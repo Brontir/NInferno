@@ -19,12 +19,16 @@ permissions:
 
 concurrency:
   group: decisions-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # A newer push to a PR replaces its run; every master commit keeps its own result and cache.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   host:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      # One arch's host objects take well under this; the repository's cache space is shared.
+      CCACHE_MAXSIZE: 500M
     strategy:
       fail-fast: false
       matrix:
@@ -40,7 +44,7 @@ jobs:
             libcurl4-openssl-dev libssl-dev
       - name: CUDA 12.8 compiler and headers (for CMake's language check; no device code is built)
         run: |
-          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          wget -q --tries=3 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends cuda-nvcc-12-8 cuda-cudart-dev-12-8 \
@@ -64,7 +68,12 @@ jobs:
             ninferno_generic_routes_host_test ninferno_choice_test ninferno_gate_atlas_test \
             ninferno_route_cost_constants_test ninferno_fitted_holdouts_test ninferno_route_rules_test \
             ninferno_rmma_geometry_test ninferno_device_identity_test ninferno_format_facts_test
+          ccache -s
       - name: Run them (no GPU on this machine)
         run: |
-          ctest --test-dir build --output-on-failure -R \
-            '^ninferno_(selector_golden_host|generic_routes_host|choice|gate_atlas|route_cost_constants|fitted_holdouts|route_rules|rmma_geometry|device_identity|format_facts)_test$'
+          re='^ninferno_(selector_golden_host|generic_routes_host|choice|gate_atlas|route_cost_constants|fitted_holdouts|route_rules|rmma_geometry|device_identity|format_facts)_test$'
+          # All ten registered: a registration made conditional or renamed (its target still built)
+          # would otherwise drop out of the regex and pass unseen.
+          n=$(ctest --test-dir build -N -R "$re" | sed -n 's/^Total Tests: //p')
+          [ "$n" = 10 ] || { echo "expected 10 decision tests registered, found ${n:-none}"; exit 1; }
+          ctest --test-dir build --output-on-failure --no-tests=error -R "$re"
