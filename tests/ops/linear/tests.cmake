@@ -331,3 +331,17 @@ ninferno_add_op_test(ninferno_side_by_side_projection_test
 ninferno_add_op_test(ninferno_route_pin_selector_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_pin_selector.cpp"
   LIBRARIES ninferno_linear_test_support)
+
+# The cost model's price of every route of a route_tune sweep on a substituted board, on the host
+# (#781): the prediction a cost-model change is scored with before any stand run. A maintainer's
+# tool, not a test (NO_DEFAULT_TEST), with the host-only link of the golden's host twin
+# (tests/cmake/DecisionTests.cmake); registered on every tree, as the twin is.
+ninferno_add_test(ninferno_route_price_sweep NO_DEFAULT_TEST
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/route_price_sweep.cpp"
+  LIBRARIES ninferno_ops_host)
+target_sources(ninferno_route_price_sweep PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
+target_compile_definitions(ninferno_route_price_sweep PRIVATE NINFERNO_HOST_ONLY)
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_route_price_sweep)

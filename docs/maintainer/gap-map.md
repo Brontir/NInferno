@@ -23,10 +23,11 @@ weight rows per output row; an Add call also reads its bf16 residual. Nothing el
 the tool: a row whose law needs a number the repository does not carry is kept and printed as
 `no law` with the reason.
 
-Rates that are fitted, not counted, are not used. The Volta and Turing bf16 rows of
-`generation.h` (1536) sit above what the tensor cores physically issue (Volta: 8 cores x 64 FMA =
-1024 flops per SM-clock), so Volta prefill, which has no int8 rate either, and Turing A16 linears
-get `no law (fitted rate)` for the tensor side. Consumer Blackwell's `mma.sync` takes 8.5 cycles
+Rates that are fitted, not counted, are not used. The Volta bf16 row of `generation.h` (1536)
+sits above what the tensor cores physically issue (Volta: 8 cores x 64 FMA = 1024 flops per
+SM-clock), so Volta prefill, which has no int8 rate either, gets `no law (fitted rate)` for the
+tensor side. Turing's bf16 row is the spec rate since #781 (512: the f16 MMA with FP32
+accumulation on the GeForce boards) and gives its A16 linears a tensor law. Consumer Blackwell's `mma.sync` takes 8.5 cycles
 per m16n8k16 against Ada's 4.0 (#619), so the gb20x bf16 row is about 2x high for those kernels: a
 gb20x gap that the tensor law binds is a lower bound. Both belong in the generation facts (step 3),
 not in a constant here.

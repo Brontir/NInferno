@@ -152,9 +152,10 @@ def board_candidates(facts: dict, chip: str, sms: int, dram_gbps: float | None) 
 # --------------------------------------------------------------------------- laws
 
 # Generation rows whose rate in generation.h is a fitted aggregate, not a physical count (Volta's
-# eight tensor cores x 64 FMA = 1024 flops per SM-clock sits under the row's 1536; Turing's bf16
-# row carries the same fitted value): principle 28.10, no fitted constant in a law.
-FITTED_RATES = {("volta", "bf16"), ("turing", "bf16")}
+# eight tensor cores x 64 FMA = 1024 flops per SM-clock sits under the row's 1536): principle 28.10,
+# no fitted constant in a law. Turing's bf16 row is the spec rate since #781 (512: the f16 MMA with
+# FP32 accumulation on the GeForce boards), a law's rate like the other generations'.
+FITTED_RATES = {("volta", "bf16")}
 
 
 def tensor_rate(gen: dict | None, board: dict, compute: str) -> tuple[float | None, str]:
