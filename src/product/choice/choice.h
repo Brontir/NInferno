@@ -293,6 +293,11 @@ struct QuantOption {
     // An MoE's prefill apart (DECISIONS 66): its routed banks' GEMM, and the class of its linears
     // outside them (attention, the shared expert); Unknown: the MoE rows price the whole.
     ExpertBanks expert_banks = ExpertBanks::Unknown;
+    // The banks' GEMM under --activations int8 (every bank at AllowA8: their formats decide);
+    // none: expert_banks. `expert_banks_assumed`: the route rests on a format the file does not
+    // tell (Gemma 4's GGUF MXFP4 experts), so an estimate on it is Transferred.
+    std::optional<ExpertBanks> expert_banks_int8;
+    bool expert_banks_assumed = false;
     WeightClass rest_weights = WeightClass::KQuant;
 };
 

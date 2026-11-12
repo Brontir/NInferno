@@ -351,6 +351,8 @@ choice::QuantOption quant_option_of(const PlanSourceFacts& facts, const std::str
     quant.routed_expert_bytes = static_cast<double>(facts.model.routed_expert_bytes);
     static_assert(static_cast<int>(runtime::ExpertPrefill::Mxfp4) == static_cast<int>(choice::ExpertBanks::Mxfp4));
     quant.expert_banks        = static_cast<choice::ExpertBanks>(facts.model.expert_prefill);
+    quant.expert_banks_int8    = static_cast<choice::ExpertBanks>(facts.model.expert_prefill_int8);
+    quant.expert_banks_assumed = facts.model.expert_prefill_assumed;
     quant.rest_weights        = choice::weight_class_of(facts.shape.rest_layer_formats, label);
     const auto& formats = facts.shape.weight_formats;
     quant.nvfp4         = std::find(formats.begin(), formats.end(), "nvfp4") != formats.end();
