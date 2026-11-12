@@ -197,7 +197,9 @@ void launch_tiled(int schedule, WeightCodec codec, Epilogue epilogue, const Gemm
 // Volta prefill on CUTLASS's sm_70 GEMM over weight rows decoded once to FP16
 // (generic_volta_cutlass.cu; built for sm_70 alone). launch_volta_cutlass returns false, having
 // launched nothing, when the build lacks it, the GEMM refuses the shape or the workspace left
-// cannot hold one chunk; the tiled route then takes the call.
+// cannot hold one chunk; the tiled route then takes the call. volta_cutlass_compiled and the sizes
+// below are host code (generic_volta_cutlass_sizes.cpp, with the selector), so a host-only build
+// answers them as the device build does.
 bool volta_cutlass_compiled() noexcept;
 std::size_t volta_cutlass_workspace_bytes(std::int32_t n, std::int32_t k, std::int32_t tokens,
                                           bool swiglu);

@@ -1,5 +1,16 @@
 cmake_minimum_required(VERSION 3.28)
 
+# The decision core alone, with no CUDA compiler (#620 step 13): the selector's host objects, core's
+# host part and the configuration choice (the ninferno_decisions target, src/CMakeLists.txt) and
+# their host-only tests (tests/cmake/DecisionTests.cmake; `ctest -L host` there is the decisions
+# suite). The tree configures with C and C++ only and builds no media, converter, fetch or device
+# code. Of the toolkit it reads one header, cuda_occupancy.h, found by path
+# (NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR, cmake/Dependencies.cmake). The build architecture is the
+# same input as below, CMAKE_CUDA_ARCHITECTURES, there a plain cache variable: the decisions read it
+# through the same macros (NINFERNO_BUILD_ARCH, NINFERNO_WITHOUT_NVFP4, ...) and an sm_70 tree still
+# fetches CUTLASS, so each architecture's tree reads the golden set it reads in a full build.
+option(NINFERNO_DECISIONS_ONLY "Build only the decision core and its host-only tests (no CUDA compiler)" OFF)
+
 # One architecture per build tree. 120a (Blackwell GB20x) is the full engine: NVFP4 weights and
 # the TMA W4A4 GEMMs. 89 (Ada) builds the same engine without the NVFP4 family: the format is
 # rejected at admission ("NVFP4 weights need SM120"), and every other path (BF16, FP8, GGUF K/IQ,
@@ -33,8 +44,8 @@ if(NOT CMAKE_CUDA_ARCHITECTURES IN_LIST NINFERNO_CUDA_ARCHS)
 endif()
 # CMake's own CUDA architecture validator accepts the family suffix "f" only from 3.31.8 and
 # 4.0.2 on (earlier versions match "[0-9]+a?" and fail inside project() with an unrelated-looking
-# message). Name the reason here, before project() runs.
-if(CMAKE_CUDA_ARCHITECTURES MATCHES "f$" AND
+# message). Name the reason here, before project() runs (a decisions-only tree runs no such check).
+if(NOT NINFERNO_DECISIONS_ONLY AND CMAKE_CUDA_ARCHITECTURES MATCHES "f$" AND
    (CMAKE_VERSION VERSION_LESS 3.31.8 OR
     (CMAKE_VERSION VERSION_GREATER_EQUAL 4.0 AND CMAKE_VERSION VERSION_LESS 4.0.2)))
   message(FATAL_ERROR
@@ -67,7 +78,9 @@ endif()
 # generic engine on any later generation, the driver compiling each kernel at its first launch.
 # Only a plain number's PTX carries forward; an "a" or "f" target's is bound to its own family.
 option(NINFERNO_CUDA_EMBED_PTX "Embed the architecture's PTX beside its SASS (JIT onto a later GPU)" OFF)
-if(NINFERNO_CUDA_EMBED_PTX)
+if(NINFERNO_DECISIONS_ONLY)
+  # No device code: CMAKE_CUDA_ARCHITECTURES stays the label it was given.
+elseif(NINFERNO_CUDA_EMBED_PTX)
   if(NOT CMAKE_CUDA_ARCHITECTURES MATCHES "^[0-9]+$")
     message(FATAL_ERROR
       "NINFERNO_CUDA_EMBED_PTX needs a plain architecture number (its PTX runs on later GPUs); "
@@ -77,7 +90,11 @@ else()
   set(CMAKE_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}-real")
 endif()
 
-project(ninferno VERSION 0.1.0 LANGUAGES C CXX CUDA)
+if(NINFERNO_DECISIONS_ONLY)
+  project(ninferno VERSION 0.1.0 LANGUAGES C CXX)
+else()
+  project(ninferno VERSION 0.1.0 LANGUAGES C CXX CUDA)
+endif()
 # The version the executables report (`ninferno-serve --version`); a release build passes its tag.
 set(NINFERNO_VERSION_STRING "${PROJECT_VERSION}" CACHE STRING "Version the executables report")
 # A build run from its own tree finds routes/, the drafters' rankings and the fetched chat page in
@@ -116,8 +133,15 @@ endif()
 # Host C++ warnings for the project's own directories (never third_party). Each directory opts in by
 # calling ninferno_directory_warnings() in its CMakeLists.txt; the rest are follow-ups of issue #611.
 option(NINFERNO_WARNINGS "Host C++ warnings (-Wall -Wextra, errors on return-type and unused-function)" OFF)
-option(NINFERNO_BUILD_APPS "Build the NInferno CLI, server and perplexity evaluator" ON)
-option(BUILD_TESTING "Build NInferno tests" OFF)
+if(NINFERNO_DECISIONS_ONLY)
+  set(ninferno_apps_default OFF)
+  set(ninferno_testing_default ON)
+else()
+  set(ninferno_apps_default ON)
+  set(ninferno_testing_default OFF)
+endif()
+option(NINFERNO_BUILD_APPS "Build the NInferno CLI, server and perplexity evaluator" ${ninferno_apps_default})
+option(BUILD_TESTING "Build NInferno tests" ${ninferno_testing_default})
 option(NINFERNO_BUILD_BENCHMARKS "Build NInferno benchmarks" OFF)
 # Every test executable that holds device code links one shared library of the CUDA archives
 # (ninferno_ops_shared: ninferno_ops, ninferno_core and their device archives) and the shared CUDA
@@ -128,6 +152,11 @@ option(NINFERNO_BUILD_BENCHMARKS "Build NInferno benchmarks" OFF)
 # the redirects and the link-mode checks. A GNU ld / ELF mechanism (whole archives, an exporting
 # shared library), for test trees only.
 option(NINFERNO_SHARED_OP_TESTS "Link every test against one shared library of the CUDA archives" OFF)
+if(NINFERNO_DECISIONS_ONLY AND (NINFERNO_BUILD_APPS OR NINFERNO_BUILD_BENCHMARKS OR NINFERNO_SHARED_OP_TESTS))
+  message(FATAL_ERROR "NINFERNO_DECISIONS_ONLY builds the decision core and its tests alone, with no "
+                      "CUDA compiler: NINFERNO_BUILD_APPS, NINFERNO_BUILD_BENCHMARKS and "
+                      "NINFERNO_SHARED_OP_TESTS stay OFF there")
+endif()
 if(NINFERNO_SHARED_OP_TESTS AND (WIN32 OR NOT BUILD_TESTING))
   message(FATAL_ERROR "NINFERNO_SHARED_OP_TESTS is for Linux test trees: it needs BUILD_TESTING=ON "
                       "and an ELF toolchain (whole-archive linking into an exporting shared library)")
@@ -162,9 +191,10 @@ if(CMAKE_GENERATOR MATCHES "Ninja")
   set(CMAKE_JOB_POOL_LINK ninferno_link)
 endif()
 
-# Tests also exercise product input, logging and protocol adapters.
+# Tests also exercise product input, logging and protocol adapters. A decisions-only tree builds the
+# configuration choice alone of them (src/CMakeLists.txt).
 set(NINFERNO_BUILD_PRODUCT_SUPPORT OFF)
-if(NINFERNO_BUILD_APPS OR BUILD_TESTING)
+if((NINFERNO_BUILD_APPS OR BUILD_TESTING) AND NOT NINFERNO_DECISIONS_ONLY)
   set(NINFERNO_BUILD_PRODUCT_SUPPORT ON)
 endif()
 
@@ -243,7 +273,12 @@ if(NINFERNO_BUILD_APPS)
 endif()
 if(BUILD_TESTING)
   enable_testing()
-  add_subdirectory(tests)
+  if(NINFERNO_DECISIONS_ONLY)
+    # The decision core's tests alone, in the tree's tests/ directory as in a full build.
+    add_subdirectory(tests/decisions tests)
+  else()
+    add_subdirectory(tests)
+  endif()
 endif()
 if(NINFERNO_BUILD_BENCHMARKS)
   add_subdirectory(bench)

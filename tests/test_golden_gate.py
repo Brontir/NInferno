@@ -406,9 +406,11 @@ def unaccounted(files):
 
 # The libraries the golden links: ninferno_ops and ninferno_core, ninferno_ggml_mmq, plus what they link
 # (ninferno_core PUBLIC-links ninferno_core_host, src/core/CMakeLists.txt; ninferno_ops PRIVATE-links
-# ninferno_nvfp4_non_rdc, src/ops/CMakeLists.txt). Third-party targets are out of scope.
+# ninferno_nvfp4_non_rdc, src/ops/CMakeLists.txt), and the selector's host objects, which ninferno_ops
+# holds and the host twin links (ninferno_ops_host_objects, ninferno_ops_host: the whole of src/ops in
+# a decisions-only tree, src/ops/generic/host_sources.cmake). Third-party targets are out of scope.
 DECISION_TARGETS = {"ninferno_ops", "ninferno_core", "ninferno_core_host", "ninferno_ggml_mmq",
-                    "ninferno_nvfp4_non_rdc"}
+                    "ninferno_nvfp4_non_rdc", "ninferno_ops_host_objects", "ninferno_ops_host"}
 # Commands that set a define on a named target or source; set_target_properties / set_property /
 # target_compile_options count only when they carry a define.
 DEFINE_COMMANDS = {"target_compile_definitions", "set_source_files_properties", "set_target_properties",
@@ -514,15 +516,18 @@ class Completeness(unittest.TestCase):
             self.assertTrue((ROOT / f).exists(), f)
 
     def test_build_inputs_of_the_embedded_kernel_facts_and_the_direct_selector_inputs(self):
-        for f in ("src/ops/generic/sources.cmake", "src/ops/generic/embedded_kernel_facts.h.in",
+        for f in ("src/ops/generic/sources.cmake", "src/ops/generic/host_sources.cmake",
+                  "src/ops/generic/embedded_kernel_facts.h.in",
                   "src/ops/generic/data/kernel_facts/sm_120a.txt", "CMakeLists.txt",
                   "src/core/mmq_columns.h", "src/core/measured_boards.h"):
             self.assertTrue(gg.decision_files([f], PATHS), f)
 
     def test_the_default_route_dir_define_is_a_decision_path(self):
-        # the selector's tuning reads its routes through route_table_dir(), which falls back to the define
-        self.assertTrue(gg.decision_files(["src/ops/basic_sources.cmake"], PATHS))
-        self.assertIn("NINFERNO_DEFAULT_ROUTE_DIR", (ROOT / "src/ops/basic_sources.cmake").read_text(encoding="utf-8"))
+        # the selector's tuning reads its routes through route_table_dir(), which falls back to the
+        # define, set with the selector's host objects
+        self.assertTrue(gg.decision_files(["src/ops/generic/host_sources.cmake"], PATHS))
+        self.assertIn("NINFERNO_DEFAULT_ROUTE_DIR",
+                      (ROOT / "src/ops/generic/host_sources.cmake").read_text(encoding="utf-8"))
         self.assertIn("NINFERNO_DEFAULT_ROUTE_DIR", (ROOT / "src/ops/route_table.cpp").read_text(encoding="utf-8"))
         self.assertIn("route_table_dir()",
                       (ROOT / "src/ops/generic/generic_tune.cpp").read_text(encoding="utf-8"))
@@ -537,12 +542,12 @@ class Completeness(unittest.TestCase):
                          "ninferno_ops / ninferno_core / ninferno_ggml_mmq and are neither in "
                          "tools/audit/decision_paths.txt nor in DEFINE_INJECTORS_ALLOWED (with a reason)")
 
-    def test_the_define_injector_scan_catches_basic_sources_cmake_when_unlisted(self):
-        without = [p for p in PATHS if p[0] != "src/ops/basic_sources.cmake"]
+    def test_the_define_injector_scan_catches_host_sources_cmake_when_unlisted(self):
+        without = [p for p in PATHS if p[0] != "src/ops/generic/host_sources.cmake"]
         self.assertEqual(len(without), len(PATHS) - 1)
         found = define_injectors(tracked(), without)
-        self.assertIn("src/ops/basic_sources.cmake", found)
-        self.assertNotIn("src/ops/basic_sources.cmake", define_injectors(tracked(), PATHS))
+        self.assertIn("src/ops/generic/host_sources.cmake", found)
+        self.assertNotIn("src/ops/generic/host_sources.cmake", define_injectors(tracked(), PATHS))
 
     def test_the_define_injector_scan_sees_directory_scope_and_closure_targets(self):
         files = {
@@ -598,7 +603,8 @@ class Completeness(unittest.TestCase):
 
     def test_the_shared_test_target_helpers_are_decision_paths(self):
         # ninferno_add_test / ninferno_link_ops shape every test target, the golden producer included
-        for f in ("tests/cmake/NInfernoTests.cmake", "tests/ops/linear/tests.cmake"):
+        for f in ("tests/cmake/NInfernoTests.cmake", "tests/ops/linear/tests.cmake",
+                  "tests/cmake/DecisionTests.cmake"):
             self.assertTrue(gg.decision_files([f], PATHS), f)
             self.assertTrue((ROOT / f).exists(), f)
         # the parent lists only wire targets in (every new host test edits them); the anchor is
@@ -616,7 +622,12 @@ class Completeness(unittest.TestCase):
                 ("tests/CMakeLists.txt", "include", "cmake/NInfernoTests.cmake"),
                 ("tests/CMakeLists.txt", "include", "ops/tests.cmake"),
                 ("tests/ops/tests.cmake", "include", "${CMAKE_CURRENT_LIST_DIR}/linear/tests.cmake"),
-                ("tests/ops/linear/tests.cmake", "ninferno_add_op_test", "ninferno_selector_golden_test")):
+                ("tests/ops/linear/tests.cmake", "ninferno_add_op_test", "ninferno_selector_golden_test"),
+                # the host twin, in every test tree and alone in a decisions-only one
+                ("tests/CMakeLists.txt", "include", "cmake/DecisionTests.cmake"),
+                ("tests/decisions/CMakeLists.txt", "include",
+                 "${PROJECT_SOURCE_DIR}/tests/cmake/DecisionTests.cmake"),
+                ("tests/cmake/DecisionTests.cmake", "ninferno_add_test", "ninferno_selector_golden_host_test")):
             with self.subTest(f=f, arg=arg):
                 self.assertTrue(reaches_at_top_level(text(f), command, arg))
 

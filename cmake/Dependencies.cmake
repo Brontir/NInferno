@@ -1,5 +1,69 @@
-find_package(CUDAToolkit REQUIRED)
 find_package(Threads REQUIRED)
+
+# Repository-pinned header dependencies, vendored: nothing here is downloaded at configure time (the
+# optional downloads are CUTLASS for sm_70 trees and ninferno-ui's chat bundle, NINFERNO_UI_CHAT).
+add_library(ninferno::json INTERFACE IMPORTED GLOBAL)
+target_include_directories(ninferno::json INTERFACE
+  ${PROJECT_SOURCE_DIR}/third_party)
+
+# A decisions-only tree (NINFERNO_DECISIONS_ONLY, CMakeLists.txt) has no CUDA language and no
+# toolkit: of the toolkit it reads one header, cuda_occupancy.h (src/core/kernel_occupancy.cpp, a
+# header-only occupancy calculator with no CUDA include of its own), found by path. The header is
+# NVIDIA's, under the CUDA toolkit's license; it is not vendored, so that the repository carries no
+# copy under those terms: any toolkit install, or the runtime's development package alone
+# (cuda-cudart-dev-<version>, no compiler), has it. Its toolkit version can move an occupancy
+# answer (a decision input), so the configure prints it (CUDART_VERSION of the cuda_runtime_api.h
+# beside it); the decisions workflow reads CUDA 12.8's.
+if(NINFERNO_DECISIONS_ONLY)
+  # Each root as include/ and as targets/<platform>/include/ (where the packages put the files;
+  # include/ is a link to it when the toolkit's links are installed).
+  set(ninferno_cuda_roots "$ENV{CUDA_PATH}" "$ENV{CUDA_HOME}" "$ENV{CUDAToolkit_ROOT}")
+  file(GLOB ninferno_versioned_cuda_roots LIST_DIRECTORIES true "/usr/local/cuda-*")
+  list(SORT ninferno_versioned_cuda_roots COMPARE NATURAL ORDER DESCENDING)
+  set(ninferno_cuda_hints "")
+  set(ninferno_cuda_paths "")
+  foreach(ninferno_cuda_root IN LISTS ninferno_cuda_roots)
+    if(ninferno_cuda_root)
+      file(GLOB ninferno_cuda_targets LIST_DIRECTORIES true "${ninferno_cuda_root}/targets/*/include")
+      list(APPEND ninferno_cuda_hints "${ninferno_cuda_root}/include" ${ninferno_cuda_targets})
+    endif()
+  endforeach()
+  foreach(ninferno_cuda_root IN ITEMS /usr/local/cuda ${ninferno_versioned_cuda_roots} /opt/cuda)
+    file(GLOB ninferno_cuda_targets LIST_DIRECTORIES true "${ninferno_cuda_root}/targets/*/include")
+    list(APPEND ninferno_cuda_paths "${ninferno_cuda_root}/include" ${ninferno_cuda_targets})
+  endforeach()
+  find_path(NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR cuda_occupancy.h
+    HINTS ${ninferno_cuda_hints}
+    PATHS ${ninferno_cuda_paths}
+    DOC "The directory that holds the CUDA toolkit's cuda_occupancy.h (a decisions-only tree)")
+  if(NOT NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR OR
+     NOT EXISTS "${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR}/cuda_occupancy.h")
+    message(FATAL_ERROR
+      "NINFERNO_DECISIONS_ONLY needs the CUDA toolkit's cuda_occupancy.h (a header, no compiler): "
+      "not found (NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR='${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR}'). "
+      "Install a CUDA toolkit or its runtime development package alone (Ubuntu: cuda-cudart-dev-12-8 "
+      "from NVIDIA's repository), or pass -DNINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR=<dir holding "
+      "cuda_occupancy.h>.")
+  endif()
+  set(NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIRS "${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR}")
+  set(ninferno_cudart_version "unknown: no cuda_runtime_api.h beside it")
+  if(EXISTS "${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR}/cuda_runtime_api.h")
+    file(STRINGS "${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR}/cuda_runtime_api.h" ninferno_cudart_line
+         REGEX "^#define[ \t]+CUDART_VERSION[ \t]+[0-9]+" LIMIT_COUNT 1)
+    if(ninferno_cudart_line MATCHES "CUDART_VERSION[ \t]+([0-9]+)")
+      math(EXPR ninferno_cudart_major "${CMAKE_MATCH_1} / 1000")
+      math(EXPR ninferno_cudart_minor "(${CMAKE_MATCH_1} % 1000) / 10")
+      set(ninferno_cudart_version "CUDA ${ninferno_cudart_major}.${ninferno_cudart_minor}")
+    endif()
+  endif()
+  message(STATUS "Decisions only: cuda_occupancy.h from ${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR} "
+                 "(${ninferno_cudart_version})")
+  return()
+endif()
+
+find_package(CUDAToolkit REQUIRED)
+# The toolkit's headers, for the one that host-only code reads (cuda_occupancy.h, src/core).
+set(NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIRS ${CUDAToolkit_INCLUDE_DIRS})
 if(NOT WIN32)
   find_package(PkgConfig REQUIRED)
 endif()
@@ -31,12 +95,6 @@ else()
   pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
     libavformat libavcodec libavutil libswscale)
 endif()
-
-# Repository-pinned header dependencies, vendored: nothing here is downloaded at configure time (the
-# optional downloads are CUTLASS for sm_70 trees and ninferno-ui's chat bundle, NINFERNO_UI_CHAT).
-add_library(ninferno::json INTERFACE IMPORTED GLOBAL)
-target_include_directories(ninferno::json INTERFACE
-  ${PROJECT_SOURCE_DIR}/third_party)
 
 # Source base for the custom-template frontend; consumers will link it explicitly.
 add_subdirectory(third_party/llama-jinja EXCLUDE_FROM_ALL)

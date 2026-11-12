@@ -63,9 +63,7 @@ target_sources(ninferno_ops PRIVATE
 )
 
 # The per-GPU-class route table (routes/<class key>.json, include/ninferno/ops/route_table.h): one
-# loader for the generic path's bands and the shape-owned tables' route_as overrides.
+# loader for the generic path's bands and the shape-owned tables' route_as overrides. route_table.cpp
+# is one of the selector's host objects; its NINFERNO_DEFAULT_ROUTE_DIR is set with them
+# (generic/host_sources.cmake).
 target_link_libraries(ninferno_ops PRIVATE ninferno::json)
-if(NINFERNO_SOURCE_TREE_PATHS)
-  set_source_files_properties("${CMAKE_CURRENT_LIST_DIR}/route_table.cpp" PROPERTIES
-    COMPILE_DEFINITIONS "NINFERNO_DEFAULT_ROUTE_DIR=\"${PROJECT_SOURCE_DIR}/routes\"")
-endif()
