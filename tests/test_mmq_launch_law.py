@@ -105,7 +105,11 @@ def card_doc(info, law=LAW, formats=("q4_K", "q6_K"), scale=None, format_scale=1
     return {"schema": ml.SCHEMA, "card": card, "protocol": {"samples": 9, "passes": 2},
             "configs": configs, "fixup_alone": alone,
             "launch_node": [{"kind": k, "launches": 1000, "samples_us": [1.5] * 9}
-                            for k in ml.NODE_KINDS]}
+                            for k in ml.NODE_KINDS],
+            # What `mmq_launch_law.py run` attaches: the idle-process notes and the clock samples.
+            "notes": ["note compute processes on the probe's GPU before the run: 0"],
+            "clocks": {"samples": 0, "offset_s": 0.0, "sm_mhz": None, "memory_mhz": None,
+                       "pstates": []}}
 
 
 def quiet(fn, *args):
@@ -156,6 +160,12 @@ class Derive(unittest.TestCase):
             bad["refused"] = "another compute process"
             with open(path, "w") as f:
                 json.dump(bad, f)
+            with self.assertRaises(ValueError):
+                ml.load_card(path)
+            raw = card_doc(CARD_A)  # the microbench's own output, never checked by `run`
+            del raw["notes"], raw["clocks"]
+            with open(path, "w") as f:
+                json.dump(raw, f)
             with self.assertRaises(ValueError):
                 ml.load_card(path)
 

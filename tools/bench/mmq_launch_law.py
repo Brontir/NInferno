@@ -154,6 +154,11 @@ def load_card(path):
         raise ValueError(f"{path}: not a microbench document ({card.get('schema')!r})")
     if card.get("refused"):
         raise ValueError(f"{path}: a refused run ({card['refused']})")
+    # `run` attaches the idle-process notes and the clock samples; the microbench's own output has
+    # neither, so nothing checked that the GPU was idle while it ran.
+    if not isinstance(card.get("notes"), list) or not isinstance(card.get("clocks"), dict):
+        raise ValueError(f"{path}: not a document of `mmq_launch_law.py run` (no process notes or "
+                         "clock samples); run the microbench through it")
     return card
 
 
