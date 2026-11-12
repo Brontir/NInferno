@@ -7,11 +7,19 @@
 
 namespace ninferno::ops::detail {
 namespace {
+// Complete cold-cache Graph timings favor split-8 R16 through 48 columns.
+// R32 halves split scratch and avoids the repeated wide tile above that range.
+constexpr int kR16MaxTokens = 48;
+// R32's 32-column tile through 96 columns, its 64-column tile above (the same timings).
+constexpr int kR32NarrowMaxTokens = 96;
+
 DynamicConvPrepareRoute resolve_route(int tokens) {
-    // Complete cold-cache Graph timings favor split-8 R16 through 48 columns.
-    // R32 halves split scratch and avoids the repeated wide tile above that range.
-    if (tokens <= 48) return {16, tokens <= 8 ? 8 : tokens <= 16 ? 16 : tokens <= 32 ? 32 : 48, 8};
-    return {32, tokens <= 96 ? 32 : 64, 4};
+    // R16's column tile is the smallest compiled one (8, 16, 32, 48) that covers the tokens: a
+    // coverage bound of the instances bf16_dynamic_grouped_conv_prepare_partial.cu compiles, not a
+    // fitted edge.
+    if (tokens <= kR16MaxTokens)
+        return {16, tokens <= 8 ? 8 : tokens <= 16 ? 16 : tokens <= 32 ? 32 : 48, 8};
+    return {32, tokens <= kR32NarrowMaxTokens ? 32 : 64, 4};
 }
 
 std::size_t capacity(DynamicConvPrepareRoute route, int tokens) {

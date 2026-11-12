@@ -63,10 +63,26 @@ static_assert(arch_registry::shared_reserved_per_block(130) == 1024);
 // The build's own limits are the table's.
 static_assert(ops::kMaxSharedBytesPerBlock ==
               arch_registry::find(NINFERNO_BUILD_ARCH).build_smem_per_block_optin);
-// The build keeps the old limits above sm_90, below the device's.
-static_assert(arch_registry::find(9, 0).build_smem_per_block_optin == 99 * 1024);
-static_assert(arch_registry::find(11, 0).build_smem_per_sm == 100 * 1024);
+// The build compiles sm_90..sm_119 against the device's limits (#648; it kept 99/100 KiB before).
+static_assert(arch_registry::find(9, 0).build_smem_per_block_optin == 227 * 1024);
+static_assert(arch_registry::find(10, 0).build_smem_per_block_optin == 227 * 1024);
+static_assert(arch_registry::find(11, 0).build_smem_per_sm == 228 * 1024);
 static_assert(arch_registry::find(9, 5).smem_per_block_optin == 227 * 1024);
+
+// Every listed row of a chip compiles against what its device opts into; only the rows of no chip
+// at 7.1, 7.3 and 7.4 compile as Volta.
+constexpr bool build_limits_are_the_device_limits() {
+    for (const auto& r : arch_registry::kRows) {
+        const bool volta_like = r.cc == 71 || r.cc == 73 || r.cc == 74;
+        if (!volta_like && (r.build_smem_per_block_optin != r.smem_per_block_optin ||
+                            r.build_smem_per_sm != r.smem_per_sm)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static_assert(build_limits_are_the_device_limits());
 
 // The old code, verbatim.
 namespace legacy {
@@ -143,12 +159,15 @@ void every_covered_capability_keeps_its_value() {
         const std::string at = "cc " + std::to_string(cc) + ": ";
         const auto& row      = arch_registry::find(cc);
 
-        // arch_limits.h: every capability, sm_71/73/74 and sm_90..119 included (the build keeps the
-        // 99/100 KiB it had for the latter, below the device's 227/228 KiB, until a measured
-        // change).
-        expect(ops::shared_bytes_per_block_for_arch(cc) == legacy::arch_block(cc),
+        // arch_limits.h: every capability, sm_71/73/74 included. The one correction (#648):
+        // sm_90..sm_119 compile against the device's 227/228 KiB, where the old code kept the
+        // 99/100 KiB of GA10x.
+        const bool raised = cc >= 90 && cc < 120;
+        expect(ops::shared_bytes_per_block_for_arch(cc) ==
+                   (raised ? std::size_t{227 * 1024} : legacy::arch_block(cc)),
                at + "arch_limits per block");
-        expect(ops::shared_bytes_per_sm_for_arch(cc) == legacy::arch_sm(cc),
+        expect(ops::shared_bytes_per_sm_for_arch(cc) ==
+                   (raised ? std::size_t{228 * 1024} : legacy::arch_sm(cc)),
                at + "arch_limits per SM");
         expect(ops::shared_bytes_reserved_per_block_for_arch(cc) == legacy::arch_reserved(cc),
                at + "arch_limits reserved per block");

@@ -995,8 +995,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             launch_volta_hmma(codec, call.epilogue, args, stream);
             return;
         }
-        if (!current_features().mma_tensor && volta_gemv_takes(codec, args) &&
-            (args.ldx % 8) == 0 && (reinterpret_cast<std::uintptr_t>(args.x) % 16) == 0) {
+        if (!current_features().mma_tensor && volta_gemv_takes(codec, args)) {
             launch_volta_gemv(codec, call.epilogue, args, stream);
             return;
         }

@@ -14,11 +14,13 @@ in a macro or follow any declarator. Flagged:
      `Board` as a template argument: `std::vector<Board>`, `std::array<Board, N>`) initialised with
      `{...}` or `(...)` that has at least two arguments and whose first is a constant (digits,
      `kName` constants, parentheses, operators, or a designated `.major = 12`); any declarator
-     between the type and the bracket (`Board k[] = {`, `const Board& b = {`, `Board const b(`).
+     between the type and the bracket (`Board k[] = {`, `const Board& b = {`, `Board const b(`),
+     an attribute before or after the name included (`Board b [[maybe_unused]] {`).
      When the first argument starts with `{` the group is a table: every row is tested, however
      few numbers it has (`{8, 6, 82}`), however it is written (`{.major = 8, ...}`, `{8, 0, kSms,
      ...}`);
-     A function returning `Board` has its braced `return {...}` tested the same way.
+     A function returning `Board` (a conversion `operator Board()` too) has its braced
+     `return {...}` tested the same way.
   2. a `.board = {...}` designated initialiser, tested like 1;
   3. any brace tuple of five numbers that reads as a board (major 5..15, minor 0..9, SMs 1..400,
      L2 up to 512 MiB, bandwidth of 100 GB/s or more), optionally a bool after it, optionally a
@@ -32,8 +34,9 @@ words that only start with Board (`BoardRow`, `BoardCount`).
 
 A qualified constant as the first field (`facts::kMajor`) counts only when a plain number follows
 in the group of a list or a table (`Board k[] = {...}`, `std::vector<Board>`): without one it is a
-list of registry boards. After `Board b{`, in a `return {` of a Board function and in
-`.board = {`, the group is one board and all-qualified fields are flagged. Numbers are decimal,
+list of registry boards. After `Board b{`, in a `return {` of a Board function, in `.board = {`
+and in a braced row of a table (`Board k[] = {{facts::kMajor, ...}}`), the group is one board and
+all-qualified fields are flagged. Numbers are decimal,
 hex and binary (`0b1100`), with digit separators and suffixes.
 
 A function name may carry a template-id (`make_board<int>()`, `Foo<T>::make()`) or be an
@@ -323,9 +326,12 @@ def board_shaped(m):
             and 1 <= sms <= 400 and sms == int(sms) and 0 <= l2 <= 512 and bw >= 100)
 
 
-def rows(code, a, b):
+def rows(code, a, b, direct=True):
     """Spans of the board-literal rows of the table code[a:b]: each `{...}` part with at least two
-    arguments and a constant first one; a part whose first argument is `{` is a table again."""
+    arguments and a constant first one; a part whose first argument is `{` is a table again. A
+    braced row of `Board k[]` initialises one Board, so its fields may all be qualified constants
+    (direct); under a template (`std::array<Board, 2> k = {{...}}`) the inner braces may be the
+    container's own, so a row of qualified names needs a plain number too (`direct` False)."""
     out = []
     for s, e in split(code, a, b):
         if code[s] != "{":
@@ -334,16 +340,17 @@ def rows(code, a, b):
         if not inner:
             continue
         if code[inner[0][0]] == "{":
-            out += rows(code, s + 1, e - 1)
-        elif is_fields(code, inner):
+            # One brace level more (`std::array<Board, 1> a = {{{...}}}`) is a Board element.
+            out += rows(code, s + 1, e - 1, True)
+        elif is_fields(code, inner, direct):
             out.append((s, e))
     return out
 
 
-def initialiser(code, start, bracket, direct=False):
+def initialiser(code, start, bracket, direct=False, rows_direct=True):
     """Spans of the board literals of the initialiser whose bracket is code[bracket]; `start` is
     where the literal begins (the type or the designator); `direct` when the group initialises a
-    single Board (see is_fields)."""
+    single Board (see is_fields); `rows_direct` when a braced row of it does (see rows)."""
     end = close(code, bracket)
     if end is None:
         return []
@@ -351,7 +358,7 @@ def initialiser(code, start, bracket, direct=False):
     if not parts:
         return []
     if code[parts[0][0]] == "{":
-        return rows(code, bracket + 1, end)
+        return rows(code, bracket + 1, end, rows_direct)
     if is_fields(code, parts, direct):
         return [(start, end + 1)]
     return []
@@ -376,9 +383,18 @@ def type_name(table):
     return r"(?:%s|(?<![\w.:])(?:::\s*)?(?:%s)\b)" % (bare, "|".join(sorted(alts)))
 
 
+# An attribute (`[[maybe_unused]]`), which may stand before or after a declarator's name.
+# Its arguments may hold one level of brackets (`[[gnu::aligned(sizeof(v[0]))]]`).
+ATTR_CORE = r"\[\[(?:[^\[\]]|\[[^\[\]]*\])*\]\]"
+ATTR = ATTR_CORE + r"\s*"
+
+
 def typed_pattern(table):
     ty = type_name(table)
-    tail = r"(?:\w+\s*)?(?:\[[^\]]*\]\s*)?=?\s*([{(])"
+    # Each run of attributes has one place to go (before the name, after it, after the bounds),
+    # so a long run is read in linear time.
+    tail = (r"(?:%s)*(?:\w+\s*(?:%s)*)?(?:\[(?!\[)[^\]]*\]\s*(?:%s)*)?=?\s*([{(])"
+            % (ATTR, ATTR, ATTR))
     plain = ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:const\b\s*)?" + tail
     templ = r"<\s*" + ty + r"\s*(?:,[^<>;{}]*)?>\s*(?:const\b\s*)?[&*]*\s*" + tail
     return re.compile(plain + "|" + templ)
@@ -402,13 +418,16 @@ def returns(table):
     # way only: `&&?` could split it many ways, and a run with no `{` after it took exponential time.
     paren = r"\s*\((?:[^()]|\([^()]*\))*\)"
     quals = (r"(?:(?:(?:const|volatile|override|final|mutable|constexpr)\b|noexcept\b(?:%s)?|"
-             r"throw%s|&&|&(?!&)|\[\[[^\]]*\]\])\s*)*" % (paren, paren))
+             r"throw%s|&&|&(?!&)|%s)\s*)*" % (paren, paren, ATTR_CORE))
     head = (ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:\w+\s*(?:%s)?\s*::\s*)*" % TARGS + FNAME +
             r"\s*\((?:(?!(?<!\w)requires\b)[^;{}]|\{[^;{}]*\})*\)\s*" + quals +
             r"(?:\{|requires\b(?P<req1>))")
     trailing = (r"->\s*(?:const\b\s*)?" + ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*"
                 r"(?:const\b\s*)?(?:\{|requires\b(?P<req2>))")
-    return re.compile(head + "|" + trailing)
+    # A conversion operator to Board: `[explicit] operator Board() const {`.
+    conversion = (r"\boperator\s+(?:const\b\s*)?" + ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*"
+                  r"\(\s*\)\s*" + quals + r"(?:\{|requires\b(?P<req3>))")
+    return re.compile(head + "|" + trailing + "|" + conversion)
 
 
 TOKEN = re.compile(r"\w+|\S")
@@ -427,7 +446,7 @@ def body_brace(code, m):
     closed paren group, the word before that group), so it costs a bounded number of steps per
     head. Known limit: a braced initialiser at paren depth 0 inside the clause
     (`requires C<T, int{3}>`) is taken for the body."""
-    if m.group("req1") is None and m.group("req2") is None:
+    if m.group("req1") is None and m.group("req2") is None and m.group("req3") is None:
         return m.end() - 1
     stack = []     # the word before each open paren
     before = None  # the word a `{` here would follow: the last token, or before a closed group
@@ -569,7 +588,9 @@ def literals(text):
         # A group right after the type names one Board; after `<Board>` or `Board k[]` it may be
         # a list of boards, where `{measured::kA, measured::kB}` is registry names.
         spans += initialiser(code, m.start(), m.end() - 1,
-                             direct=not m.group().startswith("<") and "[" not in m.group())
+                             direct=not m.group().startswith("<")
+                             and "[" not in re.sub(ATTR, "", m.group()),
+                             rows_direct=not m.group().startswith("<"))
     for m in returns(table).finditer(code):
         body = body_brace(code, m)
         if body is None:

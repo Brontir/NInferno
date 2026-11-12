@@ -70,13 +70,14 @@ int main() {
     namespace d         = ninferno::ops::detail;
     const double excess = 2000.0;
 
-    // No snapshot carries the text kernel: the law that reads the committed facts refuses (0) on
-    // every board, even with an excess, instead of falling back to the device's limits alone.
+    // No snapshot carries the text kernel: the law that reads the committed facts refuses (no
+    // value) on every board, even with an excess, instead of falling back to the device's limits
+    // alone.
     for (const DeviceClass* b : {&rtx5090, &rtx4090, &rtx4060ti, &rtx2080ti}) {
         for (const auto& g : kGeometries) {
             expect(!d::text_kernel_facts(*b, g[0], g[1]).has_value(),
                    b->name + ": no committed facts of the text kernel");
-            expect(d::text_fused_max_tokens_with_excess(*b, g[0], g[1], excess) == 0,
+            expect(!d::text_fused_max_tokens_with_excess(*b, g[0], g[1], excess).has_value(),
                    b->name + ": no facts, no bound");
         }
     }
@@ -102,8 +103,10 @@ int main() {
     // dispatch's inputs (launch node of the generation, SMs, resident warps, clock, heads of the
     // geometry), not a prediction of any board. Ada has a launch node; gb20x and Turing have none
     // yet and answer 0.
-    const auto w4090 = d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, light, excess);
-    const auto w4060 = d::text_fused_max_tokens_with_facts(rtx4060ti, 32, 2, light, excess);
+    const auto w4090 =
+        d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, light, excess).value_or(0);
+    const auto w4060 =
+        d::text_fused_max_tokens_with_facts(rtx4060ti, 32, 2, light, excess).value_or(0);
     expect(w4090 > 0 && w4060 > 0, "Ada: a launch node, so a bound");
     const double ratio = static_cast<double>(w4090) / static_cast<double>(w4060);
     const double want =
@@ -114,38 +117,47 @@ int main() {
     // models and the decision fingerprint, not one rebuilt from the raw driver fields.
     DeviceClass canonical = rtx4090;
     canonical.facts.reference_clock_khz *= 2;
-    const auto w_canonical = d::text_fused_max_tokens_with_facts(canonical, 32, 2, light, excess);
+    const auto w_canonical =
+        d::text_fused_max_tokens_with_facts(canonical, 32, 2, light, excess).value_or(0);
     expect(std::abs(static_cast<double>(w_canonical) / w4090 - 2.0) < 0.03,
            "the law reads device.facts' reference clock (twice the clock, twice the width)");
     // The facts' occupancy is the law's: a register-limited kernel (5 CTAs against 16) and a
     // shared-memory-limited one (4) fuse proportionally narrower.
-    const auto w_registers = d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, registers, excess);
-    const auto w_shared    = d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, shared, excess);
+    const auto w_registers =
+        d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, registers, excess).value_or(0);
+    const auto w_shared =
+        d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, shared, excess).value_or(0);
     expect(w_registers > 0 && w_registers < w4090 &&
                std::abs(static_cast<double>(w4090) / w_registers - 16.0 / 5.0) < 0.03,
            "register-limited: the width scales with the facts' resident CTAs (16 over 5)");
     expect(w_shared > 0 && w_shared < w_registers &&
                std::abs(static_cast<double>(w4090) / w_shared - 16.0 / 4.0) < 0.03,
            "shared-memory-limited: the width scales with the facts' resident CTAs (16 over 4)");
-    expect(d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, facts(0, 0), excess) == 0,
+    expect(!d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, facts(0, 0), excess).has_value(),
            "unknown registers: no occupancy, no bound");
-    const auto narrow = d::text_fused_max_tokens_with_facts(rtx4090, 16, 4, light, excess);
-    const auto wide   = d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, light, excess);
+    const auto narrow =
+        d::text_fused_max_tokens_with_facts(rtx4090, 16, 4, light, excess).value_or(0);
+    const auto wide =
+        d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, light, excess).value_or(0);
     // A token's launched warp slots: 3 x ceil((Q + K) / 3), 36 for 32+2 and 21 for 16+4.
     expect(narrow > wide && std::abs(static_cast<double>(narrow) / wide - 36.0 / 21.0) < 0.03,
            "per geometry: the width composes the launched heads a token (16+4 over 32+2 is 36/21)");
     // 8+2 launches four CTAs of three warps a token: 12 slots, not 10 (the last two warps idle).
-    const auto ten    = d::text_fused_max_tokens_with_facts(rtx4090, 8, 2, light, excess);
-    const auto twelve = d::text_fused_max_tokens_with_facts(rtx4090, 16, 2, light, excess);
+    const auto ten = d::text_fused_max_tokens_with_facts(rtx4090, 8, 2, light, excess).value_or(0);
+    const auto twelve =
+        d::text_fused_max_tokens_with_facts(rtx4090, 16, 2, light, excess).value_or(0);
     expect(ten > 0 && std::abs(static_cast<double>(ten) / twelve - 18.0 / 12.0) < 0.03,
            "a partial head group's idle warps are priced (8+2 takes 12 slots, 16+2 takes 18)");
-    expect(d::text_fused_max_tokens_with_facts(rtx5090, 32, 2, light, excess) == 0 &&
-               d::text_fused_max_tokens_with_facts(rtx2080ti, 32, 2, light, excess) == 0,
-           "a generation without a launch node answers 0");
-    expect(d::text_fused_max_tokens_with_facts(rtx4090, 12, 3, light, excess) == 0,
-           "an uninstantiated geometry answers 0");
-    expect(d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, light, 0.0) == 0,
-           "no excess calibrated: 0");
+    expect(!d::text_fused_max_tokens_with_facts(rtx5090, 32, 2, light, excess).has_value() &&
+               !d::text_fused_max_tokens_with_facts(rtx2080ti, 32, 2, light, excess).has_value(),
+           "a generation without a launch node answers nothing");
+    expect(!d::text_fused_max_tokens_with_facts(rtx4090, 12, 3, light, excess).has_value(),
+           "an uninstantiated geometry answers nothing");
+    expect(!d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, light, 0.0).has_value(),
+           "no excess calibrated: nothing");
+    // A calibrated excess past the launches it saves: 0, never fuse, distinct from unknown (#720).
+    const auto never = d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, light, 1.0e12);
+    expect(never.has_value() && *never == 0, "T* below one token: 0, never fuse");
 
     if (failures == 0) std::printf("rmsnorm_rope bound: ok\n");
     return failures == 0 ? 0 : 1;

@@ -142,8 +142,8 @@ struct Window {
 // recorded for the 99 KiB builds, with the NVFP4 kernels (sm_120a) and without them (sm_89). The
 // exact counts are checked on the build recorded only (by its label); another build of the same
 // two facts (sm_86; 121a, 120f) is held to the window, since it was not run. Another build
-// (sm_70, sm_75, sm_80) has no recorded window: the groups are still matched (a new group or an
-// XPASS fails), the shares are printed and not checked.
+// (sm_70, sm_75, sm_80, sm_90, sm_100) has no recorded window: the groups are still matched (a new
+// group or an XPASS fails), the shares are printed and not checked.
 struct Build {
     bool nvfp4_kernels;
     std::size_t block_shared_bytes;
@@ -208,36 +208,36 @@ constexpr Known kKnown[] = {
      "charge (a): removed alone the group falls from 35.0 % to 2.6 % of the family's cases, with "
      "all "
      "three removed to 0.99 % (issue #690)",
-     {"89", 269202, 764040, 0x2EAAFE4A91DE2680ULL, 1.30002093448, 0.3452, 0.353, 0, 0},
-     {"120a", 270007, 782520, 0x2EAAFE4A91DE2680ULL, 1.30002093448, 0.3377, 0.346, 0, 0}},
+     {"89", 269202, 764040, 0x75C62A28A3B4F1E9ULL, 1.30002093448, 0.3452, 0.353, 0, 0},
+     {"120a", 270007, 782520, 0x75C62A28A3B4F1E9ULL, 1.30002093448, 0.3377, 0.346, 0, 0}},
     {"P1 sms x1.25",
      "rmma beyond the SM ratio",
      "charge (c) with (a): removing (c) alone leaves 20 of the 675 cases (x1.336), removing (a) "
      "alone grows the group to 13 156 (x1.90): the two charges change together (issue #690)",
-     {"89", 675, 764040, 0x2EAAFE4A91DE2680ULL, 1.42889967054, 0.0007, 0.001, 1.4, 1.43},
-     {"120a", 675, 782520, 0x2EAAFE4A91DE2680ULL, 1.42889967054, 0.0007, 0.001, 1.4, 1.43}},
+     {"89", 675, 764040, 0x75C62A28A3B4F1E9ULL, 1.42889967054, 0.0007, 0.001, 1.4, 1.43},
+     {"120a", 675, 782520, 0x75C62A28A3B4F1E9ULL, 1.42889967054, 0.0007, 0.001, 1.4, 1.43}},
     {"P1 sms x1.25",
      "staged within the SM ratio",
      "charge (a): removed alone the group disappears (issue #690)",
-     {"89", 14448, 33200, 0x2EAAFE4A91DE2680ULL, 1.25418687982, 0.4233, 0.436, 0, 0},
-     {"120a", 14448, 33200, 0x2EAAFE4A91DE2680ULL, 1.25418687982, 0.4233, 0.436, 0, 0}},
+     {"89", 14448, 33200, 0x75C62A28A3B4F1E9ULL, 1.25418687982, 0.4233, 0.436, 0, 0},
+     {"120a", 14448, 33200, 0x75C62A28A3B4F1E9ULL, 1.25418687982, 0.4233, 0.436, 0, 0}},
     {"P1 sms x1.25",
      "w4a8 within the SM ratio",
      "charges (a) and (b): removing (b) alone leaves 14.0 % of the family's cases, all three none "
      "(issue #690)",
-     {"89", 21764, 91300, 0x2EAAFE4A91DE2680ULL, 1.25566364868, 0.2299, 0.239, 0, 0},
-     {"120a", 19828, 83000, 0x2EAAFE4A91DE2680ULL, 1.25566364868, 0.2304, 0.239, 0, 0}},
+     {"89", 21764, 91300, 0x75C62A28A3B4F1E9ULL, 1.25566364868, 0.2299, 0.239, 0, 0},
+     {"120a", 19828, 83000, 0x75C62A28A3B4F1E9ULL, 1.25566364868, 0.2304, 0.239, 0, 0}},
     {"P1 sms x1.25",
      "w4a8 beyond the SM ratio",
      "charges (a) and (b) together: removing either alone makes the group disappear (issue #690)",
-     {"89", 2254, 91300, 0x2EAAFE4A91DE2680ULL, 1.52081329893, 0.0224, 0.025, 1.52, 1.53},
-     {"120a", 2074, 83000, 0x2EAAFE4A91DE2680ULL, 1.52081329893, 0.0227, 0.025, 1.52, 1.53}},
+     {"89", 2254, 91300, 0x75C62A28A3B4F1E9ULL, 1.52081329893, 0.0224, 0.025, 1.52, 1.53},
+     {"120a", 2074, 83000, 0x75C62A28A3B4F1E9ULL, 1.52081329893, 0.0227, 0.025, 1.52, 1.53}},
     {"P1 sms x1.25",
      "i8 within the SM ratio",
      "charge (b): removed alone the group falls from 39.1 % to 0.72 % of the family's cases "
      "(issue #690)",
-     {"89", 1946, 4980, 0x2EAAFE4A91DE2680ULL, 1.25811579614, 0.3812, 0.391, 0, 0},
-     {"120a", 1946, 4980, 0x2EAAFE4A91DE2680ULL, 1.25811579614, 0.3812, 0.391, 0, 0}},
+     {"89", 1946, 4980, 0x75C62A28A3B4F1E9ULL, 1.25811579614, 0.3812, 0.391, 0, 0},
+     {"120a", 1946, 4980, 0x75C62A28A3B4F1E9ULL, 1.25811579614, 0.3812, 0.391, 0, 0}},
 };
 
 // ---- Findings ----------------------------------------------------------------------------------

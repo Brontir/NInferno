@@ -28,9 +28,18 @@ enum class Nvfp4LinearAddRoute : std::uint8_t {
 // 174.9 -> 182.8 t/s, MTP3 C1 (T = 4) +5 %, DFlash 5 C1 (T = 6) +6 %; at T = 16 (MTP3 C4) it
 // lost 5 %, so wider calls keep their routes.
 // A route probe forcing the quantized route keeps it (fused activation routes test).
+constexpr std::int32_t kNvfp4AddVerifyExactMaxTokens = 8;
+
 bool nvfp4_verify_exact(std::int32_t tokens) {
-    return tokens >= 2 && tokens <= 8 && route_probe_state.quantized_act != 1;
+    return tokens >= 2 && tokens <= kNvfp4AddVerifyExactMaxTokens &&
+           route_probe_state.quantized_act != 1;
 }
+
+// The first width of the A4 route under AllowA4: 8 from the A16 / A4 selection of "select measured
+// nvfp4 activation routes" (no board or timing in the repository); K = 6144's edge moved from 7 to
+// 17 with no stated timing.
+constexpr std::int32_t kNvfp4AddFirstA4TokensK6144 = 17;
+constexpr std::int32_t kNvfp4AddFirstA4Tokens      = 8;
 
 Nvfp4LinearAddRoute resolve_route(std::int32_t output_rows, std::int32_t input_rows,
                                   LinearPolicy policy, std::int32_t tokens) {
@@ -42,7 +51,8 @@ Nvfp4LinearAddRoute resolve_route(std::int32_t output_rows, std::int32_t input_r
     }
     if (policy == LinearPolicy::AllowA8) { return Nvfp4LinearAddRoute::A16; }
     if (!allows_a4(policy)) { throw std::invalid_argument("nvfp4 linear_add: unsupported policy"); }
-    const std::int32_t first_a4 = input_rows == 6144 ? 17 : 8;
+    const std::int32_t first_a4 =
+        input_rows == 6144 ? kNvfp4AddFirstA4TokensK6144 : kNvfp4AddFirstA4Tokens;
     return route_quantized_activations(tokens >= first_a4) ? Nvfp4LinearAddRoute::A4
                                                            : Nvfp4LinearAddRoute::A16;
 }

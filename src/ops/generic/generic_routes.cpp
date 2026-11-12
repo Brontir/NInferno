@@ -335,6 +335,8 @@ bool volta_gemv_takes(WeightCodec codec, const GemmArgs& args) {
     if (args.lane_local == 0 || args.tokens < 1 || args.tokens > 4 || args.join_previous != 0) {
         return false;
     }
+    // The kernel reads each token's x in 16-byte words.
+    if ((args.ldx % 8) != 0 || (reinterpret_cast<std::uintptr_t>(args.x) % 16) != 0) return false;
     if (codec == WeightCodec::Bf16) return (args.k % 8) == 0;
     return (args.k % 256) == 0 && (codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
                                    codec == WeightCodec::GgmlQ6K || codec == WeightCodec::Q8);
