@@ -15,10 +15,13 @@
 //   full      a tile a CTA, 2 S row tiles x 2 column tiles: four waves (the law's waves x steps);
 //   streamk   floor(S / 2) row tiles x 1 column tile on S CTAs: stream-k, tiles % CTAs != 0, so
 //             the fixup kernel runs (the launch the law prices with stream_k_unit and its fixup);
+//   streamk_wide  floor(3 S / 2) row tiles x 1 column tile on S CTAs: stream-k with more tiles
+//             than CTAs, as the narrow-band launches run (64 tiles on 60 SMs), with the fixup;
 //   halfwave  the streamk shape as a tile a CTA (floor(S / 2) CTAs): what the split is against.
 // Each at K = 2048, 4096, 8192 (full: 4096, 8192), so that a unit is the slope of a call's time
 // over its longest CTA's units and the launch's fixed part the intercept (mmq_launch_law.py
-// derive). Beside them: the fixup kernel alone (the streamk launch at the largest K), and the
+// derive). Beside them: the fixup kernel alone (both stream-k launches at the largest K: its
+// bytes differ by J and by grid, which gives its effective rate and fixed time), and the
 // per-launch node cost of an empty kernel, back to back on a stream and as the nodes of a graph,
 // each with and without the programmatic-serialization attribute (core/pdl.cuh).
 //
@@ -91,7 +94,7 @@ std::vector<int> split_ints(const std::string& s) {
     return out;
 }
 
-const char* const kGrids[] = {"law", "wave1", "full", "streamk", "halfwave"};
+const char* const kGrids[] = {"law", "wave1", "full", "streamk", "streamk_wide", "halfwave"};
 
 struct Options {
     std::string out;
@@ -114,7 +117,8 @@ void usage(std::FILE* to) {
     std::fprintf(
         to,
         "usage: ninferno_mmq_launch_microbench [--out FILE] [--formats q4_K,q5_K,q6_K]\n"
-        "    [--widths 16,32,64,80,96,128] [--grids law,wave1,full,streamk,halfwave]\n"
+        "    [--widths 16,32,64,80,96,128]\n"
+        "    [--grids law,wave1,full,streamk,streamk_wide,halfwave]\n"
         "    [--ks 2048,4096,8192] [--full-ks 4096,8192] [--samples 9] [--passes 2]\n"
         "    [--sample-ms 40] [--warmup-ms 3000] [--node-launches 1000]\n"
         "    [--dry-run [--sms N] [--l2-mib M]] [--help]\n"
@@ -233,6 +237,7 @@ Grid grid_of(const std::string& name, int sms) {
     if (name == "wave1") return {name, sms, 1, sms};
     if (name == "full") return {name, 2 * sms, 2, 4 * sms};
     if (name == "streamk") return {name, half, 1, sms};
+    if (name == "streamk_wide") return {name, std::max(sms + 1, 3 * sms / 2), 1, sms};
     if (name == "halfwave") return {name, half, 1, half};
     throw std::invalid_argument("unknown grid " + name);
 }
@@ -312,12 +317,12 @@ std::vector<Config> plan_of(const Options& o, int sms) {
     return plan;
 }
 
-// The fixup-alone timings: the streamk launch at its largest K, per format and width.
+// The fixup-alone timings: each stream-k launch at its largest K, per format and width.
 std::vector<std::size_t> fixup_alone_of(const std::vector<Config>& plan) {
     std::vector<std::size_t> out;
     for (std::size_t i = 0; i < plan.size(); ++i) {
         const Config& c = plan[i];
-        if (c.grid.name != "streamk" || !c.part.fixup) continue;
+        if (!c.part.split || !c.part.fixup) continue;
         bool largest = true;
         for (const Config& d : plan) {
             if (d.grid.name == c.grid.name && d.format == c.format && d.j == c.j && d.k > c.k) {
@@ -664,7 +669,15 @@ int run(const Options& o) {
     std::vector<int> resident(plan.size(), 0);
     std::vector<bool> skipped(plan.size(), false);
     for (std::size_t i = 0; i < plan.size(); ++i) {
-        skipped[i] = !plan[i].fmt.ops->config(plan[i].j).ok;
+        const mb::TileConfig t = plan[i].fmt.ops->config(plan[i].j);
+        skipped[i]             = !t.ok;
+        // The split grids time ggml's stream-k partition: a tile without it would run another
+        // launch (launch_of refuses it too), so the run stops before measuring anything.
+        if (t.ok && plan[i].part.split && !t.stream_k) {
+            throw std::runtime_error(plan[i].format + " J " + std::to_string(plan[i].j) +
+                                     ": no stream-k on this device, the " + plan[i].grid.name +
+                                     " grid cannot run");
+        }
     }
     auto forced_of = [](const Config& c) {
         return mb::Forced{c.rows, c.k, c.columns, c.j, c.part.blocks};

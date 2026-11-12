@@ -47,8 +47,14 @@ detail::Launch launch_of(const Forced& f) {
     l.row_tiles     = f.rows / c.rows;
     l.column_tiles  = (f.columns + f.j - 1) / f.j;
     const int tiles = l.row_tiles * l.column_tiles;
-    l.blocks        = l.stream_k ? f.blocks : tiles;
-    l.fixup         = l.stream_k && tiles % l.blocks != 0;
+    // A config without stream-k launches a tile a CTA whatever the CTA count asked: a split grid
+    // there would time another launch than the one it names, so it is refused, not run.
+    if (!l.stream_k && f.blocks != tiles) {
+        throw std::invalid_argument("mmq_launch_microbench: a split launch on a tile without "
+                                    "stream-k");
+    }
+    l.blocks = f.blocks;
+    l.fixup  = l.stream_k && tiles % l.blocks != 0;
     return l;
 }
 

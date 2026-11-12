@@ -63,13 +63,19 @@ def partition(rows, k, columns, j, blocks, sms):
 def grid(name, sms):
     half = max(1, sms // 2)
     return {"law": (half, 2, 2 * half), "wave1": (sms, 1, sms), "full": (2 * sms, 2, 4 * sms),
-            "streamk": (half, 1, sms), "halfwave": (half, 1, half)}[name]
+            "streamk": (half, 1, sms), "streamk_wide": (max(sms + 1, 3 * sms // 2), 1, sms),
+            "halfwave": (half, 1, half)}[name]
 
 
-def card_doc(info, law=LAW, formats=("q4_K", "q6_K"), scale=None, format_scale=1.5):
+def card_doc(info, law=LAW, formats=("q4_K", "q6_K"), scale=None, format_scale=1.5,
+             fixup_rate=None, stream_k=None, launch=None):
     """A microbench document of a card whose calls take exactly the law's time plus INTERCEPT;
-    `scale` multiplies its units by J (a card off the law). q6_K's units are format_scale x."""
+    `scale` multiplies its units by J (a card off the law). q6_K's units are format_scale x. The
+    fixup takes its bytes at `fixup_rate` (default the DRAM rate) plus `launch` (default the
+    law's), in a call and alone; `stream_k` gives each stream-k grid its own ratio."""
     configs, alone = [], []
+    rate = fixup_rate or info["dram_bytes_per_s"]
+    fixed = law["launch_seconds"] if launch is None else launch
     for f in formats:
         for i, j in enumerate(ml.WIDTHS):
             unit = law["unit_clocks"][i] / info["reference_clock_hz"]
@@ -78,9 +84,10 @@ def card_doc(info, law=LAW, formats=("q4_K", "q6_K"), scale=None, format_scale=1
                 rt, ct, blocks = grid(g, info["sms"])
                 for k in ((4096, 8192) if g == "full" else (2048, 4096, 8192)):
                     p = partition(rt * 128, k, ct * j, j, blocks, info["sms"])
-                    t = INTERCEPT + p["units"] * unit * (law["stream_k_unit"] if p["split"] else 1)
+                    s = (stream_k or {}).get(g, law["stream_k_unit"])
+                    t = INTERCEPT + p["units"] * unit * (s if p["split"] else 1)
                     if p["fixup"]:
-                        t += p["fixup_bytes"] / info["dram_bytes_per_s"] + law["launch_seconds"]
+                        t += p["fixup_bytes"] / rate + fixed
                     us = t * 1e6
                     configs.append(dict(p, format=f, grid=g, j=j, k=k, rows=rt * 128,
                                         columns=ct * j, resident_ctas_per_sm=1, copies=3,
@@ -88,10 +95,11 @@ def card_doc(info, law=LAW, formats=("q4_K", "q6_K"), scale=None, format_scale=1
                                         weight_bytes=1.0,
                                         samples_us=[[us * 1.01, us, us * 0.99] * 3,
                                                     [us * 1.002, us, us * 0.998] * 3]))
-                    if g == "streamk" and k == 8192:
+                    if p["fixup"] and k == 8192:
+                        a = (p["fixup_bytes"] / rate + fixed) * 1e6
                         alone.append({"format": f, "j": j, "k": k, "grid": g,
                                       "fixup_bytes": p["fixup_bytes"], "calls": 100,
-                                      "samples_us": [[us / 10] * 9, [us / 10] * 9]})
+                                      "samples_us": [[a] * 9, [a] * 9]})
     card = dict(info, chip="x", l2_bytes=48 << 20, global_bytes=12 << 30, pci_bus_id="0000:01:00.0",
                 driver_sm_clock_khz=0, driver_memory_clock_khz=0, driver=13000, runtime=13020)
     return {"schema": ml.SCHEMA, "card": card, "protocol": {"samples": 9, "passes": 2},
@@ -114,7 +122,12 @@ class Derive(unittest.TestCase):
             self.assertAlmostEqual(got / want, 1.0, places=9)
         self.assertAlmostEqual(d["law"]["stream_k_unit"], LAW["stream_k_unit"], places=9)
         self.assertAlmostEqual(d["law"]["launch_seconds"] / LAW["launch_seconds"], 1.0, places=6)
+        self.assertAlmostEqual(d["law"]["fixup_rate_ratio"], 1.0, places=6)
+        for g in ml.STREAM_K_GRIDS:
+            self.assertAlmostEqual(d["stream_k_by_grid"][g], LAW["stream_k_unit"], places=9)
         self.assertEqual(d["missing_widths"], [])
+        self.assertEqual(d["resident_flags"], [])
+        self.assertIsNone(d["clock_ratio"])  # no clocks recorded
         self.assertEqual(d["generation"], "ada")
         row = d["per_format"]["q4_K"][32]
         self.assertAlmostEqual(row["intercept_s"] / INTERCEPT, 1.0, places=6)
@@ -157,6 +170,45 @@ class Derive(unittest.TestCase):
         self.assertIsNone(ml.cpp_row("kX", d["law"]))
 
 
+    def test_fixup_from_the_kernel_alone(self):
+        # The fixup reads its partials from the L2 at twice the DRAM rate: the fit over the
+        # widths finds the rate and L; the in-situ difference at the DRAM rate is biased.
+        d = ml.derive(card_doc(CARD_A, fixup_rate=2 * CARD_A["dram_bytes_per_s"]))
+        self.assertAlmostEqual(d["law"]["launch_seconds"] / LAW["launch_seconds"], 1.0, places=6)
+        self.assertAlmostEqual(d["law"]["fixup_rate_ratio"], 2.0, places=6)
+        self.assertAlmostEqual(d["law"]["stream_k_unit"], LAW["stream_k_unit"], places=9)
+        insitu = d["per_format"]["q4_K"][128]["insitu_fixup_beyond_bytes_s"]
+        self.assertLess(insitu, LAW["launch_seconds"] - 1e-7)
+
+    def test_a_negative_launch_gives_no_row(self):
+        d = ml.derive(card_doc(CARD_A, launch=-1e-6))
+        self.assertLess(d["law"]["launch_seconds"], 0)
+        self.assertIsNone(ml.cpp_row("kX", d["law"]))
+        self.assertIn("negative", ml.row_problem(d["law"], d["missing_widths"]))
+
+    def test_each_stream_k_grid_apart(self):
+        d = ml.derive(card_doc(CARD_A, stream_k={"streamk": 1.25, "streamk_wide": 1.05}))
+        self.assertAlmostEqual(d["stream_k_by_grid"]["streamk"], 1.25, places=9)
+        self.assertAlmostEqual(d["stream_k_by_grid"]["streamk_wide"], 1.05, places=9)
+        self.assertAlmostEqual(d["law"]["stream_k_unit"], 1.15, places=9)
+
+    def test_flags_resident_ctas_and_moving_clocks(self):
+        doc = card_doc(CARD_A)
+        for c in doc["configs"]:
+            if c["j"] == 16:
+                c["resident_ctas_per_sm"] = 2
+            c["sm_mhz"] = [2700, 2760]
+        doc["configs"][0]["sm_mhz"] = [2700, 2800]  # 3.7 %
+        d = ml.derive(doc)
+        self.assertTrue(d["resident_flags"])
+        self.assertTrue(all(" J 16 " in f for f in d["resident_flags"]))
+        self.assertEqual(len(d["clock_flags"]), 1)
+        self.assertAlmostEqual(d["clock_ratio"], 2730 / 2610)
+        _, text = quiet(ml.print_derived, d)
+        self.assertIn("RESIDENT", text)
+        self.assertIn("CLOCK", text)
+
+
 class Fit(unittest.TestCase):
     def test_two_cards_of_one_law(self):
         r = ml.fit([ml.derive(card_doc(CARD_A)), ml.derive(card_doc(CARD_B))])
@@ -165,8 +217,13 @@ class Fit(unittest.TestCase):
         self.assertEqual(len(r["holdout"]), 2)
         self.assertEqual(r["holdout"][0]["from"], ["Card B"])
         for h in r["holdout"]:
-            kinds = {row["what"] for row in h["rows"]}
-            self.assertEqual(kinds, {"unit", "stream-k unit", "fixup"})
+            kinds = {ml.kind_of(row["what"]) for row in h["rows"]}
+            self.assertEqual(kinds, {"unit", "streamk unit", "streamk_wide unit",
+                                     "launch_seconds", "call law", "call full", "call streamk",
+                                     "call streamk_wide"})
+            # Every measured call of the row's format, predicted end to end.
+            self.assertEqual(sum(row["what"].startswith("call ") for row in h["rows"]),
+                             len(ml.WIDTHS) * 11)
             for row in h["rows"]:
                 self.assertLess(abs(row["error"]), 1e-6)
         self.assertEqual(ml.cpp_row(r["name"], r["law"]),
@@ -186,6 +243,27 @@ class Fit(unittest.TestCase):
         # The row is the two cards' mean.
         self.assertAlmostEqual(r["law"]["unit_clocks"][2] / LAW["unit_clocks"][2], 1.125)
         self.assertAlmostEqual(r["law"]["unit_clocks"][1] / LAW["unit_clocks"][1], 1.0)
+
+    def test_launch_seconds_is_held_out_on_its_own(self):
+        # B's fixup costs 3x A's L: diluted in the calls, it is outside on its own.
+        r = ml.fit([ml.derive(card_doc(CARD_A)),
+                    ml.derive(card_doc(CARD_B, launch=3 * LAW["launch_seconds"]))])
+        flagged = {(h["card"], row["what"]) for h in r["holdout"] for row in h["rows"]
+                   if row["outside"]}
+        self.assertIn(("Card B", "launch_seconds"), flagged)
+        self.assertIn(("Card A", "launch_seconds"), flagged)
+        self.assertFalse(r["within_tolerance"])
+
+    def test_names_cards_at_different_clock_shares(self):
+        a, b = card_doc(CARD_A), card_doc(CARD_B)
+        for c in a["configs"]:
+            c["sm_mhz"] = [2800, 2810]
+        for c in b["configs"]:
+            c["sm_mhz"] = [2500, 2510]
+        r = ml.fit([ml.derive(a), ml.derive(b)])
+        self.assertIsNotNone(r["clock_note"])
+        self.assertIsNone(ml.fit([ml.derive(card_doc(CARD_A)),
+                                  ml.derive(card_doc(CARD_B))])["clock_note"])
 
     def test_refuses_one_card_and_mixed_generations(self):
         with self.assertRaises(ValueError):
