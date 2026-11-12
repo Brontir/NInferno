@@ -387,6 +387,10 @@ class StaticSchedule(unittest.TestCase):
         # alternative step two included), 0x400-0x430.
         self.assertEqual(c.outside_total, 8 + 31 + 4)
         self.assertEqual(c.schedule_problems(), [])
+        # An MMQ kernel without a K loop fails the family audit, but at the widths ggml compiles
+        # empty (80 and 96 columns).
+        rows = {(2, J, 0, 0): (0, 0, 0, 0, c) for J in (64, 80, 96)}
+        self.assertEqual(kernel_facts.family_audit("mmq", rows), ["mmq 2 64 0 0: no K loop"])
 
     def test_problems(self):
         c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=2)

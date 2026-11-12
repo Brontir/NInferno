@@ -528,8 +528,9 @@ def family_audit(family, rows):
         if family == "mmq":
             J = k[1]
             if c.loops == 0:
+                # Only the widths compiled empty may lack the loop; any other is a failed audit.
                 if J not in (80, 96):
-                    problems.append("no K loop")
+                    out.append(f"{family} {row_key(k)}: no K loop")
                 continue
             if c.loops > 2:
                 problems.append(f"{c.loops} candidate loops")
