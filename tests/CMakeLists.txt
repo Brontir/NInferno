@@ -143,6 +143,11 @@ add_test(NAME ninferno_regret_bands_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_bands.py)
 set_tests_properties(ninferno_regret_bands_test PROPERTIES LABELS host)
 
+# tools/bench/sweep_manifest.py: the route sweep archive's manifest (#613 PR-0), no GPU.
+add_test(NAME ninferno_sweep_manifest_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_sweep_manifest.py)
+set_tests_properties(ninferno_sweep_manifest_test PROPERTIES LABELS host)
+
 # tools/audit/diff_lint.py: broken string literals, duplicated added blocks, removed definitions
 # still called and removed includes still needed, on planted diffs (#611), no GPU.
 add_test(NAME ninferno_diff_lint_test
