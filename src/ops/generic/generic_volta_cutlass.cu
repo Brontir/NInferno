@@ -11,6 +11,7 @@
 #include "core/layout.h"
 #include "ops/generic/generic_gemm.cuh"
 #include "ops/generic/generic_gemm_internal.h"
+#include "ops/generic/generic_volta_cutlass_sizes.h"
 
 #ifdef NINFERNO_VOLTA_CUTLASS
 #    include "cutlass/cutlass.h"
@@ -44,38 +45,9 @@ using GemmFor = cutlass::gemm::device::Gemm<
         ElementOut, 128 / cutlass::sizeof_bits<ElementOut>::value, float, float>,
     cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>, 2>;
 
-// Weight rows decoded per chunk (gate and up rows together under SwiGLU): as many as 140 MiB of
-// FP16 holds at the call's K (4096 rows at K = 17408, 13824 at K = 5120). A fixed 4096 rows split
-// the 27B gate_up (34816 x 5120) into nine GEMMs of 3.2 CTA waves each on the V100 (160 resident
-// 128 x 128 tiles); one chunk of a third of it runs 10.8 waves (ninfer-v100-sm70 runs the whole
-// parent).
-constexpr std::size_t kChunkWeightBytes    = std::size_t{4096} * 17408 * 2;
-constexpr std::int32_t kMinChunkWeightRows = 256;
-
-std::int32_t round_up(std::int32_t v, std::int32_t m) { return (v + m - 1) / m * m; }
-
-std::int32_t chunk_weight_rows(std::int32_t k) {
-    const std::size_t rows = kChunkWeightBytes / (static_cast<std::size_t>(k) * 2);
-    return std::max(kMinChunkWeightRows,
-                    static_cast<std::int32_t>(std::min<std::size_t>(rows, 1 << 20) / 128 * 128));
-}
-
-struct Layout {
-    std::size_t x = 0, w = 0, c = 0, total = 0;
-};
-
-Layout layout_for(std::int32_t k, std::int32_t tokens, std::int32_t weight_rows) {
-    WorkspaceLayoutBuilder b;
-    Layout l;
-    l.x = static_cast<std::size_t>(tokens) * static_cast<std::size_t>(k) * sizeof(__half);
-    l.w = static_cast<std::size_t>(weight_rows) * static_cast<std::size_t>(k) * sizeof(__half);
-    l.c = static_cast<std::size_t>(tokens) * static_cast<std::size_t>(weight_rows) * sizeof(float);
-    (void)b.alloc_bytes(l.x, 256);
-    (void)b.alloc_bytes(l.w, 256);
-    (void)b.alloc_bytes(l.c, 256);
-    l.total = b.peak_bytes(1);
-    return l;
-}
+// The chunk's sizes are host code (generic_volta_cutlass_sizes.cpp): one FP16 value of the
+// layout's arithmetic is a __half.
+static_assert(sizeof(__half) == 2);
 
 // The activation in FP16, [T, K] contiguous; eight values per thread (ldx and x are 16-byte
 // aligned on this route: run_route sends any other call to the scalar route).
@@ -226,50 +198,16 @@ int blocks_for(std::int64_t items, int threads) {
 
 } // namespace
 
-bool volta_cutlass_compiled() noexcept { return true; }
-
-std::size_t volta_cutlass_workspace_bytes(std::int32_t n, std::int32_t k, std::int32_t tokens,
-                                          bool swiglu) {
-    // n: the problem's rows; a SwiGLU call decodes its gate and up rows together, the others
-    // their rows alone (launch_volta_cutlass's first chunk).
-    const std::int32_t rows = swiglu ? 2 * round_up(n, 8) : round_up(n, 8);
-    return layout_for(k, tokens, std::min(rows, chunk_weight_rows(k))).total;
-}
-
-namespace {
-
-// The chunk's weight rows: as many as the call has (`needed`, both halves under SwiGLU), at most
-// chunk_weight_rows(K), halved while `free_bytes` cannot hold it; 0 when not even the smallest
-// chunk fits.
-std::int32_t fitting_chunk_rows(std::int32_t k, std::int32_t tokens, std::int32_t needed,
-                                std::size_t free_bytes) {
-    std::int32_t weight_rows = std::min(needed, chunk_weight_rows(k));
-    while (layout_for(k, tokens, weight_rows).total > free_bytes) {
-        if (weight_rows <= kMinChunkWeightRows) return 0;
-        weight_rows = std::max(kMinChunkWeightRows, round_up(weight_rows / 2, 16));
-    }
-    return weight_rows;
-}
-
-} // namespace
-
-std::size_t volta_cutlass_chunk_bytes(std::int32_t n, std::int32_t k, std::int32_t tokens,
-                                      bool swiglu, std::size_t free_bytes) {
-    if ((k % 8) != 0 || tokens <= 0 || n <= 0) return 0;
-    const std::int32_t needed = swiglu ? 2 * round_up(n, 8) : round_up(n, 8);
-    const std::int32_t rows   = fitting_chunk_rows(k, tokens, needed, free_bytes);
-    return rows == 0 ? 0 : layout_for(k, tokens, rows).total;
-}
-
 bool launch_volta_cutlass(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                           WorkspaceArena& workspace, std::size_t free_bytes, cudaStream_t stream) {
     if ((args.k % 8) != 0 || args.tokens <= 0 || args.rows <= 0) return false;
     const bool swiglu = epilogue == Epilogue::SwiGlu;
-    // The chunk that fits `free_bytes` (fitting_chunk_rows): the figure the caller's gate
+    // The chunk that fits `free_bytes` (volta_cutlass_fitting_rows): the figure the caller's gate
     // (volta_cutlass_call_runs) and volta_cutlass_chunk_bytes size with, so one rule sizes all
     // three.
-    const std::int32_t needed      = swiglu ? 2 * round_up(args.rows, 8) : round_up(args.rows, 8);
-    const std::int32_t weight_rows = fitting_chunk_rows(args.k, args.tokens, needed, free_bytes);
+    const std::int32_t needed = volta_cutlass_needed_rows(args.rows, swiglu);
+    const std::int32_t weight_rows =
+        volta_cutlass_fitting_rows(args.k, args.tokens, needed, free_bytes);
     if (weight_rows == 0) return false;
     const std::int32_t step = swiglu ? weight_rows / 2 : weight_rows;
     // Store and AddResidual into one BF16 output write it from the GEMM's epilogue: every chunk's
@@ -281,7 +219,7 @@ bool launch_volta_cutlass(WeightCodec codec, Epilogue epilogue, const GemmArgs& 
                         reinterpret_cast<std::uintptr_t>(out_bf16) % 16 == 0;
 
     auto scope     = workspace.scope();
-    const Layout l = layout_for(args.k, args.tokens, weight_rows);
+    const VoltaCutlassLayout l = volta_cutlass_layout(args.k, args.tokens, weight_rows);
     auto* x16      = static_cast<__half*>(workspace.alloc_bytes(l.x).data);
     auto* w16      = static_cast<__half*>(workspace.alloc_bytes(l.w).data);
     auto* c32      = static_cast<float*>(workspace.alloc_bytes(l.c).data);
@@ -292,7 +230,7 @@ bool launch_volta_cutlass(WeightCodec codec, Epilogue epilogue, const GemmArgs& 
     CUDA_CHECK(cudaGetLastError());
     for (std::int32_t l0 = 0; l0 < args.rows; l0 += step) {
         const std::int32_t count = std::min(step, args.rows - l0);
-        const std::int32_t pad   = round_up(count, 8);
+        const std::int32_t pad   = volta_cutlass_round_up(count, 8);
         const std::int32_t n     = swiglu ? 2 * pad : pad;
         const std::int64_t items = static_cast<std::int64_t>(n) * args.k / 8;
         if (swiglu) {
@@ -339,16 +277,6 @@ bool launch_volta_cutlass(WeightCodec codec, Epilogue epilogue, const GemmArgs& 
 }
 
 #else
-
-bool volta_cutlass_compiled() noexcept { return false; }
-
-std::size_t volta_cutlass_workspace_bytes(std::int32_t, std::int32_t, std::int32_t, bool) {
-    return 0;
-}
-
-std::size_t volta_cutlass_chunk_bytes(std::int32_t, std::int32_t, std::int32_t, bool, std::size_t) {
-    return 0;
-}
 
 bool launch_volta_cutlass(WeightCodec, Epilogue, const GemmArgs&, WorkspaceArena&, std::size_t,
                           cudaStream_t) {

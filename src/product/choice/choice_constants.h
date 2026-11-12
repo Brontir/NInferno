@@ -635,7 +635,8 @@ struct VoltaPrefillCost {
     int cards;
 };
 inline constexpr VoltaPrefillCost kVoltaPrefillCost{52.4, 0.69, 0.99, 1.11, 0.94, 1};
-inline constexpr double kVoltaChunkBytes = 4096.0 * 17408 * 2; // generic_volta_cutlass.cu kChunkWeightBytes
+inline constexpr double kVoltaChunkBytes =
+    4096.0 * 17408 * 2; // generic_volta_cutlass_sizes.cpp kChunkWeightBytes
 // A tiled format's call (Q8_0, Q4_K, Q5_K: their own tile beside the copy) takes the copy from this
 // many tokens, or at any width on a board of this much DRAM (generic_select.cpp volta_copy_pays); a
 // shorter call on a slower board runs the tile, not read: the share prices it.
