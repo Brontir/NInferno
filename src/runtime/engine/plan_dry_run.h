@@ -211,6 +211,32 @@ struct PlanLinear {
     std::string format;
 };
 
+// The routed layers of one kind (#616 step 7): their banks' storage formats and stored layouts
+// (artifact::format_name and layout_name spellings; a GGUF's banks in the layout the converter
+// gives them, convert::expert_bank_layout Auto), each bank's K (a gate/up bank's: the router's
+// width, or a zero-padded one above it; a down bank's: the expert width), whether a gate is there
+// (a gated FFN; Nemotron-H's experts are up and down only), the experts' activation policy, the
+// layers of this kind and their routed bytes. What the MoE op's route query is asked for
+// (set_plan_moe_route_query). The policy is the layer's as a start reads it (ops::moe_policy of its
+// two banks'): an artifact's recorded one (each bank's Use: activation_policy), a GGUF bank's the
+// converter's for the encoding it keeps where the tensor table tells it (plan_facts.cpp
+// gguf_expert_policy); Unknown where a bank records none, or the recipe or the weights' bytes
+// decide (a GGUF NVFP4 bank with an activation divisor, Gemma 4's MXFP4 experts). A layer whose
+// banks are not read whole (a format not parsed, a bank missing, gate and up of two formats) is one
+// kind with empty formats (and Unknown policy): the query is not asked for it, and its bytes are
+// priced as an unknown route.
+enum class PlanExpertPolicy : std::uint8_t { Unknown, A16Only, AllowA8, AllowA4 };
+
+struct PlanExpertLayers {
+    std::string gate_up_format, down_format;
+    std::string gate_up_layout, down_layout;
+    std::uint64_t gate_up_k = 0, down_k = 0;
+    bool gated              = true;
+    PlanExpertPolicy policy = PlanExpertPolicy::Unknown;
+    std::uint32_t layers    = 0;
+    std::uint64_t bytes     = 0;
+};
+
 // A separate Gemma 4 assistant's facts its own pass is sized on (gemma4::DrafterPass::
 // workspace_bytes, #302): its width, its feed-forward, its head's rows, and the formats its head
 // and its projections are (a converted artifact's) or may be stored in (before the conversion:
@@ -317,6 +343,8 @@ struct PlanModelFacts {
     std::vector<PlanLinear> linears;
     // Their prefill GEMM (the trunk's banks; the most of their bytes where layers differ).
     ExpertPrefill expert_prefill = ExpertPrefill::Unknown;
+    // The trunk's routed layers by kind (empty: not read; the MTP layers' apart).
+    std::vector<PlanExpertLayers> expert_layers;
     // Where a whole GGUF's tensor data starts (its tensor table ends just before), 0: not a GGUF.
     std::uint64_t gguf_data_offset = 0;
     // A drafter's full-attention KV per token (DFlash's own layers), 0 when none or unknown: the
@@ -436,6 +464,30 @@ using PlanWorkspaceQuery = std::function<PlanWorkspaceAnswer(
     const PlanModelFacts& model, const PlanRung& rung, const EngineOptions& options,
     std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan)>;
 void set_plan_workspace_query(PlanWorkspaceQuery query);
+
+// The kernel a routed layer's grouped stage runs (#616 step 7), as the MoE op's route query answers
+// (ops/moe moe_route_query, the op's own cascade on the device's class): R8 (int8 activations, one
+// CTA a job), the 16-bit register MMA, the grouped W4A8 (the int8 tier), Volta's HMMA. Unknown: no
+// answer (no query registered, or the op refuses the layer).
+enum class PlanExpertKernel : std::uint8_t { Unknown, R8, RegisterMma, W4a8, VoltaHmma };
+
+struct PlanExpertRoute {
+    PlanExpertKernel gate_up = PlanExpertKernel::Unknown;
+    PlanExpertKernel down    = PlanExpertKernel::Unknown;
+    std::string authority; // the op's authority that answered (moe::authority_name)
+};
+
+// The route a decode call of `tokens` tokens of `layers` takes on `device` under `activations`:
+// the experts at the policy the start runs them at (models::effective_policy of the recorded one:
+// Fast the recorded, Int8 AllowA8, Exact A16 under the invariant profile). The engine registers
+// it (it links the Ops this library does not: register_plan_moe_route_query); unset, nullopt
+// everywhere, and a plan's MoE step takes the measured route's price (product/choice speed_of).
+using PlanMoeRouteQuery = std::function<std::optional<PlanExpertRoute>(
+    const PlanDeviceFacts& device, const PlanModelFacts& model, const PlanExpertLayers& layers,
+    std::uint32_t tokens, ActivationMode activations)>;
+void set_plan_moe_route_query(PlanMoeRouteQuery query);
+// The registered query (an empty function where none is).
+[[nodiscard]] const PlanMoeRouteQuery& plan_moe_route_query();
 
 // A rung's bytes by the family planner's byte functions (model.offline_bytes): the persistent
 // layout and the CUDA graph allowance a start plans for `options` (normalized) at the rung's

@@ -10,6 +10,9 @@
 #include "convert/ggml_quants.h"
 #include "convert/gguf.h"
 #include "runtime/engine/plan_dry_run.h"
+#include "artifact/formats.h"
+#include "artifact/schema.h"
+#include "core/weight_view.h"
 
 #include <nlohmann/json.hpp>
 
@@ -18,6 +21,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -234,6 +238,106 @@ int gguf_qwen35() {
     failures += check(pr::plan_facts_of_gguf(file, 999999).model.expert_prefill == rt::ExpertPrefill::Unknown,
                       "a dense model: no route");
 
+    // The routed layers by kind, as the MoE op's route query is asked for them (#616 step 7): two
+    // layers of Q4_K gate and up over a Q6_K down are one kind; a layer whose gate and up are two
+    // formats is a kind with no formats (not read whole); the MTP layer's banks are not the
+    // trunk's.
+    GgufFile kinds = file;
+    for (const int block : {0, 1, 2}) {
+        const std::string b = "blk." + std::to_string(block) + ".";
+        kinds.tensors.push_back(tensor(b + "ffn_gate_exps.weight", {5120, 512, 64},
+                                       ninferno::convert::ggml::Q4_K, 100));
+        kinds.tensors.push_back(tensor(
+            b + "ffn_up_exps.weight", {5120, 512, 64},
+            block == 2 ? ninferno::convert::ggml::IQ3_XXS : ninferno::convert::ggml::Q4_K, 100));
+        kinds.tensors.push_back(tensor(b + "ffn_down_exps.weight", {512, 5120, 64},
+                                       ninferno::convert::ggml::Q6_K, 120));
+    }
+    kinds.tensors.push_back(
+        tensor("blk.64.ffn_down_exps.weight", {512, 5120, 64}, ninferno::convert::ggml::Q6_K, 70));
+    const auto layers = pr::plan_facts_of_gguf(kinds, 999999).model.expert_layers;
+    const auto read = std::find_if(layers.begin(), layers.end(), [](const rt::PlanExpertLayers& l) {
+        return !l.gate_up_format.empty();
+    });
+    const auto unread =
+        std::find_if(layers.begin(), layers.end(),
+                     [](const rt::PlanExpertLayers& l) { return l.gate_up_format.empty(); });
+    failures += check(layers.size() == 2 && read != layers.end() && unread != layers.end(),
+                      "routed layers: two kinds");
+    if (read != layers.end() && unread != layers.end()) {
+        failures += check(read->gate_up_format == "ggml_q4_k" && read->down_format == "ggml_q6_k" &&
+                              !read->gate_up_layout.empty() && !read->down_layout.empty() &&
+                              read->gate_up_k == 5120 && read->down_k == 512 && read->gated &&
+                              read->policy == rt::PlanExpertPolicy::AllowA8 && read->layers == 2 &&
+                              read->bytes == 640,
+                          "routed layers: Q4_K gate/up over Q6_K down, two layers, int8 kept");
+        failures +=
+            check(unread->layers == 1 && unread->bytes == 320 && unread->down_format.empty() &&
+                      unread->policy == rt::PlanExpertPolicy::Unknown,
+                  "routed layers: gate and up of two formats are not read whole");
+    }
+    // The GGUF banks' policy (gguf_expert_policy): MXFP4 kept as stored (AllowA8, qwen3_5's and
+    // moe_recipe's); NVFP4 without an activation divisor at BF16 inputs; NVFP4 with one
+    // (<stem>.input_scale) as its recipe decides: unknown.
+    const auto policy_of = [&](std::uint32_t type, bool divisor) {
+        GgufFile banks = file;
+        banks.tensors.push_back(tensor("blk.0.ffn_gate_exps.weight", {5120, 512, 64}, type, 100));
+        banks.tensors.push_back(tensor("blk.0.ffn_up_exps.weight", {5120, 512, 64}, type, 100));
+        banks.tensors.push_back(tensor("blk.0.ffn_down_exps.weight", {512, 5120, 64}, type, 100));
+        if (divisor) {
+            banks.tensors.push_back(
+                tensor("blk.0.ffn_gate_exps.input_scale", {64}, ninferno::convert::ggml::F32, 256));
+        }
+        const auto l = pr::plan_facts_of_gguf(banks, 999999).model.expert_layers;
+        return l.size() == 1 ? l[0].policy : rt::PlanExpertPolicy::Unknown;
+    };
+    failures +=
+        check(policy_of(ninferno::convert::ggml::MXFP4, false) == rt::PlanExpertPolicy::AllowA8,
+              "gguf MXFP4 banks: AllowA8");
+    failures +=
+        check(policy_of(ninferno::convert::ggml::NVFP4, false) == rt::PlanExpertPolicy::A16Only,
+              "gguf NVFP4 banks without a divisor: A16Only");
+    failures +=
+        check(policy_of(ninferno::convert::ggml::NVFP4, true) == rt::PlanExpertPolicy::Unknown,
+              "gguf NVFP4 banks with a divisor: unknown");
+    // Floating-point weight banks (F16, kept as bf16) are a kind of their own, at BF16 inputs:
+    // the op runs them too (Codex on #764); a float auxiliary tensor of a bank (a scale, a bias)
+    // is not a bank, and neither moves the prefill route.
+    {
+        GgufFile banks = file;
+        for (const char* name : {"blk.0.ffn_gate_exps.weight", "blk.0.ffn_up_exps.weight"}) {
+            banks.tensors.push_back(
+                tensor(name, {5120, 512, 64}, ninferno::convert::ggml::F16, 100));
+        }
+        banks.tensors.push_back(tensor("blk.0.ffn_down_exps.weight", {512, 5120, 64},
+                                       ninferno::convert::ggml::F16, 100));
+        banks.tensors.push_back(
+            tensor("blk.0.ffn_down_exps.scale", {64}, ninferno::convert::ggml::F32, 256));
+        const auto f  = pr::plan_facts_of_gguf(banks, 999999);
+        const auto& l = f.model.expert_layers;
+        failures +=
+            check(l.size() == 1 && l[0].gate_up_format == "bf16" && l[0].down_format == "bf16" &&
+                      !l[0].gate_up_layout.empty() && l[0].gate_up_k == 5120 &&
+                      l[0].down_k == 512 && l[0].policy == rt::PlanExpertPolicy::A16Only &&
+                      l[0].layers == 1 && l[0].bytes == 300,
+                  "gguf F16 banks: one bf16 kind at BF16 inputs, the scale apart");
+        failures += check(f.model.expert_prefill == rt::ExpertPrefill::Unknown,
+                          "gguf F16 banks: the prefill route as before");
+        // F32 banks as the published recipes keep them: bf16 (FP32 has no weight codec).
+        GgufFile f32 = file;
+        for (const char* name : {"blk.0.ffn_gate_exps.weight", "blk.0.ffn_up_exps.weight"}) {
+            f32.tensors.push_back(tensor(name, {5120, 512, 64}, ninferno::convert::ggml::F32, 200));
+        }
+        f32.tensors.push_back(tensor("blk.0.ffn_down_exps.weight", {512, 5120, 64},
+                                     ninferno::convert::ggml::F32, 200));
+        const auto l32 = pr::plan_facts_of_gguf(f32, 999999).model.expert_layers;
+        failures += check(l32.size() == 1 && l32[0].gate_up_format == "bf16" &&
+                              l32[0].down_format == "bf16" && !l.empty() &&
+                              l32[0].gate_up_layout == l[0].gate_up_layout &&
+                              l32[0].policy == rt::PlanExpertPolicy::A16Only,
+                          "gguf F32 banks: a bf16 kind");
+    }
+
     // The metadata alone (ninferno-ui): FileSize.
     const auto meta = pr::plan_facts_of_gguf_metadata(file.metadata, 16000000000ULL);
     failures += check(meta.model.weight_basis == rt::WeightBasis::FileSize, "metadata basis");
@@ -415,6 +519,21 @@ int gemma4() {
                      {"gemma4.attention.sliding_window", 1024},
                      {"gemma4.attention.sliding_window_pattern", pattern}};
     failures += gemma4_facts(pr::plan_facts_of_gguf_metadata(md, 1), "gemma4 gguf");
+    // Gemma 4's MXFP4 experts (#616 step 7): the GGUF decoder maps them onto NVFP4 only where
+    // their block exponents fit E4M3 (the weights' bytes), the recipe re-quantizes them otherwise:
+    // the policy the plan cannot read off the header is unknown, not MXFP4's AllowA8.
+    {
+        GgufFile mx;
+        mx.metadata = md;
+        mx.tensors.push_back(tensor("blk.0.ffn_gate_up_exps.weight", {5376, 1408, 128},
+                                    ninferno::convert::ggml::MXFP4, 200));
+        mx.tensors.push_back(tensor("blk.0.ffn_down_exps.weight", {704, 5376, 128},
+                                    ninferno::convert::ggml::MXFP4, 100));
+        const auto layers = pr::plan_facts_of_gguf(mx, 999999).model.expert_layers;
+        failures += check(layers.size() == 1 && layers[0].gate_up_format == "mxfp4" &&
+                              layers[0].policy == rt::PlanExpertPolicy::Unknown,
+                          "gemma4 gguf: MXFP4 experts, the policy unknown");
+    }
     const json config = {{"architectures", {"Gemma4ForConditionalGeneration"}},
                          {"text_config",
                           {{"model_type", "gemma4_text"},
@@ -737,6 +856,121 @@ int artifact_errors() {
     return check(false, "a missing artifact did not throw");
 }
 
+// An artifact's routed layers by kind (#616 step 7, plan_facts_of_directory): each bank's policy is
+// the one its Use records (what a start reads, models/common/weight_use.cpp); a layer of a bank
+// whose use records none has an unknown policy; the MTP layer's banks are not the trunk's.
+int artifact_expert_layers() {
+    namespace art = ninferno::artifact;
+    int failures  = 0;
+    art::Directory dir;
+    dir.components["text"].config = {{"architectures", {"GptOssForCausalLM"}},
+                                     {"model_type", "gpt_oss"},
+                                     {"hidden_size", 2880},
+                                     {"num_hidden_layers", 2},
+                                     {"layer_types", {"sliding_attention", "full_attention"}},
+                                     {"sliding_window", 128},
+                                     {"num_attention_heads", 64},
+                                     {"num_key_value_heads", 8},
+                                     {"head_dim", 64},
+                                     {"intermediate_size", 2880},
+                                     {"num_local_experts", 32},
+                                     {"num_experts_per_tok", 4},
+                                     {"max_position_embeddings", 131072},
+                                     {"vocab_size", 201088}};
+    const std::string mx =
+        std::string(art::layout_name(ninferno::default_weight_layout(ninferno::QType::MXFP4)));
+    const auto bank = [&](const std::string& name, std::uint64_t rows, std::uint64_t bytes,
+                          std::optional<art::ActivationPolicy> policy) {
+        art::TensorObject t;
+        t.id     = name;
+        t.shape  = {32, rows, 2880};
+        t.format = "mxfp4";
+        t.layout = mx;
+        t.bytes  = bytes;
+        const art::ObjectHandle handle{dir.objects.size()};
+        dir.objects.emplace_back(t);
+        dir.object_index[name] = handle;
+        art::Binding b;
+        b.whole_object     = true;
+        b.elements         = 32 * rows * 2880;
+        b.parts            = {art::Part{handle, 0, b.elements}};
+        dir.bindings[name] = b;
+        art::Use use;
+        use.parameter         = name;
+        use.input             = "x";
+        use.activation_policy = policy;
+        dir.uses[{name, "x"}] = use;
+    };
+    const auto a8 = art::ActivationPolicy::AllowA8;
+    bank("text/layers/0/experts/gate_up", 5760, 1000, a8);
+    bank("text/layers/0/experts/down", 2880, 500, a8);
+    bank("text/layers/1/experts/gate_up", 5760, 1000, a8);
+    bank("text/layers/1/experts/down", 2880, 500, std::nullopt);
+    bank("mtp/layers/0/experts/gate_up", 5760, 1000, a8);
+    bank("mtp/layers/0/experts/down", 2880, 500, a8);
+    const auto layers   = pr::plan_facts_of_directory(dir, "a test directory").model.expert_layers;
+    std::uint32_t total = 0;
+    for (const rt::PlanExpertLayers& l : layers) { total += l.layers; }
+    const auto kind = [&](rt::PlanExpertPolicy policy) {
+        return std::find_if(layers.begin(), layers.end(), [&](const rt::PlanExpertLayers& l) {
+            return l.policy == policy && l.gate_up_format == "mxfp4" && l.down_format == "mxfp4";
+        });
+    };
+    const auto recorded = kind(rt::PlanExpertPolicy::AllowA8);
+    const auto unknown  = kind(rt::PlanExpertPolicy::Unknown);
+    failures += check(layers.size() == 2 && total == 2,
+                      "artifact routed layers: the trunk's two, not the MTP layer's");
+    failures += check(recorded != layers.end() && recorded->layers == 1 &&
+                          recorded->bytes == 1500 && recorded->gate_up_k == 2880 &&
+                          recorded->down_k == 2880 && recorded->gate_up_layout == mx,
+                      "artifact routed layers: the recorded AllowA8");
+    failures += check(unknown != layers.end() && unknown->layers == 1,
+                      "artifact routed layers: a use without a policy, unknown");
+
+    // A layer of BF16 banks (Codex on #764): its weight banks (bound by a Use) are a bf16 kind at
+    // the recorded A16; its stacked gate/up bias (no Use: an auxiliary) is not a bank.
+    art::Directory floats;
+    floats.components = dir.components;
+    const std::string bf =
+        std::string(art::layout_name(ninferno::default_weight_layout(ninferno::QType::BF16)));
+    const auto object = [&](const std::string& name, art::Shape shape, std::uint64_t bytes,
+                            bool use) {
+        art::TensorObject t;
+        t.id     = name;
+        t.shape  = shape;
+        t.format = "bf16";
+        t.layout = bf;
+        t.bytes  = bytes;
+        const art::ObjectHandle handle{floats.objects.size()};
+        floats.objects.emplace_back(t);
+        floats.object_index[name] = handle;
+        art::Binding b;
+        b.whole_object = true;
+        b.elements     = 1;
+        for (const std::uint64_t d : shape) { b.elements *= d; }
+        b.parts               = {art::Part{handle, 0, b.elements}};
+        floats.bindings[name] = b;
+        if (use) {
+            art::Use u;
+            u.parameter              = name;
+            u.input                  = "x";
+            u.activation_policy      = art::ActivationPolicy::A16Only;
+            floats.uses[{name, "x"}] = u;
+        }
+    };
+    object("text/layers/0/experts/gate_up", {32, 5760, 2880}, 4000, true);
+    object("text/layers/0/experts/down", {32, 2880, 2880}, 2000, true);
+    object("text/layers/0/experts/gate_up_bias", {32, 5760}, 300, false);
+    const auto bf_layers =
+        pr::plan_facts_of_directory(floats, "a test directory").model.expert_layers;
+    failures += check(bf_layers.size() == 1 && bf_layers[0].gate_up_format == "bf16" &&
+                          bf_layers[0].down_format == "bf16" && bf_layers[0].gate_up_layout == bf &&
+                          bf_layers[0].policy == rt::PlanExpertPolicy::A16Only &&
+                          bf_layers[0].layers == 1 && bf_layers[0].bytes == 6000,
+                      "artifact routed layers: BF16 banks a bf16 kind at A16, the bias apart");
+    return failures;
+}
+
 } // namespace
 
 // A GGUF's linears take their tensors' formats by role: a recurrent layer's attn_qkv is its mixer's
@@ -780,7 +1014,7 @@ int gguf_linear_formats() {
 int main() {
     const int failures = gguf_qwen35() + config_qwen35() + qwen35_moe() + gemma4() + gpt_oss() +
                          nemotron_h() + llama() + model_types() + boards() + artifact_errors() +
-                         gguf_linear_formats();
+                         artifact_expert_layers() + gguf_linear_formats();
     if (failures == 0) { std::cout << "plan facts OK\n"; }
     return failures == 0 ? 0 : 1;
 }

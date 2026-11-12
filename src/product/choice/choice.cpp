@@ -173,18 +173,37 @@ double r8_issue_excess(const ModelFacts& model, const CardFacts& card, std::stri
 
 // An MoE's routed banks' share of the DRAM rate at `rows` concurrent rows (kMoeRoutedEta: linear
 // in log2 rows from kDramEta at one row), scaled by the generation's own DRAM share; a generation
-// without rows takes Ada's, a row of one card marks it (transferred either way).
-double moe_routed_eta(std::string_view generation, double rows, bool& transferred) noexcept {
+// without rows takes Ada's, a row of one card marks it (transferred either way). By the kernel pair
+// the op runs the routed stages on (`route`, the op's route query: #616 step 7): the generation's
+// rows of that pair; a pair it has no rows of takes its measured pair's, transferred past one row
+// (one row's share is kDramEta's whatever the pair). No `route` (not asked): the measured pair's.
+double moe_routed_eta(std::string_view generation, const MoeStepRoute* route, double rows,
+                      bool& transferred) noexcept {
     std::string_view gen = generation;
-    if (std::none_of(std::begin(kMoeRoutedEta), std::end(kMoeRoutedEta),
-                     [&](const MoeRoutedEta& r) { return r.generation == gen; })) {
+    const auto of_gen    = [&](const MoeRoutedEta& r) { return r.generation == gen; };
+    if (std::none_of(std::begin(kMoeRoutedEta), std::end(kMoeRoutedEta), of_gen)) {
         gen         = kTransferGeneration;
         transferred = transferred || rows > 1;
+    }
+    const MoeRoutedEta& measured =
+        *std::find_if(std::begin(kMoeRoutedEta), std::end(kMoeRoutedEta), of_gen);
+    ExpertKernel gate_up = measured.gate_up, down = measured.down;
+    if (route != nullptr) {
+        const bool own = std::any_of(
+            std::begin(kMoeRoutedEta), std::end(kMoeRoutedEta), [&](const MoeRoutedEta& r) {
+                return of_gen(r) && r.gate_up == route->gate_up && r.down == route->down;
+            });
+        if (own) {
+            gate_up = route->gate_up;
+            down    = route->down;
+        } else {
+            transferred = transferred || rows > 1;
+        }
     }
     const double scale = dram_eta(generation) / kDramEta;
     double lo_rows = 1, lo_eta = kDramEta;
     for (const MoeRoutedEta& r : kMoeRoutedEta) {
-        if (r.generation != gen) { continue; }
+        if (r.generation != gen || r.gate_up != gate_up || r.down != down) { continue; }
         if (r.cards < 2 && rows > 1) { transferred = true; }
         if (rows <= r.rows) {
             const double t = std::log2(rows / lo_rows) / std::log2(r.rows / lo_rows);
@@ -1367,10 +1386,28 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     // One row reads its linears on R8 (int8 activations): a format whose instructions bound it, longer.
     if (rows == 1 && route != Route::Bf16) { reads += r8_issue_excess(model, card, gen, share, transferred); }
     if (routed_read > 0) {
+        // The kernels the op runs the routed stages on at these rows (ModelFacts::moe_routes: its
+        // own route query), each pair's share of the routed bytes at that pair's share of the DRAM
+        // rate; not asked: the pair kMoeRoutedEta was measured on.
+        std::vector<MoeStepRoute> routes;
+        if (model.moe_routes) {
+            routes = model.moe_routes(static_cast<std::uint32_t>(rows), candidate.activations);
+        }
+        double asked = 0;
+        for (const MoeStepRoute& r : routes) { asked += std::max(0.0, r.share); }
         // The banks decode on the same SMs: no faster than the class's rate (not measured on Volta).
-        double routed_share = moe_routed_eta(gen, rows, transferred);
-        if (const double sm = sm_share(quant.weights); sm > 0) { routed_share = std::min(routed_share, sm); }
-        reads += routed_read / (routed_share * card.dram_bytes_per_s);
+        const double sm = sm_share(quant.weights);
+        const auto at   = [&](const MoeStepRoute* r) {
+            const double eta = moe_routed_eta(gen, r, rows, transferred);
+            return (sm > 0 ? std::min(eta, sm) : eta) * card.dram_bytes_per_s;
+        };
+        if (asked > 0) {
+            for (const MoeStepRoute& r : routes) {
+                if (r.share > 0) { reads += r.share / asked * routed_read / at(&r); }
+            }
+        } else {
+            reads += routed_read / at(nullptr);
+        }
     }
     bool flops_transferred = false;
     // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.
