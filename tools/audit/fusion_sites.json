@@ -183,7 +183,7 @@
                     "R8 MMA projection"
                 ],
                 "decided_in": {
-                    "file": "src/ops/generic/generic_gemm.cpp",
+                    "file": "src/ops/generic/generic_resolve.cpp",
                     "function": "resolve_route"
                 },
                 "rule_today":

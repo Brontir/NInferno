@@ -19,31 +19,21 @@ namespace ninferno::ops::detail::generic {
 
 namespace {
 thread_local KernelResources* t_describe = nullptr;
-thread_local std::vector<RmmaFactRead>* t_fact_sink = nullptr;
 } // namespace
 
 KernelResources* kernel_describe_target() noexcept { return t_describe; }
 
-ScopedRmmaFactsSink::ScopedRmmaFactsSink(std::vector<RmmaFactRead>& sink) noexcept
-    : previous_(t_fact_sink) {
-    t_fact_sink = &sink;
-}
-
-ScopedRmmaFactsSink::~ScopedRmmaFactsSink() { t_fact_sink = previous_; }
-
-void note_rmma_fact_read(const RmmaFactRead& read) noexcept {
-    // A sink that cannot grow loses the read (the test then fails on its digest); pricing goes on.
-    try {
-        if (t_fact_sink != nullptr) t_fact_sink->push_back(read);
-    } catch (...) {}
-}
 ScopedKernelDescribe::ScopedKernelDescribe(KernelResources& out) noexcept : previous_(t_describe) {
     t_describe = &out;
 }
 ScopedKernelDescribe::~ScopedKernelDescribe() { t_describe = previous_; }
 
-std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epilogue epilogue,
-                                              std::int32_t tokens, std::int32_t rows) {
+// The register-MMA kernel a launch would run, found by running the launch in describe mode. The
+// selector's rmma_resources (generic_rmma_describe.cpp) answers the same from the committed facts
+// with no CUDA; ninferno_rmma_describe_test holds the two equal.
+std::optional<KernelResources> rmma_resources_by_launch(int schedule, const Weight& w,
+                                                        Epilogue epilogue, std::int32_t tokens,
+                                                        std::int32_t rows) {
     if (schedule < 0 || schedule >= rmma_schedule_count() || !rmma_schedule_launchable(schedule) ||
         tokens < 1 || !supports(w)) {
         return std::nullopt;

@@ -2,8 +2,12 @@
 """The per-SM DRAM bytes-in-flight probe (tools/bench/warp_inflight, Refs #690, #735): its parser
 and derivation. A run in the checked-in probe's format round-trips into rows with b_w = rate x L0
 / W and P = the largest rate; the probe source and the parser agree on the variants, the grid
-and the columns; odd, incomplete, foreign or busy runs are refused. No GPU, no CUDA toolkit."""
+and the columns; odd, incomplete, foreign or busy runs are refused. The SM rate facts table
+(src/core/data/sm_rate_facts.json) equals its regeneration from the committed runs, every one of
+the checked-in probe; merge and regenerate name a refused run and leave its architecture out. No
+GPU, no CUDA toolkit."""
 
+import argparse
 import contextlib
 import datetime
 import importlib.util
@@ -357,6 +361,218 @@ class WarpInflight(unittest.TestCase):
             with contextlib.redirect_stderr(err):
                 self.assertEqual(wi.cmd_rows(args), 1)
             self.assertIn("bad.txt", err.getvalue())
+
+    # ---- The SM rate facts table (src/core/data/sm_rate_facts.json) ----
+
+    def test_facts_table_is_its_regeneration(self):
+        # The committed table is exactly what the committed runs give, and every committed run is
+        # one of the checked-in probe (a run the parser refuses, a stale probe version or source
+        # hash among them, would give no row: re-take it on its card and merge).
+        with open(wi.DEFAULT_TABLE) as f:
+            table = json.load(f)
+        built, refused = wi.build_facts(wi.DEFAULT_INPUTS)
+        self.assertEqual(refused, [], "committed runs the parser refuses")
+        self.assertEqual(table, built)
+        self.assertGreaterEqual(len(table["arches"]), 1)
+
+    def test_facts_schema(self):
+        with open(wi.DEFAULT_TABLE) as f:
+            table = json.load(f)
+        self.assertEqual(table["schema"], wi.FACTS_SCHEMA)
+        self.assertIsInstance(table["note"], str)
+        for key, row in table["arches"].items():
+            self.assertEqual(row["provenance"], "Measured", key)
+            self.assertEqual(key, wi.IP.arch_key(row["cc"], ""), key)
+            self.assertEqual(row["source"], f"warp_inflight_{key}.txt", key)
+            self.assertTrue(os.path.exists(os.path.join(wi.DEFAULT_INPUTS, row["source"])), key)
+            self.assertEqual(row["tool"]["probe"], wi.checked_in_probe(), key)
+            self.assertEqual(row["tool"]["source_sha256"], wi.source_sha256(), key)
+            self.assertEqual(row["tool"]["arch"], f"sm_{key}", key)
+            self.assertEqual(set(row["facts"]), set(wi.FACT_UNITS), key)
+            for name, fact in row["facts"].items():
+                self.assertEqual(fact["unit"], wi.FACT_UNITS[name], f"{key} {name}")
+                self.assertGreater(fact["value"], 0, f"{key} {name}")
+            # b_w_max is the largest lone-warp b_w of the row's variants.
+            self.assertGreaterEqual(row["facts"]["max_warp_bytes_in_flight"]["value"],
+                                    row["facts"]["ring4_b_w_w1_free"]["value"], key)
+            # The transfer checks: other cards of the architecture, by their card's file name,
+            # and the verdict is the bounds' over their ratios.
+            for c in row["transfer"]["runs"]:
+                self.assertEqual(c["source"], f"warp_inflight_{key}_{wi.card_slug(c['card'])}.txt")
+                self.assertNotEqual(c["card"], row["card"], key)
+                self.assertEqual(c["tool"]["source_sha256"], wi.source_sha256(), key)
+            self.assertEqual(row["transfer"]["refuted"],
+                             any(not c["within_bounds"] for c in row["transfer"]["runs"]), key)
+            for mode in wi.MODES:
+                for rings in ("ring2_rows", "ring4_rows"):
+                    ws = [w for w, _, _ in row[rings][mode]]
+                    self.assertEqual(ws, sorted(set(ws)), f"{key} {mode}")
+                    self.assertEqual(ws[0], 1, f"{key} {mode}")
+                # P is per SM clock: the rate over the clock it was read at.
+                f = row["facts"]
+                self.assertAlmostEqual(
+                    f[f"sm_dram_bytes_per_clock_{mode}"]["value"],
+                    f[f"sm_dram_gbps_{mode}"]["value"] * 1e3 / f[f"sm_mhz_{mode}"]["value"],
+                    delta=0.01)
+            # No host name of the machine the run was taken on: the card names it.
+            self.assertNotIn("llm", json.dumps(row).lower(), key)
+
+    def test_facts_row_of_a_run(self):
+        head, rows = wi.parse_run(SAMPLE)
+        row = wi.facts_row(head, rows, "warp_inflight_89.txt")
+        f = row["facts"]
+        self.assertEqual(f["dram_stream_latency_ns"], {"value": L_NS, "unit": "ns"})
+        self.assertAlmostEqual(f["sm_dram_gbps_free"]["value"], P_GBPS, delta=1e-3)
+        self.assertAlmostEqual(f["sm_dram_bytes_per_clock_placed"]["value"], P_GBPS * 1e3 / MHZ,
+                               delta=0.01)
+        # The made-up card follows the law: ring2 keeps its counted 2048 B at W = 1.
+        self.assertAlmostEqual(f["ring2_b_w_w1_free"]["value"], 2048, delta=2)
+        self.assertEqual([w for w, _, _ in row["ring2_rows"]["free"]],
+                         [w for w in wi.W_GRID if w <= 32])
+        # The 4-load ring keeps its 4096 B too: that is the most a warp of this card holds.
+        self.assertAlmostEqual(f["max_warp_bytes_in_flight"]["value"], 4096, delta=4)
+        # The law of the row against its own ring rows: the made-up card follows it exactly.
+        ratios = wi.law_ratios(row, {v: row[f"{v}_rows"] for v in wi.CHECKED_RINGS})
+        self.assertTrue(all(abs(r - 1) < 1e-3 for *_, r in ratios), ratios[:3])
+        json.dumps(row, allow_nan=False)
+
+    def test_transfer_checks(self):
+        # Another card of the architecture under its card's name is a check of the row: one that
+        # follows the law is within the bounds, one 20 % faster refutes the row.
+        faster = re.sub(r"^(row \S+ \d+ \S+ \d+ \d+) (\S+) (\S+) (\S+)",
+                        lambda m: m.group(1) + " " + " ".join(f"{float(x) * 1.2:.4f}"
+                                                               for x in m.groups()[1:]),
+                        SAMPLE, flags=re.M)
+        for text, refuted in ((SAMPLE, False), (faster, True)):
+            with tempfile.TemporaryDirectory() as d:
+                with open(os.path.join(d, "warp_inflight_89.txt"), "w", newline="\n") as f:
+                    f.write(SAMPLE)
+                other = text.replace("card NVIDIA GeForce RTX 4070 Ti",
+                                     "card NVIDIA GeForce RTX 4060 Ti")
+                with open(os.path.join(d, "warp_inflight_89_rtx4060ti.txt"), "w",
+                          newline="\n") as f:
+                    f.write(other)
+                table, refused = wi.build_facts(d)
+                self.assertEqual(refused, [])
+                t = table["arches"]["89"]["transfer"]
+                self.assertEqual([c["card"] for c in t["runs"]], ["NVIDIA GeForce RTX 4060 Ti"])
+                self.assertIs(t["refuted"], refuted)
+                if refuted:
+                    self.assertAlmostEqual(t["runs"][0]["law_over_measured"]["lowest"], 1 / 1.2,
+                                           delta=1e-3)
+                # Under another card's name, or the reference card's own, the run is refused.
+                os.rename(os.path.join(d, "warp_inflight_89_rtx4060ti.txt"),
+                          os.path.join(d, "warp_inflight_89_rtx4090.txt"))
+                with self.assertRaises(ValueError):
+                    wi.build_facts(d)
+        self.assertEqual(wi.card_slug("NVIDIA GeForce RTX 5070 Ti"), "rtx5070ti")
+        self.assertEqual(wi.card_slug("Quadro GV100"), "gv100")
+
+    def test_regenerate_names_a_refused_run_and_leaves_its_arch_out(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "warp_inflight_89.txt"), "w", newline="\n") as f:
+                f.write(SAMPLE)
+            stale = SAMPLE.replace(f"probe {wi.checked_in_probe()}", "probe warp_inflight 2")
+            stale = stale.replace("cc 89", "cc 75").replace("arch sm_89", "arch sm_75")
+            with open(os.path.join(d, "warp_inflight_75.txt"), "w", newline="\n") as f:
+                f.write(stale)
+            table, refused = wi.build_facts(d)
+            self.assertEqual(list(table["arches"]), ["89"])
+            self.assertEqual([n for n, _ in refused], ["warp_inflight_75.txt"])
+            self.assertIn("not the checked-in probe", refused[0][1])
+            self.assertIn("sm_75 (NVIDIA GeForce RTX 2080 Ti)", wi.absent_arches(table))
+            args = argparse.Namespace(inputs=d, table=os.path.join(d, "t.json"))
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.assertEqual(wi.cmd_regenerate(args), 0)
+            self.assertIn("warp_inflight_75.txt is no row", err.getvalue())
+            self.assertRegex(out.getvalue(), r"legacy DRAM law prices them: .*sm_75 ")
+            with open(args.table) as f:
+                self.assertEqual(list(json.load(f)["arches"]), ["89"])
+
+    def test_a_run_under_another_arch_name_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "warp_inflight_86.txt"), "w", newline="\n") as f:
+                f.write(SAMPLE)
+            with self.assertRaises(ValueError):
+                wi.build_facts(d)
+
+    def test_merge(self):
+        with tempfile.TemporaryDirectory() as d:
+            src = os.path.join(d, "run.txt")
+            with open(src, "w", newline="\n") as f:
+                f.write(SAMPLE)
+            inputs = os.path.join(d, "in")
+            os.mkdir(inputs)
+            args = argparse.Namespace(input=src, inputs=inputs, table=os.path.join(d, "t.json"))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(wi.cmd_merge(args), 0)
+            self.assertEqual(os.listdir(inputs), ["warp_inflight_89.txt"])
+            with open(args.table) as f:
+                self.assertEqual(list(json.load(f)["arches"]), ["89"])
+            # A refused run merges nothing.
+            bad = os.path.join(d, "bad.txt")
+            with open(bad, "w", newline="\n") as f:
+                f.write(SAMPLE.replace("end\n", ""))
+            args.input = bad
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(wi.cmd_merge(args), 1)
+            args.input = src + wi.REFUSED
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(wi.cmd_merge(args), 1)
+            with open(os.path.join(inputs, "warp_inflight_89.txt")) as f:
+                self.assertEqual(f.read(), SAMPLE)
+            # Another card's run under the reference name is refused: it is a transfer check
+            # (--transfer) or, on purpose, the new reference (--new-reference).
+            other = os.path.join(d, "other.txt")
+            other_text = SAMPLE.replace("card NVIDIA GeForce RTX 4070 Ti",
+                                        "card NVIDIA GeForce RTX 4060 Ti")
+            with open(other, "w", newline="\n") as f:
+                f.write(other_text)
+            args.input = other
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(wi.cmd_merge(args), 1)
+            self.assertIn("--transfer", err.getvalue())
+            with open(os.path.join(inputs, "warp_inflight_89.txt")) as f:
+                self.assertEqual(f.read(), SAMPLE)
+            args.transfer = True
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(wi.cmd_merge(args), 0)
+            self.assertEqual(sorted(os.listdir(inputs)),
+                             ["warp_inflight_89.txt", "warp_inflight_89_rtx4060ti.txt"])
+            with open(args.table) as f:
+                t = json.load(f)["arches"]["89"]["transfer"]["runs"]
+            self.assertEqual([c["card"] for c in t], ["NVIDIA GeForce RTX 4060 Ti"])
+            # The new reference may not also be a transfer check of itself.
+            args.transfer, args.new_reference = False, True
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(wi.cmd_merge(args), 1)
+            os.remove(os.path.join(inputs, "warp_inflight_89_rtx4060ti.txt"))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(wi.cmd_merge(args), 0)
+            with open(os.path.join(inputs, "warp_inflight_89.txt")) as f:
+                self.assertEqual(f.read(), other_text)
+
+    def test_warp_saturation(self):
+        # The made-up card's 4-load ring doubles the 2-load ring's b_w (it follows its count): no
+        # cap. A card whose 4-load ring reads what its 2-load ring does saturates, and b_w_max then
+        # caps the law's ring4 bytes.
+        head, rows = wi.parse_run(SAMPLE)
+        row = wi.facts_row(head, rows, "warp_inflight_89.txt")
+        self.assertFalse(row["warp_bytes_saturated"])
+        self.assertAlmostEqual(row["ring4_over_ring2_w1"], 2.0, delta=0.01)
+        capped = re.sub(r"^row (\S+ \d+) ring4 8 (\d+) .*$",
+                        lambda m: row_line(m.group(1).split()[0], int(m.group(1).split()[1]),
+                                           "ring2", int(m.group(2))).replace(" ring2 4 ",
+                                                                             " ring4 8 ").strip(),
+                        SAMPLE, flags=re.M)
+        head, rows = wi.parse_run(capped)
+        row = wi.facts_row(head, rows, "warp_inflight_89.txt")
+        self.assertTrue(row["warp_bytes_saturated"])
+        self.assertAlmostEqual(row["facts"]["max_warp_bytes_in_flight"]["value"], 2048, delta=4)
+        ratios = wi.law_ratios(row, {v: row[f"{v}_rows"] for v in wi.CHECKED_RINGS})
+        self.assertTrue(all(abs(r - 1) < 1e-3 for *_, r in ratios), ratios[:3])
 
     def test_sampler_drains_as_it_goes(self):
         # A sampler that writes far more than a pipe holds (about 4 KB on Windows, 64 KB on Linux)

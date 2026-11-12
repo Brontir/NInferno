@@ -32,10 +32,15 @@ include/ninferno/ops/route_table.h
 include/ninferno/ops/prefill_routes.h
 routes/**
 src/core/data/gpu_facts.json
+# the SM DRAM rate facts the DRAM law of #690 reads (kernel_roofline.h dram_time)
+src/core/data/sm_rate_facts.json
+src/core/sm_rate_facts.*
 src/core/device_class.*
 src/core/device_class_host.*
 src/core/arch_registry.h
 src/core/generation.*
+# the occupancy rule of the register-MMA variants (generic_rmma_describe.cpp) counts resident CTAs
+src/core/kernel_occupancy.*
 src/ops/generic/data/kernel_facts/**
 # headers the selector sources compile in (checked by tests/test_golden_gate.py: every file in
 # their include closure is listed here or named there as not deciding)
@@ -91,6 +96,7 @@ cmake/BoardRegistry.cmake
 cmake/EmbedText.cmake
 src/core/CMakeLists.txt
 src/core/embedded_gpu_facts.h.in
+src/core/embedded_sm_rate_facts.h.in
 # which kernel-facts snapshots are embedded (sources.cmake lists the sm_*.txt, the .in turns them
 # into ops/generic/embedded_kernel_facts.h) and which sources and kernels the selector's library
 # is built from; the root file defines the build architecture and feature macros that pick the

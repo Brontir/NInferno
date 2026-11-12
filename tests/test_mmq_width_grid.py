@@ -992,6 +992,82 @@ class LaunchLaw(Base):
         self.assertIn("20 of 21 sizes at the measured best", out)
         self.assertNotIn("126 of 126", out)
 
+    # --- the A/B of the production ranking (old against law) ---------------------------------------------
+    def law_arm_files(self, C=40.0, same=False, extra_ms=0.0, k=7, visits=3, labels=("old", "law"),
+                      grows=0.0):
+        """Rounds of old / law whose times follow the law exactly: C + grows x N + the model's MMQ
+        linears at the fewest tiles (old) or at each linear's law pick (law); `same`: the law arm runs
+        the old widths; `extra_ms`: added to every law-arm request (a gain the law does not predict,
+        or a loss); `grows`: a width-independent part that grows with the prompt (the old times then
+        differ by size, so the mix's prediction must be weighted as its measurement is)."""
+        files = []
+        for v in range(visits):
+            for lab in labels:
+                rows = []
+                for n in g.AB_SIZES:
+                    _, ms_old, ms_new = g.law_production(n - k)
+                    t = C + grows * n + (ms_old if lab == "old" or same else ms_new + extra_ms)
+                    rows.append(row(lab, n, [t] * 4, k=k))
+                files.append(self.write(f"ab_{v}_{lab}.jsonl", rows))
+        return files
+
+    def test_law_production_picks_each_linear_by_the_law(self):
+        # 121 columns: one 128-column tile splits every linear (stream-k + fixup), 64 runs a tile a CTA
+        picks, ms_old, ms_new = g.law_production(121)
+        self.assertEqual(picks, [64] * 6)
+        self.assertLess(ms_new, ms_old)
+        # 201 columns: q+k and v take 80, the rest stays on 128 (the picks are per product)
+        self.assertEqual(g.law_production(201)[0], [80, 80, 128, 128, 128, 128])
+        # 249 columns: two 128-column tiles everywhere, the old launch: no change
+        picks, ms_old, ms_new = g.law_production(249)
+        self.assertEqual((picks, ms_old), ([128] * 6, ms_new))
+
+    def test_ab_on_the_law_arm_reads_the_laws_own_prediction(self):
+        rc, out, err = self.run_main("ab", *self.law_arm_files())
+        self.assertEqual(rc, 0, err)
+        self.assertIn("R4 ab (law)", out)
+        self.assertIn("R4 (law): not met", out)
+        self.assertIn("more than 2 pp from the law's prediction (information): 0 of 17", out)
+        self.assertRegex(out, r"N=128  121 J128->J64 ")
+        self.assertRegex(out, r"N=208  201 J128->80/80/128/128/128/128 ")
+        self.assertIn("all sizes (information)", out)
+        self.assertNotIn("predicted range", out)  # the tile law's bracket is not the law's prediction
+
+    def test_ab_on_the_law_arm_with_no_change_meets_r4(self):
+        rc, out, err = self.run_main("ab", *self.law_arm_files(same=True))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("R4 (law): MET (refutes the law on this card) (measured +0.0 %", out)
+
+    def test_ab_on_the_law_arm_inside_the_band(self):
+        # 1.5 ms over a mix of about 120 ms is about 1.3 pp: inside the a priori 2 pp
+        rc, out, err = self.run_main("ab", *self.law_arm_files(extra_ms=1.5))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("R4 (law): not met", out)
+
+    def test_ab_on_the_law_arm_weights_the_predicted_mix_like_the_measured_one(self):
+        # old times that grow with N: the measured mix change is a change of means, so the law's
+        # predicted change must be its mean ms over the old mean; with the law exact the two agree
+        # (an unweighted mean of the per-size changes would not)
+        rc, out, err = self.run_main("ab", *self.law_arm_files(grows=1.0))
+        self.assertEqual(rc, 0, err)
+        m = re.search(r"mix \[[^]]*\]: old [0-9.]+ law [0-9.]+ ms ([-+][0-9.]+) %.*predicted ([-+][0-9.]+) %",
+                      out)
+        self.assertIsNotNone(m, out)
+        self.assertEqual(m.group(1), m.group(2))
+        self.assertIn("R4 (law): not met", out)
+
+    def test_ab_on_the_law_arm_past_the_band(self):
+        # 3 ms over a mix of about 120 ms is about 2.5 pp: past the a priori 2 pp, so R4 (law) is met
+        rc, out, err = self.run_main("ab", *self.law_arm_files(extra_ms=3.0))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("R4 (law): MET (refutes the law on this card)", out)
+        self.assertIn(" OFF", out)
+
+    def test_ab_mixing_new_and_law_is_refused(self):
+        files = self.law_arm_files(labels=("old", "law", "new"))
+        rc, _, err = self.run_main("ab", *files)
+        self.assertEqual(rc, 1)
+        self.assertIn("two A/Bs mixed", err)
 
 if __name__ == "__main__":
     unittest.main()

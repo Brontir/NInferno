@@ -160,6 +160,7 @@ NOT_DECIDING = {
     "src/core/arena.cu", "src/core/arena.h", "src/core/cache_file.h", "src/core/checked.h",
     "src/core/cuda_error.h", "src/core/device.cu", "src/core/device.h", "src/core/file_io.h",
     "src/core/hex.h", "src/core/per_device.h", "src/core/sha256.cpp", "src/core/sha256.h",
+    "src/core/per_device.cpp",  # the current device's ordinal (cudaGetDevice) for PerDevice (#620)
     "src/core/sys.cpp", "src/core/sys.h", "src/core/tensor.cpp", "src/core/tensor.h",
     "src/core/tune_timer.cu", "src/core/tune_timer.h", "src/core/units.h",
     "src/core/weight_view.cpp", "src/core/weight_view.h",
@@ -219,6 +220,7 @@ NOT_DECIDING = {
 GENERATED = {
     "core/board_registry_rows.inc": "cmake/BoardRegistry.cmake",
     "core/embedded_gpu_facts.h": "src/core/embedded_gpu_facts.h.in",
+    "core/embedded_sm_rate_facts.h": "src/core/embedded_sm_rate_facts.h.in",
     "core/arch_registry_rows.inc": "cmake/BoardRegistry.cmake",  # rows of the "archs" array of gpu_facts.json
     # which sm_*.txt snapshots are embedded is decided by sources.cmake (listed too)
     "ops/generic/embedded_kernel_facts.h": "src/ops/generic/embedded_kernel_facts.h.in",
@@ -322,10 +324,10 @@ EXCLUDED = [
     ("src/core/embedded_isa_facts.h.in", "ISA facts embedding, no selector caller yet"),
     ("src/core/data/isa_facts.json", "ISA facts rows, no selector caller yet"),
     ("src/core/data/isa_probe/*", "raw ISA probe output the rows were read from"),
+    ("src/core/data/warp_inflight/*", "raw bytes-in-flight probe output the SM rate facts rows "
+                                       "were read from (sm_rate_facts.json is listed)"),
     ("src/core/device_traits.cpp", "reads the driver (display, WDDM) for the plan, not the selector"),
     ("src/core/gate_atlas.cpp", "audit table that calls the gate; the gate's rule is in a listed header"),
-    ("src/core/kernel_occupancy.cpp", "occupancy for launch code and the kernel-facts test; the selector "
-                                      "prices from the snapshots, not from it"),
     ("src/ops/*/*/shapes/*.cpp", "per-shape tables of the per-format dispatch; the generic selector, "
                                  "which makes the golden choice, does not call them"),
     ("src/ops/**/*_dispatch.cpp", "per-format dispatch: it runs a route"),
@@ -719,13 +721,10 @@ class HostFunctions(unittest.TestCase):
             found = host_decision_functions(files)
         finally:
             PATHS[:] = saved
-        for f, name in [("src/ops/generic/generic_tiled.cu", "tiled_fits"),
-                        ("src/ops/generic/generic_tiled.cu", "tiled_supports"),
-                        ("src/ops/generic/generic_staged.cu", "staged_fits"),
-                        ("src/ops/generic/generic_volta_hmma.cu", "volta_hmma_takes"),
-                        ("src/ops/generic/generic_volta_cutlass.cu", "volta_cutlass_workspace_bytes"),
-                        ("src/ops/generic/generic_volta_cutlass.cu", "volta_cutlass_chunk_bytes"),
-                        ("src/ops/generic/ggml_mmq/ggml_vec.cu", "vec_supported")]:
+        # tiled_fits, tiled_supports, staged_fits and volta_hmma_takes moved to generic_routes.cpp,
+        # vec_supported to ggml_mmq_host.cpp (#620): listed .cpp files, which the finder does not scan
+        for f, name in [("src/ops/generic/generic_volta_cutlass.cu", "volta_cutlass_workspace_bytes"),
+                        ("src/ops/generic/generic_volta_cutlass.cu", "volta_cutlass_chunk_bytes")]:
             self.assertIn(name, found.get(f, []), f"{f}: {name}")
 
     def test_a_launcher_is_not_a_decision(self):

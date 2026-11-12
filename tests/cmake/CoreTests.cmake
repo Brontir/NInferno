@@ -55,6 +55,11 @@ ninferno_add_test(ninferno_machine_facts_test LABELS host NEEDS_SOURCE_DIR
 ninferno_add_test(ninferno_isa_facts_reader_test LABELS host NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_isa_facts.cpp"
   LIBRARIES ninferno_core ninferno::json)
+# The SM DRAM rate facts reader (core/sm_rate_facts.h) against src/core/data/sm_rate_facts.json,
+# field by field (#690). No GPU.
+ninferno_add_test(ninferno_sm_rate_facts_reader_test LABELS host NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_sm_rate_facts.cpp"
+  LIBRARIES ninferno_core ninferno::json)
 # The constexpr board registry (core/board_registry.h) against the reference table, and the
 # measured boards against the figures they were spelled with before it. No GPU.
 ninferno_add_test(ninferno_board_registry_test LABELS host
@@ -76,6 +81,8 @@ ninferno_add_test(ninferno_gate_atlas_test LABELS host STATIC_LINK
   LIBRARIES ninferno_core_host ninferno::json)
 # Host-only: no CUDA runtime in its link closure (#620 step 11), so the static archive of
 # ninferno_core_host in the shared test tree too (STATIC_LINK).
+target_sources(ninferno_gate_atlas_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp)
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_gate_atlas_test)
 
 # The route cost model's constants, each tagged fact / counted / fitted
@@ -216,11 +223,14 @@ set_tests_properties(ninferno_tool_grammar_budget_test PROPERTIES SKIP_RETURN_CO
 ninferno_add_test(ninferno_yarn_test LABELS host SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_yarn.cpp"
   LIBRARIES ninferno_core)
 
-# The host part of the generic selector (ops/generic/generic_routes.cpp, kernel_facts.cpp): route
-# names, the register-MMA variant rules, the kernel-facts snapshots; no CUDA runtime, no GPU
-# (#620 step 11).
+# The host part of the generic selector (ops/generic/generic_routes.cpp, kernel_facts.cpp and the
+# rest of ninferno_ops_host, with the device seams of generic_nodevice.cpp): route names, the
+# register-MMA variant rules, the kernel-facts snapshots; no CUDA runtime, no GPU (#620 step 11).
 ninferno_add_test(ninferno_generic_routes_host_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_generic_routes_host.cpp"
   LIBRARIES ninferno_ops_host)
+target_sources(ninferno_generic_routes_host_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
 target_compile_definitions(ninferno_generic_routes_host_test PRIVATE NINFERNO_HOST_ONLY)
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_generic_routes_host_test)

@@ -190,7 +190,10 @@ ninferno_add_test(ninferno_choice_test LABELS host golden slow STATIC_LINK
   LIBRARIES ninferno_product_choice ninferno_core_host ninferno::json)
 target_include_directories(ninferno_choice_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 # Host-only: no CUDA runtime in its link closure (#620 step 11), so the static archive of
-# ninferno_core_host in the shared test tree too (STATIC_LINK).
+# ninferno_core_host in the shared test tree too (STATIC_LINK); the device of a build without one
+# is the stub that throws (src/core/device_class_nodevice.cpp).
+target_sources(ninferno_choice_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp)
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_choice_test)
 target_compile_definitions(ninferno_choice_test PRIVATE
   NINFERNO_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

@@ -142,14 +142,15 @@ ninferno_add_op_test(ninferno_route_classes_test LABELS host
 # every served format, activation mode and width band has a family on the device's own
 # instructions, not only the scalar kernel or an emulated MMA; the known holes are listed in the
 # test with their reasons. The served modes are convert's kept_policy / head_policy under each
-# --activations mode (ninferno_convert). No GPU; skips (77) on an architecture the release does
-# not ship.
-ninferno_add_op_test(ninferno_coverage_report_test
+# --activations mode (ninferno_convert). It reads no GPU's timing, but needs one visible: ggml's
+# matrix kernel reads the device's properties when it describes a route, as in the selector golden
+# test (without a device: cudaErrorNoDevice; host again once #763 is fixed). Skips (77) on an
+# architecture the release does not ship.
+ninferno_add_op_test(ninferno_coverage_report_test LABELS gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_coverage_report.cpp"
   LIBRARIES ninferno_linear_test_support ninferno_convert)
 target_compile_definitions(ninferno_coverage_report_test PRIVATE
   NINFERNO_RELEASE_CUDA_ARCHS="$<JOIN:${NINFERNO_CUDA_ARCHS},$<COMMA>>")
-set_tests_properties(ninferno_coverage_report_test PROPERTIES LABELS host)
 
 # The format traits table against the predicates it replaced, for every QType.
 ninferno_add_op_test(ninferno_format_traits_test LABELS host
@@ -196,6 +197,15 @@ ninferno_add_op_test(ninferno_selector_golden_test LABELS gpu golden slow
   LIBRARIES ninferno_linear_test_support)
 target_compile_definitions(ninferno_selector_golden_test PRIVATE
   NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
+# It dumps every board twice over (once a process per board, then all in one): minutes of CPU.
+set_tests_properties(ninferno_selector_golden_test PROPERTIES TIMEOUT 1800)
+
+# The selector's register-MMA kernel description (rmma_resources: facts, no CUDA) equals the launch's
+# own (rmma_resources_by_launch, the real launch run in describe mode), per format, schedule,
+# epilogue and width on every board with facts (#620). No GPU.
+ninferno_add_op_test(ninferno_rmma_describe_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmma_describe.cpp"
+  LIBRARIES ninferno_linear_test_support)
 
 # The selector on the real device with no substituted board: select_route and w4a8_ws_extra return,
 # and the R8 decode table of a board that has one is found (#620). Skips (77) without a GPU.
@@ -314,3 +324,28 @@ ninferno_add_op_test(ninferno_side_by_side_projection_test
 ninferno_add_op_test(ninferno_route_pin_selector_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_pin_selector.cpp"
   LIBRARIES ninferno_linear_test_support)
+
+# The same dump code as ninferno_selector_golden_test, built and linked with no CUDA runtime
+# (ninferno_ops_host): the committed goldens must read the same from a host-only selector (#620).
+# The stubs are the device seams (current_device_class, the device ordinal, the dense tuner, which
+# never times anything on a host with no device, the Volta CUTLASS route, which a host-only build
+# answers as compiled out, and the description of an executed kernel, which a host with no device
+# has none of). Not registered on an sm_70 tree built with CUTLASS: the real Volta CUTLASS route
+# is compiled there (volta_cutlass_compiled is true, generic_volta_cutlass.cu) and the goldens of
+# the Volta boards hold its tiled rows, which the stub, answering false, never takes; the device
+# test above covers that tree.
+if(NOT (NINFERNO_BUILD_ARCH STREQUAL "70" AND NINFERNO_VOLTA_CUTLASS))
+  ninferno_add_test(ninferno_selector_golden_host_test LABELS host golden slow
+    SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
+    LIBRARIES ninferno_ops_host)
+  target_sources(ninferno_selector_golden_host_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
+    ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
+    ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
+  target_compile_definitions(ninferno_selector_golden_host_test PRIVATE
+    NINFERNO_HOST_ONLY
+    NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
+  cmake_language(DEFER CALL ninferno_assert_host_only ninferno_selector_golden_host_test)
+  # It dumps every board twice over (once a process per board, then all in one): minutes of CPU.
+  set_tests_properties(ninferno_selector_golden_host_test PROPERTIES TIMEOUT 1800)
+endif()

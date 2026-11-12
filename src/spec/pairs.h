@@ -132,8 +132,9 @@ struct RoundCostEstimate {
 
 // The load table of a profile priced for another card, from its joint verify's price
 // (Profile::joint_scale) and the gains of the choices the Engine runs (the served ones where the
-// profile has them, and the fit fallback): at C = 2, 3, ... streams the depth, within the bound
-// at the count before, under which every such choice (running min(depth, its own)) gains, its
+// profile has them; not the fit fallback, whose own profile derives its own table): at C = 2, 3,
+// ... streams the depth, within the bound at the count before, under which every such choice
+// (running min(depth, its own)) gains, its
 // one-request gain times R_1 / R_C above 1; among those the one whose sorted gains are greatest
 // least first (leximin, the shallower on a full tie), plain decode where none serves them all
 // (clipped_load writes it). An unpriced count runs plain decode, so the table ends at plain
