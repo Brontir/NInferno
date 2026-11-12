@@ -18,7 +18,7 @@ tools/bench/isa_probe and warp_inflight do, and writes the microbench's JSON wit
 (isa_probe's: compute processes before, during and after the run) and each configuration's SM
 clock span. A run with another compute process on its GPU, or whose process list could not be read
 (unless --idle-unchecked, which the file then says), is written to CARD.json.refused and is no
-input of `fit`.
+input of `fit`; nor is the microbench's own output, which carries neither the notes nor the clocks.
 
 `derive` reads one card (its medians: the median over the samples of each pass, then over the
 passes), for each format and width J:
@@ -373,8 +373,9 @@ def fit(derived, tolerance=DEFAULT_TOLERANCE):
                          "on two or more cards of a generation)")
     names = [d["card"] for d in derived]
     if len(set(names)) != len(names):
-        raise ValueError("a card is given more than once (" + ", ".join(names) + "): a generation's "
-                         "row takes two or more different cards, each predicted from the others")
+        raise ValueError("one card model is given more than once (" + ", ".join(names) + "): two "
+                         "boards of one model are one point of the generation; its row takes two "
+                         "or more different cards, each predicted from the others")
     gens = {d["generation"] for d in derived}
     if len(gens) != 1 or None in gens:
         raise ValueError("the cards are not of one work-table generation: " +
@@ -688,8 +689,10 @@ def cmd_fit(a):
         print_rows(h["rows"])
     print("  worst |error|: " + ", ".join(f"{k} {v * 100:.1f} %" for k, v in r["worst_error"].items()))
     print(f"  {'within' if r['within_tolerance'] else 'NOT within'} the tolerance "
-          f"{a.tolerance * 100:.0f} %" + ("" if r["within_tolerance"] else
-                                           ": the cards disagree, the row is no generation's law"))
+          f"{a.tolerance * 100:.0f} %" + (
+              "" if r["within_tolerance"] else
+              f": widths {r['missing_widths']} not measured, the row is incomplete"
+              if r["missing_widths"] else ": the cards disagree, the row is no generation's law"))
     if a.out:
         r["cpp"] = row
         with open(a.out, "w", newline="\n") as f:
