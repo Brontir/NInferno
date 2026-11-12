@@ -8,10 +8,13 @@
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_speculation.h"
 #include "product/speculation/speculation.h"
+#include "spec/pairs.h"
 #include "spec/profile.h"
+#include "spec/registry.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -287,11 +290,216 @@ void test_gain_note_names_where_the_price_is_held_from() {
           "a count with no price of its own: the note says not priced");
 }
 
+// The 27B GGUF's facts, as test_every_kind_carried plans it.
+pr::PlanSourceFacts qwen27b_facts() {
+    pr::PlanSourceFacts facts;
+    facts.model.model_type        = "qwen3_5_text";
+    facts.model.architecture      = "qwen35";
+    facts.model.hidden            = 5120;
+    facts.shape.hidden_size       = 5120;
+    facts.shape.num_hidden_layers = 64;
+    facts.shape.vocab_size        = 248320;
+    facts.shape.builtin_mtp       = true;
+    return facts;
+}
+
+const std::string kQwen27bCommit = "4ca720788d1e01f1bff70c033e0d0028fd02e502";
+
+// The 27B GGUF's subject on a named board: a quantization of the repository revision the lab's
+// UD-Q4_K_S pair was measured at (its MTP layers on an RTX 5070 Ti), with its DFlash2 drafter.
+pr::SpeculationSubject qwen27b_on(const char* board) {
+    std::string error;
+    const auto device = pr::plan_device_of_board(std::string(board) + ",linux,headless", &error);
+    check(device.has_value(), std::string(board) + ": " + error);
+    return pr::planned_subject(pr::PlannedTarget{.repo          = "unsloth/Qwen3.8-27B-GGUF",
+                                                 .facts         = qwen27b_facts(),
+                                                 .gguf          = true,
+                                                 .with_drafters = true,
+                                                 .quant         = "UD-Q4_K_M",
+                                                 .commit        = kQwen27bCommit},
+                               device ? pr::gpu_key_of(*device) : spec::GpuKey{});
+}
+
+// The head's own resolution (#777): a server that drafts with DFlash2 (subject_of_mode) keeps the
+// kinds it does not draft with, so the model's MTP head is priced from this model's own lab
+// measurement of it (head_priced_profile); the lab's pairs answer by the target's own weights or a
+// sibling quantization of its revision, and only a group of other models (a fine-tune's acceptance
+// is not its base's) where neither is measured, which a published profile's other kinds do not
+// take (spec::resolve_other_kinds, same model only).
+void test_head_resolution() {
+    const auto measures_mtp = [](const spec::Profile& p) {
+        return std::any_of(
+            p.measurements.begin(), p.measurements.end(),
+            [](const spec::Measurement& m) { return m.config.mode == spec::Mode::Mtp; });
+    };
+    // On the RTX 4090 (Ada, whose round-cost row the facts have) the sibling's rounds are priced on
+    // the card; on the RTX 3090 (Ampere, no round-cost row) its measurements are transferred
+    // unpriced: the pool rule's unpriced branch decides there.
+    for (const auto& [board, priced_here] :
+         std::vector<std::pair<const char*, bool>>{{"4090", true}, {"3090", false}}) {
+        const pr::SpeculationSubject subject = qwen27b_on(board);
+        const pr::SpeculationSubject dflash2 = pr::subject_of_mode(subject, spec::Mode::DFlash2);
+        check(dflash2.resolved && drafts_with(dflash2.resolved->profile, spec::Mode::DFlash2),
+              std::string(board) + ": the DFlash2 drafter's own resolution");
+        const spec::Profile& priced = pr::head_priced_profile(dflash2);
+        check(measures_mtp(priced) &&
+                  (!priced.joint_scale.empty() && !priced.plain_step_scale.empty()) == priced_here,
+              std::string(board) + ": a DFlash2 server takes the MTP head's measurements from the "
+                                   "model's sibling pair, priced on the card's facts where it has "
+                                   "them");
+        check(priced_here ||
+                  subject.resolved->source.find("no facts for ampere") != std::string::npos,
+              std::string(board) + ": unpriced for want of Ampere's facts (" +
+                  subject.resolved->source + ")");
+        check(&pr::head_priced_profile(subject) == &subject.resolved->profile,
+              std::string(board) + ": a subject that measured MTP prices the head from its own");
+
+        // The head fallback's load table (fit_fallbacks' Head step, and the pool rule's head)
+        // follows the profile that prices it (#777): on the RTX 4090 the facts derive it from
+        // the model's own MTP measurement (2:3,3:0); without that measurement, and on the RTX 3090
+        // whose rounds the facts do not price, it stays the built-in literal.
+        const auto table = [](const pr::ServedSpeculation& head) {
+            std::string out;
+            for (const auto& bound : head.engine.load) {
+                out += (out.empty() ? "" : ",") + std::to_string(bound.lanes) + ":" +
+                       std::to_string(bound.draft_tokens);
+            }
+            return out + "/" + head.load_basis;
+        };
+        pr::SpeculationSubject bare = dflash2;
+        bare.resolved->other_kinds.clear();
+        const auto head      = pr::served_head_fallback(dflash2, false);
+        const auto bare_head = pr::served_head_fallback(bare, false);
+        check(
+            head && bare_head && bare_head->load_basis == "literal" &&
+                (priced_here ? table(*head) == "2:3,3:0/facts" : table(*head) == table(*bare_head)),
+            std::string(board) + ": the head fallback's table from the model's MTP measurement (" +
+                (head ? table(*head) : std::string("none")) + " against " +
+                (bare_head ? table(*bare_head) : std::string("none")) + ")");
+
+        // A kind resolved only to price the head beside a published profile (pricing_only, as
+        // spec::resolve_other_kinds marks the same-model pair it finds there) offers no drafter
+        // and is no mode a server switches to; it prices the head as before.
+        pr::SpeculationSubject priced_only = dflash2;
+        for (auto& other : priced_only.resolved->other_kinds) { other.pricing_only = true; }
+        const auto labels = [](const pr::DrafterAxis& axis) {
+            std::string out;
+            for (const auto& o : axis.options) {
+                out += " " + o.label + "@" + std::to_string(o.speedup);
+            }
+            return out;
+        };
+        const std::string with_kinds = labels(pr::drafter_axis(priced_only, pr::SpeculationAsk{}));
+        const std::string without    = labels(pr::drafter_axis(bare, pr::SpeculationAsk{}));
+        check(with_kinds == without, std::string(board) +
+                                         ": a pricing-only kind is no drafter option (" +
+                                         with_kinds + " against" + without + ")");
+        const auto switched      = pr::subject_of_mode(priced_only, spec::Mode::Mtp);
+        const auto bare_switched = pr::subject_of_mode(bare, spec::Mode::Mtp);
+        check(switched.resolved && bare_switched.resolved &&
+                  switched.resolved->source == bare_switched.resolved->source,
+              std::string(board) + ": no server switches to a pricing-only kind");
+        check(measures_mtp(pr::head_priced_profile(priced_only)),
+              std::string(board) + ": a pricing-only kind prices the head");
+    }
+
+    const auto& pairs = spec::Registry::builtin().pairs();
+    const auto bits   = spec::label_bits("UD-Q4_K_M");
+    const auto at     = [&](const std::string& repo, const std::vector<std::string>& kinds) {
+        return spec::pair_choice(pairs, "", "qwen3_5", kinds, bits, "sm86", {}, {}, repo);
+    };
+    const auto base = at("unsloth/Qwen3.8-27B-GGUF@" + kQwen27bCommit, {"mtp"});
+    check(base && base->step == spec::PairStep::Sibling &&
+              base->source.find("unsloth/Qwen3.8-27B-GGUF") != std::string::npos,
+          "the base model's sibling pair answers for its MTP (" +
+              (base ? base->source : std::string("none")) + ")");
+    // Another revision of the repository: no sibling (another commit may hold other weights); a
+    // group of other models at most, which the head's own resolution does not take.
+    const auto other_commit =
+        at("unsloth/Qwen3.8-27B-GGUF@0000000000000000000000000000000000000000", {"mtp"});
+    check(!other_commit || other_commit->step == spec::PairStep::Group,
+          "another revision: no sibling, a group at most");
+    // A fine-tune's repository is not the base model's: never its sibling.
+    const auto fine_tune =
+        at("mradermacher/Qwen3.8-27B-Uncensored-GGUF@" + kQwen27bCommit, {"mtp"});
+    check(!fine_tune || fine_tune->step == spec::PairStep::Group,
+          "a fine-tune's pair is no sibling of the base model");
+    // A kind no pair drafts with: nothing.
+    check(!at("unsloth/Qwen3.8-27B-GGUF@" + kQwen27bCommit, {"eagle"}), "no pair: nothing");
+}
+
+// The lab's measured pool runs against the rule (#777): Qwen3.8 27B with its drafters at
+// --max-context 32768, the server drafting with DFlash2 (the measured runs' dflash2:7), a pool of n
+// whole contexts taken at its least (n x 32768 tokens). Each prints the rule's speed of the head's
+// pool over plain decode's in each part of the mix (the chats' part is the benchmark's short chats
+// at C, which the runs measured) and at the mix, beside the measured speed a request.
+//   RTX 3090, C = 8: plain decode 38.3 tok/s a request in 5 contexts, MTP 3 51.1 in 4.
+//   RTX 4090, C = 4: dflash2 K=7 left 3 of 4 contexts; plain 48.9, MTP 3 88.8, the head leaving
+//   every context plain decode does; C = 8: plain 46.2, MTP 3 69.4.
+// The drafter's own count of contexts was not recorded: every count that enters the rule. The
+// 3090's rounds are not priced (Ampere has no round-cost row: "no facts for ampere"), so the rule
+// before #777 decides it (four fifths: 4 of 5, the head); the 4090's are, and its price decides.
+void test_pool_rule_lab_runs() {
+    const auto run = [](const char* board, std::uint32_t streams, std::uint32_t plain,
+                        std::uint32_t head, std::uint32_t drafter, double measured,
+                        bool priced_here) {
+        const pr::SpeculationSubject subject =
+            pr::subject_of_mode(qwen27b_on(board), spec::Mode::DFlash2);
+        const std::uint32_t context = 32768;
+        const auto pool             = [&](std::uint32_t contexts) {
+            return pr::PoolSize{.contexts = contexts,
+                                            .tokens   = std::uint64_t{contexts} * context,
+                                            .context  = context};
+        };
+        const pr::PoolDecision decision = pr::pool_rule(
+            subject, false, drafter, streams, [&] { return pool(plain); },
+            [&](const pr::ServedSpeculation&) { return std::optional<pr::PoolSize>(pool(head)); });
+        const auto served           = pr::served_head_fallback(subject, false);
+        const spec::Profile& priced = pr::head_priced_profile(subject);
+        std::string parts;
+        if (served) {
+            for (const pr::MixPart& part : pr::mix_parts(streams, pool(head), pool(plain))) {
+                const auto step = [&](std::uint32_t c) { return pr::plain_step_price(priced, c); };
+                const auto with_head = pr::mix_steps(
+                    part.head, part.requests,
+                    [&](std::uint32_t c) { return pr::pool_head_gain(priced, *served, c); }, step);
+                const auto plainly = pr::mix_steps(
+                    part.plain, part.requests, [](std::uint32_t) { return 1.0; }, step);
+                char text[96];
+                std::snprintf(text, sizeof text, " %u requests on %u vs %u streams x%.3f;",
+                              part.requests, part.head, part.plain,
+                              with_head && plainly ? *plainly / *with_head : -1.0);
+                parts += text;
+            }
+        }
+        char line[320];
+        std::snprintf(line, sizeof line,
+                      "%s C %u, head %u / plain %u contexts (drafter %u): %s, mix x%.3f;%s "
+                      "measured x%.3f a request",
+                      board, streams, head, plain, drafter,
+                      decision.keep == pr::PoolKeep::Head ? "the head" : "plain decode",
+                      decision.head_price ? *decision.head_price : -1.0, parts.c_str(), measured);
+        std::cout << line << '\n';
+        check(decision.keep == pr::PoolKeep::Head && decision.head_price.has_value() == priced_here,
+              std::string(line) + ": measured faster, the rule keeps the head" +
+                  (priced_here ? " by its price" : ", unpriced, by four fifths"));
+    };
+    for (std::uint32_t drafter = 1; drafter < 5; ++drafter) {
+        run("3090", 8, 5, 4, drafter, 51.1 / 38.3, false);
+    }
+    run("4090", 4, 4, 4, 3, 88.8 / 48.9, true);
+    for (std::uint32_t contexts = 2; contexts <= 8; ++contexts) {
+        run("4090", 8, contexts, contexts, contexts - 1, 69.4 / 46.2, true);
+    }
+}
+
 } // namespace
 
 int main() {
     test_every_kind_carried();
     test_gain_note_names_where_the_price_is_held_from();
+    test_head_resolution();
+    test_pool_rule_lab_runs();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;
