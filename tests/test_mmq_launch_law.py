@@ -193,6 +193,10 @@ class Derive(unittest.TestCase):
         self.assertAlmostEqual(d["law"]["stream_k_unit"], LAW["stream_k_unit"], places=9)
         insitu = d["per_format"]["q4_K"][128]["insitu_fixup_beyond_bytes_s"]
         self.assertLess(insitu, LAW["launch_seconds"] - 1e-7)
+        # MmqLaunchLaw prices the fixup at the DRAM rate: a law whose fixup runs at twice it is no
+        # row (the holdouts checked a law with the rate; codex on #819).
+        self.assertIsNone(ml.cpp_row("kX", d["law"]))
+        self.assertIn("fixup-rate", ml.row_problem(d["law"], d["missing_widths"]))
 
     def test_a_negative_launch_gives_no_row(self):
         d = ml.derive(card_doc(CARD_A, launch=-1e-6))
