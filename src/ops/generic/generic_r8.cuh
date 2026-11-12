@@ -16,6 +16,7 @@
 // activation: the bytes do not change with T.
 
 #include "core/pdl.cuh"
+#include "ops/generic/compiled_codecs.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_w4a8.cuh"
 #include "ops/generic/generic_schedules.h"
@@ -400,8 +401,17 @@ void r8_launch_epilogue(int schedule, const GemmArgs& args, cudaStream_t stream,
     }
 }
 
-// kVerify: the codec also has the verify-width form (a pre-quantized activation, T = 2..kR8VerifyTokens);
-// r8_verify_compiled lists the same formats.
+// One case of a launch file's R8 switch, from its compiled_codecs.h list (X(CODEC, TYPE,
+// PREQUANT)): PREQUANT is kVerify, and a codec without the verify form takes no activation planes.
+#define NINFERNO_R8_LAUNCH_CASE(CODEC, TYPE, PREQUANT)                                             \
+    case WeightCodec::CODEC:                                                                       \
+        r8_launch_codec<TYPE, PREQUANT>(schedule, epilogue, args, stream,                          \
+                                        PREQUANT ? pre : W4a8Activation{});                        \
+        return true;
+
+// kVerify: the codec also has the verify-width form (a pre-quantized activation, 2 to
+// kR8VerifyTokens tokens); r8_verify_compiled lists the same formats (compiled_codecs.h's
+// PREQUANT).
 template <class C, bool kVerify = false>
 void r8_launch_codec(int schedule, Epilogue epilogue, const GemmArgs& args, cudaStream_t stream,
                      W4a8Activation pre = {}) {

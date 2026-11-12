@@ -9,6 +9,7 @@
 // tok/s; Qwen3.5-9B Q4_K_M decode C1 on the HMMA kernel 0.8 % below it).
 #include "core/device.h"
 #include "core/device_class.h"
+#include "ops/generic/compiled_codecs.h"
 #include "ops/generic/generic_gemm.cuh"
 #include "ops/generic/generic_gemm_internal.h"
 
@@ -430,21 +431,15 @@ void launch_epilogue(Epilogue epilogue, const GemmArgs& args, cudaStream_t strea
 void launch_volta_gemv(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                        cudaStream_t stream) {
     switch (codec) {
-    case WeightCodec::GgmlQ4K:
-        launch_epilogue<K45<4>>(epilogue, args, stream);
+#define NINFERNO_VOLTA_GEMV_CASE(CODEC, TYPE)                                                      \
+    case WeightCodec::CODEC:                                                                       \
+        launch_epilogue<TYPE>(epilogue, args, stream);                                             \
         return;
-    case WeightCodec::GgmlQ5K:
-        launch_epilogue<K45<5>>(epilogue, args, stream);
-        return;
-    case WeightCodec::Q8:
-        launch_epilogue<Q8G32>(epilogue, args, stream);
-        return;
-    case WeightCodec::Bf16:
-        launch_epilogue<Bf16Rows>(epilogue, args, stream);
-        return;
+        NINFERNO_VOLTA_GEMV_CODECS(NINFERNO_VOLTA_GEMV_CASE)
+#undef NINFERNO_VOLTA_GEMV_CASE
     default:
-        launch_epilogue<K6>(epilogue, args, stream);
-        return;
+        // volta_gemv_takes admits no other codec.
+        throw std::invalid_argument("volta_gemv: unsupported codec");
     }
 }
 

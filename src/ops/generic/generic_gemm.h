@@ -259,13 +259,15 @@ struct I8ScheduleInfo {
 // Whether a weight format has a W4A8 codec: a scale (and min) per 32 values (Q6_K, Q3_K, Q2_K,
 // IQ2_XS, IQ2_S: per 16) over integer codes that fit int8 (ggml Q4_0/Q4_1/Q5_0/Q5_1/IQ4_NL/IQ4_XS/
 // Q4_K/Q5_K/Q6_K/Q3_K/Q2_K, MXFP4, u4_g128_zp, q8_g32, and the signed grid values of IQ3_XXS/
-// IQ3_S/IQ2_XXS/IQ2_XS/IQ2_S), and NVFP4 (doubled E2M1 codes) on every build.
+// IQ3_S/IQ2_XXS/IQ2_XS/IQ2_S), and NVFP4 (doubled E2M1 codes) on every build. The W4A8 lists of
+// compiled_codecs.h, as the launch files instantiate them.
 [[nodiscard]] bool w4a8_supports(QType qtype);
 // K the W4A8 tiles take for this format (generic_routes.cpp).
 [[nodiscard]] bool w4a8_k_admits(QType qtype, std::int32_t k);
 // Whether a weight format has an R8 (W8A8 decode) codec: q8_g32, MXFP4, the ggml 4/5-bit blocks
 // (Q4_0/Q4_1/Q5_0/Q5_1/IQ4_NL/IQ4_XS), the K-quants Q2_K..Q6_K and the codebook i-quants: the
-// formats of a published GGUF, whose A16 decode is the costly part of a decode call.
+// formats of a published GGUF, whose A16 decode is the costly part of a decode call. The R8 lists
+// of compiled_codecs.h (NVFP4 only on a build without the native NVFP4 kernels).
 [[nodiscard]] bool r8_supports(QType qtype);
 // The most tokens an R8 launch takes, the widths the heuristic gives it, and whether its quantized
 // activation (36 bytes per 32 values and token slot, 40 with the block sums a codec with a min
@@ -318,7 +320,7 @@ inline constexpr std::int32_t kMmqMinTokens = 5;
 // RTX 4090 (Qwen3.5-9B Q8_0 spec-tune, dflash:7 229 -> 273 tok/s).
 [[nodiscard]] std::int32_t r8_verify_widest(QType qtype);
 // The formats whose R8 codec has the verify-width form compiled: every R8 format but Q3_K and
-// Q2_K (r8_prequant = false in format_traits.h).
+// Q2_K (PREQUANT false in compiled_codecs.h's R8 lists).
 [[nodiscard]] bool r8_verify_compiled(QType qtype);
 // Whether a call of 2..r8_verify_widest tokens takes R8 on this device: the formats measured faster
 // there (r8_verify_supports) where the MMA takes BF16 operands itself; every compiled format where
@@ -332,7 +334,8 @@ inline constexpr std::int32_t kMmqMinTokens = 5;
 // whole eight-token block on R8 (Q8, r8_verify_widest) and the generic path reads the weight.
 // A speculative drafter's A16Only projections take A8 there (ops::drafter_linear_policy).
 [[nodiscard]] bool r8_takes_block(const Weight& weight);
-// Whether a weight format has a TiledMma codec (then its prefill routes are the tiled ones).
+// Whether a weight format has a TiledMma codec on every build (then its prefill routes are the
+// tiled ones): NINFERNO_TILED_CODECS, compiled_codecs.h.
 [[nodiscard]] bool tiled_supports(WeightCodec codec);
 // The schedule's shared tiles for the codec fit one block of this build (generic_tiled.cu).
 [[nodiscard]] bool tiled_fits(int schedule, WeightCodec codec);

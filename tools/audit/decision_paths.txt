@@ -25,6 +25,8 @@ src/ops/generic/generic_coverage.cpp
 src/ops/generic/generic_workspace.cpp
 src/ops/generic/r8_decode_table.h
 src/ops/generic/format_traits.h
+# the codecs each launch file compiles (#615 F4): the admission predicates and the manifest read them
+src/ops/generic/compiled_codecs.h
 src/ops/generic/*route_authorities*
 src/ops/generic/*kernel_roofline*
 src/ops/route_table.cpp

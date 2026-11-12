@@ -1,18 +1,18 @@
 #pragma once
 
 // What the generic path knows about each stored format, as one table: a row per QType, read by the
-// admission predicates of generic_routes.cpp and generic_select.cpp (r8_supports, w4a8_supports,
-// ...). A new format is one row here, not a case label in a dozen switches. Reading a row never
-// queries the device: a predicate that also looks at the card keeps that part and reads only the
-// format from here.
+// admission predicates of generic_routes.cpp and generic_select.cpp (r8_k_values, w4a8_k_admits,
+// r8_verify_supports, ...). A new format is one row here, not a case label in a dozen switches.
+// Reading a row never queries the device: a predicate that also looks at the card keeps that part
+// and reads only the format from here.
 //
 // Each field says what kind of knowledge it is:
 //   codec fact       true of the bytes of the format, for every build and card;
-//   compiled         true of this binary (which kernels instantiate the format); to move to the
-//                    launch files' lists (architecture review item 3, F4);
 //   measured rule    a per-card sweep result, not derived from the format: it holds on the cards
 //                    named in its comment, and must be re-checked when a kernel it was measured on
 //                    changes. No field is a threshold; a measured rule is one bit per format.
+// What this binary compiles for a format (its R8, W4A8, producer-warp and tiled codecs) is not
+// here: it is the launch files' lists, compiled_codecs.h (#615 F4).
 //
 // A QType without a row (a value the enum does not name) reads as the default row: no capability,
 // the 32-value R8 step.
@@ -26,14 +26,6 @@
 #include <utility>
 
 namespace ninferno::ops::detail::generic {
-
-// Whether a codec exists for the format on this build: on every build, or only where the native
-// NVFP4 kernels are absent (NVFP4's R8 decode stands in for them: r8_supports).
-enum class Support : std::uint8_t { No, Yes, WithoutNativeFp4 };
-
-constexpr bool admits(Support s, bool native_fp4) noexcept {
-    return s == Support::Yes || (s == Support::WithoutNativeFp4 && !native_fp4);
-}
 
 // Fields are in the order the rows below initialize them.
 struct FormatTraits {
@@ -56,23 +48,15 @@ struct FormatTraits {
     // ptxas shows the 64x64 tile spilling where the 128x32 tile spills less (sm_86..sm_120); that
     // is the reason, not the evidence.
     bool tall_tile = false;
-    // [compiled] The W4A8 codec (classic tile) of the format.
-    Support w4a8 = Support::No;
-    // [compiled] The format the producer-warp W4A8 tile is compiled for (w4a8_ws_supports).
-    bool w4a8_ws = false;
-    // [measured rule] Of those, the formats a measured dense-tune choice may move to the
-    // producer-warp tile on sm_89 / sm_120 (w4a8_ws_extra).
+    // [measured rule] Of the formats the producer-warp W4A8 tile is compiled for
+    // (w4a8_ws_supports, compiled_codecs.h), those a measured dense-tune choice may move to it on
+    // sm_89 / sm_120 (w4a8_ws_extra).
     bool w4a8_ws_tuned = false;
     // [codec fact] K values of the group the W4A8 tile's zero tail may start on when K is not a
     // whole 128-value tile (w4a8_k_admits): 32 for the 32-value blocks, 64 for the 64-value groups
     // (a K of whole groups past the last 128-value tile, e.g. gpt-oss's 2880 in a native G64
     // conversion), or 0 for a format that needs whole tiles.
     std::uint8_t w4a8_tail_k = 0;
-    // [compiled] The R8 (decode-width) codec of the format.
-    Support r8 = Support::No;
-    // [compiled] R8 has its pre-quantized (W4A8 plane) verify form for the format
-    // (r8_verify_compiled, with r8).
-    bool r8_prequant = true;
     // [measured rule] R8 takes the format at verify widths on every card (r8_verify_supports).
     // Evidence by row: IQ2_S, IQ3_S, IQ3_XXS: RTX 5080 shape micro-benchmark, T = 4, quantize + R8
     // against the register MMA 0.73-0.91 on the large shapes; IQ2_XXS and IQ2_XS: not separately
@@ -94,148 +78,73 @@ struct FormatTraits {
 
 namespace format_rows {
 using Q = QType;
-using S = Support;
 // Rows are listed in QType order. A row that carries nothing is still listed: the static_assert
 // below fails the build for a named QType without exactly one row.
 inline constexpr std::array kFormats{
-    FormatTraits{
-        .q = Q::Q4_G64_FP16, .qx_g64 = true, .w4a8 = S::Yes, .w4a8_tail_k = 64, .r8 = S::Yes},
-    FormatTraits{
-        .q = Q::Q5_G64_FP16, .qx_g64 = true, .w4a8 = S::Yes, .w4a8_tail_k = 64, .r8 = S::Yes},
-    FormatTraits{
-        .q = Q::Q6_G64_FP16, .qx_g64 = true, .w4a8 = S::Yes, .w4a8_tail_k = 64, .r8 = S::Yes},
-    FormatTraits{
-        .q = Q::Q8_G32_FP16, .w4a8 = S::Yes, .w4a8_tail_k = 32, .r8 = S::Yes, .r8_verify = true},
+    FormatTraits{.q = Q::Q4_G64_FP16, .qx_g64 = true, .w4a8_tail_k = 64},
+    FormatTraits{.q = Q::Q5_G64_FP16, .qx_g64 = true, .w4a8_tail_k = 64},
+    FormatTraits{.q = Q::Q6_G64_FP16, .qx_g64 = true, .w4a8_tail_k = 64},
+    FormatTraits{.q = Q::Q8_G32_FP16, .w4a8_tail_k = 32, .r8_verify = true},
     FormatTraits{.q = Q::BF16},
     FormatTraits{.q = Q::FP32},
     FormatTraits{.q = Q::INT32},
-    // NINFERNO-SPECIAL(arch:no-fp4-mma): without the native NVFP4 kernels decode multiplies the
-    // doubled E2M1 codes on dp4a (W4a8Nvfp4, as the W4A8 prefill) instead of the BF16 register MMA,
-    // so R8 takes NVFP4 only there; sm_120a keeps its native decode. The int8 tier multiplies the
-    // doubled E2M1 codes exactly on every build (W4A8: Yes). With the native kernels W4A4 keeps the
-    // weights it takes (allows_w4a8), and W4A8 runs the prefill of those whose policy allows A8
-    // but not A4, which the BF16 register MMA ran before.
-    FormatTraits{.q = Q::NVFP4, .w4a8 = S::Yes, .r8 = S::WithoutNativeFp4},
+    FormatTraits{.q = Q::NVFP4},
     FormatTraits{.q = Q::FP8_E4M3FN_ROW_BF16},
-    FormatTraits{.q = Q::MXFP4, .w4a8 = S::Yes, .w4a8_tail_k = 32, .r8 = S::Yes},
+    FormatTraits{.q = Q::MXFP4, .w4a8_tail_k = 32},
     FormatTraits{.q = Q::FP8_E4M3FN_ROW_F32},
     FormatTraits{.q = Q::FP8_E4M3FN_B128_F32},
-    // The u4 zero-point formats decode as in W4A8 (W4a8U4ZpG): before, a u4 checkpoint's decode
-    // stayed on the A16 register MMA wherever its other formats took R8. U4 G32 is the G128 codec
-    // with its group index.
-    FormatTraits{.q = Q::U4_G128_ZP_FP16, .w4a8 = S::Yes, .r8 = S::Yes},
-    FormatTraits{.q           = Q::GGML_Q4_K,
-                 .light_step  = true,
-                 .tall_tile   = true,
-                 .w4a8        = S::Yes,
-                 .w4a8_ws     = true,
-                 .r8          = S::Yes,
-                 .r8_k_values = 64},
+    FormatTraits{.q = Q::U4_G128_ZP_FP16},
+    FormatTraits{.q = Q::GGML_Q4_K, .light_step = true, .tall_tile = true, .r8_k_values = 64},
+    FormatTraits{.q = Q::GGML_Q5_K, .light_step = true, .r8_k_values = 64},
+    FormatTraits{.q = Q::GGML_Q6_K, .r8_k_values = 128},
+    FormatTraits{.q = Q::GGML_Q3_K, .r8_k_values = 128, .decode_heavy = true},
+    FormatTraits{.q = Q::GGML_Q2_K, .r8_k_values = 128},
     FormatTraits{
-        .q = Q::GGML_Q5_K, .light_step = true, .w4a8 = S::Yes, .r8 = S::Yes, .r8_k_values = 64},
-    FormatTraits{
-        .q = Q::GGML_Q6_K, .w4a8 = S::Yes, .w4a8_ws = true, .r8 = S::Yes, .r8_k_values = 128},
-    FormatTraits{.q            = Q::GGML_Q3_K,
-                 .w4a8         = S::Yes,
-                 .r8           = S::Yes,
-                 .r8_prequant  = false,
-                 .r8_k_values  = 128,
-                 .decode_heavy = true},
-    FormatTraits{
-        .q = Q::GGML_Q2_K, .w4a8 = S::Yes, .r8 = S::Yes, .r8_prequant = false, .r8_k_values = 128},
-    FormatTraits{.q             = Q::GGML_IQ4_XS,
-                 .mmq_verify    = true,
-                 .light_step    = true,
-                 .w4a8          = S::Yes,
-                 .w4a8_ws       = true,
-                 .w4a8_ws_tuned = true,
-                 .r8            = S::Yes},
+        .q = Q::GGML_IQ4_XS, .mmq_verify = true, .light_step = true, .w4a8_ws_tuned = true},
     FormatTraits{.q            = Q::GGML_IQ3_XXS,
                  .mmq_verify   = true,
                  .light_step   = true,
-                 .w4a8         = S::Yes,
-                 .w4a8_ws      = true,
-                 .r8           = S::Yes,
                  .r8_verify    = true,
                  .decode_heavy = true},
     FormatTraits{.q             = Q::GGML_IQ3_S,
                  .mmq_verify    = true,
                  .light_step    = true,
-                 .w4a8          = S::Yes,
-                 .w4a8_ws       = true,
                  .w4a8_ws_tuned = true,
-                 .r8            = S::Yes,
                  .r8_verify     = true,
                  .decode_heavy  = true},
-    FormatTraits{.q           = Q::GGML_Q4_0,
-                 .light_step  = true,
-                 .w4a8        = S::Yes,
-                 .w4a8_ws     = true,
-                 .w4a8_tail_k = 32,
-                 .r8          = S::Yes,
-                 .r8_verify   = true},
-    FormatTraits{
-        .q = Q::GGML_Q4_1, .light_step = true, .w4a8 = S::Yes, .w4a8_tail_k = 32, .r8 = S::Yes},
-    FormatTraits{
-        .q = Q::GGML_Q5_0, .light_step = true, .w4a8 = S::Yes, .w4a8_tail_k = 32, .r8 = S::Yes},
-    FormatTraits{
-        .q = Q::GGML_Q5_1, .light_step = true, .w4a8 = S::Yes, .w4a8_tail_k = 32, .r8 = S::Yes},
-    FormatTraits{.q           = Q::GGML_IQ4_NL,
-                 .mmq_verify  = true,
-                 .light_step  = true,
-                 .w4a8        = S::Yes,
-                 .w4a8_tail_k = 32,
-                 .r8          = S::Yes},
+    FormatTraits{.q = Q::GGML_Q4_0, .light_step = true, .w4a8_tail_k = 32, .r8_verify = true},
+    FormatTraits{.q = Q::GGML_Q4_1, .light_step = true, .w4a8_tail_k = 32},
+    FormatTraits{.q = Q::GGML_Q5_0, .light_step = true, .w4a8_tail_k = 32},
+    FormatTraits{.q = Q::GGML_Q5_1, .light_step = true, .w4a8_tail_k = 32},
+    FormatTraits{.q = Q::GGML_IQ4_NL, .mmq_verify = true, .light_step = true, .w4a8_tail_k = 32},
     FormatTraits{.q             = Q::GGML_IQ2_XXS,
                  .mmq_verify    = true,
-                 .w4a8          = S::Yes,
-                 .w4a8_ws       = true,
                  .w4a8_ws_tuned = true,
-                 .r8            = S::Yes,
                  .r8_verify     = true,
                  .sched_iq2     = true,
                  .decode_heavy  = true},
     FormatTraits{.q             = Q::GGML_IQ2_XS,
                  .mmq_verify    = true,
-                 .w4a8          = S::Yes,
-                 .w4a8_ws       = true,
                  .w4a8_ws_tuned = true,
-                 .r8            = S::Yes,
                  .r8_verify     = true,
                  .sched_iq2     = true,
                  .decode_heavy  = true},
     FormatTraits{.q            = Q::GGML_IQ2_S,
                  .mmq_verify   = true,
                  .light_step   = true,
-                 .w4a8         = S::Yes,
-                 .w4a8_ws      = true,
-                 .r8           = S::Yes,
                  .r8_verify    = true,
                  .sched_iq2    = true,
                  .decode_heavy = true},
-    // IQ1_S / IQ1_M decode as in W4A8 (W4a8Iq1S / W4a8Iq1M): before, their decode stayed on the A16
-    // register MMA (27B UD-IQ2_XXS on the RTX 2080 Ti, nsys: the IQ1_S rmma calls 7.2 + 4.0 +
-    // 2.6 ms of a 45 ms token).
-    FormatTraits{.q            = Q::GGML_IQ1_S,
-                 .mmq_verify   = true,
-                 .w4a8         = S::Yes,
-                 .r8           = S::Yes,
-                 .sched_iq2    = true,
-                 .decode_heavy = true},
-    FormatTraits{.q            = Q::GGML_IQ1_M,
-                 .mmq_verify   = true,
-                 .w4a8         = S::Yes,
-                 .r8           = S::Yes,
-                 .sched_iq2    = true,
-                 .decode_heavy = true},
+    FormatTraits{.q = Q::GGML_IQ1_S, .mmq_verify = true, .sched_iq2 = true, .decode_heavy = true},
+    FormatTraits{.q = Q::GGML_IQ1_M, .mmq_verify = true, .sched_iq2 = true, .decode_heavy = true},
     FormatTraits{.q = Q::GGML_TQ1_0},
     FormatTraits{.q = Q::GGML_TQ2_0},
     FormatTraits{.q = Q::GGML_Q1_0},
     FormatTraits{.q = Q::GGML_Q2_0},
-    FormatTraits{.q = Q::U4_G32_ZP_FP16, .w4a8 = S::Yes, .w4a8_tail_k = 32, .r8 = S::Yes},
-    FormatTraits{.q = Q::U4_G64_ZP_FP16, .w4a8 = S::Yes, .w4a8_tail_k = 64, .r8 = S::Yes},
-    FormatTraits{.q = Q::Q3_G128_FP16, .w4a8 = S::Yes, .r8 = S::Yes},
-    FormatTraits{.q = Q::Q3_G64_FP16, .w4a8 = S::Yes, .r8 = S::Yes},
+    FormatTraits{.q = Q::U4_G32_ZP_FP16, .w4a8_tail_k = 32},
+    FormatTraits{.q = Q::U4_G64_ZP_FP16, .w4a8_tail_k = 64},
+    FormatTraits{.q = Q::Q3_G128_FP16},
+    FormatTraits{.q = Q::Q3_G64_FP16},
 };
 } // namespace format_rows
 
