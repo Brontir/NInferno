@@ -12,9 +12,18 @@ import regret_report as rr
 import selection_regret as regret
 
 BOARD = "rtx-test"
+SWEEP = {"passes": 3, "samples": 7, "shapes": "tools/bench/data/route_regret/shapes.txt",
+         "shapes_sha256": "ab" * 32, "route_policy": "the build's default"}
+GPU_FIELDS = "NVIDIA GeForce RTX 4070 Ti, 285.00, 3105, 2610, Enabled"
 META = {"card": "RTX Test", "revision": "0123456789abcdef0123456789abcdef01234567",
-        "date": "2026-11-12T20:00:00Z", "nvcc": "12.8.93", "driver": "580.95.05",
-        "qualification": "synthetic", "sweep": {"passes": 3, "samples": 7}}
+        "date": "2026-11-12T20:00:00Z", "nvcc": "12.8.93", "nvcc_source": "CMAKE_CUDA_COMPILER",
+        "driver": "580.95.05", "qualification": "synthetic", "sweep": SWEEP,
+        "gpu": rr.gpu_record(GPU_FIELDS, "2610\n2595\n2625\n")}
+
+
+def meta(**sweep):
+    """META with some sweep fields changed."""
+    return {**META, "sweep": {**SWEEP, **sweep}}
 
 
 def ok(key, ms):
@@ -201,6 +210,20 @@ class CheckTest(unittest.TestCase):
             "delta.new_holds": lambda d: d["delta"].pop("new_holds"),
             "bands.decode": lambda d: d["bands"]["decode"].pop("weighted_regret"),
             "delta.threshold": lambda d: d["delta"].update(threshold=-1),
+            "sweep.passes": lambda d: d["sweep"].pop("passes"),
+            "sweep.samples": lambda d: d["sweep"].update(samples="7"),
+            "sweep.shapes_sha256": lambda d: d["sweep"].update(shapes_sha256="abc"),
+            "summary.geomean_slowdown": lambda d: d["summary"].update(geomean_slowdown="1.1"),
+            "summary.cases": lambda d: d["summary"].update(cases=-1),
+            "delta.table_exit": lambda d: d["delta"].update(table_exit={"holds": 1}),
+            "delta.new_groups[0]": lambda d: d["delta"].update(new_groups=[{"regime": "x"}]),
+            "delta.sweep_matches": lambda d: d["delta"].update(sweep_matches="yes"),
+            "nvcc: must be unknown": lambda d: d.update(nvcc_source="none"),
+            "nvcc: expected the version": lambda d: d.update(nvcc="unknown"),
+            "nvcc_source": drop("nvcc_source"),
+            "gpu.sm_mhz_during_sweep": lambda d: d["gpu"].update(
+                sm_mhz_during_sweep={"min": 3000, "max": 2000, "samples": 2}),
+            "gpu: expected": lambda d: d["gpu"].pop("persistence_mode"),
         }
         for what, mutate in cases.items():
             with self.subTest(what=what):
@@ -219,6 +242,53 @@ class CheckTest(unittest.TestCase):
         doc["delta"]["regressions"] = []
         self.assertTrue(rr.check(doc))
 
+    def test_unknown_nvcc_with_no_compiler_in_the_cache(self):
+        doc = rr.build(selection_report(document()), BOARD,
+                       {**META, "nvcc": "unknown", "nvcc_source": "none"})
+        self.assertEqual(rr.check(doc), [])
+
+
+class SweepTest(unittest.TestCase):
+    def test_sweep_matches(self):
+        before = rr.build(selection_report(document()), BOARD, META)
+        same = rr.build(selection_report(document()), BOARD, META, previous=before,
+                        previous_path="a")
+        self.assertIs(same["delta"]["sweep_matches"], True)
+        for change in ({"samples": 15}, {"passes": 2}, {"shapes_sha256": "cd" * 32},
+                       {"route_policy": "evidence"}):
+            with self.subTest(change=change):
+                other = rr.build(selection_report(document()), BOARD, meta(**change),
+                                 previous=before, previous_path="a")
+                self.assertIs(other["delta"]["sweep_matches"], False)
+        a5 = rr.build(selection_report(document()), BOARD, META,
+                      previous=a5_summary(selection_report(document()), 0.1), previous_path="a")
+        self.assertEqual(a5["delta"]["sweep_matches"], "unknown")
+
+    def test_markdown_labels_moves_across_sweeps(self):
+        before = rr.build(selection_report(document()), BOARD, META, bands(0.1))
+        same = rr.build(selection_report(document(decode_ms=1.3)), BOARD, META, bands(0.3),
+                        previous=before, previous_path="a")
+        self.assertNotIn("Not comparable", rr.markdown(same))
+        self.assertIn("(same sweep)", rr.markdown(same))
+        other = rr.build(selection_report(document(decode_ms=1.3)), BOARD, meta(samples=15),
+                         bands(0.3), previous=before, previous_path="a")
+        self.assertIn("Not comparable as a selector change: the sweep differs", rr.markdown(other))
+        a5 = rr.build(selection_report(document(decode_ms=1.3)), BOARD, META, bands(0.3),
+                      previous=a5_summary(selection_report(document()), 0.1), previous_path="a")
+        self.assertIn("does not record its sweep", rr.markdown(a5))
+
+    def test_gpu_record(self):
+        gpu = rr.gpu_record(GPU_FIELDS, "2610\n[N/A]\n2595\n\n2625\n")
+        self.assertEqual(gpu["max_sm_mhz"], 3105)
+        self.assertEqual(gpu["applications_graphics_mhz"], 2610)
+        self.assertEqual(gpu["persistence_mode"], "Enabled")
+        self.assertEqual(gpu["power_limit_w"], 285)
+        self.assertEqual(gpu["sm_mhz_during_sweep"], {"min": 2595, "max": 2625, "samples": 3})
+        self.assertIsNone(rr.gpu_record(GPU_FIELDS, "")["sm_mhz_during_sweep"])
+        self.assertEqual(rr.gpu_record("X, [N/A], 1, 1, Disabled")["power_limit_w"], "[N/A]")
+        with self.assertRaises(ValueError):
+            rr.gpu_record("only, three, fields")
+
 
 class CliTest(unittest.TestCase):
     def test_build_then_check(self):
@@ -231,13 +301,17 @@ class CliTest(unittest.TestCase):
                     "--bands", str(tmp / "bands.json"), "--board", BOARD,
                     "--shapes", str(tmp / "shapes.txt"), "--passes", "3", "--samples", "7",
                     "--previous", "none", "--repo", str(tmp), "--out", str(tmp / "run.json"),
-                    "--md", str(tmp / "run.md")]
-            for key in ("card", "revision", "date", "nvcc", "driver"):
-                args += [f"--{key}", META[key]]
+                    "--md", str(tmp / "run.md"), "--gpu", GPU_FIELDS,
+                    "--sm-clock-log", str(tmp / "clock.log")]
+            (tmp / "clock.log").write_text("2610\n2580\n")
+            for key in ("card", "revision", "date", "nvcc", "nvcc_source", "driver"):
+                args += [f"--{key.replace('_', '-')}", META[key]]
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(rr.main(args), 0)
             run = json.loads((tmp / "run.json").read_text())
             self.assertEqual(run["sweep"]["shapes"], "shapes.txt")  # relative to the repo
+            self.assertEqual(run["gpu"]["sm_mhz_during_sweep"],
+                             {"min": 2580, "max": 2610, "samples": 2})
             self.assertIn("RTX Test", (tmp / "run.md").read_text())
             self.assertEqual(rr.main(["check", str(tmp / "run.json")]), 0)
             run["schema"] = "x"

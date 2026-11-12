@@ -10,7 +10,9 @@ Due when the range changes a file that can move a board's route regret:
     in this checkout (the golden gate's list: the route selector, its cost model, the route tables,
     the facts);
   - the sweep's grid, tools/bench/data/route_regret/shapes.txt;
-  - a kernel source under src/ops/generic (.cu, .cuh): the routes' times are the other half.
+  - a route kernel: a .cu or .cuh under src/ops/generic, or any file a .cu there includes,
+    transitively (src/ops/common/mma.cuh, ...), at either end of the range: the routes' times
+    are the regret's other half.
 Only the scoring tools (regret_collect.py, selection_regret.py, ...) changed: not due, re-score
 the stands' archived CSVs instead.
 
@@ -21,9 +23,9 @@ crosses an architecture (src/ops/route_table.cpp class_chain). A sibling minor w
 features (sm_80 and sm_86) may lend its table (src/core/device_class_host.cpp gpu_similar_chips),
 so a table of an architecture no lab board has moves the boards of its major. The lab boards'
 own architectures differ in features from the other minors of their majors (sm_70 / sm_75,
-sm_86 / sm_89). The grid moves every board. Every other trigger is
-classified by affected_arches.py: an arch-guarded answer names its boards; "all", and host code
-(the selector runs on the host for every board), name every board.
+sm_86 / sm_89). The grid moves every board. Every other trigger is classified by
+affected_arches.py, each path on its own: an arch-guarded answer names its boards; "all", and host
+code (the selector runs on the host for every board), name every board.
 Exit: 0 due, 1 not due, 2 error.
 """
 import argparse
@@ -43,7 +45,8 @@ REPORTS = "tools/bench/data/route_regret"
 GPU_FACTS = "src/core/data/gpu_facts.json"
 # What moves the regret besides the decision paths.
 GRID = "tools/bench/data/route_regret/shapes.txt"
-EXTRA_PATTERNS = (GRID, "src/ops/generic/**.cu", "src/ops/generic/**.cuh")
+EXTRA_PATTERNS = (GRID,)
+KERNEL_DIR = "src/ops/generic/"  # the route kernels the sweep times (kernel_files)
 ROUTE_TABLE = re.compile(r"routes/[^/]+\.json\Z")
 # affected_arches' build sets by compute capability.
 ARCH_OF_CC = {70: "sm_70", 75: "sm_75", 86: "sm_86", 89: "sm_89", 120: "sm_120a"}
@@ -104,11 +107,41 @@ def table_boards(cc, boards):
                    f"it: " + (", ".join(major) or "no lab board of its major"))
 
 
-def answer(changed, patterns, boards, table_text, arches_of, chips):
+def kernel_files(repo):
+    """The generic route kernels and every file they include, transitively: the .cu and .cuh
+    files under src/ops/generic and the include closure of each .cu there (src/ops/common/mma.cuh,
+    ...). A change to any of them can change a route's time."""
+    out = set()
+    for f in repo.files:
+        if f.startswith(KERNEL_DIR) and f.endswith((".cu", ".cuh")):
+            out.add(f)
+            if f.endswith(".cu"):
+                out |= repo.include_closure(f)
+    return out
+
+
+def boards_of_classification(res, boards):
+    """(boards, why) of one path's affected_arches.classify result. "all", and host code (the
+    selector runs on the host for every board), name every board; only an arch-guarded answer
+    narrows them."""
+    if res["all"] or not res["arches"]:
+        why = "affected_arches.py: all" if res["all"] else \
+            "affected_arches.py: host code, which every board's selector runs"
+        return sorted(boards), why
+    arches = set(res["arches"])
+    hit = sorted(b for b, v in boards.items() if v["arch"] in arches or v["arch"] is None)
+    return hit, "affected_arches.py: " + ", ".join(a for a in aa.ARCHES if a in arches)
+
+
+def answer(changed, patterns, boards, table_text, classify_one, chips, kernels=()):
     """The verdict. changed: the paths of the range; patterns: load_patterns() of the trigger
     globs; table_text(path): a route table's text at the head or, deleted, at the base (None if
-    neither); arches_of(paths): affected_arches.classify's arches for paths."""
-    triggers = sorted(p for p in changed if any(rx.match(p) for _, rx in patterns))
+    neither); classify_one(path): affected_arches.classify's result for that path alone (one call
+    a path: a host file beside an arch-guarded one keeps its own answer); kernels: kernel_files()
+    at either end of the range."""
+    kernels = set(kernels)
+    triggers = sorted(p for p in changed
+                      if p in kernels or any(rx.match(p) for _, rx in patterns))
     why = {}
     other = []
     for p in triggers:
@@ -125,17 +158,10 @@ def answer(changed, patterns, boards, table_text, arches_of, chips):
         why[p] = "the sweep's grid: every board"
         for v in boards.values():
             v.setdefault("_by", []).append(p)
-    if other:
-        # Host-only (no arch) is still every board's decision: the selector is host code that
-        # runs on every board, so only an arch-guarded answer narrows the boards.
-        arches = set(arches_of(other))
-        for p in other:
-            why[p] = ("affected_arches.py: " + ", ".join(a for a in aa.ARCHES if a in arches)
-                      if arches else
-                      "affected_arches.py: host code, which every board's selector runs")
-        for b, v in boards.items():
-            if not arches or v["arch"] in arches or v["arch"] is None:
-                v.setdefault("_by", []).extend(other)
+    for p in other:
+        hit, why[p] = boards_of_classification(classify_one(p), boards)
+        for b in hit:
+            boards[b].setdefault("_by", []).append(p)
     due = {b: sorted(set(v.pop("_by"))) for b, v in sorted(boards.items()) if "_by" in v}
     return {"due": bool(due), "triggers": triggers, "boards": due, "reasons": why,
             "cards": {b: boards[b]["card"] for b in due}}
@@ -171,11 +197,14 @@ def main(argv=None):
             text = git_show(root, head, p)
             return text if text is not None else git_show(root, merge_base, p)
 
-        def arches_of(paths):
-            repo = aa.Repo(root, ref=head)
-            return aa.classify(paths, repo, base=aa.Repo(root, ref=merge_base))["arches"]
+        head_repo = aa.Repo(root, ref=head)
+        base_repo = aa.Repo(root, ref=merge_base)
 
-        res = answer(changed, patterns, boards, table_text, arches_of, chips)
+        def classify_one(p):
+            return aa.classify([p], head_repo, base=base_repo)
+
+        kernels = kernel_files(head_repo) | kernel_files(base_repo)
+        res = answer(changed, patterns, boards, table_text, classify_one, chips, kernels)
     except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
         print(f"regret_due: {error}", file=sys.stderr)
         return 2

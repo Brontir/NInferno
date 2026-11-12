@@ -287,7 +287,17 @@ per-case CSVs stay on the stands (`docs/maintainer/sweep-archive.md`).
 ## The regret job
 
 `tools/bench/regret_job.sh BUILD_DIR [OUT_DIR]` (#620 step 10) runs the sweep above on one board,
-with the GPU idle, from the checkout the build was made of. It takes about 25 minutes on a lab board.
+with the GPU idle. It takes about 25 minutes on a lab board.
+
+**The build must be fresh from this checkout.** A build records no revision of its own, so the job
+ties the build to the checkout in two ways and refuses it otherwise:
+- `CMAKE_HOME_DIRECTORY` in its `CMakeCache.txt` must be this checkout;
+- `ninja -n` must have no work left for the job's three targets (`ninferno-serve`,
+  `ninferno_linear_generic_test`, `ninferno_route_classes_test`).
+
+The report's `revision` is then the checkout's HEAD. `nvcc` is the version of the CUDA compiler
+the cache names. When the cache names none, `nvcc` is `unknown`: the job never reads the `nvcc`
+on PATH, which can be another toolkit than the build's (a 13.x on PATH beside a 12.8 sm_70 build).
 
 1. **Qualify.** ctest in `BUILD_DIR` runs `ninferno_linear_generic_test` (with
    `NINFERNO_TEST_FORMATS` set to the formats of the grid) and `ninferno_route_classes_test`. Both
@@ -298,18 +308,23 @@ with the GPU idle, from the checkout the build was made of. It takes about 25 mi
    when `ROUTE_POLICY` is set.
 3. **Score.** `regret_collect.py --pci-id` (the board label and card name come from the card's PCI id
    in `gpu_facts.json`), then `selection_regret.py` and `regret_bands.py --doc`.
-4. **Report.** `regret_report.py build` writes `OUT_DIR/<YYYYMMDD>-<rev12>.json` and a `.md` summary.
-   The maintainer commits the JSON as `tools/bench/data/route_regret/runs/<board>/<YYYYMMDD>-<rev12>.json`;
+4. **Report.** `regret_report.py build` writes `OUT_DIR/<stamp>-<rev12>.json` and a `.md` summary.
+   `<stamp>` is the report's UTC date, `YYYYMMDDTHHMMSSZ`, so the file names sort by time. The
+   maintainer commits the JSON as `tools/bench/data/route_regret/runs/<board>/<stamp>-<rev12>.json`;
    the per-case CSVs stay on the stand.
 
-The job refuses to start if another compute process is on the card. It does not lock the card,
-so on a stand with a job queue it goes through the queue like any other GPU job.
+The job refuses to start if another compute process is on the card. That check is a snapshot at
+the start only: the job takes no lock. On a stand it runs through the stand's own queue lock, which
+keeps other GPU work off the card for the whole run. During the passes it samples the SM clock once
+a second.
 
 **The report, `ninferno-regret-run/1`.** `regret_report.py check FILE...` validates it.
 - **Provenance:** `revision` (the checkout's HEAD, `-dirty` with uncommitted edits), `board`,
-  `card`, `device` (route_tune's class id), `pci_device_id`, `date` (UTC), `nvcc` (the build's CUDA
-  compiler), `driver`, `gpu` (name, max SM clock, power limit), `qualification` and `sweep` (grid
-  file and its sha256, passes, samples, route policy).
+  `card`, `device` (route_tune's class id), `pci_device_id`, `date` (UTC), `nvcc` and
+  `nvcc_source` (`CMAKE_CUDA_COMPILER`, or `none` with `nvcc` `unknown`), `driver`, `qualification`
+  and `sweep` (grid file and its sha256, passes, samples, route policy).
+- **`gpu`:** name, power limit, max SM clock, application graphics clock, persistence mode, and
+  the SM clock sampled during the sweep (`min`, `max`, `samples`).
 - **Scores:** `summary` (selection_regret's `by_board` row), `by_board_regime_authority` (this
   board's groups) and `bands` (regret_bands' `overall`, the production pick).
 - **Table exit:** `table_exit` is the metric of #616 step 9. `overrides` holds the case ids behind
@@ -317,6 +332,10 @@ so on a stand with a job queue it goes through the queue like any other GPU job.
   the metric.
 - **`delta`:** a comparison with the board's previous committed report, which is the newest
   `runs/<board>/*.json` at HEAD, else the A5 summary `<board>.json`.
+  - `sweep_matches` says whether both runs swept the same grid (sha256), samples, passes and route
+    policy: `true`, `false`, or `unknown` against an A5 summary, which does not record them. When
+    it is not `true`, the moves are not the selector's alone, and the `.md` labels them not
+    comparable.
   - The figures compared, all as slowdown factors:
     - per regime x authority group and for the board: the geomean and the p95;
     - per band: the time-weighted factor.
@@ -335,14 +354,16 @@ the threshold is not read as a change.
 - **After a merge:** `tools/audit/regret_due.py OLD..NEW` exits 0 when the range touches any of:
   - a decision-path file (`tools/audit/decision_paths.txt`, the golden gate's list);
   - the grid (`shapes.txt`);
-  - a kernel source under `src/ops/generic` (`.cu`, `.cuh`).
+  - a route kernel: a `.cu` or `.cuh` under `src/ops/generic`, or any file a `.cu` there includes,
+    transitively (`src/ops/common/mma.cuh`, ...), at either end of the range.
 
   It also names the boards:
   - a route table (`routes/<class>.json`) moves only the boards of its own compute capability;
     a table of an architecture no lab board has moves the boards of its major, since a sibling
     minor may borrow it;
   - the grid moves every board;
-  - any other file is read by `affected_arches.py`. An arch-guarded file names its arch's boards;
+  - any other file is read by `affected_arches.py`, each file on its own. An arch-guarded file
+    names its arch's boards;
     every other answer, host code included (the selector runs on the host for every board), names
     every board.
 
