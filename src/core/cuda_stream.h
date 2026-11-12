@@ -7,6 +7,7 @@
 #ifdef NINFERNO_HOST_ONLY
 struct CUstream_st;
 using cudaStream_t = CUstream_st*;
+struct dim3; // launch-shape parameters in declarations (complete only in CUDA builds)
 #else
 #    include <cuda_runtime.h>
 #endif

@@ -83,6 +83,9 @@ bool rmma_add_sums();
 
 int spread_smem(Route route, WeightCodec codec, Epilogue epilogue, const GemmArgs& args);
 
+// Whether the current device launches with programmatic dependent launch (pdl_prefetch).
+bool pdl_device();
+
 // The formats the producer-warp W4A8 tile is compiled for (w4a8_ws_compiled, generic_w4a8.cuh).
 bool w4a8_ws_supports(QType q);
 

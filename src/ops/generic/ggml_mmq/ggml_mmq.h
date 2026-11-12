@@ -8,8 +8,15 @@
 
 #include "core/format_facts.h"
 
-#include <cuda_bf16.h>
-#include <cuda_runtime.h>
+#ifdef NINFERNO_HOST_ONLY
+// The declarations below name a stream and a bf16 pointer only (#620): no runtime for the selector.
+#    include "core/cuda_stream.h"
+struct __nv_bfloat16;
+struct dim3;
+#else
+#    include <cuda_bf16.h>
+#    include <cuda_runtime.h>
+#endif
 
 #include <cstddef>
 #include <cstdint>
@@ -37,6 +44,16 @@ struct Planes {
 // (MMQ_ITER_K), so a hidden size of 5376 (Gemma 4 31B), 2816 or 3840 takes the kernel too.
 inline constexpr int kRowMultiple = 128;
 inline constexpr int kKMultiple   = 256;
+
+// ggml's q8_1 tile in the sizes the functions below add up: QK8_1_MMQ values to a block of
+// sizeof(block_q8_1_mmq) bytes, and a half2 (ggml_mmq.cu and ggml_vec.cu assert each against ggml's
+// own, so that ggml_mmq_host.cpp needs no ggml or CUDA header).
+inline constexpr int kQ8MmqValues             = 128;
+inline constexpr std::size_t kQ8MmqBlockBytes = 144;
+inline constexpr std::size_t kHalf2Bytes      = 4;
+
+// ggml's activation slack: the kernel over-reads up to one widest column tile past the end.
+inline constexpr std::size_t kActivationSlack = 128 * kQ8MmqBlockBytes;
 
 // The activation: ggml's q8_1 tiles for `columns` tokens of K values (with ggml's over-read slack).
 [[nodiscard]] std::size_t activation_bytes(int k, int columns);
@@ -123,6 +140,11 @@ struct VecOut {
 [[nodiscard]] bool vec_supported(Type type);
 // The planar activation of `columns` tokens of K values (K whole 256-value blocks).
 [[nodiscard]] std::size_t vec_activation_bytes(int k, int columns);
+
+// Where the planar activation's scales start: its codes, rounded up to 16 bytes.
+inline std::size_t vec_scales_offset(int k, int columns) {
+    return (std::size_t(k) * columns + 15) / 16 * 16;
+}
 void vec_quantize_activation(const __nv_bfloat16* x, int ldx, int k, int columns, void* out,
                              cudaStream_t stream);
 // Which instance of the 4-column runtime-K plain kernel a launch takes: Auto lets the launch choose

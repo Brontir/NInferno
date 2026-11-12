@@ -39,6 +39,8 @@ src/core/device_class.*
 src/core/device_class_host.*
 src/core/arch_registry.h
 src/core/generation.*
+# the occupancy rule of the register-MMA variants (generic_rmma_describe.cpp) counts resident CTAs
+src/core/kernel_occupancy.*
 src/ops/generic/data/kernel_facts/**
 # headers the selector sources compile in (checked by tests/test_golden_gate.py: every file in
 # their include closure is listed here or named there as not deciding)

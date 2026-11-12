@@ -19,23 +19,11 @@ bool ggml_mmq_call(const Weight& w, LinearPolicy policy, std::int32_t rows, std:
     return mmq_call(w, policy, rows, tokens);
 }
 
-bool ggml_mmq_format(QType qtype) {
-    Weight probe;
-    probe.qtype     = qtype;
-    const auto type = mmq_type(probe);
-    return type && ggml_mmq::matrix_supported(*type);
-}
 
 std::size_t ggml_mmq_workspace_bytes(std::int32_t k, std::int32_t plane_rows, std::int32_t tokens) {
     return mmq_workspace_bytes(k, plane_rows, tokens);
 }
 
-bool ggml_vec_format(QType qtype) {
-    Weight probe;
-    probe.qtype     = qtype;
-    const auto type = mmq_type(probe);
-    return type && ggml_mmq::vec_supported(*type);
-}
 
 std::size_t ggml_vec_workspace_bytes(std::int32_t k, std::int32_t tokens) {
     return vec_workspace_bytes(k, tokens);
