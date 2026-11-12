@@ -158,7 +158,7 @@ std::optional<product::GgufTensorTable> hub_tensor_table(const std::string& spec
                 convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
                                          head.bytes.size(), head.size, head.path);
             // A split part's head: read, no whole table (no tensor bytes: the rows above are
-            // read), at most its banks' prefill route.
+            // read), at most its banks' prefill route and its tensors' formats.
             return product::gguf_tensor_table(product::plan_facts_of_gguf(file, head.size))
                 .value_or(product::GgufTensorTable{});
         } catch (const convert::GgufTruncated&) {

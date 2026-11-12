@@ -1,0 +1,8 @@
+bf16 256x2048 not packed: row-split test packer: unsupported qtype
+bf16 1024x4096 not packed: row-split test packer: unsupported qtype
+bf16 2048x1024 not packed: row-split test packer: unsupported qtype
+bf16 4096x4096 not packed: row-split test packer: unsupported qtype
+bf16 6144x5120 not packed: row-split test packer: unsupported qtype
+bf16 17408x5120 not packed: row-split test packer: unsupported qtype
+bf16 5120x17408 not packed: row-split test packer: unsupported qtype
+bf16 28672x8192 not packed: row-split test packer: unsupported qtype

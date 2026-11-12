@@ -3,13 +3,18 @@
 // with the kernels, holds every row equal to the constants its codec struct is compiled with
 // (generic_w4a8.cuh codec_traits<C>). A change to a codec's kMin, kHalfMin, kSpan, kGridWords or
 // kBytes fails the build here until the row follows; no code is emitted.
+//
+// It also holds the launch lists (compiled_codecs.h) to one another: every R8 and producer-warp
+// entry names the codec struct of its codec's W4A8 entry, and w4a8_ws_compiled<C> (the template
+// the W4A8 launch switch reads) is true for exactly the producer-warp list's codecs.
 #include "ops/generic/codec_traits.h"
 
-#include "ops/generic/format_traits.h"
+#include "ops/generic/compiled_codecs.h"
 #include "ops/generic/generic_w4a8.cuh"
 
 #include <array>
 #include <cstddef>
+#include <type_traits>
 
 namespace ninferno::ops::detail::generic {
 namespace {
@@ -22,38 +27,40 @@ constexpr WeightCodec proven() {
     return W;
 }
 
-// One line per codec a format runs as in the launch files (generic_w4a8_*.cu, generic_r8*.cu).
-constexpr std::array kRows{
-    proven<W4a8Q8, WeightCodec::Q8>(),
-    proven<W4a8G64<4>, WeightCodec::Q4>(),
-    proven<W4a8G64<5>, WeightCodec::Q5>(),
-    proven<W4a8G64<6>, WeightCodec::Q6>(),
-    proven<W4a8U4Zp, WeightCodec::U4Zp>(),
-    proven<W4a8U4ZpG32, WeightCodec::U4ZpG32>(),
-    proven<W4a8U4ZpG64, WeightCodec::U4ZpG64>(),
-    proven<W4a8Q3<128>, WeightCodec::Q3G128>(),
-    proven<W4a8Q3<64>, WeightCodec::Q3G64>(),
-    proven<W4a8Ggml32<Ggml32::Q4_0>, WeightCodec::GgmlQ40>(),
-    proven<W4a8Ggml32<Ggml32::Q4_1>, WeightCodec::GgmlQ41>(),
-    proven<W4a8Ggml32<Ggml32::Q5_0>, WeightCodec::GgmlQ50>(),
-    proven<W4a8Ggml32<Ggml32::Q5_1>, WeightCodec::GgmlQ51>(),
-    proven<W4a8Ggml32<Ggml32::IQ4_NL>, WeightCodec::GgmlIq4Nl>(),
-    proven<W4a8Iq4Xs, WeightCodec::GgmlIq4Xs>(),
-    proven<W4a8Mxfp4, WeightCodec::Mxfp4>(),
-    proven<W4a8Nvfp4, WeightCodec::Nvfp4>(),
-    proven<W4a8Q45K<4>, WeightCodec::GgmlQ4K>(),
-    proven<W4a8Q45K<5>, WeightCodec::GgmlQ5K>(),
-    proven<W4a8Q6K, WeightCodec::GgmlQ6K>(),
-    proven<W4a8Q3K, WeightCodec::GgmlQ3K>(),
-    proven<W4a8Q2K, WeightCodec::GgmlQ2K>(),
-    proven<W4a8Iq3Xxs, WeightCodec::GgmlIq3Xxs>(),
-    proven<W4a8Iq3S, WeightCodec::GgmlIq3S>(),
-    proven<W4a8Iq2Xxs, WeightCodec::GgmlIq2Xxs>(),
-    proven<W4a8Iq2Xs, WeightCodec::GgmlIq2Xs>(),
-    proven<W4a8Iq2S, WeightCodec::GgmlIq2S>(),
-    proven<W4a8Iq1S, WeightCodec::GgmlIq1S>(),
-    proven<W4a8Iq1M, WeightCodec::GgmlIq1M>(),
-};
+// One line per codec of the W4A8 launch files (generic_w4a8_*.cu); the R8 lists name the same
+// structs (below).
+#define NINFERNO_PROVEN_ROW(CODEC, TYPE) proven<TYPE, WeightCodec::CODEC>(),
+constexpr std::array kRows{NINFERNO_W4A8_CODECS(NINFERNO_PROVEN_ROW)};
+#undef NINFERNO_PROVEN_ROW
+
+// The codec struct each W4A8 entry instantiates, by codec.
+template <WeightCodec W>
+struct W4a8StructOf {};
+
+#define NINFERNO_W4A8_STRUCT_OF(CODEC, TYPE)                                                       \
+    template <>                                                                                    \
+    struct W4a8StructOf<WeightCodec::CODEC> {                                                      \
+        using type = TYPE;                                                                         \
+    };
+NINFERNO_W4A8_CODECS(NINFERNO_W4A8_STRUCT_OF)
+#undef NINFERNO_W4A8_STRUCT_OF
+
+// An R8 or producer-warp entry's struct is its codec's W4A8 struct (a codec with no W4A8 entry
+// fails here: W4a8StructOf has no `type`).
+#define NINFERNO_SAME_STRUCT(CODEC, TYPE, ...)                                                     \
+    static_assert(std::is_same_v<TYPE, typename W4a8StructOf<WeightCodec::CODEC>::type>,           \
+                  "compiled_codecs.h: " #CODEC "'s entry names another struct than its W4A8 one");
+NINFERNO_R8_CODECS(NINFERNO_SAME_STRUCT)
+NINFERNO_W4A8_WS_CODECS(NINFERNO_SAME_STRUCT)
+#undef NINFERNO_SAME_STRUCT
+
+// w4a8_ws_compiled<C>, the launch's test, against the list w4a8_ws_supports reads.
+#define NINFERNO_WS_AGREES(CODEC, TYPE)                                                            \
+    static_assert(w4a8_ws_compiled<TYPE>() == compiled(Variant::W4a8Ws, WeightCodec::CODEC),       \
+                  "generic_w4a8.cuh: w4a8_ws_compiled disagrees with NINFERNO_W4A8_WS_CODECS "     \
+                  "for " #CODEC);
+NINFERNO_W4A8_CODECS(NINFERNO_WS_AGREES)
+#undef NINFERNO_WS_AGREES
 
 constexpr bool proven_here(WeightCodec codec) {
     for (WeightCodec c : kRows) {
@@ -73,19 +80,20 @@ constexpr bool each_codec_once() {
 
 static_assert(each_codec_once());
 
-// Every format the generic path may run as W4A8 or R8 (format_traits.h) has its codec proven
-// here: a codec added to a launch list and missed in codec_traits.h would read the default row,
-// and r8_fits would size its shared memory short.
-constexpr bool every_w4a8_r8_format_proven() {
-    for (const FormatTraits& t : kFormatTraits) {
-        if (t.w4a8 == Support::No && t.r8 == Support::No) continue;
-        const auto codec = format_facts(t.q).codec;
-        if (!codec || !proven_here(*codec)) return false;
+// Every codec the generic path may run as W4A8 or R8 (compiled_codecs.h) is proven here: a codec
+// added to a launch list and missed in codec_traits.h would read the default row, and r8_fits
+// would size its shared memory short.
+constexpr bool every_w4a8_r8_codec_proven() {
+    for (WeightCodec c : kCompiledW4a8Codecs) {
+        if (!proven_here(c)) return false;
+    }
+    for (const R8CompiledCodec& e : kCompiledR8Codecs) {
+        if (!proven_here(e.codec)) return false;
     }
     return true;
 }
 
-static_assert(every_w4a8_r8_format_proven());
+static_assert(every_w4a8_r8_codec_proven());
 
 // A codec with no codec struct here has the default row: codec_traits.h states nothing a kernel
 // does not hold.
