@@ -2237,6 +2237,42 @@ void test_moe_routes() {
     check(!single.moe() && !single.moe_route_unqueried, "MoE routes: a dense model is not marked");
 }
 
+// The plan JSON's `speed_why` (ninferno-dry-plan/1): in the choice's ESTIMATES (choice_json) and a
+// quantization row's `estimate` (quant_plan_json) where a rule names a reason, absent otherwise.
+void test_speed_why_json() {
+    namespace ch = ninferno::product::choice;
+    for (const bool named : {false, true}) {
+        ch::Speed speed;
+        speed.decode_per_stream = 100;
+        speed.prefill           = 1000;
+        speed.basis             = named ? ch::SpeedBasis::Transferred : ch::SpeedBasis::Own;
+        speed.transferred       = named;
+        if (named) { speed.why = "MoE route not queried"; }
+        pr::ServedChoice served;
+        ch::Scored s;
+        s.speed = speed;
+        served.choice.scored.push_back(s);
+        served.choice.chosen        = 0;
+        const nlohmann::json choice = pr::choice_json(served);
+        pr::QuantPlan plan;
+        pr::QuantRow row;
+        row.estimate = speed;
+        plan.rows.push_back(row);
+        const nlohmann::json quants = pr::quant_plan_json(plan);
+        const std::string at        = named ? "named" : "none";
+        const auto& chosen          = choice.at("chosen");
+        const auto& estimate        = quants.at("quants").at(0).at("estimate");
+        if (named) {
+            check(chosen.value("speed_why", "") == "MoE route not queried" &&
+                      estimate.value("speed_why", "") == "MoE route not queried",
+                  "speed_why: in the choice's and the row's estimates (" + at + ")");
+        } else {
+            check(!chosen.contains("speed_why") && !estimate.contains("speed_why"),
+                  "speed_why: absent without a reason (" + at + ")");
+        }
+    }
+}
+
 int main() {
     // The plan's mechanics on the published profiles: the registry without the lab's measured
     // pairs (test_spec_pairs tests those), so a campaign's new pairs move none of these checks
@@ -2266,6 +2302,7 @@ int main() {
     test_kv_options();
     test_plan_now();
     test_moe_routes();
+    test_speed_why_json();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

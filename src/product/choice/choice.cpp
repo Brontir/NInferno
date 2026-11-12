@@ -1462,6 +1462,9 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
                       : transferred || prefill_transferred        ? SpeedBasis::Transferred
                                                                   : SpeedBasis::Own;
     out.transferred = out.basis != SpeedBasis::Own;
+    // A lent generation's estimate rests on another generation's rows whatever the route: the
+    // lent row is its reason, not the MoE step's.
+    if (out.basis != SpeedBasis::Transferred) { out.why = {}; }
     return out;
 }
 

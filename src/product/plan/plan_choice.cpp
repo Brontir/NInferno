@@ -56,7 +56,7 @@ Json estimates_json(const choice::Scored& s) {
                 {"kld_terms", terms},
                 {"worth", round_to(s.worth, 4)}};
     // Why the speed is Transferred where a rule names it ("MoE route not queried", #766).
-    if (!s.speed.why.empty()) { out["speed_why"] = s.speed.why; }
+    if (!s.speed.why.empty()) { out["speed_why"] = std::string(s.speed.why); }
     return out;
 }
 
