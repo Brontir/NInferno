@@ -1810,21 +1810,27 @@ void moe_with_plan(const Tensor& x, const MoeWeights& w, const MoeConfig& c,
     run(x, w, c, epilogue, out, workspace, stream, p, router_input);
 }
 
+std::int32_t moe_split_tokens(const MoeWeights& w, const MoeConfig& c, std::int32_t t) {
+    // Without tensor mma.sync (Volta's build) the register-MMA stages run on FP32 FMAs, and R8
+    // stops at r8_token_limit(): a verify step of 5..16 tokens runs as calls of at most four, each
+    // on its own plan, where four tokens take R8 (V100, Gemma 4 26B experts, tuned: R8 at T = 4
+    // 214 us against the register MMA's 1535 at T = 5). R8 sums a token the same way at every T,
+    // so a column's bytes are those of plain decode.
+    const std::int32_t r8_tokens = r8_token_limit(w.gate_up);
+    const bool split = !build_features().mma_tensor && t > r8_tokens && t < kMoeBandEdgeTokens &&
+                       !prefill_routes_active() && !invariant_routes_active() &&
+                       select_plan(w, c, r8_tokens, false).gate_up_r8 >= 0;
+    return split ? r8_tokens : 0;
+}
+
 } // namespace detail::moe
 
 void moe(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue epilogue,
          Tensor& out, WorkspaceArena& workspace, cudaStream_t stream,
          const Tensor* router_input) {
     const std::int32_t t = x.ne[1];
-    // Without tensor mma.sync (Volta's build) the register-MMA stages run on FP32 FMAs, and R8
-    // stops at r8_token_limit(): a verify step of 5..16 tokens runs as calls of at most four, each
-    // on its own plan, where four tokens take R8 (V100, Gemma 4 26B experts, tuned: R8 at T = 4
-    // 214 us against the register MMA's 1535 at T = 5). R8 sums a token the same way at every T,
-    // so a column's bytes are those of plain decode.
-    const std::int32_t r8_tokens = detail::moe::r8_token_limit(w.gate_up);
-    if (!build_features().mma_tensor && t > r8_tokens && t < detail::moe::kMoeBandEdgeTokens &&
-        !prefill_routes_active() && !invariant_routes_active() &&
-        detail::moe::select_plan(w, c, r8_tokens, false).gate_up_r8 >= 0) {
+    // Volta's build: calls of at most the R8 limit, each on its own plan (moe_split_tokens).
+    if (const std::int32_t r8_tokens = detail::moe::moe_split_tokens(w, c, t); r8_tokens > 0) {
         for (std::int32_t begin = 0; begin < t; begin += r8_tokens) {
             const std::int32_t n = std::min(r8_tokens, t - begin);
             const Tensor xs      = x.slice(1, begin, n);

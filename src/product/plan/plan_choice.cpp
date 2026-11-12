@@ -9,7 +9,11 @@
 
 #include <algorithm>
 #include <limits>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <set>
+#include <utility>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
@@ -238,6 +242,74 @@ choice::CardFacts choice_card_of(const spec::GpuKey& gpu) {
     return out;
 }
 
+namespace {
+
+// The op's stage kernel (ops/moe MoeStageKernel, as the registered query hands it on) as the
+// choice's table names it.
+choice::ExpertKernel expert_kernel_of(runtime::PlanExpertKernel kernel) noexcept {
+    switch (kernel) {
+    case runtime::PlanExpertKernel::Unknown:
+        return choice::ExpertKernel::Unknown;
+    case runtime::PlanExpertKernel::R8:
+        return choice::ExpertKernel::R8;
+    case runtime::PlanExpertKernel::RegisterMma:
+        return choice::ExpertKernel::RegisterMma;
+    case runtime::PlanExpertKernel::W4a8:
+        return choice::ExpertKernel::W4a8;
+    case runtime::PlanExpertKernel::VoltaHmma:
+        return choice::ExpertKernel::VoltaHmma;
+    }
+    return choice::ExpertKernel::Unknown;
+}
+
+} // namespace
+
+void with_moe_routes(choice::ModelFacts& model, const PlanSourceFacts& facts,
+                     const runtime::PlanDeviceFacts& device) {
+    const runtime::PlanMoeRouteQuery& query = runtime::plan_moe_route_query();
+    if (!query || !model.moe() || facts.model.expert_layers.empty()) { return; }
+    // What the query reads of the model: its routed layers and their geometry.
+    runtime::PlanModelFacts layers;
+    layers.experts       = facts.model.experts;
+    layers.experts_used  = facts.model.experts_used;
+    layers.hidden        = facts.model.hidden;
+    layers.expert_layers = facts.model.expert_layers;
+
+    struct Answers {
+        std::mutex mutex;
+        std::map<std::pair<std::uint32_t, ActivationMode>, std::vector<choice::MoeStepRoute>> at;
+    };
+
+    auto answers     = std::make_shared<Answers>();
+    model.moe_routes = [query, layers = std::move(layers), device,
+                        answers](std::uint32_t rows, ActivationMode activations) {
+        const std::lock_guard<std::mutex> lock(answers->mutex);
+        if (const auto it = answers->at.find({rows, activations}); it != answers->at.end()) {
+            return it->second;
+        }
+        std::vector<choice::MoeStepRoute> out;
+        for (const runtime::PlanExpertLayers& kind : layers.expert_layers) {
+            choice::MoeStepRoute step;
+            step.share = static_cast<double>(kind.bytes);
+            if (const auto route = query(device, layers, kind, rows, activations)) {
+                step.gate_up = expert_kernel_of(route->gate_up);
+                step.down    = expert_kernel_of(route->down);
+            }
+            const auto same =
+                std::find_if(out.begin(), out.end(), [&](const choice::MoeStepRoute& s) {
+                    return s.gate_up == step.gate_up && s.down == step.down;
+                });
+            if (same != out.end()) {
+                same->share += step.share;
+            } else {
+                out.push_back(step);
+            }
+        }
+        answers->at.emplace(std::pair{rows, activations}, out);
+        return out;
+    };
+}
+
 DryRunInputs inputs_with(const DryRunInputs& inputs, const choice::Candidate& c) {
     DryRunInputs out                        = inputs;
     out.options.kv_cache                    = c.kv;
@@ -310,6 +382,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     idle.device.free_bytes.reset();
     ServedChoice out;
     choice::ModelFacts model       = choice_model_of(facts);
+    with_moe_routes(model, facts, inputs.device);
     const choice::CardFacts card   = choice_card_of(inputs.gpu);
     const choice::QuantOption quant = quant_option_of(facts, label);
     out.quant = quant;

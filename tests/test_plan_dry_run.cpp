@@ -4,7 +4,10 @@
 // family table agrees with the Engine's, ninferno-ui's launch options are ninferno-serve's, and
 // the speculation report follows the start's order. CPU, no network, no GPU.
 
+#include "artifact/formats.h"
 #include "convert/drafters.h"
+#include "core/device_class.h"
+#include "core/weight_view.h"
 #include "product/plan/plan_cached.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
@@ -13,6 +16,7 @@
 #include "runtime/engine/family_registry.h"
 #include "runtime/engine/kv_capacity.h"
 #include "runtime/engine/plan_dry_run.h"
+#include "runtime/engine/plan_moe_routes.h"
 #include "runtime/engine/quant_rule.h"
 #include "runtime/engine/plan_ladder.h"
 #include "serve/generation_service.h"
@@ -2121,6 +2125,112 @@ void test_plan_now() {
           "the start's own context counted");
 }
 
+// The MoE step's routes on a planned board (#616 step 7): the registered query is the op's own
+// (ops/moe moe_route_query on the board's class), asked per routed kind and rows, the answers by
+// the kinds' bytes. gpt-oss-20b's MXFP4 banks (E32 k4 H2880 F2880) on the RTX 4090: R8 on the
+// gate/up over the register-MMA down at four rows, both stages on the register MMA from five
+// (the FP4-element banks keep R8 to four tokens: moe.cpp r8_fp4_elements), and the invariant
+// profile's register MMA under --activations exact; a kind not read whole has no answer.
+void test_moe_routes() {
+    rt::register_plan_moe_route_query();
+    pr::PlanSourceFacts f;
+    f.model.experts              = 32;
+    f.model.experts_used         = 4;
+    f.model.hidden               = 2880;
+    f.shape.experts              = 32;
+    f.shape.experts_per_token    = 4;
+    f.shape.routed_expert_params = 19e9;
+    f.model.params               = 21e9;
+    const std::string mx_layout  = std::string(
+        ninferno::artifact::layout_name(ninferno::default_weight_layout(ninferno::QType::MXFP4)));
+    rt::PlanExpertLayers mx;
+    mx.gate_up_format = mx.down_format = "mxfp4";
+    mx.gate_up_layout = mx.down_layout = mx_layout;
+    mx.gate_up_k = mx.down_k = 2880;
+    mx.policy                = rt::PlanExpertPolicy::AllowA8;
+    mx.layers                = 24;
+    mx.bytes                 = 3000;
+    rt::PlanExpertLayers unread;
+    unread.layers = 1;
+    unread.bytes  = 1000;
+    // The same banks with no recorded policy: the query is not answered (no guess at the policy).
+    rt::PlanExpertLayers unrecorded = mx;
+    unrecorded.policy               = rt::PlanExpertPolicy::Unknown;
+    unrecorded.layers               = 1;
+    unrecorded.bytes                = 500;
+    f.model.expert_layers           = {mx, unread, unrecorded};
+    rt::PlanDeviceFacts device;
+    device.name                                 = "RTX 4090";
+    device.compute_capability                   = 89;
+    device.pci_device_id                        = 0x2684;
+    device.sms                                  = 128;
+    device.total_bytes                          = 24 * kGiB;
+    ninferno::product::choice::ModelFacts model = pr::choice_model_of(f);
+    pr::with_moe_routes(model, f, device);
+    check(static_cast<bool>(model.moe_routes), "MoE routes: asked where a query is registered");
+    if (model.moe_routes) {
+        using K        = ninferno::product::choice::ExpertKernel;
+        const auto has = [&](std::uint32_t rows, ninferno::ActivationMode a, K gate_up, K down,
+                             double share) {
+            for (const auto& r : model.moe_routes(rows, a)) {
+                if (r.gate_up == gate_up && r.down == down && r.share == share) { return true; }
+            }
+            return false;
+        };
+        const auto fast  = ninferno::ActivationMode::Fast;
+        const auto exact = ninferno::ActivationMode::Exact;
+        const auto int8  = ninferno::ActivationMode::Int8;
+        check(has(4, fast, K::Unknown, K::Unknown, 1500),
+              "MoE routes: a kind not read whole and a kind of no recorded policy, unknown");
+        // Under exact and int8 the start runs the experts at A16 / AllowA8 whatever was recorded
+        // (models::effective_policy): the kind of no recorded policy is answered there.
+        check(has(2, int8, K::Unknown, K::Unknown, 1000) &&
+                  has(2, exact, K::Unknown, K::Unknown, 1000),
+              "MoE routes: under exact and int8 only the kind not read whole unknown");
+        // A build without tensor mma.sync (Volta's) runs other kernels (moe_split_tokens).
+        if (ninferno::build_features().mma_tensor) {
+            check(has(4, fast, K::R8, K::RegisterMma, 3000),
+                  "MoE routes: MXFP4 at four rows, R8 on the gate/up");
+            check(has(8, fast, K::RegisterMma, K::RegisterMma, 3000),
+                  "MoE routes: MXFP4 at eight rows, the register MMA");
+            check(has(2, exact, K::RegisterMma, K::RegisterMma, 3500),
+                  "MoE routes: exact activations, the invariant profile");
+            check(has(4, int8, K::R8, K::RegisterMma, 3500),
+                  "MoE routes: int8 activations, AllowA8 whatever was recorded");
+        }
+    }
+    // BF16 banks (a GGUF's F16 experts, kept as bf16: plan_facts' floating-point weight banks):
+    // asked too, and not on the measured pair (R8 over the register MMA) at four rows.
+    {
+        pr::PlanSourceFacts fb = f;
+        rt::PlanExpertLayers bf;
+        bf.gate_up_format = bf.down_format = "bf16";
+        bf.gate_up_layout = bf.down_layout = std::string(ninferno::artifact::layout_name(
+            ninferno::default_weight_layout(ninferno::QType::BF16)));
+        bf.gate_up_k = bf.down_k                = 2880;
+        bf.policy                               = rt::PlanExpertPolicy::A16Only;
+        bf.layers                               = 24;
+        bf.bytes                                = 700;
+        fb.model.expert_layers                  = {bf};
+        ninferno::product::choice::ModelFacts m = pr::choice_model_of(fb);
+        pr::with_moe_routes(m, fb, device);
+        check(static_cast<bool>(m.moe_routes), "MoE routes: BF16 banks asked");
+        if (m.moe_routes) {
+            const auto routes = m.moe_routes(4, ninferno::ActivationMode::Fast);
+            const bool measured =
+                routes.size() == 1 &&
+                routes[0].gate_up == ninferno::product::choice::ExpertKernel::R8 &&
+                routes[0].down == ninferno::product::choice::ExpertKernel::RegisterMma;
+            check(routes.size() == 1 && routes[0].share == 700 && !measured,
+                  "MoE routes: BF16 banks at four rows, not the measured pair");
+        }
+    }
+    rt::set_plan_moe_route_query({});
+    ninferno::product::choice::ModelFacts unasked = pr::choice_model_of(f);
+    pr::with_moe_routes(unasked, f, device);
+    check(!unasked.moe_routes, "MoE routes: not asked without a query");
+}
+
 int main() {
     // The plan's mechanics on the published profiles: the registry without the lab's measured
     // pairs (test_spec_pairs tests those), so a campaign's new pairs move none of these checks
@@ -2149,6 +2259,7 @@ int main() {
     test_cached_quants();
     test_kv_options();
     test_plan_now();
+    test_moe_routes();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;
