@@ -30,6 +30,7 @@
 #include "models/qwen3_5/program/planning/described_start.h"
 #include "ops/route_pins.h"
 #include "product/plan/plan_facts.h"
+#include "product/plan/plan_quants.h"
 #include "runtime/engine/plan_dry_run.h"
 #include "runtime/engine/plan_workspace.h"
 #include "core/weight_view.h"
@@ -733,6 +734,27 @@ void run(const Case& k) {
         ops::set_route_pins({});
         check(pinned.workspace_basis.find("--moe-path") != std::string::npos,
               k.name + ": a pinned MoE path keeps the formula (" + pinned.workspace_basis + ")");
+    }
+    // A quantization row of equal bytes (another packing of the same widths) is not the source
+    // file: it keeps no directory, so it is never planned with the source's forms; the row whose
+    // files are the source's keeps it (codex on #832).
+    {
+        product::PlanSourceFacts shape = product::plan_facts_of_directory(directory, k.name);
+        shape.shape.weights            = "digest:source";
+        product::QuantRow other;
+        other.weight_bytes    = shape.model.weight_bytes;
+        other.basis           = shape.model.weight_basis;
+        other.listing.weights = "digest:other";
+        check(product::row_facts(shape, other).model.artifact_directory == nullptr,
+              k.name + ": an equal-bytes row of other files has no directory");
+        product::QuantRow unknown = other;
+        unknown.listing.weights.clear();
+        check(product::row_facts(shape, unknown).model.artifact_directory == nullptr,
+              k.name + ": a row of unknown files has no directory");
+        product::QuantRow same = other;
+        same.listing.weights   = "digest:source";
+        check(product::row_facts(shape, same).model.artifact_directory != nullptr,
+              k.name + ": the source file's own row keeps its directory");
     }
     // The same facts without the directory: a config.json's or a GGUF header's.
     rt::PlanModelFacts bare = facts;
