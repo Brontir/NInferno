@@ -79,6 +79,12 @@ class AnswerTest(unittest.TestCase):
         self.assertEqual(len(res["boards"]), 4)
         self.assertEqual(calls, [])
 
+    def test_the_job_moves_every_board(self):
+        res, calls = run([due.JOB])
+        self.assertEqual(len(res["boards"]), 4)
+        self.assertEqual(calls, [])
+        self.assertIn("job", res["reasons"][due.JOB])
+
     def test_affected_arches_narrows_only_by_arch(self):
         res, _ = run(["src/ops/generic/generic_cost.cpp"], arches=["sm_89"])
         self.assertEqual(list(res["boards"]), ["rtx4090"])

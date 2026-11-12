@@ -9,7 +9,8 @@ Due when the range changes a file that can move a board's route regret:
   - a decision-path file: tools/audit/decision_paths.txt, the list at either end of the range and
     in this checkout (the golden gate's list: the route selector, its cost model, the route tables,
     the facts);
-  - the sweep's grid, tools/bench/data/route_regret/shapes.txt;
+  - the sweep's grid, tools/bench/data/route_regret/shapes.txt, or the job that runs it,
+    tools/bench/regret_job.sh (its passes, samples, qualification and route-tune flags);
   - a route kernel: a .cu or .cuh under src/ops/generic, or any file a .cu there includes,
     transitively (src/ops/common/mma.cuh, ...), at either end of the range: the routes' times
     are the regret's other half.
@@ -45,7 +46,9 @@ REPORTS = "tools/bench/data/route_regret"
 GPU_FACTS = "src/core/data/gpu_facts.json"
 # What moves the regret besides the decision paths.
 GRID = "tools/bench/data/route_regret/shapes.txt"
-EXTRA_PATTERNS = (GRID,)
+JOB = "tools/bench/regret_job.sh"  # defines the sweep: passes, samples, qualification, flags
+SWEEP = (GRID, JOB)
+EXTRA_PATTERNS = SWEEP
 KERNEL_DIR = "src/ops/generic/"  # the route kernels the sweep times (kernel_files)
 ROUTE_TABLE = re.compile(r"routes/[^/]+\.json\Z")
 # affected_arches' build sets by compute capability.
@@ -152,10 +155,11 @@ def answer(changed, patterns, boards, table_text, classify_one, chips, kernels=(
         hit, why[p] = table_boards(cc, boards)
         for b in hit:
             boards[b].setdefault("_by", []).append(p)
-    grid = [p for p in other if p == GRID]
-    other = [p for p in other if p != GRID]
+    grid = [p for p in other if p in SWEEP]
+    other = [p for p in other if p not in SWEEP]
     for p in grid:
-        why[p] = "the sweep's grid: every board"
+        why[p] = ("the sweep's grid: every board" if p == GRID
+                  else "the job that runs the sweep: every board")
         for v in boards.values():
             v.setdefault("_by", []).append(p)
     for p in other:

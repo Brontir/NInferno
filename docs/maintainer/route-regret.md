@@ -354,7 +354,8 @@ the threshold is not read as a change.
 **When it runs.**
 - **After a merge:** `tools/audit/regret_due.py OLD..NEW` exits 0 when the range touches any of:
   - a decision-path file (`tools/audit/decision_paths.txt`, the golden gate's list);
-  - the grid (`shapes.txt`);
+  - the grid (`shapes.txt`) or the job that runs it (`regret_job.sh`: its passes, samples,
+    qualification and route-tune flags);
   - a route kernel: a `.cu` or `.cuh` under `src/ops/generic`, or any file a `.cu` there includes,
     transitively (`src/ops/common/mma.cuh`, ...), at either end of the range.
 
@@ -362,7 +363,7 @@ the threshold is not read as a change.
   - a route table (`routes/<class>.json`) moves only the boards of its own compute capability;
     a table of an architecture no lab board has moves the boards of its major, since a sibling
     minor may borrow it;
-  - the grid moves every board;
+  - the grid and the job move every board;
   - any other file is read by `affected_arches.py`, each file on its own. An arch-guarded file
     names its arch's boards;
     every other answer, host code included (the selector runs on the host for every board), names
