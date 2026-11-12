@@ -104,6 +104,31 @@ class Scan(unittest.TestCase):
                 by = {f["path"]: f for f in sm.scan(root, "rtx4090")["files"]}
             self.assertIn("No such file", by["bom.csv"]["error"])
 
+    def test_odd_files_do_not_stop_the_scan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "good.csv").write_text(ROUTES_OLD)
+            # An unrelated CSV with bare CR line ends: no header csv reads, skipped.
+            (root / "cr.csv").write_bytes(b"a,b\rc,d\r")
+            # A field past csv's limit: listed with its error.
+            (root / "big.csv").write_text("format,compute,epilogue,n,k,T,route,median_us\n"
+                                          "q4k,a16,store,4096,4096,16,r" + "x" * 200000 + ",1\n")
+            # A row cut inside its last field still has every column: the missing final newline
+            # (route_tune ends every row with one) names it cut.
+            (root / "nolf.csv").write_text("format,compute,epilogue,n,k,T,route,median_us\n"
+                                           "q4k,a16,store,4096,4096,16,r8,1.5\n"
+                                           "q4k,a16,store,4096,4096,32,r8,2.")
+            # A blank line does not shift the line a short row is named by.
+            (root / "blank.csv").write_text("format,compute,epilogue,n,k,T,route,median_us\n"
+                                            "\n"
+                                            "q4k,a16,store,4096,4096,32\n"
+                                            "q4k,a16,store,4096,4096,16,r8,1.5\n")
+            by = {f["path"]: f for f in sm.scan(root, "rtx4090")["files"]}
+            self.assertEqual(sorted(by), ["big.csv", "blank.csv", "good.csv", "nolf.csv"])
+            self.assertIn("field larger than field limit", by["big.csv"]["error"])
+            self.assertEqual((by["nolf.csv"]["rows"], by["nolf.csv"]["cut_last_row"]), (1, 3))
+            self.assertIn("line 3 has too few columns", by["blank.csv"]["error"])
+
     def test_build_trees_are_not_walked(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

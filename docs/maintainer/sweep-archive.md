@@ -5,13 +5,13 @@ This page lists them: one row per card and directory of `ninferno_route_tune` CS
 "manifest of the sweep archive" of Roadmap 3 (#613, PR-0). The band-weighted regret that scores
 them is `tools/bench/regret_bands.py` (#631, `--pick model` for the cost model's own pick).
 
-Snapshot of 2026-11-12: 757 sweeps (`--routes-out`) and 501 selections (`--selected-out`),
-0.29 GB, on 9 cards. 20 files end in a row a killed sweep cut short (left out, `cut_last_row`).
-Only 37 of the 1258 files name their run and device (route_tune wrote those columns from #518 on),
-and 37 sweeps carry a `model_us` with more than six significant digits, the precision
-`regret_bands.py` needs to tell a tie. The older files can still be scored with `--routes` and the
-board named by hand. A PR's A/B passes may be cleaned up with its builds, so the counts can fall
-between snapshots.
+Snapshot of 2026-11-12: 758 sweeps (`--routes-out`) and 502 selections (`--selected-out`),
+0.29 GB, on 9 cards. 21 files end in a row a killed sweep cut short (left out,
+`cut_last_row`). Only 39 of the 1260 readable files name their run and device (route_tune
+wrote those columns from #518 on), and 38 sweeps carry a `model_us` with more than six significant
+digits, the precision `regret_bands.py` needs to tell a tie. The older files can still be scored with
+`--routes` and the board named by hand. A PR's A/B passes may be cleaned up with its builds, so the
+counts can fall between snapshots.
 
 Regenerate (the per-file manifest, with each file's SHA-256, stays with the archive):
 
@@ -127,11 +127,11 @@ one A/B's passes.
 
 ### rtx4060ti
 
-68 sweeps, 42 selections, 20.6 MB.
+69 sweeps, 43 selections, 21.6 MB.
 
 | directory | sweeps | selections | rows | formats | T | protocols | model_us digits | named run/device | dates |
 |---|---|---|---|---|---|---|---|---|---|
-| a5_f24d0079 (1 cut) | 1 | 0 | 993 | q4k | 1..8192 | copies flushed | 17 | 1/1 | 2026-11-12 |
+| a5_f24d0079 (1 cut) | 2 | 1 | 6212 | q4k q6k | 1..8192 | copies flushed | 17 | 3/3 | 2026-11-12 |
 | clk | 1 | 0 | 612 | q4k q6k | 17..8192 | unnamed | 6 | 0/1 | 2026-11-06 |
 | drlaw (2 cut) | 5 | 0 | 16879 | q4k q6k | 5..8192 | unnamed | 6 | 0/5 | 2026-11-07 |
 | kitrunm/run.logs | 4 | 4 | 18194 | bf16 q4k q5k q6k | 1..8192 | unnamed | none | 0/8 | 2026-11-04 |
@@ -293,7 +293,7 @@ one A/B's passes.
 | ncur8 | 1 | 0 | 1866 | iq1m iq1s iq2s iq2xs iq2xxs iq3s iq3xxs iq4nl iq4xs q2k q3k q40 q41 q4k q50 q51 q5k q6k q8 | 1..8192 | unnamed | 6 | 0/1 | 2026-11-06 |
 | ncur8/d | 1 | 0 | 1866 | iq1m iq1s iq2s iq2xs iq2xxs iq3s iq3xxs iq4nl iq4xs q2k q3k q40 q41 q4k q50 q51 q5k q6k q8 | 1..8192 | unnamed | 6 | 0/1 | 2026-11-06 |
 | r301 | 6 | 6 | 271414 | bf16 fp8 fp8r32 iq2s iq2xs iq3s iq3xxs iq4nl iq4xs nvfp4 q3k q4 q4k q5 q5k q6 q6k q8 | 1..8192 | unnamed | 6 | 0/12 | 2026-11-07 |
-| r301/killed (1 cut) | 1 | 1 | 5068 | bf16 | 1..8192 | unnamed | 6 | 0/2 | 2026-11-07 |
+| r301/killed (2 cut) | 1 | 1 | 5067 | bf16 | 1..8192 | unnamed | 6 | 0/2 | 2026-11-07 |
 | r301/skewed | 2 | 2 | 8526 | q4k q6k | 1..8192 | unnamed | 6 | 0/4 | 2026-11-07 |
 | rcost | 2 | 2 | 9971 | bf16 q4k q5k q6k | 1..8192 | unnamed | 6 | 0/4 | 2026-11-04 |
 | retune | 1 | 0 | 99113 | bf16 fp8 fp8r32 nvfp4 q4 q4k q5 q6 q6k q8 | 1..8192 | unnamed | none | 0/1 | 2026-11-04 |

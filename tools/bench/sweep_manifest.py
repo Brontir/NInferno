@@ -26,6 +26,7 @@ import argparse
 import csv
 import datetime
 import hashlib
+import io
 import json
 import re
 import sys
@@ -79,7 +80,10 @@ def describe(path, root):
         with path.open("rb") as f:
             first = f.readline(1 << 16)
             line = first.decode("utf-8-sig", errors="replace")
-            header = next(csv.reader([line]), None)
+            try:
+                header = next(csv.reader(io.StringIO(line, newline="")), None)
+            except csv.Error:  # no CSV header (a bare CR, a NUL): not route_tune's
+                return None
             kind = kind_of(header) if header else None
             if kind is None:
                 return None
@@ -96,17 +100,26 @@ def describe(path, root):
         "modified": datetime.datetime.fromtimestamp(modified,
                                                     datetime.timezone.utc).strftime("%Y-%m-%d"),
     }
+    def short(r):
+        return any(r.get(c) is None for c in header) or None in r
+
     try:
-        rows = list(csv.DictReader(text.splitlines()))
-        short = lambda r: any(r.get(c) is None for c in header) or None in r  # noqa: E731
-        # A sweep killed mid-write ends in a cut row: that row is left out and said so
-        # (`cut_last_row`, its line). A short or long row anywhere else makes the file unreadable.
-        if rows and short(rows[-1]) and None not in rows[-1]:
-            record["cut_last_row"] = len(rows) + 1
+        reader = csv.DictReader(io.StringIO(text, newline=""))
+        lines, rows = [], []
+        for r in reader:
+            lines.append(reader.line_num)
+            rows.append(r)
+        # A sweep killed mid-write ends in a cut row: route_tune ends every row with a newline, so
+        # a file without one, or whose last row stops short, ends in a cut row. It is left out and
+        # said so (`cut_last_row`, its line). A short or long row anywhere else makes the file
+        # unreadable.
+        if rows and (not data.endswith(b"\n") or (short(rows[-1]) and None not in rows[-1])):
+            record["cut_last_row"] = lines.pop()
             rows.pop()
-        for i, r in enumerate(rows, 2):
+        for line_num, r in zip(lines, rows):
             if short(r):
-                raise ValueError(f"line {i} has {'too few' if None not in r else 'too many'} columns")
+                raise ValueError(f"line {line_num} has "
+                                 f"{'too few' if None not in r else 'too many'} columns")
         widths = sorted({int(r["T"]) for r in rows})
         record.update({
             "rows": len(rows),
@@ -127,7 +140,7 @@ def describe(path, root):
             record["model_us_digits"] = max((significant_digits(v) for v in priced), default=0)
         else:
             record["authority_column"] = "authority" in rows[0] if rows else False
-    except (KeyError, ValueError, TypeError, AttributeError) as error:  # a short or malformed row
+    except (KeyError, ValueError, TypeError, AttributeError, csv.Error) as error:  # malformed
         record["error"] = f"unreadable rows: {error}"
     return record
 
