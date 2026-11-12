@@ -6,6 +6,7 @@
 // tools/release/package.sh; ninferno_kernel_facts_live_test). One implementation for the test and
 // the release, so what the release checks is what the goldens were made from.
 
+#include "core/board_registry.h"
 #include "core/device_class.h"
 #include "ops/generic/kernel_facts.h"
 
@@ -15,31 +16,54 @@
 
 namespace ninferno::ops::detail::generic {
 
-// Datasheet numbers as the CUDA device query reports them (boost SM clock, memory clock = data
-// rate / 2, bus width).
+// A board as the CUDA device query reports a stock one: compute capability, SMs, L2, memory size,
+// boost SM clock, memory clock (half the data rate) and bus width.
 struct FactsBoard {
     const char* name;
-    std::uint32_t pci_device_id;
+    std::uint32_t pci_device_id; // 0: an id the registry has no row of
     int major, minor, sms;
-    std::size_t l2_mib, memory_gib;
+    double l2_mib;
+    std::size_t memory_gib;
     int sm_clock_mhz, memory_clock_mhz, bus_bits;
 };
 
+// The golden board of a PCI id: its row of the board registry (core/board_registry.h, generated
+// from core/data/gpu_facts.json), with the reference clock as the boost clock and half the row's
+// data rate as the memory clock (machine_facts reads the row, not a driver's rounding such as
+// 14001 MHz against 14000). An id the registry lacks is a compile error.
+[[nodiscard]] constexpr FactsBoard registry_facts_board(const char* name,
+                                                        std::uint32_t pci_device_id) {
+    const board_registry::BoardRow& r = board_registry::row(pci_device_id);
+    return {name,
+            pci_device_id,
+            r.major,
+            r.minor,
+            r.sms,
+            r.l2_mib,
+            static_cast<std::size_t>(r.vram_gib),
+            r.boost_mhz,
+            static_cast<int>(r.gbps * 500 + 0.5),
+            r.bus_bits};
+}
+
 inline constexpr FactsBoard kFactsBoards[] = {
-    {"rtx5090", 0x2B85, 12, 0, 170, 96, 32, 2407, 14001, 512},
-    {"rtx5080", 0x2C02, 12, 0, 84, 64, 16, 2617, 15001, 256},
-    {"rtx5070ti", 0x2C05, 12, 0, 70, 48, 16, 2452, 14001, 256},
-    {"rtx5060ti", 0x2D04, 12, 0, 36, 32, 16, 2572, 14001, 128},
-    {"rtx4090", 0x2684, 8, 9, 128, 72, 24, 2520, 10501, 384},
-    {"rtx4060ti", 0x2805, 8, 9, 34, 32, 16, 2535, 9001, 128},
-    {"l4", 0x27B8, 8, 9, 58, 48, 24, 2040, 6251, 192},
-    {"rtx3090", 0x2204, 8, 6, 82, 6, 24, 1695, 9751, 384},
-    {"a10", 0x2236, 8, 6, 72, 6, 24, 1695, 6251, 384},
-    {"a100", 0x20B0, 8, 0, 108, 40, 40, 1410, 1215, 5120},
-    {"rtx2080ti", 0x1E07, 7, 5, 68, 5, 11, 1545, 7000, 352},
-    {"v100", 0x1DB5, 7, 0, 80, 6, 32, 1530, 877, 4096},
-    // Not targets, but the rows where spellings of one generation fact used to disagree.
-    {"h100-sxm", 0x2330, 9, 0, 132, 50, 80, 1980, 2619, 5120},
+    registry_facts_board("rtx5090", 0x2B85),
+    registry_facts_board("rtx5080", 0x2C02),
+    registry_facts_board("rtx5070ti", 0x2C05),
+    registry_facts_board("rtx5060ti", 0x2D04),
+    registry_facts_board("rtx4090", 0x2684),
+    registry_facts_board("rtx4060ti", 0x2805),
+    registry_facts_board("l4", 0x27B8),
+    registry_facts_board("rtx3090", 0x2204),
+    registry_facts_board("a10", 0x2236),
+    registry_facts_board("a100", 0x20B0),
+    registry_facts_board("rtx2080ti", 0x1E07),
+    registry_facts_board("v100", 0x1DB5),
+    // Not a target, but the row where spellings of one generation fact used to disagree.
+    registry_facts_board("h100-sxm", 0x2330),
+    // Boards the registry has no row of, so their facts are declared here: the B300 and the GB10
+    // (DGX Spark), which the table does not list, and a made-up sm_120 board of an unknown id. As
+    // for any unknown id, machine_facts prices them from these driver values.
     {"b300", 0, 10, 3, 148, 126, 268, 2032, 3996, 8192},
     {"gb10-spark", 0, 12, 1, 48, 24, 128, 2418, 4266, 256},
     {"unknown-sm120-48sm", 0, 12, 0, 48, 32, 12, 2500, 14001, 192},

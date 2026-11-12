@@ -175,12 +175,9 @@ int similar_default() {
 }
 
 // The board of every shipped table, read on a substitute of the board its gpu.pci_id names (no
-// GPU): the table is that board's own, at distance 0, but where a recorded conflict
-// (core/measured_boards.h kDramConflicts) keeps the figures it was measured under; an id that
-// is not its class's board is refused. A shipped id mistyped into another valid board, or
-// another chip's, fails here.
+// GPU): the table is that board's own, at distance 0; an id that is not its class's board is
+// refused. A shipped id mistyped into another valid board, or another chip's, fails here.
 int shipped_boards() {
-    namespace measured       = ninferno::measured;
     namespace board_registry = ninferno::board_registry;
     const auto substitute    = [](std::uint32_t id) {
         const board_registry::BoardRow* row = board_registry::find(id);
@@ -242,13 +239,9 @@ int shipped_boards() {
             const auto board          = generic::route_table_board(utf8_path(f.path()));
             const ninferno::Board own = ninferno::board_of(ninferno::device_class());
             const double d            = board ? ninferno::board_distance(own, *board) : -1.0;
-            const bool conflict       = measured::conflict_dram_gbps(id) != 0;
-            const double expected =
-                conflict ? ninferno::board_distance(own, measured::board_of_pci(id)) : 0.0;
             std::cout << name << ": " << m[1].str() << " on " << ninferno::device_class().id()
-                      << ", distance " << d << (conflict ? " (recorded conflict)" : "") << '\n';
-            failures += check(board && d == expected && (!conflict || d > 0),
-                              name + " is measured on the board of its id");
+                      << ", distance " << d << '\n';
+            failures += check(board && d == 0.0, name + " is measured on the board of its id");
         } catch (const std::exception& e) {
             failures += check(false, name + " refused on the board of its id: " + e.what());
         }

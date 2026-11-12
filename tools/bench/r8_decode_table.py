@@ -83,8 +83,7 @@ def pci_text(pci_id):
 
 def registry_rows():
     """{PCI id: (cc, SMs, L2 MiB, DRAM GB/s)} of src/core/data/gpu_facts.json, the rows
-    measured::board_of_pci reads (without its recorded conflicts, which the bench's printed
-    figures, the device's, do not carry either)."""
+    measured::board_of_pci reads."""
     rows = json.loads(GPU_FACTS.read_text(encoding="utf-8"))["gpus"]
     return {pci_text(r["id"]): (r["cc"], r["sms"], float(r.get("l2_mib", 0)),
                                 r["bus_bits"] * r["gbps"] / 8.0) for r in rows}
