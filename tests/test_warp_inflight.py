@@ -26,7 +26,13 @@ with open(wi.SOURCE) as f:
 # A made-up card that follows the law exactly: L = 256 ns a fetch, P = 90 GB/s an SM, 2800 MHz.
 L_NS, P_GBPS, MHZ = 256.0, 90.0, 2800.0
 HEAD = {"sms": "60", "max_warps_per_sm": "48"}
-NO_ROW = {("ring4", 48)}
+# The (mode, variant, W) whose registers do not fit: ring4 at 48 placed warps, ring8 at 32 and up.
+NO_ROW = {("placed", "ring4", 48), ("placed", "ring8", 32), ("placed", "ring8", 48),
+          ("free", "ring8", 32)}
+NO_ROW_NOTES = ("note placed ring4 w48: 1 of 2 CTAs fit an SM (registers), no row\n"
+                "note free ring8 w32: 0 of 1 CTAs fit an SM (registers), no row\n"
+                "note placed ring8 w32: 0 of 1 CTAs fit an SM (registers), no row\n"
+                "note placed ring8 w48: 1 of 2 CTAs fit an SM (registers), no row\n")
 
 
 def law(variant, w):
@@ -47,8 +53,8 @@ SAMPLE = (
     f"probe {wi.checked_in_probe()}\ncard NVIDIA GeForce RTX 4070 Ti\ncc 89\nsms 60\n"
     "l2_bytes 50331648\nmem_clock_khz 10501000\nmax_warps_per_sm 48\nsmem_per_sm 102400\n"
     "driver 13040\nruntime 13020\nnvcc 13.2.86\nnote device 0 is the GPU at PCI 0000:01:00.0\n"
-    "columns " + " ".join(wi.COLUMNS) + "\nnote warm-up: 300 ms of every SM streaming\n"
-    "note placed ring4 w48: 1 of 2 CTAs fit an SM (registers), no row\n" +
+    "columns " + " ".join(wi.COLUMNS) + "\nnote warm-up: 300 ms of every SM streaming\n" +
+    NO_ROW_NOTES +
     "".join(row_line(*p) for p in ROWS) +
     "span_ns 1762862400000000000 1762862404000000000\nselfcheck ok\nend\n"
     "note compute processes on the probe's GPU before the run: 0\n"
@@ -345,6 +351,46 @@ class WarpInflight(unittest.TestCase):
         # Without the registers' note the placed ring4 W = 48 row is owed.
         self.refused(SAMPLE.replace("note placed ring4 w48: 1 of 2 CTAs fit an SM (registers), "
                                     "no row\n", ""), "rows missing")
+        # So is the free ring8 W = 32 row without its note (probe 4 checks the free CTA fits).
+        self.refused(SAMPLE.replace("note free ring8 w32: 0 of 1 CTAs fit an SM (registers), "
+                                    "no row\n", ""), "rows missing")
+        self.refused(SAMPLE.replace("note free ring8 w32", "note free ring9 w32"), "odd note")
+
+    def earlier(self, probe="warp_inflight 3"):
+        """SAMPLE as a run of an earlier probe: its version, its source's hash, its variants'
+        rows and load counts only."""
+        e = wi.EARLIER_PROBES[probe]
+        variants = e["variants"]
+        text = SAMPLE.replace(f"probe {wi.checked_in_probe()}", f"probe {probe}")
+        text = text.replace(wi.source_sha256(), e["source_sha256"])
+        text = text.replace(" ".join(f"{v}:{wi.sass_loads_of(v)}" for v in wi.VARIANTS),
+                            " ".join(f"{v}:{wi.sass_loads_of(v)}" for v in variants))
+        lines = [ln for ln in text.splitlines(keepends=True)
+                 if not any(ln.startswith(p) for p in ("row ", "note free ", "note placed "))
+                 or any(f" {v} " in ln for v in variants)]
+        return "".join(lines), variants
+
+    def test_earlier_probe_parses_as_its_own(self):
+        # A probe 3 run (#739, no ring8) parses with its six variants; its source is the recorded
+        # one, not the checked-in warp_inflight.cu.
+        self.assertNotEqual(wi.EARLIER_PROBES["warp_inflight 3"]["source_sha256"],
+                            wi.source_sha256())
+        self.assertNotIn("warp_inflight 3", wi.checked_in_probe())
+        text, variants = self.earlier()
+        self.assertNotIn("ring8", variants)
+        head, rows = wi.parse_run(text)
+        self.assertEqual(head["probe"], "warp_inflight 3")
+        self.assertEqual({r["variant"] for r in rows}, set(variants))
+        self.assertEqual(len(rows), len(wi.expected_points(HEAD, NO_ROW, variants)))
+        # Its rows are its own variants': a ring8 row, a ring8 load count or another hash is no
+        # probe 3 run.
+        ring8 = row_line("free", 1, "ring8", 1)
+        self.refused(text.replace("selfcheck ok", ring8 + "selfcheck ok"), "outside the grid")
+        self.refused(text.replace("ring4:12", "ring4:12 ring8:24"), "16-byte loads")
+        self.refused(text.replace(wi.EARLIER_PROBES["warp_inflight 3"]["source_sha256"],
+                                  wi.source_sha256()), "source_sha256")
+        self.refused(text.replace("probe warp_inflight 3", "probe warp_inflight 2"),
+                     "earlier one this parser reads")
 
     def test_cli_rows_refuses_a_bad_file(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -29,6 +29,9 @@
 // for a one-row-set Store call of the m1 register-MMA schedules and of R8 with two rows a warp,
 // F = 1 for R8 with one row, F = 4 under SwiGLU (two row sets). The ring therefore keeps 2, 4 or 8
 // loads a lane in flight in its latency-bound limit, where the step's compute is short against L0.
+// ring8 (16 loads a lane, 8192 bytes a warp; probe 4, #757) goes past the m1 schedules' counts to
+// find where one warp stops gaining: on sm_75, sm_86 and sm_89 ring4 still kept x1.8 of ring2's
+// bytes, so its reading was only a lower bound of what a warp keeps in flight.
 //
 // Two placements of the W warps:
 //   free:   k CTAs of W warps (W <= 32), no shared memory and the L1-largest carve-out; the CTA
@@ -48,8 +51,9 @@
 // row the median of three repetitions. ns_fetch is the median over warps of a warp's span over its
 // fetches: a chain's loaded latency of one fetch, half of it for a ring (two fetches overlap);
 // sm_mhz is clock64 over %globaltimer. A span under 100 us is refused (the timer steps by ~1 us).
-// A placed (variant, W) whose registers fit fewer than c CTAs an SM has no row and says so in a
-// note; every other point of the grid has one.
+// A (mode, variant, W) whose registers fit fewer CTAs an SM than it needs (1 free, c placed: the
+// ring8 loop's 64 data registers a lane) has no row and says so in a note; every other point of
+// the grid has one.
 //
 // Clocks (probe 2). The measured part is bracketed by a `span_ns <begin> <end>` line in host wall
 // time (system_clock, ns since the epoch): warp_inflight.py keeps the nvidia-smi clock samples
@@ -94,7 +98,7 @@ constexpr size_t kBuffer = size_t{1} << 30;
 // The bytes of one measurement (all its warps) and of one warp: the largest measurement stays
 // far from the buffer's size, so no measurement reads a line an earlier one may have left in L2.
 constexpr size_t kRunBudget = size_t{256} << 20;
-constexpr size_t kWarpMax   = size_t{4} << 20; // a ring4 warp alone still spans ~300 us
+constexpr size_t kWarpMax   = size_t{4} << 20; // a ring8 warp alone still spans ~200 us
 constexpr int kReps         = 3;
 constexpr int kMaxSmId      = 1024; // %smid is below %nsmid, which is below this on every chip
 
@@ -210,6 +214,7 @@ const Variant kVariants[] = {
     {"chain1", 1, false, stream<1, false>}, {"chain2", 2, false, stream<2, false>},
     {"chain4", 4, false, stream<4, false>}, {"ring1", 1, true, stream<1, true>},
     {"ring2", 2, true, stream<2, true>},    {"ring4", 4, true, stream<4, true>},
+    {"ring8", 8, true, stream<8, true>},
 };
 
 std::vector<std::string> g_failures;
@@ -366,7 +371,7 @@ int main(int argc, char** argv) {
     const int cc = p.major * 10 + p.minor;
     char pci[32] = {};
     CHECK(cudaDeviceGetPCIBusId(pci, sizeof pci, 0));
-    std::printf("probe warp_inflight 3\n");
+    std::printf("probe warp_inflight 4\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -496,6 +501,16 @@ int main(int argc, char** argv) {
         for (const Variant& v : kVariants)
             for (const int w : w_list) {
                 if (w > 32 || w > pr.max_warps) continue;
+                // One CTA of W warps must fit an SM, or the launch fails: the ring8 loop's
+                // registers leave no room for 32 warps (or for 24 on a 48-warp SM).
+                int fit = 0;
+                CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&fit, v.kernel, 32 * w, 0));
+                if (fit < 1) {
+                    if (k == 1)
+                        std::printf("note free %s w%d: 0 of 1 CTAs fit an SM (registers), no row\n",
+                                    v.name, w);
+                    continue;
+                }
                 pr.row(v, "free", k, w, 1, k, 0, nullptr);
             }
     }
@@ -522,7 +537,8 @@ int main(int argc, char** argv) {
                 CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&fit, v.kernel, 32 * (w / c),
                                                                     pr.shared_for[c]));
                 // More than c CTAs is the shared size wrong; fewer is the variant's registers (the
-                // ring4 loop's 32 data registers a lane leave no room for 48 or 64 warps): no row.
+                // ring4 loop's 32 data registers a lane leave no room for 48 or 64 warps, the ring8
+                // loop's 64 none for 32 or more): no row.
                 check(fit <= c, std::string("placed ") + v.name + " w" + std::to_string(w) +
                                     ": the occupancy API fits " + std::to_string(fit) +
                                     " CTAs an SM, more than " + std::to_string(c));

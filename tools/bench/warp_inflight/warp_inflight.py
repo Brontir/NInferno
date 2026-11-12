@@ -62,7 +62,15 @@ WARP_LOAD = 512  # one warp-wide 16-byte load: 32 lanes x 16 B
 # F loads a lane in flight, a ring 2F; the SASS of a chain's loop holds F 16-byte loads, a ring's
 # 3F (the first fetch before the loop, two in it).
 VARIANTS = {"chain1": (1, False), "chain2": (2, False), "chain4": (4, False),
-            "ring1": (1, True), "ring2": (2, True), "ring4": (4, True)}
+            "ring1": (1, True), "ring2": (2, True), "ring4": (4, True), "ring8": (8, True)}
+# The runs of an earlier probe still parse, as what that probe measured: its source's sha256 (the
+# warp_inflight.cu of that version, in the history) and its variants. Probe 3 (#739) had no ring8,
+# which probe 4 (#757) added; its other kernels are the same.
+EARLIER_PROBES = {
+    "warp_inflight 3": {
+        "source_sha256": "c903f40008fb45fa109c837b07bd78d9a5dbb565c9906afa1cbcd9b4711d93e8",
+        "variants": ("chain1", "chain2", "chain4", "ring1", "ring2", "ring4")},
+}
 W_GRID = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
 K_GRID = (1, 2, 4, 8)
 MODES = ("free", "placed")
@@ -74,7 +82,8 @@ RUN_HEADER = ("source_sha256", "arch", "sass_ldg128")
 COUNTS = ("cc", "sms", "l2_bytes", "max_warps_per_sm", "smem_per_sm", "driver", "runtime")
 PROBE_LINE = re.compile(r'printf\("probe (warp_inflight \d+)\\n"\)')
 PROBE_VALUE = re.compile(r"warp_inflight (\d+)")
-NO_ROW = re.compile(r"placed (\w+) w(\d+): \d+ of \d+ CTAs fit an SM \(registers\), no row")
+NO_ROW = re.compile(r"(free|placed) (\w+) w(\d+): \d+ of \d+ CTAs fit an SM \(registers\), "
+                    r"no row")
 REFUSED_LINE = "refused"
 REFUSED = ".refused"
 # b_w's linear region: the rows from W = 1 up whose b_w stays within this share of b_w at W = 1
@@ -286,24 +295,35 @@ def source_sha256():
     return IP.source_sha256(SOURCE)
 
 
-def expected_points(head, no_row):
+def expected_points(head, no_row, variants=tuple(VARIANTS)):
     """Every (mode, k, variant, w) the probe measures on this card: the free rows up to 32 warps,
-    the placed rows up to the SM's resident warps (two CTAs above 32), less the placed pairs the
-    run noted the registers do not fit."""
+    the placed rows up to the SM's resident warps (two CTAs above 32), of `variants` (the run's
+    probe's), less the (mode, variant, w) the run noted the registers do not fit."""
     sms, max_w = int(head["sms"]), int(head["max_warps_per_sm"])
     points = set()
     for mode in MODES:
         for k in K_GRID:
             if k > sms:
                 continue
-            for v in VARIANTS:
+            for v in variants:
                 for w in W_GRID:
-                    if w > max_w or (mode == "free" and w > 32):
+                    if w > max_w or (mode == "free" and w > 32) or (mode, v, w) in no_row:
                         continue
-                    if mode == "placed" and (w > 32 and w % 2 or (v, w) in no_row):
+                    if mode == "placed" and w > 32 and w % 2:
                         continue
                     points.add((mode, k, v, w))
     return points
+
+
+def probe_variants(probe):
+    """The variants a run of `probe` (its header value) measured: the checked-in probe's, or an
+    earlier probe's (EARLIER_PROBES); ValueError for any other."""
+    if probe == checked_in_probe():
+        return tuple(VARIANTS)
+    if probe in EARLIER_PROBES:
+        return EARLIER_PROBES[probe]["variants"]
+    raise ValueError(f"{probe} is neither the checked-in probe ({checked_in_probe()}) nor an "
+                     f"earlier one this parser reads ({', '.join(EARLIER_PROBES)})")
 
 
 def _positive(text, what):
@@ -319,7 +339,8 @@ def _positive(text, what):
 def parse_run(text):
     """The header fields and the rows of one warp_inflight output (as `run` saves it); ValueError
     when a line is odd or unknown, the columns are not the parser's, a row is malformed, out of
-    the grid, given twice or missing, the probe version or source hash is not the checked-in one,
+    the grid, given twice or missing, the probe version and source hash are not the checked-in
+    probe's or a recorded earlier one's (EARLIER_PROBES: its rows are its own variants'),
     the build's -arch is not the card's, the SASS load counts are not the variants', the
     self-check failed, the run did not end, or the process notes do not show the GPU idle."""
     head, rows, notes, ended, checked, failures = {}, {}, [], False, False, []
@@ -386,17 +407,18 @@ def parse_run(text):
         raise ValueError(f"mem_clock_khz is no count: {head['mem_clock_khz']!r}")
     if not PROBE_VALUE.fullmatch(head["probe"]):
         raise ValueError(f"odd probe line: {head['probe']!r}")
-    # A run is of the checked-in probe: its version and its source's hash.
-    if head["probe"] != checked_in_probe():
-        raise ValueError(f"{head['probe']} is not the checked-in probe ({checked_in_probe()})")
-    if head["source_sha256"] != source_sha256():
-        raise ValueError(f"source_sha256 {head['source_sha256']} is not the checked-in "
-                         f"warp_inflight.cu's ({source_sha256()}): a changed probe bumps its "
-                         "version")
+    # A run is of the checked-in probe (its version and its source's hash) or of an earlier one
+    # (that version's recorded hash), and holds that probe's variants.
+    variants = probe_variants(head["probe"])
+    want_sha = (source_sha256() if head["probe"] == checked_in_probe()
+                else EARLIER_PROBES[head["probe"]]["source_sha256"])
+    if head["source_sha256"] != want_sha:
+        raise ValueError(f"source_sha256 {head['source_sha256']} is not that of {head['probe']}'s "
+                         f"warp_inflight.cu ({want_sha}): a changed probe bumps its version")
     own = "sm_" + IP.arch_key(int(head["cc"]), "")
     if head["arch"] != own:
         raise ValueError(f"built for {head['arch']}, not {own} (cc {head['cc']})")
-    want = " ".join(f"{v}:{sass_loads_of(v)}" for v in VARIANTS)
+    want = " ".join(f"{v}:{sass_loads_of(v)}" for v in variants)
     if head["sass_ldg128"] != want:
         raise ValueError(f"the build's 16-byte loads per kernel are {head['sass_ldg128']!r}, not "
                          f"the variants' {want!r}")
@@ -405,10 +427,10 @@ def parse_run(text):
     for n in notes:
         m = NO_ROW.fullmatch(n)
         if m:
-            if m.group(1) not in VARIANTS:
+            if m.group(2) not in variants:
                 raise ValueError(f"odd note: {n!r}")
-            no_row.add((m.group(1), int(m.group(2))))
-    want_points = expected_points(head, no_row)
+            no_row.add((m.group(1), m.group(2), int(m.group(3))))
+    want_points = expected_points(head, no_row, variants)
     extra = sorted(set(rows) - want_points)
     if extra:
         raise ValueError(f"rows outside the grid (max {max_w} warps, {head['sms']} SMs): {extra}")
