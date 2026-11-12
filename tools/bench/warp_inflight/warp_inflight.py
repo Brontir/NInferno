@@ -79,6 +79,9 @@ COLUMNS = ("mode", "k", "variant", "inflight", "w", "gbps", "gbps_lo", "gbps_hi"
 HEADER = ("probe", "card", "cc", "sms", "l2_bytes", "mem_clock_khz", "max_warps_per_sm",
           "smem_per_sm", "driver", "runtime", "nvcc", "span_ns")
 RUN_HEADER = ("source_sha256", "arch", "sass_ldg128")
+# Run header lines from a probe version on: sass_inflight, the most 16-byte loads a lane each
+# kernel's SASS keeps in flight (peak_in_flight), which must be the variant's count.
+RUN_HEADER_SINCE = {"sass_inflight": 4}
 COUNTS = ("cc", "sms", "l2_bytes", "max_warps_per_sm", "smem_per_sm", "driver", "runtime")
 PROBE_LINE = re.compile(r'printf\("probe (warp_inflight \d+)\\n"\)')
 PROBE_VALUE = re.compile(r"warp_inflight (\d+)")
@@ -387,7 +390,7 @@ def parse_run(text):
             ended = True
         elif word == REFUSED_LINE:
             raise ValueError(f"`run` refused this run: {' '.join(parts[1:])}")
-        elif word in HEADER or word in RUN_HEADER:
+        elif word in HEADER or word in RUN_HEADER or word in RUN_HEADER_SINCE:
             if word in head:
                 raise ValueError(f"{word} line given twice")
             head[word] = " ".join(parts[1:])
@@ -422,6 +425,18 @@ def parse_run(text):
     if head["sass_ldg128"] != want:
         raise ValueError(f"the build's 16-byte loads per kernel are {head['sass_ldg128']!r}, not "
                          f"the variants' {want!r}")
+    version = int(PROBE_VALUE.fullmatch(head["probe"]).group(1))
+    for k, since in RUN_HEADER_SINCE.items():
+        if version >= since and not head.get(k):
+            raise ValueError(f"no {k} line (owed from probe {since})")
+        if version < since and k in head:
+            raise ValueError(f"a {k} line in a run of {head['probe']} (it began with probe "
+                             f"{since})")
+    if "sass_inflight" in head:
+        want = " ".join(f"{v}:{inflight_of(v)}" for v in variants)
+        if head["sass_inflight"] != want:
+            raise ValueError(f"the build's SASS keeps {head['sass_inflight']!r} 16-byte loads a "
+                             f"lane in flight, not the variants' {want!r}")
     max_w = int(head["max_warps_per_sm"])
     no_row = set()
     for n in notes:
@@ -547,7 +562,8 @@ def run_of(head, rows, source, isa_table):
         "smem_per_sm": int(head["smem_per_sm"]), "mem_clock_khz": int(head["mem_clock_khz"]),
         "tool": {"probe": head["probe"], "nvcc": head["nvcc"], "driver": head["driver"],
                  "runtime": head["runtime"], "arch": head["arch"],
-                 "source_sha256": head["source_sha256"], "sass_ldg128": head["sass_ldg128"]},
+                 "source_sha256": head["source_sha256"], "sass_ldg128": head["sass_ldg128"],
+                 "sass_inflight": head.get("sass_inflight")},
         "notes": head["notes"],
         "clocks_waived": any(n.startswith(CLOCK_WAIVED) for n in head["notes"]),
         "l0": {"own_ns": own, "own_source": "this run's free, k = 1, chain1, W = 1 ns_fetch (so "
@@ -572,9 +588,8 @@ def table_of(paths, isa_table):
     return {"schema": SCHEMA, "note": NOTE, "runs": runs}
 
 
-def sass_loads(sass):
-    """{variant: 16-byte global loads in its kernel} of `cuobjdump -sass` text, read with
-    sass_counts' parser: LDG instructions whose opcode carries .128."""
+def _kernels(sass):
+    """{variant: its kernel's SASS body} of `cuobjdump -sass` text (sass_counts' parser)."""
     sc = IP._sass_counts()
     tag = {f"streamILi{f}ELb{int(ring)}E": v for v, (f, ring) in VARIANTS.items()}
     out = {}
@@ -583,12 +598,55 @@ def sass_loads(sass):
         variant = next(v for t, v in tag.items() if t in name)
         if variant in out:
             raise ValueError(f"two kernels of {variant} in the build's SASS")
-        out[variant] = sum(1 for row in body
-                           if sc.base_opcode(row[2]) == "LDG" and ".128" in row[2])
+        out[variant] = body
     missing = [v for v in VARIANTS if v not in out]
     if missing:
         raise ValueError(f"no kernel of {missing} in the build's SASS")
     return out
+
+
+def _is_ldg128(opcode):
+    return IP._sass_counts().base_opcode(opcode) == "LDG" and ".128" in opcode
+
+
+def sass_loads(sass):
+    """{variant: 16-byte global loads in its kernel} of `cuobjdump -sass` text, read with
+    sass_counts' parser: LDG instructions whose opcode carries .128."""
+    return {v: sum(1 for row in body if _is_ldg128(row[2])) for v, body in _kernels(sass).items()}
+
+
+SASS_REGISTER = re.compile(r"\bR(\d+)(\.64)?\b")
+
+
+def peak_in_flight(body):
+    """The most 16-byte loads the kernel's SASS keeps in flight a lane, read in program order: a
+    load stays in flight until an instruction reads or overwrites a register it writes (its
+    quad), which waits for it. The loop's body is read once, after the code before it, which is
+    where the probe's fetches meet; a guarded load counts as issued."""
+    sc = IP._sass_counts()
+    pending, peak = [], 0
+    for _, _, opcode, operands, _ in body:
+        written = sc.written_registers(opcode, operands)
+        fields = operands.split(",")
+        reads = set()
+        # The registers read: every one named after the destination (its first operand, where
+        # the instruction writes one), a .64 address as its pair.
+        for f in fields[1:] if written else fields:
+            for m in SASS_REGISTER.finditer(f):
+                n = int(m.group(1))
+                reads.update({f"R{n}", f"R{n + 1}"} if m.group(2) else {f"R{n}"})
+        pending = [q for q in pending if not (q & reads or q & written)]
+        if _is_ldg128(opcode):
+            pending.append(written)
+            peak = max(peak, len(pending))
+    return peak
+
+
+def sass_inflight(sass):
+    """{variant: the most 16-byte loads a lane its kernel's SASS keeps in flight} (peak_in_flight):
+    a chain's F, a ring's 2F, when ptxas issues every load of a fetch before the data it waits
+    on; fewer when it recycles a fetch's registers (ring8 without its clock read)."""
+    return {v: peak_in_flight(body) for v, body in _kernels(sass).items()}
 
 
 def cmd_run(a):
@@ -608,11 +666,12 @@ def cmd_run(a):
         sass = subprocess.run([cuobjdump, "-sass", exe], stdout=subprocess.PIPE, text=True,
                               check=True).stdout
         try:
-            loads = sass_loads(sass)
+            loads, peaks = sass_loads(sass), sass_inflight(sass)
         except ValueError as e:
             print(f"warp_inflight: {e}; no run", file=sys.stderr)
             return 3
         head.append("sass_ldg128 " + " ".join(f"{v}:{loads[v]}" for v in VARIANTS))
+        head.append("sass_inflight " + " ".join(f"{v}:{peaks[v]}" for v in VARIANTS))
         before = IP._compute_apps()
 
         # Both nvidia-smi streams drained as they come (IP.Sampler, #741).

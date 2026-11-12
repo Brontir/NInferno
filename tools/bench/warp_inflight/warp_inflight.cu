@@ -189,6 +189,12 @@ __global__ void stream(const unsigned char* buf, unsigned long long base,
                 fetch<F>(a, p + off + (acc & zero));
                 off += kStep;
             }
+            // ptxas issues ring1-4's two fetches back to back after compute(Slot0) (2F loads a
+            // lane in flight, then waited on). At F = 8 it would recycle Slot1's registers
+            // instead, waiting on its first loads before issuing its last ones (about three
+            // round trips a step). A clock read before compute(Slot1) keeps every load of both
+            // fetches ahead of it, as at F <= 4; ring1-4's SASS does not change.
+            if constexpr (F >= 8) acc ^= static_cast<unsigned>(clock64()) & zero;
             acc = consume<F>(b, acc);
         }
     }

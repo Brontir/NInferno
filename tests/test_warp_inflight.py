@@ -49,7 +49,8 @@ ROWS = sorted(wi.expected_points(HEAD, NO_ROW),
               key=lambda p: (wi.MODES.index(p[0]), p[1], list(wi.VARIANTS).index(p[2]), p[3]))
 SAMPLE = (
     f"source_sha256 {wi.source_sha256()}\narch sm_89\nsass_ldg128 " +
-    " ".join(f"{v}:{wi.sass_loads_of(v)}" for v in wi.VARIANTS) + "\n"
+    " ".join(f"{v}:{wi.sass_loads_of(v)}" for v in wi.VARIANTS) + "\n" +
+    "sass_inflight " + " ".join(f"{v}:{wi.inflight_of(v)}" for v in wi.VARIANTS) + "\n"
     f"probe {wi.checked_in_probe()}\ncard NVIDIA GeForce RTX 4070 Ti\ncc 89\nsms 60\n"
     "l2_bytes 50331648\nmem_clock_khz 10501000\nmax_warps_per_sm 48\nsmem_per_sm 102400\n"
     "driver 13040\nruntime 13020\nnvcc 13.2.86\nnote device 0 is the GPU at PCI 0000:01:00.0\n"
@@ -313,6 +314,39 @@ class WarpInflight(unittest.TestCase):
         with self.assertRaises(ValueError):
             wi.sass_loads(fn(1, False, 1))
 
+    @staticmethod
+    def body(lines):
+        """A SASS body of sass_counts' rows from `OPCODE operands` lines."""
+        sass = "\t\tFunction : k\n" + "".join(f"        /*{i * 16:04x}*/      {ln} ;\n"
+                                              for i, ln in enumerate(lines))
+        return next(iter(wi.IP._sass_counts().parse_functions(sass.splitlines()).values()))
+
+    def test_peak_in_flight(self):
+        ld = "LDG.E.EF.128 R{}, [R2.64+0x{:x}]"
+        xor = "LOP3.LUT R50, R{}, R{}, R50, 0x96, !PT"
+        # Both fetches of a 2-load ring issued before the data is read: 4 in flight.
+        ring2 = [ld.format(4, 0), ld.format(8, 0x200), xor.format(5, 4), xor.format(9, 8),
+                 ld.format(12, 0x400), ld.format(16, 0x600), ld.format(4, 0x800),
+                 ld.format(8, 0xa00), xor.format(13, 12), xor.format(17, 16)]
+        self.assertEqual(wi.peak_in_flight(self.body(ring2)), 4)
+        # A fetch whose registers are recycled: the reload of R4 waits for the load it overwrites,
+        # and reading R9 waits for the second load; at most 2 are ever in flight.
+        recycled = [ld.format(4, 0), ld.format(8, 0x200), xor.format(5, 4), ld.format(4, 0x400),
+                    xor.format(9, 8), ld.format(8, 0x600)]
+        self.assertEqual(wi.peak_in_flight(self.body(recycled)), 2)
+        # An address read of a load's register (R4.64 is R4 and R5) waits for it as well.
+        chained = [ld.format(4, 0), "LDG.E.EF.128 R8, [R4.64]"]
+        self.assertEqual(wi.peak_in_flight(self.body(chained)), 1)
+
+    def test_sass_inflight_is_the_count(self):
+        # Probe 4 owes the line, it must be the variants' counts, and an earlier probe has none.
+        line = "sass_inflight " + " ".join(f"{v}:{wi.inflight_of(v)}" for v in wi.VARIANTS)
+        self.refused(SAMPLE.replace(line + "\n", ""), "no sass_inflight line")
+        self.refused(SAMPLE.replace("ring8:16", "ring8:11"), "SASS keeps")
+        text, _ = self.earlier()
+        self.refused(text.replace("arch sm_89\n", "arch sm_89\nsass_inflight chain1:1\n"),
+                     "began with probe 4")
+
     def refused(self, text, why):
         with self.assertRaises(ValueError) as cm:
             wi.parse_run(text)
@@ -366,8 +400,9 @@ class WarpInflight(unittest.TestCase):
         text = text.replace(" ".join(f"{v}:{wi.sass_loads_of(v)}" for v in wi.VARIANTS),
                             " ".join(f"{v}:{wi.sass_loads_of(v)}" for v in variants))
         lines = [ln for ln in text.splitlines(keepends=True)
-                 if not any(ln.startswith(p) for p in ("row ", "note free ", "note placed "))
-                 or any(f" {v} " in ln for v in variants)]
+                 if not ln.startswith("sass_inflight ") and
+                 (not any(ln.startswith(p) for p in ("row ", "note free ", "note placed "))
+                  or any(f" {v} " in ln for v in variants))]
         return "".join(lines), variants
 
     def test_earlier_probe_parses_as_its_own(self):
