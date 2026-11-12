@@ -23,18 +23,22 @@ namespace ninferno::models::qwen3_5::detail {
 struct DescribedStart {
     std::unique_ptr<DescribedModel> model;
     execution::PreparedParameters forms; // their views point into `model`
+    std::int32_t public_tokens = 0;      // the tokenizer's public ids (public_token_count)
 
     // The arenas a start's planner sizes for `plan` over these forms (qwen3_5_workspace_plan):
     // the capacity queries answer for this thread's device class, the plan's multiprocessor count
     // and the caller's route profile, as a start's do.
-    [[nodiscard]] WorkspacePlan workspace_plan(std::int32_t public_tokens,
-                                               const SequencePlanImpl& plan) const;
+    [[nodiscard]] WorkspacePlan workspace_plan(const SequencePlanImpl& plan) const;
 };
 
-// Throws where describe_model does (plan_load would refuse the directory for `options`, or a
-// binding reads the payload) and where a form refuses the bound weights (a start refuses them
-// too).
+// `public_tokens`: the artifact tokenizer's public ids (load.h, public_token_count), which a start
+// reads from its resources: the sampler's and the accept step's domain, and the bound an indexed
+// proposal head is checked against. Throws where describe_model does (plan_load would refuse the
+// directory for `options` and these tokens, or a binding reads the payload) and where a form
+// refuses the bound weights (a start refuses them too). The forms read the process's route pins
+// (--moe-path), as a start's do.
 [[nodiscard]] std::unique_ptr<const DescribedStart>
-describe_start(const artifact::Directory& directory, const LoadOptions& options);
+describe_start(const artifact::Directory& directory, const LoadOptions& options,
+               std::uint32_t public_tokens);
 
 } // namespace ninferno::models::qwen3_5::detail

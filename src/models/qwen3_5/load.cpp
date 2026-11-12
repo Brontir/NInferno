@@ -141,8 +141,14 @@ ops::WeightInput DescribedModel::input(WeightId id) const {
     return bound_weight_input(weight(id), options_);
 }
 
+std::uint32_t public_token_count(const artifact::Reader& reader) {
+    const Config config = parse_config(reader.directory(), {});
+    artifact::Binder binder(reader);
+    return loading::bind_resources(binder, config).public_token_count;
+}
+
 std::unique_ptr<DescribedModel> describe_model(const artifact::Directory& directory,
-                                               LoadOptions options) {
+                                               LoadOptions options, std::uint32_t public_tokens) {
     std::unique_ptr<DescribedModel> out(new DescribedModel);
     out->options_ = options;
     out->config_  = parse_config(directory, options);
@@ -151,8 +157,8 @@ std::unique_ptr<DescribedModel> describe_model(const artifact::Directory& direct
     const auto reader = artifact::Reader::detached(directory);
     artifact::Binder binder(reader);
     loading::Bindings bindings(binder);
-    out->weights_ = bind_model(bindings, directory, out->config_, options,
-                               static_cast<std::uint32_t>(out->config_.text.vocab_size), false);
+    // The tokenizer's public ids, as plan_load checks the proposal head and the selector against.
+    out->weights_ = bind_model(bindings, directory, out->config_, options, public_tokens, false);
     // One parent an object, as materialize gives each object its device parent: its geometry, an
     // address never read (distinct a parent; the forms compare parents, not addresses), and for
     // NVFP4 a positive weight divisor in place of the payload's (the forms read whether it is

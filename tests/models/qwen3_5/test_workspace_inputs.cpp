@@ -16,13 +16,19 @@
 // - the plan without the weights (#615 W2): the same model as a converted artifact's directory, in
 //   the same packing, read by --plan's facts (product::plan_facts_of_directory), sizes the dry
 //   run's rung (runtime::plan_rung_bytes, the workspace query registered as ninferno-serve
-//   registers it) at the start's capacity to the byte, with "start" as its basis; facts without
-//   the directory (a config.json, a GGUF header) keep the formula and say so.
+//   registers it) at the start's capacity to the byte, with "start" as its basis, every arena of
+//   the described start equal to the start's at the tokenizer's public ids (fewer than the
+//   embedding rows); facts without the directory (a config.json, a GGUF header) or without the
+//   tokenizer's ids keep the formula and say so, as do a --moe-path pin and an indexed proposal
+//   head wider than the tokenizer's ids (the start refuses it).
 // The capacity queries answer for a substituted board (the RTX 5090, the RTX 4060 Ti).
 
 #include "artifact/formats.h"
 #include "artifact/schema.h"
 #include "core/device_class.h"
+#include "models/load_options.h"
+#include "models/qwen3_5/program/planning/described_start.h"
+#include "ops/route_pins.h"
 #include "product/plan/plan_facts.h"
 #include "runtime/engine/plan_dry_run.h"
 #include "runtime/engine/plan_workspace.h"
@@ -608,8 +614,12 @@ struct Case {
 
 void run(const Case& k) {
     const ScopedDeviceClass substitute(k.device);
-    const qwen::Config config             = k.config();
-    const std::int32_t public_tokens      = static_cast<std::int32_t>(config.text.vocab_size);
+    const qwen::Config config = k.config();
+    // The start's public ids are its tokenizer's (FrontendResources::public_token_count), fewer
+    // than the embedding's 248320 rows, as the 265 of the loading fixture's 272: far enough below
+    // that the sampler's and the accept step's scratch (512-id tiles) differ, so an arena sized
+    // over the embedding's rows instead fails the comparison below.
+    const std::int32_t public_tokens      = 240000;
     const auto plan                       = plan_of(config, k.options, k.device.sms);
     const bool mtp                        = plan.features.mtp();
     const bool optimal                    = plan.proposal_head == ProposalHead::Optimized;
@@ -679,14 +689,51 @@ void run(const Case& k) {
     // The plan without the weights (#615 W2): the same model as an artifact's directory, its
     // facts as --plan reads them, the dry run's rung at the case's options and context.
     const art::Directory directory = DirectoryOf(config, k.layout).build(kProposalRows);
-    const rt::PlanModelFacts facts = product::plan_facts_of_directory(directory, k.name).model;
+    rt::PlanModelFacts facts       = product::plan_facts_of_directory(directory, k.name).model;
     check(facts.offline_bytes && facts.artifact_directory != nullptr,
           k.name + ": the artifact's facts lay out its state and keep its directory (" +
               facts.offline_reason + ")");
     rt::PlanRung rung;
     rung.max_context   = k.options.max_context;
     rung.prefill_chunk = k.options.prefill_chunk;
-    const auto dry = rt::plan_rung_bytes(facts, rung, k.options, k.options.max_concurrency, false);
+    const auto at      = [&](const rt::PlanModelFacts& f) {
+        return rt::plan_rung_bytes(f, rung, k.options, k.options.max_concurrency, false);
+    };
+    // A directory without its file: the tokenizer is not read, the formula stands.
+    const auto unread = at(facts);
+    check(unread.workspace_basis.find("tokenizer") != std::string::npos,
+          k.name + ": without the tokenizer's public ids the formula stands (" +
+              unread.workspace_basis + ")");
+    // As plan_facts_of_artifact reads them from the file's resources.
+    facts.tokenizer_tokens = static_cast<std::uint32_t>(public_tokens);
+    const auto dry         = at(facts);
+    // Every arena of the described start, the sampler's and the accept step's domain included.
+    const auto described_start  = detail::describe_start(directory, models::load_options(k.options),
+                                                         static_cast<std::uint32_t>(public_tokens));
+    const auto described_arenas = described_start->workspace_plan(plan);
+    check(same(described_arenas, start), k.name + ": the described start's arenas (" +
+                                             bytes(described_arenas) + ") are the start's (" +
+                                             bytes(start) + ")");
+    if (optimal) {
+        // A tokenizer naming fewer ids than the indexed head's rows: the start refuses the head
+        // (bind_proposal), and so does the plan.
+        rt::PlanModelFacts narrow = facts;
+        narrow.tokenizer_tokens   = kProposalRows - 1;
+        const auto refused        = at(narrow);
+        check(refused.workspace_basis.rfind("formula: ", 0) == 0,
+              k.name + ": a proposal head wider than the tokenizer's ids is refused (" +
+                  refused.workspace_basis + ")");
+    }
+    {
+        // A --moe-path pin: the plan sizes the automatic path only.
+        ops::RoutePins pins;
+        pins.moe = MoePath::Generic;
+        ops::set_route_pins(pins);
+        const auto pinned = at(facts);
+        ops::set_route_pins({});
+        check(pinned.workspace_basis.find("--moe-path") != std::string::npos,
+              k.name + ": a pinned MoE path keeps the formula (" + pinned.workspace_basis + ")");
+    }
     // The same facts without the directory: a config.json's or a GGUF header's.
     rt::PlanModelFacts bare = facts;
     bare.artifact_directory.reset();

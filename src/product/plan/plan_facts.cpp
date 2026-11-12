@@ -1434,6 +1434,11 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
             out.shape.prompt_tail_calls = *calls;
         }
     }
+    // The tokenizer's public ids for the workspace query that binds the directory (#615): the
+    // file's frontend resources, as a start reads them.
+    if (out.model.artifact_directory) {
+        out.model.tokenizer_tokens = runtime::plan_tokenizer_tokens(artifact).value_or(0);
+    }
     return out;
 }
 

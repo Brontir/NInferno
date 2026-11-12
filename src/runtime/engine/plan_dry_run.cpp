@@ -359,6 +359,21 @@ PlanWorkspaceQuery& workspace_query() {
 void set_plan_workspace_query(PlanWorkspaceQuery query) { workspace_query() = std::move(query); }
 
 namespace {
+PlanTokenizerQuery& tokenizer_query() {
+    static PlanTokenizerQuery query;
+    return query;
+}
+} // namespace
+
+void set_plan_tokenizer_query(PlanTokenizerQuery query) { tokenizer_query() = std::move(query); }
+
+std::optional<std::uint32_t> plan_tokenizer_tokens(const std::filesystem::path& artifact) {
+    const PlanTokenizerQuery& query = tokenizer_query();
+    if (!query) { return std::nullopt; }
+    return query(artifact);
+}
+
+namespace {
 PlanMoeRouteQuery& moe_route_query() {
     static PlanMoeRouteQuery query;
     return query;

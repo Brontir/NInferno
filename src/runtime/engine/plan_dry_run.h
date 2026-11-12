@@ -34,6 +34,7 @@
 #include "runtime/engine/plan_ladder.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -379,6 +380,11 @@ struct PlanModelFacts {
     // Qwen 3.5 artifact's), null for any other source: what the family's workspace query binds
     // the model over, as a start binds it (#615; its payload is never read). Shared: facts copy.
     std::shared_ptr<const artifact::Directory> artifact_directory;
+    // The ids the artifact's tokenizer makes public (a start's public_token_count: the sampler's
+    // domain, the bound of an indexed proposal head), read from its resources when the facts come
+    // from the artifact's file (plan_tokenizer_tokens); 0: not read (a directory alone). The
+    // embedding rows (vocab) may be more.
+    std::uint32_t tokenizer_tokens = 0;
 
     // Whether the shape is enough to plan: a context and some attention.
     [[nodiscard]] bool known() const noexcept {
@@ -483,6 +489,15 @@ using PlanWorkspaceQuery = std::function<PlanWorkspaceAnswer(
     const PlanModelFacts& model, const PlanRung& rung, const EngineOptions& options,
     std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan)>;
 void set_plan_workspace_query(PlanWorkspaceQuery query);
+
+// The public ids of an artifact's tokenizer (PlanModelFacts::tokenizer_tokens), read from its
+// resources as a start reads them; nullopt where they cannot be read. The engine registers it
+// beside the workspace queries (it links the families' frontends); unset, nullopt.
+using PlanTokenizerQuery =
+    std::function<std::optional<std::uint32_t>(const std::filesystem::path& artifact)>;
+void set_plan_tokenizer_query(PlanTokenizerQuery query);
+[[nodiscard]] std::optional<std::uint32_t>
+plan_tokenizer_tokens(const std::filesystem::path& artifact);
 
 // The kernel a routed layer's grouped stage runs (#616 step 7), as the MoE op's route query answers
 // (ops/moe moe_route_query, the op's own cascade on the device's class): R8 (int8 activations, one

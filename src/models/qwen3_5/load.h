@@ -70,7 +70,8 @@ public:
 
 private:
     DescribedModel() = default;
-    friend std::unique_ptr<DescribedModel> describe_model(const artifact::Directory&, LoadOptions);
+    friend std::unique_ptr<DescribedModel> describe_model(const artifact::Directory&, LoadOptions,
+                                                          std::uint32_t);
 
     Config config_;
     LoadOptions options_;
@@ -79,11 +80,18 @@ private:
     std::vector<BoundWeight> bound_;
 };
 
-// Throws (an ArtifactError, std::invalid_argument) where plan_load would refuse the directory for
-// `options`, or where a binding reads the payload: a Use's activation divisor (an NVFP4 A4 route's
-// calibration). An indexed proposal head's ids and the frontend's resources are not read (no form
-// depends on them).
+// `public_tokens`: the tokenizer's public ids (public_token_count), what plan_load checks an
+// indexed proposal head and a DFlash2 selector against. Throws (an ArtifactError,
+// std::invalid_argument) where plan_load would refuse the directory for `options`, or where a
+// binding reads the payload: a Use's activation divisor (an NVFP4 A4 route's calibration). An
+// indexed proposal head's ids and the frontend's resources are not read (no form depends on them).
 [[nodiscard]] std::unique_ptr<DescribedModel> describe_model(const artifact::Directory& directory,
-                                                             LoadOptions options);
+                                                             LoadOptions options,
+                                                             std::uint32_t public_tokens);
+
+// The ids a request may carry or sample, as plan_load reads them (FrontendResources::
+// public_token_count): the artifact's tokenizer resources, the only objects read (no weight is).
+// Throws where plan_load's resources refuse.
+[[nodiscard]] std::uint32_t public_token_count(const artifact::Reader& reader);
 
 } // namespace ninferno::models::qwen3_5
