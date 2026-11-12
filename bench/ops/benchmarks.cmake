@@ -78,3 +78,27 @@ ninferno_add_op_bench(ninferno_context_kv_materialize_bench
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/context_kv_materialize_bench.cu")
 ninferno_add_op_bench(ninferno_mtp_pack_bench SOURCES "${CMAKE_CURRENT_LIST_DIR}/mtp_pack_bench.cu")
 ninferno_add_op_bench(ninferno_proposal_remap_bench SOURCES "${CMAKE_CURRENT_LIST_DIR}/proposal_remap_bench.cu")
+# The launch law of ggml's matrix kernel on one card (#785; tools/bench/mmq_launch_law.py run):
+# the production kernel and launch template with the column tile and CTA count forced. Its
+# per-format units include ggml's headers like the ninferno_ggml_mmq archive's own units, and it
+# links that archive, the selector's host objects (ggml_mmq_host.cpp: the activation's size) and
+# the core only, so building it builds no other kernel.
+set(NINFERNO_MMQ_BENCH_DIR "${PROJECT_SOURCE_DIR}/tools/bench")
+add_executable(ninferno_mmq_launch_microbench
+  "${NINFERNO_MMQ_BENCH_DIR}/mmq_launch_microbench.cu"
+  "${NINFERNO_MMQ_BENCH_DIR}/mmq_launch_microbench_q4_k.cu"
+  "${NINFERNO_MMQ_BENCH_DIR}/mmq_launch_microbench_q5_k.cu"
+  "${NINFERNO_MMQ_BENCH_DIR}/mmq_launch_microbench_q6_k.cu")
+ninferno_internal_includes(ninferno_mmq_launch_microbench)
+target_include_directories(ninferno_mmq_launch_microbench PRIVATE
+  "${NINFERNO_MMQ_BENCH_DIR}"
+  "${PROJECT_SOURCE_DIR}/src/ops/generic/ggml_mmq"
+  "${PROJECT_SOURCE_DIR}/third_party/ggml-quants/include"
+  "${PROJECT_SOURCE_DIR}/third_party/ggml-quants/src")
+target_compile_definitions(ninferno_mmq_launch_microbench PRIVATE NINFERNO_GGML_NO_CUBLAS)
+target_compile_options(ninferno_mmq_launch_microbench PRIVATE
+  $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>
+  $<$<COMPILE_LANGUAGE:CUDA>:-Xcudafe=--diag_suppress=177>)
+ninferno_cuda_non_rdc_archive(ninferno_mmq_launch_microbench)
+target_link_libraries(ninferno_mmq_launch_microbench PRIVATE
+  ninferno_ggml_mmq ninferno_ops_host ninferno_core ninferno::cudart)

@@ -138,6 +138,13 @@ add_test(NAME ninferno_warp_inflight_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_warp_inflight.py)
 set_tests_properties(ninferno_warp_inflight_test PROPERTIES LABELS host)
 
+# tools/bench/mmq_launch_law.py (#785): the launch law of ggml's matrix kernel from the
+# microbench's JSON, a generation's row fitted on two cards with each predicted from the other, and
+# a card checked against a core/generation.h row, on synthetic cards. No GPU, no CUDA toolkit.
+add_test(NAME ninferno_mmq_launch_law_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_launch_law.py)
+set_tests_properties(ninferno_mmq_launch_law_test PROPERTIES LABELS host)
+
 # tools/bench/gap_map.py: measured times against the counted DRAM and tensor laws (#619), on
 # synthetic inputs, no GPU.
 add_test(NAME ninferno_gap_map_test
