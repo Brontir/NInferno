@@ -1075,6 +1075,19 @@ int boards() {
                       "4090,headless,linux");
     const auto w = pr::plan_device_of_board("nvidia geforce rtx 4090, wddm", &error);
     failures += check(w && w->paravirtual && w->drives_display, "4090 wddm: a display assumed");
+    // A registry name with a comma (#831): whole, with facts after it, and without the vendor.
+    const auto tu116 = pr::plan_device_of_board("GeForce GTX 1650 (TU116, GDDR6)", &error);
+    failures += check(tu116 && tu116->name == "GeForce GTX 1650 (TU116, GDDR6)",
+                      "a comma in the board's name: " + error);
+    const auto tu116h =
+        pr::plan_device_of_board("gtx 1650 (tu116, gddr6), headless, linux", &error);
+    failures += check(tu116h && tu116h->name == "GeForce GTX 1650 (TU116, GDDR6)" &&
+                          !tu116h->paravirtual && !tu116h->drives_display,
+                      "a comma name with facts after it: " + error);
+    error.clear();
+    failures += check(!pr::plan_device_of_board("GTX 1650 (TU116, GDDR6), turbo", &error) &&
+                          error.find("turbo") != std::string::npos,
+                      "an unknown fact after a comma name: " + error);
     const auto laptop = pr::plan_device_of_board("4090 laptop", &error);
     failures += check(laptop && laptop->name == "GeForce RTX 4090 Laptop GPU", "4090 laptop");
     const auto pci = pr::plan_device_of_board("0x2B85", &error);
