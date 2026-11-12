@@ -15,7 +15,9 @@ rows left out.
   q4_K and q6_K matrices (store and SwiGLU), at the tool's default widths: 190 scored cases per
   board, T 1..512 (1-8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512). The 1024-8192 rows
   belong to the prefill profile and are left out of the scoring. The weight copies rotate
-  (`--rotate` is on by default: 57 consecutive calls over copies of 2x L2 or 128 MiB).
+  (`--rotate`, on by default): ceil(max(2 x L2, 128 MiB) / the shape's weight bytes) copies,
+  clamped to 1..64, so the count differs by shape, and the q6_K 248320 x 4096 weight, larger than
+  that span, runs from one copy.
 - No other job on the GPU during the passes (a queue holder, the stand lock, no compute process).
 - Regret is the extra time of the pick over the best observed route, summed over a band's cases
   (time-weighted). "Best observed" is the best qualified candidate in the sweep, not a global
@@ -30,6 +32,21 @@ rows left out.
     --pci-id <id> > regret.json`, then `selection_regret.py regret.json > report.json`, gives the
     report by regime x authority. The ridge comes from the board's PCI id.
 - The summary JSON is those two outputs with the per-case rows and the GPU UUIDs left out.
+
+## Qualification and holdout
+
+- The candidates are qualified by a full ctest of master on each build set, not at f24d0079
+  itself (the summaries' `legacy_qualification`). For sm_70, sm_86 and sm_120a that run is
+  752bae56, and 752bae56..f24d0079 is #768 alone, which changes kernel-facts data, no kernel
+  source: the candidates measured are the code that was qualified. For sm_89 it is f24d0079.
+  **For sm_75 (RTX 2080 Ti) it is 65e573fd, and the commits after it change kernel sources
+  (ggml_mmq, ggml_vec): its candidates were not qualified at the measured revision.** Its regret
+  is dominated by the cost-model error of #781 either way, but read its per-route numbers with
+  that caveat until a sweep at a qualified revision replaces them.
+- `holdout: board` is the tools' default label, and no `fit_boards` were declared, so `passed`
+  does not establish a board holdout. Production answers here include route-table and dense-tune
+  entries measured on the board itself, and the selector carries constants fitted on named lab
+  boards. These are regrets of the selector as shipped, not out-of-sample results.
 
 ## Scope, and what it does not cover
 
