@@ -276,13 +276,9 @@ int i8_bits(QType q) { return q == QType::Q5_G64_FP16 ? 5 : q == QType::Q6_G64_F
 
 bool i8_fits(int schedule, QType qtype) {
     // The high plane takes 0 / 8 / 16 bytes a group and weight row in every stage; a tile runs
-    // three stages where four do not fit (generic_i8.cu kI8Stages).
-    const auto s     = i8_schedule_info(schedule);
-    const int high   = i8_bits(qtype) == 4 ? 0 : i8_bits(qtype) == 5 ? 8 : 16;
-    const auto ring  = static_cast<std::size_t>(2 * s.block_n * 16);
-    const auto stage = (s.smem_bytes - ring) / static_cast<std::size_t>(s.stages) +
-                       static_cast<std::size_t>(s.block_n) * high;
-    return 3 * stage + ring <= kMaxSharedBytesPerBlock;
+    // three stages where four do not fit (generic_i8.cu kI8Stages, generic_i8_schedules.h).
+    const auto s = i8_schedule_info(schedule);
+    return i8_smem_bytes(s.block_m, s.block_n, i8_bits(qtype), 3) <= kMaxSharedBytesPerBlock;
 }
 
 I8ScheduleInfo i8_schedule_info(int index) {

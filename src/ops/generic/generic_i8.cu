@@ -27,6 +27,7 @@
 #include "ops/common/arch_limits.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_gemm.cuh"
+#include "ops/generic/generic_i8_schedules.h"
 
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
@@ -359,10 +360,17 @@ void launch_tile(const GemmArgs& args, const std::int8_t* codes, const float* sc
 }
 
 // A tile takes four pipeline stages, or three where four do not fit a block's shared memory (Q6's
-// high plane at 256x128: 100 KiB against 99).
+// high plane at 256x128: 100 KiB against 99): generic_i8_schedules.h i8_stages, the count the
+// price and the fit check read too (#761), and the tile's bytes are the ones they count.
 template <int WT, int WN, int Bits>
-constexpr int kI8Stages =
-    I8Tile<WT, WN, 4, Bits>::kSmemBytes <= static_cast<int>(kMaxSharedBytesPerBlock) ? 4 : 3;
+constexpr int kI8Stages = i8_stages(64 * WT, 64 * WN, Bits);
+template <int WT, int WN, int Bits>
+constexpr bool kI8Counted =
+    I8Tile<WT, WN, kI8Stages<WT, WN, Bits>, Bits>::kSmemBytes ==
+    static_cast<int>(i8_smem_bytes(64 * WT, 64 * WN, Bits, kI8Stages<WT, WN, Bits>));
+static_assert(kI8Counted<4, 2, 4> && kI8Counted<4, 2, 5> && kI8Counted<4, 2, 6> &&
+              kI8Counted<2, 2, 4> && kI8Counted<2, 2, 5> && kI8Counted<2, 2, 6> &&
+              kI8Counted<2, 1, 4> && kI8Counted<2, 1, 5> && kI8Counted<2, 1, 6>);
 
 template <int Bits, Epilogue E>
 void launch_bits(int schedule, const GemmArgs& args, const std::int8_t* codes, const float* scales,
