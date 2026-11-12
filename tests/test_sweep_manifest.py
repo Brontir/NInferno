@@ -115,8 +115,12 @@ class Scan(unittest.TestCase):
                 "format,compute,epilogue,n,k,T,asked,selected\n"
                 "q4_K,a16,store,4096,4096,1\n"
                 "q4_K,a16,store,4096,4096,2,r8,r8.w4r1\n")
+            # A selection whose only row was cut: no rows left, no pair either.
+            (root / "sel_cut.csv").write_text("format,compute,epilogue,n,k,T,asked,selected\n"
+                                              "q4_K,a16,store,4096,4096,1,r8,r8.w")
             by = {f["path"]: f for f in sm.scan(root, "rtx4090")["files"]}
             self.assertIn("error", by["sel_bad.csv"])
+            self.assertEqual(by["sel_cut.csv"]["rows"], 0)
             self.assertEqual(by["routes.csv"]["selected_in_dir"], ["sel_ok.csv"])
 
     def test_odd_files_do_not_stop_the_scan(self):

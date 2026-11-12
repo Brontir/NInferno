@@ -180,8 +180,9 @@ def scan(root, card):
     # The selections a sweep pairs with: the --selected-out files of its directory.
     selected = {}
     for r in files:
-        # Only a selection that reads: an unreadable one is no pair a regret run can use.
-        if r.get("kind") == "selected" and "error" not in r:
+        # Only a selection that reads and holds a row: an unreadable or empty one is no pair a
+        # regret run can use (regret_collect refuses a file with no rows).
+        if r.get("kind") == "selected" and "error" not in r and r.get("rows", 0) > 0:
             selected.setdefault(str(Path(r["path"]).parent), []).append(r["path"])
     for r in files:
         if r.get("kind") == "routes":
