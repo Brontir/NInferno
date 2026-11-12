@@ -219,6 +219,7 @@ NOT_DECIDING = {
 GENERATED = {
     "core/board_registry_rows.inc": "cmake/BoardRegistry.cmake",
     "core/embedded_gpu_facts.h": "src/core/embedded_gpu_facts.h.in",
+    "core/embedded_sm_rate_facts.h": "src/core/embedded_sm_rate_facts.h.in",
     "core/arch_registry_rows.inc": "cmake/BoardRegistry.cmake",  # rows of the "archs" array of gpu_facts.json
     # which sm_*.txt snapshots are embedded is decided by sources.cmake (listed too)
     "ops/generic/embedded_kernel_facts.h": "src/ops/generic/embedded_kernel_facts.h.in",
@@ -322,6 +323,8 @@ EXCLUDED = [
     ("src/core/embedded_isa_facts.h.in", "ISA facts embedding, no selector caller yet"),
     ("src/core/data/isa_facts.json", "ISA facts rows, no selector caller yet"),
     ("src/core/data/isa_probe/*", "raw ISA probe output the rows were read from"),
+    ("src/core/data/warp_inflight/*", "raw bytes-in-flight probe output the SM rate facts rows "
+                                       "were read from (sm_rate_facts.json is listed)"),
     ("src/core/device_traits.cpp", "reads the driver (display, WDDM) for the plan, not the selector"),
     ("src/core/gate_atlas.cpp", "audit table that calls the gate; the gate's rule is in a listed header"),
     ("src/core/kernel_occupancy.cpp", "occupancy for launch code and the kernel-facts test; the selector "

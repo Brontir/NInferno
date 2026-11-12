@@ -8,6 +8,20 @@ rate (P) read from it: the facts the decode price's per-SM bound min(P, W x b_w 
                           [--clocks-waived]
     warp_inflight.py rows --input warp_inflight_89.txt [--input ...] [--isa-table ...] [--out F]
     warp_inflight.py show --input warp_inflight_89.txt [--isa-table ...]
+    warp_inflight.py merge --input warp_inflight_89.txt [--transfer | --new-reference]
+                           [--inputs DIR] [--table F]
+    warp_inflight.py regenerate [--inputs DIR] [--table F]
+
+`merge` copies one run into src/core/data/warp_inflight/ under its architecture's name
+(warp_inflight_<arch>.txt, the architecture's reference card), or with `--transfer` under its
+architecture's and card's name (warp_inflight_<arch>_<card>.txt, a transfer check), and
+regenerates src/core/data/sm_rate_facts.json from all of them; `regenerate` rebuilds the table
+from the committed runs. The table holds, per architecture, the facts the decode price reads
+(kernel_roofline.h dram_time, via core/sm_rate_facts.h): P per SM clock in both carve-outs, the
+streaming L0, the most bytes one warp keeps in flight, the ring rows that verify the law, and the
+law against every other card's run (a row that fails one is refuted: the architecture's boards
+keep the legacy DRAM law). A committed run the parser refuses gives no row: regenerate names it,
+and names the architectures of the ISA table left without a row (they keep the legacy law too).
 
 `run` compiles tools/bench/warp_inflight/warp_inflight.cu for sm_<arch> into a temporary directory
 (nvcc -O3 -std=c++17 -arch=sm_<arch>), counts the 16-byte loads of each variant's kernel in the
@@ -43,7 +57,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 SOURCE = os.path.join(HERE, "warp_inflight.cu")
 DEFAULT_ISA_TABLE = os.path.join(ROOT, "src", "core", "data", "isa_facts.json")
+DEFAULT_INPUTS = os.path.join(ROOT, "src", "core", "data", "warp_inflight")
+DEFAULT_TABLE = os.path.join(ROOT, "src", "core", "data", "sm_rate_facts.json")
 SCHEMA = 1
+FACTS_SCHEMA = 1
 
 
 def _isa_probe():
@@ -62,30 +79,46 @@ WARP_LOAD = 512  # one warp-wide 16-byte load: 32 lanes x 16 B
 # F loads a lane in flight, a ring 2F; the SASS of a chain's loop holds F 16-byte loads, a ring's
 # 3F (the first fetch before the loop, two in it).
 VARIANTS = {"chain1": (1, False), "chain2": (2, False), "chain4": (4, False),
-            "ring1": (1, True), "ring2": (2, True), "ring4": (4, True), "ring8": (8, True)}
+            "ring1": (1, True), "ring2": (2, True), "ring4": (4, True), "ring8": (8, True),
+            "chain8": (8, False), "chain16": (16, False)}
 # The runs of an earlier probe still parse, as what that probe measured: its source's sha256 (the
 # warp_inflight.cu of that version, in the history) and its variants. Probe 3 (#739) had no ring8,
-# which probe 4 (#757) added; its other kernels are the same.
+# which probe 4 (#757) added; probe 5 (#757) added chain8 and chain16. The kernels an earlier
+# probe shares with the checked-in one compile to the same SASS.
 EARLIER_PROBES = {
     "warp_inflight 3": {
         "source_sha256": "c903f40008fb45fa109c837b07bd78d9a5dbb565c9906afa1cbcd9b4711d93e8",
         "variants": ("chain1", "chain2", "chain4", "ring1", "ring2", "ring4")},
+    "warp_inflight 4": {
+        "source_sha256": "58670da851b02a489eff542a37b9f4baf3f97221db6952c82641e20204ff83d1",
+        "variants": ("chain1", "chain2", "chain4", "ring1", "ring2", "ring4", "ring8")},
 }
 W_GRID = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
 K_GRID = (1, 2, 4, 8)
+# The chains whose lone-warp reading decides whether a warp holds every load of its count at once
+# (chain_all_in_flight, #757): name -> loads a lane.
+CAP_CHAINS = {"chain8": 8, "chain16": 16}
 
 
-def all_in_flight(b_w_w1, inflight_bytes, l0_ns, latency_ns):
-    """Whether one warp alone had every load of the variant in flight at once (#757). A warp held
-    to fewer loads than its count issues the next one only once its first has returned, a DRAM
-    latency after it left, and that load returns a latency later: its step takes at least twice
-    the shortest DRAM latency (`latency_ns`, the ISA table's TLB-warm pointer chase, which the
-    streaming fetch never beats), and by Little's law at W = 1 (b_w = count x L0 / step, `l0_ns`
-    the run's own L0) it keeps at most count x L0 / (2 x latency). A reading above that refutes a
-    cap below the count. Not a fitted bound: the 2 is the two latencies, both facts measured. The
-    probe 3 rows: sm_70's ring4 (2121 B, bound 2612 B) and sm_120a's (1832 B, bound 2543 B) are
-    caps; sm_75 / sm_86 / sm_89's ring4 (3340-3448 B, bounds 2200-2370 B) are not."""
-    return b_w_w1 > inflight_bytes * l0_ns / (2.0 * latency_ns)
+def chain_bound(inflight_bytes, l0_ns, latency_ns):
+    """The most bytes a lone warp on a chain keeps by Little's law (b_w = count x L0 / step) when
+    it is held to fewer loads than its count: it issues the load past its cap only once its first
+    load has returned, a DRAM latency after it left, and that load returns a latency later. The
+    chain's compute waits on every load of the fetch and the next fetch's address depends on it,
+    so the step takes at least two latencies. `latency_ns` is the ISA table's TLB-warm pointer
+    chase (dram_tlbwarm_latency_ns_w1), which the streaming fetch never beats; `l0_ns` the run's
+    own L0. Not a fitted bound: the 2 is the two latencies, both facts measured. A ring's steps
+    overlap (the next fetch's loads issue while this one's are out), so this bound does not hold
+    for a ring, and no ring reading is read against it."""
+    return inflight_bytes * l0_ns / (2.0 * latency_ns)
+
+
+def chain_all_in_flight(b_w_w1, inflight_bytes, l0_ns, latency_ns):
+    """Whether a lone warp on a chain had every load of the fetch in flight at once: its reading
+    is above chain_bound, which a warp held to fewer loads cannot pass."""
+    return b_w_w1 > chain_bound(inflight_bytes, l0_ns, latency_ns)
+
+
 MODES = ("free", "placed")
 COLUMNS = ("mode", "k", "variant", "inflight", "w", "gbps", "gbps_lo", "gbps_hi", "ns_fetch",
            "sm_mhz", "mib")
@@ -338,7 +371,7 @@ def probe_variants(probe):
         return tuple(VARIANTS)
     if probe in EARLIER_PROBES:
         return EARLIER_PROBES[probe]["variants"]
-    raise ValueError(f"{probe} is neither the checked-in probe ({checked_in_probe()}) nor an "
+    raise ValueError(f"{probe} is not the checked-in probe ({checked_in_probe()}), nor an "
                      f"earlier one this parser reads ({', '.join(EARLIER_PROBES)})")
 
 
@@ -601,6 +634,334 @@ def table_of(paths, isa_table):
     return {"schema": SCHEMA, "note": NOTE, "runs": runs}
 
 
+FACTS_NOTE = (
+    "Per-architecture SM DRAM rate facts, regenerated by `tools/bench/warp_inflight/"
+    "warp_inflight.py regenerate` from the committed probe runs in src/core/data/warp_inflight/ "
+    "(warp_inflight_<arch>.txt: the architecture's reference card; "
+    "warp_inflight_<arch>_<card>.txt: another card of it, a transfer check; all written by "
+    "`warp_inflight.py run`, never edited by "
+    "hand), read by core/sm_rate_facts.h for the decode price's per-SM bound "
+    "min(P, W x min(b_w, b_w_max) / L0) (kernel_roofline.h dram_time, #690). "
+    "sm_dram_bytes_per_clock_free / _placed: P, the largest rate one SM reached at k = 1 (any "
+    "variant, any W) over the SM clock of that row, with the L1-largest carve-out (`free`) and "
+    "the shared-largest one (`placed`); sm_dram_gbps_* and sm_mhz_* are the rate and clock it was "
+    "read from. dram_stream_latency_ns: L0, the run's own fetch time of one warp alone on one SM "
+    "with one 16-byte streaming load a lane in flight (free, k = 1, chain1, W = 1): the loads the "
+    "law prices, not the ISA table's pointer chase (dram_tlbwarm_latency_ns_w1, 8-24 % shorter on "
+    "the same card). max_warp_bytes_in_flight: b_w_max, the most bytes in flight one warp alone "
+    "reached (b_w at W = 1 by Little's law on L0, the largest over every variant and both "
+    "carve-outs). warp_bytes_saturated: the warp saturates, so b_w_max caps the bytes the law "
+    "counts. In a row whose run has chain8 and chain16 (probe 5 on), the warp saturates where "
+    "either chain's lone-warp b_w is at or under the two-latency bound count x L0 / (2 x the ISA "
+    "table's dram_tlbwarm_latency_ns_w1): a warp held to fewer loads than the chain's count "
+    "cannot pass it (cap_test: each chain's reading, its bound and the latency's source). In an "
+    "earlier run's row, it saturates where the 4-load ring keeps less than x1.5 of the 2-load "
+    "ring's b_w at W = 1 "
+    "(ring4_over_ring2_w1; the midpoint between no gain and the doubling its count gives: sm_70 "
+    "x1.20, sm_120a x1.00 saturate, sm_75 / sm_86 / sm_89 x1.80-1.81 do not); elsewhere b_w_max "
+    "is a lower bound of the warp's limit and caps nothing. ring2_* / chain4_* / ring4_*: b_w at "
+    "W = 1 of the "
+    "two-slot ring with two loads a lane a slot (2048 B a warp by count), of four loads a lane in "
+    "one chain (2048 B) and of the 4-load ring (4096 B), and the largest W up to which every "
+    "ring2 row keeps 0.9 of it. ring2_rows, ring4_rows: those rows at k = 1, [W, GB/s an SM, SM "
+    "MHz], the measurement the law's check reads (tests/ops/linear/test_kernel_roofline.cpp check "
+    "8). transfer: the other cards' runs of the architecture, their ring rows, the law of this "
+    "row against them (law over measured: the lowest, the highest at W = 1, the highest), and "
+    "`refuted` when any of their rows falls outside the check's bounds (the law below the row by "
+    "more than 1 %, above it by more than x1.25 at W = 1 or x1.40 anywhere): a refuted row is no "
+    "fact of the architecture, and its boards keep the legacy DRAM law. Provenance Measured for "
+    "every run, with its source file, card, probe version, nvcc, driver, runtime and the sha256 "
+    "of the warp_inflight.cu it was built from; a board of the architecture other than the "
+    "reference card is priced by the reference row, a transfer. tests/test_warp_inflight.py pins "
+    "that the table equals its regeneration and that every committed run is of the checked-in "
+    "probe or of an earlier one it records (warp_inflight.py EARLIER_PROBES: that version's "
+    "source sha256 and variants).")
+# The facts of a row: name -> unit.
+FACT_UNITS = {
+    "sm_dram_bytes_per_clock_free": "B/clk", "sm_dram_bytes_per_clock_placed": "B/clk",
+    "sm_dram_gbps_free": "GB/s", "sm_dram_gbps_placed": "GB/s",
+    "sm_mhz_free": "MHz", "sm_mhz_placed": "MHz",
+    "dram_stream_latency_ns": "ns",
+    "max_warp_bytes_in_flight": "B",
+    "ring2_b_w_w1_free": "B", "ring2_b_w_w1_placed": "B",
+    "ring2_linear_to_w_free": "warps", "ring2_linear_to_w_placed": "warps",
+    "chain4_b_w_w1_free": "B", "ring4_b_w_w1_free": "B",
+}
+# The ring variants the law is checked on, with the bytes a warp keeps in flight by count.
+CHECKED_RINGS = {"ring2": 2 * 2 * WARP_LOAD, "ring4": 2 * 4 * WARP_LOAD}
+# The check's bounds on law over measured (test_kernel_roofline.cpp check 8 holds the same): the
+# law is Little's with the unloaded L0, the counted bytes and a corner at P, an upper bound of the
+# rate, so never below a row (to 1 %), at most x1.25 above it at W = 1 and x1.40 anywhere. At W = 1
+# the gap is the count against what a warp keeps in flight: 0.86-0.93 of the 2-load ring's 2048 B,
+# 0.82-0.84 of the 4-load ring's 4096 B where nothing caps it (x1.07-1.16 and x1.19-1.23 over the
+# rows); on the curve the measured rate rounds off into P where the law has a corner (an
+# unmodelled knee at W = 8-16, x1.16-1.37: a gap of the model, not noise).
+LAW_NEVER_BELOW, LAW_AT_ONE_WARP, LAW_ON_THE_CURVE = 0.99, 1.25, 1.40
+# Whether one warp saturates: the 4-load ring doubles the 2-load ring's loads in flight; a warp
+# that is not saturated gains about the count (x1.80-1.81 at W = 1 on sm_75, sm_86, sm_89), a
+# saturated one about nothing (x1.00 on sm_120a, x1.20 on sm_70). b_w_max caps the counted bytes
+# only where the ring4 reading keeps less than half of that doubling (x1.5): the midpoint between
+# no gain and the count, 0.30 from the nearest reading on either side. Elsewhere b_w_max is the
+# largest reading, a lower bound of the warp's limit, and no cap (a ring8 run would place it).
+SATURATION_GAIN = 1.5
+
+
+def ring_rows(rows, variant):
+    return {mode: [[r["w"], r["gbps"], r["sm_mhz"]] for r in rows
+                   if r["mode"] == mode and r["k"] == 1 and r["variant"] == variant]
+            for mode in MODES}
+
+
+def card_slug(card):
+    """The file-name spelling of a card: `NVIDIA GeForce RTX 5070 Ti` -> `rtx5070ti`."""
+    name = card.lower()
+    for word in ("nvidia ", "geforce ", "quadro ", "tesla "):
+        name = name.replace(word, "")
+    return re.sub(r"[^a-z0-9]", "", name)
+
+
+def law_ratios(row, rings):
+    """Law over measured for every ring row of `rings` ({variant: {mode: [[W, GB/s, MHz]]}}) under
+    `row`'s facts: [(variant, mode, W, ratio)]."""
+    f = {n: v["value"] for n, v in row["facts"].items()}
+    out = []
+    for variant, count in CHECKED_RINGS.items():
+        b_w = min(count, f["max_warp_bytes_in_flight"]) if row["warp_bytes_saturated"] else count
+        for mode in MODES:
+            p = f[f"sm_dram_bytes_per_clock_{mode}"]
+            for w, gbps, mhz in rings[variant][mode]:
+                law = min(p * mhz * 1e-3, w * b_w / f["dram_stream_latency_ns"])
+                out.append((variant, mode, w, law / gbps))
+    return out
+
+
+def within_bounds(ratios):
+    return all(LAW_NEVER_BELOW <= r <= LAW_ON_THE_CURVE and (w != 1 or r <= LAW_AT_ONE_WARP)
+               for _, _, w, r in ratios)
+
+
+def cap_test(head, rows, summary, own, isa_table):
+    """The chain test of whether one warp saturates below its count (#757), for a run with the
+    CAP_CHAINS rows (probe 5 on); None for an earlier run, which keeps the ring rule. Each chain's
+    lone-warp b_w (free, k = 1, W = 1) against chain_bound with the architecture's latency from
+    the ISA table: a reading at or under the bound is a warp held to fewer loads (a cap)."""
+    if not all(v in summary["variants"]["free"] for v in CAP_CHAINS):
+        return None
+    latency, why, card = isa_l0(int(head["cc"]), isa_table)
+    if latency is None:
+        raise ValueError(f"no DRAM latency for the chain test: {why}")
+    chains = {}
+    for v, n in CAP_CHAINS.items():
+        b_w = summary["variants"]["free"][v]["b_w_w1"]
+        bound = round(chain_bound(n * WARP_LOAD, own, latency), 1)
+        chains[v] = {"b_w_w1": b_w, "two_latency_bound": bound, "all_in_flight": b_w > bound}
+    return {"latency_ns": latency, "latency_source": why, "latency_card": card,
+            "latency_is_this_card": card == head["card"], "chains": chains,
+            "saturated": not all(c["all_in_flight"] for c in chains.values())}
+
+
+def facts_row(head, rows, source, isa_table=DEFAULT_ISA_TABLE):
+    """One architecture's row of sm_rate_facts.json from a parsed run (its transfer checks are
+    added by build_facts)."""
+    own = own_l0(rows)
+    summary = derive(rows, own)
+    values = {"dram_stream_latency_ns": own}
+    for mode in MODES:
+        top = max((r for r in rows if r["mode"] == mode and r["k"] == 1), key=lambda r: r["gbps"])
+        values[f"sm_dram_bytes_per_clock_{mode}"] = summary["p_bytes_per_clk"][mode]
+        values[f"sm_dram_gbps_{mode}"] = top["gbps"]
+        values[f"sm_mhz_{mode}"] = top["sm_mhz"]
+        ring2 = summary["variants"][mode]["ring2"]
+        values[f"ring2_b_w_w1_{mode}"] = ring2["b_w_w1"]
+        values[f"ring2_linear_to_w_{mode}"] = ring2["linear_to_w"]
+    values["chain4_b_w_w1_free"] = summary["variants"]["free"]["chain4"]["b_w_w1"]
+    values["ring4_b_w_w1_free"] = summary["variants"]["free"]["ring4"]["b_w_w1"]
+    values["max_warp_bytes_in_flight"] = max(d["b_w_w1"] for mode in MODES
+                                             for d in summary["variants"][mode].values())
+    gain = values["ring4_b_w_w1_free"] / values["ring2_b_w_w1_free"]
+    chains = cap_test(head, rows, summary, own, isa_table)
+    row = {
+        "provenance": "Measured", "source": source, "card": head["card"],
+        "cc": int(head["cc"]), "sms": int(head["sms"]),
+        "tool": {"probe": head["probe"], "nvcc": head["nvcc"], "driver": head["driver"],
+                 "runtime": head["runtime"], "arch": head["arch"],
+                 "source_sha256": head["source_sha256"]},
+        "clocks_waived": any(n.startswith(CLOCK_WAIVED) for n in head["notes"]),
+        "notes": head["notes"],
+        "facts": {name: {"value": values[name], "unit": unit} for name, unit in FACT_UNITS.items()},
+        # b_w_max is a cap only where the probe saw one warp saturate: by the chain test where
+        # the run has its chains (probe 5 on), else by the ring rule (SATURATION_GAIN).
+        "warp_bytes_saturated": chains["saturated"] if chains else gain < SATURATION_GAIN,
+        "ring4_over_ring2_w1": round(gain, 3),
+        "ring2_rows": ring_rows(rows, "ring2"),
+        "ring4_rows": ring_rows(rows, "ring4"),
+    }
+    if chains:
+        row["cap_test"] = chains
+    return row
+
+
+def transfer_of(row, runs):
+    """The transfer checks of `row`: every other card's run of the architecture, its ring rows and
+    the law of `row` against them; refuted when any falls outside the bounds."""
+    checks = []
+    for name, head, rows in runs:
+        rings = {"ring2": ring_rows(rows, "ring2"), "ring4": ring_rows(rows, "ring4")}
+        ratios = law_ratios(row, rings)
+        checks.append({
+            "source": name, "card": head["card"], "sms": int(head["sms"]),
+            "tool": {"probe": head["probe"], "source_sha256": head["source_sha256"]},
+            "dram_stream_latency_ns": own_l0(rows),
+            "ring2_rows": rings["ring2"], "ring4_rows": rings["ring4"],
+            "law_over_measured": {
+                "lowest": round(min(r for *_, r in ratios), 4),
+                "highest_at_one_warp": round(max(r for _, _, w, r in ratios if w == 1), 4),
+                "highest": round(max(r for *_, r in ratios), 4)},
+            "within_bounds": within_bounds(ratios)})
+    return {"runs": checks, "refuted": any(not c["within_bounds"] for c in checks)}
+
+
+def build_facts(inputs_dir, replace=None):
+    """(the table from the runs in `inputs_dir`, rows in order of compute capability; [(file
+    name, why)] of the runs the parser refuses, which give no row and no check). A run is
+    warp_inflight_<arch>.txt (the architecture's row) or warp_inflight_<arch>_<card>.txt (another
+    card of it, a transfer check of that row). ValueError when a run sits under another
+    architecture's or card's name, or a transfer check has no row of its architecture. `replace`,
+    a (file name, text) pair, is read in place of that file: the table a merge would make, built
+    before anything is written."""
+    arches, others, refused = {}, {}, []
+    names = set(os.listdir(inputs_dir)) | ({replace[0]} if replace else set())
+    for name in sorted(names):
+        if not (name.startswith("warp_inflight_") and name.endswith(".txt")):
+            continue
+        if replace and name == replace[0]:
+            text = replace[1]
+        else:
+            with open(os.path.join(inputs_dir, name)) as f:
+                text = f.read()
+        try:
+            head, rows = parse_run(text)
+        except ValueError as e:
+            refused.append((name, str(e)))
+            continue
+        key = IP.arch_key(int(head["cc"]), "")
+        if name == f"warp_inflight_{key}.txt":
+            arches[key] = facts_row(head, rows, name)
+        elif name == f"warp_inflight_{key}_{card_slug(head['card'])}.txt":
+            others.setdefault(key, []).append((name, head, rows))
+        else:
+            raise ValueError(f"{name}: a run of sm_{key} ({head['card']}) belongs in "
+                             f"warp_inflight_{key}.txt or warp_inflight_{key}_"
+                             f"{card_slug(head['card'])}.txt")
+    for key, row in arches.items():
+        runs = others.pop(key, [])
+        for name, head, _ in runs:
+            if head["card"] == row["card"]:
+                raise ValueError(f"{name}: a transfer check of the reference card itself")
+        row["transfer"] = transfer_of(row, runs)
+    if others:
+        raise ValueError(f"transfer checks without a row of their architecture: {sorted(others)}")
+    arches = dict(sorted(arches.items(), key=lambda kv: kv[1]["cc"]))
+    return {"schema": FACTS_SCHEMA, "note": FACTS_NOTE, "arches": arches}, refused
+
+
+def absent_arches(table, isa_table=DEFAULT_ISA_TABLE):
+    """The architectures of the ISA facts table that this table has no row for."""
+    try:
+        with open(isa_table) as f:
+            isa = json.load(f).get("arches", {})
+    except OSError:
+        return []
+    return [f"sm_{k} ({row['card']})" for k, row in isa.items() if k not in table["arches"]]
+
+
+def report(table, refused, path, inputs):
+    for name, why in refused:
+        print(f"warp_inflight: {name} is no row: {why}", file=sys.stderr)
+    print(f"warp_inflight: {path} regenerated from {inputs}: "
+          + (", ".join(f"sm_{k} ({r['card']})" for k, r in table["arches"].items()) or "no row"))
+    for key, row in table["arches"].items():
+        for c in row["transfer"]["runs"]:
+            lo = c["law_over_measured"]
+            print(f"warp_inflight: sm_{key} row against {c['card']}: law over measured "
+                  f"{lo['lowest']}..{lo['highest']} (x{lo['highest_at_one_warp']} at W = 1)"
+                  f"{'' if c['within_bounds'] else ': outside the bounds'}")
+        if row["transfer"]["refuted"]:
+            print(f"warp_inflight: sm_{key}: the row is refuted by another card of it; its boards "
+                  "keep the legacy DRAM law")
+    absent = absent_arches(table)
+    if absent:
+        print("warp_inflight: no valid run, the legacy DRAM law prices them: " + ", ".join(absent))
+
+
+def cmd_regenerate(a):
+    try:
+        table, refused = build_facts(a.inputs)
+        IP.save_table(a.table, table)
+    except (OSError, ValueError) as e:
+        print(f"warp_inflight: {e}", file=sys.stderr)
+        return 1
+    report(table, refused, a.table, a.inputs)
+    return 0
+
+
+def cmd_merge(a):
+    """One run in, one regenerate: the run is copied into the inputs directory under its
+    architecture's name (replacing an older run of it), or with `--transfer` under its
+    architecture's and card's name (a transfer check of the architecture's row), and the table is
+    rebuilt from all of them. A refused run, or a table that cannot be built or saved, changes
+    nothing."""
+    if a.input.endswith(REFUSED):
+        print(f"warp_inflight: {a.input} is a refused run's output; nothing merged",
+              file=sys.stderr)
+        return 1
+    with open(a.input) as f:
+        text = f.read()
+    try:
+        head, _ = parse_run(text)
+    except ValueError as e:
+        print(f"warp_inflight: {a.input}: {e}; nothing merged", file=sys.stderr)
+        return 1
+    key = IP.arch_key(int(head["cc"]), "")
+    suffix = f"_{card_slug(head['card'])}" if getattr(a, "transfer", False) else ""
+    dest = os.path.join(a.inputs, f"warp_inflight_{key}{suffix}.txt")
+    # Another card's run under the reference name would drop the reference card's evidence (and
+    # the checks made against it): it takes --transfer, or --new-reference to replace it on purpose.
+    if os.path.exists(dest) and not suffix and not getattr(a, "new_reference", False):
+        with open(dest) as f:
+            m = re.search(r"^card (.+)$", f.read(), re.M)
+        if m and m.group(1).strip() != head["card"]:
+            print(f"warp_inflight: {dest} is the sm_{key} reference run of {m.group(1).strip()}, "
+                  f"not {head['card']}: merge it with --transfer (a check of that row), or with "
+                  "--new-reference to make it the reference; nothing merged", file=sys.stderr)
+            return 1
+    try:
+        table, refused = build_facts(a.inputs, (os.path.basename(dest), text))
+    except (OSError, ValueError) as e:
+        print(f"warp_inflight: {e}; nothing merged ({dest} is as it was)", file=sys.stderr)
+        return 1
+    before = None
+    if os.path.exists(dest):
+        with open(dest, "rb") as f:
+            before = f.read()
+    try:
+        with open(dest, "w", newline="\n") as out:
+            out.write(text)
+        IP.save_table(a.table, table)
+    except (OSError, ValueError) as e:
+        if before is None:
+            if os.path.exists(dest):
+                os.remove(dest)
+        else:
+            with open(dest, "wb") as out:
+                out.write(before)
+        print(f"warp_inflight: {e}; nothing merged ({dest} is as it was)", file=sys.stderr)
+        return 1
+    print(f"warp_inflight: {a.input} -> {dest}")
+    report(table, refused, a.table, a.inputs)
+    return 0
+
+
 def _kernels(sass):
     """{variant: its kernel's SASS body} of `cuobjdump -sass` text (sass_counts' parser)."""
     sc = IP._sass_counts()
@@ -635,7 +996,9 @@ def peak_in_flight(body):
     """The most 16-byte loads the kernel's SASS keeps in flight a lane, read in program order: a
     load stays in flight until an instruction reads or overwrites a register it writes (its
     quad), which waits for it. The loop's body is read once, after the code before it, which is
-    where the probe's fetches meet; a guarded load counts as issued."""
+    where the probe's fetches meet; a guarded load counts as issued. A count of what the text
+    lets be in flight, not a schedule: DEPBAR waits and the loop's back edge are not followed
+    (the probe's kernels wait on their loads through the registers they read)."""
     sc = IP._sass_counts()
     pending, peak = [], 0
     for _, _, opcode, operands, _ in body:
@@ -685,6 +1048,12 @@ def cmd_run(a):
             return 3
         head.append("sass_ldg128 " + " ".join(f"{v}:{loads[v]}" for v in VARIANTS))
         head.append("sass_inflight " + " ".join(f"{v}:{peaks[v]}" for v in VARIANTS))
+        short = [f"{v} {peaks[v]} of {inflight_of(v)}" for v in VARIANTS
+                 if peaks[v] != inflight_of(v)]
+        if short:
+            print("warp_inflight: the build's SASS does not keep each variant's loads in flight ("
+                  + ", ".join(short) + "); no run", file=sys.stderr)
+            return 3
         before = IP._compute_apps()
 
         # Both nvidia-smi streams drained as they come (IP.Sampler, #741).
@@ -798,10 +1167,11 @@ def cmd_show(a):
             print(f"  {mode}: P {p:.2f} GB/s an SM ({s['p_bytes_per_clk'][mode]} B/clk)")
             for v, d in s["variants"].get(mode, {}).items():
                 cap = ""
-                if l0["table_ns"]:
-                    held = all_in_flight(d["b_w_w1"], d["warp_bytes_in_flight"], l0["own_ns"],
-                                         l0["table_ns"])
-                    cap = "; every load in flight at once" if held else "; a cap below the count"
+                if v in CAP_CHAINS and l0["table_ns"]:
+                    bound = chain_bound(d["warp_bytes_in_flight"], l0["own_ns"], l0["table_ns"])
+                    cap = (f"; the two-latency bound {bound:.0f} B: "
+                           + ("every load in flight at once" if d["b_w_w1"] > bound
+                              else "a cap below the count"))
                 print(f"    {v:7s} in flight {d['warp_bytes_in_flight']:5d} B a warp: b_w at W=1 "
                       f"{d['b_w_w1']:7.1f} B, linear to W={d['linear_to_w']} (b_w there "
                       f"{d['b_w_at_linear_w']:.1f} B){cap}")
@@ -834,6 +1204,20 @@ def main():
         if name == "rows":
             s.add_argument("--out")
         s.set_defaults(fn=fn)
+    m = sub.add_parser("merge")
+    m.add_argument("--input", required=True)
+    m.add_argument("--inputs", default=DEFAULT_INPUTS)
+    m.add_argument("--table", default=DEFAULT_TABLE)
+    how = m.add_mutually_exclusive_group()
+    how.add_argument("--transfer", action="store_true",
+                     help="another card of the architecture: a transfer check of its row")
+    how.add_argument("--new-reference", action="store_true",
+                     help="replace the architecture's reference run with another card's")
+    m.set_defaults(fn=cmd_merge)
+    g = sub.add_parser("regenerate")
+    g.add_argument("--inputs", default=DEFAULT_INPUTS)
+    g.add_argument("--table", default=DEFAULT_TABLE)
+    g.set_defaults(fn=cmd_regenerate)
     a = ap.parse_args()
     return a.fn(a)
 

@@ -32,6 +32,10 @@
 // ring8 (16 loads a lane, 8192 bytes a warp; probe 4, #757) goes past the m1 schedules' counts to
 // find where one warp stops gaining: on sm_75, sm_86 and sm_89 ring4 still kept x1.8 of ring2's
 // bytes, so its reading was only a lower bound of what a warp keeps in flight.
+// chain8 and chain16 (probe 5, #757) settle whether a warp holds every one of its 8 or 16 loads
+// at once. A ring's steps overlap, so a cap shows there only as a lower rate. A chain issues its
+// next fetch only once every load of this one is back, so a warp held to fewer loads than its
+// count takes at least two DRAM latencies a step (warp_inflight.py chain_all_in_flight).
 //
 // Two placements of the W warps:
 //   free:   k CTAs of W warps (W <= 32), no shared memory and the L1-largest carve-out; the CTA
@@ -52,8 +56,8 @@
 // fetches: a chain's loaded latency of one fetch, half of it for a ring (two fetches overlap);
 // sm_mhz is clock64 over %globaltimer. A span under 100 us is refused (the timer steps by ~1 us).
 // A (mode, variant, W) whose registers fit fewer CTAs an SM than it needs (1 free, c placed: the
-// ring8 loop's 64 data registers a lane) has no row and says so in a note; every other point of
-// the grid has one.
+// 64 data registers a lane of ring8 and chain16) has no row and says so in a note; every other
+// point of the grid has one.
 //
 // Clocks (probe 2). The measured part is bracketed by a `span_ns <begin> <end>` line in host wall
 // time (system_clock, ns since the epoch): warp_inflight.py keeps the nvidia-smi clock samples
@@ -171,6 +175,9 @@ __global__ void stream(const unsigned char* buf, unsigned long long base,
         for (int i = 0; i < fetches; ++i) {
             uint4 v[F];
             fetch<F>(v, p + off);
+            // As in the ring below: the clock read keeps every load of chain8 and chain16 ahead
+            // of the compute that waits on them; chain1-4's SASS does not change.
+            if constexpr (F >= 8) acc ^= static_cast<unsigned>(clock64()) & zero;
             acc = consume<F>(v, acc);
             off += kStep + (acc & zero);
         }
@@ -217,10 +224,11 @@ struct Variant {
 };
 
 const Variant kVariants[] = {
-    {"chain1", 1, false, stream<1, false>}, {"chain2", 2, false, stream<2, false>},
-    {"chain4", 4, false, stream<4, false>}, {"ring1", 1, true, stream<1, true>},
-    {"ring2", 2, true, stream<2, true>},    {"ring4", 4, true, stream<4, true>},
-    {"ring8", 8, true, stream<8, true>},
+    {"chain1", 1, false, stream<1, false>},    {"chain2", 2, false, stream<2, false>},
+    {"chain4", 4, false, stream<4, false>},    {"ring1", 1, true, stream<1, true>},
+    {"ring2", 2, true, stream<2, true>},       {"ring4", 4, true, stream<4, true>},
+    {"ring8", 8, true, stream<8, true>},       {"chain8", 8, false, stream<8, false>},
+    {"chain16", 16, false, stream<16, false>},
 };
 
 std::vector<std::string> g_failures;
@@ -377,7 +385,7 @@ int main(int argc, char** argv) {
     const int cc = p.major * 10 + p.minor;
     char pci[32] = {};
     CHECK(cudaDeviceGetPCIBusId(pci, sizeof pci, 0));
-    std::printf("probe warp_inflight 4\n");
+    std::printf("probe warp_inflight 5\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -507,8 +515,8 @@ int main(int argc, char** argv) {
         for (const Variant& v : kVariants)
             for (const int w : w_list) {
                 if (w > 32 || w > pr.max_warps) continue;
-                // One CTA of W warps must fit an SM, or the launch fails: the ring8 loop's
-                // registers leave no room for 32 warps (or for 24 on a 48-warp SM).
+                // One CTA of W warps must fit an SM, or the launch fails: the registers of ring8
+                // and chain16 leave no room for 32 warps (and on sm_75, none for 24).
                 int fit = 0;
                 CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&fit, v.kernel, 32 * w, 0));
                 if (fit < 1) {
