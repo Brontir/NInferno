@@ -536,17 +536,25 @@ public:
     void add(const std::string& layer, bool down, const std::string& format,
              const std::string& layout, std::uint64_t k, std::uint64_t x_width, std::uint64_t bytes,
              const std::optional<artifact::ActivationPolicy>& policy, bool weight) {
-        if (format == "bf16" || format == "fp32" || format == "fp16" || format == "int32") {
+        if (format == "bf16" || format == "fp32" || format == "int32") {
             if (!weight) { return; }
             Layer& l = layers_[layer];
             l.float_bytes += bytes;
+            Bank& b = down ? l.down : l.gate_up;
+            // An F32 bank as the converter keeps it: cast to bf16 (moe_published,
+            // gemma4_published; FP32 has no weight codec).
+            const std::string kept_format = format == "fp32" ? "bf16" : format;
             try {
-                const QType q = artifact::parse_format(format);
-                const QuantLayout kept =
-                    layout.empty() ? default_weight_layout(q) : artifact::parse_layout(layout);
-                note(down ? l.down : l.gate_up, format, std::string(artifact::layout_name(kept)), k,
-                     policy);
-            } catch (const std::exception&) { l.known = false; }
+                const QType q          = artifact::parse_format(kept_format);
+                const QuantLayout kept = layout.empty() || format == "fp32"
+                                             ? default_weight_layout(q)
+                                             : artifact::parse_layout(layout);
+                note(b, kept_format, std::string(artifact::layout_name(kept)), k, policy);
+            } catch (const std::exception&) {
+                // A bank not read: its layer's kind unknown, its prefill route untouched.
+                b.seen  = true;
+                b.whole = false;
+            }
             return;
         }
         Layer& l = layers_[layer];

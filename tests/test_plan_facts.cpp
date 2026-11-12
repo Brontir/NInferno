@@ -323,6 +323,19 @@ int gguf_qwen35() {
                   "gguf F16 banks: one bf16 kind at BF16 inputs, the scale apart");
         failures += check(f.model.expert_prefill == rt::ExpertPrefill::Unknown,
                           "gguf F16 banks: the prefill route as before");
+        // F32 banks as the published recipes keep them: bf16 (FP32 has no weight codec).
+        GgufFile f32 = file;
+        for (const char* name : {"blk.0.ffn_gate_exps.weight", "blk.0.ffn_up_exps.weight"}) {
+            f32.tensors.push_back(tensor(name, {5120, 512, 64}, ninferno::convert::ggml::F32, 200));
+        }
+        f32.tensors.push_back(tensor("blk.0.ffn_down_exps.weight", {512, 5120, 64},
+                                     ninferno::convert::ggml::F32, 200));
+        const auto l32 = pr::plan_facts_of_gguf(f32, 999999).model.expert_layers;
+        failures += check(l32.size() == 1 && l32[0].gate_up_format == "bf16" &&
+                              l32[0].down_format == "bf16" && !l.empty() &&
+                              l32[0].gate_up_layout == l[0].gate_up_layout &&
+                              l32[0].policy == rt::PlanExpertPolicy::A16Only,
+                          "gguf F32 banks: a bf16 kind");
     }
 
     // The metadata alone (ninferno-ui): FileSize.
@@ -913,6 +926,48 @@ int artifact_expert_layers() {
                       "artifact routed layers: the recorded AllowA8");
     failures += check(unknown != layers.end() && unknown->layers == 1,
                       "artifact routed layers: a use without a policy, unknown");
+
+    // A layer of BF16 banks (Codex on #764): its weight banks (bound by a Use) are a bf16 kind at
+    // the recorded A16; its stacked gate/up bias (no Use: an auxiliary) is not a bank.
+    art::Directory floats;
+    floats.components = dir.components;
+    const std::string bf =
+        std::string(art::layout_name(ninferno::default_weight_layout(ninferno::QType::BF16)));
+    const auto object = [&](const std::string& name, art::Shape shape, std::uint64_t bytes,
+                            bool use) {
+        art::TensorObject t;
+        t.id     = name;
+        t.shape  = shape;
+        t.format = "bf16";
+        t.layout = bf;
+        t.bytes  = bytes;
+        const art::ObjectHandle handle{floats.objects.size()};
+        floats.objects.emplace_back(t);
+        floats.object_index[name] = handle;
+        art::Binding b;
+        b.whole_object = true;
+        b.elements     = 1;
+        for (const std::uint64_t d : shape) { b.elements *= d; }
+        b.parts               = {art::Part{handle, 0, b.elements}};
+        floats.bindings[name] = b;
+        if (use) {
+            art::Use u;
+            u.parameter              = name;
+            u.input                  = "x";
+            u.activation_policy      = art::ActivationPolicy::A16Only;
+            floats.uses[{name, "x"}] = u;
+        }
+    };
+    object("text/layers/0/experts/gate_up", {32, 5760, 2880}, 4000, true);
+    object("text/layers/0/experts/down", {32, 2880, 2880}, 2000, true);
+    object("text/layers/0/experts/gate_up_bias", {32, 5760}, 300, false);
+    const auto bf_layers =
+        pr::plan_facts_of_directory(floats, "a test directory").model.expert_layers;
+    failures += check(bf_layers.size() == 1 && bf_layers[0].gate_up_format == "bf16" &&
+                          bf_layers[0].down_format == "bf16" && bf_layers[0].gate_up_layout == bf &&
+                          bf_layers[0].policy == rt::PlanExpertPolicy::A16Only &&
+                          bf_layers[0].layers == 1 && bf_layers[0].bytes == 6000,
+                      "artifact routed layers: BF16 banks a bf16 kind at A16, the bias apart");
     return failures;
 }
 

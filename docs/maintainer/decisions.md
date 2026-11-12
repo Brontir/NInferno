@@ -2068,8 +2068,11 @@ grouped stages run at the step's rows, on the planned board: `moe_route_query`
 of a wide call, now one function, `moe_split_tokens`, that `moe()` calls too) over descriptor
 banks on the board's class. The plan facts keep the trunk's routed layers by kind
 (`PlanModelFacts::expert_layers`: each weight bank's format, stored layout and K, a
-floating-point bank's too (a GGUF's F16 experts as bf16; a bank's float scales and biases are not
-banks), and the experts'
+floating-point bank's too (a GGUF's F16 and F32 experts as bf16, as `moe_published` and
+`gemma4_published` keep them; a Qwen 3.5/3.6 MoE GGUF's float experts are re-quantized by
+`choose_recipe` only under `--maintainer-quantize`; a bank's float scales and biases are not
+banks; each quantization row's from its own tensor table, none for a row whose header was not
+read, never another row's), and the experts'
 activation policy: an artifact's the one its uses record, `Use::activation_policy`, which a start
 reads; a GGUF's where its tensor table tells it (`gguf_expert_policy`: a ggml block or MXFP4
 bank as stored, `kept_block_policy`; an NVFP4 bank without an activation divisor A16); unknown
