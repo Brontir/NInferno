@@ -1217,7 +1217,7 @@ def cmd_show(a):
                     bound = chain_bound(d["warp_bytes_in_flight"], l0["own_ns"], l0["table_ns"])
                     cap = (f"; the two-latency bound {bound:.0f} B: "
                            + ("every load in flight at once" if d["b_w_w1"] > bound
-                              else "a cap below the count"))
+                              else "at or under it, which alone is no verdict (cap_test decides)"))
                 print(f"    {v:7s} in flight {d['warp_bytes_in_flight']:5d} B a warp: b_w at W=1 "
                       f"{d['b_w_w1']:7.1f} B, linear to W={d['linear_to_w']} (b_w there "
                       f"{d['b_w_at_linear_w']:.1f} B){cap}")
