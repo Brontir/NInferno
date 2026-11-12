@@ -14,10 +14,11 @@ rows left out.
   median and the production pick. The ten shapes are the golden shapes of the two lab models'
   q4_K and q6_K matrices (store and SwiGLU), at the tool's default widths: 190 scored cases per
   board, T 1..512 (1-8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512). The 1024-8192 rows
-  belong to the prefill profile and are left out of the scoring. The weight copies rotate
-  (`--rotate`, on by default): ceil(max(2 x L2, 128 MiB) / the shape's weight bytes) copies,
-  clamped to 1..64, so the count differs by shape, and the q6_K 248320 x 4096 weight, larger than
-  that span, runs from one copy.
+  belong to the prefill profile and are left out of the scoring. A decode or verify
+  sample (T <= 16) is one call on each of ceil(max(2 x L2, 128 MiB) / the shape's weight bytes)
+  weight copies (`--rotate`, on by default), clamped to 1..64, so the count differs by shape; the
+  q6_K 248320 x 4096 weight, larger than that span, runs from one copy. A wider sample is one call
+  after the tuners' L2 read flush.
 - No other job on the GPU during the passes (a queue holder, the stand lock, no compute process).
 - Regret is the extra time of the pick over the best observed route, summed over a band's cases
   (time-weighted). "Best observed" is the best qualified candidate in the sweep, not a global
