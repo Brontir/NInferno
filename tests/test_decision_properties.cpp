@@ -61,6 +61,8 @@
 #include "core/weight_view.h"
 #include "ops/common/arch_limits.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_gemm_internal.h"
+#include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/kernel_roofline.h"
 #include "ops/generic/route_query.h"
@@ -167,11 +169,14 @@ constexpr QType kFormats[] = {
 constexpr Shape kShapes[] = {{1024, 4096}, {17408, 5120}};
 // Every width of the decode, verify and prefill bands the selector tells apart: both sides of each
 // width bound it switches at (held below), and widths inside the bands.
-constexpr std::int32_t kTokens[] = {1,  2,  4,   5,   8,   9,   12,  16,  17,  32,
-                                    33, 64, 127, 128, 255, 256, 512, 513, 1024};
+// Besides the named bounds: 3 / 4 (rules_r8's IQ2-class formats from 4), 64 / 65 (heuristic_w4a8's
+// 64x64 tile up to 64 and the prefill narrow band, then a choice by the SM count), 8 / 9
+// (kMmqVerifyMinTokens), 255 / 256 (kVoltaTileMaxTokens), local to generic_select.cpp.
+constexpr std::int32_t kTokens[] = {1,  2,  3,  4,   5,   8,   9,   12,  16,  17,  32,
+                                    33, 64, 65, 127, 128, 255, 256, 512, 513, 1024};
 // The widths the price is checked at: from the first the cost model ranks (17), both sides of
 // each bound there.
-constexpr std::int32_t kPriceTokens[] = {17, 32, 33, 64, 127, 128, 255, 256, 512, 513, 1024};
+constexpr std::int32_t kPriceTokens[] = {17, 32, 33, 64, 65, 127, 128, 255, 256, 512, 513, 1024};
 
 template <std::size_t N>
 constexpr bool has(const std::int32_t (&grid)[N], std::int32_t t) {
@@ -191,7 +196,10 @@ constexpr bool upto_bound(const std::int32_t (&grid)[N], std::int32_t bound) {
 }
 
 static_assert(upto_bound(kTokens, generic::kR8MaxTokens) &&
-                  from_bound(kTokens, generic::kMmqMinTokens) &&
+                  upto_bound(kTokens, generic::kR8VerifyTokens) &&
+                  upto_bound(kTokens, generic::kMmqMaxTokens) &&
+                  upto_bound(kTokens, generic::kVoltaHmmaMaxTokens) && upto_bound(kTokens, 64) &&
+                  from_bound(kTokens, 4) && from_bound(kTokens, generic::kMmqMinTokens) &&
                   upto_bound(kTokens, generic::kGgmlVecMaxTokens) &&
                   upto_bound(kTokens, generic::kGgmlMmqMaxTokens) &&
                   upto_bound(kTokens, generic::kDenseTuneMaxTokens) &&
@@ -228,7 +236,9 @@ std::string decisions_of(const DeviceClass& d) {
                     const std::int32_t rows = e == Epilogue::SwiGlu ? s.n / 2 : s.n;
                     for (const std::int32_t t : kTokens) {
                         for (const bool prefill : {false, true}) {
-                            if (prefill && t < 256) { continue; }
+                            // The prefill profile from its first width: the selector's prefill
+                            // band switches inside 17..255 too (#719).
+                            if (prefill && t < generic::kPrefillBandMinTokens) { continue; }
                             out << static_cast<int>(q) << '/' << static_cast<int>(policy) << '/'
                                 << static_cast<int>(e) << '/' << s.n << 'x' << s.k << "/T" << t
                                 << (prefill ? "p" : "") << '=';
