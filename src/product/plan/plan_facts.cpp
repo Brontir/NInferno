@@ -491,6 +491,26 @@ std::string format_of_ggml(std::uint32_t type) {
     return "ggml_" + g::type_name(type);
 }
 
+// The activation policy a GGUF's routed bank runs at once converted, where its tensor table tells:
+// the converter's recipes keep a ggml block bank and an MXFP4 bank as stored (kept_block_policy:
+// qwen3_5_published, dense moe_recipe), an NVFP4 bank without an activation divisor
+// (<stem>.input_scale) at BF16 inputs (kept_policy). Unknown (none) where the recipe or the data
+// decide: an NVFP4 bank with a divisor (AllowA4 under the Qwen 3.5 and Gemma 4 published recipes,
+// A16Only under moe_recipe), and Gemma 4's MXFP4 experts, which the GGUF decoder maps onto NVFP4
+// only where their block exponents fit E4M3 (gguf_model.cpp probe_mx: the weights' bytes, not the
+// header) and the recipe re-quantizes otherwise.
+std::optional<artifact::ActivationPolicy>
+gguf_expert_policy(const std::string& model_type, const std::string& format, bool input_scale) {
+    try {
+        const QType q = artifact::parse_format(format);
+        if (q == QType::NVFP4) {
+            return input_scale ? std::nullopt : std::optional(artifact::ActivationPolicy::A16Only);
+        }
+        if (q == QType::MXFP4 && model_type == "gemma4_text") { return std::nullopt; }
+        return convert::kept_block_policy(q);
+    } catch (const std::exception&) { return std::nullopt; }
+}
+
 // The routed banks' prefill GEMM (runtime::ExpertPrefill), as ops/moe w4a8_bank_refusal decides it,
 // bank by bank (#311: a stage takes the grouped W4A8 where its own bank admits it): the grouped
 // W4A8 reads a bank of a format with int8 codes (convert::kept_block_policy AllowA8, the formats
@@ -507,18 +527,12 @@ std::string format_of_ggml(std::uint32_t type) {
 // (runtime::PlanExpertLayers).
 class ExpertRoutes {
 public:
-    // The activation policy a bank records: `kept` (a GGUF's encoding, which the converter keeps:
-    // convert::kept_block_policy of its format), else `recorded` (an artifact's Use; none:
-    // unknown).
-    struct Policy {
-        bool kept = false;
-        std::optional<artifact::ActivationPolicy> recorded;
-    };
-
-    // `down`: the layer's down bank (else its gate, up or fused gate/up bank).
+    // `down`: the layer's down bank (else its gate, up or fused gate/up bank). `policy`: the
+    // activation policy the bank runs at (an artifact's recorded Use, gguf_expert_policy for a
+    // GGUF); none: unknown.
     void add(const std::string& layer, bool down, const std::string& format,
              const std::string& layout, std::uint64_t k, std::uint64_t x_width, std::uint64_t bytes,
-             const Policy& policy) {
+             const std::optional<artifact::ActivationPolicy>& policy) {
         if (format == "bf16" || format == "fp32" || format == "fp16" || format == "int32") { return; }
         Layer& l = layers_[layer];
         l.bytes += bytes;
@@ -539,12 +553,10 @@ public:
                 b.whole = false;
             }
             // A bank read through several objects or uses takes the strictest of their policies.
-            const std::optional<artifact::ActivationPolicy> recorded =
-                policy.kept ? std::optional(convert::kept_block_policy(q)) : policy.recorded;
-            if (!recorded) {
+            if (!policy) {
                 b.policy_known = false;
-            } else if (!b.seen || static_cast<int>(*recorded) < static_cast<int>(b.policy)) {
-                b.policy = *recorded;
+            } else if (!b.seen || static_cast<int>(*policy) < static_cast<int>(b.policy)) {
+                b.policy = *policy;
             }
             b.seen           = true;
             b.format         = format;
@@ -1137,8 +1149,13 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
             if (!mtp && !t.ne.empty()) {
                 // A gate or up bank reads x at the hidden width; a down bank its own K.
                 const bool down = t.name.find("ffn_down_exps.") != std::string::npos;
-                expert_routes.add(std::to_string(*block), down, format_of_ggml(t.type), "", t.ne[0],
-                                  down ? t.ne[0] : g.hidden, t.bytes, {.kept = true});
+                const std::string format = format_of_ggml(t.type);
+                const bool input_scale =
+                    t.name.ends_with(".weight") &&
+                    names.count(t.name.substr(0, t.name.size() - 7) + ".input_scale") > 0;
+                expert_routes.add(std::to_string(*block), down, format, "", t.ne[0],
+                                  down ? t.ne[0] : g.hidden, t.bytes,
+                                  gguf_expert_policy(g.model_type, format, input_scale));
             }
             // The banks' weights only: a bank's per-expert scale (Gemma 4's ffn_down_exps.scale,
             // FP32) is not one of them.
@@ -1352,8 +1369,9 @@ PlanSourceFacts plan_facts_of_directory(const artifact::Directory& dir, const st
     // The activation policy each routed object's uses record (the converter's, convert/planner.cpp;
     // the start reads it: models/common/weight_use.cpp), the strictest where several read it; none
     // where a use records none (ExpertRoutes: the layer's policy unknown).
-    std::vector<ExpertRoutes::Policy> recorded(dir.objects.size());
-    std::vector<std::uint8_t> used(dir.objects.size(), 0);
+    enum class Recorded : std::uint8_t { None, Policy, Unknown };
+    std::vector<std::optional<artifact::ActivationPolicy>> recorded(dir.objects.size());
+    std::vector<Recorded> used(dir.objects.size(), Recorded::None);
     for (const auto& [key, use] : dir.uses) {
         if (!artifact::routed_expert_layer(use.parameter)) { continue; }
         const auto binding = dir.bindings.find(use.parameter);
@@ -1361,18 +1379,19 @@ PlanSourceFacts plan_facts_of_directory(const artifact::Directory& dir, const st
         for (const auto& piece : binding->second.parts) {
             const std::size_t i = piece.object.index;
             if (i >= recorded.size()) { continue; }
-            auto& r = recorded[i].recorded;
+            auto& r = recorded[i];
             if (!use.activation_policy) {
-                used[i] = 2; // a use without a policy: unknown whatever the others say
-            } else if (used[i] == 0 || (used[i] == 1 && static_cast<int>(*use.activation_policy) <
-                                                            static_cast<int>(*r))) {
+                used[i] = Recorded::Unknown; // a use without a policy, whatever the others say
+            } else if (used[i] == Recorded::None ||
+                       (used[i] == Recorded::Policy &&
+                        static_cast<int>(*use.activation_policy) < static_cast<int>(*r))) {
                 r       = use.activation_policy;
-                used[i] = 1;
+                used[i] = Recorded::Policy;
             }
         }
     }
     for (std::size_t i = 0; i < recorded.size(); ++i) {
-        if (used[i] != 1) { recorded[i].recorded.reset(); }
+        if (used[i] != Recorded::Policy) { recorded[i].reset(); }
     }
     // The input table's objects that the output head does not share (an untied table: a decode
     // step gathers one row of it).

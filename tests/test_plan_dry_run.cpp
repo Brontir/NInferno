@@ -2174,16 +2174,24 @@ void test_moe_routes() {
         };
         const auto fast  = ninferno::ActivationMode::Fast;
         const auto exact = ninferno::ActivationMode::Exact;
+        const auto int8  = ninferno::ActivationMode::Int8;
         check(has(4, fast, K::Unknown, K::Unknown, 1500),
               "MoE routes: a kind not read whole and a kind of no recorded policy, unknown");
+        // Under exact and int8 the start runs the experts at A16 / AllowA8 whatever was recorded
+        // (models::effective_policy): the kind of no recorded policy is answered there.
+        check(has(2, int8, K::Unknown, K::Unknown, 1000) &&
+                  has(2, exact, K::Unknown, K::Unknown, 1000),
+              "MoE routes: under exact and int8 only the kind not read whole unknown");
         // A build without tensor mma.sync (Volta's) runs other kernels (moe_split_tokens).
         if (ninferno::build_features().mma_tensor) {
             check(has(4, fast, K::R8, K::RegisterMma, 3000),
                   "MoE routes: MXFP4 at four rows, R8 on the gate/up");
             check(has(8, fast, K::RegisterMma, K::RegisterMma, 3000),
                   "MoE routes: MXFP4 at eight rows, the register MMA");
-            check(has(2, exact, K::RegisterMma, K::RegisterMma, 3000),
+            check(has(2, exact, K::RegisterMma, K::RegisterMma, 3500),
                   "MoE routes: exact activations, the invariant profile");
+            check(has(4, int8, K::R8, K::RegisterMma, 3500),
+                  "MoE routes: int8 activations, AllowA8 whatever was recorded");
         }
     }
     rt::set_plan_moe_route_query({});

@@ -219,10 +219,12 @@ struct PlanLinear {
 // layers of this kind and their routed bytes. What the MoE op's route query is asked for
 // (set_plan_moe_route_query). The policy is the layer's as a start reads it (ops::moe_policy of its
 // two banks'): an artifact's recorded one (each bank's Use: activation_policy), a GGUF bank's the
-// converter's for the encoding it keeps (convert::kept_block_policy); Unknown where a bank records
-// none. A layer whose banks are not read whole (a format not parsed, a bank missing, gate and up of
-// two formats) is one kind with empty formats (and Unknown policy): the query is not asked for it,
-// and its bytes are priced as an unknown route.
+// converter's for the encoding it keeps where the tensor table tells it (plan_facts.cpp
+// gguf_expert_policy); Unknown where a bank records none, or the recipe or the weights' bytes
+// decide (a GGUF NVFP4 bank with an activation divisor, Gemma 4's MXFP4 experts). A layer whose
+// banks are not read whole (a format not parsed, a bank missing, gate and up of two formats) is one
+// kind with empty formats (and Unknown policy): the query is not asked for it, and its bytes are
+// priced as an unknown route.
 enum class PlanExpertPolicy : std::uint8_t { Unknown, A16Only, AllowA8, AllowA4 };
 
 struct PlanExpertLayers {
@@ -475,13 +477,14 @@ struct PlanExpertRoute {
     std::string authority; // the op's authority that answered (moe::authority_name)
 };
 
-// The route a decode call of `tokens` tokens of `layers` takes on `device` under the speed
-// profile, or under --activations exact (`exact`: the invariant profile, A16). The engine registers
+// The route a decode call of `tokens` tokens of `layers` takes on `device` under `activations`:
+// the experts at the policy the start runs them at (models::effective_policy of the recorded one:
+// Fast the recorded, Int8 AllowA8, Exact A16 under the invariant profile). The engine registers
 // it (it links the Ops this library does not: register_plan_moe_route_query); unset, nullopt
 // everywhere, and a plan's MoE step takes the measured route's price (product/choice speed_of).
 using PlanMoeRouteQuery = std::function<std::optional<PlanExpertRoute>(
     const PlanDeviceFacts& device, const PlanModelFacts& model, const PlanExpertLayers& layers,
-    std::uint32_t tokens, bool exact)>;
+    std::uint32_t tokens, ActivationMode activations)>;
 void set_plan_moe_route_query(PlanMoeRouteQuery query);
 // The registered query (an empty function where none is).
 [[nodiscard]] const PlanMoeRouteQuery& plan_moe_route_query();

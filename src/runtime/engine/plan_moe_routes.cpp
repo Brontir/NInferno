@@ -2,6 +2,7 @@
 
 #include "artifact/formats.h"
 #include "core/device_class.h"
+#include "models/common/weight_use.h"
 #include "ninferno/ops/linear.h"
 #include "ops/moe/moe_route_query.h"
 #include "runtime/engine/plan_dry_run.h"
@@ -47,7 +48,7 @@ DeviceClass class_of(const PlanDeviceFacts& device) {
 void register_plan_moe_route_query() {
     set_plan_moe_route_query([](const PlanDeviceFacts& device, const PlanModelFacts& model,
                                 const PlanExpertLayers& layers, std::uint32_t tokens,
-                                bool exact) -> std::optional<PlanExpertRoute> {
+                                ActivationMode activations) -> std::optional<PlanExpertRoute> {
         if (layers.gate_up_format.empty() || layers.down_format.empty() || model.experts == 0 ||
             model.experts_used == 0 || model.hidden == 0 || layers.down_k == 0 ||
             device.compute_capability == 0) {
@@ -65,23 +66,28 @@ void register_plan_moe_route_query() {
             shape.gate_up_k      = static_cast<std::int32_t>(layers.gate_up_k);
             shape.inter          = static_cast<std::int32_t>(layers.down_k);
             shape.relu2          = !layers.gated;
-            // The experts' policy as the start reads it (PlanExpertLayers::policy); not known (a
-            // bank that records none): no answer, the step's route unknown.
+            // The experts' policy as the start runs them (models::effective_policy of the
+            // recorded one, PlanExpertLayers::policy): Exact and Int8 whatever was recorded; Fast
+            // the recorded one, and none where it is not known (a bank that records none).
+            ops::LinearPolicy recorded = ops::LinearPolicy::A16Only;
             switch (layers.policy) {
             case PlanExpertPolicy::A16Only:
-                shape.policy = ops::LinearPolicy::A16Only;
+                recorded = ops::LinearPolicy::A16Only;
                 break;
             case PlanExpertPolicy::AllowA8:
-                shape.policy = ops::LinearPolicy::AllowA8;
+                recorded = ops::LinearPolicy::AllowA8;
                 break;
             case PlanExpertPolicy::AllowA4:
-                shape.policy = ops::LinearPolicy::AllowA4;
+                recorded = ops::LinearPolicy::AllowA4;
                 break;
             case PlanExpertPolicy::Unknown:
-                return std::nullopt;
+                if (activations == ActivationMode::Fast) { return std::nullopt; }
+                break;
             }
-            const auto answer = moe::moe_route_query(
-                class_of(device), shape, static_cast<std::int32_t>(tokens), false, exact);
+            shape.policy = models::effective_policy(recorded, activations);
+            const auto answer =
+                moe::moe_route_query(class_of(device), shape, static_cast<std::int32_t>(tokens),
+                                     false, activations == ActivationMode::Exact);
             if (!answer) { return std::nullopt; }
             return PlanExpertRoute{kernel_of(answer->stages.gate_up.kernel),
                                    kernel_of(answer->stages.down.kernel),

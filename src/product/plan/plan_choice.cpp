@@ -277,22 +277,21 @@ void with_moe_routes(choice::ModelFacts& model, const PlanSourceFacts& facts,
 
     struct Answers {
         std::mutex mutex;
-        std::map<std::pair<std::uint32_t, bool>, std::vector<choice::MoeStepRoute>> at;
+        std::map<std::pair<std::uint32_t, ActivationMode>, std::vector<choice::MoeStepRoute>> at;
     };
 
     auto answers     = std::make_shared<Answers>();
     model.moe_routes = [query, layers = std::move(layers), device,
                         answers](std::uint32_t rows, ActivationMode activations) {
-        const bool exact = activations == ActivationMode::Exact;
         const std::lock_guard<std::mutex> lock(answers->mutex);
-        if (const auto it = answers->at.find({rows, exact}); it != answers->at.end()) {
+        if (const auto it = answers->at.find({rows, activations}); it != answers->at.end()) {
             return it->second;
         }
         std::vector<choice::MoeStepRoute> out;
         for (const runtime::PlanExpertLayers& kind : layers.expert_layers) {
             choice::MoeStepRoute step;
             step.share = static_cast<double>(kind.bytes);
-            if (const auto route = query(device, layers, kind, rows, exact)) {
+            if (const auto route = query(device, layers, kind, rows, activations)) {
                 step.gate_up = expert_kernel_of(route->gate_up);
                 step.down    = expert_kernel_of(route->down);
             }
@@ -306,7 +305,7 @@ void with_moe_routes(choice::ModelFacts& model, const PlanSourceFacts& facts,
                 out.push_back(step);
             }
         }
-        answers->at.emplace(std::pair{rows, exact}, out);
+        answers->at.emplace(std::pair{rows, activations}, out);
         return out;
     };
 }

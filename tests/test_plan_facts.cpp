@@ -276,6 +276,30 @@ int gguf_qwen35() {
                       unread->policy == rt::PlanExpertPolicy::Unknown,
                   "routed layers: gate and up of two formats are not read whole");
     }
+    // The GGUF banks' policy (gguf_expert_policy): MXFP4 kept as stored (AllowA8, qwen3_5's and
+    // moe_recipe's); NVFP4 without an activation divisor at BF16 inputs; NVFP4 with one
+    // (<stem>.input_scale) as its recipe decides: unknown.
+    const auto policy_of = [&](std::uint32_t type, bool divisor) {
+        GgufFile banks = file;
+        banks.tensors.push_back(tensor("blk.0.ffn_gate_exps.weight", {5120, 512, 64}, type, 100));
+        banks.tensors.push_back(tensor("blk.0.ffn_up_exps.weight", {5120, 512, 64}, type, 100));
+        banks.tensors.push_back(tensor("blk.0.ffn_down_exps.weight", {512, 5120, 64}, type, 100));
+        if (divisor) {
+            banks.tensors.push_back(
+                tensor("blk.0.ffn_gate_exps.input_scale", {64}, ninferno::convert::ggml::F32, 256));
+        }
+        const auto l = pr::plan_facts_of_gguf(banks, 999999).model.expert_layers;
+        return l.size() == 1 ? l[0].policy : rt::PlanExpertPolicy::Unknown;
+    };
+    failures +=
+        check(policy_of(ninferno::convert::ggml::MXFP4, false) == rt::PlanExpertPolicy::AllowA8,
+              "gguf MXFP4 banks: AllowA8");
+    failures +=
+        check(policy_of(ninferno::convert::ggml::NVFP4, false) == rt::PlanExpertPolicy::A16Only,
+              "gguf NVFP4 banks without a divisor: A16Only");
+    failures +=
+        check(policy_of(ninferno::convert::ggml::NVFP4, true) == rt::PlanExpertPolicy::Unknown,
+              "gguf NVFP4 banks with a divisor: unknown");
 
     // The metadata alone (ninferno-ui): FileSize.
     const auto meta = pr::plan_facts_of_gguf_metadata(file.metadata, 16000000000ULL);
@@ -458,6 +482,21 @@ int gemma4() {
                      {"gemma4.attention.sliding_window", 1024},
                      {"gemma4.attention.sliding_window_pattern", pattern}};
     failures += gemma4_facts(pr::plan_facts_of_gguf_metadata(md, 1), "gemma4 gguf");
+    // Gemma 4's MXFP4 experts (#616 step 7): the GGUF decoder maps them onto NVFP4 only where
+    // their block exponents fit E4M3 (the weights' bytes), the recipe re-quantizes them otherwise:
+    // the policy the plan cannot read off the header is unknown, not MXFP4's AllowA8.
+    {
+        GgufFile mx;
+        mx.metadata = md;
+        mx.tensors.push_back(tensor("blk.0.ffn_gate_up_exps.weight", {5376, 1408, 128},
+                                    ninferno::convert::ggml::MXFP4, 200));
+        mx.tensors.push_back(tensor("blk.0.ffn_down_exps.weight", {704, 5376, 128},
+                                    ninferno::convert::ggml::MXFP4, 100));
+        const auto layers = pr::plan_facts_of_gguf(mx, 999999).model.expert_layers;
+        failures += check(layers.size() == 1 && layers[0].gate_up_format == "mxfp4" &&
+                              layers[0].policy == rt::PlanExpertPolicy::Unknown,
+                          "gemma4 gguf: MXFP4 experts, the policy unknown");
+    }
     const json config = {{"architectures", {"Gemma4ForConditionalGeneration"}},
                          {"text_config",
                           {{"model_type", "gemma4_text"},

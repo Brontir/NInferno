@@ -2055,9 +2055,16 @@ of a wide call, now one function, `moe_split_tokens`, that `moe()` calls too) ov
 banks on the board's class. The plan facts keep the trunk's routed layers by kind
 (`PlanModelFacts::expert_layers`: each bank's format, stored layout and K, and the experts'
 activation policy: an artifact's the one its uses record, `Use::activation_policy`, which a start
-reads; a GGUF's `kept_block_policy` of its encodings; unknown where a use records none, and an
-unknown policy is no answer, the measured pair's share transferred, never the optimistic case;
-the MTP layer's banks are apart on both paths, as the runtime keeps them). The engine registers
+reads; a GGUF's where its tensor table tells it (`gguf_expert_policy`: a ggml block or MXFP4
+bank as stored, `kept_block_policy`; an NVFP4 bank without an activation divisor A16); unknown
+where a use records none, or where the recipe or the weights' bytes decide (a GGUF NVFP4 bank with
+`<stem>.input_scale`: AllowA4 under the Qwen 3.5 and Gemma 4 published recipes, A16 under
+`moe_recipe`; Gemma 4's MXFP4 experts, which the GGUF decoder maps onto NVFP4 only where their
+block exponents fit E4M3, `probe_mx` on the weights, and the recipe re-quantizes otherwise). An
+unknown policy is no answer under fast activations, the measured pair's share transferred, never
+the optimistic case; under int8 and exact the query asks at the policy the start runs
+(`models::effective_policy`: AllowA8, A16 under the invariant profile) whatever was recorded.
+The MTP layer's banks are apart on both paths, as the runtime keeps them). The engine registers
 the query for the plan (`runtime::register_plan_moe_route_query`, as it registers the workspace
 queries); `product::with_moe_routes` asks it per kind and rows and hands the choice the routed
 bytes by kernel pair (`ModelFacts::moe_routes`). The class the plan asks on is the board's
