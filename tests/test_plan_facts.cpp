@@ -530,10 +530,20 @@ int gemma4() {
                                     ninferno::convert::ggml::MXFP4, 200));
         mx.tensors.push_back(tensor("blk.0.ffn_down_exps.weight", {704, 5376, 128},
                                     ninferno::convert::ggml::MXFP4, 100));
-        const auto layers = pr::plan_facts_of_gguf(mx, 999999).model.expert_layers;
+        const auto facts  = pr::plan_facts_of_gguf(mx, 999999).model;
+        const auto layers = facts.expert_layers;
         failures += check(layers.size() == 1 && layers[0].gate_up_format == "mxfp4" &&
                               layers[0].policy == rt::PlanExpertPolicy::Unknown,
                           "gemma4 gguf: MXFP4 experts, the policy unknown");
+        // Their prefill (#769): every site the loader keeps them as runs A16 under fast
+        // activations (an NVFP4 site with no divisor, or the recipe's BF16 / Q8 at the Recipe
+        // default A16Only): A16, on a format the header does not tell (assumed: Transferred).
+        // Under --activations int8 every bank runs AllowA8: the file's format decides.
+        failures +=
+            check(facts.expert_prefill == rt::ExpertPrefill::A16 && facts.expert_prefill_assumed,
+                  "gemma4 gguf: MXFP4 experts prefill A16, assumed");
+        failures += check(facts.expert_prefill_int8 == rt::ExpertPrefill::Mxfp4,
+                          "gemma4 gguf: MXFP4 experts under int8, the MXFP4 route");
     }
     const json config = {{"architectures", {"Gemma4ForConditionalGeneration"}},
                          {"text_config",
@@ -993,7 +1003,8 @@ int artifact_prefill_policy() {
         Policy policy;
     };
 
-    const auto route = [](QType format, const std::vector<Bank>& banks) {
+    // `int8`: the route under --activations int8 (expert_prefill_int8), else fast activations'.
+    const auto route = [](QType format, const std::vector<Bank>& banks, bool int8 = false) {
         art::Directory dir;
         dir.components["text"].config      = gpt_oss_text_config();
         const ninferno::QuantLayout layout = format == QType::MXFP4
@@ -1020,7 +1031,8 @@ int artifact_prefill_policy() {
             use.activation_policy      = bank.policy;
             dir.uses[{bank.name, "x"}] = use;
         }
-        return pr::plan_facts_of_directory(dir, "a test directory").model.expert_prefill;
+        const auto facts = pr::plan_facts_of_directory(dir, "a test directory").model;
+        return int8 ? facts.expert_prefill_int8 : facts.expert_prefill;
     };
     const auto layers = [](Policy gate_up0, Policy down0, Policy gate_up1, Policy down1) {
         return std::vector<Bank>{{"text/layers/0/experts/gate_up", 5760, gate_up0},
@@ -1045,6 +1057,14 @@ int artifact_prefill_policy() {
                       "artifact prefill: Q4_0 banks recorded AllowA8, the grouped W4A8");
     failures += check(route(QType::GGML_Q4_0, layers(a16, a16, a16, a16)) == rt::ExpertPrefill::A16,
                       "artifact prefill: Q4_0 banks recorded A16Only, A16 (not the kept AllowA8)");
+    // Under --activations int8 the start runs every bank at AllowA8 (models::effective_policy),
+    // whatever was recorded: the formats decide.
+    failures +=
+        check(route(QType::MXFP4, layers(a16, a16, a16, a16), true) == rt::ExpertPrefill::Mxfp4,
+              "artifact prefill under int8: MXFP4 banks recorded A16Only, the MXFP4 route");
+    failures +=
+        check(route(QType::GGML_Q4_0, layers(a16, a8, a16, a8), true) == rt::ExpertPrefill::Int8,
+              "artifact prefill under int8: Q4_0 banks with A16-only ones, the grouped W4A8");
     return failures;
 }
 

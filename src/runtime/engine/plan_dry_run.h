@@ -341,8 +341,15 @@ struct PlanModelFacts {
     std::uint64_t routed_expert_bytes = 0, mtp_routed_expert_bytes = 0;
     // The trunk's linears by shape (empty: the geometry did not name them).
     std::vector<PlanLinear> linears;
-    // Their prefill GEMM (the trunk's banks; the most of their bytes where layers differ).
+    // Their prefill GEMM (the trunk's banks; the most of their bytes where layers differ), at the
+    // policy the banks run at under fast activations; under --activations int8, where the start
+    // runs every bank at AllowA8 (models::effective_policy), by their formats alone.
     ExpertPrefill expert_prefill = ExpertPrefill::Unknown;
+    ExpertPrefill expert_prefill_int8 = ExpertPrefill::Unknown;
+    // The route rests on banks whose kept format the header does not tell (Gemma 4's GGUF MXFP4
+    // experts: NVFP4, BF16 or Q8 by the loader's probe and recipe): an estimate on it is
+    // Transferred.
+    bool expert_prefill_assumed = false;
     // The trunk's routed layers by kind (empty: not read; the MTP layers' apart).
     std::vector<PlanExpertLayers> expert_layers;
     // Where a whole GGUF's tensor data starts (its tensor table ends just before), 0: not a GGUF.

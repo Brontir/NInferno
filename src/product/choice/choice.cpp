@@ -569,6 +569,17 @@ Route route_of(const QuantOption& quant, ActivationMode activations, const CardF
 
 namespace {
 
+// The quantization as a candidate's prefill reads it: under --activations int8 the start runs
+// every routed bank at AllowA8 (models::effective_policy), so the banks' GEMM is their formats'
+// (QuantOption::expert_banks_int8, #769).
+QuantOption prefill_quant(const QuantOption& quant, ActivationMode activations) {
+    QuantOption out = quant;
+    if (activations == ActivationMode::Int8 && quant.expert_banks_int8) {
+        out.expert_banks = *quant.expert_banks_int8;
+    }
+    return out;
+}
+
 // The weight format a linear's file names (ggml_q4_k, ...) as the engine's QType; a name the matrix
 // kernel does not run (bf16, q8_g32_fp16) gives one with no tile of its own (widest_tile: 128).
 QType qtype_of_name(std::string_view name) noexcept {
@@ -941,6 +952,9 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
     case ExpertBanks::Mxfp4: banks = gen == "gb20x" ? TileKernel::Mx : TileKernel::Int8; break;
     case ExpertBanks::Unknown: return 0;
     }
+    // A route on a kept format the file does not tell (Gemma 4's GGUF MXFP4 experts): its bytes
+    // and kernel differ by what the loader keeps.
+    if (moe && quant.expert_banks_assumed && transferred != nullptr) { *transferred = true; }
     if (!moe && gen == "volta") { return volta_linears_seconds(model, card, quant, tokens, transferred); }
     // A K-quant mix, an IQ4_XS file, or another class's label with a K-quant format in it (Q3_K_M:
     // mmq_linears_seconds reads the format, 0 for none).
@@ -1433,7 +1447,8 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
 
     bool prefill_transferred = false;
     const std::uint32_t filled = prompt > 0 ? std::min(candidate.chunk, prompt) : candidate.chunk;
-    out.prefill = linear_prefill(model, card, quant, route, filled, prefill_transferred);
+    out.prefill = linear_prefill(model, card, prefill_quant(quant, candidate.activations), route,
+                                 filled, prefill_transferred);
     if (prompt > 0 && out.prefill > 0) {
         // Exact activations run every route invariant (ScopedInvariantRoutes): attention on the grouped
         // kernels at every width, never the prompt kernel.
@@ -1596,8 +1611,13 @@ double single_request_seconds(const ModelFacts& model, const CardFacts& card,
     double prefill_seconds =
         tiled > 0 ? tiled : attention_seconds(model, card, prompt, transferred);
     prefill_seconds += tail_calls_seconds(model, card, quant, candidate, prompt, transferred);
-    if (whole > 0) { prefill_seconds += whole / linear_prefill(model, card, quant, route, chunk, transferred); }
-    if (rest > 0) { prefill_seconds += rest / linear_prefill(model, card, quant, route, rest, transferred); }
+    const QuantOption banks = prefill_quant(quant, candidate.activations);
+    if (whole > 0) {
+        prefill_seconds += whole / linear_prefill(model, card, banks, route, chunk, transferred);
+    }
+    if (rest > 0) {
+        prefill_seconds += rest / linear_prefill(model, card, banks, route, rest, transferred);
+    }
     if (basis != nullptr && transferred) { *basis = widest(*basis, SpeedBasis::Transferred); }
     return prefill_seconds + task.answer / speed.decode_per_stream;
 }
