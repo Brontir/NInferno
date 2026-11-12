@@ -217,7 +217,7 @@ def main(argv=None):
     if args.json:
         print(json.dumps(res, indent=1))
     elif not res["due"]:
-        print("regret job: not due (no decision path, grid or kernel source changed)")
+        print("regret job: not due (no decision path, grid, job script or kernel source changed)")
     else:
         print("regret job: due on " + ", ".join(f"{b} ({res['cards'][b]})" for b in res["boards"]))
         for p in res["triggers"]:
