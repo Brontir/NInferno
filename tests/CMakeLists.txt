@@ -150,6 +150,15 @@ add_test(NAME ninferno_regret_bands_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_bands.py)
 set_tests_properties(ninferno_regret_bands_test PROPERTIES LABELS host)
 
+# tools/bench/regret_report.py and tools/audit/regret_due.py: the regret job's report, its schema
+# checker and delta, and when the job is due on which boards (#620 step 10), synthetic, no GPU.
+add_test(NAME ninferno_regret_report_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_report.py)
+set_tests_properties(ninferno_regret_report_test PROPERTIES LABELS host)
+add_test(NAME ninferno_regret_due_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_due.py)
+set_tests_properties(ninferno_regret_due_test PROPERTIES LABELS host)
+
 # tools/bench/sweep_manifest.py: the route sweep archive's manifest (#613 PR-0), no GPU.
 add_test(NAME ninferno_sweep_manifest_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_sweep_manifest.py)

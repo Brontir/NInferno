@@ -56,7 +56,7 @@ Narrower than #614's PR-A5 plan:
   regret is not here.
 - No shapes recorded from the lab models (`NINFERNO_ROUTE_RECORD`).
 - T to 512 only: the plan asks for `--points` covering 17..2048.
-- No `tools/bench/run_route_regret.sh` yet: the commands above are the procedure.
+- The commands above are now one script, `tools/bench/regret_job.sh` ([below](#the-regret-job)).
 - The per-case rows, which `route_table_prune.py` (PR-F3) reads, are not committed. They stay in
   the sweep's CSVs on the stands (`docs/maintainer/sweep-archive.md`).
 
@@ -256,3 +256,81 @@ would regress the RTX 3090 as the tables stand.
 
 A new sweep is the same commands on a later master. The summaries are rewritten by board, and the
 per-case CSVs stay on the stands (`docs/maintainer/sweep-archive.md`).
+
+## The regret job
+
+`tools/bench/regret_job.sh BUILD_DIR [OUT_DIR]` (#620 step 10) runs the sweep above on one board,
+with the GPU idle, from the checkout the build was made of. It takes about 25 minutes on a lab board.
+
+1. **Qualify.** ctest in `BUILD_DIR` runs `ninferno_linear_generic_test` (with
+   `NINFERNO_TEST_FORMATS` set to the formats of the grid) and `ninferno_route_classes_test`. Both
+   must pass and neither may be skipped. Their names become the `--qualified` statement, so the
+   candidates are qualified at the measured build itself.
+2. **Sweep.** Three passes of `ninferno-serve route-tune --shapes
+   tools/bench/data/route_regret/shapes.txt --samples 7 --a8-candidates 1`, plus `--route-policy`
+   when `ROUTE_POLICY` is set.
+3. **Score.** `regret_collect.py --pci-id` (the board label and card name come from the card's PCI id
+   in `gpu_facts.json`), then `selection_regret.py` and `regret_bands.py --doc`.
+4. **Report.** `regret_report.py build` writes `OUT_DIR/<YYYYMMDD>-<rev12>.json` and a `.md` summary.
+   The maintainer commits the JSON as `tools/bench/data/route_regret/runs/<board>/<YYYYMMDD>-<rev12>.json`;
+   the per-case CSVs stay on the stand.
+
+The job refuses to start if another compute process is on the card. It does not lock the card,
+so on a stand with a job queue it goes through the queue like any other GPU job.
+
+**The report, `ninferno-regret-run/1`.** `regret_report.py check FILE...` validates it.
+- **Provenance:** `revision` (the checkout's HEAD, `-dirty` with uncommitted edits), `board`,
+  `card`, `device` (route_tune's class id), `pci_device_id`, `date` (UTC), `nvcc` (the build's CUDA
+  compiler), `driver`, `gpu` (name, max SM clock, power limit), `qualification` and `sweep` (grid
+  file and its sha256, passes, samples, route policy).
+- **Scores:** `summary` (selection_regret's `by_board` row), `by_board_regime_authority` (this
+  board's groups) and `bands` (regret_bands' `overall`, the production pick).
+- **Table exit:** `table_exit` is the metric of #616 step 9. `overrides` holds the case ids behind
+  its counts (`caught_up`, `holds`, `unscored`). Both are null when selection_regret.py predates
+  the metric.
+- **`delta`:** a comparison with the board's previous committed report, which is the newest
+  `runs/<board>/*.json` at HEAD, else the A5 summary `<board>.json`.
+  - The figures compared, all as slowdown factors:
+    - per regime x authority group and for the board: the geomean and the p95;
+    - per band: the time-weighted factor.
+  - A factor that grew by more than `threshold` (5 %, the table exit's resolution) is listed under
+    `regressions`, with both values and the case counts. One that shrank by as much is listed under
+    `improvements`.
+  - `new_groups` and `gone_groups` are the regime x authority groups found in only one of the two
+    reports.
+  - `new_holds` and `new_caught_up` are the override cases whose state changed. They are null
+    against an A5 summary, which keeps no per-case rows.
+
+The narrowest decode cases sit within a few ticks of the 1.024 us event timer. A move there below
+the threshold is not read as a change.
+
+**When it runs.**
+- **After a merge:** `tools/audit/regret_due.py OLD..NEW` exits 0 when the range touches any of:
+  - a decision-path file (`tools/audit/decision_paths.txt`, the golden gate's list);
+  - the grid (`shapes.txt`);
+  - a kernel source under `src/ops/generic` (`.cu`, `.cuh`).
+
+  It also names the boards:
+  - a route table (`routes/<class>.json`) moves only the boards of its own compute capability;
+    a table of an architecture no lab board has moves the boards of its major, since a sibling
+    minor may borrow it;
+  - the grid moves every board;
+  - any other file is read by `affected_arches.py`. An arch-guarded file names its arch's boards;
+    every other answer, host code included (the selector runs on the host for every board), names
+    every board.
+
+  If only the scoring tools changed, the job is not due: re-score the archived CSVs instead. The
+  script exits 1 when the job is not due and 2 on an error. `--json` prints the answer with a
+  reason for each file.
+- **Weekly:** on each lab stand, one run of master. A cron line, not installed:
+
+  ```
+  # m h dom mon dow: Sundays 03:00, a Release build of origin/master (the job's three targets) in build-regret
+  0 3 * * 0  cd "$HOME/ninferno" && mkdir -p profiles/bench/regret && { git fetch -q origin && git checkout -q --detach origin/master && cmake -S . -B build-regret -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON && cmake --build build-regret -j8 --target ninferno-serve ninferno_linear_generic_test ninferno_route_classes_test && tools/bench/regret_job.sh build-regret; } >> profiles/bench/regret/cron.log 2>&1
+  ```
+
+  The job reads the previous report at HEAD, so after a run is committed, the next one compares
+  against it.
+
+  On a stand whose GPU work goes through a queue, put the same command into the queue at that
+  hour instead.
