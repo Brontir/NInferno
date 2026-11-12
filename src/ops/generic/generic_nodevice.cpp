@@ -12,9 +12,8 @@
 // must not take this file: tests.cmake), and the kernel an executed route would launch is not
 // described (route_resources, rmma_resources_by_launch, rmma_plane_taken: they read the device's
 // binary; the last three stubs are here for the link only, nothing a host-only test calls reaches
-// them). A host-only
-// test adds this file to its own sources; nothing beside ninferno_ops links it, which defines the
-// real ones.
+// them). A host-only test adds this file to its own sources; nothing beside ninferno_ops links
+// it, which defines the real ones.
 namespace ninferno::ops::detail::generic {
 
 std::optional<Route> tuned_dense_route(const Problem&, std::int32_t) { return std::nullopt; }
