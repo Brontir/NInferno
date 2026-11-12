@@ -194,13 +194,17 @@ def compare(current, previous, threshold):
             moved[kind].append({**entry, "previous": before, "current": after,
                                 "change": after / before - 1})
 
-    for metric in GROUP_METRICS:
+    # The figures leave out a case either run could not score: two runs that did not score every
+    # case may sum different case sets, so their board and group figures are not compared.
+    scored_all = lambda s: s.get("scored_cases") is None or s["scored_cases"] == s.get("cases")
+    scored_match = scored_all(p_summary) and scored_all(current["summary"])
+    for metric in GROUP_METRICS if scored_match else ():
         note({"scope": "board", "metric": metric},
              group_figures(p_summary)[metric], group_figures(current["summary"])[metric])
     key = lambda g: (g["regime"], g["authority"])
     before = {key(g): g for g in p_groups}
     after = {key(g): g for g in current["by_board_regime_authority"]}
-    for k in sorted(before.keys() & after.keys()):
+    for k in sorted(before.keys() & after.keys()) if scored_match else ():
         for metric in GROUP_METRICS:
             note({"scope": "regime_authority", "regime": k[0], "authority": k[1], "metric": metric,
                   "cases": [before[k]["cases"], after[k]["cases"]]},
@@ -217,6 +221,7 @@ def compare(current, previous, threshold):
     return {
         "threshold": threshold,
         "sweep_matches": sweep_matches(p_sweep, current["sweep"]),
+        "all_cases_scored": scored_match,
         "regressions": moved["regression"],
         "improvements": moved["improvement"],
         "new_groups": side(after.keys() - before.keys(), after),
@@ -438,6 +443,8 @@ def check(doc):
                 need(grew == (key == "regressions"), f"{where}: the change has the wrong sign")
     need(delta.get("sweep_matches") in (True, False, "unknown") and "sweep_matches" in delta,
          "delta.sweep_matches: expected true, false or unknown")
+    need(delta.get("all_cases_scored", True) in (True, False),
+         "delta.all_cases_scored: expected true or false")
     for key in ("new_groups", "gone_groups"):
         entries = delta.get(key)
         if not need(isinstance(entries, list), f"delta.{key}: expected a list"):
@@ -469,8 +476,12 @@ def pct(x):
 
 def comparability(delta):
     """Why the delta's moves are not the selector's alone, or "" when the sweeps match."""
-    return {True: "", False: "the sweep differs (grid, samples, passes or route policy)",
-            "unknown": "the previous report does not record its sweep"}[delta["sweep_matches"]]
+    why = {True: "", False: "the sweep differs (grid, samples, passes or route policy)",
+           "unknown": "the previous report does not record its sweep"}[delta["sweep_matches"]]
+    if delta.get("all_cases_scored") is False:
+        why = "; ".join(w for w in (why, "a run left cases unscored: board and group figures not "
+                                         "compared") if w)
+    return why
 
 
 def markdown(doc):

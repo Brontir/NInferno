@@ -109,6 +109,18 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(len(back["delta"]["improvements"]), len(d["regressions"]))
         self.assertEqual(rr.check(back), [])
 
+    def test_unscored_cases_hold_back_the_board_and_group_figures(self):
+        before = rr.build(selection_report(document()), BOARD, META, bands(0.1))
+        before["summary"]["scored_cases"] = before["summary"]["cases"] - 1  # one case unscored
+        after = rr.build(selection_report(document(decode_ms=1.3)), BOARD, META, bands(0.3),
+                         previous=before, previous_path="a")
+        d = after["delta"]
+        self.assertIs(d["all_cases_scored"], False)
+        # Only the band moves: the board and group figures may sum different case sets.
+        self.assertEqual({e["scope"] for e in d["regressions"]}, {"band"})
+        self.assertIn("unscored", rr.comparability(d))
+        self.assertEqual(rr.check(after), [])
+
     def test_threshold_hides_a_small_move(self):
         before = rr.build(selection_report(document()), BOARD, META)
         after = rr.build(selection_report(document(decode_ms=1.12)), BOARD, META,
