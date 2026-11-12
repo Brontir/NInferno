@@ -261,6 +261,9 @@ const std::vector<Spec>& specs() {
              "kQuantKldSource",
              "kQuantKldCards",
              "kQuantKld",
+             // a measurement of answers against KLD (configuration-choice.md, #618 step 11): data
+             // a caller shows, never a decision's, not fitted
+             "kAnswerScales",
              // the benchmark's request mix and the trade (DECISIONS 73: declared conventions)
              "kRequestPrompt",
              "kRequestAnswer",
@@ -276,6 +279,10 @@ const std::vector<Spec>& specs() {
              "kTransferredDecodeError",
              "largest_transferred_decode_error",
              "kUnmeasuredCarryDecodeError",
+             // quoted, not fitted (#618 step 11): kPrefillEta's recorded in-sample error (its
+             // record holds the holdout) and the shortest prompt of the fit's 7K points, shown
+             "kPrefillPredictionError",
+             "kPrefillErrorFromPrompt",
              "kReferenceCards",
              "kWorthTie",
              // names of an enum's values, no number

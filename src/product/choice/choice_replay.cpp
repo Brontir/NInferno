@@ -537,7 +537,9 @@ json choice_summary(const Choice& c) {
                 {"resolution_basis", std::string(resolution_basis_name(c.resolution_basis))},
                 {"resolution_decides", c.resolution_decides},
                 {"resolution_floor", c.resolution_floor},
-                {"why", c.why}};
+                {"why", c.why},
+                {"why_code", c.why_code},
+                {"gate_code", c.gate_code}};
 }
 
 } // namespace ninferno::product::choice

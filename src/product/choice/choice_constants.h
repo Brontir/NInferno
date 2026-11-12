@@ -443,6 +443,28 @@ inline constexpr PrefillEta kPrefillEta[] = {
     {true, "gb20x", Route::Int8, 0.205, 2},  // RTX 5070 Ti, 5090: Gemma 26B-A4B, 35B-A3B
 };
 
+// The prefill estimate's recorded error, for a caller to show beside it (#618 step 11), never a
+// decision's: the rms and the worst of predicted / measured - 1 of kPrefillEta's fit, the numbers
+// the file head and fitted_holdouts.h's kPrefillEta record quote (fitted and checked on the same
+// points, so in sample; nothing here recomputes them). They hold from the fit's ~7K-token points
+// on (kPrefillErrorFromPrompt: the shortest of them in tools/fits/data/prefill/rows.json) and on
+// the generations of the cards they were measured on (the dense rows: RTX 2080 Ti, 3060, 4060 Ti,
+// 4070 Ti, 4090, 5070 Ti, 5090; the MoE rows: RTX 4060 Ti, 4090, 5070 Ti, 5090; the Quadro GV100 is
+// left out of the fit). Below that prompt no error is recorded: the estimate runs up to 30 % above
+// a measured prompt rate at 2K (a request's fixed time is not modeled).
+struct PrefillPredictionError {
+    bool moe;
+    double rms;
+    double worst;
+    std::string_view generations[4]; // "" past the last
+};
+
+inline constexpr PrefillPredictionError kPrefillPredictionError[] = {
+    {false, 0.064, 0.187, {"turing", "ga10x", "ada", "gb20x"}},
+    {true, 0.083, 0.189, {"ada", "gb20x"}},
+};
+inline constexpr std::uint32_t kPrefillErrorFromPrompt = 7118;
+
 // A dense model's int8 route on Q8 weights prefills on the generic int8 tiles (the W4A8 kernel's
 // Q8 codec, ops/generic q8_prefill_a8), not ggml's MMQ that kPrefillEta's int8 rows measured. Since
 // the 64-token tiles run token-major (PR #249) a tile no longer streams its weights from DRAM once
@@ -1030,6 +1052,20 @@ inline constexpr QuantKldPoint kQuantKld[] = {
 inline constexpr double kAccuracyWeight      = 25.0; // lambda: 0.001 KLD = 2.5 % of a request's time
 inline constexpr std::uint32_t kRequestPrompt = 2048; // the short request: a chat
 inline constexpr std::uint32_t kRequestAnswer = 512;  // the answer of either request
+
+// What a KLD means in answers, where it was calibrated (#618 step 11: shown, never a decision's):
+// MMLU-Pro points lost per unit of KLD against Q8_0 (docs/maintainer/configuration-choice.md, "What
+// lambda means in answers": Qwen3.5-9B GGUF, 2026-10-25, full MMLU-Pro at temperature 0, two runs a
+// quantization on the RTX 4090 and 5070 Ti; Q4_K_M 0.73 points for 0.0172 KLD, UD-IQ2_M 4.48 for
+// 0.114: about 0.04 points per 0.001). One family: another's KLD is not on the same scale (Gemma
+// 4's terms are two orders larger for the same switches), so it is not calibrated.
+struct AnswerScale {
+    std::string_view family;
+    std::string_view benchmark;
+    double points_per_kld;
+};
+
+inline constexpr AnswerScale kAnswerScales[] = {{"qwen3_5_text", "mmlu_pro", 40.0}};
 // The request mix (DECISIONS 73; a convention from the published benchmark, not Fitted): the worth
 // weighs the short request's ln(T) by the number of short chats the benchmark sends (20 prompts,
 // docs/performance/methodology.md) and the long request's by its long prompts (6, of about 24K

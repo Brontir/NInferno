@@ -247,6 +247,9 @@ struct QuantRow {
     // The plan counts a default proposal head whose size its own header did not give (the
     // parsed header's head taken as this row's).
     bool proposal_head_assumed = false;
+    // Whether the row's accuracy term may decide between quantizations (choice::quant_authority:
+    // direct, transfer, estimate, unknown); the trade weighs only direct rows.
+    choice::QualityAuthority quality_authority = choice::QualityAuthority::Unknown;
 };
 
 struct QuantPlan {

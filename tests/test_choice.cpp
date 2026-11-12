@@ -3620,6 +3620,105 @@ void fixture_cards_are_registry_rows(const json& doc, const std::string& what) {
     }
 }
 
+// What a caller shows beside the choice (#618 step 11): the gate as a code with the measurement
+// that would open it, the reference card it decided on, the bands its estimates carry, the answer
+// scale where calibrated. None of it decides.
+void reports_gates_and_bands(const json& fixture) {
+    ch::Task task;
+    task.contexts      = {32768};
+    const Bench a      = nine_b(fixture, "RTX 4070 Ti");
+    const auto allowed = ch::allowed_axes(a.model, KvCacheStorage::Int8Group64);
+    const ch::Choice c =
+        ch::choose(a.model, a.card, a.quants[0], allowed, {}, task, oracle(a, 9.6e9));
+    check(c.chosen && c.by_worth && c.why_code == "by_worth" && c.gate_code == "open" &&
+              c.gates_closed.empty(),
+          "gates: Ada, Qwen 3.5: every gate open");
+    check(c.reference && c.reference->generation == "ada" &&
+              c.reference->cards == "RTX 4070 Ti, RTX 4090" && !c.reference->lent &&
+              c.reference->decides && c.reference->card.sms == 94,
+          "gates: decided on Ada's reference card, the mean of the 4070 Ti and the 4090");
+    // The board's bands by basis (resolution_of on the board): an Own estimate carries the
+    // generation's measured decode error, a lent one the assumed carry.
+    const ch::Resolution own = ch::resolution_for(c.board_resolutions, ch::SpeedBasis::Own);
+    check(own.basis == ch::ResolutionBasis::Own && own.rms == 0.0226 && own.decides,
+          "bands: an Own estimate on Ada, the three cards' 2.26 %");
+    check(ch::resolution_for(c.board_resolutions, ch::SpeedBasis::LentGeneration).basis ==
+              ch::ResolutionBasis::Unmeasured,
+          "bands: a lent estimate, the assumed carry");
+    // The prefill at the short request's prompt: below the fit's 7K points no error is recorded.
+    check(!c.prefill_band.holds && c.prefill_band.why_code == "short_prompt" &&
+              c.prefill_band.fit_rms == 0.064 && c.prefill_band.fit_worst == 0.187 &&
+              !c.prefill_band.moe && c.prefill_band.prompt == task.prompt,
+          "bands: a 2K prompt claims no prefill error, the dense fit's 6.4 % beside it");
+    const ch::PrefillBand at7k = ch::prefill_band_of(a.model, a.card, ch::kPrefillErrorFromPrompt);
+    check(at7k.holds && at7k.why_code.empty(), "bands: from the fit's 7K points on, it holds");
+    const ch::PrefillBand volta = ch::prefill_band_of(a.model, board_card(0x1DBA), 22000);
+    check(!volta.holds && volta.why_code == "generation_not_in_fit",
+          "bands: Volta was left out of the prefill fit");
+    ch::ModelFacts moe       = a.model;
+    moe.experts              = 256;
+    moe.experts_per_token    = 8;
+    moe.routed_expert_params = moe.params * 0.8;
+    const ch::PrefillBand m  = ch::prefill_band_of(moe, a.card, 22000);
+    check(m.moe && m.holds && m.fit_rms == 0.083 && m.fit_worst == 0.189,
+          "bands: an MoE takes the MoE rows' 8.3 %");
+    check(!ch::prefill_band_of(moe, card_of(fixture.at("cards").at("RTX 3060")), 22000).holds,
+          "bands: no MoE prefill was measured on Ampere");
+    // Turing: no reference card; what opens it.
+    const Bench t = nine_b(fixture, "RTX 2080 Ti");
+    const ch::Choice ct =
+        ch::choose(t.model, t.card, t.quants[0], allowed, {}, task, oracle(t, 9.0e9));
+    check(ct.chosen && !ct.by_worth && ct.why_code == "defaults" &&
+              ct.gate_code == "no_reference_card" && !ct.reference && !ct.gates_closed.empty() &&
+              ct.gates_closed[0].opens_with == "reference_factors" &&
+              ct.gates_closed[0].generation == "turing" && ct.gates_closed[0].cards == 0,
+          "gates: Turing, no reference card, opened by its KV and exact factors on two cards");
+    // Another family on Ada: neither its switches' terms nor its curve were measured.
+    ch::ModelFacts gemma = a.model;
+    gemma.family         = "gemma4_text";
+    const auto g         = ch::closed_gates(gemma, a.card);
+    check(g.size() == 2 && g[0].code == "family_unmeasured" &&
+              g[0].opens_with == "family_kld_terms" && g[0].family == "gemma4_text" &&
+              g[1].axis == "quant" && g[1].code == "quant_curve_unmeasured" &&
+              g[1].opens_with == "quant_curve",
+          "gates: Gemma 4 on Ada, its accuracy terms and its curve");
+    // A family with switch terms and no curve: the switches decide, the quantizations by the rule.
+    ch::ModelFacts qmoe = moe;
+    qmoe.family         = "qwen3_5_moe_text";
+    const auto q        = ch::closed_gates(qmoe, a.card);
+    check(q.size() == 1 && q[0].axis == "quant" && q[0].code == "quant_curve_unmeasured" &&
+              ch::decides_switches(qmoe, a.card) && !ch::weighs_quantizations(qmoe, a.card),
+          "gates: Qwen 3.5 MoE on Ada, only the curve closed");
+    // A test's closed gate, and a compute capability with no generation row.
+    const auto closed = ch::closed_gates(a.model, a.card, {false, true});
+    check(!closed.empty() && closed[0].code == "accuracy_gate_closed" &&
+              closed[0].opens_with.empty(),
+          "gates: a closed accuracy gate has nothing to measure");
+    ch::CardFacts lent = card_of(fixture.at("cards").at("RTX 5090"));
+    lent.major         = 13;
+    lent.minor         = 0;
+    const auto lg      = ch::closed_gates(a.model, lent);
+    const auto lr      = ch::reference_of(lent);
+    check(!lg.empty() && lg[0].code == "lent_generation" && lg[0].opens_with == "generation_row" &&
+              lr && lr->lent && lr->cards.empty() && !lr->decides,
+          "gates: a lent generation, opened by a generation row");
+    // The answer scale: only the calibrated family.
+    const ch::AnswerScale* scale = ch::answer_scale_of("qwen3_5_text");
+    check(scale && scale->points_per_kld == 40.0 && scale->benchmark == "mmlu_pro" &&
+              !ch::answer_scale_of("gemma4_text") && !ch::answer_scale_of("qwen3_5_moe_text"),
+          "answers: Qwen 3.5 dense only");
+    // The gate code agrees with the worth on every fixture board, and with decides_switches.
+    for (const auto& [name, unused] : fixture.at("cards").items()) {
+        const Bench b = nine_b(fixture, name);
+        const ch::Choice x =
+            ch::choose(b.model, b.card, b.quants[0], allowed, {}, task, oracle(b, 12e9));
+        check(x.chosen && (x.gate_code == "open") == x.by_worth &&
+                  x.by_worth == ch::decides_switches(b.model, b.card) &&
+                  (x.reference.has_value() == ch::reference_of(b.card).has_value()),
+              "gates: " + name + ": the gate code is the worth's");
+    }
+}
+
 int main() {
     for (const char* name : {"speed_measured", "decode_measured", "prefill_measured"}) {
         std::ifstream cards(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/" + name +
@@ -3678,6 +3777,7 @@ int main() {
     resolution_by_pair();
     resolution_of_compared(fixture);
     resolution_by_basis(fixture);
+    reports_gates_and_bands(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

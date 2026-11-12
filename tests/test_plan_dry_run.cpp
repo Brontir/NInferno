@@ -2283,6 +2283,109 @@ void test_speed_why_json() {
     }
 }
 
+// The plan JSON's gate codes and bands (#618 step 11, ninferno-dry-plan/1, additive): the choice's
+// why and gate as codes with the measurement that opens a closed gate, the reference card it
+// decided on, each estimate's decision price and bands, the answer scale where calibrated, the
+// quantization's authority (the choice's and each quantization row's).
+void test_choice_json_gates() {
+    const auto served_on = [](int cc) {
+        pr::PlanSourceFacts facts;
+        facts.model = qwen27b(9 * kGiB);
+        pr::DryRunInputs inputs;
+        inputs.device                 = card(24, cc);
+        inputs.gpu                    = pr::gpu_key_of(inputs.device);
+        const pr::LaunchPlanOptions o = pr::launch_options({.max_concurrency = 1, .spec = "none"});
+        inputs.options                = o.options;
+        inputs.ask                    = o.ask;
+        return pr::choose_at_weights(facts, inputs, inputs.pins);
+    };
+    const auto ada = served_on(89);
+    check(ada && ada->choice.chosen, "gates JSON: Ada chooses");
+    if (ada && ada->choice.chosen) {
+        const nlohmann::json j = pr::choice_json(*ada);
+        // Additive: the fields before #618 step 11 stay.
+        for (const char* kept :
+             {"why", "by_worth", "resolution", "resolution_basis", "resolution_decides",
+              "resolution_floor", "chunk_by_speed", "chunk_basis", "kv_options",
+              "activations_allowed", "chosen", "alternatives", "task"}) {
+            check(j.contains(kept), std::string("gates JSON: ") + kept + " kept");
+        }
+        check(j.at("why_code") == "by_worth" && j.at("gate_code") == "open" &&
+                  j.at("gates_closed").empty(),
+              "gates JSON: Ada, Qwen 3.5: the worth decides, no gate closed");
+        const nlohmann::json& on = j.at("decided_on");
+        check(on.at("generation") == "ada" && on.at("cards") == "RTX 4070 Ti, RTX 4090" &&
+                  on.at("lent") == false && on.at("decides") == true && on.at("sms") == 94 &&
+                  on.at("clock_mhz") == 2565,
+              "gates JSON: decided on Ada's reference card");
+        check(j.at("answer_scale").at("calibrated") == true &&
+                  j.at("answer_scale").at("benchmark") == "mmlu_pro" &&
+                  j.at("answer_scale").at("points_per_kld") == 40.0,
+              "gates JSON: Qwen 3.5's KLD in MMLU-Pro points");
+        const nlohmann::json& c = j.at("chosen");
+        check(c.at("decision_seconds").is_number() && c.at("decision_seconds").get<double>() > 0 &&
+                  c.at("decision_basis").is_string() && c.at("weighed_at").is_number(),
+              "gates JSON: the chosen's decision price on the reference card");
+        const nlohmann::json& band = c.at("band");
+        check(band.at("decode").at("basis").is_string() && band.at("decode").at("rms").is_number(),
+              "gates JSON: the decode band");
+        check(band.at("prefill").at("rms").is_null() &&
+                  band.at("prefill").at("why_code") == "short_prompt" &&
+                  band.at("prefill").at("fit_rms") == 0.064 &&
+                  band.at("prefill").at("from_prompt") == 7118,
+              "gates JSON: a 2K prompt claims no prefill error, the fit's shown beside");
+        check(c.at("answer_points").is_number() &&
+                  std::abs(c.at("answer_points").get<double>() - 40.0 * c.at("kld").get<double>()) <
+                      0.01,
+              "gates JSON: the chosen's KLD in answer points");
+        const std::string authority = c.at("quality_authority");
+        check(authority == "direct" || authority == "transfer" || authority == "estimate" ||
+                  authority == "unknown",
+              "gates JSON: the quantization's authority");
+        for (const nlohmann::json& a : j.at("alternatives")) {
+            if (!a.contains("worth")) { continue; }
+            check(a.contains("band") && a.contains("decision_seconds") &&
+                      a.contains("answer_points"),
+                  "gates JSON: an alternative's estimates carry the same");
+        }
+    }
+    // Turing: no reference card, so no decision price; the gate and what opens it.
+    const auto turing = served_on(75);
+    check(turing && turing->choice.chosen, "gates JSON: Turing chooses");
+    if (turing && turing->choice.chosen) {
+        const nlohmann::json j = pr::choice_json(*turing);
+        check(j.at("why_code") == "defaults" && j.at("gate_code") == "no_reference_card" &&
+                  j.at("decided_on").is_null(),
+              "gates JSON: Turing keeps the defaults, no reference card");
+        const nlohmann::json& g = j.at("gates_closed").at(0);
+        check(g.at("axis") == "switches" && g.at("code") == "no_reference_card" &&
+                  g.at("opens_with") == "reference_factors" && g.at("generation") == "turing" &&
+                  g.at("cards") == 0,
+              "gates JSON: opened by the KV and exact factors on two Turing cards");
+        check(j.at("chosen").at("decision_seconds").is_null() &&
+                  j.at("chosen").at("decision_basis").is_null(),
+              "gates JSON: no decision price without a reference card");
+    }
+    // Another family: not calibrated; a refusal before choosing: its code.
+    pr::ServedChoice other;
+    other.family           = "gemma4_text";
+    other.choice.why       = "refused";
+    other.choice.why_code  = "kv_not_run";
+    const nlohmann::json o = pr::choice_json(other);
+    check(o.at("answer_scale").at("calibrated") == false &&
+              o.at("answer_scale").at("why_code") == "family_not_calibrated" &&
+              o.at("why_code") == "kv_not_run" && o.at("chosen").is_null() &&
+              o.at("decided_on").is_null(),
+          "gates JSON: another family is not calibrated; a refusal says its code");
+    // A quantization row's authority.
+    pr::QuantPlan plan;
+    pr::QuantRow row;
+    row.quality_authority = ninferno::product::choice::QualityAuthority::Direct;
+    plan.rows.push_back(row);
+    check(pr::quant_plan_json(plan).at("quants").at(0).at("quality_authority") == "direct",
+          "gates JSON: a quantization row's authority");
+}
+
 int main() {
     // The plan's mechanics on the published profiles: the registry without the lab's measured
     // pairs (test_spec_pairs tests those), so a campaign's new pairs move none of these checks
@@ -2313,6 +2416,7 @@ int main() {
     test_plan_now();
     test_moe_routes();
     test_speed_why_json();
+    test_choice_json_gates();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;
