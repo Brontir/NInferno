@@ -2220,10 +2220,21 @@ void test_moe_routes() {
                   "MoE routes: BF16 banks at four rows, not the measured pair");
         }
     }
+    check(!model.moe_route_unqueried, "MoE routes: a registered query leaves the step unmarked");
     rt::set_plan_moe_route_query({});
     ninferno::product::choice::ModelFacts unasked = pr::choice_model_of(f);
     pr::with_moe_routes(unasked, f, device);
     check(!unasked.moe_routes, "MoE routes: not asked without a query");
+    // Without a query (ninferno-ui, #766) the model is marked: its MoE steps are Transferred past
+    // one row, "MoE route not queried" (product/choice speed_of, ninferno_choice_test).
+    check(unasked.moe_route_unqueried, "MoE routes: no query, the model marked unqueried");
+    pr::PlanSourceFacts dense                    = f;
+    dense.model.experts                          = 0;
+    dense.shape.experts                          = 0;
+    dense.shape.routed_expert_params             = 0;
+    ninferno::product::choice::ModelFacts single = pr::choice_model_of(dense);
+    pr::with_moe_routes(single, dense, device);
+    check(!single.moe() && !single.moe_route_unqueried, "MoE routes: a dense model is not marked");
 }
 
 int main() {

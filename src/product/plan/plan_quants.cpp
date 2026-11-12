@@ -1370,6 +1370,7 @@ Json quant_plan_json(const QuantPlan& plan) {
                 {"long_prompt", row.request_long_prompt},
                 {"transferred", row.estimate->transferred},
                 {"speed_basis", std::string(choice::speed_basis_name(row.estimate->basis))}};
+            if (!row.estimate->why.empty()) { item["estimate"]["speed_why"] = row.estimate->why; }
         } else {
             item["estimate"] = nullptr;
         }
