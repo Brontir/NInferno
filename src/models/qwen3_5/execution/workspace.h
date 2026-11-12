@@ -4,7 +4,9 @@
 
 #include "core/arena.h"
 #include "core/layout.h"
-#include "models/qwen3_5/execution/parameters.h"
+#include "core/tensor.h"
+#include "models/qwen3_5/config.h"
+#include "models/qwen3_5/execution/parameter_types.h"
 
 #include <cstdint>
 

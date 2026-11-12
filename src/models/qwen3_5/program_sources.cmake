@@ -3,6 +3,7 @@ target_sources(ninferno_model_runtime PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/program/storage/draft_context.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/planning/pressure_planner.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/planning/startup.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/program/planning/workspace_plan.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/program.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/program_impl.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/numeric_status.cpp"
