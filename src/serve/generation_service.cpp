@@ -636,9 +636,9 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         // pool every context plain decode does, and drafting still pays at these loads (RTX 4090,
         // Qwen3.8 27B at --max-context 32768 and --max-concurrency 4: dflash2 K=7 left 3 of 4
         // contexts and the server decoded plainly at 48.9 tok/s a request; MTP 3 88.8, at 8: 46.2
-        // against 69.4). Four fifths: one context fewer costs only when every request runs a full
-        // one, while plain decode costs every request (RTX 3090, the same at 8: plain 38.3 tok/s a
-        // request in 5 contexts, MTP 3 51.1 in 4).
+        // against 69.4). It runs where its pool prices at least plain decode's over the benchmark's
+        // mix (product::pool_head_price, #777): its load table's gain at each number of active
+        // streams, a context it costs counted as a stream the user asked for and does not get.
         const auto head_contexts =
             [&](const product::ServedSpeculation& head) -> std::optional<std::uint32_t> {
             engine_.reset();
@@ -676,8 +676,16 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                 std::to_string(with_drafter) + " of " + std::to_string(options_.max_concurrency) +
                 " full contexts (" + std::to_string(drafting.kv_capacity) +
                 " tokens) beside its drafter; plain decode holds " + std::to_string(pool.plain) +
-                " (" + std::to_string(plain_tokens) +
-                "), so the server decodes plainly (an explicit --spec keeps the drafter)";
+                " (" + std::to_string(plain_tokens) + ")";
+            if (pool.head_price) {
+                char price[32];
+                std::snprintf(price, sizeof price, "%.3f", *pool.head_price);
+                speculation_plain_reason_ += "; the MTP head's pool decodes the benchmark's mix "
+                                             "at x" +
+                                             std::string(price) + " of plain decode's";
+            }
+            speculation_plain_reason_ +=
+                ", so the server decodes plainly (an explicit --spec keeps the drafter)";
             served_speculation_.reset();
             if (standing != Built::Plain) {
                 engine_.reset();

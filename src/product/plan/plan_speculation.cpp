@@ -13,8 +13,10 @@
 #include "spec/registry.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <exception>
 #include <set>
+#include <string>
 #include <utility>
 
 namespace ninferno::product {
@@ -511,8 +513,8 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                 serve(plain, std::move(p));
             }
             // The pool rule (pool_rule): a drafter that leaves the automatic pool fewer whole
-            // contexts than C while plain decode holds more gives way (to the MTP head when it
-            // keeps four fifths of plain decode's contexts).
+            // contexts than C while plain decode holds more gives way (to the MTP head where its
+            // pool prices at least plain decode's over the benchmark's mix).
             if (served && built) {
                 const std::uint32_t with_drafter = pool_contexts_of(out.plan, options);
                 std::optional<runtime::DryRunPlan> plain_plan, head_plan;
@@ -538,9 +540,15 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                 } else if (pool.keep == PoolKeep::Plain) {
                     for (auto& s : r.fallbacks) { s.served = false; }
                     const SpeculativeOptions plain;
-                    step("pool_plain", plain, *plain_plan,
-                         "plain decode holds " + std::to_string(pool.plain) +
-                             " whole contexts against " + std::to_string(with_drafter));
+                    std::string why = "plain decode holds " + std::to_string(pool.plain) +
+                                      " whole contexts against " + std::to_string(with_drafter);
+                    if (pool.head_price) {
+                        char price[32];
+                        std::snprintf(price, sizeof price, "%.3f", *pool.head_price);
+                        why += "; the MTP head's pool decodes the benchmark's mix at x" +
+                               std::string(price) + " of plain decode's";
+                    }
+                    step("pool_plain", plain, *plain_plan, why);
                     served.reset();
                     serve(plain, std::move(*plain_plan));
                 }

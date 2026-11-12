@@ -2440,8 +2440,12 @@ instead of an Engine build:
 5. plain decode.
 
 With an automatic pool at an explicit context, the pool rule follows. When the drafter leaves fewer
-whole contexts than `--max-concurrency` and plain decode holds more, the MTP head runs if it keeps
-four fifths of plain decode's contexts; otherwise plain decode runs.
+whole contexts than `--max-concurrency` and plain decode holds more, the MTP head runs if its pool
+decodes the benchmark's short-chat wave (20 prompts from `--max-concurrency` clients) at least as
+fast as plain decode's. Each pool serves as many streams as it holds whole contexts, at most
+`--max-concurrency`; the head's speed at each number of active streams comes from its load table
+and the round-cost facts, the plain step's from the same facts. Where those facts do not price it,
+the head runs only if its pool serves as many streams as plain decode's.
 
 **The largest quantization that fits** (`runtime/engine/quant_rule.h`). A hub GGUF repository
 without `--quant` plans every listed quantization at the asked context and `--max-concurrency` on an

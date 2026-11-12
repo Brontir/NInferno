@@ -1,6 +1,7 @@
 #include "product/speculation/speculation.h"
 
 #include "artifact/reader.h"
+#include "product/choice/choice_constants.h"
 #include "spec/fingerprint.h"
 #include "spec/gpu_identity.h"
 #include "spec/manifest.h"
@@ -714,13 +715,100 @@ pool_rule(const SpeculationSubject& subject, bool per_request, std::uint32_t wit
     out.keep = PoolKeep::Plain;
     if (auto head = served_head_fallback(subject, per_request)) {
         const auto contexts = head_contexts(*head);
-        if (contexts && 5 * static_cast<std::uint64_t>(*contexts) >=
-                            4 * static_cast<std::uint64_t>(std::min(out.plain, concurrency))) {
+        if (!contexts) { return out; }
+        // served_head_fallback serves a head only for a subject whose profile was found.
+        const spec::Profile& priced = subject.resolved->profile;
+        const HeadPrice price       = pool_head_price(
+            concurrency, *contexts, out.plain,
+            [&](std::uint32_t streams) { return pool_head_gain(priced, *head, streams); },
+            [&](std::uint32_t streams) { return plain_step_price(priced, streams); });
+        out.head_price = price.over_plain;
+        if (price.pays) {
             out.keep = PoolKeep::Head;
             out.head = std::move(head);
         }
     }
     return out;
+}
+
+std::vector<std::uint32_t> mix_turns(std::uint32_t streams) {
+    std::vector<std::uint32_t> out;
+    if (streams == 0) { return out; }
+    for (auto left = static_cast<std::uint32_t>(choice::kMixShortRequests); left > 0;) {
+        out.push_back(std::min(streams, left));
+        left -= out.back();
+    }
+    return out;
+}
+
+std::optional<double> mix_steps(std::uint32_t streams, const StreamPrice& gain,
+                                const StreamPrice& step) {
+    if (streams == 0) { return std::nullopt; }
+    double total = 0;
+    for (const std::uint32_t active : mix_turns(streams)) {
+        const auto g = gain(active);
+        const auto s = step(active);
+        if (!g || !s || !(*g > 0) || !(*s > 0)) { return std::nullopt; }
+        // Each answer of the turn at g / s tokens a one-stream plain step.
+        total += *s / *g;
+    }
+    return total;
+}
+
+HeadPrice pool_head_price(std::uint32_t concurrency, std::uint32_t head_contexts,
+                          std::uint32_t plain_contexts, const StreamPrice& head_gain,
+                          const StreamPrice& step) {
+    HeadPrice out;
+    const std::uint32_t head  = std::min(concurrency, head_contexts);
+    const std::uint32_t plain = std::min(concurrency, plain_contexts);
+    if (head == 0) { return out; }
+    const auto with_head = mix_steps(head, head_gain, step);
+    const auto plainly   = mix_steps(plain, [](std::uint32_t) { return 1.0; }, step);
+    if (with_head && plainly) {
+        out.over_plain = *plainly / *with_head;
+        out.pays       = *with_head <= *plainly;
+        return out;
+    }
+    // Not priced: kept only where both pools serve as many streams (the same turns) and no turn's
+    // gain is priced below 1. Where every gain is priced, no turn is then slower than plain
+    // decode's whatever a step of its streams costs; where a gain is not, the head runs as the
+    // model's built-in MTP default runs where it has no profile (its watchdog floors raised). A
+    // stream the head costs is a loss nothing prices against it: plain decode.
+    if (head == plain) {
+        const auto turns = mix_turns(head);
+        out.pays         = std::none_of(turns.begin(), turns.end(), [&](std::uint32_t active) {
+            const auto g = head_gain(active);
+            return g && *g < 1.0;
+        });
+    }
+    return out;
+}
+
+std::optional<double> pool_head_gain(const spec::Profile& priced, const ServedSpeculation& head,
+                                     std::uint32_t streams) {
+    spec::SpecConfig at = head.menu.primary.config;
+    if (!at.enabled() || streams == 0) { return std::nullopt; }
+    // The last bound at or below these streams, as the Engine reads its load table.
+    for (const SpeculationLoad& bound : head.engine.load) {
+        if (bound.lanes > streams) { break; }
+        at.k = std::min(static_cast<std::int32_t>(bound.draft_tokens), head.menu.primary.config.k);
+    }
+    if (at.k <= 0) { return 1.0; }
+    const auto gain = spec::measured_gain(priced, at, std::nullopt);
+    if (!gain) { return std::nullopt; }
+    if (streams == 1) { return gain; }
+    const auto by_streams = priced.joint_scale.find(at.label());
+    if (by_streams == priced.joint_scale.end()) { return std::nullopt; }
+    const auto scale = by_streams->second.find(static_cast<std::int32_t>(streams));
+    if (scale == by_streams->second.end()) { return std::nullopt; }
+    return *gain * scale->second;
+}
+
+std::optional<double> plain_step_price(const spec::Profile& priced, std::uint32_t streams) {
+    if (streams == 1) { return 1.0; }
+    const auto found = priced.plain_step_scale.find(static_cast<std::int32_t>(streams));
+    if (found == priced.plain_step_scale.end()) { return std::nullopt; }
+    return found->second;
 }
 
 void require_named_tune(const std::filesystem::path& artifact, int device,

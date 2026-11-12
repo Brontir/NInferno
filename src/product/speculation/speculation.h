@@ -205,19 +205,74 @@ enum class FallbackStep { FitFallback, Shallower, Head };
 fit_fallbacks(const SpeculationSubject& subject, const ServedSpeculation& refused, bool per_request,
               const std::function<bool(const ServedSpeculation&, FallbackStep)>& fits);
 
+// The benchmark's short-chat wave on a pool of `streams` slots, the mix our decisions are weighed
+// by (DECISIONS 50 and 73): tools/bench/perf_matrix.py sends choice::kMixShortRequests prompts,
+// their answers alike, from as many workers as the server has streams, worker k taking prompts
+// k, k + C, ...; a pool of fewer slots than workers admits them as slots free. The active streams
+// of each turn of slots: `streams` while prompts are left for every slot, then the rest (20
+// prompts on 8 slots: 8, 8, 4). Empty for no slot.
+[[nodiscard]] std::vector<std::uint32_t> mix_turns(std::uint32_t streams);
+
+// A price at a number of active streams; nullopt where it is not known.
+using StreamPrice = std::function<std::optional<double>(std::uint32_t streams)>;
+
+// The wave's time on a pool of `streams` slots (mix_turns), in one-stream plain decode steps an
+// answer token: a turn of s streams decodes each answer at `gain(s)` over plain decode, whose step
+// of s streams costs `step(s)` one-stream steps. nullopt where a turn's gain or step is not known
+// (or not positive).
+[[nodiscard]] std::optional<double> mix_steps(std::uint32_t streams, const StreamPrice& gain,
+                                              const StreamPrice& step);
+
+// The MTP head's pool against plain decode's at the mix (pool_rule, #777). Each pool serves
+// min(concurrency, its whole contexts) streams: a context the head costs is a stream the user
+// asked for and does not get. The head pays where its wave takes no longer than plain decode's
+// (mix_steps, plain decode at a gain of 1, both under the same step prices). Where a wave is not
+// priced (a gain or a step price the facts do not give), it pays only where both pools serve as
+// many streams and no turn's gain is priced below 1: with every gain priced it is then no slower
+// at any step price; with one not priced it runs as the model's built-in MTP default runs without
+// a profile. A stream it costs is then a loss nothing prices against it, and plain decode runs.
+// `over_plain`: the head pool's tokens/s over plain decode's at the mix, where both are priced.
+struct HeadPrice {
+    bool pays = false;
+    std::optional<double> over_plain;
+};
+
+[[nodiscard]] HeadPrice pool_head_price(std::uint32_t concurrency, std::uint32_t head_contexts,
+                                        std::uint32_t plain_contexts, const StreamPrice& head_gain,
+                                        const StreamPrice& step);
+
+// The served MTP head's gain over plain decode at `streams` active streams, from `priced` (the
+// subject's profile, whose facts price it): the depth its load table runs there (the table's last
+// bound at or below the streams, min(bound, its own depth); its own depth below the first bound),
+// 1 where that depth is 0 (plain decode); else that depth's one-request gain (spec::measured_gain
+// over every section) times the joint verify's price there (Profile::joint_scale, R_1 / R_C; 1 at
+// one stream). nullopt where either is not known.
+[[nodiscard]] std::optional<double>
+pool_head_gain(const spec::Profile& priced, const ServedSpeculation& head, std::uint32_t streams);
+// A plain decode step's price at `streams` streams in one-stream steps (Profile::plain_step_scale;
+// 1 at one stream); nullopt where nobody priced it.
+[[nodiscard]] std::optional<double> plain_step_price(const spec::Profile& priced,
+                                                     std::uint32_t streams);
+
 // The pool rule (--spec auto with an automatic KV pool): when the served drafter leaves the pool
 // `with_drafter` whole contexts, fewer than `concurrency`, and plain decode holds more
 // (`plain_contexts`, 0 when plain decode does not fit), requests waiting for pages cost more than
-// drafting saves. The model's own MTP head runs then when it holds at least four fifths of the
-// contexts plain decode does (or of every one served; `head_contexts`, nullopt when it does not
-// fit), else plain decode. One context always fits a drafter, so a server of one request never
-// loses it. `plain_contexts` is called only inside the rule's range, `head_contexts` only when
-// plain decode holds more; each builds or plans its configuration as `fits` above does.
+// drafting saves and the drafter gives way. The model's own MTP head runs then where its pool
+// (`head_contexts`, nullopt when it does not fit) prices at least plain decode's over the
+// benchmark's mix (pool_head_price: its load table's gain at each number of active streams,
+// pool_head_gain, against plain decode's, under the plain step's price, plain_step_price; both
+// from the subject's profile; unpriced, only where it serves as many streams), else plain decode.
+// One context always fits a drafter, so a server of one request never loses it. `plain_contexts` is
+// called only inside the rule's range, `head_contexts` only when plain decode holds more; each
+// builds or plans its configuration as `fits` above does.
 enum class PoolKeep { Drafter, Head, Plain };
 struct PoolDecision {
     PoolKeep keep = PoolKeep::Drafter;
     std::optional<ServedSpeculation> head; // PoolKeep::Head: the head served
     std::uint32_t plain = 0;               // the contexts plain decode holds (0: not asked)
+    // The head pool's tokens/s over plain decode's at the mix (HeadPrice::over_plain), where the
+    // head fits and both are priced.
+    std::optional<double> head_price;
 };
 [[nodiscard]] PoolDecision
 pool_rule(const SpeculationSubject& subject, bool per_request, std::uint32_t with_drafter,
