@@ -602,7 +602,7 @@ class Completeness(unittest.TestCase):
         self.assertEqual(sorted(found), ["a/CMakeLists.txt", "b/x.cmake", "c/x.cmake", "d/x.cmake"])
 
     def test_the_shared_test_target_helpers_are_decision_paths(self):
-        # ninferno_add_test / ninferno_link_ops shape every test target, the golden producer included
+        # ninferno_add_test / ninferno_add_op_test shape every test target, the golden producer included
         for f in ("tests/cmake/NInfernoTests.cmake", "tests/ops/linear/tests.cmake",
                   "tests/cmake/DecisionTests.cmake"):
             self.assertTrue(gg.decision_files([f], PATHS), f)

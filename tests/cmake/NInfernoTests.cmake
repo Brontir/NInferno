@@ -5,34 +5,9 @@ function(ninferno_test_includes target)
   target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/tests)
 endfunction()
 
-# NINFERNO_SHARED_OP_TESTS: ninferno_ops, ninferno_core (and the non-RDC NVFP4 archive) whole in one
-# shared library. The archive already carries its device link (CUDA_RESOLVE_DEVICE_SYMBOLS), so
-# the library links no device code of its own.
-if(NINFERNO_SHARED_OP_TESTS)
-  add_library(ninferno_ops_shared SHARED "${CMAKE_CURRENT_LIST_DIR}/ops_shared_anchor.cpp")
-  set(ninferno_whole $<TARGET_FILE:ninferno_ops> $<TARGET_FILE:ninferno_core>
-      $<TARGET_FILE:ninferno_core_host>)
-  if(TARGET ninferno_nvfp4_non_rdc)
-    list(APPEND ninferno_whole $<TARGET_FILE:ninferno_nvfp4_non_rdc>)
-  endif()
-  target_link_options(ninferno_ops_shared PRIVATE
-    "LINKER:--whole-archive" ${ninferno_whole} "LINKER:--no-whole-archive")
-  target_link_libraries(ninferno_ops_shared PRIVATE ninferno_ops
-    PUBLIC ninferno::cudart CUDA::cuda_driver Threads::Threads)
-  set_target_properties(ninferno_ops_shared PROPERTIES
-    LINKER_LANGUAGE CXX
-    CUDA_RESOLVE_DEVICE_SYMBOLS OFF)
-endif()
-
-# Links ninferno_ops into a test target: the shared library under NINFERNO_SHARED_OP_TESTS (ninferno_ops
-# then only for its usage requirements), the archive otherwise.
-function(ninferno_link_ops target scope)
-  if(NINFERNO_SHARED_OP_TESTS)
-    target_link_libraries(${target} ${scope} ninferno_ops_shared "$<COMPILE_ONLY:ninferno_ops>")
-  else()
-    target_link_libraries(${target} ${scope} ninferno_ops)
-  endif()
-endfunction()
+# The shared test tree's library (NINFERNO_SHARED_OP_TESTS: ninferno_ops_shared) is defined once,
+# in cmake/SharedTestLibrary.cmake; tests reach it through the link redirects of
+# cmake/NInfernoTargets.cmake.
 
 # Every test carries labels (tools/audit/ctest_labels.sh fails on a test without):
 #   host    runs and passes with no GPU (CUDA_VISIBLE_DEVICES= ctest -L host)
