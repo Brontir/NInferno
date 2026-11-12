@@ -42,5 +42,7 @@ if(TARGET ninferno_product_choice)
   target_compile_definitions(ninferno_decisions INTERFACE NINFERNO_HOST_ONLY)
   target_link_libraries(ninferno_decisions INTERFACE
     ninferno_ops_host ninferno_core_host ninferno_product_choice)
-  cmake_language(DEFER CALL ninferno_assert_host_only ninferno_decisions)
+  # At the end of the top-level list, once the redirects (ninferno::core_host, which the choice
+  # links) exist, so the check follows them instead of skipping an unknown name.
+  cmake_language(DEFER DIRECTORY ${PROJECT_SOURCE_DIR} CALL ninferno_assert_host_only ninferno_decisions)
 endif()

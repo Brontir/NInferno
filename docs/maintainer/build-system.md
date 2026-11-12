@@ -68,7 +68,10 @@ workflow runs. `CMAKE_CUDA_ARCHITECTURES` still picks the build set (`120a` full
 `70` with CUTLASS fetched) and with it the committed selector goldens the host twin reads. Of the
 toolkit only `cuda_occupancy.h` is read: found under `CUDA_PATH`, `CUDA_HOME` or `/usr/local/cuda*`,
 or named with `-DNINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR=<dir>`; the CUDA runtime's development package
-alone (`cuda-cudart-dev-12-8`) carries it.
+alone (`cuda-cudart-dev-12-8`) carries it. The first toolkit found wins, and its header feeds the
+occupancy calculator (`kernel_occupancy.cpp`, a decision path), so the configure prints its CUDA
+version. The `decisions` workflow reads CUDA 12.8's; a local decisions tree that is to agree with
+it should name a 12.8 include directory.
 
 ```bash
 cmake --preset decisions -DCMAKE_CUDA_ARCHITECTURES=89

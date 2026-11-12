@@ -406,9 +406,11 @@ def unaccounted(files):
 
 # The libraries the golden links: ninferno_ops and ninferno_core, ninferno_ggml_mmq, plus what they link
 # (ninferno_core PUBLIC-links ninferno_core_host, src/core/CMakeLists.txt; ninferno_ops PRIVATE-links
-# ninferno_nvfp4_non_rdc, src/ops/CMakeLists.txt). Third-party targets are out of scope.
+# ninferno_nvfp4_non_rdc, src/ops/CMakeLists.txt), and the selector's host objects, which ninferno_ops
+# holds and the host twin links (ninferno_ops_host_objects, ninferno_ops_host: the whole of src/ops in
+# a decisions-only tree, src/ops/generic/host_sources.cmake). Third-party targets are out of scope.
 DECISION_TARGETS = {"ninferno_ops", "ninferno_core", "ninferno_core_host", "ninferno_ggml_mmq",
-                    "ninferno_nvfp4_non_rdc"}
+                    "ninferno_nvfp4_non_rdc", "ninferno_ops_host_objects", "ninferno_ops_host"}
 # Commands that set a define on a named target or source; set_target_properties / set_property /
 # target_compile_options count only when they carry a define.
 DEFINE_COMMANDS = {"target_compile_definitions", "set_source_files_properties", "set_target_properties",

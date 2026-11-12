@@ -9,14 +9,32 @@ target_include_directories(ninferno::json INTERFACE
 # A decisions-only tree (NINFERNO_DECISIONS_ONLY, CMakeLists.txt) has no CUDA language and no
 # toolkit: of the toolkit it reads one header, cuda_occupancy.h (src/core/kernel_occupancy.cpp, a
 # header-only occupancy calculator with no CUDA include of its own), found by path. The header is
-# NVIDIA's under the toolkit's license, so it is not vendored here: any toolkit install, or the
-# runtime's development package alone (cuda-cudart-dev-<version>, no compiler), carries it.
+# NVIDIA's, under the CUDA toolkit's license; it is not vendored, so that the repository carries no
+# copy under those terms: any toolkit install, or the runtime's development package alone
+# (cuda-cudart-dev-<version>, no compiler), has it. Its toolkit version can move an occupancy
+# answer (a decision input), so the configure prints it (CUDART_VERSION of the cuda_runtime_api.h
+# beside it); the decisions workflow reads CUDA 12.8's.
 if(NINFERNO_DECISIONS_ONLY)
-  file(GLOB ninferno_versioned_cuda_includes LIST_DIRECTORIES true "/usr/local/cuda-*/include")
-  list(SORT ninferno_versioned_cuda_includes COMPARE NATURAL ORDER DESCENDING)
+  # Each root as include/ and as targets/<platform>/include/ (where the packages put the files;
+  # include/ is a link to it when the toolkit's links are installed).
+  set(ninferno_cuda_roots "$ENV{CUDA_PATH}" "$ENV{CUDA_HOME}" "$ENV{CUDAToolkit_ROOT}")
+  file(GLOB ninferno_versioned_cuda_roots LIST_DIRECTORIES true "/usr/local/cuda-*")
+  list(SORT ninferno_versioned_cuda_roots COMPARE NATURAL ORDER DESCENDING)
+  set(ninferno_cuda_hints "")
+  set(ninferno_cuda_paths "")
+  foreach(ninferno_cuda_root IN LISTS ninferno_cuda_roots)
+    if(ninferno_cuda_root)
+      file(GLOB ninferno_cuda_targets LIST_DIRECTORIES true "${ninferno_cuda_root}/targets/*/include")
+      list(APPEND ninferno_cuda_hints "${ninferno_cuda_root}/include" ${ninferno_cuda_targets})
+    endif()
+  endforeach()
+  foreach(ninferno_cuda_root IN ITEMS /usr/local/cuda ${ninferno_versioned_cuda_roots} /opt/cuda)
+    file(GLOB ninferno_cuda_targets LIST_DIRECTORIES true "${ninferno_cuda_root}/targets/*/include")
+    list(APPEND ninferno_cuda_paths "${ninferno_cuda_root}/include" ${ninferno_cuda_targets})
+  endforeach()
   find_path(NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR cuda_occupancy.h
-    HINTS "$ENV{CUDA_PATH}/include" "$ENV{CUDA_HOME}/include" "$ENV{CUDAToolkit_ROOT}/include"
-    PATHS /usr/local/cuda/include ${ninferno_versioned_cuda_includes} /opt/cuda/include
+    HINTS ${ninferno_cuda_hints}
+    PATHS ${ninferno_cuda_paths}
     DOC "The directory that holds the CUDA toolkit's cuda_occupancy.h (a decisions-only tree)")
   if(NOT NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR OR
      NOT EXISTS "${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR}/cuda_occupancy.h")
@@ -28,7 +46,18 @@ if(NINFERNO_DECISIONS_ONLY)
       "cuda_occupancy.h>.")
   endif()
   set(NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIRS "${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR}")
-  message(STATUS "Decisions only: cuda_occupancy.h from ${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR}")
+  set(ninferno_cudart_version "unknown: no cuda_runtime_api.h beside it")
+  if(EXISTS "${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR}/cuda_runtime_api.h")
+    file(STRINGS "${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR}/cuda_runtime_api.h" ninferno_cudart_line
+         REGEX "^#define[ \t]+CUDART_VERSION[ \t]+[0-9]+" LIMIT_COUNT 1)
+    if(ninferno_cudart_line MATCHES "CUDART_VERSION[ \t]+([0-9]+)")
+      math(EXPR ninferno_cudart_major "${CMAKE_MATCH_1} / 1000")
+      math(EXPR ninferno_cudart_minor "(${CMAKE_MATCH_1} % 1000) / 10")
+      set(ninferno_cudart_version "CUDA ${ninferno_cudart_major}.${ninferno_cudart_minor}")
+    endif()
+  endif()
+  message(STATUS "Decisions only: cuda_occupancy.h from ${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR} "
+                 "(${ninferno_cudart_version})")
   return()
 endif()
 
