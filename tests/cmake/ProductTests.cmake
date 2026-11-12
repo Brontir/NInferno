@@ -181,3 +181,15 @@ ninferno_add_test(ninferno_plan_bytes_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_bytes.cpp"
   LIBRARIES ninferno_product_plan ninferno_model_runtime ninferno_engine ninferno_core ninferno::json)
 target_include_directories(ninferno_plan_bytes_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+# A named board's plan reads no GPU (#615 W4): with every CUDA device hidden, under each target
+# board of gpu_facts.json's substituted class, the Gemma 4 workspace query's capacity functions
+# (one by one), the registered queries, the rung bytes and the dry run answer, the same in either
+# board order; the known escapes (#830, the product path's missing substitute) are checked as they
+# are. CPU.
+ninferno_add_test(ninferno_plan_device_class_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_device_class.cpp"
+  LIBRARIES ninferno_product_plan ninferno_engine ninferno_ops ninferno_core ninferno::json)
+target_include_directories(ninferno_plan_device_class_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+set_tests_properties(ninferno_plan_device_class_test PROPERTIES
+  ENVIRONMENT CUDA_VISIBLE_DEVICES=-1)
