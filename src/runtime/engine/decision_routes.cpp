@@ -4,6 +4,7 @@
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
+#include "ops/route_pins.h"
 
 #include <optional>
 #include <sstream>
@@ -174,21 +175,32 @@ DecisionSection replay_lines(const DeviceClass& device, const DecisionSection& r
 } // namespace
 
 DecisionSection routes_of(const DeviceClass& device, std::span<const generic::SeenProblem> problems,
-                          std::int32_t prefill_chunk, bool invariant) {
+                          std::int32_t prefill_chunk, bool invariant, RoutePolicy policy) {
+    const ops::ScopedRoutePolicy scoped(policy);
     return lines_of(device, problems, prefill_chunk, invariant, Say::Route);
 }
 
 DecisionSection route_evidence_of(const DeviceClass& device,
                                   std::span<const generic::SeenProblem> problems,
-                                  std::int32_t prefill_chunk, bool invariant) {
+                                  std::int32_t prefill_chunk, bool invariant, RoutePolicy policy) {
+    const ops::ScopedRoutePolicy scoped(policy);
     return lines_of(device, problems, prefill_chunk, invariant, Say::Evidence);
 }
 
-DecisionSection replay_routes(const DeviceClass& device, const DecisionSection& recorded) {
+RoutePolicy route_policy_of(const DecisionSection& options) {
+    const auto it = options.find("maintainer.route_policy");
+    return it == options.end() ? RoutePolicy::Legacy : parse_route_policy(it->second);
+}
+
+DecisionSection replay_routes(const DeviceClass& device, const DecisionSection& recorded,
+                              RoutePolicy policy) {
+    const ops::ScopedRoutePolicy scoped(policy);
     return replay_lines(device, recorded, Say::Route);
 }
 
-DecisionSection replay_route_evidence(const DeviceClass& device, const DecisionSection& recorded) {
+DecisionSection replay_route_evidence(const DeviceClass& device, const DecisionSection& recorded,
+                                      RoutePolicy policy) {
+    const ops::ScopedRoutePolicy scoped(policy);
     return replay_lines(device, recorded, Say::Evidence);
 }
 

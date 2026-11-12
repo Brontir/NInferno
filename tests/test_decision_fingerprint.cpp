@@ -194,8 +194,7 @@ int options_reach_their_section() {
          [](EngineOptions& o) { o.context_cache.max_shared_prefixes = 2; }},
         {"context_cache.max_long_anchors",
          [](EngineOptions& o) { o.context_cache.max_long_anchors_per_continuation = 2; }},
-        {"context_cache.kept_tokens",
-         [](EngineOptions& o) { o.context_cache.kept_tokens = 4096; }},
+        {"context_cache.kept_tokens", [](EngineOptions& o) { o.context_cache.kept_tokens = 4096; }},
         {"speculative.backend",
          [](EngineOptions& o) { o.speculative.backend = ninferno::SpeculativeBackend::Mtp; }},
         {"speculative.draft_tokens", [](EngineOptions& o) { o.speculative.draft_tokens = 3; }},
@@ -245,6 +244,8 @@ int options_reach_their_section() {
          [](EngineOptions& o) { o.maintainer.decode_route = ninferno::DecodeRoute::Vec; }},
         {"maintainer.moe_path",
          [](EngineOptions& o) { o.maintainer.moe_path = ninferno::MoePath::Generic; }},
+        {"maintainer.route_policy",
+         [](EngineOptions& o) { o.maintainer.route_policy = ninferno::RoutePolicy::Evidence; }},
     };
     int failures = each_field_reaches("options", EngineOptions{}, collect, edits);
     // The artifact, its prefill signature and a separate drafter enter by source identity.
@@ -518,6 +519,19 @@ int maintainer_options() {
           std::pair{"maintainer.moe_path", "fused"}}) {
         failures += check(rt::options_of(pinned, "id", "sig", "").at(key) == value,
                           std::string("the options section spells ") + key + " as its option");
+    }
+    // --route-policy (#614 F1): legacy is the release's and clean; evidence is taint by name.
+    {
+        ninferno::EngineOptions evidence;
+        evidence.maintainer.route_policy = ninferno::RoutePolicy::Evidence;
+        failures +=
+            check(taints(evidence).contains("maintainer") &&
+                      taints(evidence).at("maintainer") == "route_policy" &&
+                      rt::options_of(evidence, "id", "sig", "").at("maintainer.route_policy") ==
+                          "evidence" &&
+                      rt::options_of(ninferno::EngineOptions{}, "id", "sig", "")
+                              .at("maintainer.route_policy") == "legacy",
+                  "--route-policy evidence is not taint by name, or legacy is");
     }
     // --tune-cache is read only while a tuner is on: alone it is not taint.
     ninferno::EngineOptions cache_only;

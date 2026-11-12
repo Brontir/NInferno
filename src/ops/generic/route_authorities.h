@@ -7,8 +7,22 @@
 // rests on, or abstains. select_route, auto_route and heuristic_route (generic_gemm.h) walk the
 // three lists below in the order of the old cascades, and the first answer wins: the routes are
 // the ones those cascades gave (ninferno_selector_golden_test holds them byte for byte); what is
-// new is that every answer names its authority and its evidence. The precedence itself (one rule
-// over the kinds of evidence) is a later step of #614.
+// new is that every answer names its authority and its evidence.
+//
+// The precedence over evidence (#614 F1, the Ask's RoutePolicy: --route-policy, ops/route_pins.h).
+// Legacy, the default, is the order alone: the first answer wins, as above. Evidence demotes, in
+// the auto list (auto_answer), an answer whose evidence is Borrowed or Transferred (a route-table
+// entry measured on another board: lent by a farther table, or the nearest table past
+// kCarryDistance) below the ranker: the walk goes on past it (the dense tuner's entry, measured
+// here, may still answer), then the ranker answers (the cost model where it prices the call, else
+// the rules) and the dense tuner's prefill band may refine that answer as usual. Where the ranker
+// has no candidate (its answer is the scalar route of scalar-fallback, which only stands where no
+// rule names a route the build admits) the demoted answer stands, its evidence unchanged. Never
+// demoted: Pin, Measured (this board's own table, the dense tuner), Carried (a board within
+// kCarryDistance, every quantity compared) and Ranker. The select list (the profiles, the probe,
+// the pins, Volta's fixed routes) and the rules list are walked as under Legacy: the rules' one
+// answer that can be Transferred (mmq-prefill-gate) comes after the cost model already, and
+// answers where the cost model abstains (the prefill band, no clocks, NVFP4).
 //
 // Evidence kinds. Pin: a maintainer's choice (a route pin, a route probe). Measured: timed on this
 // board (a route table measured here, the dense tuner's entry of this class and build, the R8
@@ -21,6 +35,7 @@
 // exact-key entry taken from a farther table because the nearest lacked it (route_table.cpp
 // fill_from).
 
+#include "ninferno/option_enums.h"
 #include "ops/generic/generic_gemm.h"
 
 #include <cstdint>
@@ -53,6 +68,8 @@ struct Ask {
     Profile profile;
     std::int32_t tokens;
     int lanes; // the round's sequences (ops::round_lanes()): the MMQ verify rule reads it
+    // The precedence over evidence (ops::route_policy() at resolve_ask / ask_below_profiles).
+    RoutePolicy policy = RoutePolicy::Legacy;
 
     // The prefill band: the prefill profile's calls of 17 tokens or more, which take one route per
     // problem; below it the profile's calls route as the speed profile's.
@@ -98,7 +115,26 @@ struct Evidence {
     // where the answer is this board's own, a pin's or a ranker's.
     std::string donor;
     double distance = 0; // board_distance to the donor (0: this board)
+    // The policy the walk ran under, and under RoutePolicy::Evidence the first answer it demoted
+    // (its authority and kind; empty `demoted_source`: none), which Legacy would have taken.
+    RoutePolicy policy = RoutePolicy::Legacy;
+    std::string_view demoted_source;
+    Kind demoted_kind = Kind::Ranker;
 };
+
+// Whether `policy` demotes an answer of `kind` below the ranker (see the header's comment):
+// Borrowed and Transferred under RoutePolicy::Evidence, nothing under Legacy.
+[[nodiscard]] constexpr bool policy_demotes(RoutePolicy policy, Evidence::Kind kind) noexcept {
+    return policy == RoutePolicy::Evidence &&
+           (kind == Evidence::Kind::Borrowed || kind == Evidence::Kind::Transferred);
+}
+
+// The evidence kind of a route-table answer (route_table.h TableAnswer): Borrowed where a farther
+// table lent the entry (`lent`), else Measured at distance 0, Carried within kCarryDistance and
+// Transferred past it. The one classification route_table_entry prints and table_claims gates
+// its claim by (#614 F1: under RoutePolicy::Evidence a claim of a Borrowed or Transferred entry
+// does not move a call off its shape's own kernel).
+[[nodiscard]] Evidence::Kind table_evidence_kind(bool lent, double distance) noexcept;
 
 [[nodiscard]] constexpr const char* evidence_kind_name(Evidence::Kind k) noexcept {
     switch (k) {
@@ -137,10 +173,13 @@ struct RouteAnswer {
 
 // The evidence as the places a person or a tool reads a decision print it (#614, A3): "authority=
 // <source> evidence=<kind>", and for an answer that names a donor " donor=<board or class>
-// d=<distance>" (three decimals, locale independent). One function for the description line
+// d=<distance>" (three decimals, locale independent); under RoutePolicy::Evidence then
+// " policy=evidence", and where the walk demoted an answer " demoted=<source>:<kind>" (Legacy
+// prints neither, so its lines are as before F1). One function for the description line
 // (describe_text), the decision manifest's route_evidence section and the route tuner's CSV.
 [[nodiscard]] std::string evidence_text(const Evidence& evidence);
-// The two columns the route tuner's --selected-out ends its rows with: "<source>,<kind>".
+// The two columns the route tuner's --selected-out ends its rows with: "<source>,<kind>" (the
+// policy is the run's own, --route-policy, and is not a column).
 [[nodiscard]] std::string evidence_columns(const Evidence& evidence);
 
 // An authority: the first of a list to answer decides the call. nullopt: it abstains (its scope

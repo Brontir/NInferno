@@ -202,7 +202,8 @@ int main() {
                                                 {"--debug-poison", "300"},
                                                 {"--prefill-route", "fp8"},
                                                 {"--decode-route", "rmma"},
-                                                {"--moe-path", "sparse"}}) {
+                                                {"--moe-path", "sparse"},
+                                                {"--route-policy", "auto"}}) {
         std::vector<std::string> arguments{"ninferno-cli", "model.ninferno", "--prompt", "hello"};
         arguments.insert(arguments.end(), bad.begin(), bad.end());
         failures += check(rejects([&] { (void)parse(arguments); }),
@@ -211,7 +212,7 @@ int main() {
     for (const char* flag :
          {"--decode-steps", "--decode-wait", "--cuda-sync", "--route-table", "--route-dir",
           "--debug-prefill-cuts", "--debug-poison", "--drafter-registry", "--prefill-route",
-          "--decode-route", "--moe-path"}) {
+          "--decode-route", "--moe-path", "--route-policy"}) {
         failures += check(help.find(flag) != std::string::npos,
                           (std::string("CLI help omits ") + flag).c_str());
     }

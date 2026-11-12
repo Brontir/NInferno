@@ -66,6 +66,7 @@ void apply_maintainer_options(const MaintainerOptions& m, bool first) {
     }
     if (!first) { return; }
     ops::set_route_pins({m.prefill_route, m.decode_route, m.moe_path});
+    ops::set_route_policy(m.route_policy);
     ops::detail::generic::set_dense_tune(m.dense_tune, m.tune_cache);
     ops::set_moe_tune(m.moe_tune, m.tune_cache);
     models::qwen3_5::execution::set_debug_prefill_cuts(m.debug_prefill_cuts);
@@ -199,11 +200,13 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     in.taint    = runtime::taint_of(in);
     {
         const auto seen = ops::detail::generic::seen_problems();
-        in.routes       = runtime::routes_of(device_class(resolved.device), seen, memory.prefill_chunk,
-                                             resolved.activations == ActivationMode::Exact);
-        in.route_evidence =
-            runtime::route_evidence_of(device_class(resolved.device), seen, memory.prefill_chunk,
-                                       resolved.activations == ActivationMode::Exact);
+        // Under the start's --route-policy, which the options section records (route_policy_of).
+        in.routes = runtime::routes_of(device_class(resolved.device), seen, memory.prefill_chunk,
+                                       resolved.activations == ActivationMode::Exact,
+                                       resolved.maintainer.route_policy);
+        in.route_evidence = runtime::route_evidence_of(
+            device_class(resolved.device), seen, memory.prefill_chunk,
+            resolved.activations == ActivationMode::Exact, resolved.maintainer.route_policy);
     }
     in.observed = runtime::observed_of(memory);
     in.observed.merge(runtime::observed_of(device_class(resolved.device)));

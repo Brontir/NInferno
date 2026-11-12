@@ -52,6 +52,31 @@ void set_route_pins(const RoutePins& pins) noexcept;
 void clear_route_pin_ledger() noexcept;
 [[nodiscard]] RoutePins route_pins() noexcept;
 
+// The selector's precedence over evidence (--route-policy, option_enums.h RoutePolicy; #614 F1):
+// process-wide as the pins are, set by an Engine at construction (or by the route tuner for one
+// A/B arm) and read once per call by the selector's Ask (route_authorities.h resolve_ask). Legacy
+// is the release's. set_route_pins leaves it as it is.
+void set_route_policy(RoutePolicy policy) noexcept;
+[[nodiscard]] RoutePolicy route_policy() noexcept;
+
+// The policy for one scope, the previous one back at its end: a manifest's replay asks the
+// selector under the policy the manifest records (runtime/engine/decision_routes.h). Process-wide,
+// so not beside a live Engine of another policy.
+class ScopedRoutePolicy {
+public:
+    explicit ScopedRoutePolicy(RoutePolicy policy) noexcept : previous_(route_policy()) {
+        set_route_policy(policy);
+    }
+
+    ~ScopedRoutePolicy() { set_route_policy(previous_); }
+
+    ScopedRoutePolicy(const ScopedRoutePolicy&)            = delete;
+    ScopedRoutePolicy& operator=(const ScopedRoutePolicy&) = delete;
+
+private:
+    RoutePolicy previous_;
+};
+
 // The families a pin's band met since set_route_pins, as bit masks over the enum's values
 // (bit 1 << static_cast<int>(family)): `seen` whether a call of the band was resolved, `took`
 // whether the pinned family took one, `could` the families that could compute some call.

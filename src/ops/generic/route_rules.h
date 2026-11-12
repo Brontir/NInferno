@@ -223,10 +223,20 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "timing of its own (the timing is the single-sequence rule's, RTX 5070 Ti)",
      ""},
     {"Ask: lanes at the builders", Basis::Structural, "route_authorities.cpp",
-     "tokens, ops::round_lanes()};", 0, kUnknown, kUnknown,
+     "tokens, ops::round_lanes(),", 0, kUnknown, kUnknown,
      "resolve_ask and ask_below_profiles read the lane count from ops::round_lanes() (the rule "
      "above reads it from the Ask): a contract of where the value comes from, with no timing of "
      "its own (the timing is mmq_verify_rule's single-sequence rule, RTX 5070 Ti)",
+     "", 2},
+    // The precedence over evidence (#614 F1): the Ask's policy is the process's --route-policy,
+    // read at the same two builders; a constant there would fix one policy for every call.
+    {"Ask: route policy at the builders", Basis::Structural, "route_authorities.cpp",
+     "ops::route_policy()};", 0, kUnknown, kUnknown,
+     "resolve_ask and ask_below_profiles read the precedence over evidence from "
+     "ops::route_policy() (--route-policy: legacy, the release's, or evidence, which demotes "
+     "borrowed and transferred route-table answers below the ranker), so the tuner's ranker and "
+     "the A16 heuristic's walks run under the policy of the selection they stand beside: a "
+     "contract of where the value comes from, an A/B setting with no timing of its own",
      "", 2},
     {"mmq_verify_rule: lanes handed over", Basis::Structural, "route_authorities.cpp",
      "mmq_verify_rule(weight, problem.policy, problem.n, ask.tokens, ask.lanes)", 0, kUnknown,

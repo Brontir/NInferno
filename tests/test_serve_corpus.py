@@ -274,10 +274,12 @@ def test_route_pins_reach_server_and_bind_the_campaign(tmp_path, concurrent):
             corpus.route_pins_of(args),
         )
     pins = corpus.route_pins_of(args)
-    assert pins == {"prefill_route": "mmq", "decode_route": "vec", "moe_path": "auto"}
+    assert pins == {"prefill_route": "mmq", "decode_route": "vec", "moe_path": "auto",
+                    "route_policy": "legacy"}
     assert command[command.index("--prefill-route") + 1] == "mmq"
     assert command[command.index("--decode-route") + 1] == "vec"
     assert "--moe-path" not in command
+    assert "--route-policy" not in command  # legacy, the release's, is never passed
     event = {"engine": {"maintainer": {"prefill_route": "mmq", "decode_route": "vec",
                                        "moe_path": "auto"}}}
     corpus.require_route_pins(event, pins)
@@ -296,6 +298,17 @@ def test_route_pins_reach_server_and_bind_the_campaign(tmp_path, concurrent):
         corpus.bind_route_pins(legacy, pins)
     corpus.bind_route_pins(legacy, {})
     assert json.loads((legacy / "route_pins.json").read_text(encoding="utf-8")) == {}
+    # --route-policy evidence (#614 F1) is passed, checked in server_start (a server that reports
+    # no route_policy is legacy), and keeps its campaign apart.
+    evidence = {**pins, "route_policy": "evidence"}
+    assert corpus.route_pin_flags(evidence)[-2:] == ["--route-policy", "evidence"]
+    with pytest.raises(corpus.CampaignError, match="route pins"):
+        corpus.require_route_pins({"engine": {"maintainer": {"prefill_route": "mmq",
+                                                             "decode_route": "vec"}}}, evidence)
+    corpus.require_route_pins({"engine": {"maintainer": {"prefill_route": "mmq",
+                                                         "decode_route": "vec"}}}, pins)
+    with pytest.raises(corpus.CampaignError, match="another --output"):
+        corpus.bind_route_pins(tmp_path, evidence)
 
 
 def test_server_log_schema_matches_the_server() -> None:

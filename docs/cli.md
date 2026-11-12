@@ -122,6 +122,12 @@ choice. `ninferno`, `ninferno-serve` and the serve bench tools (`tools/bench/run
 `--moe-path`. Details, and what each pin does not reach:
 [route pins](maintainer/environment.md#route-pins).
 
+`--route-policy legacy|evidence` is an A/B setting of the same kind: `legacy` (the default) is the
+release's selection, and `evidence` lets the cost model or the rules decide where the route table's
+entry for the call was measured on another board. `ninferno`, `ninferno-serve`,
+`ninferno-perplexity` and `ninferno-serve route-tune` take it:
+[route policy](maintainer/environment.md#route-policy).
+
 ### Speculative decoding
 
 | Option | Default | Meaning |

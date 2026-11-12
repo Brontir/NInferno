@@ -450,6 +450,10 @@ struct MaintainerOptions {
     PrefillRoute prefill_route = PrefillRoute::Auto;
     DecodeRoute decode_route   = DecodeRoute::Auto;
     MoePath moe_path           = MoePath::Auto;
+    // --route-policy legacy|evidence: the generic selector's precedence over evidence
+    // (option_enums.h RoutePolicy, #614 F1). Legacy is the release's selection; Evidence demotes
+    // the route-table entries measured on another board below the ranker, for an A/B.
+    RoutePolicy route_policy = RoutePolicy::Legacy;
     // --artifact-io auto|direct|buffered: how the weights are read at load (O_DIRECT or the page
     // cache). An I/O mode, not a decision: the bytes read are the same.
     ArtifactIo artifact_io = ArtifactIo::Auto;
@@ -1960,7 +1964,8 @@ struct LoadSummary {
     // problem the generic path's tuner timed during the warm-up.
     std::vector<std::string> moe_tune;
     // The route pins given (--prefill-route, --decode-route, --moe-path): one line per pin, with
-    // what the startup's calls in its band took (ops/route_pins.h). Empty without a pin.
+    // what the startup's calls in its band took (ops/route_pins.h), and a line for a
+    // --route-policy other than legacy. Empty without either.
     std::vector<std::string> route_pins;
     // A speculative drafter's load notes (the dense decoder's DFlash feature projection: split by
     // tap, or whole and why); empty without one.

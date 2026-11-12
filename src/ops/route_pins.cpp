@@ -11,6 +11,7 @@ namespace {
 std::atomic<std::uint8_t> g_prefill{static_cast<std::uint8_t>(PrefillRoute::Auto)};
 std::atomic<std::uint8_t> g_decode{static_cast<std::uint8_t>(DecodeRoute::Auto)};
 std::atomic<std::uint8_t> g_moe{static_cast<std::uint8_t>(MoePath::Auto)};
+std::atomic<std::uint8_t> g_policy{static_cast<std::uint8_t>(RoutePolicy::Legacy)};
 
 struct AtomicBand {
     std::atomic<bool> seen{false};
@@ -80,6 +81,14 @@ RoutePins route_pins() noexcept {
     return {static_cast<PrefillRoute>(g_prefill.load(std::memory_order_relaxed)),
             static_cast<DecodeRoute>(g_decode.load(std::memory_order_relaxed)),
             static_cast<MoePath>(g_moe.load(std::memory_order_relaxed))};
+}
+
+void set_route_policy(RoutePolicy policy) noexcept {
+    g_policy.store(static_cast<std::uint8_t>(policy), std::memory_order_relaxed);
+}
+
+RoutePolicy route_policy() noexcept {
+    return static_cast<RoutePolicy>(g_policy.load(std::memory_order_relaxed));
 }
 
 void note_prefill_pin(bool took, std::uint32_t could) noexcept { g_prefill_band.note(took, could); }

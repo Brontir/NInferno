@@ -39,6 +39,14 @@ enum class DecodeRoute : std::uint8_t { Auto, A16, R8, Vec, Mmq };
 // the generic MoE Op (ops::moe) that reads every expert format.
 enum class MoePath : std::uint8_t { Auto, Fused, Generic };
 
+// A maintainer's pin of the generic selector's precedence over evidence (--route-policy; #614 F1,
+// ops/generic/route_authorities.h). Legacy is the release's selection: the first authority that
+// answers decides, whatever its evidence. Evidence demotes a route-table answer whose entry was
+// measured on another board (Borrowed: lent by a farther table; Transferred: the nearest table is
+// past the carry distance) below the ranker (the cost model, else the rules), for the A/B that
+// checks whether such entries should decide.
+enum class RoutePolicy : std::uint8_t { Legacy, Evidence };
+
 // How artifact payloads (the weights) are read at load (--artifact-io): Auto reads local disks with
 // O_DIRECT (a 20+ GB payload kept out of the page cache) and network, FUSE and host-shared file
 // systems through the page cache; Direct and Buffered force one. The bytes read are the same.
@@ -91,6 +99,25 @@ inline constexpr std::uint32_t kMaximumDecodeSteps = 32;
         return "generic";
     }
     return "unknown";
+}
+
+[[nodiscard]] constexpr const char* route_policy_name(RoutePolicy policy) noexcept {
+    switch (policy) {
+    case RoutePolicy::Legacy:
+        return "legacy";
+    case RoutePolicy::Evidence:
+        return "evidence";
+    }
+    return "unknown";
+}
+
+// --route-policy legacy|evidence.
+[[nodiscard]] inline RoutePolicy parse_route_policy(std::string_view text) {
+    for (const RoutePolicy policy : {RoutePolicy::Legacy, RoutePolicy::Evidence}) {
+        if (text == route_policy_name(policy)) { return policy; }
+    }
+    throw std::invalid_argument("--route-policy must be legacy or evidence, not '" +
+                                std::string(text) + "'");
 }
 
 // --prefill-route auto|a16|w4a8|i8|mmq|w4a4.
