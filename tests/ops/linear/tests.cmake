@@ -239,14 +239,13 @@ target_compile_definitions(ninferno_rmma_geometry_test PRIVATE
 #   takes minutes (560 s in one sm_120a build); a snapshot without loop counts (schema 1: sm_70
 #   alone, waived by name in ninferno_kernel_facts_lookup_test, which fails on any other) is
 #   compared in seconds, and another nvcc skips. The test checks this build's architecture alone,
-#   so the snapshots no stand builds (sm_80, sm_90, sm_100) are checked by
-#   tools/dev/kernel_facts_archs.sh, a build machine's job (#762), and by the release's package.sh
-#   (#758). The label is slow in every build, so `ctest -L host -LE slow` leaves it out even where
-#   it would be quick: a label that depended on the snapshot would make the fast set differ
-#   between builds.
+#   so a snapshot no stand builds (sm_80, sm_90, sm_100) is checked only by the release's
+#   package.sh (#758). The label is slow in every build, so `ctest -L host -LE slow` leaves it out
+#   even where it would be quick: a label that depended on the snapshot would make the fast set
+#   differ between builds.
 # - ninferno_kernel_facts_lookup_test: every snapshot parses and carries the loop counts (schema
-#   4; sm_70 waived, #762), the release engine of each lab capability is found, and every
-#   facts-priced golden board's price reads facts; no GPU.
+#   4; sm_70 waived until #762), the release engine of each lab capability is found, and every facts-priced golden board's
+#   price reads facts; no GPU.
 # - ninferno_kernel_facts_live_test: on a GPU that runs this build's SASS, the running kernels'
 #   attributes and the driver's occupancy equal the snapshot and the pure occupancy.
 get_filename_component(ninferno_cuda_bin "${CMAKE_CUDA_COMPILER}" DIRECTORY)
