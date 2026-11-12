@@ -300,6 +300,30 @@ int gguf_qwen35() {
     failures +=
         check(policy_of(ninferno::convert::ggml::NVFP4, true) == rt::PlanExpertPolicy::Unknown,
               "gguf NVFP4 banks with a divisor: unknown");
+    // Floating-point weight banks (F16, kept as bf16) are a kind of their own, at BF16 inputs:
+    // the op runs them too (Codex on #764); a float auxiliary tensor of a bank (a scale, a bias)
+    // is not a bank, and neither moves the prefill route.
+    {
+        GgufFile banks = file;
+        for (const char* name : {"blk.0.ffn_gate_exps.weight", "blk.0.ffn_up_exps.weight"}) {
+            banks.tensors.push_back(
+                tensor(name, {5120, 512, 64}, ninferno::convert::ggml::F16, 100));
+        }
+        banks.tensors.push_back(tensor("blk.0.ffn_down_exps.weight", {512, 5120, 64},
+                                       ninferno::convert::ggml::F16, 100));
+        banks.tensors.push_back(
+            tensor("blk.0.ffn_down_exps.scale", {64}, ninferno::convert::ggml::F32, 256));
+        const auto f  = pr::plan_facts_of_gguf(banks, 999999);
+        const auto& l = f.model.expert_layers;
+        failures +=
+            check(l.size() == 1 && l[0].gate_up_format == "bf16" && l[0].down_format == "bf16" &&
+                      !l[0].gate_up_layout.empty() && l[0].gate_up_k == 5120 &&
+                      l[0].down_k == 512 && l[0].policy == rt::PlanExpertPolicy::A16Only &&
+                      l[0].layers == 1 && l[0].bytes == 300,
+                  "gguf F16 banks: one bf16 kind at BF16 inputs, the scale apart");
+        failures += check(f.model.expert_prefill == rt::ExpertPrefill::Unknown,
+                          "gguf F16 banks: the prefill route as before");
+    }
 
     // The metadata alone (ninferno-ui): FileSize.
     const auto meta = pr::plan_facts_of_gguf_metadata(file.metadata, 16000000000ULL);

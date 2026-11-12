@@ -2194,6 +2194,32 @@ void test_moe_routes() {
                   "MoE routes: int8 activations, AllowA8 whatever was recorded");
         }
     }
+    // BF16 banks (a GGUF's F16 experts, kept as bf16: plan_facts' floating-point weight banks):
+    // asked too, and not on the measured pair (R8 over the register MMA) at four rows.
+    {
+        pr::PlanSourceFacts fb = f;
+        rt::PlanExpertLayers bf;
+        bf.gate_up_format = bf.down_format = "bf16";
+        bf.gate_up_layout = bf.down_layout = std::string(ninferno::artifact::layout_name(
+            ninferno::default_weight_layout(ninferno::QType::BF16)));
+        bf.gate_up_k = bf.down_k                = 2880;
+        bf.policy                               = rt::PlanExpertPolicy::A16Only;
+        bf.layers                               = 24;
+        bf.bytes                                = 700;
+        fb.model.expert_layers                  = {bf};
+        ninferno::product::choice::ModelFacts m = pr::choice_model_of(fb);
+        pr::with_moe_routes(m, fb, device);
+        check(static_cast<bool>(m.moe_routes), "MoE routes: BF16 banks asked");
+        if (m.moe_routes) {
+            const auto routes = m.moe_routes(4, ninferno::ActivationMode::Fast);
+            const bool measured =
+                routes.size() == 1 &&
+                routes[0].gate_up == ninferno::product::choice::ExpertKernel::R8 &&
+                routes[0].down == ninferno::product::choice::ExpertKernel::RegisterMma;
+            check(routes.size() == 1 && routes[0].share == 700 && !measured,
+                  "MoE routes: BF16 banks at four rows, not the measured pair");
+        }
+    }
     rt::set_plan_moe_route_query({});
     ninferno::product::choice::ModelFacts unasked = pr::choice_model_of(f);
     pr::with_moe_routes(unasked, f, device);

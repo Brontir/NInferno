@@ -2067,7 +2067,9 @@ grouped stages run at the step's rows, on the planned board: `moe_route_query`
 `moe_plan_query`: the route tables, the class's A8 route, the R8 token limits; and Volta's split
 of a wide call, now one function, `moe_split_tokens`, that `moe()` calls too) over descriptor
 banks on the board's class. The plan facts keep the trunk's routed layers by kind
-(`PlanModelFacts::expert_layers`: each bank's format, stored layout and K, and the experts'
+(`PlanModelFacts::expert_layers`: each weight bank's format, stored layout and K, a
+floating-point bank's too (a GGUF's F16 experts as bf16; a bank's float scales and biases are not
+banks), and the experts'
 activation policy: an artifact's the one its uses record, `Use::activation_policy`, which a start
 reads; a GGUF's where its tensor table tells it (`gguf_expert_policy`: a ggml block or MXFP4
 bank as stored, `kept_block_policy`; an NVFP4 bank without an activation divisor A16); unknown
