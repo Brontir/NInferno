@@ -1016,10 +1016,11 @@ int main() {
                    sp::load_label(sp::facts_load(p)) + ")");
     }
     // The table bounds the choices the Engine runs: the served ones where the profile has them,
-    // and the fit fallback. The profile chose mtp:3 (x2, 2 x 0.6 = 1.2 at two streams) but the
-    // Engine runs mtp:2 (x1.5, 1.5 x 0.6 = 0.9: a loss); depth 1 gains for it (1.2012 x 0.95 over
-    // the mix), so the bound is 1, not the unrunnable choice's 3. A fit fallback mtp:1 at x1.05
-    // (1.05 x 0.95 < 1) loses at every bound, so the table decodes plainly from two streams.
+    // not the fit fallback (#713: it runs under a table of its own). The profile chose mtp:3 (x2,
+    // 2 x 0.6 = 1.2 at two streams) but the Engine runs mtp:2 (x1.5, 1.5 x 0.6 = 0.9: a loss);
+    // depth 1 gains for it (1.2012 x 0.95 over the mix), so the bound is 1, not the unrunnable
+    // choice's 3. A fit fallback mtp:1 at x1.05 (1.05 x 0.95 < 1) loses at every bound; it no
+    // longer keeps the default from depth 3 (it made the table plain from two streams).
     {
         sp::Profile p;
         p.overall.config      = sp::SpecConfig::parse("mtp:3");
@@ -1052,12 +1053,12 @@ int main() {
         fallback.config     = one;
         fallback.tok_s      = 1.05;
         p.fit_fallback      = fallback;
-        expect(sp::load_label(sp::facts_load(p)) == "2:0",
-               "a fit fallback that loses at every bound: plain (" +
+        expect(sp::load_label(sp::facts_load(p)) == "2:3,3:0",
+               "a fit fallback that loses at every bound leaves the default's table: 3 (" +
                    sp::load_label(sp::facts_load(p)) + ")");
     }
-    // A choice entered twice is counted once: a fit fallback equal to the overall choice (the
-    // same configuration over the same sections) does not weigh twice in the leximin order. The
+    // Each choice counts once, over its own sections, and a fit fallback equal to the overall
+    // choice does not weigh it twice in the leximin order (it does not enter the table). The
     // overall mtp:2 gains A1 at depth 1 and 1.3 at 2; the thinking mtp:2 gains 1.9 at 1 and A1 at
     // 2 (a tie on the least gain, exact: x 0.5). Once each, depth 1 wins on the next gain (1.9
     // against 1.3); with the overall counted twice, depth 2 would (1.3 against A1).

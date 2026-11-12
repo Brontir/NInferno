@@ -170,8 +170,10 @@ int check_feature_table() {
     // nearest the RTX 5080 of the measured sm_120 boards, and no board of another instruction set
     // is near at all.
     {
-        const ninferno::Board ti{12, 0, 70, 48, 896}, b5080{12, 0, 84, 64, 960},
-            b5060{12, 0, 36, 32, 448}, b5090{12, 0, 170, 96, 1792}, l4{8, 9, 58, 48, 300};
+        using ninferno::measured::board_of_pci; // the boards by PCI id, from the registry
+        const ninferno::Board ti = board_of_pci(0x2C05), b5080 = board_of_pci(0x2C02),
+                              b5060 = board_of_pci(0x2D04), b5090 = board_of_pci(0x2B85),
+                              l4 = board_of_pci(0x27B8);
         const double d80 = ninferno::board_distance(ti, b5080);
         failures += expect(ninferno::board_distance(ti, ti) == 0 &&
                                d80 == ninferno::board_distance(b5080, ti) &&
@@ -179,7 +181,8 @@ int check_feature_table() {
                                d80 < ninferno::board_distance(ti, b5090) &&
                                !std::isfinite(ninferno::board_distance(ti, l4)),
                            "board distance");
-        const ninferno::Board a30{8, 0, 56, 24, 933}, a100{8, 0, 108, 40, 1555}, a10{8, 6, 72, 6, 600};
+        const ninferno::Board a30 = board_of_pci(0x20B7), a100 = board_of_pci(0x20B0),
+                              a10 = board_of_pci(0x2236);
         failures += expect(std::isfinite(ninferno::board_distance(a30, a100)) &&
                                !std::isfinite(ninferno::board_distance(a30, a10)),
                            "board distance keeps FP32-accumulate HMMA rates apart");
@@ -209,7 +212,7 @@ int check_feature_table() {
     {
         namespace m = ninferno::measured;
         using D     = m::GateAnswer::Disposition;
-        const ninferno::Board ti5070{12, 0, 70, 48, 896}, ti4070{8, 9, 60, 48, 504};
+        const ninferno::Board ti5070 = m::board_of_pci(0x2C05), ti4070 = m::board_of_pci(0x2782);
         const auto own = m::mmq_prefill_gate(m::kRtx5090);
         failures += expect(own.donor != nullptr && own.donor->board.sms == 170 && own.distance == 0 &&
                                own.disposition == D::Measured && own.pays,

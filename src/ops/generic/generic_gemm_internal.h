@@ -6,10 +6,11 @@
 #include "ops/generic/generic_variant_rules.h"
 #include "ops/generic/kernel_facts.h"
 
-#include <cuda_runtime.h>
+#include "core/cuda_stream.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 namespace ninferno::ops::detail::generic {
 
@@ -27,6 +28,29 @@ public:
 private:
     KernelResources* previous_;
 };
+
+// A kernel's committed facts (kernel_facts.h, #612) as the register-MMA launch describes it. The
+// block limit is the launch bounds' (Schedule::kThreads); the versions are the build's
+// architecture. Host code (rmma_resources, generic_rmma_describe.cpp) describes from the facts the
+// same way.
+inline void describe_from_facts(KernelResources& out, const kernel_facts::KernelFacts& f,
+                                unsigned grid_x, unsigned grid_y, unsigned grid_z, int threads,
+                                std::size_t dynamic_smem, bool latency) noexcept {
+    out.registers             = f.registers;
+    out.local_bytes           = f.spill_bytes();
+    out.static_smem           = f.static_shared_bytes;
+    out.dynamic_smem          = dynamic_smem;
+    out.threads               = threads;
+    out.max_threads_per_block = threads;
+    out.ptx_version           = NINFERNO_BUILD_ARCH;
+    out.binary_version        = NINFERNO_BUILD_ARCH;
+    out.grid_x                = grid_x;
+    out.grid_y                = grid_y;
+    out.grid_z                = grid_z;
+    out.latency_variant       = latency;
+}
+
+#ifndef NINFERNO_HOST_ONLY // the launch describes a kernel; the selector does not
 inline void describe_kernel(KernelResources& out, const cudaFuncAttributes& a, dim3 grid,
                             int threads, std::size_t dynamic_smem, bool latency) noexcept {
     out.registers             = a.numRegs;
@@ -43,27 +67,21 @@ inline void describe_kernel(KernelResources& out, const cudaFuncAttributes& a, d
     out.latency_variant       = latency;
 }
 
-// The same from a kernel's committed facts (kernel_facts.h, #612): what the register-MMA launch
-// describes. The block limit is the launch bounds' (Schedule::kThreads); the versions are the
-// build's architecture.
 inline void describe_kernel(KernelResources& out, const kernel_facts::KernelFacts& f, dim3 grid,
                             int threads, std::size_t dynamic_smem, bool latency) noexcept {
-    out.registers             = f.registers;
-    out.local_bytes           = f.spill_bytes();
-    out.static_smem           = f.static_shared_bytes;
-    out.dynamic_smem          = dynamic_smem;
-    out.threads               = threads;
-    out.max_threads_per_block = threads;
-    out.ptx_version           = NINFERNO_BUILD_ARCH;
-    out.binary_version        = NINFERNO_BUILD_ARCH;
-    out.grid_x                = grid.x;
-    out.grid_y                = grid.y;
-    out.grid_z                = grid.z;
-    out.latency_variant       = latency;
+    describe_from_facts(out, f, grid.x, grid.y, grid.z, threads, dynamic_smem, latency);
 }
+#endif
+
+// rmma_resources by running the register-MMA launch in describe mode (generic_describe.cpp): the
+// selector's own rmma_resources reads the facts without a launch, and ninferno_rmma_describe_test
+// holds the two equal.
+[[nodiscard]] std::optional<KernelResources>
+rmma_resources_by_launch(int schedule, const Weight& weight, Epilogue epilogue, std::int32_t tokens,
+                         std::int32_t rows = 0);
 
 // The register-MMA launch of `codec` (one of the launch_rmma_* below): run_route's, and
-// rmma_resources' described one.
+// rmma_resources_by_launch's described one.
 void launch_rmma_codec(WeightCodec codec, int schedule, Epilogue epilogue, const GemmArgs& args,
                        cudaStream_t stream);
 

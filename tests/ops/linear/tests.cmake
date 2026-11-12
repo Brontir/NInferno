@@ -86,6 +86,11 @@ add_test(NAME ninferno_route_table_similar_default_test
   COMMAND ninferno_route_table_test --similar-default)
 ninferno_label_tests(ninferno_route_table_similar_default_test LABELS gpu)
 set_tests_properties(ninferno_route_table_similar_default_test PROPERTIES SKIP_RETURN_CODE 77)
+# Every shipped table's gpu.pci_id is the board of its class, read on that board (substituted, no
+# GPU): the table is its own, at distance 0 but for a recorded conflict (#612 step 9).
+add_test(NAME ninferno_route_table_shipped_boards_test
+  COMMAND ninferno_route_table_test --shipped-boards)
+set_tests_properties(ninferno_route_table_shipped_boards_test PROPERTIES LABELS host)
 
 # The generic projection path: random and awkward shapes in every format, every op and route,
 # against an FP64 reference GEMM, plus the token invariance of the prefill-admissible routes.
@@ -197,6 +202,15 @@ ninferno_add_op_test(ninferno_selector_golden_test LABELS gpu golden slow
   LIBRARIES ninferno_linear_test_support)
 target_compile_definitions(ninferno_selector_golden_test PRIVATE
   NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
+# It dumps every board twice over (once a process per board, then all in one): minutes of CPU.
+set_tests_properties(ninferno_selector_golden_test PROPERTIES TIMEOUT 1800)
+
+# The selector's register-MMA kernel description (rmma_resources: facts, no CUDA) equals the launch's
+# own (rmma_resources_by_launch, the real launch run in describe mode), per format, schedule,
+# epilogue and width on every board with facts (#620). No GPU.
+ninferno_add_op_test(ninferno_rmma_describe_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmma_describe.cpp"
+  LIBRARIES ninferno_linear_test_support)
 
 # The selector on the real device with no substituted board: select_route and w4a8_ws_extra return,
 # and the R8 decode table of a board that has one is found (#620). Skips (77) without a GPU.
@@ -222,12 +236,16 @@ target_compile_definitions(ninferno_rmma_geometry_test PRIVATE
 #   other registers by construction; the price reads the snapshot either way). A mismatch names
 #   the kernels and the command that regenerates the file. Where the snapshot carries loop counts
 #   and the nvcc is its own, the check disassembles every register-MMA kernel (about 2400), which
-#   takes minutes (560 s in one sm_120a build); a snapshot without loop counts (sm_70, sm_80,
-#   sm_90, sm_100) is compared in seconds, and another nvcc skips. The label is slow in every
-#   build, so `ctest -L host -LE slow` leaves it out even where it would be quick: a label that
-#   depended on the snapshot would make the fast set differ between builds.
-# - ninferno_kernel_facts_lookup_test: every snapshot parses, the release engine of each lab
-#   capability is found, and every facts-priced golden board's price reads facts; no GPU.
+#   takes minutes (560 s in one sm_120a build); a snapshot without loop counts (schema 1: sm_70
+#   alone, waived by name in ninferno_kernel_facts_lookup_test, which fails on any other) is
+#   compared in seconds, and another nvcc skips. The test checks this build's architecture alone,
+#   so a snapshot no stand builds (sm_80, sm_90, sm_100) is checked only by the release's
+#   package.sh (#758). The label is slow in every build, so `ctest -L host -LE slow` leaves it out
+#   even where it would be quick: a label that depended on the snapshot would make the fast set
+#   differ between builds.
+# - ninferno_kernel_facts_lookup_test: every snapshot parses and carries the loop counts (schema
+#   4; sm_70 waived until #762), the release engine of each lab capability is found, and every facts-priced golden board's
+#   price reads facts; no GPU.
 # - ninferno_kernel_facts_live_test: on a GPU that runs this build's SASS, the running kernels'
 #   attributes and the driver's occupancy equal the snapshot and the pure occupancy.
 get_filename_component(ninferno_cuda_bin "${CMAKE_CUDA_COMPILER}" DIRECTORY)
@@ -315,3 +333,24 @@ ninferno_add_op_test(ninferno_side_by_side_projection_test
 ninferno_add_op_test(ninferno_route_pin_selector_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_pin_selector.cpp"
   LIBRARIES ninferno_linear_test_support)
+
+# The same dump code as ninferno_selector_golden_test, built and linked with no CUDA runtime
+# (ninferno_ops_host): the committed goldens must read the same from a host-only selector (#620).
+# The stubs are the device seams (current_device_class, the device ordinal, the dense tuner, which
+# never times anything on a host with no device, and the description of an executed kernel, which a
+# host with no device has none of). The Volta CUTLASS route's sizes are host code
+# (generic_volta_cutlass_sizes.cpp, in ninferno_ops_host), so an sm_70 tree built with CUTLASS
+# answers here as its device build does: every tree registers the twin (#620 step 13).
+ninferno_add_test(ninferno_selector_golden_host_test LABELS host golden slow
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
+  LIBRARIES ninferno_ops_host)
+target_sources(ninferno_selector_golden_host_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
+target_compile_definitions(ninferno_selector_golden_host_test PRIVATE
+  NINFERNO_HOST_ONLY
+  NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_selector_golden_host_test)
+# It dumps every board twice over (once a process per board, then all in one): minutes of CPU.
+set_tests_properties(ninferno_selector_golden_host_test PROPERTIES TIMEOUT 1800)

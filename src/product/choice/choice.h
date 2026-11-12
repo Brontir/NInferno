@@ -200,6 +200,14 @@ struct LinearShape {
     std::string format;
 };
 
+// The kernels of a routed layer's two grouped stages at a decode width, and the share of the
+// routed bytes the layers that take them hold (ModelFacts::moe_routes).
+struct MoeStepRoute {
+    ExpertKernel gate_up = ExpertKernel::Unknown;
+    ExpertKernel down    = ExpertKernel::Unknown;
+    double share         = 1;
+};
+
 struct ModelFacts {
     std::string family;               // model_type (qwen3_5_text, gemma4_text, ...)
     double params = 0;                // every weight
@@ -247,6 +255,12 @@ struct ModelFacts {
     // drafters, 0 for plain).
     std::vector<DrafterOption> drafters;
     std::size_t default_drafter = 0;
+    // The kernels the MoE op runs a decode step's routed banks on at `rows` rows (#616 step 7): its
+    // own route query on the card's class (product/plan with_moe_routes: ops/moe moe_route_query),
+    // by the routed bytes of the layers each kernel pair takes. Unset, or empty: not asked, and the
+    // step takes the pair its kMoeRoutedEta rows were measured on.
+    std::function<std::vector<MoeStepRoute>(std::uint32_t rows, ActivationMode activations)>
+        moe_routes;
     [[nodiscard]] bool moe() const noexcept { return experts > 1 && routed_expert_params > 0; }
 };
 

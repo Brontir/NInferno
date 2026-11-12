@@ -27,6 +27,8 @@
 #      apart: they win some sizes by padding whatever f is, and the table cannot pick them).
 #   R3 grid: the regret at f 0.20 is not below the regret of the fewest tiles.
 #   R4 ab: the mix change lies more than 2 pp outside the predicted mix range.
+#   R4 ab (law, AB_ARM=law): the mix change lies more than 2 pp from the launch law's own predicted mix
+#      change (its ms of the model's MMQ linears, the tree's constants, no refit).
 #   R1 grid (a report, not a verdict): the regret at f 0.20 against the least over the f buckets;
 #      neighbouring buckets' tables differ at one to three sizes, so it cannot separate 0.10 from 0.30.
 #   Any one of R2..R5 met refutes f = 0.20 for this card; the thresholds, the range, the interval
@@ -98,7 +100,9 @@
 # and CUDA_DEVICE_ORDER=PCI_BUS_ID makes CUDA's index the one nvidia-smi shows).
 # Env: MODEL (required), OUT (results dir, default profiles/524_turing), BUILD (default build-524t),
 # PORT (18524; it must be free: a server that already answers is refused), K (tokens - columns,
-# default 7, assumed), F_AB (A/B f, default 0.20; set it to the grid's best), JOBS (8), FORCE=1 (skip
+# default 7, assumed), F_AB (A/B f, default 0.20; set it to the grid's best), AB_ARM (the A/B's second
+# arm: new, the tile law at F_AB, default; or law, the production ranking, on Turing the launch law of
+# DECISIONS 78, read against the law's own prediction, R4 (law)), JOBS (8), FORCE=1 (skip
 # the busy-GPU check), PY (the Python command, default python3). `probe`, `grid` and `ab` alone need
 # BUILD to hold the hooked binary.
 set -euo pipefail
@@ -112,6 +116,8 @@ K=${K:-7}
 [[ "$K" =~ ^[0-9]+$ ]] || { echo "K must be a whole number of tokens (got $K)"; exit 2; }
 PREFILL_CHUNK=1024
 F_AB=${F_AB:-0.20}
+AB_ARM=${AB_ARM:-new}
+case "$AB_ARM" in new | law) ;; *) echo "AB_ARM must be new (the tile law at F_AB) or law (got $AB_ARM)"; exit 2 ;; esac
 JOBS=${JOBS:-8}
 PATCH=tools/bench/524_grid_hook.patch
 PY=${PY:-python3}
@@ -300,10 +306,11 @@ ab() {
   local round mode
   for round in 1 2 3; do
     # counterbalanced by round: old new, new old, old new (a drift does not line up with the mode)
-    for mode in $([ "$round" = 2 ] && echo new old || echo old new); do
+    for mode in $([ "$round" = 2 ] && echo "$AB_ARM" old || echo old "$AB_ARM"); do
       SLOG=${mode}_$round
       start_server "$SLOG" NINFERNO_MMQ_MODE=$mode NINFERNO_MMQ_F="$F_AB"
-      measure "$mode" "$OUT/ab_${round}_$mode.jsonl" --sizes ab --f "$F_AB"
+      # the f is recorded for the tile-law arm only (the law arm prices the widths by the launch law)
+      measure "$mode" "$OUT/ab_${round}_$mode.jsonl" --sizes ab $([ "$mode" = new ] && echo --f "$F_AB")
       stop_server
     done
   done

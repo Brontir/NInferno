@@ -165,7 +165,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "complement of that rule, but a bare 2 in the code, not defined from it, so the number is not "
      "tied to it by the compiler); the record names no board or margin for the lower edge. The "
      "same edge is written again at "
-     "r8_prequantized_takes (route demotion, generic_gemm.cpp) and in generic_workspace.cpp "
+     "r8_prequantized_takes (route demotion, generic_resolve.cpp) and in generic_workspace.cpp "
      "(route_workspace_bytes, the interval plan): a change of the edge is a change in four places",
      ""},
     {"kMmqMinTokens", Basis::Unknown, "generic_gemm.h",
@@ -721,14 +721,14 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "sm_75 (Volta's register MMA is FMA-emulated, compute-bound)' (generic_variant_rules.h); no "
      "timing of its own (the bytes bound is kRmmaWideBytes)",
      ""},
-    {"r8_prequantized: lower edge", Basis::Structural, "generic_gemm.cpp",
+    {"r8_prequantized: lower edge", Basis::Structural, "generic_resolve.cpp",
      "route.family == Family::R8Mma && tokens >= 2 && tokens <= kR8VerifyTokens &&", 2, kUnknown,
      kUnknown,
      "the verify band of R8 again (r8_verify_tunable's two tokens to kR8VerifyTokens): the "
      "pre-quantized verify form; T = 1 is the decode rule (kR8DecodeTokens; the 2 is a bare "
      "literal, the complement of that rule, not defined from it); no board or margin recorded",
      ""},
-    {"kMinChunkWeightRows", Basis::Unknown, "generic_volta_cutlass.cu",
+    {"kMinChunkWeightRows", Basis::Unknown, "generic_volta_cutlass_sizes.cpp",
      "constexpr std::int32_t kMinChunkWeightRows = 256;", 256, "gv100:80sm", "V100 (80 SMs)",
      "the fewest weight rows a decode chunk holds: a fixed 4096 rows split the 27B gate_up "
      "(34816 x 5120) into nine GEMMs of 3.2 CTA waves each, one chunk of a third of it runs 10.8 "
@@ -826,7 +826,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "4090's R8 decode entries on the 4080 SUPER (1.2: won 41, lost 30, to -22 %); nothing "
      "measured places the 1.0",
      ""},
-    {"kSpreadMeasured", Basis::Measured, "generic_gemm.cpp",
+    {"kSpreadMeasured", Basis::Measured, "generic_gates.cpp",
      "constexpr SpreadMeasured kSpreadMeasured[] = {{measured::kRtx5090, true}, "
      "{measured::kRtx5080, true}, {measured::kRtx5060Ti, false}, {measured::kRtx4080Super, "
      "false}};",
@@ -839,13 +839,13 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "RTX 4080 SUPER (even) not; any other board takes the nearest of them within "
      "measured::kCarryDistance (else off), never across instruction sets",
      ""},
-    {"spread_smem: thin calls", Basis::Unknown, "generic_gemm.cpp",
+    {"spread_smem: thin calls", Basis::Unknown, "generic_gates.cpp",
      "epilogue != Epilogue::Store || args.tokens > 8 ||", 8, "gb202:170sm", "RTX 5090",
      "the eight-warp decode CTA (w1x8) spread over every SM: Store epilogue and at most eight "
      "tokens; measured at T = 1 only, SwiGLU loses (two CTAs per SM already: 116 registers); no "
      "record for the eight-token edge itself",
      ""},
-    {"spread_smem: two CTAs per SM", Basis::Unknown, "generic_gemm.cpp",
+    {"spread_smem: two CTAs per SM", Basis::Unknown, "generic_gates.cpp",
      "if (ctas > 2 * static_cast<std::int64_t>(device.sms) || pad > kStaticSharedBytesPerBlock)", 0,
      "gb202:170sm", "RTX 5090",
      "a call of at most two CTAs per SM: at 416 CTAs and more spreading loses (6656x4096 NVFP4 "

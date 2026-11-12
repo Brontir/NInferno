@@ -22,7 +22,7 @@
 #include "ninferno/ops/moe.h"
 #include "ops/generic/generic_gemm.h"
 
-#include <cuda_runtime.h>
+#include "core/cuda_stream.h"
 
 #include <array>
 #include <cstdint>
@@ -293,6 +293,12 @@ struct MoePlan {
 // tuner, benches and tests); the explicit route's workspace need.
 [[nodiscard]] MoePlan select_plan(const MoeWeights& weights, const MoeConfig& config,
                                   std::int32_t tokens, bool prefill);
+// The width of the calls moe() runs a call of `tokens` as, 0 where it runs whole: on a build
+// without tensor mma.sync (Volta's), a call wider than the gate/up bank's R8 limit and below the
+// prefill band, outside the prefill and invariant profiles (the thread's), whose R8-wide call takes
+// R8, runs as calls of at most that limit, each on its own plan. moe() and moe_route_query read it.
+[[nodiscard]] std::int32_t moe_split_tokens(const MoeWeights& weights, const MoeConfig& config,
+                                            std::int32_t tokens);
 void moe_with_plan(const Tensor& x, const MoeWeights& weights, const MoeConfig& config,
                    MoeEpilogue epilogue, Tensor& out, WorkspaceArena& workspace,
                    cudaStream_t stream, const MoePlan& plan, const Tensor* router_input = nullptr);
@@ -364,6 +370,18 @@ struct A8RouteAnswer {
 
 // Whether every stage of the plan sums each dot product in one order whatever T is.
 [[nodiscard]] bool plan_is_token_invariant(const MoePlan& plan);
+
+// The streaming register-MMA schedule of a stage of K values, and the one schedule every
+// prefill-profile stage takes (moe_plan.cpp).
+[[nodiscard]] int streaming_schedule(std::int32_t k);
+inline constexpr int kPrefillSchedule = 5; // 4 x 1 warps, 64 rows x 64 columns
+
+// The plan with R8 schedules gate_up_r8 / down_r8 (-1: the stage's register MMA).
+[[nodiscard]] MoePlan with_r8(MoePlan p, int gate_up_r8, int down_r8);
+
+// The names of a register-MMA and of an R8 schedule, as a route table and a plan's name spell them.
+[[nodiscard]] std::string schedule_name(int index);
+[[nodiscard]] std::string r8_schedule_name(int index);
 
 // A plan's stable name in the route table: "<gate/up schedule>|<down schedule>", each schedule
 // named as the generic path names its register-MMA routes ("rmma.m1.n1.w1x8") or its R8 routes

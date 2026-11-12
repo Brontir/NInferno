@@ -759,6 +759,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         // The speed of a typical request at the storages this row's plan serves with.
         const PlanSourceFacts facts = row_facts(shape, row);
         choice::ModelFacts model     = choice_model_of(facts);
+        with_moe_routes(model, facts, inputs.device);
         const choice::CardFacts card = choice_card_of(inputs.gpu);
         // The quantization as the choice prices it (product::quant_option_of: one rule for a
         // hub row, the CLI's plan and a start's artifact).
@@ -1564,6 +1565,7 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
     const bool named = std::any_of(facts.model.linears.begin(), facts.model.linears.end(),
                                    [](const runtime::PlanLinear& l) { return !l.format.empty(); });
     if (named) { table.linears = facts.model.linears; }
+    table.expert_layers = facts.model.expert_layers;
     return table;
 }
 
@@ -1583,6 +1585,11 @@ PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
         out.model.mtp_bytes         = *row.mtp_bytes;
         out.model.own_drafter_bytes = row.listing.table ? row.listing.table->own_drafter_bytes : 0;
     }
+    // Its routed layers by kind from its own table only: the shape's are another file's even at
+    // equal bytes (with_weights keeps them there), and a row without its table has none (the MoE
+    // step then takes the measured pair's share: product/choice speed_of).
+    out.model.expert_layers = row.listing.table ? row.listing.table->expert_layers
+                                                : std::vector<runtime::PlanExpertLayers>{};
     // Its stored routed banks and token table where its table counted them (a GGUF's).
     if (const auto& table = row.listing.table) {
         if (table->routed_expert_bytes) {

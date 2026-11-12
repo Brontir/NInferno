@@ -8708,12 +8708,7 @@
   }
  ],
  "gpu": {
-  "board": {
-   "cc": 89,
-   "dram_gbps": 1008.0,
-   "l2_mib": 72.0,
-   "sms": 128
-  },
+  "pci_id": "0x2684",
   "class": "ad102",
   "name": "NVIDIA GeForce RTX 4090"
  },

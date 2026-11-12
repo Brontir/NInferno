@@ -10,6 +10,7 @@
 #include "product/logging/startup_log.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
+#include "runtime/engine/plan_moe_routes.h"
 #include "runtime/engine/plan_workspace.h"
 #include "runtime/engine/prompt_tail.h"
 #include "product/update/update_check.h"
@@ -201,6 +202,7 @@ int main(int argc, char** argv) {
                     "the GGUF's frontend", {}, false);
             });
         ninferno::runtime::register_plan_workspace_queries();
+        ninferno::runtime::register_plan_moe_route_query();
         try {
             return tune ? ninferno::cli::run_spec_tune(argc, argv)
                         : ninferno::cli::run_spec_reselect(argc, argv);
@@ -230,8 +232,10 @@ int main(int argc, char** argv) {
     }
     if (options.version_requested) { return print_version(); }
     if (options.build_manifest_requested) { return print_build_manifest(); }
-    // The plan without the weights sizes a family's workspace as a start does (#302).
+    // The plan without the weights sizes a family's workspace as a start does (#302), and its MoE
+    // step reads the op's own route (#616 step 7).
     ninferno::runtime::register_plan_workspace_queries();
+    ninferno::runtime::register_plan_moe_route_query();
     // The prefill's tail calls come from the served frontend (DECISIONS 62).
     ninferno::product::set_prompt_tail_calls_source(
         [chat_template = options.chat_template_path,

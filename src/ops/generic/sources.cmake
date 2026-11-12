@@ -23,31 +23,51 @@ configure_file("${CMAKE_CURRENT_LIST_DIR}/embedded_kernel_facts.h.in"
   "${CMAKE_CURRENT_BINARY_DIR}/generated/ops/generic/embedded_kernel_facts.h" @ONLY)
 target_include_directories(ninferno_ops PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
-# The host part of the selector, with no CUDA runtime (#620 step 11): the kernel-facts snapshots'
-# reader and the route names, schedule accessors and format admission that read no device. ninferno_ops
-# links it PUBLIC; the shared-ops test library takes it whole (tests/cmake/NInfernoTests.cmake).
-add_library(ninferno_ops_host STATIC
+# The selector, with no CUDA runtime (#620 step 11): everything that decides a route and reads no
+# device but through the seams (core/device_class.h, core/per_device.h). Compiled once, as objects
+# with NINFERNO_HOST_ONLY, and used twice:
+# - ninferno_ops_host, a static library for a host-only target (the selector golden's host twin, the
+#   route-name test), which links no CUDA runtime and no ninferno_core: the stubs of the device seams
+#   (core/*_nodevice.cpp, generic_nodevice.cpp) take their place in that target's own sources;
+# - ninferno_ops, which holds the same objects, so a product binary resolves the seams against the
+#   real ninferno_core and the launch code of ninferno_ops in one archive, with no link order between
+#   archives to depend on.
+add_library(ninferno_ops_host_objects OBJECT
   "${CMAKE_CURRENT_LIST_DIR}/kernel_facts.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/generic_routes.cpp")
-ninferno_internal_includes(ninferno_ops_host)
-target_include_directories(ninferno_ops_host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_compile_definitions(ninferno_ops_host PRIVATE NINFERNO_HOST_ONLY)
+  "${CMAKE_CURRENT_LIST_DIR}/kernel_facts_device.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_routes.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_select.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_rmma_describe.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_gates.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_cost.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_workspace.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_volta_cutlass_sizes.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/route_query.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/route_authorities.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/../prefill_routes.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/../route_pins.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/../route_table.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_ggml_host.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/ggml_mmq_host.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/../moe/moe_plan.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/selector_facts_host.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_facts_sink.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_resolve.cpp")
+ninferno_internal_includes(ninferno_ops_host_objects)
+target_include_directories(ninferno_ops_host_objects PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_compile_definitions(ninferno_ops_host_objects PRIVATE NINFERNO_HOST_ONLY)
+target_link_libraries(ninferno_ops_host_objects PRIVATE ninferno_core_host ninferno::json)
+add_library(ninferno_ops_host STATIC $<TARGET_OBJECTS:ninferno_ops_host_objects>)
 target_link_libraries(ninferno_ops_host PUBLIC ninferno_core_host)
-target_link_libraries(ninferno_ops PUBLIC ninferno_ops_host)
+target_sources(ninferno_ops PRIVATE $<TARGET_OBJECTS:ninferno_ops_host_objects>)
 
 ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/generic_select.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/kernel_facts_device.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_coverage.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/generic_workspace.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/generic_cost.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_describe.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_ggml.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/build_manifest.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_tune.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/route_query.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/route_authorities.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/route_tune_tool.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/selector_facts.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/price_tool.cpp"
@@ -138,4 +158,8 @@ if(NINFERNO_CUTLASS_INCLUDE)
     PROPERTIES INCLUDE_DIRECTORIES "${NINFERNO_CUTLASS_INCLUDE}"
                COMPILE_DEFINITIONS NINFERNO_VOLTA_CUTLASS
                COMPILE_OPTIONS "--expt-relaxed-constexpr")
+  # The route's sizes (host code) answer for the route the .cu compiles.
+  set_source_files_properties("${CMAKE_CURRENT_LIST_DIR}/generic_volta_cutlass_sizes.cpp"
+    TARGET_DIRECTORY ninferno_ops_host_objects
+    PROPERTIES COMPILE_DEFINITIONS NINFERNO_VOLTA_CUTLASS)
 endif()

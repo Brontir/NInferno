@@ -154,13 +154,15 @@ void default_for_builtin_drafter(const std::set<std::string>& components,
         choice.config = {.mode = spec::Mode::Mtp, .k = 3};
         // From eight rows on, two drafts: Qwen3.6 35B on the RTX 5090 at C=8 (both
         // orders) 1250-1258 tok/s at depth 2 against 1131-1158 at depth 3.
-        resolved.profile.load = {{.lanes = 8, .depth = 2}};
+        resolved.profile.load       = {{.lanes = 8, .depth = 2}};
+        resolved.profile.load_basis = "literal"; // one model and card's measurement, not facts
     } else if (components.contains("dflash2")) {
         choice.config = {.mode = spec::Mode::DFlash2, .k = 7};
         // From two rows on, three drafts: Qwen3.8 27B Q3 (HF GGUF conversion) on the RTX 4080
         // SUPER, no profile for the chip (both orders): C=4 depth 7 131 tok/s, plain 153,
         // depth 5 155-160, depth 3 214-218; C=2 depth 7 149-158, depth 3 164-173.
-        resolved.profile.load = {{.lanes = 2, .depth = 3}};
+        resolved.profile.load       = {{.lanes = 2, .depth = 3}};
+        resolved.profile.load_basis = "literal";
     } else if (components.contains("dflash")) {
         choice.config = {.mode = spec::Mode::DFlash, .k = 7};
     } else {
@@ -363,11 +365,94 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
     return out;
 }
 
-// The profile with every choice replaced by its fit fallback.
+// spec::facts_load for `runs` alone at a one-request gain of `gain`, over `priced`'s measurements
+// (its gains at shallower depths) and joint verify's price. `gain` is over every section, so the
+// table checks the overall choice only: copied into the thinking and non-thinking ones it would
+// stand for their own sections' gains at its depth, while their shallower depths took theirs.
+std::vector<spec::LoadBound> facts_load_as(const spec::Profile& priced, const spec::Choice& runs,
+                                           double gain) {
+    spec::Profile p       = priced;
+    p.overall             = runs;
+    p.overall.tok_s       = gain;
+    p.overall.plain_tok_s = 1.0;
+    p.thinking = p.non_thinking = spec::Choice{};
+    p.served.reset();
+    p.fit_fallback.reset();
+    return spec::facts_load(p);
+}
+
+// The load table of `out`, a profile that runs one configuration (`out.overall`) as every choice
+// in place of `shown`'s choices (a shallower depth of one of its drafters, or its fit fallback),
+// from `shown`'s table. Under a bound of d at C streams a choice runs min(d, its own depth), so a
+// table shows a depth at C only where the choices it bounded ran that depth there.
+//   - Where the root profile's table is derived from the facts (`root_basis`, the profile the
+//     user's subject resolved, not `shown`'s label: a fit fallback whose gain is not known has its
+//     table cut and labelled literal, and a shallower depth of it with a measured gain is still a
+//     facts profile's, #760), the table is derived again for `out` (as subject_of_mode does), with
+//     `gain` as its configuration's one-request gain; where that gain is not known, as below.
+//   - Otherwise (measured, a literal, or facts without the gain) a bound stays while `out` runs
+//     under it the depth that the bounded choices of its drafter (mode and head) ran there,
+//     min(d, own) == min(d, their deepest); from the first bound where it would run another depth
+//     (a shallower depth under a bound of its parent's depth or deeper), nothing showed it to gain
+//     there: plain decode from that count on, and the table is a literal (load_basis), its bounds
+//     before the cut `shown`'s. A table kept whole keeps `shown`'s basis: `out` runs every depth
+//     the bounded choices ran under it. A drafter (or head) none of the bounded choices drafts
+//     with: one request speculates, two or more decode plainly (as subject_of_mode). Counts below
+//     the first bound are left unbounded, as for `shown`: a measured table starts at two streams,
+//     and a literal's first bound (stand_in_load's cap) is not a depth's. No table stays none.
+void load_for(const spec::Profile& shown, spec::Profile& out, std::optional<double> gain,
+              std::string_view root_basis) {
+    out.load_basis = shown.load_basis;
+    if (root_basis == "facts" && gain) {
+        out.load       = facts_load_as(out, out.overall, *gain);
+        out.load_basis = "facts";
+        return;
+    }
+    out.load.clear();
+    if (shown.load.empty()) { return; }
+    const spec::SpecConfig& runs = out.overall.config;
+    const spec::ServedChoices bounded =
+        shown.served ? *shown.served
+                     : spec::ServedChoices{shown.overall, shown.thinking, shown.non_thinking};
+    // Of the bounded choices drafting as runs does: its mode and its head (a proposal head verifies
+    // at another cost a round, so a bound measured with the full head shows nothing for it).
+    std::int32_t deepest = 0;
+    for (const spec::Choice* c : {&bounded.overall, &bounded.thinking, &bounded.non_thinking}) {
+        if (c->config.enabled() && c->config.mode == runs.mode &&
+            c->config.proposal_head == runs.proposal_head) {
+            deepest = std::max(deepest, c->config.k);
+        }
+    }
+    if (deepest == 0 || !runs.enabled()) {
+        out.load       = {spec::LoadBound{.lanes = 2, .depth = 0}};
+        out.load_basis = "literal";
+        return;
+    }
+    for (const spec::LoadBound& bound : shown.load) {
+        if (bound.depth != 0 && std::min(bound.depth, runs.k) != std::min(bound.depth, deepest)) {
+            out.load.push_back(spec::LoadBound{.lanes = bound.lanes, .depth = 0});
+            out.load_basis = "literal";
+            return;
+        }
+        out.load.push_back(bound);
+        if (bound.depth == 0) { return; }
+    }
+}
+
+// A choice's one-request gain from its own measurement where it carries one, else from the
+// profile's measurements of its configuration (spec::measured_gain over every section).
+std::optional<double> gain_of(const spec::Profile& profile, const spec::Choice& choice) {
+    if (choice.tok_s > 0 && choice.plain_tok_s > 0) { return choice.speedup(); }
+    return spec::measured_gain(profile, choice.config, std::nullopt);
+}
+
+// The profile with every choice replaced by its fit fallback, under a table of its own (load_for).
 spec::Profile fallback_profile(const spec::Profile& profile) {
     spec::Profile out = profile;
     out.overall = out.thinking = out.non_thinking = *profile.fit_fallback;
     out.served.reset();
+    out.fit_fallback.reset();
+    load_for(profile, out, gain_of(profile, *profile.fit_fallback), profile.load_basis);
     return out;
 }
 
@@ -503,6 +588,12 @@ std::optional<spec::Profile> shallower_profile(const spec::Profile& profile,
     out.non_thinking                 = shallower;
     out.served.reset();
     out.fit_fallback.reset();
+    // Its load table from the table its drafter ran under (the fit fallback's own where it is the
+    // fallback's): the shallower depth was not shown to gain where that table ran a deeper one.
+    // Its one-request gain is the profile's measurement of it, not its parent's.
+    const bool of_fallback = profile.fit_fallback && *same == &*profile.fit_fallback;
+    load_for(of_fallback ? fallback_profile(profile) : profile, out,
+             spec::measured_gain(profile, shallower.config, std::nullopt), profile.load_basis);
     return out;
 }
 
@@ -684,6 +775,20 @@ std::optional<ServedSpeculation> served_head_fallback(const SpeculationSubject& 
     default_for_builtin_drafter(subject.components, subject.proposal_drafters, head);
     if (!head.found() || head.profile.overall.config.mode != spec::Mode::Mtp) {
         return std::nullopt;
+    }
+    // Its load table from the facts where the profile's table is derived from them (load_basis
+    // "facts", as load_for derives a shallower depth's and the fit fallback's) and the profile
+    // prices the head's configuration (its one-request gain measured, its joint verify priced:
+    // Profile::joint_scale); else the built-in literal stays, labelled
+    // (default_for_builtin_drafter). A measured or literal table at home is not derived again,
+    // though the lab's record prices its joint verify too: those keep their tables (load_for,
+    // subject_of_mode), so the head's stays the built-in one.
+    const spec::Profile& priced = resolved->profile;
+    const spec::Choice& runs    = head.profile.overall;
+    if (const auto gain = spec::measured_gain(priced, runs.config, std::nullopt);
+        priced.load_basis == "facts" && gain && priced.joint_scale.contains(runs.config.label())) {
+        head.profile.load       = facts_load_as(priced, runs, *gain);
+        head.profile.load_basis = "facts";
     }
     ServedSpeculation out;
     out.source = resolved->source + " (fit fallback: the built-in " +

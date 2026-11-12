@@ -27,6 +27,7 @@
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/build_manifest.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_i8_schedules.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/route_table.h"
 
@@ -49,6 +50,28 @@ using namespace ninferno;
 using namespace ninferno::test;
 namespace generic = ninferno::ops::detail::generic;
 using ops::LinearPolicy;
+
+// The I8 tiles' stages and shared memory as the price and the fit check read them
+// (generic_i8_schedules.h; generic_i8.cu compiles its tiles from the same formula and
+// static_asserts its bytes equal it, #761). On a 99 KiB block (sm_86 / 89 / 12x): Q6 at 256x128
+// runs three stages (four would be 100 KiB), every other format and tile four; the price used to
+// read four for every one, and the 4-bit tile's bytes.
+constexpr std::size_t k99KiB = 99 * 1024;
+static_assert(generic::i8_stages(256, 128, 6, k99KiB) == 3 &&
+              generic::i8_stages(256, 128, 5, k99KiB) == 4 &&
+              generic::i8_stages(256, 128, 4, k99KiB) == 4 &&
+              generic::i8_stages(128, 128, 6, k99KiB) == 4 &&
+              generic::i8_stages(128, 64, 6, k99KiB) == 4 &&
+              generic::i8_smem_bytes(256, 128, 6, 4) == 102400 &&
+              generic::i8_smem_bytes(256, 128, 6, 3) == 77824);
+// A board's tile is its architecture's build limit's, whatever this tree's: sm_80 / 90 / 100
+// (163 / 227 KiB blocks) compile Q6 256x128 with four stages, sm_86 / 89 / 120 with three.
+static_assert(generic::i8_stages(256, 128, 6, ops::shared_bytes_per_block_for_arch(80)) == 4 &&
+              generic::i8_stages(256, 128, 6, ops::shared_bytes_per_block_for_arch(90)) == 4 &&
+              generic::i8_stages(256, 128, 6, ops::shared_bytes_per_block_for_arch(100)) == 4 &&
+              generic::i8_stages(256, 128, 6, ops::shared_bytes_per_block_for_arch(86)) == 3 &&
+              generic::i8_stages(256, 128, 6, ops::shared_bytes_per_block_for_arch(89)) == 3 &&
+              generic::i8_stages(256, 128, 6, ops::shared_bytes_per_block_for_arch(120)) == 3);
 
 struct TestBoard {
     const char* name;

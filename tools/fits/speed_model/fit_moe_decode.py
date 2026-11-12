@@ -11,6 +11,9 @@ A step of C rows takes (choice.cpp speed_of)
 with every term but eta_routed from the dense model's facts (DECISIONS 60: kRowsEta's K-quant rows,
 kKernelCost, kDecodeLaunches). eta_routed(C) is the measured step less those, per generation, the
 mean over cards and quantizations at 2, 4 and 8 rows; then every step row's error under them.
+Every step row here ran one kernel pair, R8 on the gate/up bank over the register MMA on the down
+(the MoE op's route for these layers on these boards, DECISIONS 79): the shares are that pair's,
+and the table keys them by it.
 
     python3 fit_moe_decode.py [speed_measured.json]
 """

@@ -898,26 +898,18 @@ std::vector<LoadBound> clipped_load(const std::vector<std::int32_t>& depths) {
 // the bound governs throughput over the mix, so a depth may pass here while one section loses.
 std::vector<LoadBound> facts_load(const Profile& p) {
     // The choices the table bounds are those the Engine runs: the served ones where the profile
-    // has them (engine_choices: the Engine cannot run its own), and the fit fallback, which runs
-    // as every choice where the default does not fit (over the whole mix, as the overall one).
-    // One table serves both, so a fallback that loses at a depth keeps the default from it too,
-    // though the fallback runs only where the default does not fit.
+    // has them (engine_choices: the Engine cannot run its own). The fit fallback is not among
+    // them: it runs only where the default does not fit, as every choice of a profile of its own
+    // (product::served_fit_fallback), which derives its own table; so a fallback that loses at a
+    // depth does not keep the default from it.
     const ServedChoices& runs =
         p.served ? *p.served : ServedChoices{p.overall, p.thinking, p.non_thinking};
     std::vector<std::pair<const Choice*, std::optional<bool>>> choices;
     for (const auto& [c, thinking] :
          {std::pair<const Choice*, std::optional<bool>>{&runs.overall, std::nullopt},
           std::pair<const Choice*, std::optional<bool>>{&runs.thinking, true},
-          std::pair<const Choice*, std::optional<bool>>{&runs.non_thinking, false},
-          std::pair<const Choice*, std::optional<bool>>{p.fit_fallback ? &*p.fit_fallback : nullptr,
-                                                        std::nullopt}}) {
-        if (c == nullptr || !c->config.enabled()) { continue; }
-        // A configuration entered twice over the same sections (the fit fallback equal to the
-        // overall choice) is one choice: twice, its gain would count twice in the leximin order.
-        const bool seen = std::any_of(choices.begin(), choices.end(), [&](const auto& other) {
-            return other.first->config.label() == c->config.label() && other.second == thinking;
-        });
-        if (!seen) { choices.emplace_back(c, thinking); }
+          std::pair<const Choice*, std::optional<bool>>{&runs.non_thinking, false}}) {
+        if (c->config.enabled()) { choices.emplace_back(c, thinking); }
     }
     // A choice's gain at C streams under a bound of `bound`: it runs min(bound, its own depth), at
     // that depth's one-request gain times R_1 / R_C there; nullopt where either is unknown.

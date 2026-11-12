@@ -37,7 +37,10 @@ grid     reads the per-width files of `measure` (label "J<w>"; one file per visi
 ab       reads files labelled old/new (the same sizes, the same number of visits at every size, the
          whole mix) and prints the per-size change (medians with the range of the visits) beside the
          predicted range, the mismatch count, and the mix change beside its predicted range (the
-         per-size ranges weighted by the old medians, as the measured mix change of means is).
+         per-size ranges weighted by the old medians, as the measured mix change of means is). Files
+         labelled old/law (the production ranking: on Turing the launch law of DECISIONS 78) are read
+         against the law's own prediction instead (each linear's pick and its ms, `law_production`):
+         the per-size change beside it, and the mix change with the verdict R4 (law).
 kprobe   reads one `measure` file made with the width forced to 128 and consecutive sizes (130..146)
          and prints the interval of k that the biggest step in time implies (columns cross 128 there),
          ending with one machine-readable line `KPROBE k_lo=<a> k_hi=<b> trusted=<0|1>` that the
@@ -176,6 +179,9 @@ CRITERIA = f"""REFUTATION CRITERIA for f = {ASSUMED_F:.2f} (fixed before the run
      than {TOL:g} % slower than the best of the six production widths (J 48 / J 112 are not pickable).
   R3 grid: the regret at f {ASSUMED_F:.2f} is not below the regret of the fewest tiles (the table gives no gain).
   R4 ab (f {ASSUMED_F:.2f}): the mix change lies more than {R4_PP:g} pp outside the predicted mix range.
+  R4 ab (law): the A/B of the production ranking (on Turing the launch law, DECISIONS 78) against the
+     fewest tiles: the mix change lies more than {R4_PP:g} pp from the law's own predicted mix change (its
+     ms of the model's MMQ linears with the tree's constants, no refit); MET refutes the law on this card.
   R1 grid is a REPORT, not a verdict: the regret at f {ASSUMED_F:.2f} against the least over the f buckets
      ({R1_PP} pp shown for scale). Neighbouring buckets' tables differ at one to three sizes, so the
      regret cannot separate f 0.10 from 0.30; the fit (R5) can.
@@ -645,12 +651,25 @@ def same_sizes(data: Data, labels: list[str]) -> list[int]:
 # prices every cell with it beside the tile law: with the law's constants as they stand (no refit;
 # one C_N per size and one D_r per run fitted as in FIT), and refitted (units by launch mode and the
 # fixup launches free), naming each pick's launch modes.
-# Facts of the board and the model the kit measures (the RTX 2080 Ti's facts row: 68 SMs, a 1545 MHz
-# reference clock, 352 bits at 14 Gbps; Qwen3-8B's linears on the MMQ path, routes/tu102.json and
-# generic_gemm.cpp: gate and up two products, down K 12288; 36 layers):
-LAW_SMS = 68
-LAW_CLOCK_HZ = 1545e6
-LAW_DRAM_BYTES_PER_S = 616e9
+# Facts of the board and the model the kit measures. The board is the RTX 2080 Ti's row of
+# core/data/gpu_facts.json (PCI id 0x1E07: 68 SMs, a 1545 MHz reference clock, 352 bits at 14 Gbps),
+# read from the file so a change of the row moves the law here too (#772). The model is Qwen3-8B's
+# linears on the MMQ path (routes/tu102.json and generic_gemm.cpp: gate and up two products, down
+# K 12288; 36 layers):
+LAW_PCI_ID = 0x1E07
+GPU_FACTS = Path(__file__).resolve().parents[2] / "src" / "core" / "data" / "gpu_facts.json"
+
+
+def law_board(path: Path = GPU_FACTS, pci_id: int = LAW_PCI_ID) -> tuple[int, float, float]:
+    """(SMs, reference clock in Hz, DRAM bytes/s) of the board's gpu_facts row, as the C++
+    LaunchFacts reads them (bus bits x Gbps / 8)."""
+    for row in json.loads(path.read_text(encoding="utf-8"))["gpus"]:
+        if int(row["id"], 16) == pci_id:
+            return int(row["sms"]), row["boost_mhz"] * 1e6, row["bus_bits"] * row["gbps"] / 8 * 1e9
+    raise Fail(f"{path}: no row for PCI id {pci_id:#06x}")
+
+
+LAW_SMS, LAW_CLOCK_HZ, LAW_DRAM_BYTES_PER_S = law_board()
 LAW_LINEARS = [(5120, 4096), (1024, 4096), (4096, 4096), (12288, 4096), (12288, 4096), (4096, 12288)]
 LAW_LAYERS = 36
 # kTuringMmqLaw (MEASURED; core/generation.h names the source of each value)
@@ -707,6 +726,17 @@ def law_terms_of(cols: int, j: int) -> dict:
         t["fix"] += LAW_LAYERS * (1 if lo["fixup"] else 0)
         t["modes"].append("sk+fix" if lo["fixup"] else ("sk" if lo["split"] else "tile"))
     return t
+
+
+def law_production(cols: int) -> tuple[list[int], float, float]:
+    """What the production ranking does at one body call (the A/B's `law` arm): each linear's width
+    (select_launch ranks per product: the least launch_seconds among the six table widths, the narrower
+    on a tie), and the model's MMQ linears in ms at the fewest tiles (the `old` arm) and at those picks."""
+    old = pick(cols, None, OLD)
+    picks = [min(PRODUCTION, key=lambda j: (law_seconds(r, kk, cols, j), j)) for r, kk in LAW_LINEARS]
+    ms_old = 1e3 * LAW_LAYERS * sum(law_seconds(r, kk, cols, old) for r, kk in LAW_LINEARS)
+    ms_new = 1e3 * LAW_LAYERS * sum(law_seconds(r, kk, cols, j) for (r, kk), j in zip(LAW_LINEARS, picks))
+    return picks, ms_old, ms_new
 
 
 def _solve(a: list[list[float]], b: list[float]) -> list[float] | None:
@@ -1040,28 +1070,93 @@ def pred_range(c: int) -> tuple[float, float] | None:
     return None
 
 
-def ab(a: argparse.Namespace) -> None:
-    data = load(a.files)
+def ab_arms(data, arm: str) -> tuple[dict, dict, list[int]]:
+    """The checks both A/B readers make: old and `arm` rows only, the same sizes and visits, the whole mix."""
     d = data.d
-    k = data.k()
-    for lab in ("old", "new"):
+    for lab in ("old", arm):
         if lab not in d:
             raise Fail(f"no rows labelled {lab}")
-    unknown = sorted(set(d) - {"old", "new"})
+    unknown = sorted(set(d) - {"old", arm})
     if unknown:
-        raise Fail(f"labels {unknown} are not old/new: the files of the grid? (use `grid`)")
-    old, new = d["old"], d["new"]
+        raise Fail(f"labels {unknown} are not old/{arm}: the files of the grid (use `grid`), or two A/Bs "
+                   f"mixed (old/new and old/law are separate runs)")
+    old, new = d["old"], d[arm]
     print(cell_counts(d, "old"))
-    print(cell_counts(d, "new"))
-    sizes = same_sizes(data, ["old", "new"])
+    print(cell_counts(d, arm))
+    sizes = same_sizes(data, ["old", arm])
     for n in sizes:
         if len(old[n]) != len(new[n]):
-            raise Fail(f"N={n}: {len(old[n])} old visits against {len(new[n])} new: an interrupted or stale run")
+            raise Fail(f"N={n}: {len(old[n])} old visits against {len(new[n])} {arm}: an interrupted or stale run")
     if len({len(old[n]) for n in sizes}) != 1:
         raise Fail("the sizes were measured a different number of times: an interrupted or stale run")
     lack = [n for n in MIX if n not in sizes]
     if lack:
-        raise Fail(f"the mix sizes {lack} were not measured at old and new: the mix would change its workload")
+        raise Fail(f"the mix sizes {lack} were not measured at old and {arm}: the mix would change its workload")
+    return old, new, sizes
+
+
+def ab_law(data) -> None:
+    """The A/B of the production ranking (`law`: DECISIONS 78's launch law on Turing) against the fewest
+    tiles (`old`). Prediction: the law's own time of the model's MMQ linears (law_production: the tree's
+    constants, no refit), old picks minus the law's, over the old arm's measured median of the size."""
+    k = data.k()
+    old, new, sizes = ab_arms(data, "law")
+    print(f"columns = tokens - k, k = {k}. law arm: the production ranking (NINFERNO_MMQ_MODE=law, on Turing the "
+          f"launch law of DECISIONS 78); predicted change = the law's ms of the model's MMQ linears, law picks "
+          f"minus the fewest tiles, over the old arm's median (the tree's constants, no refit).")
+    print("The law arm does not move the host cost model: route choice stays on the production table.")
+    lines = CRITERIA.splitlines()
+    at = next(i for i, ln in enumerate(lines) if ln.strip().startswith("R4 ab (law)"))
+    print("\n".join(lines[at:at + 3]))
+
+    def spread(rows: list[list[float]]) -> str:
+        m = [statistics.median(r) for r in rows]
+        return f"{statistics.median(flat(rows)):7.2f} [{min(m):.2f}-{max(m):.2f}]"
+
+    print("size cols widths(old->law: one width, or one a linear q+k/v/o/gate/up/down)  old median [range of the "
+          "visits' medians]  law median [range]  change | predicted (law ms) | measured - predicted")
+    off = 0
+    saved = {}
+    for n in sizes:
+        c = n - k
+        picks, ms_old, ms_new = law_production(c)
+        saved[n] = ms_new - ms_old
+        o, w = statistics.median(flat(old[n])), statistics.median(flat(new[n]))
+        ch, pr = 100 * (w / o - 1), 100 * saved[n] / o
+        bad = abs(ch - pr) > R4_PP + 1e-9
+        off += bad
+        jn = f"J{picks[0]}" if len(set(picks)) == 1 else "/".join(str(j) for j in picks)
+        print(f"N={n:3d} {c:4d} J{pick(c, None, OLD):<3d}->{jn:<26s} old {spread(old[n])}  law {spread(new[n])} ms "
+              f"{ch:+6.1f} % | {pr:+6.1f} % ({saved[n]:+6.2f} ms) | {ch - pr:+5.1f} pp{'  OFF' if bad else ''}")
+    print(f"sizes whose change lies more than {R4_PP:g} pp from the law's prediction (information): {off} of {len(sizes)}")
+
+    def mix_of(ns: list[int], name: str, verdict: bool) -> None:
+        visits = len(old[ns[0]])
+        per = [100 * (statistics.mean(statistics.median(new[n][v]) for n in ns)
+                      / statistics.mean(statistics.median(old[n][v]) for n in ns) - 1) for v in range(visits)]
+        mo = statistics.mean(statistics.median(flat(old[n])) for n in ns)
+        mw = statistics.mean(statistics.median(flat(new[n])) for n in ns)
+        ch = 100 * (mw / mo - 1)
+        # a change of mean times: the predicted ms are averaged over the same sizes, over the old mean
+        pr = 100 * statistics.mean(saved[n] for n in ns) / mo
+        print(f"{name} {ns}: old {mo:.2f} law {mw:.2f} ms {ch:+.1f} %  (per visit {min(per):+.1f} .. {max(per):+.1f} "
+              f"%, {visits} visits); predicted {pr:+.1f} %")
+        if verdict:
+            hit = abs(ch - pr) > R4_PP + 1e-9
+            print(f"  R4 (law): {'MET (refutes the law on this card)' if hit else 'not met'} "
+                  f"(measured {ch:+.1f} % against {pr - R4_PP:+.1f} .. {pr + R4_PP:+.1f} %)")
+
+    mix_of([n for n in MIX if n in sizes], "mix", True)
+    mix_of(sizes, "all sizes (information)", False)
+
+
+def ab(a: argparse.Namespace) -> None:
+    data = load(a.files)
+    d = data.d
+    if "law" in d:
+        return ab_law(data)
+    k = data.k()
+    old, new, sizes = ab_arms(data, "new")
     fs = data.fs.get("new", set())
     if len(fs) > 1:
         raise Fail(f"the new rows were measured with different f {sorted(fs)}")

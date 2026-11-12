@@ -1,12 +1,7 @@
 {
  "schema": "ninferno-route-table/1",
  "gpu": {
-  "board": {
-   "cc": 120,
-   "dram_gbps": 896.0,
-   "l2_mib": 48.0,
-   "sms": 70
-  },
+  "pci_id": "0x2c05",
   "class": "gb203:70sm",
   "name": "NVIDIA GeForce RTX 5070 Ti"
  },
