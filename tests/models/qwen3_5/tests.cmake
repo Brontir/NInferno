@@ -2,9 +2,11 @@ ninferno_add_test(ninferno_qwen3_5_loading_real_test LABELS real gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_loading_real.cpp"
   LIBRARIES ninferno_model_loading)
 
+# Also --plan's facts of the fixture's file through the registered queries (#615 W2).
 ninferno_add_test(ninferno_qwen3_5_loading_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_loading.cpp"
-  LIBRARIES ninferno_model_loading)
+  LIBRARIES ninferno_product_plan ninferno_engine ninferno_model_loading)
+target_include_directories(ninferno_qwen3_5_loading_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 set_tests_properties(
   ninferno_qwen3_5_loading_real_test

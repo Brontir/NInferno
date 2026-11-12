@@ -44,6 +44,7 @@
 
 namespace ninferno::artifact {
 struct Directory;
+class Reader;
 } // namespace ninferno::artifact
 
 namespace ninferno::models::qwen3_5::detail {
@@ -490,14 +491,14 @@ using PlanWorkspaceQuery = std::function<PlanWorkspaceAnswer(
     std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan)>;
 void set_plan_workspace_query(PlanWorkspaceQuery query);
 
-// The public ids of an artifact's tokenizer (PlanModelFacts::tokenizer_tokens), read from its
-// resources as a start reads them; nullopt where they cannot be read. The engine registers it
-// beside the workspace queries (it links the families' frontends); unset, nullopt.
+// The public ids of an artifact's tokenizer (PlanModelFacts::tokenizer_tokens), read from the
+// resources of the artifact `reader` has open, as a start reads them; nullopt where they cannot be
+// read. The engine registers it beside the workspace queries (it links the families' frontends);
+// unset, nullopt. The caller keeps the count (a start reads the facts several times).
 using PlanTokenizerQuery =
-    std::function<std::optional<std::uint32_t>(const std::filesystem::path& artifact)>;
+    std::function<std::optional<std::uint32_t>(const artifact::Reader& reader)>;
 void set_plan_tokenizer_query(PlanTokenizerQuery query);
-[[nodiscard]] std::optional<std::uint32_t>
-plan_tokenizer_tokens(const std::filesystem::path& artifact);
+[[nodiscard]] std::optional<std::uint32_t> plan_tokenizer_tokens(const artifact::Reader& reader);
 
 // The kernel a routed layer's grouped stage runs (#616 step 7), as the MoE op's route query answers
 // (ops/moe moe_route_query, the op's own cascade on the device's class): R8 (int8 activations, one

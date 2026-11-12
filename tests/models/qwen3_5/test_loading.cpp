@@ -3,6 +3,9 @@
 #include "artifact/formats.h"
 #include "models/qwen3_5/load.h"
 #include "ops/common/native_nvfp4.h"
+#include "product/plan/plan_facts.h"
+#include "runtime/engine/plan_dry_run.h"
+#include "runtime/engine/plan_workspace.h"
 
 #include <algorithm>
 #include <array>
@@ -196,6 +199,19 @@ void logical_data_and_instances() {
                     described->weight(described->weights().text.output_head).view.shape ==
                         std::vector<std::uint64_t>{272, 128},
                 "the directory-only binding differs from plan_load's");
+    }
+    {
+        // --plan's facts of the artifact file, the queries registered as ninferno-serve registers
+        // them: the tokenizer's 265 ids and the directory reach the workspace query, read once
+        // (a second read of the same file shares the kept directory).
+        runtime::register_plan_workspace_queries();
+        const auto facts = product::plan_facts_of_artifact(fixture.file.entry).model;
+        require(facts.artifact_directory != nullptr && facts.tokenizer_tokens == 265,
+                "--plan's facts of the artifact lack its directory or its tokenizer's 265 ids");
+        const auto again = product::plan_facts_of_artifact(fixture.file.entry).model;
+        require(again.artifact_directory == facts.artifact_directory &&
+                    again.tokenizer_tokens == 265,
+                "a second read of the artifact's facts did not share the kept directory");
     }
     const auto& attention = std::get<qwen::AttentionWeights>(plan.weights().text.layers[0].mixer);
     const auto& query     = plan.parameter(attention.query);

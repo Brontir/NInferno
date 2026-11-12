@@ -367,10 +367,10 @@ PlanTokenizerQuery& tokenizer_query() {
 
 void set_plan_tokenizer_query(PlanTokenizerQuery query) { tokenizer_query() = std::move(query); }
 
-std::optional<std::uint32_t> plan_tokenizer_tokens(const std::filesystem::path& artifact) {
+std::optional<std::uint32_t> plan_tokenizer_tokens(const artifact::Reader& reader) {
     const PlanTokenizerQuery& query = tokenizer_query();
     if (!query) { return std::nullopt; }
-    return query(artifact);
+    return query(reader);
 }
 
 namespace {

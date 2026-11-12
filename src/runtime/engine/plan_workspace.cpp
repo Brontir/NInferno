@@ -439,9 +439,8 @@ void register_plan_workspace_queries() {
     });
     // A Qwen 3.5 artifact's public tokens, from its tokenizer resources (load.h): what its start
     // samples over and checks an indexed proposal head against.
-    set_plan_tokenizer_query([](const std::filesystem::path& path) -> std::optional<std::uint32_t> {
+    set_plan_tokenizer_query([](const artifact::Reader& reader) -> std::optional<std::uint32_t> {
         try {
-            const artifact::Reader reader(path);
             return models::qwen3_5::public_token_count(reader);
         } catch (const std::exception&) { return std::nullopt; }
     });

@@ -1426,23 +1426,77 @@ void set_prompt_tail_calls_files_source(PromptTailCallsFilesSource source) {
     tail_calls_counted().clear();
 }
 
+namespace {
+
+PlanSourceFacts directory_facts(const artifact::Directory& dir, const std::string& where);
+
+// The family whose workspace query binds the model over the artifact's directory (#615).
+bool binds_directory(const runtime::PlanModelFacts& model) {
+    return model.model_type == "qwen3_5_text" || model.model_type == "qwen3_5_moe_text";
+}
+
+// What the workspace query reads of an artifact beside its facts (#615): its directory and its
+// tokenizer's public ids, kept per path, write time and size. A start reads its artifact's facts
+// up to three times and a --plan more; the copy of a 35B-A3B's ~30,000-object directory and the
+// tokenizer (a ~10 MB tokenizer.json) are made once, and the facts share one directory, which
+// the query's described start is kept by.
+struct KeptArtifact {
+    std::filesystem::file_time_type written;
+    std::uintmax_t size = 0;
+    std::shared_ptr<const artifact::Directory> directory;
+    std::uint32_t tokenizer_tokens = 0;
+};
+
+KeptArtifact kept_artifact(const std::filesystem::path& artifact, const artifact::Reader& reader) {
+    static std::mutex mutex;
+    static std::map<std::filesystem::path, KeptArtifact> kept;
+    std::error_code time_error, size_error;
+    const auto written = std::filesystem::last_write_time(artifact, time_error);
+    const auto size    = std::filesystem::file_size(artifact, size_error);
+    const bool keyed   = !time_error && !size_error;
+    std::shared_ptr<const artifact::Directory> directory;
+    {
+        std::lock_guard lock(mutex);
+        if (const auto it = kept.find(artifact);
+            keyed && it != kept.end() && it->second.written == written && it->second.size == size) {
+            // A count not read (no query registered yet, a tokenizer that failed) is asked again.
+            if (it->second.tokenizer_tokens != 0) { return it->second; }
+            directory = it->second.directory;
+        }
+    }
+    if (!directory) { directory = std::make_shared<const artifact::Directory>(reader.directory()); }
+    KeptArtifact out{written, size, std::move(directory),
+                     runtime::plan_tokenizer_tokens(reader).value_or(0)};
+    if (keyed) {
+        std::lock_guard lock(mutex);
+        kept[artifact] = out;
+    }
+    return out;
+}
+
+} // namespace
+
 PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     const artifact::Reader reader(artifact);
-    auto out = plan_facts_of_directory(reader.directory(), artifact.string());
+    auto out = directory_facts(reader.directory(), artifact.string());
     if (prompt_tail_calls_source()) {
         if (const auto calls = prompt_tail_calls_of(artifact)) {
             out.shape.prompt_tail_calls = *calls;
         }
     }
-    // The tokenizer's public ids for the workspace query that binds the directory (#615): the
-    // file's frontend resources, as a start reads them.
-    if (out.model.artifact_directory) {
-        out.model.tokenizer_tokens = runtime::plan_tokenizer_tokens(artifact).value_or(0);
+    // The directory and the tokenizer's public ids for the workspace query that binds the model
+    // over them: the file's frontend resources, as a start reads them.
+    if (binds_directory(out.model)) {
+        const KeptArtifact kept      = kept_artifact(artifact, reader);
+        out.model.artifact_directory = kept.directory;
+        out.model.tokenizer_tokens   = kept.tokenizer_tokens;
     }
     return out;
 }
 
-PlanSourceFacts plan_facts_of_directory(const artifact::Directory& dir, const std::string& where) {
+namespace {
+
+PlanSourceFacts directory_facts(const artifact::Directory& dir, const std::string& where) {
     const auto text = dir.components.find("text");
     if (text == dir.components.end()) {
         throw std::runtime_error(where + ": the artifact has no text component");
@@ -1624,8 +1678,14 @@ PlanSourceFacts plan_facts_of_directory(const artifact::Directory& dir, const st
     out.model.head_format         = bound.head_format;
     if (out.model.hidden != 0) { out.model.head_rows = bound.head_elements / out.model.hidden; }
     split_linears_by_format(out.model.linears, bound.roles);
-    // The directory itself for the family whose workspace query binds the model over it (#615).
-    if (out.model.model_type == "qwen3_5_text" || out.model.model_type == "qwen3_5_moe_text") {
+    return out;
+}
+
+} // namespace
+
+PlanSourceFacts plan_facts_of_directory(const artifact::Directory& dir, const std::string& where) {
+    auto out = directory_facts(dir, where);
+    if (binds_directory(out.model)) {
         out.model.artifact_directory = std::make_shared<const artifact::Directory>(dir);
     }
     return out;
