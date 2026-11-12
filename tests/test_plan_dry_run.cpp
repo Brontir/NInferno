@@ -2383,6 +2383,16 @@ void test_choice_json_gates() {
               o.at("why_code") == "kv_not_run" && o.at("chosen").is_null() &&
               o.at("decided_on").is_null(),
           "gates JSON: another family is not calibrated; a refusal says its code");
+    // The calibrated family without a chosen candidate (no fit, a refused pin): nothing says the
+    // files are the calibrated model's, so the scale stays uncalibrated.
+    pr::ServedChoice none;
+    none.family            = "qwen3_5_text";
+    none.choice.why        = "refused";
+    none.choice.why_code   = "pin_refused";
+    const nlohmann::json n = pr::choice_json(none);
+    check(n.at("answer_scale").at("calibrated") == false &&
+              n.at("answer_scale").at("why_code") == "no_choice" && n.at("chosen").is_null(),
+          "gates JSON: the calibrated family without a choice is not calibrated (no_choice)");
     // A Q8_0 of the calibrated family: the curve's zero (Evidence::Reference) on a 27B is not the
     // 9B's measured file, so no scale and no points; the 9B's own Q8_0 file loses 0 points.
     for (const bool own : {false, true}) {

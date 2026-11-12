@@ -23,7 +23,7 @@ assert.ok(from >= 0 && to > from, "the plan helpers block is marked in the page"
 const NAMES = ["parseCtxText", "planTok", "ctxInput", "ctxNoteText", "planSpecOf", "planQuery", "catalogQuery", "planStateOf",
                "planRowOf", "launchContextOf", "reasonText", "unsupportedText", "cardGbOf", "cardGbText", "ruleText", "planRowState",
                "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf", "actOptions", "actAskOf", "ACT_MODES", "artifactPlanQuery", "replayDiff", "nowLine", "nowReasonText", "kvOptionsOf", "kvWhyText", "KV_CODECS", "KV_WHY_CODES",
-               "gateTexts", "decidedOnText", "bandText", "answerText", "qualityText", "GATE_CODES", "GATE_OPENS", "QUALITY_AUTHORITIES", "GEN_LABELS", "PREFILL_WHY",
+               "gateTexts", "decidedOnText", "decidedChunkText", "decidedText", "bandText", "answerText", "qualityText", "GATE_CODES", "GATE_OPENS", "QUALITY_AUTHORITIES", "GEN_LABELS", "PREFILL_WHY",
                "REASON_CODES", "UNSUPPORTED_CODES", "RULE_TIERS", "SPEC_BASES"];
 const ctx = vm.createContext({});
 vm.runInContext(html.slice(from, to) + `\n;globalThis.H = {${NAMES.join(", ")}};`, ctx);
@@ -568,13 +568,26 @@ for (const lang of ["en", "ru", "uk"]) for (const k of ["replayContext", "replay
   const mvars = '{"gen":"Ada (RTX 40)","family":"Qwen3.6-35B-A3B-GGUF"}';
   eq(H.gateTexts(moe, tr), [`gate_quant_curve_unmeasured${mvars}. gateOpens{"what":${JSON.stringify("gateOpens_quant_curve" + mvars)}}`],
      "an open switches gate: the quantization's closed gate still said, with what opens it");
-  eq(H.decidedOnText(moe, tr), 'decidedOn{"gen":"Ada (RTX 40)","cards":"RTX 4070 Ti, RTX 4090"}', "and the reference card beside it");
-  // The switches closed (Ada, Gemma MoE) while the chunk is decided on the reference card: both said.
-  const gemma = {model: {source: "google/gemma-4-26B-A4B-it-GGUF"}, choice: {by_worth: false, gate_code: "kv_terms_one_card", why: "x",
+  eq(H.decidedText(moe, tr), 'decidedOn{"gen":"Ada (RTX 40)","cards":"RTX 4070 Ti, RTX 4090"}', "and the reference card beside it");
+  eq(H.decidedText({choice: {decided_on: null, by_worth: true}}, tr), "", "decided by worth without a reference card: nothing");
+  // A reference card that decides nothing (Turing / Ampere: reference_one_card) is not said; an
+  // older document without the field still shows it.
+  eq(H.decidedOnText({choice: {decided_on: {generation: "ga10x", cards: "RTX 3060", lent: false, decides: false}}}, tr), "",
+     "a reference card that decides nothing: not said");
+  eq(H.decidedOnText({choice: {decided_on: {generation: "ada", cards: "RTX 4090", lent: false}}}, tr), 'decidedOn{"gen":"Ada (RTX 40)","cards":"RTX 4090"}',
+     "an older document without decides: said");
+  // The switches closed (Ada, Gemma MoE) while the chunk is decided on the reference card: the gate
+  // and the chunk's line, independently.
+  const gemma = {model: {source: "google/gemma-4-26B-A4B-it-GGUF"}, choice: {by_worth: false, chunk_by_speed: true, gate_code: "kv_terms_one_card", why: "x",
     gates_closed: [{axis: "switches", code: "kv_terms_one_card", opens_with: "kv_kld_second_card", generation: "ada", family: "gemma4_text", cards: 1}],
     decided_on: {generation: "ada", cards: "RTX 4070 Ti, RTX 4090", lent: false, decides: true}}};
-  ok(H.gateTexts(gemma, tr).length === 1 && H.gateTexts(gemma, tr)[0].startsWith("gate_kv_terms_one_card") &&
-     H.decidedOnText(gemma, tr).startsWith("decidedOn"), "a closed switches gate and the reference card, independently");
+  ok(H.gateTexts(gemma, tr).length === 1 && H.gateTexts(gemma, tr)[0].startsWith("gate_kv_terms_one_card"), "a closed switches gate");
+  eq(H.decidedText(gemma, tr), 'decidedOnChunk{"gen":"Ada (RTX 40)","cards":"RTX 4070 Ti, RTX 4090"}', "and the chunk decided on the reference card");
+  // A dense Gemma on Ada: the switches closed, no chunk decided: nothing was decided on the card.
+  const dense = {...gemma, choice: {...gemma.choice, chunk_by_speed: false}};
+  eq(H.decidedText(dense, tr), "", "the family's defaults, no chunk decided: no reference-card line");
+  whole(EN("decidedOnChunk", {gen: "Ada (RTX 40)", cards: "RTX 4070 Ti, RTX 4090"}), "chunk en");
+  whole(RU("decidedOnChunk", {gen: "Ada (RTX 40)", cards: "RTX 4070 Ti, RTX 4090"}), "chunk ru");
   whole(EN("gate_no_reference_card", {gen: "Turing (RTX 20)"}) + ". " + EN("gateOpens", {what: EN("gateOpens_reference_factors", {gen: "Turing (RTX 20)"})}), "gate en");
   whole(RU("gate_family_unmeasured", {family: "gemma-4-12b-it-GGUF"}) + ". " + RU("gateOpens", {what: RU("gateOpens_family_kld_terms", {family: "gemma-4-12b-it-GGUF"})}), "gate ru");
   whole(RU("gate_quant_switches_closed", {gen: "Turing (RTX 20)"}), "quant gate ru");
@@ -604,7 +617,7 @@ for (const lang of ["en", "ru", "uk"]) {
   for (const m of H.GATE_OPENS) ok(typeof T[lang]["gateOpens_" + m] === "string" && T[lang]["gateOpens_" + m].length > 0, `${lang}: gateOpens_${m}`);
   for (const a of H.QUALITY_AUTHORITIES) ok(typeof T[lang]["quality_" + a] === "string", `${lang}: quality_${a}`);
   for (const w of H.PREFILL_WHY) ok(typeof T[lang]["bandPrefillNo_" + w] === "string", `${lang}: bandPrefillNo_${w}`);
-  for (const k of ["gateOpens", "decidedOn", "genOther", "thisModel", "bandDecode", "bandDecodeRough", "bandPrefill", "bandPrefillNone", "bandHead", "answersPoints", "answersNot"])
+  for (const k of ["gateOpens", "decidedOn", "decidedOnChunk", "genOther", "thisModel", "bandDecode", "bandDecodeRough", "bandPrefill", "bandPrefillNone", "bandHead", "answersPoints", "answersNot"])
     ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
   ok(T[lang].decidedLent === undefined, `${lang}: no dead decidedLent`);
 }

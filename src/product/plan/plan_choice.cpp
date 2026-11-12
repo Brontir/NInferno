@@ -928,9 +928,11 @@ Json choice_json(const ServedChoice& served) {
     }
     // The KLD's answer scale (choice_constants.h kAnswerScales): calibrated only for the one model
     // it was measured on, on its own measured files (the chosen quantization's term says), and
-    // only for the quantization's KLD against Q8_0; elsewhere not calibrated and why.
+    // only for the quantization's KLD against Q8_0; elsewhere not calibrated and why. Only a
+    // chosen candidate's measured quantization clears it: without one (no fit, a refused pin)
+    // nothing says the files are the calibrated model's (no_choice).
     const choice::AnswerScale* answers = choice::answer_scale_of(served.family);
-    std::string_view uncalibrated      = answers == nullptr ? "family_not_calibrated" : "";
+    std::string_view uncalibrated      = answers == nullptr ? "family_not_calibrated" : "no_choice";
     if (answers != nullptr && served.choice.chosen) {
         (void)choice::answer_points(served.choice.scored[*served.choice.chosen].accuracy, answers,
                                     &uncalibrated);

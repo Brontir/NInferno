@@ -1077,6 +1077,9 @@ struct AnswerScale {
     double noise_points; // a run's mean reproduces within it
 };
 
+// `model` is not checked against kQuantKld: the scale trusts that every kQuantKld file (the files
+// whose term is Evidence::Measured) under a scale's family key is that model's own. A row of
+// another model's files there would take the 9B's scale.
 inline constexpr AnswerScale kAnswerScales[] = {
     {"qwen3_5_text", "Qwen3.5-9B", "mmlu_pro", 40.0, 2, 0.2}};
 // The request mix (DECISIONS 73; a convention from the published benchmark, not Fitted): the worth
