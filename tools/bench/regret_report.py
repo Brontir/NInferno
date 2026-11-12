@@ -97,11 +97,19 @@ def gpu_record(fields, clock_log=None):
     return out
 
 
+# A committed label kept for a registry name that carries the board's memory size: the lab's RTX
+# 4060 Ti is the 16 GB board (0x2805), which its A5 summary, the selector goldens and the
+# performance pages name rtx4060ti; the 8 GB board is the same chip (AD106, 34 SMs, the same
+# clocks), so a run of either compares with that baseline.
+ESTABLISHED_LABELS = {"rtx4060ti16gb": "rtx4060ti"}
+
+
 def board_of(name):
     """(label, card) of a gpu_facts.json name: "GeForce RTX 4070 Ti" -> ("rtx4070ti", "RTX 4070
     Ti"), "Quadro GV100" -> ("gv100", "Quadro GV100"): the names of the committed reports."""
     card = re.sub(r"^(NVIDIA\s+)?(GeForce\s+)?", "", name.strip())
     label = re.sub(r"[^a-z0-9]", "", re.sub(r"^quadro\s+", "", card.lower()))
+    label = ESTABLISHED_LABELS.get(label, label)
     if not label:
         raise ValueError(f"no board label in the name {name!r}")
     return label, card

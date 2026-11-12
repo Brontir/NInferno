@@ -56,12 +56,12 @@
       "worst_regret": 0.10810810810810811
     }
   },
-  "board": "rtx4060ti16gb",
+  "board": "rtx4060ti",
   "build_id": "regret-2579694de91b-rtx4060ti16gb",
   "by_board_regime_authority": [
     {
       "authority": "r8-rules",
-      "board": "rtx4060ti16gb",
+      "board": "rtx4060ti",
       "cases": 10,
       "evidence": {
         "ranker": 10
@@ -80,7 +80,7 @@
     },
     {
       "authority": "vec-rule",
-      "board": "rtx4060ti16gb",
+      "board": "rtx4060ti",
       "cases": 30,
       "evidence": {
         "ranker": 30
@@ -99,7 +99,7 @@
     },
     {
       "authority": "rmma-rule",
-      "board": "rtx4060ti16gb",
+      "board": "rtx4060ti",
       "cases": 30,
       "evidence": {
         "ranker": 30
@@ -118,7 +118,7 @@
     },
     {
       "authority": "route-table",
-      "board": "rtx4060ti16gb",
+      "board": "rtx4060ti",
       "cases": 30,
       "evidence": {
         "borrowed": 12,
@@ -138,7 +138,7 @@
     },
     {
       "authority": "cost-model",
-      "board": "rtx4060ti16gb",
+      "board": "rtx4060ti",
       "cases": 60,
       "evidence": {
         "ranker": 60
@@ -157,7 +157,7 @@
     },
     {
       "authority": "cost-model",
-      "board": "rtx4060ti16gb",
+      "board": "rtx4060ti",
       "cases": 30,
       "evidence": {
         "ranker": 30
@@ -178,8 +178,20 @@
   "card": "RTX 4060 Ti 16GB",
   "date": "2026-11-12T20:36:51Z",
   "delta": {
-    "previous": null,
-    "threshold": 0.05
+    "previous": {
+      "path": "tools/bench/data/route_regret/rtx4060ti.json",
+      "revision": "f24d0079613133f8e19f9bcc40b9357c761292b9"
+    },
+    "threshold": 0.05,
+    "sweep_matches": "unknown",
+    "all_cases_scored": true,
+    "regressions": [],
+    "improvements": [],
+    "new_groups": [],
+    "gone_groups": [],
+    "new_holds": null,
+    "new_caught_up": null,
+    "table_exit": null
   },
   "device": "ad106:34sm",
   "driver": "615.71.09",

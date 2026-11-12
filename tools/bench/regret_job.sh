@@ -79,12 +79,13 @@ board_card=$("$PY" "$HERE/regret_report.py" board "$PCI") || die "PCI id $PCI is
 BOARD=${board_card%%$'\t'*}
 CARD=${board_card#*$'\t'}
 
-# The revision: the checkout's HEAD, "-dirty" with uncommitted edits. The build records no
-# revision of its own, so it is tied to the checkout instead: its cache must name this checkout as
-# its source, and ninja must have nothing left to build for the job's targets (a build of other
-# sources, or a stale one, is refused).
+# The revision: the checkout's HEAD, "-dirty" with uncommitted edits or untracked files that are
+# not ignored (a new kernel_facts/sm_*.txt enters the build through a CONFIGURE_DEPENDS glob). The
+# build records no revision of its own, so it is tied to the checkout instead: its cache must name
+# this checkout as its source, and ninja must have nothing left to build for the job's targets (a
+# build of other sources, or a stale one, is refused).
 REV=$(git -C "$ROOT" rev-parse HEAD)
-git -C "$ROOT" diff --quiet HEAD -- || REV=$REV-dirty
+[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=normal)" ] || REV=$REV-dirty
 cache() { sed -n "s/^$1:[A-Z]*=//p" "$BUILD/CMakeCache.txt"; }
 SOURCE=$(cache CMAKE_HOME_DIRECTORY)
 [ -n "$SOURCE" ] && [ "$(cd "$SOURCE" 2>/dev/null && pwd -P)" = "$(cd "$ROOT" && pwd -P)" ] ||

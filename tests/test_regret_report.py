@@ -344,7 +344,8 @@ class NamesTest(unittest.TestCase):
     def test_board_of_matches_the_committed_names(self):
         for name, want in (("GeForce RTX 4070 Ti", ("rtx4070ti", "RTX 4070 Ti")),
                            ("NVIDIA GeForce RTX 3090", ("rtx3090", "RTX 3090")),
-                           ("Quadro GV100", ("gv100", "Quadro GV100"))):
+                           ("Quadro GV100", ("gv100", "Quadro GV100")),
+                           ("GeForce RTX 4060 Ti 16GB", ("rtx4060ti", "RTX 4060 Ti 16GB"))):
             with self.subTest(name=name):
                 self.assertEqual(rr.board_of(name), want)
         data = Path(__file__).resolve().parents[1] / "tools/bench/data/route_regret"
