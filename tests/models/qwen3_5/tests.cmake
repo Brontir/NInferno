@@ -61,6 +61,10 @@ ninferno_add_test(ninferno_qwen3_5_workspace_inputs_test LABELS host
   LIBRARIES ninferno_model_runtime ninferno_core)
 target_include_directories(ninferno_qwen3_5_workspace_inputs_test PRIVATE
   ${PROJECT_SOURCE_DIR}/src)
+# And on every target board of gpu_facts.json with every CUDA device hidden (#615 W4): a device
+# read the substitute does not answer throws.
+set_tests_properties(ninferno_qwen3_5_workspace_inputs_test PROPERTIES
+  ENVIRONMENT CUDA_VISIBLE_DEVICES=-1)
 
 # The MTP layer's packed Q/K/gate/V parent (the unregistered-split check reads the device): fused Op forms, and a BF16 MoE parent
 # (nvidia / RedHatAI NVFP4 35B-A3B releases) sized for the generic linear instead of refused.
