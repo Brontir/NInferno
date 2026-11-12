@@ -39,6 +39,7 @@
 #include "runtime/engine/plan_workspace.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -622,13 +623,39 @@ void real_artifacts(const std::vector<std::pair<std::string, DeviceClass>>& boar
     std::string path;
     while (std::getline(paths, path, ':')) {
         if (path.empty()) { continue; }
-        const auto source              = product::plan_facts_of_artifact(path);
+        // What the query adds to a start's (and a --plan's) reads of the facts: the tokenizer
+        // parsed once a path (the first read), the model described once a profile (the first
+        // query); the later reads and queries are the caches'.
+        using clock   = std::chrono::steady_clock;
+        const auto ms = [](clock::duration d) {
+            return std::chrono::duration<double, std::milli>(d).count();
+        };
+        const auto t0     = clock::now();
+        const auto source = product::plan_facts_of_artifact(path);
+        const auto t1     = clock::now();
+        (void)product::plan_facts_of_artifact(path);
+        const auto t2                  = clock::now();
         const rt::PlanModelFacts facts = source.model;
         check(facts.artifact_directory != nullptr && facts.tokenizer_tokens != 0,
               path + ": the facts keep the directory and the tokenizer's ids");
         if (facts.artifact_directory == nullptr || facts.tokenizer_tokens == 0) { continue; }
         std::cout << path << ": " << facts.model_type << ", tokenizer " << facts.tokenizer_tokens
                   << " of " << facts.vocab << " rows\n";
+        {
+            const ScopedDeviceClass substitute(boards.front().second);
+            rt::PlanRung rung;
+            rung.max_context          = 32768;
+            rung.prefill_chunk        = 2048;
+            const EngineOptions first = options_of(32768, 2048, 1);
+            const auto t3             = clock::now();
+            (void)rt::plan_rung_bytes(facts, rung, first, 1, false);
+            const auto t4 = clock::now();
+            (void)rt::plan_rung_bytes(facts, rung, first, 1, false);
+            const auto t5 = clock::now();
+            std::cout << "  facts " << ms(t1 - t0) << " ms first (tokenizer parsed), "
+                      << ms(t2 - t1) << " ms again; rung " << ms(t4 - t3)
+                      << " ms first (model described), " << ms(t5 - t4) << " ms again\n";
+        }
         const std::string stem = std::filesystem::path(path).stem().string();
         // A long context within the model's positions.
         const std::uint32_t wide = std::min<std::uint32_t>(65536, facts.native_context);

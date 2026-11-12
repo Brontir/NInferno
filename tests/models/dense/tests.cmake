@@ -15,6 +15,19 @@ ninferno_add_test(ninferno_decoder_plan_workspace_test LABELS host
 target_include_directories(ninferno_decoder_plan_workspace_test PRIVATE
   ${PROJECT_SOURCE_DIR}/src)
 
+# The same against a real start (#615 W3): one dense_decoder, one moe_decoder and one nemotron_h
+# artifact loaded as ninferno-serve loads them; the start's planned arena equals --plan's workspace
+# to the byte, fast and exact. NINFERNO_TEST_PLAN_WORKSPACE_ARTIFACTS names them, else the smallest
+# converted artifact of each family in the Hugging Face cache that fits the card; none skips.
+# GPU + artifacts.
+ninferno_add_test(ninferno_decoder_plan_workspace_real_test LABELS real gpu
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_plan_workspace_real.cpp"
+  LIBRARIES ninferno_product_plan ninferno_engine ninferno_model_runtime ninferno_convert
+    ninferno_core ninferno::json)
+target_include_directories(ninferno_decoder_plan_workspace_real_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src)
+set_tests_properties(ninferno_decoder_plan_workspace_real_test PROPERTIES SKIP_RETURN_CODE 77)
+
 # Prefix reuse through the Engine on a dense artifact whose prompt ends on an execution boundary
 # (SmolLM3): a zero-suffix restore of a shared prefix, cold == warm. GPU + artifact.
 ninferno_add_test(ninferno_dense_reuse_real_test LABELS real gpu

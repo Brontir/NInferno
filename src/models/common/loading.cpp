@@ -70,7 +70,8 @@ std::unique_ptr<ArtifactBacking> Demands::describe() {
                                           ": owning values do not have parent backing");
         }
         WeightView view;
-        view.shape = item.reference.shape;
+        view.shape            = item.reference.shape;
+        std::uint64_t covered = 0;
         for (const auto& part : item.reference.binding.parts) {
             const std::size_t i = part.object.index;
             if (parents.at(i) == nullptr) {
@@ -79,7 +80,17 @@ std::unique_ptr<ArtifactBacking> Demands::describe() {
                     geometry, reinterpret_cast<const std::byte*>((std::uintptr_t{i} + 1) << 32),
                     geometry.format == QType::NVFP4 ? 1.0F : 0.0F});
             }
+            // bind_view's checks (artifact/views.cpp): the plan refuses where the start refuses.
+            if (part.begin >= part.end || part.end > parents[i]->geometry.elements) {
+                throw artifact::ArtifactError(item.reference.name +
+                                              ": invalid materialized region");
+            }
+            covered = artifact::checked_add(covered, part.end - part.begin, item.reference.name);
             view.parts.push_back({parents[i], part.begin, part.end});
+        }
+        if (covered != weight_element_count(view.shape)) {
+            throw artifact::ArtifactError(item.reference.name +
+                                          ": materialized coverage differs from logical shape");
         }
         backing->views.push_back(std::move(view));
     }
