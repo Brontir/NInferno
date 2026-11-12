@@ -936,6 +936,41 @@ class LaunchLaw(Base):
         self.assertEqual(float(m.group(3)), g.LAW_LAUNCH_S)
         self.assertEqual(sorted(g.LAW_UNIT_CLOCKS), sorted(g.PRODUCTION))
 
+    def test_the_board_is_the_facts_row(self):
+        # The law's board is read from core/data/gpu_facts.json (#772), the row the C++ pins of
+        # tests/test_choice.cpp spell out: 68 SMs, 1545 MHz, 352 bits at 14 Gbps.
+        self.assertEqual((g.LAW_SMS, g.LAW_CLOCK_HZ, g.LAW_DRAM_BYTES_PER_S), (68, 1545e6, 616e9))
+        with tempfile.TemporaryDirectory() as tmp:
+            facts = Path(tmp) / "gpu_facts.json"
+            facts.write_text(json.dumps({"gpus": [{"id": "0x1E07", "sms": 72, "boost_mhz": 1500,
+                                                   "bus_bits": 256, "gbps": 16.0}]}))
+            self.assertEqual(g.law_board(facts), (72, 1500e6, 512e9))
+            with self.assertRaises(g.Fail):
+                g.law_board(facts, 0x2204)
+
+    def test_the_picks_are_the_cpp_pins(self):
+        # Every Turing pick tests/test_choice.cpp holds with static_assert (DECISIONS 78: a format of
+        # the work table, the widest tile 128), on the LaunchFacts it states, is the pick this copy of
+        # the law makes: the least launch_seconds among the production widths, the narrower on a tie
+        # (mmq_columns::pick keeps the first of the ascending widths on an equal cost). A change of
+        # launch_of, launch_seconds or the pins that this copy does not follow fails here (#772).
+        src = (Path(__file__).resolve().parents[1] / "tests" / "test_choice.cpp").read_text()
+        facts = {m[1]: (int(m[2]), int(m[3]), int(m[4]), float(m[5]), float(m[6])) for m in re.finditer(
+            r"LaunchFacts\s+(\w+)\{(\d+),\s*(\d+),\s*(\d+),\s*([0-9.e+]+),\s*([0-9.e+]+)\}", src)}
+        pins = [(int(m[1]), m[2], int(m[3])) for m in re.finditer(
+            r"pick\((\d+),\s*7,\s*5,\s*true,\s*128,\s*(\w+)\)\s*==\s*(\d+)", src)]
+        self.assertGreaterEqual(len(pins), 13)
+        for cols, name, want in pins:
+            rows, k, sms, clock, dram = facts[name]
+            # The pins' board is the law's: the facts row the module reads.
+            self.assertEqual((sms, clock, dram), (g.LAW_SMS, g.LAW_CLOCK_HZ, g.LAW_DRAM_BYTES_PER_S))
+            got = min(g.PRODUCTION, key=lambda j: (g.law_seconds(rows, k, cols, j), j))
+            self.assertEqual(got, want, f"{rows}x{k} at {cols} columns")
+        # law_production ranks a linear the same way.
+        picks = g.law_production(121)[0]
+        self.assertEqual(picks[g.LAW_LINEARS.index((4096, 4096))], 64)
+        self.assertEqual(picks[g.LAW_LINEARS.index((12288, 4096))], 64)
+
     def test_launch_of_is_the_kernels_rule(self):
         # 4096 x 4096 at 121 columns on 68 SMs: one 128-column tile is 32 CTAs (47 %): stream-k over 68
         # CTAs, 8 units the longest (512 / 68 = 7.5), a fixup; two 64-column tiles are 64 CTAs (94 %): a
