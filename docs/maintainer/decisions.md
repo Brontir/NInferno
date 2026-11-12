@@ -2031,8 +2031,20 @@ Picks of the 4096-row products (`test_choice`): 64 at 97..128 columns, 80 at 129
 **Numerics.** As DECISIONS 74: a different width changes the stream-k split and the sums; the
 logprob check of that note has not been run for the Turing picks.
 
-**Open.** The production A/B (V5: the law against the fewest tiles, the kit's `ab` with
-`NINFERNO_MMQ_MODE=old|law`); the unit's cost from facts (it is about three times the issue bound
+**V5 (12.11, RTX 2080 Ti, measured).** The production ranking against the fewest tiles, the kit's
+`ab` with `AB_ARM=law` (Qwen3-8B Q4_K_M, k 7, three counterbalanced visits, 204 requests an arm),
+predicted from the tree's constants before the run (no refit). The mix 144..256: -12.0 % measured
+(per visit -12.1 .. -11.7 %) against -12.0 % predicted, inside the pre-registered band -14.0 ..
+-10.0 %: R4 (law) not met, the law stands on this card. All 17 sizes: -12.7 % against -14.0 %.
+Five sizes lie more than 2 pp from their prediction, all on the optimistic side: 96 tokens (+3.9 pp)
+and 270..384 (+3.6 .. +4.5 pp), where the law picks several widths a layer; the per-size gap is
+recorded, not fitted. Logprobs (8 natural prompts, 24 greedy tokens): the law against the fewest
+tiles at chunk 1024 differ by a mean |dlogprob| of 0.0000 .. 0.0400 and in the text of 3 of 8;
+the fewest tiles at chunk 128 against 1024 differ by 0.0000 .. 0.0063 and in 2 of 8: another
+column tile is another accumulation order (fast mode, not exact), the same kind of change as
+another chunk.
+
+**Open.** The unit's cost from facts (it is about three times the issue bound
 of its counts: the serialized load phases of a CTA a SM are a latency, not counted here); what makes
 a stream-k unit dearer beyond the 8 % of V3; the 1.7 % of the grid that neither law holds (441
 columns J 80, 505 columns J 128, the J 16 cells); a second Turing card; Q6_K's own unit
