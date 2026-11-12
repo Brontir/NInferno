@@ -1,12 +1,7 @@
 {
  "schema": "ninferno-route-table/1",
  "gpu": {
-  "board": {
-   "cc": 120,
-   "dram_gbps": 1792.0,
-   "l2_mib": 96.0,
-   "sms": 170
-  },
+  "pci_id": "0x2b85",
   "class": "gb202",
   "name": "NVIDIA GeForce RTX 5090"
  },

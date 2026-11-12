@@ -189,7 +189,7 @@ prefill-profile cases cover them, `claim` entries, entries with `r8_bands` outsi
 segments, wide ranges when the report carries no ridge, and, with `--dense-tune`, table entries
 whose problem the dense tuner also routes for the class (pruning would hand the call to the tuner,
 not the ranker). The measured device must be the table's board (a full `chip:Nsm` id against the
-table's `gpu.board.sms`), and `--class` a full class id equal to it.
+SMs: its `gpu.pci_id`'s registry row, else `gpu.board.sms`), and `--class` a full class id equal to it.
 
 route_tune selects with its problems' policy (an `a16` problem is `A16Only`, the exact mode's
 linears, not the default `AllowA8` path of a published model's projections) and the speed route

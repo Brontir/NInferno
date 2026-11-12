@@ -16,6 +16,12 @@ row stands for its store problem only where the sweep has no store row of that p
 --merge HEADER keeps HEADER's entries (another format family's sweeps, another GPU's) for every
 problem the given sweeps of that GPU did not measure; a measured problem takes the new verdict.
 
+Each table names the board its sweeps ran on by PCI id, which the bench's "board" line prints
+(`pci 0x2684`), and the header reads its facts from the registry
+(`measured::board_of_pci(0x2684)`, core/measured_boards.h): no board's facts are written here
+(#612 step 9). A sweep from a bench that printed no id takes the --merge header's for its GPU; an
+id src/core/data/gpu_facts.json lacks stops the tool (add the board's row first).
+
     python3 tools/bench/r8_decode_table.py --out src/ops/generic/r8_decode_table.h \
         ad102:128sm=a1.txt,a2.txt,a3.txt gb202:170sm=b1.txt,b2.txt,b3.txt
     python3 tools/bench/r8_decode_table.py --merge src/ops/generic/r8_decode_table.h \
@@ -23,9 +29,11 @@ problem the given sweeps of that GPU did not measure; a measured problem takes t
 """
 
 import argparse
+import json
 import re
 import statistics
 import sys
+from pathlib import Path
 
 ROW = re.compile(
     r"^r8 (\S+) (\S+) n=(\d+) k=(\d+) r8\.w(\d+)r(\d+) ([\d.]+) us [\d.]+ GB/s same=(\d)"
@@ -53,9 +61,33 @@ QTYPES = {
 }
 # clang-format aligns the comments: any spacing before "//".
 ENTRY = re.compile(r"^\s*\{QType::(\w+), Epilogue::(\w+), (\d+), (\d+), (\d+), (\d+)\},\s*// (.*)$")
-TABLE = re.compile(r'^\s*\{"(\S+)", (?:\{(\d+), (\d+), (\d+), ([\d.]+), ([\d.]+)\}, )?(\w+)\},\s*$')
-BOARD = re.compile(r"^board cc (\d+) sms (\d+) l2_mib ([\d.]+) dram_gbps ([\d.]+)")
+TABLE = re.compile(r'^\s*\{"(\S+)", (?:measured::board_of_pci\((0x[0-9A-Fa-f]+)\), )?(\w+)\},\s*$')
+BOARD = re.compile(r"^board cc (\d+) sms (\d+) l2_mib ([\d.]+) dram_gbps ([\d.]+)"
+                   r"(?: pci (0x[0-9A-Fa-f]+))?")
+GPU_FACTS = Path(__file__).resolve().parents[2] / "src" / "core" / "data" / "gpu_facts.json"
 EPILOGUES = {"store": "Store", "swiglu": "SwiGlu"}
+
+
+# The facts every sweep's board line printed, by PCI id (each one: a --merge of several sweeps
+# under one id may mix the stock board with a variant on other memory): each is checked against
+# the id's registry row.
+printed = {}
+
+
+def pci_text(pci_id):
+    """A PCI product id as the header spells it: "0x" and four upper-case hex digits."""
+    if not re.fullmatch(r"0[xX][0-9A-Fa-f]{4}", pci_id):
+        sys.exit(f"{pci_id!r} is not a PCI product id (0x and four hex digits)")
+    return "0x%04X" % int(pci_id, 16)
+
+
+def registry_rows():
+    """{PCI id: (cc, SMs, L2 MiB, DRAM GB/s)} of src/core/data/gpu_facts.json, the rows
+    measured::board_of_pci reads (without its recorded conflicts, which the bench's printed
+    figures, the device's, do not carry either)."""
+    rows = json.loads(GPU_FACTS.read_text(encoding="utf-8"))["gpus"]
+    return {pci_text(r["id"]): (r["cc"], r["sms"], float(r.get("l2_mib", 0)),
+                                r["bus_bits"] * r["gbps"] / 8.0) for r in rows}
 
 
 def read_run(path, gpu):
@@ -64,8 +96,14 @@ def read_run(path, gpu):
     for line in open(path, errors="replace", encoding="utf-8"):
         m = BOARD.match(line)
         if m:
-            cc, sms, l2, bw = m.groups()
-            board = (int(cc) // 10, int(cc) % 10, int(sms), float(l2), float(bw))
+            # The board's PCI id; a bench before it printed one gives None. The facts it printed
+            # are not copied (the header reads them from the registry by id), only checked
+            # against the id's row (main).
+            if m.group(5):
+                cc, sms, l2, bw = m.groups()[:4]
+                printed.setdefault(pci_text(m.group(5)), set()).add(
+                    (int(cc), int(sms), float(l2), float(bw)))
+            board = pci_text(m.group(5)) if m.group(5) else None
             continue
         if line.strip() == "done":
             done = True
@@ -122,11 +160,7 @@ def read_header(path):
             continue
         m = TABLE.match(line)
         if m:
-            board = None
-            if m.group(2):
-                board = (int(m.group(2)), int(m.group(3)), int(m.group(4)), float(m.group(5)),
-                         float(m.group(6)))
-            gpus[m.group(1)] = (m.group(7), board)
+            gpus[m.group(1)] = (m.group(3), pci_text(m.group(2)) if m.group(2) else None)
     return {gpu: (by_name.get(name, {}), board) for gpu, (name, board) in gpus.items()}
 
 
@@ -196,12 +230,31 @@ def main():
             rows += [(key, line) for key, line in entries.items() if key not in measured]
             board = board or old_board
         if board is None:
-            sys.exit(f"{gpu}: no 'board' line in its sweeps and none in --merge")
+            sys.exit(f"{gpu}: no PCI id in its sweeps' 'board' line and none in --merge")
         tables.append((gpu, len(paths), rows, board))
     for gpu, (entries, board) in old.items():  # a GPU without new sweeps keeps its table
         if board is None:
             sys.exit(f"{gpu}: the --merge header records no board")
         tables.append((gpu, 0, list(entries.items()), board))
+    known = registry_rows()
+    for gpu, _, _, board in tables:
+        if board not in known:
+            sys.exit(f"{gpu}: PCI id {board} has no row in {GPU_FACTS}; add the board's row first")
+        # A board that shares its id with a variant on other memory (core/machine_facts.cpp: the
+        # 8 GB RTX 3060 on 128 bits, the RTX 4070 with GDDR6) is not its id's row: its id would
+        # read back as the row's facts.
+        cc, sms, l2, bw = known[board]
+        # The rule of measured::row_board_facts (core/measured_boards.h): cc and SMs exact, L2 and
+        # bandwidth to a part in 10^4.
+        def close(x, y):
+            return abs(x - y) <= 1e-4 * max(x, y)
+        for seen in sorted(printed.get(board, ())):
+            if seen[0] == cc and seen[1] == sms and close(seen[2], l2) and close(seen[3], bw):
+                continue
+            sys.exit(f"{gpu}: the sweeps' board (cc {seen[0]}, {seen[1]} SMs, L2 {seen[2]:g} MiB, "
+                     f"{seen[3]:g} GB/s) is not the row of its PCI id {board} (cc {cc}, {sms} SMs, "
+                     f"L2 {l2:g} MiB, {bw:g} GB/s): a variant under the id, which the table "
+                     "cannot name")
     tables.sort(key=lambda t: t[0])
     order = {"Store": 0, "SwiGlu": 1}
     for _, _, rows, _ in tables:
@@ -219,6 +272,7 @@ def main():
         "// call takes the store entry (the same kernel up to the final read-modify-write).",
         "",
         '#include "core/device_class.h"',
+        '#include "core/measured_boards.h"',
         '#include "core/weight.h"',
         '#include "ops/generic/generic_gemm.h"',
         "",
@@ -258,8 +312,8 @@ def main():
         lines.append("};")
         lines.append("")
     lines.append(f"inline constexpr std::array<R8DecodeTable, {len(names)}> kR8DecodeTables{{{{")
-    for gpu, name, (major, minor, sms, l2, bw) in names:
-        lines.append(f'    {{"{gpu}", {{{major}, {minor}, {sms}, {l2:g}, {bw:g}}}, {name}}},')
+    for gpu, name, board in names:
+        lines.append(f'    {{"{gpu}", measured::board_of_pci({board}), {name}}},')
     lines.append("}};")
     # nearest_known_measured skips a board without its L2 or bandwidth: the build refuses one.
     lines.append("static_assert(measured_boards_known(std::span(kR8DecodeTables)));")

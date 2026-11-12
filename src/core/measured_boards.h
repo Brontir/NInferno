@@ -11,7 +11,9 @@
 #include "core/measured_disposition.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 
 namespace ninferno::measured {
@@ -30,16 +32,68 @@ inline constexpr Board kRtx3090      = board_registry::board(0x2204);
 inline constexpr Board kA10          = board_registry::board(0x2236);
 inline constexpr Board kA100Sxm40    = board_registry::board(0x20B0);
 inline constexpr Board kRtx2080Ti    = board_registry::board(0x1E07);
-// Conflict between tables: the row spells the V100 SXM2's 4096-bit HBM2 at 1.754 Gbps, 898.048
-// GB/s; the route and R8 tables and the gates were measured under, and board_distance has always
-// read, the published 900 GB/s. Kept at 900 so every distance is as before.
-inline constexpr Board kV100Sxm2 = board_registry::board(0x1DB5, 900);
+
+// The recorded conflicts between a registry row and the bandwidth the data keyed by that board was
+// measured under (board_registry::board's override), in one place: the measured constants below
+// and every table that names its board by PCI id (board_of_pci) read them.
+struct DramConflict {
+    std::uint32_t pci_device_id;
+    double dram_gbps;
+};
+
+inline constexpr DramConflict kDramConflicts[] = {
+    // The row spells the V100 SXM2's 4096-bit HBM2 at 1.754 Gbps, 898.048 GB/s; the route and R8
+    // tables and the gates were measured under, and board_distance has always read, the published
+    // 900 GB/s. Kept at 900 so every distance is as before.
+    {0x1DB5, 900},
+};
+
+// The bandwidth a conflict records for a PCI id; 0 (none) for every other id.
+[[nodiscard]] constexpr double conflict_dram_gbps(std::uint32_t pci_device_id) noexcept {
+    for (const DramConflict& c : kDramConflicts) {
+        if (c.pci_device_id == pci_device_id) { return c.dram_gbps; }
+    }
+    return 0;
+}
+
+// The board data recorded by its PCI id was measured on (a route table's gpu.pci_id, an R8 decode
+// table's row): the registry's row with its recorded conflict. An id the registry lacks is a
+// compile error in a constant expression, as board_registry::board.
+[[nodiscard]] constexpr Board board_of_pci(std::uint32_t pci_device_id) {
+    return board_registry::board(pci_device_id, conflict_dram_gbps(pci_device_id));
+}
+
+// board_of_pci for an id read at run time (a route table's gpu.pci_id); nullopt where the registry
+// has no row for it.
+[[nodiscard]] constexpr std::optional<Board>
+find_board_of_pci(std::uint32_t pci_device_id) noexcept {
+    if (board_registry::find(pci_device_id) == nullptr) { return std::nullopt; }
+    return board_of_pci(pci_device_id);
+}
+
+inline constexpr Board kV100Sxm2 = board_of_pci(0x1DB5);
 
 // Pins, checked in every translation unit that includes this header: a change of a gpu_facts.json
 // row that moves a measured board's figures fails every product build, not only the test.
 constexpr bool same_board_facts(const Board& a, const Board& b) {
     return a.major == b.major && a.minor == b.minor && a.sms == b.sms && a.l2_mib == b.l2_mib &&
            a.dram_gbps == b.dram_gbps && a.mma_slow == b.mma_slow;
+}
+
+// A device's board against its id's registry row: where they agree, a route table names the board
+// by its id (route_table.cpp write_route_table; the shipped-boards test asks the same). The DRAM
+// bandwidth reaches the two sides by different arithmetic (board_of from the memory clock in kHz
+// of half the data rate, the row from bus * rate / 8), which differs in the last bit on four rows
+// (the A100 PCIe 80GB, the H100 NVL, the A30, the A800 PCIe 80GB), so it and the L2 are compared to
+// a part in 10^4; a twin on other memory differs by percents (the RTX 4070 with GDDR6: 20 against
+// 21 Gbps). A row that gives no L2 (0) agrees only with a device that reports none, so a real card
+// of such a row (the H100 NVL, the A30) is written by its facts until its row gives the L2.
+constexpr bool row_board_facts(const Board& a, const Board& b) {
+    const auto close = [](double x, double y) {
+        return (x > y ? x - y : y - x) <= 1e-4 * (x > y ? x : y);
+    };
+    return a.major == b.major && a.minor == b.minor && a.sms == b.sms &&
+           close(a.l2_mib, b.l2_mib) && close(a.dram_gbps, b.dram_gbps) && a.mma_slow == b.mma_slow;
 }
 
 // The literals the measured boards carried before the registry (major, minor, SMs, L2 MiB, DRAM

@@ -6836,12 +6836,7 @@
   }
  ],
  "gpu": {
-  "board": {
-   "cc": 89,
-   "dram_gbps": 504.0,
-   "l2_mib": 48.0,
-   "sms": 60
-  },
+  "pci_id": "0x2782",
   "class": "ad104:60sm",
   "name": "NVIDIA GeForce RTX 4070 Ti"
  },

@@ -8,6 +8,7 @@
 // call takes the store entry (the same kernel up to the final read-modify-write).
 
 #include "core/device_class.h"
+#include "core/measured_boards.h"
 #include "core/weight.h"
 #include "ops/generic/generic_gemm.h"
 
@@ -518,15 +519,15 @@ inline constexpr R8DecodeEntry kR8DecodeTu102_68sm[] = {
 };
 
 inline constexpr std::array<R8DecodeTable, 9> kR8DecodeTables{{
-    {"ad102:128sm", {8, 9, 128, 72, 1008}, kR8DecodeAd102_128sm},
-    {"ad103:80sm", {8, 9, 80, 64, 736}, kR8DecodeAd103_80sm},
-    {"ad106:34sm", {8, 9, 34, 32, 288}, kR8DecodeAd106_34sm},
-    {"ga100:108sm", {8, 0, 108, 40, 1555}, kR8DecodeGa100_108sm},
-    {"ga102:72sm", {8, 6, 72, 6, 600}, kR8DecodeGa102_72sm},
-    {"ga102:82sm", {8, 6, 82, 6, 936}, kR8DecodeGa102_82sm},
-    {"gb202:170sm", {12, 0, 170, 96, 1792}, kR8DecodeGb202_170sm},
-    {"gb206:36sm", {12, 0, 36, 32, 448}, kR8DecodeGb206_36sm},
-    {"tu102:68sm", {7, 5, 68, 5.5, 616}, kR8DecodeTu102_68sm},
+    {"ad102:128sm", measured::board_of_pci(0x2684), kR8DecodeAd102_128sm},
+    {"ad103:80sm", measured::board_of_pci(0x2702), kR8DecodeAd103_80sm},
+    {"ad106:34sm", measured::board_of_pci(0x2805), kR8DecodeAd106_34sm},
+    {"ga100:108sm", measured::board_of_pci(0x20B0), kR8DecodeGa100_108sm},
+    {"ga102:72sm", measured::board_of_pci(0x2236), kR8DecodeGa102_72sm},
+    {"ga102:82sm", measured::board_of_pci(0x2204), kR8DecodeGa102_82sm},
+    {"gb202:170sm", measured::board_of_pci(0x2B85), kR8DecodeGb202_170sm},
+    {"gb206:36sm", measured::board_of_pci(0x2D04), kR8DecodeGb206_36sm},
+    {"tu102:68sm", measured::board_of_pci(0x1E07), kR8DecodeTu102_68sm},
 }};
 static_assert(measured_boards_known(std::span(kR8DecodeTables)));
 

@@ -7909,12 +7909,7 @@
   }
  ],
  "gpu": {
-  "board": {
-   "cc": 86,
-   "dram_gbps": 360.0,
-   "l2_mib": 2.25,
-   "sms": 28
-  },
+  "pci_id": "0x2504",
   "class": "ga106",
   "name": "NVIDIA GeForce RTX 3060"
  },

@@ -7,6 +7,7 @@
 #include "ggml_mmq.h"
 
 #include "core/cuda_error.h"
+#include "core/device_class.h"
 #include "core/generation.h"
 #include "core/mmq_columns.h"
 #include "core/per_device.h"
@@ -70,6 +71,17 @@ struct DeviceFacts {
 };
 
 [[nodiscard]] const DeviceFacts& device_facts();
+
+// device_facts() are the device class's, a substituted board's under ScopedDeviceClass, so a
+// launch chosen from them is that board's: run on this GPU it could take a tile its shared memory
+// or compute capability does not hold. A launch under a substitute other than this GPU's own class
+// is refused; a description (ScopedDescribe) launches nothing and is not.
+inline void refuse_substituted_launch() {
+    if (substituted_foreign_class()) {
+        throw std::logic_error("ggml mmq: a launch under a substituted board (its tile and grid "
+                               "are another GPU's); describe it instead");
+    }
+}
 
 // A CudaError, so a device fault that first surfaces at one of these launches is still answered
 // as the device's failure (HTTP 503) rather than an internal error.
@@ -190,20 +202,23 @@ template <ggml_type type, int J>
 void launch(const Launch& l, const char* codes, const ggml_planes& planes, int stride_row_blocks,
             int rows, int k, const int* activation, int columns, float* out,
             std::int64_t out_column_stride, float* fixup, cudaStream_t stream) {
-    static PerDevice<bool> raised;
-    allow_dynamic_smem(raised, mul_mat_q<type, J, false>, l.shared);
-    constexpr int qk      = ggml_cuda_type_traits<type>::qk;
-    const uint3 blocks_fd = init_fastdiv_values(k / qk);
-    const uint3 one_fd    = init_fastdiv_values(1);
-    const uint3 ntx_fd    = init_fastdiv_values(l.column_tiles);
     const dim3 block_dims(WARP_SIZE, l.threads / WARP_SIZE, 1);
-    const int stride = static_cast<int>(out_column_stride);
+    // A description launches nothing, so it needs no opt-in shared memory on this GPU: under a
+    // substituted board its tile is the substitute's, which this GPU may not hold.
     if (LaunchShape* described = describe_target()) {
         describe_launch(*described, reinterpret_cast<const void*>(mul_mat_q<type, J, false>),
                         l.stream_k ? dim3(l.blocks, 1, 1) : dim3(l.row_tiles, l.column_tiles, 1),
                         block_dims, l.shared);
         return;
     }
+    refuse_substituted_launch();
+    static PerDevice<bool> raised;
+    allow_dynamic_smem(raised, mul_mat_q<type, J, false>, l.shared);
+    constexpr int qk      = ggml_cuda_type_traits<type>::qk;
+    const uint3 blocks_fd = init_fastdiv_values(k / qk);
+    const uint3 one_fd    = init_fastdiv_values(1);
+    const uint3 ntx_fd    = init_fastdiv_values(l.column_tiles);
+    const int stride      = static_cast<int>(out_column_stride);
     if (!l.stream_k) {
         check(::ninferno::pdl::launch_dependent(
                   {dim3(l.row_tiles, l.column_tiles, 1), block_dims, l.shared, stream},

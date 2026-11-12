@@ -9,6 +9,7 @@
 
 #include "core/device_class.h"
 #include "core/format_facts.h"
+#include "core/measured_boards.h"
 #include "ops/common/shape_routes.h"
 #include "ops/generic/route_authorities.h"
 #include "ops/generic/route_table.h"
@@ -90,7 +91,8 @@ struct Table {
     std::unordered_map<std::uint64_t, RouteEntry> generic;                // bands / prefill
     std::unordered_map<std::uint64_t, std::vector<RouteAsBand>> route_as; // shape-owned tables
     RouteTableStatus status;
-    std::optional<Board> board; // the board it was measured on (gpu.board), when recorded
+    // The board it was measured on (gpu.pci_id's registry row, else gpu.board), when recorded.
+    std::optional<Board> board;
     // table_distance when it was installed for this device (TableAnswer::distance).
     double distance = std::numeric_limits<double>::infinity();
 };
@@ -278,6 +280,28 @@ void parse_moe_entry(const Json& e, const std::string& path, Table& table) {
     ++table.status.entries;
 }
 
+// A table's gpu.pci_id, "0x" and four hex digits as write_route_table spells it (either case);
+// nullopt for anything else.
+std::optional<std::uint32_t> parse_pci_id(std::string_view s) {
+    if (s.size() != 6 || s[0] != '0' || (s[1] != 'x' && s[1] != 'X')) return std::nullopt;
+    std::uint32_t value = 0;
+    for (const char c : s.substr(2)) {
+        const int digit = c >= '0' && c <= '9'   ? c - '0'
+                          : c >= 'a' && c <= 'f' ? c - 'a' + 10
+                          : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                                                 : -1;
+        if (digit < 0) return std::nullopt;
+        value = value * 16 + static_cast<std::uint32_t>(digit);
+    }
+    return value;
+}
+
+std::string pci_id_text(std::uint32_t id) {
+    char hex[11];
+    std::snprintf(hex, sizeof(hex), "0x%04x", static_cast<unsigned>(id));
+    return hex;
+}
+
 std::shared_ptr<Table> parse_table(const std::string& path) {
     std::ifstream in(path_from_utf8(path), std::ios::binary);
     if (!in) throw std::runtime_error("route table: cannot open " + path);
@@ -298,11 +322,41 @@ std::shared_ptr<Table> parse_table(const std::string& path) {
         table->status.path           = path;
         table->status.content_sha256 = sha256_hex(std::string_view(bytes));
         table->status.gpu_class = root.at("gpu").at("class").get<std::string>();
-        // "board": {"cc": 89, "sms": 58, "l2_mib": 48, "dram_gbps": 300}: the card it was
-        // measured on, which the default lookup ranks tables by (board_distance). "mma_slow"
-        // (written only when set) defaults to the class's chip fact, so a table without it keyed
-        // tu116 / tu117 still counts as one of those chips.
-        if (const Json& gpu = root.at("gpu"); gpu.contains("board")) {
+        // The card it was measured on, which the default lookup ranks tables by (board_distance).
+        // "pci_id": "0x27b8" names it: the registry's row of that id (core/measured_boards.h
+        // board_of_pci, with its recorded conflict), its facts spelled nowhere else. An id the
+        // registry lacks reads "board": {"cc": 89, "sms": 58, "l2_mib": 48, "dram_gbps": 300},
+        // which the writer records for such a board only; neither: no board. "mma_slow" (written
+        // only when set) defaults to the class's chip fact, so a table without it keyed tu116 /
+        // tu117 still counts as one of those chips.
+        const Json& gpu = root.at("gpu");
+        if (gpu.contains("pci_id")) {
+            const std::string id = gpu.at("pci_id").get<std::string>();
+            const auto value     = parse_pci_id(id);
+            if (!value) {
+                throw std::runtime_error("route table: " + path + ": gpu.pci_id \"" + id +
+                                         "\" is not a PCI product id (0x and four hex digits)");
+            }
+            table->board = measured::find_board_of_pci(*value);
+            // The id must name a board of the table's class: a mistyped id that is another valid
+            // board (0x2783 for 0x2782) or another chip's is refused, not read as that board.
+            if (table->board) {
+                const Board& b    = *table->board;
+                const auto& cls   = table->status.gpu_class;
+                const auto colon  = cls.find(':');
+                const auto chip   = cls.substr(0, colon);
+                const auto arch   = "sm" + std::to_string(b.major) + std::to_string(b.minor);
+                const auto row    = gpu_chip(*value, b.major, b.minor, b.sms);
+                const bool sms_ok = colon == std::string::npos ||
+                                    cls.substr(colon + 1) == std::to_string(b.sms) + "sm";
+                if ((chip != "*" && chip != arch && chip != row) || !sms_ok) {
+                    throw std::runtime_error("route table: " + path + ": gpu.pci_id " + id +
+                                             " is a " + row + " board with " +
+                                             std::to_string(b.sms) + " SMs, not of class " + cls);
+                }
+            }
+        }
+        if (!table->board && gpu.contains("board")) {
             const Json& b    = gpu.at("board");
             const int cc     = b.at("cc").get<int>();
             const auto& cls  = table->status.gpu_class;
@@ -901,17 +955,33 @@ bool table_claims(const Problem& problem, std::int32_t tokens, bool prefill) {
     return table_route(problem, tokens, prefill).has_value();
 }
 
+std::optional<Board> route_table_board(const std::string& path) { return parse_table(path)->board; }
+
 std::string write_route_table(const std::string& gpu_class, const std::string& gpu_name,
                               const std::vector<RouteEntry>& entries) {
     Json root;
     root["schema"] = "ninferno-route-table/1";
     root["gpu"]    = {{"class", gpu_class}, {"name", gpu_name}};
-    // The board it is measured on, which the default lookup ranks tables by.
+    // The board it is measured on, which the default lookup ranks tables by: its PCI id, whose
+    // facts the reader takes from the registry, where the board is its id's row. Otherwise the
+    // facts themselves and no id: a board the registry lacks (an id it has no row for, or none
+    // read), and one that shares its id with a variant on other memory (core/machine_facts.cpp:
+    // the 8 GB RTX 3060 on 128 bits, the RTX 4070 with GDDR6), whose id would read back as the row.
     try {
-        const Board b        = board_of(device_class());
-        root["gpu"]["board"] = {{"cc", b.major * 10 + b.minor}, {"sms", b.sms},
-                                {"l2_mib", b.l2_mib}, {"dram_gbps", b.dram_gbps}};
-        if (b.mma_slow) root["gpu"]["board"]["mma_slow"] = true;
+        const DeviceClass& device = device_class();
+        const Board b             = board_of(device);
+        const bool row_board =
+            board_registry::find(device.pci_device_id) != nullptr &&
+            measured::row_board_facts(b, board_registry::board(device.pci_device_id));
+        if (row_board) {
+            root["gpu"]["pci_id"] = pci_id_text(device.pci_device_id);
+        } else {
+            root["gpu"]["board"] = {{"cc", b.major * 10 + b.minor},
+                                    {"sms", b.sms},
+                                    {"l2_mib", b.l2_mib},
+                                    {"dram_gbps", b.dram_gbps}};
+            if (b.mma_slow) root["gpu"]["board"]["mma_slow"] = true;
+        }
     } catch (const std::exception&) {
     }
     Json list      = Json::array();
