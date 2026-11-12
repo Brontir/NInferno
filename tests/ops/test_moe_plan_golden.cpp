@@ -23,6 +23,7 @@
 #include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
 #include "ops/moe/moe_internal.h"
+#include "ops/moe/moe_route_query.h"
 
 #include <cmath>
 #include <cstdint>
@@ -196,6 +197,49 @@ ProvenancePin g_pins[] = {
      0,
      false},
 };
+
+// The pure query (moe_route_query, #616 step 7: what the configuration choice asks) against the
+// cascade on this test's own weights: the same plan, authority, stage kernels and evidence kind at
+// every board, layer, policy, profile and width, on the call moe() runs (a Volta build splits a
+// call wider than its R8 limit: moe_split_tokens), and no answer exactly where the cascade throws.
+// The query builds its own descriptor banks from the shape; the expected side runs the cascade on
+// this test's weights (qw's packed descriptors), so a match also binds the query's descriptors to
+// the weights the goldens are dumped from.
+int g_query_mismatches = 0;
+
+void check_query(const DeviceClass& device, const moe::MoeLayerShape& shape,
+                 const ops::MoeWeights& weights, const ops::MoeConfig& config, std::int32_t t,
+                 bool prefill, bool invariant, const std::string& name) {
+    const auto q = moe::moe_route_query(device, shape, t, prefill, invariant);
+    std::string want, got;
+    try {
+        // moe()'s split reads the thread's profiles: the prefill one as the query sets it (the
+        // invariant one the caller's loop holds).
+        const ops::ScopedPrefillRoutes routes(prefill);
+        const std::int32_t split    = moe::moe_split_tokens(weights, config, t);
+        const std::int32_t call     = split > 0 ? split : t;
+        const moe::MoePlanQuery p   = moe::moe_plan_query(weights, config, call, prefill);
+        const moe::MoeStageRoutes s = moe::stage_routes(weights, p.plan);
+        want = moe::plan_name(p.plan) + " " + moe::authority_name(p.authority) + " " +
+               s.gate_up.name + "," + s.down.name + " " + moe::evidence_kind_name(p.evidence.kind) +
+               " T=" + std::to_string(call);
+    } catch (const std::exception&) { want = "refused"; }
+    if (q) {
+        got = moe::plan_name(q->plan) + " " + moe::authority_name(q->authority) + " " +
+              q->stages.gate_up.name + "," + q->stages.down.name + " " +
+              moe::evidence_kind_name(q->evidence.kind) + " T=" + std::to_string(q->call_tokens);
+    } else {
+        got = "refused";
+    }
+    if (got != want) {
+        if (g_query_mismatches < 10) {
+            std::cerr << "moe plan golden: " << g_board << " " << name << " T=" << t
+                      << (prefill ? " prefill" : "") << (invariant ? " invariant" : "")
+                      << ": moe_route_query " << got << ", the cascade " << want << "\n";
+        }
+        ++g_query_mismatches;
+    }
+}
 
 void note_pins(const moe::MoePlanQuery& q) {
     const auto& e = q.evidence;
@@ -379,6 +423,18 @@ void dump_layer(const Layer& l, std::map<std::string, std::string>& dumps) {
         if (l.frag_gate_up) weights.gate_up.layout = QuantLayout::GgmlFrag;
         if (l.frag_down) weights.down.layout = QuantLayout::GgmlFrag;
     }
+    // The same layer as the query describes it (its own descriptors).
+    moe::MoeLayerShape shape;
+    shape.gate_up        = l.gate_up;
+    shape.down           = l.down;
+    shape.gate_up_layout = weights.gate_up.layout;
+    shape.down_layout    = weights.down.layout;
+    shape.experts        = l.experts;
+    shape.top_k          = l.top_k;
+    shape.hidden         = l.hidden;
+    shape.gate_up_k      = l.hidden + l.pad;
+    shape.inter          = l.inter;
+    shape.relu2          = l.relu2;
     for (const generic::FactsBoard& b : boards()) {
         std::string& out = dumps[b.name];
         if (!gate_up) {
@@ -395,6 +451,7 @@ void dump_layer(const Layer& l, std::map<std::string, std::string>& dumps) {
                 continue;
             }
             weights.expert_policy = policy;
+            shape.policy          = policy;
             for (const Profile profile : {Profile::Speed, Profile::Prefill, Profile::Invariant}) {
                 std::optional<ops::ScopedInvariantRoutes> invariant;
                 if (profile == Profile::Invariant) invariant.emplace();
@@ -414,6 +471,8 @@ void dump_layer(const Layer& l, std::map<std::string, std::string>& dumps) {
                     } catch (const std::exception& error) {
                         what = std::string("threw: ") + error.what();
                     }
+                    check_query(d, shape, weights, config, t, profile == Profile::Prefill,
+                                profile == Profile::Invariant, name);
                     if (what != last) {
                         flush();
                         last    = what;
@@ -464,6 +523,11 @@ int main(int argc, char** argv) {
                     ++failed;
                 }
             }
+        }
+        if (g_query_mismatches != 0) {
+            std::cerr << "moe plan golden: " << g_query_mismatches
+                      << " calls where moe_route_query is not the cascade's answer\n";
+            ++failed;
         }
         if (g_evidence_mismatches != 0) {
             std::cerr << "moe plan golden: " << g_evidence_mismatches

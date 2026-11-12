@@ -247,10 +247,14 @@ void loop_counts_read() {
     // without the columns (schema 1, `kernel_facts.py extract --no-sass`) fails: the tool writes
     // schema 4, so a schema 1 file is one nobody regenerated since the loop columns came (#758:
     // sm_80, sm_90 and sm_100 stayed so, because no stand builds those architectures and
-    // ninferno_kernel_facts_test checks only a build's own). kResourcesOnly names the snapshots
-    // still waiting for their build, each with its issue.
+    // ninferno_kernel_facts_test checks only a build's own; tools/dev/kernel_facts_archs.sh checks
+    // them now, #762). kResourcesOnly names the snapshots whose loop counts cannot be written yet,
+    // each with its issue.
     constexpr std::string_view kResourcesOnly[] = {
-        "70", // #762: the Volta engine needs CUDA 12.8 (not regenerated with #758)
+        // #762: in 108 kernels (BF16 and FP8 codes, two or more token tiles) the K loop's products
+        // are calls (mma_bf16_fma_call, mma.cuh: not inlined), whose bodies sass_counts.py does
+        // not count, so the loop holds no FFMA and `extract` refuses the counts (loops 0).
+        "70",
     };
     kf::RmmaKernelKey key;
     key.decoder = "Bf16Decoder";

@@ -1,0 +1,1880 @@
+{
+ "board": "rtx4070ti",
+ "card": "RTX 4070 Ti",
+ "measure": "NVIDIA GeForce RTX 4070 Ti, 3105 MHz, 285.00 W",
+ "model_bands": {
+  "bands": {
+   "batch129": [
+    129,
+    null
+   ],
+   "decode": [
+    1,
+    8
+   ],
+   "narrow": [
+    17,
+    32
+   ],
+   "verify": [
+    9,
+    16
+   ],
+   "wide": [
+    33,
+    128
+   ]
+  },
+  "by_board": {
+   "rtx4070ti": {
+    "batch129": {
+     "best_ms": 31.976044,
+     "cases": 30,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.007945394449627496,
+     "selected_ms": 32.187366000000004,
+     "skipped": 0,
+     "tokens": 9600,
+     "weighted_regret": 0.006608759982942303,
+     "worst_regret": 0.1063116776315789
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 80,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 5.32109,
+     "cases": 20,
+     "cases_over_5pct": 14,
+     "geomean_regret": 0.22171211657576473,
+     "selected_ms": 5.747269999999999,
+     "skipped": 0,
+     "tokens": 560,
+     "weighted_regret": 0.08009261260380862,
+     "worst_regret": 0.6037735849056605
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 20,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 14.197084,
+     "cases": 40,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.017739626740618686,
+     "selected_ms": 14.223164,
+     "skipped": 0,
+     "tokens": 3360,
+     "weighted_regret": 0.0018369969495144467,
+     "worst_regret": 0.44999999999999996
+    }
+   }
+  },
+  "by_family": {
+   "(no pick)": {
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 80,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 20,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    }
+   },
+   "ggml_mmq": {
+    "batch129": {
+     "best_ms": 31.929964000000002,
+     "cases": 29,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.00822049666887592,
+     "selected_ms": 32.141286,
+     "skipped": 0,
+     "tokens": 9344,
+     "weighted_regret": 0.006618297471303158,
+     "worst_regret": 0.1063116776315789
+    },
+    "narrow": {
+     "best_ms": 4.349762,
+     "cases": 6,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.006975424193323088,
+     "selected_ms": 4.430662,
+     "skipped": 0,
+     "tokens": 168,
+     "weighted_regret": 0.018598718734496256,
+     "worst_regret": 0.03887790345118525
+    },
+    "wide": {
+     "best_ms": 13.945788,
+     "cases": 34,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0006773283753467307,
+     "selected_ms": 13.952156,
+     "skipped": 0,
+     "tokens": 2912,
+     "weighted_regret": 0.0004566253265860798,
+     "worst_regret": 0.01853612167300378
+    }
+   },
+   "rmma": {
+    "narrow": {
+     "best_ms": 0.031744,
+     "cases": 2,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.4580982203432207,
+     "selected_ms": 0.046079999999999996,
+     "skipped": 0,
+     "tokens": 56,
+     "weighted_regret": 0.4516129032258063,
+     "worst_regret": 0.5714285714285714
+    },
+    "wide": {
+     "best_ms": 0.04608,
+     "cases": 2,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.36235090927411195,
+     "selected_ms": 0.062464,
+     "skipped": 0,
+     "tokens": 112,
+     "weighted_regret": 0.3555555555555554,
+     "worst_regret": 0.44999999999999996
+    }
+   },
+   "w4a8": {
+    "narrow": {
+     "best_ms": 0.939584,
+     "cases": 12,
+     "cases_over_5pct": 12,
+     "geomean_regret": 0.3065947318054303,
+     "selected_ms": 1.2705279999999999,
+     "skipped": 0,
+     "tokens": 336,
+     "weighted_regret": 0.35222396294530345,
+     "worst_regret": 0.6037735849056605
+    },
+    "wide": {
+     "best_ms": 0.205216,
+     "cases": 4,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.015600343593869859,
+     "selected_ms": 0.208544,
+     "skipped": 0,
+     "tokens": 336,
+     "weighted_regret": 0.016217059098705633,
+     "worst_regret": 0.04428904428904423
+    }
+   },
+   "w4a8ws": {
+    "batch129": {
+     "best_ms": 0.046079999999999996,
+     "cases": 1,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0,
+     "selected_ms": 0.046079999999999996,
+     "skipped": 0,
+     "tokens": 256,
+     "weighted_regret": 0.0,
+     "worst_regret": 0.0
+    }
+   }
+  },
+  "by_format": {
+   "q4k": {
+    "batch129": {
+     "best_ms": 6.582724,
+     "cases": 21,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.011369859637088586,
+     "selected_ms": 6.794046,
+     "skipped": 0,
+     "tokens": 6720,
+     "weighted_regret": 0.032102515615116234,
+     "worst_regret": 0.1063116776315789
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 56,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 1.08688,
+     "cases": 14,
+     "cases_over_5pct": 12,
+     "geomean_regret": 0.29588614420169224,
+     "selected_ms": 1.417984,
+     "skipped": 0,
+     "tokens": 392,
+     "weighted_regret": 0.3046371264537022,
+     "worst_regret": 0.6037735849056605
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 14,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 3.100192,
+     "cases": 28,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.023173170863117987,
+     "selected_ms": 3.122944,
+     "skipped": 0,
+     "tokens": 2352,
+     "weighted_regret": 0.007338900300368545,
+     "worst_regret": 0.44999999999999996
+    }
+   },
+   "q6k": {
+    "batch129": {
+     "best_ms": 25.39332,
+     "cases": 9,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0,
+     "selected_ms": 25.39332,
+     "skipped": 0,
+     "tokens": 2880,
+     "weighted_regret": 0.0,
+     "worst_regret": 0.0
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 24,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 4.23421,
+     "cases": 6,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.0647319724077855,
+     "selected_ms": 4.329286,
+     "skipped": 0,
+     "tokens": 168,
+     "weighted_regret": 0.022454247663672655,
+     "worst_regret": 0.2111017661900756
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 6,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 11.096892,
+     "cases": 12,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.00517330529243365,
+     "selected_ms": 11.10022,
+     "skipped": 0,
+     "tokens": 1008,
+     "weighted_regret": 0.00029990379288191704,
+     "worst_regret": 0.04428904428904423
+    }
+   }
+  },
+  "cases_skipped": 100,
+  "legacy_qualification": "full ctest of master f24d0079 on sm_89 (RTX 4070 Ti board): 395/395 passed",
+  "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
+  "overall": {
+   "batch129": {
+    "best_ms": 31.976044,
+    "cases": 30,
+    "cases_over_5pct": 3,
+    "geomean_regret": 0.007945394449627496,
+    "selected_ms": 32.187366000000004,
+    "skipped": 0,
+    "tokens": 9600,
+    "weighted_regret": 0.006608759982942303,
+    "worst_regret": 0.1063116776315789
+   },
+   "decode": {
+    "best_ms": 0.0,
+    "cases": 0,
+    "cases_over_5pct": 0,
+    "geomean_regret": null,
+    "selected_ms": 0.0,
+    "skipped": 80,
+    "tokens": 0,
+    "weighted_regret": null,
+    "worst_regret": null
+   },
+   "narrow": {
+    "best_ms": 5.32109,
+    "cases": 20,
+    "cases_over_5pct": 14,
+    "geomean_regret": 0.22171211657576473,
+    "selected_ms": 5.747269999999999,
+    "skipped": 0,
+    "tokens": 560,
+    "weighted_regret": 0.08009261260380862,
+    "worst_regret": 0.6037735849056605
+   },
+   "verify": {
+    "best_ms": 0.0,
+    "cases": 0,
+    "cases_over_5pct": 0,
+    "geomean_regret": null,
+    "selected_ms": 0.0,
+    "skipped": 20,
+    "tokens": 0,
+    "weighted_regret": null,
+    "worst_regret": null
+   },
+   "wide": {
+    "best_ms": 14.197084,
+    "cases": 40,
+    "cases_over_5pct": 2,
+    "geomean_regret": 0.017739626740618686,
+    "selected_ms": 14.223164,
+    "skipped": 0,
+    "tokens": 3360,
+    "weighted_regret": 0.0018369969495144467,
+    "worst_regret": 0.44999999999999996
+   }
+  },
+  "prefill_profile_rows_excluded": 404,
+  "schema": "ninferno-regret-bands/1",
+  "skipped_cases": [
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx4070ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   }
+  ]
+ },
+ "regret_report": {
+  "build_id": "a5-f24d0079-rtx4070ti",
+  "by_board": {
+   "rtx4070ti": {
+    "cases": 190,
+    "geomean_slowdown": 1.0426699462184497,
+    "max_regret": 0.6037735849056605,
+    "median_regret": 0.0,
+    "p95_regret": 0.26714859437751004,
+    "scored_cases": 190,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 190
+    }
+   }
+  },
+  "by_board_regime_authority": [
+   {
+    "authority": "r8-rules",
+    "board": "rtx4070ti",
+    "cases": 10,
+    "evidence": {
+     "ranker": 10
+    },
+    "geomean_slowdown": 1.0030178858004666,
+    "max_regret": 0.016949152542372836,
+    "median_regret": 0.0,
+    "p95_regret": 0.016949152542372836,
+    "regime": "decode T<=4",
+    "ridge_t": 178.97142857142856,
+    "scored_cases": 10,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 10
+    }
+   },
+   {
+    "authority": "vec-rule",
+    "board": "rtx4070ti",
+    "cases": 30,
+    "evidence": {
+     "ranker": 30
+    },
+    "geomean_slowdown": 1.0213102797405293,
+    "max_regret": 0.14212930009842428,
+    "median_regret": 0.004216494493328726,
+    "p95_regret": 0.11452272517620843,
+    "regime": "decode T<=4",
+    "ridge_t": 178.97142857142856,
+    "scored_cases": 30,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 30
+    }
+   },
+   {
+    "authority": "rmma-rule",
+    "board": "rtx4070ti",
+    "cases": 30,
+    "evidence": {
+     "ranker": 30
+    },
+    "geomean_slowdown": 1.0807530330009119,
+    "max_regret": 0.28245174598497136,
+    "median_regret": 0.047087874659400564,
+    "p95_regret": 0.26714859437751004,
+    "regime": "verify T5-16",
+    "ridge_t": 178.97142857142856,
+    "scored_cases": 30,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 30
+    }
+   },
+   {
+    "authority": "route-table",
+    "board": "rtx4070ti",
+    "cases": 30,
+    "evidence": {
+     "measured": 30
+    },
+    "geomean_slowdown": 1.0000257639254069,
+    "max_regret": 0.0007732065758883078,
+    "median_regret": 0.0,
+    "p95_regret": 0.0,
+    "regime": "verify T5-16",
+    "ridge_t": 178.97142857142856,
+    "scored_cases": 30,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 30
+    }
+   },
+   {
+    "authority": "cost-model",
+    "board": "rtx4070ti",
+    "cases": 60,
+    "evidence": {
+     "ranker": 60
+    },
+    "geomean_slowdown": 1.0816350452247525,
+    "max_regret": 0.6037735849056605,
+    "median_regret": 0.0,
+    "p95_regret": 0.47499999999999987,
+    "regime": "T>=17 below ridge",
+    "ridge_t": 178.97142857142856,
+    "scored_cases": 60,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 60
+    }
+   },
+   {
+    "authority": "cost-model",
+    "board": "rtx4070ti",
+    "cases": 30,
+    "evidence": {
+     "ranker": 30
+    },
+    "geomean_slowdown": 1.0079453944496275,
+    "max_regret": 0.1063116776315789,
+    "median_regret": 0.0,
+    "p95_regret": 0.06159221583370189,
+    "regime": "T>=17 above ridge",
+    "ridge_t": 178.97142857142856,
+    "scored_cases": 30,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 30
+    }
+   }
+  ],
+  "by_model": {
+   "qwen3.5-9b+gemma4-12b-dense": {
+    "cases": 190,
+    "geomean_slowdown": 1.0426699462184497,
+    "max_regret": 0.6037735849056605,
+    "median_regret": 0.0,
+    "p95_regret": 0.26714859437751004,
+    "scored_cases": 190,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 190
+    }
+   }
+  },
+  "device": "ad104:60sm",
+  "fit_boards": [],
+  "fit_models": [],
+  "holdout": "board",
+  "input_sha256": "e59f94b3d1457a3a569cdf12d77bcc9d84ae138b71be473fe8f2b103a0990830",
+  "max_regret": null,
+  "passed": true,
+  "schema": "ninferno-selection-regret-report/1",
+  "scope": "best observed qualified candidate in the supplied inventory; not a global optimum",
+  "selector_revision": "f24d0079",
+  "summary": {
+   "cases": 190,
+   "geomean_slowdown": 1.0426699462184497,
+   "max_regret": 0.6037735849056605,
+   "median_regret": 0.0,
+   "p95_regret": 0.26714859437751004,
+   "scored_cases": 190,
+   "single_pass_cases": 0,
+   "statuses": {
+    "complete": 190
+   }
+  }
+ },
+ "selected_bands": {
+  "bands": {
+   "batch129": [
+    129,
+    null
+   ],
+   "decode": [
+    1,
+    8
+   ],
+   "narrow": [
+    17,
+    32
+   ],
+   "verify": [
+    9,
+    16
+   ],
+   "wide": [
+    33,
+    128
+   ]
+  },
+  "by_board": {
+   "rtx4070ti": {
+    "batch129": {
+     "best_ms": 31.976044,
+     "cases": 30,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.007945394449627496,
+     "selected_ms": 32.187366000000004,
+     "skipped": 0,
+     "tokens": 9600,
+     "weighted_regret": 0.006608759982942303,
+     "worst_regret": 0.1063116776315789
+    },
+    "decode": {
+     "best_ms": 18.79694404,
+     "cases": 80,
+     "cases_over_5pct": 11,
+     "geomean_regret": 0.027721263442292976,
+     "selected_ms": 19.08831506,
+     "skipped": 0,
+     "tokens": 360,
+     "weighted_regret": 0.015500978211136829,
+     "worst_regret": 0.26714859437751004
+    },
+    "narrow": {
+     "best_ms": 5.32109,
+     "cases": 20,
+     "cases_over_5pct": 14,
+     "geomean_regret": 0.22171211657576473,
+     "selected_ms": 5.747269999999999,
+     "skipped": 0,
+     "tokens": 560,
+     "weighted_regret": 0.08009261260380862,
+     "worst_regret": 0.6037735849056605
+    },
+    "verify": {
+     "best_ms": 5.1111732000000005,
+     "cases": 20,
+     "cases_over_5pct": 4,
+     "geomean_regret": 0.04110852581423141,
+     "selected_ms": 5.1680503,
+     "skipped": 0,
+     "tokens": 280,
+     "weighted_regret": 0.011127993079944831,
+     "worst_regret": 0.28245174598497136
+    },
+    "wide": {
+     "best_ms": 14.197084,
+     "cases": 40,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.017739626740618686,
+     "selected_ms": 14.223164,
+     "skipped": 0,
+     "tokens": 3360,
+     "weighted_regret": 0.0018369969495144467,
+     "worst_regret": 0.44999999999999996
+    }
+   }
+  },
+  "by_family": {
+   "ggml_mmq": {
+    "batch129": {
+     "best_ms": 31.929964000000002,
+     "cases": 29,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.00822049666887592,
+     "selected_ms": 32.141286,
+     "skipped": 0,
+     "tokens": 9344,
+     "weighted_regret": 0.006618297471303158,
+     "worst_regret": 0.1063116776315789
+    },
+    "narrow": {
+     "best_ms": 4.349762,
+     "cases": 6,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.006975424193323088,
+     "selected_ms": 4.430662,
+     "skipped": 0,
+     "tokens": 168,
+     "weighted_regret": 0.018598718734496256,
+     "worst_regret": 0.03887790345118525
+    },
+    "verify": {
+     "best_ms": 0.308875,
+     "cases": 2,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0,
+     "selected_ms": 0.308875,
+     "skipped": 0,
+     "tokens": 28,
+     "weighted_regret": 0.0,
+     "worst_regret": 0.0
+    },
+    "wide": {
+     "best_ms": 13.945788,
+     "cases": 34,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0006773283753467307,
+     "selected_ms": 13.952156,
+     "skipped": 0,
+     "tokens": 2912,
+     "weighted_regret": 0.0004566253265860798,
+     "worst_regret": 0.01853612167300378
+    }
+   },
+   "ggml_vec": {
+    "decode": {
+     "best_ms": 7.00706106,
+     "cases": 30,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.021310279740529348,
+     "selected_ms": 7.17249828,
+     "skipped": 0,
+     "tokens": 90,
+     "weighted_regret": 0.02361007255158709,
+     "worst_regret": 0.14212930009842428
+    }
+   },
+   "r8": {
+    "decode": {
+     "best_ms": 2.29040897,
+     "cases": 10,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.00301788580046658,
+     "selected_ms": 2.29427877,
+     "skipped": 0,
+     "tokens": 10,
+     "weighted_regret": 0.0016895672566283881,
+     "worst_regret": 0.016949152542372836
+    }
+   },
+   "rmma": {
+    "decode": {
+     "best_ms": 9.49947401,
+     "cases": 40,
+     "cases_over_5pct": 8,
+     "geomean_regret": 0.03885572506190815,
+     "selected_ms": 9.62153801,
+     "skipped": 0,
+     "tokens": 260,
+     "weighted_regret": 0.012849553551228743,
+     "worst_regret": 0.26714859437751004
+    },
+    "narrow": {
+     "best_ms": 0.031744,
+     "cases": 2,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.4580982203432207,
+     "selected_ms": 0.046079999999999996,
+     "skipped": 0,
+     "tokens": 56,
+     "weighted_regret": 0.4516129032258063,
+     "worst_regret": 0.5714285714285714
+    },
+    "verify": {
+     "best_ms": 4.8022982,
+     "cases": 18,
+     "cases_over_5pct": 4,
+     "geomean_regret": 0.04577920878114061,
+     "selected_ms": 4.8591753,
+     "skipped": 0,
+     "tokens": 252,
+     "weighted_regret": 0.011843725156426288,
+     "worst_regret": 0.28245174598497136
+    },
+    "wide": {
+     "best_ms": 0.04608,
+     "cases": 2,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.36235090927411195,
+     "selected_ms": 0.062464,
+     "skipped": 0,
+     "tokens": 112,
+     "weighted_regret": 0.3555555555555554,
+     "worst_regret": 0.44999999999999996
+    }
+   },
+   "w4a8": {
+    "narrow": {
+     "best_ms": 0.939584,
+     "cases": 12,
+     "cases_over_5pct": 12,
+     "geomean_regret": 0.3065947318054303,
+     "selected_ms": 1.2705279999999999,
+     "skipped": 0,
+     "tokens": 336,
+     "weighted_regret": 0.35222396294530345,
+     "worst_regret": 0.6037735849056605
+    },
+    "wide": {
+     "best_ms": 0.205216,
+     "cases": 4,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.015600343593869859,
+     "selected_ms": 0.208544,
+     "skipped": 0,
+     "tokens": 336,
+     "weighted_regret": 0.016217059098705633,
+     "worst_regret": 0.04428904428904423
+    }
+   },
+   "w4a8ws": {
+    "batch129": {
+     "best_ms": 0.046079999999999996,
+     "cases": 1,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0,
+     "selected_ms": 0.046079999999999996,
+     "skipped": 0,
+     "tokens": 256,
+     "weighted_regret": 0.0,
+     "worst_regret": 0.0
+    }
+   }
+  },
+  "by_format": {
+   "q4k": {
+    "batch129": {
+     "best_ms": 6.582724,
+     "cases": 21,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.011369859637088586,
+     "selected_ms": 6.794046,
+     "skipped": 0,
+     "tokens": 6720,
+     "weighted_regret": 0.032102515615116234,
+     "worst_regret": 0.1063116776315789
+    },
+    "decode": {
+     "best_ms": 3.63920864,
+     "cases": 56,
+     "cases_over_5pct": 4,
+     "geomean_regret": 0.01393210032872605,
+     "selected_ms": 3.67822576,
+     "skipped": 0,
+     "tokens": 252,
+     "weighted_regret": 0.010721319896624504,
+     "worst_regret": 0.1111284289276806
+    },
+    "narrow": {
+     "best_ms": 1.08688,
+     "cases": 14,
+     "cases_over_5pct": 12,
+     "geomean_regret": 0.29588614420169224,
+     "selected_ms": 1.417984,
+     "skipped": 0,
+     "tokens": 392,
+     "weighted_regret": 0.3046371264537022,
+     "worst_regret": 0.6037735849056605
+    },
+    "verify": {
+     "best_ms": 1.1347819,
+     "cases": 14,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.026307365511985648,
+     "selected_ms": 1.1398243,
+     "skipped": 0,
+     "tokens": 196,
+     "weighted_regret": 0.004443497027931009,
+     "worst_regret": 0.19106799780430905
+    },
+    "wide": {
+     "best_ms": 3.100192,
+     "cases": 28,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.023173170863117987,
+     "selected_ms": 3.122944,
+     "skipped": 0,
+     "tokens": 2352,
+     "weighted_regret": 0.007338900300368545,
+     "worst_regret": 0.44999999999999996
+    }
+   },
+   "q6k": {
+    "batch129": {
+     "best_ms": 25.39332,
+     "cases": 9,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0,
+     "selected_ms": 25.39332,
+     "skipped": 0,
+     "tokens": 2880,
+     "weighted_regret": 0.0,
+     "worst_regret": 0.0
+    },
+    "decode": {
+     "best_ms": 15.1577354,
+     "cases": 24,
+     "cases_over_5pct": 7,
+     "geomean_regret": 0.060629667272342314,
+     "selected_ms": 15.4100893,
+     "skipped": 0,
+     "tokens": 108,
+     "weighted_regret": 0.016648522575476443,
+     "worst_regret": 0.26714859437751004
+    },
+    "narrow": {
+     "best_ms": 4.23421,
+     "cases": 6,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.0647319724077855,
+     "selected_ms": 4.329286,
+     "skipped": 0,
+     "tokens": 168,
+     "weighted_regret": 0.022454247663672655,
+     "worst_regret": 0.2111017661900756
+    },
+    "verify": {
+     "best_ms": 3.9763913,
+     "cases": 6,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.07648001126758142,
+     "selected_ms": 4.028226,
+     "skipped": 0,
+     "tokens": 84,
+     "weighted_regret": 0.013035613471943819,
+     "worst_regret": 0.28245174598497136
+    },
+    "wide": {
+     "best_ms": 11.096892,
+     "cases": 12,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.00517330529243365,
+     "selected_ms": 11.10022,
+     "skipped": 0,
+     "tokens": 1008,
+     "weighted_regret": 0.00029990379288191704,
+     "worst_regret": 0.04428904428904423
+    }
+   }
+  },
+  "cases_skipped": 0,
+  "legacy_qualification": "full ctest of master f24d0079 on sm_89 (RTX 4070 Ti board): 395/395 passed",
+  "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
+  "overall": {
+   "batch129": {
+    "best_ms": 31.976044,
+    "cases": 30,
+    "cases_over_5pct": 3,
+    "geomean_regret": 0.007945394449627496,
+    "selected_ms": 32.187366000000004,
+    "skipped": 0,
+    "tokens": 9600,
+    "weighted_regret": 0.006608759982942303,
+    "worst_regret": 0.1063116776315789
+   },
+   "decode": {
+    "best_ms": 18.79694404,
+    "cases": 80,
+    "cases_over_5pct": 11,
+    "geomean_regret": 0.027721263442292976,
+    "selected_ms": 19.08831506,
+    "skipped": 0,
+    "tokens": 360,
+    "weighted_regret": 0.015500978211136829,
+    "worst_regret": 0.26714859437751004
+   },
+   "narrow": {
+    "best_ms": 5.32109,
+    "cases": 20,
+    "cases_over_5pct": 14,
+    "geomean_regret": 0.22171211657576473,
+    "selected_ms": 5.747269999999999,
+    "skipped": 0,
+    "tokens": 560,
+    "weighted_regret": 0.08009261260380862,
+    "worst_regret": 0.6037735849056605
+   },
+   "verify": {
+    "best_ms": 5.1111732000000005,
+    "cases": 20,
+    "cases_over_5pct": 4,
+    "geomean_regret": 0.04110852581423141,
+    "selected_ms": 5.1680503,
+    "skipped": 0,
+    "tokens": 280,
+    "weighted_regret": 0.011127993079944831,
+    "worst_regret": 0.28245174598497136
+   },
+   "wide": {
+    "best_ms": 14.197084,
+    "cases": 40,
+    "cases_over_5pct": 2,
+    "geomean_regret": 0.017739626740618686,
+    "selected_ms": 14.223164,
+    "skipped": 0,
+    "tokens": 3360,
+    "weighted_regret": 0.0018369969495144467,
+    "worst_regret": 0.44999999999999996
+   }
+  },
+  "prefill_profile_rows_excluded": 404,
+  "schema": "ninferno-regret-bands/1",
+  "skipped_cases": []
+ },
+ "source_sha": "f24d0079613133f8e19f9bcc40b9357c761292b9",
+ "sweep": "ninferno_route_tune --a8-candidates 1 --samples 7, three passes (#614 A5)"
+}

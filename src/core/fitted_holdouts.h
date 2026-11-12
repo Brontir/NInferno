@@ -254,10 +254,12 @@ inline constexpr FittedHoldout kChoiceHoldouts[] = {
      Holdout::none(
          "the MoE step rows of speed_measured.json: Ada RTX 4090 (UD-Q4_K_M, UD-Q3_K_S) and RTX "
          "4060 Ti (UD-Q3_K_S); Blackwell RTX 5070 Ti (UD-IQ3_XXS, UD-Q3_K_S) and 5090 (UD-Q3_K_S); "
-         "the mean over the generation's cards (tools/fits/speed_model/fit_moe_decode.py)",
+         "the mean over the generation's cards (tools/fits/speed_model/fit_moe_decode.py); one "
+         "kernel pair, R8 gate/up over the register-MMA down (the op's route at 2-8 rows there)",
          "none left out; the check is the same rows: MoE decode 33 points rms 4.5 % worst 13.5 %; "
-         "Ada's 8-row point rests on one card",
-         "DECISIONS 65; tests/test_choice.cpp")},
+         "Ada's 8-row point rests on one card; no other kernel pair measured (a step the op runs "
+         "on another pair takes these rows, transferred)",
+         "DECISIONS 65, 79; tests/test_choice.cpp")},
     {kChoice, "kPrefillEta",
      Holdout::none(
          "tools/fits/prefill/fit_prefill.py on tools/fits/data/prefill/rows.json: 82 points, "

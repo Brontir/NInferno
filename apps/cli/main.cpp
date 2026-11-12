@@ -4,6 +4,7 @@
 
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
+#include "runtime/engine/plan_moe_routes.h"
 #include "runtime/engine/plan_workspace.h"
 #include "runtime/engine/prompt_tail.h"
 #include "product/plan/plan_quants.h"
@@ -244,8 +245,10 @@ int main(int argc, char** argv) {
                 {f.tokenizer_json, f.tokenizer_config_json, f.chat_template_jinja, f.generation_config_json},
                 "the GGUF's frontend", {}, false);
         });
-    // The plan without the weights sizes a family's workspace as a start does (#302).
+    // The plan without the weights sizes a family's workspace as a start does (#302), and its MoE
+    // step reads the op's own route (#616 step 7).
     ninferno::runtime::register_plan_workspace_queries();
+    ninferno::runtime::register_plan_moe_route_query();
     if (ninferno::version_requested(argc, argv)) {
         std::cout << "NInferno " << NINFERNO_VERSION_STRING << '\n';
         return 0;

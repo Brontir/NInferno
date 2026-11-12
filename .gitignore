@@ -2,6 +2,10 @@
 build/
 build-*/
 cmake-build-*/
+# tools/dev/kernel_facts_archs.sh run inside a checkout (KFA_ROOT defaults to the current directory)
+/build_kfa_*/
+/kfa.lock
+/logs/
 *.o
 *.obj
 *.so

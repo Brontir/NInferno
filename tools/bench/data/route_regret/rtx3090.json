@@ -1,0 +1,1833 @@
+{
+ "board": "rtx3090",
+ "card": "RTX 3090",
+ "measure": "NVIDIA GeForce RTX 3090, 2130 MHz, 390.00 W",
+ "model_bands": {
+  "bands": {
+   "batch129": [
+    129,
+    null
+   ],
+   "decode": [
+    1,
+    8
+   ],
+   "narrow": [
+    17,
+    32
+   ],
+   "verify": [
+    9,
+    16
+   ],
+   "wide": [
+    33,
+    128
+   ]
+  },
+  "by_board": {
+   "rtx3090": {
+    "batch129": {
+     "best_ms": 34.273672,
+     "cases": 30,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.008502369318963865,
+     "selected_ms": 34.308872,
+     "skipped": 0,
+     "tokens": 9600,
+     "weighted_regret": 0.0010270273929213758,
+     "worst_regret": 0.15167095115681217
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 80,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 3.977696,
+     "cases": 20,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.04437881680392497,
+     "selected_ms": 4.007616,
+     "skipped": 0,
+     "tokens": 560,
+     "weighted_regret": 0.0075219423505465954,
+     "worst_regret": 0.4285714285714286
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 20,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 14.587482,
+     "cases": 40,
+     "cases_over_5pct": 12,
+     "geomean_regret": 0.038796875399258246,
+     "selected_ms": 14.766178,
+     "skipped": 0,
+     "tokens": 3360,
+     "weighted_regret": 0.012249955132763946,
+     "worst_regret": 0.2999999999999998
+    }
+   }
+  },
+  "by_family": {
+   "(no pick)": {
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 80,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 20,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    }
+   },
+   "ggml_mmq": {
+    "batch129": {
+     "best_ms": 33.969544,
+     "cases": 28,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.00911244037292347,
+     "selected_ms": 34.004744,
+     "skipped": 0,
+     "tokens": 8576,
+     "weighted_regret": 0.0010362223290369954,
+     "worst_regret": 0.15167095115681217
+    },
+    "narrow": {
+     "best_ms": 3.946976,
+     "cases": 18,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.039458324577631876,
+     "selected_ms": 3.973824,
+     "skipped": 0,
+     "tokens": 504,
+     "weighted_regret": 0.006802169559683158,
+     "worst_regret": 0.4285714285714286
+    },
+    "wide": {
+     "best_ms": 14.05705,
+     "cases": 36,
+     "cases_over_5pct": 12,
+     "geomean_regret": 0.0431995038266908,
+     "selected_ms": 14.235746,
+     "skipped": 0,
+     "tokens": 2848,
+     "weighted_regret": 0.012712197793989466,
+     "worst_regret": 0.2999999999999998
+    }
+   },
+   "rmma": {
+    "narrow": {
+     "best_ms": 0.030719999999999997,
+     "cases": 2,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.0897247358851685,
+     "selected_ms": 0.033792,
+     "skipped": 0,
+     "tokens": 56,
+     "weighted_regret": 0.10000000000000009,
+     "worst_regret": 0.18750000000000022
+    }
+   },
+   "w4a8ws": {
+    "batch129": {
+     "best_ms": 0.304128,
+     "cases": 2,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0,
+     "selected_ms": 0.304128,
+     "skipped": 0,
+     "tokens": 1024,
+     "weighted_regret": 0.0,
+     "worst_regret": 0.0
+    },
+    "wide": {
+     "best_ms": 0.530432,
+     "cases": 4,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0,
+     "selected_ms": 0.530432,
+     "skipped": 0,
+     "tokens": 512,
+     "weighted_regret": 0.0,
+     "worst_regret": 0.0
+    }
+   }
+  },
+  "by_format": {
+   "q4k": {
+    "batch129": {
+     "best_ms": 7.484864,
+     "cases": 21,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.01216833584321897,
+     "selected_ms": 7.520064,
+     "skipped": 0,
+     "tokens": 6720,
+     "weighted_regret": 0.004702824259732674,
+     "worst_regret": 0.15167095115681217
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 56,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 1.015552,
+     "cases": 14,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.018177649559264708,
+     "selected_ms": 1.023776,
+     "skipped": 0,
+     "tokens": 392,
+     "weighted_regret": 0.008098058986639733,
+     "worst_regret": 0.18750000000000022
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 14,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 3.44432,
+     "cases": 28,
+     "cases_over_5pct": 12,
+     "geomean_regret": 0.05387382181903222,
+     "selected_ms": 3.602272,
+     "skipped": 0,
+     "tokens": 2352,
+     "weighted_regret": 0.04585868908812207,
+     "worst_regret": 0.2999999999999998
+    }
+   },
+   "q6k": {
+    "batch129": {
+     "best_ms": 26.788808,
+     "cases": 9,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0,
+     "selected_ms": 26.788808,
+     "skipped": 0,
+     "tokens": 2880,
+     "weighted_regret": 0.0,
+     "worst_regret": 0.0
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 24,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 2.962144,
+     "cases": 6,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.10816699030639132,
+     "selected_ms": 2.98384,
+     "skipped": 0,
+     "tokens": 168,
+     "weighted_regret": 0.0073244244709238515,
+     "worst_regret": 0.4285714285714286
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 6,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 11.143162,
+     "cases": 12,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.004450816897994425,
+     "selected_ms": 11.163906,
+     "skipped": 0,
+     "tokens": 1008,
+     "weighted_regret": 0.00186159009444542,
+     "worst_regret": 0.039999999999999813
+    }
+   }
+  },
+  "cases_skipped": 100,
+  "legacy_qualification": "full ctest of master 752bae56 on sm_86 (RTX 3060 board): 395/395 passed; f24d0079 itself was not run on sm_86",
+  "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
+  "overall": {
+   "batch129": {
+    "best_ms": 34.273672,
+    "cases": 30,
+    "cases_over_5pct": 2,
+    "geomean_regret": 0.008502369318963865,
+    "selected_ms": 34.308872,
+    "skipped": 0,
+    "tokens": 9600,
+    "weighted_regret": 0.0010270273929213758,
+    "worst_regret": 0.15167095115681217
+   },
+   "decode": {
+    "best_ms": 0.0,
+    "cases": 0,
+    "cases_over_5pct": 0,
+    "geomean_regret": null,
+    "selected_ms": 0.0,
+    "skipped": 80,
+    "tokens": 0,
+    "weighted_regret": null,
+    "worst_regret": null
+   },
+   "narrow": {
+    "best_ms": 3.977696,
+    "cases": 20,
+    "cases_over_5pct": 3,
+    "geomean_regret": 0.04437881680392497,
+    "selected_ms": 4.007616,
+    "skipped": 0,
+    "tokens": 560,
+    "weighted_regret": 0.0075219423505465954,
+    "worst_regret": 0.4285714285714286
+   },
+   "verify": {
+    "best_ms": 0.0,
+    "cases": 0,
+    "cases_over_5pct": 0,
+    "geomean_regret": null,
+    "selected_ms": 0.0,
+    "skipped": 20,
+    "tokens": 0,
+    "weighted_regret": null,
+    "worst_regret": null
+   },
+   "wide": {
+    "best_ms": 14.587482,
+    "cases": 40,
+    "cases_over_5pct": 12,
+    "geomean_regret": 0.038796875399258246,
+    "selected_ms": 14.766178,
+    "skipped": 0,
+    "tokens": 3360,
+    "weighted_regret": 0.012249955132763946,
+    "worst_regret": 0.2999999999999998
+   }
+  },
+  "prefill_profile_rows_excluded": 404,
+  "schema": "ninferno-regret-bands/1",
+  "skipped_cases": [
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx3090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   }
+  ]
+ },
+ "regret_report": {
+  "build_id": "a5-f24d0079-rtx3090",
+  "by_board": {
+   "rtx3090": {
+    "cases": 190,
+    "geomean_slowdown": 1.0443612221631882,
+    "max_regret": 0.5614953682756652,
+    "median_regret": 0.0,
+    "p95_regret": 0.24761718749999995,
+    "scored_cases": 190,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 190
+    }
+   }
+  },
+  "by_board_regime_authority": [
+   {
+    "authority": "r8-rules",
+    "board": "rtx3090",
+    "cases": 10,
+    "evidence": {
+     "ranker": 10
+    },
+    "geomean_slowdown": 1.0179420932253347,
+    "max_regret": 0.0841121495327104,
+    "median_regret": 0.0,
+    "p95_regret": 0.0841121495327104,
+    "regime": "decode T<=4",
+    "ridge_t": 85.5323076923077,
+    "scored_cases": 10,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 10
+    }
+   },
+   {
+    "authority": "vec-rule",
+    "board": "rtx3090",
+    "cases": 30,
+    "evidence": {
+     "ranker": 30
+    },
+    "geomean_slowdown": 1.080345724516973,
+    "max_regret": 0.5614953682756652,
+    "median_regret": 0.029405369177261886,
+    "p95_regret": 0.32547109840968025,
+    "regime": "decode T<=4",
+    "ridge_t": 85.5323076923077,
+    "scored_cases": 30,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 30
+    }
+   },
+   {
+    "authority": "rmma-rule",
+    "board": "rtx3090",
+    "cases": 36,
+    "evidence": {
+     "ranker": 36
+    },
+    "geomean_slowdown": 1.0761207585416244,
+    "max_regret": 0.28717948717948705,
+    "median_regret": 0.05988238668961565,
+    "p95_regret": 0.2831168831168829,
+    "regime": "verify T5-16",
+    "ridge_t": 85.5323076923077,
+    "scored_cases": 36,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 36
+    }
+   },
+   {
+    "authority": "route-table",
+    "board": "rtx3090",
+    "cases": 24,
+    "evidence": {
+     "borrowed": 12,
+     "measured": 12
+    },
+    "geomean_slowdown": 1.0195530851475576,
+    "max_regret": 0.2058852328673766,
+    "median_regret": 0.0,
+    "p95_regret": 0.19623787172379026,
+    "regime": "verify T5-16",
+    "ridge_t": 85.5323076923077,
+    "scored_cases": 24,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 24
+    }
+   },
+   {
+    "authority": "cost-model",
+    "board": "rtx3090",
+    "cases": 40,
+    "evidence": {
+     "ranker": 40
+    },
+    "geomean_slowdown": 1.0444222268875596,
+    "max_regret": 0.4285714285714286,
+    "median_regret": 0.0025510204081632404,
+    "p95_regret": 0.2963709677419355,
+    "regime": "T>=17 below ridge",
+    "ridge_t": 85.5323076923077,
+    "scored_cases": 40,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 40
+    }
+   },
+   {
+    "authority": "cost-model",
+    "board": "rtx3090",
+    "cases": 50,
+    "evidence": {
+     "ranker": 50
+    },
+    "geomean_slowdown": 1.0182935634625554,
+    "max_regret": 0.2195121951219512,
+    "median_regret": 0.0,
+    "p95_regret": 0.15167095115681217,
+    "regime": "T>=17 above ridge",
+    "ridge_t": 85.5323076923077,
+    "scored_cases": 50,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 50
+    }
+   }
+  ],
+  "by_model": {
+   "qwen3.5-9b+gemma4-12b-dense": {
+    "cases": 190,
+    "geomean_slowdown": 1.0443612221631882,
+    "max_regret": 0.5614953682756652,
+    "median_regret": 0.0,
+    "p95_regret": 0.24761718749999995,
+    "scored_cases": 190,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 190
+    }
+   }
+  },
+  "device": "ga102:82sm",
+  "fit_boards": [],
+  "fit_models": [],
+  "holdout": "board",
+  "input_sha256": "4aa6dd2cb216c7cec325234af7d897e826415697573fa5bf3bd4f10098569265",
+  "max_regret": null,
+  "passed": true,
+  "schema": "ninferno-selection-regret-report/1",
+  "scope": "best observed qualified candidate in the supplied inventory; not a global optimum",
+  "selector_revision": "f24d0079",
+  "summary": {
+   "cases": 190,
+   "geomean_slowdown": 1.0443612221631882,
+   "max_regret": 0.5614953682756652,
+   "median_regret": 0.0,
+   "p95_regret": 0.24761718749999995,
+   "scored_cases": 190,
+   "single_pass_cases": 0,
+   "statuses": {
+    "complete": 190
+   }
+  }
+ },
+ "selected_bands": {
+  "bands": {
+   "batch129": [
+    129,
+    null
+   ],
+   "decode": [
+    1,
+    8
+   ],
+   "narrow": [
+    17,
+    32
+   ],
+   "verify": [
+    9,
+    16
+   ],
+   "wide": [
+    33,
+    128
+   ]
+  },
+  "by_board": {
+   "rtx3090": {
+    "batch129": {
+     "best_ms": 34.273672,
+     "cases": 30,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.008502369318963865,
+     "selected_ms": 34.308872,
+     "skipped": 0,
+     "tokens": 9600,
+     "weighted_regret": 0.0010270273929213758,
+     "worst_regret": 0.15167095115681217
+    },
+    "decode": {
+     "best_ms": 10.50807925,
+     "cases": 80,
+     "cases_over_5pct": 26,
+     "geomean_regret": 0.0470885272393915,
+     "selected_ms": 10.81143269,
+     "skipped": 0,
+     "tokens": 360,
+     "weighted_regret": 0.028868590803595273,
+     "worst_regret": 0.5614953682756652
+    },
+    "narrow": {
+     "best_ms": 3.977696,
+     "cases": 20,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.04437881680392497,
+     "selected_ms": 4.007616,
+     "skipped": 0,
+     "tokens": 560,
+     "weighted_regret": 0.0075219423505465954,
+     "worst_regret": 0.4285714285714286
+    },
+    "verify": {
+     "best_ms": 3.15537442,
+     "cases": 20,
+     "cases_over_5pct": 10,
+     "geomean_regret": 0.10081337237969046,
+     "selected_ms": 3.2375629,
+     "skipped": 0,
+     "tokens": 280,
+     "weighted_regret": 0.026047140231300947,
+     "worst_regret": 0.28717948717948705
+    },
+    "wide": {
+     "best_ms": 14.587482,
+     "cases": 40,
+     "cases_over_5pct": 12,
+     "geomean_regret": 0.038796875399258246,
+     "selected_ms": 14.766178,
+     "skipped": 0,
+     "tokens": 3360,
+     "weighted_regret": 0.012249955132763946,
+     "worst_regret": 0.2999999999999998
+    }
+   }
+  },
+  "by_family": {
+   "ggml_mmq": {
+    "batch129": {
+     "best_ms": 33.969544,
+     "cases": 28,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.00911244037292347,
+     "selected_ms": 34.004744,
+     "skipped": 0,
+     "tokens": 8576,
+     "weighted_regret": 0.0010362223290369954,
+     "worst_regret": 0.15167095115681217
+    },
+    "narrow": {
+     "best_ms": 3.946976,
+     "cases": 18,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.039458324577631876,
+     "selected_ms": 3.973824,
+     "skipped": 0,
+     "tokens": 504,
+     "weighted_regret": 0.006802169559683158,
+     "worst_regret": 0.4285714285714286
+    },
+    "verify": {
+     "best_ms": 0.5789699,
+     "cases": 6,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.0629689713609125,
+     "selected_ms": 0.58921,
+     "skipped": 0,
+     "tokens": 84,
+     "weighted_regret": 0.01768675711811607,
+     "worst_regret": 0.2058852328673766
+    },
+    "wide": {
+     "best_ms": 14.05705,
+     "cases": 36,
+     "cases_over_5pct": 12,
+     "geomean_regret": 0.0431995038266908,
+     "selected_ms": 14.235746,
+     "skipped": 0,
+     "tokens": 2848,
+     "weighted_regret": 0.012712197793989466,
+     "worst_regret": 0.2999999999999998
+    }
+   },
+   "ggml_vec": {
+    "decode": {
+     "best_ms": 3.9190704600000004,
+     "cases": 30,
+     "cases_over_5pct": 13,
+     "geomean_regret": 0.08034572451697297,
+     "selected_ms": 4.18103855,
+     "skipped": 0,
+     "tokens": 90,
+     "weighted_regret": 0.06684444504730847,
+     "worst_regret": 0.5614953682756652
+    }
+   },
+   "r8": {
+    "decode": {
+     "best_ms": 1.2641805099999999,
+     "cases": 10,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.017942093225334688,
+     "selected_ms": 1.27147427,
+     "skipped": 0,
+     "tokens": 10,
+     "weighted_regret": 0.005769555804969739,
+     "worst_regret": 0.0841121495327104
+    }
+   },
+   "rmma": {
+    "decode": {
+     "best_ms": 5.324828279999999,
+     "cases": 40,
+     "cases_over_5pct": 12,
+     "geomean_regret": 0.03006342271033291,
+     "selected_ms": 5.358919869999999,
+     "skipped": 0,
+     "tokens": 260,
+     "weighted_regret": 0.00640238298914686,
+     "worst_regret": 0.1448637282121208
+    },
+    "narrow": {
+     "best_ms": 0.030719999999999997,
+     "cases": 2,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.0897247358851685,
+     "selected_ms": 0.033792,
+     "skipped": 0,
+     "tokens": 56,
+     "weighted_regret": 0.10000000000000009,
+     "worst_regret": 0.18750000000000022
+    },
+    "verify": {
+     "best_ms": 2.57640452,
+     "cases": 14,
+     "cases_over_5pct": 8,
+     "geomean_regret": 0.11744209898742786,
+     "selected_ms": 2.6483529,
+     "skipped": 0,
+     "tokens": 196,
+     "weighted_regret": 0.02792588642097238,
+     "worst_regret": 0.28717948717948705
+    }
+   },
+   "w4a8ws": {
+    "batch129": {
+     "best_ms": 0.304128,
+     "cases": 2,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0,
+     "selected_ms": 0.304128,
+     "skipped": 0,
+     "tokens": 1024,
+     "weighted_regret": 0.0,
+     "worst_regret": 0.0
+    },
+    "wide": {
+     "best_ms": 0.530432,
+     "cases": 4,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0,
+     "selected_ms": 0.530432,
+     "skipped": 0,
+     "tokens": 512,
+     "weighted_regret": 0.0,
+     "worst_regret": 0.0
+    }
+   }
+  },
+  "by_format": {
+   "q4k": {
+    "batch129": {
+     "best_ms": 7.484864,
+     "cases": 21,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.01216833584321897,
+     "selected_ms": 7.520064,
+     "skipped": 0,
+     "tokens": 6720,
+     "weighted_regret": 0.004702824259732674,
+     "worst_regret": 0.15167095115681217
+    },
+    "decode": {
+     "best_ms": 2.21802865,
+     "cases": 56,
+     "cases_over_5pct": 14,
+     "geomean_regret": 0.03671063820260212,
+     "selected_ms": 2.26052009,
+     "skipped": 0,
+     "tokens": 252,
+     "weighted_regret": 0.01915729988429149,
+     "worst_regret": 0.5614953682756652
+    },
+    "narrow": {
+     "best_ms": 1.015552,
+     "cases": 14,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.018177649559264708,
+     "selected_ms": 1.023776,
+     "skipped": 0,
+     "tokens": 392,
+     "weighted_regret": 0.008098058986639733,
+     "worst_regret": 0.18750000000000022
+    },
+    "verify": {
+     "best_ms": 0.8807330200000001,
+     "cases": 14,
+     "cases_over_5pct": 8,
+     "geomean_regret": 0.11312943295407485,
+     "selected_ms": 0.9260575000000001,
+     "skipped": 0,
+     "tokens": 196,
+     "weighted_regret": 0.05146222404605649,
+     "worst_regret": 0.28717948717948705
+    },
+    "wide": {
+     "best_ms": 3.44432,
+     "cases": 28,
+     "cases_over_5pct": 12,
+     "geomean_regret": 0.05387382181903222,
+     "selected_ms": 3.602272,
+     "skipped": 0,
+     "tokens": 2352,
+     "weighted_regret": 0.04585868908812207,
+     "worst_regret": 0.2999999999999998
+    }
+   },
+   "q6k": {
+    "batch129": {
+     "best_ms": 26.788808,
+     "cases": 9,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0,
+     "selected_ms": 26.788808,
+     "skipped": 0,
+     "tokens": 2880,
+     "weighted_regret": 0.0,
+     "worst_regret": 0.0
+    },
+    "decode": {
+     "best_ms": 8.2900506,
+     "cases": 24,
+     "cases_over_5pct": 12,
+     "geomean_regret": 0.07170940493361799,
+     "selected_ms": 8.5509126,
+     "skipped": 0,
+     "tokens": 108,
+     "weighted_regret": 0.03146687669192261,
+     "worst_regret": 0.32547109840968025
+    },
+    "narrow": {
+     "best_ms": 2.962144,
+     "cases": 6,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.10816699030639132,
+     "selected_ms": 2.98384,
+     "skipped": 0,
+     "tokens": 168,
+     "weighted_regret": 0.0073244244709238515,
+     "worst_regret": 0.4285714285714286
+    },
+    "verify": {
+     "best_ms": 2.2746413999999997,
+     "cases": 6,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.07260323025094206,
+     "selected_ms": 2.3115053999999997,
+     "skipped": 0,
+     "tokens": 84,
+     "weighted_regret": 0.016206510617453818,
+     "worst_regret": 0.2451612903225806
+    },
+    "wide": {
+     "best_ms": 11.143162,
+     "cases": 12,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.004450816897994425,
+     "selected_ms": 11.163906,
+     "skipped": 0,
+     "tokens": 1008,
+     "weighted_regret": 0.00186159009444542,
+     "worst_regret": 0.039999999999999813
+    }
+   }
+  },
+  "cases_skipped": 0,
+  "legacy_qualification": "full ctest of master 752bae56 on sm_86 (RTX 3060 board): 395/395 passed; f24d0079 itself was not run on sm_86",
+  "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
+  "overall": {
+   "batch129": {
+    "best_ms": 34.273672,
+    "cases": 30,
+    "cases_over_5pct": 2,
+    "geomean_regret": 0.008502369318963865,
+    "selected_ms": 34.308872,
+    "skipped": 0,
+    "tokens": 9600,
+    "weighted_regret": 0.0010270273929213758,
+    "worst_regret": 0.15167095115681217
+   },
+   "decode": {
+    "best_ms": 10.50807925,
+    "cases": 80,
+    "cases_over_5pct": 26,
+    "geomean_regret": 0.0470885272393915,
+    "selected_ms": 10.81143269,
+    "skipped": 0,
+    "tokens": 360,
+    "weighted_regret": 0.028868590803595273,
+    "worst_regret": 0.5614953682756652
+   },
+   "narrow": {
+    "best_ms": 3.977696,
+    "cases": 20,
+    "cases_over_5pct": 3,
+    "geomean_regret": 0.04437881680392497,
+    "selected_ms": 4.007616,
+    "skipped": 0,
+    "tokens": 560,
+    "weighted_regret": 0.0075219423505465954,
+    "worst_regret": 0.4285714285714286
+   },
+   "verify": {
+    "best_ms": 3.15537442,
+    "cases": 20,
+    "cases_over_5pct": 10,
+    "geomean_regret": 0.10081337237969046,
+    "selected_ms": 3.2375629,
+    "skipped": 0,
+    "tokens": 280,
+    "weighted_regret": 0.026047140231300947,
+    "worst_regret": 0.28717948717948705
+   },
+   "wide": {
+    "best_ms": 14.587482,
+    "cases": 40,
+    "cases_over_5pct": 12,
+    "geomean_regret": 0.038796875399258246,
+    "selected_ms": 14.766178,
+    "skipped": 0,
+    "tokens": 3360,
+    "weighted_regret": 0.012249955132763946,
+    "worst_regret": 0.2999999999999998
+   }
+  },
+  "prefill_profile_rows_excluded": 404,
+  "schema": "ninferno-regret-bands/1",
+  "skipped_cases": []
+ },
+ "source_sha": "f24d0079613133f8e19f9bcc40b9357c761292b9",
+ "sweep": "ninferno_route_tune --a8-candidates 1 --samples 7, three passes (#614 A5)"
+}

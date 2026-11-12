@@ -1,0 +1,1787 @@
+{
+ "board": "rtx2080ti",
+ "card": "RTX 2080 Ti",
+ "measure": "NVIDIA GeForce RTX 2080 Ti, 2205 MHz, 260.00 W",
+ "model_bands": {
+  "bands": {
+   "batch129": [
+    129,
+    null
+   ],
+   "decode": [
+    1,
+    8
+   ],
+   "narrow": [
+    17,
+    32
+   ],
+   "verify": [
+    9,
+    16
+   ],
+   "wide": [
+    33,
+    128
+   ]
+  },
+  "by_board": {
+   "rtx2080ti": {
+    "batch129": {
+     "best_ms": 66.82704,
+     "cases": 30,
+     "cases_over_5pct": 30,
+     "geomean_regret": 2.197122359850738,
+     "selected_ms": 296.153794,
+     "skipped": 0,
+     "tokens": 9600,
+     "weighted_regret": 3.431646142040707,
+     "worst_regret": 4.700856354354615
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 80,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 6.887836000000001,
+     "cases": 20,
+     "cases_over_5pct": 20,
+     "geomean_regret": 0.9603096218201439,
+     "selected_ms": 19.26716,
+     "skipped": 0,
+     "tokens": 560,
+     "weighted_regret": 1.7972733380992225,
+     "worst_regret": 2.1887983961909527
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 20,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 27.57586,
+     "cases": 40,
+     "cases_over_5pct": 40,
+     "geomean_regret": 1.871003821247589,
+     "selected_ms": 109.701086,
+     "skipped": 0,
+     "tokens": 3360,
+     "weighted_regret": 2.9781564745396882,
+     "worst_regret": 3.9586776859504136
+    }
+   }
+  },
+  "by_family": {
+   "(no pick)": {
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 80,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 20,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    }
+   },
+   "rmma": {
+    "batch129": {
+     "best_ms": 66.82704,
+     "cases": 30,
+     "cases_over_5pct": 30,
+     "geomean_regret": 2.197122359850738,
+     "selected_ms": 296.153794,
+     "skipped": 0,
+     "tokens": 9600,
+     "weighted_regret": 3.431646142040707,
+     "worst_regret": 4.700856354354615
+    },
+    "narrow": {
+     "best_ms": 6.887836000000001,
+     "cases": 20,
+     "cases_over_5pct": 20,
+     "geomean_regret": 0.9603096218201439,
+     "selected_ms": 19.26716,
+     "skipped": 0,
+     "tokens": 560,
+     "weighted_regret": 1.7972733380992225,
+     "worst_regret": 2.1887983961909527
+    },
+    "wide": {
+     "best_ms": 27.57586,
+     "cases": 40,
+     "cases_over_5pct": 40,
+     "geomean_regret": 1.871003821247589,
+     "selected_ms": 109.701086,
+     "skipped": 0,
+     "tokens": 3360,
+     "weighted_regret": 2.9781564745396882,
+     "worst_regret": 3.9586776859504136
+    }
+   }
+  },
+  "by_format": {
+   "q4k": {
+    "batch129": {
+     "best_ms": 14.78025,
+     "cases": 21,
+     "cases_over_5pct": 21,
+     "geomean_regret": 2.2576849304126294,
+     "selected_ms": 63.131536,
+     "skipped": 0,
+     "tokens": 6720,
+     "weighted_regret": 3.2713442600767912,
+     "worst_regret": 4.700856354354615
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 56,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 1.735808,
+     "cases": 14,
+     "cases_over_5pct": 14,
+     "geomean_regret": 0.9203266653412272,
+     "selected_ms": 3.4961919999999997,
+     "skipped": 0,
+     "tokens": 392,
+     "weighted_regret": 1.01415824791682,
+     "worst_regret": 1.8555098308184732
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 14,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 6.513536,
+     "cases": 28,
+     "cases_over_5pct": 28,
+     "geomean_regret": 1.8942775743942026,
+     "selected_ms": 23.828454,
+     "skipped": 0,
+     "tokens": 2352,
+     "weighted_regret": 2.658297735669228,
+     "worst_regret": 3.9586776859504136
+    }
+   },
+   "q6k": {
+    "batch129": {
+     "best_ms": 52.04679,
+     "cases": 9,
+     "cases_over_5pct": 9,
+     "geomean_regret": 2.0601520709624235,
+     "selected_ms": 233.022258,
+     "skipped": 0,
+     "tokens": 2880,
+     "weighted_regret": 3.4771686784141727,
+     "worst_regret": 3.701629624957623
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 24,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 5.1520280000000005,
+     "cases": 6,
+     "cases_over_5pct": 6,
+     "geomean_regret": 1.0568706259346325,
+     "selected_ms": 15.770968,
+     "skipped": 0,
+     "tokens": 168,
+     "weighted_regret": 2.0611184566543503,
+     "worst_regret": 2.1887983961909527
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 6,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 21.062324,
+     "cases": 12,
+     "cases_over_5pct": 12,
+     "geomean_regret": 1.8174236081631956,
+     "selected_ms": 85.872632,
+     "skipped": 0,
+     "tokens": 1008,
+     "weighted_regret": 3.077072976372408,
+     "worst_regret": 3.563430871651959
+    }
+   }
+  },
+  "cases_skipped": 100,
+  "legacy_qualification": "full ctest of master 65e573fd on sm_75 (this board): 393/393 passed; f24d0079 itself was not run on sm_75, and kernel sources changed in between: not qualified at the measured revision",
+  "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
+  "overall": {
+   "batch129": {
+    "best_ms": 66.82704,
+    "cases": 30,
+    "cases_over_5pct": 30,
+    "geomean_regret": 2.197122359850738,
+    "selected_ms": 296.153794,
+    "skipped": 0,
+    "tokens": 9600,
+    "weighted_regret": 3.431646142040707,
+    "worst_regret": 4.700856354354615
+   },
+   "decode": {
+    "best_ms": 0.0,
+    "cases": 0,
+    "cases_over_5pct": 0,
+    "geomean_regret": null,
+    "selected_ms": 0.0,
+    "skipped": 80,
+    "tokens": 0,
+    "weighted_regret": null,
+    "worst_regret": null
+   },
+   "narrow": {
+    "best_ms": 6.887836000000001,
+    "cases": 20,
+    "cases_over_5pct": 20,
+    "geomean_regret": 0.9603096218201439,
+    "selected_ms": 19.26716,
+    "skipped": 0,
+    "tokens": 560,
+    "weighted_regret": 1.7972733380992225,
+    "worst_regret": 2.1887983961909527
+   },
+   "verify": {
+    "best_ms": 0.0,
+    "cases": 0,
+    "cases_over_5pct": 0,
+    "geomean_regret": null,
+    "selected_ms": 0.0,
+    "skipped": 20,
+    "tokens": 0,
+    "weighted_regret": null,
+    "worst_regret": null
+   },
+   "wide": {
+    "best_ms": 27.57586,
+    "cases": 40,
+    "cases_over_5pct": 40,
+    "geomean_regret": 1.871003821247589,
+    "selected_ms": 109.701086,
+    "skipped": 0,
+    "tokens": 3360,
+    "weighted_regret": 2.9781564745396882,
+    "worst_regret": 3.9586776859504136
+   }
+  },
+  "prefill_profile_rows_excluded": 404,
+  "schema": "ninferno-regret-bands/1",
+  "skipped_cases": [
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx2080ti",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   }
+  ]
+ },
+ "regret_report": {
+  "build_id": "a5-f24d0079-rtx2080ti",
+  "by_board": {
+   "rtx2080ti": {
+    "cases": 190,
+    "geomean_slowdown": 1.6802703099190672,
+    "max_regret": 4.700856354354615,
+    "median_regret": 0.530720384292694,
+    "p95_regret": 3.5790940713623867,
+    "scored_cases": 190,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 190
+    }
+   }
+  },
+  "by_board_regime_authority": [
+   {
+    "authority": "dense-tune",
+    "board": "rtx2080ti",
+    "cases": 2,
+    "evidence": {
+     "measured": 2
+    },
+    "geomean_slowdown": 1.0,
+    "max_regret": 0.0,
+    "median_regret": 0.0,
+    "p95_regret": 0.0,
+    "regime": "decode T<=4",
+    "ridge_t": 98.23792207792208,
+    "scored_cases": 2,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 2
+    }
+   },
+   {
+    "authority": "r8-rules",
+    "board": "rtx2080ti",
+    "cases": 9,
+    "evidence": {
+     "ranker": 9
+    },
+    "geomean_slowdown": 1.0059631693869941,
+    "max_regret": 0.033339996059883914,
+    "median_regret": 0.0,
+    "p95_regret": 0.033339996059883914,
+    "regime": "decode T<=4",
+    "ridge_t": 98.23792207792208,
+    "scored_cases": 9,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 9
+    }
+   },
+   {
+    "authority": "vec-rule",
+    "board": "rtx2080ti",
+    "cases": 29,
+    "evidence": {
+     "ranker": 29
+    },
+    "geomean_slowdown": 1.2103319005469162,
+    "max_regret": 0.7131385980669465,
+    "median_regret": 0.09062499999999973,
+    "p95_regret": 0.708209602093516,
+    "regime": "decode T<=4",
+    "ridge_t": 98.23792207792208,
+    "scored_cases": 29,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 29
+    }
+   },
+   {
+    "authority": "mmq-verify-rule",
+    "board": "rtx2080ti",
+    "cases": 20,
+    "evidence": {
+     "ranker": 20
+    },
+    "geomean_slowdown": 1.0952667128496987,
+    "max_regret": 0.42881367377717083,
+    "median_regret": 0.0,
+    "p95_regret": 0.4279551921947693,
+    "regime": "verify T5-16",
+    "ridge_t": 98.23792207792208,
+    "scored_cases": 20,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 20
+    }
+   },
+   {
+    "authority": "rmma-rule",
+    "board": "rtx2080ti",
+    "cases": 20,
+    "evidence": {
+     "ranker": 20
+    },
+    "geomean_slowdown": 1.0343738630424728,
+    "max_regret": 0.1836246991887167,
+    "median_regret": 0.0,
+    "p95_regret": 0.1748370205702634,
+    "regime": "verify T5-16",
+    "ridge_t": 98.23792207792208,
+    "scored_cases": 20,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 20
+    }
+   },
+   {
+    "authority": "route-table",
+    "board": "rtx2080ti",
+    "cases": 20,
+    "evidence": {
+     "measured": 20
+    },
+    "geomean_slowdown": 1.0,
+    "max_regret": 0.0,
+    "median_regret": 0.0,
+    "p95_regret": 0.0,
+    "regime": "verify T5-16",
+    "ridge_t": 98.23792207792208,
+    "scored_cases": 20,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 20
+    }
+   },
+   {
+    "authority": "cost-model",
+    "board": "rtx2080ti",
+    "cases": 50,
+    "evidence": {
+     "ranker": 50
+    },
+    "geomean_slowdown": 2.3962298108622444,
+    "max_regret": 3.898400056385678,
+    "median_regret": 1.2142199940566771,
+    "p95_regret": 3.529476670870114,
+    "regime": "T>=17 below ridge",
+    "ridge_t": 98.23792207792208,
+    "scored_cases": 50,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 50
+    }
+   },
+   {
+    "authority": "cost-model",
+    "board": "rtx2080ti",
+    "cases": 40,
+    "evidence": {
+     "ranker": 40
+    },
+    "geomean_slowdown": 3.2237025754762274,
+    "max_regret": 4.700856354354615,
+    "median_regret": 2.198109318264628,
+    "p95_regret": 4.420734259462261,
+    "regime": "T>=17 above ridge",
+    "ridge_t": 98.23792207792208,
+    "scored_cases": 40,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 40
+    }
+   }
+  ],
+  "by_model": {
+   "qwen3.5-9b+gemma4-12b-dense": {
+    "cases": 190,
+    "geomean_slowdown": 1.6802703099190672,
+    "max_regret": 4.700856354354615,
+    "median_regret": 0.530720384292694,
+    "p95_regret": 3.5790940713623867,
+    "scored_cases": 190,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 190
+    }
+   }
+  },
+  "device": "tu102:68sm",
+  "fit_boards": [],
+  "fit_models": [],
+  "holdout": "board",
+  "input_sha256": "18b652e304fa9d8e8f5af480694ab03ca0ced5c3aba3df970ad0985c5a9e1910",
+  "max_regret": null,
+  "passed": true,
+  "schema": "ninferno-selection-regret-report/1",
+  "scope": "best observed qualified candidate in the supplied inventory; not a global optimum",
+  "selector_revision": "f24d0079",
+  "summary": {
+   "cases": 190,
+   "geomean_slowdown": 1.6802703099190672,
+   "max_regret": 4.700856354354615,
+   "median_regret": 0.530720384292694,
+   "p95_regret": 3.5790940713623867,
+   "scored_cases": 190,
+   "single_pass_cases": 0,
+   "statuses": {
+    "complete": 190
+   }
+  }
+ },
+ "selected_bands": {
+  "bands": {
+   "batch129": [
+    129,
+    null
+   ],
+   "decode": [
+    1,
+    8
+   ],
+   "narrow": [
+    17,
+    32
+   ],
+   "verify": [
+    9,
+    16
+   ],
+   "wide": [
+    33,
+    128
+   ]
+  },
+  "by_board": {
+   "rtx2080ti": {
+    "batch129": {
+     "best_ms": 66.82704,
+     "cases": 30,
+     "cases_over_5pct": 30,
+     "geomean_regret": 2.197122359850738,
+     "selected_ms": 296.153794,
+     "skipped": 0,
+     "tokens": 9600,
+     "weighted_regret": 3.431646142040707,
+     "worst_regret": 4.700856354354615
+    },
+    "decode": {
+     "best_ms": 16.30929495,
+     "cases": 80,
+     "cases_over_5pct": 23,
+     "geomean_regret": 0.08146568204762872,
+     "selected_ms": 19.506359630000002,
+     "skipped": 0,
+     "tokens": 360,
+     "weighted_regret": 0.19602715444176821,
+     "worst_regret": 0.7131385980669465
+    },
+    "narrow": {
+     "best_ms": 6.887836000000001,
+     "cases": 20,
+     "cases_over_5pct": 20,
+     "geomean_regret": 0.9603096218201439,
+     "selected_ms": 19.26716,
+     "skipped": 0,
+     "tokens": 560,
+     "weighted_regret": 1.7972733380992225,
+     "worst_regret": 2.1887983961909527
+    },
+    "verify": {
+     "best_ms": 5.5363282,
+     "cases": 20,
+     "cases_over_5pct": 8,
+     "geomean_regret": 0.09526671284969868,
+     "selected_ms": 5.5903307,
+     "skipped": 0,
+     "tokens": 280,
+     "weighted_regret": 0.009754208574556777,
+     "worst_regret": 0.42881367377717083
+    },
+    "wide": {
+     "best_ms": 27.57586,
+     "cases": 40,
+     "cases_over_5pct": 40,
+     "geomean_regret": 1.871003821247589,
+     "selected_ms": 109.701086,
+     "skipped": 0,
+     "tokens": 3360,
+     "weighted_regret": 2.9781564745396882,
+     "worst_regret": 3.9586776859504136
+    }
+   }
+  },
+  "by_family": {
+   "ggml_mmq": {
+    "verify": {
+     "best_ms": 5.5363282,
+     "cases": 20,
+     "cases_over_5pct": 8,
+     "geomean_regret": 0.09526671284969868,
+     "selected_ms": 5.5903307,
+     "skipped": 0,
+     "tokens": 280,
+     "weighted_regret": 0.009754208574556777,
+     "worst_regret": 0.42881367377717083
+    }
+   },
+   "ggml_vec": {
+    "decode": {
+     "best_ms": 6.01890236,
+     "cases": 29,
+     "cases_over_5pct": 19,
+     "geomean_regret": 0.2103319005469162,
+     "selected_ms": 9.20633117,
+     "skipped": 0,
+     "tokens": 86,
+     "weighted_regret": 0.5295697818896001,
+     "worst_regret": 0.7131385980669465
+    }
+   },
+   "r8": {
+    "decode": {
+     "best_ms": 1.91044621,
+     "cases": 10,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.005365255763640331,
+     "selected_ms": 1.91139006,
+     "skipped": 0,
+     "tokens": 10,
+     "weighted_regret": 0.000494046885517907,
+     "worst_regret": 0.033339996059883914
+    }
+   },
+   "rmma": {
+    "batch129": {
+     "best_ms": 66.82704,
+     "cases": 30,
+     "cases_over_5pct": 30,
+     "geomean_regret": 2.197122359850738,
+     "selected_ms": 296.153794,
+     "skipped": 0,
+     "tokens": 9600,
+     "weighted_regret": 3.431646142040707,
+     "worst_regret": 4.700856354354615
+    },
+    "decode": {
+     "best_ms": 8.37994638,
+     "cases": 41,
+     "cases_over_5pct": 4,
+     "geomean_regret": 0.016622634254091606,
+     "selected_ms": 8.3886384,
+     "skipped": 0,
+     "tokens": 264,
+     "weighted_regret": 0.0010372405270688834,
+     "worst_regret": 0.1836246991887167
+    },
+    "narrow": {
+     "best_ms": 6.887836000000001,
+     "cases": 20,
+     "cases_over_5pct": 20,
+     "geomean_regret": 0.9603096218201439,
+     "selected_ms": 19.26716,
+     "skipped": 0,
+     "tokens": 560,
+     "weighted_regret": 1.7972733380992225,
+     "worst_regret": 2.1887983961909527
+    },
+    "wide": {
+     "best_ms": 27.57586,
+     "cases": 40,
+     "cases_over_5pct": 40,
+     "geomean_regret": 1.871003821247589,
+     "selected_ms": 109.701086,
+     "skipped": 0,
+     "tokens": 3360,
+     "weighted_regret": 2.9781564745396882,
+     "worst_regret": 3.9586776859504136
+    }
+   }
+  },
+  "by_format": {
+   "q4k": {
+    "batch129": {
+     "best_ms": 14.78025,
+     "cases": 21,
+     "cases_over_5pct": 21,
+     "geomean_regret": 2.2576849304126294,
+     "selected_ms": 63.131536,
+     "skipped": 0,
+     "tokens": 6720,
+     "weighted_regret": 3.2713442600767912,
+     "worst_regret": 4.700856354354615
+    },
+    "decode": {
+     "best_ms": 3.2815189499999997,
+     "cases": 56,
+     "cases_over_5pct": 14,
+     "geomean_regret": 0.04083239078556922,
+     "selected_ms": 3.34348423,
+     "skipped": 0,
+     "tokens": 252,
+     "weighted_regret": 0.018883108994388165,
+     "worst_regret": 0.3293368822001157
+    },
+    "narrow": {
+     "best_ms": 1.735808,
+     "cases": 14,
+     "cases_over_5pct": 14,
+     "geomean_regret": 0.9203266653412272,
+     "selected_ms": 3.4961919999999997,
+     "skipped": 0,
+     "tokens": 392,
+     "weighted_regret": 1.01415824791682,
+     "worst_regret": 1.8555098308184732
+    },
+    "verify": {
+     "best_ms": 1.3765655,
+     "cases": 14,
+     "cases_over_5pct": 6,
+     "geomean_regret": 0.1257522395005941,
+     "selected_ms": 1.4235281,
+     "skipped": 0,
+     "tokens": 196,
+     "weighted_regret": 0.03411577582032965,
+     "worst_regret": 0.42881367377717083
+    },
+    "wide": {
+     "best_ms": 6.513536,
+     "cases": 28,
+     "cases_over_5pct": 28,
+     "geomean_regret": 1.8942775743942026,
+     "selected_ms": 23.828454,
+     "skipped": 0,
+     "tokens": 2352,
+     "weighted_regret": 2.658297735669228,
+     "worst_regret": 3.9586776859504136
+    }
+   },
+   "q6k": {
+    "batch129": {
+     "best_ms": 52.04679,
+     "cases": 9,
+     "cases_over_5pct": 9,
+     "geomean_regret": 2.0601520709624235,
+     "selected_ms": 233.022258,
+     "skipped": 0,
+     "tokens": 2880,
+     "weighted_regret": 3.4771686784141727,
+     "worst_regret": 3.701629624957623
+    },
+    "decode": {
+     "best_ms": 13.027776,
+     "cases": 24,
+     "cases_over_5pct": 9,
+     "geomean_regret": 0.1825529911302537,
+     "selected_ms": 16.1628754,
+     "skipped": 0,
+     "tokens": 108,
+     "weighted_regret": 0.24064732153822743,
+     "worst_regret": 0.7131385980669465
+    },
+    "narrow": {
+     "best_ms": 5.1520280000000005,
+     "cases": 6,
+     "cases_over_5pct": 6,
+     "geomean_regret": 1.0568706259346325,
+     "selected_ms": 15.770968,
+     "skipped": 0,
+     "tokens": 168,
+     "weighted_regret": 2.0611184566543503,
+     "worst_regret": 2.1887983961909527
+    },
+    "verify": {
+     "best_ms": 4.1597627,
+     "cases": 6,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.027305745838544393,
+     "selected_ms": 4.1668026,
+     "skipped": 0,
+     "tokens": 84,
+     "weighted_regret": 0.001692380192745091,
+     "worst_regret": 0.09876220703124994
+    },
+    "wide": {
+     "best_ms": 21.062324,
+     "cases": 12,
+     "cases_over_5pct": 12,
+     "geomean_regret": 1.8174236081631956,
+     "selected_ms": 85.872632,
+     "skipped": 0,
+     "tokens": 1008,
+     "weighted_regret": 3.077072976372408,
+     "worst_regret": 3.563430871651959
+    }
+   }
+  },
+  "cases_skipped": 0,
+  "legacy_qualification": "full ctest of master 65e573fd on sm_75 (this board): 393/393 passed; f24d0079 itself was not run on sm_75, and kernel sources changed in between: not qualified at the measured revision",
+  "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
+  "overall": {
+   "batch129": {
+    "best_ms": 66.82704,
+    "cases": 30,
+    "cases_over_5pct": 30,
+    "geomean_regret": 2.197122359850738,
+    "selected_ms": 296.153794,
+    "skipped": 0,
+    "tokens": 9600,
+    "weighted_regret": 3.431646142040707,
+    "worst_regret": 4.700856354354615
+   },
+   "decode": {
+    "best_ms": 16.30929495,
+    "cases": 80,
+    "cases_over_5pct": 23,
+    "geomean_regret": 0.08146568204762872,
+    "selected_ms": 19.506359630000002,
+    "skipped": 0,
+    "tokens": 360,
+    "weighted_regret": 0.19602715444176821,
+    "worst_regret": 0.7131385980669465
+   },
+   "narrow": {
+    "best_ms": 6.887836000000001,
+    "cases": 20,
+    "cases_over_5pct": 20,
+    "geomean_regret": 0.9603096218201439,
+    "selected_ms": 19.26716,
+    "skipped": 0,
+    "tokens": 560,
+    "weighted_regret": 1.7972733380992225,
+    "worst_regret": 2.1887983961909527
+   },
+   "verify": {
+    "best_ms": 5.5363282,
+    "cases": 20,
+    "cases_over_5pct": 8,
+    "geomean_regret": 0.09526671284969868,
+    "selected_ms": 5.5903307,
+    "skipped": 0,
+    "tokens": 280,
+    "weighted_regret": 0.009754208574556777,
+    "worst_regret": 0.42881367377717083
+   },
+   "wide": {
+    "best_ms": 27.57586,
+    "cases": 40,
+    "cases_over_5pct": 40,
+    "geomean_regret": 1.871003821247589,
+    "selected_ms": 109.701086,
+    "skipped": 0,
+    "tokens": 3360,
+    "weighted_regret": 2.9781564745396882,
+    "worst_regret": 3.9586776859504136
+   }
+  },
+  "prefill_profile_rows_excluded": 404,
+  "schema": "ninferno-regret-bands/1",
+  "skipped_cases": []
+ },
+ "source_sha": "f24d0079613133f8e19f9bcc40b9357c761292b9",
+ "sweep": "ninferno_route_tune --a8-candidates 1 --samples 7, three passes (#614 A5)"
+}

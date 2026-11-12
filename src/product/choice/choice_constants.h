@@ -276,23 +276,46 @@ inline constexpr R8IssueRate kR8IssueRate[] = {
     {"ga10x", 2.87, 2},
 };
 
+// The kernel a routed layer's grouped stage runs at a decode width (ops/moe MoeStageKernel, as the
+// op's route query answers it: runtime::PlanExpertKernel). Unknown: not asked, or no answer.
+enum class ExpertKernel : std::uint8_t { Unknown, R8, RegisterMma, W4a8, VoltaHmma };
+
 // An MoE's routed banks at C concurrent rows (DECISIONS 65): the experts any of the rows routes to,
 // each for a row or two, many small reads apart from the dense GEMVs kRowsEta measures. Their share
 // of the DRAM rate (C = 1: kDramEta; linear in log2 C between points; beyond the last, the last's):
 // the MoE step rows of speed_measured.json (the server's windows of exactly C rows, eight different
 // tasks) less every other term of the step, the mean over the generation's cards and quantizations
 // (tools/fits/speed_model/fit_moe_decode.py). A generation without rows takes Ada's (transferred).
+//
+// Each row is keyed by the kernels the measured steps' routed stages ran (#616 step 7): what the
+// MoE op's route query answers for those layers at 2-8 rows on those boards (ops/moe
+// moe_route_query; the plan goldens tests/ops/moe_plan_golden: decode-r8, R8 on the gate/up bank,
+// the register MMA on the down bank, for the Q4_K, Q3_K and IQ3_XXS gate/up banks over Q6_K, Q4_K
+// and IQ4_XS downs on the RTX 4090, 4060 Ti, 5070 Ti and 5090; the 5070 Ti's IQ2_S layers of
+// UD-IQ3_XXS take the gb206 table's R8 gate/up over the register-MMA down from T = 2). One kernel
+// pair only, so the rows do not tell the pairs apart: within it the share still falls with the
+// rows (the rows key stays), and a step whose layers the op runs on another pair (both stages on
+// the register MMA above the R8 limit, an FP4-element bank from five rows, --activations exact;
+// both on R8 in a route-table band; W4A8; Volta's HMMA) takes its generation's measured pair,
+// transferred: no step of that pair was measured, and no share is derived for it here.
 struct MoeRoutedEta {
     std::string_view generation;
+    ExpertKernel gate_up; // the kernels the measured steps' routed stages ran
+    ExpertKernel down;
     double rows;
     double eta;
     int cards;
 };
+
 inline constexpr MoeRoutedEta kMoeRoutedEta[] = {
     // Ada: RTX 4090 (UD-Q4_K_M, UD-Q3_K_S), 4060 Ti (UD-Q3_K_S, 7 rows its most: no 8-row point).
-    {"ada", 2, 0.926, 2}, {"ada", 4, 0.909, 2}, {"ada", 8, 0.803, 1},
+    {"ada", ExpertKernel::R8, ExpertKernel::RegisterMma, 2, 0.926, 2},
+    {"ada", ExpertKernel::R8, ExpertKernel::RegisterMma, 4, 0.909, 2},
+    {"ada", ExpertKernel::R8, ExpertKernel::RegisterMma, 8, 0.803, 1},
     // Blackwell: RTX 5070 Ti (UD-IQ3_XXS, UD-Q3_K_S), 5090 (UD-Q3_K_S).
-    {"gb20x", 2, 0.918, 2}, {"gb20x", 4, 0.740, 2}, {"gb20x", 8, 0.634, 2},
+    {"gb20x", ExpertKernel::R8, ExpertKernel::RegisterMma, 2, 0.918, 2},
+    {"gb20x", ExpertKernel::R8, ExpertKernel::RegisterMma, 4, 0.740, 2},
+    {"gb20x", ExpertKernel::R8, ExpertKernel::RegisterMma, 8, 0.634, 2},
 };
 
 // The model's measured error on a generation's dense decode estimate: the rms of ln(predicted /
@@ -640,7 +663,8 @@ struct VoltaPrefillCost {
     int cards;
 };
 inline constexpr VoltaPrefillCost kVoltaPrefillCost{52.4, 0.69, 0.99, 1.11, 0.94, 1};
-inline constexpr double kVoltaChunkBytes = 4096.0 * 17408 * 2; // generic_volta_cutlass.cu kChunkWeightBytes
+inline constexpr double kVoltaChunkBytes =
+    4096.0 * 17408 * 2; // generic_volta_cutlass_sizes.cpp kChunkWeightBytes
 // A tiled format's call (Q8_0, Q4_K, Q5_K: their own tile beside the copy) takes the copy from this
 // many tokens, or at any width on a board of this much DRAM (generic_select.cpp volta_copy_pays); a
 // shorter call on a slower board runs the tile, not read: the share prices it.
