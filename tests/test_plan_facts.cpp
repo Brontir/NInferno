@@ -191,6 +191,15 @@ int gguf_qwen35() {
     // the grouped W4A8; IQ3_XXS and IQ3_S banks in fragment order the W4A8 does not read, so the
     // 16-bit register MMA; MXFP4 banks their own route.
     failures += check(e.model.expert_prefill == rt::ExpertPrefill::Int8, "Q4_K banks: int8");
+    failures += check(!e.model.expert_prefill_assumed, "a whole table's banks: the file's own route");
+    // A split part's banks are the first part's only; a later part may hold another format, so
+    // the route read off them is an assumed one (#813), as gguf_tensor_table already says.
+    GgufFile moe_split                = moe;
+    moe_split.metadata["split.count"] = 3;
+    const auto es                     = pr::plan_facts_of_gguf(moe_split, 17000000000ULL);
+    failures += check(es.model.expert_prefill == rt::ExpertPrefill::Int8 &&
+                          es.model.expert_prefill_assumed,
+                      "a split part's banks: the route kept, assumed");
     GgufFile iq3 = file;
     iq3.tensors.push_back(
         tensor("blk.0.ffn_gate_exps.weight", {5120, 512, 64}, ninferno::convert::ggml::IQ3_XXS, 200));
