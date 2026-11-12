@@ -7,6 +7,7 @@
 #include "ggml_mmq.h"
 
 #include "core/cuda_error.h"
+#include "core/device_class.h"
 #include "core/generation.h"
 #include "core/mmq_columns.h"
 #include "core/per_device.h"
@@ -24,11 +25,12 @@
     } while (0)
 
 // The 80- and 96-column tiles are built only for the architectures whose generation takes them
-// (core/generation.h mmq_work_tiles); the others never launch them. The device pass cannot call
-// the generation table, so the one range it holds is spelled here and checked against the table.
+// (core/generation.h mmq_work_tiles: Turing, GA10x, Ada, GB20x); the others never launch them. The
+// device pass cannot call the generation table, so the ranges it holds are spelled here and checked
+// against the table.
 namespace ninferno::ops::ggml_mmq::detail {
 [[nodiscard]] __host__ __device__ constexpr bool work_tiles_arch(int cc) {
-    return (cc >= 810 && cc < 900) || (cc >= 1200 && cc < 1300);
+    return (cc >= 750 && cc < 800) || (cc >= 810 && cc < 900) || (cc >= 1200 && cc < 1300);
 }
 
 constexpr bool work_tiles_arch_matches_table() {
@@ -62,9 +64,24 @@ struct DeviceFacts {
     int cc                             = 0; // ggml's: 100 * major + 10 * minor
     int sm_count                       = 0;
     std::size_t shared_per_block_optin = 0;
+    // The board's facts (core/machine_facts.h, the query's DeviceClass::facts) the launch law
+    // prices the fixup with: 0 where the board has no roofline.
+    double clock_hz         = 0; // the reference clock
+    double dram_bytes_per_s = 0;
 };
 
 [[nodiscard]] const DeviceFacts& device_facts();
+
+// device_facts() are the device class's, a substituted board's under ScopedDeviceClass, so a
+// launch chosen from them is that board's: run on this GPU it could take a tile its shared memory
+// or compute capability does not hold. A launch under a substitute other than this GPU's own class
+// is refused; a description (ScopedDescribe) launches nothing and is not.
+inline void refuse_substituted_launch() {
+    if (substituted_foreign_class()) {
+        throw std::logic_error("ggml mmq: a launch under a substituted board (its tile and grid "
+                               "are another GPU's); describe it instead");
+    }
+}
 
 // A CudaError, so a device fault that first surfaces at one of these launches is still answered
 // as the device's failure (HTTP 503) rather than an internal error.
@@ -123,17 +140,20 @@ template <ggml_type type>
 Launch select_launch(int rows, int columns, int k) {
     const DeviceFacts& device = device_facts();
     Launch best;
-    double best_cost        = 1e300;
-    const int major         = device.cc / 100;
-    const int minor         = device.cc / 10 % 10;
-    const bool work_table   = mmq_columns::uses_work_table(major, minor, kWorkTilesFormat<type>);
-    const double tile_fixed = mmq_columns::tile_fixed(major, minor, kWorkTilesFormat<type>);
-    for (const int J : mmq_columns::tiles(major, minor, kWorkTilesFormat<type>)) {
+    double best_cost  = 1e300;
+    const int major   = device.cc / 100;
+    const int minor   = device.cc / 10 % 10;
+    const bool format = kWorkTilesFormat<type>;
+    // The product's shape and the card, for a generation that prices its widths by the launch
+    // they run (core/mmq_columns.h width_cost; the others rank by the tile count).
+    const mmq_columns::LaunchFacts facts{rows, k, device.sm_count, device.clock_hz,
+                                         device.dram_bytes_per_s};
+    for (const int J : mmq_columns::tiles(major, minor, format)) {
         const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, false, device.cc);
         if (config.type == GGML_TYPE_COUNT) continue;
         const std::size_t shared = mmq_get_nbytes_shared(config, device.cc);
         if (shared > device.shared_per_block_optin) continue;
-        const double cost = mmq_columns::launch_cost(columns, J, work_table, tile_fixed);
+        const double cost = mmq_columns::width_cost(columns, J, major, minor, format, facts);
         if (cost < best_cost) {
             best_cost     = cost;
             best.k_vram   = config.K_vram;
@@ -147,18 +167,14 @@ Launch select_launch(int rows, int columns, int k) {
     if (best.J == 0) throw std::invalid_argument("ggml mmq: no tile fits this device");
     best.row_tiles    = (rows + best.I - 1) / best.I;
     best.column_tiles = (columns + best.J - 1) / best.J;
-    const int tiles   = best.row_tiles * best.column_tiles;
-    if (best.stream_k) {
-        const int waves      = (tiles + device.sm_count - 1) / device.sm_count;
-        const int efficiency = 100 * tiles / (device.sm_count * waves);
-        // A block beyond the call's work units (an output tile times its K_vram steps) has nothing
-        // to do and lengthens the fixup's scan (llama.cpp #30553).
-        const int work = tiles * std::max(1, (k + best.k_vram - 1) / best.k_vram);
-        best.blocks    = efficiency >= 90 ? tiles : std::min(device.sm_count, work);
-        best.fixup           = tiles % best.blocks != 0;
-    } else {
-        best.blocks = tiles;
-    }
+    // The partition the law priced: a tile a CTA where the grid fills its last wave to 90 %, else
+    // min(SMs, units) CTAs over the units (a block beyond the call's units has nothing to do and
+    // lengthens the fixup's scan, llama.cpp #30553), and the fixup where they do not divide the
+    // tiles.
+    const mmq_columns::ColumnLaunch l = mmq_columns::launch_of(
+        rows, k, columns, best.J, device.sm_count, best.stream_k, best.k_vram, best.I);
+    best.blocks = l.blocks;
+    best.fixup  = l.fixup;
     return best;
 }
 
@@ -186,20 +202,23 @@ template <ggml_type type, int J>
 void launch(const Launch& l, const char* codes, const ggml_planes& planes, int stride_row_blocks,
             int rows, int k, const int* activation, int columns, float* out,
             std::int64_t out_column_stride, float* fixup, cudaStream_t stream) {
-    static PerDevice<bool> raised;
-    allow_dynamic_smem(raised, mul_mat_q<type, J, false>, l.shared);
-    constexpr int qk      = ggml_cuda_type_traits<type>::qk;
-    const uint3 blocks_fd = init_fastdiv_values(k / qk);
-    const uint3 one_fd    = init_fastdiv_values(1);
-    const uint3 ntx_fd    = init_fastdiv_values(l.column_tiles);
     const dim3 block_dims(WARP_SIZE, l.threads / WARP_SIZE, 1);
-    const int stride = static_cast<int>(out_column_stride);
+    // A description launches nothing, so it needs no opt-in shared memory on this GPU: under a
+    // substituted board its tile is the substitute's, which this GPU may not hold.
     if (LaunchShape* described = describe_target()) {
         describe_launch(*described, reinterpret_cast<const void*>(mul_mat_q<type, J, false>),
                         l.stream_k ? dim3(l.blocks, 1, 1) : dim3(l.row_tiles, l.column_tiles, 1),
                         block_dims, l.shared);
         return;
     }
+    refuse_substituted_launch();
+    static PerDevice<bool> raised;
+    allow_dynamic_smem(raised, mul_mat_q<type, J, false>, l.shared);
+    constexpr int qk      = ggml_cuda_type_traits<type>::qk;
+    const uint3 blocks_fd = init_fastdiv_values(k / qk);
+    const uint3 one_fd    = init_fastdiv_values(1);
+    const uint3 ntx_fd    = init_fastdiv_values(l.column_tiles);
+    const int stride      = static_cast<int>(out_column_stride);
     if (!l.stream_k) {
         check(::ninferno::pdl::launch_dependent(
                   {dim3(l.row_tiles, l.column_tiles, 1), block_dims, l.shared, stream},

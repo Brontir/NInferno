@@ -11,20 +11,25 @@
 #             (installs a newer release, share/ninferno/install.sh)
 #     lib/    the shared libraries the binaries link (FFmpeg, curl, OpenSSL, ...), found through
 #             the binaries' $ORIGIN/../lib run path; the CUDA runtime is linked statically;
-#             libpdfium.so, which ninferno-serve loads for PDF documents
+#             FFmpeg is our LGPL, decoders-only build (tools/release/ffmpeg.sh), not the build
+#             machine's; libpdfium.so, which ninferno-serve loads for PDF documents
 #     share/ninferno/   engines.json (which engine runs where), route tables, drafter rankings,
 #                       the page's chat window (llama-ui), the recommendations ninferno-start shows
 #
 # NINFERNO_ARCHS lists the generations (default "120a 100 90 89 86 80 75 70"); each builds in its own
 # tree (NINFERNO_BUILD_ROOT/build-release-<arch>). Volta needs CUDA 12.8 (CUDA 13 dropped it):
-# NINFERNO_CUDA70=/usr/local/cuda-12.8, else the archive has no Volta engine. NINFERNO_PACKAGE_CLEAN=1
+# NINFERNO_CUDA70 names it (default /usr/local/cuda-12.8 when that exists); with neither,
+# package.sh stops, unless 70 is left out of NINFERNO_ARCHS on purpose. release.json lists the engines built. NINFERNO_PACKAGE_CLEAN=1
 # removes each tree once its engine is copied (six trees at once outgrow a small disk);
 # NINFERNO_PACKAGE_RESUME=1 keeps the engines an interrupted run already put in OUT_DIR; NINFERNO_JOBS
 # caps the compile jobs (nvcc on sm_75's largest kernels needs memory). NINFERNO_VERSION overrides
 # the version (default `git describe`, without a leading v), NINFERNO_CMAKE_ARGS adds configure
-# arguments and NINFERNO_PACKAGE_TARGETS more targets for the first tree. The C library, the
+# arguments and NINFERNO_PACKAGE_TARGETS more targets for the first tree. NINFERNO_FFMPEG_PREFIX is
+# where ffmpeg.sh builds FFmpeg (default NINFERNO_BUILD_ROOT/build-release-ffmpeg; it needs nasm,
+# meson and ninja). The C library, the
 # dynamic loader and the NVIDIA driver libraries stay the user's; build on the oldest
-# distribution the archive should support (the glibc it needs is the build machine's).
+# distribution the archive should support (the glibc it needs is the build machine's, and it must
+# not be newer than the GLIBC_MIN install.sh checks).
 set -euo pipefail
 OUT=$(realpath -m "${1:-dist}")
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -36,6 +41,46 @@ NAME=ninferno-$VERSION-linux-x86_64
 STAGE=$OUT/$NAME
 ARCHIVE=ninferno-linux-x86_64.tar.gz  # a stable name: releases/latest/download/<name>
 CUDA70=${NINFERNO_CUDA70:-$(ls -d /usr/local/cuda-12.8 2>/dev/null || true)}
+[ -x "$CUDA70/bin/nvcc" ] || CUDA70=""
+# Volta is in every release unless NINFERNO_ARCHS leaves it out: a missing CUDA 12.8 stops here,
+# before hours of building, rather than shipping an archive without its engine. A resumed run may
+# already hold it.
+for arch in $ARCHS; do
+  [ "$arch" = 70 ] && [ -z "$CUDA70" ] || continue
+  # The build loop's own resume condition, for sm_70.
+  if [ "${NINFERNO_PACKAGE_RESUME:-0}" = 1 ] && [ -x "$STAGE/bin/ninferno-serve-sm70" ] &&
+    [ -f "$STAGE/bin/ninferno-serve.dispatch" ]; then continue; fi
+  echo "package.sh: no CUDA 12.8 for the Volta engine (NINFERNO_CUDA70); to build without Volta, leave 70 out of NINFERNO_ARCHS" >&2
+  exit 1
+done
+# The archive needs the build machine's glibc; install.sh lets in GLIBC_MIN and newer.
+GLIBC_BUILD=$(getconf GNU_LIBC_VERSION | sed -n 's/^glibc \([0-9][0-9.]*\).*/\1/p' || true)
+GLIBC_MIN=$(sed -n 's/^GLIBC_MIN=\([0-9.]*\)$/\1/p' "$ROOT/tools/release/install.sh")
+[ -n "$GLIBC_BUILD" ] && [ -n "$GLIBC_MIN" ] || { echo "package.sh: cannot read the build machine's glibc or install.sh's GLIBC_MIN" >&2; exit 1; }
+if [ "$(printf '%s\n%s\n' "$GLIBC_BUILD" "$GLIBC_MIN" | sort -V | tail -n1)" != "$GLIBC_MIN" ]; then
+  echo "package.sh: this machine has glibc $GLIBC_BUILD, newer than the $GLIBC_MIN install.sh checks for (GLIBC_MIN): build on an older distribution, or raise GLIBC_MIN and the README's minimum" >&2
+  exit 1
+fi
+# A CUDA 12.8 copied from a distribution with glibc 2.41 or newer carries that distribution's patch
+# of crt/math_functions.h: sinpi, cospi and rsqrt declared noexcept (true), as glibc 2.41's math.h
+# declares them. Against an older glibc the declarations clash and the Volta tree stops compiling
+# hours in. NVIDIA's own package (docs/maintainer/release.md) has no such patch.
+build70=no
+for arch in $ARCHS; do
+  [ "$arch" = 70 ] || continue
+  # A resumed run that holds the engine builds no Volta tree (the build loop's condition).
+  if [ "${NINFERNO_PACKAGE_RESUME:-0}" = 1 ] && [ -x "$STAGE/bin/ninferno-serve-sm70" ] &&
+    [ -f "$STAGE/bin/ninferno-serve.dispatch" ]; then continue; fi
+  build70=yes
+done
+if [ -n "$CUDA70" ] && [ "$build70" = yes ]; then
+  math=$CUDA70/targets/x86_64-linux/include/crt/math_functions.h
+  if [ -f "$math" ] && grep -Eq 'sinpi\(double x\) noexcept' "$math" &&
+    [ "$(printf '%s\n%s\n' "$GLIBC_BUILD" 2.41 | sort -V | head -n1)" != 2.41 ]; then
+    echo "package.sh: $math declares sinpi noexcept (a copy from a system with glibc 2.41 or newer), which does not compile against this machine's glibc $GLIBC_BUILD: install CUDA 12.8 from NVIDIA's apt repository (docs/maintainer/release.md)" >&2
+    exit 1
+  fi
+fi
 # Checked before hours of building: the run paths below need it.
 command -v patchelf > /dev/null || { echo "package.sh: patchelf is needed (the binaries' run path)" >&2; exit 1; }
 # Every tree but Volta's builds with this nvcc, not the one CMake finds first (/usr/local/cuda can be
@@ -67,8 +112,9 @@ done
 # The kernels an engine compiled against its snapshot: the linked binary read with cuobjdump
 # (tools/kernel_facts/kernel_facts.py check: no GPU), and, where a GPU of the generation is on
 # this machine, the running kernels' attributes against it too (`ninferno-serve selector-facts`,
-# the probe the selector goldens are priced by; exit 2 without such a GPU: the release goes on,
-# the first check having passed). A flag, a source or a compiler build that changed the kernels is
+# the probe the selector goldens are priced by; exit 2 without such a GPU, and the loader's exit 127
+# without the NVIDIA driver, whose libcuda.so.1 the engine links: the release goes on, the first
+# check having passed). A flag, a source or a compiler build that changed the kernels is
 # caught here, not by the toolkit's name.
 check_kernel_facts() {
   local arch=$1 bin=$2 nvcc_bin=$3
@@ -76,24 +122,59 @@ check_kernel_facts() {
 }
 # The same with the compiler named: a resumed Volta engine was built by CUDA 12.8 (the only
 # compiler the build path takes for it), and any toolkit's cuobjdump reads its sm_70 binary.
+# A passed check leaves a stamp in OUT_DIR (no .sha256: never published): a resumed run checks an
+# engine again only when the engine, its snapshot, the nvcc named or the checker changed, instead
+# of the SASS pass's minutes per engine.
 check_kernel_facts_as() {
   local arch=$1 bin=$2 version=$3 cuda_bin=$4
   python3 -B "$ROOT/tools/kernel_facts/kernel_facts.py" check --binary "$bin" --expected "$FACTS/sm_$arch.txt" \
-    --nvcc "$version" --cuda-bin "$cuda_bin" \
+    --nvcc "$version" --cuda-bin "$cuda_bin" --stamp "$OUT/.kernel-facts-checked/sm_$arch" \
     || { echo "package.sh: the sm_$arch kernels differ from their snapshot (kernel-facts snapshots, #612)" >&2; exit 1; }
 }
 check_selector_facts() {
   local arch=$1 bin=$2 out status
-  out=$("$bin" selector-facts) && status=0 || status=$?
+  out=$("$bin" selector-facts 2>&1) && status=0 || status=$?
   if [ "$status" = 2 ]; then
     echo "package.sh: 'ninferno-serve selector-facts' found no GPU that runs the sm_$arch kernels on this machine; the live check was not run" >&2
+    return 0
+  fi
+  if [ "$status" = 127 ] && [[ $out == *"libcuda.so.1: cannot open shared object file"* ]]; then
+    echo "package.sh: no NVIDIA driver on this machine (libcuda.so.1), so no GPU for sm_$arch; the live check was not run" >&2
     return 0
   fi
   [ "$status" = 0 ] || { echo "$out" >&2; echo "package.sh: 'ninferno-serve selector-facts' failed for sm_$arch (exit $status)" >&2; exit 1; }
 }
 
+# FFmpeg is our own LGPL build with decoders only (tools/release/ffmpeg.sh), never the build
+# machine's (a distribution's FFmpeg is GPL and brings x264, x265 and xvid): every tree finds it
+# through pkg-config, and lib/ carries it. Built once (a few minutes) and reused while ffmpeg.pin
+# and the script stay the same.
+# The two test-only switches of ffmpeg.sh are refused: a release links the pinned dav1d, built
+# static, and decodes with assembly.
+for switch in NINFERNO_DAV1D_PREFIX NINFERNO_FFMPEG_NO_ASM; do
+  if [ -n "${!switch:-}" ]; then
+    echo "package.sh: $switch is for test builds of ffmpeg.sh; unset it for a release" >&2
+    exit 1
+  fi
+done
+FFMPEG=$(realpath -m "${NINFERNO_FFMPEG_PREFIX:-$BUILD_ROOT/build-release-ffmpeg}")
+bash "$ROOT/tools/release/ffmpeg.sh" "$FFMPEG"
+if grep -q -- '--disable-x86asm' "$FFMPEG/share/licenses/ffmpeg/BUILD.txt"; then
+  echo "package.sh: $FFMPEG was built without assembly (NINFERNO_FFMPEG_NO_ASM), too slow for a release" >&2
+  exit 1
+fi
+# Read from the dynamic section (readelf runs nothing of the library, unlike ldd).
+avcodec_dynamic=$(readelf -d "$FFMPEG/lib/libavcodec.so") ||
+  { echo "package.sh: cannot read $FFMPEG/lib/libavcodec.so (readelf, from binutils)" >&2; exit 1; }
+if [[ $avcodec_dynamic =~ NEEDED[^[:cntrl:]]*libdav1d ]]; then
+  echo "package.sh: $FFMPEG's libavcodec loads a shared dav1d (NINFERNO_DAV1D_PREFIX), not the pinned one built into it" >&2
+  exit 1
+fi
+export PKG_CONFIG_PATH="$FFMPEG/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+
 first=""
 engines=""
+built=""  # the engines this archive holds, for release.json
 jobs=()
 [ -n "${NINFERNO_JOBS:-}" ] && jobs=(-j "$NINFERNO_JOBS")
 for arch in $ARCHS; do
@@ -101,7 +182,8 @@ for arch in $ARCHS; do
   specific=false; [[ $arch =~ [af]$ ]] && specific=true
   if [ "${NINFERNO_PACKAGE_RESUME:-0}" = 1 ] && [ -x "$STAGE/bin/ninferno-serve-sm$arch" ] && [ -f "$STAGE/bin/ninferno-serve.dispatch" ]; then
     echo "package.sh: sm_$arch already packed (resume)"
-    # Its facts again: the tree, a flag or the index may have changed since it was staged.
+    # Its facts again: the index or the checker may have changed since it was staged (the stamp
+    # skips the SASS pass where nothing did, check_kernel_facts_as).
     if [ "$arch" = 70 ] && [ -z "$CUDA70" ]; then
       check_kernel_facts_as 70 "$STAGE/bin/ninferno-serve-sm70" \
         "$(sed -n 's/^nvcc \(.*\)$/\1/p' "$FACTS/sm_70.txt")" "$(dirname "$NVCC")"
@@ -112,16 +194,19 @@ for arch in $ARCHS; do
     if [ "$arch" = 86 ] || [ "$arch" = 120a ]; then check_selector_facts "$arch" "$STAGE/bin/ninferno-serve-sm$arch"; fi
     first=${first:-$STAGE}
     engines+="${engines:+, }{\"tag\": \"$arch\", \"arch\": ${arch//[!0-9]/}, \"specific\": $specific, \"ptx\": $ptx}"
+    built+="${built:+ }$arch"
     continue
   fi
   extra=(-DCMAKE_CUDA_COMPILER="$NVCC")
   if [ "$arch" = 70 ]; then
-    [ -n "$CUDA70" ] || { echo "package.sh: no CUDA 12.8 (NINFERNO_CUDA70): no Volta engine" >&2; continue; }
+    [ -n "$CUDA70" ] || { echo "package.sh: no CUDA 12.8 (NINFERNO_CUDA70) for the Volta engine" >&2; exit 1; }
     extra=(-DCMAKE_CUDA_COMPILER="$CUDA70/bin/nvcc")
   fi
   # Ada's engine carries its PTX too: the driver compiles it, once, for a GPU no engine names.
   build=$BUILD_ROOT/build-release-$arch
+  # pkg-config's answer is cached: a tree configured before against another FFmpeg asks again.
   cmake -S "$ROOT" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -U__pkg_config_checked_FFMPEG -U'pkgcfg_lib_FFMPEG_*' \
     -DCMAKE_CUDA_ARCHITECTURES="$arch" -DNINFERNO_CUDA_EMBED_PTX=$([ $ptx = true ] && echo ON || echo OFF) \
     -DNINFERNO_CUDA_LINEINFO=OFF -DNINFERNO_BUILD_APPS=ON -DBUILD_TESTING=OFF \
     -DNINFERNO_BUILD_BENCHMARKS=OFF -DNINFERNO_SOURCE_TREE_PATHS=OFF -DCMAKE_INSTALL_LIBDIR=lib -DNINFERNO_VERSION_STRING="$VERSION" \
@@ -150,6 +235,7 @@ for arch in $ARCHS; do
   install -m 0755 -s "$build/apps/ninferno-serve" "$STAGE/bin/ninferno-serve-sm$arch"
   [ "${NINFERNO_PACKAGE_CLEAN:-0}" = 1 ] && rm -rf "$build"
   engines+="${engines:+, }{\"tag\": \"$arch\", \"arch\": ${arch//[!0-9]/}, \"specific\": $specific, \"ptx\": $ptx}"
+  built+="${built:+ }$arch"
 done
 [ -n "$first" ] || { echo "package.sh: no architecture built" >&2; exit 1; }
 mv "$STAGE/bin/ninferno-serve.dispatch" "$STAGE/bin/ninferno-serve"
@@ -163,11 +249,18 @@ echo "{\"engines\": [$engines]}" > "$STAGE/share/ninferno/engines.json"
 system_lib='^(linux-vdso|ld-linux|libc|libm|libdl|librt|libpthread|libresolv|libutil|libcuda|libnvidia)[.-]'
 mkdir -p "$STAGE/lib"
 for exe in "$STAGE"/bin/*; do
-  ldd "$exe" 2> /dev/null | awk '$2 == "=>" && $3 ~ /^\// {print $3}'
+  LD_LIBRARY_PATH="$FFMPEG/lib" ldd "$exe" 2> /dev/null | awk '$2 == "=>" && $3 ~ /^\// {print $3}'
 done | sort -u | while read -r lib; do
   base=$(basename "$lib")
   [[ $base =~ $system_lib ]] && continue
   cp -L "$lib" "$STAGE/lib/$base"
+done
+# Every FFmpeg library in lib/ is the one ffmpeg.sh built (a binary linked against another
+# FFmpeg would bring that one's), checked before the run paths below change the files.
+for lib in "$STAGE"/lib/libav*.so* "$STAGE"/lib/libsw*.so* "$STAGE"/lib/libpostproc*.so*; do
+  [ -e "$lib" ] || continue
+  cmp -s "$lib" "$FFMPEG/lib/$(basename "$lib")" ||
+    { echo "package.sh: lib/$(basename "$lib") is not the FFmpeg tools/release/ffmpeg.sh built in $FFMPEG" >&2; exit 1; }
 done
 for exe in "$STAGE"/bin/ninferno-serve-sm*; do
   if ldd "$exe" | grep -q 'libcudart'; then
@@ -179,6 +272,13 @@ done
 bash "$ROOT/tools/release/pdfium.sh" linux-x64 "$STAGE/lib" "$STAGE/share/licenses/pdfium"
 # The bundled libraries resolve each other from lib/ as well.
 for lib in "$STAGE"/lib/*.so*; do patchelf --set-rpath '$ORIGIN' "$lib"; done
+# FFmpeg's licence notes and sources (ffmpeg.sh), and the check of the libraries as bundled: each
+# reports an LGPL licence, the configure line has no --enable-gpl or --enable-nonfree, there is no
+# encoder, muxer or protocol, and no GPL codec library (x264, x265, xvid) sits beside them.
+mkdir -p "$STAGE/share/licenses"
+cp -r "$FFMPEG/share/licenses/ffmpeg" "$STAGE/share/licenses/"
+python3 -B "$ROOT/tools/release/ffmpeg_check.py" "$STAGE/lib" > "$STAGE/share/licenses/ffmpeg/BUILD.txt" ||
+  { echo "package.sh: the FFmpeg in lib/ is not the LGPL, decoders-only build a release may carry" >&2; exit 1; }
 # Their licenses, from the distribution's packages (Debian and Ubuntu: /usr/share/doc/<package>).
 for lib in "$STAGE"/lib/*.so*; do
   package=$(dpkg -S "$(basename "$lib")" 2> /dev/null | head -n 1 | cut -d: -f1) || true
@@ -204,9 +304,10 @@ install -m 0755 "$ROOT/tools/release/ninferno-update" "$STAGE/bin/ninferno-updat
 install -m 0644 "$ROOT/tools/release/install.sh" "$STAGE/share/ninferno/install.sh"
 python3 "$ROOT/tools/release/recommend.py" --out "$STAGE/share/ninferno/recommend.tsv"
 cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$STAGE/"
-# cuda: the toolkit of every engine but Volta's, which CUDA 12.8 builds.
+# archs: the engines built; cuda: the toolkit of every engine but Volta's, which CUDA 12.8 builds;
+# glibc: the oldest the archive runs on.
 cat > "$STAGE/share/ninferno/release.json" <<JSON
-{"version": "$VERSION", "archs": "$ARCHS", "cuda": "$CUDA",
+{"version": "$VERSION", "archs": "$built", "cuda": "$CUDA", "glibc": "$GLIBC_BUILD",
  "built": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 JSON
 "$STAGE/bin/ninferno-serve" --version || true

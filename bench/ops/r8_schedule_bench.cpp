@@ -409,9 +409,12 @@ int main(int argc, char** argv) {
                     device.name.c_str(), device.id().c_str(), device.l2_bytes >> 20, samples,
                     launches);
         {
+            // The PCI id names the board in the table (tools/bench/r8_decode_table.py writes
+            // measured::board_of_pci of it); the facts are for the reader of the sweep.
             const Board b = board_of(device);
-            std::printf("board cc %d sms %d l2_mib %g dram_gbps %g\n", b.major * 10 + b.minor,
-                        b.sms, b.l2_mib, b.dram_gbps);
+            std::printf("board cc %d sms %d l2_mib %g dram_gbps %g pci 0x%04x\n",
+                        b.major * 10 + b.minor, b.sms, b.l2_mib, b.dram_gbps,
+                        static_cast<unsigned>(device.pci_device_id));
         }
         for (const Problem& p : problems) {
             for (const std::int32_t t : widths) run_problem(p, samples, launches, device.l2_bytes, t);

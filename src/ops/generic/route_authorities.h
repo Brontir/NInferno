@@ -13,7 +13,9 @@
 // Evidence kinds. Pin: a maintainer's choice (a route pin, a route probe). Measured: timed on this
 // board (a route table measured here, the dense tuner's entry of this class and build, the R8
 // decode table of this board). Ranker: the cost model where it prices the call, else a rule (a
-// derivation from the card's facts, or a literal of one or more measured cards). Carried: a
+// derivation from the card's facts, or a literal of one or more measured cards, fitted there and
+// applied to every board). The printed kind does not tell these apart and names no donor; the cost
+// model and a rule differ in Evidence::ranker, which is not printed. Carried: a
 // measurement of a board within kCarryDistance (core/measured_boards.h), every quantity compared.
 // Transferred: a measurement of a farther board, carried by the authority's own rule. Borrowed: an
 // exact-key entry taken from a farther table because the nearest lacked it (route_table.cpp
@@ -55,7 +57,7 @@ struct Ask {
     // The prefill band: the prefill profile's calls of 17 tokens or more, which take one route per
     // problem; below it the profile's calls route as the speed profile's.
     [[nodiscard]] bool prefill_band() const noexcept {
-        return profile == Profile::Prefill && tokens >= 17;
+        return profile == Profile::Prefill && tokens >= kPrefillBandMinTokens;
     }
 
     [[nodiscard]] bool prefill() const noexcept { return profile == Profile::Prefill; }
@@ -67,6 +69,23 @@ struct Ask {
 // The Ask of a call below the profiles (auto_route, heuristic_route: the pins' A16 answer, the
 // tuner's baseline): Prefill or Speed by `prefill` whatever profile is active.
 [[nodiscard]] Ask ask_below_profiles(std::int32_t tokens, bool prefill);
+
+// The profile filter (#614, step A2): whether the Ask's profile lets `route` answer. It is the one
+// place the profiles' contracts are stated; the authorities (route_authorities.cpp) and the route
+// table's loader (route_table.cpp) both ask it. What a route can compute at all (the format, the
+// policy, the build, the device's features) is route_admits' half, not this one.
+//
+// The prefill band (Ask::prefill_band): every call of 17 tokens or more takes one route per
+// problem, so the route must sum in the order every width shares (route_is_token_invariant). With a
+// weight, a format with a tiled codec keeps its tiled route there (the tiled and register-MMA
+// families sum in different orders); the loader has no weight and does not ask that half. Below
+// the band, and under the speed and invariant profiles, every route passes.
+[[nodiscard]] bool profile_admits(Route route, const Ask& ask, const Weight* weight = nullptr);
+
+// Under the prefill profile a route that stands in for `reference` (a table's prefill route, the
+// rules' choice) must sum as it does, so a prefill token's bytes do not depend on which of the two
+// its call's width took (same_summation). Other profiles: every route passes.
+[[nodiscard]] bool profile_admits_as(Route route, const Ask& ask, Route reference);
 
 struct Evidence {
     enum class Kind : std::uint8_t { Pin, Measured, Ranker, Carried, Transferred, Borrowed };
@@ -116,6 +135,14 @@ struct RouteAnswer {
     Evidence evidence;
 };
 
+// The evidence as the places a person or a tool reads a decision print it (#614, A3): "authority=
+// <source> evidence=<kind>", and for an answer that names a donor " donor=<board or class>
+// d=<distance>" (three decimals, locale independent). One function for the description line
+// (describe_text), the decision manifest's route_evidence section and the route tuner's CSV.
+[[nodiscard]] std::string evidence_text(const Evidence& evidence);
+// The two columns the route tuner's --selected-out ends its rows with: "<source>,<kind>".
+[[nodiscard]] std::string evidence_columns(const Evidence& evidence);
+
 // An authority: the first of a list to answer decides the call. nullopt: it abstains (its scope
 // does not hold the call, or nothing it names is admitted).
 using Authority = std::optional<RouteAnswer> (*)(const Ask&, const Problem&, const Weight&);
@@ -145,5 +172,11 @@ struct NamedAuthority {
 [[nodiscard]] RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& weight);
 [[nodiscard]] RouteAnswer heuristic_answer(const Ask& ask, const Problem& problem,
                                            const Weight& weight);
+// The ranker's answer: what auto_answer gives where neither the route table nor the dense tuner
+// answers (the NVFP4 half-L2 rule, then the rules), under the Ask the call's rules see (an NVFP4
+// A16 call of 17 tokens or more as the prefill profile's, nvfp4_promoted). The route a measured
+// override would hand the call back to: tools/bench/route_table_prune.py compares the two.
+[[nodiscard]] RouteAnswer ranker_answer(const Ask& ask, const Problem& problem,
+                                        const Weight& weight);
 
 } // namespace ninferno::ops::detail::generic

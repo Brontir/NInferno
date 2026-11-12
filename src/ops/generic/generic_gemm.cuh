@@ -31,6 +31,7 @@
 #include "ops/common/memory.cuh"
 #include "ops/common/mma.cuh"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/rmma_geometry.h"
 #include "ops/generic/ggml_iq_tables.cuh"
 #include "ops/linear/fp8/fp8_a16_codec.cuh"
 
@@ -41,6 +42,7 @@
 #include <cuda_fp8.h>
 
 #include <cstdint>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -2196,6 +2198,71 @@ struct StageActsOf : std::false_type {};
 template <class D>
 struct StageActsOf<D, std::void_t<decltype(D::kStageActs)>> : std::bool_constant<D::kStageActs> {};
 
+// The decoder constants the shared-memory geometry reads are rows of geometry::kDecoderGeometry
+// (rmma_geometry.h, which the host test checks against the kernel-facts snapshots): each row is
+// pinned to its decoder here.
+template <class D>
+constexpr int TableWordsOf() {
+    if constexpr (TableOf<D>::value) {
+        return D::kTableWords;
+    } else {
+        return 0;
+    }
+}
+
+// A decoder that has a row in geometry::kDecoderGeometry (the reverse of the rows' check: a decoder
+// with a table, staging or a group tail but no row would price 0 bytes of shared memory).
+template <class D>
+struct HasGeometryRow : std::false_type {};
+
+template <class D>
+constexpr bool decoder_matches_geometry(std::string_view name) {
+    const geometry::DecoderGeometry g = geometry::decoder_geometry(name);
+    return g.name == name && g.run == D::kRun && g.table_words == TableWordsOf<D>() &&
+           g.stage_acts == StageActsOf<D>::value && g.group_tail == GroupTailOf<D>::value;
+}
+
+// Pins the row `name` to the decoder (constants equal) and records that the decoder has one.
+#define NINFERNO_DECODER_GEOMETRY_ROW(name, ...)                                                   \
+    static_assert(decoder_matches_geometry<__VA_ARGS__>(name));                                    \
+    template <>                                                                                    \
+    struct HasGeometryRow<__VA_ARGS__> : std::true_type {};
+
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq1MDecoder", GgmlIq1MDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq1SDecoder", GgmlIq1SDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq2SDecoder", GgmlIq2SDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq2XsDecoder", GgmlIq2XsDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq2XxsDecoder", GgmlIq2XxsDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq3SDecoder", GgmlIq3SDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq3XxsDecoder", GgmlIq3XxsDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ3KDecoder", GgmlQ3KDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ6KDecoder", GgmlQ6KDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ6KWideDecoder", GgmlQ6KWideDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ45KQuadDecoder<4>", GgmlQ45KQuadDecoder<4>)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ45KQuadDecoder<5>", GgmlQ45KQuadDecoder<5>)
+NINFERNO_DECODER_GEOMETRY_ROW("Ggml32Decoder<0>", Ggml32Decoder<Ggml32::Q4_0>)
+NINFERNO_DECODER_GEOMETRY_ROW("Ggml32Decoder<1>", Ggml32Decoder<Ggml32::Q4_1>)
+NINFERNO_DECODER_GEOMETRY_ROW("Ggml32Decoder<2>", Ggml32Decoder<Ggml32::Q5_0>)
+NINFERNO_DECODER_GEOMETRY_ROW("Ggml32Decoder<3>", Ggml32Decoder<Ggml32::Q5_1>)
+NINFERNO_DECODER_GEOMETRY_ROW("Ggml32Decoder<4>", Ggml32Decoder<Ggml32::IQ4_NL>)
+NINFERNO_DECODER_GEOMETRY_ROW("Mxfp4SpreadDecoder", Mxfp4SpreadDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ45KDecoder<4>", GgmlQ45KDecoder<4>)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ45KDecoder<5>", GgmlQ45KDecoder<5>)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ4KFragDecoder", GgmlQ4KFragDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ40FragDecoder", GgmlQ40FragDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq3XxsFragDecoder", GgmlIq3XxsFragDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq2SFragDecoder", GgmlIq2SFragDecoder)
+#undef NINFERNO_DECODER_GEOMETRY_ROW
+
+// The build capability the geometry reads (geometry::build_has_cp_async) is the one rmma_kernel's
+// kStaged gate compiles under, on every architecture this file is compiled for.
+#ifdef __CUDA_ARCH__
+static_assert(geometry::build_has_cp_async(__CUDA_ARCH__ / 10) ==
+                  (NINFERNO_HAS_CP_ASYNC && !NINFERNO_FMA_MMA),
+              "geometry::build_has_cp_async (rmma_geometry.h) differs from the kernel's cp.async "
+              "gate (NINFERNO_HAS_CP_ASYNC, NINFERNO_FMA_MMA)");
+#endif
+
 // A decoder with finish() (kFinish: the wide Q6_K) loads its runs in a raw form that finish()
 // completes with the whole warp once the loads have landed: mma_step finishes the step's runs in
 // place after issuing the step's activation loads (finished in the fetch, the swap waited for the
@@ -2407,9 +2474,9 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                 // wait (RTX 3060 at T <= 8: +15-23 % with the adds). So do f16 operands (F16Of,
                 // Turing's: act_operands converted act to f16 in place, which the BF16 unpack below
                 // cannot read; the adds lost there anyway, rmma_add_sums).
-                const bool add =
+                [[maybe_unused]] const bool add =
                     NINFERNO_FMA_MMA || (!F16Of<Decoder>::value && NT >= 4 && add_sums);
-                float sums[NT][4];
+                [[maybe_unused]] float sums[NT][4]; // read under MinTermOf only
                 if constexpr (MinTermOf<Decoder>::value) {
                     if (add) {
 #pragma unroll
@@ -3173,6 +3240,13 @@ __global__
 __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Latency>)) void
     rmma_kernel(
     GemmArgs a) {
+    // The shared-memory geometry (rmma_geometry.h) prices a decoder by its kDecoderGeometry row:
+    // one with a table, staging or a group tail and no row would be priced 0.
+    static_assert(HasGeometryRow<Decoder>::value ||
+                      !(TableOf<Decoder>::value || StageActsOf<Decoder>::value ||
+                        GroupTailOf<Decoder>::value),
+                  "a decoder with a table, staging or a group tail needs a row in "
+                  "geometry::kDecoderGeometry (rmma_geometry.h)");
     constexpr int R        = Decoder::kRun;
     constexpr int KStep    = 4 * R;
     constexpr int J        = R / 4; // MMAs per K step
@@ -3249,8 +3323,9 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
     // add, one row set and half the weight per activation, lost 5-20 % with it (the shared memory
     // comes out of L1, which the quad's weight words hit): they load in the step.
     constexpr bool kRaw      = Latency && UnpackOf<Decoder>::value;
-    constexpr bool kActStage = Latency && StageActsOf<Decoder>::value && kSwiGlu && NT == 1 &&
-                               Schedule::kWarpsM * WK <= 8 && !GroupTailOf<Decoder>::value;
+    constexpr bool kActStage =
+        geometry::rmma_stages_activations(Latency, StageActsOf<Decoder>::value, kSwiGlu, NT,
+                                          Schedule::kWarpsM * WK, GroupTailOf<Decoder>::value);
 #if NINFERNO_FMA_MMA || !NINFERNO_HAS_CP_ASYNC
     constexpr bool kStaged = false; // no cp.async (sm_75 copies synchronously, memory.cuh)
 #else
@@ -3261,6 +3336,8 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
     unsigned act_ring[kAhead ? 2 : 1][1][kAhead ? 2 * J : 1];
     __shared__ uint2 act_stage[kStaged ? 2 : 1][kStaged ? Schedule::kWarpsM * WK : 1]
                               [kStaged ? J : 1][32];
+    static_assert(!kStaged ||
+                  sizeof(act_stage) == geometry::rmma_act_stage_bytes(Schedule::kWarpsM, WK, J));
     const auto stage_act = [&](auto slot_tag, int step) {
         if constexpr (kStaged) {
             constexpr int slot = decltype(slot_tag)::value;
@@ -3325,7 +3402,7 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
         // schedules better there (Q5_K store 8192x4096 w1x4 at T = 8: 81.9 us against 92.9 in
         // place; Q4_K even).
         constexpr bool kCopy = kRaw && !kSwiGlu;
-        Run unpacked[kCopy ? kSets : 1][kCopy ? MT : 1][2];
+        [[maybe_unused]] Run unpacked[kCopy ? kSets : 1][kCopy ? MT : 1][2]; // read under kRaw only
         if constexpr (kRaw) {
 #pragma unroll
             for (int s = 0; s < kSets; ++s)
@@ -3438,6 +3515,8 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
     bool live = true;
     if constexpr (WK > 1) {
         __shared__ float partial[WK - 1][Schedule::kWarpsM][kSets][MT][NT][4][32];
+        static_assert(sizeof(partial) ==
+                      geometry::rmma_partial_bytes(Schedule::kWarpsM, WK, kSets, MT, NT));
         if (warp_k > 0) {
 #pragma unroll
             for (int s = 0; s < kSets; ++s)
@@ -3476,6 +3555,8 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
         namespace cg = cooperative_groups;
         const cg::cluster_group cluster = cg::this_cluster();
         __shared__ float rank_partial[Schedule::kWarpsM][kSets][MT][NT][4][32];
+        static_assert(sizeof(rank_partial) ==
+                      geometry::rmma_rank_partial_bytes(Schedule::kWarpsM, kSets, MT, NT, C, true));
         if (live) {
 #pragma unroll
             for (int s = 0; s < kSets; ++s)

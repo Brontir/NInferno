@@ -28,6 +28,12 @@ cmake --build build -j
 The binaries run from `build/apps/`. `cmake --install build --prefix ~/.local` installs them
 with the per-GPU route tables and drafter rankings they read from `share/ninferno/`. PDF documents
 need pdfium beside them (`tools/release/pdfium.sh`, or `NINFERNO_PDFIUM`; the releases carry it).
+Image and video input reads what the FFmpeg the build found can decode. The Linux release carries
+its own (below); to build against it, run `tools/release/ffmpeg.sh ~/ffmpeg-ninferno` (a path
+without spaces) and configure with `PKG_CONFIG_PATH=~/ffmpeg-ninferno/lib/pkgconfig`. The binaries
+in `build/apps/` find it through their build run path. Installed ones look only in their own
+`../lib`: configure with `-DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON` to add the FFmpeg directory to
+their run path, or start them with `LD_LIBRARY_PATH=~/ffmpeg-ninferno/lib`.
 
 ## Docker image
 
@@ -48,12 +54,35 @@ holds `ninferno` and `ninferno-serve` with their route tables and drafter rankin
 `tools/release/package.sh [OUT_DIR]` builds the architectures `NINFERNO_ARCHS` lists (default
 every generation; `NINFERNO_ARCHS=89` for one) the way the releases are built (no `-lineinfo`,
 the CUDA runtime linked statically; `70` with CUDA 12.8, since CUDA 13 no longer compiles for
-Volta) and packs one self-contained archive: the
+Volta; `NINFERNO_CUDA70` names that toolkit, default `/usr/local/cuda-12.8`; with no CUDA 12.8
+found it stops, unless `70` is left out of `NINFERNO_ARCHS`) and packs
+one self-contained archive: the
 binaries (`ninferno-ui` among them), the shared libraries they load (found beside them), the route
 tables, the drafter rankings, the page's chat window and the model list `ninferno-start` offers.
 It needs `patchelf` (it points the bundled libraries' run path at their own directory) and network
-access (PDFium and the chat page are downloaded). `tools/release/install.sh` installs such an
-archive (`NINFERNO_ARCHIVE=FILE`) or downloads the one for the GPU it finds.
+access (PDFium, the FFmpeg and dav1d sources and the chat page are downloaded). The archive
+needs the build machine's glibc, so `package.sh` stops when that is newer than the `GLIBC_MIN`
+that `install.sh` checks (2.39: the [release build machine](maintainer/release.md) runs Ubuntu 24.04). `tools/release/install.sh` downloads the archive
+for the GPU it finds; `NINFERNO_ARCHIVE=FILE` skips the download, but the file is still checked
+against the signed manifest (`NINFERNO_MANIFEST` names one already downloaded), so it installs only
+the archive that manifest names, not a local build.
+
+The archive's FFmpeg is not the distribution's, which is GPL and carries encoders (x264, x265,
+xvid): `tools/release/ffmpeg.sh` builds FFmpeg 9.0.2 with dav1d 1.5.4 from the tarballs
+`tools/release/ffmpeg.pin` pins by SHA-256, under the LGPL 2.1 or later, with decoders, demuxers
+and parsers only (MP4/MOV/3GP, MKV/WebM, AVI, MPEG-TS, FLV, GIF and the JPEG, PNG, WebP and BMP
+images; H.264, HEVC, VP8, VP9, AV1 through dav1d, MPEG-4 Part 2, MPEG-1 and MPEG-2 video, Motion
+JPEG, PNG, WebP, GIF, BMP), no encoder, muxer, protocol, hardware decoding or audio. It needs
+nasm, meson and ninja, and takes a few minutes; package.sh builds it once into
+`NINFERNO_FFMPEG_PREFIX` (default `build-release-ffmpeg`) and points every tree at it. Offline,
+`NINFERNO_FFMPEG_ARCHIVE` and `NINFERNO_DAV1D_ARCHIVE` name the tarballs. package.sh refuses
+ffmpeg.sh's test switches (`NINFERNO_DAV1D_PREFIX`, `NINFERNO_FFMPEG_NO_ASM`), and stops when a
+library in `lib/` is not that build, or when
+`tools/release/ffmpeg_check.py` finds a licence other than LGPL, `--enable-gpl` or
+`--enable-nonfree` in the configure line, an encoder, a muxer, a protocol, or a GPL codec
+library beside them. The archive's `share/licenses/ffmpeg` carries the licence texts, the check's
+report (`BUILD.txt`: the configure line, the decoders and demuxers) and the source tarballs with
+the build scripts.
 
 The release toolkit is pinned to its patch level (the `nvcc` line of
 `src/ops/generic/data/kernel_facts/sm_<arch>.txt`), because on sm_86 and sm_120 the selector's
@@ -68,7 +97,11 @@ reads (#613). `package.sh` (and `package-native.ps1`) check it twice: the nvcc v
 the snapshots, and each engine's kernels against its snapshot (`kernel_facts.py check` on the
 linked binary, the SASS pass included: minutes per engine; on a GPU of the generation also
 `ninferno-serve selector-facts`, the running kernels' attributes against it). A mismatch (another
-flag, source or compiler build) stops the release. After a kernel change, regenerate the snapshot
+flag, source or compiler build) stops the release. Before that, a test build whose nvcc is the
+snapshot's checks its own architecture's snapshot when the slow tests run
+(`ninferno_kernel_facts_test`; under another nvcc it skips), and `tools/dev/kernel_facts_archs.sh`
+checks those of the release architectures that no test machine builds (sm_80, sm_90, sm_100),
+on a CPU. After a kernel change, regenerate the snapshot
 of each architecture from a build of it (`ninja ninferno_kernel_facts_update` in a test tree, or
 `kernel_facts.py extract` on the release binary), then the selector goldens that move with it
 (`ninferno_selector_golden_test --update`).

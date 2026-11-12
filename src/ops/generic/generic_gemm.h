@@ -14,8 +14,9 @@
 #include "ninferno/ops/linear.h"
 #include "ninferno/option_enums.h"
 #include "ops/generic/kernel_facts.h"
+#include "ops/route_pins.h"
 
-#include <cuda_runtime.h>
+#include "core/cuda_stream.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -31,9 +32,9 @@ namespace ninferno::ops::detail::generic {
 
 inline constexpr int kMaxSegments = 4;
 
-// The widths where the speed profile's heuristic choices change (generic_gemm.cpp, below the route
-// table's bands): the register MMA's stream regime through 32 tokens (through 512 where the BF16
-// MMA is emulated), its 64-row tiles and a tiled codec's or BF16's staged tiles from 33 where
+// The widths where the speed profile's heuristic choices change (generic_select.cpp, below the
+// route table's bands): the register MMA's stream regime through 32 tokens (through 512 where the
+// BF16 MMA is emulated), its 64-row tiles and a tiled codec's or BF16's staged tiles from 33 where
 // they fill the SMs (heuristic_rmma, tiled_speed_pays, staged_speed_route), the staged MMA's
 // fallback from 256, and the W4A8 lookup/K-quant formats their producer-warp and 128x128 tiles
 // from 128 (128x64 from 65, heuristic_w4a8). kSpeedFill: the waves of the SMs a tile's grid
@@ -47,6 +48,11 @@ inline constexpr std::int32_t kW4a8WideMinTokens    = 128;
 // The widest call whose register-MMA launch prefetches under the previous kernel
 // (GemmArgs::pdl_prefetch): decode and speculative verify.
 inline constexpr std::int32_t kPdlPrefetchMaxTokens = 16;
+// The first width of the prefill band: one past the widest speculative verify (16 tokens), where a
+// call takes the prefill profile's one route per problem and the speed profile's batched-verify
+// rules end (select_route, heuristic_route, the Volta routes). The one definition is
+// ops/route_pins.h's (the pins' band starts here too), which is below this header.
+inline constexpr std::int32_t kPrefillBandMinTokens = ops::kPrefillPinMinTokens;
 
 enum class Epilogue : std::uint8_t {
     Store,       // out = W x (GemmArgs::relu2: relu(W x)^2, one rounding)
@@ -55,45 +61,9 @@ enum class Epilogue : std::uint8_t {
                  // gelu_gate: GELU's tanh form in place of SiLU, GeGLU)
 };
 
-enum class WeightCodec : std::uint8_t {
-    Bf16,
-    Fp8,
-    Nvfp4,
-    Q4,
-    Q5,
-    Q6,
-    Q8,
-    Mxfp4,
-    Fp8RowF32,
-    Fp8B128,
-    U4Zp,
-    GgmlQ4K,
-    GgmlQ5K,
-    GgmlQ6K,
-    GgmlQ3K,
-    GgmlQ2K,
-    GgmlIq4Xs,
-    GgmlIq3Xxs,
-    GgmlIq3S,
-    GgmlQ40,
-    GgmlQ41,
-    GgmlQ50,
-    GgmlQ51,
-    GgmlIq4Nl,
-    GgmlIq2Xxs,
-    GgmlIq2Xs,
-    GgmlIq2S,
-    GgmlIq1S,
-    GgmlIq1M,
-    GgmlTq10,
-    GgmlTq20,
-    GgmlQ10,
-    GgmlQ20,
-    U4ZpG32,
-    U4ZpG64,
-    Q3G128,
-    Q3G64,
-};
+// The codec that reads a format is a format fact (core/format_facts.h); the name stays here for
+// its readers.
+using ninferno::WeightCodec;
 
 // Device-visible arguments of one generic call. Plain data, passed by value.
 struct GemmArgs {
@@ -281,7 +251,7 @@ struct I8ScheduleInfo {
 // Q4_K/Q5_K/Q6_K/Q3_K/Q2_K, MXFP4, u4_g128_zp, q8_g32, and the signed grid values of IQ3_XXS/
 // IQ3_S/IQ2_XXS/IQ2_XS/IQ2_S), and NVFP4 (doubled E2M1 codes) on every build.
 [[nodiscard]] bool w4a8_supports(QType qtype);
-// K the W4A8 tiles take for this format (generic_gemm.cpp).
+// K the W4A8 tiles take for this format (generic_routes.cpp).
 [[nodiscard]] bool w4a8_k_admits(QType qtype, std::int32_t k);
 // Whether a weight format has an R8 (W8A8 decode) codec: q8_g32, MXFP4, the ggml 4/5-bit blocks
 // (Q4_0/Q4_1/Q5_0/Q5_1/IQ4_NL/IQ4_XS), the K-quants Q2_K..Q6_K and the codebook i-quants: the
@@ -345,7 +315,8 @@ inline constexpr std::int32_t kMmqMinTokens = 5;
 // it does not (Turing: each operand rounded to f16 and two k8 MMAs per k16 make the A16 register
 // MMA the costlier path; RTX 2080 Ti).
 [[nodiscard]] bool r8_verify_takes(QType qtype);
-// r8_verify_takes for one matrix (Q4_0 takes R8 at the verify widths only on a large one).
+// r8_verify_takes for one matrix of n rows of K (Q4_0 takes R8 at the verify widths only on a large
+// one): the rows a call reads (call_weight_rows), never the fused parent's a slice is cut from.
 [[nodiscard]] bool r8_verify_takes_shape(QType qtype, std::int64_t n, std::int64_t k);
 // Whether R8 takes a call of kR8VerifyTokens tokens of this weight under A8: its format verifies a
 // whole eight-token block on R8 (Q8, r8_verify_widest) and the generic path reads the weight.
@@ -429,7 +400,7 @@ inline constexpr std::int32_t kMmqMinTokens = 5;
 // int8: the Q4 SwiGLU 2456 us a chunk against 1385, Q5 down 1219 against 635, the Q5 5120-row
 // linear 825 against 290. They take the int8 tiers on the cards where int8 activations pay
 // (half-rate fp32-accumulate HMMA: GeForce, Ada/Ampere inference parts), not on sm80/90/100.
-inline constexpr std::int32_t kQ8PrefillA8Tokens = 17;
+inline constexpr std::int32_t kQ8PrefillA8Tokens = kPrefillBandMinTokens;
 [[nodiscard]] bool prefill_a8_format(QType qtype);
 // The policy a prefill-width call of this format runs under: the artifact's own, except that
 // where int8 activations pay, A8 for a Q4/Q5/Q6 G64 weight the artifact records as A16Only
@@ -486,6 +457,12 @@ struct Problem {
     std::int32_t k;
     Epilogue epilogue;
 };
+
+// The weight rows a call reads: its output rows, under SwiGLU a gate and an up row each. A slice
+// of a fused parent reads these, not the parent's (#640, #704).
+[[nodiscard]] inline std::int64_t call_weight_rows(const Problem& problem) {
+    return (problem.epilogue == Epilogue::SwiGlu ? 2LL : 1LL) * problem.n;
+}
 
 // A distinct problem that reached the generic path on this thread since clear_seen_problems, with
 // its weight's stored rows and layout: what route_query needs to ask the call's route again (the
@@ -554,11 +531,12 @@ struct FamilyCoverage {
 
 // Why a call of `tokens` tokens does not take R8 where its weight could (#307): the weight not
 // admitted to R8 (allows_r8), a decode call whose activation does not fit one CTA, a verify call
-// wider than the format's widest R8 verify, or a shape the verify kernel does not take. r8_call
-// decides by this.
+// wider than the format's widest R8 verify, or a shape the verify kernel does not take (the call's
+// own rows, call_weight_rows: a slice of a fused parent as a standalone weight of its shape, #704).
+// The policy is the problem's. r8_call decides by this.
 enum class R8CallRefusal { None, NotAdmitted, DecodeFit, VerifyWidth, VerifyShape };
 [[nodiscard]] std::string_view r8_call_refusal_name(R8CallRefusal why) noexcept;
-[[nodiscard]] R8CallRefusal r8_call_refusal(const Weight& weight, LinearPolicy policy,
+[[nodiscard]] R8CallRefusal r8_call_refusal(const Problem& problem, const Weight& weight,
                                             std::int32_t tokens);
 
 [[nodiscard]] FamilyCoverage rmma_coverage(const Problem& problem, const Weight& weight,
@@ -794,16 +772,35 @@ struct RouteTile {
 [[nodiscard]] std::optional<RouteTile> route_tile(Route route, Epilogue epilogue,
                                                   std::int32_t tokens);
 
+// The K values one register-MMA step of the format covers at K = `k`: four runs of the decoder
+// its codec launches (rmma_kernel's KStep = 4 x Decoder::kRun, generic_select.cpp rmma_k_step):
+// 32 for BF16, Q8 and U4 G32, 64 for FP8, NVFP4 and the 16-value groupwise runs, 128 for the
+// 32-value decoders and the ggml 32-blocks stepped four at a time. The price counts the bytes a
+// warp keeps in flight from it (kernel_roofline.h price_register_mma).
+[[nodiscard]] std::int64_t rmma_step_values(QType qtype, std::int32_t k);
+
+// The register-MMA decoder of the format by its geometry row's spelling (rmma_geometry.h
+// kDecoderGeometry), for the static shared memory it adds (a codebook, staged activations);
+// empty for a format whose decoder adds none.
+[[nodiscard]] std::string_view rmma_geometry_decoder(QType qtype);
+
+// Whether price_routes prices this A16 route on a device (generic_cost.cpp), a pricing rule and
+// not admission (route_admits): every route, except where the BF16 MMA is emulated (Turing,
+// Volta), which gets no pipelined tile (tiled, staged) and no 8-tile register-MMA token strip.
+// The selector's price and the price tool (price_tool.cpp) read this one predicate.
+[[nodiscard]] bool a16_route_priced(Route route, bool bf16_mma_native);
+
 // The logical traffic of a call on `route` (#298): the bytes its CTAs request, before any cache
-// serves them, predicted from route_tile. Every token column of CTAs reads the whole weight
-// (payload_bytes over the call's n rows, as the cost model's bpw), every row block of CTAs reads the
-// whole activation (the register MMA's every row warp: no shared memory holds its operands) in the route's representation (A16 bf16: 2 bytes a value; the int8 tiers one
-// byte and their scales: W4A8 36 bytes a 32-value block, 40 with a min's block sums, over K in
-// whole 128-value tiles; I8 an FP32 scale and an int32 sum a 64, over tokens padded to 256),
-// and the output is written once in bf16 (a cluster's K split reduces in distributed shared
-// memory). A prediction, not a counter: the caches serve the re-reads (RTX 5090, Qwen3.5-9B
-// shapes: a 16 x 8 register-MMA tile at T = 512 requested 8 TB/s, past the L2's rate, its
-// activation re-read by every row block from L1), so a hit rate turns it into DRAM bytes.
+// serves them, predicted from route_tile. Every token column of CTAs reads the call's matrix
+// (its share of the weight's rows, as the cost model's bpw: #640), every row block of CTAs reads
+// the whole activation (the register MMA's every row warp: no shared memory holds its operands) in
+// the route's representation (A16 bf16: 2 bytes a value; the int8 tiers one byte and their scales:
+// W4A8 36 bytes a 32-value block, 40 with a min's block sums, over K in whole 128-value tiles; I8
+// an FP32 scale and an int32 sum a 64, over tokens padded to 256), and the output is written once
+// in bf16 (a cluster's K split reduces in distributed shared memory). A prediction, not a counter:
+// the caches serve the re-reads (RTX 5090, Qwen3.5-9B shapes: a 16 x 8 register-MMA tile at T = 512
+// requested 8 TB/s, past the L2's rate, its activation re-read by every row block from L1), so a
+// hit rate turns it into DRAM bytes.
 struct RouteTraffic {
     double weight_bytes     = 0;
     double activation_bytes = 0;
@@ -860,7 +857,7 @@ struct BuildManifest {
 [[nodiscard]] bool volta_tiled_format(QType qtype);
 
 // The tiled route a call takes on a GPU without tensor mma.sync (Volta), from 17 tokens on, for a
-// format with a tiled codec; nothing elsewhere (generic_gemm.cpp).
+// format with a tiled codec; nothing elsewhere (generic_select.cpp).
 [[nodiscard]] std::optional<Route> volta_tiled_route(const Weight& weight, LinearPolicy policy,
                                                      std::int32_t tokens);
 // The route Volta's own rules give a call before any tuned or tabled one (select_route):
@@ -929,6 +926,12 @@ struct BuildManifest {
 
 // Transient storage a route needs for T tokens (W4A4, W4A8: the quantized activation).
 [[nodiscard]] std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t tokens);
+// Whether a call of `tokens` on R8 `route` takes the pre-quantized verify form (resolve_route's
+// r8_prequantized): R8 family, 2..kR8VerifyTokens tokens, a workspace with room for its planes, a
+// format compiled for it. resolve_route and the fusion-site manifest ask this one function.
+[[nodiscard]] bool r8_prequantized_takes(Route route, QType qtype, std::int32_t k,
+                                         std::int32_t tokens,
+                                         std::optional<std::size_t> workspace_free);
 // The workspace the route a call RUNS takes from the call's workspace, the one rule resolve_route
 // checks the free bytes against and the descriptions report: ggml's matrix kernel its planes for
 // one prefill slice (both halves of a SwiGLU pair), its vector kernel those of its first
@@ -946,8 +949,8 @@ struct BuildManifest {
 // it by rule (r8_verify_takes): the dense tuner's candidate. R8 sums a token as at decode.
 [[nodiscard]] bool r8_verify_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens);
 // Whether the dense tuner may time R8 at T tokens: r8_verify_tunable, or a width where the format
-// has R8 but ggml's vector kernel takes it by rule.
-[[nodiscard]] bool r8_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens);
+// has R8 but ggml's vector kernel takes it by rule (the problem's policy and rows, as r8_call).
+[[nodiscard]] bool r8_tunable(const Problem& problem, const Weight& w, std::int32_t tokens);
 // Whether a call of `rows` rows and T tokens may take ggml's matrix kernel (the dense tuner's
 // candidate at verify widths 5..16).
 [[nodiscard]] bool ggml_mmq_call(const Weight& w, LinearPolicy policy, std::int32_t rows,
@@ -960,6 +963,15 @@ struct BuildManifest {
 [[nodiscard]] std::size_t ggml_vec_workspace_bytes(std::int32_t k, std::int32_t tokens);
 // The widest call ggml's vector kernel takes (ggml_mmq::kVecMaxColumns).
 inline constexpr std::int32_t kGgmlVecMaxTokens = 8;
+// Which ggml gated pair a call of `tokens` tries first (segmented_swiglu_pair): the vector pair up
+// to kGgmlVecMaxTokens, the matrix pair above (a vector-band call that cannot take its pair does
+// not fall through to the matrix pair). The launch and the fusion-site manifest ask this one
+// function.
+enum class GgmlGatedPair : std::uint8_t { Vec, Mmq };
+
+[[nodiscard]] constexpr GgmlGatedPair ggml_gated_pair_for(std::int32_t tokens) noexcept {
+    return tokens <= kGgmlVecMaxTokens ? GgmlGatedPair::Vec : GgmlGatedPair::Mmq;
+}
 // The widest call ggml's matrix kernel takes (its 5..16-token band).
 inline constexpr std::int32_t kGgmlMmqMaxTokens = 16;
 // Whether a call of `problem` on `weight` of T tokens takes ggml's vector kernel, the bytes of its
@@ -1171,6 +1183,8 @@ enum class Demotion : std::uint8_t {
     GgmlLayout,    // ggml's kernels: rows off the matrix kernel's multiple, or too many segments
     GgmlWorkspace, // ggml's kernels: no workspace, or less free than their planes take
     Workspace,     // W4A4, W4A8 or I8 given less workspace than their activation planes take
+    VoltaCopy,     // Volta: a CUTLASS-only format's tiled call with no room for a decoded chunk
+    KStep,         // the register MMA asked with K off its kernel's step: the scalar kernel
 };
 [[nodiscard]] std::string_view demotion_name(Demotion demotion) noexcept;
 

@@ -9,6 +9,7 @@
 #include "core/per_device.h"
 #include "ops/generic/generic_gemm.cuh"
 #include "ops/generic/generic_gemm_internal.h"
+#include "ops/generic/generic_rmma_decoders.h"
 #include "ops/common/arch_limits.h"
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/kernel_facts.h"
@@ -23,7 +24,7 @@ namespace ninferno::ops::detail::generic {
 // The schedules: index, warps_m, warps_k, m_tiles,
 // n_tiles, cluster (K split over a thread-block cluster of that many CTAs, generic_gemm.cuh).
 // NINFERNO_GENERIC_RMMA_SCHEDULES: ops/generic/generic_schedules.h (one list for the
-// instantiations here and the host table in generic_gemm.cpp).
+// instantiations here and the host table in generic_schedule_tables.h).
 
 template <class Decoder, class Schedule, Epilogue E, bool Latency, bool AddSums = false>
 void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream);
@@ -59,6 +60,21 @@ std::int64_t rmma_grid_ctas(const GemmArgs& args) {
     const std::int64_t x = (args.rows + Schedule::kRowsPerCta - 1) / Schedule::kRowsPerCta;
     const std::int64_t y = (args.tokens + Schedule::kTokensPerCta - 1) / Schedule::kTokensPerCta;
     return x * y * Schedule::kCluster;
+}
+
+// Whether a row of the host's decoder table (generic_rmma_decoders.h) states the traits of the
+// decoder type as the launch reads them (UnpackOf, StageActsOf, SpreadOf, FinishOf, GroupTailOf,
+// MinTermOf, WideOf): each generic_gemm_<format>.cu static_asserts its decoder against its row, so
+// a trait changed in one place and not the other fails the build. The name is a runtime string
+// (kernel_facts::decoder_name), held by ninferno_rmma_describe_test.
+template <class Decoder>
+constexpr bool rmma_decoder_traits_match(const RmmaDecoder& row) {
+    return row.name != nullptr && row.unpack == UnpackOf<Decoder>::value &&
+           row.stage_acts == StageActsOf<Decoder>::value && row.spread == SpreadOf<Decoder> &&
+           row.finish == FinishOf<Decoder>::value &&
+           row.group_tail == GroupTailOf<Decoder>::value &&
+           row.min_term == MinTermOf<Decoder>::value &&
+           (row.wide[0] != '\0') == !std::is_void_v<typename WideOf<Decoder>::type>;
 }
 
 // The key of a kernel instance in the kernel-facts snapshots (ops/generic/kernel_facts.h): the

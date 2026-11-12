@@ -1,6 +1,6 @@
 #pragma once
 
-// Helpers of the generic path's route selection (generic_gemm.cpp) that its other files share.
+// Helpers of the generic path's route selection (generic_select.cpp) that its other files share.
 
 #include "core/device_class.h"
 #include "core/measured_boards.h"
@@ -59,7 +59,18 @@ bool volta_cutlass_only(WeightCodec codec);
 // Whether a TiledMma call of `tokens` runs on the decoded copy (and so needs its workspace): a
 // CUTLASS-only format's (`only`: it has no tile of its own) from the prefill band's 17 tokens, a
 // tiled format's where the copy pays.
+// (Reads the current device class, like volta_cutlass_only: not a device argument.)
 bool volta_cutlass_runs(bool only, std::int32_t tokens);
+
+// A TiledMma call that runs CUTLASS over the decoded copy: the band takes it, the build has the
+// kernel and `workspace_free` holds a chunk. run_route and the route description both ask it.
+bool volta_cutlass_call_runs(WeightCodec codec, std::int32_t n, std::int32_t k, std::int32_t tokens,
+                             bool swiglu, std::optional<std::size_t> workspace_free);
+
+// A TiledMma call of a CUTLASS-only format that volta_cutlass_call_runs refuses: run_route runs the
+// scalar kernel and notes a demotion (Demotion::VoltaCopy).
+bool volta_tiled_runs_scalar(WeightCodec codec, std::int32_t n, std::int32_t k, std::int32_t tokens,
+                             bool swiglu, std::optional<std::size_t> workspace_free);
 
 // GemmArgs::add_sums: outside the invariant and prefill profiles, whose calls keep one summation
 // order at every T (a call there may change width from one chunk or round to the next), a tensor-core
@@ -71,6 +82,9 @@ bool volta_cutlass_runs(bool only, std::int32_t tokens);
 bool rmma_add_sums();
 
 int spread_smem(Route route, WeightCodec codec, Epilogue epilogue, const GemmArgs& args);
+
+// Whether the current device launches with programmatic dependent launch (pdl_prefetch).
+bool pdl_device();
 
 // The formats the producer-warp W4A8 tile is compiled for (w4a8_ws_compiled, generic_w4a8.cuh).
 bool w4a8_ws_supports(QType q);
@@ -96,10 +110,10 @@ struct R8TableHit {
 std::optional<R8TableHit> tuned_r8(const Problem& p);
 
 // The route selection's rules and fixed routes, which route_authorities.cpp asks in order
-// (generic_gemm.cpp holds the bodies and their measurements).
-// Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits;
-// r8_call_refusal, generic_gemm.h, names why not).
-bool r8_call(const Weight& w, LinearPolicy policy, std::int32_t tokens);
+// (generic_select.cpp holds the bodies and their measurements).
+// Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits; the
+// verify widths by the call's own rows; r8_call_refusal, generic_gemm.h, names why not).
+bool r8_call(const Problem& problem, const Weight& w, std::int32_t tokens);
 // The verify widths the vector kernel takes by rule: 2..4 tokens with tensor mma.sync, every
 // width it reads without.
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens);
@@ -166,7 +180,7 @@ struct ActivationPlanes {
 
 ActivationPlanes activation_planes(Route route, std::int32_t k, std::int32_t tokens);
 
-// Shared by the selection and the workspace queries (generic_gemm.cpp).
+// Shared by the selection and the workspace queries (generic_select.cpp).
 std::int32_t vec_max_tokens();
 bool volta_tiled_qtype(QType qtype);
 bool volta_cutlass_qtype(QType qtype);
@@ -180,8 +194,21 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
                   const PricedRoute& take);
 std::optional<Route> cost_route(const Problem& problem, const Weight& weight, std::int32_t tokens);
 
-// The weight-side admission of the A8 and A4 tiles and of R8 (generic_gemm.cpp; their refusals
-// name the reason).
+// The bytes a weight value of the call's matrix takes, as price_routes, a8_candidates and
+// route_traffic read them (#640, #704): the weight's bytes over the rows it holds (Weight::n),
+// never fewer than the call reads (call_weight_rows), so a slice of a fused parent
+// (segmented_projection: the whole parent with the call's rows in Problem::n) reads its rows'
+// share of the payload. A row view (native_weight of part of a parent: its own rows in n, its
+// parent's payload) is priced by Weight::priced_bytes, the bytes a standalone weight of its shape
+// takes with its planes' padding: what the decision manifest's replay of the shape prices
+// (route_query). Under SwiGLU each output row reads its gate and its up row: the value holds both
+// (x2). A whole weight keeps payload_bytes / (n K), to the bit. A slice's share is proportional
+// to rows: exact where the layout stores rows whole up to the planes' padding, within a 128-row
+// scale tile for NVFP4 and the FP8 128x128 scales.
+double bytes_per_weight(const Weight& weight, const Problem& problem);
+
+// The weight-side admission of the A8 and A4 tiles and of R8 (generic_select.cpp, generic_gemm.cpp;
+// their refusals name the reason).
 bool allows_w4a8(const Weight& w, LinearPolicy policy);
 bool allows_i8(const Weight& w, LinearPolicy policy);
 bool allows_w4a4(const Weight& w, LinearPolicy policy);

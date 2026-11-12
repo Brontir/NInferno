@@ -47,6 +47,9 @@ struct GgufTensorTable {
     // Its linears by their tensors' formats (plan_facts split_linears_by_format); empty: none named.
     // Another row's are not this one's: a row without its own keeps the label's.
     std::vector<runtime::PlanLinear> linears;
+    // Its routed layers by kind (PlanModelFacts::expert_layers, #616 step 7); empty: none read.
+    // Another row's are not this one's, whatever its bytes: a row without its own has none.
+    std::vector<runtime::PlanExpertLayers> expert_layers;
 };
 // The table from the facts of a head read (nullopt: a split part or no tensor table).
 [[nodiscard]] std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts);

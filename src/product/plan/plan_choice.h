@@ -28,13 +28,23 @@ namespace ninferno::product {
 // The choice's facts of a model (its shape, the bytes a step reads per storage) and of a card.
 [[nodiscard]] choice::ModelFacts choice_model_of(const PlanSourceFacts& facts);
 [[nodiscard]] choice::CardFacts choice_card_of(const spec::GpuKey& gpu);
+// The model's MoE step routes on `device` (choice::ModelFacts::moe_routes, #616 step 7): the
+// registered MoE route query (runtime::set_plan_moe_route_query: the op's own) over the facts'
+// routed layers, each kind's routed bytes at the kernels the op answers for it (Unknown where it
+// does not), the answers kept per rows and activations. Left unset where no query is registered
+// (a program that does not link the Ops: ninferno-ui), the model is dense, or the facts list no
+// routed layers.
+void with_moe_routes(choice::ModelFacts& model, const PlanSourceFacts& facts,
+                     const runtime::PlanDeviceFacts& device);
 
 // The drafter axis: beside plain decode, one option per speculation
 // mode the subject's profile chose or measured and its Engine runs. A profile with measurements
 // (a lab pair's, a local tune's) chooses each mode again over that mode's measurements alone; one
 // without offers its own choice. Each option carries the served speculation a start of it runs
-// (served_speculation over the profile of that mode), its gain the profile's choice for the
-// server's thinking flag, and the streams from which its load table decodes plainly.
+// (served_speculation over the profile of that mode); its gain, load gains and joint price are
+// those of the choice that start runs for the server's thinking flag (the profile's served choice
+// where the Engine cannot run its own: served_choices), and the streams from which its load
+// table decodes plainly.
 struct DrafterAxis {
     std::vector<choice::DrafterOption> options;
     std::vector<ServedSpeculation> served;

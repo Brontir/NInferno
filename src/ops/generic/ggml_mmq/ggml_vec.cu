@@ -16,6 +16,8 @@
 #include <algorithm>
 
 namespace ninferno::ops::ggml_mmq {
+
+static_assert(kHalf2Bytes == sizeof(half2)); // vec_activation_bytes (ggml_mmq_host.cpp)
 namespace detail {
 namespace {
 
@@ -768,6 +770,7 @@ void vec_launch_grid(const VecArgs& args, int groups, int slots, cudaStream_t st
                         dim3(blocks), dim3(kVecWarps * 32), 0);
         return;
     }
+    refuse_substituted_launch();
     check(pdl::launch_dependent({dim3(blocks), dim3(kVecWarps * 32), 0, stream},
                                 vec_kernel<type, T, KS, Gated, Bounded>, args),
           "vector product launch");
@@ -863,39 +866,6 @@ __global__ void vec_quantize_kernel(const __nv_bfloat16* __restrict__ x, int ldx
 } // namespace
 } // namespace detail
 
-bool vec_supported(Type type) {
-    switch (type) {
-    case Type::IQ4_XS:
-    case Type::Q4_K:
-    case Type::Q5_K:
-    case Type::Q6_K:
-    case Type::Q2_K:
-    case Type::IQ3_XXS:
-    case Type::IQ3_S:
-    case Type::Q3_K:
-    case Type::IQ2_XXS:
-    case Type::IQ2_XS:
-    case Type::IQ2_S:
-    case Type::IQ1_S:
-    case Type::Q4_0:
-    case Type::Q4_1:
-    case Type::Q5_0:
-    case Type::Q5_1:
-    case Type::IQ4_NL:
-    case Type::IQ1_M: return true;
-    default: return false;
-    }
-}
-
-namespace {
-std::size_t vec_scales_offset(int k, int columns) {
-    return (std::size_t(k) * columns + 15) / 16 * 16;
-}
-} // namespace
-
-std::size_t vec_activation_bytes(int k, int columns) {
-    return vec_scales_offset(k, columns) + std::size_t(columns) * (k / 32) * sizeof(half2);
-}
 
 void vec_quantize_activation(const __nv_bfloat16* x, int ldx, int k, int columns, void* out,
                              cudaStream_t stream) {

@@ -24,6 +24,10 @@ namespace {
 // Under the prefill profile, A8 calls up to this size take the short-call tiles.
 constexpr std::int32_t kFp8LinearAddPrefillSmallTMax = 128;
 
+// Outside the prefill profile A8 starts at the measured speed frontiers (resolve_route).
+constexpr std::int32_t kFp8A8FirstTokensK6144  = 17;
+constexpr std::int32_t kFp8A8FirstTokensK17408 = 20;
+
 enum class Fp8LinearAddRoute : std::uint8_t {
     A16,
     A8,
@@ -42,7 +46,9 @@ Fp8LinearAddRoute resolve_route(std::int32_t output_rows, std::int32_t input_row
     // the size of the chunk that carries it. Otherwise the measured speed frontiers apply (T=17
     // for K=6144, T=20 for K=17408).
     const std::int32_t first_a8 =
-        prefill ? 17 : (input_rows == Fp8N5120K6144::kInputRows ? 17 : 20);
+        prefill ? 17
+                : (input_rows == Fp8N5120K6144::kInputRows ? kFp8A8FirstTokensK6144
+                                                           : kFp8A8FirstTokensK17408);
     return tokens >= first_a8 ? Fp8LinearAddRoute::A8 : Fp8LinearAddRoute::A16;
 }
 

@@ -2,6 +2,10 @@
 build/
 build-*/
 cmake-build-*/
+# tools/dev/kernel_facts_archs.sh run inside a checkout (KFA_ROOT defaults to the current directory)
+/build_kfa_*/
+/kfa.lock
+/logs/
 *.o
 *.obj
 *.so
@@ -66,3 +70,6 @@ profiles/
 # Claude Code personal/local settings (may contain API tokens)
 .claude/settings.local.json
 Testing/
+
+# Site-specific list of test machines for tools/audit/affected_arches.py
+tools/audit/stands.local.json

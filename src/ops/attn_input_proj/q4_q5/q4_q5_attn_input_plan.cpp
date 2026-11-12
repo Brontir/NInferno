@@ -88,6 +88,14 @@ int small_t_variant(std::int32_t cols) noexcept {
 
 bool small_t_taken(std::int32_t cols) noexcept { return small_t_variant(cols) > 0; }
 
+// The column routes past the small-T bands. The edges at 12, 32, 64 and 128 are coverage: the
+// parent split's kernel serves T <= 12, and 32, 64 and 128 are the C32, C64 and C128 tiles' widths.
+// The paired R32 C64 S3 route through 104 columns, and the paired S4 route from one C128 tile up to
+// 193 columns, were retuned on timings ("retune variable-width target attention projections") that
+// name no board in the repository.
+constexpr std::int32_t kPairR32C64S3MaxCols    = 104;
+constexpr std::int32_t kMixedR64C128ResumeCols = 193;
+
 } // namespace
 
 bool q4_q5_attn_input_admits(const Q4Q5AttnInputProblem& problem) noexcept {
@@ -105,8 +113,8 @@ Q4Q5AttnInputPlan q4_q5_attn_input_resolve_plan(const Q4Q5AttnInputProblem& prob
     if (problem.cols <= 12) return {Q4Q5AttnInputScheduleId::ParentSplitFixed};
     if (problem.cols <= 32) return {Q4Q5AttnInputScheduleId::MixedR32C32S2};
     if (problem.cols <= 64) return {Q4Q5AttnInputScheduleId::MixedR32C64S3};
-    if (problem.cols <= 104) return {Q4Q5AttnInputScheduleId::PairR32C64S3};
-    if (problem.cols <= 128 || problem.cols >= 193)
+    if (problem.cols <= kPairR32C64S3MaxCols) return {Q4Q5AttnInputScheduleId::PairR32C64S3};
+    if (problem.cols <= 128 || problem.cols >= kMixedR64C128ResumeCols)
         return {Q4Q5AttnInputScheduleId::MixedR64C128S2};
     return {Q4Q5AttnInputScheduleId::PairR32C64S4};
 }

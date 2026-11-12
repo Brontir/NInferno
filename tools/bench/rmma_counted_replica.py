@@ -9,7 +9,9 @@
 A sweep directory holds `ninferno_route_tune --routes-out` CSVs (format, compute, epilogue, n,
 k, T, route, median_us, model_us, registers, local_bytes, ...); the board is named as
 src/core/data/gpu_facts.json spells it. For every register-MMA row the script prices the route
-as generic_cost.cpp's `cost` does (the chip from gpu_facts.json and the architecture's residency
+as the engine's register-MMA price did before #690 (kernel_roofline.h price_register_mma under its
+legacy DRAM law; the DRAM law of #690 for the architectures with an SM rate row is not replicated
+here) (the chip from gpu_facts.json and the architecture's residency
 limits, the kernel instance from the committed kernel-facts snapshot of the board's release
 engine, matched by the registers and spill the sweep recorded), then with the counted terms:
 
@@ -26,7 +28,8 @@ regret (the measured time of the law's pick over the measured best, summed per b
 picks the counted law changes with the measured gain or loss. The plain-form boards reproduce
 the CSV's own model_us bit for bit; the heavy-form boards' CSVs predate the last refit of the
 constants, so their model_us is not a check. This is a study tool: the engine's price is
-generic_cost.cpp, and this file follows it by hand.
+kernel_roofline.h (price_routes in generic_cost.cpp hands it the kernel), and this file follows
+its legacy law by hand.
 """
 
 import argparse

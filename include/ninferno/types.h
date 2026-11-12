@@ -780,6 +780,17 @@ struct OutputConstraintSpec {
     // Special tokens are visible in the output (OutputOptions::preserve_special_tokens or raw), so
     // their bytes take part in matching. Otherwise the constraint never admits a special token.
     bool special_tokens_visible = false;
+    // StructuralTag: the grammar spells the output's markup itself from the first token, the
+    // answer header (GrammarVocabulary::content_open) and the reasoning open marker included.
+    // The request's matcher then keeps the header (it does not drop it, as it does for a grammar
+    // of the answer's text) and keeps its place across a reasoning section the model opens: the
+    // reasoning's text and its terminator are not the grammar's, what follows them is (the
+    // tool_choice none steer of PromptSummary::refusal_tag). A presented output only: under
+    // OutputOptions::raw the request's gate is the grammar's from the first token, so the
+    // grammar reads the reasoning too, and the harmony refusal tag then refuses any analysis
+    // text (an embedder that asks for raw output should not install the steer; the serve layer
+    // never sets raw). The output presentation is unchanged.
+    bool reads_answer_header = false;
 };
 
 // A compiled constraint: immutable, shareable across requests, and bound to one Engine's
@@ -1160,7 +1171,10 @@ struct PromptSummary {
     // special-token visibility; its header tokens are structural, so it reads them either way) the
     // serve layer compiles as the request's header steer when it carries no constraint of its own:
     // tool_choice none on a format whose call is a message of its own (harmony), where a header
-    // constraint is the only way to keep the model from writing it. Empty: none.
+    // constraint is the only way to keep the model from writing it. It spells every header the
+    // output may write, so it is compiled with OutputConstraintSpec::reads_answer_header, for a
+    // presented (not raw) output. Set only where the model may open its reasoning at the first
+    // token (reasoning_open_allowed, not starts_in_reasoning). Empty: none.
     std::string refusal_tag;
 
     // The request thinks: its prompt starts the reasoning (Qwen), or leaves the model to open it
@@ -1988,6 +2002,9 @@ struct LoadSummary {
     // and verify widths and the prefill chunk (the "routes" section, manifest only): replayable from
     // its own lines and the board's class (src/runtime/engine/decision_routes.h).
     std::string decision_routes;
+    // The same lines with the authority and the evidence of each answer (the "route_evidence"
+    // section, #614): text only, in neither the fingerprint nor the manifest's hash.
+    std::string decision_route_evidence;
     // The artifact's id (16 bytes, lowercase hex), as the load read it: drawn at random per
     // conversion, so it names the file (observed), not what it computes.
     std::string artifact_id;

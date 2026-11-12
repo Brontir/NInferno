@@ -306,9 +306,25 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
 [[nodiscard]] std::vector<std::string> gpu_class_chain(std::string_view chip, int sms,
                                                        std::string_view arch);
 
-// The current device's class, cached per ordinal. Throws std::runtime_error when CUDA cannot
-// report the device or the ordinal is invalid.
-[[nodiscard]] const DeviceClass& device_class();
+// The class of the device this thread runs on, probed once: what device_class() returns where no
+// class is substituted (ScopedDeviceClass). Throws where CUDA cannot report the device; a host-only
+// build (device_class_nodevice.cpp) always throws. Defined in ninferno_core (device_class.cpp) or
+// the host-only stub, never in ninferno_core_host.
+[[nodiscard]] const DeviceClass& current_device_class();
+
+// The substitute this thread's device_class() answers (ScopedDeviceClass), or null.
+[[nodiscard]] const DeviceClass* substituted_device_class() noexcept;
+
+// The current device's class: the ScopedDeviceClass substitute of this thread, else the probed
+// class. Throws std::runtime_error when CUDA cannot report the device. Inline, so that the
+// reference to current_device_class() sits in the object that calls device_class():
+// ninferno_core_host keeps no reference into ninferno_core. The selector's objects in
+// ninferno_ops_host call it: ninferno_ops holds the same objects and links ninferno_core, and a
+// host-only test adds the stub (device_class_nodevice.cpp) to its own sources.
+[[nodiscard]] inline const DeviceClass& device_class() {
+    if (const DeviceClass* substitute = substituted_device_class()) { return *substitute; }
+    return current_device_class();
+}
 [[nodiscard]] const DeviceClass& device_class(int device);
 
 // The identity of ordinal `device`: cudaDeviceGetPCIBusId and cudaGetDeviceProperties' uuid,
@@ -344,8 +360,9 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
 // A class built from a board's facts alone, as the query would build it (no CUDA call): the chip
 // from the PCI id or the SM count, the architecture's features, and the per-block and per-SM
 // limits of the architecture. Its driver clocks are 0 and its `facts` empty (FactSource::None):
-// a test that wants the table's facts sets `facts = machine_facts_of(d)`. For host tests of the heuristics and route tables that read a
-// class, on GPUs this machine lacks.
+// a test that wants the table's facts sets `facts = machine_facts_of(d)`. For host tests of the
+// heuristics and route tables that read a class, on GPUs this machine lacks, and for a named board
+// (product::gpu_key_of). Host only (device_class_host.cpp, in ninferno_core_host).
 [[nodiscard]] DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int minor,
                                                  int sms, std::size_t l2_bytes,
                                                  std::size_t global_bytes);
@@ -370,9 +387,8 @@ private:
     const std::string* previous_key_;
 };
 
-// The substitute this thread's device_class() answers (ScopedDeviceClass), or null; and its
-// device_class_key, computed once when the substitution began (null without one).
-[[nodiscard]] const DeviceClass* substituted_device_class() noexcept;
+// The substitute this thread's device_class() answers (substituted_device_class, above), or null;
+// and its device_class_key, computed once when the substitution began (null without one).
 [[nodiscard]] const std::string* substituted_device_class_key() noexcept;
 // Whether this thread's device_class() answers a substitute other than the current CUDA device's
 // own class (by content): state measured or loaded on that device (a tuned route, an explicit

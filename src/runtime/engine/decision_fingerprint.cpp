@@ -243,6 +243,9 @@ DecisionFingerprint decision_fingerprint(const DecisionInputs& inputs) {
     section_into(planned, "plan", inputs.plan);
     section_into(out.routes, "routes", inputs.routes);
     section_into(out.observed, "observed", inputs.observed);
+    // Not in `manifest`'s hash: the evidence of an answer is derived from the same inputs, and
+    // hashing it would move the id of every manifest written before it existed.
+    section_into(out.route_evidence, "route_evidence", inputs.route_evidence);
     out.manifest = "nm1-" + short_hash(planned + out.routes + out.observed);
     return out;
 }

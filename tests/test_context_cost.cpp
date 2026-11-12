@@ -427,7 +427,7 @@ void test_carried_and_generic() {
          .board         = ninferno::measured::kRtx5090},
         {.gpu_class     = "gb202:188sm",
          .class_prefill = prefill(188),
-         .board         = {12, 0, 188, 128, 1792}},
+         .board         = ninferno::measured::board_of_pci(0x2BB1)},
     };
     const auto chip = ninferno::runtime::resolve_context_machine_cost(
         compiled, identity({"gb202:170sm", "gb202", "sm120", "*"}, "any"));
@@ -596,7 +596,7 @@ void test_resolution_and_atomic_upserts() {
                                                                R"({"run":4})");
         const auto chip = ninferno::runtime::resolve_context_machine_cost(
             identity({"ad102:114sm", "ad102", "sm89", "*"}, "unmeasured-config-and-formats",
-                     {8, 9, 114, 72, 1008}),
+                     ninferno::measured::board_of_pci(0x2685)),
             chip_path);
         expect(chip.model.transfer[0].batch_ns == 55 &&
                    chip.summary.transfer_source == ninferno::ContextCostPresetSource::External &&

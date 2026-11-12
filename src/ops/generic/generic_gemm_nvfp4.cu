@@ -3,6 +3,9 @@
 
 namespace ninferno::ops::detail::generic {
 
+static_assert(rmma_decoder_traits_match<Nvfp4Decoder>(rmma_decoder_of(WeightCodec::Nvfp4, 0)),
+              "generic_rmma_decoders.h: the Nvfp4 row differs from Nvfp4Decoder");
+
 void launch_rmma_nvfp4(int schedule, Epilogue epilogue, const GemmArgs& args, cudaStream_t stream) {
     launch_rmma<Nvfp4Decoder>(schedule, epilogue, args, stream);
 }

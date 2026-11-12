@@ -8,9 +8,13 @@
 #include "core/sys.h"
 
 #include "core/device_class.h"
+#include "core/format_facts.h"
+#include "core/measured_boards.h"
 #include "ops/common/shape_routes.h"
+#include "ops/generic/route_authorities.h"
 #include "ops/generic/route_table.h"
 #include "ops/moe/moe_internal.h"
+#include "ops/route_pins.h"
 
 #include <nlohmann/json.hpp>
 
@@ -52,7 +56,13 @@ using detail::generic::RouteEntry;
 using Json = nlohmann::json;
 
 // The first call width the prefill route profile makes token-invariant.
-constexpr std::int32_t kPrefillMinTokens = 17;
+constexpr std::int32_t kPrefillMinTokens = kPrefillPinMinTokens;
+
+// The Ask of a table's prefill-profile entry at `tokens` (a prefill route's or band's first
+// width): the profile filter (generic::profile_admits) judges a table as it judges a call.
+detail::generic::Ask prefill_ask(std::int32_t tokens) {
+    return detail::generic::Ask{detail::generic::Profile::Prefill, tokens, 1};
+}
 
 std::uint64_t key_of(QType q, RouteCompute c, Epilogue e, std::int32_t n, std::int32_t k) {
     return (static_cast<std::uint64_t>(q) << 56) | (static_cast<std::uint64_t>(c) << 52) |
@@ -81,51 +91,15 @@ struct Table {
     std::unordered_map<std::uint64_t, RouteEntry> generic;                // bands / prefill
     std::unordered_map<std::uint64_t, std::vector<RouteAsBand>> route_as; // shape-owned tables
     RouteTableStatus status;
-    std::optional<Board> board; // the board it was measured on (gpu.board), when recorded
+    // The board it was measured on (gpu.pci_id's registry row, else gpu.board), when recorded.
+    std::optional<Board> board;
     // table_distance when it was installed for this device (TableAnswer::distance).
     double distance = std::numeric_limits<double>::infinity();
 };
 
-std::optional<QType> parse_qtype(const std::string& s) {
-    if (s == "bf16") return QType::BF16;
-    if (s == "fp8") return QType::FP8_E4M3FN_ROW_BF16;
-    if (s == "nvfp4") return QType::NVFP4;
-    if (s == "q4") return QType::Q4_G64_FP16;
-    if (s == "q5") return QType::Q5_G64_FP16;
-    if (s == "q6") return QType::Q6_G64_FP16;
-    if (s == "q8") return QType::Q8_G32_FP16;
-    if (s == "mxfp4") return QType::MXFP4;
-    if (s == "fp8r32") return QType::FP8_E4M3FN_ROW_F32;
-    if (s == "fp8b128") return QType::FP8_E4M3FN_B128_F32;
-    if (s == "u4zp") return QType::U4_G128_ZP_FP16;
-    if (s == "u4zp32") return QType::U4_G32_ZP_FP16;
-    if (s == "u4zp64") return QType::U4_G64_ZP_FP16;
-    if (s == "q3g128") return QType::Q3_G128_FP16;
-    if (s == "q3g64") return QType::Q3_G64_FP16;
-    if (s == "q4k") return QType::GGML_Q4_K;
-    if (s == "q5k") return QType::GGML_Q5_K;
-    if (s == "q6k") return QType::GGML_Q6_K;
-    if (s == "q3k") return QType::GGML_Q3_K;
-    if (s == "q2k") return QType::GGML_Q2_K;
-    if (s == "iq4xs") return QType::GGML_IQ4_XS;
-    if (s == "iq3xxs") return QType::GGML_IQ3_XXS;
-    if (s == "iq3s") return QType::GGML_IQ3_S;
-    if (s == "q40") return QType::GGML_Q4_0;
-    if (s == "q41") return QType::GGML_Q4_1;
-    if (s == "q50") return QType::GGML_Q5_0;
-    if (s == "q51") return QType::GGML_Q5_1;
-    if (s == "iq4nl") return QType::GGML_IQ4_NL;
-    if (s == "iq2xxs") return QType::GGML_IQ2_XXS;
-    if (s == "iq2xs") return QType::GGML_IQ2_XS;
-    if (s == "iq2s") return QType::GGML_IQ2_S;
-    if (s == "iq1s") return QType::GGML_IQ1_S;
-    if (s == "iq1m") return QType::GGML_IQ1_M;
-    if (s == "tq10") return QType::GGML_TQ1_0;
-    if (s == "tq20") return QType::GGML_TQ2_0;
-    if (s == "q10") return QType::GGML_Q1_0;
-    if (s == "q20") return QType::GGML_Q2_0;
-    return std::nullopt;
-}
+// The format a route spelling names (core/format_facts.h); a format without a route spelling
+// (FP32, INT32) never parses, whatever the string.
+std::optional<QType> parse_qtype(const std::string& s) { return find_route(s); }
 
 std::optional<RouteCompute> parse_compute(const std::string& s) {
     if (s == "a16") return RouteCompute::A16;
@@ -196,7 +170,7 @@ void parse_entry(const Json& e, const std::string& path, Table& table) {
             // Chunk invariance: under the prefill profile every call of 17 tokens or more takes
             // this route, so it must sum K in the one order every T shares.
             const Route r = require_route(e.at("prefill"), where);
-            if (!detail::generic::route_is_token_invariant(r)) {
+            if (!detail::generic::profile_admits(r, prefill_ask(kPrefillMinTokens))) {
                 refuse("a prefill route that is not token-invariant (it would make a prefill "
                        "token's bytes depend on its call's width)", where);
             }
@@ -215,7 +189,8 @@ void parse_entry(const Json& e, const std::string& path, Table& table) {
                 if (b.t_min < kPrefillMinTokens) {
                     refuse("a prefill band below T = " + std::to_string(kPrefillMinTokens), where);
                 }
-                if (!detail::generic::same_summation(b.route, *entry.prefill)) {
+                if (!detail::generic::profile_admits_as(b.route, prefill_ask(b.t_min),
+                                                        *entry.prefill)) {
                     refuse("a prefill band whose route sums in another order than the prefill "
                            "route (a prefill token's bytes would depend on its call's width)",
                            where);
@@ -305,6 +280,28 @@ void parse_moe_entry(const Json& e, const std::string& path, Table& table) {
     ++table.status.entries;
 }
 
+// A table's gpu.pci_id, "0x" and four hex digits as write_route_table spells it (either case);
+// nullopt for anything else.
+std::optional<std::uint32_t> parse_pci_id(std::string_view s) {
+    if (s.size() != 6 || s[0] != '0' || (s[1] != 'x' && s[1] != 'X')) return std::nullopt;
+    std::uint32_t value = 0;
+    for (const char c : s.substr(2)) {
+        const int digit = c >= '0' && c <= '9'   ? c - '0'
+                          : c >= 'a' && c <= 'f' ? c - 'a' + 10
+                          : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                                                 : -1;
+        if (digit < 0) return std::nullopt;
+        value = value * 16 + static_cast<std::uint32_t>(digit);
+    }
+    return value;
+}
+
+std::string pci_id_text(std::uint32_t id) {
+    char hex[11];
+    std::snprintf(hex, sizeof(hex), "0x%04x", static_cast<unsigned>(id));
+    return hex;
+}
+
 std::shared_ptr<Table> parse_table(const std::string& path) {
     std::ifstream in(path_from_utf8(path), std::ios::binary);
     if (!in) throw std::runtime_error("route table: cannot open " + path);
@@ -325,11 +322,41 @@ std::shared_ptr<Table> parse_table(const std::string& path) {
         table->status.path           = path;
         table->status.content_sha256 = sha256_hex(std::string_view(bytes));
         table->status.gpu_class = root.at("gpu").at("class").get<std::string>();
-        // "board": {"cc": 89, "sms": 58, "l2_mib": 48, "dram_gbps": 300}: the card it was
-        // measured on, which the default lookup ranks tables by (board_distance). "mma_slow"
-        // (written only when set) defaults to the class's chip fact, so a table without it keyed
-        // tu116 / tu117 still counts as one of those chips.
-        if (const Json& gpu = root.at("gpu"); gpu.contains("board")) {
+        // The card it was measured on, which the default lookup ranks tables by (board_distance).
+        // "pci_id": "0x27b8" names it: the registry's row of that id (core/measured_boards.h
+        // board_of_pci, with its recorded conflict), its facts spelled nowhere else. An id the
+        // registry lacks reads "board": {"cc": 89, "sms": 58, "l2_mib": 48, "dram_gbps": 300},
+        // which the writer records for such a board only; neither: no board. "mma_slow" (written
+        // only when set) defaults to the class's chip fact, so a table without it keyed tu116 /
+        // tu117 still counts as one of those chips.
+        const Json& gpu = root.at("gpu");
+        if (gpu.contains("pci_id")) {
+            const std::string id = gpu.at("pci_id").get<std::string>();
+            const auto value     = parse_pci_id(id);
+            if (!value) {
+                throw std::runtime_error("route table: " + path + ": gpu.pci_id \"" + id +
+                                         "\" is not a PCI product id (0x and four hex digits)");
+            }
+            table->board = measured::find_board_of_pci(*value);
+            // The id must name a board of the table's class: a mistyped id that is another valid
+            // board (0x2783 for 0x2782) or another chip's is refused, not read as that board.
+            if (table->board) {
+                const Board& b    = *table->board;
+                const auto& cls   = table->status.gpu_class;
+                const auto colon  = cls.find(':');
+                const auto chip   = cls.substr(0, colon);
+                const auto arch   = "sm" + std::to_string(b.major) + std::to_string(b.minor);
+                const auto row    = gpu_chip(*value, b.major, b.minor, b.sms);
+                const bool sms_ok = colon == std::string::npos ||
+                                    cls.substr(colon + 1) == std::to_string(b.sms) + "sm";
+                if ((chip != "*" && chip != arch && chip != row) || !sms_ok) {
+                    throw std::runtime_error("route table: " + path + ": gpu.pci_id " + id +
+                                             " is a " + row + " board with " +
+                                             std::to_string(b.sms) + " SMs, not of class " + cls);
+                }
+            }
+        }
+        if (!table->board && gpu.contains("board")) {
             const Json& b    = gpu.at("board");
             const int cc     = b.at("cc").get<int>();
             const auto& cls  = table->status.gpu_class;
@@ -468,10 +495,12 @@ void fill_from(Table& table, const std::vector<std::shared_ptr<Table>>& lenders)
         }
         added += lent;
         for (auto& [key, entry] : other->moe) {
-            if (table.moe.emplace(key, std::move(entry)).second) {
-                ++lent;
-                ++layers;
-            }
+            if (table.moe.count(key) != 0) continue;
+            entry.lender          = other->status.gpu_class;
+            entry.lender_distance = table_distance(*other);
+            table.moe.emplace(key, std::move(entry));
+            ++lent;
+            ++layers;
         }
         if (lent == 0) continue;
         from += (from.empty() ? "" : ", ") + other->status.gpu_class + " " + std::to_string(lent);
@@ -526,8 +555,7 @@ DeviceTables& here() {
         if (!slot) slot = std::make_unique<DeviceTables>();
         return *slot;
     }
-    int device = 0;
-    if (cudaGetDevice(&device) != cudaSuccess || device < 0 || device >= kMaxDevices) device = 0;
+    const int device = std::max(current_device_ordinal_or_none(), 0);
     return g_devices[static_cast<std::size_t>(device)];
 }
 
@@ -813,6 +841,27 @@ std::optional<MoePlan> table_plan(const MoeRouteKey& key, std::int32_t tokens, b
     return std::nullopt;
 }
 
+std::optional<MoeTableOrigin> table_origin(const MoeRouteKey& key) {
+    const auto table = active_table(here());
+    if (!table) return std::nullopt;
+    const auto it = table->moe.find(moe_key_of(key));
+    if (it == table->moe.end()) return std::nullopt;
+    MoeTableOrigin o;
+    o.table_class     = table->status.gpu_class;
+    o.table_distance  = table_distance(*table);
+    o.lender          = it->second.lender;
+    o.lender_distance = it->second.lender_distance;
+    try {
+        const auto chain = device_class().class_chain();
+        // Own: keyed by one of this device's classes and measured on this very board (distance 0):
+        // a sibling board reading the same file (a gb203 card on the RTX 5080's table) carries it.
+        o.own = (o.table_class == route_gpu_class() ||
+                 std::find(chain.begin(), chain.end(), o.table_class) != chain.end()) &&
+                o.table_distance == 0;
+    } catch (const std::exception&) {}
+    return o;
+}
+
 } // namespace moe
 
 namespace generic {
@@ -836,84 +885,9 @@ const char* epilogue_name(Epilogue e) {
 }
 
 const char* qtype_name(QType q) {
-    switch (q) {
-    case QType::BF16:
-        return "bf16";
-    case QType::FP8_E4M3FN_ROW_BF16:
-        return "fp8";
-    case QType::NVFP4:
-        return "nvfp4";
-    case QType::Q4_G64_FP16:
-        return "q4";
-    case QType::Q5_G64_FP16:
-        return "q5";
-    case QType::Q6_G64_FP16:
-        return "q6";
-    case QType::Q8_G32_FP16:
-        return "q8";
-    case QType::MXFP4:
-        return "mxfp4";
-    case QType::FP8_E4M3FN_ROW_F32:
-        return "fp8r32";
-    case QType::FP8_E4M3FN_B128_F32:
-        return "fp8b128";
-    case QType::U4_G128_ZP_FP16:
-        return "u4zp";
-    case QType::U4_G32_ZP_FP16:
-        return "u4zp32";
-    case QType::U4_G64_ZP_FP16:
-        return "u4zp64";
-    case QType::Q3_G128_FP16:
-        return "q3g128";
-    case QType::Q3_G64_FP16:
-        return "q3g64";
-    case QType::GGML_Q4_K:
-        return "q4k";
-    case QType::GGML_Q5_K:
-        return "q5k";
-    case QType::GGML_Q6_K:
-        return "q6k";
-    case QType::GGML_Q3_K:
-        return "q3k";
-    case QType::GGML_Q2_K:
-        return "q2k";
-    case QType::GGML_IQ4_XS:
-        return "iq4xs";
-    case QType::GGML_IQ3_XXS:
-        return "iq3xxs";
-    case QType::GGML_IQ3_S:
-        return "iq3s";
-    case QType::GGML_Q4_0:
-        return "q40";
-    case QType::GGML_Q4_1:
-        return "q41";
-    case QType::GGML_Q5_0:
-        return "q50";
-    case QType::GGML_Q5_1:
-        return "q51";
-    case QType::GGML_IQ4_NL:
-        return "iq4nl";
-    case QType::GGML_IQ2_XXS:
-        return "iq2xxs";
-    case QType::GGML_IQ2_XS:
-        return "iq2xs";
-    case QType::GGML_IQ2_S:
-        return "iq2s";
-    case QType::GGML_IQ1_S:
-        return "iq1s";
-    case QType::GGML_IQ1_M:
-        return "iq1m";
-    case QType::GGML_TQ1_0:
-        return "tq10";
-    case QType::GGML_TQ2_0:
-        return "tq20";
-    case QType::GGML_Q1_0:
-        return "q10";
-    case QType::GGML_Q2_0:
-        return "q20";
-    default:
-        return "unknown";
-    }
+    // The rows' spellings are string literals, so the view's data is NUL-terminated.
+    const std::string_view route = format_facts(q).route;
+    return route.empty() ? "unknown" : route.data();
 }
 
 std::string format_label(QType q) {
@@ -981,17 +955,33 @@ bool table_claims(const Problem& problem, std::int32_t tokens, bool prefill) {
     return table_route(problem, tokens, prefill).has_value();
 }
 
+std::optional<Board> route_table_board(const std::string& path) { return parse_table(path)->board; }
+
 std::string write_route_table(const std::string& gpu_class, const std::string& gpu_name,
                               const std::vector<RouteEntry>& entries) {
     Json root;
     root["schema"] = "ninferno-route-table/1";
     root["gpu"]    = {{"class", gpu_class}, {"name", gpu_name}};
-    // The board it is measured on, which the default lookup ranks tables by.
+    // The board it is measured on, which the default lookup ranks tables by: its PCI id, whose
+    // facts the reader takes from the registry, where the board is its id's row. Otherwise the
+    // facts themselves and no id: a board the registry lacks (an id it has no row for, or none
+    // read), and one that shares its id with a variant on other memory (core/machine_facts.cpp:
+    // the 8 GB RTX 3060 on 128 bits, the RTX 4070 with GDDR6), whose id would read back as the row.
     try {
-        const Board b        = board_of(device_class());
-        root["gpu"]["board"] = {{"cc", b.major * 10 + b.minor}, {"sms", b.sms},
-                                {"l2_mib", b.l2_mib}, {"dram_gbps", b.dram_gbps}};
-        if (b.mma_slow) root["gpu"]["board"]["mma_slow"] = true;
+        const DeviceClass& device = device_class();
+        const Board b             = board_of(device);
+        const bool row_board =
+            board_registry::find(device.pci_device_id) != nullptr &&
+            measured::row_board_facts(b, board_registry::board(device.pci_device_id));
+        if (row_board) {
+            root["gpu"]["pci_id"] = pci_id_text(device.pci_device_id);
+        } else {
+            root["gpu"]["board"] = {{"cc", b.major * 10 + b.minor},
+                                    {"sms", b.sms},
+                                    {"l2_mib", b.l2_mib},
+                                    {"dram_gbps", b.dram_gbps}};
+            if (b.mma_slow) root["gpu"]["board"]["mma_slow"] = true;
+        }
     } catch (const std::exception&) {
     }
     Json list      = Json::array();

@@ -108,10 +108,12 @@ DFlashFeatureSink batch_feature_sink_impl(DFlashBatchContext& state, const Tenso
 // registered for RowSplit Q8_G32_FP16 matrices; a drafter stored in other formats (a published
 // GGUF's Q4_0, a BF16 or --drafter-quant q4 / nvfp4 artifact) takes the generic projections with
 // the same state effects.
+// FUSION-SITE: drafter_attn_input
 bool fused_q8(const Weight& weight) {
     return ::ninferno::models::qwen3_5::execution::fused_q8_weight(weight);
 }
 
+// FUSION-SITE: drafter_context_kv
 bool fused_context(const DraftParameters& draft) {
     return std::all_of(draft.layers.begin(), draft.layers.end(), [](const auto& layer) {
         return fused_q8(layer.context_key.weight) && fused_q8(layer.context_value.weight);

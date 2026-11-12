@@ -355,7 +355,8 @@ struct TiledShared {
 };
 
 // The schedule's pipeline depth, lowered until the shared tiles fit one block of this build
-// (99 KiB; Turing 64 KiB). A schedule over the limit at two stages does not fit (tiled_fits).
+// (arch_limits.h: 99 KiB on most builds, Turing 64 KiB). A schedule over the limit at two stages
+// does not fit (tiled_fits).
 template <class S, class C, int Stages = S::kStages>
 struct TiledStages {
     static constexpr int value = sizeof(TiledShared<S, C, Stages>) <= kMaxSharedBytesPerBlock ||

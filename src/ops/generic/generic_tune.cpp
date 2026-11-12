@@ -9,7 +9,7 @@
 // those families, and every R8 schedule where the heuristic takes R8 (decode and verify widths),
 // each call after an L2 flush, the median of its repetitions. Where the policy allows A8, ggml's
 // matrix kernel (Family::GgmlMmq, verify widths 5..16) competes with the A16 schedules: it wins on
-// one card and format and loses on another (generic_gemm.cpp, kMmqMinTokens); so does R8 at the
+// one card and format and loses on another (generic_gemm.h, kMmqMinTokens); so does R8 at the
 // verify widths 2..4 of a format that does not take it there by rule (r8_verify_tunable). A
 // schedule replaces the heuristic's only where it is kMargin faster, so noise keeps the heuristic.
 //
@@ -58,6 +58,7 @@
 #include "ops/common/native_nvfp4.h"
 #include "ops/common/route_probe.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/route_authorities.h"
 #include "ops/generic/route_table.h"
 
 #include <cuda_bf16.h>
@@ -100,6 +101,9 @@ constexpr int kReps      = 5;
 inline constexpr std::array<std::int32_t, 9> kPrefillBandTokens = {17,  32,  64,   127, 128,
                                                                    256, 512, 1024, 2048};
 inline constexpr std::size_t kPrefillBands                      = kPrefillBandTokens.size();
+// The first band is the prefill band's lower edge: the selection, the workspace plan and the tuner
+// read one boundary.
+static_assert(kPrefillBandTokens.front() == kPrefillBandMinTokens);
 
 std::size_t prefill_band(std::int32_t tokens) {
     for (std::size_t b = 0; b < kPrefillBands; ++b) {
@@ -296,7 +300,8 @@ std::vector<Route> prefill_candidates(Route base, const Weight& weight, LinearPo
         for (int i = 0; i < staged_schedule_count(); ++i) {
             routes.push_back({Family::StagedMma, static_cast<std::uint8_t>(i)});
         }
-        std::erase_if(routes, [&](Route r) { return !same_summation(base, r); });
+        const Ask prefill = ask_below_profiles(17, true);
+        std::erase_if(routes, [&](Route r) { return !profile_admits_as(r, prefill, base); });
     }
     std::erase_if(routes, [&](Route r) { return !route_admits(r, weight, policy); });
     return routes;
@@ -402,7 +407,7 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
             }
             // R8 at a width the format does not take it at by rule: a token's bytes are then R8
             // decode's, which greedy speculation reproduces.
-            if (base.family != Family::R8Mma && r8_tunable(weight, problem.policy, t)) {
+            if (base.family != Family::R8Mma && r8_tunable(problem, weight, t)) {
                 routes.insert(routes.end(), r8.begin(), r8.end());
             }
             for (const Route r : routes) {

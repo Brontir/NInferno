@@ -1,5 +1,6 @@
 #include "product/choice/choice.h"
 
+#include "core/device_class.h"
 #include "core/generation.h"
 #include "core/measured_boards.h"
 #include "core/mmq_columns.h"
@@ -21,6 +22,18 @@ std::string_view generation_of(const CardFacts& card) noexcept {
     return generation_row(card.major, card.minor).name;
 }
 
+CardFacts card_facts_of(const DeviceClass& device) {
+    CardFacts out;
+    out.major            = device.major;
+    out.minor            = device.minor;
+    out.sms              = device.sms;
+    out.clock_hz         = device.facts.reference_clock_khz * 1e3;
+    out.dram_bytes_per_s = device.facts.dram_bytes_per_s();
+    out.l2_bytes         = device.facts.l2_mib * (1 << 20);
+    out.fp4              = device.features.mma_mxf4nvf4;
+    return out;
+}
+
 namespace {
 
 // The generation row's tensor rate per SM and clock for a route (Fp4: twice the int8 rate). A
@@ -30,14 +43,6 @@ double peak(const CardFacts& card, Route route) noexcept {
     const double s8          = row.s8 > 0 ? row.s8 : row.bf16;
     const double rate        = route == Route::Bf16 ? row.bf16 : route == Route::Fp4 ? 2 * s8 : s8;
     return card.sms * card.clock_hz * rate;
-}
-
-// A decode step's int8 compute rate: the int8 MMA's; a generation without one (Volta) takes its
-// prefill through the tiled f16 MMA (peak) but decodes on dp4a, 4 int8 multiply-adds a lane each
-// clock on its 64 lanes per SM: 512 operations a SM-clock.
-double decode_int8_peak(const CardFacts& card) noexcept {
-    const GenerationRow& row = generation_row(card.major, card.minor);
-    return row.s8 > 0 ? peak(card, Route::Int8) : card.sms * card.clock_hz * kDp4aOpsPerSmClock;
 }
 
 // The generation's own row of a per-generation table, else kTransferGeneration's (`transferred`).
@@ -168,18 +173,37 @@ double r8_issue_excess(const ModelFacts& model, const CardFacts& card, std::stri
 
 // An MoE's routed banks' share of the DRAM rate at `rows` concurrent rows (kMoeRoutedEta: linear
 // in log2 rows from kDramEta at one row), scaled by the generation's own DRAM share; a generation
-// without rows takes Ada's, a row of one card marks it (transferred either way).
-double moe_routed_eta(std::string_view generation, double rows, bool& transferred) noexcept {
+// without rows takes Ada's, a row of one card marks it (transferred either way). By the kernel pair
+// the op runs the routed stages on (`route`, the op's route query: #616 step 7): the generation's
+// rows of that pair; a pair it has no rows of takes its measured pair's, transferred past one row
+// (one row's share is kDramEta's whatever the pair). No `route` (not asked): the measured pair's.
+double moe_routed_eta(std::string_view generation, const MoeStepRoute* route, double rows,
+                      bool& transferred) noexcept {
     std::string_view gen = generation;
-    if (std::none_of(std::begin(kMoeRoutedEta), std::end(kMoeRoutedEta),
-                     [&](const MoeRoutedEta& r) { return r.generation == gen; })) {
+    const auto of_gen    = [&](const MoeRoutedEta& r) { return r.generation == gen; };
+    if (std::none_of(std::begin(kMoeRoutedEta), std::end(kMoeRoutedEta), of_gen)) {
         gen         = kTransferGeneration;
         transferred = transferred || rows > 1;
+    }
+    const MoeRoutedEta& measured =
+        *std::find_if(std::begin(kMoeRoutedEta), std::end(kMoeRoutedEta), of_gen);
+    ExpertKernel gate_up = measured.gate_up, down = measured.down;
+    if (route != nullptr) {
+        const bool own = std::any_of(
+            std::begin(kMoeRoutedEta), std::end(kMoeRoutedEta), [&](const MoeRoutedEta& r) {
+                return of_gen(r) && r.gate_up == route->gate_up && r.down == route->down;
+            });
+        if (own) {
+            gate_up = route->gate_up;
+            down    = route->down;
+        } else {
+            transferred = transferred || rows > 1;
+        }
     }
     const double scale = dram_eta(generation) / kDramEta;
     double lo_rows = 1, lo_eta = kDramEta;
     for (const MoeRoutedEta& r : kMoeRoutedEta) {
-        if (r.generation != gen) { continue; }
+        if (r.generation != gen || r.gate_up != gate_up || r.down != down) { continue; }
         if (r.cards < 2 && rows > 1) { transferred = true; }
         if (rows <= r.rows) {
             const double t = std::log2(rows / lo_rows) / std::log2(r.rows / lo_rows);
@@ -510,7 +534,7 @@ Scored score(const ModelFacts& model, const CardFacts& card, const std::optional
     s.accuracy    = accuracy_of(model, quant, c, card);
     s.seconds     = request_seconds(model, card, quant, c, task);
     if (ref) {
-        s.decision_seconds = request_seconds(model, ref->card, quant, c, task);
+        s.decision_seconds = request_seconds(model, ref->card, quant, c, task, &s.decision_basis);
         s.worth = -std::log(s.decision_seconds) - task.accuracy_weight * s.accuracy.kld;
     }
     return s;
@@ -781,7 +805,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                               : format == &formats[3] ? QType::GGML_Q6_K
                               : format == &formats[4] ? QType::GGML_IQ4_XS
                                                       : QType::GGML_Q4_1;
-    double clocks = 0, bytes = 0;
+    double clocks = 0, bytes = 0, launch_s = 0;
     // A linear of a format not read takes the share (the dense int8 prefill rate on its flops) beside
     // the read ones' tiles: one such tensor no longer drops the whole file's tiles for the share
     // (Qwen3.8 27B UD-Q6_K, two IQ4_NL ffn_gate of 400 linears: 3975 tokens/s on the RTX 4090 against
@@ -843,28 +867,50 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         // format: its tile's, Q3_K .. Q4_1 of `formats`).
         const int widest = mmq_columns::widest_tile(
             l.format.empty() ? label_qtype : qtype_of_name(l.format), card.major, card.minor);
+        // One grid's shape on this card: what a generation with a launch law prices the widths by
+        // (core/mmq_columns.h width_cost, the kernel's own ranking).
+        const mmq_columns::LaunchFacts facts{static_cast<int>(n), static_cast<int>(l.k), card.sms,
+                                             card.clock_hz, card.dram_bytes_per_s};
+        const MmqLaunchLaw* law = mmq_columns::launch_law(card.major, card.minor, measured_format);
         for (double done = 0; done < tokens; done += kMmqSliceTokens) {
             const double t = std::min(kMmqSliceTokens, tokens - done);
             // The column tile the kernel's table takes (core/mmq_columns.h).
             const int width      = mmq_columns::pick(static_cast<int>(t), card.major, card.minor,
-                                                     measured_format, widest);
+                                                     measured_format, widest, facts);
             const double columns = width;
-            const double tiles = std::ceil(n / kMmqTile) * std::ceil(t / columns);
-            const double waves = std::ceil(tiles / sms);
-            const double k_step =
-                l.k * step *
-                mmq_columns::step_share(
-                    width, mmq_columns::tile_fixed(card.major, card.minor, measured_format));
-            if (100 * tiles >= 90 * sms * waves) {
-                clocks += grids * l.per_token * waves * (cost->c0 + k_step);
-            } else { // stream-k: the SMs share the tiles' K steps; the fixup adds the split tiles
-                clocks += grids * l.per_token * (cost->c0 + tiles * k_step / sms);
-                bytes += grids * l.per_token * sms * kMmqTile * columns * 4 * 2;
+            if (law != nullptr && mmq_columns::priced(facts)) {
+                // The launch the kernel runs (DECISIONS 78): its longest CTA's units at the
+                // format's 128-column step scaled by the law's unit share, the fixup's bytes and
+                // its launch where it splits tiles.
+                const mmq_columns::ColumnLaunch launch = mmq_columns::launch_of(
+                    facts.rows, facts.k, static_cast<int>(t), width, card.sms);
+                const double waves = launch.split ? 1.0 : std::ceil(launch.tiles / sms);
+                clocks += grids * l.per_token *
+                          (cost->c0 * waves + launch.units * mmq_columns::kUnitK * step *
+                                                  mmq_columns::unit_share(launch, *law));
+                if (launch.fixup) {
+                    bytes += grids * l.per_token * mmq_columns::fixup_bytes(launch);
+                    launch_s += grids * l.per_token * law->launch_seconds;
+                }
+            } else {
+                const double tiles = std::ceil(n / kMmqTile) * std::ceil(t / columns);
+                const double waves = std::ceil(tiles / sms);
+                const double k_step =
+                    l.k * step *
+                    mmq_columns::step_share(
+                        width, mmq_columns::tile_fixed(card.major, card.minor, measured_format));
+                if (100 * tiles >= 90 * sms * waves) {
+                    clocks += grids * l.per_token * waves * (cost->c0 + k_step);
+                } else { // stream-k: the SMs share the tiles' K steps; the fixup adds the split
+                         // tiles
+                    clocks += grids * l.per_token * (cost->c0 + tiles * k_step / sms);
+                    bytes += grids * l.per_token * sms * kMmqTile * columns * 4 * 2;
+                }
             }
             bytes += l.per_token * t * (grids * l.k * kMmqInputBytes + l.n * kMmqOutputBytes + n * kMmqWrittenBytes);
         }
     }
-    return with_unread(clocks / card.clock_hz + bytes / card.dram_bytes_per_s);
+    return with_unread(clocks / card.clock_hz + bytes / card.dram_bytes_per_s + launch_s);
 }
 
 } // namespace
@@ -885,7 +931,7 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
     };
     // The banks' GEMM (product/plan expert_prefill_of): MXFP4 takes the block-scaled MMA on
     // Blackwell, Ada converts it to int8. The linears beside them take the classic int8 tiles when
-    // their weights are Q8_0; a K-quant's take a tile by format and card (generic_gemm.cpp
+    // their weights are Q8_0; a K-quant's take a tile by format and card (generic_select.cpp
     // w4a8_ws_wins: Q6_K on Blackwell the 128 x 64 producer-warp tile), not yet priced.
     // A dense model's linears likewise: the int8 tiles for Q8_0 weights (q8_prefill_a8).
     TileKernel banks = TileKernel::Int8;
@@ -1048,6 +1094,10 @@ struct Int8PromptLayout {
     int slots = 0;
 };
 
+// The layout and the CTA cost read the kernel's one half-CTA figure (int8/prompt_fast_cost.h).
+static_assert(kAttentionHalfCta == ::ninferno::ops::kInt8PromptHalfCtaPercent / 100.0,
+              "the estimate's half-CTA share is the INT8 prompt kernel's");
+
 // The makespan the kernel weighs a layout by, in hundredths of a 128-row CTA (int8_prompt_fast_makespan).
 long long int8_prompt_makespan(int wide, int narrow, int sms) {
     std::vector<long long> free(static_cast<std::size_t>(sms), 100LL * (wide / sms));
@@ -1055,7 +1105,7 @@ long long int8_prompt_makespan(int wide, int narrow, int sms) {
     long long end = *std::max_element(free.begin(), free.end());
     for (int i = 0; i < narrow; ++i) {
         const auto sm = std::min_element(free.begin(), free.end());
-        *sm += 72;
+        *sm += ::ninferno::ops::kInt8PromptHalfCtaPercent;
         end = std::max(end, *sm);
     }
     return end;
@@ -1073,7 +1123,8 @@ Int8PromptLayout int8_prompt_layout(int width, int heads, int sms) {
             best.slots = slots;
         }
     }
-    if (72LL * up(up(width, 64) * heads, sms) <= best_cost) { return {true, 0}; }
+    const long long half = ::ninferno::ops::kInt8PromptHalfCtaPercent;
+    if (half * up(up(width, 64) * heads, sms) <= best_cost) { return {true, 0}; }
     return best;
 }
 
@@ -1236,14 +1287,16 @@ namespace {
 // The calls a prefill runs after the prompt's chunks (ModelFacts::prompt_tail_calls): each a few
 // tokens through every layer, a plain decode step's reads at the prompt's depth (DECISIONS 62:
 // two such calls on Qwen3.5 9B, 2 x the weights over the DRAM rate predicted 22.5 / 11.3 / 12.7 ms
-// on the RTX 4070 Ti / 4090 / 5070 Ti, the profiled tail 20.0 / 10.4 / 12.6).
+// on the RTX 4070 Ti / 4090 / 5070 Ti, the profiled tail 20.0 / 10.4 / 12.6). `transferred`: the
+// one-row decode estimate it rests on is not Own.
 double tail_calls_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-                          const Candidate& candidate, double prompt) {
+                          const Candidate& candidate, double prompt, bool& transferred) {
     if (model.prompt_tail_calls == 0) { return 0; }
-    Candidate plain = candidate;
-    plain.drafter   = 0;
-    const double rate = speed_of(model, card, quant, plain, 1, prompt, 0).decode_per_stream;
-    return rate > 0 ? model.prompt_tail_calls / rate : 0;
+    Candidate plain   = candidate;
+    plain.drafter     = 0;
+    const Speed speed = speed_of(model, card, quant, plain, 1, prompt, 0);
+    transferred       = transferred || speed.basis != SpeedBasis::Own;
+    return speed.decode_per_stream > 0 ? model.prompt_tail_calls / speed.decode_per_stream : 0;
 }
 
 } // namespace
@@ -1333,10 +1386,28 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     // One row reads its linears on R8 (int8 activations): a format whose instructions bound it, longer.
     if (rows == 1 && route != Route::Bf16) { reads += r8_issue_excess(model, card, gen, share, transferred); }
     if (routed_read > 0) {
+        // The kernels the op runs the routed stages on at these rows (ModelFacts::moe_routes: its
+        // own route query), each pair's share of the routed bytes at that pair's share of the DRAM
+        // rate; not asked: the pair kMoeRoutedEta was measured on.
+        std::vector<MoeStepRoute> routes;
+        if (model.moe_routes) {
+            routes = model.moe_routes(static_cast<std::uint32_t>(rows), candidate.activations);
+        }
+        double asked = 0;
+        for (const MoeStepRoute& r : routes) { asked += std::max(0.0, r.share); }
         // The banks decode on the same SMs: no faster than the class's rate (not measured on Volta).
-        double routed_share = moe_routed_eta(gen, rows, transferred);
-        if (const double sm = sm_share(quant.weights); sm > 0) { routed_share = std::min(routed_share, sm); }
-        reads += routed_read / (routed_share * card.dram_bytes_per_s);
+        const double sm = sm_share(quant.weights);
+        const auto at   = [&](const MoeStepRoute* r) {
+            const double eta = moe_routed_eta(gen, r, rows, transferred);
+            return (sm > 0 ? std::min(eta, sm) : eta) * card.dram_bytes_per_s;
+        };
+        if (asked > 0) {
+            for (const MoeStepRoute& r : routes) {
+                if (r.share > 0) { reads += r.share / asked * routed_read / at(&r); }
+            }
+        } else {
+            reads += routed_read / at(nullptr);
+        }
     }
     bool flops_transferred = false;
     // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.
@@ -1345,9 +1416,14 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const double flops_rate  = linear_prefill(model, card, decode_quant, route, kDefaultChunk, flops_transferred, false) * 2 * params;
     const double flops       = flops_rate > 0 ? rows * 2 * params / flops_rate : 0;
     const double step        = std::max(reads + launches + exact, flops);
+    // The step rests on the flops' rate where it binds: its basis then counts.
+    if (flops > reads + launches + exact) { transferred = transferred || flops_transferred; }
     out.decode_per_stream = step > 0 && std::isfinite(step) ? 1 / step : 0;
     // A drafter's measured gain over plain decode at the depth its load table lets these many
-    // streams draft (a gain no measurement gives is not counted: DrafterOption::measured).
+    // streams draft (a gain no measurement gives is not counted: DrafterOption::measured). Not
+    // part of the basis: the gain is the speculation profile's measurement on the lab cards it
+    // names (DrafterOption), not a rate of this card's generation; SpeedBasis covers the
+    // plain-decode estimate it multiplies.
     if (candidate.drafter > 0 && candidate.drafter <= model.drafters.size()) {
         const DrafterOption& d = model.drafters[candidate.drafter - 1];
         if (d.measured_at(static_cast<std::uint32_t>(rows))) {
@@ -1365,8 +1441,9 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
         const double tiled     = exact ? 0 : prefill_attention_tiled_seconds(model, card, candidate.kv, prompt, candidate.chunk,
                                                                    &prefill_transferred);
         const double attention = tiled > 0 ? tiled : attention_seconds(model, card, prompt, prefill_transferred);
-        out.prefill            = prompt / (prompt / out.prefill + attention +
-                                tail_calls_seconds(model, card, quant, candidate, prompt));
+        out.prefill = prompt / (prompt / out.prefill + attention +
+                                tail_calls_seconds(model, card, quant, candidate, prompt,
+                                                   prefill_transferred));
     }
     out.basis       = !generation_known(card.major, card.minor) ? SpeedBasis::LentGeneration
                       : transferred || prefill_transferred        ? SpeedBasis::Transferred
@@ -1453,11 +1530,57 @@ double worth_band(const CardFacts& card) noexcept {
     return 0;
 }
 
+Resolution resolution_of(const CardFacts& board, SpeedBasis estimates) noexcept {
+    const auto own_row = [](std::string_view gen) -> const PredictionError* {
+        for (const PredictionError& e : kDecodePredictionError) {
+            if (e.generation == gen) { return &e; }
+        }
+        return nullptr;
+    };
+    const bool known           = generation_known(board.major, board.minor);
+    const std::string_view gen = generation_of(board);
+    const PredictionError* own = known ? own_row(gen) : nullptr;
+    // The floor: the Own band of the rows the estimates rest on (the board's generation's, or on a
+    // compute capability with no generation row the lent generation's, generation_of: its rows
+    // price the board), else of the rows they are carried from (kTransferGeneration's). A wider
+    // basis is never resolved more finely than that, and never decided beyond it. The floor that
+    // decides rests on two or more lab cards: a one-card row of the generation falls back to the
+    // lender's row of two or more, never to 0.
+    const PredictionError* priced   = own_row(gen);
+    const PredictionError* lender   = own_row(kTransferGeneration);
+    const auto two_cards            = [](const PredictionError* e) { return e && e->cards >= 2; };
+    const PredictionError* deciding = two_cards(priced)   ? priced
+                                      : two_cards(lender) ? lender
+                                                          : nullptr;
+    const PredictionError* base     = priced ? priced : lender;
+    const double floor              = base ? base->rms : 0.0;
+    const double decided_floor      = deciding ? deciding->rms : 0.0;
+    const Resolution assumed{ResolutionBasis::Unmeasured,
+                             std::max(kUnmeasuredCarryDecodeError, floor), false, decided_floor};
+    if (!known || estimates == SpeedBasis::LentGeneration) { return assumed; }
+    if (estimates == SpeedBasis::Own && own != nullptr) {
+        return {ResolutionBasis::Own, own->rms, own->cards >= 2, decided_floor};
+    }
+    if (own != nullptr) {
+        // A generation with its own error whose estimate is Transferred (a weight class without
+        // its rows, a row of one card): no carry onto those was measured, the assumed worst case.
+        return {ResolutionBasis::Transferred, assumed.rms, false, decided_floor};
+    }
+    for (const TransferredError& e : kTransferredDecodeError) {
+        if (e.target == gen) {
+            return {ResolutionBasis::Transferred, std::max(e.rms, floor), e.cards >= 2,
+                    decided_floor};
+        }
+    }
+    return assumed; // ga100, hopper, gb100, thor: no row of either kind
+}
+
 double single_request_seconds(const ModelFacts& model, const CardFacts& card,
                               const QuantOption& quant, const Candidate& candidate,
-                              const Task& task, std::uint32_t prompt) {
+                              const Task& task, std::uint32_t prompt, SpeedBasis* basis) {
     const double middle = prompt + task.answer / 2.0;
     const Speed speed   = speed_of(model, card, quant, candidate, task.concurrency, middle, prompt);
+    if (basis != nullptr) { *basis = widest(*basis, speed.basis); }
     if (speed.prefill <= 0 || speed.decode_per_stream <= 0) { return INFINITY; }
     // The prompt's linears run as whole chunks and a final partial one, each at its own rate (an
     // MoE's prefill depends on how full a chunk is); its attention runs over the whole prompt.
@@ -1472,18 +1595,22 @@ double single_request_seconds(const ModelFacts& model, const CardFacts& card,
                                                                       chunk, &transferred);
     double prefill_seconds =
         tiled > 0 ? tiled : attention_seconds(model, card, prompt, transferred);
-    prefill_seconds += tail_calls_seconds(model, card, quant, candidate, prompt);
+    prefill_seconds += tail_calls_seconds(model, card, quant, candidate, prompt, transferred);
     if (whole > 0) { prefill_seconds += whole / linear_prefill(model, card, quant, route, chunk, transferred); }
     if (rest > 0) { prefill_seconds += rest / linear_prefill(model, card, quant, route, rest, transferred); }
+    if (basis != nullptr && transferred) { *basis = widest(*basis, SpeedBasis::Transferred); }
     return prefill_seconds + task.answer / speed.decode_per_stream;
 }
 
 double request_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-                       const Candidate& candidate, const Task& task) {
-    const double shorter = single_request_seconds(model, card, quant, candidate, task, task.prompt);
+                       const Candidate& candidate, const Task& task, SpeedBasis* basis) {
+    if (basis != nullptr) { *basis = SpeedBasis::Own; }
+    const double shorter =
+        single_request_seconds(model, card, quant, candidate, task, task.prompt, basis);
     const std::uint32_t long_prompt = task.long_prompt();
     if (long_prompt == 0) { return shorter; }
-    const double longer = single_request_seconds(model, card, quant, candidate, task, long_prompt);
+    const double longer =
+        single_request_seconds(model, card, quant, candidate, task, long_prompt, basis);
     const double weight = kMixLongRequests / (kMixShortRequests + kMixLongRequests);
     return std::exp((1 - weight) * std::log(shorter) + weight * std::log(longer));
 }
@@ -1545,6 +1672,24 @@ std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates)
         return out;
     }
     return std::nullopt;
+}
+
+ChunkBasis chunk_basis_of(const ModelFacts& model, const CardFacts& card, const Gates& gates) {
+    if (!gates.moe_chunk || !model.moe()) { return ChunkBasis::None; }
+    const std::string_view gen = generation_of(card);
+    // The generation the shares were measured on, with its reference card: they decide.
+    if (const auto ref = reference_of(card, gates);
+        ref && ref->chunk_decides && gen == kMoeChunkCurveGeneration) {
+        return ChunkBasis::Own;
+    }
+    if (!generation_known(card.major, card.minor)) { return ChunkBasis::Transferred; }
+    // Another generation whose own MoE prefill rate rests on two lab cards: its saturated rate
+    // times the measured shares' slope, carried unchanged, estimates the chunk but never decides
+    // it (#300: another generation's rows estimate, they do not decide).
+    for (const PrefillEta& row : kPrefillEta) {
+        if (row.moe && row.generation == gen && row.cards >= 2) { return ChunkBasis::CarriedCurve; }
+    }
+    return ChunkBasis::Transferred;
 }
 
 bool decides_switches(const ModelFacts& model, const CardFacts& card, const Gates& gates) {
@@ -1698,8 +1843,23 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     }
     const std::optional<Reference> ref = reference_of(card, gates);
     out.by_worth       = decides_switches(model, card, gates);
-    out.resolution     = ref ? worth_band(ref->card) : 0;
-    out.chunk_by_speed = ref && ref->chunk_decides && model.moe() && !pins.chunk;
+    // The resolution of a comparison the resolution rule weighs (#618): typed by the wider basis of
+    // its two estimates (resolution_of); with the gate closed, the reference card's generation's
+    // one number (worth_band), Own on a known generation, a number carried onto the board where
+    // the rows are lent, deciding whatever the estimates rest on.
+    const auto band_of = [&](SpeedBasis estimates) -> Resolution {
+        if (!ref) { return {}; }
+        if (gates.typed_resolution) { return resolution_of(card, estimates); }
+        return {generation_known(card.major, card.minor) ? ResolutionBasis::Own
+                                                         : ResolutionBasis::Transferred,
+                worth_band(ref->card), true, worth_band(ref->card)};
+    };
+    const Resolutions bands = {band_of(SpeedBasis::Own), band_of(SpeedBasis::Transferred),
+                               band_of(SpeedBasis::LentGeneration)};
+    out.resolutions         = bands;
+
+    out.chunk_basis                    = chunk_basis_of(model, card, gates);
+    out.chunk_by_speed                 = out.chunk_basis == ChunkBasis::Own && !pins.chunk;
     // The enumeration order breaks exact ties (better()): one canonical order of each axis's
     // values (allowed_axes'), never the order a caller listed them in (#301).
     std::vector<KvCacheStorage> kvs = pins.kv ? std::vector<KvCacheStorage>{*pins.kv} : allowed.kv;
@@ -1775,6 +1935,10 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     // the answer, so a step below the largest asked (Auto's 16K, 8K) prices a shorter one, never a
     // prompt the stream cannot hold. The candidates were scored at the largest asked context; a
     // step whose long prompt differs scores them again.
+    // The resolution rule weighs a comparison with the best worth at the band of the wider basis of
+    // the two estimates (#618): one that does not decide (Resolution::decides: a one-card or
+    // assumed error) is resolved at its Own floor, the Own band it widens, never beyond (AGENTS.md:
+    // a lab constant decides only on two cards). The choice reports the best worth's own band.
     std::optional<std::size_t> chosen;
     std::uint32_t settled = 0;
     bool resolved         = false;
@@ -1798,13 +1962,23 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         }
         if (chosen) {
             const std::size_t best = *chosen;
-            chosen   = resolve_within_resolution(out.scored, holding, best, out.resolution);
+            chosen                 = resolve_within_resolution(out.scored, holding, best, bands);
             resolved = *chosen != best;
             anchor   = best;
             settled  = context;
+            for (const std::size_t i : holding) {
+                out.scored[i].weighed_at = resolution_width(resolution_for(
+                    bands, widest(out.scored[best].decision_basis, out.scored[i].decision_basis)));
+            }
             break;
         }
     }
+    const Resolution& band =
+        resolution_for(bands, chosen ? out.scored[anchor].decision_basis : SpeedBasis::Own);
+    out.resolution         = band.rms;
+    out.resolution_basis   = band.basis;
+    out.resolution_decides = band.decides;
+    out.resolution_floor   = band.floor;
     if (!chosen) {
         out.why = "no candidate holds " + std::to_string(task.contexts.empty() ? 0 : task.contexts.back()) +
                   " tokens for each of " + std::to_string(task.concurrency) + " streams";
@@ -1827,17 +2001,50 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     out.anchor_worth               = out.scored[anchor].worth;
     for (Scored& s : out.scored) { s.fits = s.own_context >= settled; }
     const Scored& c = out.scored[*chosen];
+    // The chunk a carried curve predicts (an estimate to verify, never a pick): the widest-chunk
+    // candidates of the chosen configuration that hold the settled context, on the board's own
+    // rates; a wider chunk must be faster by more than the tie to displace the narrower.
+    if (out.chunk_basis == ChunkBasis::CarriedCurve && !pins.chunk) {
+        double best        = request_seconds(model, card, quant, c.candidate, priced);
+        out.chunk_estimate = c.candidate.chunk;
+        for (const std::uint32_t chunk : kMoeChunks) {
+            Candidate v = c.candidate;
+            v.chunk     = chunk;
+            if (chunk == c.candidate.chunk || (own_context && own_context(v) < settled)) {
+                continue;
+            }
+            const double seconds = request_seconds(model, card, quant, v, priced);
+            if ((chunk < out.chunk_estimate && seconds <= best * (1 + kWorthTie)) ||
+                seconds < best * (1 - kWorthTie)) {
+                best               = seconds;
+                out.chunk_estimate = chunk;
+            }
+        }
+    }
     out.why =
         quant.label + ": every stream holds " + std::to_string(settled) + " tokens; KV " +
         std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
         activation_name(c.candidate.activations) +
         (out.by_worth
-             ? (resolved ? ": the more accurate one inside the speed estimate's resolution (" +
-                               fixed(100 * out.resolution, 1) + " %) of the best worth"
-                         : std::string(": the best worth")) +
+             ? (resolved
+                    ? (std::log(c.decision_seconds / out.scored[anchor].decision_seconds) <=
+                               c.weighed_at + kWorthTie
+                           ? ": the more accurate one inside the speed estimate's resolution (" +
+                                 fixed(100 * c.weighed_at, 1) + " %) of the best worth"
+                           : ": more accurate than and no slower than the pick inside the "
+                             "speed estimate's resolution of the best worth")
+                    : std::string(": the best worth")) +
                    " on the " + std::string(generation_of(card)) + " reference card (" +
                    fixed(c.decision_seconds, 2) + " s on " + request_mix_text(priced) +
-                   " there, KLD " + fixed(c.accuracy.kld, 4) + ")"
+                   " there, KLD " + fixed(c.accuracy.kld, 4) + ")" +
+                   (out.resolution_decides
+                        ? std::string()
+                        : "; the best worth's speed estimate is " +
+                              std::string(resolution_basis_name(out.resolution_basis)) +
+                              ": its band, " + fixed(100 * out.resolution, 1) +
+                              " %, rests on one lab card or is assumed, so the rule weighed it "
+                              "at its own floor, " +
+                              fixed(100 * out.resolution_floor, 1) + " %")
              : ": the family's defaults (" + defaults_why + ")") +
         (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
                                   ": the fastest prefill on the reference card"
@@ -1877,23 +2084,56 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
 std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
                                       const std::vector<std::size_t>& eligible, std::size_t anchor,
                                       double resolution) noexcept {
+    const Resolution one{ResolutionBasis::Own, resolution, resolution > 0, resolution};
+    return resolve_within_resolution(scored, eligible, anchor, Resolutions{one, one, one});
+}
+
+std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
+                                      const std::vector<std::size_t>& eligible, std::size_t anchor,
+                                      const Resolutions& bands) noexcept {
     std::size_t pick = anchor;
-    if (!(resolution > 0)) { return pick; }
-    const Scored& a = scored[anchor];
+    const Scored& a  = scored[anchor];
     if (!(a.decision_seconds > 0)) { return pick; }
     for (const std::size_t i : eligible) {
         const Scored& s = scored[i];
-        // Strictly more accurate (a NaN KLD never is), and not slower than the resolution.
+        // Strictly more accurate (a NaN KLD never is), and not slower than the resolution of the
+        // two's comparison: its full width where it decides, else its Own floor (a one-card or
+        // assumed band never widens the decision).
         if (!(s.decision_seconds > 0) || !(s.accuracy.kld + kWorthTie < a.accuracy.kld)) {
             continue;
         }
-        if (std::log(s.decision_seconds / a.decision_seconds) > resolution + kWorthTie) {
+        const double width =
+            resolution_width(resolution_for(bands, widest(a.decision_basis, s.decision_basis)));
+        if (!(width > 0) || std::log(s.decision_seconds / a.decision_seconds) > width + kWorthTie) {
             continue;
         }
         const Scored& p = scored[pick];
         if (pick == anchor || s.accuracy.kld < p.accuracy.kld - kWorthTie ||
             (std::abs(s.accuracy.kld - p.accuracy.kld) <= kWorthTie && i < pick)) {
             pick = i;
+        }
+    }
+    // A moved pick is never dominated: among the candidates no slower and strictly more accurate
+    // than it, the one of the lowest KLD, then the lowest index, takes it (comparisons of unequal
+    // widths could otherwise leave it out). Such a pick may lie beyond its own comparison's width
+    // of the anchor; it is no slower than one inside its band.
+    for (bool again = pick != anchor; again;) {
+        again           = false;
+        const Scored& p = scored[pick];
+        std::optional<std::size_t> by;
+        for (const std::size_t i : eligible) {
+            const Scored& s = scored[i];
+            if (!(s.decision_seconds > 0) || s.decision_seconds > p.decision_seconds ||
+                !(s.accuracy.kld + kWorthTie < p.accuracy.kld)) {
+                continue;
+            }
+            const bool lower = !by || s.accuracy.kld < scored[*by].accuracy.kld - kWorthTie;
+            const bool tie = by && std::abs(s.accuracy.kld - scored[*by].accuracy.kld) <= kWorthTie;
+            if (lower || (tie && i < *by)) { by = i; }
+        }
+        if (by) {
+            pick  = *by;
+            again = true;
         }
     }
     return pick;
@@ -1904,6 +2144,31 @@ std::vector<Alternative> explain(const Choice& choice) {
     if (!choice.chosen) { return out; }
     const Scored& chosen = choice.scored[*choice.chosen];
     const Candidate& c   = chosen.candidate;
+    // The band of a comparison by the wider basis of its two estimates, and the width the rule
+    // weighs it at (#618).
+    const auto band_of = [&](const Scored& x, const Scored& y) -> const Resolution& {
+        return resolution_for(choice.resolutions, widest(x.decision_basis, y.decision_basis));
+    };
+    const auto width_text = [&](const Resolution& b) {
+        return fixed(100 * resolution_width(b), 1) + " % decode rms" +
+               (b.decides ? std::string()
+                          : ", " + std::string(resolution_basis_name(b.basis)) + ": its " +
+                                fixed(100 * b.rms, 1) +
+                                " % rests on one lab card or is assumed, so the Own floor");
+    };
+    // Why the best worth was passed over: the chosen lies inside the band of their comparison, or
+    // (the dominance guard) beyond it, no slower than a candidate inside it and more accurate.
+    const auto anchor_text = [&](const Scored& a) {
+        const Resolution& b = band_of(a, chosen);
+        const bool inside   = a.decision_seconds > 0 && chosen.decision_seconds > 0 &&
+                            std::log(chosen.decision_seconds / a.decision_seconds) <=
+                                resolution_width(b) + kWorthTie;
+        return inside ? "inside the speed estimate's resolution (" + width_text(b) +
+                            "): the chosen is the more accurate"
+                      : std::string("beyond the speed estimate's resolution (") + width_text(b) +
+                            "), but no slower than a candidate inside it and more accurate: the "
+                            "chosen dominates that one";
+    };
     const auto value_of = [&](const Scored& s, Axis axis) -> std::string {
         switch (axis) {
         case Axis::Kv: return std::string(kv_cache_storage_name(s.candidate.kv));
@@ -1968,31 +2233,31 @@ std::vector<Alternative> explain(const Choice& choice) {
                                    ? "the default chunk stands (no measured chunk shares decide here)"
                                    : "the family's default stands (no decision constants for this generation)";
             } else if (choice.resolved_within_resolution && &s == &choice.scored[choice.anchor]) {
-                // The best worth, passed over by the resolution rule for the more accurate one.
+                // The best worth, passed over by the resolution rule for the more accurate one
+                // (the code stays within_resolution where the dominance guard moved the pick
+                // beyond its own comparison's width: the text says so).
                 alt.why_code = "within_resolution";
-                alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) +
-                              " above the chosen, inside the speed estimate's resolution (" +
-                              fixed(100 * choice.resolution, 1) +
-                              " % decode rms): the chosen is the more accurate (KLD " +
-                              fixed(chosen.accuracy.kld, 4) + " against " +
-                              fixed(s.accuracy.kld, 4) + ")";
+                alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " above the chosen, " +
+                              anchor_text(s) + " (KLD " + fixed(chosen.accuracy.kld, 4) +
+                              " against " + fixed(s.accuracy.kld, 4) + ")";
             } else if (s.worth > chosen.worth + kWorthTie) {
-                // Not the anchor, yet above the moved pick. Inside the band (no slower than the
-                // anchor by more than the resolution) the chosen is the most accurate; outside it,
-                // the rule does not weigh this one at all (resolve_within_resolution).
-                const Scored& a   = choice.scored[choice.anchor];
-                const bool inside = s.decision_seconds > 0 && a.decision_seconds > 0 &&
+                // Not the anchor, yet above the moved pick. Inside the band of its comparison with
+                // the anchor (no slower than it by more than that width, #618) the chosen is the
+                // most accurate; outside it, the rule does not weigh this one at all
+                // (resolve_within_resolution).
+                const Scored& a      = choice.scored[choice.anchor];
+                const Resolution& ab = band_of(a, s);
+                const bool inside    = s.decision_seconds > 0 && a.decision_seconds > 0 &&
                                     std::log(s.decision_seconds / a.decision_seconds) <=
-                                        choice.resolution + kWorthTie;
+                                        resolution_width(ab) + kWorthTie;
                 alt.why_code = inside ? "within_resolution" : "outside_resolution";
-                alt.why_not =
-                    "worth " + fixed(s.worth - chosen.worth, 3) + " above the chosen, " +
-                    (inside ? std::string("which is the more accurate inside the speed "
-                                          "estimate's resolution of the best worth")
-                            : "but slower than the best worth by more than the speed "
-                              "estimate's resolution (" +
-                                  fixed(100 * choice.resolution, 1) +
-                                  " %): the rule picks the most accurate inside that band");
+                alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " above the chosen, " +
+                              (inside ? std::string("which is the more accurate inside the speed "
+                                                    "estimate's resolution of the best worth")
+                                      : "but slower than the best worth by more than the speed "
+                                        "estimate's resolution (" +
+                                            width_text(ab) +
+                                            "): the rule picks the most accurate inside that band");
             } else if (std::abs(s.worth - chosen.worth) <= kWorthTie &&
                        s.own_context != chosen.own_context) {
                 alt.why_code = "tie_context";
@@ -2007,21 +2272,22 @@ std::vector<Alternative> explain(const Choice& choice) {
             } else if (s.decision_seconds > 0 && chosen.decision_seconds > 0 &&
                        chosen.worth - s.worth <=
                            std::min(
-                               choice.resolution,
+                               resolution_width(band_of(s, chosen)),
                                std::abs(std::log(s.decision_seconds / chosen.decision_seconds))) +
                                kWorthTie &&
                        chosen.worth - s.worth > kWorthTie) {
                 // It loses by less than the estimate's uncertainty about the two's speeds: the
-                // generation's decode error, and no more than their speeds differ (configurations
-                // that run nearly the same kernels err alike). Indistinguishable within the
-                // estimate; a gap of accuracy beyond their speeds' difference stays a loss.
+                // width of their own comparison's band (by the wider of the two bases, #618: a
+                // one-card or assumed band at its Own floor), and no more than their speeds differ
+                // (configurations that run nearly the same kernels err alike). Indistinguishable
+                // within the estimate; a gap of accuracy beyond their speeds' difference stays a
+                // loss.
                 // The tie's slack absorbs the rounding between the worth's and this log's paths:
                 // at equal accuracy the gap is the speed difference exactly.
                 alt.why_code = "within_resolution";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) +
-                               " against the chosen, inside the speed estimate's resolution (" +
-                               fixed(100 * choice.resolution, 1) +
-                               " % decode rms): the point estimate decides";
+                              " against the chosen, inside the speed estimate's resolution (" +
+                              width_text(band_of(s, chosen)) + "): the point estimate decides";
             } else {
                 alt.why_code = "lower_worth";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";
@@ -2055,12 +2321,9 @@ std::vector<Alternative> explain(const Choice& choice) {
             }
             if (alt.value.empty()) { alt.value = value_of(anchor, axis); }
             alt.why_code = "within_resolution";
-            alt.why_not  = "worth " + fixed(anchor.worth - chosen.worth, 3) +
-                          " above the chosen, inside the speed estimate's resolution (" +
-                          fixed(100 * choice.resolution, 1) +
-                          " % decode rms): the chosen is the more accurate (KLD " +
-                          fixed(chosen.accuracy.kld, 4) + " against " +
-                          fixed(anchor.accuracy.kld, 4) +
+            alt.why_not = "worth " + fixed(anchor.worth - chosen.worth, 3) + " above the chosen, " +
+                          anchor_text(anchor) + " (KLD " + fixed(chosen.accuracy.kld, 4) +
+                          " against " + fixed(anchor.accuracy.kld, 4) +
                           "); the best worth, which differs on more than this axis";
             out.push_back(std::move(alt));
         }

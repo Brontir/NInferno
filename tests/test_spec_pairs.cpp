@@ -228,6 +228,73 @@ int main() {
                    "named boards of one class stand beside a record naming none (" +
                        std::to_string(group.size()) + ")");
         }
+        // One chip under its two board names is one card (a card is its chip's facts, not the
+        // name): the RTX 3060 and its Lite Hash Rate board, the RTX 2080 Ti and its Rev. A board.
+        const auto named = [&](std::uint32_t board, const char* gpu, const char* generation) {
+            auto pair         = mtp_q4;
+            pair.tune.key.gpu = gpu;
+            pair.generation   = generation;
+            pair.lab_board    = board;
+            return pair;
+        };
+        for (const auto& twins :
+             {std::vector<sp::MeasuredPair>{named(0x2503, "ga106:28sm", "sm86"),
+                                            named(0x2504, "ga106:28sm", "sm86")},
+              std::vector<sp::MeasuredPair>{named(0x1E04, "tu102:68sm", "sm75"),
+                                            named(0x1E07, "tu102:68sm", "sm75")}}) {
+            expect(sp::pair_group(twins, "qwen3_5", "mtp", 4.9).empty(),
+                   "two board names of one chip are one card: no group of two cards");
+            // A second chip beside them: two cards, the twins' records one of them.
+            auto both = twins;
+            both.push_back(named(0x2684, "ad102:128sm", "sm89"));
+            expect(sp::pair_group(both, "qwen3_5", "mtp", 4.9).size() == 2,
+                   "the twin boards' record of a target once, beside another card's");
+        }
+        // A target's own tune records under two board names of one chip are one card's: pooled
+        // into one measurement (one lab card), not two unpooled records of which one is dropped.
+        {
+            const std::vector<sp::MeasuredPair> lite = {named(0x2503, "ga106:28sm", "sm86"),
+                                                        named(0x2504, "ga106:28sm", "sm86")};
+            const auto twin =
+                sp::pair_choice(lite, lite[0].target, "qwen3_5", {"mtp"}, 4.9, "sm86");
+            expect(twin && twin->source.find("(1 lab card(s))") != std::string::npos,
+                   "a target's records under two board names of one chip are one lab card");
+        }
+        // Two cards of one class (the same chip and SM count, another memory configuration or
+        // rate) stand as two.
+        expect(sp::pair_group(
+                   {named(0x2782, "ad104:60sm", "sm89"), named(0x27B1, "ad104:60sm", "sm89")},
+                   "qwen3_5", "mtp", 4.9)
+                       .size() == 2,
+               "two different cards of one class count as two");
+        // Boards equal but for the reference clock are priced apart: two cards (Tesla V100 SXM2
+        // 16GB 1530 MHz and PCIe 16GB 1380 MHz).
+        expect(sp::pair_group(
+                   {named(0x1DB1, "gv100:80sm", "sm70"), named(0x1DB4, "gv100:80sm", "sm70")},
+                   "qwen3_5", "mtp", 4.9)
+                       .size() == 2,
+               "boards of one chip with other clocks count as two");
+        // A board the facts table has no row for stands as its id: two ids two cards, one id one.
+        expect(sp::pair_group(
+                   {named(0x7771, "ad104:60sm", "sm89"), named(0x7772, "ad104:60sm", "sm89")},
+                   "qwen3_5", "mtp", 4.9)
+                       .size() == 2,
+               "two boards without a facts row count as two");
+        expect(sp::pair_group(
+                   {named(0x7771, "ad104:60sm", "sm89"), named(0x7771, "ad104:60sm", "sm89")},
+                   "qwen3_5", "mtp", 4.9)
+                   .empty(),
+               "one board without a facts row is one card");
+        // A record naming no board is its class's card: beside another class's, two cards; beside
+        // a named board of its own class, no card of its own.
+        expect(sp::pair_group({named(0, "ad104:60sm", "sm89"), named(0, "ga106:28sm", "sm86")},
+                              "qwen3_5", "mtp", 4.9)
+                       .size() == 2,
+               "records naming no board are their classes' cards");
+        expect(sp::pair_group({named(0, "ad104:60sm", "sm89"), named(0x2782, "ad104:60sm", "sm89")},
+                              "qwen3_5", "mtp", 4.9)
+                   .empty(),
+               "a record naming no board is no second card beside its class's named board");
     }
     // Three cards, no depth all of them measured (one 1-3, one 3-5, one 1 and 5): each depth on
     // two cards stands, the group speculates (it decoded plainly for want of a common label).

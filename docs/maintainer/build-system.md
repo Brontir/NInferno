@@ -22,13 +22,14 @@ The default configuration is Release. Ninja links and archives share the single-
 | `NINFERNO_BUILD_APPS` | ON | the executables of `apps/` (CLI, server, page, converter, perplexity, dispatcher, family CLIs) |
 | `BUILD_TESTING` | OFF | C++ tests and registered Python interoperability tests |
 | `NINFERNO_BUILD_BENCHMARKS` | OFF | Op, model, Engine and context-cost benchmarks |
+| `NINFERNO_WARNINGS` | OFF | host C++ warnings (`-Wall -Wextra -Wunused` without `-Wmissing-field-initializers`, errors on `return-type` and `unused-function`) for the directories that opt in with `ninferno_directory_warnings()`: `src/product`, `src/runtime` and `src/spec` and what they contain; the other directories are follow-ups of issue #611. CUDA translation units (nvcc) and MSVC builds do not get these flags; never `third_party` |
 | `NINFERNO_UI_CHAT` | ON | download llama-ui's chat bundle for `ninferno-ui` (see below) |
 | `NINFERNO_VOLTA_CUTLASS` | ON | CUTLASS sm_70 GEMM for Volta prefill (`sm_70` trees; fetched) |
 | `NINFERNO_CUDA_EMBED_PTX` | OFF | embed each architecture's PTX beside its SASS (JIT on a later GPU) |
 | `NINFERNO_CUDA_LINEINFO` | ON in NVFP4 (`sm_120`) trees that embed tree paths, else OFF | compile CUDA with `-lineinfo` (for profiling) |
 | `NINFERNO_SOURCE_TREE_PATHS` | ON | embed the source and build tree paths, so a binary run from the tree finds `routes/`, the drafters' rankings and the chat page there; the release scripts turn it off (those files ship beside the binaries) and source paths in CUDA errors are then relative to the tree |
 | `NINFERNO_VERSION_STRING` | the project version | the version the executables report |
-| `NINFERNO_SHARED_OP_TESTS` | OFF | link the op tests against one shared `ninferno_ops` |
+| `NINFERNO_SHARED_OP_TESTS` | OFF | link every test with device code against one shared library of the CUDA archives (Linux test trees; see below) |
 
 Apps or tests enable the internal product support components: media acquisition, prompt input,
 logging and serving. This is one derived condition, not a separate user option. FFmpeg belongs
@@ -156,6 +157,40 @@ Source-list maintenance must preserve language, architecture, RDC mode, device-l
 and numerical compiler options. Splitting a manifest does not reduce kernel instantiation work
 or justify combining shape translation units or enabling unity builds.
 
+## The shared test tree
+
+Without options every test executable links the CUDA archives statically, so each one carries the
+whole engine's device code (about 600 MB per test on `120a`), and a test tree is mostly copies of
+it. `NINFERNO_SHARED_OP_TESTS=ON` (Linux, `BUILD_TESTING=ON`) puts the member archives
+`ninferno_core_host`, `ninferno_core`, `ninferno_ops`, `ninferno_nvfp4_non_rdc` and
+`ninferno_ggml_mmq` whole into one shared library, `ninferno_ops_shared`
+(`cmake/SharedTestLibrary.cmake`), and every test with device code links it and the shared CUDA
+runtime instead. On `120a` (CUDA 13.4) this took a full test tree from 107 GB to 14 GB (the tests
+from 97 GB to 2.9 GB, the library 1.1 GB once) at the same build time, which compilation
+dominates either way.
+
+- Every library outside the members links a member by its redirect, `ninferno::core`,
+  `ninferno::ops`, ... (`cmake/NInfernoTargets.cmake`). Without the option a redirect is an alias of
+  the archive: every command of the build is the one the archive's own name gives. With it, a
+  redirect resolves on the executable being linked: the archive for an app or bench, the shared
+  library (and the archive's compile requirements) for a test with the `NINFERNO_SHARED_OPS`
+  property. `ninferno::cudart` resolves the same way. Members link each other by their own names.
+- A member holds per-process or per-device state (the substituted device class, the per-device
+  slots of the launch sites, the facts cache, the runtime's kernel registrations), so it is in the
+  library whole and a test that links the library holds no copy of it. `ninferno_sys` is not a
+  member: it holds no state, and every target links it by its own name.
+- At the end of the configure (`ninferno_decide_link_modes`) every executable of `tests/` whose
+  static closure reaches device code takes the library, unless declared `STATIC_LINK` in
+  `ninferno_add_test`; the others keep their static link. `STATIC_LINK` tests: those with
+  `LINKER:--wrap` (a wrap reaches no call made inside a shared library), the device-image refusal
+  (the product's link) and the host-only gate-atlas and choice tests. Each decision is asserted
+  (`ninferno_assert_link_mode`: no member archive and no static runtime beside the library; apps and
+  benches never reach the library or the shared runtime) and written to
+  `<build>/ninferno_link_modes.txt`; `ninferno_link_mode_test` (`tools/audit/link_mode.sh`) checks
+  the built binaries against it.
+- The apps and benches of such a tree link exactly as without the option; the members' host code is
+  compiled position-independent (device code is unchanged). Release trees never set the option.
+
 ## Consumers and verification
 
 `apps/CMakeLists.txt` explicitly defines every executable. Tests and benchmarks
@@ -173,3 +208,73 @@ device links and CTest commands/properties; check the relevant option combinatio
 affected targets and run their behavioral tests. A shape-source edit should rebuild its own
 translation unit plus necessary downstream links. Build-time or inference-speed claims require
 measurements at that scope.
+
+## Which arches a change must be tested on
+
+`python tools/audit/affected_arches.py` answers, for a change, which per-architecture build sets
+(sm_70, sm_75, sm_86, sm_89, sm_120a) must run the tests, or that one machine is enough ("host"),
+or that nothing changed. It needs no GPU. It reads git, never the build.
+
+- Default: the diff `--base...--head` (default `origin/master` to `HEAD`), read from the refs, so
+  the answer does not depend on what is checked out. It sees commits only; edits that are not
+  committed are not in it. Renames are listed as a removal and an addition.
+- `--files a b c`: the paths you name, relative to the repository root. Backslashes, a leading
+  `./` and `..` are folded; an absolute path must lie inside the root, otherwise the tool refuses.
+- `--ninja BUILD_DIR`: the objects `ninja -n` would rebuild, joined with the diff and with the
+  uncommitted and untracked files. A dry run cannot see files that tests read at run time, and it
+  stops at the manifest step when CMake would re-run or a `CONFIGURE_DEPENDS` glob is re-checked
+  (the project has such globs, so on a real build tree this mode is likely to answer "all" often);
+  both cases answer "all", and a file read at run time is taken from the diff.
+
+The rules, in the order they are tried:
+
+1. "all": `routes/`, `src/core/data/`, `src/ops/generic/data/`, build files, any `*_golden/`
+   directory under `tests/`, `third_party/`; any file that names an arch macro
+   (`NINFERNO_BUILD_ARCH`, `WITHOUT_NVFP4`, `__CUDA_ARCH__`, ...) before or after the change; chips
+   outside the lab set; any file a `.cu` includes, transitively and whatever its extension;
+   every `.cu`/`.cuh`.
+2. One arch: a translation unit (`.cu`, `.cpp`, `.cc`) that CMake lists only under that arch's
+   `NINFERNO_BUILD_ARCH` guard and whose name says the same arch. A header listed under a guard
+   does not narrow: any unguarded file may include it. A chip name in a data file name never
+   narrows the answer: the name says whose board the file describes, not which build set reads it.
+3. "host": only `src/chat`, `src/connect`, `src/media`, `src/text`, `src/structured`,
+   `src/convert`, `apps/connect`, `apps/convert`, `tests/chat`, `tests/convert*`,
+   `tests/release`, `docs`, `.github`, and only for C++ files (`.cpp .cc .h .hpp .inl`) and, outside
+   `src/` and `apps/`, for Python, JSON, text and YAML files; `.md` anywhere. This list of types is
+   a choice, not a fact derived from the build. A C++ file is host only when it does not name the
+   device-facts API (`cuda_runtime`, `cudaDeviceGetAttribute`, `cudaGetDeviceProperties`,
+   `device_class`, `DeviceFeatures`, `gpu_facts`, `kernel_facts`) and no file of its include
+   closure (before or after the change) uses an arch macro or a computed include.
+4. Everything else, including `tools/`, `tests/fixtures/`, `src/artifact/`, `src/ui/`,
+   `src/serve/`: "all". Several of these run, or are read by, device tests.
+
+### Not seen by the tool
+
+The tool reads names, includes and CMake guards, not behaviour. It does not see:
+
+- a symlink retargeted to a header that holds an arch macro;
+- `set_source_files_properties` under a guard for a source that CMake globs;
+- an arch-derived macro that is not on its list (`ARCH_MACROS`);
+- a `.cu` that includes a header through a macro (`#include MACRO` in a `.cu` is read as an
+  arch use, but the file the macro names is not followed);
+- a new device-facts read or arch-macro include in a host directory that the grep above does not
+  name (a wrapper with another name), and a data file under `docs/`, `.github/` or `tests/` that a
+  device source or test reads;
+- a CMake guard written in a form `guard_arches` does not parse (it then answers "all", which is
+  safe), or hidden from the parser in another way than a bracket comment (a CMake file that holds
+  `#[` anywhere is not parsed for guards: every listing in it answers "all");
+- a header that only a guarded translation unit includes (it answers "all", which is wider than
+  needed, never narrower).
+
+When the change adds a CMake guard construct, includes a core or device header from chat, connect,
+media, text, structured or convert, or adds a data file that device code reads, ignore "host" and
+run every arch. When in doubt, run every arch.
+
+The machine named by `any_one` should be the fullest build (sm_120a): a host-only convert change
+still runs `ninferno_artifact_poisoned_upload_test` (`tests/convert_native/tests.cmake`), whose
+converter output is uploaded by the GPU materialization test, and a narrower card exercises less of
+it.
+
+The ctest line is always the full suite: which tests carry which label is not read here, so the
+tool never names a label filter. A scan of every tracked file runs in
+`tests/test_affected_arches.py` and fails when a file answers one arch.

@@ -32,9 +32,16 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `r8_decode_table.py` | Generate `src/ops/generic/r8_decode_table.h` from R8 schedule sweeps. |
 | `hard_set.py` | One serving configuration through the hard question set ([eval/corpora/hard50](../../eval/corpora/hard50/README.md)): answers graded against the references, decode rate and, at a fixed speculative depth, tokens per round. |
 | `selection_regret.py` | Offline regret of recorded production choices against qualified, matched alternatives on held-out boards or models ([below](#offline-selection-regret)). |
+| `regret_bands.py` | Regret weighted by T band, per board, format and route family, from regret documents or plain route_tune CSVs ([below](#regret-by-t-band)). |
+| `sweep_manifest.py` | The manifest of the route sweep archive: which route_tune CSVs exist on which card, what they cover and whether they name their run, device and protocol ([archive](../../docs/maintainer/sweep-archive.md)). |
 | `regret_collect.py` | The lab collector for `selection_regret.py`: `ninferno_route_tune --selected-out` (the route the production path runs per problem and width) and one `--routes-out` sweep per pass into its input ([below](#offline-selection-regret)). |
+| `gap_map.py` | Where measured kernel times sit against the counted DRAM and tensor laws, per card, format and T band; host only ([doc](../../docs/maintainer/gap-map.md)). |
 | `mmq_transfer_audit.py` | Offline audit of how the MMQ choice transfers between same-generation cards (#373): route-table agreement and gate-label regret by workload regime, from `routes/*.json` and `data/mmq_paired_prefill.json`; no GPU ([report](../../docs/maintainer/mmq-transfer-audit.md)). |
+| `run_524_turing_grid.sh`, `mmq_width_grid.py`, `524_grid_hook.patch` | Measurement kit for the Turing column-tile step (#524, [DECISIONS 74](../../docs/maintainer/decisions.md)): forced-width grid and A/B on an idle RTX 2080 Ti with `ninferno-serve`. The widths come from a bench-only kernel patch the script applies for the build and reverts; it is never merged into the kernel. `AB_ARM=law` runs the A/B of the production ranking (on Turing the launch law, [DECISIONS 78](../../docs/maintainer/decisions.md)) against the fewest tiles, read against the law's own prediction. Run on the RTX 2080 Ti (grid and tile-law A/B 10.11, law A/B 12.11). |
 | `quality_rows.py` | Perplexity and KL divergence of each `--activations` mode against `exact` on the fixed corpus, appended as `docs/performance/` rows. |
+| `isa_probe/` | The ISA facts of one card for the register-MMA price (#613 PR-2): `isa_probe.cu` measures tensor pipe cycles per MMA and the dependent MMA latency (per PTX `mma.sync`; on sm_70 one is four SASS HMMA.884 STEPs, the row's `sass_per_mma`), INT32 / FP32 cycles per warp instruction, the dependent latencies of the decode chains' ALU ops (each conversion alone) and the L1 / L2 / DRAM / shared load latencies alone and under 2-8 chasing warps (in SM clocks; beyond the L1 in wall ns as well), every memory level once on a chip that runs nothing else and once beside a working warp on every SM (`_held`), DRAM also with all 32 lanes of every warp chasing, on every SM and on half of them (the memory system's throughput), and the SM clock the card ran each part at; `isa_probe.py run --arch 89` builds and runs it (10 to 20 s, the GPU otherwise idle), `merge` copies the run into `src/core/data/isa_probe/isa_probe_<arch>.txt` and regenerates `src/core/data/isa_facts.json` from every file there (provenance Measured, source file, card, nvcc, driver, and the sha256 of the probe source the run was built from, which the test holds against the checked-in `isa_probe.cu`; `regenerate` alone rebuilds it; the test pins table = regeneration); `isa_probe_ncu.sh` cross-checks the tensor figure with Nsight Compute. |
+| `warp_inflight/` | The per-SM DRAM rate against resident warps W (Refs #690, #735): `warp_inflight.cu` streams 16-byte `ld.global.cs` loads with a known number in flight a lane (`chainF`: F; `ringF`: the decode kernels' two-slot ring, up to 2F) on 1 to 8 SMs, W from 1 to the SM's resident warps; `warp_inflight.py run --arch 89` builds and runs it (5 to 15 s, the GPU otherwise idle; it measures only once the warm-up has held one memory clock for 1 s, at most 10 s, and refuses a run whose clocks moved; source hash, -arch and the build's 16-byte load counts on the run), `rows` writes JSON rows with provenance and b_w = rate x L0 / W (L0 the run's own lone-warp fetch time, the ISA table's beside it), `show` prints b_w and the saturated per-SM rate P; `merge` copies a run into `src/core/data/warp_inflight/warp_inflight_<arch>.txt` (with `--transfer`, another card of the architecture: `warp_inflight_<arch>_<card>.txt`, a check of the row) and regenerates `src/core/data/sm_rate_facts.json` (P per SM clock in both carve-outs, the streaming L0, the most bytes a warp keeps in flight, the ring rows, the law against every other card's run, which refutes the row when outside the bounds; read by `core/sm_rate_facts.h` for the DRAM law of #690), `regenerate` alone rebuilds it and names any committed run it refuses and the ISA table's architectures left without a row (the test pins table = regeneration). |
+| `run_521_gateup.sh` | Run `route-tune` twice on the gated gate/up shapes of #521 at T = 2-4 and print, per shape and T, the gated vector-kernel launch against 2 x a single launch (an estimate) and the best register-MMA schedule, with the paired per-pass difference and a verdict floored at the timer's raw tick (1.024 us; two passes are two samples, not a confidence range); `--summarize A.csv B.csv` re-reads two routes files without a GPU; aborts when an expected cell is missing ([DECISIONS 76](../../docs/maintainer/decisions.md)). |
 
 ## Offline selection regret
 
@@ -129,19 +136,61 @@ one call after the L2 flush, or `warm`, one call where the timer had no flush bu
 one board, and a case's passes from one protocol, or the collector refuses them; each case's
 `workload` states its protocol. Files written before these columns are refused, and so is one run given as two passes.
 
-Regret by authority and regime (#614): a `--selected-out` CSV may also carry `authority` (the route
+Regret by authority and regime (#614): a `--selected-out` CSV carries `authority` (the route
 authority that answered, e.g. `route-table`, `cost-model`, `r8-table`) and `evidence` (`pin`,
 `measured`, `ranker`, `carried`, `transferred`, `borrowed`); each case records them with its width
-`t`. A file without the columns reads `unknown` for both, so the tools work on older data.
+`t`. route_tune writes both (and `ranker`); a file without the columns, from an older run, reads
+`unknown` for both, so the tools work on older data.
 `regret_collect.py --pci-id 0x2B85` adds the board's compute capability, SMs, DRAM rate, boost
 clock and `mma_slow` from `core/data/gpu_facts.json` (the rows' device must be that board's
-class: its chip, or its architecture where the class has no chip, and its SMs);
+class: its chip, or its architecture where the class has no chip, and its SMs; rows that record
+the `pci_device_id` route_tune now writes must carry that id, which tells two SKUs of one class
+apart, and without `--pci-id` the facts are read by the recorded id);
 `selection_regret.py` reports `by_board_regime_authority`: per board x regime x authority the
 usual summary and the evidence kinds. Regimes by T: decode T<=4, verify 5..16, and from 17 below
 or above the card's ridge
 T* = s8 x SMs x boost clock x 4.5/8 / (2 x DRAM bytes/s), as the MMQ transfer audit computes it
 (`s8` from `core/generation.h`; `--generation-header`); without board facts, and on a board without
 tensor cores (`mma_slow`), `T>=17 ridge unknown`.
+
+Exit tooling (#614, F3): `route_table_prune.py report.json --table routes/<class>.json
+[--dense-tune routes/tuner/dense_tune.json --class <id>]` lists the measured route-table entries
+and dense tuner problems whose ranker pick is within the resolution (default 5 %, as
+`route_as_table.py --min-gain`) of the override in every regime the entry has routes in, and with
+`--apply` deletes them (default: dry run; the files must be in canonical `indent=1` form so the diff
+is only the entries). It reads cases of authority `route-table`, `dense-tune` or
+`dense-tune-prefill-band` (a dense prefill band's answer), evidence `measured`, with `ranker` (the
+route the call takes where neither the table nor the tuner answers, `ranker_answer`: the NVFP4
+half-L2 rule, then the rules under the Ask the call's rules see) and `ranker_vs_selected` (its
+median time over the selected route's, minus one). Each range of an entry is judged only by the
+cases whose `selected` route is that range's route: where ranges overlap (an r8 band inside a band)
+a case of one says nothing of the other, a `prefill` route covers only the widths its prefill bands
+leave, and a case that measured none of the routes the entry names at its width (a report taken
+before the entry changed) keeps it. `ninferno_route_tune --selected-out` writes the three columns
+it needs, `authority`, `evidence` (`select_answer`'s) and `ranker` (resolved for the call and timed
+like the selected route), after `pci_device_id`; every reader takes the columns by name. Its
+selection reads the release's dense tuner entries as the engine's does (the tuner on in mode Off: it
+reads `routes/tuner/dense_tune.json` and never times or writes), so dense overrides answer there. A
+file without the columns reads `unknown` and prunes nothing. A dense problem needs a case at every
+width it routes (the runtime takes those routes by the exact width), and each prefill band it
+routes (prefill-profile cases, which no run writes yet). The
+report must name the measured `device` (route_tune's class id, kept by `regret_collect.py` and
+passed on by `selection_regret.py`); that device, not the `--board` label, must be the table's
+board. The CTest `ninferno_route_table_prune_test` also holds that every measured table entry
+(`tuned_on`) records `evidence_us` with a gain above the resolution; the existing gaps are
+`tests/route_evidence_gaps.json`, the output of `route_table_prune.py --gaps routes --gaps-out
+tests/route_evidence_gaps.json`. No new entry may join it; a change to `routes/` that closes a gap
+or changes its kind (on this branch or on master, which a merge brings in) fails the test until the
+list is regenerated with that command.
+
+The prune tool keeps an entry whose key another table of the routes directory holds (the board
+would borrow that table's override, not the ranker's pick: `fill_from`) or, unless
+`--allow-borrowers`, that a table lacking it may borrow; it keeps prefill overrides until
+prefill-profile cases cover them, `claim` entries, entries with `r8_bands` outside the measured
+segments, wide ranges when the report carries no ridge, and, with `--dense-tune`, table entries
+whose problem the dense tuner also routes for the class (pruning would hand the call to the tuner,
+not the ranker). The measured device must be the table's board (a full `chip:Nsm` id against the
+SMs: its `gpu.pci_id`'s registry row, else `gpu.board.sms`), and `--class` a full class id equal to it.
 
 route_tune selects with its problems' policy (an `a16` problem is `A16Only`, the exact mode's
 linears, not the default `AllowA8` path of a published model's projections) and the speed route
@@ -150,11 +199,79 @@ each case's workload and numerical contract say so.
 
 ```bash
 for p in 1 2 3; do ninferno_route_tune --shapes shapes.txt --out /dev/null --routes-out p$p.csv --selected-out sel_p$p.csv; done
-python3 tools/bench/regret_collect.py --selected sel_p1.csv sel_p2.csv sel_p3.csv --routes p1.csv p2.csv p3.csv --board rtx3060 --model qwen3.5-9b --selector-revision <commit> --build-id <build> --holdout board --fit-boards rtx4090,rtx5090 --qualified "ninferno_linear_generic_test, ninferno_route_classes_test" > selection.json
+python3 tools/bench/regret_collect.py --selected sel_p1.csv sel_p2.csv sel_p3.csv --routes p1.csv p2.csv p3.csv --board rtx3060 --model qwen3.5-9b --selector-revision <commit> --build-id <build> --holdout board --fit-boards rtx4090,rtx5090 --qualified "ninferno_linear_generic_test, ninferno_route_classes_test" --pci-id 0x2503 > selection.json
+python3 tools/bench/selection_regret.py selection.json > report.json
+python3 tools/bench/route_table_prune.py report.json --table routes/ga106.json --dense-tune routes/tuner/dense_tune.json --class ga106:28sm   # dry run; --apply deletes
 ```
 
 The report preserves selector/build identity and a SHA-256
 of the exact input bytes. This is an offline evaluation aid for #301, not runtime autotuning.
+
+## Regret by T band
+
+One geomean over all cases hides where a selector loses: a change can cost 10% at T 17-32 and win
+at T 48+. `regret_bands.py` reports the extra time of the recorded picks over the best observed
+route, **summed over the cases of a band** (time-weighted: a long GEMM counts for what it costs, a
+tiny one barely), for the bands decode (T 1-8), verify (9-16), narrow (17-32), wide (33-128) and
+batch129 (129+), by board, format and route family (the part of the selected route's name before
+its first dot). `by_board` is the acceptance cell: the cross-board groups (`overall`, `by_format`,
+`by_family`) pool boards by absolute time, so the slowest board dominates them and can mask a
+regression on a faster one. This says nothing about prefill: the cases are the speed profile's
+widths (up to T 512 by default), so the widest band is batched decode and wide verify.
+
+`--routes-out` also holds the prefill profile's rows (its widths from chunk/2 and its bands from
+32), with no profile column. route_tune writes one selection per problem and width of its speed
+loop and none in its prefill loop, so only the (problem, width) pairs the `--selected` file lists
+are cases (the widths are read per problem), and there a row of a route the speed loop does not
+time at that width (R8 above 4 tokens; w4a4,
+staged, NVFP4 tiled and tiled below 17) is left out unless it is the executed selection. The
+JSON report counts the (case, route) pairs left out as `prefill_profile_rows_excluded`.
+
+There is no default cross-band mean: no committed mix gives band weights the sweeps can carry.
+`--band-weights '{"decode":3,"verify":1}'` adds a `weighted` mean per group; a group with no case
+in a band of nonzero weight gets none, rather than a mean of the bands it has; likewise a group with
+skipped cases in a weighted band (its `weighted_incomplete` lists them), because the mean of the
+scored cases would read lower than the truth. Every group and band carries `skipped`, the markdown
+cell reads `regret (n / skipped)`, and the report lists each skipped case with its T, board, format,
+family of the pick and reason under `skipped_cases`. A case is skipped, never scored as zero regret, when its pick was not timed, when a pass did not time one of
+its candidates, when no selection is recorded for it (at a width the selection lists for another
+problem; in either pick), when the pick is of another compute class than the case's key, when fewer than two
+candidates of its class were timed, or (`--pick model`, T >= 17 only) when the case is NVFP4 (the
+cost model does not rank NVFP4; route_tune writes its `model_us` as a diagnostic), when it is an
+int8 q4 / q5 / q6 case with K a multiple of 512 (the model also prices the I8 tiles there, which
+route_tune does not sweep; such cases come from an `--a8-candidates 1` sweep of these ggml
+formats, whose rows are keyed a8 and priced under AllowA8, where the model also prices the I8
+schedules route_tune never times), when the model prices none of the candidates, or when it prices the
+best candidates of two route families equally. When every case is skipped the report is still
+written, listing them, and the exit status is 2. A tie within one family takes the route first in the family's schedule order, as the
+other speed-loop widths of the same problem show it (`cost_route` keeps the first offered on an
+equal price; the speed loop writes a family's routes in schedule order); a tie they do not settle
+is skipped. A tie is also skipped when the file's `model_us` has no value of more
+than six significant digits (a pass from before `route_tune` printed 17): there an equal price may be two prices that differ in the seventh digit,
+where production takes the cheaper. `--pick model` ranks only within the
+case's compute class; production under AllowA8 also offers the a8 candidates.
+
+```bash
+python3 tools/bench/regret_bands.py --doc selection.json --doc other_board.json --md bands.md --json bands.json
+python3 tools/bench/regret_bands.py --routes p1.csv p2.csv --selected sel_p1.csv --board rtx5090 --qualified "oracle tests X passed"
+python3 tools/bench/regret_bands.py --routes p1.csv p2.csv --selected sel_p1.csv --pick model --board rtx5090 --qualified "oracle tests X passed"   # the model price's own pick, needs model_us
+python3 -m unittest discover -s tests -p test_regret_bands.py
+```
+
+`--doc` takes the `ninferno-selection-regret/1` documents `regret_collect.py` writes. `--routes`
+takes plain `route_tune` CSVs (medians over the passes given), because the existing sweeps predate
+the run/device columns `regret_collect.py` requires; the board is named by hand, and nothing then
+checks that the passes come from one build and board. route_tune does not check results, so
+`--routes` also needs `--qualified TEXT` naming the correctness tests that qualified its candidates
+(recorded as `legacy_qualification` in the JSON report), and either `--pick` needs one
+`--selected` per `--routes` group (its widths tell the speed profile's rows from the prefill
+profile's). `--pick model` scores the model price's own pick from `--routes` and is refused with
+`--doc`. `--doc` and `--routes` cannot be mixed in one run (the documents carry a provenance the
+legacy CSVs lack). `--doc` inputs with a different `selector_revision`, `build_id`, `holdout`,
+`fit_boards` or `fit_models` (the fit lists as sets: one frozen selector has one fit inventory)
+are refused rather than merged; equal provenance is recorded as `provenance` in the report. A case (board,
+model, id) that two inputs both hold, for example one document given twice, is refused: merged, it
+would count and weigh twice.
 
 ## Published performance numbers
 
@@ -313,7 +430,7 @@ shape-class rule, beats it by at least `--min-gain` in the median and in every s
 schedules produced identical bytes. Each table records the board its sweeps ran on (the bench's
 `board` line: compute capability, SMs, L2, DRAM bandwidth; `--merge` keeps a header's), and a
 device takes the table of the nearest board within a variant's distance of it (`board_distance`,
-`kR8CarryDistance` in `generic_gemm.cpp`).
+`kR8CarryDistance` in `generic_select.cpp`).
 
 | Option | Default | Meaning |
 |---|---|---|

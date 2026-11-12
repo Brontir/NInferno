@@ -32,10 +32,19 @@ enum class Nvfp4LinearSwiGluRoute {
 // 174.9 -> 182.8 t/s, MTP3 C1 (T = 4) +5 %, DFlash 5 C1 (T = 6) +6 %; at T = 16 (MTP3 C4) it
 // lost 5 %, so wider calls keep their routes.
 // A route probe forcing the quantized route keeps it (fused activation routes test).
+constexpr std::int32_t kNvfp4SwiGluVerifyExactMaxTokens = 8;
+
 bool nvfp4_verify_exact(std::int32_t tokens) {
-    return tokens >= 2 && tokens <= 8 && route_probe_state.quantized_act != 1;
+    return tokens >= 2 && tokens <= kNvfp4SwiGluVerifyExactMaxTokens &&
+           route_probe_state.quantized_act != 1;
 }
 
+// Under AllowA4 the fused A16 routes keep the widths through this one, A4 above (no timing stated).
+// The other edges below are coverage: 16 is the small-T fused kernel's widest sliced tile, 256 the
+// TMA A4 schedule's token tile.
+constexpr std::int32_t kNvfp4SwiGluFusedA16MaxTokens = 4;
+
+// FUSION-SITE: nvfp4_linear_swiglu
 Nvfp4LinearSwiGluRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
     if (tokens <= 0) { throw std::invalid_argument("nvfp4 linear_swiglu: T must be positive"); }
     if (!valid_linear_policy(policy)) {
@@ -56,7 +65,9 @@ Nvfp4LinearSwiGluRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
     // The fused A16 routes keep T <= 4 unless a route probe forces the quantized route.
     if (route_probe_state.quantized_act != 1) {
         if (tokens == 1) { return Nvfp4LinearSwiGluRoute::DecodeFusedA16; }
-        if (tokens <= 4) { return Nvfp4LinearSwiGluRoute::SmallTFusedA16; }
+        if (tokens <= kNvfp4SwiGluFusedA16MaxTokens) {
+            return Nvfp4LinearSwiGluRoute::SmallTFusedA16;
+        }
     }
     // This route dispatches its own fused kernel rather than a Linear shape's, so it carries its
     // own condition; the call site below forces the matching scale layout.
@@ -129,7 +140,9 @@ std::size_t nvfp4_linear_swiglu_workspace_capacity_bytes(LinearPolicy policy,
                    ? fused_workspace_bytes(1)
                    : 0;
     }
-    if (max_tokens <= 4 && route_probe_state.quantized_act != 1) { return 0; }
+    if (max_tokens <= kNvfp4SwiGluFusedA16MaxTokens && route_probe_state.quantized_act != 1) {
+        return 0;
+    }
 
     return fused_workspace_bytes(max_tokens);
 }

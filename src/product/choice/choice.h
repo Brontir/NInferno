@@ -35,6 +35,7 @@
 #include "ninferno/types.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -42,6 +43,10 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace ninferno {
+struct DeviceClass; // core/device_class.h
+} // namespace ninferno
 
 namespace ninferno::product::choice {
 
@@ -56,12 +61,22 @@ struct CardFacts {
     bool fp4 = false;           // FP4 tensor cores (NVFP4 weights run W4A4)
 };
 
+// The card facts of a device class whose `facts` (machine_facts: the reference clock, which on a
+// laptop is the bottom of its published boost range, the memory rate, the L2) and `features` are
+// filled, as the device query and product::gpu_key_of's synthetic class fill them. gpu_key_of
+// takes its rates from here and product::choice_card_of reads them back, so this is what the plan
+// prices; a host test of a gpu_facts.json board builds the class and calls it.
+[[nodiscard]] CardFacts card_facts_of(const DeviceClass& device);
+
 // One way to decode beside plain decode: a drafter the model carries at the configuration chosen
 // for it, and its gain.
 struct DrafterOption {
     std::string label;     // the configuration, as --spec-config takes it ("mtp:4", "dflash:7")
     std::string drafter;   // the drafter's name in the artifact or manifest
-    double speedup = 1;    // decode of one stream against plain decode's (the tune's choice)
+    // Decode of one stream against plain decode's (the tune's choice). It carries no SpeedBasis:
+    // a request's basis (request_seconds) types the plain-decode estimate the gain multiplies, not
+    // the gain, whose evidence is `basis` and `measured` below (a known gap, #618).
+    double speedup = 1;
     // From this many streams a round of every stream decodes plainly (the load table's first
     // bound at depth 0); 0: any number speculates.
     std::uint32_t plain_from_streams = 0;
@@ -71,11 +86,12 @@ struct DrafterOption {
     // the drafter axis is not weighed and the profile's choice stands (never plain decode for a
     // gain of 1 nobody measured).
     bool measured = true;
+
     // Where the load table bounds the configuration's depth (#303): from `streams` streams on, the
     // gain one request measured at the bounded depth (1 where that depth was not measured: a gain
-    // no measurement gives is not counted). A ceiling: the verify of the streams' rows together
-    // costs more than one request's, and that is not priced. Ascending by streams; empty: `speedup`
-    // wherever it speculates.
+    // no measurement gives is not counted). One request's gain: the verify of the streams' rows
+    // together costs more than one request's, which `joint` prices where it can. Ascending by
+    // streams; empty: `speedup` wherever it speculates.
     struct LoadGain {
         std::uint32_t streams = 0;
         double speedup        = 1;
@@ -85,9 +101,19 @@ struct DrafterOption {
     };
     std::vector<LoadGain> load;
 
-    // The gain at `streams` streams: plain decode's 1 from plain_from_streams on, else the load
-    // table's at its last bound below, else `speedup`.
-    [[nodiscard]] double speedup_at(std::uint32_t streams) const noexcept {
+    // The joint verify's price at `streams` streams (#303): R_1(k) / R_C(k) at the depth in force
+    // there (spec::load_gain), by which the one-request gain at that depth is scaled. Ascending
+    // by streams; a count of streams not listed is not priced (see speedup_at).
+    struct JointScale {
+        std::uint32_t streams = 0;
+        double scale          = 1;
+    };
+
+    std::vector<JointScale> joint;
+
+    // The load table's gain at `streams` streams, before the joint price: plain decode's 1 from
+    // plain_from_streams on, else the table's at its last bound below, else `speedup`.
+    [[nodiscard]] double base_gain_at(std::uint32_t streams) const noexcept {
         if (plain_from_streams != 0 && streams >= plain_from_streams) { return 1; }
         double gain = speedup;
         for (const LoadGain& g : load) {
@@ -96,11 +122,56 @@ struct DrafterOption {
         }
         return gain;
     }
-    // Whether a measurement gives the gain at `streams` streams: `measured`, and the load table's
-    // bound in force there measured at its depth (a published profile lists no depths but its
-    // choice's). Plain decode's from plain_from_streams on is no gain to measure.
-    [[nodiscard]] bool measured_at(std::uint32_t streams) const noexcept {
-        if (!measured) { return false; }
+
+    // The count whose joint price supplies the gain at `streams` streams, with that entry's scale;
+    // `streams` 0: no price does, the gain is base_gain_at (a ceiling). The hold rule, once: the
+    // gain at a count is base_gain_at scaled by the joint verify's price at that count, and never
+    // more than the least gain priced at a smaller count (the gain does not climb back as the load
+    // grows, priced there or not). Nothing is priced where the drafter is not counted: at a count
+    // whose own bound is unmeasured (`measured_at` is false there, the estimate counts x1, so no
+    // smaller count's price is held to it), and from an entry whose bound is unmeasured (it holds
+    // a placeholder gain). A scale above 1 supplies nothing, at its own count or held to a larger
+    // one: a joint verify never costs less than one request's, so such a scale is not a price.
+    struct PriceSource {
+        std::uint32_t streams = 0;
+        double scale          = 1;
+        double gain           = 0; // the gain counted at the asked streams
+    };
+
+    [[nodiscard]] PriceSource price_source_at(std::uint32_t streams) const noexcept {
+        PriceSource out;
+        out.gain = base_gain_at(streams);
+        if (plain_from_streams != 0 && streams >= plain_from_streams) {
+            out.gain = 1;
+            return out;
+        }
+        // A gain nobody measured is not priced: the drafter's, or the bound's in force here.
+        if (!measured || !bound_measured_at(streams)) { return out; }
+        for (const JointScale& j : joint) {
+            if (j.streams > streams) { break; }
+            if (!bound_measured_at(j.streams) || j.scale > 1) { continue; }
+            const double priced = base_gain_at(j.streams) * j.scale;
+            if (priced < out.gain) { out = {j.streams, j.scale, priced}; }
+        }
+        return out;
+    }
+
+    // The gain at `streams` streams (price_source_at): below 1 where the round at that load no
+    // longer pays, so the choice weighs plain decode. Before any count is priced it is the
+    // one-request ceiling.
+    [[nodiscard]] double speedup_at(std::uint32_t streams) const noexcept {
+        return price_source_at(streams).gain;
+    }
+
+    // Whether the gain at `streams` streams rests on a joint verify's price (priced there or held
+    // from a smaller count), not on a one-request ceiling.
+    [[nodiscard]] bool joint_priced_at(std::uint32_t streams) const noexcept {
+        return price_source_at(streams).streams != 0;
+    }
+
+    // Whether the load table's bound in force at `streams` streams was measured at its depth
+    // (true before any bound and from plain_from_streams on).
+    [[nodiscard]] bool bound_measured_at(std::uint32_t streams) const noexcept {
         if (plain_from_streams != 0 && streams >= plain_from_streams) { return true; }
         bool known = true;
         for (const LoadGain& g : load) {
@@ -108,6 +179,13 @@ struct DrafterOption {
             known = g.measured;
         }
         return known;
+    }
+
+    // Whether a measurement gives the gain at `streams` streams: `measured`, and the load table's
+    // bound in force there measured at its depth (a published profile lists no depths but its
+    // choice's). Plain decode's from plain_from_streams on is no gain to measure.
+    [[nodiscard]] bool measured_at(std::uint32_t streams) const noexcept {
+        return measured && bound_measured_at(streams);
     }
 };
 
@@ -120,6 +198,14 @@ struct LinearShape {
     // Its weights' storage format where the file names one (ggml_q4_k, ...; runtime::PlanLinear);
     // "": the quantization's label stands for it.
     std::string format;
+};
+
+// The kernels of a routed layer's two grouped stages at a decode width, and the share of the
+// routed bytes the layers that take them hold (ModelFacts::moe_routes).
+struct MoeStepRoute {
+    ExpertKernel gate_up = ExpertKernel::Unknown;
+    ExpertKernel down    = ExpertKernel::Unknown;
+    double share         = 1;
 };
 
 struct ModelFacts {
@@ -169,6 +255,12 @@ struct ModelFacts {
     // drafters, 0 for plain).
     std::vector<DrafterOption> drafters;
     std::size_t default_drafter = 0;
+    // The kernels the MoE op runs a decode step's routed banks on at `rows` rows (#616 step 7): its
+    // own route query on the card's class (product/plan with_moe_routes: ops/moe moe_route_query),
+    // by the routed bytes of the layers each kernel pair takes. Unset, or empty: not asked, and the
+    // step takes the pair its kMoeRoutedEta rows were measured on.
+    std::function<std::vector<MoeStepRoute>(std::uint32_t rows, ActivationMode activations)>
+        moe_routes;
     [[nodiscard]] bool moe() const noexcept { return experts > 1 && routed_expert_params > 0; }
 };
 
@@ -215,6 +307,46 @@ struct QuantOption {
 // The band within which two quantizations' worths are a tie on this card's decisions (the
 // generation's measured decode error, kDecodePredictionError; 0 where none is measured).
 [[nodiscard]] double worth_band(const CardFacts& card) noexcept;
+
+// What a comparison's speed resolution rests on (#618): the basis of the estimates it compares (the
+// widest of them, SpeedBasis) on the board's generation. None: no reference, so no estimate
+// decides. Own: every compared estimate is Own and the generation states its measured decode error
+// (kDecodePredictionError). Transferred: an estimate is Transferred; the measured carry of
+// kTransferGeneration's rows onto the board's generation where one is stated
+// (kTransferredDecodeError, by target), else (a generation with its own error whose estimate
+// rests on a class or row not measured on two of its cards) the unmeasured carry. Unmeasured: the
+// estimates are lent (a compute capability with no generation row), or a known generation has
+// neither row (ga100, hopper, gb100, thor): an assumed worst case, the largest measured carry (all
+// of them Ada onto older generations; no measured row bounds a carry onto a newer architecture or
+// below Volta (Pascal)): a label, not a bound (kUnmeasuredCarryDecodeError).
+enum class ResolutionBasis : std::uint8_t { None, Own, Transferred, Unmeasured };
+
+[[nodiscard]] constexpr std::string_view resolution_basis_name(ResolutionBasis basis) noexcept {
+    return basis == ResolutionBasis::None          ? "none"
+           : basis == ResolutionBasis::Own         ? "own"
+           : basis == ResolutionBasis::Transferred ? "transferred"
+                                                   : "unmeasured";
+}
+
+struct Resolution {
+    ResolutionBasis basis = ResolutionBasis::None;
+    double rms            = 0; // ln(predicted / measured), root mean square
+    // The band may decide at its full width: its row rests on two or more lab cards (an Own row
+    // today; no transfer row does). False: a one-card or assumed number, which never widens a
+    // decision: a comparison resting on it is resolved at `floor` only.
+    bool decides = false;
+    // The Own band of two or more lab cards it widens (the board generation's
+    // kDecodePredictionError, else kTransferGeneration's): the estimates are indistinguishable at
+    // least within it, so a comparison resting on a band that does not decide is still resolved
+    // within it, never beyond. 0: no such row. Equal to `rms` for an Own band that decides.
+    double floor = 0;
+};
+
+// The width a comparison resting on `r` is resolved at: its full width where it decides, else its
+// Own floor.
+[[nodiscard]] constexpr double resolution_width(const Resolution& r) noexcept {
+    return r.decides ? r.rms : r.floor;
+}
 
 // What the user asks: the context each stream holds of its own (the contexts in turn: a pinned
 // one, or Auto's targets runtime::quant_own_targets gives), the streams, the request shape. The
@@ -285,9 +417,30 @@ struct Candidate {
 // Transferred: a constant from another generation (kTransferGeneration) or one lab card of this
 // one; LentGeneration: the card's compute capability has no row of its own (core/generation.h
 // generation_known) and the nearest generation's rates, efficiencies and constants stand in.
+// In order of width: a comparison of several estimates rests on the widest of their bases.
 enum class SpeedBasis { Own, Transferred, LentGeneration };
 [[nodiscard]] constexpr std::string_view speed_basis_name(SpeedBasis basis) noexcept {
     return basis == SpeedBasis::Own ? "own" : basis == SpeedBasis::Transferred ? "transferred" : "lent_generation";
+}
+
+[[nodiscard]] constexpr SpeedBasis widest(SpeedBasis a, SpeedBasis b) noexcept {
+    return a < b ? b : a;
+}
+
+// The resolution of a comparison on `board` between estimates whose widest basis is `estimates`
+// (ResolutionBasis). Never narrower than the Own band the estimates rest on or are carried from
+// (the board's generation's kDecodePredictionError, else kTransferGeneration's): a one-card or
+// assumed row only widens the number, never the decision (Resolution::decides false: the
+// comparison is resolved at that Own floor). The one function choose() types the resolution rule's
+// comparisons and Choice::resolution with; the plan JSON and the replay report what it set.
+[[nodiscard]] Resolution resolution_of(const CardFacts& board, SpeedBasis estimates) noexcept;
+
+// The resolution of a comparison by the widest basis of its two estimates, indexed by SpeedBasis.
+using Resolutions = std::array<Resolution, 3>;
+
+[[nodiscard]] constexpr const Resolution& resolution_for(const Resolutions& bands,
+                                                         SpeedBasis basis) noexcept {
+    return bands[static_cast<std::size_t>(basis)];
 }
 
 struct Speed {
@@ -305,17 +458,21 @@ struct Speed {
 
 // One request of `prompt` tokens in and `answer` out on one stream of `concurrency`: the prompt at
 // the prefill rate, the answer at the decode rate at the middle of its window.
+// `basis`, where given, is widened to the basis of every rate the request reads (its decode,
+// prefill, attention and tail calls).
 [[nodiscard]] double single_request_seconds(const ModelFacts& model, const CardFacts& card,
                                             const QuantOption& quant, const Candidate& candidate,
-                                            const Task& task, std::uint32_t prompt);
+                                            const Task& task, std::uint32_t prompt,
+                                            SpeedBasis* basis = nullptr);
 
 // The task's request mix (DECISIONS 73): the geometric mean of the short request (task.prompt) and
 // the long one (task.long_prompt()) weighted by kMixShortRequests and kMixLongRequests, so that
 // ln of it is the weighted mean of the two requests' ln(T), the time the worth prices. The short
-// request alone where the task has no long one.
+// request alone where the task has no long one. `basis`, where given: the widest basis of both
+// requests' estimates.
 [[nodiscard]] double request_seconds(const ModelFacts& model, const CardFacts& card,
                                      const QuantOption& quant, const Candidate& candidate,
-                                     const Task& task);
+                                     const Task& task, SpeedBasis* basis = nullptr);
 
 // The mix in words, for a reason or a listing: "a 2048+512-token request" without a long one, else
 // "the request mix: 20 of 2048+512 tokens, 6 of 24576+512".
@@ -329,6 +486,11 @@ struct Gates {
     // quantization curve): nullopt, from their cards (accuracy_decides, kQuantKldCards).
     std::optional<bool> accuracy;
     bool moe_chunk = kMoeChunkTwoCards; // the MoE chunk shares
+    // The resolution typed per comparison by the bases of its two estimates (#618, resolution_of),
+    // and a band that does not decide (Resolution::decides) moves no pick. False: the reference
+    // card's generation's one number (worth_band) for every comparison, whatever the estimates
+    // rest on, the rule before #618; a test closes it to list what the typing changes.
+    bool typed_resolution = true;
 };
 
 // Whether the switches' terms the worth decides by (the KV codecs' and the int8 activations') were
@@ -366,6 +528,31 @@ struct Reference {
                                                      std::uint32_t chunk, bool* transferred = nullptr);
 
 [[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates = {});
+
+// What an MoE's chunk decision rests on: Own (the generation the shares were measured on, priced on
+// its reference card: it decides), CarriedCurve (another generation whose MoE prefill rate rests on
+// two lab cards: its saturated rate times the shares' slope, carried unchanged, estimates the best
+// chunk (Choice::chunk_estimate) but never decides it: another generation's rows estimate, #300),
+// Transferred (neither: the default chunk stands, no estimate), None (not an MoE, or the gate is
+// closed).
+enum class ChunkBasis : std::uint8_t { None, Own, CarriedCurve, Transferred };
+
+[[nodiscard]] constexpr std::string_view chunk_basis_name(ChunkBasis basis) noexcept {
+    switch (basis) {
+    case ChunkBasis::None:
+        return "none";
+    case ChunkBasis::Own:
+        return "own";
+    case ChunkBasis::CarriedCurve:
+        return "carried_curve";
+    case ChunkBasis::Transferred:
+        return "transferred";
+    }
+    return "none";
+}
+
+[[nodiscard]] ChunkBasis chunk_basis_of(const ModelFacts& model, const CardFacts& card,
+                                        const Gates& gates = {});
 // Whether the worth decides the KV codec and the activations for `model` on this card: its
 // generation's factors decide and its family's switch terms rest on two cards (accuracy_decides);
 // else the family's defaults stand.
@@ -453,6 +640,10 @@ struct Scored {
     Accuracy accuracy;
     double seconds = 0;            // request_seconds on the board (an estimate to show)
     double decision_seconds = 0;   // request_seconds on the reference card (0: none)
+    SpeedBasis decision_basis = SpeedBasis::Own; // what decision_seconds rests on (request_seconds)
+    // The width the resolution rule weighed it at against the best worth: resolution_width of the
+    // band of the wider of the two bases (Choice::resolutions). 0: not held, or no reference.
+    double weighed_at   = 0;
     double worth = 0;              // -ln(decision_seconds) - lambda kld (0 without a reference)
     bool variant = false;          // a coupled storage's other value beside the chosen (not eligible)
     std::string drafter = "plain"; // its drafter's configuration (DrafterOption::label)
@@ -467,17 +658,33 @@ struct Choice {
     std::uint32_t context = 0;         // the own context per stream the choice settled on
     bool by_worth = false;             // the worth decided the KV codec and activations (else the defaults)
     bool chunk_by_speed = false;       // an MoE's chunk was the fastest (else the default stood)
+    ChunkBasis chunk_basis = ChunkBasis::None; // what the chunk decision rests on
+    // CarriedCurve: the chunk the carried curve predicts fastest on this board (an estimate for an
+    // A/B to verify; the pick stays the default). 0: none.
+    std::uint32_t chunk_estimate = 0;
     // The worth decided the drafter (else the profile's choice stood: no decision constants, or a
     // drafter whose gain no measurement gives).
     bool drafter_by_worth = false;
     // The speed estimate's resolution wherever a reference exists (#301; the chunk axis needs it
-    // where the worth does not decide): the reference card's generation's measured decode error
-    // (worth_band), the speed term's uncertainty in worth (-ln seconds) units; 0 without one. An
+    // where the worth does not decide): the error of the best worth's estimate (resolution_of;
+    // with typed_resolution closed, the reference card's generation's measured decode error,
+    // worth_band), the speed term's uncertainty in worth (-ln seconds) units; 0 without one. An
     // alternative that loses by no more than the smaller of it and the two's speed difference is
     // indistinguishable (explain: within_resolution); the point estimate decides, unless a
     // candidate that far from the best worth is strictly more accurate
     // (resolved_within_resolution).
     double resolution = 0;
+    // What `resolution` rests on: resolution_of over the best worth's decision_basis, the band of
+    // every comparison the resolution rule weighed (a comparison with a wider estimate rests on a
+    // band that does not decide): the board's generation's own rows, a transfer, or an assumption.
+    ResolutionBasis resolution_basis = ResolutionBasis::None;
+    // That band decides at its full width (Resolution::decides). False (a one-card or assumed
+    // row): the rule weighed the best worth's comparisons at `resolution_floor` only.
+    bool resolution_decides = false;
+    double resolution_floor = 0; // Resolution::floor of that band
+    // The band of a comparison by the wider basis of its two estimates (resolution_of), as the
+    // rule and explain() weigh it; all None without a reference.
+    Resolutions resolutions{};
     // The resolution moved the pick (#301, DECISIONS 75): among the candidates whose speed is
     // inside `resolution` of the best worth's (the anchor), the one of strictly lower modelled KLD
     // took it (resolve_within_resolution). False: the anchor stood. `anchor` indexes the best
@@ -521,9 +728,20 @@ struct Alternative {
 // DECISIONS 60's band between quantizations). `eligible` lists indices into `scored` (the
 // candidates that hold the asked context); `anchor` is the one with the best worth among them. A
 // candidate wins only if its modelled KLD is lower than the anchor's by more than kWorthTie and its
-// request time is longer by no more than `resolution` (worth units: ln of the time ratio). Among
-// the winners the lowest KLD, then the lowest index in `scored`; none: the anchor. Context beyond
-// what was asked is headroom (DECISIONS 73) and does not count. A resolution of 0 returns `anchor`.
+// request time is longer by no more than the resolution of the two's comparison (worth units: ln
+// of the time ratio): `bands` by the wider of their decision_basis (#618), at resolution_width (a
+// band that does not decide: its Own floor, never beyond). Among the winners the lowest KLD, then
+// the lowest index in `scored`; none: the anchor. A moved pick is never dominated: where eligible
+// candidates are no slower and strictly more accurate than it, the one of the lowest KLD (then
+// index) takes it, which may lie beyond its own comparison's width (explain says so; with the
+// widths equal, as on every generation today, it never moves anything). Context beyond what was
+// asked is headroom (DECISIONS 73) and does not count. A resolution of 0 returns `anchor`.
+[[nodiscard]] std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
+                                                    const std::vector<std::size_t>& eligible,
+                                                    std::size_t anchor,
+                                                    const Resolutions& bands) noexcept;
+// One deciding band for every comparison, whatever its estimates rest on (the rule before #618).
+// A resolution of 0 returns `anchor`.
 [[nodiscard]] std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
                                                     const std::vector<std::size_t>& eligible,
                                                     std::size_t anchor, double resolution) noexcept;

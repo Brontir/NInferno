@@ -8,8 +8,12 @@
 
 #include "core/board_registry.h"
 #include "core/device_class.h"
+#include "core/measured_disposition.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 
 namespace ninferno::measured {
@@ -28,16 +32,68 @@ inline constexpr Board kRtx3090      = board_registry::board(0x2204);
 inline constexpr Board kA10          = board_registry::board(0x2236);
 inline constexpr Board kA100Sxm40    = board_registry::board(0x20B0);
 inline constexpr Board kRtx2080Ti    = board_registry::board(0x1E07);
-// Conflict between tables: the row spells the V100 SXM2's 4096-bit HBM2 at 1.754 Gbps, 898.048
-// GB/s; the route and R8 tables and the gates were measured under, and board_distance has always
-// read, the published 900 GB/s. Kept at 900 so every distance is as before.
-inline constexpr Board kV100Sxm2 = board_registry::board(0x1DB5, 900);
+
+// The recorded conflicts between a registry row and the bandwidth the data keyed by that board was
+// measured under (board_registry::board's override), in one place: the measured constants below
+// and every table that names its board by PCI id (board_of_pci) read them.
+struct DramConflict {
+    std::uint32_t pci_device_id;
+    double dram_gbps;
+};
+
+inline constexpr DramConflict kDramConflicts[] = {
+    // The row spells the V100 SXM2's 4096-bit HBM2 at 1.754 Gbps, 898.048 GB/s; the route and R8
+    // tables and the gates were measured under, and board_distance has always read, the published
+    // 900 GB/s. Kept at 900 so every distance is as before.
+    {0x1DB5, 900},
+};
+
+// The bandwidth a conflict records for a PCI id; 0 (none) for every other id.
+[[nodiscard]] constexpr double conflict_dram_gbps(std::uint32_t pci_device_id) noexcept {
+    for (const DramConflict& c : kDramConflicts) {
+        if (c.pci_device_id == pci_device_id) { return c.dram_gbps; }
+    }
+    return 0;
+}
+
+// The board data recorded by its PCI id was measured on (a route table's gpu.pci_id, an R8 decode
+// table's row): the registry's row with its recorded conflict. An id the registry lacks is a
+// compile error in a constant expression, as board_registry::board.
+[[nodiscard]] constexpr Board board_of_pci(std::uint32_t pci_device_id) {
+    return board_registry::board(pci_device_id, conflict_dram_gbps(pci_device_id));
+}
+
+// board_of_pci for an id read at run time (a route table's gpu.pci_id); nullopt where the registry
+// has no row for it.
+[[nodiscard]] constexpr std::optional<Board>
+find_board_of_pci(std::uint32_t pci_device_id) noexcept {
+    if (board_registry::find(pci_device_id) == nullptr) { return std::nullopt; }
+    return board_of_pci(pci_device_id);
+}
+
+inline constexpr Board kV100Sxm2 = board_of_pci(0x1DB5);
 
 // Pins, checked in every translation unit that includes this header: a change of a gpu_facts.json
 // row that moves a measured board's figures fails every product build, not only the test.
 constexpr bool same_board_facts(const Board& a, const Board& b) {
     return a.major == b.major && a.minor == b.minor && a.sms == b.sms && a.l2_mib == b.l2_mib &&
            a.dram_gbps == b.dram_gbps && a.mma_slow == b.mma_slow;
+}
+
+// A device's board against its id's registry row: where they agree, a route table names the board
+// by its id (route_table.cpp write_route_table; the shipped-boards test asks the same). The DRAM
+// bandwidth reaches the two sides by different arithmetic (board_of from the memory clock in kHz
+// of half the data rate, the row from bus * rate / 8), which differs in the last bit on four rows
+// (the A100 PCIe 80GB, the H100 NVL, the A30, the A800 PCIe 80GB), so it and the L2 are compared to
+// a part in 10^4; a twin on other memory differs by percents (the RTX 4070 with GDDR6: 20 against
+// 21 Gbps). A row that gives no L2 (0) agrees only with a device that reports none, so a real card
+// of such a row (the H100 NVL, the A30) is written by its facts until its row gives the L2.
+constexpr bool row_board_facts(const Board& a, const Board& b) {
+    const auto close = [](double x, double y) {
+        return (x > y ? x - y : y - x) <= 1e-4 * (x > y ? x : y);
+    };
+    return a.major == b.major && a.minor == b.minor && a.sms == b.sms &&
+           close(a.l2_mib, b.l2_mib) && close(a.dram_gbps, b.dram_gbps) && a.mma_slow == b.mma_slow;
 }
 
 // The literals the measured boards carried before the registry (major, minor, SMs, L2 MiB, DRAM
@@ -60,6 +116,9 @@ static_assert(same_board_facts(measured::kV100Sxm2, Board{7, 0, 80, 6, 900}));
 // the A10, an RTX 5070 Ti 0.57 from the 5080), not to the next class of card: the RTX 4090's R8
 // decode entries on the 4080 SUPER (1.2) won 41 and lost 30, to -22 %. A board farther from every
 // measured one keeps the unmeasured default.
+// The value is CHOSEN, not measured or derived: the examples above sit below it and the one
+// measured loss (1.2) above it, and nothing measured places the 1.0 between them (route_rules.h
+// lists it with Basis::Unknown).
 inline constexpr double kCarryDistance = 1.0;
 
 // A choice measured on one board: whether it paid there.
@@ -70,18 +129,15 @@ struct Gate {
 
 // What a measured gate's answer for a board rests on (#373): the donor (the nearest measured board
 // within the gate's distance; null: none), how far it is, what the distance could not compare, the
-// answer, and how the evidence applies. Measured: the board itself (distance 0, every quantity
-// known: the board's facts are a measured board's). Carried: within kCarryDistance, every quantity compared. Transferred: farther, the
-// gate's own rule carrying it (the MMQ gate's: at any distance). Incomplete: a quantity unknown on
-// either side, so the distance can understate the difference. None: no donor (the unmeasured
-// default). The answer is the legacy rule's, but for one case: a gate bounded by a distance does
-// not take an Incomplete donor's answer (the unmeasured default instead), since the quantity it
-// could not compare may be what puts the donor out of reach. So a missing fact never promotes a
-// transfer the full facts would refuse (conservatively: also when the known quantities alone
-// would reach); a gate that carries at any distance (the MMQ gate's) admits regardless of the
-// quantities, and keeps its answer.
+// answer, and how the evidence applies (Disposition, core/measured_disposition.h: the one
+// vocabulary of the gates and of the value tables below). The answer is the legacy rule's, but for
+// one case: a gate bounded by a distance does not take an Incomplete donor's answer (the
+// unmeasured default instead), since the quantity it could not compare may be what puts the donor
+// out of reach. So a missing fact never promotes a transfer the full facts would refuse
+// (conservatively: also when the known quantities alone would reach); a gate that carries at any
+// distance (the MMQ gate's) admits regardless of the quantities, and keeps its answer.
 struct GateAnswer {
-    enum class Disposition { Measured, Carried, Transferred, Incomplete, None };
+    using Disposition = measured::Disposition;
     const Gate* donor = nullptr;
     double distance   = 0;
     BoardUnknowns unknown;
@@ -89,14 +145,7 @@ struct GateAnswer {
     Disposition disposition = Disposition::None;
 };
 [[nodiscard]] constexpr const char* gate_disposition_name(GateAnswer::Disposition d) noexcept {
-    switch (d) {
-    case GateAnswer::Disposition::Measured: return "measured";
-    case GateAnswer::Disposition::Carried: return "carried";
-    case GateAnswer::Disposition::Transferred: return "transferred";
-    case GateAnswer::Disposition::Incomplete: return "incomplete";
-    case GateAnswer::Disposition::None: return "none";
-    }
-    return "none";
+    return disposition_name(d);
 }
 [[nodiscard]] inline GateAnswer gate_answer(std::span<const Gate> gates, const Board& board,
                                             double max_distance) noexcept {
@@ -129,7 +178,7 @@ struct GateAnswer {
 }
 
 // Whether ggml's matrix kernel takes a prefill of the ggml block formats from 17 tokens on
-// (ops/generic generic_gemm.cpp mmq_prefill_wins, where the measurements stand): the nearest
+// (ops/generic generic_select.cpp mmq_prefill_wins, where the measurements stand): the nearest
 // measured board's answer of its instruction set, at any distance.
 inline constexpr Gate kMmqPrefillPays[] = {
     {kRtx5090, true},    {kRtx5060Ti, false}, {kRtx4090, true},
@@ -154,6 +203,44 @@ inline constexpr Gate kMmqPrefillPays[] = {
     } catch (...) {
         return false;
     }
+}
+
+// What a measured VALUE table's answer for a board rests on (#616 step 3): the tables that carry a
+// measured value (a schedule, a token frontier) by board distance, not a yes/no gate, in the gates'
+// vocabulary (Disposition). Measured: the board's facts are a table row's (distance 0, every
+// quantity known). Carried: a measured board within the table's distance answers. Incomplete: no
+// entry with every quantity known is within the distance, but the nearest entry by plain distance
+// is, with a quantity unknown on either side (L2 or bandwidth), so it may be near in the facts that
+// were left out; the value is the default, as gate_answer's bounded gate takes it. None: no entry
+// is within the distance, and the value is the table's declared default (a literal, its provenance
+// named by the table's owner). The donor is chosen exactly as the lookups choose it
+// (nearest_known_measured), so the disposition never disagrees with the answer. Where every entry
+// knows its facts (both tables assert measured_boards_known), an unknown is the board's own, no
+// entry is complete for it, and the answer is Incomplete or None. Only a table with an incomplete
+// entry could give Measured or Carried from a complete entry while a nearer entry is Incomplete.
+template <class Entry>
+struct TableAnswer {
+    const Entry* entry      = nullptr; // the donor's entry, null on Incomplete and None
+    double distance         = 0;       // board_distance to the donor (0 without one)
+    Disposition disposition = Disposition::None;
+};
+
+// `table`'s answer for `board` within `max_distance`; an entry needs a `board` member.
+template <class Entry, std::size_t Extent>
+[[nodiscard]] TableAnswer<Entry> table_answer(std::span<const Entry, Extent> table,
+                                              const Board& board, double max_distance) noexcept {
+    TableAnswer<Entry> out;
+    out.entry = nearest_known_measured(table, board, max_distance);
+    if (out.entry != nullptr) {
+        out.distance    = board_distance(board, out.entry->board);
+        out.disposition = out.distance == 0 ? Disposition::Measured : Disposition::Carried;
+        return out;
+    }
+    const Entry* plain = nearest_measured(table, board, max_distance);
+    if (plain != nullptr && board_unknowns(board, plain->board).any()) {
+        out.disposition = Disposition::Incomplete;
+    }
+    return out;
 }
 
 } // namespace ninferno::measured

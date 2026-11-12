@@ -290,7 +290,7 @@ here (Ampere, Ada, Blackwell) the K-quant and legacy formats take the vector ker
 the register MMA from 5. This is the fast-activation route with no saved dense route: under
 `--activations exact` `select_route` returns the register-MMA invariant route at every width before
 the band is consulted, and in fast mode a saved `tuned_dense_route` replaces the vector kernel at
-T = 2..4 where one exists (`generic_gemm.cpp`, `select_route`). Other boards keep their own rules: Volta's vector route extends past T = 4
+T = 2..4 where one exists (`generic_select.cpp`, `select_route`). Other boards keep their own rules: Volta's vector route extends past T = 4
 for formats `volta_hmma_route` does not take (`vec_rule_max_tokens`), and Turing sends codebook
 formats at T = 5..8 to the MMQ kernel (`mmq_verify_rule`). `verify_route_seconds` (bytes at 0.93 of DRAM and counted warp instructions at
 0.6 of the issue rate, combined as sqrt(tb^2 + ti^2), plus 1.5 us a launch) was never used and is
@@ -1701,17 +1701,77 @@ Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tile
 on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 -> 107 ms from 144 to
 256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.
 
+**Turing, predicted, to verify (#524).** RTX 2080 Ti (sm_75, 68 SMs, 64 KiB of shared memory): f 0.20,
+best range 0.15-0.25. This is an assumption, not a derivation: 0.20 is a value measured on other cards,
+assumed for Turing because its int8 tensor rate per SM is theirs (2048 ops a clock, `s8` 2048 on both
+rows) and the K-quant decode runs on the same 64 int32 lanes. The measured ones split two against two:
+RTX 3090 and RTX 4070 Ti are best at 0.15-0.20 (0.28 and 0.07 pp less regret than at 0.25-0.30), RTX
+3060 and RTX 4090 are best at 0.25-0.30 (0.21 and 0.17 pp less than at 0.15-0.20), so the neighbouring
+buckets around 0.20 differ by 0.07-0.28 pp of mean regret and the regret of one visit cannot separate
+them. The two facts do not fix f either: GB20x has the same `s8` and the same Q4_K / Q6_K tile
+configuration and was best at 0.10 alone (0.06 % against 0.31 % at 0.05 and 0.45 % at 0.15-0.20). The
+grid therefore MEASURES f: a least-squares fit of the work law, T = C_N + a x tiles x (1 - J / 128) +
+b x tiles x J / 128 with one constant per size, over all its cells gives f = a / b with a bootstrap
+interval over the width runs (every width is measured twice, 16..128 then 128..16, so a drift in time
+does not line up with J), printed beside the predicted range 0.15-0.25: an interval wholly outside it
+refutes 0.20, wholly inside it stands, across an edge it is undecided, and a lack-of-fit ratio (the
+residual, after one fitted offset per server run that takes the drift between the runs, against the
+cells' own request noise) above 3 means the law does not describe the card and gives no verdict on f.
+These criteria are fixed in the kit's header before the run (`tools/bench/mmq_width_grid.py`,
+`CRITERIA`). The regret per bucket of the table of picks is printed
+as a report only: on the kit's own sizes it cannot tell 0.10 from 0.30, and the regret is taken
+against the six widths the table picks from (J 48 and J 112 are measured too, and shown apart: they
+win some sizes by padding whatever f is). Turing holds one block per SM at every width where
+sm_86's 100 KiB holds two up to J 64 (shared memory only; registers per thread are not checked),
+which can raise the fixed share of the narrow tiles. The Q4_K / Q6_K tile is 42 048 B (J 16) to
+57 856 B (J 128), 38 912 B of weight rows plus the y tile and ids (`tile_shared_bytes`; the J 128
+values are pinned in `tests/test_choice.cpp`): all eight widths fit 64 KiB (Q2_K's 128-column tile,
+70 144 B, does not: `widest_tile` 64, it keeps the fewest tiles). On 68 SMs a 4096-row product (32 row
+tiles) with two column tiles is 64 CTAs, 94 % of one wave, for 2 x 128 and for 2 x 80 / 96 alike, so
+at 129..192 columns the saving is padding, not waves. The grid's sizes are prompt tokens and the
+kernel sees tokens - k columns (k assumed 7, to be measured by the kit's `kprobe`); the older grids'
+N were columns. The predicted A/B below is in columns, the bracket of the measured cards, not a
+derivation: 144..160 columns -14..-19 %, 176..192 -9..-13 %, 208..256 within 0.5 %. The A/B's new arm
+does not move the host cost model: route choice stays on the production table. The Turing row keeps
+the fewest tiles until `tools/bench/run_524_turing_grid.sh` (forced-width grid, then the A/B; the
+widths come from a bench-only patch that is never merged into the kernel) has run on an RTX 2080 Ti
+and the grid agrees. Nothing is changed by this note. (The grid ran on 10.11: the work law does not
+fit this card, and Turing takes the launch law of DECISIONS 78 instead of an f.)
+
 ## 75. Inside the speed estimate's resolution the more accurate candidate wins (#301, 09.11, rule; not yet run on the stands)
 
 **Decision.** `choose()` finds the best worth (the anchor). A candidate whose request time on the
-reference card is longer by no more than `Choice::resolution` (the generation's decode rms, `ln` of
-the time ratio) is indistinguishable from it in speed, so the speed term does not rank them; the
+reference card is longer by no more than the resolution of their comparison (the generation's
+decode rms, `ln` of the time ratio; since #618 the band of the wider basis of the two estimates,
+`resolution_of`: own, the measured carry for a generation without its own error, or the largest
+carry, assumed, where no carry onto those estimates was measured; resolved at its full width where
+it decides, else at its own floor, `resolution_width`; `Choice::resolution` reports the best
+worth's band) is indistinguishable from it in speed, so the speed term does not rank them; the
 accuracy term does. The order is the one of the cross-quantization band (DECISIONS 60): a candidate
 wins only if its modelled KLD is lower than the anchor's by more than `kWorthTie`; the lowest KLD
 first, then the lowest canonical index; otherwise the anchor stays (`resolve_within_resolution`).
 Context beyond what was asked is headroom (DECISIONS 73) and does not count, so an equal-KLD
 sibling (a narrower chunk, plain against a drafter, BF16 against INT8 at 8K) never moves the pick.
 A NaN KLD never wins. Without a reference card the resolution is 0 and nothing changes.
+
+Only a band that rests on two or more lab cards decides (`Resolution::decides`: an own row today;
+Ada's three cards, Blackwell's two). The carries onto GA10x, Turing and Volta are each the
+residuals of one lab card (RTX 3060, RTX 2080 Ti, Quadro GV100), and the largest carry stands in,
+assumed, where nothing was measured. Such a band is never narrower than the own one it widens, but
+widening is not conservative here: a wider band lets a more accurate and slower candidate displace
+the best worth, up to 72 % slower at the largest carry. Nor is falling back to the best worth: the
+estimates are indistinguishable at least within the own band, so a pick below it would rest on a
+one-card point estimate. So each comparison the rule weighs, the best worth against a candidate,
+takes the band of the wider basis of the two estimates: where either is not own (on Ada: an
+unmeasured weight class, the exact route's prefill or the BF16-KV prompt kernel, rows of one Ada
+card), the band does not decide and the comparison is resolved at its own floor (2.26 % on Ada),
+never beyond. On a compute capability with no generation row the floor is the lent generation's
+own band (cc 13.0, priced from Blackwell's rows: 0.0170), not the lender's. A moved pick is never
+dominated on both axes by an eligible candidate: among those no slower and strictly more accurate
+than it, the lowest KLD, then the lowest index, takes it, which may lie beyond its own comparison's
+width (`explain` says so; with equal widths, as today, it moves nothing). The worth itself still
+ranks by point estimates (their error per basis is the cost model's work, #613). With
+`Gates::typed_resolution` closed, the old single number weighs every comparison as before (#618).
 
 `Choice::resolved_within_resolution`, `anchor` and `anchor_worth` record the move; the `why` line
 says it, and `explain` lists the anchor as `within_resolution` with a positive `worth_delta`. The
@@ -1723,3 +1783,368 @@ than the resolution slower; the chunk and the drafter carry no KLD term and neve
 
 Regret against recorded measurements: `tools/bench/selection_regret.py` and `regret_collect.py`
 (held-out observed regret). Left: run them over the stands' route sweeps for the moved picks.
+
+## 76. The vector kernel's T = 4 loss on Ampere: an instruction count orders the cards but does not reproduce the size; the gated pairs stay on the band (#521, 09.11, analysis; gated pair not measured)
+
+**Decision.** No route change and no rule. #560's bounded twin took the part of the loss that has a
+counted saving; by elimination the rest is expected in the gated gate/up launches, but that is not
+measured: the issue's data has no gated-shape row. A rule would move calls nobody timed, and the
+only gated-shape timings at hand (earlier tuner files, below) say the sign depends on the shape, so
+the candidate rule is not supported as stated. The measurement that is missing is a kit,
+`tools/bench/run_521_gateup.sh`, not run on a card yet.
+
+**Where the numbers come from.** The measured numbers of this entry (the gains and losses, the 47 %,
+the end-to-end +1.6 % and +2.8 %, the per-T slopes) and the SASS count "105 + 37 T" are the ones
+recorded in the text of issue #521. They are not committed as rows: no route-tune table, fixture or
+log holding them is in the repository, and the SASS count has no tool output here either. They have
+no reproduction path in the repository; the kit above measures only the missing gated-pair timings
+(two shapes, T = 2..4). The ratios and rho below are computed from
+`src/core/data/gpu_facts.json`: ratio = SMs x boost GHz / (gbps x bus bits / 8) and rho = 37 / (1152
+x 4 x ratio). Reading of the constants, which reproduces the table's rho: 1152 is the bytes of one
+2048-weight Q4_K slice (2048 x 4.5 bits / 8) and 4 the warp instructions an SM issues per clock
+(four schedulers), so rho is the added instruction time per T as a share of the DRAM time of the
+same slice. The instruction count 37 per T is the sm_86 / sm_89 one.
+
+**Candidate cause.** The vector kernel's slice loop is 105 + 37 T warp instructions per 2048 weights
+(SASS, sm_86 and sm_89 alike; no other architecture was counted); 16 T of them are dp4a, which the
+issue puts on the half-rate INT pipe (not verified here); the register MMA's loop has no T term. If
+the instruction cost per weight is the same on every GA10x/AD10x card, what differs is the DRAM time
+it hides behind: per T the kernel adds rho of the DRAM time. This is a candidate, not an established
+cause.
+
+| card | SMs x GHz / (GB/s) | rho per T | a16 gain, T = 4, pre-#560 | against measurement |
+|---|---|---|---|---|
+| RTX 3060 | 0.138 | 5.8 % | +5.4..6.9 % | same order; not the same quantity |
+| RTX 3090 | 0.148 | 5.4 % | +4.6..7.9 % | same order; not the same quantity |
+| RTX 5060 Ti | 0.207 | 3.9 % | +0.9..1.9 % | 2 to 4 times too high (see below) |
+| RTX 4090 | 0.320 | 2.5 % | -1.3..-2.3 % (vector wins) | wrong sign: gain predicted, loss seen |
+
+What the table shows. "Same order; not the same quantity": rho is a per-T kernel increment, the
+measured column an end-to-end gain at C = 4 that included the CTA-residency step (below), so the
+rows compare a term with a level. Ordered by the ratio the four cards come in the order of the
+measured gains (3060 and 3090 high and not separated, 5060 Ti low, 4090 negative), so the count
+ranks them. It does not reproduce the size: the 5060 Ti is predicted two to four times above what
+was measured. rho is positive for every card, so it predicts no sign by itself; on the 4090 the
+measurement is the opposite sign. The sign comes from the crossover with the register MMA and from
+the CTA-residency term (below), which are in issue #521 and not in this entry. The 5060 Ti row
+applies the sm_86 / sm_89 instruction count to an sm_120 card, which was not counted.
+
+The per-T slope: the measured slope is 1.41 times the count on the 3090 (2.7 us measured / 1.92 us
+counted) and 1.33 or 1.21 times on the 4090 (1.1 or 1.0 us measured / 0.83 us counted), with rho
+from the registry ratios above (an earlier version said "1.4-1.6 times on both"; that came from
+older, wrong ratios). So the model under-predicts the slope by 41 % on the 3090 and by 33 or 21 % on
+the 4090. An account made after the measurements, and untested: counting the 16 T dp4a as double (53
+per T instead of 37) gives 2.75 us on the 3090 (measured 2.7) and 1.18 us on the 4090 (measured 1.1
+or 1.0). It is not used in rho, and it should be checked on a card not yet looked at before anyone
+relies on it. These are mismatches: the model is wrong there until a term explains them; nothing
+here smooths them.
+
+A second term, CTA residency (85 registers: 5 CTAs of 128 threads per SM against 7 at 72), explained
+the 3090's jump at T = 4 and was taken in #560 for the plain non-gated instance. On the 3060 the
+end-to-end prediction before the measurement was +5..6 % at C = 4; after #560 it measured +2.8 % on
+Gemma 4 12B and +1.6 % on Qwen3.5-9B: a miss by about two on the first (5..6 / 2.8 = 1.8-2.1) and
+three to four on the second (5..6 / 1.6 = 3.1-3.8). An account made afterwards, 47 % of Gemma's
+decode parameters x 6 % = 2.8 %, gives the first figure; it is not a prediction, and it does not
+give the second model's 1.6 % (its share of the twinned shapes was not split per shape).
+
+**Open.** The gated launches (about half the weight bytes) keep the unbounded instance; a bound
+there costs registers (110 for 3 columns) or spills. The candidate rule was "T <= 3 for a gated pair
+where SMs x clk / BW is under a threshold". It is a candidate, not adopted, and the data at hand do
+not support it as stated. Its threshold lies between two measured cards (3090 loses at 0.148, 5060
+Ti ties at 0.207), so it is anywhere in that bracket, and the bracket holds the RTX 2080 Ti 0.171,
+3070 0.177, 5070 0.179 and 5070 Ti 0.192 among others. Both boards that lose are Ampere and both
+that do not are Ada or Blackwell, so on four cards the ratio and the generation cannot be told
+apart.
+
+Earlier route-tune files for the RTX 3060 (route files of 08.11, rows labelled a8; the build and
+provenance were not verified, and they hold no twin rows for these shapes) time the gated vector
+launch and the register-MMA schedules, so gated against the best register-MMA schedule can be read
+over 8 files:
+
+| shape (n x k) | T = 2 | T = 3 | T = 4 |
+|---|---|---|---|
+| 12288 x 4096 | -4.7..-5.7 % | -3.9..-4.2 % | -0.9..-1.8 % (gated wins throughout) |
+| 15360 x 3840 | +0.5..+0.9 % (about one tick) | +2.9..+3.4 % | +4.4..+6.2 % (gated loses from T = 3) |
+
+(gated / register MMA - 1; the tuner's r8 schedule is faster than both at T = 2 on both shapes.)
+
+What these files can carry. The tuner's event timer ticks at 1.024 us (source:
+`src/ops/generic/route_tune_tool.cpp`, comment at the sample loop) and a decode-width median is
+divided by the number of weight copies (3 on these shapes' swiglu rows), so one median moves in
+steps of 0.34 us, and a gated-minus-register-MMA difference of about one tick (1.024 us) or less is
+not a result. In microseconds the differences over the 8 files are: 12288 x 4096 -8.9 .. -10.6
+(T = 2), -7.2 .. -7.9 (T = 3), -1.7 .. -3.4 (T = 4); 15360 x 3840 +1.0 .. +1.8 (T = 2), +6.1 ..
++7.2 (T = 3), +9.2 .. +13.0 (T = 4). So the T = 2 sign of 15360 x 3840 is not supported: three of
+the eight files differ by exactly one tick and a fourth by 1.045 us. The T = 4 cell of 12288 x 4096
+(1.7 us at the least) is under two ticks, so its sign is weakly supported. What stands: at T = 3 and
+T = 4 the two shapes have opposite signs, by 1.7 us or more in every file. The table's earlier
+note, "gated loses from T = 2", is withdrawn: on 15360 x 3840 gated loses from T = 3, and at
+T = 2 the difference is at the timer's resolution. These files are 8 runs, not paired passes, and
+their build and provenance were not verified. A single per-card ratio with a cut at T <= 3 fits
+neither shape in the same way: the sign depends on the shape. The candidate needs a shape term, and
+no rule is adopted here; the kit prints the shapes side by side on a known build and its criterion is a verdict pattern per shape, not a threshold.
+Nothing is fitted to these files.
+
+What the candidate would move, over all 113 rows of the registry (`gpu_facts.json`): at 0.17 it is
+57 rows, about half the registry, of which two boards were measured (the RTX 3060 and 3090); the
+other 55 would be moved on the strength of a ratio alone. By family: 19 GA10x (cc 86: RTX 3050,
+3060, 3060 Ti, 3070 Ti, 3080, 3080 Ti, 3090, 3090 Ti and the laptop 3060 rows, A2, RTX A4000,
+A5000), 13 Turing (GTX 1650 / 1660 variants, T400 / T600 / T1000, RTX 2060 / 2070 / 2060 SUPER /
+2070 SUPER), 8 GA100 (A30, A100, A800), 7 Hopper (H100, H200, H800), 6 Volta (V100, GV100), 3
+consumer Blackwell (RTX 5060 and the 5080 Laptop rows) and 1 data-center Blackwell (B200); 8 of the
+57 rows are `target: false` (the 7 Hopper and B200). Across the bracket the count runs from 42 rows
+(a threshold just above the 3090) to 76 (just below the 5060 Ti). The instruction count was taken on
+sm_86 and sm_89 only, so the domain of any such rule is GA10x (cc 86) until another generation is
+counted and measured; the 38 rows of other families under 0.17 are outside what any number here
+supports.
+
+Whether the gated pair at T = 4 is better as two non-gated launches or as the register MMA is
+untimed. Next: the kit on the 3060 (both shapes, T = 2, 3, 4) before any code, with a 3090 and a
+4090 or 5060 Ti as controls. Its limit: for gate and up of one format production runs one gated
+launch (`ggml_vec_gated_pair`; StoreF32 then GateProduct is the mixed-format path only), so the
+two-launch alternative has no production sequence to time. The kit prints 2 x a single launch as an
+estimate of it: expected high by about one activation quantisation, and it omits the FP32 plane
+write and read of the real two-launch form. Its verdicts name which alternative carries a result
+(`alt(rmma)` is measured, `alt(twin)` rests on the estimate). The kit's verdict floor is the timer's
+raw tick, 1.024 us (observed on the consumer boards and GV100 and recorded in a comment of the
+tuner's source; used as the bound on one median step, and a difference of exactly one tick gets no
+verdict). Two passes are two samples, not a confidence range: a cell within a few microseconds of
+zero (12288 x 4096 at T = 4, 15360 x 3840 at T = 2 on the old files) needs more passes before it is
+read as a verdict.
+
+## 77. Small-T eta re-read from the fit of the shipped registry: ada 0.160, gb20x 0.160 (#688, 10.11, fitted)
+
+54 and 56 recorded ada 0.148 and gb20x 0.165. `tools/fits/round_cost/fit_eta.py` on the shipped
+registry now fits ada 0.160 (64 rounds on three cards: RTX 4070 Ti, RTX 4090, RTX 4060 Ti) and gb20x
+0.160 (30 rounds on RTX 5070 Ti and RTX 5090); the rows of `kSmallTEta` were not re-read when the
+registry grew. Both values stay fitted constants: no fact derivation has been found (54).
+
+**Decision.** The rows are the tool's fit at 3 decimals, and `tests/test_round_cost_eta_fit.py`
+fails when the shipped registry and the rows disagree, so a registry refresh re-reads them.
+
+Leave one card out: ada 0.152 .. 0.180 (without the RTX 4070 Ti, which carries 48 of the 64
+rounds), gb20x 0.159 .. 0.163. The hold-out in the header comment: ada -3.9 / +2.0 / +1.2 %, gb20x
++3.2 / +3.8 %. The third decimal is a near-tie of the 1 % grid, and the fit is sensitive: every Ada
+measurement scaled by 1.005 or 0.995 moves it to 0.154 or 0.167.
+
+What moves: over every board of `gpu_facts.json` and every registry target with round facts
+(about 10 400 chosen pairs), 53 picks on 33 boards change. The mode (MTP or DFlash) never changes;
+the depth does (Ada deeper, Blackwell shallower), and 4 cases switch speculation on or off where a
+section's speed-up sits near 1.0 (L40 and L40S with an IQ3_M MoE target, an AD107 board with
+gpt-oss-20b, RTX 5060 with a Gemma 4 MTP target).
+
+## 78. Turing's column tiles priced by the launch they run (#524, 11.11, measured)
+
+**Decision.** On Turing (the generation row's `mmq_launch_law`, `core/generation.h`) ggml's matrix
+kernel takes the widths of the work table (16, 32, 64, 80, 96, 128; the 80- and 96-column kernels
+are now built for sm_75) for Q4_K and Q6_K and ranks them by the launch each one runs, not by its
+tile count:
+
+    cost(J) = U(J) x u(J) x (stream-k ? s : 1) + F(J) x (fixup bytes / DRAM rate + L)
+
+U(J) is the longest CTA's units (a unit: one 128-row x J-column tile over 256 K values) by the
+kernel's own partition: a tile a CTA where the grid fills its last wave of SMs to 90 %, `waves x
+K / 256`; else stream-k over min(SMs, units) CTAs, `ceil(tiles x K / 256 / CTAs)`. F(J) is 1 where
+the CTAs do not divide the tiles (the fixup kernel runs). The fixup's bytes are counted from the
+partition: every partial tile (128 x J FP32) read once, and every output tile they land in read
+and written once (the CTA's own write of its partial is the tile kernel's, inside s). The DRAM rate
+is the board's facts (352 bits at 14 Gbps: 616 GB/s on the RTX 2080 Ti). `core/mmq_columns.h`
+holds the rule (`launch_of`, `fixup_bytes`, `launch_seconds`, `width_cost`); `select_launch` ranks
+by it and takes its CTA count and fixup from `launch_of`, and the estimate (`mmq_linears_seconds`)
+prices the same launch, the format's 128-column K step (`kMmqTileCost`) scaled by the law's unit
+share. `test_route_classes` holds the kernel's width to the table's on 4096- and 12288-row
+products of 1..512 columns, `test_choice` pins the Turing picks. A Turing board whose facts give no
+roofline (an unknown id without the driver's clocks) cannot price the law and keeps the fewest
+tiles of 16, 32, 64 and 128, as before. GA10x, Ada and GB20x keep the
+tile law of DECISIONS 74 (their grids fit it); the generic cost model's MMQ term is computed only
+where the MMA reads BF16 (sm_80 on), so it never prices a Turing call and is unchanged.
+
+**Why the tile law misfits this card.** On 68 SMs a 4096-row product is 32 row tiles: one
+128-column tile is 32 CTAs (47 % of a wave: stream-k, 68 CTAs, a fixup), two 64-column tiles are 64
+CTAs (94 %: a tile a CTA, no fixup); the 12288-row linears likewise (96 tiles 70 %, 192 tiles 94 %).
+So at 97..128 columns the fewest tiles is also the launch that splits every linear and runs a fixup,
+and the narrower width is the one that does not. On the other measured cards (82, 128, 28, 170 SMs)
+both widths run stream-k and the difference cancels: the RTX 2080 Ti is the one card where the mode
+flips between the candidates. That is the launch rule and the SM count, not Turing's ISA. The tile
+law fitted to this card's grid (10.11, Qwen3-8B Q4_K_M, 8 widths x 21 sizes x 2 visits) left 2.87 %
+rms (3.04 % beyond the request noise) and a lack-of-fit ratio of 20, so its f (0.213) is no
+measurement.
+
+**Facts read (cuobjdump of the hooked sm_75 build, nvcc 13.4; CPU only).** Registers / stack bytes of
+`mul_mat_q` at J = 16, 32, 48, 64, 80, 96, 112, 128: Q4_K 128, 195, 246, 254, 250, 255, 255, 255 / 48
+(stack only at 128); Q5_K 140 .. 255, stack at 112 (48) and 128 (56); Q6_K 147 .. 255, stack at 96
+(40), 112 (16), 128 (64). The prediction made beforehand, 255 registers and a stack from J 80 on,
+holds for Q6_K, not for Q4_K (J 80 250, no stack). sm_86 Q4_K (the same source): 112 .. 248, at
+most 221 at J 128, no stack at any width. SASS counts of Q4_K on sm_75 (static; the kernel holds the unit's loop
+twice, with and without the fixup write): IMMA 8 J, I2F 8 J + 19, FFMA 16 J, FMUL 8 J, exactly
+linear in J; LDL / STL 16 / 15 at J 128 only. sm_86: IMMA 2 J (one m16n8k32 where Turing issues four
+m8n8k16), I2F 19 at every J. So no issue count steps between J 64 and J 80.
+
+**Measured (the microbench `tools/bench/mmq_launch_microbench.cu` against the hooked build, RTX
+2080 Ti at 1.93-1.97 GHz, the medians of two passes of 9 x 1000 back-to-back calls, pass to pass
+0.8 % median, 2.9 % at most; nsys for the kernels apart).**
+- The unit by width (the time of one unit: 16 more units, k 4096 -> 8192, over 16, us): a tile a
+  CTA on 64 CTAs (two column tiles of a 4096-row product) 3.40, 4.56, 5.36, 6.28, 7.23, 8.50, 9.30, 11.60 at J 16 .. 128
+  (48 and 112 included); the same on 32 CTAs (one column tile) 2.90, 3.96, 4.76, 5.50, 6.22, 7.37,
+  8.53, 9.87; stream-k on 68 CTAs over one column tile 4.06, 5.04, 6.00, 7.53, 9.05, 10.65, 12.04,
+  12.80. Per 16 columns the 64-CTA unit grows 0.8-1.3 us from 32 to 112, then 2.3 us to 128 (the
+  spill); not the step at 80 the grid fit had. The units are about three times the issue
+  bound of their SASS counts. `unit_clocks` are the 64-CTA ones at the 1545 MHz reference clock;
+  `stream_k_unit` 1.18 is the mean ratio of the stream-k unit to them over the six table widths
+  (1.10 .. 1.25). Both are MEASURED constants of the generation's row, read on the launches the
+  law prices (a production launch of these products runs 64-68 CTAs; the 32-CTA unit, 15 % cheaper,
+  is not one).
+- V2, J 128 at 121 columns, 4096 x 4096: stream-k on 68 CTAs with the fixup 129.3 us a call, a tile
+  a CTA on 32 CTAs 161.5 us. Kernels apart: the 68-CTA tile kernel 111.3 us, the fixup 17.5 us, the
+  32-CTA kernel 162.6 us; the fixup's launch adds 0.7 us of gap. Predicted beforehand: 8 / 16 of
+  the 32-CTA kernel plus 28 us of fixup bytes and a gap; measured: the 8 stream-k units take 111 us,
+  not 81 (a unit on 68 CTAs costs more than on 32), and the fixup 17.5 us, not 28: the prediction's 4x the
+  partial bytes (17.4 MB) counted the CTA's own write, which is in the tile kernel; the bytes the
+  fixup kernel moves (60 partials read, 32 output tiles read and written: 8.1 MB) take 13.2 us at
+  616 GB/s.
+- V3, J 64 at 121 columns: a tile a CTA (64 CTAs) 105.6 us, stream-k forced (68 CTAs, the same 16
+  units on the longest CTA) 123.8 us: tile kernel 104.4, stream-k kernel 112.7 (+8 %), its fixup
+  10.3 us (5.9 MB: 9.6 us) and 0.8 us of gap. So the stream-k unit penalty of the grid fit is real,
+  not zero: 8 % at equal units and column tiles, 10-25 % where the stream-k call has one column tile
+  and the tile-a-CTA call two (its weight tile is read by two CTAs, the second from the L2: a
+  candidate cause, not separated).
+- `launch_seconds` 3.3 us: the fixup kernel's time beyond its bytes at 616 GB/s plus its launch
+  gap, 5.0 us (J 128) and 1.6 us (J 64), their mean. MEASURED.
+The first window's numbers (one pass of 7 x 200 calls, each process from an idle clock) were up to
+33 % off on the first configurations and are not used.
+
+**Verification on the grid (V4: the 10.11 run re-read by the kit's reader with the law's constants,
+no refit; one C_N per size and one D_r per run fitted as in its FIT).** The law picks the measured
+best of the six table widths at 20 of 21 sizes, mean regret 0.11 % (miss: 281 columns, J 96 for
+J 80, +2.3 %), against 1.56 % for the tile law at f 0.20 and 13.75 % for the fewest tiles; predicted
+beforehand: at least 19 and 0.44 %. Residual 2.05 % rms of the size's time over the 252 cells of the
+table widths (2.19 % beyond the request noise; the tile law's two fitted constants left 2.87 and
+3.04 %); 57 of 126 size x width medians within 1 %. Of the 14 cells predicted beforehand to lie
+within 1 %, 7 are (25 columns J 64, 105 J 64 and J 128, 121 J 64, 137 J 80, 313 J 128, 377
+J 128); the others are off by -1.5 .. -3.9 % (121 and 137 J 128, 201 J 128, 313 J 80, 377 J 96, 25 J 32) and +3.4 % (25
+J 128): the law's units are the microbench's Q4_K at 1.95 GHz, the grid's are Qwen3-8B's Q4_K / Q6_K
+mix in a server run. The refit of the law's form (units by mode, a + b J each, and the fixup
+launches free: a FITTED diagnosis) leaves 1.77 %, so about 1.7 % of structure is in neither law.
+Picks of the 4096-row products (`test_choice`): 64 at 97..128 columns, 80 at 129..160 and 257..320,
+96 at 161..192 and 321..384, 128 at 193..256.
+
+**Numerics.** As DECISIONS 74: a different width changes the stream-k split and the sums. The
+logprob check for the Turing picks is in V5 below.
+
+**V5 (12.11, RTX 2080 Ti, measured).** The production ranking against the fewest tiles, the kit's
+`ab` with `AB_ARM=law` (Qwen3-8B Q4_K_M, k 7, three counterbalanced visits, 204 requests an arm),
+predicted from the tree's constants before the run (no refit). The mix 144..256: -12.0 % measured
+(per visit -12.1 .. -11.7 %) against -12.0 % predicted, inside the pre-registered +-2 pp (-14.0 ..
+-10.0 % on this run's old mean): R4 (law) not met, the law stands on this card. All 17 sizes:
+-12.7 % against -14.0 %. Five sizes lie more than 2 pp from their prediction, all on the
+optimistic side: 96 tokens (+3.9 pp; J 96 on every linear) and 270..384 (+3.6 .. +4.5 pp, where the
+law picks several widths a layer); the per-size gap is recorded, not fitted. Logprobs (8 natural
+prompts, 24 greedy tokens, the mean |dlogprob| over the common prefix of the two generations): the
+law against the fewest tiles at chunk 1024 differ by 0.0000 .. 0.0400 and in the text of 3 of 8;
+the fewest tiles at chunk 128 against 1024 differ by 0.0000 .. 0.0063 and in 2 of 8. Another column
+tile is another accumulation order (fast mode, not exact), the same kind of change as another chunk
+but up to six times larger here at its largest (DECISIONS 74's old-against-new: 0.000 .. 0.03).
+The logprob tool and its rows are not committed.
+
+**Open.** The unit's cost from facts (it is about three times the issue bound
+of its counts: the serialized load phases of a CTA a SM are a latency, not counted here); what makes
+a stream-k unit dearer beyond the 8 % of V3; the 1.7 % of the grid that neither law holds (441
+columns J 80, 505 columns J 128, the J 16 cells); a second Turing card; Q6_K's own unit
+(it takes Q4_K's measured u(J), though Q6_K spills from J 96 and Q4_K only at J 128: a format
+transfer, not measured). The constants are one
+card's, the RTX 2080 Ti's (the lab's one Turing card), carried by the generation row to every
+Turing board as a transfer, as `kMmqTileCost`'s Turing row and GB20x's `mmq_tile_fixed` (the RTX
+5090's) are; a constant fitted on two cards of a generation is the standard (AGENTS.md) and this
+row does not meet it. What depends on the board is taken from its facts: the launch mode and the
+fixup follow its SM count and DRAM rate (`launch_of`, `fixup_bytes`); the measured part is the
+unit's cost on the SM (the same TU10x SM on every Turing board).
+
+## 79. The MoE decode step reads the op's route; kMoeRoutedEta keyed by the kernel pair (#616 step 7, 12.11, rule; no new measurement)
+
+**Decision.** The configuration choice's MoE decode step asks the MoE op which kernels its two
+grouped stages run at the step's rows, on the planned board: `moe_route_query`
+(`ops/moe/moe_route_query.h`) is `moe()`'s own decision as a pure query (the cascade of
+`moe_plan_query`: the route tables, the class's A8 route, the R8 token limits; and Volta's split
+of a wide call, now one function, `moe_split_tokens`, that `moe()` calls too) over descriptor
+banks on the board's class. The plan facts keep the trunk's routed layers by kind
+(`PlanModelFacts::expert_layers`: each weight bank's format, stored layout and K, a
+floating-point bank's too (a GGUF's F16 and F32 experts as bf16, as `moe_published` and
+`gemma4_published` keep them; a Qwen 3.5/3.6 MoE GGUF's float experts are re-quantized by
+`choose_recipe` only under `--maintainer-quantize`; a bank's float scales and biases are not
+banks; each quantization row's from its own tensor table, none for a row whose header was not
+read, never another row's), and the experts'
+activation policy: an artifact's the one its uses record, `Use::activation_policy`, which a start
+reads; a GGUF's where its tensor table tells it (`gguf_expert_policy`: a ggml block or MXFP4
+bank as stored, `kept_block_policy`; an NVFP4 bank without an activation divisor A16); unknown
+where a use records none, or where the recipe or the weights' bytes decide (a GGUF NVFP4 bank with
+`<stem>.input_scale`: AllowA4 under the Qwen 3.5 and Gemma 4 published recipes, A16 under
+`moe_recipe`; Gemma 4's MXFP4 experts, which the GGUF decoder maps onto NVFP4 only where their
+block exponents fit E4M3, `probe_mx` on the weights, and the recipe re-quantizes otherwise). An
+unknown policy is no answer under fast activations, the measured pair's share transferred, never
+the optimistic case; under int8 and exact the query asks at the policy the start runs
+(`models::effective_policy`: AllowA8, A16 under the invariant profile) whatever was recorded.
+The MTP layer's banks are apart on both paths, as the runtime keeps them). The engine registers
+the query for the plan (`runtime::register_plan_moe_route_query`, as it registers the workspace
+queries); `product::with_moe_routes` asks it per kind and rows and hands the choice the routed
+bytes by kernel pair (`ModelFacts::moe_routes`). The class the plan asks on is the board's
+synthetic one (`synthetic_device_class` with the board's machine facts: no L2 size, clocks or
+bus, its features not intersected with the build's), so the answer is `moe()`'s on that class,
+not exactly the real card's; it labels the estimate's basis only and moves no number. `kMoeRoutedEta`'s rows are keyed by the pair their
+steps ran: R8 on the gate/up bank over the register MMA on the down bank. A step whose layers the op
+runs on another pair takes its generation's measured pair's share, transferred past one row; one
+row reads at kDramEta whatever the pair (as before).
+
+**Why not a share per kernel kind.** Every MoE step row of `speed_measured.json` ran one pair: the
+query's answer for those layers at 2-8 rows on the RTX 4090, 4060 Ti, 5070 Ti and 5090 (plan
+goldens, `decode-r8`; the 5070 Ti's IQ2_S layers of UD-IQ3_XXS take the gb206 table's R8 gate/up
+over the register-MMA down from T = 2; UD-Q3_K_S's bank formats are not in the repository, only
+its bytes). So the rows give no second pair to tell apart, and within the one pair the share still
+falls with the rows (Ada 0.926 / 0.909 / 0.803, Blackwell 0.918 / 0.740 / 0.634 at 2 / 4 / 8): the
+kernel kind does not replace the rows key, it is added to it. The register-MMA pair (both stages:
+the op's route above the R8 limit, for FP4-element banks from five rows, and under --activations
+exact) would need a step measured on it: gpt-oss-20b's MXFP4 steps at 5-8 rows are that pair, but
+their windows are not on disk (DECISIONS 65 keeps only "3-26 % slow"), and their expert reads are
+ten times Qwen3.6's, so a share read off them would mix the kernel with the read size. The stage
+price (`price_moe_stage`, step 4) has no compute term for R8 (dp4a issue), so a calibration per
+kind against it is not derivable either. No value is set for a pair no step measured.
+
+**What it changes.** No speed estimate moves (every pair takes the measured pair's share); the
+basis does where the op runs another pair past one row: on Ada and Blackwell, gpt-oss's MXFP4
+banks at 2 rows on the RTX 4090 and 4060 Ti (their route-table band: R8 on both stages) and from 5
+rows (the register MMA on both), any MoE above 8 rows, IQ2_S gate/up banks the tables put on R8
+on both stages at 2-4 rows, every MoE under --activations exact; elsewhere the estimate was
+transferred already.
+`ninferno-serve --plan --no-load --json` on five local MoE GGUFs (gpt-oss-20b Q4_K_M, Qwen3.6
+35B-A3B MXFP4_MOE and UD-IQ2_XXS, Gemma 4 26B-A4B UD-IQ2_M, Nemotron 3.5 Lightning UD-Q4_K_XL)
+on the RTX 4090, 5090, 5070 Ti, 3090 and 4060 Ti at 1, 2, 4, 6 and 8 streams, before and after: 125
+plans, 64 with a choice, one changed: gpt-oss-20b on the RTX 4090 at 2 streams, its estimate
+Transferred (was Own), resolution 0.5447 (was 0.0226, no longer deciding); its choice (FP8 KV,
+fast activations) and its estimate (228.6 tok/s a stream) the same. The others the rule names did
+not move: gpt-oss-20b on the RTX 4060 Ti at 2 streams has no candidate that fits (no choice to
+label); Qwen3.6 UD-IQ2_XXS's banks are IQ2_XXS gate/up over IQ2_S (37 layers) or IQ3_S (3) down,
+which the RTX 4090 runs on the measured pair at 2 and 4 rows (still own); the 64 exact-activation
+alternatives the plans list were transferred before and stay so; gpt-oss-20b on the RTX 4090 at 6
+and 8 streams (the register MMA on both stages) was transferred already, and at 4 it runs the
+measured pair; on the 5090, 5070 Ti and 3090 every gpt-oss estimate was transferred already; 16
+streams give no plan (`--max-concurrency` takes 1-8). The comparison read each plan's chosen candidate, its worth,
+resolution and its basis, the rung, and the speed basis of every alternative the JSON lists
+(one per axis, not every candidate the choice scored).
+
+**Verification.** `ninferno_moe_plan_golden_test`: the query equals the cascade (plan, authority,
+stage kernels, evidence kind, the call moe() runs) at every board, layer, policy, profile and width
+of the goldens, on its own descriptors. `ninferno_choice_test`: MoE decode 33 points rms 4.48 %,
+worst 13.5 %; the long steps 22 points rms 4.85 %, worst 13.2 % (the same numbers: an unasked step
+and one on the measured pair price alike, `moe_step_reads_the_route`). The RTX 5090's UD-Q4_K_M
+long steps at 4 and 8 rows (-11, -13 %) run the measured pair (R8 on the Q4_K / Q5_K gate/up over
+the register-MMA down there): the kernel pair does not explain them; Blackwell's share, read on
+IQ3_XXS and Q3_K banks only, stays the open cause. `ninferno_plan_dry_run_test`: gpt-oss's MXFP4
+banks on the RTX 4090 through the registered query: R8 gate/up over the register-MMA down at four
+rows, the register MMA on both stages at eight, the invariant profile's under exact activations.
+
+**Open.** A step on the register-MMA pair (gpt-oss-20b, or Qwen3.6 at 16 rows) on two cards of a
+generation would give that pair its own share; the gpt-oss step rows as regression rows once their
+windows are re-measured; ninferno-ui links no Ops and registers neither this query nor the
+workspace ones, so its plan document differs from `ninferno-serve --plan --no-load --json` for an
+MoE where the op runs another pair (gpt-oss-20b on the RTX 4090 at 2 streams: the UI's basis own,
+resolution 0.0226; serve's transferred, 0.5447): the estimate and the choice are the same; a hub row priced from another quantization's header has no layers
+of its own (the measured pair, as before).

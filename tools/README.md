@@ -35,7 +35,7 @@ python3 -m tools.smoke.serve_contract --base-url http://127.0.0.1:8080 --model q
 | Maintain the drafter registry and speculation corpus | [`spec/`](#maintainer-tools) |
 | Generate or check documentation | [`docs/`](#maintainer-tools) |
 | Audit the source tree | [`audit/`, `check_file_modes.sh`, `specializations.sh`, `pdl_sass_audit.py`](#maintainer-tools) |
-| Build and publish a release (archives, installer, WSL root file system, update manifest) | `release/`: `package.sh`, `install.sh`, `ninferno-update`, `ninferno-start`, `pdfium.sh`, `manifest.py`, `recommend.py`, `windows/` (`build.sh`, `package-native.ps1`, `make_rootfs.sh`), `server/` ([README](release/server/README.md)) |
+| Build and publish a release (archives, installer, WSL root file system, update manifest) | `release/`: `package.sh`, `install.sh`, `ninferno-update`, `ninferno-start`, `pdfium.sh`, `ffmpeg.sh` (with `ffmpeg_check.py`), `manifest.py`, `recommend.py`, `windows/` (`build.sh`, `package-native.ps1`, `make_rootfs.sh`), `server/` ([README](release/server/README.md)) |
 | Talk to a running server from Python | `ninferno_serve/` (public-protocol clients), `streaming_http/` (timestamped HTTP and SSE) |
 | Regenerate the dense RoPE test fixture from transformers | `convert/dense_rope_fixture.py <fixture.json> <name> <config.json>` |
 
@@ -175,6 +175,8 @@ nvcc -O3 -std=c++17 -arch=native tools/hbm_bandwidth_probe.cu -o build/hbm_bandw
 | `generate_jinja_unicode.py` | Regenerates Jinja's Unicode full-case exceptions and contextual-case properties from `SpecialCasing.txt` and `DerivedCoreProperties.txt`. |
 | `docs/gen_performance.py [--check]` | Generates the [performance pages](../docs/performance/README.md) from `docs/performance/data/`; `--check` fails when a page differs from the data. |
 | `docs/check_anchors.py ROOT` | Fails when a relative Markdown link names a missing file, or an `#anchor` no heading of its target (GitHub slugs); links in code are skipped. |
+| `audit/board_literal_lint.py` | Fails when a board's facts are written as a literal outside the registry: a `ninferno::Board` literal (any spelling: multi-line, designated, parentheses, `::ninferno::Board`, aliases, `.board = {...}`, every row of a `Board` table or `std::vector<Board>` whose first row is written in braces) or a bare five-number tuple that reads as (major, minor, SMs, L2, GB/s), in every tracked C++ file outside `third_party/` and `src/ui/third_party/`. What it does not see, and what it flags although it is no board, is listed in the script's docstring. Exceptions are pinned per file by the literals themselves, with a reason (`ALLOW`: 41 literals in 5 files); run by the lint workflow and, with its unit tests, by `ninferno_board_literal_lint_test`. |
+| `audit/ctest_labels.sh [BUILD_DIR [CONFIG]]` | Fails on a CTest test without a label from host, gpu, real, golden, slow (see tests/README.md). |
 | `audit/ctest_skips.sh BUILD_DIR` | Counts cases skipped inside passing CTest tests, by reason and by test. |
 | `audit/decision_inputs.sh` | Fails when a listed decision file (planners, scheduler, speculation, routes, linear dispatch, attention and MoE plans, machine facts) includes a clock or timing header, names a clock, a timer or a clock read, reads the environment (`getenv`, `_wgetenv`, `sys::env`, ...) or queries free memory (registered as `ninferno_decision_inputs_test` on UNIX hosts). |
 | `audit/legacy_stream_calls.sh SOURCE_ROOT` | Audits synchronous CUDA copies and fills on the legacy default stream (registered as `ninferno_legacy_stream_audit_test`). |

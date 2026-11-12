@@ -9,6 +9,7 @@
 #include "ops/generic/route_table.h"
 #include "ops/route_pins.h"
 
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -71,7 +72,7 @@ std::optional<RouteAnswer> route_probe(const Ask& ask, const Problem& problem,
                                            heuristic_w4a4(problem.n, ask.tokens, prefill_band))};
         if (route_admits(r, weight, problem.policy)) return by_pin(r, "route-probe");
     }
-    if (forced == 1 && r8_call(weight, problem.policy, ask.tokens)) {
+    if (forced == 1 && r8_call(problem, weight, ask.tokens)) {
         const Route r{Family::R8Mma, static_cast<std::uint8_t>(heuristic_r8(problem, ask.tokens))};
         if (route_admits(r, weight, problem.policy)) return by_pin(r, "route-probe");
     }
@@ -131,7 +132,7 @@ constexpr NamedAuthority kSelectAuthorities[] = {
 // An NVFP4 A16 call of 17 tokens or more: the scope of the half-L2 rule, and the calls the rest of
 // the automatic selection treats as the prefill profile's (nvfp4_promoted).
 bool nvfp4_a16_wide(const Ask& ask, const Problem& problem, const Weight& weight) {
-    return problem.qtype == QType::NVFP4 && ask.tokens >= 17 &&
+    return problem.qtype == QType::NVFP4 && ask.tokens >= kPrefillBandMinTokens &&
            !allows_w4a4(weight, problem.policy) && !allows_w4a8(weight, problem.policy);
 }
 
@@ -174,12 +175,12 @@ Ask nvfp4_promoted(const Ask& ask, const Problem& problem, const Weight& weight)
 // W4A8 heuristic (route tables hold A16 schedules only: compute_class keys these formats as a16
 // whatever the policy), an R8 call likewise, and ggml's kernels stand in for the heuristic only.
 bool a8_wide_call(const Ask& ask, const Problem& problem, const Weight& weight) {
-    return ask.tokens >= 17 && allows_w4a8(weight, problem.policy);
+    return ask.tokens >= kPrefillBandMinTokens && allows_w4a8(weight, problem.policy);
 }
 
 bool a8_call(const Ask& ask, const Problem& problem, const Weight& weight) {
     return a8_wide_call(ask, problem, weight) || vec_rule(weight, problem.policy, ask.tokens) ||
-           r8_call(weight, problem.policy, ask.tokens) ||
+           r8_call(problem, weight, ask.tokens) ||
            mmq_verify_rule(weight, problem.policy, problem.n, ask.tokens, ask.lanes);
 }
 
@@ -191,11 +192,8 @@ std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& prob
     if (a8_call(ask, problem, weight)) return std::nullopt;
     const auto hit = table_route_answer(problem, ask.tokens, ask.prefill());
     if (!hit) return std::nullopt;
-    const bool prefill_band = ask.prefill_band();
     if (!route_admits(hit->route, weight, problem.policy) ||
-        (prefill_band && !route_is_token_invariant(hit->route)) ||
-        (prefill_band && supports(weight) && tiled_supports(codec_of(weight)) &&
-         hit->route.family != Family::TiledMma)) {
+        !profile_admits(hit->route, ask, &weight)) {
         return std::nullopt;
     }
     Evidence e;
@@ -224,7 +222,7 @@ std::optional<RouteAnswer> dense_tune_entry(const Ask& ask, const Problem& probl
     if (a8_wide_call(ask, problem, weight)) return std::nullopt;
     const auto dense = tuned_dense_route(problem, ask.tokens);
     if (!dense || !route_admits(*dense, weight, problem.policy)) return std::nullopt;
-    const bool r8 = r8_call(weight, problem.policy, ask.tokens);
+    const bool r8 = r8_call(problem, weight, ask.tokens);
     if (dense->family == Family::R8Mma) {
         if (!(r8 || r8_verify_tunable(weight, problem.policy, ask.tokens))) return std::nullopt;
     } else if (!(vec_rule(weight, problem.policy, ask.tokens) || !r8)) {
@@ -241,7 +239,8 @@ std::optional<RouteAnswer> dense_tune_prefill_band(const Ask& ask, const Problem
     const auto band = tuned_prefill_route(problem, ask.tokens, heuristic);
     if (!band || !route_admits(*band, weight, problem.policy)) return std::nullopt;
     if ((band->family == Family::W4a8Mma && heuristic.family == Family::W4a8Mma) ||
-        (ask.prefill() && band->family != Family::W4a8Mma && same_summation(*band, heuristic))) {
+        (ask.prefill() && band->family != Family::W4a8Mma &&
+         profile_admits_as(*band, ask, heuristic))) {
         return measured_here(*band, "dense-tune-prefill-band");
     }
     return std::nullopt;
@@ -258,7 +257,8 @@ constexpr NamedAuthority kAutoAuthorities[] = {
 // A4 only where the policy allows it, and never at T <= 16, which is where decode and speculative
 // verify run.
 std::optional<RouteAnswer> w4a4_rule(const Ask& ask, const Problem& problem, const Weight& weight) {
-    if (ask.tokens < 17 || !allows_w4a4(weight, problem.policy)) return std::nullopt;
+    if (ask.tokens < kPrefillBandMinTokens || !allows_w4a4(weight, problem.policy))
+        return std::nullopt;
     const Route r{Family::W4a4Mma, static_cast<std::uint8_t>(
                                        heuristic_w4a4(problem.n, ask.tokens, ask.prefill_band()))};
     if (route_admits(r, weight, problem.policy)) return by_rule(r, "w4a4-rule");
@@ -283,7 +283,8 @@ std::optional<RouteAnswer> vec_kernel_rule(const Ask& ask, const Problem& proble
 // (cost_route, a8_candidates); the rules below where the device reports no clocks.
 std::optional<RouteAnswer> cost_model(const Ask& ask, const Problem& problem,
                                       const Weight& weight) {
-    if (ask.prefill_band() || ask.tokens < 17 || problem.qtype == QType::NVFP4) return std::nullopt;
+    if (ask.prefill_band() || ask.tokens < kPrefillBandMinTokens || problem.qtype == QType::NVFP4)
+        return std::nullopt;
     if (const auto r = cost_route(problem, weight, ask.tokens)) {
         return RouteAnswer{*r,
                            Evidence{Evidence::Kind::Ranker, Evidence::Ranker::Cost, "cost-model"}};
@@ -296,7 +297,7 @@ std::optional<RouteAnswer> cost_model(const Ask& ask, const Problem& problem,
 // R8 rules (r8_rules_route), asked only when the table does not answer.
 std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
                                        const Weight& weight) {
-    if (!r8_call(weight, problem.policy, ask.tokens)) return std::nullopt;
+    if (!r8_call(problem, weight, ask.tokens)) return std::nullopt;
     // The rules' schedule is computed only when the T=1 table does not answer.
     const auto hit = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;
     RouteAnswer answer =
@@ -323,7 +324,8 @@ std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
 // distance).
 std::optional<RouteAnswer> mmq_prefill_gate(const Ask& ask, const Problem& problem,
                                             const Weight& weight) {
-    if (ask.tokens < 17 || !mmq_prefill_wins(problem, weight)) return std::nullopt;
+    if (ask.tokens < kPrefillBandMinTokens || !mmq_prefill_wins(problem, weight))
+        return std::nullopt;
     const measured::GateAnswer gate = mmq_prefill_device_gate();
     Evidence e;
     e.ranker   = Evidence::Ranker::None;
@@ -338,9 +340,10 @@ std::optional<RouteAnswer> mmq_prefill_gate(const Ask& ask, const Problem& probl
         e.kind = Evidence::Kind::Carried;
         break;
     case D::Incomplete:
-        // A quantity unknown on either side: the board itself (distance 0) is still the board
-        // measured on; any farther donor is a transfer.
-        e.kind = gate.distance == 0 ? Evidence::Kind::Measured : Evidence::Kind::Transferred;
+        // A quantity unknown on either side: the distance can understate the difference, even at
+        // 0 (equal SM counts are not one board), so the answer is not the board's own measure at
+        // any distance: a transfer, the donor named.
+        e.kind = Evidence::Kind::Transferred;
         break;
     case D::Transferred:
     case D::None:
@@ -355,7 +358,7 @@ std::optional<RouteAnswer> mmq_prefill_gate(const Ask& ask, const Problem& probl
 
 // The I8 tile of a call from 17 tokens (i8_route: the cost rule over its tiles).
 std::optional<RouteAnswer> i8_rule(const Ask& ask, const Problem& problem, const Weight& weight) {
-    if (ask.tokens < 17) return std::nullopt;
+    if (ask.tokens < kPrefillBandMinTokens) return std::nullopt;
     if (const auto r = i8_route(problem, weight, ask.tokens)) return by_rule(*r, "i8-rule");
     return std::nullopt;
 }
@@ -363,7 +366,8 @@ std::optional<RouteAnswer> i8_rule(const Ask& ask, const Problem& problem, const
 // The W4A8 tile from 17 tokens where the policy allows it (w4a8_route: the W4A8 rules' tile, else
 // the first schedule that fits the build).
 std::optional<RouteAnswer> w4a8_rule(const Ask& ask, const Problem& problem, const Weight& weight) {
-    if (ask.tokens < 17 || !allows_w4a8(weight, problem.policy)) return std::nullopt;
+    if (ask.tokens < kPrefillBandMinTokens || !allows_w4a8(weight, problem.policy))
+        return std::nullopt;
     if (const auto r = w4a8_route(problem, weight, ask.tokens)) return by_rule(*r, "w4a8-rule");
     return std::nullopt;
 }
@@ -476,6 +480,17 @@ constexpr NamedAuthority kRuleAuthorities[] = {
 
 } // namespace
 
+bool profile_admits(Route route, const Ask& ask, const Weight* weight) {
+    if (!ask.prefill_band()) return true;
+    if (!route_is_token_invariant(route)) return false;
+    return !(weight != nullptr && supports(*weight) && tiled_supports(codec_of(*weight)) &&
+             route.family != Family::TiledMma);
+}
+
+bool profile_admits_as(Route route, const Ask& ask, Route reference) {
+    return !ask.prefill() || same_summation(route, reference);
+}
+
 Ask resolve_ask(std::int32_t tokens, bool prefill) {
     return Ask{invariant_routes_active() ? Profile::Invariant
                : prefill                 ? Profile::Prefill
@@ -510,6 +525,12 @@ RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& we
     return answer;
 }
 
+RouteAnswer ranker_answer(const Ask& ask, const Problem& problem, const Weight& weight) {
+    const Ask asked = nvfp4_promoted(ask, problem, weight);
+    if (auto answer = nvfp4_half_l2(asked, problem, weight)) return *answer;
+    return heuristic_answer(asked, problem, weight);
+}
+
 RouteAnswer select_answer(const Problem& problem, const Weight& weight, std::int32_t tokens,
                           bool prefill) {
     const Ask ask = resolve_ask(tokens, prefill);
@@ -531,6 +552,23 @@ Route auto_route(const Problem& problem, const Weight& weight, std::int32_t toke
 Route heuristic_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
                       bool prefill) {
     return heuristic_answer(ask_below_profiles(tokens, prefill), problem, weight).route;
+}
+
+std::string evidence_text(const Evidence& e) {
+    std::string out =
+        "authority=" + std::string(e.source) + " evidence=" + evidence_kind_name(e.kind);
+    if (!e.donor.empty()) {
+        // Locale-independent: std::to_chars, three decimals.
+        char digits[64];
+        const auto end =
+            std::to_chars(digits, digits + sizeof(digits), e.distance, std::chars_format::fixed, 3);
+        out += " donor=" + e.donor + " d=" + std::string(digits, end.ptr);
+    }
+    return out;
+}
+
+std::string evidence_columns(const Evidence& e) {
+    return std::string(e.source) + ',' + evidence_kind_name(e.kind);
 }
 
 } // namespace ninferno::ops::detail::generic

@@ -576,12 +576,13 @@ double per_request_gain(const Profile& profile, bool thinking_default) {
 }
 
 std::optional<double> measured_gain(const Profile& profile, const SpecConfig& config,
-                                    bool thinking) {
+                                    std::optional<bool> thinking) {
     if (!config.enabled()) { return std::nullopt; }
     const auto table = aggregate(profile.measurements);
     const std::vector<std::string> sections =
-        thinking ? std::vector<std::string>{"thinking"}
-                 : std::vector<std::string>{"math", "code", "prose"};
+        !thinking   ? std::vector<std::string>{"math", "code", "prose", "thinking"}
+        : *thinking ? std::vector<std::string>{"thinking"}
+                    : std::vector<std::string>{"math", "code", "prose"};
     // The sections plain decode measured, as select's groups take them; the configuration must
     // be measured on each.
     double plain = 0, at = 0;
@@ -745,6 +746,7 @@ Profile profile_from_published(const Json& published) {
     p.served   = served_from(published);
     p.fit_fallback = fit_fallback_from(published);
     p.load         = load_from(published);
+    if (!p.load.empty()) { p.load_basis = "measured"; } // a published table is a measured one
     p.context_limit = published.value("context_limit", 0U);
     return p;
 }

@@ -4,6 +4,7 @@
 #include "convert/drafters.h"
 #include "core/hub_revision.h"
 #include "core/device_class.h"
+#include "product/choice/choice.h"
 #include "product/plan/plan_quants.h"
 #include "product/speculative_options.h"
 #include "runtime/engine/kv_capacity.h"
@@ -277,15 +278,18 @@ spec::GpuKey gpu_key_of(const runtime::PlanDeviceFacts& device) {
         synthetic_device_class(device.pci_device_id, device.compute_capability / 10,
                                device.compute_capability % 10, device.sms, 0, device.total_bytes);
     d.facts = machine_facts_of(d);
+    // The rates the configuration choice prices (choice::card_facts_of, which a host test of every
+    // gpu_facts.json board calls on the same class; choice_card_of reads them back from the key).
+    const choice::CardFacts card = choice::card_facts_of(d);
     return spec::GpuKey{d.similarity_chain(),
                         d.global_bytes,
-                        d.features.mma_mxf4nvf4,
+                        card.fp4,
                         d.class_chain().size() - 1,
-                        d.sms,
+                        card.sms,
                         d.compute_capability(),
                         d.facts.reference_clock_khz,
-                        d.dram_gbps(),
-                        d.facts.l2_mib * (1 << 20)};
+                        card.dram_bytes_per_s / 1e9,
+                        card.l2_bytes};
 }
 
 bool per_request_of(const SpeculationAsk& ask, const SpeculationSubject* subject) {
@@ -583,6 +587,12 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         }
         r.load                 = bounds_of(r.engine.load);
         r.load_basis           = r.load.empty() ? "none" : "measured";
+        // The basis of the table in force: the served step's (the profile's choice, its fit
+        // fallback, a shallower draft or the MTP head: each serves a profile's table and carries
+        // its spec::Profile::load_basis).
+        if (!r.load.empty() && served && !served->load_basis.empty()) {
+            r.load_basis = served->load_basis;
+        }
         r.depth_at_concurrency = depth_at(r.engine, concurrency);
     }
     return out;

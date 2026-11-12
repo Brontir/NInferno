@@ -1,5 +1,6 @@
 #include "product/plan/plan_quants.h"
 
+#include "product/plan/nvfp4_card.h"
 #include "product/plan/plan_choice.h"
 
 #include "artifact/formats.h"
@@ -86,8 +87,8 @@ Unsupported unsupported(const QuantListing& q, double bits_per_weight,
         return {"above_8_bits", "above 8 bits per weight: the engine serves 8 bits or fewer"};
     }
     // NVFP4 weights run on cards with FP4 tensor cores (compute capability 10.0 and up).
-    if (ascii_upper(q.quant).find("NVFP4") != std::string::npos && device.compute_capability != 0 &&
-        device.compute_capability < 100) {
+    if (ascii_upper(q.quant).find("NVFP4") != std::string::npos &&
+        !nvfp4_planned_on(device.compute_capability)) {
         return {"nvfp4_card", "NVFP4 weights need an RTX 50 / Blackwell card"};
     }
     return {};
@@ -428,7 +429,7 @@ struct PublishedDrafter {
     std::uint64_t head_bits = 16;
 };
 
-PublishedDrafter published_drafter(const spec::DrafterDecl& d, const std::string& spec,
+PublishedDrafter published_drafter(const spec::DrafterDecl& /*d*/, const std::string& spec,
                                    const convert::FetchOptions& fetch, bool read_config) {
     PublishedDrafter out;
     try {
@@ -758,6 +759,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         // The speed of a typical request at the storages this row's plan serves with.
         const PlanSourceFacts facts = row_facts(shape, row);
         choice::ModelFacts model     = choice_model_of(facts);
+        with_moe_routes(model, facts, inputs.device);
         const choice::CardFacts card = choice_card_of(inputs.gpu);
         // The quantization as the choice prices it (product::quant_option_of: one rule for a
         // hub row, the CLI's plan and a start's artifact).
@@ -1563,6 +1565,7 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
     const bool named = std::any_of(facts.model.linears.begin(), facts.model.linears.end(),
                                    [](const runtime::PlanLinear& l) { return !l.format.empty(); });
     if (named) { table.linears = facts.model.linears; }
+    table.expert_layers = facts.model.expert_layers;
     return table;
 }
 
@@ -1582,6 +1585,11 @@ PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
         out.model.mtp_bytes         = *row.mtp_bytes;
         out.model.own_drafter_bytes = row.listing.table ? row.listing.table->own_drafter_bytes : 0;
     }
+    // Its routed layers by kind from its own table only: the shape's are another file's even at
+    // equal bytes (with_weights keeps them there), and a row without its table has none (the MoE
+    // step then takes the measured pair's share: product/choice speed_of).
+    out.model.expert_layers = row.listing.table ? row.listing.table->expert_layers
+                                                : std::vector<runtime::PlanExpertLayers>{};
     // Its stored routed banks and token table where its table counted them (a GGUF's).
     if (const auto& table = row.listing.table) {
         if (table->routed_expert_bytes) {

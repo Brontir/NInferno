@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/device_class.h"
 #include "core/tensor.h"
 
 #include <cuda_runtime.h>
@@ -70,5 +71,30 @@ void rmsnorm_rope(const Tensor& positions, const Tensor& q_norm_weight, const Te
 // The (query, key) head counts the text form above is instantiated for: Qwen3.5's attention
 // layers (0.8B/2B 8,2; 4B/9B 16,4; 27B 24,4; 35B 16,2; 122B/397B 32,2).
 [[nodiscard]] bool rmsnorm_rope_text_heads(std::int32_t query_heads, std::int32_t key_heads);
+
+// The widest text-form call (tokens) a dispatch should still fuse for one geometry on `device`:
+// the launches the fusion saves (three kernels become one: two) against the per-token time it
+// loses to the three separate kernels, which each choose their own shape (the launch-amortisation
+// law, ops/common/sm_wave_rules.h launch_amortized_tokens: a per-warp latency chain over the
+// board's SMs, resident warps and clock). The resident warps are the occupancy of the kernel's
+// committed facts (registers, shared memory) on the board's limits; the launch is the generation's
+// graph node (core/cost_constants.h launch_node_seconds). One constant is not a fact: the fused
+// kernel's chain excess in SM cycles, Fitted and not calibrated (route_cost::kPendingFits). Until
+// it is, wherever the generation has no launch node, and wherever the kernel-facts snapshots carry
+// no facts of the text kernel (every architecture today), the answer is 256, the width measured on
+// the RTX 5090 (the fused form won through it and lost at 1024). A call wider than a graph is
+// captured for pays the eager launch, so the bound is understated there. Both forms are the same
+// arithmetic bit for bit.
+[[nodiscard]] std::int32_t rmsnorm_rope_text_fused_max_tokens(const DeviceClass& device,
+                                                              std::int32_t query_heads,
+                                                              std::int32_t key_heads);
+
+// Whether a text-form call of `tokens` is within the fused width for this geometry on `device`: the
+// geometry is instantiated and tokens <= rmsnorm_rope_text_fused_max_tokens. The model's other
+// conditions (RoPE kind, theta, epsilon, head width) stay its own. The dispatch and the fusion-site
+// manifest (ops/common/fusion_site_manifest.h) both ask this function.
+[[nodiscard]] bool rmsnorm_rope_text_takes_width(const DeviceClass& device,
+                                                 std::int32_t query_heads, std::int32_t key_heads,
+                                                 std::int32_t tokens);
 
 } // namespace ninferno::ops

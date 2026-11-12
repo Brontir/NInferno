@@ -113,17 +113,24 @@ if(NINFERNO_BUILD_ARCH STREQUAL "70" AND NINFERNO_VOLTA_CUTLASS)
 endif()
 
 # --- Global settings ---------------------------------------------------------
+# Host C++ warnings for the project's own directories (never third_party). Each directory opts in by
+# calling ninferno_directory_warnings() in its CMakeLists.txt; the rest are follow-ups of issue #611.
+option(NINFERNO_WARNINGS "Host C++ warnings (-Wall -Wextra, errors on return-type and unused-function)" OFF)
 option(NINFERNO_BUILD_APPS "Build the NInferno CLI, server and perplexity evaluator" ON)
 option(BUILD_TESTING "Build NInferno tests" OFF)
 option(NINFERNO_BUILD_BENCHMARKS "Build NInferno benchmarks" OFF)
-# Op tests against one shared ninferno_ops instead of each statically linking the whole engine
-# (620 MB per test binary on 120a, linked one at a time through the ninferno_link pool): a test
-# tree for fast gates. Every object is then position-independent and the CUDA runtime shared, so
-# the library and the tests use one runtime. Not for the product tree.
-option(NINFERNO_SHARED_OP_TESTS "Link the op tests against one shared ninferno_ops" OFF)
-if(NINFERNO_SHARED_OP_TESTS)
-  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-  set(CMAKE_CUDA_RUNTIME_LIBRARY Shared)
+# Every test executable that holds device code links one shared library of the CUDA archives
+# (ninferno_ops_shared: ninferno_ops, ninferno_core and their device archives) and the shared CUDA
+# runtime, instead of each statically linking its own copy of the whole engine (about 600 MB per
+# test on 120a, linked one at a time through the ninferno_link pool). The apps and benches of the
+# same tree link exactly as without the option; the member archives' host code is then compiled
+# position-independent. cmake/SharedTestLibrary.cmake has the library, cmake/NInfernoTargets.cmake
+# the redirects and the link-mode checks. A GNU ld / ELF mechanism (whole archives, an exporting
+# shared library), for test trees only.
+option(NINFERNO_SHARED_OP_TESTS "Link every test against one shared library of the CUDA archives" OFF)
+if(NINFERNO_SHARED_OP_TESTS AND (WIN32 OR NOT BUILD_TESTING))
+  message(FATAL_ERROR "NINFERNO_SHARED_OP_TESTS is for Linux test trees: it needs BUILD_TESTING=ON "
+                      "and an ELF toolchain (whole-archive linking into an exporting shared library)")
 endif()
 # -lineinfo (source lines for Nsight Compute) also embeds every kernel's PTX text in the fat
 # binary (.nv_debug_ptx_txt): on sm_75 2.9 of the 4.7 GB device-link cubin, which put every
@@ -179,6 +186,10 @@ link_libraries(ninferno_sys)
 
 # --- Subdirectories ----------------------------------------------------------
 add_subdirectory(src)
+ninferno_define_redirects() # ninferno::core, ninferno::ops, ... (cmake/NInfernoTargets.cmake)
+if(NINFERNO_SHARED_OP_TESTS)
+  include(cmake/SharedTestLibrary.cmake)
+endif()
 if(NINFERNO_BUILD_APPS)
   add_subdirectory(apps)
   # `cmake --install`: the executables, the route tables and token rankings they look up beside
@@ -236,4 +247,7 @@ if(BUILD_TESTING)
 endif()
 if(NINFERNO_BUILD_BENCHMARKS)
   add_subdirectory(bench)
+endif()
+if(NINFERNO_SHARED_OP_TESTS)
+  ninferno_decide_link_modes() # every target exists now
 endif()

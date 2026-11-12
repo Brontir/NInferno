@@ -14,12 +14,16 @@
 // GA10x on the RTX 3060 and 3090, Ada on the RTX 4070 Ti and 4090, GB20x on the RTX 5090: the grids
 // of DECISIONS 74) and the weight format is one those grids ran (work_tiles_format): J = 16, 32,
 // 64, 80, 96, 128 and the least work ceil(columns / J) x step_share(J, the row's mmq_tile_fixed).
-// No other generation or format has been run over the widths: a generation joins by its row, a
-// format by its grid.
+// Where the row also carries a launch law (Turing, the RTX 2080 Ti's grid: DECISIONS 78) the same
+// widths are priced by the launch each runs (launch_seconds): its longest CTA's units times a
+// unit's cost, plus the stream-k fixup where the launch splits tiles. No other generation or format
+// has been run over the widths: a generation joins by its row, a format by its grid.
 
+#include "core/arch_registry.h"
 #include "core/generation.h"
 #include "core/weight.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <optional>
@@ -67,6 +71,136 @@ inline constexpr double kTileFixed      = 0.43;
 [[nodiscard]] constexpr double launch_cost(int columns, int j, bool work_table,
                                            double fixed = kTileFixed) noexcept {
     return work_table ? tile_count(columns, j) * step_share(j, fixed) : tile_count(columns, j);
+}
+
+// --- The launch law (core/generation.h mmq_launch_law; DECISIONS 78) ---
+//
+// What ggml's matrix kernel launches for a product of `rows` x `columns` over k (select_launch
+// takes its partition from launch_of): tiles of 128 rows x j columns over the whole K, one CTA a
+// SM. A grid whose last wave of SMs is at least 90 % full runs a tile a CTA, in waves; else
+// stream-k: min(SMs, units) CTAs take contiguous ranges of the tiles' units (a unit: one tile's
+// 256-value K step, MMQ_ITER_K), and where the CTAs do not divide the tiles a fixup kernel adds the
+// partial tile of every CTA whose range ends inside a tile (mmq.cuh mul_mat_q_stream_k_fixup). A
+// launch takes as long as its longest CTA.
+inline constexpr int kUnitK = 256;
+
+struct ColumnLaunch {
+    int j           = 0;
+    int tiles       = 0;
+    int blocks      = 0;     // CTAs
+    int units       = 0;     // on the longest CTA
+    bool split      = false; // stream-k: the CTAs share the tiles' units (else a tile a CTA)
+    bool fixup      = false; // the fixup kernel runs (the CTAs do not divide the tiles)
+    int partials    = 0;     // CTAs whose range ends inside a tile: the partial tiles it adds
+    int split_tiles = 0;     // the tiles those ranges end in: the output tiles it adds them to
+};
+
+// ggml's partition: CTA b takes units [b W / B, (b + 1) W / B) of the W units, rounded down to the
+// format's K_vram (a K-quant's block is 256 values; a 32-value block format's ranges round to 8
+// blocks: the same units).
+[[nodiscard]] constexpr ColumnLaunch launch_of(int rows, int k, int columns, int j, int sms,
+                                               bool stream_k = true, int unit_k = kUnitK,
+                                               int tile_rows = kTile) noexcept {
+    ColumnLaunch l;
+    l.j             = j;
+    l.tiles         = tile_count(rows, tile_rows) * tile_count(columns, j);
+    const int steps = std::max(1, (k + unit_k - 1) / unit_k);
+    l.blocks        = l.tiles;
+    l.units         = steps;
+    if (sms <= 0 || l.tiles <= 0) { return l; }
+    const int waves = (l.tiles + sms - 1) / sms;
+    l.units         = waves * steps;
+    if (!stream_k || 100 * l.tiles / (sms * waves) >= 90) { return l; }
+    const long long work = static_cast<long long>(l.tiles) * steps;
+    l.blocks             = static_cast<int>(std::min<long long>(sms, work));
+    l.units              = static_cast<int>((work + l.blocks - 1) / l.blocks);
+    l.split              = true;
+    l.fixup              = l.tiles % l.blocks != 0;
+    long long last       = -1;
+    for (long long b = 1; b < l.blocks; ++b) {
+        const long long end = b * work / l.blocks; // CTA b - 1's
+        if (end % steps == 0) { continue; }
+        ++l.partials;
+        if (end / steps != last) {
+            ++l.split_tiles;
+            last = end / steps;
+        }
+    }
+    return l;
+}
+
+// The fixup kernel's DRAM bytes: it reads every partial tile (128 x j FP32) and reads and writes
+// the output tile each is added to. (A CTA's write of its partial is the tile kernel's: it is in
+// the stream-k unit's cost, the law's stream_k_unit.)
+[[nodiscard]] constexpr double fixup_bytes(const ColumnLaunch& l) noexcept {
+    return (l.partials + 2.0 * l.split_tiles) * kTile * l.j * 4.0;
+}
+
+// What a launch law prices a product with: its shape and the card's (the reference clock and the
+// DRAM rate of core/machine_facts.h).
+struct LaunchFacts {
+    int rows                = 0;
+    int k                   = 0;
+    int sms                 = 0;
+    double clock_hz         = 0;
+    double dram_bytes_per_s = 0;
+};
+
+[[nodiscard]] constexpr bool priced(const LaunchFacts& f) noexcept {
+    return f.rows > 0 && f.k > 0 && f.sms > 0 && f.clock_hz > 0 && f.dram_bytes_per_s > 0;
+}
+
+// The launch law of a format on compute capability major.minor: the generation row's where it
+// takes the work table, else none.
+[[nodiscard]] constexpr const MmqLaunchLaw* launch_law(int major, int minor, bool format) noexcept {
+    return uses_work_table(major, minor, format) ? mmq_launch_law_of(major, minor) : nullptr;
+}
+
+// A width's place in the work table (the law's unit_clocks), -1 for one it does not hold.
+[[nodiscard]] constexpr int work_index(int j) noexcept {
+    for (std::size_t i = 0; i < std::size(kTilesWork); ++i) {
+        if (kTilesWork[i] == j) { return static_cast<int>(i); }
+    }
+    return -1;
+}
+
+// A unit's cost of the launch against a tile-a-CTA unit of 128 columns (the share the estimate
+// scales its measured 128-column step by).
+[[nodiscard]] constexpr double unit_share(const ColumnLaunch& l, const MmqLaunchLaw& law) noexcept {
+    const int i = work_index(l.j);
+    if (i < 0 || !(law.unit_clocks[5] > 0)) { return 0; }
+    return law.unit_clocks[i] / law.unit_clocks[5] * (l.split ? law.stream_k_unit : 1.0);
+}
+
+// The launch's seconds: units x a unit's clocks, and the fixup's bytes and launch where it has one.
+[[nodiscard]] constexpr double launch_seconds(const ColumnLaunch& l, const MmqLaunchLaw& law,
+                                              const LaunchFacts& f) noexcept {
+    const int i = work_index(l.j);
+    if (i < 0 || !priced(f)) { return 1e300; }
+    const double unit = law.unit_clocks[i] * (l.split ? law.stream_k_unit : 1.0) / f.clock_hz;
+    return l.units * unit +
+           (l.fixup ? fixup_bytes(l) / f.dram_bytes_per_s + law.launch_seconds : 0.0);
+}
+
+// The cost the launch choice ranks the widths by (select_launch and pick alike): the launch law's
+// seconds where the generation has one and the facts price it, else launch_cost (the least work on
+// the work table, the fewest tiles elsewhere). A board of a launch-law generation whose facts give
+// no roofline (an unknown id without the driver's clocks) keeps the fewest tiles of 16, 32, 64 and
+// 128, the choice before DECISIONS 78: the law cannot be priced there, and no other measurement
+// stands for it.
+[[nodiscard]] constexpr double width_cost(int columns, int j, int major, int minor, bool format,
+                                          const LaunchFacts& f) noexcept {
+    if (const MmqLaunchLaw* law = launch_law(major, minor, format); law != nullptr) {
+        if (priced(f)) {
+            return launch_seconds(launch_of(f.rows, f.k, columns, j, f.sms), *law, f);
+        }
+        for (const int everywhere : kTilesEverywhere) {
+            if (j == everywhere) { return tile_count(columns, j); }
+        }
+        return 1e300;
+    }
+    return launch_cost(columns, j, uses_work_table(major, minor, format),
+                       tile_fixed(major, minor, format));
 }
 
 // Shared memory a tile needs, as ggml's mmq_get_nbytes_shared computes it for the MMA data layout
@@ -143,12 +277,7 @@ inline constexpr int kTileK         = 32;  // MMQ_TILE_NE_K
 // sharedMemPerBlockOptin; the CUDA programming guide's table): 96 KiB on sm_70, 64 KiB on sm_75,
 // 163 KiB on sm_80 and sm_87, 227 KiB from sm_90 on, 99 KiB on sm_86, sm_89 and sm_12x.
 [[nodiscard]] constexpr std::size_t shared_per_block(int major, int minor) noexcept {
-    const int cc = major * 10 + minor;
-    if (cc == 70 || cc == 72) { return 96 * 1024; }
-    if (cc == 75) { return 64 * 1024; }
-    if (cc == 80 || cc == 87) { return 163 * 1024; }
-    if (cc >= 90 && cc < 120) { return 227 * 1024; }
-    return 99 * 1024;
+    return arch_registry::find(major, minor).smem_per_block_optin; // the archs table
 }
 
 // The widest tile of the widths both tables hold (128, 64, 32, 16) that the device's shared memory
@@ -166,16 +295,15 @@ inline constexpr int kTileK         = 32;  // MMQ_TILE_NE_K
 
 // The width the card's table takes for `columns` tokens of a format (work_tiles_format), among the
 // widths up to `widest` (widest_tile: a format whose wider tile the device's shared memory cannot
-// hold, Turing's 64 KiB and Q2_K's 128-column tile, runs narrower ones).
-[[nodiscard]] constexpr int pick(int columns, int major, int minor, bool format,
-                                 int widest = 128) noexcept {
-    const bool work    = uses_work_table(major, minor, format);
-    const double fixed = tile_fixed(major, minor, format);
-    int best           = 0;
-    double least       = 1e300;
+// hold, Turing's 64 KiB and Q2_K's 128-column tile, runs narrower ones), for a product of the
+// shape and on the card of `facts` (read only where the generation has a launch law).
+[[nodiscard]] constexpr int pick(int columns, int major, int minor, bool format, int widest,
+                                 const LaunchFacts& facts) noexcept {
+    int best     = 0;
+    double least = 1e300;
     for (const int j : tiles(major, minor, format)) {
         if (j > widest) { continue; }
-        if (const double c = launch_cost(columns, j, work, fixed); c < least) {
+        if (const double c = width_cost(columns, j, major, minor, format, facts); c < least) {
             least = c;
             best  = j;
         }

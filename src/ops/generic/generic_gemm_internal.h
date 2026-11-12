@@ -3,12 +3,14 @@
 // Private launch entry points of the generic projection path, one per compiled family and format.
 
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_variant_rules.h"
 #include "ops/generic/kernel_facts.h"
 
-#include <cuda_runtime.h>
+#include "core/cuda_stream.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 namespace ninferno::ops::detail::generic {
 
@@ -26,6 +28,30 @@ public:
 private:
     KernelResources* previous_;
 };
+
+// A kernel's committed facts (kernel_facts.h, #612) as the register-MMA launch describes it. The
+// block limit is the launch bounds' (Schedule::kThreads); the versions are the build's
+// architecture. Host code (rmma_resources, generic_rmma_describe.cpp) describes from the facts the
+// same way.
+inline void describe_from_facts(KernelResources& out, const kernel_facts::KernelFacts& f,
+                                unsigned grid_x, unsigned grid_y, unsigned grid_z, int threads,
+                                std::size_t dynamic_smem, bool latency) noexcept {
+    out.registers             = f.registers;
+    out.local_bytes           = f.spill_bytes();
+    out.static_smem           = f.static_shared_bytes;
+    out.dynamic_smem          = dynamic_smem;
+    out.threads               = threads;
+    out.max_threads_per_block = threads;
+    out.ptx_version           = NINFERNO_BUILD_ARCH;
+    out.binary_version        = NINFERNO_BUILD_ARCH;
+    out.grid_x                = grid_x;
+    out.grid_y                = grid_y;
+    out.grid_z                = grid_z;
+    out.latency_variant       = latency;
+    out.loop                  = f.loop;
+}
+
+#ifndef NINFERNO_HOST_ONLY // the launch describes a kernel; the selector does not
 inline void describe_kernel(KernelResources& out, const cudaFuncAttributes& a, dim3 grid,
                             int threads, std::size_t dynamic_smem, bool latency) noexcept {
     out.registers             = a.numRegs;
@@ -42,28 +68,21 @@ inline void describe_kernel(KernelResources& out, const cudaFuncAttributes& a, d
     out.latency_variant       = latency;
 }
 
-// The same from a kernel's committed facts (kernel_facts.h, #612): what the register-MMA launch
-// describes. The block limit is the launch bounds' (Schedule::kThreads); the versions are the
-// build's architecture.
 inline void describe_kernel(KernelResources& out, const kernel_facts::KernelFacts& f, dim3 grid,
                             int threads, std::size_t dynamic_smem, bool latency) noexcept {
-    out.registers             = f.registers;
-    out.local_bytes           = f.spill_bytes();
-    out.static_smem           = f.static_shared_bytes;
-    out.dynamic_smem          = dynamic_smem;
-    out.threads               = threads;
-    out.max_threads_per_block = threads;
-    out.ptx_version           = NINFERNO_BUILD_ARCH;
-    out.binary_version        = NINFERNO_BUILD_ARCH;
-    out.grid_x                = grid.x;
-    out.grid_y                = grid.y;
-    out.grid_z                = grid.z;
-    out.latency_variant       = latency;
-    out.loop                  = f.loop;
+    describe_from_facts(out, f, grid.x, grid.y, grid.z, threads, dynamic_smem, latency);
 }
+#endif
+
+// rmma_resources by running the register-MMA launch in describe mode (generic_describe.cpp): the
+// selector's own rmma_resources reads the facts without a launch, and ninferno_rmma_describe_test
+// holds the two equal.
+[[nodiscard]] std::optional<KernelResources>
+rmma_resources_by_launch(int schedule, const Weight& weight, Epilogue epilogue, std::int32_t tokens,
+                         std::int32_t rows = 0);
 
 // The register-MMA launch of `codec` (one of the launch_rmma_* below): run_route's, and
-// rmma_resources' described one.
+// rmma_resources_by_launch's described one.
 void launch_rmma_codec(WeightCodec codec, int schedule, Epilogue epilogue, const GemmArgs& args,
                        cudaStream_t stream);
 
@@ -147,46 +166,11 @@ void launch_scalar(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
 inline constexpr double kRmmaLatencySwiGluBytes = 4.5;
 inline constexpr double kRmmaLatencyOneSetBytes = 5.5;
 
-// The DRAM bytes per SM cycle below which the wide-load Q6_K (GgmlQ6KWideDecoder) of one token
-// tile pays: there the plain kernel's twice-fetched sectors fill the load queue (ncu, RTX 4090,
-// Gemma 4 12B ffn_down 3840x15360 at T = 6: lg_throttle a third of the stalls, 54 % of DRAM).
-// A/B, T = 1..8, bytes per SM cycle: RTX 4090 3.1 (that add 71 -> 59 us), 5070 Ti 5.2 (every
-// problem 1-8 % faster); on the 3060 (7.2), whose plain kernel streams at 84 % of DRAM, the
-// extra shuffles cost 2-10 %. The boundary of rmma_latency_pays' one row set, from the other side.
-inline constexpr double kRmmaWideBytes = 5.5;
 
-// Whether a variant kernel of a register-MMA call keeps the plain kernel's occupancy where it
-// counts: its grid of `grid_ctas` CTAs takes no more waves on `sms` SMs at the variant's resident
-// CTAs per SM (registers, shared memory and threads: cudaOccupancy*) than at the plain kernel's.
-// In flight a SM holds tens of KB of weight loads at either count (rmma_kernel's ring: 37-74 KB
-// against the 2-4 KB that Little's law asks at 230-310 ns of DRAM latency, generic_gemm.cuh), so
-// a CTA fewer per SM costs nothing while the grid still fits in as many waves; a grid it pushes
-// into another, part-empty wave runs that wave on SMs the rest left idle. Q4_K add K = 4096 w1x4
-// at T = 8, held to 4, 3 and 2 CTAs per SM by a pad of shared memory (time against 4 CTAs):
-// RTX 5070 Ti (70 SMs), grids of 192..768 CTAs: as many waves 0.97 and 0.97, a wave more
-// 1.16-1.61 (8 of 8); RTX 4060 Ti (34 SMs), 96..384 CTAs: as many waves 0.98 and 0.99, a wave
-// more 1.02-1.28 (8 of 8). The loss of a wave more lies between the bytes (1.0: the board
-// streams at its bandwidth whatever the residency) and the waves' ratio (a latency-bound CTA
-// takes as long alone), nearer the latter on the latency-bound 5070 Ti. The CTA count alone
-// decided before: Q5_K's w1x4 latency kernel at 129 registers against 127 (sm_120, 4 -> 3 CTAs
-// per SM) lost 12-30 % on Qwen3.5-9B calls, the 256-CTA ones a wave more at 3. A variant that
-// holds no CTA, or unknown counts (0), never pays.
-[[nodiscard]] bool rmma_variant_occupancy_rule(std::int64_t grid_ctas, int sms, int variant_ctas,
-                                               int plain_ctas);
-
-// rmma_wide_pays' rule on its inputs: below kRmmaWideBytes (0: unknown, no), not before sm_75
-// (Volta's register MMA is FMA-emulated, compute-bound), and only where the wide kernel keeps the
-// plain one's occupancy (rmma_variant_occupancy_rule: `occupancy`) and spills at most
-// kRmmaWideSpillSlack bytes a thread more
-// (sm_89's one-row-set tiles, held to 128 registers, keep 8 bytes of loop-invariant state in
-// local memory; SwiGLU's 128-register tiles spill 160 bytes in the loop, RTX 4090 w1x16 at
-// T = 6 100.3 -> 103.9 us).
-inline constexpr std::size_t kRmmaWideSpillSlack = 16;
-[[nodiscard]] bool rmma_wide_rule(double bytes_per_sm_cycle, int compute_capability, bool occupancy,
-                                  std::size_t wide_local_bytes, std::size_t plain_local_bytes);
 
 // Volta's warp-per-row GEMV of the ggml Q4_K / Q5_K / Q6_K, Q8 G32 and BF16 formats at T <= 4
-// (generic_volta_gemv.cu), in place of a lane-local register-MMA call.
+// (generic_volta_gemv.cu), in place of a lane-local register-MMA call; x in 16-byte words (ldx a
+// multiple of 8, x on 16 bytes). run_route and rmma_resources both ask this one predicate.
 bool volta_gemv_takes(WeightCodec codec, const GemmArgs& args);
 void launch_volta_gemv(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                        cudaStream_t stream);
@@ -222,8 +206,10 @@ std::size_t volta_cutlass_workspace_bytes(std::int32_t n, std::int32_t k, std::i
 // it fits); 0 when it would launch nothing for want of room.
 std::size_t volta_cutlass_chunk_bytes(std::int32_t n, std::int32_t k, std::int32_t tokens,
                                       bool swiglu, std::size_t free_bytes);
+// `free_bytes`: the workspace the chunk is sized to (the call's aligned free space, as
+// volta_cutlass_chunk_bytes takes it).
 bool launch_volta_cutlass(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
-                          WorkspaceArena& workspace, cudaStream_t stream);
+                          WorkspaceArena& workspace, std::size_t free_bytes, cudaStream_t stream);
 
 // Staged register MMA (generic_staged.cu): BF16 weights only.
 void launch_staged(int schedule, Epilogue epilogue, const GemmArgs& args, cudaStream_t stream);

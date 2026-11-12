@@ -17,17 +17,6 @@
 
 namespace ninferno::ops::detail::generic {
 
-DeviceClass board_device_class(const FactsBoard& b, double sm_scale, double memory_scale) {
-    DeviceClass d      = synthetic_device_class(b.pci_device_id, b.major, b.minor, b.sms,
-                                                b.l2_mib * kMiB, b.memory_gib * 1024 * kMiB);
-    d.sm_clock_khz     = static_cast<int>(b.sm_clock_mhz * 1000 * sm_scale);
-    d.memory_clock_khz = static_cast<int>(b.memory_clock_mhz * 1000 * memory_scale);
-    d.memory_bus_bits  = b.bus_bits;
-    d.facts            = machine_facts_of(d); // as the query derives them from these values
-    return d;
-}
-
-bool board_prices_from_facts(const FactsBoard& b) { return rmma_terms_measured(b.major, b.minor); }
 
 std::size_t selector_facts_probe(const FactsBoard& board) {
     // Every format the register-MMA terms are kept for (has_subblock_scales), a new one included.
@@ -42,6 +31,7 @@ std::size_t selector_facts_probe(const FactsBoard& board) {
 
     constexpr Shape kShapes[]        = {{1024, 4096}, {4096, 4096}, {17408, 5120}, {5120, 17408}};
     constexpr std::int32_t kTokens[] = {17, 32, 64, 128, 256, 1024};
+    static_assert(kTokens[0] == kPrefillBandMinTokens); // the grid starts at the band's edge
     const DeviceClass device         = board_device_class(board);
     std::vector<RmmaFactRead> reads;
     {
@@ -75,6 +65,12 @@ LiveCheckResult selector_facts_live_check(const FactsBoard& board) {
     {
         const kernel_facts::ScopedLiveCheck live(reads);
         (void)selector_facts_probe(board);
+    }
+    // The price must have run kernels through the launch (rmma_resources describes through it
+    // under a live check): a sink left empty checked nothing, which is no pass.
+    if (reads.empty()) {
+        throw std::runtime_error(std::string(board.name) +
+                                 ": the live check read no kernel from the running GPU");
     }
     LiveCheckResult result;
     result.checked = reads.size();

@@ -22,10 +22,15 @@ using RouteSpec = ColumnRoute<Q8LinearAddScheduleId>;
 // idle in the tail). Qwen3.6-35B's K=4096 projection has 2048 rows: RTX 5090 (170 SMs) r8 = 256
 // CTAs (r8 the fastest of r4/r8/r16); RTX 4090 (128) r8; RTX 3090 (82) r16 = 128 CTAs.
 // NINFERNO-SPECIAL(arch:q8add-k4096-rows): the 4090 and 3090 rows were measured on those boards.
+// The CTAs every two SMs need (one and a half an SM).
+constexpr std::int64_t kK4096DecodeCtasPerTwoSms = 3;
+
 int k4096_decode_rows(std::int32_t rows) {
     const std::int64_t sms = device_class().sms;
     for (const int r : {16, 8}) {
-        if (2 * (static_cast<std::int64_t>(rows) / r) >= 3 * sms) { return r; }
+        if (2 * (static_cast<std::int64_t>(rows) / r) >= kK4096DecodeCtasPerTwoSms * sms) {
+            return r;
+        }
     }
     return 4;
 }

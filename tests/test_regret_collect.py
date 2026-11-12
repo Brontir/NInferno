@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -214,6 +215,30 @@ class Collect(unittest.TestCase):
         self.assertEqual((case["authority"], case["evidence"], case["t"]),
                          ("route-table", "measured", 1))
 
+    def test_the_tuners_header_ends_with_the_new_columns_and_reads(self):
+        """The header route_tune writes (kSelectedCsvHeader, route_query.h, #614 A3): the old
+        columns in their old order, then authority,evidence,ranker; a row of it reaches the cases."""
+        text = (Path(__file__).resolve().parents[1] / "src" / "ops" / "generic"
+                / "route_query.h").read_text(encoding="utf-8")
+        start = text.index("kSelectedCsvHeader")
+        # the literal may be split into adjacent pieces, which C++ joins
+        header = "".join(re.findall(r'"([^"]*)"', text[start:text.index(";", start)]))
+        columns = header.split(",")
+        self.assertEqual(columns[:-3], ("format,compute,epilogue,n,k,T,asked,selected,select_ns,"
+                                        "run,device,pci_device_id").split(","))
+        self.assertEqual(columns[-3:], ["authority", "evidence", "ranker"])
+        for needed in collect.SELECTED_COLUMNS:
+            self.assertIn(needed, columns)
+        sweep = "q8,a16,store,64,64,1,rmma.a,10\nq8,a16,store,64,64,1,rmma.b,12\n"
+        sel = self.write("sel.csv", header + "\n"
+                         + "q8,a16,store,64,64,1,rmma.a,rmma.a,0,r1,ga106:28sm,,route-table,"
+                           "carried,rmma.a\n")
+        routes = [self.write("p1.csv", HEAD + stamp(sweep, "r1", True))]
+        doc = collect.collect([sel], routes, "held-board", "held-model", "rev", "build", "both",
+                              [], [], "tests")
+        (case,) = doc["cases"]
+        self.assertEqual((case["authority"], case["evidence"]), ("route-table", "carried"))
+
     def test_old_selected_files_read_unknown(self):
         doc = self.collect_with_authority([], ["", ""])
         (case,) = doc["cases"]
@@ -272,6 +297,20 @@ class Collect(unittest.TestCase):
         doc = self.collect_with_authority([], [""], facts=right)
         self.assertEqual(doc["board_facts"]["held-board"]["sms"], 28)
 
+    def test_the_ranker_column_reaches_the_case(self):
+        doc = self.collect_with_authority(["authority", "evidence", "ranker"],
+                                          [",route-table,measured,rmma.b"] * 2)
+        self.assertEqual(doc["cases"][0]["ranker"], "rmma.b")
+        report = regret.evaluate(json.loads(json.dumps(doc)))
+        # selected rmma.a 10 ms against the ranker's rmma.b 12 ms: 20 % slower than the selected
+        self.assertAlmostEqual(report["cases"][0]["ranker_vs_selected"], 0.2)
+        none = self.collect_with_authority(["authority", "evidence"], [",route-table,measured"] * 2)
+        self.assertNotIn("ranker", none["cases"][0])
+        with self.assertRaisesRegex(ValueError, "another ranker"):
+            self.collect_with_authority(["authority", "evidence", "ranker"],
+                                        [",route-table,measured,rmma.a",
+                                         ",route-table,measured,rmma.b"])
+
     def collect_on(self, device, pci_id):
         """One case measured on `device`, collected with the registry row of `pci_id`."""
         facts_json = Path(__file__).resolve().parents[1] / "src/core/data/gpu_facts.json"
@@ -281,6 +320,87 @@ class Collect(unittest.TestCase):
                             + f"q8,a16,store,64,64,1,rmma.a,10,r1,{device},flushed,1,15\n")
         return collect.collect([sel], [routes], "held-board", "held-model", "rev", "build",
                                "both", [], [], "tests", collect.board_facts(facts_json, pci_id))
+
+    def collect_recorded(self, sel_pci, route_pci, pci_id=None, facts_json=None):
+        """One case of an ad104:60sm board whose rows record a PCI id (#684)."""
+        facts_json = facts_json or Path(__file__).resolve().parents[1] / "src/core/data/gpu_facts.json"
+        device = "ad104:60sm GPU-0a1b2c3d"
+        sel = self.write("s.csv", SELECTED_HEAD.rstrip("\n") + ",pci_device_id\n"
+                         + f"q8,a16,store,64,64,1,rmma.a,rmma.a,r1,{device},{sel_pci}\n")
+        routes = self.write("p.csv", HEAD.rstrip("\n") + ",pci_device_id\n"
+                            + f"q8,a16,store,64,64,1,rmma.a,10,r1,{device},flushed,1,15,{route_pci}\n")
+        facts = collect.board_facts(facts_json, pci_id) if pci_id else None
+        return collect.collect([sel], [routes], "held-board", "held-model", "rev", "build",
+                               "both", [], [], "tests", facts, gpu_facts=facts_json)
+
+    def test_route_tunes_own_selected_header_is_read_by_name(self):
+        # the header ninferno_route_tune --selected-out writes (route_tune_tool.cpp), whatever the
+        # order its columns come in: every column the collector and the prune tool read is there
+        generic = Path(__file__).resolve().parents[1] / "src/ops/generic"
+        source = (generic / "route_tune_tool.cpp").read_text(encoding="utf-8")
+        # the tool writes the header constant of route_query.h (#614 A3)
+        self.assertIn("selected_csv << generic::kSelectedCsvHeader", source)
+        query = (generic / "route_query.h").read_text(encoding="utf-8")
+        start = query.index("kSelectedCsvHeader =")
+        header = "".join(re.findall(r'"([^"]*)"', query[start:query.index(";", start)]))
+        columns = header.split(",")
+        for need in collect.SELECTED_COLUMNS + ("pci_device_id", "authority", "evidence",
+                                                "ranker"):
+            self.assertIn(need, columns)
+        values = {"format": "q8", "compute": "a16", "epilogue": "store", "n": "64", "k": "64",
+                  "T": "1", "asked": "rmma.a", "selected": "rmma.a", "select_ns": "0",
+                  "run": "r1", "device": "ad104:60sm GPU-0a1b2c3d", "pci_device_id": "0x2782",
+                  "authority": "route-table", "evidence": "measured", "ranker": "rmma.a"}
+        sel = self.write("s.csv", header + "\n" + ",".join(values[c] for c in columns) + "\n")
+        routes = self.write("p.csv", HEAD.rstrip("\n") + ",pci_device_id\n"
+                            + "q8,a16,store,64,64,1,rmma.a,10,r1,ad104:60sm GPU-0a1b2c3d,"
+                            "flushed,1,15,0x2782\n")
+        doc = collect.collect([sel], [routes], "held-board", "held-model", "rev", "build",
+                              "both", [], [], "tests", None)
+        (case,) = doc["cases"]
+        self.assertEqual((case["authority"], case["evidence"], case["ranker"]),
+                         ("route-table", "measured", "rmma.a"))
+        self.assertEqual(doc["pci_device_id"], "0x2782")
+
+    def test_a_recorded_pci_id_tells_two_skus_of_one_class_apart(self):
+        # An RTX 4070 Ti (0x2782) and an RTX 4500 Ada (0x27b1) are both ad104:60sm: the class
+        # check accepts either, the recorded id only the board the rows ran on.
+        with self.assertRaisesRegex(ValueError, r"RTX 4500 Ada Generation \(0x27b1\).*0x2782"):
+            self.collect_recorded("0x2782", "0x2782", pci_id="0x27B1")
+        doc = self.collect_recorded("0x2782", "0x2782", pci_id="0x2782")
+        self.assertEqual(doc["pci_device_id"], "0x2782")
+        self.assertEqual(doc["board_facts"]["held-board"]["dram_gbps"], 504.0)
+
+    def test_without_pci_id_the_recorded_id_reads_the_board_facts(self):
+        doc = self.collect_recorded("0x27B1", "0x27b1")
+        self.assertEqual(doc["board_facts"]["held-board"]["name"], "RTX 4500 Ada Generation")
+        self.assertEqual(doc["board_facts"]["held-board"]["dram_gbps"], 432.0)
+
+    def test_an_id_the_registry_does_not_list_still_collects(self):
+        # A new SKU the engine runs by its class: the document is written, without a ridge.
+        doc = self.collect_recorded("0x2fff", "0x2fff")
+        self.assertEqual(doc["pci_device_id"], "0x2fff")
+        self.assertNotIn("board_facts", doc)
+
+    def test_a_malformed_registry_row_is_still_an_error(self):
+        row = {"id": "0x2782", "name": "GeForce RTX 4070 Ti", "chip": "ad104", "cc": 89, "sms": 60,
+               "bus_bits": 192, "gbps": 21, "boost_mhz": 2610, "mma_slow": "no"}
+        bad = self.write("facts.json", json.dumps({"gpus": [row]}))
+        with self.assertRaisesRegex(ValueError, "mma_slow is not true or false"):
+            self.collect_recorded("0x2782", "0x2782", facts_json=bad)
+
+    def test_an_empty_or_absent_pci_id_keeps_the_class_check(self):
+        doc = self.collect_recorded("", "")
+        self.assertNotIn("pci_device_id", doc)
+        self.assertNotIn("board_facts", doc)
+        doc = self.collect_recorded("", "", pci_id="0x27B1")  # the class check alone accepts it
+        self.assertEqual(doc["board_facts"]["held-board"]["dram_gbps"], 432.0)
+
+    def test_files_of_two_pci_ids_are_refused(self):
+        with self.assertRaisesRegex(ValueError, "PCI ids 0x2782, 0x27b1"):
+            self.collect_recorded("0x2782", "0x27b1")
+        with self.assertRaisesRegex(ValueError, "not a hex id"):
+            self.collect_recorded("0x2782", "rtx")
 
     def test_a_board_of_the_same_sms_and_another_chip_is_refused(self):
         # A GTX 1660 Ti's rows (tu116:24sm, with the device's UUID after the class id) and the

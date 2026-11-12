@@ -1,9 +1,10 @@
 #pragma once
 
 // What the generic path knows about each stored format, as one table: a row per QType, read by the
-// admission predicates of generic_gemm.cpp (r8_supports, w4a8_supports, ...). A new format is one
-// row here, not a case label in a dozen switches. Reading a row never queries the device: a
-// predicate that also looks at the card keeps that part and reads only the format from here.
+// admission predicates of generic_routes.cpp and generic_select.cpp (r8_supports, w4a8_supports,
+// ...). A new format is one row here, not a case label in a dozen switches. Reading a row never
+// queries the device: a predicate that also looks at the card keeps that part and reads only the
+// format from here.
 //
 // Each field says what kind of knowledge it is:
 //   codec fact       true of the bytes of the format, for every build and card;
@@ -257,16 +258,8 @@ constexpr const FormatTraits& format_traits(QType q) noexcept {
     return kNoFormatTraits;
 }
 
-// Whether the enum names the value (a compiler prints an unnamed enumerator as a cast): the rows
-// are checked against the enum itself, not against a second hand-written list of it.
-#if defined(__GNUC__) || defined(__clang__)
-template <QType Q>
-constexpr bool named_qtype() noexcept {
-    constexpr std::string_view where = __PRETTY_FUNCTION__;
-    const std::size_t at             = where.find("Q = ");
-    return at != std::string_view::npos && where[at + 4] != '(';
-}
-
+// Rows against the enum's own names (named_qtype, core/format_facts.h): no second list of it.
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(__CUDACC__)
 constexpr int format_rows_of(QType q) noexcept {
     int n = 0;
     for (const FormatTraits& t : kFormatTraits) n += t.q == q ? 1 : 0;

@@ -1,3 +1,4 @@
+ninferno_directory_warnings()
 add_library(ninferno_runtime_support STATIC
   contract/token_mask_staging.cpp
   engine/admission_policy.cpp
@@ -11,7 +12,7 @@ add_library(ninferno_runtime_support STATIC
   engine/public_types.cpp
 )
 ninferno_internal_includes(ninferno_runtime_support)
-target_link_libraries(ninferno_runtime_support PUBLIC ninferno_core ninferno_sequence_layout
+target_link_libraries(ninferno_runtime_support PUBLIC ninferno::core ninferno_sequence_layout
   PRIVATE ninferno::json ninferno::cudart)
 # The build section of the decision fingerprint. The commit is read at every build, not at
 # configure (a stand checks out a commit and rebuilds without reconfiguring): the
@@ -48,6 +49,7 @@ add_library(ninferno_engine STATIC
   engine/hf_text_frontend.cpp
   engine/prompt_tail.cpp
   engine/plan_workspace.cpp
+  engine/plan_moe_routes.cpp
   engine/model_instance.cpp
   engine/warmup_cache.cpp
   engine/warmup_widths.cpp
@@ -60,9 +62,9 @@ target_include_directories(ninferno_engine PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(ninferno_engine PRIVATE
   ninferno_model_runtime
   ninferno_artifact
-  ninferno_core
+  ninferno::core
   ninferno_runtime_support
-  ninferno_ops
+  ninferno::ops
   ninferno_structured
   ninferno_text
   ninferno_media_decode)

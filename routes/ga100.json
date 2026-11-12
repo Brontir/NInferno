@@ -5305,12 +5305,7 @@
  "gpu": {
   "class": "ga100",
   "name": "NVIDIA A100-SXM4-40GB",
-  "board": {
-   "cc": 80,
-   "sms": 108,
-   "l2_mib": 40,
-   "dram_gbps": 1555
-  }
+  "pci_id": "0x20b0"
  },
  "schema": "ninferno-route-table/1"
 }

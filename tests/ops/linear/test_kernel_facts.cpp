@@ -18,9 +18,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -238,11 +240,22 @@ void occupancy_from_facts() {
 }
 
 void loop_counts_read() {
-    // The K loop's counts (schema 2, #613 PR-3) of the BF16 decoder on the four-warp K-split
+    // The K loop's counts (#613 PR-3) of the BF16 decoder on the four-warp K-split
     // schedule, in every snapshot that carries them: one loop, two K steps of 4 * kRun = 32 values
     // (k_iter 64), one m16n8k16 MMA per 16 K per tile (4 per iteration) on a tensor-core build,
     // the weights read by global loads, and the total above the parts it is made of. A snapshot
-    // without the columns (schema 1) reads nullopt and is named, not failed.
+    // without the columns (schema 1, `kernel_facts.py extract --no-sass`) fails: the tool writes
+    // schema 4, so a schema 1 file is one nobody regenerated since the loop columns came (#758:
+    // sm_80, sm_90 and sm_100 stayed so, because no stand builds those architectures and
+    // ninferno_kernel_facts_test checks only a build's own; tools/dev/kernel_facts_archs.sh checks
+    // them now, #762). kResourcesOnly names the snapshots whose loop counts cannot be written yet,
+    // each with its issue.
+    constexpr std::string_view kResourcesOnly[] = {
+        // #762: in 108 kernels (BF16 and FP8 codes, two or more token tiles) the K loop's products
+        // are calls (mma_bf16_fma_call, mma.cuh: not inlined), whose bodies sass_counts.py does
+        // not count, so the loop holds no FFMA and `extract` refuses the counts (loops 0).
+        "70",
+    };
     kf::RmmaKernelKey key;
     key.decoder = "Bf16Decoder";
     key.warps_m = 1;
@@ -252,10 +265,15 @@ void loop_counts_read() {
         const std::string name = "sm_" + std::string(arch);
         const auto facts       = kf::rmma_facts(arch, key);
         if (!facts) continue; // snapshots_parse reports it
+        const bool waived = std::find(std::begin(kResourcesOnly), std::end(kResourcesOnly), arch) !=
+                            std::end(kResourcesOnly);
         if (!facts->loop) {
             std::cout << name << ": no loop counts (schema 1)\n";
+            expect(waived, name + ": a schema 1 snapshot (no loop counts): regenerate it from a "
+                                  "build of the architecture (ninja ninferno_kernel_facts_update)");
             continue;
         }
+        expect(!waived, name + ": carries loop counts, take it off kResourcesOnly");
         const kf::LoopCounts& l = *facts->loop;
         std::cout << name << ": Bf16Decoder 1 4 1 1 1 loop: " << l.mma << ' ' << l.mma_shape
                   << ", k_iter " << l.k_iter << ", " << l.ldg << " LDG (" << l.ldg_bytes << " B), "
@@ -290,6 +308,71 @@ void loop_counts_read() {
     }
 }
 
+void schedules_read() {
+    // The static schedule (schema 4, #613 PR-C) of every row of every snapshot that carries it,
+    // within the bounds a kernel's control codes allow: every issued instruction stalls at least
+    // one clock, so a stall sum is at least its instruction count; the waits, the local waits and
+    // the barriers are instructions of their part; a found loop has instructions outside it (the
+    // prologue and the store at least). Every row of a snapshot with a loop has a schedule (the
+    // reader refuses a schema 2 one, see old_columns_refused). No value is pinned: a recompile
+    // moves them.
+    for (const auto arch : kf::snapshot_archs()) {
+        const std::string name = "sm_" + std::string(arch);
+        const auto rows        = kf::rmma_rows(arch);
+        expect(rows.size() == kf::snapshot_header(arch)->kernels,
+               name + ": " + std::to_string(rows.size()) + " rows read");
+        int with = 0, without = 0, bad = 0;
+        std::string first;
+        for (const auto& f : rows) {
+            if (!f.loop) continue;
+            if (!f.loop->schedule) {
+                ++without;
+                continue;
+            }
+            ++with;
+            const kf::LoopCounts& l     = *f.loop;
+            const kf::StaticSchedule& d = *l.schedule;
+            const bool ok =
+                d.stall_sum >= l.total && 0 <= d.sb_waits_local && d.sb_waits_local <= d.sb_waits &&
+                d.sb_waits <= l.total && d.outside_stall >= d.outside_total &&
+                0 <= d.outside_waits && d.outside_waits <= d.outside_total && 0 <= d.outside_bar &&
+                d.outside_bar <= d.outside_total && (l.loops == 0 || d.outside_total > 0);
+            if (!ok && bad++ == 0) {
+                first = "stall_sum " + std::to_string(d.stall_sum) + " total " +
+                        std::to_string(l.total) + " outside " + std::to_string(d.outside_total);
+            }
+        }
+        expect(without == 0,
+               name + ": " + std::to_string(without) + " loop rows without a schedule");
+        expect(bad == 0,
+               name + ": " + std::to_string(bad) + " schedules out of bounds, first " + first);
+        std::cout << name << ": " << rows.size() << " rows, " << with << " with a schedule\n";
+    }
+}
+
+void old_columns_refused() {
+    // The reader takes the full (schema 4) columns line and the resources-only one, and refuses
+    // the schema 2 line (the loop's counts without the schedule): its rows would carry no
+    // schedule, and the Python tool refuses it as well.
+    const std::string resources = "family decoder warps_m warps_k m_tiles n_tiles cluster epilogue "
+                                  "latency add_sums registers "
+                                  "stack local shared";
+    const std::string loop =
+        " loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts "
+        "ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp "
+        "uniform other total";
+    const std::string schedule = " stall_sum sb_waits sb_waits_local outside_total outside_stall "
+                                 "outside_waits outside_bar";
+    const auto text            = [](const std::string& columns) {
+        return "arch 89\nkernels 0\ncolumns " + columns + "\n";
+    };
+    expect(kf::snapshot_text_accepted(text(resources + loop + schedule)),
+           "the schema 4 columns line is read");
+    expect(kf::snapshot_text_accepted(text(resources)), "the resources-only columns line is read");
+    expect(!kf::snapshot_text_accepted(text(resources + loop)),
+           "the schema 2 columns line (no schedule) is refused");
+}
+
 } // namespace
 
 int main() {
@@ -298,6 +381,8 @@ int main() {
         release_engines();
         canonical_names();
         loop_counts_read();
+        schedules_read();
+        old_columns_refused();
         occupancy_from_facts();
         boards_read_facts();
         build_kernels_find_facts();

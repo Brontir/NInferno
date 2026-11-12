@@ -426,14 +426,6 @@ void launch_epilogue(Epilogue epilogue, const GemmArgs& args, cudaStream_t strea
 
 } // namespace
 
-bool volta_gemv_takes(WeightCodec codec, const GemmArgs& args) {
-    if (args.lane_local == 0 || args.tokens < 1 || args.tokens > 4 || args.join_previous != 0) {
-        return false;
-    }
-    if (codec == WeightCodec::Bf16) return (args.k % 8) == 0;
-    return (args.k % 256) == 0 && (codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
-                                   codec == WeightCodec::GgmlQ6K || codec == WeightCodec::Q8);
-}
 
 void launch_volta_gemv(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                        cudaStream_t stream) {

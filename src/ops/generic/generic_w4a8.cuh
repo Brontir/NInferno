@@ -24,6 +24,7 @@
 #include "ops/common/arch_limits.h"
 #include "ops/common/memory.cuh"
 #include "ops/common/mma.cuh"
+#include "ops/generic/codec_traits.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_gemm.cuh"
 #include "ops/generic/generic_schedules.h"
@@ -212,6 +213,39 @@ __host__ __device__ constexpr bool w4a8_half_min() {
     } else {
         return false;
     }
+}
+
+// A codebook codec's grid words (kGridWords): r8_kernel stages them below sm_80 (r8_grid_words).
+template <class C>
+__host__ __device__ constexpr int w4a8_grid_words() {
+    if constexpr (requires { C::kGridWords; }) {
+        return C::kGridWords;
+    } else {
+        return 0;
+    }
+}
+
+// The whole kept block a codec reads (kBytes: the Q4_K / Q5_K superblock); 0 for a codec that
+// reads the ggml planes.
+template <class C>
+__host__ __device__ constexpr int w4a8_block_bytes() {
+    if constexpr (requires { C::kBytes; }) {
+        return C::kBytes;
+    } else {
+        return 0;
+    }
+}
+
+// The codec's constants in the shape of the host rules' rows (codec_traits.h, read by r8_fits /
+// w4a8_fits / mmq_plane_bytes): generic_codec_traits.cu static_asserts that each codec struct of
+// the launch files equals its codec's row.
+template <class C>
+constexpr CodecTraits codec_traits() {
+    return {.min         = C::kMin,
+            .half_min    = w4a8_half_min<C>(),
+            .span        = w4a8_span<C>(),
+            .grid_words  = w4a8_grid_words<C>(),
+            .block_bytes = w4a8_block_bytes<C>()};
 }
 
 template <Ggml32 F>
@@ -1886,22 +1920,21 @@ __global__ __launch_bounds__(S::kThreads + 32 * Producers) void w4a8_ws_kernel(G
     w4a8_store_tile<S, E>(a, acc, block_row, token_begin, warp_m, warp_n, lane);
 }
 
-
 // ---------------------------------------------------------------------------------------------
-// Launch. The schedules' last field is the producer warps: 0 for w4a8_kernel, else w4a8_ws_kernel with that many producers
-// and a ring of three stages in the 99 KiB of dynamic shared memory a block may have. The
-// producer-warp tile is compiled only for the codecs the picker gives it (w4a8_ws_compiled; route
-// admission refuses the others: w4a8_ws_supports, generic_gemm.cpp).
+// Launch. The schedules' last field is the producer warps: 0 for w4a8_kernel, else w4a8_ws_kernel
+// with that many producers and a ring of three stages in the 99 KiB of dynamic shared memory a
+// block may have. The producer-warp tile is compiled only for the codecs the picker gives it
+// (w4a8_ws_compiled; route admission refuses the others: w4a8_ws_supports, generic_select.cpp).
 // ---------------------------------------------------------------------------------------------
 
 // NINFERNO_GENERIC_W4A8_SCHEDULES: ops/generic/generic_schedules.h (one list for the
-// instantiations here and the host table in generic_gemm.cpp).
+// instantiations here and the host table in generic_schedule_tables.h).
 
 inline constexpr int kW4a8MaxDynamicSmem = 99 * 1024;
 
 // The codecs w4a8_ws_kernel is compiled for: IQ3_XXS, IQ2_S, Q4_K, Q6_K, Q4_0, IQ4_XS, IQ2_XS
 // and IQ2_XXS (keep in step
-// with w4a8_ws_supports, generic_gemm.cpp).
+// with w4a8_ws_supports, generic_select.cpp).
 template <class C>
 constexpr bool w4a8_ws_compiled() {
     return std::is_same_v<C, W4a8Iq3Xxs> || std::is_same_v<C, W4a8Iq2S> ||

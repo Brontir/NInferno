@@ -125,6 +125,22 @@ struct RoundCostEstimate {
 // that a user's spec-tune can be held to it (tools/kit/validate.py).
 [[nodiscard]] std::map<std::string, double> profile_round_costs(const Profile& profile);
 
+// A load table from the depth in force at 2, 3, ... streams: a bound is a ceiling, so the table is
+// clipped to its running minimum and a bound is written only where the depth falls. Depths
+// 3, 3, 2, 0 give 2:3,4:2,5:0; 2, 2, 3, 2 give 2:2 alone (the rise is clipped, no 4:2 follows).
+[[nodiscard]] std::vector<LoadBound> clipped_load(const std::vector<std::int32_t>& depths);
+
+// The load table of a profile priced for another card, from its joint verify's price
+// (Profile::joint_scale) and the gains of the choices the Engine runs (the served ones where the
+// profile has them; not the fit fallback, whose own profile derives its own table): at C = 2, 3,
+// ... streams the depth, within the bound at the count before, under which every such choice
+// (running min(depth, its own)) gains, its
+// one-request gain times R_1 / R_C above 1; among those the one whose sorted gains are greatest
+// least first (leximin, the shallower on a full tie), plain decode where none serves them all
+// (clipped_load writes it). An unpriced count runs plain decode, so the table ends at plain
+// decode by kPricedVerifyRows + 1 streams at the latest.
+[[nodiscard]] std::vector<LoadBound> facts_load(const Profile& profile);
+
 // The profile of a target from its pairs measured on the lab's cards (the same target and drafters),
 // the same whatever the order of `measured` (records ordered by GPU class id, then content):
 //   1. With `gpu`, a card other than the measuring one prices its rounds by the facts
@@ -204,7 +220,10 @@ struct PairChoice {
 // A fine-tune's drafts may be accepted less than its base model's: WaveCut's uncensored Qwen3.8-27B
 // fine-tune took 2.90 tokens a round with the base's DFlash2 drafter against the base's 4.5-4.6,
 // 0.535 of the drafts past the first. A group's choice must still pay at that acceptance.
-// A group's choice is a lab constant for targets nobody measured: fitted on this many cards or more.
+// A group's choice is a lab constant for targets nobody measured once it rests on this many
+// physical cards (card_of: chip, SM count, reference clock, memory bus and rate, memory size; two
+// board names of one chip are one card). Chosen, not fitted: two is the least that tells a card's
+// own trait from the group's. A group resting on fewer cards gives no choice.
 inline constexpr std::size_t kGroupCards = 2;
 inline constexpr double kFineTuneAcceptance = 0.535;
 inline constexpr double kPreliminaryGain    = 1.05;

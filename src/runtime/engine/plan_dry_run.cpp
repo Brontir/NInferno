@@ -358,6 +358,17 @@ PlanWorkspaceQuery& workspace_query() {
 
 void set_plan_workspace_query(PlanWorkspaceQuery query) { workspace_query() = std::move(query); }
 
+namespace {
+PlanMoeRouteQuery& moe_route_query() {
+    static PlanMoeRouteQuery query;
+    return query;
+}
+} // namespace
+
+void set_plan_moe_route_query(PlanMoeRouteQuery query) { moe_route_query() = std::move(query); }
+
+const PlanMoeRouteQuery& plan_moe_route_query() { return moe_route_query(); }
+
 std::uint64_t plan_workspace_estimate(const PlanModelFacts& model, const PlanRung& rung,
                                       const EngineOptions& options, std::uint32_t concurrency,
                                       const models::qwen3_5::detail::SequencePlanImpl* plan,

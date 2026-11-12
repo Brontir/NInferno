@@ -3,6 +3,7 @@
 // The generic projection path's view of the per-GPU-class route table
 // (include/ninferno/ops/route_table.h; loaded by src/ops/route_table.cpp): "bands" and "prefill".
 
+#include "core/device_class.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/common/route_compute.h"
 #include "ops/generic/generic_gemm.h"
@@ -79,6 +80,11 @@ struct TableAnswer {
 // under an A16Only policy: then the generic path computes it even though its shape has a
 // shape-owned Linear table.
 [[nodiscard]] bool table_claims(const Problem& problem, std::int32_t tokens, bool prefill);
+
+// The board a table file was measured on as the default lookup reads it (gpu.pci_id's registry
+// row, else gpu.board; nullopt: none recorded), after the loader's validation of the file under
+// this thread's device class. Throws as load_route_table does.
+[[nodiscard]] std::optional<Board> route_table_board(const std::string& path);
 
 // Serializes entries as a table file for `gpu_class` (the tuner's writer).
 [[nodiscard]] std::string write_route_table(const std::string& gpu_class,

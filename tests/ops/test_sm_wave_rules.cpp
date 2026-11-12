@@ -98,8 +98,50 @@ void report_nvfp4(int sms) {
 
 } // namespace
 
+// The launch-amortisation law (rmsnorm_rope's fused width): T* = saved launches x launch seconds x
+// SMs x warps an SM x clock / (excess cycles x heads a token). Floor, no rounding to a grid; scales
+// with each factor; nullopt where an input is unknown or the excess is not calibrated, 0 (never)
+// where T* is below one token. A composition
+// check of the formula, not a prediction of any board.
+void check_launch_amortized() {
+    const auto law = [](int saved, double launch, int sms, int warps, double clock, double heads,
+                        double excess) {
+        return sm_rules::launch_amortized_tokens(saved, launch, sms, warps, clock, heads, excess)
+            .value_or(-1);
+    };
+    const auto unknown = [](int saved, double launch, int sms, int warps, double clock,
+                            double heads, double excess) {
+        return !sm_rules::launch_amortized_tokens(saved, launch, sms, warps, clock, heads, excess)
+                    .has_value();
+    };
+    const auto t = law(2, 1.5e-6, 34, 48, 2.5e9, 34.0, 2000.0);
+    expect(t == static_cast<std::int32_t>(2 * 1.5e-6 * 34 * 48 * 2.5e9 / (2000.0 * 34.0)),
+           "law: the stated formula, floored");
+    expect(law(2, 1.5e-6, 68, 48, 2.5e9, 34.0, 2000.0) >= 2 * t - 1,
+           "law: twice the SMs, twice the width");
+    expect(law(2, 1.5e-6, 34, 48, 2.5e9, 68.0, 2000.0) >= 0 &&
+               law(2, 1.5e-6, 34, 48, 2.5e9, 68.0, 2000.0) <= t / 2 + 1,
+           "law: twice the heads a token, half the width");
+    expect(law(2, 3.0e-6, 34, 48, 2.5e9, 34.0, 2000.0) >= 2 * t - 1,
+           "law: twice the launch, twice the width");
+    expect(unknown(0, 1.5e-6, 34, 48, 2.5e9, 34.0, 2000.0) &&
+               unknown(2, 0.0, 34, 48, 2.5e9, 34.0, 2000.0) &&
+               unknown(2, 1.5e-6, 0, 48, 2.5e9, 34.0, 2000.0) &&
+               unknown(2, 1.5e-6, 34, 0, 2.5e9, 34.0, 2000.0) &&
+               unknown(2, 1.5e-6, 34, 48, 0.0, 34.0, 2000.0) &&
+               unknown(2, 1.5e-6, 34, 48, 2.5e9, 0.0, 2000.0) &&
+               unknown(2, 1.5e-6, 34, 48, 2.5e9, 34.0, 0.0),
+           "law: unknown inputs or an uncalibrated excess answer nothing (the caller's default)");
+    // A calibrated excess so large that T* is below one token is "never fuse" (0), not unknown
+    // (#720: the caller's default would fuse).
+    expect(!unknown(2, 1.5e-6, 34, 48, 2.5e9, 34.0, 1.0e12) &&
+               law(2, 1.5e-6, 34, 48, 2.5e9, 34.0, 1.0e12) == 0,
+           "law: T* below one token is 0, never fuse");
+}
+
 int main() {
     check_tuned_board_unchanged();
+    check_launch_amortized();
     std::printf("170 SMs: every decision unchanged (fp8 split, tiles 1..16384 x K %d/%d/%d; "
                 "nvfp4 route to T %d)\n",
                 kFp8Ks[0], kFp8Ks[1], kFp8Ks[2], kMaxTokens);

@@ -7,6 +7,7 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/kernel_facts.h"
+#include "ops/generic/kernel_roofline.h"
 #include "ops/generic/rmma_counted_terms.h"
 #include "ops/generic/route_cost_constants.h"
 
@@ -175,6 +176,68 @@ void law_gate() {
     expect(g::rmma_counted_law() == g::route_cost::kRmmaCountedLaw, "cleared");
 }
 
+void roofline_reads_the_law() {
+    // price_register_mma (kernel_roofline.h) takes the kernel's loop (RegisterMmaKernel::loop)
+    // only under Calibration::rmma_counted_law: off, the price of a kernel with a loop is the
+    // price without one, to the bit (the selector goldens); on, its tensor and spill terms are
+    // rmma_counted::terms' of the busiest SM's grid. A legacy-law chip of 4 SMs at 2 GHz, a heavy
+    // Q4_K-like kernel (2 x 2 warps, 32 x 32 tile) spilling 64 bytes a thread.
+    namespace kr = ninferno::ops::detail::generic::kernel_roofline;
+    kr::ChipFacts chip;
+    chip.sms                = 4;
+    chip.clock_hz           = 2e9;
+    chip.dram_bytes_per_s   = 500e9;
+    chip.tensor_rate        = 512;
+    chip.max_threads_per_sm = 1536;
+    chip.max_ctas_per_sm    = 16;
+    chip.registers_per_sm   = 65536;
+    chip.smem_per_sm        = 100 * 1024;
+    chip.major              = 8;
+    const kr::Call call{1024, 4096, 64, 1, 0.5625};
+    kr::RegisterMmaKernel kernel;
+    kernel.rows        = 32;
+    kernel.cols        = 32;
+    kernel.threads     = 128;
+    kernel.warps_k     = 2;
+    kernel.m_tiles     = 1;
+    kernel.k_step      = 128;
+    kernel.registers   = 255;
+    kernel.local_bytes = 64;
+    kernel.heavy       = true;
+    // A warp of 1 m tile x 4 n tiles over 256 K an iteration: 64 weight MMAs and 64 with ones.
+    kf::LoopCounts l;
+    l.loops                         = 1;
+    l.k_iter                        = 256;
+    l.mma                           = 128;
+    l.mma_ones                      = 64;
+    l.mma_shape                     = "HMMA.16816.F32.BF16";
+    l.local                         = 6;
+    l.total                         = 400;
+    kr::RegisterMmaKernel with_loop = kernel;
+    with_loop.loop                  = l;
+    kr::Calibration off;
+    off.rmma_counted_law = false;
+    const auto plain     = kr::price_register_mma(chip, off, call, kernel);
+    const auto ignored   = kr::price_register_mma(chip, off, call, with_loop);
+    expect(!ignored.counted && ignored.total == plain.total && ignored.mma == plain.mma &&
+               ignored.spill == plain.spill,
+           "law off: the loop changes nothing");
+    kr::Calibration on  = off;
+    on.rmma_counted_law = true;
+    const auto no_loop  = kr::price_register_mma(chip, on, call, kernel);
+    expect(!no_loop.counted && no_loop.total == plain.total, "law on, no loop: the fitted terms");
+    const auto counted   = kr::price_register_mma(chip, on, call, with_loop);
+    const kr::Grid& grid = counted.grid;
+    const auto c         = rc::terms(l, grid.waves, kernel.threads / 32.0, call.k, kernel.warps_k,
+                                     chip.tensor_rate * chip.clock_hz, grid.warps, on.l1_hit_latency_cycles,
+                                     chip.clock_hz, chip.major);
+    expect(counted.counted && counted.mma == c.mma && counted.spill == c.spill,
+           "law on: the counted tensor and spill terms");
+    expect(std::fabs(counted.mma / plain.mma - 2.0) < 1e-12,
+           "the min-term MMAs double the tensor term at one m tile");
+    expect(counted.total != plain.total, "law on: the price moves");
+}
+
 } // namespace
 
 int main() {
@@ -182,6 +245,7 @@ int main() {
         ones_share_on_the_snapshots();
         terms_arithmetic();
         law_gate();
+        roofline_reads_the_law();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         ++failures;

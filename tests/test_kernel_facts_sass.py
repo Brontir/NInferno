@@ -16,13 +16,26 @@ import kernel_facts  # noqa: E402
 import sass_counts as sc  # noqa: E402
 
 
-def sass(lines):
-    """A `cuobjdump -sass` function body from (offset, text) pairs, in cuobjdump's layout."""
+# The high word every fixture instruction carries unless a test gives another: stall 2, yield,
+# no scoreboard set or waited on.
+DEFAULT_HIGH_WORD = 0x000FE40000000F00
+
+
+def sass(lines, words=None):
+    """A `cuobjdump -sass` function body from (offset, text) pairs, in cuobjdump's layout: the
+    low word on the instruction's line, the high word (the control code) alone on the next;
+    `words` maps an offset to its high word."""
     out = ["\tcode for sm_89", "\t\tFunction : _Z6kernelv"]
     for offset, text in lines:
+        high = (words or {}).get(offset, DEFAULT_HIGH_WORD)
         out.append(f"        /*{offset:04x}*/ {text:60s} /* 0x0000000000000000 */")
-        out.append(" " * 80 + "/* 0x000fe40000000f00 */")
+        out.append(" " * 80 + f"/* 0x{high:016x} */")
     return "\n".join(out) + "\n"
+
+
+def high_word(stall, yield_flag=1, write=7, read=7, wait=0):
+    """A high word with the given control code (bits 41-57) and nothing else."""
+    return (stall | yield_flag << 4 | write << 5 | read << 8 | wait << 11) << 41
 
 
 # Offsets step by 0x10 as in SASS. The loop runs 0x100 .. 0x300 (the back edge at 0x300); the
@@ -85,8 +98,44 @@ KERNEL = [
 ]
 
 
-def body_of(lines):
-    return sc.parse_functions(sass(lines).splitlines())["_Z6kernelv"]
+def body_of(lines, words=None):
+    return sc.parse_functions(sass(lines, words).splitlines())["_Z6kernelv"]
+
+
+# Control codes read off an sm_86 build of the Q4_K register-MMA kernels (cuobjdump -sass of
+# nvcc 13.2), decoded by hand from bits 41-57 of the high word: stall 41-44, yield 45, write
+# scoreboard 46-48, read scoreboard 49-51 (7: none), wait mask 52-57.
+#   0x000fe200000418ff (HMMA.16816.F32.BF16 R52, R52, R20, RZ): bits 40-63 are 0x000fe2, shifted
+#     by one 0x7f1 = 0b111_111_1_0001: stall 1, yield 1, write 7, read 7, wait 0.
+#   0x004ff600000418ff (an HMMA after a load): 0x004ff6 >> 1 = 0x27fb = 0b100_111_111_1_1011:
+#     stall 11, yield 1, write 7, read 7, wait 0b000100 (scoreboard 2).
+#   0x000ea2000c1e1d00 (LDG.E.128 R84, [R10.64]): 0x000ea2 >> 1 = 0x751 = 0b111_010_1_0001:
+#     stall 1, yield 1, write 2, read 7, wait 0.
+#   0x000fec0000010000 (BAR.SYNC.DEFER_BLOCKING 0x0): 0x7f6: stall 6, yield 1, none.
+HMMA_WORD = 0x000FE200000418FF
+HMMA_WAITS_SB2 = 0x004FF600000418FF
+LDG_SETS_SB2 = 0x000EA2000C1E1D00
+BAR_WORD = 0x000FEC0000010000
+
+# The loop of KERNEL with a static schedule: the weight load at 0x130 sets scoreboard 2, the MMA
+# at 0x1a0 waits on it; a local load at 0x1c0 sets scoreboard 3, the MMA at 0x2c0 waits on it; a
+# local load at the bottom (0x2d0) sets scoreboard 4, the first decode of the next iteration
+# (0x160) waits on it through the back edge. Outside the loop: a CTA barrier and a store that
+# waits; the unreachable self-branch at 0x520 has stall 0, as ptxas writes it.
+SCHEDULED = [(o, {0x1c0: "LDL R26, [R1] ;", 0x2d0: "LDL R48, [R1+0x400] ;",
+                  0x400: "BAR.SYNC.DEFER_BLOCKING 0x0 ;"}.get(o, t)) for o, t in KERNEL]
+SCHEDULED_WORDS = {
+    0x130: LDG_SETS_SB2,
+    0x190: HMMA_WORD,
+    0x1a0: HMMA_WAITS_SB2,
+    0x1c0: high_word(2, write=3),
+    0x2c0: high_word(2, wait=1 << 3),
+    0x2d0: high_word(2, write=4),
+    0x160: high_word(2, wait=1 << 4),
+    0x400: BAR_WORD,
+    0x420: high_word(2, wait=1 << 1),
+    0x520: high_word(0),
+}
 
 
 class LoopFinder(unittest.TestCase):
@@ -266,6 +315,90 @@ class LoopFinder(unittest.TestCase):
         c = sc.loop_counts(body_of(KERNEL), tiles=2)
         self.assertEqual(sc.LoopCounts.from_row(c.row()), c)
         self.assertEqual(len(c.row()), len(sc.COLUMNS))
+        loop_only = sc.LoopCounts.from_row(c.row()[:len(sc.LOOP_COLUMNS)])
+        self.assertFalse(loop_only.scheduled)
+        self.assertEqual(loop_only, c.without_schedule())
+
+
+class StaticSchedule(unittest.TestCase):
+    """The control codes (schema 4): the decode of hand-checked words, the sums over the counted
+    iteration and the code outside the loop."""
+
+    def test_control_word_decode(self):
+        # (stall, yield, write scoreboard, read scoreboard, wait mask, reuse)
+        self.assertEqual(sc.Control(HMMA_WORD).fields(), (1, 1, 7, 7, 0, 0))
+        self.assertEqual(sc.Control(HMMA_WAITS_SB2).fields(), (11, 1, 7, 7, 0b000100, 0))
+        self.assertEqual(sc.Control(LDG_SETS_SB2).fields(), (1, 1, 2, 7, 0, 0))
+        self.assertEqual(sc.Control(BAR_WORD).fields(), (6, 1, 7, 7, 0, 0))
+        self.assertEqual(sc.Control(DEFAULT_HIGH_WORD).fields(), (2, 1, 7, 7, 0, 0))
+        # The reuse flags (58-61) and the instruction bits below 41 are not the control code.
+        self.assertEqual(sc.Control(HMMA_WORD | 0xF << 58).fields(), (1, 1, 7, 7, 0, 0xF))
+        self.assertEqual(sc.Control(high_word(15, 0, 5, 0, 0x3F)).fields(), (15, 0, 5, 0, 0x3F, 0))
+
+    def test_high_word_follows_its_instruction(self):
+        body = body_of(SCHEDULED, SCHEDULED_WORDS)
+        self.assertEqual(body[17][0], 0x190)
+        self.assertEqual(body[17][4], HMMA_WORD)
+        self.assertTrue(all(ins[4] is not None for ins in body))
+        # A text without the high words (an older dump) parses with None and no schedule.
+        text = "\n".join(l for l in sass(KERNEL).splitlines() if "/*0" in l or "Function" in l)
+        bare = sc.parse_functions(text.splitlines())["_Z6kernelv"]
+        self.assertTrue(all(ins[4] is None for ins in bare))
+        c = sc.loop_counts(bare, tiles=2)
+        self.assertFalse(c.scheduled)
+        self.assertEqual(c.without_schedule(), sc.loop_counts(body_of(KERNEL), tiles=2)
+                         .without_schedule())
+
+    def test_schedule_of_the_fixture(self):
+        c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=2)
+        self.assertTrue(c.scheduled)
+        self.assertEqual((c.loops, c.mma, c.total, c.local), (1, 6, 29, 2))
+        # 29 instructions at stall 2, except the LDG and the first weight MMA at 1 and the MMA
+        # that waits on the LDG at 11.
+        self.assertEqual(c.stall_sum, 29 * 2 - 1 - 1 + 9)
+        # Waits: 0x1a0 on the LDG's scoreboard, 0x2c0 on the LDL at 0x1c0, 0x160 on the LDL at
+        # 0x2d0 of the previous iteration; the two last are local.
+        self.assertEqual((c.sb_waits, c.sb_waits_local), (3, 2))
+        # Outside: the prologue (0x000-0x070) and the epilogue (0x400-0x430); not the loop's
+        # plain version of step two (0x280-0x2b0, a member of the loop off the counted path),
+        # not the callee or the self-branch after EXIT.
+        self.assertEqual(c.outside_total, 8 + 4)
+        self.assertEqual(c.outside_stall, 11 * 2 + 6)
+        self.assertEqual((c.outside_waits, c.outside_bar), (1, 1))
+        self.assertEqual(c.schedule_problems(), [])
+        self.assertGreaterEqual(c.stall_sum, c.total)
+
+    def test_local_wait_needs_the_ldl(self):
+        # The same scoreboard set by a shared load is no local wait; a wait in between clears it.
+        lds = [(o, "LDS R26, [R1] ;" if o == 0x1c0 else t) for o, t in SCHEDULED]
+        c = sc.loop_counts(body_of(lds, SCHEDULED_WORDS), tiles=2)
+        self.assertEqual((c.sb_waits, c.sb_waits_local), (3, 1))
+        words = dict(SCHEDULED_WORDS)
+        words[0x200] = high_word(2, wait=1 << 4)  # waits on the bottom LDL's scoreboard first
+        c = sc.loop_counts(body_of(SCHEDULED, words), tiles=2)
+        self.assertEqual((c.sb_waits, c.sb_waits_local), (4, 2))  # 0x160 still local, 0x200 not
+
+    def test_no_loop_counts_everything_outside(self):
+        straight = [l for l in SCHEDULED if l[0] not in (0x2f0, 0x300)]
+        c = sc.loop_counts(body_of(straight, SCHEDULED_WORDS), tiles=2)
+        self.assertEqual((c.loops, c.total, c.stall_sum, c.sb_waits), (0, 0, 0, 0))
+        self.assertTrue(c.scheduled)
+        # Every reachable instruction: 0x000-0x070, 0x100-0x2e0 (0x2f0, 0x300 removed: the
+        # alternative step two included), 0x400-0x430.
+        self.assertEqual(c.outside_total, 8 + 31 + 4)
+        self.assertEqual(c.schedule_problems(), [])
+
+    def test_problems(self):
+        c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=2)
+        c.stall_sum = c.total - 1
+        self.assertIn("stall_sum", c.schedule_problems()[0])
+        c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=2)
+        c.sb_waits_local = c.sb_waits + 1
+        self.assertEqual(len(c.schedule_problems()), 1)
+        c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=2)
+        c.outside_bar = c.outside_total + 1
+        self.assertEqual(len(c.schedule_problems()), 1)
+        self.assertEqual(c.without_schedule().schedule_problems(), [])
 
 
 class Snapshot(unittest.TestCase):
@@ -322,9 +455,13 @@ class Snapshot(unittest.TestCase):
         c = sc.LoopCounts()
         rows[other] = (48, 0, 0, 0, c)
         lines = kernel_facts.loop_audit(rows)
-        self.assertEqual(len(lines), 2)
+        self.assertEqual(len(lines), 3)
         self.assertIn("without a K loop", lines[0])
         self.assertIn("k_iter differs", lines[1])
+        self.assertIn("1 of 2 kernels have no control codes", lines[2])
+        c.scheduled = True
+        c.stall_sum = -1
+        self.assertIn("stall_sum -1 < total 0", kernel_facts.loop_audit(rows)[2])
 
     def test_rows_match_the_columns_line(self):
         text = kernel_facts.render("89", self.rows(), "13.4.92", "-O3", "abc")
@@ -415,6 +552,194 @@ class Check(unittest.TestCase):
                           " ".join(l.split()[:15]) if l.startswith("columns ") else l
                           for l in text.splitlines()]
         self.assertEqual(self.run_check("\n".join(resources_only) + "\n"), 0)
+
+    def test_stamp(self):
+        stamp = self.root / "stamps" / "sm_89"
+        text = self.expected_text()
+        self.assertEqual(self.run_check(text, extra=["--stamp", str(stamp)]), 0)
+        self.assertTrue(stamp.is_file())
+        # The same inputs pass again without extracting anything.
+        saved = kernel_facts.extract_rows
+
+        def no_extract(*args, **kwargs):
+            raise AssertionError("extracted although the stamp holds")
+
+        kernel_facts.extract_rows = no_extract
+        try:
+            self.assertEqual(self.run_check(text, extra=["--stamp", str(stamp)]), 0)
+        finally:
+            kernel_facts.extract_rows = saved
+
+        def bump(rows):
+            rows[Snapshot.KEY][4].mma += 1
+
+        # Another snapshot (or nvcc) is another check: it runs, fails, and the stamp stays the
+        # old pass's, so the next run checks again.
+        before = stamp.read_text()
+        self.assertEqual(self.run_check(self.expected_text(bump), extra=["--stamp", str(stamp)]), 1)
+        self.assertEqual(stamp.read_text(), before)
+        self.assertEqual(self.run_check(text, nvcc="13.0.1", extra=["--stamp", str(stamp)]), 77)
+        self.assertEqual(stamp.read_text(), before)
+
+    def test_stamp_without_inputs(self):
+        # A missing snapshot is said as without a stamp, not a traceback.
+        argv = ["check", "--dump", str(self.root / "usage.txt"), "--no-sass", "--expected",
+                str(self.root / "none.txt"), "--stamp", str(self.root / "stamp")]
+        self.assertEqual(kernel_facts.main(argv), 1)
+        self.assertFalse((self.root / "stamp").exists())
+
+    def older_schema(self, text, extra=()):
+        """`text` (schema 4) rewritten as schema 2, or as schema 3 with `extra` loop columns."""
+        n = len(kernel_facts.ROW_HEAD) + len(sc.LOOP_COLUMNS)
+        out = []
+        for l in text.splitlines():
+            if l.startswith("rmma "):
+                l = " ".join(l.split()[:n] + ["0"] * len(extra))
+            elif l.startswith("columns "):
+                l = " ".join(l.split()[:n + 1] + list(extra))
+            out.append(l)
+        return "\n".join(out) + "\n"
+
+    def test_older_schemas_are_rejected(self):
+        # Schema 2 (the loop without the schedule) and schema 3 (plus the critical path) are no
+        # longer read: `check` fails on them instead of comparing without the schedule.
+        text = self.expected_text()
+        chain = ("cp_mma", "cp_ld", "cp_lds", "cp_shfl", "cp_imad", "cp_iadd", "cp_lop3",
+                 "cp_prmt", "cp_shf", "cp_hfma2", "cp_ffma", "cp_cvt", "cp_f2f", "cp_other")
+        for old in (self.older_schema(text), self.older_schema(text, chain)):
+            with self.assertRaises(SystemExit):
+                kernel_facts.parse_snapshot(old)
+            with self.assertRaises(SystemExit):
+                self.run_check(old)
+        self.assertEqual(self.run_check(text), 0)
+
+    def test_render_refuses_rows_without_a_schedule(self):
+        rows = {k: (*v[:4], v[4].without_schedule()) for k, v in self.rows_of().items()}
+        with self.assertRaises(SystemExit):
+            kernel_facts.render("89", rows, "13.4.92", "-O3", "abc")
+
+    def rows_of(self):
+        return kernel_facts.extract_rows(None, None, "89", str(self.root / "usage.txt"),
+                                         str(self.root / "sass.txt"))
+
+    def test_schedule_is_compared(self):
+        def later(rows):
+            rows[Snapshot.KEY][4].stall_sum += 1
+
+        self.assertEqual(self.run_check(self.expected_text(later)), 1)
+
+    def test_impossible_schedule_fails(self):
+        # The revert check: a snapshot whose stall sum is below its instruction count (or whose
+        # waits exceed their instructions) is no kernel's and fails `check` before any compare.
+        def short(rows):
+            c = rows[Snapshot.KEY][4]
+            c.stall_sum = c.total - 1
+
+        with self.assertRaises(SystemExit) as raised:
+            self.run_check(self.expected_text(short))
+        self.assertEqual(raised.exception.code, 3)
+
+        def waits(rows):
+            c = rows[Snapshot.KEY][4]
+            c.outside_waits = c.outside_total + 1
+
+        with self.assertRaises(SystemExit):
+            self.run_check(self.expected_text(waits))
+
+
+class CommittedSnapshots(unittest.TestCase):
+    """Every committed snapshot parses under the reader `check` uses, and every kernel's static
+    schedule is one a kernel can have: the stall sums at least the instruction counts, the
+    waits within their parts. Nothing ties a snapshot to another table."""
+
+    def test_bounds(self):
+        root = Path(__file__).resolve().parents[1] / "src" / "ops" / "generic" / "data" / \
+            "kernel_facts"
+        files = sorted(root.glob("sm_*.txt"))
+        self.assertTrue(files)
+        scheduled = 0
+        for path in files:
+            header, rows = kernel_facts.parse_snapshot(path.read_text())
+            self.assertEqual(header["arch"], path.stem[3:])
+            for key, value in rows.items():
+                c = value[4]
+                if c is None or not c.scheduled:
+                    continue
+                scheduled += 1
+                self.assertGreaterEqual(c.stall_sum, c.total, f"{path.name} {key}")
+                self.assertGreaterEqual(c.outside_stall, c.outside_total, f"{path.name} {key}")
+                self.assertLessEqual(c.sb_waits_local, c.sb_waits, f"{path.name} {key}")
+                self.assertEqual(c.schedule_problems(), [], f"{path.name} {key}")
+        print(f"committed snapshots: {len(files)} files, {scheduled} kernels with a schedule")
+
+
+def elf64(sections):
+    """A minimal little-endian ELF64 file: the header, the sections' bytes, then the section
+    header table (a null section, `sections` as (name, bytes), and .shstrtab)."""
+    import struct
+    names = b"\0" + b"".join(n.encode() + b"\0" for n, _ in sections) + b".shstrtab\0"
+    body, offsets, at = b"", [], 64
+    for _, data in sections:
+        offsets.append(at + len(body))
+        body += data
+    names_at = at + len(body)
+    body += names
+    shoff = at + len(body)
+    headers = [bytes(64)]
+    name_at = 1
+    for (n, data), offset in zip(sections, offsets):
+        headers.append(struct.pack("<IIQQQQIIQQ", name_at, 1, 0, 0, offset, len(data), 0, 0, 1, 0))
+        name_at += len(n) + 1
+    headers.append(struct.pack("<IIQQQQIIQQ", name_at, 3, 0, 0, names_at, len(names), 0, 0, 1, 0))
+    head = b"\x7fELF" + bytes([2, 1, 1]) + bytes(9)
+    head += struct.pack("<HHIQQQIHHHHHH", 2, 62, 1, 0, 0, shoff, 0, 64, 0, 0, 64, len(headers),
+                        len(headers) - 1)
+    return head + body + b"".join(headers)
+
+
+class StampKey(unittest.TestCase):
+    """The stamp's key reads a binary's device code (.nv_fatbin): stripping it or setting its run
+    path leaves the key; other device code changes it."""
+
+    def key(self, root, data):
+        binary = root / "engine"
+        binary.write_bytes(data)
+        expected = root / "expected.txt"
+        expected.write_text("snapshot\n")
+
+        class Args:
+            pass
+
+        a = Args()
+        a.binary, a.dump, a.sass_dump, a.expected = str(binary), None, None, str(expected)
+        a.nvcc, a.no_sass, a.cuda_bin, a.sass_batch = "13.4.92", False, None, 64
+        return kernel_facts.check_key(a)
+
+    def test_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fat = b"fatbin image"
+            built = elf64([(".text", b"code" * 8), (".symtab", b"symbols"), (".nv_fatbin", fat)])
+            (root / "e").write_bytes(built)
+            self.assertEqual(kernel_facts.elf_section(root / "e", ".nv_fatbin"), fat)
+            self.assertIsNone(kernel_facts.elf_section(root / "e", ".nv_missing"))
+            # Stripped (no .symtab) and with another run path (other .dynamic bytes): same key.
+            stripped = elf64([(".text", b"code" * 8), (".dynamic", b"rpath=$ORIGIN/../lib"),
+                              (".nv_fatbin", fat)])
+            self.assertEqual(self.key(root, built), self.key(root, stripped))
+            other = elf64([(".text", b"code" * 8), (".nv_fatbin", b"fatbin imagf")])
+            self.assertNotEqual(self.key(root, built), self.key(root, other))
+            # A relocatable image the objects left counts too; the images' addresses do not.
+            rel = elf64([(".nv_fatbin", fat), ("__nv_relfatbin", b"object image")])
+            rel2 = elf64([(".nv_fatbin", fat), ("__nv_relfatbin", b"object imagf")])
+            self.assertNotEqual(self.key(root, rel), self.key(root, rel2))
+            moved = elf64([(".nv_fatbin", fat), (".nvFatBinSegment", b"addresses 1")])
+            moved2 = elf64([(".nv_fatbin", fat), (".nvFatBinSegment", b"addresses 2")])
+            self.assertEqual(self.key(root, moved), self.key(root, moved2))
+            # Not ELF: the whole file.
+            (root / "t").write_bytes(b"not an elf")
+            self.assertIsNone(kernel_facts.elf_section(root / "t", ".nv_fatbin"))
+            self.assertNotEqual(self.key(root, b"text a"), self.key(root, b"text b"))
 
 
 if __name__ == "__main__":

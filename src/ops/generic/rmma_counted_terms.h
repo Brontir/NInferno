@@ -3,8 +3,9 @@
 // The register MMA's terms counted from its kernel (#613 PR-7a): what one iteration of the K loop
 // issues, read off the SASS into the kernel-facts snapshot (kernel_facts::LoopCounts, #650), turned
 // into seconds on a chip. No CUDA, no measurement: the counts are the kernel's, the rates and
-// latencies the chip's published facts. The price (generic_cost.cpp) reads them in place of two
-// fitted constants under route_cost::kRmmaCountedLaw:
+// latencies the chip's published facts. The price (kernel_roofline.h price_register_mma, from the
+// kernel's RegisterMmaKernel::loop) reads them in place of two fitted constants under
+// route_cost::kRmmaCountedLaw (Calibration::rmma_counted_law):
 //   - the tensor term from the loop's MMAs, the min-term ones (activations against 1.0, mma_step)
 //     included: (sets x m_tiles + 1) / (sets x m_tiles) of the weight MMAs where the tile does not
 //     add the sums in FP32 (#598), read, not reasoned. On the lab sweeps this term is a floor the

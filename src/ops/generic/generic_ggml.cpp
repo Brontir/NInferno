@@ -19,23 +19,11 @@ bool ggml_mmq_call(const Weight& w, LinearPolicy policy, std::int32_t rows, std:
     return mmq_call(w, policy, rows, tokens);
 }
 
-bool ggml_mmq_format(QType qtype) {
-    Weight probe;
-    probe.qtype     = qtype;
-    const auto type = mmq_type(probe);
-    return type && ggml_mmq::matrix_supported(*type);
-}
 
 std::size_t ggml_mmq_workspace_bytes(std::int32_t k, std::int32_t plane_rows, std::int32_t tokens) {
     return mmq_workspace_bytes(k, plane_rows, tokens);
 }
 
-bool ggml_vec_format(QType qtype) {
-    Weight probe;
-    probe.qtype     = qtype;
-    const auto type = mmq_type(probe);
-    return type && ggml_mmq::vec_supported(*type);
-}
 
 std::size_t ggml_vec_workspace_bytes(std::int32_t k, std::int32_t tokens) {
     return vec_workspace_bytes(k, tokens);
@@ -84,6 +72,7 @@ std::int32_t ggml_mmq_slice_tokens(QType qtype) {
     return ggml_mmq_format(qtype) ? kMmqPrefillSlice : kMmqMaxTokens;
 }
 
+// FUSION-SITE: mmq_gated_pair
 bool ggml_mmq_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& up,
                          std::int32_t rows, bool gelu, Tensor& out, WorkspaceArena& workspace,
                          cudaStream_t stream) {
@@ -171,6 +160,7 @@ bool ggml_vec_takes_tuned(const Tensor& x, const Weight& weight, LinearPolicy po
     return ggml_vec_takes(problem, weight, x.ne[1]);
 }
 
+// FUSION-SITE: vec_gated_pair
 bool ggml_vec_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& up,
                          std::int32_t rows, bool gelu, Tensor& out, WorkspaceArena& workspace,
                          const PreparedActivation* prepared, cudaStream_t stream) {

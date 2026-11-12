@@ -72,3 +72,268 @@ function(ninferno_target_sources target)
   endif()
   target_sources(${target} PRIVATE ${filtered})
 endfunction()
+
+# Warnings for every target created in the calling directory and below, when NINFERNO_WARNINGS is
+# ON. Designated and partial aggregate initializers are the code base's style, so
+# -Wmissing-field-initializers is off. Host C++ only: nvcc's CUDA translation units do not get
+# these flags. -Wunused stays a warning.
+function(ninferno_directory_warnings)
+  if(NINFERNO_WARNINGS AND NOT MSVC)
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wunused;-Wno-missing-field-initializers;-Werror=return-type;-Werror=unused-function>")
+  endif()
+endfunction()
+
+# Fails the configure when `target` reaches the CUDA runtime through its link closure: the host-only
+# targets (ninferno_core_host and what links only it) must build and run on a machine with no
+# toolkit (#620 step 11). Call it deferred, once every target exists.
+function(ninferno_assert_host_only target)
+  set(todo ${target})
+  set(seen "")
+  while(todo)
+    list(POP_FRONT todo item)
+    if(item IN_LIST seen)
+      continue()
+    endif()
+    list(APPEND seen ${item})
+    if(item MATCHES "cudart|^CUDA::|^ninferno_core$")
+      message(FATAL_ERROR "${target} is host-only but its link closure reaches ${item}")
+    endif()
+    if(NOT TARGET ${item})
+      continue()
+    endif()
+    # A redirect of the shared test tree (ninferno::core_host, ...): a host-only target never takes
+    # the shared test library, so the redirect is its static archive.
+    get_target_property(redirect ${item} NINFERNO_REDIRECT_STATIC)
+    if(redirect)
+      list(APPEND todo ${redirect})
+      continue()
+    endif()
+    get_target_property(kind ${item} TYPE)
+    set(props INTERFACE_LINK_LIBRARIES)
+    if(NOT kind STREQUAL "INTERFACE_LIBRARY")
+      list(APPEND props LINK_LIBRARIES)
+    endif()
+    foreach(prop IN LISTS props)
+      get_target_property(deps ${item} ${prop})
+      if(NOT deps)
+        continue()
+      endif()
+      foreach(dep IN LISTS deps)
+        string(REGEX REPLACE "^\\$<(LINK_ONLY|BUILD_INTERFACE):(.*)>$" "\\2" dep "${dep}")
+        if(dep MATCHES "^\\$<INSTALL_INTERFACE:")
+          continue() # install-time names, not this build's closure
+        endif()
+        if(dep MATCHES "\\$<")
+          message(FATAL_ERROR "${target}: the host-only check cannot read the generator expression "
+                              "${dep} of ${item}; teach ninferno_assert_host_only about it")
+        endif()
+        list(APPEND todo ${dep})
+      endforeach()
+    endforeach()
+  endwhile()
+endfunction()
+
+# --- The shared test tree (NINFERNO_SHARED_OP_TESTS) ---------------------------------------------
+# The archives that go whole into ninferno_ops_shared (cmake/SharedTestLibrary.cmake). Each holds
+# per-process or per-device state (the substituted device class, PerDevice slots, the facts cache,
+# the CUDA runtime's registrations) that must exist once in a process, so an archive is in the
+# library whole or not at all, and an executable that takes the library takes none of them
+# (ninferno_assert_link_mode). ninferno_sys, which every target links by link_libraries(), is not
+# a member: it holds no state (operating-system calls and one constant table), so the copy an
+# executable links beside the library's is harmless, and under its own name it leaves every app's
+# link line as it is (a redirect of it reorders them).
+set(NINFERNO_SHARED_MEMBERS core_host core ops nvfp4_non_rdc ggml_mmq)
+
+# ninferno::<m> is the name every non-member library and every test links a member by. With the
+# option off it is an alias of the archive ninferno_<m>, so every link line is the one the archive's
+# own name gives. With it on it resolves on the executable being linked (the head): the archive for
+# an executable without the NINFERNO_SHARED_OPS property (every app and bench: the product link,
+# unchanged), the shared test library plus the archive's compile requirements for one with it.
+# Members link each other by their own names. Called once the members exist (after src/).
+function(ninferno_define_redirects)
+  foreach(m IN LISTS NINFERNO_SHARED_MEMBERS)
+    if(NOT TARGET ninferno_${m})
+      continue() # the NVFP4 archive outside the NVFP4 trees
+    endif()
+    if(NOT NINFERNO_SHARED_OP_TESTS)
+      add_library(ninferno::${m} ALIAS ninferno_${m})
+      continue()
+    endif()
+    add_library(ninferno::${m} INTERFACE IMPORTED GLOBAL)
+    set(shared "$<BOOL:$<TARGET_PROPERTY:NINFERNO_SHARED_OPS>>")
+    set_property(TARGET ninferno::${m} PROPERTY INTERFACE_LINK_LIBRARIES
+      "$<${shared}:ninferno_ops_shared>"
+      "$<IF:${shared},$<COMPILE_ONLY:ninferno_${m}>,ninferno_${m}>")
+    # Read by the closure walks below instead of the generator expression.
+    set_target_properties(ninferno::${m} PROPERTIES
+      NINFERNO_REDIRECT_KEY NINFERNO_SHARED_OPS
+      NINFERNO_REDIRECT_STATIC ninferno_${m}
+      NINFERNO_REDIRECT_SHARED ninferno_ops_shared)
+  endforeach()
+endfunction()
+
+# The link closure of `root` as its link line holds it: every target and name it reaches, each
+# redirect resolved by the root's own properties. Compile-only and install-time items are not
+# followed. A generator expression it cannot read fails the configure when it could name a member,
+# the shared library or a CUDA runtime.
+function(ninferno_link_closure out root)
+  get_target_property(todo ${root} LINK_LIBRARIES)
+  if(NOT todo)
+    set(todo "")
+  endif()
+  set(seen "")
+  while(todo)
+    list(POP_FRONT todo item)
+    # A target linked from another directory is listed between ::@ markers.
+    string(REGEX REPLACE "^::@\\([^)]*\\)" "" item "${item}")
+    if(item STREQUAL "" OR item STREQUAL "::@")
+      continue()
+    endif()
+    while(item MATCHES "^\\$<(LINK_ONLY|BUILD_INTERFACE):(.*)>$")
+      set(item "${CMAKE_MATCH_2}")
+    endwhile()
+    if(item MATCHES "^\\$<(COMPILE_ONLY|INSTALL_INTERFACE):")
+      continue()
+    endif()
+    if(item MATCHES "\\$<")
+      if(item MATCHES "ninferno|cudart")
+        message(FATAL_ERROR "${root}: the link-mode check cannot read the generator expression "
+                            "${item}; teach ninferno_link_closure about it")
+      endif()
+      continue()
+    endif()
+    if(item IN_LIST seen)
+      continue()
+    endif()
+    list(APPEND seen ${item})
+    if(NOT TARGET ${item})
+      continue()
+    endif()
+    get_target_property(key ${item} NINFERNO_REDIRECT_KEY)
+    if(key)
+      get_target_property(root_shared ${root} ${key})
+      if(root_shared)
+        get_target_property(to ${item} NINFERNO_REDIRECT_SHARED)
+      else()
+        get_target_property(to ${item} NINFERNO_REDIRECT_STATIC)
+      endif()
+      list(APPEND todo ${to})
+      continue()
+    endif()
+    get_target_property(kind ${item} TYPE)
+    get_target_property(imported ${item} IMPORTED)
+    set(props INTERFACE_LINK_LIBRARIES)
+    if(kind STREQUAL "STATIC_LIBRARY" AND NOT imported)
+      list(APPEND props LINK_LIBRARIES) # a static library's private links reach its consumer
+    endif()
+    foreach(prop IN LISTS props)
+      get_target_property(deps ${item} ${prop})
+      if(deps)
+        list(APPEND todo ${deps})
+      endif()
+    endforeach()
+  endwhile()
+  set(${out} ${seen} PARENT_SCOPE)
+endfunction()
+
+# Fails the configure when `target`'s link closure is not of `mode`:
+# - shared: a test on the shared library: it reaches ninferno_ops_shared, no member archive (a second
+#   copy of the state above) and no static CUDA runtime (a second runtime);
+# - static: the product link: neither the shared library nor the shared CUDA runtime;
+# - members: the shared library itself: the members, ninferno_sys, third-party libraries and the
+#   shared CUDA runtime only.
+function(ninferno_assert_link_mode target mode)
+  ninferno_link_closure(closure ${target})
+  set(members "")
+  foreach(m IN LISTS NINFERNO_SHARED_MEMBERS)
+    list(APPEND members ninferno_${m})
+  endforeach()
+  set(bad "")
+  if(mode STREQUAL "shared")
+    if(NOT "ninferno_ops_shared" IN_LIST closure)
+      list(APPEND bad "no ninferno_ops_shared")
+    endif()
+    foreach(item IN LISTS closure)
+      if(item IN_LIST members OR item STREQUAL "CUDA::cudart_static")
+        list(APPEND bad ${item})
+      endif()
+    endforeach()
+  elseif(mode STREQUAL "static")
+    foreach(item IN LISTS closure)
+      if(item STREQUAL "ninferno_ops_shared" OR item STREQUAL "CUDA::cudart")
+        list(APPEND bad ${item})
+      endif()
+    endforeach()
+  elseif(mode STREQUAL "members")
+    foreach(item IN LISTS closure)
+      if(item STREQUAL "ninferno_ops_shared" OR item STREQUAL "CUDA::cudart_static" OR
+         (item MATCHES "^ninferno_" AND NOT item IN_LIST members AND NOT item STREQUAL "ninferno_sys"))
+        list(APPEND bad ${item})
+      endif()
+    endforeach()
+  else()
+    message(FATAL_ERROR "ninferno_assert_link_mode: unknown mode ${mode}")
+  endif()
+  if(bad)
+    list(JOIN bad ", " bad)
+    message(FATAL_ERROR "${target} must link ${mode} but its link closure holds: ${bad}. A test "
+                        "links a member archive by its redirect (ninferno::<m>), never by name.")
+  endif()
+endfunction()
+
+# The shared test tree's link modes, decided once every target exists (called at the end of the
+# top-level CMakeLists.txt): a test executable whose static closure holds device code (ninferno_core,
+# ninferno_ops or their device archives) takes the shared library and the shared CUDA runtime,
+# unless it was declared STATIC_LINK (ninferno_add_test); a test with no device code keeps its
+# static link (it would only gain a dependency on the CUDA runtime). Apps and benches stay static.
+# Each decision is asserted, and the list is written to <build>/ninferno_link_modes.txt for
+# tools/audit/link_mode.sh.
+function(ninferno_decide_link_modes)
+  set(device ninferno_core ninferno_ops ninferno_nvfp4_non_rdc ninferno_ggml_mmq)
+  set(lines "")
+  get_property(tests DIRECTORY ${PROJECT_SOURCE_DIR}/tests PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(t IN LISTS tests)
+    get_target_property(kind ${t} TYPE)
+    if(NOT kind STREQUAL "EXECUTABLE")
+      continue()
+    endif()
+    set(mode static)
+    get_target_property(static_link ${t} NINFERNO_STATIC_LINK)
+    if(NOT static_link)
+      ninferno_link_closure(closure ${t})
+      foreach(item IN LISTS device)
+        if(item IN_LIST closure)
+          set(mode shared)
+        endif()
+      endforeach()
+    endif()
+    if(mode STREQUAL "shared")
+      set_target_properties(${t} PROPERTIES
+        NINFERNO_SHARED_OPS ON
+        NINFERNO_SHARED_CUDART ON
+        CUDA_RUNTIME_LIBRARY Shared)
+    endif()
+    ninferno_assert_link_mode(${t} ${mode})
+    string(APPEND lines "${mode} ${t} $<TARGET_FILE:${t}>\n")
+  endforeach()
+  set(product_dirs "")
+  if(NINFERNO_BUILD_APPS)
+    list(APPEND product_dirs apps)
+  endif()
+  if(NINFERNO_BUILD_BENCHMARKS)
+    list(APPEND product_dirs bench)
+  endif()
+  foreach(dir IN LISTS product_dirs)
+    get_property(targets DIRECTORY ${PROJECT_SOURCE_DIR}/${dir} PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(t IN LISTS targets)
+      get_target_property(kind ${t} TYPE)
+      if(kind STREQUAL "EXECUTABLE")
+        ninferno_assert_link_mode(${t} static)
+        string(APPEND lines "product ${t} $<TARGET_FILE:${t}>\n")
+      endif()
+    endforeach()
+  endforeach()
+  ninferno_assert_link_mode(ninferno_ops_shared members)
+  string(APPEND lines "library ninferno_ops_shared $<TARGET_FILE:ninferno_ops_shared>\n")
+  file(GENERATE OUTPUT ${CMAKE_BINARY_DIR}/ninferno_link_modes.txt CONTENT "${lines}")
+endfunction()

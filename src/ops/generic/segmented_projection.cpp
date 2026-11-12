@@ -41,6 +41,7 @@ bool same_parent(const ProjectionSlice& a, const ProjectionSlice& b) {
 
 // Runs the projection: consecutive slices of one parent become one call; each call's rows are
 // spread over the outputs they intersect.
+// FUSION-SITE: vec_shared_quantize
 void project(const Tensor& x_matrix, const SegmentedProjectionWeights& w,
              std::span<const ProjectionOutput> outputs, WorkspaceArena& workspace,
              cudaStream_t stream) {
@@ -116,6 +117,8 @@ void project(const Tensor& x_matrix, const SegmentedProjectionWeights& w,
         const ProjectionSlice& first = w.slices[i];
         std::int32_t done            = 0;
         while (done < rows) {
+            // The weight is the whole parent, the call's rows in call.rows: run() prices those
+            // rows' share of its bytes, not the parent (bytes_per_weight, #640).
             generic::Call call;
             call.x         = &x_matrix;
             call.weight    = &first.parent;
@@ -225,13 +228,13 @@ segmented_swiglu_pair_workspace_capacity_bytes(const SegmentedProjectionWeights&
     if (!gated_halves(weights)) return 0;
     const std::int32_t half = weights.rows() / 2;
     std::size_t bytes       = 0;
-    if (min_tokens <= generic::kGgmlVecMaxTokens) {
+    if (generic::ggml_gated_pair_for(min_tokens) == generic::GgmlGatedPair::Vec) {
         bytes = generic::ggml_vec_gated_pair_bytes(
             weights.columns(), half, std::min(max_tokens, generic::kGgmlVecMaxTokens));
     }
     // The matrix kernel's band, or its prefill slice where that route holds (its route decides
     // per call; sized for its widest width).
-    if (max_tokens > generic::kGgmlVecMaxTokens) {
+    if (generic::ggml_gated_pair_for(max_tokens) == generic::GgmlGatedPair::Mmq) {
         const auto halves = *gated_halves(weights);
         const std::int32_t slice =
             std::min(generic::ggml_mmq_slice_tokens(halves.first.weight->qtype),
@@ -252,7 +255,7 @@ bool segmented_swiglu_pair(const Tensor& x, const SegmentedProjectionWeights& we
     }
     const auto halves = gated_halves(weights);
     if (!halves) return false;
-    if (xm.ne[1] <= generic::kGgmlVecMaxTokens) {
+    if (generic::ggml_gated_pair_for(xm.ne[1]) == generic::GgmlGatedPair::Vec) {
         return generic::ggml_vec_gated_pair(xm, halves->first, halves->second, half, gelu, out,
                                             workspace, nullptr, stream);
     }
@@ -404,6 +407,7 @@ generic::GdnControlRows control_bank_rows(const SegmentedProjectionWeights& w, s
 
 } // namespace
 
+// FUSION-SITE: segmented_gdn_control
 void segmented_gdn_norm_gating_proj(const Tensor& x, const Tensor& norm_weight, float eps,
                                     const SegmentedProjectionWeights& weights, const Tensor& A_log,
                                     const Tensor& dt_bias, WorkspaceArena& workspace, Tensor& h,

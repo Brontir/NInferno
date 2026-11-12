@@ -6,10 +6,13 @@
 // caches one of them answers every GPU with whichever launched first (a second GPU then launches
 // an over-48-KiB kernel without its opt-in and fails with an invalid argument).
 
-#include "core/device.h"
 #include "core/device_class.h"
 
-#include <cuda_runtime.h>
+#ifndef NINFERNO_HOST_ONLY
+#    include "core/device.h"
+
+#    include <cuda_runtime.h>
+#endif
 
 #include <array>
 #include <cstddef>
@@ -22,15 +25,15 @@ namespace ninferno {
 
 inline constexpr int kMaxDevices = 64;
 
-// The calling thread's current CUDA device.
-inline int current_device_ordinal() {
-    int device = 0;
-    CUDA_CHECK(cudaGetDevice(&device));
-    if (device < 0 || device >= kMaxDevices) {
-        throw std::out_of_range("device ordinal past the supported 64 devices");
-    }
-    return device;
-}
+// The calling thread's current CUDA device; throws where there is none. Out of line, one definition
+// per build: per_device.cpp in ninferno_core asks the runtime, and a host-only target (no CUDA
+// runtime, #620) links per_device_nodevice.cpp, which always throws. A host-only object reads no
+// device itself; it reaches the ordinal only through this call.
+int current_device_ordinal();
+
+// The same ordinal, or -1 where there is no current CUDA device (or it is past kMaxDevices): the
+// answer a substitute's cache entry is kept under, and the slot of a table read with no device.
+int current_device_ordinal_or_none() noexcept;
 
 // One T per device, made on first use by make(device). A make that throws leaves the slot unset,
 // so the next call retries: a failure is never cached. While this thread's device_class() answers
@@ -44,11 +47,7 @@ public:
     template <class Make>
     const T& get(Make&& make) {
         if (const std::string* substitute = substituted_device_class_key()) {
-            int device = -1;
-            if (cudaGetDevice(&device) != cudaSuccess || device < 0 || device >= kMaxDevices) {
-                (void)cudaGetLastError();
-                device = -1;
-            }
+            const int device      = current_device_ordinal_or_none();
             const std::string key = std::to_string(device) + '|' + *substitute;
             std::lock_guard lock(substituted_mutex_);
             auto it = substituted_.find(key);
@@ -72,6 +71,7 @@ private:
     std::map<std::string, T> substituted_; // node-based: references stay valid
 };
 
+#ifndef NINFERNO_HOST_ONLY
 // The dynamic shared-memory opt-in of `kernel`, once per device. The caller owns the slot (one
 // `static PerDevice<bool>` per launch site): kernels of one signature share a function type, so a
 // slot keyed on the type would serve whichever instantiation launched first.
@@ -83,5 +83,6 @@ void allow_dynamic_smem(PerDevice<bool>& slot, Kernel kernel, std::size_t bytes)
         return true;
     });
 }
+#endif
 
 } // namespace ninferno
