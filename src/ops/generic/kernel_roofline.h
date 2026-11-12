@@ -10,19 +10,39 @@
 // the clients. Today's clients: price_routes' register-MMA and pipelined tiles (generic_cost.cpp),
 // byte-equal to the formula they replaced (tests/ops/linear/test_kernel_roofline.cpp). No CUDA.
 //
-// The model, in words: a tile's time on the busiest SM is its bytes over that SM's share of the
-// memory system plus its MMA work over the SM's tensor rate (the register MMA runs them in series;
-// the pipelined tiles take the longer of the two at a fraction of the rate), slowed in proportion
-// while the SM holds fewer warps than saturate it, plus the exposed dependent chain of its K steps
-// per residency round, plus the reduction of a split K.
+// The model, in words: a tile's time on the busiest SM is its DRAM time plus its MMA work over the
+// SM's tensor rate (the register MMA runs them in series; the pipelined tiles take the longer of
+// the two at a fraction of the rate), the MMA and the L2 traffic slowed in proportion while the SM
+// holds fewer warps than saturate it, plus the exposed dependent chain of its K steps and the
+// reduction of a split K per residency round.
+//
+// The DRAM time (issue #690, dram_time below): every CTA's bytes over the chip's shared bus, or the
+// busiest SM's residency rounds at the rate its resident warps reach, whichever is longer. The rate
+// one SM reaches with W resident warps is min(P, W x b_w / L0) (Little's law), from the facts the
+// bytes-in-flight probe measured once per architecture (core/sm_rate_facts.h): L0 the fetch time of
+// one warp's 16-byte streaming loads alone on an SM, P the most bytes per SM clock one SM reaches
+// (with the L1-largest carve-out for a kernel without shared memory, the shared-largest one for a
+// kernel with some). b_w, the bytes a warp keeps in flight, is counted per kernel from its loop
+// (the register MMA's two ring slots of a step's weight runs, the pipelined and A8 tiles' cp.async
+// stages ahead), and held to b_w_max, the most one warp kept in flight in the probe, on the
+// architectures where the probe saw one warp saturate (sm_70; elsewhere no cap). The rate
+// depends on no other SM, so a board with more SMs, all else equal, is never priced slower for
+// it. A chip whose architecture has no SM rate row (sm_80, sm_90, sm_100, sm_121 today), or whose
+// row another card of it refutes (sm_120a: the RTX 5070 Ti), keeps the law #643 extracted
+// (`legacy_dram`): the busiest SM's CTAs at bw / SMs, under the warp fill. That law bills idle SMs
+// (#690) and stays until a probe row that holds exists for the architecture.
 
 #include "core/device_class.h"
 #include "core/generation.h"
+#include "core/sm_rate_facts.h"
+#include "ops/generic/rmma_geometry.h"
 #include "ops/generic/route_cost_constants.h"
 
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <stdexcept>
+#include <string_view>
 
 namespace ninferno::ops::detail::generic::kernel_roofline {
 
@@ -33,6 +53,17 @@ struct ChipFacts {
     double sms                = 0;
     double clock_hz           = 0; // the reference SM clock
     double dram_bytes_per_s   = 0; // bus width x memory data rate
+    // The architecture's SM DRAM rate facts (core/sm_rate_facts.h), absent where the table has
+    // no row for it: the price then keeps the legacy DRAM law (see the top). L0: one warp's
+    // 16-byte streaming loads alone on an SM, their fetch time in seconds; P: the most bytes per
+    // SM clock one SM moves from DRAM, with the L1-largest carve-out (`free`) and with the
+    // shared-largest one (`placed`). Absent too where another card of the architecture refutes
+    // the row (its transfer check). sm_max_warp_bytes: b_w_max, the most bytes one warp keeps in
+    // flight, only where the probe saw a warp saturate (warp_bytes_saturated); absent, no cap.
+    std::optional<double> dram_latency_s;
+    std::optional<double> sm_dram_bytes_per_clock_free;
+    std::optional<double> sm_dram_bytes_per_clock_placed;
+    std::optional<double> sm_max_warp_bytes;
     double tensor_rate        = 0; // the BF16 MMA rate per SM and clock (GenerationRow::bf16)
     double max_threads_per_sm = 0;
     double max_ctas_per_sm    = 0;
@@ -87,6 +118,78 @@ struct Grid {
     double fill      = 0; // the slowdown factor of too few warps, in (min_warp_fill, 1]
 };
 
+// Whether the chip is priced by the DRAM law of #690 (dram_time) or keeps the legacy one: the
+// architecture has an SM rate row that no other card of it refutes (its L0 and both P).
+[[nodiscard]] inline bool legacy_dram(const ChipFacts& chip) {
+    return !chip.dram_latency_s || !chip.sm_dram_bytes_per_clock_free ||
+           !chip.sm_dram_bytes_per_clock_placed;
+}
+
+// dram_time with the terms it took (price_tool prints them).
+struct DramTerms {
+    double bus         = 0; // every CTA's bytes over the chip's bandwidth
+    double sm          = 0; // the busiest SM's residency rounds at its own rate
+    double peak        = 0; // P of the carve-out at the reference clock, bytes per second
+    double counted     = 0; // the bytes the kernel's loop keeps in flight a warp, by count
+    double warp_bytes  = 0; // b_w: that, at most b_w_max where a warp saturates
+    double round_rate  = 0; // R_sm of the busiest SM's first round: min(P, W x b_w / L0)
+    double total       = 0; // max(bus, sm)
+    bool bus_bound     = false;
+    bool shared_carved = false; // P of the shared-largest carve-out
+};
+
+// The DRAM time of a grid of `ctas` CTAs, each moving `bytes_per_cta` over the DRAM bus, an SM
+// holding `occupancy` of them at once, each of `warps_per_cta` warps keeping `counted_bytes` in
+// flight by the count of its loop, with the shared-largest carve-out (`shared_carveout`: a kernel
+// with shared memory) or the L1-largest one (a kernel with none) (issue #690). Two bounds, the
+// longer one is the time:
+//  - the bus: every CTA's bytes over the chip's bandwidth;
+//  - the busiest SM: its q = ceil(ctas / SMs) CTAs run in residency rounds of `occupancy` (the last
+//    one holds the rest), and a round of c CTAs moves c x bytes_per_cta at the rate its c x warps
+//    reach, min(P, W x b_w / L0), P of the carve-out at the chip's reference clock, b_w the
+//    counted bytes, at most b_w_max where the probe saw one warp saturate (sm_70, and sm_120a
+//    whose row is refuted: the 4-load ring keeps x1.20 and x1.00 of the 2-load ring's b_w; the
+//    others' x1.80-1.81 show no limit, and their counted bytes stand, b_w_max a lower bound of
+//    the limit). The probe measured b_w_max with 16-byte ld.global loads; the cp.async of the
+//    shared-memory tiles is taken to have the same per-warp limit (not measured).
+// The bus bound reads no SM count; the busiest SM's rounds read it only through q, which does not
+// grow with more SMs. A round's rate is its own SM's, never a share of the bus: SMs left idle by
+// a small grid cost nothing, and the bus bound holds the grid that fills every SM. Requires the
+// chip's SM rate facts (legacy_dram false).
+[[nodiscard]] inline DramTerms dram_terms(const ChipFacts& chip, double ctas, double occupancy,
+                                          double warps_per_cta, double bytes_per_cta,
+                                          double counted_bytes, bool shared_carveout) {
+    DramTerms t;
+    t.shared_carved   = shared_carveout;
+    t.counted         = counted_bytes;
+    const double occ  = std::max(occupancy, 1.0);
+    const double q    = std::ceil(ctas / chip.sms);
+    const double full = std::floor(q / occ);
+    const double last = q - full * occ;
+    t.peak            = (shared_carveout ? chip.sm_dram_bytes_per_clock_placed.value()
+                                         : chip.sm_dram_bytes_per_clock_free.value()) *
+             chip.clock_hz;
+    t.warp_bytes =
+        chip.sm_max_warp_bytes ? std::min(counted_bytes, *chip.sm_max_warp_bytes) : counted_bytes;
+    const double per_w = t.warp_bytes / chip.dram_latency_s.value();
+    const auto rate    = [&](double c) { return std::min(t.peak, c * warps_per_cta * per_w); };
+    const auto round   = [&](double c) { return c * bytes_per_cta / rate(c); };
+    t.round_rate       = rate(std::min(q, occ));
+    t.sm               = full * round(occ) + (last > 0 ? round(last) : 0.0);
+    t.bus              = ctas * bytes_per_cta / chip.dram_bytes_per_s;
+    t.bus_bound        = t.bus >= t.sm;
+    t.total            = std::max(t.bus, t.sm);
+    return t;
+}
+
+[[nodiscard]] inline double dram_time(const ChipFacts& chip, double ctas, double occupancy,
+                                      double warps_per_cta, double bytes_per_cta,
+                                      double counted_bytes, bool shared_carveout) {
+    return dram_terms(chip, ctas, occupancy, warps_per_cta, bytes_per_cta, counted_bytes,
+                      shared_carveout)
+        .total;
+}
+
 // ---- Register MMA ----
 
 // One register-MMA kernel instance for one call: its tile (route_tile), its CTA, and the
@@ -99,17 +202,52 @@ struct RegisterMmaKernel {
     double cluster = 1;           // K over a thread-block cluster of that many CTAs
     double threads = 0;           // per CTA
     double warps_k = 1;           // K over that many warps of the CTA
+    double m_tiles = 1;           // 16-row MMA tiles of a warp (RmmaScheduleInfo::m_tiles)
+    // K values of one step of the decoder (rmma_step_values: 4 x kRun); no default, the DRAM law
+    // of #690 refuses a kernel without one.
+    double k_step = 0;
+    // The CTA's static shared memory (the K warps' and the cluster's partials, the staged
+    // activations, a codebook): any picks the shared-largest carve-out's P (dram_time).
+    double shared_bytes = 0;
     std::optional<int> registers; // per thread
     double local_bytes = 0;       // the spill per thread
     bool heavy         = false;
 };
 
+// The static shared memory of a register-MMA instance of `decoder` (its kDecoderGeometry
+// spelling, rmma_geometry_decoder) on a chip of `compute_capability`, per CTA: the K warps'
+// partials, a cluster's (the cluster schedules launch only in the build with the NVFP4 kernels),
+// the decoder's codebook and its staged SwiGLU activations (rmma_geometry.h
+// rmma_decoder_static_shared_bytes, the rule the kernel is static_asserted against). Whether the
+// launch takes the latency variant, the one that stages, is decided from the compiled kernels'
+// facts and occupancy (rmma_latency_pays); the price takes the staging form where it may stage,
+// a bound: its placed P is the lower one. The dynamic shared memory of the spread decoders
+// (GemmArgs::spread_smem, sm_120-class builds, legacy DRAM law today) is not counted. Where the
+// price reads the compiled facts (the heavy form) a caller passes their static_smem instead.
+[[nodiscard]] inline double register_mma_static_shared_bytes(std::string_view decoder, int warps_m,
+                                                             int warps_k, int m_tiles, int n_tiles,
+                                                             int cluster, bool swiglu,
+                                                             int compute_capability) {
+    return static_cast<double>(geometry::rmma_decoder_static_shared_bytes(
+        decoder, warps_m, warps_k, m_tiles, n_tiles, cluster, swiglu, true, compute_capability,
+        true));
+}
+
 struct RegisterMmaTerms {
     Grid grid;
+    // The DRAM law the price took: false the one of #690 (dram_time), true the legacy one (an
+    // architecture without an SM rate row, legacy_dram).
+    bool legacy = true;
+    // The DRAM law's terms of `mem` (plain form) or `dram` (heavy form); empty under the legacy
+    // law.
+    DramTerms dram_law;
     // Bytes, in seconds. Heavy form: the matrix once over the DRAM bus, every CTA's weights and
     // token tile through its SM's L2 port, the spill through the L1; these add (a max of the DRAM
-    // and the L2 time did worse on the 5090 and 4090). Plain form: the busiest SM's DRAM share
-    // of every CTA's bytes, or the whole matrix over the whole bus, whichever is longer.
+    // and the L2 time did worse on the 5090 and 4090). Plain form: every CTA's bytes over DRAM.
+    // The DRAM time is dram_time's (in the heavy form a CTA reads its weights from DRAM for one of
+    // the token tiles and from the L2 for the others: bytes_per_cta / tiles). Legacy: the matrix
+    // once over the whole bus (heavy); the busiest SM's share of the bus for its CTAs' bytes, or
+    // the whole matrix over the whole bus, whichever is longer (plain).
     double dram          = 0;
     double l2_weight     = 0;
     double l2_activation = 0;
@@ -124,7 +262,9 @@ struct RegisterMmaTerms {
     double reduce         = 0;
     // The warps' dependent chain of K steps per residency round (not slowed by the fill).
     double chain = 0;
-    // (bytes + mma + reduce) / fill + chain.
+    // The DRAM time + (the L2 and L1 bytes + mma) / fill + reduce + chain: the reduce is a
+    // per-round latency, like the chain, and the DRAM rate already reads the resident warps
+    // (dram_time). Legacy: (bytes + mma + reduce) / fill + chain.
     double total = 0;
 };
 
@@ -159,11 +299,35 @@ struct RegisterMmaTerms {
     // The warps resident on a busy SM: SMs left idle by a small grid do not slow the busiest one,
     // whose bytes are already in `mem`.
     g.warps              = std::min(q, std::max(occ, 1.0)) * k.threads / 32;
+    t.legacy             = legacy_dram(chip);
     const double bw      = chip.dram_bytes_per_s;
     const double bw_sm   = bw / chip.sms;
     const double peak_sm = chip.tensor_rate * chip.clock_hz;
     const double clk     = chip.clock_hz;
-    t.mem = std::max(q * k.rows * kc * call.bpw / bw_sm, call.n * call.k * call.bpw / bw);
+    const double cta_b   = k.rows * kc * call.bpw; // one CTA's weight bytes
+    // b_w by count: the K loop fetches the next step's weight runs into the ring's second slot
+    // before it computes this step's (generic_gemm.cuh), a step of a warp being its m_tiles x 16
+    // rows (of each set) over k_step K values: a lane holds two runs of each set and m tile (its
+    // row in either 8-row half, one quarter of the step's K each), so the warp's 32 lanes hold
+    // 2 slots x m_tiles x 16 x k_step x bpw bytes (bpw holds both sets' bytes under SwiGLU; the
+    // runs' scales and heads with the codes, so BF16 m1 Store is 2048 B, Q4_K 2304, Q6_K 3360).
+    // The P of the carve-out the kernel's shared memory takes: the probe measured the two ends
+    // only (none, the shared-largest), so any shared memory takes the lower, placed P, a bound.
+    // In the heavy form a CTA reads its weights from DRAM for one of the token tiles and from the
+    // L2 for the others.
+    if (!t.legacy) {
+        if (!(k.k_step > 0)) {
+            throw std::invalid_argument(
+                "kernel_roofline: a register-MMA kernel without its K step");
+        }
+        const double counted = 2.0 * k.m_tiles * 16.0 * k.k_step * call.bpw;
+        t.dram_law = dram_terms(chip, g.ctas, occ, k.threads / 32, k.heavy ? cta_b / tiles : cta_b,
+                                counted, k.shared_bytes > 0);
+    }
+    // (The legacy terms keep their operation order: the kernel-roofline golden holds them to the
+    // bit.)
+    t.mem = t.legacy ? std::max(q * k.rows * kc * call.bpw / bw_sm, call.n * call.k * call.bpw / bw)
+                     : t.dram_law.total;
     t.mma = q * 2.0 * k.rows * call.sets * k.cols * kc / peak_sm;
     // The CTAs the busiest SM runs one residency after another each pay their warps' dependent
     // chain: the exposed load latency of a K step (16 K per warp, 150 cycles).
@@ -175,13 +339,15 @@ struct RegisterMmaTerms {
     // first (blockIdx.x) and the token tiles after (blockIdx.y), so the `occ` x `sms` CTAs
     // resident together span ceil(occ x sms / gx) token tiles (at most min(tiles, occ) on one
     // SM); the CTAs of one tile on an SM read it at the same K, so a residency round fetches each
-    // of its tiles once for all of them. A spilled register goes through the L1 twice a K step.
+    // of its tiles once for all of them, and never more tiles than its q CTAs (the legacy law does
+    // not cap that). A spilled register goes through the L1 twice a K step.
     const double l2_sm = cal.l2_bytes_per_sm_clock * clk;
-    t.dram             = call.n * call.k * call.bpw / bw;
+    t.dram             = t.legacy ? call.n * call.k * call.bpw / bw : t.dram_law.total;
     t.l2_weight        = q * kc * k.rows * call.bpw / l2_sm;
     const double per_round =
         std::min({tiles, std::max(occ, 1.0), q, std::max(1.0, std::ceil(occ * chip.sms / gx))});
-    t.l2_activation = rounds * per_round * kc * (call.tokens / tiles) * 2.0 / l2_sm;
+    const double reads = t.legacy ? rounds * per_round : std::min(rounds * per_round, q);
+    t.l2_activation    = reads * kc * (call.tokens / tiles) * 2.0 / l2_sm;
     t.spill         = q * k.threads * k.local_bytes * cal.spill_accesses_per_step *
               std::ceil(kc / (cal.rmma_heavy_step_k * k.warps_k)) /
               (cal.l1_bytes_per_sm_clock * clk);
@@ -194,7 +360,14 @@ struct RegisterMmaTerms {
     t.reduce = t.reduce_cluster + t.reduce_warps;
     t.chain  = rounds * std::ceil(kc / (cal.rmma_step_k * k.warps_k)) * cal.rmma_step_cycles / clk;
     g.fill   = std::clamp(g.warps / fill_warps, cal.min_warp_fill, 1.0);
-    t.total  = (t.bytes + t.mma + t.reduce) / g.fill + t.chain;
+    if (t.legacy) {
+        t.total = (t.bytes + t.mma + t.reduce) / g.fill + t.chain;
+    } else if (k.heavy) {
+        t.total = t.dram + (t.l2_weight + t.l2_activation + t.spill + t.mma) / g.fill + t.reduce +
+                  t.chain;
+    } else {
+        t.total = t.mem + t.mma / g.fill + t.reduce + t.chain;
+    }
     return t;
 }
 
@@ -215,10 +388,12 @@ struct PipelinedKernel {
 
 struct PipelinedTerms {
     Grid grid;
-    double mem   = 0; // the busiest SM's DRAM share, or the whole matrix over the bus
-    double mma   = 0; // the MMA work over the fraction of the tensor rate
-    double chain = 0; // one stage's barrier and cp.async wait per stage and residency round
-    double total = 0; // max(mem, mma) / fill + chain
+    bool legacy = true; // the DRAM law the price took (RegisterMmaTerms::legacy)
+    DramTerms dram_law; // the DRAM law's terms of `mem`; empty under the legacy law
+    double mem   = 0;   // dram_time; legacy: the busiest SM's DRAM share, or the whole matrix
+    double mma   = 0;   // the MMA work over the fraction of the tensor rate
+    double chain = 0;   // one stage's barrier and cp.async wait per stage and residency round
+    double total = 0;   // max(mem, mma / fill) + chain; legacy: max(mem, mma) / fill + chain
 };
 
 // The CTAs one SM holds of a pipelined tile: its thread and CTA limits and the shared memory of
@@ -244,24 +419,56 @@ struct PipelinedTerms {
     g.occupancy          = pipelined_occupancy(chip, cal, k);
     const double occ     = g.occupancy;
     g.warps              = std::min(q, std::max(occ, 1.0)) * k.threads / 32;
+    t.legacy             = legacy_dram(chip);
     const double bw      = chip.dram_bytes_per_s;
     const double bw_sm   = bw / chip.sms;
     const double peak_sm = chip.tensor_rate * chip.clock_hz;
-    t.mem    = std::max(q * k.rows * call.k * call.bpw / bw_sm, call.n * call.k * call.bpw / bw);
+    // b_w: the cp.async ring keeps stages - 1 K stages of the CTA's weight rows in flight while it
+    // multiplies one, over the CTA's warps.
+    if (!t.legacy) {
+        const double in_flight =
+            (k.stages - 1.0) * k.rows * cal.pipelined_stage_k * call.bpw / (k.threads / 32);
+        t.dram_law = dram_terms(chip, g.ctas, occ, k.threads / 32, k.rows * call.k * call.bpw,
+                                in_flight, true);
+    }
+    t.mem    = t.legacy
+                   ? std::max(q * k.rows * call.k * call.bpw / bw_sm, call.n * call.k * call.bpw / bw)
+                   : t.dram_law.total;
     t.mma    = q * 2.0 * k.rows * call.sets * k.cols * call.k / peak_sm / k.tensor_fraction;
     g.rounds = std::ceil(q / std::max(occ, 1.0));
     t.chain  = g.rounds * std::ceil(call.k / cal.pipelined_stage_k) * cal.pipelined_stage_cycles /
               chip.clock_hz;
     g.fill  = std::clamp(g.warps / cal.pipelined_saturating_warps, cal.min_warp_fill, 1.0);
-    t.total = std::max(t.mem, t.mma) / g.fill + t.chain;
+    t.total = t.legacy ? std::max(t.mem, t.mma) / g.fill + t.chain
+                       : std::max(t.mem, t.mma / g.fill) + t.chain;
     return t;
 }
 
 // ---- From a device class ----
 
+// The SM DRAM rate facts of a chip from its architecture's row of core/sm_rate_facts.h (L0 in
+// seconds, P per SM clock in both carve-outs, b_w_max in bytes where a warp saturates, else no
+// cap); left absent without a row, and
+// where another card of the architecture refutes the row (the law of the row falls outside the
+// check's bounds over that card's run: sm_120a, whose RTX 5070 Ti fetches 12 % faster a warp
+// and moves 9 % more a clock in the placed carve-out than the RTX 5090 row says). A board of
+// the architecture other than the row's card is priced by the row: a transfer, checked against
+// every other card's run that is committed.
+inline void fill_sm_rate_facts(ChipFacts& c, int major, int minor) {
+    for (const SmRateRow& row : sm_rate_facts_table()) {
+        if (row.major != major || row.minor != minor) continue;
+        if (row.transfer_refuted) return;
+        c.dram_latency_s                 = row.dram_stream_latency_ns * 1e-9;
+        c.sm_dram_bytes_per_clock_free   = row.bytes_per_clock_free;
+        c.sm_dram_bytes_per_clock_placed = row.bytes_per_clock_placed;
+        if (row.warp_bytes_saturated) c.sm_max_warp_bytes = row.max_warp_bytes_in_flight;
+        return;
+    }
+}
+
 // The chip facts of a class: its facts' reference clock and bandwidth (never the driver's
 // clocks), its generation row's BF16 rate, its residency limits (a limit the query left at 0
-// reads as 1, as the price always did).
+// reads as 1, as the price always did), its architecture's SM DRAM rate facts.
 [[nodiscard]] inline ChipFacts chip_facts_of(const DeviceClass& d) {
     ChipFacts c;
     c.sms                = d.sms;
@@ -272,6 +479,7 @@ struct PipelinedTerms {
     c.max_ctas_per_sm    = std::max(d.max_blocks_per_sm, 1);
     c.registers_per_sm   = d.registers_per_sm;
     c.smem_per_sm        = static_cast<double>(d.smem_per_sm);
+    fill_sm_rate_facts(c, d.major, d.minor);
     return c;
 }
 

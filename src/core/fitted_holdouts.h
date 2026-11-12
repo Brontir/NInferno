@@ -8,9 +8,13 @@
 // tagged Basis::Fitted or ScaledFromOneBoard (ops/generic/route_rules.h), and the kernels' and
 // dispatch's untagged launch constants a sweep of src/ found (kKernelHoldouts: a constexpr literal
 // whose comment says measured, tuned, optimum, fastest, swept or fitted; the sweep is not a test,
-// and untagged constants it missed have no record). A record per constant or per table of one
-// fit: the table's rows are one fit over the same data, so one record says what it was fitted on
-// and what, if anything, was left out; the per-row card counts stay in the tables (`cards`).
+// and untagged constants it missed have no record). A threshold written as a literal inside a
+// function is invisible to the test: the measured ones of the plans swept in #718 are named
+// constants with records, and the literals left there are coverage bounds (a compiled tile's width,
+// a kernel's range, the prefill class's first width) or carry no stated measurement (the #718 PR
+// lists them). A record per constant or per table of one fit: the table's rows are one fit over
+// the same data, so one record says what it was fitted on and what, if anything, was left out; the
+// per-row card counts stay in the tables (`cards`).
 //
 // Checked only where a script and data in the repository reproduce the held-out score of the
 // shipped value (none today: a held-out score quoted from a fit whose data is not in the
@@ -74,6 +78,27 @@ inline constexpr std::string_view kMoePrefill =
 inline constexpr std::string_view kGdnGating =
     "src/ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_plan.cpp";
 inline constexpr std::string_view kRmsNormRope = "src/ops/rmsnorm_rope/launch.h";
+// The plans' measured thresholds and per-chip band tables (#718): thresholds written as literals
+// inside a function are invisible to the test, so the measured ones are named there.
+inline constexpr std::string_view kDynamicConvPrepare =
+    "src/ops/dynamic_grouped_conv/bf16/bf16_dynamic_grouped_conv_prepare_plan.cpp";
+inline constexpr std::string_view kQ4Q5GdnInput =
+    "src/ops/gdn_input_proj/q4_q5/q4_q5_gdn_input_plan.cpp";
+inline constexpr std::string_view kQ4Q5AttnInput =
+    "src/ops/attn_input_proj/q4_q5/q4_q5_attn_input_plan.cpp";
+inline constexpr std::string_view kBf16CausalPlan =
+    "src/ops/softmax_attention/dense/causal_cache/bf16/plan.cpp";
+inline constexpr std::string_view kInt8CausalPlan =
+    "src/ops/softmax_attention/dense/causal_cache/int8/plan.cpp";
+inline constexpr std::string_view kNvfp4AttnInput =
+    "src/ops/attn_input_proj/nvfp4/nvfp4_attn_input_plan.cpp";
+inline constexpr std::string_view kNvfp4LinearAdd =
+    "src/ops/linear_add/nvfp4/nvfp4_linear_add_plan.cpp";
+inline constexpr std::string_view kNvfp4LinearSwiglu =
+    "src/ops/linear_swiglu/nvfp4/nvfp4_linear_swiglu_plan.cpp";
+inline constexpr std::string_view kFp8LinearAdd = "src/ops/linear_add/fp8/fp8_linear_add_plan.cpp";
+inline constexpr std::string_view kSparseMoeSmallT =
+    "src/ops/sparse_moe/small_t/sparse_moe_small_t_plan.cpp";
 
 // --- route_cost_constants.h: the A16 / A8 refits and the per-generation modelling constants ---
 // The A16 tiles: one leave-one-board-out refit of the model's constants.
@@ -730,6 +755,239 @@ inline constexpr FittedHoldout kKernelHoldouts[] = {
                    "a second, almost empty 128-wide tile",
                    "the comment names no board or margin: none left out",
                    "q4_linear_swiglu_gemm_mma.cu at the C128 tail launch")},
+
+    // --- The plans' measured thresholds and per-chip band tables (#718). A band table is the
+    // fit of the chip it is keyed to (kMeasured in its file): that chip is its only check.
+    {kDynamicConvPrepare, "kR16MaxTokens",
+     Holdout::none("complete cold-cache Graph timings: split-8 R16 favoured through 48 columns",
+                   "the comment names no board or margin: none left out",
+                   "bf16_dynamic_grouped_conv_prepare_plan.cpp at kR16MaxTokens")},
+    {kDynamicConvPrepare, "kR32NarrowMaxTokens",
+     Holdout::none("the same cold-cache Graph timings: R32's 32-column tile through 96 columns, "
+                   "its 64-column tile above",
+                   "the comment names no board or margin: none left out",
+                   "bf16_dynamic_grouped_conv_prepare_plan.cpp at kR32NarrowMaxTokens")},
+
+    // Q4/Q5 GDN input (Qwen 27B shapes): the sliced-K small-T bands, cold against the column route.
+    {kQ4Q5GdnInput, "kGb202Bands",
+     Holdout::none("the RTX 5090: R16 W4 S2 from T = 5 (x1.39 / 1.68 / 1.30 at T = 8 / 13 / 24); "
+                   "swept again after the K permutation, R16 W8 at 9..16 and R32 W4 S2 at 24 "
+                   "and 32; MTP3 at 24K 170.0 -> 178.7 tok/s",
+                   "one board: none left out", "q4_q5_gdn_input_plan.cpp at the sliced-K comment")},
+    {kQ4Q5GdnInput, "kAd103Bands",
+     Holdout::none("the RTX 4070 Ti SUPER (AD103): R16 W8 from T = 5 (x1.11 / 1.25 at 5 / 8), "
+                   "R32 W8 at 28..32 (x1.47 / 1.51)",
+                   "one board, keyed to the RTX 4080 SUPER (the same AD103): none left out",
+                   "q4_q5_gdn_input_plan.cpp at the sliced-K comment")},
+    {kQ4Q5GdnInput, "kAd102Bands",
+     Holdout::none("the RTX 4090: R16 W8 from T = 9 (T = 8 loses, x0.94); faster cold from T = 5 "
+                   "after the K permutation but not in the server, so kept; MTP3 at 24K 107.6 -> "
+                   "113.6 tok/s with the verify widths 2..4",
+                   "one board: none left out", "q4_q5_gdn_input_plan.cpp at the sliced-K comment")},
+    {kQ4Q5GdnInput, "kGa102Bands",
+     Holdout::none("the RTX 3090: R16 W8 from T = 2 after the K permutation (87 / 90 / 94 us at "
+                   "T = 2 / 5 / 8 against 104 / 164 / 159), the column route from T = 25",
+                   "one board: none left out", "q4_q5_gdn_input_plan.cpp at the sliced-K comment")},
+    {kQ4Q5GdnInput, "kTu102Bands",
+     Holdout::none("the RTX 2080 Ti: R32 W8 for T = 9..16 (x1.69 at 13), R16 W4 S2 to 24 (x1.22), "
+                   "then the column route",
+                   "one board: none left out", "q4_q5_gdn_input_plan.cpp at the sliced-K comment")},
+    {kQ4Q5GdnInput, "kFallbackBands",
+     Holdout::none("the bands every measured native-BF16 board gains on (R16 W8 for T = 9..24): "
+                   "the RTX 5090, 4090, 4070 Ti SUPER and 3090, not the RTX 2080 Ti (emulated "
+                   "BF16 MMA, bands of its own)",
+                   "a card of an unmeasured architecture takes them unmeasured: none left out",
+                   "q4_q5_gdn_input_plan.cpp at the sliced-K comment")},
+    {kQ4Q5GdnInput, "kMmaGb202Bands",
+     Holdout::none("ninferno_gdn_input_proj_bench, 27B form, warm graph, on the RTX 5090: the "
+                   "sliced-K bands lead the small-T MMA at every width (1.04..1.28x)",
+                   "one board: none left out", "q4_q5_gdn_input_plan.cpp at kMmaGb202Bands")},
+    {kQ4Q5GdnInput, "kMmaAd102Bands",
+     Holdout::none("the same bench on the RTX 4090: small-T MMA leads at T = 2..8 (twice the "
+                   "grouped route at 5..8) and from 16, the sliced-K band at 10..12",
+                   "one board: none left out", "q4_q5_gdn_input_plan.cpp at kMmaGb202Bands")},
+    {kQ4Q5GdnInput, "kMmaGa102Bands",
+     Holdout::none("the same bench on the RTX 3090: small-T MMA leads at every width "
+                   "(1.14..1.85x)",
+                   "one board: none left out", "q4_q5_gdn_input_plan.cpp at kMmaGb202Bands")},
+    {kQ4Q5GdnInput, "kMmaFallbackBands",
+     Holdout::none("the RTX 4090 and RTX 3090, where small-T MMA leads (the RTX 5090 alone "
+                   "prefers the sliced-K bands)",
+                   "an unmeasured board takes small-T MMA unmeasured: none left out",
+                   "q4_q5_gdn_input_plan.cpp at kMmaGb202Bands")},
+    {kQ4Q5GdnInput, "kT1MmaGa102Bands",
+     Holdout::none("the RTX 3090 decode census at 19.5K: the fused-convolution GEMVs 59.1 + 24.6 "
+                   "us a layer against small-T MMA 55.0 + 17.1 and a 2.6 us convolution",
+                   "one board: none left out", "q4_q5_gdn_input_plan.cpp at kT1MmaGa102Bands")},
+    {kQ4Q5GdnInput, "kT1MmaAd103Bands",
+     Holdout::none("the RTX 4080 SUPER at T = 1: 81.1 against 85.0 us", "one board: none left out",
+                   "q4_q5_gdn_input_plan.cpp at kT1MmaAd103Bands")},
+
+    // Q4/Q5 attention input (Qwen 27B shapes): the small-T bands (variants 1..4 sliced-K, 5 the
+    // small-T MMA), cold against the column route, and the retuned column routes past them.
+    {kQ4Q5AttnInput, "kGb202Bands",
+     Holdout::none("the RTX 5090: R16 W4 S2 from T = 5 (x1.30 / 1.75 / 1.31 at T = 8 / 13 / 24); "
+                   "after the K permutation from T = 2 (33 against 41..45 us at T = 2..4) and "
+                   "R32 W4 S2 at 25..32 (64..66 against 84..86)",
+                   "one board: none left out",
+                   "q4_q5_attn_input_plan.cpp at the sliced-K comment")},
+    {kQ4Q5AttnInput, "kGb203Bands",
+     Holdout::none("the RTX 5080: variant 4 53 us at T = 2..8 (the column route 61..78), variant 5 "
+                   "59..63 us at 10..16, R16 W4 S2 (variant 2) at 17..24",
+                   "one board: none left out",
+                   "q4_q5_attn_input_plan.cpp at kGb203Bands and the sliced-K comment",
+                   "the table differs from its comment past 24: it runs R32 W8 (variant 4) at "
+                   "T = 25..32, where the comment has R16 W4 S2 to 28 (x1.26) and R32 W8 at 32 "
+                   "(x1.32); the rows at 25..28 rest on no stated timing")},
+    {kQ4Q5AttnInput, "kAd103Bands",
+     Holdout::none("the RTX 4080 SUPER: variant 5 69..77 us at T = 2..16 against 75..82 (variant "
+                   "1); the RTX 4070 Ti SUPER (AD103): R16 W8 from T = 5 (1.20 / 1.41 / 2.36 / "
+                   "1.94 at 5 / 12 / 13 / 24)",
+                   "the two AD103 boards are its only check: none left out",
+                   "q4_q5_attn_input_plan.cpp at kGb203Bands and the sliced-K comment")},
+    {kQ4Q5AttnInput, "kAd102Bands",
+     Holdout::none("the RTX 4090: variant 5 53..57 us at T = 2..16 against 58..77 (variant 1) and "
+                   "67..74 (variant 4), variant 4 from 20; the DFlash2 round census at 19.5K",
+                   "one board: none left out",
+                   "q4_q5_attn_input_plan.cpp at the sliced-K comment")},
+    {kQ4Q5AttnInput, "kGa102Bands",
+     Holdout::none("the RTX 3090: variant 5, a DFlash2 round census at 19.5K, 34.1 + 26.3 us at "
+                   "T = 6 against 49.3 + 34.4 for R16 W8",
+                   "one board: none left out",
+                   "q4_q5_attn_input_plan.cpp at the sliced-K comment")},
+    {kQ4Q5AttnInput, "kGa100Bands",
+     Holdout::none("the A100 (cold, graph): variant 5 at T = 2..16 (57..88 us against 76..95 for "
+                   "variant 1) and 28..32, variant 1 at 20..24 (114 / 120 against 122 / 122)",
+                   "one board: none left out", "q4_q5_attn_input_plan.cpp at kGa100Bands")},
+    {kQ4Q5AttnInput, "kTu102Bands",
+     Holdout::none("the RTX 2080 Ti: R16 W4 S2 for T = 9..24 (1.59 / 1.20)",
+                   "one board: none left out",
+                   "q4_q5_attn_input_plan.cpp at the sliced-K comment")},
+    {kQ4Q5AttnInput, "kFallbackMmaBands",
+     Holdout::none("the pattern the A100, RTX 3090, 4060 Ti and 4090 share on the native BF16 MMA "
+                   "(variant 5 1.3..2.5x the column route at T = 2..8 on each)",
+                   "a chip with no measured row or sibling takes it unmeasured: none left out",
+                   "q4_q5_attn_input_plan.cpp at kFallbackMmaBands")},
+    {kQ4Q5AttnInput, "kFallbackBands",
+     Holdout::none("where the MMA is emulated (Volta, Turing): the column route and variant 1 "
+                   "(R16 W8 for T = 9..20), the GDN input plan's fallback narrowed",
+                   "the comment names no board for the narrowing: none left out",
+                   "q4_q5_attn_input_plan.cpp at kFallbackMmaBands")},
+    {kQ4Q5AttnInput, "kPairR32C64S3MaxCols",
+     Holdout::none("timings of the commit that retuned the variable-width attention projections "
+                   "(the paired R32 C64 S3 route through 104 columns)",
+                   "the timings and boards are not in the repository: none left out",
+                   "q4_q5_attn_input_plan.cpp at kPairR32C64S3MaxCols")},
+    {kQ4Q5AttnInput, "kMixedR64C128ResumeCols",
+     Holdout::none("the same retune: the paired R32 C64 S4 route from 129 columns to 192, the "
+                   "R64 C128 tile again from 193",
+                   "the timings and boards are not in the repository: none left out",
+                   "q4_q5_attn_input_plan.cpp at kPairR32C64S3MaxCols")},
+
+    // Q5 LinearAdd: the small-T MMA bands, bench/ops/q5_linear_add_bench (cold L2, graph) against
+    // the column routes.
+    {kQ5LinearAdd, "kSmallTGa102Bands",
+     Holdout::none("the RTX 3090: small-T MMA at every width 2..32",
+                   "one board; the comment gives no figures for it: none left out",
+                   "q5_linear_add_plan.cpp at the small-T MMA comment")},
+    {kQ5LinearAdd, "kSmallTGa100Bands",
+     Holdout::none("the A100 (cold, graph): 1.03 against 1.00 at T = 2..4, 0.71..0.94 at 5..24, "
+                   "1.01..1.04 at 28..32; the RTX 3090's bands lost 27B MTP3 C4 4 % in the server",
+                   "one board: none left out", "q5_linear_add_plan.cpp at kSmallTGa100Bands")},
+    {kQ5LinearAdd, "kSmallTAd102Bands",
+     Holdout::none("the RTX 4090 (27B down/out): 67.6 against 74.8..90.1 us at T = 2..8 (K = "
+                   "17408), equal at 10..16, behind the sliced-K from 20",
+                   "one board: none left out", "q5_linear_add_plan.cpp at kSmallTGa100Bands")},
+    {kQ5LinearAdd, "kSmallTGb202Bands",
+     Holdout::none("the RTX 5090: equal to T = 16, behind from T = 20 (34.8 against 26.6 us at "
+                   "K = 6144, 88 against 61 at K = 17408): off",
+                   "one board: none left out", "q5_linear_add_plan.cpp at kSmallTGa100Bands")},
+    {kQ5LinearAdd, "kSmallTGb203Bands",
+     Holdout::none("the RTX 5080: 71.7 against 88..90 us at T = 5..8 (K = 17408), 106 against "
+                   "119..127 at 20..24, equal at 28..32",
+                   "one board: none left out", "q5_linear_add_plan.cpp at kSmallTGa100Bands")},
+    {kQ5LinearAdd, "kSmallTAd103Bands",
+     Holdout::none("the RTX 4080 SUPER: 91 against 135..139 us at T = 5..8 and 139 against "
+                   "173..178 at 20..24 (K = 17408); behind the row split at T = 2..4",
+                   "one board: none left out", "q5_linear_add_plan.cpp at kSmallTGa100Bands")},
+
+    // The BF16 and INT8 causal attention plans.
+    {kBf16CausalPlan, "kTiled128MinWidth",
+     Holdout::none("the 128-row prefill tiles, measured only for Qwen3.5 group 8 (16 query, 2 KV "
+                   "heads)",
+                   "the comment names no board or timing: none left out; other geometries keep "
+                   "the 64-row tiles",
+                   "causal_cache/bf16/plan.cpp at kTiled128MinWidth")},
+    {kBf16CausalPlan, "kTiled128MinPastKeys",
+     Holdout::none("the same measurement of the 128-row tiles (Qwen3.5 group 8)",
+                   "the comment names no board or timing: none left out",
+                   "causal_cache/bf16/plan.cpp at kTiled128MinWidth")},
+    {kBf16CausalPlan, "kLongCtaSmDivisor",
+     Holdout::none("upstream's tuning on the RTX 5090: 85 CTAs per tile on 170 SMs",
+                   "one board: none left out; every board takes half its SMs",
+                   "causal_cache/bf16/plan.cpp at kLongCtaSmDivisor")},
+    {kBf16CausalPlan, "kSmallQueryMaxWaves",
+     Holdout::none("the plan's cap on small-query partitions: up to six waves",
+                   "the comment names no board or timing for the cap: none left out",
+                   "causal_cache/bf16/plan.cpp at kLongCtaSmDivisor")},
+    {kInt8CausalPlan, "kTwoCtasPerSmMaxWidth",
+     Holdout::none("the wave rules, measured on four and two KV heads",
+                   "the comment names no board or timing: none left out; other geometries take "
+                   "the rules of their KV head count",
+                   "causal_cache/int8/plan.cpp at kTwoCtasPerSmMaxWidth")},
+
+    // NVFP4 and FP8 activation routes.
+    {kNvfp4AttnInput, "kNvfp4AttnInputFirstA4Tokens",
+     Holdout::none("the A16 / A4 selection of the commit that chose the measured NVFP4 activation "
+                   "routes",
+                   "its timings and boards are not in the repository: none left out",
+                   "nvfp4_attn_input_plan.cpp at kNvfp4AttnInputFirstA4Tokens")},
+    {kNvfp4LinearAdd, "kNvfp4AddVerifyExactMaxTokens",
+     Holdout::none("the RTX 5090, Qwen3.8-27B NVFP4 (nsys census, MTP3 at 24K; serve MTP3 C1 +5 "
+                   "%, DFlash 5 C1 +6 %); at T = 16 the exact route lost 5 %",
+                   "one board: none left out; every board takes the band",
+                   "nvfp4_linear_add_plan.cpp at nvfp4_verify_exact")},
+    {kNvfp4LinearAdd, "kNvfp4AddFirstA4TokensK6144",
+     Holdout::none("the commit that chose the measured NVFP4 activation routes (0ba16ed) set it "
+                   "at 7; the edge moved to 17 in 54ef520 with no stated timing",
+                   "no timing or board in the repository: none left out",
+                   "nvfp4_linear_add_plan.cpp at kNvfp4AddFirstA4Tokens")},
+    {kNvfp4LinearAdd, "kNvfp4AddFirstA4Tokens",
+     Holdout::none("the A16 / A4 selection of the commit that chose the measured NVFP4 activation "
+                   "routes (K = 17408)",
+                   "its timings and boards are not in the repository: none left out",
+                   "nvfp4_linear_add_plan.cpp at kNvfp4AddFirstA4Tokens")},
+    {kNvfp4LinearSwiglu, "kNvfp4SwiGluVerifyExactMaxTokens",
+     Holdout::none("the RTX 5090, Qwen3.8-27B NVFP4: SwiGLU 34816x5120 at T = 4 64.8 us against "
+                   "the small-T fused 69.2; at T = 16 the exact route lost 5 %",
+                   "one board: none left out; every board takes the band",
+                   "nvfp4_linear_swiglu_plan.cpp at nvfp4_verify_exact")},
+    {kNvfp4LinearSwiglu, "kNvfp4SwiGluFusedA16MaxTokens",
+     Holdout::none("the fused A16 routes kept through T = 4 under AllowA4, A4 above",
+                   "the comment names no board or timing: none left out",
+                   "nvfp4_linear_swiglu_plan.cpp at kNvfp4SwiGluFusedA16MaxTokens")},
+    {kFp8LinearAdd, "kFp8A8FirstTokensK6144",
+     Holdout::none("the measured A16 / A8 speed frontier at K = 6144 (T = 17)",
+                   "the comment names no board or margin: none left out",
+                   "fp8_linear_add_plan.cpp at resolve_route")},
+    {kFp8LinearAdd, "kFp8A8FirstTokensK17408",
+     Holdout::none("the measured A16 / A8 speed frontier at K = 17408 (T = 20)",
+                   "the comment names no board or margin: none left out",
+                   "fp8_linear_add_plan.cpp at resolve_route")},
+
+    {kSparseMoeSmallT, "kMtpPaths1MaxTokens",
+     Holdout::none("the commit that tuned sparse MoE verification through T = 16 (the Q8 MTP "
+                   "profile's D3 schedule)",
+                   "no figures for this edge in the repository: none left out",
+                   "sparse_moe_small_t_plan.cpp at kMtpPaths1MaxTokens")},
+    {kQ8LinearAdd, "kK4096DecodeCtasPerTwoSms",
+     Holdout::none("Qwen3.6-35B's K = 4096 decode GEMV (2048 rows): r8 the fastest of r4 / r8 / "
+                   "r16 on the RTX 5090 (256 CTAs on 170 SMs), r8 on the RTX 4090, r16 on the RTX "
+                   "3090 (128 CTAs on 82 SMs)",
+                   "the three boards are its fit: none left out; a new card takes the rule by its "
+                   "SM count",
+                   "q8_linear_add_plan.cpp at k4096_decode_rows",
+                   "the RTX 5090 sits at the edge: 2 x 256 CTAs = 512 against 3 x 170 SMs = 510")},
 };
 
 } // namespace ninferno::fitted

@@ -75,7 +75,7 @@ std::optional<KernelResources> rmma_described(int schedule, const Weight& w, Epi
     // Without tensor mma.sync run_route hands such calls to Volta's own HMMA and GEMV kernels
     // (the call's x aligned as the engine passes it): no register-MMA kernel runs to describe.
     if (!current_features().mma_tensor &&
-        (volta_hmma_takes(codec, args) || ((args.ldx % 8) == 0 && volta_gemv_takes(codec, args)))) {
+        (volta_hmma_takes(codec, args) || volta_gemv_takes(codec, args))) {
         return std::nullopt;
     }
     KernelResources out;

@@ -36,6 +36,7 @@ decision_patterns=(
   src/core/host_cpu_quota.h
   src/core/machine_facts.cpp
   src/core/isa_facts.cpp
+  src/core/sm_rate_facts.cpp
   src/runtime/engine/plan_ladder.cpp
   src/runtime/engine/plan_ladder.h
   src/ops/generic/generic_gemm.cpp

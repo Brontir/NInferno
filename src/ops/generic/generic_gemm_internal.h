@@ -150,7 +150,8 @@ inline constexpr double kRmmaLatencyOneSetBytes = 5.5;
 
 
 // Volta's warp-per-row GEMV of the ggml Q4_K / Q5_K / Q6_K, Q8 G32 and BF16 formats at T <= 4
-// (generic_volta_gemv.cu), in place of a lane-local register-MMA call.
+// (generic_volta_gemv.cu), in place of a lane-local register-MMA call; x in 16-byte words (ldx a
+// multiple of 8, x on 16 bytes). run_route and rmma_resources both ask this one predicate.
 bool volta_gemv_takes(WeightCodec codec, const GemmArgs& args);
 void launch_volta_gemv(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                        cudaStream_t stream);

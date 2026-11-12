@@ -20,8 +20,8 @@ struct ArchRow {
     int cc_to;                        // the row covers cc..cc_to
     std::size_t smem_per_block_optin; // bytes (cudaDeviceProp::sharedMemPerBlockOptin)
     std::size_t smem_per_sm;          // bytes
-    // The two limits kernels are compiled against (ops/common/arch_limits.h): the values they had
-    // before this table, below the device's for sm_90..sm_119 until a measured change raises them.
+    // The two limits kernels are compiled against (ops/common/arch_limits.h): the device's, except
+    // the rows of no chip at 7.1, 7.3 and 7.4, which compile as Volta.
     std::size_t build_smem_per_block_optin;
     std::size_t build_smem_per_sm;
     int smem_reserved_per_block; // bytes of the SM's shared memory the driver keeps per block
