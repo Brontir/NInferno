@@ -1794,6 +1794,7 @@ runtime::PlanDeviceFacts plan_device_of_cuda(int device, bool measure_free, bool
     runtime::PlanDeviceFacts out;
     out.name               = props.name;
     out.source             = "GPU " + std::to_string(device);
+    out.cuda_device        = device;
     out.total_bytes        = props.totalGlobalMem;
     out.compute_capability = props.major * 10 + props.minor;
     out.integrated         = props.integrated != 0;
