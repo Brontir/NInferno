@@ -203,8 +203,9 @@ ninferno_add_op_test(ninferno_linear_candidates_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_linear_candidates.cpp"
   LIBRARIES ninferno_linear_test_support)
 
-# The generic path's choices on thirteen substituted boards against selector_golden/<board>.txt:
-# a selector change shows line by line; a refactor must leave every file as it was.
+# The generic path's choices on the substituted boards against
+# selector_golden/<build set>/<board>/<format>.txt (one file per format, header.txt the board's
+# header): a selector change shows line by line; a refactor must leave every file as it was.
 ninferno_add_op_test(ninferno_selector_golden_test LABELS gpu golden slow
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
   LIBRARIES ninferno_linear_test_support)
