@@ -1559,12 +1559,14 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
                        facts.model.expert_prefill_int8 != runtime::ExpertPrefill::Unknown;
     // A split part's head (its own tensors only): no whole table, its file size stands; the
     // route its banks prefill on is still its own file's, the row's own (#775: row_facts takes
-    // it from the row's table only).
+    // it from the row's table only). The route is read off the first part's banks alone and a
+    // later part may hold banks of another format, so it is an assumed one: an estimate on it is
+    // Transferred (QuantOption::expert_banks_assumed), not the file's own.
     if (facts.model.weight_basis == runtime::WeightBasis::FileSize &&
         facts.model.gguf_data_offset != 0 && route) {
         return GgufTensorTable{.expert_prefill         = facts.model.expert_prefill,
                                .expert_prefill_int8    = facts.model.expert_prefill_int8,
-                               .expert_prefill_assumed = facts.model.expert_prefill_assumed};
+                               .expert_prefill_assumed = true};
     }
     if (facts.model.weight_basis != runtime::WeightBasis::GgufTensors ||
         facts.model.weight_bytes == 0) {

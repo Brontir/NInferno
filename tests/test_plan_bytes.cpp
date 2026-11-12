@@ -1189,6 +1189,10 @@ void test_proposal_bytes_per_quant() {
         part_row.basis          = rt::WeightBasis::FileSize;
         check(pr::row_facts(routed, part_row).model.expert_prefill == rt::ExpertPrefill::Mxfp4,
               "a split row: its own part's prefill route");
+        // Read off the first part's banks alone (a later part may hold another format): assumed.
+        check(!part.model.expert_prefill_assumed && part_table->expert_prefill_assumed &&
+                  pr::row_facts(routed, part_row).model.expert_prefill_assumed,
+              "a split row's prefill route is an assumed one (Transferred)");
         pr::PlanSourceFacts dense_part  = part;
         dense_part.model.expert_prefill = dense_part.model.expert_prefill_int8 =
             rt::ExpertPrefill::Unknown;
