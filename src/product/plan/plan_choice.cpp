@@ -20,6 +20,8 @@
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <string>
+#include <tuple>
 
 namespace ninferno::product {
 
@@ -319,6 +321,50 @@ void with_moe_routes(choice::ModelFacts& model, const PlanSourceFacts& facts,
     };
 }
 
+namespace {
+
+choice::PrefillKernel prefill_kernel_of(runtime::PlanPrefillKernel kernel) {
+    switch (kernel) {
+    case runtime::PlanPrefillKernel::Unknown:
+        return choice::PrefillKernel::Unknown;
+    case runtime::PlanPrefillKernel::Mmq:
+        return choice::PrefillKernel::Mmq;
+    case runtime::PlanPrefillKernel::W4a8:
+        return choice::PrefillKernel::W4a8;
+    case runtime::PlanPrefillKernel::OtherA8:
+        return choice::PrefillKernel::OtherA8;
+    case runtime::PlanPrefillKernel::A16:
+        return choice::PrefillKernel::A16;
+    }
+    return choice::PrefillKernel::Unknown;
+}
+
+} // namespace
+
+void with_prefill_routes(choice::ModelFacts& model, const runtime::PlanDeviceFacts& device) {
+    const runtime::PlanPrefillRouteQuery& query = runtime::plan_prefill_route_query();
+    if (!query || device.compute_capability == 0) { return; }
+    using Key = std::tuple<std::string, double, double, bool, std::uint32_t, ActivationMode>;
+
+    struct Answers {
+        std::mutex mutex;
+        std::map<Key, choice::PrefillKernel> at;
+    };
+
+    auto answers         = std::make_shared<Answers>();
+    model.prefill_routes = [query, device, answers](const choice::LinearShape& l,
+                                                    std::uint32_t tokens,
+                                                    ActivationMode activations) {
+        const Key key{l.format, l.n, l.k, l.gated, tokens, activations};
+        const std::lock_guard<std::mutex> lock(answers->mutex);
+        if (const auto it = answers->at.find(key); it != answers->at.end()) { return it->second; }
+        const choice::PrefillKernel kernel =
+            prefill_kernel_of(query(device, l.format, l.n, l.k, l.gated, tokens, activations));
+        answers->at.emplace(key, kernel);
+        return kernel;
+    };
+}
+
 DryRunInputs inputs_with(const DryRunInputs& inputs, const choice::Candidate& c) {
     DryRunInputs out                        = inputs;
     out.options.kv_cache                    = c.kv;
@@ -423,6 +469,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     ServedChoice out;
     choice::ModelFacts model       = choice_model_of(facts);
     with_moe_routes(model, facts, inputs.device);
+    with_prefill_routes(model, inputs.device);
     const choice::CardFacts card   = choice_card_of(inputs.gpu);
     const choice::QuantOption quant = quant_option_of(facts, label);
     out.quant = quant;

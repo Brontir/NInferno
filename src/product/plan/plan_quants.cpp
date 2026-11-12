@@ -754,6 +754,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         const PlanSourceFacts facts = row_facts(shape, row);
         choice::ModelFacts model     = choice_model_of(facts);
         with_moe_routes(model, facts, inputs.device);
+        with_prefill_routes(model, inputs.device);
         const choice::CardFacts card = choice_card_of(inputs.gpu);
         // The quantization as the choice prices it (product::quant_option_of: one rule for a
         // hub row, the CLI's plan and a start's artifact).
