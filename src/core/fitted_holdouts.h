@@ -441,10 +441,11 @@ inline constexpr FittedHoldout kGenerationHoldouts[] = {
     {kGeneration, "w4a8_eff_scale",
      Holdout::none(
          "ninferno_route_tune timings of the RTX 4090, 5090, 4060 Ti, L4, A10 and A100 (18.10): "
-         "the "
-         "full-rate rows (ga100, hopper, gb100) take the A100's 0.46, the one board of them",
-         "one board for the rows that differ from 1.0: nothing left out, and not carried to a lent "
-         "row (fitted_route_scales: nullopt); Turing's 1.0 is the consumer rows' value with no "
+         "the ga100 row takes the A100's 0.46; the hopper and gb100 rows, with no board of their "
+         "own in the fit, hold none (#618 step 12)",
+         "one board for the row that differs from 1.0: nothing left out, and not carried to a lent "
+         "row or to Hopper / GB100 (fitted_route_scales: nullopt); Turing's 1.0 is the consumer "
+         "rows' value with no "
          "Turing board in the fit (#781: W4A8 at 0.70..0.74 of the RTX 2080 Ti's measured time)",
          "core/generation.h comment (fitted constants)")},
     {kGeneration, "a16_cost_scale",
