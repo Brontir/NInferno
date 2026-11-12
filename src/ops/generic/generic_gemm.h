@@ -824,7 +824,8 @@ struct BuildManifest {
     int arch           = 0; // the architecture the tree compiles for (NINFERNO_BUILD_ARCH)
     bool arch_specific = false;
     bool native_nvfp4  = false;
-    // Volta's CUTLASS prefill (generic_volta_cutlass.cu, volta_cutlass_compiled): on a build
+    // Volta's CUTLASS prefill (generic_volta_cutlass.cu; volta_cutlass_compiled, host code in
+    // generic_volta_cutlass_sizes.cpp, says whether the tree compiled it in): on a build
     // without tensor mma.sync, what the tiled route's schedule 0 runs for the formats without a
     // tile of their own; without it those formats are omitted there.
     bool volta_cutlass = false;

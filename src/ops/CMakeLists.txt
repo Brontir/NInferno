@@ -1,4 +1,12 @@
 # Compile policy is owned here; each semantic family explicitly contributes sources.
+
+# The selector's host objects (ninferno_ops_host), with no CUDA runtime: all of src/ops that a
+# decisions-only tree builds (NINFERNO_DECISIONS_ONLY, CMakeLists.txt).
+include("${CMAKE_CURRENT_LIST_DIR}/generic/host_sources.cmake")
+if(NINFERNO_DECISIONS_ONLY)
+  return()
+endif()
+
 add_library(ninferno_ops STATIC)
 ninferno_internal_includes(ninferno_ops)
 ninferno_cuda_archive(ninferno_ops)

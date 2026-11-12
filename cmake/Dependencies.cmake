@@ -1,5 +1,40 @@
-find_package(CUDAToolkit REQUIRED)
 find_package(Threads REQUIRED)
+
+# Repository-pinned header dependencies, vendored: nothing here is downloaded at configure time (the
+# optional downloads are CUTLASS for sm_70 trees and ninferno-ui's chat bundle, NINFERNO_UI_CHAT).
+add_library(ninferno::json INTERFACE IMPORTED GLOBAL)
+target_include_directories(ninferno::json INTERFACE
+  ${PROJECT_SOURCE_DIR}/third_party)
+
+# A decisions-only tree (NINFERNO_DECISIONS_ONLY, CMakeLists.txt) has no CUDA language and no
+# toolkit: of the toolkit it reads one header, cuda_occupancy.h (src/core/kernel_occupancy.cpp, a
+# header-only occupancy calculator with no CUDA include of its own), found by path. The header is
+# NVIDIA's under the toolkit's license, so it is not vendored here: any toolkit install, or the
+# runtime's development package alone (cuda-cudart-dev-<version>, no compiler), carries it.
+if(NINFERNO_DECISIONS_ONLY)
+  file(GLOB ninferno_versioned_cuda_includes LIST_DIRECTORIES true "/usr/local/cuda-*/include")
+  list(SORT ninferno_versioned_cuda_includes COMPARE NATURAL ORDER DESCENDING)
+  find_path(NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR cuda_occupancy.h
+    HINTS "$ENV{CUDA_PATH}/include" "$ENV{CUDA_HOME}/include" "$ENV{CUDAToolkit_ROOT}/include"
+    PATHS /usr/local/cuda/include ${ninferno_versioned_cuda_includes} /opt/cuda/include
+    DOC "The directory that holds the CUDA toolkit's cuda_occupancy.h (a decisions-only tree)")
+  if(NOT NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR OR
+     NOT EXISTS "${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR}/cuda_occupancy.h")
+    message(FATAL_ERROR
+      "NINFERNO_DECISIONS_ONLY needs the CUDA toolkit's cuda_occupancy.h (a header, no compiler): "
+      "not found (NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR='${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR}'). "
+      "Install a CUDA toolkit or its runtime development package alone (Ubuntu: cuda-cudart-dev-12-8 "
+      "from NVIDIA's repository), or pass -DNINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR=<dir holding "
+      "cuda_occupancy.h>.")
+  endif()
+  set(NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIRS "${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR}")
+  message(STATUS "Decisions only: cuda_occupancy.h from ${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR}")
+  return()
+endif()
+
+find_package(CUDAToolkit REQUIRED)
+# The toolkit's headers, for the one that host-only code reads (cuda_occupancy.h, src/core).
+set(NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIRS ${CUDAToolkit_INCLUDE_DIRS})
 if(NOT WIN32)
   find_package(PkgConfig REQUIRED)
 endif()
@@ -31,12 +66,6 @@ else()
   pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
     libavformat libavcodec libavutil libswscale)
 endif()
-
-# Repository-pinned header dependencies, vendored: nothing here is downloaded at configure time (the
-# optional downloads are CUTLASS for sm_70 trees and ninferno-ui's chat bundle, NINFERNO_UI_CHAT).
-add_library(ninferno::json INTERFACE IMPORTED GLOBAL)
-target_include_directories(ninferno::json INTERFACE
-  ${PROJECT_SOURCE_DIR}/third_party)
 
 # Source base for the custom-template frontend; consumers will link it explicitly.
 add_subdirectory(third_party/llama-jinja EXCLUDE_FROM_ALL)
