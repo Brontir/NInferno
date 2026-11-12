@@ -8,11 +8,13 @@
 # sm_100.txt before tools/release/package.sh does at release time (#758, #762). Per architecture:
 #   - configures a test tree with the release flags (Release, NINFERNO_CUDA_LINEINFO=OFF,
 #     NINFERNO_CUDA_EMBED_PTX=OFF; ccache launchers where ccache is installed);
-#   - builds ninferno_selector_golden_test, the binary the check reads (about 15 minutes and 1.3 GB
-#     a tree with ccache), at the lowest CPU and I/O priority;
-#   - runs ninferno_kernel_facts_test (cuobjdump, the SASS pass included: minutes), with no GPU
-#     visible. Its skip (exit 77: this nvcc is not the snapshot's) is a failure here: the job
-#     exists to compare, so it refuses to start on a toolkit other than the snapshots' nvcc.
+#   - builds ninferno_selector_golden_test, the binary the check reads (1.3 GB a tree; 20 to 30
+#     minutes cold at -j8 on a 16-core machine, less with ccache), at the lowest CPU and I/O
+#     priority;
+#   - runs ninferno_kernel_facts_test (cuobjdump on the binary, the SASS pass included: about ten
+#     minutes), with no GPU visible. Its skip (exit 77: this nvcc is not the snapshot's) is a
+#     failure here: the job exists to compare, so it refuses to start on a toolkit other than the
+#     snapshots' nvcc.
 # Source tree: KFA_SOURCE=DIR checks that tree as it is; otherwise the job checks out
 # origin/KFA_BRANCH (default master; any PR branch, e.g. one touching src/ops/**/*.cu*) detached and
 # cleaned in $KFA_ROOT/wt_kfa, a worktree of KFA_REPO.
