@@ -199,7 +199,10 @@ std::optional<GgufTensorTable> read_tensor_table(const fs::path& path) {
                                .expert_layers          = facts.model.expert_layers,
                                .expert_prefill         = facts.model.expert_prefill,
                                .expert_prefill_int8    = facts.model.expert_prefill_int8,
-                               .expert_prefill_assumed = facts.model.expert_prefill_assumed};
+                               .expert_prefill_assumed = facts.model.expert_prefill_assumed,
+                               .weight_formats         = facts.shape.weight_formats,
+                               .layer_formats          = facts.shape.layer_formats,
+                               .rest_layer_formats     = facts.shape.rest_layer_formats};
     } catch (const std::exception&) { return std::nullopt; }
 }
 

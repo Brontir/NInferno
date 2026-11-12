@@ -86,7 +86,8 @@ int spread_smem(Route route, WeightCodec codec, Epilogue epilogue, const GemmArg
 // Whether the current device launches with programmatic dependent launch (pdl_prefetch).
 bool pdl_device();
 
-// The formats the producer-warp W4A8 tile is compiled for (w4a8_ws_compiled, generic_w4a8.cuh).
+// The formats the producer-warp W4A8 tile is compiled for (NINFERNO_W4A8_WS_CODECS,
+// compiled_codecs.h; the list w4a8_ws_compiled reads, generic_w4a8.cuh).
 bool w4a8_ws_supports(QType q);
 
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band);

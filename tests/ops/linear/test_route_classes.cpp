@@ -26,7 +26,9 @@
 #include "ninferno/ops/route_table.h"
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/build_manifest.h"
+#include "ops/generic/compiled_codecs.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_i8_schedules.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/route_table.h"
@@ -515,6 +517,150 @@ void check_manifest_lists(const generic::BuildManifest& manifest, Fail&& fail) {
     if (json.find("\"build\": {\n    \"version\": \"test\"") == std::string::npos ||
         json.find("\"rmma\"") == std::string::npos) {
         fail("manifest: the document lacks its fields");
+    }
+}
+
+// What the launch files' codec switches hold, asked of the switches themselves (#615 F4), with no
+// GPU: each probe passes arguments the instantiated path refuses before any CUDA call, so the
+// refusal says whether the switch has a case for the codec. R8: K of whole groups and nine tokens
+// with an activation plane: a verify-form case refuses the plane's width, a plain case (no plane)
+// the nine tokens. W4A8 and tiled: a schedule past the list. Producer-warp W4A8, a described
+// launch (nothing runs): a codec without the tile refuses by name. Volta HMMA and GEMV: an
+// epilogue no case names, which a listed codec's epilogue switch passes over.
+struct LaunchedCodec {
+    bool r8 = false, r8_prequant = false, w4a8 = false, w4a8_ws = false, tiled = false;
+    bool volta_hmma = false, volta_gemv = false;
+};
+
+template <class Launch>
+std::string refusal_of(Launch&& launch) {
+    try {
+        launch();
+    } catch (const std::exception& e) { return e.what(); }
+    return {};
+}
+
+bool says(const std::string& message, std::string_view text) {
+    return message.find(text) != std::string::npos;
+}
+
+template <class Fail>
+LaunchedCodec probe_launch_files(WeightCodec codec, Fail&& fail) {
+    namespace g = generic;
+    LaunchedCodec out;
+    const std::string name = "launch probe codec " + std::to_string(static_cast<int>(codec)) + ": ";
+    const auto unexpected  = [&](const char* family, const std::string& message) {
+        fail(name + family + " refused as '" + message + "'");
+    };
+    std::int8_t plane_byte = 0;
+    float plane_value      = 0.0F;
+    {
+        g::GemmArgs args{};
+        args.k      = 4096;
+        args.tokens = 9;
+        const g::W4a8Activation pre{&plane_byte, &plane_value, &plane_value, 0};
+        const auto m =
+            refusal_of([&] { g::launch_r8(0, codec, g::Epilogue::Store, args, nullptr, pre); });
+        out.r8_prequant = says(m, "no verify-width form");
+        out.r8          = out.r8_prequant || says(m, "more than kR8MaxTokens");
+        if (!out.r8 && !says(m, "has no R8 codec")) unexpected("R8", m);
+    }
+    g::KernelResources described{};
+    const g::ScopedKernelDescribe describe(described);
+    g::GemmArgs args{};
+    args.k = 4096;
+    {
+        const auto m = refusal_of([&] {
+            g::launch_w4a8(g::w4a8_schedule_count(), codec, g::Epilogue::Store, args, nullptr,
+                           nullptr, nullptr, false, nullptr);
+        });
+        out.w4a8     = says(m, "unknown schedule");
+        if (!out.w4a8 && !says(m, "has no W4A8 codec")) unexpected("W4A8", m);
+    }
+    for (int i = 0; out.w4a8 && i < g::w4a8_schedule_count(); ++i) {
+        if (g::w4a8_schedule_info(i).producers == 0) continue;
+        const auto m = refusal_of([&] {
+            g::launch_w4a8(i, codec, g::Epilogue::Store, args, nullptr, nullptr, nullptr, false,
+                           nullptr);
+        });
+        out.w4a8_ws  = !says(m, "no producer-warp tile");
+        break;
+    }
+    {
+        const auto m =
+            refusal_of([&] { g::launch_tiled(-1, codec, g::Epilogue::Store, args, nullptr); });
+        out.tiled = says(m, "unknown schedule");
+        if (!out.tiled && !says(m, "has no tiled codec")) unexpected("tiled", m);
+    }
+    const auto no_epilogue = static_cast<g::Epilogue>(0x7f);
+    {
+        const auto m = refusal_of([&] { g::launch_volta_hmma(codec, no_epilogue, args, nullptr); });
+        out.volta_hmma = m.empty();
+        if (!out.volta_hmma && !says(m, "unsupported codec")) unexpected("Volta HMMA", m);
+    }
+    {
+        const auto m = refusal_of([&] { g::launch_volta_gemv(codec, no_epilogue, args, nullptr); });
+        out.volta_gemv = m.empty();
+        if (!out.volta_gemv && !says(m, "unsupported codec")) unexpected("Volta GEMV", m);
+    }
+    return out;
+}
+
+// The lists of compiled_codecs.h, which the admission predicates and the manifest read, against
+// what the launch files hold for every codec value (the enum's and one past it); and the
+// manifest's per-format lists (R8's verify form, the producer-warp tiles' formats) against the
+// launch files directly.
+template <class Fail>
+void check_compiled_lists(const generic::BuildManifest& manifest, Fail&& fail) {
+    using generic::compiled;
+    using generic::Variant;
+    std::map<WeightCodec, LaunchedCodec> launched;
+    for (int v = 0; v <= static_cast<int>(WeightCodec::Q3G64) + 1; ++v) {
+        const auto c                        = static_cast<WeightCodec>(v);
+        const LaunchedCodec p               = probe_launch_files(c, fail);
+        launched[c]                         = p;
+        const std::pair<bool, bool> pairs[] = {
+            {p.r8, compiled(Variant::R8, c)},
+            {p.r8_prequant, compiled(Variant::R8Prequant, c)},
+            {p.w4a8, compiled(Variant::W4a8, c)},
+            {p.w4a8_ws, compiled(Variant::W4a8Ws, c)},
+            {p.tiled, compiled(Variant::Tiled, c) || compiled(Variant::TiledVolta, c)},
+            {p.volta_hmma, compiled(Variant::VoltaHmma, c)},
+            {p.volta_gemv, compiled(Variant::VoltaGemv, c)},
+        };
+        static constexpr const char* kNames[] = {"R8",    "R8 verify form", "W4A8",      "W4A8 ws",
+                                                 "tiled", "Volta HMMA",     "Volta GEMV"};
+        for (std::size_t i = 0; i < std::size(pairs); ++i) {
+            if (pairs[i].first != pairs[i].second) {
+                fail("compiled_codecs.h: codec " + std::to_string(v) + " " + kNames[i] + ": the " +
+                     "launch file " + (pairs[i].first ? "holds" : "lacks") + " it, the list " +
+                     (pairs[i].second ? "names" : "omits") + " it");
+            }
+        }
+    }
+    const auto has = [](const std::vector<QType>& list, QType q) {
+        return std::find(list.begin(), list.end(), q) != list.end();
+    };
+    for (int n = 0; n <= 0xFF; ++n) {
+        const auto q     = static_cast<QType>(n);
+        const auto codec = format_facts(q).codec;
+        if (!codec) continue;
+        const LaunchedCodec& p = launched[*codec];
+        if (has(manifest.r8_verify_formats, q) != p.r8_prequant) {
+            fail("manifest: r8 verify formats " +
+                 std::string(has(manifest.r8_verify_formats, q) ? "list" : "omit") + " QType " +
+                 std::to_string(n) + " against the R8 launch files");
+        }
+        for (const auto& s : manifest.schedules) {
+            if (s.route.family != generic::Family::W4a8Mma ||
+                generic::w4a8_schedule_info(s.route.schedule).producers == 0) {
+                continue;
+            }
+            if (has(s.only_formats, q) != p.w4a8_ws) {
+                fail("manifest: " + generic::route_name(s.route) + " formats disagree with the " +
+                     "producer-warp launch for QType " + std::to_string(n));
+            }
+        }
     }
 }
 
@@ -1036,6 +1182,7 @@ int run_board(const TestBoard& b) {
     };
     const generic::BuildManifest manifest = generic::build_manifest();
     check_manifest_lists(manifest, fail);
+    check_compiled_lists(manifest, fail);
     // Weights are never read here: an aligned address stands in for the payload.
     void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
     for (const QType qtype : kFormats) {

@@ -191,6 +191,16 @@ int gguf_qwen35() {
     // the grouped W4A8; IQ3_XXS and IQ3_S banks in fragment order the W4A8 does not read, so the
     // 16-bit register MMA; MXFP4 banks their own route.
     failures += check(e.model.expert_prefill == rt::ExpertPrefill::Int8, "Q4_K banks: int8");
+    failures +=
+        check(!e.model.expert_prefill_assumed, "a whole table's banks: the file's own route");
+    // A split part's banks are the first part's only; a later part may hold another format, so
+    // the route read off them is an assumed one (#813), as gguf_tensor_table already says.
+    GgufFile moe_split                = moe;
+    moe_split.metadata["split.count"] = 3;
+    const auto es                     = pr::plan_facts_of_gguf(moe_split, 17000000000ULL);
+    failures +=
+        check(es.model.expert_prefill == rt::ExpertPrefill::Int8 && es.model.expert_prefill_assumed,
+              "a split part's banks: the route kept, assumed");
     GgufFile iq3 = file;
     iq3.tensors.push_back(
         tensor("blk.0.ffn_gate_exps.weight", {5120, 512, 64}, ninferno::convert::ggml::IQ3_XXS, 200));
@@ -706,6 +716,79 @@ int gemma4() {
                               bare.expert_prefill_int8 == rt::ExpertPrefill::Unknown &&
                               !bare.expert_prefill_assumed,
                           "equal-bytes rows: a row without its table, no route");
+        // An unread Gemma 4 row whose label names MXFP4 banks (#811 P3): the kept site its header
+        // would not tell either, so its estimate is Transferred as a read one's is; a label of
+        // other banks is not marked.
+        pr::QuantRow unread_mx = row_of(mxfp4, "MXFP4_MOE");
+        unread_mx.listing.table.reset();
+        const auto bare_mx = pr::row_facts(q4_0, unread_mx);
+        failures += check(bare_mx.model.expert_prefill == rt::ExpertPrefill::Unknown &&
+                              bare_mx.model.expert_prefill_assumed,
+                          "unread Gemma 4 MXFP4 row: no route, assumed by its label");
+        // An engaged but empty table (the UI caches one for a header past 128 MiB): unread too.
+        pr::QuantRow empty_mx     = row_of(mxfp4, "MXFP4_MOE");
+        empty_mx.listing.table    = pr::GgufTensorTable{};
+        const auto empty_table_mx = pr::row_facts(q4_0, empty_mx);
+        failures += check(empty_table_mx.model.expert_prefill_assumed,
+                          "Gemma 4 MXFP4 row with an empty table: assumed by its label");
+        // Through the quantization the choice prices (linear_prefill: an assumed MoE prefill is
+        // Transferred on every path, the share path of Unknown banks too).
+        failures += check(
+            pr::quant_option_of(bare_mx, "MXFP4_MOE").expert_banks_assumed &&
+                !pr::quant_option_of(pr::row_facts(mxfp4, unread), "Q4_0").expert_banks_assumed,
+            "unread Gemma 4 rows: the MXFP4 label's assumed, Q4_0's not");
+        // Another family's row is not marked by an MXFP4 label (gpt-oss: its banks run as read).
+        pr::PlanSourceFacts other_family = q4_0;
+        other_family.model.model_type    = "gpt_oss";
+        failures += check(!pr::row_facts(other_family, unread_mx).model.expert_prefill_assumed,
+                          "an unread MXFP4 row of another family: not assumed");
+    }
+    // Two quantizations of equal tensor bytes with other linears (#811): Q8_0 beside the banks
+    // in one, Q4_K in the other. A row reads its own header's formats (the weight class, whether
+    // the tiles price its prefill, its routes), never the parsed file's at equal bytes; a row
+    // without its table reads its label's.
+    {
+        using Class       = ninferno::product::choice::WeightClass;
+        const auto q8     = gemma4_mx_gguf(ninferno::convert::ggml::Q8_0);
+        const auto k      = gemma4_mx_gguf(ninferno::convert::ggml::Q4_K);
+        const auto row_of = [](const pr::PlanSourceFacts& own, const std::string& quant) {
+            pr::QuantRow row;
+            row.listing.format = "gguf";
+            row.listing.quant  = quant;
+            row.listing.table  = pr::gguf_tensor_table(own);
+            row.weight_bytes   = row.listing.table ? row.listing.table->tensor_bytes : 0;
+            row.basis          = rt::WeightBasis::GgufTensors;
+            return row;
+        };
+        failures += check(q8.model.weight_bytes == k.model.weight_bytes &&
+                              q8.shape.rest_layer_formats != k.shape.rest_layer_formats,
+                          "equal-bytes formats: the same bytes, other linears");
+        const ninferno::product::choice::CardFacts card =
+            pr::choice_card_of(pr::gpu_key_of(rtx4090));
+        const auto tiles = [&](const pr::PlanSourceFacts& facts, const std::string& quant) {
+            return ninferno::product::choice::prefill_linears_seconds(
+                pr::choice_model_of(facts), card, pr::quant_option_of(facts, quant), 2048);
+        };
+        // The Q4_K row beside the parsed Q8_0 file: its own K-quant linears (the share path), not
+        // the parsed file's Q8_0 (the tiles); the reverse prices the tiles.
+        const auto k_row = pr::row_facts(q8, row_of(k, "Q4_K_M"));
+        const auto kq    = pr::quant_option_of(k_row, "Q4_K_M");
+        failures += check(kq.rest_weights == Class::KQuant && tiles(k_row, "Q4_K_M") == 0,
+                          "equal-bytes formats: the Q4_K row's own linears, the share path");
+        const auto q8_row = pr::row_facts(k, row_of(q8, "Q8_0"));
+        failures += check(pr::quant_option_of(q8_row, "Q8_0").rest_weights == Class::Q8 &&
+                              tiles(q8_row, "Q8_0") > 0,
+                          "equal-bytes formats: the Q8_0 row's own linears, the tiles");
+        // Its routes from its own formats, not its label's: MXFP4 banks take 8-bit activations
+        // under a BF16 label; the same row unread takes the label's (BF16: none).
+        failures += check(pr::quant_option_of(q8_row, "BF16").int8_route,
+                          "a read row's routes: its own formats' (MXFP4: int8)");
+        pr::QuantRow unread = row_of(q8, "BF16");
+        unread.listing.table.reset();
+        const auto bare = pr::row_facts(k, unread);
+        failures += check(bare.shape.weight_formats.empty() &&
+                              !pr::quant_option_of(bare, "BF16").int8_route,
+                          "an unread row's routes: its label's (BF16: no int8)");
     }
     const json config = {{"architectures", {"Gemma4ForConditionalGeneration"}},
                          {"text_config",
