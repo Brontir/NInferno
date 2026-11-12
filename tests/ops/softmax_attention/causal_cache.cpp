@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <iostream>
@@ -46,6 +47,54 @@ constexpr std::int32_t kNvfp4QuantGroups = kHeadDim / kNvfp4QuantGroup;
 constexpr std::int32_t kNvfp4CodeBytes   = kHeadDim / 2;
 constexpr float kAttentionScale          = 0.0625f;
 constexpr std::uint16_t kOutputCanary    = 0x7fc1u;
+
+// CPU workers for the host fixtures and the FP64 oracle: half the host's hardware threads (the
+// stands run host-labelled tests four at a time beside this serial GPU queue), or
+// NINFERNO_TEST_CPU_THREADS when it is set. Every parallel loop below hands each worker whole
+// rows or elements that it alone writes and keeps every FP64 sum in its serial order, so neither
+// the fixture bytes nor the oracle depend on the count.
+int host_workers() {
+    static const int workers = [] {
+        if (const char* text = std::getenv("NINFERNO_TEST_CPU_THREADS"); text && *text) {
+            const int requested = std::atoi(text);
+            if (requested > 0) return requested;
+        }
+        return static_cast<int>(std::max(1u, std::thread::hardware_concurrency() / 2));
+    }();
+    return workers;
+}
+
+// Set on parallel_ranges' workers: a loop inside a worker (make_cache's K and V planes) runs on
+// that worker alone, so the process never runs more than host_workers() of them.
+thread_local bool inside_worker = false;
+
+// Runs f(first, last) over [0, count) in contiguous ranges of at least `grain` items on up to
+// host_workers() threads, and rethrows a worker's exception.
+template <typename F>
+void parallel_ranges(std::int64_t count, std::int64_t grain, F f) {
+    const int workers = inside_worker
+                            ? 1
+                            : static_cast<int>(std::clamp<std::int64_t>(
+                                  count / std::max<std::int64_t>(grain, 1), 1, host_workers()));
+    if (workers == 1) {
+        if (count > 0) f(std::int64_t{0}, count);
+        return;
+    }
+    std::vector<std::exception_ptr> errors(static_cast<std::size_t>(workers));
+    {
+        std::vector<std::jthread> threads;
+        threads.reserve(static_cast<std::size_t>(workers));
+        for (int w = 0; w < workers; ++w)
+            threads.emplace_back([&, w] {
+                inside_worker = true;
+                try {
+                    f(count * w / workers, count * (w + 1) / workers);
+                } catch (...) { errors[static_cast<std::size_t>(w)] = std::current_exception(); }
+            });
+    }
+    for (const auto& error : errors)
+        if (error) std::rethrow_exception(error);
+}
 
 // A1 and A3 use one fixed criterion for each registered storage profile; token count, geometry,
 // execution envelope, and private launch route do not select or relax it.
@@ -273,6 +322,36 @@ std::size_t physical_plane_elements(std::int32_t leading_extent, const Geometry&
            physical_pages;
 }
 
+// Runs f(head, position) over every (head, position) row of a cache on host_workers() threads.
+// Callers write only the row's own elements (the block tables map logical pages one to one).
+template <typename F>
+void for_each_cache_row(std::int32_t heads, std::int32_t positions, F f) {
+    const std::int64_t rows = static_cast<std::int64_t>(heads) * positions;
+    parallel_ranges(rows, 256, [&](std::int64_t first, std::int64_t last) {
+        for (std::int64_t r = first; r < last; ++r)
+            f(static_cast<std::int32_t>(r / positions), static_cast<std::int32_t>(r % positions));
+    });
+}
+
+template <typename T>
+void scatter_paged_into(const std::vector<T>& logical, std::int32_t leading_extent,
+                        const Geometry& geometry, std::int32_t logical_capacity,
+                        std::span<const std::int32_t> block_table, std::vector<T>& physical) {
+    for_each_cache_row(
+        geometry.kv_heads, logical_capacity, [&](std::int32_t head, std::int32_t position) {
+            const std::int32_t page =
+                block_table[static_cast<std::size_t>(position) / kPagedKVPageSize];
+            for (std::int32_t leading = 0; leading < leading_extent; ++leading) {
+                const std::size_t source = static_cast<std::size_t>(leading) +
+                                           static_cast<std::size_t>(leading_extent) *
+                                               (static_cast<std::size_t>(position) +
+                                                static_cast<std::size_t>(logical_capacity) * head);
+                physical[paged_index(leading_extent, geometry, page, head, position, leading)] =
+                    logical[source];
+            }
+        });
+}
+
 template <typename T>
 std::vector<T> scatter_paged(const std::vector<T>& logical, std::int32_t leading_extent,
                              const Geometry& geometry, std::int32_t logical_capacity,
@@ -281,41 +360,8 @@ std::vector<T> scatter_paged(const std::vector<T>& logical, std::int32_t leading
     std::vector<T> physical(static_cast<std::size_t>(leading_extent) * kPagedKVPageSize *
                             static_cast<std::size_t>(geometry.kv_heads) *
                             static_cast<std::size_t>(physical_pages));
-    for (std::int32_t head = 0; head < geometry.kv_heads; ++head) {
-        for (std::int32_t position = 0; position < logical_capacity; ++position) {
-            const std::int32_t page =
-                block_table[static_cast<std::size_t>(position) / kPagedKVPageSize];
-            for (std::int32_t leading = 0; leading < leading_extent; ++leading) {
-                const std::size_t source = static_cast<std::size_t>(leading) +
-                                           static_cast<std::size_t>(leading_extent) *
-                                               (static_cast<std::size_t>(position) +
-                                                static_cast<std::size_t>(logical_capacity) * head);
-                physical[paged_index(leading_extent, geometry, page, head, position, leading)] =
-                    logical[source];
-            }
-        }
-    }
+    scatter_paged_into(logical, leading_extent, geometry, logical_capacity, block_table, physical);
     return physical;
-}
-
-template <typename T>
-void scatter_paged_into(const std::vector<T>& logical, std::int32_t leading_extent,
-                        const Geometry& geometry, std::int32_t logical_capacity,
-                        std::span<const std::int32_t> block_table, std::vector<T>& physical) {
-    for (std::int32_t head = 0; head < geometry.kv_heads; ++head) {
-        for (std::int32_t position = 0; position < logical_capacity; ++position) {
-            const std::int32_t page =
-                block_table[static_cast<std::size_t>(position) / kPagedKVPageSize];
-            for (std::int32_t leading = 0; leading < leading_extent; ++leading) {
-                const std::size_t source = static_cast<std::size_t>(leading) +
-                                           static_cast<std::size_t>(leading_extent) *
-                                               (static_cast<std::size_t>(position) +
-                                                static_cast<std::size_t>(logical_capacity) * head);
-                physical[paged_index(leading_extent, geometry, page, head, position, leading)] =
-                    logical[source];
-            }
-        }
-    }
 }
 
 template <typename T>
@@ -324,8 +370,8 @@ std::vector<T> gather_paged(std::span<const T> physical, std::int32_t leading_ex
                             std::span<const std::int32_t> block_table) {
     std::vector<T> logical(static_cast<std::size_t>(leading_extent) * logical_capacity *
                            static_cast<std::size_t>(geometry.kv_heads));
-    for (std::int32_t head = 0; head < geometry.kv_heads; ++head) {
-        for (std::int32_t position = 0; position < logical_capacity; ++position) {
+    for_each_cache_row(
+        geometry.kv_heads, logical_capacity, [&](std::int32_t head, std::int32_t position) {
             const std::int32_t page =
                 block_table[static_cast<std::size_t>(position) / kPagedKVPageSize];
             for (std::int32_t leading = 0; leading < leading_extent; ++leading) {
@@ -336,21 +382,31 @@ std::vector<T> gather_paged(std::span<const T> physical, std::int32_t leading_ex
                 logical[target] =
                     physical[paged_index(leading_extent, geometry, page, head, position, leading)];
             }
-        }
-    }
+        });
     return logical;
 }
+
+// Element-wise conversions split over workers; each element is converted on its own.
+constexpr std::int64_t kElementsPerWorker = 1 << 16;
 
 std::vector<float> make_bf16_values(std::size_t count, std::uint32_t seed, float lo, float hi) {
     std::vector<float> values(count);
     fill_uniform(values, seed, lo, hi);
-    round_to_bf16(values);
+    // round_to_bf16, element by element.
+    parallel_ranges(std::int64_t(count), kElementsPerWorker,
+                    [&](std::int64_t first, std::int64_t last) {
+                        for (auto i = first; i < last; ++i)
+                            values[i] = bf16_to_f32(f32_to_bf16(values[i]));
+                    });
     return values;
 }
 
 std::vector<std::uint16_t> to_bf16_bits(const std::vector<float>& values) {
     std::vector<std::uint16_t> bits(values.size());
-    for (std::size_t i = 0; i < values.size(); ++i) { bits[i] = f32_to_bf16(values[i]); }
+    parallel_ranges(std::int64_t(values.size()), kElementsPerWorker,
+                    [&](std::int64_t first, std::int64_t last) {
+                        for (auto i = first; i < last; ++i) bits[i] = f32_to_bf16(values[i]);
+                    });
     return bits;
 }
 
@@ -420,7 +476,10 @@ float round_to_f16(float value) { return f16_bits_to_f32(f32_to_f16_bits(value))
 
 std::vector<std::uint16_t> to_f16_bits(const std::vector<float>& values) {
     std::vector<std::uint16_t> bits(values.size());
-    for (std::size_t i = 0; i < values.size(); ++i) { bits[i] = f32_to_f16_bits(values[i]); }
+    parallel_ranges(std::int64_t(values.size()), kElementsPerWorker,
+                    [&](std::int64_t first, std::int64_t last) {
+                        for (auto i = first; i < last; ++i) bits[i] = f32_to_f16_bits(values[i]);
+                    });
     return bits;
 }
 
@@ -660,42 +719,22 @@ void encode_rotated_key_row(std::span<const float> source, std::size_t source_ba
     }
 }
 
-// Runs f(head, position) over every row of a cache. Each row writes only its own codes and
-// scales, so rows split over threads (up to eight, a quarter of the host's for ctest -j4) give the
-// same bytes: encoding every row of a max-context cache on one thread was most of the
-// softmax_attention runs' time (make_cache in 27 of 40 stack samples).
-template <typename F>
-void for_each_cache_row(std::int32_t heads, std::int32_t positions, F f) {
-    const std::int64_t rows = static_cast<std::int64_t>(heads) * positions;
-    const int share         = static_cast<int>(std::thread::hardware_concurrency() / 4);
-    const int threads       = rows < 512 ? 1 : std::clamp(share, 1, 8);
-    if (threads == 1) {
-        for (std::int64_t r = 0; r < rows; ++r)
-            f(static_cast<std::int32_t>(r / positions), static_cast<std::int32_t>(r % positions));
-        return;
-    }
-    std::vector<std::exception_ptr> errors(static_cast<std::size_t>(threads));
-    std::vector<std::thread> workers;
-    for (int w = 0; w < threads; ++w) {
-        workers.emplace_back([&, w] {
-            try {
-                for (std::int64_t r = w; r < rows; r += threads)
-                    f(static_cast<std::int32_t>(r / positions),
-                      static_cast<std::int32_t>(r % positions));
-            } catch (...) { errors[static_cast<std::size_t>(w)] = std::current_exception(); }
-        });
-    }
-    for (auto& worker : workers) worker.join();
-    for (const auto& e : errors)
-        if (e) std::rethrow_exception(e);
-}
-
+// make_cache encodes its rows with for_each_cache_row: each row writes only its own codes and
+// scales, so the bytes do not depend on the workers (encoding every row of a max-context cache on
+// one thread was most of the softmax_attention runs' time, make_cache in 27 of 40 stack samples).
 HostCache make_cache(const Geometry& geometry, KvCacheStorage storage, std::int32_t max_context,
                      std::uint32_t seed, float qk_amplitude = 0.25f) {
     const std::int32_t logical_capacity = align_up_page(max_context);
     const std::size_t elements          = cache_elements(geometry, logical_capacity);
-    std::vector<float> logical_k = make_bf16_values(elements, seed, -qk_amplitude, qk_amplitude);
-    std::vector<float> logical_v = make_bf16_values(elements, seed + 1u, -1.0f, 1.0f);
+    // K and V draw from their own seeded generators, so they draw on two threads.
+    std::vector<float> logical_k, logical_v;
+    parallel_ranges(2, 1, [&](std::int64_t first, std::int64_t last) {
+        for (auto plane = first; plane < last; ++plane)
+            if (plane == 0)
+                logical_k = make_bf16_values(elements, seed, -qk_amplitude, qk_amplitude);
+            else
+                logical_v = make_bf16_values(elements, seed + 1u, -1.0f, 1.0f);
+    });
 
     HostCache cache{geometry, storage, max_context, logical_capacity};
     if (storage == KvCacheStorage::BFloat16) {
@@ -906,15 +945,23 @@ std::vector<double> ideal_attention(const std::vector<float>& q, const HostCache
     const bool rotate_v = cache.storage == KvCacheStorage::Nvfp4Group16 ||
                           cache.storage == KvCacheStorage::Fp8KeyNvfp4Value;
     std::vector<double> query(q.begin(), q.end()), output(q.size());
-    if (rotate_q)
-        for (int token = 0; token < tokens; ++token)
-            for (int head = 0; head < geometry.q_heads; ++head) {
-                std::array<double, kHeadDim> row{};
-                for (int d = 0; d < kHeadDim; ++d) row[d] = q[q_index(geometry, head, d, token)];
-                normalized_hadamard_d256(row);
-                for (int d = 0; d < kHeadDim; ++d)
-                    query[q_index(geometry, head, d, token)] = row[d];
-            }
+    // Each (token, query head) row rotates on its own; rows split over workers.
+    const auto rotate_rows = [&](const auto& read, std::vector<double>& target) {
+        parallel_ranges(std::int64_t(tokens) * geometry.q_heads, 64,
+                        [&](std::int64_t first, std::int64_t last) {
+                            for (auto r = first; r < last; ++r) {
+                                const int token = int(r / geometry.q_heads);
+                                const int head  = int(r % geometry.q_heads);
+                                std::array<double, kHeadDim> row{};
+                                for (int d = 0; d < kHeadDim; ++d)
+                                    row[d] = read(q_index(geometry, head, d, token));
+                                normalized_hadamard_d256(row);
+                                for (int d = 0; d < kHeadDim; ++d)
+                                    target[q_index(geometry, head, d, token)] = row[d];
+                            }
+                        });
+    };
+    if (rotate_q) rotate_rows([&](std::size_t i) { return double(q[i]); }, query);
     // Decode the persistent public representation once. No private Q quantization, staging
     // casts, partial rounding or inverse-transform materialization enters this oracle.
     const auto index = [&](int d, int head, int pos) {
@@ -922,20 +969,18 @@ std::vector<double> ideal_attention(const std::vector<float>& q, const HostCache
     };
     std::vector<double> keys(std::size_t(visible) * geometry.kv_heads * kHeadDim),
         values(keys.size());
-    for (int head = 0; head < geometry.kv_heads; ++head)
-        for (int pos = 0; pos < visible; ++pos)
-            for (int d = 0; d < kHeadDim; ++d) {
-                keys[index(d, head, pos)]   = cache_value(cache, true, head, pos, d);
-                values[index(d, head, pos)] = cache_value(cache, false, head, pos, d);
-            }
-    // Amortize thread startup with enough dot-product work per worker. Bound CPU workers and
-    // their per-row score buffers; parallel rows retain each FP64 sum's original order.
-    constexpr unsigned kMaxOracleWorkers      = 8;
+    for_each_cache_row(geometry.kv_heads, visible, [&](int head, int pos) {
+        for (int d = 0; d < kHeadDim; ++d) {
+            keys[index(d, head, pos)]   = cache_value(cache, true, head, pos, d);
+            values[index(d, head, pos)] = cache_value(cache, false, head, pos, d);
+        }
+    });
+    // Amortize thread startup with enough dot-product work per worker; parallel rows retain each
+    // FP64 sum's original order.
     constexpr std::int64_t kProductsPerWorker = 1 << 20;
     const auto products = static_cast<std::int64_t>(tokens) * geometry.q_heads * visible * kHeadDim;
     const int workers   = static_cast<int>(std::min<std::int64_t>(
-        std::min(kMaxOracleWorkers, std::max(1u, std::thread::hardware_concurrency())),
-        std::max<std::int64_t>(1, products / kProductsPerWorker)));
+        host_workers(), std::max<std::int64_t>(1, products / kProductsPerWorker)));
     naive_dense_softmax_attention(
         op_geometry(geometry), tokens, visible, double(kAttentionScale),
         [&](int d, int head, int token) { return query[q_index(geometry, head, d, token)]; },
@@ -946,16 +991,8 @@ std::vector<double> ideal_attention(const std::vector<float>& q, const HostCache
             output[q_index(geometry, head, d, token)] = value;
         },
         workers);
-    if (rotate_v)
-        for (int token = 0; token < tokens; ++token)
-            for (int head = 0; head < geometry.q_heads; ++head) {
-                std::array<double, kHeadDim> row{};
-                for (int d = 0; d < kHeadDim; ++d)
-                    row[d] = output[q_index(geometry, head, d, token)];
-                normalized_hadamard_d256(row);
-                for (int d = 0; d < kHeadDim; ++d)
-                    output[q_index(geometry, head, d, token)] = row[d];
-            }
+    // In place: a row reads only its own elements before it writes them.
+    if (rotate_v) rotate_rows([&](std::size_t i) { return output[i]; }, output);
     return output;
 }
 
@@ -2925,32 +2962,51 @@ int verify_aligned_position_partition() {
 // monotonic in the window. Every window a call can reach must fit the capacity (on 128 SMs
 // W 11 at 2045 + 11 keys captured 22 splits and a one-column row ran 32).
 int verify_bf16_partition_capacity() {
-    const int sms = DeviceContext().multiprocessor_count();
-    int failures  = 0;
+    constexpr int kMaximumReports = 8;
+    const int sms                 = DeviceContext().multiprocessor_count();
     std::vector<int> widths;
     for (int width = 1; width <= 16; ++width) widths.push_back(width);
     for (int width : {32, 64, 128, 256}) widths.push_back(width);
-    for (const auto& geometry : kGeometries)
-        for (const int width : widths)
-            for (const int loose : {0, 1000})
-                for (int low = 1; low <= 70000; low += loose ? 7 : 1) {
-                    const auto high = static_cast<unsigned>(low + loose);
-                    const auto plan = ops::detail::make_bf16_kv_causal_plan(
-                        geometry.q_heads, geometry.kv_heads, width, 1,
-                        {static_cast<unsigned>(low), high}, sms);
-                    if (!plan.grouped()) continue;
-                    for (int window = std::max(1, low - (width - 1));
-                         window <= static_cast<int>(high); ++window) {
-                        const int splits = plan.partition.live(window).splits;
-                        if (splits <= plan.partition.capacity) continue;
-                        std::cout << "bf16 partition capacity " << geometry.name << " W=" << width
-                                  << " envelope " << low << ".." << high << ": window " << window
-                                  << " runs " << splits << " splits over a capacity of "
-                                  << plan.partition.capacity << "\n";
-                        if (++failures >= 8) return failures;
-                        break;
-                    }
+    // Each (geometry, width) sweep is independent: the sweeps run on workers (under this thread's
+    // route profile), each keeps its first reports, and they print in the serial order.
+    const bool invariant     = ops::invariant_routes_active();
+    const std::size_t sweeps = std::size(kGeometries) * widths.size();
+    std::vector<std::vector<std::string>> reports(sweeps);
+    const auto sweep = [&](const Geometry& geometry, int width, std::vector<std::string>& found) {
+        for (const int loose : {0, 1000})
+            for (int low = 1; low <= 70000; low += loose ? 7 : 1) {
+                const auto high = static_cast<unsigned>(low + loose);
+                const auto plan = ops::detail::make_bf16_kv_causal_plan(
+                    geometry.q_heads, geometry.kv_heads, width, 1,
+                    {static_cast<unsigned>(low), high}, sms);
+                if (!plan.grouped()) continue;
+                for (int window = std::max(1, low - (width - 1)); window <= static_cast<int>(high);
+                     ++window) {
+                    const int splits = plan.partition.live(window).splits;
+                    if (splits <= plan.partition.capacity) continue;
+                    found.push_back("bf16 partition capacity " + std::string(geometry.name) +
+                                    " W=" + std::to_string(width) + " envelope " +
+                                    std::to_string(low) + ".." + std::to_string(high) +
+                                    ": window " + std::to_string(window) + " runs " +
+                                    std::to_string(splits) + " splits over a capacity of " +
+                                    std::to_string(plan.partition.capacity) + "\n");
+                    if (found.size() >= kMaximumReports) return;
+                    break;
                 }
+            }
+    };
+    parallel_ranges(std::int64_t(sweeps), 1, [&](std::int64_t first, std::int64_t last) {
+        const ops::ScopedInvariantRoutes profile(invariant);
+        for (auto index = first; index < last; ++index)
+            sweep(kGeometries[std::size_t(index) / widths.size()],
+                  widths[std::size_t(index) % widths.size()], reports[std::size_t(index)]);
+    });
+    int failures = 0;
+    for (const auto& found : reports)
+        for (const auto& report : found) {
+            std::cout << report;
+            if (++failures >= kMaximumReports) return failures;
+        }
     return failures;
 }
 
@@ -2999,16 +3055,38 @@ struct ShapedCall {
     int row_keys = 0;
 };
 
+// The host caches of one context's shape calls: row b is make_cache(geometry, storage,
+// shaped_cache_keys(context) + 3, 9300 + 3b) for every call, so each row is encoded once per
+// context and every call uploads the same bytes it would have made itself (a 70K-key row took
+// seconds, and a context made some forty of them).
+class ShapedCaches {
+public:
+    ShapedCaches(const Geometry& geometry, KvCacheStorage storage, int context)
+        : geometry_(geometry), storage_(storage), keys_(shaped_cache_keys(context) + 3) {}
+
+    // The first `batch` rows.
+    std::span<const HostCache> rows(int batch) {
+        while (static_cast<int>(rows_.size()) < batch)
+            rows_.push_back(make_cache(geometry_, storage_, keys_,
+                                       9300u + 3u * static_cast<std::uint32_t>(rows_.size())));
+        return std::span<const HostCache>(rows_).first(static_cast<std::size_t>(batch));
+    }
+
+private:
+    const Geometry& geometry_;
+    KvCacheStorage storage_;
+    int keys_;
+    std::vector<HostCache> rows_;
+};
+
 std::vector<std::uint16_t> shaped_request_output(const Geometry& geometry, KvCacheStorage storage,
-                                                 int context, ShapedCall shape) {
+                                                 int context, ShapedCall shape,
+                                                 ShapedCaches& caches) {
     const int visible    = shaped_cache_keys(context);
     const int table_keys = std::max(visible, shape.row_keys);
     const ops::CausalAttentionExecutionEnvelope envelope{1U, std::uint32_t(table_keys)};
     const std::size_t q_column = std::size_t(kHeadDim) * geometry.q_heads;
-    std::vector<HostCache> initial;
-    for (int b = 0; b < shape.batch; ++b)
-        initial.push_back(make_cache(geometry, storage, visible + 3, 9300u + 3u * b));
-    BatchDeviceCache cache(initial, MappingPattern::Identity, table_keys);
+    BatchDeviceCache cache(caches.rows(shape.batch), MappingPattern::Identity, table_keys);
     DeviceContext device;
     const auto call = [&](int first, int width, int batch, int valid) {
         const std::size_t columns = std::size_t(width) * batch;
@@ -3057,12 +3135,12 @@ std::vector<std::uint16_t> shaped_request_output(const Geometry& geometry, KvCac
 // prefill reads it): `width` columns from position `context` over a KV row of `row_keys` keys
 // (ShapedCall::row_keys). The BF16 bits.
 std::vector<std::uint16_t> shaped_cached_output(const Geometry& geometry, KvCacheStorage storage,
-                                                int context, int width, int row_keys = 0) {
+                                                int context, int width, ShapedCaches& caches,
+                                                int row_keys = 0) {
     const int visible    = shaped_cache_keys(context);
     const int table_keys = std::max(visible, row_keys);
     const ops::CausalAttentionExecutionEnvelope envelope{1U, std::uint32_t(table_keys)};
-    DeviceCache cache(make_cache(geometry, storage, visible + 3, 9300u), MappingPattern::Identity,
-                      table_keys);
+    DeviceCache cache(caches.rows(1).front(), MappingPattern::Identity, table_keys);
     const auto q_bits = to_bf16_bits(shaped_columns(geometry, 0, width, 1).q);
     std::vector<std::int32_t> positions(width);
     for (int j = 0; j < width; ++j) positions[j] = context + j;
@@ -3109,8 +3187,9 @@ int run_shape_invariance_cases(KvCacheStorage storage) {
             const std::size_t q_column = std::size_t(kHeadDim) * geometry.q_heads;
             const std::string name     = std::string("shape invariance ") + geometry.name + " " +
                                      cache_name(storage) + " ctx=" + std::to_string(context) + " ";
+            ShapedCaches caches(geometry, storage, context);
             const auto output = [&](ShapedCall shape) {
-                return shaped_request_output(geometry, storage, context, shape);
+                return shaped_request_output(geometry, storage, context, shape, caches);
             };
             const auto alone = output({});
             const auto wide  = output({.width = 300, .valid = 300});
@@ -3134,11 +3213,11 @@ int run_shape_invariance_cases(KvCacheStorage storage) {
                     name + "W=4 B=1 vs W=" + std::to_string(width) + " B=" + std::to_string(batch),
                     output({.width = width, .batch = batch, .valid = 4}), alone);
             }
-            const auto cached = shaped_cached_output(geometry, storage, context, 300);
+            const auto cached = shaped_cached_output(geometry, storage, context, 300, caches);
             for (const int width : {1, 4, 130})
                 failures += verify_shape_prefix(
                     name + "cached W=" + std::to_string(width) + " vs W=300",
-                    shaped_cached_output(geometry, storage, context, width), cached);
+                    shaped_cached_output(geometry, storage, context, width, caches), cached);
             // The KV row (block-table width and envelope) a session sizes from free memory: rows of
             // 4K, 32K, 64K and 256K keys give the bytes of the cache's own row. The 32K row is the
             // control (its splits were 512 keys before and are now up to 32K keys); the splits
@@ -3160,7 +3239,8 @@ int run_shape_invariance_cases(KvCacheStorage storage) {
                 for (const int width : {1, 300})
                     failures += verify_shape_prefix(
                         row + "cached W=" + std::to_string(width) + " vs W=300",
-                        shaped_cached_output(geometry, storage, context, width, row_keys), cached);
+                        shaped_cached_output(geometry, storage, context, width, caches, row_keys),
+                        cached);
             }
         }
     return failures;
