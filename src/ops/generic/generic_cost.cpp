@@ -43,8 +43,14 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     // the s8 m16n8k32 from its m8n8k16, ops/common/mma.cuh), not on a chip that runs mma.sync on
     // its FP16 units (mma_slow: TU116 / TU117), and an int8 rate in the generation row (Volta has
     // none: its build composes the int8 MMA from dp4a). Whether the BF16 MMA is native says
-    // nothing about the int8 one (#781: Turing's W4A8, I8 and ggml MMQ went unpriced, and the
-    // register MMA was taken at up to 4.7x the fastest route's time).
+    // nothing about the int8 one (#781: Turing's W4A8 and ggml MMQ went unpriced, and the
+    // register MMA was taken at up to 4.7x the fastest route's time). The I8 tiles stay refused
+    // there (route_requires: ldmatrix and cp.async, sm_80 on). Turing's A8 prices carry
+    // efficiencies fitted on other generations (kW4a8Efficiency, kMmqEfficiency, its row's
+    // w4a8_eff_scale 1.0): on the RTX 2080 Ti A5 sweep they read 0.58 .. 0.75 of the measured
+    // time for ggml MMQ and 0.70 .. 0.74 for W4A8 (band geomeans), in the right order. OPEN: the
+    // chip fact they lack, MMQ's dequantize on 64 CUDA-core lanes a SM on Turing against 128 on
+    // Ampere and Ada (choice_constants.h kPrefillEta's Turing row).
     if (!d.features.mma_tensor || d.features.mma_slow || !allows_a8(problem.policy)) return;
     if (generation_row(d.major, d.minor).s8 <= 0) return;
     // A device without a roofline in its facts (an unknown id whose driver reports no clock or bus

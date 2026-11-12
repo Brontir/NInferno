@@ -20,8 +20,13 @@
 //         accumulation at the full 1024, a fact of the board, not of the compute capability; the
 //         facts have no per-board tensor rate (gpu_facts.json carries mma_slow, the one per-board
 //         MMA fact) and every reader of the kind (fp32acc_full_rate_of) is keyed by generation,
-//         so those boards are priced at 512 here. Volta (FP32 FMAs, mma_bf16_native false) keeps
-//         the fitted aggregate 1536.
+//         so those boards are priced at 512 here (TITAN RTX is segment geforce in gpu_facts.json,
+//         so not even the segment separates them). Turing's A8 prices (W4A8, MMQ, priced since
+//         #781) carry efficiencies fitted on other generations (route_cost_constants.h
+//         kW4a8Efficiency, kMmqEfficiency; w4a8_eff_scale 1.0 below): 0.58 .. 0.75 of the
+//         measured time for MMQ and 0.70 .. 0.74 for W4A8 on the RTX 2080 Ti A5 sweep. OPEN: the
+//         missing fact, MMQ's dequantize on 64 CUDA-core lanes a SM against 128 on Ampere and Ada.
+//         Volta (FP32 FMAs, mma_bf16_native false) keeps the fitted aggregate 1536.
 //   s8    the int8 MMA, 0 where the card has none (Volta, whose build composes it from dp4a).
 //   fp32_fma  not a tensor rate: the FP32 fused multiply-adds an SM issues per clock (the CUDA C++
 //         Programming Guide's arithmetic instruction throughput table, "32-bit floating-point

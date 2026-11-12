@@ -142,7 +142,11 @@ inline constexpr Holdout h_a8_refit = Holdout::quoted(
     "repository: each board held out in turn, time over the best route of either class 1.06..1.09 "
     "on the consumer boards (the A100, the minor-0 row's one board, 1.13 in sample only)",
     "generic_gemm.cpp route_tile comment",
-    "one aggregate for the A8 constants; the record gives no per-constant error");
+    "one aggregate for the A8 constants; the record gives no per-constant error. Turing (priced "
+    "since #781) carries them from these generations, no Turing board in the fit: on the RTX 2080 "
+    "Ti A5 sweep the W4A8 tiles read 0.70..0.74 and ggml MMQ 0.58..0.75 of the measured time "
+    "(band geomeans), not refit; OPEN: MMQ's dequantize on 64 CUDA-core lanes a SM on Turing "
+    "against 128 on Ampere and Ada");
 // The register MMA of the K-quant and codebook decoders (#499, #301).
 inline constexpr Holdout h_rmma_heavy_warps = Holdout::none(
     "RTX 3060 + RTX 3090 and RTX 5090 + RTX 5070 Ti, cost-model replica",
@@ -438,7 +442,8 @@ inline constexpr FittedHoldout kGenerationHoldouts[] = {
          "the "
          "full-rate rows (ga100, hopper, gb100) take the A100's 0.46, the one board of them",
          "one board for the rows that differ from 1.0: nothing left out, and not carried to a lent "
-         "row (fitted_route_scales: nullopt)",
+         "row (fitted_route_scales: nullopt); Turing's 1.0 is the consumer rows' value with no "
+         "Turing board in the fit (#781: W4A8 at 0.70..0.74 of the RTX 2080 Ti's measured time)",
          "core/generation.h comment (fitted constants)")},
     {kGeneration, "a16_cost_scale",
      Holdout::none(
