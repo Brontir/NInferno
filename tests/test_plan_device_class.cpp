@@ -22,7 +22,10 @@
 //   capacity; Qwen 3.5 has no query yet, its workspace is the formula): planned by the family
 //   planner, a ladder sized; the Gemma 4 query refused by the hidden device (the escape);
 // - the registered MoE route query (register_plan_moe_route_query) for the 26B-A4B's and the
-//   35B-A3B's routed layers at 1, 4 and 512 tokens under fast and exact activations: answered.
+//   35B-A3B's routed layers at 1, 4 and 512 tokens under fast and exact activations: answered;
+// - the registered prefill route query (register_plan_prefill_route_query, #613 PR-9) for a dense
+//   trunk's Q4_K, Q6_K and Q8_0 linears at 512 and 1024 tokens under fast and exact activations:
+//   answered.
 // Every answer is the same with the boards taken in the reverse order (no cache keeps the first
 // board's answer for the next), and each Gemma 4 subject's capacities and each dry run differ
 // between boards (the substitute is read). The Qwen 3.5 workspace planner (build_workspace_plan) is
@@ -59,6 +62,7 @@
 #include "product/plan/plan_quants.h"
 #include "runtime/engine/plan_dry_run.h"
 #include "runtime/engine/plan_moe_routes.h"
+#include "runtime/engine/plan_prefill_routes.h"
 #include "runtime/engine/plan_workspace.h"
 #include "support/named_board.h"
 #include "support/no_device.h"
@@ -683,6 +687,35 @@ std::map<std::string, std::string> run_board(const NamedBoard& b, const std::vec
             }
         }
     }
+    // The prefill route query (#613 PR-9) substitutes the board's class itself too (route_query):
+    // a dense trunk's Q4_K, Q6_K and Q8_0 linears (a gated pair among them) at prefill widths.
+    const auto& prefill_routes = rt::plan_prefill_route_query();
+
+    struct Linear {
+        const char* format;
+        double n, k;
+        bool gated;
+    };
+
+    const Linear linears[] = {{"ggml_q4_k", 4096, 4096, false},
+                              {"ggml_q6_k", 4096, 12288, false},
+                              {"q8_g32_fp16", 24576, 4096, true}};
+    for (const Linear& l : linears) {
+        for (const std::uint32_t tokens : {512U, 1024U}) {
+            for (const ActivationMode mode : {ActivationMode::Fast, ActivationMode::Exact}) {
+                const std::string what = std::string(l.format) + " prefill route at " +
+                                         std::to_string(tokens) +
+                                         (mode == ActivationMode::Exact ? " exact" : " fast");
+                guarded(what, [&] {
+                    const rt::PlanPrefillKernel kernel =
+                        prefill_routes(b.device, l.format, l.n, l.k, l.gated, tokens, mode);
+                    check(kernel != rt::PlanPrefillKernel::Unknown,
+                          b.name + ", " + what + ": answered");
+                    return std::to_string(static_cast<int>(kernel));
+                });
+            }
+        }
+    }
     return out;
 }
 
@@ -697,6 +730,7 @@ int main() {
     }
     rt::register_plan_workspace_queries();
     rt::register_plan_moe_route_query();
+    rt::register_plan_prefill_route_query();
     const std::vector<Subject> all      = subjects();
     const std::vector<NamedBoard> every = boards();
     check(every.size() >= 50, "the registry has its target boards");
