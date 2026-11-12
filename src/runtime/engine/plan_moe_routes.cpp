@@ -30,19 +30,6 @@ PlanExpertKernel kernel_of(moe::MoeStageKernel kernel) {
     return PlanExpertKernel::Unknown;
 }
 
-// The planned board's class, as gpu_key_of builds it (product/plan plan_speculation.cpp): the chip
-// from the PCI id or the SM count, the board table's facts. A synthetic class (no L2 size, no
-// driver clocks or bus width, the architecture's features not intersected with this build's):
-// the answer is moe()'s on that class, which can differ from the real card's where a rule reads
-// what the class leaves out. It only labels the step's basis (DECISIONS 79).
-DeviceClass class_of(const PlanDeviceFacts& device) {
-    DeviceClass d =
-        synthetic_device_class(device.pci_device_id, device.compute_capability / 10,
-                               device.compute_capability % 10, device.sms, 0, device.total_bytes);
-    d.facts = machine_facts_of(d);
-    return d;
-}
-
 } // namespace
 
 void register_plan_moe_route_query() {
@@ -85,9 +72,13 @@ void register_plan_moe_route_query() {
                 break;
             }
             shape.policy = models::effective_policy(recorded, activations);
-            const auto answer =
-                moe::moe_route_query(class_of(device), shape, static_cast<std::int32_t>(tokens),
-                                     false, activations == ActivationMode::Exact);
+            // On the planned board's class (plan_device_class, as gpu_key_of reads it): a
+            // synthetic class, so the answer is moe()'s on that class, which can differ from the
+            // real card's where a rule reads what the class leaves out. It only labels the step's
+            // basis (DECISIONS 79).
+            const auto answer = moe::moe_route_query(plan_device_class(device), shape,
+                                                     static_cast<std::int32_t>(tokens), false,
+                                                     activations == ActivationMode::Exact);
             if (!answer) { return std::nullopt; }
             return PlanExpertRoute{kernel_of(answer->stages.gate_up.kernel),
                                    kernel_of(answer->stages.down.kernel),

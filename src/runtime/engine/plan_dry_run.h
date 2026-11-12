@@ -27,7 +27,8 @@
 // either the free memory now less the weights or an idle card's (the VRAM less a declared driver
 // and desktop share). Facts that do not name the state (estimate_basis "approximate", and why)
 // take plan_rung_estimate's bytes. The started plan is the authority; the dry run says "estimate".
-// Pure: no CUDA, no files, no clock.
+// Pure: no files, no clock, and no CUDA but the class of a CUDA device the facts name that is not
+// this thread's current one (dry_run_plan).
 
 #include "models/qwen3_5/program/planning/state_shape.h"
 #include "ninferno/types.h"
@@ -39,6 +40,10 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace ninferno {
+struct DeviceClass;
+} // namespace ninferno
 
 namespace ninferno::models::qwen3_5::detail {
 struct SequencePlanImpl;
@@ -390,7 +395,18 @@ struct PlanDeviceFacts {
     // The free Device memory now, before any weights (a live device); nullopt: an idle card,
     // plan_idle_free_bytes.
     std::optional<std::uint64_t> free_bytes;
+    // The CUDA ordinal the facts were read from (product::plan_device_of_cuda); -1: none, a board
+    // known by its facts alone (a named board, NVML's stats).
+    int cuda_device = -1;
 };
+
+// The device class the plan reads for a board known by its facts (#829): the chip from the PCI id
+// or the SM count, the architecture's limits, the board table's facts, no L2 size or driver
+// clocks, the architecture's features not intersected with this build's. What a named board's
+// rung sizing (dry_run_plan), its speculation key (product::gpu_key_of) and its MoE routes
+// (register_plan_moe_route_query) read; a rule that reads what the class leaves out can answer
+// otherwise than on the real card.
+[[nodiscard]] DeviceClass plan_device_class(const PlanDeviceFacts& device);
 
 // What a CUDA context and the driver take of an idle card before any weights (declared, not
 // measured: 448-600 MiB with lazy loading on the lab's cards), and what a desktop the card drives
@@ -563,6 +579,11 @@ struct DryRunPlan {
 // as GenerationService sets them; normalized here as normalize_engine_options would for the
 // family). Never throws for a plan that does not fit; throws std::invalid_argument for options the
 // Engine refuses (validate_engine_options' checks the dry run can make).
+// The registered queries it sizes rungs with read the device class (device_class()): it answers
+// `device`'s for the call (ScopedDeviceClass, #829). A board known by its facts (cuda_device -1,
+// with its compute capability and SMs) answers plan_device_class; a CUDA device other than this
+// thread's current one (plan_device_of_cuda reads one without making it current) answers its own
+// class; the current device's is read as it is.
 [[nodiscard]] DryRunPlan dry_run_plan(const PlanModelFacts& model, const PlanDeviceFacts& device,
                                       EngineOptions options);
 
