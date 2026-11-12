@@ -81,9 +81,13 @@ target_sources(ninferno_gate_atlas_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/d
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_gate_atlas_test)
 
 # The route cost model's constants, each tagged fact / counted / fitted
-# (ops/generic/route_cost_constants.h); `--list` prints them. No GPU.
+# (ops/generic/route_cost_constants.h); `--list` prints them. The Counted ones are held to the
+# kernel families' records and the architecture table (core/arch_registry.h: the generated rows
+# of ninferno_core_host's include directory). No GPU.
 ninferno_add_test(ninferno_route_cost_constants_test LABELS host NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_cost_constants.cpp")
+target_include_directories(ninferno_route_cost_constants_test PRIVATE
+  $<TARGET_PROPERTY:ninferno_core_host,INTERFACE_INCLUDE_DIRECTORIES>)
 set_tests_properties(ninferno_route_cost_constants_test PROPERTIES LABELS host)
 
 # The holdout records of the fitted constants it covers (core/fitted_holdouts.h, the one mechanism;

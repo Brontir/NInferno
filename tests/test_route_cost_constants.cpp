@@ -5,8 +5,12 @@
 // instead of deriving them. The header's own text is read too: every constant it defines must be
 // in the descriptor and every listed one defined, so a new one cannot bypass the checks by being
 // left out. The Holdout record of each Fitted constant is in core/fitted_holdouts.h and checked by
-// ninferno_fitted_holdouts_test. No GPU.
+// ninferno_fitted_holdouts_test. Every Counted constant equals what it counts: a field of its
+// kernel family's record (ops/generic/family_facts.h, which the kernels static_assert), or for the
+// one that is no kernel's, the architecture table's row it is read off (kCountedSources). No GPU.
 
+#include "core/arch_registry.h"
+#include "ops/generic/family_facts.h"
 #include "ops/generic/route_cost_constants.h"
 
 #include <cmath>
@@ -19,9 +23,40 @@
 #include <string>
 #include <string_view>
 
+namespace g  = ninferno::ops::detail::generic;
 namespace rc = ninferno::ops::detail::generic::route_cost;
 
 namespace {
+
+// What each Counted constant counts. A new Counted constant names its source here, or the test
+// fails: a counted number is not typed by hand.
+struct CountedSource {
+    std::string_view name;
+    double value;
+};
+
+// The opt-in shared memory of a block on the parts the model reads it off (sm_86, sm_89, sm_120).
+constexpr double tile_shared_cap() {
+    const std::size_t cap = ninferno::arch_registry::find(86).smem_per_block_optin;
+    return ninferno::arch_registry::find(89).smem_per_block_optin == cap &&
+                   ninferno::arch_registry::find(120).smem_per_block_optin == cap
+               ? static_cast<double>(cap)
+               : 0.0;
+}
+
+constexpr CountedSource kCountedSources[] = {
+    {"rmma_step_k", g::kRegisterMmaFacts.mma_k},
+    {"rmma_heavy_step_k", g::kRegisterMmaFacts.step_k},
+    {"pipelined_stage_k", g::kStagedMmaFacts.stage_k},
+    {"pipelined_stage_bytes_per_row", g::kStagedMmaFacts.stage_row_bytes},
+    {"max_tile_shared_bytes", tile_shared_cap()},
+    {"w4a8_stage_bytes_per_row", g::kW4a8MmaFacts.stage_row_bytes},
+    {"w4a8_step_k", g::kW4a8MmaFacts.step_k},
+    {"i8_stage_k", g::kI8MmaFacts.stage_k},
+    {"mmq_tile_rows", g::kGgmlMmqFacts.tile_rows},
+    {"mmq_column_step", g::kGgmlMmqFacts.column_step},
+};
+static_assert(tile_shared_cap() > 0, "sm_86, sm_89 and sm_120 no longer share one block cap");
 
 const char* provenance_name(rc::Provenance p) {
     switch (p) {
@@ -139,6 +174,35 @@ int main(int argc, char** argv) {
             ++failures;
         }
         fitted += c.from == rc::Provenance::Fitted;
+    }
+    std::set<std::string_view> counted;
+    for (const auto& c : rc::kRouteCostConstants) {
+        if (c.from != rc::Provenance::Counted) continue;
+        counted.insert(c.name);
+        const CountedSource* source = nullptr;
+        for (const auto& s : kCountedSources) {
+            if (s.name == c.name) source = &s;
+        }
+        if (source == nullptr) {
+            std::fprintf(stderr,
+                         "%.*s is Counted but names no source in kCountedSources (its kernel "
+                         "family's record, ops/generic/family_facts.h)\n",
+                         static_cast<int>(c.name.size()), c.name.data());
+            ++failures;
+            continue;
+        }
+        const double value = c.values.size() == 1 ? c.values[0] : 0.0;
+        if (c.values.size() != 1 || value != source->value) {
+            std::fprintf(stderr, "%.*s: %g, its source counts %g\n",
+                         static_cast<int>(c.name.size()), c.name.data(), value, source->value);
+            ++failures;
+        }
+    }
+    for (const auto& s : kCountedSources) {
+        if (counted.count(s.name) != 0) continue;
+        std::fprintf(stderr, "kCountedSources names %.*s, which is no Counted constant\n",
+                     static_cast<int>(s.name.size()), s.name.data());
+        ++failures;
     }
     constexpr std::size_t kExpectedFitted = 26;
     if (fitted != kExpectedFitted) {

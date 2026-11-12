@@ -20,10 +20,14 @@ namespace {
 // instantiations here and the host table in generic_schedule_tables.h).
 
 // generic_shared_bytes.h's table of the staged layouts (staged_fits reads it with no CUDA header),
-// held equal to the layouts' own sizes.
+// held equal to the layouts' own sizes, and those to the family's record (family_facts.h) the
+// price reads: a stage of stage_k BF16 values of every row and token.
+static_assert(kStagedMmaFacts.stage_row_bytes == kStagedMmaFacts.stage_k * 2 && // BF16
+              kStagedMmaFacts.stage_token_bytes == kStagedMmaFacts.stage_row_bytes);
 #define NINFERNO_GENERIC_HOLDS(I, R, T, WM, WN, ST)                                                \
     static_assert(kStagedSharedBytes[I] ==                                                         \
-                  static_cast<int>(sizeof(StagedShared<StagedSchedule<R, T, WM, WN, ST>, ST>)));
+                  static_cast<int>(sizeof(StagedShared<StagedSchedule<R, T, WM, WN, ST>, ST>)));   \
+    static_assert(kStagedSharedBytes[I] == ST * (R + T) * kStagedMmaFacts.stage_row_bytes);
 NINFERNO_GENERIC_STAGED_SCHEDULES(NINFERNO_GENERIC_HOLDS)
 #undef NINFERNO_GENERIC_HOLDS
 

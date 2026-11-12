@@ -187,9 +187,8 @@ std::optional<KernelResources> ggml_resources(Route route, const Weight& w, Epil
     return out;
 }
 
-} // namespace
-
-std::optional<KernelResources> route_resources(Route route, const Weight& w, Epilogue epilogue,
+// route_resources' kernel, before its family's record is added.
+std::optional<KernelResources> described_route(Route route, const Weight& w, Epilogue epilogue,
                                                std::int32_t tokens, std::int32_t rows_asked,
                                                std::optional<bool> r8_prequantized,
                                                bool group_sums) {
@@ -280,6 +279,18 @@ std::optional<KernelResources> route_resources(Route route, const Weight& w, Epi
         }
     }
     if (out.threads == 0) return std::nullopt;
+    return out;
+}
+
+} // namespace
+
+std::optional<KernelResources> route_resources(Route route, const Weight& w, Epilogue epilogue,
+                                               std::int32_t tokens, std::int32_t rows_asked,
+                                               std::optional<bool> r8_prequantized,
+                                               bool group_sums) {
+    std::optional<KernelResources> out =
+        described_route(route, w, epilogue, tokens, rows_asked, r8_prequantized, group_sums);
+    if (out) out->family = family_facts(route.family);
     return out;
 }
 
