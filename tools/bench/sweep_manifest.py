@@ -100,6 +100,7 @@ def describe(path, root):
         "modified": datetime.datetime.fromtimestamp(modified,
                                                     datetime.timezone.utc).strftime("%Y-%m-%d"),
     }
+
     def short(r):
         return any(r.get(c) is None for c in header) or None in r
 
@@ -224,7 +225,10 @@ def summary(document):
         dirs = {}
         for f in document["files"]:
             if f["card"] == card:
-                dirs.setdefault(str(Path(f["path"]).parent.as_posix()), []).append(f)
+                # A directory that could not be listed is its own row, not its parent's.
+                unlisted = f.get("error", "").startswith("unlisted:")
+                where = f["path"] if unlisted else Path(f["path"]).parent.as_posix()
+                dirs.setdefault(where, []).append(f)
         t = document["totals"][card]
         lines += [f"### {card}", "",
                   f"{t['routes']} sweeps, {t['selected']} selections, {t['bytes'] / 1e6:.1f} MB"

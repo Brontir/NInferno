@@ -108,7 +108,7 @@ class Scan(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "good.csv").write_text(ROUTES_OLD)
-            # An unrelated CSV with bare CR line ends: no header csv reads, skipped.
+            # An unrelated CSV with bare CR line ends: its header is not route_tune's, skipped.
             (root / "cr.csv").write_bytes(b"a,b\rc,d\r")
             # A field past csv's limit: listed with its error.
             (root / "big.csv").write_text("format,compute,epilogue,n,k,T,route,median_us\n"
@@ -156,7 +156,8 @@ class Scan(unittest.TestCase):
             self.assertEqual(sorted(by), ["locked", "r.csv"])
             self.assertIn("Permission denied", by["locked"]["error"])
             text = sm.summary(sm.merge([("s", {"schema": sm.SCHEMA, "card": "rtx4090", "files": files})]))
-            self.assertIn("1 unreadable", text)
+            # The unlisted directory is its own row, named.
+            self.assertIn("| locked (1 unreadable) |", text)
 
     def test_digits(self):
         self.assertEqual(sm.significant_digits("12.3456"), 6)
