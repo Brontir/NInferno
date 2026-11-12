@@ -5,6 +5,9 @@
 
 #include <cctype>
 #include <charconv>
+#include <functional>
+#include <iterator>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -16,9 +19,17 @@ namespace ninferno::ops::detail::generic::kernel_facts {
 
 namespace {
 
+// One section family's rows (#785): its header lines and its rows by their key's spelling.
+struct Section {
+    SectionHeader header;
+    bool has_nvcc = false, has_kernels = false;
+    std::map<std::string, KernelFacts> rows; // by the key as the file spells it
+};
+
 struct Snapshot {
     SnapshotHeader header;
-    std::unordered_map<std::string, KernelFacts> rows; // by row_key
+    std::unordered_map<std::string, KernelFacts> rows;    // by row_key
+    std::map<std::string, Section, std::less<>> sections; // by family
 };
 
 // The columns of a schema 4 snapshot (tools/kernel_facts/kernel_facts.py COLUMNS), the order
@@ -31,9 +42,91 @@ constexpr std::string_view kColumns =
 // The length of the one shorter columns line kColumns begins with: the resources alone (schema 1,
 // up to "shared"). The older loop-without-schedule columns (schema 2) are refused.
 constexpr std::size_t kResourceColumnsLength = kColumns.find(" loops ");
+// The loop's columns of every schema 4 row (from "loops" on), and the pipe counts a section's
+// rows carry after them (kernel_facts.py Family.schema_columns, sass_counts.py PIPE_FIELDS).
+constexpr std::string_view kLoopColumns = kColumns.substr(kResourceColumnsLength);
+constexpr std::string_view kPipeColumns = " i2f i2fp ffma fmul fadd imad bar";
+
+// A section family's columns up to the resources (kernel_facts.py FAMILIES: "family", the key,
+// the resources), and how many key fields lead as text (the codec) before the integers.
+struct SectionFamily {
+    std::string_view name;
+    std::string_view head_columns;
+    int text_keys = 0;
+    int int_keys  = 0;
+};
+
+constexpr SectionFamily kSections[] = {
+    {"mmq", "family type J fallback prec registers stack local shared", 0, 4},
+    {"w4a8",
+     "family codec block_m block_n warps_m warps_n epilogue flavor stages producers registers "
+     "stack local shared",
+     1, 8},
+};
+static_assert(std::size(kSections) == std::size(kSectionFamilies));
+
+const SectionFamily* section_family(std::string_view name) {
+    for (const auto& f : kSections) {
+        if (f.name == name) return &f;
+    }
+    return nullptr;
+}
 
 // What a snapshot's rows carry past the resources, by its columns line.
 enum class Columns { Resources, Schedule };
+
+// The K loop's counts and the static schedule (schema 4) of a row, from `fields` at the loop's
+// first column; the pipe counts after them where `pipes`.
+LoopCounts read_loop(std::istringstream& fields, bool pipes, const std::string& line) {
+    LoopCounts l;
+    fields >> l.loops >> l.k_iter >> l.mma >> l.mma_ones >> l.mma_shape >> l.ldg >> l.ldg_bytes >>
+        l.ld >> l.ld_bytes >> l.ldgsts >> l.ldgsts_bytes >> l.lds >> l.lds_bytes >> l.sts >>
+        l.sts_bytes >> l.local >> l.local_bytes >> l.shfl >> l.int_alu >> l.fp_alu >> l.uniform >>
+        l.other >> l.total;
+    if (!fields) throw std::runtime_error("kernel facts: malformed loop: " + line);
+    StaticSchedule d;
+    fields >> d.stall_sum >> d.sb_waits >> d.sb_waits_local >> d.outside_total >> d.outside_stall >>
+        d.outside_waits >> d.outside_bar;
+    if (!fields) throw std::runtime_error("kernel facts: malformed schedule: " + line);
+    l.schedule = d;
+    if (pipes) {
+        PipeCounts p;
+        fields >> p.i2f >> p.i2fp >> p.ffma >> p.fmul >> p.fadd >> p.imad >> p.bar;
+        if (!fields) throw std::runtime_error("kernel facts: malformed pipe counts: " + line);
+        l.pipes = p;
+    }
+    return l;
+}
+
+// One row of a section family under its columns: the key's fields (spelled back with single
+// spaces as the map's key), the resources, the loop where the columns name it.
+void read_section_row(Section& s, const SectionFamily& f, Columns columns,
+                      std::istringstream& fields, const std::string& line) {
+    std::string key;
+    for (int i = 0; i < f.text_keys + f.int_keys; ++i) {
+        std::string v;
+        fields >> v;
+        if (!fields) throw std::runtime_error("kernel facts: malformed row: " + line);
+        if (i >= f.text_keys) {
+            int n         = 0;
+            const auto r  = std::from_chars(v.data(), v.data() + v.size(), n);
+            const bool ok = r.ec == std::errc{} && r.ptr == v.data() + v.size();
+            if (!ok) throw std::runtime_error("kernel facts: malformed key: " + line);
+        }
+        if (i != 0) key += ' ';
+        key += v;
+    }
+    KernelFacts k;
+    fields >> k.registers >> k.stack_bytes >> k.local_bytes >> k.static_shared_bytes;
+    if (!fields) throw std::runtime_error("kernel facts: malformed row: " + line);
+    if (columns != Columns::Resources) k.loop = read_loop(fields, true, line);
+    if (fields >> std::ws; !fields.eof()) {
+        throw std::runtime_error("kernel facts: fields past the columns': " + line);
+    }
+    if (!s.rows.emplace(std::move(key), k).second) {
+        throw std::runtime_error("kernel facts: a repeated row: " + line);
+    }
+}
 
 // One string per key: the row's spelling without the family column.
 std::string row_key(const RmmaKernelKey& k) {
@@ -49,9 +142,14 @@ std::string row_key(const RmmaKernelKey& k) {
 // A snapshot's text (tools/kernel_facts/kernel_facts.py: header lines `name value`, rows
 // `rmma <decoder> <5 schedule ints> <epilogue> <latency> <sums> <registers> <stack> <local>
 // <shared>`). A malformed line is a build error of the data, not a runtime condition: it throws.
+// After the register-MMA rows, the sections (#785): a `family <name>` line, then its
+// family_nvcc, family_kernels and family_columns lines and rows of that family alone.
 Snapshot parse(std::string_view text) {
     Snapshot s;
     std::optional<Columns> columns; // what the columns line, read before any row, promises
+    Section* section            = nullptr; // the section being read, after its `family` line
+    const SectionFamily* family = nullptr;
+    std::optional<Columns> section_columns;
     std::istringstream in{std::string(text)};
     for (std::string line; std::getline(in, line);) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -59,6 +157,48 @@ Snapshot parse(std::string_view text) {
         std::istringstream fields(line);
         std::string first;
         fields >> first;
+        std::string rest;
+        if (first == "family") {
+            fields >> rest;
+            family = section_family(rest);
+            if (family == nullptr || s.sections.count(rest) != 0 ||
+                (fields >> std::ws, !fields.eof())) {
+                throw std::runtime_error("kernel facts: unexpected or repeated section: " + line);
+            }
+            section = &s.sections[rest];
+            section_columns.reset();
+            continue;
+        }
+        if (section != nullptr) {
+            if (first == family->name) {
+                if (!section_columns) {
+                    throw std::runtime_error("kernel facts: a row before its columns: " + line);
+                }
+                read_section_row(*section, *family, *section_columns, fields, line);
+                continue;
+            }
+            std::getline(fields, rest);
+            if (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);
+            if (first == "family_nvcc") {
+                section->header.nvcc = rest;
+                section->has_nvcc    = !rest.empty();
+            } else if (first == "family_kernels") {
+                section->header.kernels = std::stoul(rest);
+                section->has_kernels    = true;
+            } else if (first == "family_columns") {
+                const std::string loop = std::string(family->head_columns) +
+                                         std::string(kLoopColumns) + std::string(kPipeColumns);
+                if (rest == loop)
+                    section_columns = Columns::Schedule;
+                else if (rest == family->head_columns)
+                    section_columns = Columns::Resources;
+                else
+                    throw std::runtime_error("kernel facts: unexpected family_columns: " + rest);
+            } else {
+                throw std::runtime_error("kernel facts: unexpected line in a section: " + line);
+            }
+            continue;
+        }
         if (first == "rmma") {
             if (!columns) {
                 throw std::runtime_error("kernel facts: a row before the columns line: " + line);
@@ -73,29 +213,13 @@ Snapshot parse(std::string_view text) {
             // Schema 4: the K loop's counts follow (tools/kernel_facts/sass_counts.py COLUMNS),
             // then the static schedule, on every row of a file whose columns line names them and
             // on none of a resources-only one's.
-            if (*columns != Columns::Resources) {
-                LoopCounts l;
-                fields >> l.loops >> l.k_iter >> l.mma >> l.mma_ones >> l.mma_shape >> l.ldg >>
-                    l.ldg_bytes >> l.ld >> l.ld_bytes >> l.ldgsts >> l.ldgsts_bytes >> l.lds >>
-                    l.lds_bytes >> l.sts >> l.sts_bytes >> l.local >> l.local_bytes >> l.shfl >>
-                    l.int_alu >> l.fp_alu >> l.uniform >> l.other >> l.total;
-                if (!fields) throw std::runtime_error("kernel facts: malformed loop: " + line);
-                StaticSchedule d;
-                fields >> d.stall_sum >> d.sb_waits >> d.sb_waits_local >> d.outside_total >>
-                    d.outside_stall >> d.outside_waits >> d.outside_bar;
-                if (!fields) {
-                    throw std::runtime_error("kernel facts: malformed schedule: " + line);
-                }
-                l.schedule = d;
-                f.loop = std::move(l);
-            }
+            if (*columns != Columns::Resources) f.loop = read_loop(fields, false, line);
             if (fields >> std::ws; !fields.eof()) {
                 throw std::runtime_error("kernel facts: fields past the columns': " + line);
             }
             k.latency = latency != 0;
             s.rows.emplace(row_key(k), f);
         } else {
-            std::string rest;
             std::getline(fields, rest);
             if (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);
             if (first == "arch")
@@ -122,6 +246,12 @@ Snapshot parse(std::string_view text) {
     if (s.header.arch.empty() || s.header.kernels != s.rows.size()) {
         throw std::runtime_error("kernel facts: a snapshot header disagrees with its rows");
     }
+    for (const auto& [name, sec] : s.sections) {
+        if (!sec.has_nvcc || !sec.has_kernels || sec.header.kernels != sec.rows.size()) {
+            throw std::runtime_error("kernel facts: the " + name +
+                                     " section's header disagrees with its rows");
+        }
+    }
     return s;
 }
 
@@ -146,6 +276,22 @@ const Snapshot* find(std::string_view arch) {
         if (s->header.arch == arch) return s.get();
     }
     return nullptr;
+}
+
+const Section* find_section(std::string_view arch, std::string_view family) {
+    const Snapshot* s = find(arch);
+    if (s == nullptr) return nullptr;
+    const auto it = s->sections.find(family);
+    return it == s->sections.end() ? nullptr : &it->second;
+}
+
+std::optional<KernelFacts> section_facts(std::string_view arch, std::string_view family,
+                                         const std::string& key) {
+    const Section* s = find_section(arch, family);
+    if (s == nullptr) return std::nullopt;
+    const auto it = s->rows.find(key);
+    if (it == s->rows.end()) return std::nullopt;
+    return it->second;
 }
 
 // A label's number and kind: "120a" -> 120, 'a'; "89" -> 89, 0.
@@ -185,6 +331,35 @@ std::optional<SnapshotHeader> snapshot_header(std::string_view arch) {
     const Snapshot* s = find(arch);
     if (s == nullptr) return std::nullopt;
     return s->header;
+}
+
+std::optional<SectionHeader> section_header(std::string_view arch, std::string_view family) {
+    const Section* s = find_section(arch, family);
+    if (s == nullptr) return std::nullopt;
+    return s->header;
+}
+
+std::vector<std::pair<std::string, KernelFacts>> section_rows(std::string_view arch,
+                                                              std::string_view family) {
+    std::vector<std::pair<std::string, KernelFacts>> v;
+    if (const Section* s = find_section(arch, family)) v.assign(s->rows.begin(), s->rows.end());
+    return v;
+}
+
+std::optional<KernelFacts> mmq_facts(std::string_view arch, const MmqKernelKey& key) {
+    return section_facts(arch, "mmq",
+                         std::to_string(key.type) + ' ' + std::to_string(key.J) + ' ' +
+                             (key.fallback ? "1" : "0") + ' ' + std::to_string(key.prec));
+}
+
+std::optional<KernelFacts> w4a8_facts(std::string_view arch, const W4a8KernelKey& key) {
+    std::string k = key.codec;
+    for (const int v : {key.block_m, key.block_n, key.warps_m, key.warps_n, key.epilogue,
+                        key.flavor, key.stages, key.producers}) {
+        k += ' ';
+        k += std::to_string(v);
+    }
+    return section_facts(arch, "w4a8", k);
 }
 
 std::optional<KernelFacts> rmma_facts(std::string_view arch, const RmmaKernelKey& key) {
