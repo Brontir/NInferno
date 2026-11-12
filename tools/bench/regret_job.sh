@@ -81,7 +81,9 @@ SOURCE=$(cache CMAKE_HOME_DIRECTORY)
   die "$BUILD was configured from '${SOURCE:-?}', not from this checkout ($ROOT)"
 TARGETS=(ninferno-serve ninferno_linear_generic_test ninferno_route_classes_test)
 [ -f "$BUILD/build.ninja" ] || die "$BUILD is not a Ninja build: its freshness cannot be checked"
-ninja -C "$BUILD" -n "${TARGETS[@]}" 2>&1 | grep -q "no work to do" ||
+NINJA=$(cache CMAKE_MAKE_PROGRAM)   # the ninja the build was configured with, not PATH's
+[ -n "$NINJA" ] && [ -x "$NINJA" ] || die "the build's CMAKE_MAKE_PROGRAM '${NINJA:-?}' is not runnable"
+"$NINJA" -C "$BUILD" -n "${TARGETS[@]}" 2>&1 | grep -q "no work to do" ||
   die "$BUILD is not up to date with this checkout: cmake --build $BUILD --target ${TARGETS[*]}"
 # nvcc: the build's own CUDA compiler (CMakeCache.txt), never the one on PATH.
 NVCC_BIN=$(cache CMAKE_CUDA_COMPILER)
@@ -132,6 +134,7 @@ for p in $(seq 1 "$PASSES"); do
 done
 kill "$SAMPLER" 2>/dev/null || true
 wait "$SAMPLER" 2>/dev/null || true
+trap - EXIT   # the sampler is gone: its PID must not be killed again at exit
 
 # 3. score
 "$PY" "$HERE/regret_collect.py" --selected "${SELECTED[@]}" --routes "${ROUTES[@]}" \

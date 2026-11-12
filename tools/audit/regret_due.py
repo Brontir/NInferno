@@ -192,6 +192,8 @@ def main(argv=None):
         reports = {p.as_posix(): json.loads(p.read_text(encoding="utf-8"))
                    for p in sorted((here / REPORTS).glob("*.json"))}
         boards = lab_boards(reports, chips)
+        if not boards:  # "not due" would be a silent wrong answer
+            raise ValueError(f"no lab board: no board's regret report in {REPORTS}")
 
         def table_text(p):
             text = git_show(root, head, p)
