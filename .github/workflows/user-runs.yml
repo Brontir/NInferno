@@ -1,0 +1,56 @@
+name: user-runs
+
+# Every file under docs/performance/user-runs/ is a user's measurement: untrusted input
+# (docs/maintainer/validation-protocol.md). This job runs on pull_request, never
+# pull_request_target: no secret reaches it and its token reads only. The validator is the base
+# branch's, so a pull request cannot change the rules its own files are judged by; the pull
+# request's files are read as JSON data only.
+on:
+  pull_request:
+    paths: ["docs/performance/user-runs/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: user-runs-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: The validator (base branch)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+      - name: The submitted files (pull request)
+        uses: actions/checkout@v4
+        with:
+          path: pr
+          persist-credentials: false
+          sparse-checkout: docs/performance/user-runs
+          sparse-checkout-cone-mode: true
+      - name: Only plain JSON files and the README
+        working-directory: pr/docs/performance/user-runs
+        run: |
+          bad=0
+          while IFS= read -r -d '' f; do
+            name=${f#./}
+            if [ -L "$f" ] || [ ! -f "$f" ]; then
+              echo "not a regular file: $name"; bad=1
+            elif [ "$name" != README.md ] && ! [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.json$ ]]; then
+              echo "not a result file (NAME.json at the top of the folder): $name"; bad=1
+            fi
+          done < <(find . -mindepth 1 ! -type d -print0)
+          if [ -n "$(find . -mindepth 1 -type d)" ]; then echo "no folders here"; bad=1; fi
+          exit $bad
+      - name: Validate every result file
+        run: |
+          shopt -s nullglob
+          files=(pr/docs/performance/user-runs/*.json)
+          if [ ${#files[@]} -eq 0 ]; then echo "no result files"; exit 0; fi
+          python3 -I -B base/tools/kit/validate.py "${files[@]}"
