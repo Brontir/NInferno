@@ -212,11 +212,11 @@ target_compile_definitions(ninferno_rmma_geometry_test PRIVATE
 #   alone, waived by name in ninferno_kernel_facts_lookup_test, which fails on any other) is
 #   compared in seconds, and another nvcc skips. The test checks this build's architecture alone,
 #   so a snapshot no stand builds (sm_80, sm_90, sm_100) is checked only by the release's
-#   package.sh (#758). The label is slow in every
-#   build, so `ctest -L host -LE slow` leaves it out even where it would be quick: a label that
-#   depended on the snapshot would make the fast set differ between builds.
+#   package.sh (#758). The label is slow in every build, so `ctest -L host -LE slow` leaves it out
+#   even where it would be quick: a label that depended on the snapshot would make the fast set
+#   differ between builds.
 # - ninferno_kernel_facts_lookup_test: every snapshot parses and carries the loop counts (schema
-#   4), the release engine of each lab capability is found, and every facts-priced golden board's
+#   4; sm_70 waived until #762), the release engine of each lab capability is found, and every facts-priced golden board's
 #   price reads facts; no GPU.
 # - ninferno_kernel_facts_live_test: on a GPU that runs this build's SASS, the running kernels'
 #   attributes and the driver's occupancy equal the snapshot and the pure occupancy.
