@@ -1,0 +1,10 @@
+q4k a16 store 4096 4096
+q4k a16 swiglu 12288 4096
+q6k a16 store 4096 12288
+q4k a16 store 1024 4096
+q4k a16 store 8192 4096
+q6k a16 store 248320 4096
+q4k a16 store 3840 15360
+q4k a16 swiglu 15360 3840
+q6k a16 store 3840 3840
+q4k a16 store 4096 3840
