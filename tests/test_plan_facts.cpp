@@ -857,6 +857,24 @@ int artifact_errors() {
     return check(false, "a missing artifact did not throw");
 }
 
+// A two-layer gpt-oss text config (E32 k4 H2880 F2880): the artifact tests' routed geometry.
+json gpt_oss_text_config() {
+    return {{"architectures", {"GptOssForCausalLM"}},
+            {"model_type", "gpt_oss"},
+            {"hidden_size", 2880},
+            {"num_hidden_layers", 2},
+            {"layer_types", {"sliding_attention", "full_attention"}},
+            {"sliding_window", 128},
+            {"num_attention_heads", 64},
+            {"num_key_value_heads", 8},
+            {"head_dim", 64},
+            {"intermediate_size", 2880},
+            {"num_local_experts", 32},
+            {"num_experts_per_tok", 4},
+            {"max_position_embeddings", 131072},
+            {"vocab_size", 201088}};
+}
+
 // An artifact's routed layers by kind (#616 step 7, plan_facts_of_directory): each bank's policy is
 // the one its Use records (what a start reads, models/common/weight_use.cpp); a layer of a bank
 // whose use records none has an unknown policy; the MTP layer's banks are not the trunk's.
@@ -864,20 +882,7 @@ int artifact_expert_layers() {
     namespace art = ninferno::artifact;
     int failures  = 0;
     art::Directory dir;
-    dir.components["text"].config = {{"architectures", {"GptOssForCausalLM"}},
-                                     {"model_type", "gpt_oss"},
-                                     {"hidden_size", 2880},
-                                     {"num_hidden_layers", 2},
-                                     {"layer_types", {"sliding_attention", "full_attention"}},
-                                     {"sliding_window", 128},
-                                     {"num_attention_heads", 64},
-                                     {"num_key_value_heads", 8},
-                                     {"head_dim", 64},
-                                     {"intermediate_size", 2880},
-                                     {"num_local_experts", 32},
-                                     {"num_experts_per_tok", 4},
-                                     {"max_position_embeddings", 131072},
-                                     {"vocab_size", 201088}};
+    dir.components["text"].config = gpt_oss_text_config();
     const std::string mx =
         std::string(art::layout_name(ninferno::default_weight_layout(ninferno::QType::MXFP4)));
     const auto bank = [&](const std::string& name, std::uint64_t rows, std::uint64_t bytes,
@@ -990,20 +995,7 @@ int artifact_prefill_policy() {
 
     const auto route = [](QType format, const std::vector<Bank>& banks) {
         art::Directory dir;
-        dir.components["text"].config      = {{"architectures", {"GptOssForCausalLM"}},
-                                              {"model_type", "gpt_oss"},
-                                              {"hidden_size", 2880},
-                                              {"num_hidden_layers", 2},
-                                              {"layer_types", {"sliding_attention", "full_attention"}},
-                                              {"sliding_window", 128},
-                                              {"num_attention_heads", 64},
-                                              {"num_key_value_heads", 8},
-                                              {"head_dim", 64},
-                                              {"intermediate_size", 2880},
-                                              {"num_local_experts", 32},
-                                              {"num_experts_per_tok", 4},
-                                              {"max_position_embeddings", 131072},
-                                              {"vocab_size", 201088}};
+        dir.components["text"].config      = gpt_oss_text_config();
         const ninferno::QuantLayout layout = format == QType::MXFP4
                                                  ? ninferno::default_weight_layout(format)
                                                  : ninferno::ggml_published_layout(format);
