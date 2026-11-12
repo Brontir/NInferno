@@ -215,19 +215,23 @@ struct PlanLinear {
 // (artifact::format_name and layout_name spellings; a GGUF's banks in the layout the converter
 // gives them, convert::expert_bank_layout Auto), each bank's K (a gate/up bank's: the router's
 // width, or a zero-padded one above it; a down bank's: the expert width), whether a gate is there
-// (a gated FFN; Nemotron-H's experts are up and down only), whether both banks keep int8
-// activations (convert::kept_block_policy AllowA8), the layers of this kind and their routed
-// bytes. What the MoE op's route query is asked for (set_plan_moe_route_query). A layer whose banks
-// are not read whole (a format not parsed, gate and up of two formats) is not listed: its bytes are
-// routed_expert_bytes less the listed ones'.
+// (a gated FFN; Nemotron-H's experts are up and down only), the experts' activation policy, the
+// layers of this kind and their routed bytes. What the MoE op's route query is asked for
+// (set_plan_moe_route_query). The policy is the layer's as a start reads it (ops::moe_policy of its
+// two banks'): an artifact's recorded one (each bank's Use: activation_policy), a GGUF bank's the
+// converter's for the encoding it keeps (convert::kept_block_policy); Unknown where a bank records
+// none. A layer whose banks are not read whole (a format not parsed, a bank missing, gate and up of
+// two formats) is one kind with empty formats (and Unknown policy): the query is not asked for it,
+// and its bytes are priced as an unknown route.
+enum class PlanExpertPolicy : std::uint8_t { Unknown, A16Only, AllowA8, AllowA4 };
 struct PlanExpertLayers {
     std::string gate_up_format, down_format;
     std::string gate_up_layout, down_layout;
     std::uint64_t gate_up_k = 0, down_k = 0;
-    bool gated           = true;
-    bool a8              = false;
-    std::uint32_t layers = 0;
-    std::uint64_t bytes  = 0;
+    bool gated              = true;
+    PlanExpertPolicy policy = PlanExpertPolicy::Unknown;
+    std::uint32_t layers    = 0;
+    std::uint64_t bytes     = 0;
 };
 
 // A separate Gemma 4 assistant's facts its own pass is sized on (gemma4::DrafterPass::

@@ -276,6 +276,10 @@ inline constexpr R8IssueRate kR8IssueRate[] = {
     {"ga10x", 2.87, 2},
 };
 
+// The kernel a routed layer's grouped stage runs at a decode width (ops/moe MoeStageKernel, as the
+// op's route query answers it: runtime::PlanExpertKernel). Unknown: not asked, or no answer.
+enum class ExpertKernel : std::uint8_t { Unknown, R8, RegisterMma, W4a8, VoltaHmma };
+
 // An MoE's routed banks at C concurrent rows (DECISIONS 65): the experts any of the rows routes to,
 // each for a row or two, many small reads apart from the dense GEMVs kRowsEta measures. Their share
 // of the DRAM rate (C = 1: kDramEta; linear in log2 C between points; beyond the last, the last's):
@@ -294,9 +298,6 @@ inline constexpr R8IssueRate kR8IssueRate[] = {
 // the register MMA above the R8 limit, an FP4-element bank from five rows, --activations exact;
 // both on R8 in a route-table band; W4A8; Volta's HMMA) takes its generation's measured pair,
 // transferred: no step of that pair was measured, and no share is derived for it here.
-// The kernel a routed layer's grouped stage runs at a decode width (ops/moe MoeStageKernel, as the
-// op's route query answers it: runtime::PlanExpertKernel). Unknown: not asked, or no answer.
-enum class ExpertKernel : std::uint8_t { Unknown, R8, RegisterMma, W4a8, VoltaHmma };
 struct MoeRoutedEta {
     std::string_view generation;
     ExpertKernel gate_up; // the kernels the measured steps' routed stages ran

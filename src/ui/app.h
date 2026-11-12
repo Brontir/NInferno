@@ -235,9 +235,13 @@ private:
     // The plan without the weights of a repository's quantization (all of them when `quant` is
     // empty, with the largest that fits) on GPU `gpu` for what a launch asks: the
     // "ninferno-dry-plan/1" document (product/plan/plan_quants.h), as ninferno-serve <repo> --plan
-    // --no-load --json would print it for an idle card of that GPU. Throws when the repository's
-    // shape cannot be read.
-    // The plan of a model converted here (My models), as its start plans it (product::plan_artifact).
+    // --no-load --json would print it for an idle card of that GPU, but for the queries
+    // ninferno-serve registers from the Ops this program does not link: a family's workspace
+    // (runtime::set_plan_workspace_query) and an MoE step's routes (set_plan_moe_route_query,
+    // DECISIONS 79: here the step keeps the measured route's basis, so an MoE estimate the server
+    // types Transferred can read Own here). Throws when the repository's shape cannot be read.
+    // The plan of a model converted here (My models), as its start plans it
+    // (product::plan_artifact).
     nlohmann::json artifact_plan_json(const std::filesystem::path& artifact, int gpu,
                                       const product::LaunchAsk& launch);
     nlohmann::json plan_json(const std::string& repo, const std::string& hub, int gpu,

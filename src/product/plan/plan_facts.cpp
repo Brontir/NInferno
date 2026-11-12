@@ -503,13 +503,21 @@ std::string format_of_ggml(std::uint32_t type) {
 // rule), A16 for the others. The trunk takes the route of the most of its banks' bytes. The banks'
 // 16-bit and float tensors (biases) do not decide.
 // It also keeps each layer's banks as stored (`layers`, #616 step 7): the gate/up bank's format,
-// layout and K, the down bank's, for the MoE op's route query (runtime::PlanExpertLayers).
+// layout, K and activation policy, the down bank's, for the MoE op's route query
+// (runtime::PlanExpertLayers).
 class ExpertRoutes {
 public:
+    // The activation policy a bank records: `kept` (a GGUF's encoding, which the converter keeps:
+    // convert::kept_block_policy of its format), else `recorded` (an artifact's Use; none:
+    // unknown).
+    struct Policy {
+        bool kept = false;
+        std::optional<artifact::ActivationPolicy> recorded;
+    };
     // `down`: the layer's down bank (else its gate, up or fused gate/up bank).
     void add(const std::string& layer, bool down, const std::string& format,
-             const std::string& layout, std::uint64_t k, std::uint64_t x_width,
-             std::uint64_t bytes) {
+             const std::string& layout, std::uint64_t k, std::uint64_t x_width, std::uint64_t bytes,
+             const Policy& policy) {
         if (format == "bf16" || format == "fp32" || format == "fp16" || format == "int32") { return; }
         Layer& l = layers_[layer];
         l.bytes += bytes;
@@ -528,6 +536,14 @@ public:
             const std::string stored = std::string(artifact::layout_name(kept));
             if (b.seen && (b.format != format || b.layout != stored || b.k != k)) {
                 b.whole = false;
+            }
+            // A bank read through several objects or uses takes the strictest of their policies.
+            const std::optional<artifact::ActivationPolicy> recorded =
+                policy.kept ? std::optional(convert::kept_block_policy(q)) : policy.recorded;
+            if (!recorded) {
+                b.policy_known = false;
+            } else if (!b.seen || static_cast<int>(*recorded) < static_cast<int>(b.policy)) {
+                b.policy = *recorded;
             }
             b.seen           = true;
             b.format         = format;
@@ -584,13 +600,13 @@ public:
                 kind.down_format    = l.down.format;
                 kind.down_layout    = l.down.layout;
                 kind.down_k         = l.down.k;
-                kind.a8             = l.a8;
+                kind.policy         = layer_policy(l.gate_up, l.down);
             }
             const auto same = [&](const runtime::PlanExpertLayers& o) {
                 return o.gate_up_format == kind.gate_up_format &&
                        o.gate_up_layout == kind.gate_up_layout && o.gate_up_k == kind.gate_up_k &&
                        o.down_format == kind.down_format && o.down_layout == kind.down_layout &&
-                       o.down_k == kind.down_k && o.a8 == kind.a8;
+                       o.down_k == kind.down_k && o.policy == kind.policy;
             };
             auto it = std::find_if(out.begin(), out.end(), same);
             if (it == out.end()) { it = out.insert(out.end(), kind); }
@@ -605,7 +621,24 @@ private:
         std::string format, layout;
         std::uint64_t k = 0;
         bool seen = false, whole = true;
+        artifact::ActivationPolicy policy = artifact::ActivationPolicy::A16Only;
+        bool policy_known                 = true;
     };
+
+    // The experts' policy as a start reads it (ops::moe_policy of the two banks': A16 unless both
+    // allow A8, then A4 where either allows it); Unknown where a bank records none.
+    static runtime::PlanExpertPolicy layer_policy(const Bank& gate_up, const Bank& down) {
+        using P = artifact::ActivationPolicy;
+        if (!gate_up.policy_known || !down.policy_known) {
+            return runtime::PlanExpertPolicy::Unknown;
+        }
+        if (gate_up.policy == P::A16Only || down.policy == P::A16Only) {
+            return runtime::PlanExpertPolicy::A16Only;
+        }
+        return gate_up.policy == P::AllowA4 || down.policy == P::AllowA4
+                   ? runtime::PlanExpertPolicy::AllowA4
+                   : runtime::PlanExpertPolicy::AllowA8;
+    }
     struct Layer {
         std::uint64_t bytes = 0, int8_bytes = 0;
         std::uint64_t mxfp4_bytes = 0; // of an MXFP4 layer: its banks in whole blocks
@@ -1104,7 +1137,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
                 // A gate or up bank reads x at the hidden width; a down bank its own K.
                 const bool down = t.name.find("ffn_down_exps.") != std::string::npos;
                 expert_routes.add(std::to_string(*block), down, format_of_ggml(t.type), "", t.ne[0],
-                                  down ? t.ne[0] : g.hidden, t.bytes);
+                                  down ? t.ne[0] : g.hidden, t.bytes, {.kept = true});
             }
             // The banks' weights only: a bank's per-expert scale (Gemma 4's ffn_down_exps.scale,
             // FP32) is not one of them.
@@ -1280,10 +1313,19 @@ void set_prompt_tail_calls_files_source(PromptTailCallsFilesSource source) {
 
 PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     const artifact::Reader reader(artifact);
-    const auto& dir = reader.directory();
+    auto out = plan_facts_of_directory(reader.directory(), artifact.string());
+    if (prompt_tail_calls_source()) {
+        if (const auto calls = prompt_tail_calls_of(artifact)) {
+            out.shape.prompt_tail_calls = *calls;
+        }
+    }
+    return out;
+}
+
+PlanSourceFacts plan_facts_of_directory(const artifact::Directory& dir, const std::string& where) {
     const auto text = dir.components.find("text");
     if (text == dir.components.end()) {
-        throw std::runtime_error(artifact.string() + ": the artifact has no text component");
+        throw std::runtime_error(where + ": the artifact has no text component");
     }
 
     // The vision encoder's tensors stay off the Device for a text plan: the objects only
@@ -1305,6 +1347,31 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         for (const auto& piece : binding.parts) {
             if (piece.object.index < reads_x.size()) { reads_x[piece.object.index] = 1; }
         }
+    }
+    // The activation policy each routed object's uses record (the converter's, convert/planner.cpp;
+    // the start reads it: models/common/weight_use.cpp), the strictest where several read it; none
+    // where a use records none (ExpertRoutes: the layer's policy unknown).
+    std::vector<ExpertRoutes::Policy> recorded(dir.objects.size());
+    std::vector<std::uint8_t> used(dir.objects.size(), 0);
+    for (const auto& [key, use] : dir.uses) {
+        if (!artifact::routed_expert_layer(use.parameter)) { continue; }
+        const auto binding = dir.bindings.find(use.parameter);
+        if (binding == dir.bindings.end()) { continue; }
+        for (const auto& piece : binding->second.parts) {
+            const std::size_t i = piece.object.index;
+            if (i >= recorded.size()) { continue; }
+            auto& r = recorded[i].recorded;
+            if (!use.activation_policy) {
+                used[i] = 2; // a use without a policy: unknown whatever the others say
+            } else if (used[i] == 0 || (used[i] == 1 && static_cast<int>(*use.activation_policy) <
+                                                            static_cast<int>(*r))) {
+                r       = use.activation_policy;
+                used[i] = 1;
+            }
+        }
+    }
+    for (std::size_t i = 0; i < recorded.size(); ++i) {
+        if (used[i] != 1) { recorded[i].recorded.reset(); }
     }
     // The input table's objects that the output head does not share (an untied table: a decode
     // step gathers one row of it).
@@ -1371,10 +1438,12 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         if (alone && m[Mtp]) { mtp_bytes += tensor->bytes; }
         if (routed[i]) {
             routed_bytes += tensor->bytes;
-            if (!tensor->shape.empty()) {
+            // The trunk's banks only, as a GGUF's (its NextN blocks apart): an MTP layer's banks
+            // run under MTP alone.
+            if (!tensor->shape.empty() && !(alone && m[Mtp])) {
                 const std::uint64_t k = tensor->shape.back();
                 expert_routes.add(*routed[i], reads_x[i] == 0, tensor->format, tensor->layout, k,
-                                  reads_x[i] ? hidden : k, tensor->bytes);
+                                  reads_x[i] ? hidden : k, tensor->bytes, recorded[i]);
             }
         }
         if (alone && m[Drafter]) {
@@ -1431,11 +1500,6 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     out.model.head_format         = bound.head_format;
     if (out.model.hidden != 0) { out.model.head_rows = bound.head_elements / out.model.hidden; }
     split_linears_by_format(out.model.linears, bound.roles);
-    if (prompt_tail_calls_source()) {
-        if (const auto calls = prompt_tail_calls_of(artifact)) {
-            out.shape.prompt_tail_calls = *calls;
-        }
-    }
     return out;
 }
 

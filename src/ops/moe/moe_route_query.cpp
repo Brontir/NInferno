@@ -75,10 +75,11 @@ std::optional<MoeRouteAnswer> moe_route_query(const DeviceClass& device, const M
         config.top_k = layer.top_k;
         if (layer.relu2) { config.activation = MoeActivation::Relu2; }
 
-        // moe()'s own split of the call (Volta's build), then the cascade on the call it runs.
+        // moe()'s own split of the call (Volta's build; never under the prefill profile), then
+        // the cascade on the call it runs.
         const std::int32_t split = moe_split_tokens(weights, config, tokens);
         const std::int32_t call  = split > 0 ? split : tokens;
-        MoePlanQuery q = moe_plan_query(weights, config, call, split > 0 ? false : prefill);
+        MoePlanQuery q           = moe_plan_query(weights, config, call, prefill);
         MoeRouteAnswer out;
         out.stages      = stage_routes(weights, q.plan);
         out.plan        = q.plan;

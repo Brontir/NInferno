@@ -242,12 +242,32 @@ choice::CardFacts choice_card_of(const spec::GpuKey& gpu) {
     return out;
 }
 
+namespace {
+
+// The op's stage kernel (ops/moe MoeStageKernel, as the registered query hands it on) as the
+// choice's table names it.
+choice::ExpertKernel expert_kernel_of(runtime::PlanExpertKernel kernel) noexcept {
+    switch (kernel) {
+    case runtime::PlanExpertKernel::Unknown:
+        return choice::ExpertKernel::Unknown;
+    case runtime::PlanExpertKernel::R8:
+        return choice::ExpertKernel::R8;
+    case runtime::PlanExpertKernel::RegisterMma:
+        return choice::ExpertKernel::RegisterMma;
+    case runtime::PlanExpertKernel::W4a8:
+        return choice::ExpertKernel::W4a8;
+    case runtime::PlanExpertKernel::VoltaHmma:
+        return choice::ExpertKernel::VoltaHmma;
+    }
+    return choice::ExpertKernel::Unknown;
+}
+
+} // namespace
+
 void with_moe_routes(choice::ModelFacts& model, const PlanSourceFacts& facts,
                      const runtime::PlanDeviceFacts& device) {
     const runtime::PlanMoeRouteQuery& query = runtime::plan_moe_route_query();
     if (!query || !model.moe() || facts.model.expert_layers.empty()) { return; }
-    static_assert(static_cast<int>(runtime::PlanExpertKernel::VoltaHmma) ==
-                  static_cast<int>(choice::ExpertKernel::VoltaHmma));
     // What the query reads of the model: its routed layers and their geometry.
     runtime::PlanModelFacts layers;
     layers.experts       = facts.model.experts;
@@ -273,8 +293,8 @@ void with_moe_routes(choice::ModelFacts& model, const PlanSourceFacts& facts,
             choice::MoeStepRoute step;
             step.share = static_cast<double>(kind.bytes);
             if (const auto route = query(device, layers, kind, rows, exact)) {
-                step.gate_up = static_cast<choice::ExpertKernel>(route->gate_up);
-                step.down    = static_cast<choice::ExpertKernel>(route->down);
+                step.gate_up = expert_kernel_of(route->gate_up);
+                step.down    = expert_kernel_of(route->down);
             }
             const auto same =
                 std::find_if(out.begin(), out.end(), [&](const choice::MoeStepRoute& s) {

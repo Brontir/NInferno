@@ -2053,10 +2053,17 @@ grouped stages run at the step's rows, on the planned board: `moe_route_query`
 `moe_plan_query`: the route tables, the class's A8 route, the R8 token limits; and Volta's split
 of a wide call, now one function, `moe_split_tokens`, that `moe()` calls too) over descriptor
 banks on the board's class. The plan facts keep the trunk's routed layers by kind
-(`PlanModelFacts::expert_layers`: each bank's format, stored layout and K); the engine registers
+(`PlanModelFacts::expert_layers`: each bank's format, stored layout and K, and the experts'
+activation policy: an artifact's the one its uses record, `Use::activation_policy`, which a start
+reads; a GGUF's `kept_block_policy` of its encodings; unknown where a use records none, and an
+unknown policy is no answer, the measured pair's share transferred, never the optimistic case;
+the MTP layer's banks are apart on both paths, as the runtime keeps them). The engine registers
 the query for the plan (`runtime::register_plan_moe_route_query`, as it registers the workspace
 queries); `product::with_moe_routes` asks it per kind and rows and hands the choice the routed
-bytes by kernel pair (`ModelFacts::moe_routes`). `kMoeRoutedEta`'s rows are keyed by the pair their
+bytes by kernel pair (`ModelFacts::moe_routes`). The class the plan asks on is the board's
+synthetic one (`synthetic_device_class` with the board's machine facts: no L2 size, clocks or
+bus, its features not intersected with the build's), so the answer is `moe()`'s on that class,
+not exactly the real card's; it labels the estimate's basis only and moves no number. `kMoeRoutedEta`'s rows are keyed by the pair their
 steps ran: R8 on the gate/up bank over the register MMA on the down bank. A step whose layers the op
 runs on another pair takes its generation's measured pair's share, transferred past one row; one
 row reads at kDramEta whatever the pair (as before).
@@ -2078,14 +2085,24 @@ kind against it is not derivable either. No value is set for a pair no step meas
 **What it changes.** No speed estimate moves (every pair takes the measured pair's share); the
 basis does where the op runs another pair past one row: on Ada and Blackwell, gpt-oss's MXFP4
 banks at 2 rows on the RTX 4090 and 4060 Ti (their route-table band: R8 on both stages) and from 5
-rows (the register MMA on both), any MoE above 8 rows, the IQ2_S layers the tables put on R8 on both stages at 2-4
-rows, every MoE under --activations exact; elsewhere the estimate was transferred already.
+rows (the register MMA on both), any MoE above 8 rows, IQ2_S gate/up banks the tables put on R8
+on both stages at 2-4 rows, every MoE under --activations exact; elsewhere the estimate was
+transferred already.
 `ninferno-serve --plan --no-load --json` on five local MoE GGUFs (gpt-oss-20b Q4_K_M, Qwen3.6
 35B-A3B MXFP4_MOE and UD-IQ2_XXS, Gemma 4 26B-A4B UD-IQ2_M, Nemotron 3.5 Lightning UD-Q4_K_XL)
 on the RTX 4090, 5090, 5070 Ti, 3090 and 4060 Ti at 1, 2, 4, 6 and 8 streams, before and after: 125
 plans, 64 with a choice, one changed: gpt-oss-20b on the RTX 4090 at 2 streams, its estimate
 Transferred (was Own), resolution 0.5447 (was 0.0226, no longer deciding); its choice (FP8 KV,
-fast activations) and its estimate (228.6 tok/s a stream) the same.
+fast activations) and its estimate (228.6 tok/s a stream) the same. The others the rule names did
+not move: gpt-oss-20b on the RTX 4060 Ti at 2 streams has no candidate that fits (no choice to
+label); Qwen3.6 UD-IQ2_XXS's banks are IQ2_XXS gate/up over IQ2_S (37 layers) or IQ3_S (3) down,
+which the RTX 4090 runs on the measured pair at 2 and 4 rows (still own); the 64 exact-activation
+alternatives the plans list were transferred before and stay so; gpt-oss-20b on the RTX 4090 at 6
+and 8 streams (the register MMA on both stages) was transferred already, and at 4 it runs the
+measured pair; on the 5090, 5070 Ti and 3090 every gpt-oss estimate was transferred already; 16
+streams give no plan (`--max-concurrency` takes 1-8). The comparison read each plan's chosen candidate, its worth,
+resolution and its basis, the rung, and the speed basis of every alternative the JSON lists
+(one per axis, not every candidate the choice scored).
 
 **Verification.** `ninferno_moe_plan_golden_test`: the query equals the cascade (plan, authority,
 stage kernels, evidence kind, the call moe() runs) at every board, layer, policy, profile and width
@@ -2100,6 +2117,8 @@ rows, the register MMA on both stages at eight, the invariant profile's under ex
 
 **Open.** A step on the register-MMA pair (gpt-oss-20b, or Qwen3.6 at 16 rows) on two cards of a
 generation would give that pair its own share; the gpt-oss step rows as regression rows once their
-windows are re-measured; ninferno-ui links no Ops and does not register the query (its plans keep
-the measured pair, as before); a hub row priced from another quantization's header has no layers
+windows are re-measured; ninferno-ui links no Ops and registers neither this query nor the
+workspace ones, so its plan document differs from `ninferno-serve --plan --no-load --json` for an
+MoE where the op runs another pair (gpt-oss-20b on the RTX 4090 at 2 streams: the UI's basis own,
+resolution 0.0226; serve's transferred, 0.5447): the estimate and the choice are the same; a hub row priced from another quantization's header has no layers
 of its own (the measured pair, as before).

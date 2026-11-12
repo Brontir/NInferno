@@ -47,6 +47,10 @@ namespace ninferno::convert {
 struct GgufFile;
 }
 
+namespace ninferno::artifact {
+struct Directory;
+}
+
 namespace ninferno::product {
 
 // What the configuration choice and the drafter plan read of the target beside the plan facts:
@@ -121,6 +125,11 @@ struct PlanSourceFacts {
 // From a .ninferno artifact: its text config and its tensors (Artifact). Throws
 // std::runtime_error when the file is no artifact.
 [[nodiscard]] PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact);
+// The same from an artifact's directory as read (no file, no prompt tail calls: those are the
+// frontend's, plan_facts_of_artifact asks them); `where` names it in an error. Throws
+// std::runtime_error when it has no text component.
+[[nodiscard]] PlanSourceFacts plan_facts_of_directory(const artifact::Directory& dir,
+                                                      const std::string& where);
 
 // Where plan_facts_of_artifact reads an artifact's prompt tail calls (PlanTargetShape): the
 // model's frontend lives above this library, so a program that links it registers its reader

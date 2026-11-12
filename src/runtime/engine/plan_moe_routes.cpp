@@ -30,7 +30,10 @@ PlanExpertKernel kernel_of(moe::MoeStageKernel kernel) {
 }
 
 // The planned board's class, as gpu_key_of builds it (product/plan plan_speculation.cpp): the chip
-// from the PCI id or the SM count, the board table's facts.
+// from the PCI id or the SM count, the board table's facts. A synthetic class (no L2 size, no
+// driver clocks or bus width, the architecture's features not intersected with this build's):
+// the answer is moe()'s on that class, which can differ from the real card's where a rule reads
+// what the class leaves out. It only labels the step's basis (DECISIONS 79).
 DeviceClass class_of(const PlanDeviceFacts& device) {
     DeviceClass d =
         synthetic_device_class(device.pci_device_id, device.compute_capability / 10,
@@ -62,13 +65,21 @@ void register_plan_moe_route_query() {
             shape.gate_up_k      = static_cast<std::int32_t>(layers.gate_up_k);
             shape.inter          = static_cast<std::int32_t>(layers.down_k);
             shape.relu2          = !layers.gated;
-            // The experts' policy (ops::moe_policy of the banks'): the int8 encodings' AllowA8
-            // (convert::kept_block_policy); an NVFP4 bank the converter's AllowA4 (a calibrated
-            // site's: the facts do not say whether its activation divisor is there); else A16.
-            const bool nvfp4  = shape.gate_up == QType::NVFP4 || shape.down == QType::NVFP4;
-            shape.policy      = layers.a8 ? ops::LinearPolicy::AllowA8
-                                : nvfp4   ? ops::LinearPolicy::AllowA4
-                                          : ops::LinearPolicy::A16Only;
+            // The experts' policy as the start reads it (PlanExpertLayers::policy); not known (a
+            // bank that records none): no answer, the step's route unknown.
+            switch (layers.policy) {
+            case PlanExpertPolicy::A16Only:
+                shape.policy = ops::LinearPolicy::A16Only;
+                break;
+            case PlanExpertPolicy::AllowA8:
+                shape.policy = ops::LinearPolicy::AllowA8;
+                break;
+            case PlanExpertPolicy::AllowA4:
+                shape.policy = ops::LinearPolicy::AllowA4;
+                break;
+            case PlanExpertPolicy::Unknown:
+                return std::nullopt;
+            }
             const auto answer = moe::moe_route_query(
                 class_of(device), shape, static_cast<std::int32_t>(tokens), false, exact);
             if (!answer) { return std::nullopt; }

@@ -202,6 +202,9 @@ ProvenancePin g_pins[] = {
 // cascade on this test's own weights: the same plan, authority, stage kernels and evidence kind at
 // every board, layer, policy, profile and width, on the call moe() runs (a Volta build splits a
 // call wider than its R8 limit: moe_split_tokens), and no answer exactly where the cascade throws.
+// The query builds its own descriptor banks from the shape; the expected side runs the cascade on
+// this test's weights (qw's packed descriptors), so a match also binds the query's descriptors to
+// the weights the goldens are dumped from.
 int g_query_mismatches = 0;
 
 void check_query(const DeviceClass& device, const moe::MoeLayerShape& shape,
@@ -215,8 +218,7 @@ void check_query(const DeviceClass& device, const moe::MoeLayerShape& shape,
         const ops::ScopedPrefillRoutes routes(prefill);
         const std::int32_t split = moe::moe_split_tokens(weights, config, t);
         const std::int32_t call  = split > 0 ? split : t;
-        const moe::MoePlanQuery p =
-            moe::moe_plan_query(weights, config, call, split > 0 ? false : prefill);
+        const moe::MoePlanQuery p   = moe::moe_plan_query(weights, config, call, prefill);
         const moe::MoeStageRoutes s = moe::stage_routes(weights, p.plan);
         want = moe::plan_name(p.plan) + " " + moe::authority_name(p.authority) + " " +
                s.gate_up.name + "," + s.down.name + " " + moe::evidence_kind_name(p.evidence.kind) +

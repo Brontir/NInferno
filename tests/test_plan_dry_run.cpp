@@ -2142,13 +2142,18 @@ void test_moe_routes() {
     mx.gate_up_format = mx.down_format = "mxfp4";
     mx.gate_up_layout = mx.down_layout = mx_layout;
     mx.gate_up_k = mx.down_k = 2880;
-    mx.a8                    = true;
+    mx.policy                = rt::PlanExpertPolicy::AllowA8;
     mx.layers                = 24;
     mx.bytes                 = 3000;
     rt::PlanExpertLayers unread;
-    unread.layers         = 1;
-    unread.bytes          = 1000;
-    f.model.expert_layers = {mx, unread};
+    unread.layers = 1;
+    unread.bytes  = 1000;
+    // The same banks with no recorded policy: the query is not answered (no guess at the policy).
+    rt::PlanExpertLayers unrecorded = mx;
+    unrecorded.policy               = rt::PlanExpertPolicy::Unknown;
+    unrecorded.layers               = 1;
+    unrecorded.bytes                = 500;
+    f.model.expert_layers           = {mx, unread, unrecorded};
     rt::PlanDeviceFacts device;
     device.name                                 = "RTX 4090";
     device.compute_capability                   = 89;
@@ -2169,7 +2174,8 @@ void test_moe_routes() {
         };
         const auto fast  = ninferno::ActivationMode::Fast;
         const auto exact = ninferno::ActivationMode::Exact;
-        check(has(4, fast, K::Unknown, K::Unknown, 1000), "MoE routes: a kind not read whole");
+        check(has(4, fast, K::Unknown, K::Unknown, 1500),
+              "MoE routes: a kind not read whole and a kind of no recorded policy, unknown");
         // A build without tensor mma.sync (Volta's) runs other kernels (moe_split_tokens).
         if (ninferno::build_features().mma_tensor) {
             check(has(4, fast, K::R8, K::RegisterMma, 3000),

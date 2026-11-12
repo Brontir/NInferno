@@ -10,6 +10,9 @@
 #include "convert/ggml_quants.h"
 #include "convert/gguf.h"
 #include "runtime/engine/plan_dry_run.h"
+#include "artifact/formats.h"
+#include "artifact/schema.h"
+#include "core/weight_view.h"
 
 #include <nlohmann/json.hpp>
 
@@ -18,6 +21,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -264,10 +268,12 @@ int gguf_qwen35() {
         failures += check(read->gate_up_format == "ggml_q4_k" && read->down_format == "ggml_q6_k" &&
                               !read->gate_up_layout.empty() && !read->down_layout.empty() &&
                               read->gate_up_k == 5120 && read->down_k == 512 && read->gated &&
-                              read->a8 && read->layers == 2 && read->bytes == 640,
-                          "routed layers: Q4_K gate/up over Q6_K down, two layers");
+                              read->policy == rt::PlanExpertPolicy::AllowA8 && read->layers == 2 &&
+                              read->bytes == 640,
+                          "routed layers: Q4_K gate/up over Q6_K down, two layers, int8 kept");
         failures +=
-            check(unread->layers == 1 && unread->bytes == 320 && unread->down_format.empty(),
+            check(unread->layers == 1 && unread->bytes == 320 && unread->down_format.empty() &&
+                      unread->policy == rt::PlanExpertPolicy::Unknown,
                   "routed layers: gate and up of two formats are not read whole");
     }
 
@@ -774,6 +780,79 @@ int artifact_errors() {
     return check(false, "a missing artifact did not throw");
 }
 
+// An artifact's routed layers by kind (#616 step 7, plan_facts_of_directory): each bank's policy is
+// the one its Use records (what a start reads, models/common/weight_use.cpp); a layer of a bank
+// whose use records none has an unknown policy; the MTP layer's banks are not the trunk's.
+int artifact_expert_layers() {
+    namespace art = ninferno::artifact;
+    int failures  = 0;
+    art::Directory dir;
+    dir.components["text"].config = {{"architectures", {"GptOssForCausalLM"}},
+                                     {"model_type", "gpt_oss"},
+                                     {"hidden_size", 2880},
+                                     {"num_hidden_layers", 2},
+                                     {"layer_types", {"sliding_attention", "full_attention"}},
+                                     {"sliding_window", 128},
+                                     {"num_attention_heads", 64},
+                                     {"num_key_value_heads", 8},
+                                     {"head_dim", 64},
+                                     {"intermediate_size", 2880},
+                                     {"num_local_experts", 32},
+                                     {"num_experts_per_tok", 4},
+                                     {"max_position_embeddings", 131072},
+                                     {"vocab_size", 201088}};
+    const std::string mx =
+        std::string(art::layout_name(ninferno::default_weight_layout(ninferno::QType::MXFP4)));
+    const auto bank = [&](const std::string& name, std::uint64_t rows, std::uint64_t bytes,
+                          std::optional<art::ActivationPolicy> policy) {
+        art::TensorObject t;
+        t.id     = name;
+        t.shape  = {32, rows, 2880};
+        t.format = "mxfp4";
+        t.layout = mx;
+        t.bytes  = bytes;
+        const art::ObjectHandle handle{dir.objects.size()};
+        dir.objects.emplace_back(t);
+        dir.object_index[name] = handle;
+        art::Binding b;
+        b.whole_object     = true;
+        b.elements         = 32 * rows * 2880;
+        b.parts            = {art::Part{handle, 0, b.elements}};
+        dir.bindings[name] = b;
+        art::Use use;
+        use.parameter         = name;
+        use.input             = "x";
+        use.activation_policy = policy;
+        dir.uses[{name, "x"}] = use;
+    };
+    const auto a8 = art::ActivationPolicy::AllowA8;
+    bank("text/layers/0/experts/gate_up", 5760, 1000, a8);
+    bank("text/layers/0/experts/down", 2880, 500, a8);
+    bank("text/layers/1/experts/gate_up", 5760, 1000, a8);
+    bank("text/layers/1/experts/down", 2880, 500, std::nullopt);
+    bank("mtp/layers/0/experts/gate_up", 5760, 1000, a8);
+    bank("mtp/layers/0/experts/down", 2880, 500, a8);
+    const auto layers   = pr::plan_facts_of_directory(dir, "a test directory").model.expert_layers;
+    std::uint32_t total = 0;
+    for (const rt::PlanExpertLayers& l : layers) { total += l.layers; }
+    const auto kind = [&](rt::PlanExpertPolicy policy) {
+        return std::find_if(layers.begin(), layers.end(), [&](const rt::PlanExpertLayers& l) {
+            return l.policy == policy && l.gate_up_format == "mxfp4" && l.down_format == "mxfp4";
+        });
+    };
+    const auto recorded = kind(rt::PlanExpertPolicy::AllowA8);
+    const auto unknown  = kind(rt::PlanExpertPolicy::Unknown);
+    failures += check(layers.size() == 2 && total == 2,
+                      "artifact routed layers: the trunk's two, not the MTP layer's");
+    failures += check(recorded != layers.end() && recorded->layers == 1 &&
+                          recorded->bytes == 1500 && recorded->gate_up_k == 2880 &&
+                          recorded->down_k == 2880 && recorded->gate_up_layout == mx,
+                      "artifact routed layers: the recorded AllowA8");
+    failures += check(unknown != layers.end() && unknown->layers == 1,
+                      "artifact routed layers: a use without a policy, unknown");
+    return failures;
+}
+
 } // namespace
 
 // A GGUF's linears take their tensors' formats by role: a recurrent layer's attn_qkv is its mixer's
@@ -817,7 +896,7 @@ int gguf_linear_formats() {
 int main() {
     const int failures = gguf_qwen35() + config_qwen35() + qwen35_moe() + gemma4() + gpt_oss() +
                          nemotron_h() + llama() + model_types() + boards() + artifact_errors() +
-                         gguf_linear_formats();
+                         artifact_expert_layers() + gguf_linear_formats();
     if (failures == 0) { std::cout << "plan facts OK\n"; }
     return failures == 0 ? 0 : 1;
 }
