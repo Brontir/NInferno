@@ -92,6 +92,7 @@ From a source tree or with options:
    - Each switch alone is scored against it (`--kld`): INT8, FP8, K8V4 and NVFP4 KV under exact, and the fast activations with BF16 KV.
    - Beside each term the run records the plan's term for the same switch (`--plan` with the switch pinned: its KLD, and whether a lab measured it).
    - It needs `ninferno-perplexity` beside `ninferno-serve` and the source tree's corpus: a build, not a release. The reference's logits file is deleted after the run.
+   - Lab-only for now: a build's file is refused by P1, so a `--kld` file passes the validator only with `--any-build`, never the CI job of `docs/performance/user-runs/` ([validation-protocol.md](validation-protocol.md)).
 
 ## The result file: `ninferno-user-run/1.minor`
 
@@ -186,7 +187,7 @@ tests the transfer rule, not this card's facts. Speculation and hard50 runs have
 
 | Rule | Rejects | When |
 |---|---|---|
-| R0 the file | the file | over the size cap (64 MiB) or not a regular file; not UTF-8 or not JSON, nested too deep, `NaN` or `Infinity`, a key given twice |
+| R0 the file | the file | over the size cap (64 MiB) or not a regular file; not UTF-8 or not JSON, nested too deep, `NaN`, `Infinity` or a number too large to be finite, a key given twice |
 | R0 schema | the file | not `ninferno-user-run/1.N` with a minor the validator knows (0 to 4), or `card` not an object, or `runs` not a list of objects; a key `measure.py` does not write (the file's, `kit`'s, `ninferno`'s, a run's by its mode, an unknown mode); a value of another type where a rule reads it |
 | P1 provenance | the file | with the release manifest: the build's version, its commit and the engine's SHA-256 are not one release's entry (a build of one's own, a modified engine, a file before 1.4) |
 | R1 identity | the file | the plan's device name differs from `nvidia-smi`'s |
@@ -223,12 +224,12 @@ A KLD term is a model constant: no card rule applies.
 
 | Rule | Rejects | When |
 |---|---|---|
-| K1 the reference | the run | the reference is not the exact route with BF16 KV and an FP32 state at context 4096 and stride 2048, or the corpus is not `perplexity-1m/quick` |
+| K1 the reference | the run | the reference is not the exact route with BF16 KV and an FP32 state at context 4096 and stride 2048, or the corpus is not the lab's: `<corpus_id>/quick`, the `corpus_id` of `eval/corpora/perplexity-1m/manifest.json` as `ninferno-perplexity` reports it |
 | K1 the term | the term | the scoring failed, or the KLD is not in 0..10 or the top-1 agreement not in 0..1 |
 
-Verdict: against the plan's term of the same switch. A term a lab measured: within ±15 % (two lab
-cards' terms of one switch agree within 13 %) it **confirms** the model's term, outside it
-**contradicts** it. A term no lab measured for the family (the plan borrows one, or has none) gives
+Verdict: against the plan's term of the same switch. A term a lab measured: within ±15 %
+(`KLD_TOLERANCE`, just above the up to 13 % two lab cards' terms of one switch differ by) it
+**confirms** the model's term, outside it **contradicts** it. These are reporting words only. A term no lab measured for the family (the plan borrows one, or has none) gives
 **no lab term**: the user's value is a candidate model constant, proxy evidence until a maintainer
 reproduces it.
 

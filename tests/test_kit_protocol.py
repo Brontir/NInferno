@@ -93,7 +93,7 @@ class Provenance(unittest.TestCase):
 class Shape(unittest.TestCase):
     def test_an_unknown_schema_version_is_refused(self):
         for schema in ("ninferno-user-run/1.9", "ninferno-user-run/2.0", "ninferno-user-run/1",
-                       "ninferno-user-run/1.4x", "", None):
+                       "ninferno-user-run/1.4x", "ninferno-user-run/1.04", "", None):
             with self.subTest(schema=schema):
                 d = released()
                 d["schema"] = schema
@@ -175,6 +175,45 @@ class Reading(unittest.TestCase):
         latin.write_bytes(b'{"x": "\xe9"}')
         with self.assertRaises(validate.Refused):
             validate.load_run(str(latin))
+
+    def test_a_number_too_large_is_refused(self):
+        # json reads 1e400 as inf without calling parse_constant.
+        with self.assertRaises(validate.Refused) as e:
+            validate.load_run(self.write("huge.json", '{"x": 1e400}'))
+        self.assertIn("not finite", str(e.exception))
+
+    def test_an_overflow_rejects_that_file_and_the_next_is_read(self):
+        bad = self.write("a.json", json.dumps(released()))
+        good = self.write("b.json", json.dumps(released()))
+        real = validate.validate
+
+        def overflow_once(doc, *args, **kw):
+            if not getattr(overflow_once, "done", False):
+                overflow_once.done = True
+                raise OverflowError("int too large to convert to float")
+            return real(doc, *args, **kw)
+        with mock.patch.object(validate, "validate", side_effect=overflow_once):
+            code, out = cli(bad, good, "--releases", str(self.manifest), "--json")
+        reports = json.loads(out)
+        self.assertEqual(code, 1)
+        self.assertTrue(reports["a.json"]["file"].startswith("rejected: R0 a malformed value (OverflowError)"))
+        self.assertEqual(reports["b.json"]["file"], "accepted")
+
+    def test_no_submitted_string_starts_a_line(self):
+        # A CI runner reads "::command::" at a line's start: every printed string stays on its line.
+        payload = "x\n::error::pwned\r\n::add-mask::y ::warning::z"
+        d = released()
+        d["runs"][0]["id"] = payload
+        d["runs"].append({"id": payload, "repo": "o/m", "quant": "Q", "mode": "plain", "error": payload})
+        code, out = cli(self.write("inj.json", json.dumps(d)), "--releases", str(self.manifest))
+        self.assertEqual(code, 0)
+        self.assertFalse([line for line in out.splitlines() if line.lstrip().startswith("::")], out)
+        self.assertIn("x\\n::error::pwned", out)
+        bad = released()
+        bad["schema"] = payload
+        code, out = cli(self.write("inj2.json", json.dumps(bad)), "--releases", str(self.manifest))
+        self.assertEqual(code, 1)
+        self.assertFalse([line for line in out.splitlines() if line.lstrip().startswith("::")], out)
 
     def test_a_value_of_another_type_is_refused_not_crashed(self):
         d = released()
@@ -265,9 +304,13 @@ class SwitchFactors(unittest.TestCase):
         self.assertTrue(factor(validate.validate(d), "KV fp8")["verdict"].startswith("not used"))
 
 
+# The lab's corpus as ninferno-perplexity names it in report.json: the manifest's own corpus_id.
+CORPUS_ID = json.loads((ROOT / "eval/corpora/perplexity-1m/manifest.json").read_text(encoding="utf-8"))["corpus_id"]
+
+
 def kld_run(terms, **reference):
     ref = {"activations": "exact", "kv": "bf16", "state": "f32", "context": 4096, "stride": 2048,
-           "corpus": "perplexity-1m/quick"}
+           "corpus": f"{CORPUS_ID}/quick"}
     ref.update(reference)
     return {"id": "q9", "repo": "org/m", "quant": "Q4_K_M", "mode": "kld", "reference": ref, "terms": terms}
 
@@ -305,6 +348,28 @@ class Kld(unittest.TestCase):
                         .startswith("rejected: K1 the reference"))
         self.assertTrue(self.rows(kld_run([term("kv", "fp8", 0.003, 0.0028)], corpus="own"))[0]["status"]
                         .startswith("rejected: K1 the corpus"))
+
+    def test_the_kits_own_kld_run_passes_k1(self):
+        # measure.kld_run with ninferno-perplexity's report shape (corpus.id from the manifest,
+        # corpus.mode): what the kit writes is what the validator expects.
+        def report(*args, kld_out=None, kld=None, **kw):
+            out = {"corpus": {"id": CORPUS_ID, "mode": "quick"}, "overall": {"perplexity": 5.0}}
+            if kld:
+                out["kld"] = {"overall": {"mean_kld": 0.0029, "top1_agreement": 0.986, "p99_kld": 0.05}}
+            return out
+        plan = {"value": "fp8", "kld": 0.0028, "measured": True, "transferred": False}
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(measure, "prepare", return_value=("m.ninferno", None)), \
+                mock.patch.object(measure, "perplexity", side_effect=report), \
+                mock.patch.object(measure, "plan_term", return_value=plan), \
+                contextlib.redirect_stdout(io.StringIO()):
+            run = measure.kld_run("serve", "ppl", {"id": "q9", "repo": "org/m", "quant": "Q4_K_M"}, 0, Path(d))
+        self.assertNotIn("error", run)
+        self.assertEqual(run["reference"]["corpus"], validate.kld_corpus())
+        rows = self.rows(run)
+        self.assertEqual(len(rows), len(measure.KLD_SWITCHES))
+        self.assertTrue(all(r["status"] == "accepted" for r in rows), rows)
+        self.assertTrue(rows[1]["verdict"].startswith("confirms"))
 
     def test_a_failed_or_out_of_range_term(self):
         rows = self.rows(kld_run([term("kv", "nvfp4", None, error="refused"),

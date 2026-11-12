@@ -14,6 +14,7 @@ executed or imported. Exit 1 when any file is rejected.
 """
 import argparse
 import json
+import math
 import os
 import re
 import statistics
@@ -640,8 +641,8 @@ def judge_routes(run, out, tolerance):
 
 
 def schema_minor(schema):
-    """The minor of a `ninferno-user-run/1.N` schema, None for any other spelling."""
-    m = re.fullmatch(re.escape(SCHEMA_MAJOR) + r"\.(\d{1,3})", str(schema))
+    """The minor of a `ninferno-user-run/1.N` schema, None for any other spelling (1.04 too)."""
+    m = re.fullmatch(re.escape(SCHEMA_MAJOR) + r"\.(0|[1-9]\d{0,2})", str(schema))
     return int(m.group(1)) if m else None
 
 
@@ -855,14 +856,22 @@ def judge_plain(doc, run, out, capped, tolerance):
 # The base a switch configuration's speed is held to: INT8 KV under the fast route, the codec the
 # KV read factors are measured against (choice_constants.h kKvReadFactor, kExactComputeEta).
 SWITCH_BASE = ("int8", "fast")
-# Two lab cards' KLD terms of one switch agree within 13 % (the KV codecs of Qwen3.5-9B, RTX 5070 Ti
-# and RTX 4070 Ti); a user's term within this of the lab's confirms the model constant (K2).
+# Two lab cards' KLD terms of one switch differ by up to 13 % (the KV codecs of Qwen3.5-9B, RTX 5070
+# Ti and RTX 4070 Ti); a user's term within this of the lab's is reported as confirming the term
+# (K2). A reporting word only: no term changes from it.
 KLD_TOLERANCE = 0.15
 # The reference every term is measured against (configuration-choice.md: the exact route, BF16 KV,
-# FP32 state), at ninferno-perplexity's context and stride, and the corpus the lab's terms are on
-# (ninferno-perplexity --quick).
+# FP32 state), at ninferno-perplexity's context and stride.
 KLD_REFERENCE = {"activations": "exact", "kv": "bf16", "state": "f32", "context": 4096, "stride": 2048}
-KLD_CORPUS = "perplexity-1m/quick"
+# The corpus the lab's terms are on: its manifest's corpus_id, as ninferno-perplexity reports it
+# (report.json corpus.id), in --quick mode (corpus.mode).
+KLD_MANIFEST = HERE.parents[1] / "eval/corpora/perplexity-1m/manifest.json"
+
+
+def kld_corpus():
+    """`<corpus_id>/quick` of the lab's corpus, None when its manifest is not beside the validator."""
+    corpus_id = (load_json(KLD_MANIFEST) or {}).get("corpus_id")
+    return f"{corpus_id}/quick" if isinstance(corpus_id, str) and corpus_id else None
 
 
 def judge_switch_factors(doc, runs, reports, tolerance):
@@ -927,8 +936,9 @@ def judge_kld(run, out):
         out["metrics"].append({"metric": "kld", "status": "rejected: K1 the reference is not the exact "
                                "route with BF16 KV and an FP32 state at context 4096, stride 2048"})
         return
-    if ref.get("corpus") != KLD_CORPUS:
-        out["metrics"].append({"metric": "kld", "status": f"rejected: K1 the corpus is not {KLD_CORPUS}"})
+    corpus = kld_corpus()
+    if corpus is None or ref.get("corpus") != corpus:
+        out["metrics"].append({"metric": "kld", "status": f"rejected: K1 the corpus is not the lab's ({corpus})"})
         return
     for term in run.get("terms") or []:
         if not isinstance(term, dict):
@@ -1023,6 +1033,15 @@ def _no_constant(name):
     raise Refused(f"R0 {name} is not JSON")
 
 
+def _finite(text):
+    """A JSON number as a float, refused when it is not finite: json reads 1e400 as inf without
+    calling parse_constant."""
+    value = float(text)
+    if not math.isfinite(value):
+        raise Refused(f"R0 the number {text[:24]} is not finite")
+    return value
+
+
 def load_run(path, max_bytes=None):
     """The file at `path` as JSON, nothing else: a regular file (no link) of at most `max_bytes`
     (MAX_FILE_BYTES), UTF-8, one JSON value without NaN or Infinity and without a key given twice.
@@ -1039,7 +1058,8 @@ def load_run(path, max_bytes=None):
         raise Refused(f"R0 the file is over the size cap ({max_bytes} bytes)")
     try:
         text = data.decode("utf-8")
-        return json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_no_constant)
+        return json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_no_constant,
+                          parse_float=_finite)
     except UnicodeDecodeError:
         raise Refused("R0 not UTF-8") from None
     except RecursionError:
@@ -1076,7 +1096,14 @@ def render(report):
                 lines.append(f"      {m['verdict']}")
             for note in m.get("notes", []):
                 lines.append(f"      note: {note}")
-    return "\n".join(lines)
+    return "\n".join(one_line(line) for line in lines)
+
+
+def one_line(text):
+    """`text` with every control character escaped (a newline as \\n): a submitted string (an id,
+    an error, the schema) never starts a line of its own, so it cannot be read as a CI runner's
+    command (::error::, ::add-mask::, ...)."""
+    return re.sub(r"[\x00-\x1f\x7f  \x85]", lambda m: repr(m.group())[1:-1], str(text))
 
 
 def main():
@@ -1095,14 +1122,16 @@ def main():
             report = validate(load_run(path), args.tolerance, releases=releases)
         except Refused as e:
             report = {"schema": None, "file": f"rejected: {e}", "capped": [], "runs": []}
-        except (AttributeError, TypeError, KeyError, IndexError, ValueError, ZeroDivisionError) as e:
-            # A value of another type than measure.py writes, somewhere the rules read it.
+        except (AttributeError, TypeError, KeyError, IndexError, ValueError, ZeroDivisionError,
+                OverflowError) as e:
+            # A value of another type or size than measure.py writes, somewhere the rules read it:
+            # this file is rejected, the next ones are still read.
             report = {"schema": None, "file": f"rejected: R0 a malformed value ({type(e).__name__})",
                       "capped": [], "runs": []}
         failed += report["file"].startswith("rejected")
         reports[os.path.basename(path)] = report
         if not args.json:
-            print((f"== {os.path.basename(path)}\n" if len(args.runs) > 1 else "") + render(report))
+            print((f"== {one_line(os.path.basename(path))}\n" if len(args.runs) > 1 else "") + render(report))
     if args.json:
         print(json.dumps(reports if len(args.runs) > 1 else reports.popitem()[1], indent=1))
     return 1 if failed else 0

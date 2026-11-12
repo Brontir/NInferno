@@ -1223,7 +1223,9 @@ def kld_run(serve, ppl, model, device, workdir):
         reference.unlink(missing_ok=True)
         ref = perplexity(ppl, artifact, "bf16", "exact", device, workdir / f"{model['id']}.kld.exact",
                          kld_out=reference)
-        run["reference"]["corpus"] = f"{(ref.get('corpus') or {}).get('id')}/quick"
+        # As ninferno-perplexity names it: the manifest's corpus_id and the mode (validate.py K1).
+        corpus = ref.get("corpus") or {}
+        run["reference"]["corpus"] = f"{corpus.get('id')}/{corpus.get('mode')}"
         run["reference"]["perplexity"] = (ref.get("overall") or {}).get("perplexity")
         for axis, value in KLD_SWITCHES:
             kv, activations = (value, "exact") if axis == "kv" else ("bf16", value)
