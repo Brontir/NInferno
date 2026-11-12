@@ -28,6 +28,7 @@
 #include "models/qwen3_5/program/planning/workspace_plan.h"
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/weight_input.h"
+#include "support/named_board.h"
 #include "support/no_device.h"
 
 #include <algorithm>
@@ -487,9 +488,9 @@ void every_board(const std::vector<Case>& cases) {
     std::vector<DeviceClass> boards;
     for (const GpuFactsRow& row : gpu_facts_table()) {
         if (!row.target) { continue; }
-        DeviceClass d = synthetic_device_class(row.pci_device_id, row.major, row.minor, row.sms,
-                                               static_cast<std::size_t>(row.l2_mib * (1 << 20)), 0);
-        d.facts       = machine_facts_of(d);
+        // The class the plan reads for the named board; the name (never read by a decision, not
+        // in device_class_key) only names it in the messages.
+        DeviceClass d = named_board_class(named_board_facts(row));
         d.name        = row.name;
         boards.push_back(std::move(d));
     }

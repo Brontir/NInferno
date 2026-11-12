@@ -5,51 +5,81 @@
 //
 // Every CUDA device is hidden from this process before the runtime starts (support/no_device.h):
 // a device read that the substitute does not answer (an unsubstituted device_class(), a PerDevice
-// cache keyed on the real ordinal, a direct runtime query) throws, as on a machine with no GPU.
-// For each target row of gpu_facts.json, under the row's class as the plan builds a named board's
-// (synthetic_device_class over plan_device_of_board's facts, as product::gpu_key_of and the
-// registered MoE route query build it):
-// - plan_workspace_estimate through the registered workspace query (register_plan_workspace_
-//   queries) for Gemma 4 31B (the trunk's linears and the head), Gemma 4 26B-A4B (the generic
-//   MoE's capacity) and Gemma 4 31B under MTP (its assistant's pass): each must answer from the
-//   start's capacity functions ("start"), but for a known escape it reaches (below);
-// - plan_rung_bytes, the family planner's KV, states, rings and graphs beside that workspace, for
-//   those and for Qwen3.6-27B and Qwen3.6-35B-A3B (the KV and context capacity);
-// - dry_run_plan over the board's own PlanDeviceFacts (the ladder, the margins, the fit);
-// - the registered MoE route query (register_plan_moe_route_query) for the 35B-A3B's and the
-//   26B-A4B's routed layers, at decode and at a prefill width.
-// Every answer is the same with the boards taken in the reverse order: no cache keeps the first
-// board's answer for the next. The Qwen 3.5 workspace planner (build_workspace_plan) is checked the
-// same way in tests/models/qwen3_5/test_workspace_inputs.cpp. CPU, no files.
+// cache keyed on the real ordinal, a direct runtime call) throws, as on a machine with no GPU. For
+// each target row of gpu_facts.json, under the class the plan builds for the named board
+// (support/named_board.h, over plan_device_of_board's facts):
+// - each capacity function the registered Gemma 4 workspace query calls (runtime/engine/
+//   plan_workspace.cpp gemma4_workspace: models::gemma4::target_op_bytes, generic_moe_bytes,
+//   gemma_drafter_pass), called directly for Gemma 4 31B, Gemma 4 26B-A4B and Gemma 4 31B under
+//   MTP at the columns a start sizes: the trunk's and the head's linear and GeGLU capacities, the
+//   generic MoE's (ops::moe_workspace_bytes over described banks) and the fused MoE's, sampling,
+//   the greedy acceptance, the assistant's BF16 projections and head. Each must answer; only
+//   ops::gemma4_attention_workspace_bytes may throw, and it must, with cudaErrorNoDevice (the
+//   known escape below);
+// - the registered workspace query itself (plan_workspace_estimate), plan_rung_bytes and
+//   dry_run_plan over the board's own PlanDeviceFacts, for the three Gemma 4 subjects and for
+//   Qwen3.6-27B and Qwen3.6-35B-A3B (the family planner's KV, states, rings, graphs and context
+//   capacity; Qwen 3.5 has no query yet, its workspace is the formula): planned by the family
+//   planner, a ladder sized; the Gemma 4 query refused by the hidden device (the escape);
+// - the registered MoE route query (register_plan_moe_route_query) for the 26B-A4B's and the
+//   35B-A3B's routed layers at 1, 4 and 512 tokens under fast and exact activations: answered.
+// Every answer is the same with the boards taken in the reverse order (no cache keeps the first
+// board's answer for the next), and each Gemma 4 subject's capacities and each dry run differ
+// between boards (the substitute is read). The Qwen 3.5 workspace planner (build_workspace_plan) is
+// checked the same way in tests/models/qwen3_5/test_workspace_inputs.cpp. CPU, no files.
 //
 // Known escapes (each kept by name and checked as it is, so the list only shrinks):
-// - Gemma 4's attention decode plan reads the host GPU's occupancy (kGemmaDecodePlanEscape);
-// - the product path installs no substitute: product::plan_artifact and runtime::dry_run_plan
-//   take the named board's PlanDeviceFacts, but the registered workspace query reads
-//   device_class() as it finds it, so `--plan-device` sizes Gemma 4's workspace for this
-//   machine's GPU (with none, the query is refused and the formula stands). A probe query shows
-//   the dry run of a named board asks it with no substituted class.
+// - #830: Gemma 4's attention decode plan reads the host GPU (kDecodePlanEscape, below). While it
+//   escapes, the registered Gemma 4 query never answers "start" under a substitute: the pieces
+//   above are what is checked of it.
+// - The product path installs no substitute: product::plan_artifact and runtime::dry_run_plan take
+//   the named board's PlanDeviceFacts, but the registered workspace query reads device_class() as
+//   it finds it, so `--plan-device` sizes Gemma 4's workspace for this machine's GPU (with none,
+//   the query is refused and the formula stands). A probe query shows the dry run of a named board
+//   asks it with no substituted class.
+//
+// The escaped calls print their CUDA_CHECK line to stderr; the test silences stderr around them
+// (QuietStderr) and writes its own failures to stdout.
 
 #include "artifact/formats.h"
+#include "core/cuda_error.h"
 #include "core/device_class.h"
 #include "core/machine_facts.h"
 #include "core/weight_view.h"
+#include "ninferno/ops/gemma4_attention.h"
+#include "ninferno/ops/gemma4_moe.h"
+#include "ninferno/ops/linear.h"
+#include "ninferno/ops/linear_swiglu.h"
+#include "ninferno/ops/moe.h"
+#include "ninferno/ops/sampling.h"
+#include "ninferno/ops/speculative_round.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "runtime/engine/plan_dry_run.h"
 #include "runtime/engine/plan_moe_routes.h"
 #include "runtime/engine/plan_workspace.h"
+#include "support/named_board.h"
 #include "support/no_device.h"
 
 #include <nlohmann/json.hpp>
 
+#include <fcntl.h>
+#ifdef _WIN32
+#    include <io.h>
+#else
+#    include <unistd.h>
+#endif
+
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <functional>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -65,15 +95,57 @@ constexpr std::uint64_t kGiB = std::uint64_t{1} << 30;
 
 int failures = 0;
 
+// To stdout: stderr is silenced around the escaped calls (QuietStderr).
 void check(bool condition, const std::string& what) {
     if (condition) { return; }
-    std::cerr << "FAIL: " << what << '\n';
+    std::cout << "FAIL: " << what << std::endl;
     ++failures;
 }
 
 bool starts_with(std::string_view text, std::string_view prefix) {
     return text.substr(0, prefix.size()) == prefix;
 }
+
+// While alive, stderr (descriptor 2) writes nowhere: what cuda_check prints for an escaped call.
+class QuietStderr {
+public:
+    QuietStderr() {
+        std::fflush(stderr);
+#ifdef _WIN32
+        saved_          = _dup(2);
+        const int empty = _open("NUL", _O_WRONLY);
+        if (empty >= 0) {
+            _dup2(empty, 2);
+            _close(empty);
+        }
+#else
+        saved_          = dup(2);
+        const int empty = open("/dev/null", O_WRONLY);
+        if (empty >= 0) {
+            dup2(empty, 2);
+            close(empty);
+        }
+#endif
+    }
+
+    ~QuietStderr() {
+        std::fflush(stderr);
+        if (saved_ < 0) { return; }
+#ifdef _WIN32
+        _dup2(saved_, 2);
+        _close(saved_);
+#else
+        dup2(saved_, 2);
+        close(saved_);
+#endif
+    }
+
+    QuietStderr(const QuietStderr&)            = delete;
+    QuietStderr& operator=(const QuietStderr&) = delete;
+
+private:
+    int saved_ = -1;
+};
 
 // ---- The models: config.json as published, the formats a GGUF's tensor table names.
 
@@ -178,24 +250,21 @@ struct Subject {
     rt::PlanModelFacts facts;
     EngineOptions options; // as ninferno-serve builds them (launch_options), then the speculation
     std::uint32_t concurrency = 1;
-    bool start_workspace      = false; // the family's workspace query answers ("start")
-    // A named known escape (below) the subject's workspace query reaches: the query is refused
-    // with the hidden device's error, and the formula stands. Empty: none.
-    std::string known_escape;
+    bool gemma                = false; // the registered Gemma 4 workspace query sizes it
 };
 
-// Known escape: Gemma 4's attention decode plan (ops/softmax_attention/gemma4/launch.cu,
-// gemma4_attention_decode_plan, which gemma4_attention_workspace_bytes and so models::gemma4::
-// target_op_bytes call) counts its splits from the resident CTAs of the decode kernel: it sets the
-// kernel's shared-memory opt-in (allow_dynamic_smem, cudaFuncSetAttribute on the current device)
-// and asks the runtime's occupancy (kernel_resident_ctas_per_sm,
-// cudaOccupancyMaxActiveBlocksPerMultiprocessor, cached by the real ordinal), then multiplies by
-// the substitute's SMs; the Volta SIMT decode (gemma4_volta_decode_resident_ctas) does the same.
-// Under a substituted board the splits, and so the partials' workspace, follow the host GPU's
-// occupancy; with no GPU the Gemma 4 query is refused and the formula stands. The facts' answer
-// (core/kernel_occupancy.h resident_ctas_per_sm) needs these kernels in the kernel-facts
-// snapshots, which carry none of them. Every Gemma 4 subject reaches it.
-constexpr std::string_view kGemmaDecodePlanEscape = "gemma4_attention_decode_plan";
+// #830, the known escape: Gemma 4's attention decode plan (ops/softmax_attention/gemma4/launch.cu,
+// gemma4_attention_decode_plan, which ops::gemma4_attention_workspace_bytes calls, and so
+// models::gemma4::target_op_bytes and drafter_pass_bytes) counts its splits from the resident CTAs
+// of the decode kernel: it sets the kernel's shared-memory opt-in (allow_dynamic_smem,
+// cudaFuncSetAttribute on the current device) and asks the runtime's occupancy
+// (kernel_resident_ctas_per_sm, cudaOccupancyMaxActiveBlocksPerMultiprocessor, cached by the real
+// ordinal), then multiplies by the substitute's SMs; the Volta SIMT decode
+// (gemma4_volta_decode_resident_ctas) does the same. Under a substituted board the splits, and so
+// the partials' workspace, follow the host GPU's occupancy; with no GPU it throws, the Gemma 4
+// query is refused and the formula stands. The facts' answer (core/kernel_occupancy.h
+// resident_ctas_per_sm) needs these kernels in the kernel-facts snapshots, which carry none.
+constexpr std::string_view kDecodePlanEscape = "#830 (gemma4_attention_decode_plan)";
 
 EngineOptions served(std::uint32_t context, std::uint32_t streams, SpeculativeBackend backend) {
     EngineOptions o =
@@ -212,16 +281,15 @@ std::vector<Subject> subjects() {
     std::vector<Subject> out;
     const rt::PlanModelFacts gemma31b =
         with_gguf_formats(facts_of(gemma_config(5376, 60, 32, 16, 4, 21504), 18 * kGiB));
-    const std::string escape(kGemmaDecodePlanEscape);
-    out.push_back({"Gemma 4 31B Q4_K", gemma31b, served(32768, 2, SpeculativeBackend::None), 2,
-                   true, escape});
+    out.push_back(
+        {"Gemma 4 31B Q4_K", gemma31b, served(32768, 2, SpeculativeBackend::None), 2, true});
     {
         json config                                    = gemma_config(2816, 30, 16, 8, 2, 2112);
         config["text_config"]["num_experts"]           = 128;
         config["text_config"]["top_k_experts"]         = 8;
         config["text_config"]["moe_intermediate_size"] = 704;
         out.push_back({"Gemma 4 26B-A4B Q4_K", with_gguf_formats(facts_of(config, 16 * kGiB)),
-                       served(16384, 1, SpeculativeBackend::None), 1, true, escape});
+                       served(16384, 1, SpeculativeBackend::None), 1, true});
     }
     {
         // Its assistant (a separate drafter, BF16 as published): the MTP round's pass.
@@ -232,8 +300,8 @@ std::vector<Subject> subjects() {
                                                          .head_formats       = {"bf16"},
                                                          .projection_formats = {"bf16"}};
         mtp.drafter_bytes      = kGiB;
-        out.push_back({"Gemma 4 31B Q4_K, MTP 3", mtp, served(32768, 1, SpeculativeBackend::Mtp), 1,
-                       true, escape});
+        out.push_back(
+            {"Gemma 4 31B Q4_K, MTP 3", mtp, served(32768, 1, SpeculativeBackend::Mtp), 1, true});
     }
     out.push_back({"Qwen3.6-27B Q4_K", facts_of(qwen_config(false), 16 * kGiB),
                    served(65536, 4, SpeculativeBackend::None), 4, false});
@@ -250,16 +318,6 @@ struct NamedBoard {
     DeviceClass substitute;
 };
 
-// The class the plan reads for a named board (product::gpu_key_of, plan_moe_routes.cpp class_of):
-// the chip from the PCI id or the SM count, the architecture's limits, the table's facts.
-DeviceClass class_of(const rt::PlanDeviceFacts& device) {
-    DeviceClass d =
-        synthetic_device_class(device.pci_device_id, device.compute_capability / 10,
-                               device.compute_capability % 10, device.sms, 0, device.total_bytes);
-    d.facts = machine_facts_of(d);
-    return d;
-}
-
 std::vector<NamedBoard> boards() {
     std::vector<NamedBoard> out;
     for (const GpuFactsRow& row : gpu_facts_table()) {
@@ -273,7 +331,209 @@ std::vector<NamedBoard> boards() {
         check(device.has_value() && device->name == row.name,
               row.name + ": --plan-device names it by " + id + " (" + error + ")");
         if (!device) { continue; }
-        out.push_back({row.name, *device, class_of(*device)});
+        // The facts the class reads are named_board_facts' (the Qwen planner test's boards).
+        const rt::PlanDeviceFacts own = named_board_facts(row);
+        check(device->pci_device_id == own.pci_device_id &&
+                  device->compute_capability == own.compute_capability && device->sms == own.sms &&
+                  device->total_bytes == own.total_bytes,
+              row.name + ": --plan-device's facts are named_board_facts'");
+        out.push_back({row.name, *device, named_board_class(*device)});
+    }
+    return out;
+}
+
+// ---- The Gemma 4 query's capacity functions, called one by one.
+
+// A weight described by its format and shape alone, in the converter's layout, at an address never
+// read (plan_workspace.cpp's DescribedWeight).
+struct DescribedWeight {
+    WeightParent parent;
+    WeightView view;
+    Weight weight;
+
+    DescribedWeight(QType qtype, std::uint64_t n, std::uint64_t k) {
+        parent.data                  = reinterpret_cast<const std::byte*>(std::uintptr_t{1} << 32);
+        const std::uint64_t shape[2] = {n, k};
+        parent.geometry              = weight_geometry(qtype, default_weight_layout(qtype), shape);
+        view.shape                   = {n, k};
+        view.parts                   = {WeightRegion{&parent, 0, n * k}};
+        weight                       = native_weight(view, 0.0F);
+    }
+
+    DescribedWeight(const DescribedWeight&)            = delete;
+    DescribedWeight& operator=(const DescribedWeight&) = delete;
+};
+
+// The policy a start's projection carries for a stored format (plan_workspace.cpp's policy_of).
+ops::LinearPolicy policy_of(QType qtype) {
+    if (qtype == QType::BF16 || qtype == QType::FP32) { return ops::LinearPolicy::A16Only; }
+    if (qtype == QType::NVFP4) { return ops::LinearPolicy::AllowA4; }
+    return ops::LinearPolicy::AllowA8;
+}
+
+struct Projection {
+    QType qtype{};
+    std::int32_t n = 0, k = 0;
+    ops::LinearPolicy policy = ops::LinearPolicy::A16Only;
+    bool geglu               = false;
+};
+
+// Every capacity function the Gemma 4 query calls for `s` (gemma4_workspace and what it calls),
+// at the columns a start sizes: one prefill chunk, the batch, an MTP round. Each answers (its
+// bytes, joined); ops::gemma4_attention_workspace_bytes must throw the hidden device's error
+// (#830), and no other piece may.
+std::string gemma_pieces(const NamedBoard& b, const Subject& s) {
+    const rt::PlanModelFacts& m = s.facts;
+    const auto chunk =
+        static_cast<std::int32_t>(std::min(s.options.prefill_chunk, s.options.max_context));
+    const auto batch   = static_cast<std::int32_t>(s.concurrency);
+    const bool mtp     = s.options.speculative.backend == SpeculativeBackend::Mtp;
+    const auto round   = static_cast<std::int32_t>(s.options.speculative.draft_tokens) + 1;
+    const auto context = static_cast<std::int32_t>(s.options.max_context);
+    std::vector<std::int32_t> columns = {1, batch, chunk};
+    if (mtp) { columns.push_back(batch * round); }
+    std::string out;
+    const auto piece = [&](const std::string& what, const std::function<std::size_t()>& f) {
+        try {
+            out += what + " " + std::to_string(f()) + "; ";
+        } catch (const std::exception& error) {
+            check(false, b.name + ", " + s.name + ", " + what + ": " + error.what());
+            out += what + " threw; ";
+        }
+    };
+
+    std::vector<Projection> trunk;
+    for (const rt::PlanLinear& l : m.linears) {
+        if (l.expert) { continue; }
+        const QType q = artifact::parse_format(l.format);
+        trunk.push_back({q, static_cast<std::int32_t>(l.n), static_cast<std::int32_t>(l.k),
+                         policy_of(q), l.role == rt::LinearRole::FfnUp && l.gated});
+    }
+    const QType head_q = artifact::parse_format(m.head_format);
+    const Projection head{head_q, static_cast<std::int32_t>(m.head_rows),
+                          static_cast<std::int32_t>(m.hidden), policy_of(head_q)};
+    const auto vocab = static_cast<std::int32_t>(m.vocab);
+    for (const std::int32_t c : columns) {
+        const std::string at = " at " + std::to_string(c);
+        for (const Projection& p : trunk) {
+            const std::string name = std::to_string(p.n) + "x" + std::to_string(p.k);
+            piece("linear " + name + at, [&] {
+                return ops::linear_workspace_capacity_bytes(p.qtype, p.n, p.k, p.policy, 1, c);
+            });
+            if (!p.geglu) { continue; }
+            for (const auto policy : {p.policy, ops::LinearPolicy::A16Only}) {
+                piece("geglu " + name + at, [&] {
+                    return ops::linear_geglu_workspace_capacity_bytes(p.qtype, p.n, p.k, policy, 1,
+                                                                      c);
+                });
+            }
+        }
+        for (const auto policy : {head.policy, ops::LinearPolicy::A16Only}) {
+            piece("head" + at, [&] {
+                return ops::linear_workspace_capacity_bytes(head.qtype, head.n, head.k, policy, 1,
+                                                            c);
+            });
+        }
+        if (m.experts != 0) {
+            piece("gemma4_moe" + at, [&] { return ops::gemma4_moe_workspace_bytes(1, c); });
+            // The generic MoE layer (plan_workspace.cpp generic_moe_bytes).
+            piece("generic moe" + at, [&] {
+                const auto e        = static_cast<std::uint64_t>(m.experts),
+                           h        = static_cast<std::uint64_t>(m.hidden);
+                std::uint64_t inter = 0;
+                for (const rt::PlanLinear& l : m.linears) {
+                    if (l.expert && !l.gated) { inter = static_cast<std::uint64_t>(l.k); }
+                }
+                const QType up_q   = artifact::parse_format(m.expert_up_formats.front());
+                const QType down_q = artifact::parse_format(m.expert_down_formats.front());
+                const auto router  = std::make_unique<DescribedWeight>(QType::BF16, e, h);
+                const auto up      = std::make_unique<DescribedWeight>(up_q, e * 2 * inter, h);
+                const auto down    = std::make_unique<DescribedWeight>(down_q, e * h, inter);
+                ops::MoeWeights weights;
+                weights.router        = router->weight;
+                weights.gate_up       = up->weight;
+                weights.down          = down->weight;
+                weights.expert_policy = ops::moe_policy(policy_of(up_q), policy_of(down_q));
+                ops::MoeConfig config;
+                config.top_k          = static_cast<std::int32_t>(m.experts_used);
+                config.scoring        = ops::MoeScoring::Softmax;
+                config.activation     = ops::MoeActivation::GeGluTanh;
+                config.gate_up_layout = ops::MoeGateUpLayout::Concatenated;
+                return ops::moe_workspace_bytes(weights, config, 1, c);
+            });
+        }
+    }
+    piece("sampling", [&] { return ops::sampling_workspace_capacity_bytes(vocab, 1, batch); });
+    if (mtp) {
+        piece("greedy acceptance", [&] {
+            return ops::speculative_accept_greedy_drafts_workspace_capacity_bytes(
+                vocab, 1, round - 1, 1, batch);
+        });
+    }
+    if (mtp && m.drafter_geometry) {
+        // The assistant's projections and head, A16 (plan_workspace.cpp gemma_drafter_pass).
+        const rt::PlanDrafterGeometry& d = *m.drafter_geometry;
+        const auto h                     = static_cast<std::int32_t>(d.hidden),
+                   bb                    = static_cast<std::int32_t>(m.hidden),
+                   ir                    = static_cast<std::int32_t>(d.intermediate),
+                   q_sl = static_cast<std::int32_t>(m.query_heads * m.sliding_key_dim),
+                   q_fu = static_cast<std::int32_t>(m.query_heads * m.full_key_dim);
+        const DescribedWeight gate_up(QType::BF16, 2 * static_cast<std::uint64_t>(ir), d.hidden);
+        const std::vector<Projection> projections = {
+            {QType::BF16, h, 2 * bb},
+            {QType::BF16, bb, h},
+            {QType::BF16, q_sl, h},
+            {QType::BF16, h, q_sl},
+            {QType::BF16, q_fu, h},
+            {QType::BF16, h, q_fu},
+            {QType::BF16, 2 * ir, h, ops::LinearPolicy::A16Only,
+             ops::linear_geglu_supports(gate_up.weight)},
+            {QType::BF16, h, ir},
+            {QType::BF16, static_cast<std::int32_t>(d.head_rows), h}};
+        for (const std::int32_t rows : {1, batch}) {
+            for (const Projection& p : projections) {
+                const std::string name = "assistant " + std::to_string(p.n) + "x" +
+                                         std::to_string(p.k) + " at " + std::to_string(rows);
+                piece(name, [&] {
+                    return ops::linear_workspace_capacity_bytes(p.qtype, p.n, p.k, p.policy, 1,
+                                                                rows);
+                });
+                if (p.geglu) {
+                    piece(name + " geglu", [&] {
+                        return ops::linear_geglu_workspace_capacity_bytes(p.qtype, p.n, p.k,
+                                                                          p.policy, 1, rows);
+                    });
+                }
+            }
+        }
+    }
+
+    // #830: the attention's capacity, of the target's sliding and full layers (and the
+    // assistant's, which takes the same geometry), reads the host GPU and throws with none.
+    struct Layer {
+        std::int32_t head_dim, kv_heads, window;
+    };
+
+    const std::vector<Layer> layers = {
+        {static_cast<std::int32_t>(m.sliding_key_dim),
+         static_cast<std::int32_t>(m.sliding_kv_heads_total / m.sliding_layers),
+         static_cast<std::int32_t>(m.window)},
+        {static_cast<std::int32_t>(m.full_key_dim),
+         static_cast<std::int32_t>(m.full_kv_heads_total / m.full_layers), 0}};
+    for (const Layer& l : layers) {
+        bool escaped = false;
+        try {
+            const QuietStderr quiet;
+            (void)ops::gemma4_attention_workspace_bytes(
+                l.head_dim, static_cast<std::int32_t>(m.query_heads), l.kv_heads,
+                ops::Gemma4AttentionEnvelope{static_cast<std::uint32_t>(context), 1}, l.window);
+        } catch (const CudaError& error) {
+            escaped = error.code() == cudaErrorNoDevice;
+        } catch (const std::exception&) {}
+        check(escaped, b.name + ", " + s.name + ", attention D=" + std::to_string(l.head_dim) +
+                           ": the known escape " + std::string(kDecodePlanEscape) +
+                           " reads the hidden device (if it no longer does, the escape is gone: "
+                           "remove it and require \"start\" of the Gemma 4 query)");
     }
     return out;
 }
@@ -304,19 +564,19 @@ std::string text_of(const std::optional<rt::PlanExpertRoute>& r) {
            std::to_string(static_cast<int>(r->down)) + " by " + r->authority;
 }
 
-// The workspace a subject's query answers under the board's class: the start's, or for a subject
-// that reaches a known escape, the query refused by the hidden device (the formula then stands).
+// The workspace the registered query answers under the board's class: the formula for Qwen 3.5
+// (no query yet); for Gemma 4 the query refused by the hidden device (#830, whose reach
+// gemma_pieces pins to the attention's capacity).
 void check_workspace(const NamedBoard& b, const Subject& s, const std::string& basis,
                      const std::string& where) {
     const std::string what = b.name + ", " + s.name + ", " + where;
-    if (!s.known_escape.empty()) {
+    if (s.gemma) {
         check(starts_with(basis, "formula: an Op's capacity query refused the facts") &&
                   basis.find("cudaErrorNoDevice") != std::string::npos,
-              what + ": the known escape " + s.known_escape +
-                  " is reached (if it is gone, remove it): '" + basis + "'");
-    } else if (s.start_workspace) {
-        check(starts_with(basis, "start"),
-              what + ": the workspace is the start's, not '" + basis + "'");
+              what + ": the Gemma 4 query is refused by the known escape " +
+                  std::string(kDecodePlanEscape) + ", not '" + basis + "'");
+    } else {
+        check(basis == "formula", what + ": the formula, not '" + basis + "'");
     }
 }
 
@@ -338,6 +598,13 @@ std::map<std::string, std::string> run_board(const NamedBoard& b, const std::vec
                                     .kv_pages      = 0,
                                     .cached_states = 1,
                                     .prefill_chunk = s.options.prefill_chunk};
+            // The registered Gemma 4 query reaches #830 on every call: its CUDA_CHECK lines are
+            // silenced.
+            std::optional<QuietStderr> quiet;
+            if (s.gemma) {
+                quiet.emplace();
+                guarded(s.name + " capacities", [&] { return gemma_pieces(b, s); });
+            }
             guarded(s.name + " workspace", [&] {
                 std::string basis;
                 const std::uint64_t bytes = rt::plan_workspace_estimate(
@@ -393,8 +660,9 @@ std::map<std::string, std::string> run_board(const NamedBoard& b, const std::vec
 
 int main() {
     if (!hide_cuda_devices()) {
-        std::cerr << "FAIL: a CUDA device is visible to the test (run it with "
-                     "CUDA_VISIBLE_DEVICES=-1)\n";
+        std::cout << "FAIL: a CUDA device is visible to the test (run it with "
+                     "CUDA_VISIBLE_DEVICES=-1)"
+                  << std::endl;
         return 1;
     }
     rt::register_plan_workspace_queries();
@@ -440,21 +708,31 @@ int main() {
         }
     }
 
-    // What each board's plan reads differs where the boards differ: the substitute is read.
-    std::map<std::string, std::size_t> distinct;
+    // The substitute is read: the Gemma 4 capacities (the routes the linear capacity queries take
+    // on each board's class) differ between boards, as each dry run does (the boards' memory).
+    // Printed: how many distinct answers each key takes over the boards.
+    std::map<std::string, std::set<std::string>> values;
     for (const auto& answers : forward) {
-        for (const auto& [what, answer] : answers) { (void)distinct[what + "|" + answer]; }
+        for (const auto& [what, answer] : answers) { values[what].insert(answer); }
     }
+    for (const auto& [what, answers] : values) {
+        std::cout << "  " << answers.size() << " distinct over the boards: " << what << '\n';
+        if (what.find(" capacities") != std::string::npos ||
+            what.find(" dry run") != std::string::npos) {
+            check(answers.size() > 1, what + ": differs between boards");
+        }
+    }
+
     std::cout << every.size() << " boards, " << all.size() << " models, "
-              << (forward.empty() ? 0 : forward.front().size()) << " answers a board, "
-              << distinct.size() << " distinct\n";
+              << (forward.empty() ? 0 : forward.front().size()) << " answers a board\n";
     if (!forward.empty()) {
         for (const auto& [what, answer] : forward.front()) {
-            std::cout << "  " << every.front().name << ", " << what << ": " << answer << '\n';
+            std::cout << "  " << every.front().name << ", " << what << ": " << answer.substr(0, 400)
+                      << '\n';
         }
     }
     if (failures != 0) {
-        std::cerr << failures << " failure(s)\n";
+        std::cout << failures << " failure(s)\n";
         return 1;
     }
     std::cout << "plan device class: pass\n";

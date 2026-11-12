@@ -58,7 +58,7 @@ ninferno_add_test(ninferno_qwen3_5_runtime_mechanisms_test LABELS host
 # 9B and 35B-A3B geometries on a substituted RTX 5090 and RTX 4060 Ti. No GPU, no files.
 ninferno_add_test(ninferno_qwen3_5_workspace_inputs_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_workspace_inputs.cpp"
-  LIBRARIES ninferno_model_runtime ninferno_core)
+  LIBRARIES ninferno_engine ninferno_model_runtime ninferno_core)
 target_include_directories(ninferno_qwen3_5_workspace_inputs_test PRIVATE
   ${PROJECT_SOURCE_DIR}/src)
 # And on every target board of gpu_facts.json with every CUDA device hidden (#615 W4): a device
