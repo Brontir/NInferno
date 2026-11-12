@@ -1,0 +1,274 @@
+{
+  "bands": {
+    "batch129": {
+      "best_ms": 57.435958,
+      "cases": 30,
+      "cases_over_5pct": 1,
+      "geomean_regret": 0.0052928212672054276,
+      "selected_ms": 57.66066,
+      "skipped": 0,
+      "tokens": 9600,
+      "weighted_regret": 0.003912218196134187,
+      "worst_regret": 0.051221272943276164
+    },
+    "decode": {
+      "best_ms": 32.3445259,
+      "cases": 80,
+      "cases_over_5pct": 13,
+      "geomean_regret": 0.01997057014215109,
+      "selected_ms": 32.664685399999996,
+      "skipped": 0,
+      "tokens": 360,
+      "weighted_regret": 0.00989841375291256,
+      "worst_regret": 0.13523280084575262
+    },
+    "narrow": {
+      "best_ms": 9.021063999999999,
+      "cases": 20,
+      "cases_over_5pct": 9,
+      "geomean_regret": 0.059912294212516315,
+      "selected_ms": 9.218982,
+      "skipped": 0,
+      "tokens": 560,
+      "weighted_regret": 0.021939540612947894,
+      "worst_regret": 0.26315789473684204
+    },
+    "verify": {
+      "best_ms": 8.5213505,
+      "cases": 20,
+      "cases_over_5pct": 10,
+      "geomean_regret": 0.06926383761896071,
+      "selected_ms": 8.7560961,
+      "skipped": 0,
+      "tokens": 280,
+      "weighted_regret": 0.027547933863300234,
+      "worst_regret": 0.24940664556962044
+    },
+    "wide": {
+      "best_ms": 24.564002,
+      "cases": 40,
+      "cases_over_5pct": 4,
+      "geomean_regret": 0.012176480872554407,
+      "selected_ms": 24.809952,
+      "skipped": 0,
+      "tokens": 3360,
+      "weighted_regret": 0.010012619279220036,
+      "worst_regret": 0.10810810810810811
+    }
+  },
+  "board": "rtx4060ti16gb",
+  "build_id": "regret-2579694de91b-rtx4060ti16gb",
+  "by_board_regime_authority": [
+    {
+      "authority": "r8-rules",
+      "board": "rtx4060ti16gb",
+      "cases": 10,
+      "evidence": {
+        "ranker": 10
+      },
+      "geomean_slowdown": 1.0016527212503654,
+      "max_regret": 0.009933774834437248,
+      "median_regret": 0.0,
+      "p95_regret": 0.009933774834437248,
+      "regime": "decode T<=4",
+      "ridge_t": 172.38,
+      "scored_cases": 10,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 10
+      }
+    },
+    {
+      "authority": "vec-rule",
+      "board": "rtx4060ti16gb",
+      "cases": 30,
+      "evidence": {
+        "ranker": 30
+      },
+      "geomean_slowdown": 1.0381355946518185,
+      "max_regret": 0.13523280084575262,
+      "median_regret": 0.031039145257896306,
+      "p95_regret": 0.12142709163846832,
+      "regime": "decode T<=4",
+      "ridge_t": 172.38,
+      "scored_cases": 30,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 30
+      }
+    },
+    {
+      "authority": "rmma-rule",
+      "board": "rtx4060ti16gb",
+      "cases": 30,
+      "evidence": {
+        "ranker": 30
+      },
+      "geomean_slowdown": 1.044853858325679,
+      "max_regret": 0.21342694566813503,
+      "median_regret": 0.019434628975264934,
+      "p95_regret": 0.1403988645998453,
+      "regime": "verify T5-16",
+      "ridge_t": 172.38,
+      "scored_cases": 30,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 30
+      }
+    },
+    {
+      "authority": "route-table",
+      "board": "rtx4060ti16gb",
+      "cases": 30,
+      "evidence": {
+        "borrowed": 12,
+        "measured": 18
+      },
+      "geomean_slowdown": 1.015644226915089,
+      "max_regret": 0.24940664556962044,
+      "median_regret": 0.0,
+      "p95_regret": 0.24286201727982837,
+      "regime": "verify T5-16",
+      "ridge_t": 172.38,
+      "scored_cases": 30,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 30
+      }
+    },
+    {
+      "authority": "cost-model",
+      "board": "rtx4060ti16gb",
+      "cases": 60,
+      "evidence": {
+        "ranker": 60
+      },
+      "geomean_slowdown": 1.0278446295573782,
+      "max_regret": 0.26315789473684204,
+      "median_regret": 0.0,
+      "p95_regret": 0.10769230769230731,
+      "regime": "T>=17 below ridge",
+      "ridge_t": 172.38,
+      "scored_cases": 60,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 60
+      }
+    },
+    {
+      "authority": "cost-model",
+      "board": "rtx4060ti16gb",
+      "cases": 30,
+      "evidence": {
+        "ranker": 30
+      },
+      "geomean_slowdown": 1.0052928212672054,
+      "max_regret": 0.051221272943276164,
+      "median_regret": 0.0,
+      "p95_regret": 0.040625612443416115,
+      "regime": "T>=17 above ridge",
+      "ridge_t": 172.38,
+      "scored_cases": 30,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 30
+      }
+    }
+  ],
+  "card": "RTX 4060 Ti 16GB",
+  "date": "2026-11-12T20:36:51Z",
+  "delta": {
+    "previous": null,
+    "threshold": 0.05
+  },
+  "device": "ad106:34sm",
+  "driver": "615.71.09",
+  "gpu": {
+    "applications_graphics_mhz": "[Requested functionality has been deprecated]",
+    "max_sm_mhz": 3105,
+    "name": "NVIDIA GeForce RTX 4060 Ti",
+    "persistence_mode": "Enabled",
+    "power_limit_w": 165,
+    "sm_mhz_during_sweep": {
+      "max": 2805,
+      "min": 2220,
+      "samples": 1369
+    }
+  },
+  "holdout": "board",
+  "nvcc": "13.4.92",
+  "nvcc_source": "CMAKE_CUDA_COMPILER",
+  "overrides": {
+    "caught_up": [
+      "q4k.a8.store.n4096.k4096.T5",
+      "q4k.a8.store.n4096.k4096.T6",
+      "q4k.a8.store.n4096.k4096.T7",
+      "q4k.a8.store.n4096.k4096.T8",
+      "q4k.a8.swiglu.n12288.k4096.T5",
+      "q4k.a8.swiglu.n12288.k4096.T6",
+      "q4k.a8.swiglu.n12288.k4096.T7",
+      "q4k.a8.swiglu.n12288.k4096.T8",
+      "q4k.a8.swiglu.n15360.k3840.T5",
+      "q4k.a8.swiglu.n15360.k3840.T6",
+      "q4k.a8.swiglu.n15360.k3840.T7",
+      "q4k.a8.swiglu.n15360.k3840.T8"
+    ],
+    "holds": [
+      "q4k.a8.store.n4096.k4096.T12",
+      "q4k.a8.store.n4096.k4096.T16",
+      "q4k.a8.swiglu.n12288.k4096.T12",
+      "q4k.a8.swiglu.n12288.k4096.T16",
+      "q4k.a8.swiglu.n15360.k3840.T12",
+      "q4k.a8.swiglu.n15360.k3840.T16"
+    ],
+    "resolution": 0.05,
+    "unscored": []
+  },
+  "passed": true,
+  "pci_device_id": "0x2805",
+  "qualification": "ninferno_linear_generic_test (NINFERNO_TEST_FORMATS=q4k,q6k) and ninferno_route_classes_test passed on this build and board, 2026-11-12T20:36:51Z",
+  "revision": "2579694de91b3da94b4a008338f237a2b97b9e3d",
+  "schema": "ninferno-regret-run/1",
+  "selection_report_sha256": "112639878e3734aeb5e94a49c0582d25209d4b9ab99aaeb2077dce6ef682a1b8",
+  "selector_revision": "2579694de91b3da94b4a008338f237a2b97b9e3d",
+  "summary": {
+    "cases": 190,
+    "geomean_slowdown": 1.0251938007826213,
+    "max_regret": 0.26315789473684204,
+    "median_regret": 0.0,
+    "p95_regret": 0.1146496815286624,
+    "scored_cases": 190,
+    "single_pass_cases": 0,
+    "statuses": {
+      "complete": 190
+    }
+  },
+  "sweep": {
+    "passes": 3,
+    "route_policy": "the build's default",
+    "samples": 7,
+    "shapes": "tools/bench/data/route_regret/shapes.txt",
+    "shapes_sha256": "4e065f66903b787db66d5ca1f7a68006803019fae5574b64e35a64ac2a8618de"
+  },
+  "table_exit": {
+    "answered_by": {
+      "carried": 12,
+      "priced": 90,
+      "rules": 70,
+      "table": 18
+    },
+    "cases": 190,
+    "caught_up": 12,
+    "exit_share": 0.6666666666666666,
+    "holds": 6,
+    "overrides": 18,
+    "resolution": 0.05,
+    "share": {
+      "carried": 0.06315789473684211,
+      "priced": 0.47368421052631576,
+      "rules": 0.3684210526315789,
+      "table": 0.09473684210526316
+    },
+    "unscored": 0
+  }
+}
