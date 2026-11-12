@@ -427,10 +427,10 @@ inline constexpr FittedHoldout kChoiceHoldouts[] = {
 
 inline constexpr FittedHoldout kGenerationHoldouts[] = {
     {kGeneration, "bf16 (the emulated rows)",
-     Holdout::none("Turing's and Volta's BF16 rate: the fitted aggregate 1536 (the unit "
-                   "route_tune's fit used, "
-                   "where the BF16 MMA is emulated)",
-                   "one aggregate for two generations; no board left out",
+     Holdout::none("Volta's BF16 rate: the fitted aggregate 1536 (the unit route_tune's fit used, "
+                   "where the BF16 MMA is emulated in FP32 FMAs); Turing's row holds the spec "
+                   "rate 512 since #781",
+                   "one aggregate for one generation; no board left out",
                    "core/generation.h at the rate comment")},
     {kGeneration, "w4a8_eff_scale",
      Holdout::none(

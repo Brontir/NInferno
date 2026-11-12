@@ -251,21 +251,51 @@ bool has_prefill_rows(std::string_view generation) noexcept {
                        [&](const PrefillEta& row) { return row.generation == generation; });
 }
 
+namespace {
+
+const GenerationRow* generation_named(std::string_view name) noexcept {
+    for (const GenerationRow& row : kGenerations) {
+        if (row.name == name) { return &row; }
+    }
+    return nullptr;
+}
+
+// The generation's BF16 MMA is composed from other instructions (Turing's f16 k8 pairs, Volta's
+// FP32 FMAs: DeviceFeatures::mma_bf16_native false).
+bool bf16_composed(const GenerationRow& row) noexcept {
+    return !device_features_for(row.major, row.minor_lo).mma_bf16_native;
+}
+
+// Two generations run one BF16 tensor path: both compose it, or both run it natively at one rate.
+bool same_bf16_path(const GenerationRow& a, const GenerationRow& b) noexcept {
+    return bf16_composed(a) == bf16_composed(b) && (bf16_composed(a) || a.bf16 == b.bf16);
+}
+
+// A prefill row of one generation as another reads it. A BF16 row carried between the two composed
+// generations keeps its throughput: it is re-expressed in the reader's BF16 unit (Turing's row
+// against the spec 512 read by Volta against its fitted 1536, as both read it while Turing's row
+// held the same 1536, #781). Every other row is carried as its share of the peak, as before.
+double carried_eta(const PrefillEta& row, std::string_view reader) noexcept {
+    const GenerationRow* from = generation_named(row.generation);
+    const GenerationRow* to   = generation_named(reader);
+    if (row.route != Route::Bf16 || from == nullptr || to == nullptr || from == to ||
+        !bf16_composed(*from) || !bf16_composed(*to) || to->bf16 <= 0) {
+        return row.eta;
+    }
+    return row.eta * from->bf16 / to->bf16;
+}
+
+} // namespace
+
 // The generation whose prefill rows one without its own takes: kTransferGeneration, unless another
-// generation with rows runs the same BF16 tensor rate per SM (the same tensor path: Volta's composed
-// one is Turing's) and the transfer generation does not.
+// generation with rows runs the same BF16 tensor path (same_bf16_path: Volta's composed one is
+// Turing's; the native ones at the same rate per SM) and the transfer generation does not.
 std::string_view prefill_stand_in(std::string_view generation) noexcept {
-    const auto row_of = [](std::string_view name) -> const GenerationRow* {
+    const GenerationRow* own      = generation_named(generation);
+    const GenerationRow* transfer = generation_named(kTransferGeneration);
+    if (own != nullptr && (transfer == nullptr || !same_bf16_path(*transfer, *own))) {
         for (const GenerationRow& row : kGenerations) {
-            if (row.name == name) { return &row; }
-        }
-        return nullptr;
-    };
-    const GenerationRow* own      = row_of(generation);
-    const GenerationRow* transfer = row_of(kTransferGeneration);
-    if (own != nullptr && (transfer == nullptr || transfer->bf16 != own->bf16)) {
-        for (const GenerationRow& row : kGenerations) {
-            if (row.name != generation && row.bf16 == own->bf16 && has_prefill_rows(row.name)) {
+            if (row.name != generation && same_bf16_path(row, *own) && has_prefill_rows(row.name)) {
                 return row.name;
             }
         }
@@ -288,7 +318,7 @@ double prefill_eta(bool moe, std::string_view generation, Route route, bool& tra
     for (const std::string_view gen : {generation, away}) {
         if (const PrefillEta* row = prefill_row(moe, gen, base)) {
             transferred = transferred || gen != generation || row->cards < 2;
-            return row->eta;
+            return carried_eta(*row, generation);
         }
         const PrefillEta* own_int8 = prefill_row(moe, gen, Route::Int8);
         if (own_int8 == nullptr) { continue; }
@@ -297,7 +327,7 @@ double prefill_eta(bool moe, std::string_view generation, Route route, bool& tra
             const PrefillEta* dense_int8  = prefill_row(false, dense_gen, Route::Int8);
             if (dense_route != nullptr && dense_int8 != nullptr) {
                 transferred = true;
-                return own_int8->eta * dense_route->eta / dense_int8->eta;
+                return own_int8->eta * carried_eta(*dense_route, generation) / dense_int8->eta;
             }
         }
     }
@@ -316,7 +346,7 @@ double prefill_eta(bool moe, std::string_view generation, Route route, bool& tra
     for (const std::string_view gen : {generation, away}) {
         if (const PrefillEta* row = prefill_row(false, gen, base)) {
             transferred = true;
-            return row->eta * kind;
+            return carried_eta(*row, generation) * kind;
         }
     }
     transferred = true;

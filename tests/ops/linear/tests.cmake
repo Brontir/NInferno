@@ -358,3 +358,19 @@ if(NOT (NINFERNO_BUILD_ARCH STREQUAL "70" AND NINFERNO_VOLTA_CUTLASS))
   # It dumps every board twice over (once a process per board, then all in one): minutes of CPU.
   set_tests_properties(ninferno_selector_golden_host_test PROPERTIES TIMEOUT 1800)
 endif()
+
+# The cost model's price of every route of a route_tune sweep on a substituted board, on the host
+# (#781): the prediction a cost-model change is scored with before any stand run. A maintainer's
+# tool, not a test (NO_DEFAULT_TEST); the same host-only link, and the same exclusion, as the
+# golden's host twin (the stubbed Volta CUTLASS route would misprice an sm_70 CUTLASS tree's boards).
+if(NOT (NINFERNO_BUILD_ARCH STREQUAL "70" AND NINFERNO_VOLTA_CUTLASS))
+  ninferno_add_test(ninferno_route_price_sweep NO_DEFAULT_TEST
+    SOURCES "${CMAKE_CURRENT_LIST_DIR}/route_price_sweep.cpp"
+    LIBRARIES ninferno_ops_host)
+  target_sources(ninferno_route_price_sweep PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
+    ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
+    ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
+  target_compile_definitions(ninferno_route_price_sweep PRIVATE NINFERNO_HOST_ONLY)
+  cmake_language(DEFER CALL ninferno_assert_host_only ninferno_route_price_sweep)
+endif()

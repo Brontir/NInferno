@@ -39,8 +39,14 @@ namespace {
 template <class Offer>
 void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t tokens,
                    const DeviceClass& d, const Offer& offer) {
-    // BF16 operands in the MMA itself (sm_80 on) imply tensor mma.sync (device_features_for).
-    if (!d.features.mma_bf16_native || !allows_a8(problem.policy)) return;
+    // The A8 tiles multiply on the int8 MMA: tensor mma.sync (sm_75 on: Turing's build composes
+    // the s8 m16n8k32 from its m8n8k16, ops/common/mma.cuh), not on a chip that runs mma.sync on
+    // its FP16 units (mma_slow: TU116 / TU117), and an int8 rate in the generation row (Volta has
+    // none: its build composes the int8 MMA from dp4a). Whether the BF16 MMA is native says
+    // nothing about the int8 one (#781: Turing's W4A8, I8 and ggml MMQ went unpriced, and the
+    // register MMA was taken at up to 4.7x the fastest route's time).
+    if (!d.features.mma_tensor || d.features.mma_slow || !allows_a8(problem.policy)) return;
+    if (generation_row(d.major, d.minor).s8 <= 0) return;
     // A device without a roofline in its facts (an unknown id whose driver reports no clock or bus
     // width) has none here: the A16 routes stand alone. The clock and the bandwidth are the
     // board's reference facts (DeviceClass::facts, B2), never the driver's clocks.
@@ -177,9 +183,8 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         // efficiency was fitted on.
         // Never wider than the tile the device's shared memory holds for the format (Turing's
         // 64 KiB: Q2_K's 128-column tile does not fit, the kernel runs 64).
-        // The A8 routes are priced only where the MMA reads BF16 operands (sm_80 on: above), so a
-        // generation whose widths a launch law prices (Turing, DECISIONS 78) never reaches here;
-        // the facts are the product's grid on this card all the same.
+        // A generation whose widths a launch law prices (Turing, DECISIONS 78) takes the width
+        // that law picks for the product's grid on this card (the facts below).
         const bool format   = mmq_columns::work_tiles_format(problem.qtype);
         const int widest    = mmq_columns::widest_tile(problem.qtype, d.major, d.minor);
         const mmq_columns::LaunchFacts facts{static_cast<int>(n), static_cast<int>(k), d.sms, clk,
@@ -259,8 +264,9 @@ bool a16_route_priced(Route route, bool bf16_mma_native) {
 // tiled) overlapped at 0.9 / 0.8 of the tensor rate. The device numbers come from its query (SMs,
 // threads, CTAs and shared memory per SM) and its facts (reference clock, bus width x memory
 // clock: DeviceClass::facts); the tensor rate per SM and clock from the generation row
-// (core/generation.h: 512 on the consumer and pro boards, 2048 on the full-rate HBM parts, 1536
-// where the BF16 MMA is emulated, which also takes no pipelined tile and no 8-tile token strip).
+// (core/generation.h: 512 on the consumer and pro boards, Turing's GeForce boards included, 2048
+// on the full-rate HBM parts, Volta's fitted 1536; where the BF16 MMA is emulated (Turing, Volta)
+// the model takes no pipelined tile and no 8-tile token strip).
 // ninferno_route_tune's timings of seven boards (each tile in the engine, L2 flushed; BF16, Q4
 // and Q8, T >= 17), the constants refit with the board held out: 1.095 of the best (geomean;
 // RTX 4090 1.083, RTX 5090 1.068) against 1.110 for the F-lite rule (heuristic_rmma) and 1.137
