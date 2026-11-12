@@ -1755,6 +1755,8 @@ int main() {
             return 1;
         }
     }
+    // The group-sums plane is off by default (#709's A/B); its checks below run it (#619).
+    ops::detail::generic::set_group_sums_plane_enabled(true);
     int failures = 0;
     std::mt19937 rng(20260924U);
 

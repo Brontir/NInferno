@@ -959,6 +959,10 @@ struct BuildManifest {
 // are the MMA with ones at every width), and not yet in the speed profile: the price describes
 // the instances with the MMA with ones and the adds (rmma_resources) and has no term for the
 // plane's work or its pre-pass launch, so the speed profile keeps them until the price has.
+// The plane is off by default (group_sums_plane_enabled false): its A/B (#709, kernel-proposals
+// entry A) refuted the prefill rows on the RTX 5090, so rmma_group_sums answers false until a
+// counted law makes the plane pay. NINFERNO_GROUP_SUMS_PLANE=1 (read once) or
+// set_group_sums_plane_enabled turns it on for the process: the plane's tests and an A/B.
 // rmma_plane_taken: whether a call that rmma_group_sums admits launches the plane's instance on
 // this device (rmma_plane_admitted, generic_gemm_launch.cuh: the format and epilogue's every
 // plane instance keeps the spill and the CTAs per SM of its twin with the MMA with ones, from the
@@ -968,6 +972,8 @@ struct BuildManifest {
 [[nodiscard]] std::int32_t rmma_group_sums_ld(std::int32_t k, int values) noexcept;
 [[nodiscard]] std::size_t rmma_group_sums_bytes(WeightCodec codec, std::int32_t k,
                                                 std::int32_t tokens);
+[[nodiscard]] bool group_sums_plane_enabled() noexcept;
+void set_group_sums_plane_enabled(bool on) noexcept;
 [[nodiscard]] bool rmma_group_sums(WeightCodec codec);
 [[nodiscard]] bool rmma_plane_taken(int schedule, const Weight& weight, Epilogue epilogue,
                                     std::int32_t tokens, std::int32_t rows = 0);

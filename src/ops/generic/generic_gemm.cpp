@@ -649,9 +649,30 @@ bool rmma_add_sums() {
            !prefill_routes_active();
 }
 
+namespace {
+// -1: not read yet (NINFERNO_GROUP_SUMS_PLANE, read once), else 0 / 1.
+std::atomic<int> g_group_sums_plane{-1};
+} // namespace
+
+bool group_sums_plane_enabled() noexcept {
+    int on = g_group_sums_plane.load(std::memory_order_acquire);
+    if (on < 0) {
+        const char* v = std::getenv("NINFERNO_GROUP_SUMS_PLANE");
+        int expected  = -1;
+        g_group_sums_plane.compare_exchange_strong(expected,
+                                                   v != nullptr && v[0] == '1' && v[1] == '\0');
+        on = g_group_sums_plane.load(std::memory_order_acquire);
+    }
+    return on == 1;
+}
+
+void set_group_sums_plane_enabled(bool on) noexcept {
+    g_group_sums_plane.store(on ? 1 : 0, std::memory_order_release);
+}
+
 bool rmma_group_sums(WeightCodec codec) {
-    return rmma_group_sums_values(codec) > 0 && current_features().mma_tensor &&
-           !invariant_routes_active() && prefill_routes_active();
+    return group_sums_plane_enabled() && rmma_group_sums_values(codec) > 0 &&
+           current_features().mma_tensor && !invariant_routes_active() && prefill_routes_active();
 }
 
 Route r8_rules_route(const Problem& problem, std::int32_t tokens) {
