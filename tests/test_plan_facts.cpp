@@ -715,16 +715,17 @@ int gemma4() {
         failures += check(bare_mx.model.expert_prefill == rt::ExpertPrefill::Unknown &&
                               bare_mx.model.expert_prefill_assumed,
                           "unread Gemma 4 MXFP4 row: no route, assumed by its label");
-        const auto unread_speed = [&](const pr::PlanSourceFacts& facts, const std::string& quant) {
-            return ninferno::product::choice::speed_of(pr::choice_model_of(facts), card,
-                                                       pr::quant_option_of(facts, quant), fast, 1,
-                                                       4096, 2048);
-        };
-        failures += check(unread_speed(bare_mx, "MXFP4_MOE").basis ==
-                                  ninferno::product::choice::SpeedBasis::Transferred &&
-                              unread_speed(pr::row_facts(mxfp4, unread), "Q4_0").basis ==
-                                  ninferno::product::choice::SpeedBasis::Own,
-                          "unread Gemma 4 rows: the MXFP4 label's Transferred, Q4_0's Own");
+        // Through the quantization the choice prices (linear_prefill: an assumed MoE prefill is
+        // Transferred on every path, the share path of Unknown banks too).
+        failures += check(
+            pr::quant_option_of(bare_mx, "MXFP4_MOE").expert_banks_assumed &&
+                !pr::quant_option_of(pr::row_facts(mxfp4, unread), "Q4_0").expert_banks_assumed,
+            "unread Gemma 4 rows: the MXFP4 label's assumed, Q4_0's not");
+        // Another family's row is not marked by an MXFP4 label (gpt-oss: its banks run as read).
+        pr::PlanSourceFacts other_family = q4_0;
+        other_family.model.model_type    = "gpt_oss";
+        failures += check(!pr::row_facts(other_family, unread_mx).model.expert_prefill_assumed,
+                          "an unread MXFP4 row of another family: not assumed");
     }
     // Two quantizations of equal tensor bytes with other linears (#811): Q8_0 beside the banks
     // in one, Q4_K in the other. A row reads its own header's formats (the weight class, whether
