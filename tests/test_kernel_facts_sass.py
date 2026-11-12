@@ -400,6 +400,11 @@ class StaticSchedule(unittest.TestCase):
         self.assertGreater(barriers, 0)  # the body's own barriers: not an empty kernel either
         c.outside_bar, c.outside_total = 0, kernel_facts.MMQ_EMPTY_INSTRUCTIONS + 1
         self.assertEqual(len(kernel_facts.family_audit("mmq", {(2, 96, 0, 0): (0, 0, 0, 0, c)})), 1)
+        # An unknown flow counts nothing, the schedule's parts too: not taken for an empty kernel.
+        unknown = sc.loop_counts(body_of([(0x000, "BRX R2 -0x10 ;")], {0x000: high_word(1)}))
+        self.assertTrue(unknown.scheduled)
+        self.assertEqual((unknown.loops, unknown.outside_total), (0, 0))
+        self.assertEqual(len(kernel_facts.family_audit("mmq", {(2, 80, 0, 0): (0, 0, 0, 0, unknown)})), 1)
 
     def test_problems(self):
         c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=2)

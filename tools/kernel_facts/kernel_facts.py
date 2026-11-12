@@ -535,10 +535,12 @@ def family_audit(family, rows):
                 # Only the widths compiled empty may lack the loop; any other is a failed audit.
                 # An empty kernel is its guard and exit: no CTA barrier and a few dozen
                 # instructions (25-31 on sm_80, sm_90, sm_100), where a matrix kernel whose loop
-                # went unfound holds thousands and its barriers outside the loop (#827).
+                # went unfound holds thousands and its barriers outside the loop (#827). None
+                # counted at all is a flow sass_counts could not follow, not an empty kernel.
                 if J not in (80, 96):
                     out.append(f"{family} {row_key(k)}: no K loop")
-                elif c.scheduled and (c.outside_bar or c.outside_total > MMQ_EMPTY_INSTRUCTIONS):
+                elif c.scheduled and (c.outside_bar or
+                                      not 0 < c.outside_total <= MMQ_EMPTY_INSTRUCTIONS):
                     out.append(f"{family} {row_key(k)}: no K loop, and not empty "
                                f"({c.outside_total} instructions, {c.outside_bar} barriers)")
                 continue
