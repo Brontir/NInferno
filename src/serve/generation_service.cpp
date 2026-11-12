@@ -367,12 +367,14 @@ std::uint32_t pool_contexts(const ninferno::MemorySummary& memory) {
     return memory.kv_capacity / memory.max_context;
 }
 
-// The pool as the pool rule reads it: its full contexts and its KV tokens (none where
-// pool_contexts has none).
+// The pool as the pool rule reads it: its full contexts, its KV tokens and the asked context (none
+// where pool_contexts has none).
 product::PoolSize pool_size(const ninferno::MemorySummary& memory) {
     const std::uint32_t contexts = pool_contexts(memory);
     if (contexts == 0) { return {}; }
-    return {.contexts = contexts, .tokens = memory.kv_capacity};
+    return {.contexts = contexts,
+            .tokens   = memory.kv_capacity,
+            .context  = static_cast<std::uint32_t>(memory.max_context)};
 }
 
 ninferno::EngineOptions engine_options_of(const ServeOptions& options) {

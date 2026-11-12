@@ -6,6 +6,7 @@
 
 #include "models/qwen3_5/program/planning/copy_proposal.h"
 #include "models/qwen3_5/program/planning/speculation_load.h"
+#include "product/choice/choice.h"
 #include "product/choice/choice_constants.h"
 #include "product/speculation/speculation.h"
 #include "spec/pairs.h"
@@ -567,10 +568,11 @@ int main() {
                                   (literal ? engine_label(*literal) + "/" + literal->load_basis
                                            : std::string("none")));
         }
-        // (v) The pool rule (#777) prices the head's pool against plain decode's over the
-        // benchmark's short-chat wave. The profile of (iv): the head's facts table 2:3,3:0, its
-        // mtp:3 x2 (x 0.6 = 1.2 at two streams); a plain step of C streams costs 1 + 0.02 (C - 1)
-        // one-stream steps.
+        // (v) The pool rule (#777) prices the head's pool against plain decode's over DECISIONS
+        // 73's mix: 20 short requests as the user's chats (2048 + 512 tokens, held by KV tokens)
+        // and, where the asked context holds a long one, 6 long requests at it (held by whole
+        // contexts). The profile of (iv): the head's facts table 2:3,3:0, its mtp:3 x2 (x 0.6 = 1.2
+        // at two streams); a plain step of C streams costs 1 + 0.02 (C - 1) one-stream steps.
         {
             namespace pr = ninferno::product;
             sp::Profile p;
@@ -579,31 +581,46 @@ int main() {
             p.joint_scale                           = {{"mtp:3", {{2, 0.6}}}};
             p.load_basis                            = "facts";
             for (std::int32_t c = 2; c <= 8; ++c) { p.plain_step_scale[c] = 1.0 + 0.02 * (c - 1); }
-            // The benchmark's short chat (DECISIONS 73): 2048 + 512 tokens.
-            const std::uint64_t chat = pr::choice::kRequestPrompt + pr::choice::kRequestAnswer;
+            // DECISIONS 73's short request: 2048 + 512 tokens.
+            const std::uint32_t chat = pr::choice::kRequestPrompt + pr::choice::kRequestAnswer;
             // Pools of whole contexts of `context` tokens (by default one chat's: a context a
-            // stream).
+            // stream, and no long request).
+            const auto pool = [&](std::uint32_t contexts, std::uint32_t context) {
+                return pr::PoolSize{.contexts = contexts,
+                                    .tokens   = std::uint64_t{contexts} * context,
+                                    .context  = context};
+            };
             const auto rule = [&](const sp::Profile& profile, std::uint32_t with_drafter,
                                   std::uint32_t streams, std::uint32_t plain,
-                                  std::optional<std::uint32_t> head, std::uint64_t context = 0) {
-                const std::uint64_t tokens = context == 0 ? chat : context;
+                                  std::optional<std::uint32_t> head, std::uint32_t context = 0) {
+                const std::uint32_t at = context == 0 ? chat : context;
                 return pr::pool_rule(
                     subject_of(profile), false, with_drafter, streams,
-                    [&] { return pr::PoolSize{.contexts = plain, .tokens = plain * tokens}; },
+                    [&] { return pool(plain, at); },
                     [&](const pr::ServedSpeculation&) -> std::optional<pr::PoolSize> {
                         if (!head) { return std::nullopt; }
-                        return pr::PoolSize{.contexts = *head, .tokens = *head * tokens};
+                        return pool(*head, at);
                     });
             };
-            failures += check(pr::pool_slots({.contexts = 4, .tokens = 4 * 32768}) == 51 &&
-                                  pr::pool_slots({.contexts = 3, .tokens = 3 * 1024}) == 3 &&
-                                  pr::pool_slots({}) == 0,
-                              "a pool holds its tokens' short chats, at least its contexts");
+            failures += check(pr::pool_slots(pool(4, 32768)) == 51 &&
+                                  pr::pool_slots(pool(3, 1024)) == 3 && pr::pool_slots({}) == 0,
+                              "a pool holds its tokens' chats, at least its contexts");
+            failures +=
+                check(pr::mix_turns(8, 20) == std::vector<std::uint32_t>{8, 8, 4} &&
+                          pr::mix_turns(3, 20) == std::vector<std::uint32_t>{3, 3, 3, 3, 3, 3, 2} &&
+                          pr::mix_turns(4, 6) == std::vector<std::uint32_t>{4, 2} &&
+                          pr::mix_turns(20, 20) == std::vector<std::uint32_t>{20} &&
+                          pr::mix_turns(0, 20).empty(),
+                      "the mix's turns: its requests in turns of the slots");
+            const auto one_chat = pr::mix_parts(8, pool(4, chat), pool(5, chat));
+            const auto at_32k   = pr::mix_parts(8, pool(4, 32768), pool(5, 32768));
             failures += check(
-                pr::mix_turns(8) == std::vector<std::uint32_t>{8, 8, 4} &&
-                    pr::mix_turns(3) == std::vector<std::uint32_t>{3, 3, 3, 3, 3, 3, 2} &&
-                    pr::mix_turns(20) == std::vector<std::uint32_t>{20} && pr::mix_turns(0).empty(),
-                "the benchmark's wave: twenty prompts in turns of the slots");
+                one_chat.size() == 1 && one_chat[0].weight == 1.0 && one_chat[0].head == 4 &&
+                    one_chat[0].plain == 5 && at_32k.size() == 2 && at_32k[0].requests == 20 &&
+                    at_32k[0].head == 8 && at_32k[0].plain == 8 && at_32k[1].requests == 6 &&
+                    at_32k[1].head == 4 && at_32k[1].plain == 5 &&
+                    std::abs(at_32k[1].weight - 6.0 / 26.0) < 1e-15,
+                "the mix's parts: chats by tokens, long requests by whole contexts, 20 and 6");
             // As many streams as plain decode, five turns of four: the head decodes plainly
             // from three streams, so the waves take the same time, and a tie keeps it.
             const auto same = rule(p, 3, 4, 5, 4);
@@ -618,12 +635,14 @@ int main() {
                 check(fifths.keep == pr::PoolKeep::Plain && !fifths.head && fifths.head_price &&
                           std::abs(*fifths.head_price - 4.32 / 5.3) < 1e-12,
                       "four fifths of the contexts for no gain at four streams: plain");
-            // The same pools of 32K contexts hold 51 and 64 chats: both serve the eight streams,
-            // the same turns, a tie: the head.
+            // The same pools of 32K contexts: the chats (51 and 64) take the eight streams on
+            // both, a tie; the long requests run on 4 contexts against 5, turns of 4 and 2 (1.06 +
+            // 1.02 / 1.2) against 5 and 1 (1.08 + 1): the head's two streams gain, and it is kept.
             const auto roomy = rule(p, 3, 8, 5, 4, 32768);
             failures += check(roomy.keep == pr::PoolKeep::Head && roomy.head_price &&
-                                  *roomy.head_price == 1.0,
-                              "four of five 32K contexts hold every chat: the head");
+                                  std::abs(*roomy.head_price - std::pow(2.08 / (1.06 + 1.02 / 1.2),
+                                                                        6.0 / 26.0)) < 1e-12,
+                              "four of five 32K contexts: the chats tie, the long requests gain");
             // One context of two: twenty answers one at a time at x2 (10 steps) against ten
             // turns of two plain streams (10 x 1.02): the head, which four fifths refused.
             const auto alone = rule(p, 1, 2, 2, 1);
@@ -634,46 +653,51 @@ int main() {
                                   !rule(p, 3, 4, 5, std::nullopt).head_price,
                               "the head does not fit: plain decode");
             // Nothing priced: the head's built-in table (8:2) drafts three at four streams,
-            // where no joint verify is priced. Holding as many streams as plain decode it runs as
-            // the built-in default does; a stream it costs is priced by nothing: plain decode.
+            // where no joint verify is priced. The rule before #777 decides, a literal kept until
+            // the facts exist: the head where it holds four fifths of plain decode's contexts (or
+            // of every one served).
             sp::Profile unpriced = p;
             unpriced.joint_scale.clear();
             unpriced.plain_step_scale.clear();
             const auto bare = rule(unpriced, 3, 4, 5, 4);
             failures += check(bare.keep == pr::PoolKeep::Head && !bare.head_price,
-                              "an unpriced head holding every stream: the head");
-            const auto short_of = rule(unpriced, 3, 8, 5, 4);
-            failures += check(short_of.keep == pr::PoolKeep::Plain && !short_of.head_price,
-                              "an unpriced head a stream short: plain decode");
-            failures += check(rule(unpriced, 3, 8, 5, 4, 32768).keep == pr::PoolKeep::Head,
-                              "an unpriced head whose 32K contexts hold every chat: the head");
-            // A gain priced below 1 at a turn, the step prices unknown: plain decode.
-            failures +=
-                check(!pr::pool_head_price(
-                           2, 2, 2, [](std::uint32_t) { return std::optional<double>(0.9); },
-                           [](std::uint32_t c) {
-                               return c == 1 ? std::optional<double>(1.0) : std::nullopt;
-                           })
-                           .pays,
-                      "a head priced below plain decode at its turns: refused");
-            // The step prices unknown but both pools serving as many streams and the head
-            // decoding plainly from two: no turn is slower than plain decode's, kept.
+                              "unpriced, 4 of plain decode's 5 at 4 streams: the head");
+            failures += check(rule(unpriced, 3, 8, 5, 4).keep == pr::PoolKeep::Head &&
+                                  rule(unpriced, 3, 8, 5, 4, 32768).keep == pr::PoolKeep::Head,
+                              "unpriced, 4 of 5 at 8 streams: the head, four fifths");
+            failures += check(rule(unpriced, 3, 4, 5, 3).keep == pr::PoolKeep::Plain &&
+                                  rule(unpriced, 3, 4, 5, 3, 32768).keep == pr::PoolKeep::Plain,
+                              "unpriced, 3 of 4 served: plain decode, below four fifths");
+            // A gain priced below 1 with the step prices unknown is no price: four fifths decide.
+            failures += check(pr::pool_head_price(
+                                  2, pool(2, chat), pool(2, chat),
+                                  [](std::uint32_t) { return std::optional<double>(0.9); },
+                                  [](std::uint32_t c) {
+                                      return c == 1 ? std::optional<double>(1.0) : std::nullopt;
+                                  })
+                                  .pays,
+                              "unpriced: four fifths decide, whatever gain is known");
+            // The step prices unknown, the gains priced: still no price of the trade.
             unpriced.joint_scale = {{"mtp:3", {{2, 0.6}}}};
             unpriced.load_basis  = "facts";
             const auto stepless  = rule(unpriced, 3, 4, 5, 4);
             failures += check(stepless.keep == pr::PoolKeep::Head && !stepless.head_price,
-                              "no step prices, the same streams, no turn below plain: the head");
+                              "no step prices: four fifths, the head");
         }
-        // (vi) Properties of the pool rule's price over random tables (#777): a head the rule
-        // keeps never decodes the benchmark's wave slower than plain decode's pool, run as the
-        // benchmark sends it (`wave_rate`: C clients, client k sending prompts k, k + C, ... one
+        // (vi) Properties of the pool rule's price over random tables (#777). The mix run as the
+        // benchmark sends requests (`wave`: C clients, client k sending requests k, k + C, ... one
         // after another, a server admitting waiting requests in order while its pool has the KV
-        // pages for them, each chat taking its tokens, at most a context's); where both are
-        // priced the rule keeps exactly the heads that are no slower, and a head that gains more
-        // is never refused where one that gains less is kept.
+        // tokens for them): the 20 chats each taking 2048 + 512 tokens (at most a context's), the
+        // 6 long requests each a whole context, the two weighted 20 : 6 in ln of their time where
+        // the context holds a long request. Where both pools are priced, a head the rule keeps is
+        // never slower than plain decode's pool, and the rule keeps exactly the heads that are no
+        // slower; where either is not, the rule is the one before #777 (four fifths of plain
+        // decode's whole contexts); a head that gains more is never refused where one that gains
+        // less is kept.
         {
-            namespace pr       = ninferno::product;
-            const auto prompts = static_cast<std::uint32_t>(pr::choice::kMixShortRequests);
+            namespace pr      = ninferno::product;
+            const auto shorts = static_cast<std::uint32_t>(pr::choice::kMixShortRequests);
+            const auto longs  = static_cast<std::uint32_t>(pr::choice::kMixLongRequests);
             const std::uint64_t chat_tokens =
                 pr::choice::kRequestPrompt + pr::choice::kRequestAnswer;
 
@@ -682,31 +706,39 @@ int main() {
                 std::uint64_t context = 0, tokens = 0;
             };
 
-            const auto wave_rate = [&](std::uint32_t clients, Pool pool,
-                                       const pr::StreamPrice& rate) -> std::optional<double> {
-                const std::uint64_t need = std::min(chat_tokens, pool.context);
-                std::uint64_t held       = 0; // the tokens the active chats hold
+            // A part's requests per unit of time and the most streams it ran at once.
+            struct Wave {
+                std::optional<double> rate;
+                std::uint32_t peak = 0;
+            };
+
+            const auto wave = [&](std::uint32_t clients, Pool pool, std::uint32_t requests,
+                                  std::uint64_t need, const pr::StreamPrice& rate) {
+                Wave out;
+                std::uint64_t held = 0; // the tokens the active requests hold
                 std::vector<std::uint32_t> next(clients);
                 std::vector<std::uint32_t> waiting; // clients whose request waits, in order
                 for (std::uint32_t c = 0; c < clients; ++c) {
                     next[c] = c;
-                    if (c < prompts) { waiting.push_back(c); }
+                    if (c < requests) { waiting.push_back(c); }
                 }
                 std::vector<std::pair<std::uint32_t, double>> active; // client, answer left
                 double time        = 0;
                 std::uint32_t done = 0;
-                while (done < prompts) {
+                bool priced        = true;
+                while (done < requests) {
                     while (held + need <= pool.tokens && !waiting.empty()) {
                         active.emplace_back(waiting.front(), 1.0);
                         waiting.erase(waiting.begin());
                         held += need;
                     }
-                    if (active.empty()) { return std::nullopt; } // no chat fits the pool
+                    if (active.empty()) { return Wave{}; } // no request fits the pool
+                    out.peak     = std::max(out.peak, static_cast<std::uint32_t>(active.size()));
                     const auto r = rate(static_cast<std::uint32_t>(active.size()));
-                    if (!r || !(*r > 0)) { return std::nullopt; }
+                    if (!r || !(*r > 0)) { priced = false; }
                     double least = 1.0;
                     for (const auto& a : active) { least = std::min(least, a.second); }
-                    time += least / *r;
+                    if (priced) { time += least / *r; }
                     std::vector<std::pair<std::uint32_t, double>> left;
                     for (auto& [client, answer] : active) {
                         answer -= least;
@@ -717,11 +749,45 @@ int main() {
                         ++done;
                         held -= need;
                         next[client] += clients;
-                        if (next[client] < prompts) { waiting.push_back(client); }
+                        if (next[client] < requests) { waiting.push_back(client); }
                     }
                     active = std::move(left);
                 }
-                return double(prompts) / time;
+                if (priced) { out.rate = double(requests) / time; }
+                return out;
+            };
+
+            // The mix on a pool: its parts' waves and their weights.
+            struct Mix {
+                std::vector<Wave> waves;
+                std::vector<double> weights;
+            };
+
+            const auto mix = [&](std::uint32_t clients, Pool pool, const pr::StreamPrice& rate) {
+                Mix out;
+                pr::choice::Task task;
+                task.contexts       = {static_cast<std::uint32_t>(pool.context)};
+                const bool has_long = task.long_prompt() > 0;
+                const double all    = has_long ? double(shorts + longs) : double(shorts);
+                out.waves.push_back(
+                    wave(clients, pool, shorts, std::min(chat_tokens, pool.context), rate));
+                out.weights.push_back(shorts / all);
+                if (has_long) {
+                    out.waves.push_back(wave(clients, pool, longs, pool.context, rate));
+                    out.weights.push_back(longs / all);
+                }
+                return out;
+            };
+            // The head pool's speed over plain decode's at the mix; nullopt where a part is not
+            // priced.
+            const auto speed_over = [](const Mix& head, const Mix& plain) -> std::optional<double> {
+                double log_ratio = 0;
+                for (std::size_t i = 0; i < head.waves.size(); ++i) {
+                    if (!head.waves[i].rate || !plain.waves[i].rate) { return std::nullopt; }
+                    log_ratio +=
+                        head.weights[i] * std::log(*head.waves[i].rate / *plain.waves[i].rate);
+                }
+                return std::exp(log_ratio);
             };
             std::mt19937 rng(777);
             const auto uniform = [&](double a, double b) {
@@ -740,15 +806,7 @@ int main() {
                 }
                 return out;
             };
-            const auto price_at = [](const std::map<std::int32_t, double>& prices) {
-                return [&prices](std::uint32_t c) -> std::optional<double> {
-                    if (c == 1) { return 1.0; }
-                    const auto it = prices.find(static_cast<std::int32_t>(c));
-                    if (it == prices.end()) { return std::nullopt; }
-                    return it->second;
-                };
-            };
-            int kept = 0, refused = 0, stepless = 0, wrong = 0, unsound = 0, rising = 0;
+            int kept = 0, refused = 0, unpriced_kept = 0, wrong = 0, unsound = 0, rising = 0;
             for (int trial = 0; trial < 4000; ++trial) {
                 const int k = pick(1, 5);
                 // The head's gains at depths 1..k, measured on every section.
@@ -777,7 +835,7 @@ int main() {
                         }
                     }
                 }
-                if (uniform(0, 1) < 0.9) { priced.plain_step_scale = step_prices(); }
+                if (uniform(0, 1) < 0.85) { priced.plain_step_scale = step_prices(); }
                 // Any table: bounds by ascending lanes from 2, depths never rising, ending
                 // anywhere (at plain decode or not).
                 pr::ServedSpeculation head;
@@ -801,70 +859,48 @@ int main() {
                 };
                 const Pool head_pool  = pool_of(pick(1, 9));
                 const Pool plain_pool = pool_of(pick(1, 10));
-                const auto slots_of   = [](const Pool& pool) {
-                    return pr::pool_slots(
-                        {.contexts = static_cast<std::uint32_t>(pool.tokens / pool.context),
-                           .tokens   = pool.tokens});
+                const auto size_of    = [](const Pool& pool) {
+                    return pr::PoolSize{.contexts =
+                                            static_cast<std::uint32_t>(pool.tokens / pool.context),
+                                           .tokens  = pool.tokens,
+                                           .context = static_cast<std::uint32_t>(pool.context)};
                 };
-                const std::uint32_t with   = slots_of(head_pool);
-                const std::uint32_t plain  = slots_of(plain_pool);
                 const pr::StreamPrice gain = [&](std::uint32_t c) {
                     return pr::pool_head_gain(priced, head, c);
                 };
                 const pr::StreamPrice step = [&](std::uint32_t c) {
                     return pr::plain_step_price(priced, c);
                 };
-                const pr::HeadPrice price = pr::pool_head_price(streams, with, plain, gain, step);
-                const auto head_rate      = wave_rate(streams, head_pool, [&](std::uint32_t c) {
-                    const auto g = gain(c);
-                    const auto s = step(c);
-                    return g && s ? std::optional<double>(*g / *s) : std::nullopt;
-                });
-                const auto plain_rate     = wave_rate(streams, plain_pool, [&](std::uint32_t c) {
-                    const auto s = step(c);
-                    return s ? std::optional<double>(1.0 / *s) : std::nullopt;
-                });
+                const pr::HeadPrice price = pr::pool_head_price(streams, size_of(head_pool),
+                                                                size_of(plain_pool), gain, step);
+                const auto rate_at        = [](const pr::StreamPrice& g, const pr::StreamPrice& s) {
+                    return [g, s](std::uint32_t c) -> std::optional<double> {
+                        const auto a = g(c);
+                        const auto b = s(c);
+                        return a && b ? std::optional<double>(*a / *b) : std::nullopt;
+                    };
+                };
+                const pr::StreamPrice one = [](std::uint32_t) {
+                    return std::optional<double>(1.0);
+                };
+                const Mix with_head = mix(streams, head_pool, rate_at(gain, step));
+                const Mix plainly   = mix(streams, plain_pool, rate_at(one, step));
                 (price.pays ? kept : refused) += 1;
-                if (head_rate && plain_rate) {
-                    const double ratio = *head_rate / *plain_rate;
-                    if (price.pays && ratio < 1 - 1e-12) { ++unsound; }
-                    if (std::abs(ratio - 1) > 1e-9 && price.pays != (ratio > 1)) { ++wrong; }
-                    if (!price.over_plain || std::abs(*price.over_plain - ratio) > 1e-9) {
+                if (const auto ratio = speed_over(with_head, plainly)) {
+                    if (price.pays && *ratio < 1 - 1e-12) { ++unsound; }
+                    if (std::abs(*ratio - 1) > 1e-9 && price.pays != (*ratio > 1)) { ++wrong; }
+                    if (!price.over_plain || std::abs(*price.over_plain - *ratio) > 1e-9) {
                         ++wrong;
                     }
-                } else if (price.pays) {
-                    // Kept unpriced: both pools serve as many streams, no gain the wave meets is
-                    // below 1, and with every one of them priced it holds at any step price.
-                    ++stepless;
-                    std::set<std::uint32_t> met; // the active streams the head's wave meets
-                    (void)wave_rate(streams, head_pool, [&](std::uint32_t c) {
-                        met.insert(c);
-                        return std::optional<double>(1.0);
-                    });
-                    std::set<std::uint32_t> met_plain;
-                    (void)wave_rate(streams, plain_pool, [&](std::uint32_t c) {
-                        met_plain.insert(c);
-                        return std::optional<double>(1.0);
-                    });
-                    if (met != met_plain) { ++unsound; }
-                    bool all_priced = true;
-                    for (const std::uint32_t c : met) {
-                        const auto g = gain(c);
-                        if (g && *g < 1.0) { ++unsound; }
-                        all_priced = all_priced && g.has_value();
-                    }
-                    for (int draw = 0; all_priced && draw < 20; ++draw) {
-                        const auto prices = step_prices();
-                        const auto at     = price_at(prices);
-                        const auto h      = wave_rate(streams, head_pool, [&](std::uint32_t c) {
-                            const auto g = gain(c);
-                            return g ? std::optional<double>(*g / *at(c)) : std::nullopt;
-                        });
-                        const auto q      = wave_rate(streams, plain_pool, [&](std::uint32_t c) {
-                            return std::optional<double>(1.0 / *at(c));
-                        });
-                        if (!h || !q || *h < *q * (1 - 1e-12)) { ++unsound; }
-                    }
+                } else {
+                    // Unpriced: the rule before #777, unchanged (four fifths of plain decode's
+                    // whole contexts, or of every one served), and no price reported.
+                    if (price.pays) { ++unpriced_kept; }
+                    const std::uint64_t head_contexts  = head_pool.tokens / head_pool.context;
+                    const std::uint64_t plain_contexts = plain_pool.tokens / plain_pool.context;
+                    const bool master =
+                        5 * head_contexts >= 4 * std::min<std::uint64_t>(plain_contexts, streams);
+                    if (price.pays != master || price.over_plain) { ++wrong; }
                 }
                 // Monotone in the head's gain: every depth faster by the same factor.
                 const sp::Profile faster_profile = [&] {
@@ -874,18 +910,19 @@ int main() {
                     return out;
                 }();
                 const pr::HeadPrice faster = pr::pool_head_price(
-                    streams, with, plain,
+                    streams, size_of(head_pool), size_of(plain_pool),
                     [&](std::uint32_t c) { return pr::pool_head_gain(faster_profile, head, c); },
                     [&](std::uint32_t c) { return pr::plain_step_price(faster_profile, c); });
                 if (price.pays && !faster.pays) { ++rising; }
             }
-            std::cout << "pool rule properties: " << kept << " kept (" << stepless << " unpriced), "
-                      << refused << " refused\n";
-            failures += check(kept > 400 && refused > 400 && stepless > 0,
+            std::cout << "pool rule properties: " << kept << " kept (" << unpriced_kept
+                      << " unpriced), " << refused << " refused\n";
+            failures += check(kept > 400 && refused > 400 && unpriced_kept > 0,
                               "the random tables reach both answers and the unpriced case");
-            failures += check(unsound == 0, "a kept head below plain decode at the mix: " +
+            failures += check(unsound == 0, "a kept head priced below plain decode at the mix: " +
                                                 std::to_string(unsound));
-            failures += check(wrong == 0, "the rule against the wave's own price: " +
+            failures += check(wrong == 0, "the rule against the mix's own price, or unpriced "
+                                          "against the rule before #777: " +
                                               std::to_string(wrong) + " disagree");
             failures += check(rising == 0, "a faster head refused where a slower one is kept: " +
                                                std::to_string(rising));

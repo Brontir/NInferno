@@ -336,7 +336,9 @@ Notes that often matter:
   request and the automatic KV pool, the drafter's weights and state come out of the pool. When
   the pool then holds fewer full contexts than `--max-concurrency` and plain decode holds more, the server
   drafts with the model's own MTP head instead when it has one and its pool is priced at least as
-  fast as plain decode's over the benchmark's requests (`speculation | fit fallback`), else it
+  fast as plain decode's over the benchmark's requests, or, on a card whose facts do not price it
+  (Ampere, Turing and Volta today), when it holds at least four fifths as many contexts (`speculation | fit
+  fallback`), else it
   decodes without speculation and says so in
   the startup log (`speculation | ... decodes plainly`). Single-stream speed can then
   be less than half. Size the server for its load: a lower `--max-concurrency` or `--max-context`

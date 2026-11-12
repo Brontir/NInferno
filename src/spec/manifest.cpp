@@ -469,9 +469,13 @@ SelectOptions rows_of(const std::filesystem::path& artifact) {
     return out;
 }
 
+// `same_model`: only the target's own pair or a sibling quantization of its revision (pair_choice's
+// first two steps), never a group of other models (a fine-tune's acceptance is not its base's):
+// the kinds a published profile does not draft with (#777), whose acceptance the lab measured on
+// this model elsewhere and whose rounds the facts price on this card.
 void resolve_other_kinds(const SpeculationManifest& manifest, const std::filesystem::path& label,
                          const GpuKey& gpu, std::string_view weights, std::string_view quant,
-                         std::string_view repo, ResolvedSpeculation& out) {
+                         std::string_view repo, ResolvedSpeculation& out, bool same_model = false) {
     const auto& registry = Registry::builtin();
     const auto covered   = [&](Mode mode) {
         if (drafting_modes(out.profile).contains(mode)) { return true; }
@@ -488,7 +492,8 @@ void resolve_other_kinds(const SpeculationManifest& manifest, const std::filesys
         if (!registry.pairs().empty() && manifest.source != "bundle") {
             if (auto choice = pair_choice(registry.pairs(), weights, manifest.engine, {d.kind},
                                           label_bits(quant), gpu_generation(gpu), rows_of(label),
-                                          attached_identities(manifest), repo, &gpu)) {
+                                          attached_identities(manifest), repo, &gpu);
+                choice && !(same_model && choice->step == PairStep::Group)) {
                 attach_drafters(manifest, choice->profile, alone);
                 std::string origin;
                 alone.floor_sources = manifest_profiles(manifest, label, origin);
@@ -500,6 +505,7 @@ void resolve_other_kinds(const SpeculationManifest& manifest, const std::filesys
                 continue;
             }
         }
+        if (same_model) { continue; } // `out` is the published profile itself
         if (!published) {
             published.emplace();
             published->fallback = out.fallback;
@@ -787,6 +793,17 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
     if (manifest && resolve_pair_profile(*manifest, artifact, gpu, out)) { return out; }
     if (manifest) {
         resolve_manifest_profile(*manifest, artifact, gpu, out);
+        // The kinds the published profile does not draft with: this model's own lab measurement
+        // of them (#777: the MTP head beside a published DFlash2 profile).
+        if (out.found()) {
+            try {
+                resolve_other_kinds(
+                    *manifest, artifact, gpu, artifact_weights(artifact).value_or(""),
+                    artifact_quant(artifact), hub_repo_of_artifact(artifact), out, true);
+            } catch (const std::exception&) {
+                // The artifact's source inputs do not read: no pair names its weights.
+            }
+        }
     } else if (std::set<std::string> components;
                const auto* entry = entry_by_shape(artifact, components)) {
         if (resolve_entry_pair(*entry, components, artifact, gpu, out)) { return out; }
@@ -847,6 +864,11 @@ ResolvedSpeculation resolve_planned_speculation(const std::optional<SpeculationM
     if (manifest) {
         out.fallback = manifest->fallback.empty() ? "none" : manifest->fallback;
         resolve_manifest_profile(*manifest, label, gpu, out);
+        // As for an artifact (resolve_speculation): the kinds the published profile does not
+        // draft with, from this model's own lab measurement of them (#777).
+        if (out.found()) {
+            resolve_other_kinds(*manifest, label, gpu, weights, quant, repo, out, true);
+        }
     } else if (entry != nullptr) {
         resolve_entry_profile(*entry, components, gpu, out);
     } else {

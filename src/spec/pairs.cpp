@@ -1376,7 +1376,8 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
                               .source  = "registry sibling " + std::string(repo.substr(0, at)) +
                                         " " + named + " (" + std::to_string(siblings.cards.size()) +
                                         " lab card(s); this quantization not measured)" +
-                                        priced(note)};
+                                        priced(note),
+                              .step = PairStep::Sibling};
         }
     }
     // 3. Nobody measured it: the group of each kind it carries, the fastest overall.
@@ -1391,7 +1392,8 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
                               .basis   = "preliminary",
                               .source  = "registry group " + std::string(engine) + " + " + kind +
                                         " (" + std::to_string(group.size()) +
-                                        " measured pairs; this one not measured)"};
+                                        " measured pairs; this one not measured)",
+                              .step = PairStep::Group};
         }
     }
     return best;

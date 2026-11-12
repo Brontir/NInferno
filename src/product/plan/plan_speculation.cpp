@@ -89,14 +89,15 @@ std::uint32_t pool_contexts_of(const runtime::DryRunPlan& plan, const EngineOpti
                                       runtime::kAutomaticContextGrain / chosen->rung.max_context);
 }
 
-// The pool as the pool rule reads it: its whole contexts (pool_contexts_of) and its KV tokens,
-// pages of one grain each (0 where pool_contexts_of has none).
+// The pool as the pool rule reads it: its whole contexts (pool_contexts_of), its KV tokens, pages
+// of one grain each, and the asked context (none where pool_contexts_of has none).
 PoolSize pool_size_of(const runtime::DryRunPlan& plan, const EngineOptions& options) {
     const std::uint32_t contexts = pool_contexts_of(plan, options);
     if (contexts == 0) { return {}; }
     return {.contexts = contexts,
             .tokens   = static_cast<std::uint64_t>(plan.chosen()->rung.kv_pages) *
-                      runtime::kAutomaticContextGrain};
+                      runtime::kAutomaticContextGrain,
+            .context = static_cast<std::uint32_t>(plan.chosen()->rung.max_context)};
 }
 
 std::string label_of(const SpeculativeOptions& speculative) {
