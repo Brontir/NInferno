@@ -192,11 +192,14 @@ std::optional<GgufTensorTable> read_tensor_table(const fs::path& path) {
             facts.model.weight_bytes == 0) {
             return std::nullopt;
         }
-        return GgufTensorTable{.tensor_bytes      = facts.model.weight_bytes,
-                               .mtp_bytes         = facts.model.mtp_bytes,
-                               .own_drafter_bytes = facts.model.own_drafter_bytes,
-                               .basis             = runtime::WeightBasis::Artifact,
-                               .expert_layers     = facts.model.expert_layers};
+        return GgufTensorTable{.tensor_bytes           = facts.model.weight_bytes,
+                               .mtp_bytes              = facts.model.mtp_bytes,
+                               .own_drafter_bytes      = facts.model.own_drafter_bytes,
+                               .basis                  = runtime::WeightBasis::Artifact,
+                               .expert_layers          = facts.model.expert_layers,
+                               .expert_prefill         = facts.model.expert_prefill,
+                               .expert_prefill_int8    = facts.model.expert_prefill_int8,
+                               .expert_prefill_assumed = facts.model.expert_prefill_assumed};
     } catch (const std::exception&) { return std::nullopt; }
 }
 

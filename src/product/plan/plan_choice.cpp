@@ -1,7 +1,9 @@
 #include "product/plan/plan_choice.h"
 
 #include "runtime/engine/plan_dry_run.h"
+#include "convert/formats.h"
 #include "core/device_class.h"
+#include "core/format_facts.h"
 #include "core/paged_kv_storage.h"
 #include "product/speculation/speculation.h"
 #include "spec/gpu_identity.h"
@@ -329,6 +331,34 @@ DryRunInputs inputs_with(const DryRunInputs& inputs, const choice::Candidate& c)
     return out;
 }
 
+namespace {
+
+// The weight class of formats as the facts spell them (artifact::format_name; a spelling the table
+// does not name, a GGUF type the converter does not keep, is Other), else, where the facts name
+// none (a hub row), the label's (choice::label_formats).
+choice::WeightClass weight_class_of(const std::vector<std::string>& formats,
+                                    const std::string& label) {
+    if (formats.empty()) { return choice::label_class(label); }
+    std::vector<QType> read;
+    for (const std::string& f : formats) {
+        const std::optional<QType> q = find_format(f);
+        if (!q) { return choice::WeightClass::Other; }
+        read.push_back(*q);
+    }
+    return choice::weight_class_of(read);
+}
+
+// A site of the format may take 8-bit activations: its codes widen to int8 (int8_input: every
+// GGUF block format but the ternary TQ1_0 / TQ2_0 and the two-bit Q1_0 / Q2_0, which keep BF16
+// activations), or it is an encoded FP8, MXFP4 or NVFP4 site (convert::encoded_matrix_format; an
+// NVFP4 file routes apart, QuantOption::nvfp4).
+bool a8_input(QType q) noexcept {
+    return format_facts(q).int8_input ||
+           convert::encoded_matrix_format(q) != convert::MatrixFormat::Auto;
+}
+
+} // namespace
+
 choice::QuantOption quant_option_of(const PlanSourceFacts& facts, const std::string& asked) {
     const std::string label = asked.empty() ? facts.shape.quant_label : asked;
     choice::QuantOption quant;
@@ -353,29 +383,30 @@ choice::QuantOption quant_option_of(const PlanSourceFacts& facts, const std::str
     quant.expert_banks        = static_cast<choice::ExpertBanks>(facts.model.expert_prefill);
     quant.expert_banks_int8    = static_cast<choice::ExpertBanks>(facts.model.expert_prefill_int8);
     quant.expert_banks_assumed = facts.model.expert_prefill_assumed;
-    quant.rest_weights        = choice::weight_class_of(facts.shape.rest_layer_formats, label);
-    const auto& formats = facts.shape.weight_formats;
-    quant.nvfp4         = std::find(formats.begin(), formats.end(), "nvfp4") != formats.end();
+    quant.rest_weights         = weight_class_of(facts.shape.rest_layer_formats, label);
     // The weight class: the file's own layers' formats where known (with_weights clears another
     // quantization's; the vocabulary's apart), else the label (a hub row).
-    quant.weights = choice::weight_class_of(facts.shape.layer_formats, label);
-    // An int8 route (AllowA8): any quantized format but the ternary and two-bit GGML blocks
-    // (formats.cpp kept_block_policy: TQ1_0, TQ2_0, Q1_0 and Q2_0 keep BF16 activations).
-    quant.int8_route = formats.empty() ||
-                       std::any_of(formats.begin(), formats.end(), [](const std::string& f) {
-                           return f != "bf16" && f != "fp32" && f != "int32" && f != "f16" &&
-                                  f != "ggml_tq1_0" && f != "ggml_tq2_0" && f != "ggml_q1_0" &&
-                                  f != "ggml_q2_0";
-                       });
+    quant.weights = weight_class_of(facts.shape.layer_formats, label);
+    // The routes of the encodings the file holds (its weight_formats): NVFP4's where it holds
+    // NVFP4, an int8 route where any format may take 8-bit activations (a8_input). A spelling the
+    // table does not name (a GGUF type the converter does not keep) is not known to keep BF16 ones.
+    const auto& formats = facts.shape.weight_formats;
+    bool a8             = false;
+    quant.nvfp4         = false;
+    for (const std::string& f : formats) {
+        const std::optional<QType> q = find_format(f);
+        quant.nvfp4                  = quant.nvfp4 || q == QType::NVFP4;
+        a8                           = a8 || !q || a8_input(*q);
+    }
+    quant.int8_route = formats.empty() || a8;
     // A quantization named by its listing's label (a hub row: the facts' header may be another
-    // row's) takes its route from the label; an artifact's recorded source keeps the routes of the
-    // encodings it holds (its weight_formats, read above).
+    // row's) takes its routes from the formats the label names (choice::label_formats; none
+    // named: an int8 route); an artifact's recorded source keeps the routes of the encodings it
+    // holds (its weight_formats, read above).
     if (!asked.empty()) {
-        quant.nvfp4      = label.find("NVFP4") != std::string::npos || label.find("nvfp4") != std::string::npos;
-        quant.int8_route = true;
-        for (const char* a16 : {"TQ1_0", "TQ2_0", "Q1_0", "Q2_0"}) {
-            if (label.find(a16) != std::string::npos) { quant.int8_route = false; }
-        }
+        const std::optional<std::set<QType>> named = choice::label_formats(label);
+        quant.nvfp4                                = named && named->count(QType::NVFP4) > 0;
+        quant.int8_route = !named || std::any_of(named->begin(), named->end(), a8_input);
     }
     return quant;
 }

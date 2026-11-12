@@ -120,8 +120,8 @@ tests/ops/linear/tests.cmake
 # compile definitions (NINFERNO_HOST_ONLY, NINFERNO_SELECTOR_GOLDEN_DIR)
 tests/cmake/DecisionTests.cmake
 # what every test target is built with: ninferno_add_test / ninferno_add_op_test (sources,
-# compile definitions, libraries, oracle compile options), ninferno_link_ops (which ops
-# implementation the test links: archive or shared library). The files that include it only wire
+# compile definitions, libraries, oracle compile options; which ops implementation a test links,
+# archive or shared library, is cmake/NInfernoTargets.cmake's redirects). The files that include it only wire
 # targets in (tests/test_golden_gate.py checks the include chain still reaches the producer)
 tests/cmake/NInfernoTests.cmake
 tests/ops/linear/test_selector_golden.cpp

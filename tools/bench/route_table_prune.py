@@ -86,7 +86,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import selection_regret as regret  # noqa: E402
 
-RESOLUTION = 0.05  # the ranker's slowdown within which an override earns nothing
+RESOLUTION = regret.EXIT_RESOLUTION  # the ranker's slowdown within which an override earns nothing
 # The authorities whose answers are the overrides, by the names the selector gives them
 # (route_authorities.cpp): a dense tuner's prefill band answers as dense-tune-prefill-band, and
 # speaks for its problem as dense-tune does.

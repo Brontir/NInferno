@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "bench"))
+import route_table_prune as prune
 import selection_regret as regret
 
 GENERATION_HEADER = Path(__file__).resolve().parents[1] / "src" / "core" / "generation.h"
@@ -288,6 +289,55 @@ class SelectionRegretTest(unittest.TestCase):
         order = [(g["regime"], g["authority"]) for g in report["by_board_regime_authority"]]
         self.assertEqual(order[0], ("decode T<=4", "r8-table"))
         self.assertEqual(order[-1], ("T>=17 above ridge", "unknown"))
+
+    def test_table_exit_metric_by_answer_kind(self):
+        # #616 step 9: per board, how the calls were answered, and how many measured overrides
+        # the ranker has caught up with (its route within the resolution of the override's).
+        def case(t, authority, evidence, selected_ms, ranker_ms=None, board="held-board"):
+            c = {"id": f"q4k.a16.store.n1.k1.T{t}", "board": board, "model": "held-model",
+                 "workload": "w", "numerical_contract": "c", "selected": "selected",
+                 "authority": authority, "evidence": evidence,
+                 "candidates": [measured("selected", [selected_ms] * 3),
+                                measured("other", [20] * 3)]}
+            if ranker_ms is not None:
+                c["ranker"] = "ranked"
+                c["candidates"].append(measured("ranked", [ranker_ms] * 3))
+            return c
+        data = document()
+        data["cases"] = [case(1, "route-table", "measured", 10, 10.4),  # caught up (+4 %)
+                         case(2, "route-table", "measured", 10, 9.5),   # caught up (faster)
+                         case(3, "dense-tune", "measured", 10, 12),     # holds (+20 %)
+                         case(4, "dense-tune-prefill-band", "measured", 10),  # unscored
+                         case(5, "route-table", "borrowed", 10, 13),    # carried, not an override
+                         case(6, "r8-table", "measured", 10),           # table, not pruned here
+                         case(7, "cost-model", "ranker", 10),
+                         case(8, "vec-rule", "ranker", 10),
+                         case(9, "scalar-fallback", "ranker", 10),
+                         case(64, "route-table", "measured", 10, 9, board="other-board")]
+        report = regret.evaluate(data)
+        held = report["table_exit"]["held-board"]
+        self.assertEqual(held["cases"], 9)
+        self.assertEqual(held["answered_by"],
+                         {"table": 5, "carried": 1, "priced": 1, "rules": 2})
+        self.assertAlmostEqual(sum(held["share"].values()), 1.0)
+        self.assertAlmostEqual(held["share"]["table"], 5 / 9)
+        self.assertEqual((held["overrides"], held["caught_up"], held["holds"], held["unscored"]),
+                         (4, 2, 1, 1))
+        self.assertAlmostEqual(held["exit_share"], 2 / 3)
+        self.assertEqual(held["resolution"], regret.EXIT_RESOLUTION)
+        other = report["table_exit"]["other-board"]
+        self.assertEqual((other["caught_up"], other["holds"], other["exit_share"]), (1, 0, 1.0))
+        # A tighter resolution: the +4 % override still earns its place.
+        tight = regret.evaluate(data, exit_resolution=0.03)["table_exit"]["held-board"]
+        self.assertEqual((tight["caught_up"], tight["holds"]), (1, 2))
+        # No scored override: no exit share; an older collection's rows are "unknown".
+        old = regret.evaluate(document())["table_exit"]
+        (board,) = old.values()
+        self.assertIsNone(board["exit_share"])
+        self.assertEqual(board["answered_by"], {"unknown": 1})
+        # route_table_prune.py prunes exactly these authorities, at this resolution by default.
+        self.assertEqual(set(prune.TABLE_AUTHORITIES), set(regret.OVERRIDE_AUTHORITIES))
+        self.assertEqual(prune.RESOLUTION, regret.EXIT_RESOLUTION)
 
     def test_without_authority_or_ridge_old_data_still_reports(self):
         data = document()  # no authority, no evidence, no t, no board_facts

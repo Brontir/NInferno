@@ -2,7 +2,8 @@
 // replaced (#615 F2): for every QType value in a byte's range, the old answer (kept below in
 // `legacy`, verbatim but for comments) and the new read of the table agree, so the move changed no
 // value. That every named QType has exactly one row, and the rows invert, is a static_assert in the
-// header. No GPU.
+// header. #615 F7 adds the scheduling class (against the choice's string compare) and a block's
+// bytes (against ggml's type sizes). No GPU.
 #include "core/format_facts.h"
 
 #include <cstdint>
@@ -544,6 +545,91 @@ std::optional<QType> kept_block(std::uint32_t type) {
     return kept;
 }
 
+// choice.cpp weight_class_of's string compare over the artifact spellings (#615 F7), one format
+// at a time: IQ4, K-quant, Q8, the plain words that set no class, everything else Other.
+ninferno::SchedulingClass scheduling_class(QType q) {
+    using S                  = ninferno::SchedulingClass;
+    const std::string_view f = format_name(q);
+    if (f == "ggml_iq4_xs" || f == "ggml_iq4_nl") return S::IQ4;
+    if (f == "ggml_q4_k" || f == "ggml_q5_k" || f == "ggml_q6_k") return S::KQuant;
+    if (f == "q8_g32_fp16") return S::Q8;
+    if (f == "bf16" || f == "fp32" || f == "int32") return S::Unquantized;
+    return S::Other;
+}
+
+// ggml's bytes a block (convert/ggml_quants.cpp kTypes, ggml_type_traits.type_size) of the block
+// formats the engine keeps, by GGUF id; 0 for another id.
+std::uint32_t ggml_type_bytes(std::uint32_t type) {
+    switch (type) {
+    case 2:
+        return 18; // q4_0
+    case 3:
+        return 20; // q4_1
+    case 6:
+        return 22; // q5_0
+    case 7:
+        return 24; // q5_1
+    case 10:
+        return 84; // q2_K
+    case 11:
+        return 110; // q3_K
+    case 12:
+        return 144; // q4_K
+    case 13:
+        return 176; // q5_K
+    case 14:
+        return 210; // q6_K
+    case 16:
+        return 66; // iq2_xxs
+    case 17:
+        return 74; // iq2_xs
+    case 18:
+        return 98; // iq3_xxs
+    case 19:
+        return 50; // iq1_s
+    case 20:
+        return 18; // iq4_nl
+    case 21:
+        return 110; // iq3_s
+    case 22:
+        return 82; // iq2_s
+    case 23:
+        return 136; // iq4_xs
+    case 29:
+        return 56; // iq1_m
+    case 34:
+        return 54; // tq1_0
+    case 35:
+        return 66; // tq2_0
+    case 41:
+        return 18; // q1_0
+    case 42:
+        return 18; // q2_0
+    default:
+        return 0;
+    }
+}
+
+// choice.cpp mmq_linears_seconds's typed bits a weight of the formats whose K step it reads.
+std::optional<double> mmq_bits(QType q) {
+    switch (q) {
+    case QType::GGML_Q3_K:
+        return 3.4375;
+    case QType::GGML_Q4_K:
+        return 4.5;
+    case QType::GGML_Q5_K:
+        return 5.5;
+    case QType::GGML_Q6_K:
+        return 6.5625;
+    case QType::GGML_IQ4_XS:
+        return 4.25;
+    case QType::GGML_Q4_1:
+        return 5.0;
+    default:
+        return std::nullopt;
+    }
+}
+
 } // namespace legacy
 
 namespace {
@@ -585,6 +671,18 @@ int main() {
               "has_subblock_scales", v);
         agree(legacy::u4_zp_group(q), ninferno::u4_zp_group(q), "u4_zp_group", v);
         agree(legacy::q3_group(q), ninferno::q3_group(q), "q3_group", v);
+        // #615 F7: the scheduling class is the choice's string compare; a ggml block's bytes are
+        // ggml's (so its bits, bytes over values, are the ones the choice typed).
+        agree(legacy::scheduling_class(q), ninferno::scheduling_class(q), "scheduling class", v);
+        const std::uint32_t ggml_bytes =
+            f.ggml_type >= 0 && ninferno::is_ggml_block(q)
+                ? legacy::ggml_type_bytes(static_cast<std::uint32_t>(f.ggml_type))
+                : 0;
+        agree(ggml_bytes, ninferno::ggml_block_bytes(q), "ggml block bytes", v);
+        if (const auto bits = legacy::mmq_bits(q))
+            agree(*bits, ninferno::ggml_bits_per_value(q), "bits a value", v);
+        if (!ninferno::is_ggml_block(q))
+            agree(0.0, ninferno::ggml_bits_per_value(q), "no bits outside a ggml block", v);
         // Both spellings round-trip through the table as the old tables did.
         if (!f.name.empty())
             agree(legacy::parse_format(f.name), ninferno::find_format(f.name), "parse", v);

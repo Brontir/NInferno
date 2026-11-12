@@ -156,7 +156,7 @@ std::vector<Row> rows_of_table() {
                                 r.major,
                                 r.minor,
                                 r.sms,
-                                static_cast<std::size_t>(std::lround(r.l2_mib)),
+                                r.l2_mib,
                                 static_cast<std::size_t>(std::max(1L, std::lround(r.vram_gib))),
                                 r.boost_mhz,
                                 static_cast<int>(std::lround(r.gbps * 500.0)) + 1,
