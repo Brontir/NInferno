@@ -388,15 +388,15 @@ std::vector<spec::LoadBound> facts_load_as(const spec::Profile& priced, const sp
 //   - A table derived from the facts is derived again for `out` (as subject_of_mode does), with
 //     `gain` as its configuration's one-request gain; where that gain is not known, as below.
 //   - Otherwise (measured, a literal, or facts without the gain) a bound stays while `out` runs
-//     under it the depth that the bounded choices of its drafter (mode) ran there,
+//     under it the depth that the bounded choices of its drafter (mode and head) ran there,
 //     min(d, own) == min(d, their deepest); from the first bound where it would run another depth
 //     (a shallower depth under a bound of its parent's depth or deeper), nothing showed it to gain
 //     there: plain decode from that count on, and the table is a literal (load_basis), its bounds
 //     before the cut `shown`'s. A table kept whole keeps `shown`'s basis: `out` runs every depth
-//     the bounded choices ran under it. A drafter none of the bounded choices drafts with: one
-//     request speculates, two or more decode plainly (as subject_of_mode). Counts below the first
-//     bound are left unbounded, as for `shown`: a measured table starts at two streams, and a
-//     literal's first bound (stand_in_load's cap) is not a depth's. No table stays none.
+//     the bounded choices ran under it. A drafter (or head) none of the bounded choices drafts
+//     with: one request speculates, two or more decode plainly (as subject_of_mode). Counts below
+//     the first bound are left unbounded, as for `shown`: a measured table starts at two streams,
+//     and a literal's first bound (stand_in_load's cap) is not a depth's. No table stays none.
 void load_for(const spec::Profile& shown, spec::Profile& out, std::optional<double> gain) {
     out.load_basis = shown.load_basis;
     if (shown.load_basis == "facts" && gain) {
@@ -409,9 +409,12 @@ void load_for(const spec::Profile& shown, spec::Profile& out, std::optional<doub
     const spec::ServedChoices bounded =
         shown.served ? *shown.served
                      : spec::ServedChoices{shown.overall, shown.thinking, shown.non_thinking};
-    std::int32_t deepest = 0; // of the bounded choices drafting with runs' mode
+    // Of the bounded choices drafting as runs does: its mode and its head (a proposal head verifies
+    // at another cost a round, so a bound measured with the full head shows nothing for it).
+    std::int32_t deepest = 0;
     for (const spec::Choice* c : {&bounded.overall, &bounded.thinking, &bounded.non_thinking}) {
-        if (c->config.enabled() && c->config.mode == runs.mode) {
+        if (c->config.enabled() && c->config.mode == runs.mode &&
+            c->config.proposal_head == runs.proposal_head) {
             deepest = std::max(deepest, c->config.k);
         }
     }

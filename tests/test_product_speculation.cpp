@@ -474,6 +474,29 @@ int main() {
                               "the fallback's mtp:2 without its gain, its table cut: " +
                                   lower_load(p, "mtp:3"));
         }
+        // (iii c) A bound measured with the full head shows nothing for a proposal head (another
+        // verify cost a round): the shallower mtp:2+head of a fit fallback mtp:3+head beside a
+        // default mtp:5 measured at 2:2,4:1 decodes plainly from two streams; the default's own
+        // shallower mtp:4 keeps the table.
+        {
+            sp::Profile p;
+            p.overall = p.thinking = p.non_thinking = chosen("mtp:5", "mtp", 2.0);
+            p.fit_fallback                          = chosen("mtp:3+head", "mtp", 1.6);
+            p.load                                  = sp::parse_load("2:2,4:1");
+            p.load_basis                            = "measured";
+            const auto lower_load                   = [&](const char* config) {
+                const auto lower = shallower_profile(p, sp::SpecConfig::parse(config), 1.5);
+                return lower ? lower->overall.config.label() + " " + sp::load_label(lower->load) +
+                                   "/" + lower->load_basis
+                                               : std::string("no profile");
+            };
+            failures += check(lower_load("mtp:3+head") == "mtp:2+head 2:0/literal",
+                              "a proposal head's shallower depth under a full head's table: " +
+                                  lower_load("mtp:3+head"));
+            failures +=
+                check(lower_load("mtp:5") == "mtp:4 2:2,4:1/measured",
+                      "the full head's shallower depth keeps its table: " + lower_load("mtp:5"));
+        }
         // (iv) The model's own MTP head: from the facts where the profile prices its mtp:3 (x2,
         // x 0.6 at two streams), else the built-in literal, labelled.
         {
