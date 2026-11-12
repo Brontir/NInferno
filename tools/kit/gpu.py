@@ -5,6 +5,7 @@ Field names differ between drivers (clocks_event_reasons.* since 535, clocks_thr
 before; some fields are N/A on GeForce or under WDDM): each field is probed once through
 `--help-query-gpu`, an unsupported one is left out and an N/A value is kept as None, never as a
 pass."""
+import math
 import os
 import platform
 import re
@@ -71,9 +72,11 @@ def _value(text):
     if not text or text.startswith("[") or text in ("N/A", "Not Supported"):
         return None
     try:
-        return float(text)
+        value = float(text)
     except ValueError:
         return text
+    # "nan" or "inf" is not a reading, and the result file is plain JSON (validate.py refuses NaN).
+    return value if math.isfinite(value) else None
 
 
 def query(fields, device):

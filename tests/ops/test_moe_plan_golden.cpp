@@ -51,9 +51,9 @@ using ops::LinearPolicy;
 // lack (this golden's own, so the selector goldens do not move): the RTX 3060 (ga106), the RTX
 // 4070 (ad104, 46 SMs) and the RTX 4070 Ti (ad104-60sm).
 constexpr generic::FactsBoard kExtraBoards[] = {
-    {"rtx3060", 0x2503, 8, 6, 28, 2, 12, 1777, 7501, 192},
-    {"rtx4070", 0x2786, 8, 9, 46, 36, 12, 2475, 10501, 192},
-    {"rtx4070ti", 0x2782, 8, 9, 60, 48, 12, 2610, 10501, 192},
+    generic::registry_facts_board("rtx3060", 0x2503),
+    generic::registry_facts_board("rtx4070", 0x2786),
+    generic::registry_facts_board("rtx4070ti", 0x2782),
 };
 
 const std::vector<generic::FactsBoard>& boards() {

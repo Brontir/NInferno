@@ -2,9 +2,13 @@
 // with the board's SMs, clocks, memory bus, L2 and per-SM limits, core/device_class.h) the route
 // and the workspace it needs for every format, policy, epilogue, shape and width, under the speed,
 // prefill and invariant profiles and in a round of one sequence. The dump is compared with
-// selector_golden/<board>.txt; a change of the selector shows there line by line, and a refactor
-// that means none must leave every file as it was. Regenerate with --update (writes the files)
-// after a change that means to move routes.
+// selector_golden/<build set>/<board>/: header.txt (the board's header line) and one file per
+// format, <format>.txt (#620 step 8: a change of one format's price moves that format's files
+// only, so decision PRs touch fewer of the same files). Joined in the order of kFormats they are
+// the board's whole dump. A change of the selector shows there line by line, and a refactor that
+// means none must leave every file as it was. Regenerate with --update (writes the files, and
+// removes the .txt files of the board the dump no longer writes) after a change that means to
+// move routes.
 //
 // Without arguments the test runs itself once per board, then every board again in one process:
 // the selector's per-device caches keep a substituted board's answers apart by its content, so the
@@ -42,6 +46,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -146,20 +151,41 @@ constexpr const char* kBuildSet =
 
 std::filesystem::path golden_dir() { return std::filesystem::path(NINFERNO_SELECTOR_GOLDEN_DIR); }
 
-std::filesystem::path golden_file(const GoldenBoard& b) {
-    return golden_dir() / kBuildSet / (std::string(b.name) + ".txt");
+// A board's golden directory, and the name of its header file (no format is called "header").
+std::filesystem::path board_dir(const GoldenBoard& b) { return golden_dir() / kBuildSet / b.name; }
+
+constexpr std::string_view kHeaderFile = "header.txt";
+
+// One board's dump: its header line, then each format's lines in the order of kFormats (a format
+// with no line has no entry). Joined in that order they are the board's whole dump.
+struct BoardDump {
+    std::string header;
+    std::vector<std::pair<std::string, std::string>> formats; // (format name, its lines)
+};
+
+// Every line of the dump after the header.
+std::string decisions_text(const BoardDump& dump) {
+    std::string text;
+    for (const auto& [name, lines] : dump.formats) text += lines;
+    return text;
 }
 
 // One board's choices, a line per (format, policy, epilogue, shape, profile) and run of widths
 // with the same route and workspace. The scales multiply the clocks the driver reports.
-std::string dump_body(const GoldenBoard& b, double sm_scale, double memory_scale) {
+BoardDump dump_body(const GoldenBoard& b, double sm_scale, double memory_scale) {
     const DeviceClass d = generic::board_device_class(b, sm_scale, memory_scale);
     const ScopedDeviceClass scoped(d);
-    std::ostringstream out;
-    out << "# " << b.name << " " << device_class().id() << " " << device_class().arch() << '\n';
+    BoardDump dump;
+    {
+        std::ostringstream header;
+        header << "# " << b.name << " " << device_class().id() << " " << device_class().arch()
+               << '\n';
+        dump.header = header.str();
+    }
     // Weights are never read here: an aligned address stands in for the payload.
     void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
     for (const QType qtype : kFormats) {
+        std::ostringstream out; // this format's lines
         for (const Shape shape : kShapes) {
             quantized_weight::PatternedWeightOptions options;
             if (qtype == QType::NVFP4)
@@ -273,16 +299,17 @@ std::string dump_body(const GoldenBoard& b, double sm_scale, double memory_scale
                 }
             }
         }
+        if (out.tellp() > 0) dump.formats.emplace_back(generic::qtype_name(qtype), out.str());
     }
-    return out.str();
+    return dump;
 }
 
 // A facts-priced board's dump must read kernel facts (the snapshot of its release engine): a
 // dump that read none would be priced by threads alone and silently differ from the release.
-std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memory_scale = 1.0) {
+BoardDump dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memory_scale = 1.0) {
     if (!generic::board_prices_from_facts(b)) return dump_body(b, sm_scale, memory_scale);
     std::vector<generic::RmmaFactRead> reads;
-    std::string body;
+    BoardDump body;
     {
         const generic::ScopedRmmaFactsSink sink(reads);
         body = dump_body(b, sm_scale, memory_scale);
@@ -295,52 +322,99 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
     return body;
 }
 
+// The files of a board's golden directory, (file name, text): the header, then one per format.
+std::vector<std::pair<std::string, std::string>> golden_files(const BoardDump& dump) {
+    std::vector<std::pair<std::string, std::string>> files{{std::string(kHeaderFile), dump.header}};
+    for (const auto& [name, lines] : dump.formats) {
+        if (name + ".txt" == kHeaderFile)
+            throw std::logic_error("a format named like the golden header file: " + name);
+        files.emplace_back(name + ".txt", lines);
+    }
+    return files;
+}
+
+// The .txt files on disk that a board's dump does not write: a format file whose format has no
+// line any more, and the board's single file of the layout before #620 step 8.
+std::vector<std::filesystem::path>
+stale_files(const GoldenBoard& b, const std::vector<std::pair<std::string, std::string>>& files) {
+    std::vector<std::filesystem::path> stale;
+    const std::filesystem::path dir = board_dir(b);
+    if (std::filesystem::is_directory(dir)) {
+        for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+            if (entry.path().extension() != ".txt") continue;
+            const std::string name = entry.path().filename().string();
+            if (std::none_of(files.begin(), files.end(),
+                             [&](const auto& file) { return file.first == name; }))
+                stale.push_back(entry.path());
+        }
+    }
+    const std::filesystem::path single = golden_dir() / kBuildSet / (std::string(b.name) + ".txt");
+    if (std::filesystem::exists(single)) stale.push_back(single);
+    std::sort(stale.begin(), stale.end());
+    return stale;
+}
+
 int run_board(const GoldenBoard& b, bool update) {
-    const std::string now            = dump_board(b);
-    const std::filesystem::path path = golden_file(b);
+    const auto files                = golden_files(dump_board(b));
+    const std::filesystem::path dir = board_dir(b);
+    const auto stale                = stale_files(b, files);
     if (update) {
         // The directory may not exist yet in a fresh checkout; a write that fails is a failure.
-        std::filesystem::create_directories(path.parent_path());
-        std::ofstream file(path, std::ios::binary);
-        file << now;
-        if (!file.good()) {
-            std::cerr << b.name << ": cannot write " << path.string() << '\n';
-            return 1;
+        std::filesystem::create_directories(dir);
+        for (const auto& [name, text] : files) {
+            std::ofstream file(dir / name, std::ios::binary);
+            file << text;
+            if (!file.good()) {
+                std::cerr << b.name << ": cannot write " << (dir / name).string() << '\n';
+                return 1;
+            }
         }
-        std::cout << b.name << ": wrote " << path.string() << '\n';
+        for (const auto& path : stale) std::filesystem::remove(path);
+        std::cout << b.name << ": wrote " << files.size() << " files in " << dir.string() << '\n';
         return 0;
     }
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        std::cerr << b.name << ": no golden file " << path.string() << " (run with --update)\n";
-        return 1;
-    }
-    std::stringstream was_text;
-    was_text << in.rdbuf();
-    const std::string was_cmp  = was_text.str();
-    const std::string& now_cmp = now;
-    if (was_cmp == now_cmp) {
-        std::cout << b.name << ": choices as the golden file\n";
-        return 0;
-    }
-    // The first lines that differ, from both sides.
-    std::istringstream a(was_cmp), c(now_cmp);
-    std::string la, lc;
-    int shown = 0, line = 0;
-    while (shown < 20) {
-        const bool ga = static_cast<bool>(std::getline(a, la));
-        const bool gc = static_cast<bool>(std::getline(c, lc));
-        if (!ga && !gc) break;
-        ++line;
-        if (!ga) la = "<end>";
-        if (!gc) lc = "<end>";
-        if (la != lc) {
-            std::cerr << b.name << ":" << line << "\n  golden: " << la << "\n  now:    " << lc << '\n';
-            ++shown;
+    int differ = 0, shown = 0;
+    for (const auto& [name, now] : files) {
+        const std::filesystem::path path = dir / name;
+        std::ifstream in(path, std::ios::binary);
+        if (!in) {
+            std::cerr << b.name << ": no golden file " << path.string() << " (run with --update)\n";
+            ++differ;
+            continue;
         }
+        std::stringstream was_text;
+        was_text << in.rdbuf();
+        const std::string was = was_text.str();
+        if (was == now) continue;
+        ++differ;
+        // The first lines that differ, from both sides (at most 20 for the board).
+        std::istringstream a(was), c(now);
+        std::string la, lc;
+        int line = 0;
+        while (shown < 20) {
+            const bool ga = static_cast<bool>(std::getline(a, la));
+            const bool gc = static_cast<bool>(std::getline(c, lc));
+            if (!ga && !gc) break;
+            ++line;
+            if (!ga) la = "<end>";
+            if (!gc) lc = "<end>";
+            if (la != lc) {
+                std::cerr << b.name << "/" << name << ":" << line << "\n  golden: " << la
+                          << "\n  now:    " << lc << '\n';
+                ++shown;
+            }
+        }
+        std::cerr << b.name << ": choices differ from " << path.string() << '\n';
     }
-    std::cerr << b.name << ": choices differ from " << path.string() << '\n';
-    return 1;
+    for (const auto& path : stale) {
+        std::cerr << b.name << ": " << path.string()
+                  << " is not written by the dump (a format with no line now, or the single-file"
+                     " layout; --update removes it)\n";
+        ++differ;
+    }
+    if (differ != 0) return 1;
+    std::cout << b.name << ": choices as the golden files\n";
+    return 0;
 }
 
 // A board the PCI-ID table knows is decided from its row (core/machine_facts.h), so the clocks
@@ -351,12 +425,7 @@ int run_board(const GoldenBoard& b, bool update) {
 // slower memory) and is read on purpose; the variants stay inside that step.
 int run_clock_invariance(const GoldenBoard& b) {
     if (b.pci_device_id == 0) return 0; // unknown ids are priced from the driver's values
-    const auto body = [](const std::string& dump) {
-        std::size_t at = 0; // past the header line
-        while (at < dump.size() && dump[at] == '#') at = dump.find('\n', at) + 1;
-        return dump.substr(at);
-    };
-    const std::string stock = body(dump_board(b));
+    const std::string stock = decisions_text(dump_board(b)); // past the header line
     constexpr struct {
         double sm, memory;
     } kVariants[] = {{0.85, 1.0}, {1.0, 0.985}, {1.08, 1.07},
@@ -364,7 +433,7 @@ int run_clock_invariance(const GoldenBoard& b) {
                      {0.0, 1.0}, {1.0, 0.0}, {0.0, 0.0}};
     int failed = 0;
     for (const auto v : kVariants) {
-        if (body(dump_board(b, v.sm, v.memory)) == stock) continue;
+        if (decisions_text(dump_board(b, v.sm, v.memory)) == stock) continue;
         std::cerr << b.name << ": choices move with the driver's clocks (SM x" << v.sm
                   << ", memory x" << v.memory << ")\n";
         ++failed;

@@ -3,18 +3,47 @@
 rejection rules, then predicted against measured per accepted metric and what it would confirm or
 contradict.
 
-    python3 tools/kit/validate.py RUN.json [--json] [--tolerance 0.10]
+    python3 tools/kit/validate.py RUN.json [RUN.json ...] [--json] [--tolerance 0.10]
+        [--releases FILE] [--any-build]
 
 A submission is evidence for a maintainer, never a change: a contradiction names the estimate it
 disagrees with, and the model is changed only after it is reproduced, from facts, never by fitting.
+A submitted file is untrusted input (docs/maintainer/validation-protocol.md): it is read as JSON
+only, under a size cap, and refused with an unknown schema version or key; nothing of it is
+executed or imported. Exit 1 when any file is rejected.
 """
 import argparse
 import json
+import math
+import os
+import re
 import statistics
 import sys
 from pathlib import Path
 
 SCHEMA_MAJOR = "ninferno-user-run/1"
+# The minors of major 1 this validator knows (1.4: the build's identity, the switch and KLD runs).
+# A newer minor is refused until the validator learns it: it may carry keys nobody read.
+SCHEMA_MINORS = (0, 1, 2, 3, 4)
+# A file larger than this is refused before it is parsed (a --full run of the whole model set is
+# estimated at about 40 MB, most of it telemetry; no such file measured yet).
+MAX_FILE_BYTES = 64 << 20
+# The keys a file and its runs may hold (measure.py writes no others); an unknown one is refused.
+TOP_KEYS = {"schema", "kit", "created", "ninferno", "host", "card", "runs", "budget"}
+KIT_KEYS = {"version", "models_version", "models_sha256", "models_file"}
+NINFERNO_KEYS = {"version", "build", "engine"}
+RUN_KEYS = {"id", "repo", "quant", "mode", "error", "fetch_beside"}
+MODE_KEYS = {
+    "plain": {"flags", "plan", "passes"},
+    "switch": {"flags", "plan", "passes", "kv", "activations", "context"},
+    "hard50": {"set_sha256", "served", "hard50"},
+    "spec": {"plan", "manifest", "target", "configs", "profile", "publish", "processes_before",
+             "processes_after", "telemetry"},
+    "routes": {"passes", "shapes"},
+    "kld": {"reference", "terms"},
+}
+RELEASES = Path(__file__).resolve().parent / "releases.json"
+RELEASES_SCHEMA = "ninferno-kit-releases/1"
 # The stated rules' numbers (the design note's table; change them there first).
 IDLE_UTIL_MAX = 5.0            # % median utilization in the idle window before a pass (R2)
 IDLE_MEM_GROWTH_MIB = 256.0    # memory.used growth across the idle window (R2)
@@ -611,16 +640,347 @@ def judge_routes(run, out, tolerance):
                       f"{tolerance * 100:.0f} %)")
 
 
-def validate(doc, tolerance=TOLERANCE, registry=None):
+def schema_minor(schema):
+    """The minor of a `ninferno-user-run/1.N` schema, None for any other spelling (1.04 too)."""
+    m = re.fullmatch(re.escape(SCHEMA_MAJOR) + r"\.(0|[1-9]\d{0,2})", str(schema))
+    return int(m.group(1)) if m else None
+
+
+def unknown_keys(doc):
+    """The keys of the file, its kit and ninferno blocks and its runs that measure.py does not
+    write (a run of an unknown mode is one unknown key: its mode)."""
+    out = sorted(set(doc) - TOP_KEYS)
+    for name, known in (("kit", KIT_KEYS), ("ninferno", NINFERNO_KEYS)):
+        block = doc.get(name)
+        if isinstance(block, dict):
+            out += [f"{name}.{k}" for k in sorted(set(block) - known)]
+    for i, run in enumerate(doc.get("runs") or []):
+        if not isinstance(run, dict):
+            continue
+        mode = run.get("mode")
+        if mode not in MODE_KEYS:
+            out.append(f"runs[{i}].mode {str(mode)[:40]!r}")
+            continue
+        out += [f"runs[{i}].{k}" for k in sorted(set(run) - RUN_KEYS - MODE_KEYS[mode])]
+    return out
+
+
+def load_releases(path=RELEASES):
+    """The release manifest the build's identity is held to: [{version, commit, engines:
+    {platform: {tag: sha256}}}]. A manifest of another shape stops the validator (it is ours, not
+    a submission's)."""
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+    if not isinstance(doc, dict) or doc.get("schema") != RELEASES_SCHEMA or not isinstance(doc.get("releases"), list):
+        raise ValueError(f"{path}: not a {RELEASES_SCHEMA} manifest")
+    for r in doc["releases"]:
+        engines = r.get("engines") if isinstance(r, dict) else None
+        if (not isinstance(r.get("version"), str) or not re.fullmatch(r"[0-9a-f]{40}", str(r.get("commit")))
+                or not isinstance(engines, dict) or not all(
+                    isinstance(e, dict) and all(re.fullmatch(r"[0-9a-f]{64}", str(s)) for s in e.values())
+                    for e in engines.values())):
+            raise ValueError(f"{path}: a release without its version, commit or engines' SHA-256")
+    return doc["releases"]
+
+
+def provenance(doc, releases):
+    """P1: the build that measured is a release's. Its version, its commit and the SHA-256 of the
+    engine that ran (the executable holding this card's kernels) must all be one release's entry
+    in the release manifest; None when they are, else why not."""
+    nf = doc.get("ninferno") if isinstance(doc.get("ninferno"), dict) else {}
+    build = nf.get("build") if isinstance(nf.get("build"), dict) else {}
+    engine = nf.get("engine") if isinstance(nf.get("engine"), dict) else {}
+    version, commit = build.get("version"), build.get("git_commit")
+    tag, sha = engine.get("tag"), engine.get("sha256")
+    if not all(isinstance(x, str) and x for x in (version, commit, tag, sha)):
+        return "P1 no build identity (the build's version and commit, the engine's SHA-256: kit schema 1.4)"
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        return f"P1 the build's commit {commit[:48]!r} is no release's (a local or modified build)"
+    if not re.fullmatch(r"[0-9a-f]{64}", sha):
+        return "P1 the engine's SHA-256 is malformed"
+    entry = next((r for r in releases if r.get("version") == version), None)
+    if entry is None:
+        return f"P1 version {version[:32]!r} is not in the release manifest"
+    if entry["commit"] != commit:
+        return f"P1 the build's commit is not release {version}'s"
+    if not any(engines.get(tag) == sha for engines in entry["engines"].values()):
+        return f"P1 the sm_{tag[:8]} engine's SHA-256 is not release {version}'s (a rebuilt or modified engine)"
+    return None
+
+
+def file_rules(doc, releases):
+    """R0 and P1, before any run is read: (rejected or None)."""
+    if not isinstance(doc, dict):
+        return "R0 schema: the file is not one JSON object"
+    minor = schema_minor(doc.get("schema", ""))
+    if minor is None or not isinstance(doc.get("card"), dict) or not isinstance(doc.get("runs"), list) \
+            or not all(isinstance(r, dict) for r in doc["runs"]):
+        return "R0 schema"
+    if minor not in SCHEMA_MINORS:
+        return f"R0 schema: minor {minor} is newer than this validator knows ({SCHEMA_MAJOR}.{max(SCHEMA_MINORS)})"
+    keys = unknown_keys(doc)
+    if keys:
+        return "R0 unknown keys: " + ", ".join(k[:60] for k in keys[:10])
+    if releases is not None:
+        return provenance(doc, releases)
+    return None
+
+
+def judge_plain(doc, run, out, capped, tolerance):
+    """R1-R7 for a plain start's run (and a switch configuration's: the same start, its KV and
+    activations pinned)."""
+    plan = run.get("plan") or {}
+    passes = run.get("passes") or []
+    # R1: every start ran what the plan priced (its storages, as the start's `choice |` line
+    # says them) and the same decisions (one fingerprint across the passes).
+    chosen = plan.get("chosen") or {}
+    mismatch, identity_unknown = None, False
+    for p in passes:
+        if p.get("error"):
+            continue
+        served = p.get("served") or {}
+        line = served.get("choice") or ""
+        # A start that does not say what it chose cannot be held to the plan: no verdict.
+        if not line or not served.get("fingerprint"):
+            identity_unknown = True
+        for key, word in (("kv", "KV"), ("activations", "activations")):
+            if line and chosen.get(key) and f"{word} {chosen[key]}" not in line:
+                mismatch = f"R1 the start chose '{line.split('|')[0].strip()}', the plan {key} {chosen[key]}"
+    prints = {(p.get("served") or {}).get("fingerprint") for p in passes if not p.get("error")}
+    prints.discard(None)
+    if len(prints) > 1:
+        mismatch = "R1 the passes started with different decision fingerprints"
+    if identity_unknown:
+        out["notes"].append("R1 unknown: a start did not report its choice or fingerprint")
+    if mismatch:
+        out["notes"].append(mismatch)
+        return
+    kept = []
+    for i, p in enumerate(passes):
+        rule, notes, per_metric = pass_rules(p)
+        out["notes"] += [f"pass {i + 1}: {n}" for n in notes]
+        if rule:
+            out["notes"].append(f"pass {i + 1} rejected: {rule}")
+            continue
+        kept.append((p, per_metric))
+    predicted = {"decode": chosen.get("decode_tok_s_at_depth"), "prefill": chosen.get("prefill_tok_s")}
+    depth = chosen.get("depth")
+    # The lengths the plan priced: decode at the choice's depth, prefill at its typical prompt.
+    at = {"decode": depth, "prefill": plan.get("prompt")}
+    for metric in ("decode", "prefill"):
+        row = {"metric": metric, "predicted": predicted[metric]}
+        out["metrics"].append(row)
+        usable, unknown = [], False
+        for p, per_metric in kept:
+            found = per_metric.get(metric)
+            unknown = unknown or found is None
+            found = found or set()
+            bad = sorted(found & set(REJECT_REASONS))
+            if bad:
+                row.setdefault("notes", []).append("a pass rejected: R3 " + ",".join(bad))
+                continue
+            if found & set(RECORD_REASONS):
+                row.setdefault("notes", []).append("power cap events (recorded, stock behaviour)")
+            usable.append(p)
+        clock, power = window_load(usable, metric)
+        if clock is not None:
+            row["sm_clock_mhz"] = clock
+        if power is not None:
+            row["power_w"] = power
+        medians = [metric_values(p, metric)[0] for p in usable]
+        medians = [m for m in medians if isinstance(m, (int, float)) and m > 0]
+        if len(medians) < 2:
+            row["status"] = "rejected: R6 fewer than 2 usable passes"
+            continue
+        spreads, no_spread = [], False
+        for p in usable:
+            med, lo, hi, _ = metric_values(p, metric)
+            if all(isinstance(x, (int, float)) for x in (med, lo, hi)) and med > 0:
+                spreads.append((hi - lo) / med)
+            else:
+                no_spread = True
+        apart = (max(medians) - min(medians)) / min(medians)
+        if no_spread:
+            row["status"] = "rejected: R5 a pass without its min..max"
+            continue
+        if apart > REPEAT_MEDIANS:
+            row["status"] = f"rejected: R5 passes {apart * 100:.1f} % apart"
+            continue
+        if spreads and max(spreads) > REPEAT_SPREAD:
+            row["status"] = f"rejected: R5 a pass spans {max(spreads) * 100:.1f} % of its median"
+            continue
+        want = at[metric]
+        # Every contributing pass at the length the plan priced (each request's range).
+        off = None
+        for p in usable:
+            m = (p.get("measured") or {}).get(metric) or {}
+            span = m.get("prompt_tokens_range") or [m.get("prompt_tokens")] * 2
+            if not want or not all(isinstance(x, (int, float)) for x in span):
+                off = "no token count"
+                break
+            worst = max(abs(x - want) for x in span)
+            if worst / want > DEPTH_MATCH:
+                off = f"a request at {span[0] if abs(span[0] - want) == worst else span[1]:.0f} tokens"
+                break
+        if off:
+            row["status"] = f"rejected: R7 {off}, the plan priced {want}"
+            continue
+        measured = statistics.median(medians)
+        row["measured"] = round(measured, 2)
+        row["status"] = "accepted"
+        if not isinstance(row["predicted"], (int, float)) or row["predicted"] <= 0:
+            continue
+        ratio = measured / row["predicted"]
+        row["ratio"] = round(ratio, 3)
+        entry = (f"the speed model's estimate for this {doc['card'].get('smi', {}).get('name')}"
+                 f" ({run.get('repo')} {run.get('quant')}, {metric}, C=1, "
+                 f"{'depth' if metric == 'decode' else 'prompt'} {want})")
+        if chosen.get("speed_transferred"):
+            entry += ", transferred from another card: tests the transfer rule"
+        if capped:
+            row["verdict"] = "not used: the card is capped"
+        elif unknown:
+            row["verdict"] = "not used: R3 unknown (no clock event reasons in a window)"
+        elif power_unknown(doc):
+            row["verdict"] = "not used: the power source (AC or battery) is unknown"
+        elif identity_unknown:
+            row["verdict"] = "not used: R1 unknown (a start did not report its choice)"
+        elif abs(ratio - 1) <= tolerance:
+            row["verdict"] = "confirms " + entry
+        else:
+            row["verdict"] = "contradicts " + entry
+
+
+# --- Switch factors (W1) and KLD terms (K1-K2): the design note's tables; change them there first.
+
+# The base a switch configuration's speed is held to: INT8 KV under the fast route, the codec the
+# KV read factors are measured against (choice_constants.h kKvReadFactor, kExactComputeEta).
+SWITCH_BASE = ("int8", "fast")
+# Two lab cards' KLD terms of one switch differ by up to 13 % (the KV codecs of Qwen3.5-9B, RTX 5070
+# Ti and RTX 4070 Ti); a user's term within this of the lab's is reported as confirming the term
+# (K2). A reporting word only: no term changes from it.
+KLD_TOLERANCE = 0.15
+# The reference every term is measured against (configuration-choice.md: the exact route, BF16 KV,
+# FP32 state), at ninferno-perplexity's context and stride.
+KLD_REFERENCE = {"activations": "exact", "kv": "bf16", "state": "f32", "context": 4096, "stride": 2048}
+# The corpus the lab's terms are on: its manifest's corpus_id, as ninferno-perplexity reports it
+# (report.json corpus.id), in --quick mode (corpus.mode).
+KLD_MANIFEST = HERE.parents[1] / "eval/corpora/perplexity-1m/manifest.json"
+
+
+def kld_corpus():
+    """`<corpus_id>/quick` of the lab's corpus, None when its manifest is not beside the validator."""
+    corpus_id = (load_json(KLD_MANIFEST) or {}).get("corpus_id")
+    return f"{corpus_id}/quick" if isinstance(corpus_id, str) and corpus_id else None
+
+
+def judge_switch_factors(doc, runs, reports, tolerance):
+    """W1: a switch configuration's decode against the base's on the same card, measured against
+    the plan's own ratio. A card's absolute error cancels in the ratio, which is what the worth
+    compares between two candidates on one card: it tests the generation's KV read factor of the
+    codec (the exact route's compute factor for exact activations). One report per model."""
+    by_model = {}
+    for run, rep in zip(runs, reports):
+        if run.get("mode") == "switch" and not run.get("error"):
+            by_model.setdefault((run.get("repo"), run.get("quant")), []).append((run, rep))
+    out = []
+    for (repo, quant), pairs in by_model.items():
+        summary = {"id": f"{repo} {quant}", "mode": "switch factors", "metrics": [], "notes": []}
+        out.append(summary)
+
+        def decode(rep):
+            return next((m for m in rep["metrics"] if m["metric"] == "decode"), {})
+        base = next(((r, rep) for r, rep in pairs if (r.get("kv"), r.get("activations")) == SWITCH_BASE), None)
+        if base is None:
+            summary["notes"].append("W1 no base configuration (KV int8, fast) measured: no ratio")
+            continue
+        b = decode(base[1])
+        for run, rep in pairs:
+            if run is base[0]:
+                continue
+            kv, act = run.get("kv"), run.get("activations")
+            row = {"metric": f"KV {kv}, activations {act} over KV int8, fast"}
+            summary["metrics"].append(row)
+            d = decode(rep)
+            if b.get("status") != "accepted" or d.get("status") != "accepted":
+                row["status"] = "rejected: W1 the configuration's or the base's decode was not accepted"
+                continue
+            if not all(isinstance(x.get("predicted"), (int, float)) and x["predicted"] > 0 for x in (b, d)):
+                row["status"] = "accepted"
+                row["verdict"] = "no prediction: the plan priced one of the two configurations not"
+                continue
+            row["status"] = "accepted"
+            row["predicted"] = round(d["predicted"] / b["predicted"], 3)
+            row["measured"] = round(d["measured"] / b["measured"], 3)
+            ratio = row["measured"] / row["predicted"]
+            row["ratio"] = round(ratio, 3)
+            gate = next((x["verdict"] for x in (b, d) if str(x.get("verdict", "")).startswith("not used")), None)
+            what = ("the exact route's compute factor" if act == "exact"
+                    else f"the KV read factor of {kv}")
+            entry = (f"{what} on this {doc['card'].get('smi', {}).get('name')}'s generation ({repo} {quant}, "
+                     f"decode at depth {(run.get('plan') or {}).get('chosen', {}).get('depth')})")
+            if gate:
+                row["verdict"] = gate
+            elif abs(ratio - 1) <= tolerance:
+                row["verdict"] = "confirms " + entry
+            else:
+                row["verdict"] = "contradicts " + entry
+    return out
+
+
+def judge_kld(run, out):
+    """K1-K2 for a KLD run: each switch's KL divergence from the exact reference on the lab's
+    corpus, against the plan's term for that switch. A model constant: no card rule applies."""
+    ref = run.get("reference") or {}
+    if any(ref.get(k) != v for k, v in KLD_REFERENCE.items()):
+        out["metrics"].append({"metric": "kld", "status": "rejected: K1 the reference is not the exact "
+                               "route with BF16 KV and an FP32 state at context 4096, stride 2048"})
+        return
+    corpus = kld_corpus()
+    if corpus is None or ref.get("corpus") != corpus:
+        out["metrics"].append({"metric": "kld", "status": f"rejected: K1 the corpus is not the lab's ({corpus})"})
+        return
+    for term in run.get("terms") or []:
+        if not isinstance(term, dict):
+            continue
+        row = {"metric": f"kld {term.get('axis')} {term.get('value')}"}
+        out["metrics"].append(row)
+        kld, top1 = term.get("kld"), term.get("top1")
+        if term.get("error"):
+            row["status"] = "rejected: K1 " + str(term["error"])[:200]
+            continue
+        if not isinstance(kld, (int, float)) or isinstance(kld, bool) or not 0 <= kld < 10 \
+                or not isinstance(top1, (int, float)) or not 0 <= top1 <= 1:
+            row["status"] = "rejected: K1 no KLD and top-1 agreement in range"
+            continue
+        row.update({"status": "accepted", "measured": round(kld, 5)})
+        lab = term.get("plan") if isinstance(term.get("plan"), dict) else {}
+        entry = f"the {term.get('axis')} {term.get('value')} term of {run.get('repo')} {run.get('quant')}"
+        candidate = ("no lab term: " + entry + " is a candidate model constant (proxy evidence until "
+                     "a maintainer reproduces it on a lab card)")
+        if not lab.get("measured") or not isinstance(lab.get("kld"), (int, float)) or lab["kld"] <= 0:
+            row["verdict"] = candidate
+            continue
+        row["predicted"] = lab["kld"]
+        ratio = kld / lab["kld"]
+        row["ratio"] = round(ratio, 3)
+        if lab.get("transferred"):
+            # The plan borrows another family's term for the estimate it shows: the ratio says how
+            # far the borrowing is off, and the user's value is this family's candidate.
+            row["verdict"] = candidate + "; the plan borrows another family's term"
+            continue
+        row["verdict"] = ("confirms " if abs(ratio - 1) <= KLD_TOLERANCE else "contradicts ") + entry
+
+
+def validate(doc, tolerance=TOLERANCE, registry=None, releases=None):
     """The report of `doc`; `registry` the drafter registry its spec runs are held to (the
-    in-tree one when None)."""
-    report = {"schema": doc.get("schema"), "file": "accepted", "capped": [], "runs": []}
-    schema = str(doc.get("schema", ""))
-    major = schema.split(".")[0]
-    if (major != SCHEMA_MAJOR or not isinstance(doc.get("card"), dict)
-            or not isinstance(doc.get("runs"), list)
-            or not all(isinstance(r, dict) for r in doc["runs"])):
-        report["file"] = "rejected: R0 schema"
+    in-tree one when None); `releases` the release manifest the build is held to (P1; None: not
+    checked, for the kit's own report on the user's machine and a lab's own build)."""
+    report = {"schema": doc.get("schema") if isinstance(doc, dict) else None, "file": "accepted",
+              "capped": [], "runs": []}
+    rejected = file_rules(doc, releases)
+    if rejected:
+        report["file"] = "rejected: " + rejected
         return report
     rejected, capped = card_rules(doc)
     if rejected:
@@ -643,136 +1003,69 @@ def validate(doc, tolerance=TOLERANCE, registry=None):
         if run.get("mode") == "spec":
             registry = registry if registry is not None else (load_json(REGISTRY) or {})
             judge_spec(doc, run, out, capped, registry, tolerance)
-            continue
-        if run.get("mode") == "hard50":
+        elif run.get("mode") == "hard50":
             reference = reference if reference is not None else (load_json(HARD_REFERENCE) or {})
             judge_hard50(run, out, reference)
-            continue
-        if run.get("mode") == "routes":
+        elif run.get("mode") == "routes":
             judge_routes(run, out, tolerance)
-            continue
-        if run.get("mode") != "plain":
-            out["notes"].append("recorded, not validated in this version (" + str(run.get("mode")) + ")")
-            continue
-        plan = run.get("plan") or {}
-        passes = run.get("passes") or []
-        # R1: every start ran what the plan priced (its storages, as the start's `choice |` line
-        # says them) and the same decisions (one fingerprint across the passes).
-        chosen = plan.get("chosen") or {}
-        mismatch, identity_unknown = None, False
-        for p in passes:
-            if p.get("error"):
-                continue
-            served = p.get("served") or {}
-            line = served.get("choice") or ""
-            # A start that does not say what it chose cannot be held to the plan: no verdict.
-            if not line or not served.get("fingerprint"):
-                identity_unknown = True
-            for key, word in (("kv", "KV"), ("activations", "activations")):
-                if line and chosen.get(key) and f"{word} {chosen[key]}" not in line:
-                    mismatch = f"R1 the start chose '{line.split('|')[0].strip()}', the plan {key} {chosen[key]}"
-        prints = {(p.get("served") or {}).get("fingerprint") for p in passes if not p.get("error")}
-        prints.discard(None)
-        if len(prints) > 1:
-            mismatch = "R1 the passes started with different decision fingerprints"
-        if identity_unknown:
-            out["notes"].append("R1 unknown: a start did not report its choice or fingerprint")
-        if mismatch:
-            out["notes"].append(mismatch)
-            continue
-        kept = []
-        for i, p in enumerate(passes):
-            rule, notes, per_metric = pass_rules(p)
-            out["notes"] += [f"pass {i + 1}: {n}" for n in notes]
-            if rule:
-                out["notes"].append(f"pass {i + 1} rejected: {rule}")
-                continue
-            kept.append((p, per_metric))
-        predicted = {"decode": chosen.get("decode_tok_s_at_depth"), "prefill": chosen.get("prefill_tok_s")}
-        depth = chosen.get("depth")
-        # The lengths the plan priced: decode at the choice's depth, prefill at its typical prompt.
-        at = {"decode": depth, "prefill": plan.get("prompt")}
-        for metric in ("decode", "prefill"):
-            row = {"metric": metric, "predicted": predicted[metric]}
-            usable, unknown = [], False
-            for p, per_metric in kept:
-                found = per_metric.get(metric)
-                unknown = unknown or found is None
-                found = found or set()
-                bad = sorted(found & set(REJECT_REASONS))
-                if bad:
-                    row.setdefault("notes", []).append("a pass rejected: R3 " + ",".join(bad))
-                    continue
-                if found & set(RECORD_REASONS):
-                    row.setdefault("notes", []).append("power cap events (recorded, stock behaviour)")
-                usable.append(p)
-            clock, power = window_load(usable, metric)
-            if clock is not None:
-                row["sm_clock_mhz"] = clock
-            if power is not None:
-                row["power_w"] = power
-            medians = [metric_values(p, metric)[0] for p in usable]
-            medians = [m for m in medians if isinstance(m, (int, float)) and m > 0]
-            if len(medians) < 2:
-                row["status"] = "rejected: R6 fewer than 2 usable passes"
-                out["metrics"].append(row)
-                continue
-            spreads, no_spread = [], False
-            for p in usable:
-                med, lo, hi, _ = metric_values(p, metric)
-                if all(isinstance(x, (int, float)) for x in (med, lo, hi)) and med > 0:
-                    spreads.append((hi - lo) / med)
-                else:
-                    no_spread = True
-            apart = (max(medians) - min(medians)) / min(medians)
-            if no_spread:
-                row["status"] = "rejected: R5 a pass without its min..max"
-            elif apart > REPEAT_MEDIANS:
-                row["status"] = f"rejected: R5 passes {apart * 100:.1f} % apart"
-            elif spreads and max(spreads) > REPEAT_SPREAD:
-                row["status"] = f"rejected: R5 a pass spans {max(spreads) * 100:.1f} % of its median"
-            else:
-                want = at[metric]
-                # Every contributing pass at the length the plan priced (each request's range).
-                off = None
-                for p in usable:
-                    m = (p.get("measured") or {}).get(metric) or {}
-                    span = m.get("prompt_tokens_range") or [m.get("prompt_tokens")] * 2
-                    if not want or not all(isinstance(x, (int, float)) for x in span):
-                        off = "no token count"
-                        break
-                    worst = max(abs(x - want) for x in span)
-                    if worst / want > DEPTH_MATCH:
-                        off = f"a request at {span[0] if abs(span[0] - want) == worst else span[1]:.0f} tokens"
-                        break
-                if off:
-                    row["status"] = f"rejected: R7 {off}, the plan priced {want}"
-                else:
-                    measured = statistics.median(medians)
-                    row["measured"] = round(measured, 2)
-                    row["status"] = "accepted"
-                    if isinstance(row["predicted"], (int, float)) and row["predicted"] > 0:
-                        ratio = measured / row["predicted"]
-                        row["ratio"] = round(ratio, 3)
-                        entry = (f"the speed model's estimate for this {doc['card'].get('smi', {}).get('name')}"
-                                 f" ({run.get('repo')} {run.get('quant')}, {metric}, C=1, "
-                                 f"{'depth' if metric == 'decode' else 'prompt'} {want})")
-                        if chosen.get("speed_transferred"):
-                            entry += ", transferred from another card: tests the transfer rule"
-                        if capped:
-                            row["verdict"] = "not used: the card is capped"
-                        elif unknown:
-                            row["verdict"] = "not used: R3 unknown (no clock event reasons in a window)"
-                        elif power_unknown(doc):
-                            row["verdict"] = "not used: the power source (AC or battery) is unknown"
-                        elif identity_unknown:
-                            row["verdict"] = "not used: R1 unknown (a start did not report its choice)"
-                        elif abs(ratio - 1) <= tolerance:
-                            row["verdict"] = "confirms " + entry
-                        else:
-                            row["verdict"] = "contradicts " + entry
-            out["metrics"].append(row)
+        elif run.get("mode") == "kld":
+            judge_kld(run, out)
+        else:  # plain, switch
+            if run.get("mode") == "switch":
+                out["id"] = f"{run.get('id')} KV {run.get('kv')}, activations {run.get('activations')}"
+            judge_plain(doc, run, out, capped, tolerance)
+    report["runs"] += judge_switch_factors(doc, doc["runs"], report["runs"], tolerance)
     return report
+
+
+class Refused(ValueError):
+    """A file the validator does not parse (R0): its size, its encoding or its JSON."""
+
+
+def _no_duplicates(pairs):
+    keys = [k for k, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise Refused("R0 a key given twice in one object")
+    return dict(pairs)
+
+
+def _no_constant(name):
+    raise Refused(f"R0 {name} is not JSON")
+
+
+def _finite(text):
+    """A JSON number as a float, refused when it is not finite: json reads 1e400 as inf without
+    calling parse_constant."""
+    value = float(text)
+    if not math.isfinite(value):
+        raise Refused(f"R0 the number {text[:24]} is not finite")
+    return value
+
+
+def load_run(path, max_bytes=None):
+    """The file at `path` as JSON, nothing else: a regular file (no link) of at most `max_bytes`
+    (MAX_FILE_BYTES), UTF-8, one JSON value without NaN or Infinity and without a key given twice.
+    Refused (R0) otherwise; nothing of it is executed or imported."""
+    max_bytes = MAX_FILE_BYTES if max_bytes is None else max_bytes
+    p = Path(path)
+    if p.is_symlink() or not p.is_file():
+        raise Refused("R0 not a regular file")
+    if p.stat().st_size > max_bytes:
+        raise Refused(f"R0 the file is over the size cap ({p.stat().st_size} > {max_bytes} bytes)")
+    with open(p, "rb") as f:
+        data = f.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise Refused(f"R0 the file is over the size cap ({max_bytes} bytes)")
+    try:
+        text = data.decode("utf-8")
+        return json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_no_constant,
+                          parse_float=_finite)
+    except UnicodeDecodeError:
+        raise Refused("R0 not UTF-8") from None
+    except RecursionError:
+        raise Refused("R0 nested too deep") from None
+    except json.JSONDecodeError as e:
+        raise Refused(f"R0 not JSON ({e.msg}, line {e.lineno})") from None
 
 
 def render(report):
@@ -803,20 +1096,45 @@ def render(report):
                 lines.append(f"      {m['verdict']}")
             for note in m.get("notes", []):
                 lines.append(f"      note: {note}")
-    return "\n".join(lines)
+    return "\n".join(one_line(line) for line in lines)
+
+
+def one_line(text):
+    """`text` with every control character escaped (a newline as \\n): a submitted string (an id,
+    an error, the schema) never starts a line of its own, so it cannot be read as a CI runner's
+    command (::error::, ::add-mask::, ...)."""
+    return re.sub(r"[\x00-\x1f\x7f  \x85]", lambda m: repr(m.group())[1:-1], str(text))
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    ap.add_argument("run", help="a ninferno-user-run JSON file")
-    ap.add_argument("--json", action="store_true", help="print the report as JSON")
+    ap.add_argument("runs", nargs="+", metavar="RUN.json", help="ninferno-user-run JSON files")
+    ap.add_argument("--json", action="store_true", help="print the reports as JSON")
     ap.add_argument("--tolerance", type=float, default=TOLERANCE)
+    ap.add_argument("--releases", default=str(RELEASES), help="the release manifest (P1)")
+    ap.add_argument("--any-build", action="store_true",
+                    help="skip P1: a lab's own build, never a submission")
     args = ap.parse_args()
-    with open(args.run, encoding="utf-8") as f:
-        doc = json.load(f)
-    report = validate(doc, args.tolerance)
-    print(json.dumps(report, indent=1) if args.json else render(report))
-    return 0 if not report["file"].startswith("rejected") else 1
+    releases = None if args.any_build else load_releases(args.releases)
+    failed, reports = 0, {}
+    for path in args.runs:
+        try:
+            report = validate(load_run(path), args.tolerance, releases=releases)
+        except Refused as e:
+            report = {"schema": None, "file": f"rejected: {e}", "capped": [], "runs": []}
+        except (AttributeError, TypeError, KeyError, IndexError, ValueError, ZeroDivisionError,
+                OverflowError) as e:
+            # A value of another type or size than measure.py writes, somewhere the rules read it:
+            # this file is rejected, the next ones are still read.
+            report = {"schema": None, "file": f"rejected: R0 a malformed value ({type(e).__name__})",
+                      "capped": [], "runs": []}
+        failed += report["file"].startswith("rejected")
+        reports[os.path.basename(path)] = report
+        if not args.json:
+            print((f"== {one_line(os.path.basename(path))}\n" if len(args.runs) > 1 else "") + render(report))
+    if args.json:
+        print(json.dumps(reports if len(args.runs) > 1 else reports.popitem()[1], indent=1))
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

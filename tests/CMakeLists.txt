@@ -81,6 +81,13 @@ add_test(NAME ninferno_kit_validate_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kit_validate.py)
 ninferno_label_tests(ninferno_kit_validate_test LABELS host)
 
+# The validation protocol of user measurements (docs/maintainer/validation-protocol.md): the size
+# cap, JSON only, known schema versions and keys, the build held to the release manifest, the
+# switch-factor and KLD runs, and every file under docs/performance/user-runs/, no GPU.
+add_test(NAME ninferno_kit_protocol_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kit_protocol.py)
+ninferno_label_tests(ninferno_kit_protocol_test LABELS host)
+
 # tools/audit/fusion_sites.json against the FUSION-SITE markers in the code: a fusion site missing from
 # the registry, or an entry whose site is gone, fails (#617 step A), no GPU.
 add_test(NAME ninferno_fusion_sites_test

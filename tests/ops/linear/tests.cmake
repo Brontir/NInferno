@@ -87,7 +87,7 @@ add_test(NAME ninferno_route_table_similar_default_test
 ninferno_label_tests(ninferno_route_table_similar_default_test LABELS gpu)
 set_tests_properties(ninferno_route_table_similar_default_test PROPERTIES SKIP_RETURN_CODE 77)
 # Every shipped table's gpu.pci_id is the board of its class, read on that board (substituted, no
-# GPU): the table is its own, at distance 0 but for a recorded conflict (#612 step 9).
+# GPU): the table is its own, at distance 0 (#612 step 9).
 add_test(NAME ninferno_route_table_shipped_boards_test
   COMMAND ninferno_route_table_test --shipped-boards)
 set_tests_properties(ninferno_route_table_shipped_boards_test PROPERTIES LABELS host)
@@ -203,8 +203,9 @@ ninferno_add_op_test(ninferno_linear_candidates_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_linear_candidates.cpp"
   LIBRARIES ninferno_linear_test_support)
 
-# The generic path's choices on thirteen substituted boards against selector_golden/<board>.txt:
-# a selector change shows line by line; a refactor must leave every file as it was.
+# The generic path's choices on the substituted boards against
+# selector_golden/<build set>/<board>/<format>.txt (one file per format, header.txt the board's
+# header): a selector change shows line by line; a refactor must leave every file as it was.
 ninferno_add_op_test(ninferno_selector_golden_test LABELS gpu golden slow
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
   LIBRARIES ninferno_linear_test_support)

@@ -50,8 +50,15 @@ struct GgufTensorTable {
     // Its routed layers by kind (PlanModelFacts::expert_layers, #616 step 7); empty: none read.
     // Another row's are not this one's, whatever its bytes: a row without its own has none.
     std::vector<runtime::PlanExpertLayers> expert_layers;
+    // Its routed banks' prefill GEMM (PlanModelFacts::expert_prefill, _int8, _assumed; #769):
+    // likewise its own only, whatever its bytes (Unknown: the MoE rows price the whole).
+    runtime::ExpertPrefill expert_prefill      = runtime::ExpertPrefill::Unknown;
+    runtime::ExpertPrefill expert_prefill_int8 = runtime::ExpertPrefill::Unknown;
+    bool expert_prefill_assumed                = false;
 };
-// The table from the facts of a head read (nullopt: a split part or no tensor table).
+
+// The table from the facts of a head read (nullopt: no tensor table). A split part's: no tensor
+// bytes (its file size stands), only the prefill route of the banks it lists; nullopt without one.
 [[nodiscard]] std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts);
 
 // One file group of a repository listing (convert::RepoQuant's fields the plan reads).

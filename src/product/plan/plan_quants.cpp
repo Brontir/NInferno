@@ -61,13 +61,6 @@ std::string class_text(const runtime::PlanDeviceFacts& device) {
     return std::to_string(card_gb(device)) + " GB";
 }
 
-std::string ascii_upper(std::string text) {
-    for (char& c : text) {
-        if (c >= 'a' && c <= 'z') { c = static_cast<char>(c - 'a' + 'A'); }
-    }
-    return text;
-}
-
 struct Unsupported {
     std::string code;
     std::string text;
@@ -86,9 +79,10 @@ Unsupported unsupported(const QuantListing& q, double bits_per_weight,
     if (q.bits > 8 || (q.bits == 0 && bits_per_weight > 9.0)) {
         return {"above_8_bits", "above 8 bits per weight: the engine serves 8 bits or fewer"};
     }
-    // NVFP4 weights run on cards with FP4 tensor cores (compute capability 10.0 and up).
-    if (ascii_upper(q.quant).find("NVFP4") != std::string::npos &&
-        !nvfp4_planned_on(device.compute_capability)) {
+    // NVFP4 weights run on cards with FP4 tensor cores (compute capability 10.0 and up): a listing
+    // whose label names NVFP4 (choice::label_formats).
+    const std::optional<std::set<QType>> named = choice::label_formats(q.quant);
+    if (named && named->count(QType::NVFP4) > 0 && !nvfp4_planned_on(device.compute_capability)) {
         return {"nvfp4_card", "NVFP4 weights need an RTX 50 / Blackwell card"};
     }
     return {};
@@ -1555,6 +1549,19 @@ DryRunInputs under_context_cap(const DryRunInputs& inputs, std::uint32_t context
 }
 
 std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
+    const bool route = facts.model.expert_prefill != runtime::ExpertPrefill::Unknown ||
+                       facts.model.expert_prefill_int8 != runtime::ExpertPrefill::Unknown;
+    // A split part's head (its own tensors only): no whole table, its file size stands; the
+    // route its banks prefill on is still its own file's, the row's own (#775: row_facts takes
+    // it from the row's table only). The route is read off the first part's banks alone and a
+    // later part may hold banks of another format, so it is an assumed one: an estimate on it is
+    // Transferred (QuantOption::expert_banks_assumed), not the file's own.
+    if (facts.model.weight_basis == runtime::WeightBasis::FileSize &&
+        facts.model.gguf_data_offset != 0 && route) {
+        return GgufTensorTable{.expert_prefill         = facts.model.expert_prefill,
+                               .expert_prefill_int8    = facts.model.expert_prefill_int8,
+                               .expert_prefill_assumed = true};
+    }
     if (facts.model.weight_basis != runtime::WeightBasis::GgufTensors ||
         facts.model.weight_bytes == 0) {
         return std::nullopt;
@@ -1568,7 +1575,10 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
     const bool named = std::any_of(facts.model.linears.begin(), facts.model.linears.end(),
                                    [](const runtime::PlanLinear& l) { return !l.format.empty(); });
     if (named) { table.linears = facts.model.linears; }
-    table.expert_layers = facts.model.expert_layers;
+    table.expert_layers          = facts.model.expert_layers;
+    table.expert_prefill         = facts.model.expert_prefill;
+    table.expert_prefill_int8    = facts.model.expert_prefill_int8;
+    table.expert_prefill_assumed = facts.model.expert_prefill_assumed;
     return table;
 }
 
@@ -1593,6 +1603,14 @@ PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
     // step then takes the measured pair's share: product/choice speed_of).
     out.model.expert_layers = row.listing.table ? row.listing.table->expert_layers
                                                 : std::vector<runtime::PlanExpertLayers>{};
+    // Its banks' prefill route likewise (#775): the shape's is another file's formats and policy
+    // even at equal bytes; without its table, Unknown (choice prefill_linears_seconds: the MoE
+    // rows price the whole prefill).
+    const GgufTensorTable unread_table;
+    const GgufTensorTable& prefill_table = row.listing.table ? *row.listing.table : unread_table;
+    out.model.expert_prefill             = prefill_table.expert_prefill;
+    out.model.expert_prefill_int8        = prefill_table.expert_prefill_int8;
+    out.model.expert_prefill_assumed     = prefill_table.expert_prefill_assumed;
     // Its stored routed banks and token table where its table counted them (a GGUF's).
     if (const auto& table = row.listing.table) {
         if (table->routed_expert_bytes) {

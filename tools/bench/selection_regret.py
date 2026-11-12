@@ -218,7 +218,64 @@ def by_regime_authority(rows, ridges):
                                              key=lambda kv: (kv[0][0], order[kv[0][1]], kv[0][2]))]
 
 
-def evaluate(document, max_regret=None, ridges=None):
+# Which kind of answer a case's route was (#616 step 9), by the evidence it rested on:
+#   table   - an override measured on this board (route table, dense tuner, r8 decode table, ...)
+#   carried - an answer measured elsewhere (a borrowed table entry, a carried or transferred one)
+#   priced  - the cost model's ranking
+#   rules   - a rule or fallback of the selector (`ranker` evidence, any other authority)
+#   pin     - a pinned route; unknown - a row without authority/evidence (an older collection)
+ANSWER_KINDS = ("table", "carried", "priced", "rules", "pin", UNKNOWN)
+# The override authorities route_table_prune.py prunes: a measured answer of these replaces the
+# ranker's, so its ranker_vs_selected says whether the override still earns its place.
+OVERRIDE_AUTHORITIES = ("route-table", "dense-tune", "dense-tune-prefill-band")
+# The ranker's slowdown against an override within which the override earns nothing (5 %; the
+# default of route_table_prune.py's --resolution, which reads this one).
+EXIT_RESOLUTION = 0.05
+
+
+def answer_kind(row):
+    evidence = row["evidence"]
+    if evidence == "measured":
+        return "table"
+    if evidence in ("borrowed", "carried", "transferred"):
+        return "carried"
+    if evidence == "pin":
+        return "pin"
+    if evidence == "ranker":
+        return "priced" if row["authority"] == "cost-model" else "rules"
+    return UNKNOWN
+
+
+def table_exit(rows, resolution=EXIT_RESOLUTION):
+    """The table exit metric, per board (#616 step 9): how the board's calls were answered
+    (ANSWER_KINDS: case counts and shares), and of its measured overrides (OVERRIDE_AUTHORITIES)
+    how many the ranker has caught up with: the ranker's route within `resolution` of the
+    override's (`caught_up`: route_table_prune.py may delete them), still slower (`holds`), or no
+    ranker time in the case (`unscored`: the run did not time the ranker's route, or the case is
+    incomplete). `exit_share` = caught_up / (caught_up + holds), None with no scored override."""
+    out = {}
+    for board in sorted({r["board"] for r in rows}):
+        members = [r for r in rows if r["board"] == board]
+        kinds = Counter(answer_kind(r) for r in members)
+        overrides = [r for r in members
+                     if r["authority"] in OVERRIDE_AUTHORITIES and r["evidence"] == "measured"]
+        scored = [r for r in overrides if r["status"] == "complete" and "ranker_vs_selected" in r]
+        caught = sum(1 for r in scored if r["ranker_vs_selected"] <= resolution)
+        out[board] = {
+            "cases": len(members),
+            "answered_by": {k: kinds[k] for k in ANSWER_KINDS if kinds[k]},
+            "share": {k: kinds[k] / len(members) for k in ANSWER_KINDS if kinds[k]},
+            "overrides": len(overrides),
+            "caught_up": caught,
+            "holds": len(scored) - caught,
+            "unscored": len(overrides) - len(scored),
+            "exit_share": caught / len(scored) if scored else None,
+            "resolution": resolution,
+        }
+    return out
+
+
+def evaluate(document, max_regret=None, ridges=None, exit_resolution=EXIT_RESOLUTION):
     require(isinstance(document, dict), "expected JSON object")
     require(document.get("schema") == "ninferno-selection-regret/1", "unsupported schema")
     provenance = {k: name(document.get(k), k) for k in ("selector_revision", "build_id")}
@@ -260,6 +317,7 @@ def evaluate(document, max_regret=None, ridges=None):
         "by_model": {k: summarize([r for r in rows if r["model"] == k])
                      for k in sorted({r["model"] for r in rows})},
         "by_board_regime_authority": by_regime_authority(rows, ridges or {}),
+        "table_exit": table_exit(rows, exit_resolution),
         "cases": rows,
     }
 

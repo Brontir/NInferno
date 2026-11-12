@@ -20,11 +20,12 @@ From a source tree or with options:
 
     python tools/kit/measure.py --bin DIR [--full] [--budget-minutes 30] [--models auto|ID,...] [--models-file PATH]
         [--device N] [--passes 2] [--hard50] [--spec-tune SECONDS] [--routes] [--route-passes 2]
-        [--no-prefetch] [--out FILE] [--yes]
+        [--switch-factors] [--kld] [--no-prefetch] [--out FILE] [--yes]
 
 - **`--bin DIR`** holds `ninferno-serve`: a release or a build. `ninferno-serve spec-tune` and `ninferno-serve route-tune` are the speculation tune and the route tuner, run through the dispatcher on this GPU's engine. A build's own `ninferno` beside it is used for the spec tune.
 - **`--full`**: every model of the set whose plan fits the card, plain passes, `--hard50`, `--spec-tune 1200` and `--routes`, under a 24-hour budget. The options given beside it keep their values (spelt in full: the kit takes no abbreviated option).
 - **`--routes`**: the route sweep, below.
+- **`--switch-factors`** and **`--kld`**: the quantities the configuration choice is gated on, below. Neither is part of `--full`; a lab card of a new generation runs `--full --switch-factors` ([validation-protocol.md](validation-protocol.md)).
 - **Requirements:** Python 3.9+ standard library only, on Windows or Linux. `CUDA_DEVICE_ORDER=PCI_BUS_ID` is set and `CUDA_VISIBLE_DEVICES` dropped, so `--device N` is the N-th card by PCI bus id. Every `nvidia-smi` call names that card by its bus id, never by nvidia-smi's own index, which can follow another order.
 - **Downloads:**
   - The models are fetched through `ninferno-serve --prepare-only` into the user's hub cache, one after another in the set's order. They are measured with the ones already in the cache first, so with a finite budget the cache decides which chosen model is left out.
@@ -80,17 +81,30 @@ From a source tree or with options:
      - telemetry (one window, `route-tune`).
    - About two minutes a problem a pass; a model records ten to twenty problems.
 
+7. **Switch factors** (`--switch-factors`), after every model's other runs: the lab's switch-factor
+   run on Qwen3.5-9B Q4_K_M (the set's `qwen35-9b-q4km`).
+   - Six configurations, each a `switch` run: INT8, BF16, FP8, K8V4 and NVFP4 KV under `--activations fast`, and INT8 KV under `--activations exact`.
+   - Each is planned and started with `--kv-dtype` and `--activations` pinned, at `--max-context 90112`: the plan decodes at a quarter of it, the lab's 22K-token depth. When a configuration's plan does not fit there, all six run at the model's own context.
+   - Each is measured as a plain run: `--passes` starts, decode at the plan's depth and prefill at its typical prompt, under telemetry.
+   - About 40 minutes.
+8. **KLD terms** (`--kld`), per measured model: `ninferno-perplexity` on the lab's corpus (`eval/corpora/perplexity-1m`, `--quick`, context 4096, stride 2048).
+   - The reference is the exact route with BF16 KV and an FP32 state (`--kld-out`).
+   - Each switch alone is scored against it (`--kld`): INT8, FP8, K8V4 and NVFP4 KV under exact, and the fast activations with BF16 KV.
+   - Beside each term the run records the plan's term for the same switch (`--plan` with the switch pinned: its KLD, and whether a lab measured it).
+   - It needs `ninferno-perplexity` beside `ninferno-serve` and the source tree's corpus: a build, not a release. The reference's logits file is deleted after the run.
+   - Lab-only for now: a build's file is refused by P1, so a `--kld` file passes the validator only with `--any-build`, never the CI job of `docs/performance/user-runs/` ([validation-protocol.md](validation-protocol.md)).
+
 ## The result file: `ninferno-user-run/1.minor`
 
-One JSON object. An additive change bumps the minor version, and the validator accepts any minor of
-major 1.
+One JSON object. An additive change bumps the minor version. The validator accepts the minors of
+major 1 it knows (0 to 4) and refuses a newer one, and any key `measure.py` does not write.
 
 | Field | What |
 |---|---|
-| `schema` | `"ninferno-user-run/1.3"` (1.1 added the spec and hard50 runs' fields below and `pci.device_id`; 1.2 the `routes` runs and `fetch_beside`; 1.3 `kit.models_file`) |
+| `schema` | `"ninferno-user-run/1.4"` (1.1 added the spec and hard50 runs' fields below and `pci.device_id`; 1.2 the `routes` runs and `fetch_beside`; 1.3 `kit.models_file`; 1.4 `ninferno.build`, `ninferno.engine` and the `switch` and `kld` runs) |
 | `kit` | `{version, models_version, models_sha256, models_file}`: `models_file` `"custom"` for a `--models-file` set (its name is not recorded: a file name can name the user; `models_sha256` identifies the set), `null` for the built-in set |
 | `created` | UTC time |
-| `ninferno` | `{version}`: the first line of `ninferno-serve --version` |
+| `ninferno` | `{version, build, engine}`: `version` the first line of `ninferno-serve --version`; `build` the build section of `ninferno-serve --build-manifest` from the engine that runs on the card (`version, git_commit, arch, arch_specific, cuda_architectures, embed_ptx, nvfp4, cudart`); `engine` `{tag, sha256}`, the SHA-256 of that engine's executable (validate.py's P1) |
 | `host` | `{os, machine, cpu, cpus, ram_bytes, on_battery}` |
 | `card` | `{smi: the nvidia-smi facts, plan_device: the plan's device block}` |
 | `budget` | `{asked_s, used_s, skipped}` |
@@ -118,6 +132,11 @@ A `hard50` run holds `hard50` (hard_set.py's summary and `wrong`, the ids answer
 - Under WDDM only process counts are kept, never PIDs or names.
 - No host name, user name, GPU UUID or serial is collected.
 
+A `switch` run holds a plain run's fields and `kv`, `activations` and `context`, the configuration
+it pinned. A `kld` run holds `reference` `{activations, kv, state, context, stride, corpus,
+perplexity}` and `terms[]`, each `{axis, value, kld, top1, p99_kld, perplexity, plan, error?}`,
+`plan` the plan's term for the switch `{value, kld, measured, transferred, evidence, source}`.
+
 A `routes` run holds `shapes`, the recorded problems. Its `passes[]` each hold:
 - `rows`: `[format, compute, epilogue, n, k, T, route, median_us]`;
 - `selected`: `[format, compute, epilogue, n, k, T, asked, selected]`;
@@ -135,7 +154,13 @@ The kit never runs them: the user sends it.
 
 ## The validator (our side)
 
-    python tools/kit/validate.py RUN.json [--json] [--tolerance 0.10]
+    python tools/kit/validate.py RUN.json [RUN.json ...] [--json] [--tolerance 0.10] [--releases FILE] [--any-build]
+
+A submitted file is untrusted input, read as JSON only under a size cap
+([validation-protocol.md](validation-protocol.md)). The validator holds the build that measured to
+the release manifest `tools/kit/releases.json` (P1); `--any-build` skips that for a lab's own
+build, never for a submission. The kit's own report on the user's machine does not apply P1. It
+exits 1 when any file is rejected.
 
 It applies the rules below in order, then gives per run and per metric **accepted** or **rejected**
 with the rule. Each accepted metric gets its predicted and measured value and the ratio, and a
@@ -162,7 +187,9 @@ tests the transfer rule, not this card's facts. Speculation and hard50 runs have
 
 | Rule | Rejects | When |
 |---|---|---|
-| R0 schema | the file | a major other than `ninferno-user-run/1`, or `card` not an object, or `runs` not a list of objects |
+| R0 the file | the file | over the size cap (64 MiB) or not a regular file; not UTF-8 or not JSON, nested too deep, `NaN`, `Infinity` or a number too large to be finite, a key given twice |
+| R0 schema | the file | not `ninferno-user-run/1.N` with a minor the validator knows (0 to 4), or `card` not an object, or `runs` not a list of objects; a key `measure.py` does not write (the file's, `kit`'s, `ninferno`'s, a run's by its mode, an unknown mode); a value of another type where a rule reads it |
+| P1 provenance | the file | with the release manifest: the build's version, its commit and the engine's SHA-256 are not one release's entry (a build of one's own, a modified engine, a file before 1.4) |
 | R1 identity | the file | the plan's device name differs from `nvidia-smi`'s |
 | R1 identity | the run | a start's `choice \|` line names KV or activations other than the plan's, or the passes started with different decision fingerprints. A start that reports no choice line or fingerprint is *unknown*: no verdict |
 | R2 other load | the pass | another compute process listed on the card (TCC/Linux only: under WDDM the list holds the desktop's processes and says nothing); the median utilization of the idle window above 5 %; memory used growing more than 256 MiB across it |
@@ -175,6 +202,36 @@ tests the transfer rule, not this card's facts. Speculation and hard50 runs have
 
 These numbers (5 %, 256 MiB, 5 %, 10 %, 5 %, ±10 %) are set at the top of `validate.py`. A change
 goes through this page first.
+
+## Judging switch factors (`switch` runs)
+
+Each `switch` run is judged as a plain run (R1 to R7, the same verdict for its own decode and
+prefill). Then the configurations of one model are held to the base, INT8 KV under fast:
+
+| Rule | Rejects | When |
+|---|---|---|
+| W1 the ratio | the configuration's ratio | no base configuration measured, or the configuration's or the base's decode not accepted |
+
+Verdict: the configuration's decode over the base's, measured, against the same ratio of the plan's
+estimates. Within the tolerance (±10 %) it **confirms**, outside it **contradicts**, the KV read
+factor of that codec on the card's generation, or the exact route's compute factor for exact
+activations (`kKvReadFactor`, `kExactComputeEta`). When either side's verdict was "not used" (a
+capped card, unknown slowdown reasons or power source), so is the ratio's.
+
+## Judging KLD terms (`kld` runs)
+
+A KLD term is a model constant: no card rule applies.
+
+| Rule | Rejects | When |
+|---|---|---|
+| K1 the reference | the run | the reference is not the exact route with BF16 KV and an FP32 state at context 4096 and stride 2048, or the corpus is not the lab's: `<corpus_id>/quick`, the `corpus_id` of `eval/corpora/perplexity-1m/manifest.json` as `ninferno-perplexity` reports it |
+| K1 the term | the term | the scoring failed, or the KLD is not in 0..10 or the top-1 agreement not in 0..1 |
+
+Verdict: against the plan's term of the same switch. A term a lab measured: within ±15 %
+(`KLD_TOLERANCE`, just above the up to 13 % two lab cards' terms of one switch differ by) it
+**confirms** the model's term, outside it **contradicts** it. These are reporting words only. A term no lab measured for the family (the plan borrows one, or has none) gives
+**no lab term**: the user's value is a candidate model constant, proxy evidence until a maintainer
+reproduces it.
 
 ## Judging route sweeps (`routes` runs)
 

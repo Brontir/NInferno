@@ -1,0 +1,5 @@
+{
+ "schema": "ninferno-kit-releases/1",
+ "note": "The releases a user measurement may come from (docs/maintainer/validation-protocol.md): per version, the commit it was built at and the SHA-256 of every engine it ships, by platform and engine tag. tools/kit/validate.py refuses a file whose build is not one of these (P1). An entry is added by tools/kit/releases.py after a release is published (docs/maintainer/release.md), and never changed.",
+ "releases": []
+}
