@@ -186,6 +186,11 @@ class Merge(unittest.TestCase):
         self.assertEqual([(f["card"], f["path"]) for f in doc["files"]],
                          [("rtx3060", "y.csv"), ("rtx3060", "z.csv"), ("rtx4090", "x.csv")])
         self.assertEqual(doc["totals"]["rtx3060"], {"routes": 0, "selected": 1, "errors": 1, "bytes": 5})
+        # A card whose scan found no route_tune CSV: zero totals, and a summary section.
+        empty = {"schema": sm.SCHEMA, "card": "gv100", "files": []}
+        doc = sm.merge([("a", a), ("e", empty)])
+        self.assertEqual(doc["totals"]["gv100"], {"routes": 0, "selected": 0, "errors": 0, "bytes": 0})
+        self.assertIn("### gv100\n\n0 sweeps, 0 selections", sm.summary(sm.merge([("e", empty)])))
         with self.assertRaises(ValueError):
             sm.merge([("a", a), ("a2", a)])
         with self.assertRaises(ValueError):

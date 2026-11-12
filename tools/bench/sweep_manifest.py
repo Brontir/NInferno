@@ -200,9 +200,10 @@ def merge(scans):
             raise ValueError(f"{name}: card {card} is scanned twice")
         cards[card] = doc["files"]
     files = [dict(f, card=c) for c in sorted(cards) for f in cards[c]]
-    totals = {}
+    # Every card scanned has its totals, a card with no route_tune CSV too (all zero).
+    totals = {c: {"routes": 0, "selected": 0, "errors": 0, "bytes": 0} for c in cards}
     for f in files:
-        t = totals.setdefault(f["card"], {"routes": 0, "selected": 0, "errors": 0, "bytes": 0})
+        t = totals[f["card"]]
         if "error" in f:
             t["errors"] += 1
         if f.get("kind") in ("routes", "selected"):
