@@ -505,6 +505,10 @@ def loop_audit(rows):
     return out
 
 
+# The most instructions an MMQ kernel ggml_mmq_internal.cuh compiles empty may hold (family_audit).
+MMQ_EMPTY_INSTRUCTIONS = 64
+
+
 def family_audit(family, rows):
     """loop_audit for a section family's rows (#785): lines naming the kernels whose counted
     iteration is not the unit the family's price reads. ggml's matrix kernel: one or two
@@ -529,8 +533,14 @@ def family_audit(family, rows):
             J = k[1]
             if c.loops == 0:
                 # Only the widths compiled empty may lack the loop; any other is a failed audit.
+                # An empty kernel is its guard and exit: no CTA barrier and a few dozen
+                # instructions (25-31 on sm_80, sm_90, sm_100), where a matrix kernel whose loop
+                # went unfound holds thousands and its barriers outside the loop (#827).
                 if J not in (80, 96):
                     out.append(f"{family} {row_key(k)}: no K loop")
+                elif c.scheduled and (c.outside_bar or c.outside_total > MMQ_EMPTY_INSTRUCTIONS):
+                    out.append(f"{family} {row_key(k)}: no K loop, and not empty "
+                               f"({c.outside_total} instructions, {c.outside_bar} barriers)")
                 continue
             if c.loops > 2:
                 problems.append(f"{c.loops} candidate loops")
