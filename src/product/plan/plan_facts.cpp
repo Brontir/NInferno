@@ -517,10 +517,13 @@ gguf_expert_policy(const std::string& model_type, const std::string& format, boo
 // generic::w4a8_supports names) whose K and activation are whole 32-value blocks
 // (moe_w4a8_whole_blocks, the op's own rule: `x_width` is the router's width for a gate/up bank,
 // which a zero-padded bank's K exceeds, and the bank's K for a down bank), in fragment order only
-// the formats ggml_frag_w4a8 names, and prefills it on int8 activations, unless another bank of
-// its layer is A16-only (the layer's expert policy is then A16); any other bank runs the 16-bit
-// register MMA; a layer of MXFP4 banks is its own route for its banks in whole blocks (the same
-// rule), A16 for the others. The trunk takes the route of the most of its banks' bytes. The banks'
+// the formats ggml_frag_w4a8 names, and prefills it on int8 activations, unless the layer's expert
+// policy is A16 (ops/moe moe_policy: one A16-only bank makes it so); any other bank runs the
+// 16-bit register MMA; a layer of MXFP4 banks is its own route for its banks in whole blocks (the
+// same rule) where its policy allows A8, A16 for the others. The layer's policy is the one its
+// banks run at, as the decode kind reads it (`policy`: an artifact's recorded Use,
+// gguf_expert_policy for a GGUF; #769), and the formats' kept policy (convert::kept_block_policy)
+// only where a bank has none. The trunk takes the route of the most of its banks' bytes. The banks'
 // 16-bit and float tensors (biases) do not decide.
 // It also keeps each layer's banks as stored (`layers`, #616 step 7): the gate/up bank's format,
 // layout, K and activation policy, the down bank's, for the MoE op's route query
@@ -574,11 +577,14 @@ public:
             note(b, format, std::string(artifact::layout_name(kept)), k, policy);
             const bool frag = at == QuantLayout::GgmlFrag;
             l.mxfp4 = l.mxfp4 && q == QType::MXFP4;
-            const bool a8 = convert::kept_block_policy(q) == artifact::ActivationPolicy::AllowA8;
-            l.a8          = l.a8 && a8;
+            // A format with int8 codes (the grouped W4A8 reads it), which the converter keeps at
+            // AllowA8: the layer's policy where a bank records none (layer_allows_a8).
+            const bool int8_codes =
+                convert::kept_block_policy(q) == artifact::ActivationPolicy::AllowA8;
+            l.kept_a8        = l.kept_a8 && int8_codes;
             const bool whole = moe_w4a8_whole_blocks(static_cast<std::int64_t>(k),
                                                      static_cast<std::int64_t>(x_width));
-            if (whole && a8 && (!frag || ggml_frag_w4a8(q))) { l.int8_bytes += bytes; }
+            if (whole && int8_codes && (!frag || ggml_frag_w4a8(q))) { l.int8_bytes += bytes; }
             // An MXFP4 bank takes its layer's MXFP4 route (the int8 tier or the block-scaled MMA)
             // only in whole blocks too: the op refuses it otherwise (KGroup) and runs it A16.
             if (whole && q == QType::MXFP4) { l.mxfp4_bytes += bytes; }
@@ -593,12 +599,15 @@ public:
             if (!l.known) {
                 at(runtime::ExpertPrefill::Unknown) += l.bytes;
             } else if (l.mxfp4) {
-                // A bank the op refuses for its blocks (w4a8_bank_refusal KGroup) runs A16.
-                at(runtime::ExpertPrefill::Mxfp4) += l.mxfp4_bytes;
-                at(runtime::ExpertPrefill::A16) += l.bytes - l.mxfp4_bytes;
+                // A bank the op refuses for its blocks (w4a8_bank_refusal KGroup), or under an A16
+                // policy (Policy), runs A16.
+                const std::uint64_t mx = layer_allows_a8(l) ? l.mxfp4_bytes : 0;
+                at(runtime::ExpertPrefill::Mxfp4) += mx;
+                at(runtime::ExpertPrefill::A16) += l.bytes - mx;
             } else {
-                // One A16-only bank makes the layer's expert policy A16 (ops/moe moe_policy).
-                const std::uint64_t int8 = l.a8 ? l.int8_bytes : 0;
+                // An A16 expert policy refuses the grouped W4A8 every bank (w4a8_bank_refusal
+                // Policy).
+                const std::uint64_t int8 = layer_allows_a8(l) ? l.int8_bytes : 0;
                 at(runtime::ExpertPrefill::Int8) += int8;
                 at(runtime::ExpertPrefill::A16) += l.bytes - int8;
             }
@@ -683,9 +692,28 @@ private:
         std::uint64_t bytes = 0, int8_bytes = 0;
         std::uint64_t float_bytes = 0; // its floating-point weight banks (not the prefill route's)
         std::uint64_t mxfp4_bytes = 0; // of an MXFP4 layer: its banks in whole blocks
-        bool known = true, mxfp4 = true, a8 = true;
+        // kept_a8: every bank a format the converter keeps at AllowA8 (int8 codes)
+        bool known = true, mxfp4 = true, kept_a8 = true;
         Bank gate_up, down;
     };
+
+    // Whether the layer's expert policy allows int8 activations in prefill (ops::allows_a8 of
+    // ops::moe_policy): the policy its banks run at (layer_policy, the decode kind's, #769), and
+    // the formats' kept policy only where a bank has none (or a bank is missing).
+    static bool layer_allows_a8(const Layer& l) {
+        if (l.gate_up.seen && l.down.seen) {
+            switch (layer_policy(l.gate_up, l.down)) {
+            case runtime::PlanExpertPolicy::A16Only:
+                return false;
+            case runtime::PlanExpertPolicy::AllowA8:
+            case runtime::PlanExpertPolicy::AllowA4:
+                return true;
+            case runtime::PlanExpertPolicy::Unknown:
+                break;
+            }
+        }
+        return l.kept_a8;
+    }
     std::map<std::string, Layer> layers_;
 };
 

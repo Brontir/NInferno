@@ -12,6 +12,7 @@
 #include "runtime/engine/plan_dry_run.h"
 #include "artifact/formats.h"
 #include "artifact/schema.h"
+#include "core/ggml_frag.h"
 #include "core/weight_view.h"
 
 #include <nlohmann/json.hpp>
@@ -971,6 +972,90 @@ int artifact_expert_layers() {
     return failures;
 }
 
+// An artifact's MoE prefill route reads the policy its banks' Uses record, as the decode kind does
+// (#769), not the format's kept policy (convert::kept_block_policy: MXFP4 and Q4_0 AllowA8): banks
+// recorded A16Only prefill on the 16-bit register MMA (ops/moe w4a8_bank_refusal Policy), one
+// A16-only bank of a layer makes the layer A16 (ops::moe_policy), and the kept policy stands only
+// where a Use records none.
+int artifact_prefill_policy() {
+    namespace art = ninferno::artifact;
+    using ninferno::QType;
+    using Policy = std::optional<art::ActivationPolicy>;
+
+    struct Bank {
+        std::string name;
+        std::uint64_t rows;
+        Policy policy;
+    };
+
+    const auto route = [](QType format, const std::vector<Bank>& banks) {
+        art::Directory dir;
+        dir.components["text"].config      = {{"architectures", {"GptOssForCausalLM"}},
+                                              {"model_type", "gpt_oss"},
+                                              {"hidden_size", 2880},
+                                              {"num_hidden_layers", 2},
+                                              {"layer_types", {"sliding_attention", "full_attention"}},
+                                              {"sliding_window", 128},
+                                              {"num_attention_heads", 64},
+                                              {"num_key_value_heads", 8},
+                                              {"head_dim", 64},
+                                              {"intermediate_size", 2880},
+                                              {"num_local_experts", 32},
+                                              {"num_experts_per_tok", 4},
+                                              {"max_position_embeddings", 131072},
+                                              {"vocab_size", 201088}};
+        const ninferno::QuantLayout layout = format == QType::MXFP4
+                                                 ? ninferno::default_weight_layout(format)
+                                                 : ninferno::ggml_published_layout(format);
+        for (const Bank& bank : banks) {
+            art::TensorObject t;
+            t.id     = bank.name;
+            t.shape  = {32, bank.rows, 2880};
+            t.format = std::string(art::format_name(format));
+            t.layout = std::string(art::layout_name(layout));
+            t.bytes  = bank.rows;
+            const art::ObjectHandle handle{dir.objects.size()};
+            dir.objects.emplace_back(t);
+            dir.object_index[bank.name] = handle;
+            art::Binding b;
+            b.whole_object          = true;
+            b.elements              = 32 * bank.rows * 2880;
+            b.parts                 = {art::Part{handle, 0, b.elements}};
+            dir.bindings[bank.name] = b;
+            art::Use use;
+            use.parameter              = bank.name;
+            use.input                  = "x";
+            use.activation_policy      = bank.policy;
+            dir.uses[{bank.name, "x"}] = use;
+        }
+        return pr::plan_facts_of_directory(dir, "a test directory").model.expert_prefill;
+    };
+    const auto layers = [](Policy gate_up0, Policy down0, Policy gate_up1, Policy down1) {
+        return std::vector<Bank>{{"text/layers/0/experts/gate_up", 5760, gate_up0},
+                                 {"text/layers/0/experts/down", 2880, down0},
+                                 {"text/layers/1/experts/gate_up", 5760, gate_up1},
+                                 {"text/layers/1/experts/down", 2880, down1}};
+    };
+    const Policy a16 = art::ActivationPolicy::A16Only;
+    const Policy a8  = art::ActivationPolicy::AllowA8;
+    const Policy none;
+    int failures = 0;
+    failures += check(route(QType::MXFP4, layers(a8, a8, a8, a8)) == rt::ExpertPrefill::Mxfp4,
+                      "artifact prefill: MXFP4 banks recorded AllowA8, the MXFP4 route");
+    failures += check(route(QType::MXFP4, layers(a16, a16, a16, a16)) == rt::ExpertPrefill::A16,
+                      "artifact prefill: MXFP4 banks recorded A16Only, A16 (not the kept AllowA8)");
+    failures += check(route(QType::MXFP4, layers(a8, a16, a8, a16)) == rt::ExpertPrefill::A16,
+                      "artifact prefill: one A16-only bank a layer makes the layer A16");
+    failures +=
+        check(route(QType::MXFP4, layers(none, none, none, none)) == rt::ExpertPrefill::Mxfp4,
+              "artifact prefill: no recorded policy, the format's kept policy");
+    failures += check(route(QType::GGML_Q4_0, layers(a8, a8, a8, a8)) == rt::ExpertPrefill::Int8,
+                      "artifact prefill: Q4_0 banks recorded AllowA8, the grouped W4A8");
+    failures += check(route(QType::GGML_Q4_0, layers(a16, a16, a16, a16)) == rt::ExpertPrefill::A16,
+                      "artifact prefill: Q4_0 banks recorded A16Only, A16 (not the kept AllowA8)");
+    return failures;
+}
+
 } // namespace
 
 // A GGUF's linears take their tensors' formats by role: a recurrent layer's attn_qkv is its mixer's
@@ -1014,7 +1099,8 @@ int gguf_linear_formats() {
 int main() {
     const int failures = gguf_qwen35() + config_qwen35() + qwen35_moe() + gemma4() + gpt_oss() +
                          nemotron_h() + llama() + model_types() + boards() + artifact_errors() +
-                         artifact_expert_layers() + gguf_linear_formats();
+                         artifact_expert_layers() + artifact_prefill_policy() +
+                         gguf_linear_formats();
     if (failures == 0) { std::cout << "plan facts OK\n"; }
     return failures == 0 ? 0 : 1;
 }
