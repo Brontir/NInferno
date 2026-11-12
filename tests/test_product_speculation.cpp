@@ -570,9 +570,10 @@ int main() {
         }
         // (v) The pool rule (#777) prices the head's pool against plain decode's over DECISIONS
         // 73's mix: 20 short requests as the user's chats (2048 + 512 tokens, held by KV tokens)
-        // and, where the asked context holds a long one, 6 long requests at it (held by whole
-        // contexts). The profile of (iv): the head's facts table 2:3,3:0, its mtp:3 x2 (x 0.6 = 1.2
-        // at two streams); a plain step of C streams costs 1 + 0.02 (C - 1) one-stream steps.
+        // and, where the asked context holds a long one, 6 long requests at it (held by KV tokens
+        // too: 24,576 + 512 at 32K). The profile of (iv): the head's facts table 2:3,3:0, its mtp:3
+        // x2 (x 0.6 = 1.2 at two streams); a plain step of C streams costs 1 + 0.02 (C - 1)
+        // one-stream steps.
         {
             namespace pr = ninferno::product;
             sp::Profile p;
@@ -605,6 +606,20 @@ int main() {
             failures += check(pr::pool_slots(pool(4, 32768)) == 51 &&
                                   pr::pool_slots(pool(3, 1024)) == 3 && pr::pool_slots({}) == 0,
                               "a pool holds its tokens' chats, at least its contexts");
+            // DECISIONS 73's long request at 32K: its 24,576-token prompt and 512-token answer,
+            // 25,088 tokens, so 4 contexts of 32K hold 5 and 5 hold 6; at 8K it fills a context.
+            {
+                pr::choice::Task at;
+                at.contexts                 = {32768};
+                const std::uint64_t long32k = std::uint64_t{at.long_prompt()} + at.answer;
+                at.contexts                 = {8192};
+                const std::uint64_t long8k  = std::uint64_t{at.long_prompt()} + at.answer;
+                failures += check(long32k == 25088 && long8k == 8192 &&
+                                      pr::pool_slots(pool(4, 32768), long32k) == 5 &&
+                                      pr::pool_slots(pool(5, 32768), long32k) == 6 &&
+                                      pr::pool_slots(pool(4, 8192), long8k) == 4,
+                                  "a pool holds its tokens' long requests, at least its contexts");
+            }
             failures +=
                 check(pr::mix_turns(8, 20) == std::vector<std::uint32_t>{8, 8, 4} &&
                           pr::mix_turns(3, 20) == std::vector<std::uint32_t>{3, 3, 3, 3, 3, 3, 2} &&
@@ -618,9 +633,9 @@ int main() {
                 one_chat.size() == 1 && one_chat[0].weight == 1.0 && one_chat[0].head == 4 &&
                     one_chat[0].plain == 5 && at_32k.size() == 2 && at_32k[0].requests == 20 &&
                     at_32k[0].head == 8 && at_32k[0].plain == 8 && at_32k[1].requests == 6 &&
-                    at_32k[1].head == 4 && at_32k[1].plain == 5 &&
+                    at_32k[1].head == 5 && at_32k[1].plain == 6 &&
                     std::abs(at_32k[1].weight - 6.0 / 26.0) < 1e-15,
-                "the mix's parts: chats by tokens, long requests by whole contexts, 20 and 6");
+                "the mix's parts: both by KV tokens (chats 2560, long requests 25,088), 20 and 6");
             // As many streams as plain decode, five turns of four: the head decodes plainly
             // from three streams, so the waves take the same time, and a tie keeps it.
             const auto same = rule(p, 3, 4, 5, 4);
@@ -635,14 +650,22 @@ int main() {
                 check(fifths.keep == pr::PoolKeep::Plain && !fifths.head && fifths.head_price &&
                           std::abs(*fifths.head_price - 4.32 / 5.3) < 1e-12,
                       "four fifths of the contexts for no gain at four streams: plain");
-            // The same pools of 32K contexts: the chats (51 and 64) take the eight streams on
-            // both, a tie; the long requests run on 4 contexts against 5, turns of 4 and 2 (1.06 +
-            // 1.02 / 1.2) against 5 and 1 (1.08 + 1): the head's two streams gain, and it is kept.
+            // The same pools of 32K contexts (the review's case): the chats (51 and 64) take the
+            // eight streams on both, a tie; the long requests of 25,088 tokens run 5 on the head's
+            // 4 contexts against 6 on plain decode's 5, turns of 5 and 1 (1.08 + 1 / 2) against one
+            // of 6 (1.10): plain decode. Counted by whole contexts (4 against 5: turns of 4 and 2,
+            // 1.06 + 1.02 / 1.2 = 1.91, against 5 and 1, 2.08) the head would have been kept.
             const auto roomy = rule(p, 3, 8, 5, 4, 32768);
-            failures += check(roomy.keep == pr::PoolKeep::Head && roomy.head_price &&
-                                  std::abs(*roomy.head_price - std::pow(2.08 / (1.06 + 1.02 / 1.2),
-                                                                        6.0 / 26.0)) < 1e-12,
-                              "four of five 32K contexts: the chats tie, the long requests gain");
+            failures += check(roomy.keep == pr::PoolKeep::Plain && roomy.head_price &&
+                                  std::abs(*roomy.head_price -
+                                           std::pow(1.10 / (1.08 + 1.0 / 2.0), 6.0 / 26.0)) < 1e-12,
+                              "four of five 32K contexts: the long requests by pages, plain");
+            // At 64K contexts the same 4 and 5 hold 10 and 13 long requests: both serve the eight
+            // streams in either part, a tie, and the head is kept.
+            const auto wide = rule(p, 3, 8, 5, 4, 65536);
+            failures +=
+                check(wide.keep == pr::PoolKeep::Head && wide.head_price && *wide.head_price == 1.0,
+                      "four of five 64K contexts: eight streams in both parts, a tie");
             // One context of two: twenty answers one at a time at x2 (10 steps) against ten
             // turns of two plain streams (10 x 1.02): the head, which four fifths refused.
             const auto alone = rule(p, 1, 2, 2, 1);
@@ -683,17 +706,52 @@ int main() {
             const auto stepless  = rule(unpriced, 3, 4, 5, 4);
             failures += check(stepless.keep == pr::PoolKeep::Head && !stepless.head_price,
                               "no step prices: four fifths, the head");
+            // Gains and step prices given, but the head's load table a literal (a profile whose
+            // table the facts did not derive: the head keeps its built-in table): its depths are
+            // no price, so four fifths decide where the priced rule chose plain decode.
+            sp::Profile literal = p;
+            literal.load_basis  = "literal";
+            const auto by_rote  = rule(literal, 3, 8, 5, 4);
+            failures += check(by_rote.keep == pr::PoolKeep::Head && !by_rote.head_price &&
+                                  by_rote.head && by_rote.head->load_basis == "literal",
+                              "a literal head table: unpriced, four fifths, the head");
+            {
+                const auto served              = pr::served_head_fallback(subject_of(p), false);
+                pr::ServedSpeculation stand_in = served ? *served : pr::ServedSpeculation{};
+                stand_in.load_basis            = "";
+                failures += check(served && served->load_basis == "facts" &&
+                                      pr::pool_head_gain(p, *served, 1).has_value() &&
+                                      !pr::pool_head_gain(p, stand_in, 1).has_value() &&
+                                      !pr::pool_head_gain(p, stand_in, 2).has_value(),
+                                  "a stand-in head table is no price at any count");
+            }
+            // The head priced at the table its build runs (Codex on #791): a build that runs it
+            // without bounds (--spec-load none) drafts three at four and five streams, whose joint
+            // verify nobody priced, so four fifths decide where the facts table's price chose
+            // plain decode; the head served carries that table.
+            {
+                const auto unbounded = pr::pool_rule(
+                    subject_of(p), false, 3, 8, [&] { return pool(5, chat); },
+                    [&](pr::ServedSpeculation& head) -> std::optional<pr::PoolSize> {
+                        head.engine.load.clear();
+                        return pool(4, chat);
+                    });
+                failures += check(unbounded.keep == pr::PoolKeep::Head && !unbounded.head_price &&
+                                      unbounded.head && unbounded.head->engine.load.empty(),
+                                  "the head priced at the table its build runs");
+            }
         }
         // (vi) Properties of the pool rule's price over random tables (#777). The mix run as the
         // benchmark sends requests (`wave`: C clients, client k sending requests k, k + C, ... one
         // after another, a server admitting waiting requests in order while its pool has the KV
         // tokens for them): the 20 chats each taking 2048 + 512 tokens (at most a context's), the
-        // 6 long requests each a whole context, the two weighted 20 : 6 in ln of their time where
-        // the context holds a long request. Where both pools are priced, a head the rule keeps is
-        // never slower than plain decode's pool, and the rule keeps exactly the heads that are no
-        // slower; where either is not, the rule is the one before #777 (four fifths of plain
-        // decode's whole contexts); a head that gains more is never refused where one that gains
-        // less is kept.
+        // 6 long requests each their long prompt and answer (25,088 tokens at 32K and beyond, a
+        // whole context at 8K and below), the two weighted 20 : 6 in ln of their time where the
+        // context holds a long request; the head's table a literal now and then, which is no price.
+        // Where both pools are priced, a head the rule keeps is never slower than plain decode's
+        // pool, and the rule keeps exactly the heads that are no slower; where either is not, the
+        // rule is the one before #777 (four fifths of plain decode's whole contexts); a head that
+        // gains more is never refused where one that gains less is kept.
         {
             namespace pr      = ninferno::product;
             const auto shorts = static_cast<std::uint32_t>(pr::choice::kMixShortRequests);
@@ -773,7 +831,11 @@ int main() {
                     wave(clients, pool, shorts, std::min(chat_tokens, pool.context), rate));
                 out.weights.push_back(shorts / all);
                 if (has_long) {
-                    out.waves.push_back(wave(clients, pool, longs, pool.context, rate));
+                    // A long request holds its prompt's and answer's pages (25,088 tokens at
+                    // 32K), not a whole context.
+                    const std::uint64_t long_tokens =
+                        std::uint64_t{task.long_prompt()} + task.answer;
+                    out.waves.push_back(wave(clients, pool, longs, long_tokens, rate));
                     out.weights.push_back(longs / all);
                 }
                 return out;
@@ -840,8 +902,10 @@ int main() {
                 // anywhere (at plain decode or not).
                 pr::ServedSpeculation head;
                 head.menu.primary.config = sp::SpecConfig::parse("mtp:" + std::to_string(k));
-                std::uint32_t lanes      = static_cast<std::uint32_t>(pick(2, 4));
-                int depth                = k;
+                // Mostly a table the facts derived; now and then a literal one, which is no price.
+                head.load_basis     = uniform(0, 1) < 0.9 ? "facts" : "literal";
+                std::uint32_t lanes = static_cast<std::uint32_t>(pick(2, 4));
+                int depth           = k;
                 for (int bounds = pick(0, 3); bounds > 0 && depth > 0; --bounds) {
                     depth = pick(0, depth);
                     head.engine.load.push_back(
@@ -850,8 +914,8 @@ int main() {
                 }
                 const auto streams = static_cast<std::uint32_t>(pick(2, 8));
                 // Pools of whole contexts, and up to a context's tokens beyond them.
-                const std::uint64_t contexts[] = {1024, 2048, 2560, 4096, 8192, 32768};
-                const std::uint64_t context    = contexts[pick(0, 5)];
+                const std::uint64_t contexts[] = {1024, 2048, 2560, 4096, 8192, 32768, 65536};
+                const std::uint64_t context    = contexts[pick(0, 6)];
                 const auto pool_of             = [&](int whole) {
                     return Pool{.context = context,
                                             .tokens  = whole * context +

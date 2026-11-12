@@ -2161,10 +2161,12 @@ two branches (`product::pool_head_price`):
   where 5 x its contexts >= 4 x min(plain decode's contexts, C). The four fifths are a literal with
   no derivation, basis Unknown (`kUnpricedHeadShare` / `kUnpricedHeadOf`), kept only until the
   facts exist. Today it decides on the lab boards whose head the facts do not price (below):
-  Ampere, which has no round-cost row ("no facts for ampere": the RTX 3090, 3060 and A100), and
-  likewise Turing (the RTX 2080 Ti) and Volta (the Quadro GV100), whose rounds are transferred from
-  other generations without a price; and the RTX 5070 Ti, the pair's own lab card, whose measured
-  record carries a literal load table and no step prices.
+  Ampere, Turing and Volta, which have no round-cost row ("no facts for ampere": the RTX 3090, 3060
+  and A100; "no facts for turing": the RTX 2080 Ti; "no facts for volta": the Quadro GV100), so
+  their rounds are transferred from other generations' lab cards, unpriced; the RTX 5070 Ti, the
+  pair's own lab card, whose measured record carries a literal load table and no step prices; and
+  wherever the head's load table is a literal (`pool_head_gain` prices only a table the facts
+  derived or the lab measured, `ServedSpeculation::load_basis` "facts" or "measured").
 
 The bare four fifths had decided every case before. With the facts tables of #759 (2:2,3:0 or
 2:3,3:0) they gave up a fifth of the contexts for a gain that applies only at one or two active
@@ -2178,8 +2180,13 @@ client k sending requests k, k + C, ...:
   2560)) of them (`product::pool_slots`; a context shorter than a request holds one, cut to it) and
   serves w = min(C, that) streams; a request that does not fit waits for pages.
 - 6 long requests (`choice::kMixLongRequests`) at the asked context, where it holds DECISIONS 73's
-  long prompt (`choice::Task::long_prompt()`): each holds a whole context, so the pool serves min(C,
-  n) of them.
+  long prompt (`choice::Task::long_prompt()`, min(asked - 512, `choice::kLongPrompt` = 24,576)).
+  A long request holds its pages too: the prompt and the 512-token answer, 25,088 tokens at 32K
+  and beyond, a whole context at 8K and below; so the pool holds max(n, floor(T / that)) of them
+  (`pool_slots(pool, request)`) and serves min(C, that). Counted by whole contexts (the review's
+  case: 4 of 5 contexts of 32K at C = 8, the facts table 2:3,3:0) the head's pool would serve 4
+  long requests against plain decode's 5 and keep the head; by pages it serves 5 against 6, and
+  plain decode runs (pinned in (v)).
 Each part runs in turns of w streams until fewer requests are left (`product::mix_turns`: 8 slots
 8, 8, 4; 4 slots five turns of 4; 3 slots six of 3 and one of 2), and the parts weigh by their
 counts, 20 : 6 (`product::mix_parts`). The first version of this rule counted a whole context as a
@@ -2197,7 +2204,9 @@ R_s (`Profile::joint_scale`, #303). P(s) is a plain step of s streams over one s
 beside `joint_scale` on the same rates in `price_joint`). `price_joint` runs for every profile
 `priced_by_facts_for` builds, so P(s) is priced for a card without its own record too, wherever its
 architecture has the round-cost facts. No constant enters the priced branch: the request counts and
-tokens are DECISIONS 73's, the rest are the pair's facts and the card's rates.
+tokens are DECISIONS 73's, the rest are the pair's facts and the card's rates. The head is priced at
+the table its build runs: the server's build sets it (a `--spec-load` table, bounds moved to
+captured depths) before the price is taken (Codex on #791).
 
 **The head's resolution.** The head is priced from the model's own measurement of it
 (`product::head_priced_profile`): the subject's profile where it measured MTP, else its MTP
@@ -2208,6 +2217,22 @@ resolution among `ResolvedSpeculation::other_kinds`. Two changes make that resol
   only): from a measured pair of this model, its own (`PairStep::Own`) or a sibling quantization of
   its repository revision (`PairStep::Sibling`), never a group of other models (`PairStep::Group`):
   a fine-tune's acceptance is not its base's. With none, no other kind; the head is then unpriced.
+  These kinds are `ResolvedSpeculation::pricing_only`: they price the head and nothing else. The
+  drafter axis offers no option from them (`product::drafter_axis`) and no server or plan switches
+  to them (`product::subject_of_mode`), so a published profile's drafter choices are those of
+  master (pinned in `test_plan_drafter_kinds`: the axis with a pricing-only kind equals the axis
+  without it, and `subject_of_mode` to MTP serves the same resolution).
+
+**The head fallback's table, kept.** `served_head_fallback` derives the head's load table from the
+facts where the profile that prices it (`head_priced_profile`) has a facts table and prices the
+head's configuration, as before; that profile is now the model's own MTP measurement, not only the
+subject's own profile. So a server drafting with DFlash2 (`subject_of_mode`), whose DFlash2
+profile measured no MTP, serves its fit fallback's Head step (`fit_fallbacks`) and the pool rule's
+head with the facts table where master served the built-in literal: on the RTX 4090 the 27B's
+head runs 2:3,3:0 (facts) where master ran the built-in table; on the RTX 3090 (unpriced) it stays
+the literal. It is kept: the table follows the model's own measurement and this card's facts, as a
+shallower depth's and the fit fallback's do (`load_for`). Pinned in `test_plan_drafter_kinds`
+(the head fallback's table with and without the MTP resolution, on both boards).
 
 **Verified against the lab's runs** (`test_plan_drafter_kinds`, the shipped registry, Qwen3.8 27B
 GGUF UD-Q4_K_M with its DFlash2 drafter at `--max-context 32768` on the card's own board; a pool of
@@ -2222,7 +2247,8 @@ decode's, in each part and at the mix:
 | RTX 4090, 8 | plain 46.2, MTP 3 69.4, as above | priced | the head | x1.000 | x1.000-2.239 | x1.000-1.204 | x1.502 |
 
 At C = 8 the range runs over the drafter's unrecorded count, 2 to 8 contexts each (the long part
-x2.239 at 2 contexts, x1.000 at 3, x1.367-1.374 at 4-5, x1.000 at 6-8).
+x2.239 at 2 contexts, x1.000 at 3, x1.374 at 4, x1.000 at 5-8). The 3090's pools hold 5 and 6 long
+requests of 25,088 tokens; unpriced, they do not enter its verdict.
 
 The verdicts match the runs; the magnitudes do not. On the RTX 4090 the priced chats part, the one
 the runs measured, is x1.000 against x1.816 at C = 4 and x1.502 at C = 8: the predicted speed of
@@ -2241,24 +2267,34 @@ fifths to the rule:
     plain decode, and on the 4070 Ti and 5090 (8,5,8,7) too;
   - contexts of 4096: (2,1,2,1), (3,2,3,2), (4,3,5,3) and (4,2,4,3) move to the head; (8,4,5,4)
     and (8,4,6,5) move to plain decode;
-  - contexts of 8192 and 32768: (2,1,2,1), (3,2,3,2), (4,3,5,3) and (4,2,4,3) move to the head;
-    (8,4,6,5) moves to plain decode.
+  - contexts of 8192: the same four move to the head; (8,4,6,5) moves to plain decode;
+  - contexts of 32768: the same four move to the head; (8,4,5,4) moves to plain decode (5 long
+    requests against 6); (8,4,6,5) stays the head (6 long requests against 7: one turn of 6 on
+    both, a tie);
+  - contexts of 65536: the same four move to the head; nothing moves to plain decode.
   The rest stay.
 - Unpriced (RTX 5070 Ti, 3090, 3060, 2080 Ti, Quadro GV100, A100): the four fifths decide, as
   before; nothing moves.
 
-Pinned in `test_product_speculation` (v): at contexts of one request the issue's case (4 of 5
-contexts at C = 8 under 2:3,3:0, five turns of 4 head streams against four of 5 plain) moves to
-plain decode, priced x0.82; at 32K contexts it keeps the head (both serve 8 short requests, the
-long part decides); the same case unpriced keeps the head by the four fifths.
+Pinned in `test_product_speculation` (v), the facts table 2:3,3:0 and mtp:3 at x2:
+- at contexts of one request the issue's case (4 of 5 contexts at C = 8, five turns of 4 head
+  streams against four of 5 plain) moves to plain decode, priced x0.82;
+- at 32K contexts (the review's case) it moves to plain decode too: the short requests tie (8
+  streams each), the long ones run 5 on the head's pool, turns of 5 and 1 (1.08 + 1 / 2), against
+  one turn of 6 on plain decode's (1.10), priced (1.10 / 1.58)^(6/26);
+- at 64K contexts it keeps the head: 10 and 13 long requests, both serving 8 streams, a tie;
+- unpriced (no joint price, no step prices, or a literal head table) the same case keeps the head
+  by the four fifths.
 
 **Properties** (`test_product_speculation` (vi), 4000 random tables, profiles, step prices,
-concurrencies and pools at contexts of 1024 to 32768 tokens): in the priced branch a head the rule
-keeps never decodes the mix slower than plain decode's pool, the mix simulated as the benchmark
-sends it (clients, a queue, a pool admitting short requests while its KV tokens hold them and long
-ones while it has a whole context), the rule keeps exactly the heads that are no slower, and its
-price is the simulated one; in the unpriced branch the decision is master's four fifths and no price
-is claimed; a head faster at every depth is never refused where the slower one is kept.
+concurrencies and pools at contexts of 1024 to 65536 tokens, the head's table a literal in a tenth
+of them): in the priced branch a head the rule keeps never decodes the mix slower than plain
+decode's pool, the mix simulated as the benchmark sends it (clients, a queue, a pool admitting each
+request while its KV tokens hold the request's: 2560 tokens, or the long prompt and answer), the
+rule keeps exactly the heads that are no slower, and its price is the simulated one; in the
+unpriced branch (a literal table among them) the decision is master's four fifths and no price is
+claimed; a head faster at every depth is never refused where the slower one is kept. Last run:
+2586 kept (1065 unpriced), 1414 refused.
 
 **Open.**
 - The four fifths stay for unpriced boards until the facts exist: round-cost rows for Ampere,

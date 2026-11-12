@@ -647,11 +647,14 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         // Qwen3.8 27B at --max-context 32768 and --max-concurrency 4: dflash2 K=7 left 3 of 4
         // contexts and the server decoded plainly at 48.9 tok/s a request; MTP 3 88.8, at 8: 46.2
         // against 69.4; RTX 3090 at 8: plain 38.3 tok/s a request in 5 contexts, MTP 3 51.1 in 4).
-        // It runs where its pool prices at least plain decode's over the benchmark's mix
+        // It runs where its pool prices at least plain decode's over DECISIONS 73's mix
         // (product::pool_head_price, #777): its load table's gain at each number of active
-        // streams, each pool serving as many short chats as its KV tokens hold (pool_slots).
+        // streams, each pool serving as many requests as its KV tokens hold (pool_slots). Where
+        // the facts do not price that (no round-cost row for the card's generation, a literal
+        // table), the rule before #777 decides: the head where it holds four fifths of plain
+        // decode's contexts (the RTX 3090 above).
         const auto head_pool =
-            [&](const product::ServedSpeculation& head) -> std::optional<product::PoolSize> {
+            [&](product::ServedSpeculation& head) -> std::optional<product::PoolSize> {
             engine_.reset();
             auto served         = head;
             served.fit_fallback = drafted_label + " leaves the KV pool " +
@@ -666,6 +669,9 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             standing = Built::Head;
             try {
                 build();
+                // The table the build runs (--spec-load, bounds moved to captured depths): the
+                // pool rule prices the head at those depths (Codex on #791).
+                head.engine.load = served_speculation_->engine.load;
                 return pool_size(engine_->memory_summary());
             } catch (const ninferno::CapacityError&) { return std::nullopt; }
         };

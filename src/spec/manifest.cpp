@@ -472,7 +472,8 @@ SelectOptions rows_of(const std::filesystem::path& artifact) {
 // `same_model`: only the target's own pair or a sibling quantization of its revision (pair_choice's
 // first two steps), never a group of other models (a fine-tune's acceptance is not its base's):
 // the kinds a published profile does not draft with (#777), whose acceptance the lab measured on
-// this model elsewhere and whose rounds the facts price on this card.
+// this model elsewhere and whose rounds the facts price on this card. Those are marked
+// ResolvedSpeculation::pricing_only: they price the MTP head, and offer no drafter.
 void resolve_other_kinds(const SpeculationManifest& manifest, const std::filesystem::path& label,
                          const GpuKey& gpu, std::string_view weights, std::string_view quant,
                          std::string_view repo, ResolvedSpeculation& out, bool same_model = false) {
@@ -501,6 +502,7 @@ void resolve_other_kinds(const SpeculationManifest& manifest, const std::filesys
                 alone.basis         = std::move(choice->basis);
                 alone.sha256        = registry.source_sha256();
                 alone.profile       = std::move(choice->profile);
+                alone.pricing_only  = same_model;
                 out.other_kinds.push_back(std::move(alone));
                 continue;
             }
@@ -795,14 +797,27 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
         resolve_manifest_profile(*manifest, artifact, gpu, out);
         // The kinds the published profile does not draft with: this model's own lab measurement
         // of them (#777: the MTP head beside a published DFlash2 profile).
-        if (out.found()) {
+        // Only the artifact's source inputs are read under the catch, as resolve_pair_profile
+        // reads them: unreadable, no pair names its weights, and the note says so once.
+        std::optional<std::string> weights;
+        std::string quant;
+        bool inputs_read = out.found();
+        if (inputs_read) {
             try {
-                resolve_other_kinds(
-                    *manifest, artifact, gpu, artifact_weights(artifact).value_or(""),
-                    artifact_quant(artifact), hub_repo_of_artifact(artifact), out, true);
-            } catch (const std::exception&) {
-                // The artifact's source inputs do not read: no pair names its weights.
+                weights = artifact_weights(artifact);
+                quant   = artifact_quant(artifact);
+            } catch (const std::exception& e) {
+                inputs_read = false;
+                const std::string note =
+                    std::string("the artifact's source inputs do not read: ") + e.what();
+                if (std::find(out.notes.begin(), out.notes.end(), note) == out.notes.end()) {
+                    out.notes.push_back(note);
+                }
             }
+        }
+        if (inputs_read) {
+            resolve_other_kinds(*manifest, artifact, gpu, weights.value_or(""), quant,
+                                hub_repo_of_artifact(artifact), out, true);
         }
     } else if (std::set<std::string> components;
                const auto* entry = entry_by_shape(artifact, components)) {

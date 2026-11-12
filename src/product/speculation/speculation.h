@@ -238,15 +238,19 @@ struct PoolSize {
     std::uint32_t context  = 0;
 };
 
-// The user's chats a pool holds at once (#777): its KV tokens over DECISIONS 73's short request
-// (2048 + 512 tokens: a chat holds its pages, not a whole context), and never fewer than its whole
-// contexts (a context shorter than a chat holds one request, cut to it).
+// The requests of `request` tokens a pool holds at once (#777): its KV tokens over the request's (a
+// request holds its pages, not a whole context), and never fewer than its whole contexts (a context
+// shorter than the request holds one, cut to it). Without `request`: DECISIONS 73's short request
+// as the user's chat, 2048 + 512 tokens.
 [[nodiscard]] std::uint32_t pool_slots(const PoolSize& pool) noexcept;
+[[nodiscard]] std::uint32_t pool_slots(const PoolSize& pool, std::uint64_t request) noexcept;
 
 // A part of the mix on the two pools: its requests, its weight in the mix (its requests over the
-// mix's), and the streams each pool serves it, at most `concurrency`: the short chats by KV tokens
-// (pool_slots), the long requests by whole contexts. The long part only where the asked context
-// holds a long request (choice::Task::long_prompt).
+// mix's), and the streams each pool serves it, at most `concurrency`, both by KV tokens
+// (pool_slots): the short requests at 2048 + 512 tokens, the long ones at DECISIONS 73's long
+// prompt at the asked context plus the answer (choice::Task::long_prompt() + kRequestAnswer:
+// 25,088 tokens at 32K, a whole context at 8K and below). The long part only where the asked
+// context holds a long request.
 struct MixPart {
     std::uint32_t requests = 0;
     double weight          = 0;
@@ -285,7 +289,9 @@ struct HeadPrice {
 // the streams, min(bound, its own depth); its own depth below the first bound), 1 where that depth
 // is 0 (plain decode); else that depth's one-request gain (spec::measured_gain over every section)
 // times the joint verify's price there (Profile::joint_scale, R_1 / R_C; 1 at one stream). nullopt
-// where either is not known.
+// where either is not known, and where the head's table is not one the facts derived or the lab
+// measured (ServedSpeculation::load_basis "facts" or "measured"): a literal or stand-in table's
+// depths are no price, so the rule before #777 decides there.
 [[nodiscard]] std::optional<double>
 pool_head_gain(const spec::Profile& priced, const ServedSpeculation& head, std::uint32_t streams);
 // A plain decode step's price at `streams` streams in one-stream steps (Profile::plain_step_scale;
@@ -303,7 +309,9 @@ pool_head_gain(const spec::Profile& priced, const ServedSpeculation& head, std::
 // from head_priced_profile; unpriced, the four fifths of plain decode's contexts that ruled before
 // #777), else plain decode. One context always fits a drafter, so a server of one request never
 // loses it. `plain_pool` is called only inside the rule's range, `head_pool` only when plain decode
-// holds more; each builds or plans its configuration as `fits` above does.
+// holds more; each builds or plans its configuration as `fits` above does. `head_pool` sets the
+// head's `engine.load` to the table its build runs (a --spec-load table, bounds moved to captured
+// depths): the head is priced at the depths it runs (Codex on #791).
 enum class PoolKeep { Drafter, Head, Plain };
 struct PoolDecision {
     PoolKeep keep = PoolKeep::Drafter;
@@ -317,7 +325,7 @@ struct PoolDecision {
 [[nodiscard]] PoolDecision
 pool_rule(const SpeculationSubject& subject, bool per_request, std::uint32_t with_drafter,
           std::uint32_t concurrency, const std::function<PoolSize()>& plain_pool,
-          const std::function<std::optional<PoolSize>(const ServedSpeculation&)>& head_pool);
+          const std::function<std::optional<PoolSize>(ServedSpeculation&)>& head_pool);
 
 // The profile served_shallower serves: every choice `config` one draft shallower, with the drafter
 // the profile runs `config`'s mode with and the floor shallower_floor finds from `floor` (measured

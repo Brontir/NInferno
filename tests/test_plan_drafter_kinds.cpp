@@ -353,6 +353,54 @@ void test_head_resolution() {
                   subject.resolved->source + ")");
         check(&pr::head_priced_profile(subject) == &subject.resolved->profile,
               std::string(board) + ": a subject that measured MTP prices the head from its own");
+
+        // The head fallback's load table (fit_fallbacks' Head step, and the pool rule's head)
+        // follows the profile that prices it (#777): on the RTX 4090 the facts derive it from
+        // the model's own MTP measurement (2:3,3:0); without that measurement, and on the RTX 3090
+        // whose rounds the facts do not price, it stays the built-in literal.
+        const auto table = [](const pr::ServedSpeculation& head) {
+            std::string out;
+            for (const auto& bound : head.engine.load) {
+                out += (out.empty() ? "" : ",") + std::to_string(bound.lanes) + ":" +
+                       std::to_string(bound.draft_tokens);
+            }
+            return out + "/" + head.load_basis;
+        };
+        pr::SpeculationSubject bare = dflash2;
+        bare.resolved->other_kinds.clear();
+        const auto head      = pr::served_head_fallback(dflash2, false);
+        const auto bare_head = pr::served_head_fallback(bare, false);
+        check(
+            head && bare_head && bare_head->load_basis == "literal" &&
+                (priced_here ? table(*head) == "2:3,3:0/facts" : table(*head) == table(*bare_head)),
+            std::string(board) + ": the head fallback's table from the model's MTP measurement (" +
+                (head ? table(*head) : std::string("none")) + " against " +
+                (bare_head ? table(*bare_head) : std::string("none")) + ")");
+
+        // A kind resolved only to price the head beside a published profile (pricing_only, as
+        // spec::resolve_other_kinds marks the same-model pair it finds there) offers no drafter
+        // and is no mode a server switches to; it prices the head as before.
+        pr::SpeculationSubject priced_only = dflash2;
+        for (auto& other : priced_only.resolved->other_kinds) { other.pricing_only = true; }
+        const auto labels = [](const pr::DrafterAxis& axis) {
+            std::string out;
+            for (const auto& o : axis.options) {
+                out += " " + o.label + "@" + std::to_string(o.speedup);
+            }
+            return out;
+        };
+        const std::string with_kinds = labels(pr::drafter_axis(priced_only, pr::SpeculationAsk{}));
+        const std::string without    = labels(pr::drafter_axis(bare, pr::SpeculationAsk{}));
+        check(with_kinds == without, std::string(board) +
+                                         ": a pricing-only kind is no drafter option (" +
+                                         with_kinds + " against" + without + ")");
+        const auto switched      = pr::subject_of_mode(priced_only, spec::Mode::Mtp);
+        const auto bare_switched = pr::subject_of_mode(bare, spec::Mode::Mtp);
+        check(switched.resolved && bare_switched.resolved &&
+                  switched.resolved->source == bare_switched.resolved->source,
+              std::string(board) + ": no server switches to a pricing-only kind");
+        check(measures_mtp(pr::head_priced_profile(priced_only)),
+              std::string(board) + ": a pricing-only kind prices the head");
     }
 
     const auto& pairs = spec::Registry::builtin().pairs();

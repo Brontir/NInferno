@@ -487,11 +487,12 @@ void apply_builtin_default(SpeculationSubject& subject) {
 
 SpeculationSubject subject_of_mode(SpeculationSubject subject, spec::Mode mode) {
     if (!subject.resolved) { return subject; }
-    // A drafter the profile does not draft with: its own resolution (other_kinds).
+    // A drafter the profile does not draft with: its own resolution (other_kinds), never one that
+    // only prices the head beside a published profile (pricing_only, #777).
     if (!spec::drafting_modes(subject.resolved->profile).contains(mode)) {
         auto& others   = subject.resolved->other_kinds;
         const auto own = std::find_if(others.begin(), others.end(), [&](const auto& other) {
-            return spec::drafting_modes(other.profile).contains(mode);
+            return !other.pricing_only && spec::drafting_modes(other.profile).contains(mode);
         });
         if (own != others.end()) {
             spec::ResolvedSpeculation chosen = std::move(*own);
@@ -718,7 +719,7 @@ fit_fallbacks(const SpeculationSubject& subject, const ServedSpeculation& refuse
 PoolDecision
 pool_rule(const SpeculationSubject& subject, bool per_request, std::uint32_t with_drafter,
           std::uint32_t concurrency, const std::function<PoolSize()>& plain_pool,
-          const std::function<std::optional<PoolSize>(const ServedSpeculation&)>& head_pool) {
+          const std::function<std::optional<PoolSize>(ServedSpeculation&)>& head_pool) {
     PoolDecision out;
     if (with_drafter == 0 || with_drafter >= concurrency) { return out; }
     const PoolSize plain = plain_pool();
@@ -726,6 +727,7 @@ pool_rule(const SpeculationSubject& subject, bool per_request, std::uint32_t wit
     if (out.plain <= with_drafter) { return out; }
     out.keep = PoolKeep::Plain;
     if (auto head = served_head_fallback(subject, per_request)) {
+        // The build sets the table it runs (head_pool), so the head is priced at those depths.
         const auto pool = head_pool(*head);
         if (!pool) { return out; }
         // The profile that measured the model's MTP prices the head (served_head_fallback's).
@@ -767,11 +769,14 @@ std::optional<double> mix_steps(std::uint32_t streams, std::uint32_t requests,
     return total;
 }
 
-std::uint32_t pool_slots(const PoolSize& pool) noexcept {
-    const std::uint64_t chat  = std::uint64_t{choice::kRequestPrompt} + choice::kRequestAnswer;
-    const std::uint64_t chats = pool.tokens / chat;
+std::uint32_t pool_slots(const PoolSize& pool, std::uint64_t request) noexcept {
+    const std::uint64_t held = request == 0 ? 0 : pool.tokens / request;
     return static_cast<std::uint32_t>(
-        std::max<std::uint64_t>(pool.contexts, std::min<std::uint64_t>(chats, UINT32_MAX)));
+        std::max<std::uint64_t>(pool.contexts, std::min<std::uint64_t>(held, UINT32_MAX)));
+}
+
+std::uint32_t pool_slots(const PoolSize& pool) noexcept {
+    return pool_slots(pool, std::uint64_t{choice::kRequestPrompt} + choice::kRequestAnswer);
 }
 
 std::vector<MixPart> mix_parts(std::uint32_t concurrency, const PoolSize& head,
@@ -781,17 +786,20 @@ std::vector<MixPart> mix_parts(std::uint32_t concurrency, const PoolSize& head,
     choice::Task task;
     task.contexts = {plain.context};
     std::vector<MixPart> out;
-    const bool has_long = plain.context > 0 && task.long_prompt() > 0;
-    const double all    = has_long ? double(shorts) + double(longs) : double(shorts);
+    const std::uint32_t long_prompt = plain.context > 0 ? task.long_prompt() : 0;
+    const bool has_long             = long_prompt > 0;
+    const double all                = has_long ? double(shorts) + double(longs) : double(shorts);
     out.push_back({.requests = shorts,
                    .weight   = double(shorts) / all,
                    .head     = std::min(concurrency, pool_slots(head)),
                    .plain    = std::min(concurrency, pool_slots(plain))});
     if (has_long) {
+        // DECISIONS 73's long request holds its prompt and answer's pages, as a short one does.
+        const std::uint64_t request = std::uint64_t{long_prompt} + task.answer;
         out.push_back({.requests = longs,
                        .weight   = double(longs) / all,
-                       .head     = std::min(concurrency, head.contexts),
-                       .plain    = std::min(concurrency, plain.contexts)});
+                       .head     = std::min(concurrency, pool_slots(head, request)),
+                       .plain    = std::min(concurrency, pool_slots(plain, request))});
     }
     return out;
 }
@@ -841,6 +849,9 @@ std::optional<double> pool_head_gain(const spec::Profile& priced, const ServedSp
                                      std::uint32_t streams) {
     spec::SpecConfig at = head.menu.primary.config;
     if (!at.enabled() || streams == 0) { return std::nullopt; }
+    // A literal or stand-in table's depths are no price (DECISIONS 80): only a table the facts
+    // derived or the lab measured.
+    if (head.load_basis != "facts" && head.load_basis != "measured") { return std::nullopt; }
     // The last bound at or below these streams, as the Engine reads its load table.
     for (const SpeculationLoad& bound : head.engine.load) {
         if (bound.lanes > streams) { break; }
