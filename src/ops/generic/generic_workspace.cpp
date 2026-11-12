@@ -212,9 +212,10 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
     mmq = std::max(mmq, volta);
     // The register MMA's group-sums plane of a min-term format (rmma_group_sums): at any width of
     // the interval, since a prefill profile's last chunk takes it below kPrefillBandMinTokens too.
-    // Tensor-core MMA only (Volta's build adds its sums).
+    // Tensor-core MMA only (Volta's build adds its sums), and only where the plane is on (off by
+    // default, group_sums_plane_enabled): no call reads it otherwise.
     if (const auto codec = format_facts(problem.qtype).codec;
-        codec && current_features().mma_tensor) {
+        codec && group_sums_plane_enabled() && current_features().mma_tensor) {
         mmq = std::max(mmq, rmma_group_sums_bytes(*codec, problem.k, max_tokens));
     }
     if (!a8 && !r8_verify) return with_gather(mmq);
