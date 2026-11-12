@@ -26,11 +26,11 @@ namespace {
 constexpr std::size_t kChunkWeightBytes    = std::size_t{4096} * 17408 * 2;
 constexpr std::int32_t kMinChunkWeightRows = 256;
 
-// The bytes of one FP16 value (the decoded weight and the cast activation).
-constexpr std::size_t kHalfBytes = 2;
+// One FP16 value (the decoded weight and the cast activation) is two bytes.
+using Half = std::uint16_t;
 
 std::int32_t chunk_weight_rows(std::int32_t k) {
-    const std::size_t rows = kChunkWeightBytes / (static_cast<std::size_t>(k) * kHalfBytes);
+    const std::size_t rows = kChunkWeightBytes / (static_cast<std::size_t>(k) * sizeof(Half));
     return std::max(kMinChunkWeightRows,
                     static_cast<std::int32_t>(std::min<std::size_t>(rows, 1 << 20) / 128 * 128));
 }
@@ -47,8 +47,8 @@ VoltaCutlassLayout volta_cutlass_layout(std::int32_t k, std::int32_t tokens,
                                         std::int32_t weight_rows) {
     WorkspaceLayoutBuilder b;
     VoltaCutlassLayout l;
-    l.x = static_cast<std::size_t>(tokens) * static_cast<std::size_t>(k) * kHalfBytes;
-    l.w = static_cast<std::size_t>(weight_rows) * static_cast<std::size_t>(k) * kHalfBytes;
+    l.x = static_cast<std::size_t>(tokens) * static_cast<std::size_t>(k) * sizeof(Half);
+    l.w = static_cast<std::size_t>(weight_rows) * static_cast<std::size_t>(k) * sizeof(Half);
     l.c = static_cast<std::size_t>(tokens) * static_cast<std::size_t>(weight_rows) * sizeof(float);
     (void)b.alloc_bytes(l.x, 256);
     (void)b.alloc_bytes(l.w, 256);

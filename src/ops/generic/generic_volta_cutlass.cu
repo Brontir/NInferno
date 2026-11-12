@@ -47,7 +47,7 @@ using GemmFor = cutlass::gemm::device::Gemm<
 
 // The chunk's sizes are host code (generic_volta_cutlass_sizes.cpp): one FP16 value of the
 // layout's arithmetic is a __half.
-static_assert(sizeof(__half) == 2);
+static_assert(sizeof(__half) == sizeof(std::uint16_t));
 
 // The activation in FP16, [T, K] contiguous; eight values per thread (ldx and x are 16-byte
 // aligned on this route: run_route sends any other call to the scalar route).
