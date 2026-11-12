@@ -8,13 +8,14 @@ rows left out.
 
 ## How it was measured
 
-- `ninferno-serve route-tune --shapes tools/bench/data/route_regret/shapes.txt --samples 7
+- `ninferno-serve route-tune` (the `ninferno_route_tune` tool) `--shapes tools/bench/data/route_regret/shapes.txt --samples 7
   --a8-candidates 1 --out /dev/null --routes-out routes_pN.csv --selected-out sel_pN.csv`, three
   passes (N = 1, 2, 3), on a release build of the commit. Each pass writes every candidate's
   median and the production pick. The ten shapes are the golden shapes of the two lab models'
   q4_K and q6_K matrices (store and SwiGLU), at the tool's default widths: 190 scored cases per
-  board, T 1..512 (1-8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512). The 1024 and 2048 rows
-  belong to the prefill profile and are left out of the scoring.
+  board, T 1..512 (1-8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512). The 1024-8192 rows
+  belong to the prefill profile and are left out of the scoring. The weight copies rotate
+  (`--rotate` is on by default: 57 consecutive calls over copies of 2x L2 or 128 MiB).
 - No other job on the GPU during the passes (a queue holder, the stand lock, no compute process).
 - Regret is the extra time of the pick over the best observed route, summed over a band's cases
   (time-weighted). "Best observed" is the best qualified candidate in the sweep, not a global
@@ -23,9 +24,11 @@ rows left out.
 - Scoring, per board:
   - `regret_bands.py --routes routes_p1.csv routes_p2.csv routes_p3.csv --selected sel_p1.csv
     --board <board> --qualified <text> --pick selected|model --json ...` gives the band tables;
-  - `regret_collect.py --selected sel_p*.csv --routes routes_p*.csv --board <board> --pci-id <id>
-    --holdout board ...`, then `selection_regret.py`, gives the report by regime x authority. The
-    ridge comes from the board's PCI id.
+  - `regret_collect.py --selected sel_p1.csv sel_p2.csv sel_p3.csv --routes routes_p1.csv
+    routes_p2.csv routes_p3.csv --board <board> --model qwen3.5-9b+gemma4-12b-dense
+    --selector-revision f24d0079 --build-id a5-f24d0079-<board> --holdout board --qualified <text>
+    --pci-id <id> > regret.json`, then `selection_regret.py regret.json > report.json`, gives the
+    report by regime x authority. The ridge comes from the board's PCI id.
 - The summary JSON is those two outputs with the per-case rows and the GPU UUIDs left out.
 
 ## Scope, and what it does not cover
@@ -33,7 +36,8 @@ rows left out.
 Narrower than #614's PR-A5 plan:
 - Only q4_K and q6_K, and only the AllowA8 decisions are scored. The A16-policy and other-format
   regret is not here.
-- No shapes recorded from the lab models (`NINFERNO_ROUTE_RECORD`) and no `--rotate`.
+- No shapes recorded from the lab models (`NINFERNO_ROUTE_RECORD`).
+- T to 512 only: the plan asks for `--points` covering 17..2048.
 - No `tools/bench/run_route_regret.sh` yet: the commands above are the procedure.
 - The per-case rows, which `route_table_prune.py` (PR-F3) reads, are not committed. They stay in
   the sweep's CSVs on the stands (`docs/maintainer/sweep-archive.md`).
@@ -149,8 +153,9 @@ equals S there. On the GV100 the `volta-tiled` rule decides, and it is what keep
   `route-table` authority's p95 is +20-31 %. Per case, all of it is in the 12 entries each board
   borrows from another board (worst +33 % on the 4090, +25 % on the 4060 Ti, +21 % on the 3090);
   the entries measured on the board itself are at most +0.1 %. The boards whose verify entries are
-  all their own (RTX 3060, 4070 Ti, 5070 Ti, 2080 Ti) are at about 0. This is PR-F3's input: an
-  entry that carries to another board without a law loses there.
+  all their own (RTX 3060, 4070 Ti, 5070 Ti, 2080 Ti) are at about 0. The RTX 5090 also borrows 6
+  verify entries, and they lose at most +0.4 %. This is PR-F3's input: an entry that carries to
+  another board without a law can lose there.
 - **Decode T 2-4 (#788):** the vec rule's bound of 4 loses to the register MMA where a board's
   DRAM bytes per SM-clock are high (q6_K most). The counted SASS refutes an issue-rate crossover;
   an L1-sector law fits 6 of 8 boards for each format and waits for its facts.
