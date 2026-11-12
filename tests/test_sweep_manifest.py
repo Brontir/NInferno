@@ -104,6 +104,21 @@ class Scan(unittest.TestCase):
                 by = {f["path"]: f for f in sm.scan(root, "rtx4090")["files"]}
             self.assertIn("No such file", by["bom.csv"]["error"])
 
+    def test_an_unreadable_selection_is_no_pair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "routes.csv").write_text(ROUTES_OLD)
+            (root / "sel_ok.csv").write_text(SELECTED)
+            # A short row before the last: the selection is listed with its error, and no sweep
+            # names it as its pair.
+            (root / "sel_bad.csv").write_text(
+                "format,compute,epilogue,n,k,T,asked,selected\n"
+                "q4_K,a16,store,4096,4096,1\n"
+                "q4_K,a16,store,4096,4096,2,r8,r8.w4r1\n")
+            by = {f["path"]: f for f in sm.scan(root, "rtx4090")["files"]}
+            self.assertIn("error", by["sel_bad.csv"])
+            self.assertEqual(by["routes.csv"]["selected_in_dir"], ["sel_ok.csv"])
+
     def test_odd_files_do_not_stop_the_scan(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
