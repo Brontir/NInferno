@@ -1317,9 +1317,12 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.model.expert_prefill_int8     = expert_routes.route(true);
     // A split part's banks are the first part's alone and a later part may hold banks of another
     // format: a route read off them is assumed (#813), the same as gguf_tensor_table's split row.
+    // Either route counts: `--activations int8` reads expert_prefill_int8, which can be known
+    // where the fast one is not (codex on #826).
     out.model.expert_prefill_assumed =
         expert_routes.assumed() ||
-        (!whole && out.model.expert_prefill != runtime::ExpertPrefill::Unknown);
+        (!whole && (out.model.expert_prefill != runtime::ExpertPrefill::Unknown ||
+                    out.model.expert_prefill_int8 != runtime::ExpertPrefill::Unknown));
     // A split part's table lists its own layers only.
     if (whole) { out.model.expert_layers = expert_routes.layers(g.ffn_matrices != 2); }
     out.model.mtp_routed_expert_bytes = whole ? mtp_routed : 0;
