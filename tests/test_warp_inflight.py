@@ -321,6 +321,18 @@ class WarpInflight(unittest.TestCase):
                                               for i, ln in enumerate(lines))
         return next(iter(wi.IP._sass_counts().parse_functions(sass.splitlines()).values()))
 
+    def test_committed_runs_parse(self):
+        # The runs kept beside the probe (tools/bench/warp_inflight/runs, the ring8 runs of #757)
+        # are of the checked-in probe or a recorded earlier one, whole and refused by nothing.
+        runs = os.path.join(os.path.dirname(wi.SOURCE), "runs")
+        names = sorted(n for n in os.listdir(runs) if n.endswith(".txt"))
+        self.assertTrue(names)
+        for name in names:
+            with open(os.path.join(runs, name)) as f:
+                head, rows = wi.parse_run(f.read())
+            self.assertIn(head["probe"], (wi.checked_in_probe(), *wi.EARLIER_PROBES), name)
+            self.assertTrue(any(r["variant"] == "ring8" for r in rows), name)
+
     def test_peak_in_flight(self):
         ld = "LDG.E.EF.128 R{}, [R2.64+0x{:x}]"
         xor = "LOP3.LUT R50, R{}, R{}, R50, 0x96, !PT"
