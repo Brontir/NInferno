@@ -127,10 +127,22 @@ void rows_equal_the_file(const Json& file) {
         expect(row->warp_bytes_saturated == j.at("warp_bytes_saturated").get<bool>() &&
                    row->ring4_over_ring2_w1 == j.at("ring4_over_ring2_w1").get<double>(),
                where + ": warp saturation");
-        // The rule (warp_inflight.py SATURATION_GAIN): the 4-load ring keeps under x1.5 of the
-        // 2-load ring's b_w at W = 1, the midpoint between no gain and its count's doubling.
-        expect(row->warp_bytes_saturated == (row->ring4_b_w_w1_free / row->ring2_b_w_w1_free < 1.5),
-               where + ": saturated is the rule over its readings");
+        // The rule (warp_inflight.py facts_row): where the row carries a deciding chain test
+        // (`cap_test`, probe 5 on, with the card's own ISA latency), saturated is its verdict,
+        // `cap` or `no cap`. Otherwise it is the ring rule (SATURATION_GAIN): the 4-load ring
+        // keeps under x1.5 of the 2-load ring's b_w at W = 1, the midpoint between no gain and
+        // its count's doubling.
+        const auto chains = j.find("cap_test");
+        if (chains != j.end() && chains->at("decides").get<bool>()) {
+            const std::string verdict = chains->at("verdict").get<std::string>();
+            expect(verdict == "cap" || verdict == "no cap", where + ": a deciding chain verdict");
+            expect(row->warp_bytes_saturated == (verdict == "cap"),
+                   where + ": saturated is the chain test's verdict");
+        } else {
+            expect(row->warp_bytes_saturated ==
+                       (row->ring4_b_w_w1_free / row->ring2_b_w_w1_free < 1.5),
+                   where + ": saturated is the ring rule over its readings");
+        }
         const Json& transfer = j.at("transfer");
         expect(row->transfer_refuted == transfer.at("refuted").get<bool>(), where + ": refuted");
         const Json& runs = transfer.at("runs");
