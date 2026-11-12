@@ -362,3 +362,17 @@ target_compile_definitions(ninferno_selector_golden_host_test PRIVATE
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_selector_golden_host_test)
 # It dumps every board twice over (once a process per board, then all in one): minutes of CPU.
 set_tests_properties(ninferno_selector_golden_host_test PROPERTIES TIMEOUT 1800)
+
+# The route policy (#614 F1, --route-policy): on the A5 regret sweep's boards and shapes, legacy is
+# unchanged, a borrowed or transferred route-table answer yields to the ranker under evidence, and
+# an answer of any other evidence is never demoted. `--write FILE` writes the moved decisions
+# (tools/bench/data/route_regret/policy_evidence_moves.json). Host only, as the golden twin.
+ninferno_add_test(ninferno_route_policy_test LABELS host NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_policy.cpp"
+  LIBRARIES ninferno_ops_host)
+target_sources(ninferno_route_policy_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
+target_compile_definitions(ninferno_route_policy_test PRIVATE NINFERNO_HOST_ONLY)
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_route_policy_test)

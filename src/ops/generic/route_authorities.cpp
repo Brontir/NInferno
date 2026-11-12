@@ -478,6 +478,16 @@ constexpr NamedAuthority kRuleAuthorities[] = {
     {"scalar-fallback", scalar_fallback},
 };
 
+// The answer as the walk under the Ask's policy gives it: the policy, and the answer it demoted.
+RouteAnswer under_policy(RouteAnswer answer, const Ask& ask, const RouteAnswer* demoted) {
+    answer.evidence.policy = ask.policy;
+    if (demoted != nullptr) {
+        answer.evidence.demoted_source = demoted->evidence.source;
+        answer.evidence.demoted_kind   = demoted->evidence.kind;
+    }
+    return answer;
+}
+
 } // namespace
 
 bool profile_admits(Route route, const Ask& ask, const Weight* weight) {
@@ -495,11 +505,12 @@ Ask resolve_ask(std::int32_t tokens, bool prefill) {
     return Ask{invariant_routes_active() ? Profile::Invariant
                : prefill                 ? Profile::Prefill
                                          : Profile::Speed,
-               tokens, ops::round_lanes()};
+               tokens, ops::round_lanes(), ops::route_policy()};
 }
 
 Ask ask_below_profiles(std::int32_t tokens, bool prefill) {
-    return Ask{prefill ? Profile::Prefill : Profile::Speed, tokens, ops::round_lanes()};
+    return Ask{prefill ? Profile::Prefill : Profile::Speed, tokens, ops::round_lanes(),
+               ops::route_policy()};
 }
 
 std::span<const NamedAuthority> select_authorities() noexcept { return kSelectAuthorities; }
@@ -510,24 +521,42 @@ std::span<const NamedAuthority> rule_authorities() noexcept { return kRuleAuthor
 
 RouteAnswer heuristic_answer(const Ask& ask, const Problem& problem, const Weight& weight) {
     for (const NamedAuthority& a : kRuleAuthorities) {
-        if (auto answer = a.answer(ask, problem, weight)) return *answer;
+        if (auto answer = a.answer(ask, problem, weight)) {
+            return under_policy(std::move(*answer), ask, nullptr);
+        }
     }
-    return by_rule(Route{Family::Scalar, 0}, "scalar-fallback");
+    return under_policy(by_rule(Route{Family::Scalar, 0}, "scalar-fallback"), ask, nullptr);
 }
 
+// The one place the precedence over evidence applies (route_authorities.h): under Legacy the first
+// answer wins; under Evidence a Borrowed or Transferred answer of the auto list yields to what
+// follows it, and stands only where the ranker has no candidate (the scalar fallback).
 RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& weight) {
     const Ask asked = nvfp4_promoted(ask, problem, weight);
+    std::optional<RouteAnswer> demoted;
     for (const NamedAuthority& a : kAutoAuthorities) {
-        if (auto answer = a.answer(asked, problem, weight)) return *answer;
+        auto answer = a.answer(asked, problem, weight);
+        if (!answer) continue;
+        if (!policy_demotes(asked.policy, answer->evidence.kind)) {
+            return under_policy(std::move(*answer), asked, demoted ? &*demoted : nullptr);
+        }
+        if (!demoted) demoted = std::move(answer);
     }
     RouteAnswer answer = heuristic_answer(asked, problem, weight);
-    if (auto band = dense_tune_prefill_band(asked, problem, weight, answer.route)) return *band;
-    return answer;
+    if (auto band = dense_tune_prefill_band(asked, problem, weight, answer.route)) {
+        return under_policy(std::move(*band), asked, demoted ? &*demoted : nullptr);
+    }
+    if (demoted && answer.evidence.source == "scalar-fallback") {
+        return under_policy(std::move(*demoted), asked, nullptr);
+    }
+    return under_policy(std::move(answer), asked, demoted ? &*demoted : nullptr);
 }
 
 RouteAnswer ranker_answer(const Ask& ask, const Problem& problem, const Weight& weight) {
     const Ask asked = nvfp4_promoted(ask, problem, weight);
-    if (auto answer = nvfp4_half_l2(asked, problem, weight)) return *answer;
+    if (auto answer = nvfp4_half_l2(asked, problem, weight)) {
+        return under_policy(std::move(*answer), asked, nullptr);
+    }
     return heuristic_answer(asked, problem, weight);
 }
 
@@ -535,7 +564,9 @@ RouteAnswer select_answer(const Problem& problem, const Weight& weight, std::int
                           bool prefill) {
     const Ask ask = resolve_ask(tokens, prefill);
     for (const NamedAuthority& a : kSelectAuthorities) {
-        if (auto answer = a.answer(ask, problem, weight)) return *answer;
+        if (auto answer = a.answer(ask, problem, weight)) {
+            return under_policy(std::move(*answer), ask, nullptr);
+        }
     }
     return auto_answer(ask, problem, weight);
 }
@@ -563,6 +594,13 @@ std::string evidence_text(const Evidence& e) {
         const auto end =
             std::to_chars(digits, digits + sizeof(digits), e.distance, std::chars_format::fixed, 3);
         out += " donor=" + e.donor + " d=" + std::string(digits, end.ptr);
+    }
+    // Legacy adds nothing: its lines read as they did before the policy existed.
+    if (e.policy != RoutePolicy::Legacy)
+        out += std::string(" policy=") + route_policy_name(e.policy);
+    if (!e.demoted_source.empty()) {
+        out +=
+            " demoted=" + std::string(e.demoted_source) + ":" + evidence_kind_name(e.demoted_kind);
     }
     return out;
 }

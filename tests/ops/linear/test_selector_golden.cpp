@@ -25,6 +25,7 @@
 #include "ops/generic/route_table.h"
 #include "ops/generic/kernel_facts.h"
 #include "ops/generic/selector_facts.h"
+#include "ops/route_pins.h"
 
 #include <algorithm>
 #include <atomic>
@@ -376,6 +377,13 @@ int run_clock_invariance(const GoldenBoard& b) {
 
 int main(int argc, char** argv) {
     try {
+        // The goldens are the legacy route policy's (#614 F1: --route-policy legacy, the release's
+        // default), pinned here rather than assumed: a default that moved would fail first.
+        if (ops::route_policy() != RoutePolicy::Legacy) {
+            std::cerr << "selector golden: the default route policy is not legacy\n";
+            return 1;
+        }
+        ops::set_route_policy(RoutePolicy::Legacy);
         bool update = false;
         std::string board;
         for (int i = 1; i < argc; ++i) {

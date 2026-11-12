@@ -66,7 +66,7 @@ constexpr std::array<std::string_view, 24> kNonDecisionVariables{
 
 // The maintainer options' keys in the options section with their release values: one given
 // otherwise is taint.
-constexpr std::array<std::pair<std::string_view, std::string_view>, 11> kMaintainerDefaults{{
+constexpr std::array<std::pair<std::string_view, std::string_view>, 12> kMaintainerDefaults{{
     {"route_table", "unset"},
     {"route_dir", "unset"},
     {"dense_tune", "off"},
@@ -78,6 +78,7 @@ constexpr std::array<std::pair<std::string_view, std::string_view>, 11> kMaintai
     {"prefill_route", "auto"},
     {"decode_route", "auto"},
     {"moe_path", "auto"},
+    {"route_policy", "legacy"},
 }};
 
 std::string number(std::uint64_t value) { return std::to_string(value); }
@@ -410,6 +411,8 @@ DecisionSection options_of(const EngineOptions& o, std::string_view source_ident
     out["maintainer.prefill_route"] = prefill_route_name(m.prefill_route);
     out["maintainer.decode_route"]  = decode_route_name(m.decode_route);
     out["maintainer.moe_path"]      = moe_path_name(m.moe_path);
+    // The selector's precedence over evidence (#614 F1): taint whenever not legacy.
+    out["maintainer.route_policy"] = route_policy_name(m.route_policy);
     return out;
 }
 

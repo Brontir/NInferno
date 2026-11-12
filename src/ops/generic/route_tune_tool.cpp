@@ -7,7 +7,7 @@
 //                     [--samples 15] [--prefill-chunk 1024] [--prefill-only 1]
 //                     [--points T,T,...] [--rotate 0|1] [--routes-out FILE.csv]
 //                     [--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1]
-//                     [--group-sums-plane 1]
+//                     [--group-sums-plane 1] [--route-policy legacy|evidence]
 //
 // FILE holds one problem per line, "<format> <compute> <epilogue> <n> <k>", for example
 // "nvfp4 a4 store 3584 1024" (format bf16|fp8|nvfp4|q4|q5|q6|q8, compute a16|a8|a4, epilogue
@@ -57,6 +57,12 @@
 // --group-sums-plane 1 turns on the min-term formats' group-sums plane (#619), off by default since
 // its A/B (#709, docs/maintainer/kernel-proposals.md entry A): a lab switch for the plane's next
 // A/B, which then times the plane where the prefill profile reads it.
+// --route-policy evidence selects as the engine's --route-policy evidence does (#614 F1,
+// route_authorities.h): a route-table entry measured on another board (borrowed, transferred)
+// yields to the ranker. It moves what --selected-out and --describe report as the production pick
+// (the evidence columns then name the authority that answered under it), never what is timed or
+// written to the table: the two arms of an A/B are one sweep each, legacy (the default) and
+// evidence.
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/device_class.h"
@@ -71,6 +77,7 @@
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/route_tune_tool.h"
+#include "ops/route_pins.h"
 
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
@@ -139,9 +146,21 @@ int route_tune_main(int argc, char** argv) {
                          "[--key chip|variant|arch] [--samples N] [--prefill-chunk C] "
                          "[--prefill-only 1] [--points T,...] [--routes-out FILE.csv] "
                          "[--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1] "
-                         "[--rotate 0|1] [--describe 1] [--group-sums-plane 1]\n";
+                         "[--rotate 0|1] [--describe 1] [--group-sums-plane 1] "
+                         "[--route-policy legacy|evidence]\n";
             return 2;
         }
+
+        // The arm's policy, for this run alone (the process's is back to legacy on return).
+        struct PolicyReset {
+            ~PolicyReset() { ops::set_route_policy(RoutePolicy::Legacy); }
+        } policy_reset;
+
+        const RoutePolicy policy = opt.count("--route-policy")
+                                       ? parse_route_policy(opt["--route-policy"])
+                                       : RoutePolicy::Legacy;
+        ops::set_route_policy(policy);
+        std::cerr << "route-tune: --route-policy " << route_policy_name(policy) << '\n';
         const int samples       = opt.count("--samples") ? std::stoi(opt["--samples"]) : 15;
         const int chunk         = opt.count("--prefill-chunk") ? std::stoi(opt["--prefill-chunk"]) : 1024;
         const bool prefill_only = opt.count("--prefill-only") && opt["--prefill-only"] == "1";

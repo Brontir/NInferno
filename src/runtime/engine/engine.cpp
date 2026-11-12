@@ -66,6 +66,7 @@ void apply_maintainer_options(const MaintainerOptions& m, bool first) {
     }
     if (!first) { return; }
     ops::set_route_pins({m.prefill_route, m.decode_route, m.moe_path});
+    ops::set_route_policy(m.route_policy);
     ops::detail::generic::set_dense_tune(m.dense_tune, m.tune_cache);
     ops::set_moe_tune(m.moe_tune, m.tune_cache);
     models::qwen3_5::execution::set_debug_prefill_cuts(m.debug_prefill_cuts);
