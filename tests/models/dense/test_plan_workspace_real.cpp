@@ -8,9 +8,14 @@
 // facts carry is checked against the one the start's frontend takes.
 //
 // The artifacts: NINFERNO_TEST_PLAN_WORKSPACE_ARTIFACTS (paths joined by ':'), else the converted
-// artifacts in the Hugging Face cache (convert::default_hub_cache: models--*/ninfer/*/<file>): the
-// smallest of each family whose file fits this card's free memory. A family without one is skipped
-// and said; none at all skips the test (77). GPU.
+// artifacts in the Hugging Face cache (convert::default_hub_cache, ModelScope's repos under its
+// modelscope/ too): those ninferno-ui keeps (models--*/ninferno/<commit>/*.ninferno) and the
+// converter's cache (models--*/snapshots/<commit>/.ninferno-cache/*.ninferno); the smallest of
+// each family whose file fits this card's free memory. The scanned files and the picks are
+// printed. A family without one is skipped and said; none at all skips the test (77). A file in
+// this build's container (its "NInferno" magic) that the reader refuses fails the test: no silent
+// skip where artifacts exist. The scanner is checked first on a temporary layout (no GPU).
+// GPU.
 
 #include "artifact/reader.h"
 #include "convert/fetch.h"
@@ -28,11 +33,14 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <sstream>
@@ -56,69 +64,189 @@ void check(bool condition, const std::string& what) {
     ++failures;
 }
 
-// The text component's model_type of a readable artifact ("" where it is not one this build
-// reads: another container version, no text component).
-std::string model_type_of(const fs::path& path) {
-    try {
-        const artifact::Reader reader(path);
-        const auto& components = reader.directory().components;
-        const auto text        = components.find("text");
-        return text == components.end() ? std::string()
-                                        : text->second.config.value("model_type", std::string());
-    } catch (const std::exception&) { return {}; }
-}
-
 bool family(const std::string& type) {
     return type == "dense_decoder" || type == "moe_decoder" || type == "nemotron_h";
 }
 
-// The artifacts to check: the environment's list, else the smallest cached one of each family
-// that fits `free_bytes`.
-std::vector<fs::path> artifacts(std::size_t free_bytes) {
+// The .ninferno files of `dir` (none where it is not a directory).
+void ninferno_files(const fs::path& dir, std::vector<fs::path>& out) {
+    std::error_code error;
+    for (const auto& file : fs::directory_iterator(dir, error)) {
+        std::error_code kind;
+        if (file.is_regular_file(kind) && file.path().extension() == ".ninferno") {
+            out.push_back(file.path());
+        }
+    }
+}
+
+// Every converted artifact the hub cache `hub` holds, sorted: per repository (models--*, and
+// ModelScope's under modelscope/), ninferno-ui's kept conversions (ninferno/<commit>/, its
+// product/plan/plan_cached.cpp) and the converter's cache (snapshots/<commit>/.ninferno-cache/,
+// convert/cache.cpp).
+std::vector<fs::path> cached_artifacts(const fs::path& hub) {
     std::vector<fs::path> out;
+    for (const fs::path& root : {hub, hub / "modelscope"}) {
+        std::error_code error;
+        for (const auto& repo : fs::directory_iterator(root, error)) {
+            std::error_code kind;
+            if (!repo.is_directory(kind) ||
+                !repo.path().filename().string().starts_with("models--")) {
+                continue;
+            }
+            std::error_code inner;
+            for (const auto& commit : fs::directory_iterator(repo.path() / "ninferno", inner)) {
+                ninferno_files(commit.path(), out);
+            }
+            for (const auto& commit : fs::directory_iterator(repo.path() / "snapshots", inner)) {
+                ninferno_files(commit.path() / ".ninferno-cache", out);
+            }
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+// What a cached file is: in this build's container (it starts with the "NInferno" magic; an older
+// container, "NINFER", is not one this build reads), its text model_type, or why the reader
+// refused it.
+struct Probe {
+    bool current = false;
+    std::string type;
+    std::string error;
+};
+
+Probe probe(const fs::path& path) {
+    Probe out;
+    {
+        std::ifstream in(path, std::ios::binary);
+        char magic[8] = {};
+        in.read(magic, sizeof magic);
+        out.current = in.gcount() == sizeof magic && std::string(magic, 8) == "NInferno";
+    }
+    if (!out.current) { return out; }
+    try {
+        const artifact::Reader reader(path);
+        const auto& components = reader.directory().components;
+        const auto text        = components.find("text");
+        if (text == components.end()) {
+            out.error = "no text component";
+        } else {
+            out.type = text->second.config.value("model_type", std::string());
+        }
+    } catch (const std::exception& error) { out.error = error.what(); }
+    return out;
+}
+
+// The picks among `files`: the smallest of each family whose file fits `free_bytes` (the weights
+// and the arena: a fifth of the free memory left to the rest). `broken`: a file in this build's
+// container the reader refused (a bug path, not a skip). Says what it scanned and picked.
+struct Picks {
+    std::vector<fs::path> paths;
+    bool broken = false;
+};
+
+Picks pick(const std::vector<fs::path>& files, std::size_t free_bytes) {
+    Picks out;
+    std::map<std::string, std::pair<std::uintmax_t, fs::path>> smallest;
+    std::map<std::string, std::uintmax_t> too_large;
+    for (const fs::path& file : files) {
+        const Probe p = probe(file);
+        std::error_code size_error;
+        const auto bytes = fs::file_size(file, size_error);
+        std::cout << "  scanned " << file << ": ";
+        if (!p.current) {
+            std::cout << "another container version, not read\n";
+            continue;
+        }
+        if (!p.error.empty() || size_error) {
+            std::cout << "REFUSED: " << (p.error.empty() ? size_error.message() : p.error) << '\n';
+            out.broken = true;
+            continue;
+        }
+        std::cout << p.type << ", " << bytes << " bytes\n";
+        if (!family(p.type)) { continue; }
+        if (bytes > free_bytes / 5 * 4) {
+            too_large[p.type] = bytes;
+            continue;
+        }
+        auto& best = smallest[p.type];
+        if (best.second.empty() || bytes < best.first) { best = {bytes, file}; }
+    }
+    for (const char* type : {"dense_decoder", "moe_decoder", "nemotron_h"}) {
+        if (const auto it = smallest.find(type); it != smallest.end()) {
+            std::cout << "picked " << type << ": " << it->second.second << '\n';
+            out.paths.push_back(it->second.second);
+        } else if (too_large.contains(type)) {
+            std::cout << "skip " << type << ": its cached artifacts do not fit this card's "
+                      << free_bytes << " free bytes\n";
+        } else {
+            std::cout << "skip " << type << ": no cached artifact of it\n";
+        }
+    }
+    return out;
+}
+
+// The scanner over a temporary layout: both locations found, only .ninferno files, ModelScope's
+// repositories included; a file in this build's container the reader refuses is broken, an older
+// container's is not read.
+bool scanner_checks() {
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("ninferno_plan_scan_" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::remove_all(root);
+    const auto touch = [](const fs::path& path, const std::string& bytes) {
+        fs::create_directories(path.parent_path());
+        std::ofstream(path, std::ios::binary) << bytes;
+    };
+    const fs::path kept   = root / "models--org--a" / "ninferno" / "c1" / "a.Q4_K_M.ninferno";
+    const fs::path cached = root / "models--org--a" / "snapshots" / "c1" / ".ninferno-cache" /
+                            "a-Q8_0.dense_bf16.ninferno";
+    const fs::path scope =
+        root / "modelscope" / "models--org--b" / "ninferno" / "c2" / "b.ninferno";
+    touch(kept, "NINFER, an older container");
+    touch(cached, "NInferno and then garbage");
+    touch(scope, "NINFER, an older container");
+    touch(root / "models--org--a" / "snapshots" / "c1" / "a-Q8_0.gguf", "GGUF");
+    touch(root / "models--org--a" / "ninferno" / "c1" / "a.ninfer", "NINFER");
+    touch(root / "models--org--a" / "snapshots" / "c1" / "a.ninferno", "not in the cache dir");
+    touch(root / "other--x" / "ninferno" / "c" / "x.ninferno", "not a repository");
+    const auto found           = cached_artifacts(root);
+    std::vector<fs::path> want = {cached, kept, scope};
+    std::sort(want.begin(), want.end());
+    bool ok = true;
+    if (found != want) {
+        std::cerr << "FAIL: the scanner found " << found.size() << " file(s), not the 3 laid out\n";
+        ok = false;
+    }
+    const Picks picks = pick(found, std::size_t{1} << 40);
+    if (!picks.broken || !picks.paths.empty()) {
+        std::cerr << "FAIL: a refused file in this build's container is not reported broken\n";
+        ok = false;
+    }
+    const Picks older = pick({kept, scope}, std::size_t{1} << 40);
+    if (older.broken || !older.paths.empty()) {
+        std::cerr << "FAIL: an older container's file is not skipped\n";
+        ok = false;
+    }
+    fs::remove_all(root);
+    return ok;
+}
+
+// The artifacts to check: the environment's list, else the cache's picks.
+Picks artifacts(std::size_t free_bytes) {
     if (const char* env = std::getenv("NINFERNO_TEST_PLAN_WORKSPACE_ARTIFACTS"); env && *env) {
+        Picks out;
         std::stringstream paths(env);
         std::string path;
         while (std::getline(paths, path, ':')) {
-            if (!path.empty()) { out.emplace_back(path); }
+            if (!path.empty()) { out.paths.emplace_back(path); }
         }
         return out;
     }
     const fs::path hub = convert::default_hub_cache();
-    std::map<std::string, std::pair<std::uintmax_t, fs::path>> smallest;
-    std::error_code error;
-    for (const auto& repo : fs::directory_iterator(hub, error)) {
-        if (!repo.is_directory() || !repo.path().filename().string().starts_with("models--")) {
-            continue;
-        }
-        std::error_code inner;
-        for (const auto& revision : fs::directory_iterator(repo.path() / "ninfer", inner)) {
-            std::error_code files_error;
-            for (const auto& file : fs::directory_iterator(revision.path(), files_error)) {
-                const std::string ext = file.path().extension().string();
-                if (!file.is_regular_file() || (ext != ".ninfer" && ext != ".ninferno")) {
-                    continue;
-                }
-                std::error_code size_error;
-                const auto bytes = fs::file_size(file.path(), size_error);
-                // The weights and the arena: leave a fifth of the free memory to the rest.
-                if (size_error || bytes > free_bytes / 5 * 4) { continue; }
-                const std::string type = model_type_of(file.path());
-                if (!family(type)) { continue; }
-                auto& best = smallest[type];
-                if (best.second.empty() || bytes < best.first) { best = {bytes, file.path()}; }
-            }
-        }
-    }
-    for (const char* type : {"dense_decoder", "moe_decoder", "nemotron_h"}) {
-        if (const auto it = smallest.find(type); it != smallest.end()) {
-            out.push_back(it->second.second);
-        } else {
-            std::cout << "skip " << type << ": no cached artifact of it fits this card (" << hub
-                      << ")\n";
-        }
-    }
-    return out;
+    std::cout << "scanning " << hub << '\n';
+    return pick(cached_artifacts(hub), free_bytes);
 }
 
 // The plan a start's planner lays out for `options` (make_sequence_planner_impl: the options the
@@ -196,8 +324,18 @@ void run(const fs::path& path, DeviceContext& device) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        // The scanner first, on the host: a broken scan must not pass as "no artifact".
+        if (!scanner_checks()) { return 1; }
+        if (argc > 1 && std::string(argv[1]) == "--scan-only") {
+            // The host's own cache scanned and picked as the GPU run would, any size: no device.
+            const fs::path hub = convert::default_hub_cache();
+            std::cout << "scanning " << hub << '\n';
+            const Picks picks =
+                pick(cached_artifacts(hub), std::numeric_limits<std::size_t>::max());
+            return picks.broken ? 1 : 0;
+        }
         rt::register_plan_workspace_queries();
         int count = 0;
         if (cudaGetDeviceCount(&count) != cudaSuccess || count == 0) {
@@ -210,8 +348,11 @@ int main() {
             std::cout << "SKIP: the device's memory is not known\n";
             return 77;
         }
-        const auto paths = artifacts(free_bytes);
-        if (paths.empty()) {
+        const Picks picks = artifacts(free_bytes);
+        check(!picks.broken, "every cached artifact in this build's container is read (REFUSED "
+                             "above: a bug path, not a skip)");
+        const std::vector<fs::path>& paths = picks.paths;
+        if (paths.empty() && !picks.broken) {
             std::cout << "SKIP: no dense_decoder, moe_decoder or nemotron_h artifact (set "
                          "NINFERNO_TEST_PLAN_WORKSPACE_ARTIFACTS or convert one into the Hugging "
                          "Face cache)\n";
