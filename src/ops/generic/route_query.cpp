@@ -1,6 +1,7 @@
 #include "ops/generic/route_query.h"
 
 #include "core/weight_view.h"
+#include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_select_internal.h"
 
@@ -86,6 +87,9 @@ std::optional<RouteAnswer> route_answer_query(const DeviceClass& device, QType q
                                               std::optional<QuantLayout> layout) {
     if (n <= 0 || k <= 0 || tokens <= 0 || parent_rows < 0) return std::nullopt;
     const ScopedDeviceClass scoped(device);
+    // The asked profile, not the caller's: the selection reads it too (the group-sums plane's
+    // resources, rmma_group_sums), as resolved_route_query and describe_call do.
+    const ops::ScopedPrefillRoutes profile(prefill);
     DescribedWeight described;
     describe_weight(described, qtype, epilogue, n, k, parent_rows, layout);
     if (!supports(described.weight)) return std::nullopt;
@@ -121,6 +125,8 @@ resolved_route_query(const DeviceClass& device, QType qtype, LinearPolicy policy
                      std::int32_t parent_rows, bool x_aligned16, int ldx, int segments) {
     if (n <= 0 || k <= 0 || tokens <= 0 || parent_rows < 0) return std::nullopt;
     const ScopedDeviceClass scoped(device);
+    // The call's profile, which its resolution reads too (the group-sums plane: rmma_group_sums).
+    const ops::ScopedPrefillRoutes profile(prefill);
     DescribedWeight described;
     describe_weight(described, qtype, epilogue, n, k, parent_rows);
     if (!supports(described.weight)) return std::nullopt;
@@ -170,6 +176,10 @@ RouteDescription describe_resolved(const DescribedWeight& described, const Probl
     out.workspace_bytes = executed_workspace_bytes(ran, resolved.r8_prequantized, problem.k,
                                                    problem.n, problem.epilogue, tokens);
     if (chunk_workspace) out.workspace_bytes = *chunk_workspace;
+    // The register MMA's group-sums plane, where the call reads it (#619).
+    if (resolved.group_sums) {
+        out.workspace_bytes = rmma_group_sums_bytes(codec_of(w), problem.k, tokens);
+    }
     out.tile = route_tile(ran, problem.epilogue, tokens);
     // The traffic and the price take the call's share of the described parent themselves
     // (bytes_per_weight), as the selector does.
@@ -181,7 +191,8 @@ RouteDescription describe_resolved(const DescribedWeight& described, const Probl
             out.kernel = route_resources(ran, w, problem.epilogue, tokens, problem.n,
                                          ran.family == Family::R8Mma
                                              ? std::optional<bool>(resolved.r8_prequantized)
-                                             : std::nullopt);
+                                             : std::nullopt,
+                                         resolved.group_sums);
         } catch (const std::exception&) {} // no CUDA device to read the binary from
     }
     return out;
@@ -231,6 +242,8 @@ std::optional<RouteDescription> describe_call(const DeviceClass& device, QType q
                                               bool with_kernel) {
     if (n <= 0 || k <= 0 || tokens <= 0 || parent_rows < 0) return std::nullopt;
     const ScopedDeviceClass scoped(device);
+    // The call's profile, which its resolution and kernel read too (the group-sums plane).
+    const ops::ScopedPrefillRoutes profile(prefill);
     DescribedWeight described;
     describe_weight(described, qtype, epilogue, n, k, parent_rows);
     if (!supports(described.weight)) return std::nullopt;

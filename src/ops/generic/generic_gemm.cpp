@@ -142,6 +142,25 @@ void note_demotion(Route asked, Route ran, int rows, int tokens, int k, bool x16
                  static_cast<long long>(ldx), workspace, route_name(ran).c_str());
 }
 
+// A min-term register-MMA call that would read the group-sums plane but has no room for it
+// (resolve_route, Demotion::GroupSums) runs the same route with the MMA with ones: other bytes
+// than the profile's (the prefill profile's one order among them). Said once per route, counted
+// with the demotions (route_demotion_count).
+void note_group_sums_demotion(Route route, int rows, int tokens, int k, std::size_t need,
+                              std::optional<std::size_t> free) {
+    route_demotions.fetch_add(1, std::memory_order_relaxed);
+    static std::mutex mutex;
+    static std::set<std::string> said;
+    const std::lock_guard lock(mutex);
+    if (!said.emplace(route_name(route)).second) return;
+    std::fprintf(
+        stderr,
+        "ninferno: warning: route %s of a call of %d rows x %d tokens (k %d) has %s for "
+        "its group-sums plane (%zu bytes): it ran the MMA with ones, with other bytes\n",
+        route_name(route).c_str(), rows, tokens, k,
+        free ? (std::to_string(*free) + " bytes of workspace free").c_str() : "no workspace", need);
+}
+
 // Every distinct problem that reached the generic path on a thread collecting them (seen_problems:
 // an Engine's load, on its own thread, so another live Engine's calls stay out), and under
 // NINFERNO_ROUTE_RECORD=<file> each distinct (format, compute, epilogue, N, K) appended to the file
@@ -578,6 +597,8 @@ std::string_view overlap_refusal_name(OverlapRefusal why) noexcept {
     case OverlapRefusal::NoPdl: return "no_pdl";
     case OverlapRefusal::Wide: return "wide";
     case OverlapRefusal::Joined: return "joined";
+    case OverlapRefusal::GroupSums:
+        return "group_sums";
     }
     return "none";
 }
@@ -587,6 +608,13 @@ LaunchOverlap launch_overlap(const ResolvedRoute& resolved, Epilogue epilogue, i
                              bool join_asked, bool release_asked, bool pdl) {
     const Family family = resolved.executed.family;
     const bool r8_pre   = family == Family::R8Mma && resolved.r8_prequantized;
+    // A register-MMA call that reads the group-sums plane (#619) launches its pre-pass and then
+    // its kernel in stream order, as the pre-quantized R8 form does: it neither joins nor
+    // prefetches (the pre-pass, a plain launch, stands between it and the kernel before, and a
+    // joined kernel would never wait for the plane), nor releases (the next call's pre-pass or
+    // quantizer could take the workspace its kernel still reads).
+    const bool plane         = family == Family::RegisterMma && resolved.group_sums;
+    const OverlapRefusal pre = r8_pre ? OverlapRefusal::PrequantizedR8 : OverlapRefusal::GroupSums;
     // Only a register-MMA or R8 Store launch joins or releases; every other route runs in stream
     // order.
     const auto joinable = [&](bool asked) {
@@ -598,21 +626,20 @@ LaunchOverlap launch_overlap(const ResolvedRoute& resolved, Epilogue epilogue, i
     // The pre-quantized R8 form does not join either: its quantizer and kernel launch in stream
     // order (generic_r8.cuh kPre), so a join flag would only claim an overlap that never happens.
     out.join = joinable(join_asked);
-    if (out.join == OverlapRefusal::None && r8_pre) out.join = OverlapRefusal::PrequantizedR8;
+    if (out.join == OverlapRefusal::None && (r8_pre || plane)) out.join = pre;
     // The pre-quantized R8 form does not release: the next call's quantizer could take the
     // workspace it still reads (its kernel ignores the flag too, generic_r8.cuh kPre). Without
     // PDL nothing starts early (run_route keeps the kernel's flag, a no-op there).
     out.release = joinable(release_asked);
     if (out.release == OverlapRefusal::None) {
-        out.release = r8_pre ? OverlapRefusal::PrequantizedR8 : !pdl ? OverlapRefusal::NoPdl
-                                                                     : OverlapRefusal::None;
+        out.release = r8_pre || plane ? pre : !pdl ? OverlapRefusal::NoPdl : OverlapRefusal::None;
     }
     // A decode-width register-MMA call that does not join starts its weight stream under the
     // previous kernel, where the device has programmatic dependent launch (sm_90 and up; Ada
     // launches in stream order as before); R8 does the same where its activation is quantized in
     // the kernel (not the pre-quantized form, whose quantizer runs before it).
-    if (r8_pre) {
-        out.prefetch = OverlapRefusal::PrequantizedR8;
+    if (r8_pre || plane) {
+        out.prefetch = pre;
     } else if (family != Family::RegisterMma && family != Family::R8Mma) {
         out.prefetch = OverlapRefusal::Family;
     } else if (out.joins()) {
@@ -998,6 +1025,27 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         if (!current_features().mma_tensor && volta_gemv_takes(codec, args)) {
             launch_volta_gemv(codec, call.epilogue, args, stream);
             return;
+        }
+        if (resolved.group_sums) {
+            // The min term's activation sums, once per call into the workspace (#619): the
+            // pre-pass, then the kernel instance that reads them (GemmArgs::group_sums).
+            auto sums_scope     = workspace->scope();
+            const int values    = rmma_group_sums_values(codec);
+            const DeviceSpan su = workspace->alloc_bytes(
+                static_cast<std::size_t>(args.tokens) *
+                    static_cast<std::size_t>(rmma_group_sums_ld(w.k, values)) * sizeof(float),
+                256);
+            args.group_sums        = static_cast<const float*>(su.data);
+            args.group_sums_ld     = rmma_group_sums_ld(w.k, values);
+            args.group_sums_values = values;
+            launch_rmma_group_sums(args, static_cast<float*>(su.data), stream);
+            launch_rmma_codec(codec, route.schedule, call.epilogue, args, stream);
+            return;
+        }
+        if (resolved.reason == Demotion::GroupSums) {
+            note_group_sums_demotion(route, call.rows, args.tokens, w.k,
+                                     rmma_group_sums_bytes(codec, w.k, args.tokens),
+                                     workspace_free(workspace));
         }
         launch_rmma_codec(codec, route.schedule, call.epilogue, args, stream);
         return;

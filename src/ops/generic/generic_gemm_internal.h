@@ -241,6 +241,12 @@ void launch_i8(int schedule, int bits, Epilogue epilogue, const GemmArgs& args, 
 // scales and sums, rows of `ld` values (0: args.k; the blocks past args.k zero).
 void launch_w4a8_quantize(const GemmArgs& args, std::int8_t* codes, float* scales, float* sums,
                           cudaStream_t stream, int ld = 0);
+// The register MMA's group-sums pre-pass (generic_group_sums.cu, #619): for each of args.tokens
+// tokens, the sum of each group of args.group_sums_values BF16 values of x into `out` (rows of
+// args.group_sums_ld floats; the groups past args.k zero), in one fixed order (a pairwise tree
+// in index order, rmma_group_sum). K must be whole groups (refused otherwise). A described launch
+// (kernel_describe_target) runs nothing.
+void launch_rmma_group_sums(const GemmArgs& args, float* out, cudaStream_t stream);
 // R8 (generic_r8.cu): W8A8 decode for T <= 8, the activation quantized inside the kernel, or, with
 // `pre`, read from a pre-quantized activation (verify widths, r8_verify_supports formats). The
 // codec must be one r8_supports() admits; the iq3/iq2/ggml4/kquant entries return false for

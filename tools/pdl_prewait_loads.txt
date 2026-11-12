@@ -53,11 +53,16 @@ q5_a16_direct_simt_kernel<.*Q5GdnProjectionEpilogue.*, true>$ 0,8,16,24,40,48,56
 # is a producer's (a plain launch; a joined call as above), so x (0, 8, 12) is listed for every
 # epilogue. 168 and 172 (release_next, pdl_prefetch) reach a table-staging address only through the
 # thread index the release predicate is combined with. The kernel's last two template arguments are
-# the latency variant (#158) and the add-sums instance (cuobjdump prints them as false / true); the
-# latency kernels' activation ring loads x only after the wait, as the staged SwiGLU copy does
-# (#171).
-generic::rmma_kernel<.*Epilogue\)0, (false|true), (false|true)> 0,8,12,24,32,40,48,52,64,72,76,168,172,?
-generic::rmma_kernel<.*Epilogue\)[12], (false|true), (false|true)> 0,8,12,24,32,40,48,52,64,72,76,80,84,168,172,?
+# the latency variant (#158, false / true) and where a min-term kernel's group sums come from
+# (RmmaSums, printed as (...RmmaSums)0 / 1 / 2: the MMA with ones, the adds, the call's plane,
+# #619); the latency kernels' activation ring loads x only after the wait, as the staged SwiGLU copy
+# does (#171). The plane instance reads the group sums (192, the plane; 200, its row length), the
+# output of the call's own pre-pass, after the wait on the pdl_prefetch path (its loads go with
+# the step's activations, or with the activation ring after the first wait); run_route never
+# joins or prefetches such a call (its pre-pass sits between it and the kernel before), and the
+# audit cannot tell those paths apart, so the plane is listed as x is.
+generic::rmma_kernel<.*Epilogue\)0, (false|true), \(.*RmmaSums\)[0-2]> 0,8,12,24,32,40,48,52,64,72,76,168,172,192,200,?
+generic::rmma_kernel<.*Epilogue\)[12], (false|true), \(.*RmmaSums\)[0-2]> 0,8,12,24,32,40,48,52,64,72,76,80,84,168,172,192,200,?
 
 # Generic R8 (W8A8 decode, generic_r8.cuh), Store epilogue: joins like the register MMA above and
 # waits as its last instruction. It quantizes x (0; token stride 8, K 12) into shared memory and
@@ -78,11 +83,12 @@ generic::rmma_kernel<.*Epilogue\)[12], (false|true), (false|true)> 0,8,12,24,32,
 # those loads above the wait; the whole-program 120a build issues them after it.
 generic::r8_kernel<.*Epilogue\)[0-2], false> 0,8,12,24,32,40,48,52,64,72,76,80,84,?
 # kPre (the verify-width call on a pre-quantized activation, W4a8Activation after GemmArgs:
-# codes 192, scales 200, and for the codecs with a min - K-quants, Q4_1, Q5_1 - sums 208) always
+# codes 208, scales 216, and for the codecs with a min - K-quants, Q4_1, Q5_1 - sums 224) always
 # launches in stream order (r8_launch_tokens), so every load reads memory complete before it
 # started; its waits return at once. It reads K (12), the weight planes above and
-# the activation planes. The activation offsets move with sizeof(GemmArgs) (192 since #445).
-generic::r8_kernel<.*Epilogue\)[0-2], true> 12,24,32,40,48,52,64,72,76,80,84,192,200,208,?
+# the activation planes. The activation offsets move with sizeof(GemmArgs) (192 since #445, 208
+# since #619's group-sums plane).
+generic::r8_kernel<.*Epilogue\)[0-2], true> 12,24,32,40,48,52,64,72,76,80,84,208,216,224,?
 
 # Decode A16 GEMVs (nvfp4_a16_gemv.cuh): launched as programmatic dependents where the device has
 # PDL, they fill their code ring - codes (8) and scales (16), this layer's weights - before the

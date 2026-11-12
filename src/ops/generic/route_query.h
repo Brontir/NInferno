@@ -79,14 +79,15 @@ resolved_route_query(const DeviceClass& device, QType qtype, LinearPolicy policy
 // launch path and the cost model already own; nothing here is stored or fitted. Every field is the
 // answer of the function the launch (or the selector) asks: `resolved` of resolve_route, the
 // workspace of route_workspace_bytes (ggml's matrix kernel: mmq_workspace_bytes, the slice
-// run_route launches), the tile and traffic of route_tile and route_traffic (declared geometry
-// and a prediction of requested bytes, not counters), `prepared` of prepared_rule, the price of
-// route_cost_seconds, and the kernel of route_resources (the compiled registers, shared memory,
-// threads and grid, read from the HOST GPU's binary: only when asked for). Not device-free
-// otherwise either: at 17 tokens or more a gated register-MMA price (select_route,
-// route_cost_seconds) reads the host GPU's compiled rmma facts, whatever `device` substitutes.
-// The description is of the call route_query describes: the engine's contiguous, aligned
-// activation, the weight in the converter's layout (see above), not a recorded call's own layout.
+// run_route launches; a register MMA reading the group-sums plane: rmma_group_sums_bytes), the tile
+// and traffic of route_tile and route_traffic (declared geometry and a prediction of requested
+// bytes, not counters), `prepared` of prepared_rule, the price of route_cost_seconds, and the
+// kernel of route_resources (the compiled registers, shared memory, threads and grid, read from the
+// HOST GPU's binary: only when asked for). Not device-free otherwise either: at 17 tokens or more a
+// gated register-MMA price (select_route, route_cost_seconds) reads the host GPU's compiled rmma
+// facts, whatever `device` substitutes. The description is of the call route_query describes: the
+// engine's contiguous, aligned activation, the weight in the converter's layout (see above), not a
+// recorded call's own layout.
 struct RouteDescription {
     ResolvedRoute resolved;
     std::size_t workspace_bytes = 0; // what `resolved.executed` takes from the call's workspace

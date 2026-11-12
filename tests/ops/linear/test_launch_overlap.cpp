@@ -59,6 +59,17 @@ int main() {
         const auto tiled = g::launch_overlap(route(F::TiledMma, false), g::Epilogue::Store, 1, true, true, true);
         check(tiled.join == R::Family && tiled.release == R::Family && tiled.prefetch == R::Family,
               "another family runs in stream order");
+        // A register-MMA call that reads the group-sums plane (#619) runs its pre-pass and its
+        // kernel in stream order, as the pre-quantized R8 form does.
+        g::ResolvedRoute plane = route(F::RegisterMma, false);
+        plane.group_sums       = true;
+        for (const int t : {5, 17, 300}) {
+            const auto o = g::launch_overlap(plane, g::Epilogue::Store, t, true, true, true);
+            check(o.join == R::GroupSums && o.release == R::GroupSums && o.prefetch == R::GroupSums,
+                  "the group-sums plane's call neither joins, releases nor prefetches at T = " +
+                      std::to_string(t));
+        }
+        check(g::overlap_refusal_name(R::GroupSums) == "group_sums", "the refusal's name");
     }
     // The flags equal run_route's rule before #309, for every case, but the pre-quantized R8 form's
     // join (its launches run in stream order, so it never happened) and its release flag.

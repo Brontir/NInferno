@@ -104,6 +104,14 @@ ninferno_add_op_test(ninferno_launch_overlap_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_launch_overlap.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# The register MMA's pre-summed activation group plane (#619): which calls take it, its workspace
+# and demotion (host), the pre-pass bit for bit against the CPU and the instance the price
+# describes (GPU; skipped without one).
+ninferno_add_op_test(ninferno_group_sums_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_group_sums.cpp"
+  LIBRARIES ninferno_linear_test_support)
+set_tests_properties(ninferno_group_sums_test PROPERTIES SKIP_RETURN_CODE 77)
+
 # Scratch read lifetimes of generic launches (#309): which launch reads or writes which workspace
 # region until when, and that no launch starting under its predecessor takes a region it still
 # uses (host only).

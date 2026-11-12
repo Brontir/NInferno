@@ -1,6 +1,7 @@
 // The generic path's per-board launch gates that the selector reads (#620): the spread of a thin
-// NVFP4 / FP8 call over SMs (spread_smem), PDL, and the add-sums form of the register MMA. Host
-// code, no CUDA: the device is device_class()'s and the ordinal comes through core/per_device.h.
+// NVFP4 / FP8 call over SMs (spread_smem), PDL, the add-sums form of the register MMA and its
+// group-sums plane. Host code, no CUDA: the device is device_class()'s and the ordinal comes
+// through core/per_device.h.
 #include "core/device_class.h"
 #include "core/measured_boards.h"
 #include "core/per_device.h"
@@ -11,6 +12,7 @@
 #include "ops/generic/generic_select_detail.h"
 #include "ops/generic/generic_select_internal.h"
 
+#include <atomic>
 #include <cstdint>
 #include <exception>
 #include <span>
@@ -107,6 +109,25 @@ int spread_smem(Route route, WeightCodec codec, Epilogue epilogue, const GemmArg
 bool rmma_add_sums() {
     return current_features().mma_tensor && bf16_mma_native() && !invariant_routes_active() &&
            !prefill_routes_active();
+}
+
+namespace {
+// The group-sums plane is off by default (#709's A/B, docs/maintainer/kernel-proposals.md entry
+// A): only the plane's tests and route-tune's --group-sums-plane 1 turn it on.
+std::atomic<bool> g_group_sums_plane{false};
+} // namespace
+
+bool group_sums_plane_enabled() noexcept {
+    return g_group_sums_plane.load(std::memory_order_acquire);
+}
+
+void set_group_sums_plane_enabled(bool on) noexcept {
+    g_group_sums_plane.store(on, std::memory_order_release);
+}
+
+bool rmma_group_sums(WeightCodec codec) {
+    return group_sums_plane_enabled() && rmma_group_sums_values(codec) > 0 &&
+           current_features().mma_tensor && !invariant_routes_active() && prefill_routes_active();
 }
 
 } // namespace ninferno::ops::detail::generic
