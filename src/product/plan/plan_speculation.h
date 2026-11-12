@@ -16,8 +16,9 @@
 //   the fallbacks   what a start tries when the choice does not fit, in its order: the profile's
 //                   fit fallback, the deepest shallower depth that fits, the model's own MTP head,
 //                   plain decode; and, with an automatic pool, the pool rule (the drafter leaves
-//                   fewer whole contexts than C while plain decode holds more: the MTP head when
-//                   it keeps four fifths of plain decode's contexts, else plain). Each step names
+//                   fewer whole contexts than C while plain decode holds more: the MTP head where
+//                   its pool prices at least plain decode's over the benchmark's wave, else
+//                   plain; product::pool_rule). Each step names
 //                   whether it fits; the first that does is what the start serves.
 
 #include "product/plan/plan_facts.h"

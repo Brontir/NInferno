@@ -579,13 +579,26 @@ int main() {
             p.joint_scale                           = {{"mtp:3", {{2, 0.6}}}};
             p.load_basis                            = "facts";
             for (std::int32_t c = 2; c <= 8; ++c) { p.plain_step_scale[c] = 1.0 + 0.02 * (c - 1); }
+            // The benchmark's short chat (DECISIONS 73): 2048 + 512 tokens.
+            const std::uint64_t chat = pr::choice::kRequestPrompt + pr::choice::kRequestAnswer;
+            // Pools of whole contexts of `context` tokens (by default one chat's: a context a
+            // stream).
             const auto rule = [&](const sp::Profile& profile, std::uint32_t with_drafter,
                                   std::uint32_t streams, std::uint32_t plain,
-                                  std::optional<std::uint32_t> head) {
+                                  std::optional<std::uint32_t> head, std::uint64_t context = 0) {
+                const std::uint64_t tokens = context == 0 ? chat : context;
                 return pr::pool_rule(
-                    subject_of(profile), false, with_drafter, streams, [&] { return plain; },
-                    [&](const pr::ServedSpeculation&) { return head; });
+                    subject_of(profile), false, with_drafter, streams,
+                    [&] { return pr::PoolSize{.contexts = plain, .tokens = plain * tokens}; },
+                    [&](const pr::ServedSpeculation&) -> std::optional<pr::PoolSize> {
+                        if (!head) { return std::nullopt; }
+                        return pr::PoolSize{.contexts = *head, .tokens = *head * tokens};
+                    });
             };
+            failures += check(pr::pool_slots({.contexts = 4, .tokens = 4 * 32768}) == 51 &&
+                                  pr::pool_slots({.contexts = 3, .tokens = 3 * 1024}) == 3 &&
+                                  pr::pool_slots({}) == 0,
+                              "a pool holds its tokens' short chats, at least its contexts");
             failures += check(
                 pr::mix_turns(8) == std::vector<std::uint32_t>{8, 8, 4} &&
                     pr::mix_turns(3) == std::vector<std::uint32_t>{3, 3, 3, 3, 3, 3, 2} &&
@@ -598,13 +611,19 @@ int main() {
                                   *same.head_price == 1.0,
                               "the head holding every stream asked: kept at a tie");
             // The issue's case: four of plain decode's five contexts at eight streams, which the
-            // four fifths kept. Five turns of four streams decoding plainly (5 x 1.06) against
-            // four turns of five (4 x 1.08): plain decode.
+            // four fifths kept, at contexts of one chat. Five turns of four streams decoding
+            // plainly (5 x 1.06) against four turns of five (4 x 1.08): plain decode.
             const auto fifths = rule(p, 3, 8, 5, 4);
             failures +=
                 check(fifths.keep == pr::PoolKeep::Plain && !fifths.head && fifths.head_price &&
                           std::abs(*fifths.head_price - 4.32 / 5.3) < 1e-12,
                       "four fifths of the contexts for no gain at four streams: plain");
+            // The same pools of 32K contexts hold 51 and 64 chats: both serve the eight streams,
+            // the same turns, a tie: the head.
+            const auto roomy = rule(p, 3, 8, 5, 4, 32768);
+            failures += check(roomy.keep == pr::PoolKeep::Head && roomy.head_price &&
+                                  *roomy.head_price == 1.0,
+                              "four of five 32K contexts hold every chat: the head");
             // One context of two: twenty answers one at a time at x2 (10 steps) against ten
             // turns of two plain streams (10 x 1.02): the head, which four fifths refused.
             const auto alone = rule(p, 1, 2, 2, 1);
@@ -626,6 +645,8 @@ int main() {
             const auto short_of = rule(unpriced, 3, 8, 5, 4);
             failures += check(short_of.keep == pr::PoolKeep::Plain && !short_of.head_price,
                               "an unpriced head a stream short: plain decode");
+            failures += check(rule(unpriced, 3, 8, 5, 4, 32768).keep == pr::PoolKeep::Head,
+                              "an unpriced head whose 32K contexts hold every chat: the head");
             // A gain priced below 1 at a turn, the step prices unknown: plain decode.
             failures +=
                 check(!pr::pool_head_price(
@@ -646,14 +667,25 @@ int main() {
         // (vi) Properties of the pool rule's price over random tables (#777): a head the rule
         // keeps never decodes the benchmark's wave slower than plain decode's pool, run as the
         // benchmark sends it (`wave_rate`: C clients, client k sending prompts k, k + C, ... one
-        // after another, a server of n slots admitting waiting requests in order); where both
-        // are priced the rule keeps exactly the heads that are no slower, and a head that gains
-        // more is never refused where one that gains less is kept.
+        // after another, a server admitting waiting requests in order while its pool has the KV
+        // pages for them, each chat taking its tokens, at most a context's); where both are
+        // priced the rule keeps exactly the heads that are no slower, and a head that gains more
+        // is never refused where one that gains less is kept.
         {
-            namespace pr         = ninferno::product;
-            const auto prompts   = static_cast<std::uint32_t>(pr::choice::kMixShortRequests);
-            const auto wave_rate = [&](std::uint32_t clients, std::uint32_t slots,
+            namespace pr       = ninferno::product;
+            const auto prompts = static_cast<std::uint32_t>(pr::choice::kMixShortRequests);
+            const std::uint64_t chat_tokens =
+                pr::choice::kRequestPrompt + pr::choice::kRequestAnswer;
+
+            // A pool of `tokens` KV tokens at contexts of `context`.
+            struct Pool {
+                std::uint64_t context = 0, tokens = 0;
+            };
+
+            const auto wave_rate = [&](std::uint32_t clients, Pool pool,
                                        const pr::StreamPrice& rate) -> std::optional<double> {
+                const std::uint64_t need = std::min(chat_tokens, pool.context);
+                std::uint64_t held       = 0; // the tokens the active chats hold
                 std::vector<std::uint32_t> next(clients);
                 std::vector<std::uint32_t> waiting; // clients whose request waits, in order
                 for (std::uint32_t c = 0; c < clients; ++c) {
@@ -664,10 +696,12 @@ int main() {
                 double time        = 0;
                 std::uint32_t done = 0;
                 while (done < prompts) {
-                    while (active.size() < slots && !waiting.empty()) {
+                    while (held + need <= pool.tokens && !waiting.empty()) {
                         active.emplace_back(waiting.front(), 1.0);
                         waiting.erase(waiting.begin());
+                        held += need;
                     }
+                    if (active.empty()) { return std::nullopt; } // no chat fits the pool
                     const auto r = rate(static_cast<std::uint32_t>(active.size()));
                     if (!r || !(*r > 0)) { return std::nullopt; }
                     double least = 1.0;
@@ -681,6 +715,7 @@ int main() {
                             continue;
                         }
                         ++done;
+                        held -= need;
                         next[client] += clients;
                         if (next[client] < prompts) { waiting.push_back(client); }
                     }
@@ -755,9 +790,24 @@ int main() {
                         {.lanes = lanes, .draft_tokens = static_cast<std::uint32_t>(depth)});
                     lanes += static_cast<std::uint32_t>(pick(1, 3));
                 }
-                const auto streams         = static_cast<std::uint32_t>(pick(2, 8));
-                const auto with            = static_cast<std::uint32_t>(pick(1, 9));
-                const auto plain           = static_cast<std::uint32_t>(pick(1, 10));
+                const auto streams = static_cast<std::uint32_t>(pick(2, 8));
+                // Pools of whole contexts, and up to a context's tokens beyond them.
+                const std::uint64_t contexts[] = {1024, 2048, 2560, 4096, 8192, 32768};
+                const std::uint64_t context    = contexts[pick(0, 5)];
+                const auto pool_of             = [&](int whole) {
+                    return Pool{.context = context,
+                                            .tokens  = whole * context +
+                                          static_cast<std::uint64_t>(pick(0, int(context) - 1))};
+                };
+                const Pool head_pool  = pool_of(pick(1, 9));
+                const Pool plain_pool = pool_of(pick(1, 10));
+                const auto slots_of   = [](const Pool& pool) {
+                    return pr::pool_slots(
+                        {.contexts = static_cast<std::uint32_t>(pool.tokens / pool.context),
+                           .tokens   = pool.tokens});
+                };
+                const std::uint32_t with   = slots_of(head_pool);
+                const std::uint32_t plain  = slots_of(plain_pool);
                 const pr::StreamPrice gain = [&](std::uint32_t c) {
                     return pr::pool_head_gain(priced, head, c);
                 };
@@ -765,12 +815,12 @@ int main() {
                     return pr::plain_step_price(priced, c);
                 };
                 const pr::HeadPrice price = pr::pool_head_price(streams, with, plain, gain, step);
-                const auto head_rate      = wave_rate(streams, with, [&](std::uint32_t c) {
+                const auto head_rate      = wave_rate(streams, head_pool, [&](std::uint32_t c) {
                     const auto g = gain(c);
                     const auto s = step(c);
                     return g && s ? std::optional<double>(*g / *s) : std::nullopt;
                 });
-                const auto plain_rate     = wave_rate(streams, plain, [&](std::uint32_t c) {
+                const auto plain_rate     = wave_rate(streams, plain_pool, [&](std::uint32_t c) {
                     const auto s = step(c);
                     return s ? std::optional<double>(1.0 / *s) : std::nullopt;
                 });
@@ -787,12 +837,12 @@ int main() {
                     // below 1, and with every one of them priced it holds at any step price.
                     ++stepless;
                     std::set<std::uint32_t> met; // the active streams the head's wave meets
-                    (void)wave_rate(streams, with, [&](std::uint32_t c) {
+                    (void)wave_rate(streams, head_pool, [&](std::uint32_t c) {
                         met.insert(c);
                         return std::optional<double>(1.0);
                     });
                     std::set<std::uint32_t> met_plain;
-                    (void)wave_rate(streams, plain, [&](std::uint32_t c) {
+                    (void)wave_rate(streams, plain_pool, [&](std::uint32_t c) {
                         met_plain.insert(c);
                         return std::optional<double>(1.0);
                     });
@@ -806,11 +856,11 @@ int main() {
                     for (int draw = 0; all_priced && draw < 20; ++draw) {
                         const auto prices = step_prices();
                         const auto at     = price_at(prices);
-                        const auto h      = wave_rate(streams, with, [&](std::uint32_t c) {
+                        const auto h      = wave_rate(streams, head_pool, [&](std::uint32_t c) {
                             const auto g = gain(c);
                             return g ? std::optional<double>(*g / *at(c)) : std::nullopt;
                         });
-                        const auto q      = wave_rate(streams, plain, [&](std::uint32_t c) {
+                        const auto q      = wave_rate(streams, plain_pool, [&](std::uint32_t c) {
                             return std::optional<double>(1.0 / *at(c));
                         });
                         if (!h || !q || *h < *q * (1 - 1e-12)) { ++unsound; }

@@ -2160,10 +2160,14 @@ fifth of the contexts for a gain that applies only at one or two active streams.
 
 **The mix.** The benchmark's (DECISIONS 50 and 73; `tools/bench/perf_matrix.py` short_chat): 20
 prompts (`choice::kMixShortRequests`), answers alike, from C clients, client k sending prompts k,
-k + C, ... A pool of n whole contexts serves w = min(C, n) streams: a context the head costs is a
-stream the user asked for and does not get (the asked context is the only statement the user makes
-about their requests, DECISIONS 73). The wave then runs in turns of w streams until fewer prompts are
-left (`product::mix_turns`: 8 slots 8, 8, 4; 4 slots five turns of 4; 3 slots six of 3 and one of 2).
+k + C, ... A pool serves as many of those chats at once as its KV tokens hold: a chat holds its
+pages, not a whole context. The chat is DECISIONS 73's short request, `choice::kRequestPrompt` +
+`choice::kRequestAnswer` = 2048 + 512 tokens, so a pool of T tokens and n whole contexts holds
+max(n, floor(T / 2560)) chats (`product::pool_slots`; a context shorter than a chat holds one, cut
+to it) and serves w = min(C, that) streams; a chat that does not fit waits for pages. The wave then
+runs in turns of w streams until fewer prompts are left (`product::mix_turns`: 8 slots 8, 8, 4; 4
+slots five turns of 4; 3 slots six of 3 and one of 2). The first version of this rule counted a
+whole context as a stream; the RTX 3090 run below refuted it.
 
 **The price.** A turn of s streams decodes each answer at G(s) / P(s) tokens a one-stream plain step,
 so the wave takes the sum over its turns of P(s) / G(s) (`product::mix_steps`); the head is kept where
@@ -2172,8 +2176,9 @@ its sum is no larger than plain decode's (G = 1). G(s) is the head's gain under 
 one-request gain (`spec::measured_gain`) times the joint verify's price R_1 / R_s
 (`Profile::joint_scale`, #303). P(s) is a plain step of s streams over one stream's
 (`Profile::plain_step_scale`, new: `spec::plain_step_cost` with a plain step's launches, priced
-beside `joint_scale` on the same rates, `price_joint`). No constant enters: the prompt count is the
-benchmark's, the rest are the pair's facts and the card's rates.
+beside `joint_scale` on the same rates, `price_joint`). No constant enters: the prompt count and
+the chat's tokens are the benchmark's (DECISIONS 73), the rest are the pair's facts and the card's
+rates.
 
 **Unpriced.** Where a wave is not priced (a gain or a step price the facts do not give: a published
 profile carries no measurements, no `joint_scale` and no step prices; a literal table drafts at a
@@ -2183,30 +2188,45 @@ step price; with one unpriced it runs as the model's built-in MTP default runs w
 profile (its watchdog floors raised). A stream it costs is a loss nothing
 prices against it, so there plain decode runs.
 
-**Moves.** On the shipped registry the Qwen3.8 27B GGUF (dflash2 profile, the case the server's
-comment measured) resolves to a published profile on every lab board the plan knows (RTX 4090, 4080
-SUPER, 4070 Ti, 4060 Ti, 5090, 5070 Ti, 3090, 3060, 2080 Ti, Quadro GV100, A100, L4): no gain of
-the head is priced, so the rule reads only the streams. Of (C, drafter, plain, head) contexts:
-(2,1,2,2), (3,2,3,3), (4,3,4,4), (4,3,5,4), (8,6,8,8) keep the head as before; (8,4,5,4),
-(8,4,6,5), (8,5,8,7) move from the head to plain decode (the four fifths kept a head a stream short
-of plain decode's); the cases the four fifths refused stay refused. Where the facts price the head,
-the moves are those of the price: pinned in (v), the issue's case (4 of 5 contexts at C = 8 under
-2:3,3:0, five turns of 4 plain streams against four of 5) moves to plain decode, and one context of
-2 at x2 against two plain streams moves to the head.
+**Verified against the lab's runs** (`test_plan_dry_run`, Qwen3.8 27B GGUF with its drafters at
+`--max-context 32768` on the card's own board; a pool of n whole contexts taken at its least,
+n x 32768 tokens; where the drafter's own count was not recorded, every count that enters the rule):
+
+| Card, C | Measured, tok/s a request | Rule (whole contexts as streams) | Rule (chats by tokens) |
+|---|---|---|---|
+| RTX 3090, 8 | plain 38.3 in 5 contexts, MTP 3 51.1 in 4: the head | plain decode (4 of 8 streams against 5) | the head (51 and 64 chats: 8 streams each) |
+| RTX 4090, 4 | plain 48.9, MTP 3 88.8, the head in every context plain decode has: the head | the head | the head |
+| RTX 4090, 8 | plain 46.2, MTP 3 69.4, as above: the head | the head | the head |
+
+Neither profile prices the head's gain (below), so the verdicts are the unpriced rule's: the same
+streams, no gain priced below 1. No speed is predicted for them.
+
+**Moves.** On the shipped registry the Qwen3.8 27B GGUF (dflash2 profile) resolves to a published
+profile on every lab board the plan knows (RTX 4090, 4080 SUPER, 4070 Ti, 4060 Ti, 5090, 5070 Ti,
+3090, 3060, 2080 Ti, Quadro GV100, A100, L4): no gain of the head is priced, and all twelve decide
+alike. Of (C, drafter, plain, head) whole contexts, against the four fifths:
+- contexts of 8192 or 32768 tokens (3 and 12 chats a context): every case keeps the head. (2,1,2,1),
+  (3,2,3,2), (4,3,5,3) and (4,2,4,3) move from plain decode to the head; the rest kept it already.
+- contexts of 4096 (1.6 chats a context): (3,2,3,2), (4,3,5,3), (4,2,4,3) move to the head;
+  (8,4,5,4) moves to plain decode (6 chats against 8).
+- contexts of one chat (2560): (8,4,5,4), (8,5,8,7), (8,4,6,5) move to plain decode, a head a stream
+  short of plain decode's; the rest stay.
+
+Where the facts price the head, the moves are those of the price: pinned in (v), at contexts of one
+chat the issue's case (4 of 5 contexts at C = 8 under 2:3,3:0, five turns of 4 plain streams against
+four of 5) moves to plain decode, and at 32K contexts it keeps the head (both serve 8: a tie); one
+context of 2 at x2 against two plain streams moves to the head.
 
 **Properties** (`test_product_speculation` (vi), 4000 random tables, profiles, step prices,
 concurrencies and pools): a head the rule keeps never decodes the wave slower than plain decode's
-pool where both are priced, the wave simulated as the benchmark sends it (clients, slots, a queue);
-there the rule keeps exactly the heads that are no slower; a head kept unpriced serves the same
+pool where both are priced, the wave simulated as the benchmark sends it (clients, a queue, a pool
+admitting chats while its KV tokens hold them, at contexts of 1024 to 32768 tokens); there the rule
+keeps exactly the heads that are no slower; a head kept unpriced serves the same
 streams as plain decode, meets no gain below 1, and with its gains priced is no slower at 20 random
 step prices; a head faster at every depth is never refused where the slower one is kept.
 
 **Open.** The step price leaves out the KV and attention bytes that grow with s, as R_s does, so it
-errs low at more streams, towards plain decode where the pools differ in streams. A pool of n whole
-contexts holds more short chats than n at once (a 2560-token chat in a 32K context); counting a whole
-context as one stream follows the user's asked context, but the RTX 3090 run the four fifths cited
-(Qwen3.8 27B at 32K and C = 8: plain 38.3 tok/s a request in 5 contexts, MTP 3 51.1 in 4, the head
-under the built-in 8:2 table) is one of the moved cases and measured the head faster: short chats
-do not wait for whole contexts. Pricing a pool by the requests' tokens rather than whole contexts,
-and the head's own MTP measurements where the registry has them (the head is priced from the
-drafter's profile today), are not done here. Not run on the stands.
+errs low at more streams, towards plain decode where the pools differ in streams. The head is priced
+from the drafter's profile only: its own MTP resolution (`ResolvedSpeculation::other_kinds`) is not
+read, so on today's registry its gain is never priced. The benchmark's 24K prompts (DECISIONS 73's
+long request) run on a server of one stream and do not enter the wave. Not run on the stands.

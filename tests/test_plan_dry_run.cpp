@@ -8,6 +8,7 @@
 #include "convert/drafters.h"
 #include "core/device_class.h"
 #include "core/weight_view.h"
+#include "product/choice/choice_constants.h"
 #include "product/plan/plan_cached.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
@@ -1284,20 +1285,24 @@ void test_speculation_order() {
     // The pool rule (product::pool_rule): plain decode asked only inside the rule's range, the head
     // only when plain decode holds more. The 27B's profile prices nothing of the head (a published
     // profile: no measurements, no joint verify, no step prices; the head's built-in mtp:3 under
-    // 8:2), so the head is kept only where it serves as many streams as plain decode (#777).
+    // 8:2), so the head is kept only where it serves as many streams as plain decode (#777): a
+    // pool serves as many of the benchmark's short chats (2048 + 512 tokens) as its KV tokens hold.
+    // Here the pools are whole contexts of one chat each, so a context is a stream.
     {
         int plain_asked = 0, head_asked = 0;
-        const auto rule = [&](std::uint32_t with_drafter, std::uint32_t streams,
+        const std::uint64_t chat = pr::choice::kRequestPrompt + pr::choice::kRequestAnswer;
+        const auto rule          = [&](std::uint32_t with_drafter, std::uint32_t streams,
                               std::uint32_t plain, std::optional<std::uint32_t> head) {
             return pr::pool_rule(
                 drafted, false, with_drafter, streams,
                 [&] {
                     ++plain_asked;
-                    return plain;
+                    return pr::PoolSize{.contexts = plain, .tokens = plain * chat};
                 },
-                [&](const pr::ServedSpeculation&) {
+                [&](const pr::ServedSpeculation&) -> std::optional<pr::PoolSize> {
                     ++head_asked;
-                    return head;
+                    if (!head) { return std::nullopt; }
+                    return pr::PoolSize{.contexts = *head, .tokens = *head * chat};
                 });
         };
         check(rule(4, 4, 8, 8).keep == pr::PoolKeep::Drafter && plain_asked == 0,
@@ -1315,6 +1320,51 @@ void test_speculation_order() {
               "the head at 4 of plain's 5 (8 streams): a stream nothing prices, plain decode");
         check(rule(3, 4, 5, std::nullopt).keep == pr::PoolKeep::Plain,
               "the head does not fit: plain decode");
+    }
+    // The lab's measured pool cases (#777): the rule's verdict against the measured one. Qwen3.8
+    // 27B GGUF with its drafters (the dflash2 profile; the head is its built-in mtp:3) at
+    // --max-context 32768 on the card's own board, a pool of n whole contexts holding n x 32768
+    // tokens (at least that: a whole context's). Where the drafter's own count was not recorded,
+    // every count that enters the rule (fewer than C, fewer than plain decode's) is tried.
+    //   RTX 3090, C = 8: plain decode 38.3 tok/s a request in 5 contexts, MTP 3 51.1 in 4.
+    //   RTX 4090, C = 4: dflash2 K=7 left 3 of 4 contexts; plain 48.9 tok/s a request, MTP 3 88.8,
+    //   the head leaving every context plain decode does; C = 8: plain 46.2, MTP 3 69.4.
+    {
+        const auto measured = [&](const char* board, std::uint32_t streams, std::uint32_t plain,
+                                  std::uint32_t head, std::uint32_t drafter) {
+            std::string error;
+            const auto device =
+                pr::plan_device_of_board(std::string(board) + ",linux,headless", &error);
+            check(device.has_value(), std::string(board) + ": " + error);
+            if (!device) { return; }
+            const pr::SpeculationSubject at_card =
+                pr::planned_subject(pr::PlannedTarget{.repo          = "unsloth/Qwen3.8-27B-GGUF",
+                                                      .facts         = facts,
+                                                      .gguf          = true,
+                                                      .with_drafters = true},
+                                    pr::gpu_key_of(*device));
+            const std::uint64_t context = 32768;
+            const auto pool             = pr::pool_rule(
+                at_card, false, drafter, streams,
+                [&] { return pr::PoolSize{.contexts = plain, .tokens = plain * context}; },
+                [&](const pr::ServedSpeculation&) -> std::optional<pr::PoolSize> {
+                    return pr::PoolSize{.contexts = head, .tokens = head * context};
+                });
+            check(pool.keep == pr::PoolKeep::Head,
+                  std::string(board) + " at C " + std::to_string(streams) + ", the head in " +
+                      std::to_string(head) + " of plain decode's " + std::to_string(plain) +
+                      " contexts (the drafter " + std::to_string(drafter) +
+                      "): measured faster, the rule keeps it");
+        };
+        for (std::uint32_t drafter = 1; drafter < 5; ++drafter) {
+            measured("3090", 8, 5, 4, drafter);
+        }
+        measured("4090", 4, 4, 4, 3);
+        for (std::uint32_t contexts = 2; contexts <= 8; ++contexts) {
+            for (std::uint32_t drafter = 1; drafter < contexts; ++drafter) {
+                measured("4090", 8, contexts, contexts, drafter);
+            }
+        }
     }
     // The drafters a start attaches beside the target (product::attached_drafter_memory, the
     // server's plan and ninferno-ui's): a GGUF drafter file by its size in the target's listing;

@@ -223,22 +223,35 @@ using StreamPrice = std::function<std::optional<double>(std::uint32_t streams)>;
 [[nodiscard]] std::optional<double> mix_steps(std::uint32_t streams, const StreamPrice& gain,
                                               const StreamPrice& step);
 
-// The MTP head's pool against plain decode's at the mix (pool_rule, #777). Each pool serves
-// min(concurrency, its whole contexts) streams: a context the head costs is a stream the user
-// asked for and does not get. The head pays where its wave takes no longer than plain decode's
-// (mix_steps, plain decode at a gain of 1, both under the same step prices). Where a wave is not
-// priced (a gain or a step price the facts do not give), it pays only where both pools serve as
-// many streams and no turn's gain is priced below 1: with every gain priced it is then no slower
-// at any step price; with one not priced it runs as the model's built-in MTP default runs without
-// a profile. A stream it costs is then a loss nothing prices against it, and plain decode runs.
-// `over_plain`: the head pool's tokens/s over plain decode's at the mix, where both are priced.
+// An automatic KV pool as the pool rule reads it: the whole contexts of the asked context it holds
+// and its KV tokens.
+struct PoolSize {
+    std::uint32_t contexts = 0;
+    std::uint64_t tokens   = 0;
+};
+
+// The benchmark's short chats a pool holds at once (#777): its KV tokens over a short chat's, the
+// request of DECISIONS 73 (choice::kRequestPrompt + choice::kRequestAnswer, 2048 + 512 tokens: a
+// chat holds its pages, not a whole context), and never fewer than its whole contexts (a context
+// shorter than a chat holds one request, cut to it).
+[[nodiscard]] std::uint32_t pool_slots(const PoolSize& pool) noexcept;
+
+// The MTP head's pool against plain decode's at the mix (pool_rule, #777). A pool of `slots`
+// short chats (pool_slots) serves min(concurrency, slots) streams; a chat that does not fit waits
+// for pages. The head pays where its wave takes no longer than plain decode's (mix_steps, plain
+// decode at a gain of 1, both under the same step prices). Where a wave is not priced (a gain or a
+// step price the facts do not give), it pays only where both pools serve as many streams and no
+// turn's gain is priced below 1: with every gain priced it is then no slower at any step price;
+// with one not priced it runs as the model's built-in MTP default runs without a profile. A stream
+// it costs is then a loss nothing prices against it, and plain decode runs. `over_plain`: the head
+// pool's tokens/s over plain decode's at the mix, where both are priced.
 struct HeadPrice {
     bool pays = false;
     std::optional<double> over_plain;
 };
 
-[[nodiscard]] HeadPrice pool_head_price(std::uint32_t concurrency, std::uint32_t head_contexts,
-                                        std::uint32_t plain_contexts, const StreamPrice& head_gain,
+[[nodiscard]] HeadPrice pool_head_price(std::uint32_t concurrency, std::uint32_t head_slots,
+                                        std::uint32_t plain_slots, const StreamPrice& head_gain,
                                         const StreamPrice& step);
 
 // The served MTP head's gain over plain decode at `streams` active streams, from `priced` (the
@@ -256,15 +269,15 @@ pool_head_gain(const spec::Profile& priced, const ServedSpeculation& head, std::
 
 // The pool rule (--spec auto with an automatic KV pool): when the served drafter leaves the pool
 // `with_drafter` whole contexts, fewer than `concurrency`, and plain decode holds more
-// (`plain_contexts`, 0 when plain decode does not fit), requests waiting for pages cost more than
-// drafting saves and the drafter gives way. The model's own MTP head runs then where its pool
-// (`head_contexts`, nullopt when it does not fit) prices at least plain decode's over the
-// benchmark's mix (pool_head_price: its load table's gain at each number of active streams,
-// pool_head_gain, against plain decode's, under the plain step's price, plain_step_price; both
-// from the subject's profile; unpriced, only where it serves as many streams), else plain decode.
-// One context always fits a drafter, so a server of one request never loses it. `plain_contexts` is
-// called only inside the rule's range, `head_contexts` only when plain decode holds more; each
-// builds or plans its configuration as `fits` above does.
+// (`plain_pool`'s contexts, 0 when plain decode does not fit), requests waiting for pages cost more
+// than drafting saves and the drafter gives way. The model's own MTP head runs then where its pool
+// (`head_pool`, nullopt when it does not fit) prices at least plain decode's over the benchmark's
+// mix (pool_head_price over each pool's pool_slots: the head's load table's gain at each number of
+// active streams, pool_head_gain, against plain decode's, under the plain step's price,
+// plain_step_price; both from the subject's profile; unpriced, only where it serves as many
+// streams), else plain decode. One context always fits a drafter, so a server of one request never
+// loses it. `plain_pool` is called only inside the rule's range, `head_pool` only when plain decode
+// holds more; each builds or plans its configuration as `fits` above does.
 enum class PoolKeep { Drafter, Head, Plain };
 struct PoolDecision {
     PoolKeep keep = PoolKeep::Drafter;
@@ -274,10 +287,11 @@ struct PoolDecision {
     // head fits and both are priced.
     std::optional<double> head_price;
 };
+
 [[nodiscard]] PoolDecision
 pool_rule(const SpeculationSubject& subject, bool per_request, std::uint32_t with_drafter,
-          std::uint32_t concurrency, const std::function<std::uint32_t()>& plain_contexts,
-          const std::function<std::optional<std::uint32_t>(const ServedSpeculation&)>& head_contexts);
+          std::uint32_t concurrency, const std::function<PoolSize()>& plain_pool,
+          const std::function<std::optional<PoolSize>(const ServedSpeculation&)>& head_pool);
 
 // The profile served_shallower serves: every choice `config` one draft shallower, with the drafter
 // the profile runs `config`'s mode with and the floor shallower_floor finds from `floor` (measured

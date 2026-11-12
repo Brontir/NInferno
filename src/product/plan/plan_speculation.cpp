@@ -89,6 +89,16 @@ std::uint32_t pool_contexts_of(const runtime::DryRunPlan& plan, const EngineOpti
                                       runtime::kAutomaticContextGrain / chosen->rung.max_context);
 }
 
+// The pool as the pool rule reads it: its whole contexts (pool_contexts_of) and its KV tokens,
+// pages of one grain each (0 where pool_contexts_of has none).
+PoolSize pool_size_of(const runtime::DryRunPlan& plan, const EngineOptions& options) {
+    const std::uint32_t contexts = pool_contexts_of(plan, options);
+    if (contexts == 0) { return {}; }
+    return {.contexts = contexts,
+            .tokens   = static_cast<std::uint64_t>(plan.chosen()->rung.kv_pages) *
+                      runtime::kAutomaticContextGrain};
+}
+
 std::string label_of(const SpeculativeOptions& speculative) {
     if (speculative.backend == SpeculativeBackend::None) { return "plain"; }
     return std::string(speculative_backend_name(speculative.backend)) + ":" +
@@ -522,16 +532,16 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                     *subject, per_request, with_drafter, concurrency,
                     [&] {
                         plain_plan = plan_of(SpeculativeOptions{});
-                        return pool_contexts_of(*plain_plan, options);
+                        return pool_size_of(*plain_plan, options);
                     },
-                    [&](const ServedSpeculation& head) -> std::optional<std::uint32_t> {
+                    [&](const ServedSpeculation& head) -> std::optional<PoolSize> {
                         const SpeculativeOptions sp = with_given(head);
                         head_plan                   = plan_of(sp);
                         step("pool_head", sp, *head_plan,
                              "the drafter leaves " + std::to_string(with_drafter) + " of " +
                                  std::to_string(concurrency) + " whole contexts");
                         if (!head_plan->fits) { return std::nullopt; }
-                        return pool_contexts_of(*head_plan, options);
+                        return pool_size_of(*head_plan, options);
                     });
                 if (pool.keep == PoolKeep::Head) {
                     for (auto& s : r.fallbacks) { s.served = false; }

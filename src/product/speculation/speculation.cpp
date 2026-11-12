@@ -706,20 +706,21 @@ fit_fallbacks(const SpeculationSubject& subject, const ServedSpeculation& refuse
 
 PoolDecision
 pool_rule(const SpeculationSubject& subject, bool per_request, std::uint32_t with_drafter,
-          std::uint32_t concurrency, const std::function<std::uint32_t()>& plain_contexts,
-          const std::function<std::optional<std::uint32_t>(const ServedSpeculation&)>& head_contexts) {
+          std::uint32_t concurrency, const std::function<PoolSize()>& plain_pool,
+          const std::function<std::optional<PoolSize>(const ServedSpeculation&)>& head_pool) {
     PoolDecision out;
     if (with_drafter == 0 || with_drafter >= concurrency) { return out; }
-    out.plain = plain_contexts();
+    const PoolSize plain = plain_pool();
+    out.plain            = plain.contexts;
     if (out.plain <= with_drafter) { return out; }
     out.keep = PoolKeep::Plain;
     if (auto head = served_head_fallback(subject, per_request)) {
-        const auto contexts = head_contexts(*head);
-        if (!contexts) { return out; }
+        const auto pool = head_pool(*head);
+        if (!pool) { return out; }
         // served_head_fallback serves a head only for a subject whose profile was found.
         const spec::Profile& priced = subject.resolved->profile;
         const HeadPrice price       = pool_head_price(
-            concurrency, *contexts, out.plain,
+            concurrency, pool_slots(*pool), pool_slots(plain),
             [&](std::uint32_t streams) { return pool_head_gain(priced, *head, streams); },
             [&](std::uint32_t streams) { return plain_step_price(priced, streams); });
         out.head_price = price.over_plain;
@@ -755,12 +756,19 @@ std::optional<double> mix_steps(std::uint32_t streams, const StreamPrice& gain,
     return total;
 }
 
-HeadPrice pool_head_price(std::uint32_t concurrency, std::uint32_t head_contexts,
-                          std::uint32_t plain_contexts, const StreamPrice& head_gain,
+std::uint32_t pool_slots(const PoolSize& pool) noexcept {
+    const std::uint64_t chat  = std::uint64_t{choice::kRequestPrompt} + choice::kRequestAnswer;
+    const std::uint64_t chats = pool.tokens / chat;
+    return static_cast<std::uint32_t>(
+        std::max<std::uint64_t>(pool.contexts, std::min<std::uint64_t>(chats, UINT32_MAX)));
+}
+
+HeadPrice pool_head_price(std::uint32_t concurrency, std::uint32_t head_slots,
+                          std::uint32_t plain_slots, const StreamPrice& head_gain,
                           const StreamPrice& step) {
     HeadPrice out;
-    const std::uint32_t head  = std::min(concurrency, head_contexts);
-    const std::uint32_t plain = std::min(concurrency, plain_contexts);
+    const std::uint32_t head  = std::min(concurrency, head_slots);
+    const std::uint32_t plain = std::min(concurrency, plain_slots);
     if (head == 0) { return out; }
     const auto with_head = mix_steps(head, head_gain, step);
     const auto plainly   = mix_steps(plain, [](std::uint32_t) { return 1.0; }, step);

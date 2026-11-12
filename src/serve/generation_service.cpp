@@ -367,6 +367,14 @@ std::uint32_t pool_contexts(const ninferno::MemorySummary& memory) {
     return memory.kv_capacity / memory.max_context;
 }
 
+// The pool as the pool rule reads it: its full contexts and its KV tokens (none where
+// pool_contexts has none).
+product::PoolSize pool_size(const ninferno::MemorySummary& memory) {
+    const std::uint32_t contexts = pool_contexts(memory);
+    if (contexts == 0) { return {}; }
+    return {.contexts = contexts, .tokens = memory.kv_capacity};
+}
+
 ninferno::EngineOptions engine_options_of(const ServeOptions& options) {
     ninferno::EngineOptions engine_options;
     engine_options.artifact_path           = options.artifact_path;
@@ -617,7 +625,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         // The configuration the Engine standing was built with, as the rule's steps build them.
         enum class Built { Drafter, Plain, Head } standing = Built::Drafter;
         std::uint32_t plain_tokens = 0;
-        const auto plain_contexts = [&]() -> std::uint32_t {
+        const auto plain_pool                              = [&]() -> product::PoolSize {
             engine_.reset();
             engine_options.speculative = SpeculativeOptions{};
             mark_fit_fallback(engine_options.speculative, "pool_plain");
@@ -626,21 +634,22 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                 engine_ = std::make_unique<ninferno::Engine>(engine_options);
                 const ninferno::MemorySummary memory = engine_->memory_summary();
                 plain_tokens                         = memory.kv_capacity;
-                return pool_contexts(memory);
+                return pool_size(memory);
             } catch (const ninferno::CapacityError&) {
                 engine_.reset();
-                return 0;
+                return product::PoolSize{};
             }
         };
         // The model's own MTP head weighs far less than a separate drafter, so it can leave the
         // pool every context plain decode does, and drafting still pays at these loads (RTX 4090,
         // Qwen3.8 27B at --max-context 32768 and --max-concurrency 4: dflash2 K=7 left 3 of 4
         // contexts and the server decoded plainly at 48.9 tok/s a request; MTP 3 88.8, at 8: 46.2
-        // against 69.4). It runs where its pool prices at least plain decode's over the benchmark's
-        // mix (product::pool_head_price, #777): its load table's gain at each number of active
-        // streams, a context it costs counted as a stream the user asked for and does not get.
-        const auto head_contexts =
-            [&](const product::ServedSpeculation& head) -> std::optional<std::uint32_t> {
+        // against 69.4; RTX 3090 at 8: plain 38.3 tok/s a request in 5 contexts, MTP 3 51.1 in 4).
+        // It runs where its pool prices at least plain decode's over the benchmark's mix
+        // (product::pool_head_price, #777): its load table's gain at each number of active
+        // streams, each pool serving as many short chats as its KV tokens hold (pool_slots).
+        const auto head_pool =
+            [&](const product::ServedSpeculation& head) -> std::optional<product::PoolSize> {
             engine_.reset();
             auto served         = head;
             served.fit_fallback = drafted_label + " leaves the KV pool " +
@@ -655,7 +664,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             standing = Built::Head;
             try {
                 build();
-                return pool_contexts(engine_->memory_summary());
+                return pool_size(engine_->memory_summary());
             } catch (const ninferno::CapacityError&) { return std::nullopt; }
         };
         // --spec auto with an automatic KV pool (product::pool_rule): requests waiting for pages
@@ -663,8 +672,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         // tokens, 34.9 tok/s aggregate; plain 506K, 239.4). An explicit --spec keeps its drafter.
         const product::PoolDecision pool =
             product::pool_rule(speculation_subject(), options_.per_request_speculation,
-                               with_drafter, options_.max_concurrency, plain_contexts,
-                               head_contexts);
+                               with_drafter, options_.max_concurrency, plain_pool, head_pool);
         if (pool.keep == product::PoolKeep::Drafter && standing != Built::Drafter) {
             engine_.reset();
             served_speculation_        = drafted;
