@@ -345,7 +345,7 @@
    }
   },
   "cases_skipped": 100,
-  "legacy_qualification": "ninferno_linear_generic_test and ninferno_route_classes_test: full ctest of master f24d0079 on sm_89 (pending at collection)",
+  "legacy_qualification": "full ctest of master f24d0079 on sm_89 (RTX 4070 Ti board): 395/395 passed",
   "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
   "overall": {
    "batch129": {
@@ -1857,7 +1857,7 @@
    }
   },
   "cases_skipped": 0,
-  "legacy_qualification": "ninferno_linear_generic_test and ninferno_route_classes_test: full ctest of master f24d0079 on sm_89 (pending at collection)",
+  "legacy_qualification": "full ctest of master f24d0079 on sm_89 (RTX 4070 Ti board): 395/395 passed",
   "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
   "overall": {
    "batch129": {

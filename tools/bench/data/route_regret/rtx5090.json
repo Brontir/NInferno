@@ -310,7 +310,7 @@
    }
   },
   "cases_skipped": 100,
-  "legacy_qualification": "full ctest of master 752bae56 on sm_120a (RTX 5070 Ti board, same build set): 401/401 passed",
+  "legacy_qualification": "full ctest of master 752bae56 on sm_120a (RTX 5070 Ti board): 401/401 passed; f24d0079 itself was not run on sm_120a",
   "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
   "overall": {
    "batch129": {
@@ -1787,7 +1787,7 @@
    }
   },
   "cases_skipped": 0,
-  "legacy_qualification": "full ctest of master 752bae56 on sm_120a (RTX 5070 Ti board, same build set): 401/401 passed",
+  "legacy_qualification": "full ctest of master 752bae56 on sm_120a (RTX 5070 Ti board): 401/401 passed; f24d0079 itself was not run on sm_120a",
   "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
   "overall": {
    "batch129": {

@@ -262,7 +262,7 @@
    }
   },
   "cases_skipped": 100,
-  "legacy_qualification": "full ctest of master 752bae56 on sm_86 on this board: 395/395 passed (f24d0079 adds no selector change)",
+  "legacy_qualification": "full ctest of master 752bae56 on sm_86 (RTX 3060 board): 395/395 passed; f24d0079 itself was not run on sm_86",
   "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
   "overall": {
    "batch129": {
@@ -1692,7 +1692,7 @@
    }
   },
   "cases_skipped": 0,
-  "legacy_qualification": "full ctest of master 752bae56 on sm_86 on this board: 395/395 passed (f24d0079 adds no selector change)",
+  "legacy_qualification": "full ctest of master 752bae56 on sm_86 (RTX 3060 board): 395/395 passed; f24d0079 itself was not run on sm_86",
   "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
   "overall": {
    "batch129": {

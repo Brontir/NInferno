@@ -262,7 +262,7 @@
    }
   },
   "cases_skipped": 100,
-  "legacy_qualification": "ninferno_linear_generic_test and ninferno_route_classes_test: full ctest of master 65e573fd on sm_75 (mst17, 393/393); f24d0079 adds #686/#759/#770/#767/#768 above it (host split, speculation load, bench, labels, sm_80+ facts)",
+  "legacy_qualification": "full ctest of master 65e573fd on sm_75 (this board): 393/393 passed; f24d0079 itself was not run on sm_75",
   "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
   "overall": {
    "batch129": {
@@ -1719,7 +1719,7 @@
    }
   },
   "cases_skipped": 0,
-  "legacy_qualification": "ninferno_linear_generic_test and ninferno_route_classes_test: full ctest of master 65e573fd on sm_75 (mst17, 393/393); f24d0079 adds #686/#759/#770/#767/#768 above it (host split, speculation load, bench, labels, sm_80+ facts)",
+  "legacy_qualification": "full ctest of master 65e573fd on sm_75 (this board): 393/393 passed; f24d0079 itself was not run on sm_75",
   "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
   "overall": {
    "batch129": {
