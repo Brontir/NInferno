@@ -385,7 +385,10 @@ std::vector<spec::LoadBound> facts_load_as(const spec::Profile& priced, const sp
 // in place of `shown`'s choices (a shallower depth of one of its drafters, or its fit fallback),
 // from `shown`'s table. Under a bound of d at C streams a choice runs min(d, its own depth), so a
 // table shows a depth at C only where the choices it bounded ran that depth there.
-//   - A table derived from the facts is derived again for `out` (as subject_of_mode does), with
+//   - Where the root profile's table is derived from the facts (`root_basis`, the profile the
+//     user's subject resolved, not `shown`'s label: a fit fallback whose gain is not known has its
+//     table cut and labelled literal, and a shallower depth of it with a measured gain is still a
+//     facts profile's, #760), the table is derived again for `out` (as subject_of_mode does), with
 //     `gain` as its configuration's one-request gain; where that gain is not known, as below.
 //   - Otherwise (measured, a literal, or facts without the gain) a bound stays while `out` runs
 //     under it the depth that the bounded choices of its drafter (mode and head) ran there,
@@ -397,10 +400,12 @@ std::vector<spec::LoadBound> facts_load_as(const spec::Profile& priced, const sp
 //     with: one request speculates, two or more decode plainly (as subject_of_mode). Counts below
 //     the first bound are left unbounded, as for `shown`: a measured table starts at two streams,
 //     and a literal's first bound (stand_in_load's cap) is not a depth's. No table stays none.
-void load_for(const spec::Profile& shown, spec::Profile& out, std::optional<double> gain) {
+void load_for(const spec::Profile& shown, spec::Profile& out, std::optional<double> gain,
+              std::string_view root_basis) {
     out.load_basis = shown.load_basis;
-    if (shown.load_basis == "facts" && gain) {
-        out.load = facts_load_as(out, out.overall, *gain);
+    if (root_basis == "facts" && gain) {
+        out.load       = facts_load_as(out, out.overall, *gain);
+        out.load_basis = "facts";
         return;
     }
     out.load.clear();
@@ -447,7 +452,7 @@ spec::Profile fallback_profile(const spec::Profile& profile) {
     out.overall = out.thinking = out.non_thinking = *profile.fit_fallback;
     out.served.reset();
     out.fit_fallback.reset();
-    load_for(profile, out, gain_of(profile, *profile.fit_fallback));
+    load_for(profile, out, gain_of(profile, *profile.fit_fallback), profile.load_basis);
     return out;
 }
 
@@ -588,7 +593,7 @@ std::optional<spec::Profile> shallower_profile(const spec::Profile& profile,
     // Its one-request gain is the profile's measurement of it, not its parent's.
     const bool of_fallback = profile.fit_fallback && *same == &*profile.fit_fallback;
     load_for(of_fallback ? fallback_profile(profile) : profile, out,
-             spec::measured_gain(profile, shallower.config, std::nullopt));
+             spec::measured_gain(profile, shallower.config, std::nullopt), profile.load_basis);
     return out;
 }
 
