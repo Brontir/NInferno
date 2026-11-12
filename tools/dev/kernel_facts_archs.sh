@@ -46,6 +46,11 @@ else
   [ -d "$SRC" ] || git -C "$REPO" worktree add -q --detach "$SRC" || { echo "worktree add $SRC failed"; exit 3; }
   [ "$(realpath "$(git -C "$SRC" rev-parse --show-toplevel)")" = "$SRC" ] \
     || { echo "$SRC is not its own git worktree root; refusing checkout -f / clean"; exit 3; }
+  # a standalone clone at $SRC is also a worktree root: it must be a worktree of $REPO (same common
+  # git dir, as tools/dev/qc.sh checks)
+  gcd() { ( cd "$1" && realpath "$(git rev-parse --git-common-dir)" ); }
+  [ "$(gcd "$SRC")" = "$(gcd "$REPO")" ] \
+    || { echo "$SRC is not a worktree of $REPO (other git dir); refusing checkout -f / clean"; exit 3; }
   git -C "$SRC" fetch -q origin "+refs/heads/$BR:refs/remotes/origin/$BR" || { echo "fetch of $BR failed"; exit 3; }
   git -C "$SRC" checkout -q -f --detach "origin/$BR"
   git -C "$SRC" clean -fdxq
