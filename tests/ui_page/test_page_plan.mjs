@@ -23,7 +23,7 @@ assert.ok(from >= 0 && to > from, "the plan helpers block is marked in the page"
 const NAMES = ["parseCtxText", "planTok", "ctxInput", "ctxNoteText", "planSpecOf", "planQuery", "catalogQuery", "planStateOf",
                "planRowOf", "launchContextOf", "reasonText", "unsupportedText", "cardGbOf", "cardGbText", "ruleText", "planRowState",
                "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf", "actOptions", "actAskOf", "ACT_MODES", "artifactPlanQuery", "replayDiff", "nowLine", "nowReasonText", "kvOptionsOf", "kvWhyText", "KV_CODECS", "KV_WHY_CODES",
-               "gateText", "decidedOnText", "bandText", "answerText", "qualityText", "GATE_CODES", "GATE_OPENS", "QUALITY_AUTHORITIES", "GEN_LABELS", "PREFILL_WHY",
+               "gateTexts", "decidedOnText", "bandText", "answerText", "qualityText", "GATE_CODES", "GATE_OPENS", "QUALITY_AUTHORITIES", "GEN_LABELS", "PREFILL_WHY",
                "REASON_CODES", "UNSUPPORTED_CODES", "RULE_TIERS", "SPEC_BASES"];
 const ctx = vm.createContext({});
 vm.runInContext(html.slice(from, to) + `\n;globalThis.H = {${NAMES.join(", ")}};`, ctx);
@@ -541,7 +541,7 @@ for (const lang of ["en", "ru", "uk"]) for (const k of ["replayContext", "replay
   const open = {model: {source: "Qwen/Qwen3.5-9B-GGUF"}, choice: {by_worth: true, gate_code: "open", gates_closed: [], why: "x",
     decided_on: {generation: "ada", cards: "RTX 4070 Ti, RTX 4090", lent: false, decides: true},
     answer_scale: {calibrated: true, family: "qwen3_5_text", model: "Qwen3.5-9B", benchmark: "mmlu_pro", points_per_kld: 40}}};
-  eq(H.gateText(open, tr), "", "the worth decided: no gate to say");
+  eq(H.gateTexts(open, tr), [], "the worth decided: no gate to say");
   eq(H.decidedOnText(open, tr), 'decidedOn{"gen":"Ada (RTX 40)","cards":"RTX 4070 Ti, RTX 4090"}', "decided on the reference card, by its generation's name");
   eq(H.decidedOnText({choice: {decided_on: null}}, tr), "", "no reference card: nothing");
   eq(H.decidedOnText({choice: {decided_on: {generation: "gb20x", cards: "", lent: true}}}, tr), "", "a lent generation decides nothing: its gate says so");
@@ -550,12 +550,31 @@ for (const lang of ["en", "ru", "uk"]) for (const k of ["replayContext", "replay
                    {axis: "quant", code: "quant_switches_closed", opens_with: "", generation: "turing", family: "gemma4_text", cards: 0}],
     answer_scale: {calibrated: false, family: "gemma4_text", why_code: "family_not_calibrated"}}};
   const vars = '{"gen":"Turing (RTX 20)","family":"gemma-4-12b-it-GGUF"}';
-  eq(H.gateText(closed, tr), `gate_no_reference_card${vars}. gateOpens{"what":${JSON.stringify("gateOpens_reference_factors" + vars)}}`,
-     "a closed gate in the page's words, no raw key, with what opens it");
-  eq(H.gateText({choice: {gate_code: "family_unmeasured", gates_closed: [{code: "family_unmeasured", opens_with: "family_kld_terms", generation: "", family: "gemma4_text"}]}}, tr),
-     'gate_family_unmeasured{"gen":"genOther","family":"thisModel"}. gateOpens{"what":"gateOpens_family_kld_terms{\\"gen\\":\\"genOther\\",\\"family\\":\\"thisModel\\"}"}',
+  eq(H.gateTexts(closed, tr), [`gate_no_reference_card${vars}. gateOpens{"what":${JSON.stringify("gateOpens_reference_factors" + vars)}}`,
+                                `gate_quant_switches_closed${vars}`],
+     "every closed gate in the page's words, no raw key, each with what opens it");
+  eq(H.gateTexts({choice: {gate_code: "family_unmeasured", gates_closed: [{code: "family_unmeasured", opens_with: "family_kld_terms", generation: "", family: "gemma4_text"}]}}, tr),
+     ['gate_family_unmeasured{"gen":"genOther","family":"thisModel"}. gateOpens{"what":"gateOpens_family_kld_terms{\\"gen\\":\\"genOther\\",\\"family\\":\\"thisModel\\"}"}'],
      "no model name: this model");
-  eq(H.gateText({choice: {gate_code: "new_gate", why: "an English why", gates_closed: []}}, tr), "an English why", "an unknown gate: the server's words");
+  eq(H.gateTexts({choice: {gate_code: "new_gate", why: "an English why", gates_closed: []}}, tr), ["an English why"], "an unknown gate: the server's words");
+  eq(H.gateTexts({choice: {gate_code: "family_unmeasured", gates_closed: []}}, tr), ['gate_family_unmeasured{"gen":"genOther","family":"thisModel"}'],
+     "the switches' gate missing from the list: said all the same");
+  eq(H.gateTexts({choice: {gate_code: "open", why: "x", gates_closed: [{code: "new_quant_gate", opens_with: "x"}]}}, tr), [], "an unknown gate on another axis: nothing invented");
+  // The switches open, the quantization's gate closed (Ada, Qwen 3.5 MoE): the quantization's gate
+  // and what opens it are said, beside the reference card the switches were decided on.
+  const moe = {model: {source: "Qwen/Qwen3.6-35B-A3B-GGUF"}, choice: {by_worth: true, gate_code: "open", why: "x",
+    gates_closed: [{axis: "quant", code: "quant_curve_unmeasured", opens_with: "quant_curve", generation: "ada", family: "qwen3_5_moe_text", cards: 0}],
+    decided_on: {generation: "ada", cards: "RTX 4070 Ti, RTX 4090", lent: false, decides: true}}};
+  const mvars = '{"gen":"Ada (RTX 40)","family":"Qwen3.6-35B-A3B-GGUF"}';
+  eq(H.gateTexts(moe, tr), [`gate_quant_curve_unmeasured${mvars}. gateOpens{"what":${JSON.stringify("gateOpens_quant_curve" + mvars)}}`],
+     "an open switches gate: the quantization's closed gate still said, with what opens it");
+  eq(H.decidedOnText(moe, tr), 'decidedOn{"gen":"Ada (RTX 40)","cards":"RTX 4070 Ti, RTX 4090"}', "and the reference card beside it");
+  // The switches closed (Ada, Gemma MoE) while the chunk is decided on the reference card: both said.
+  const gemma = {model: {source: "google/gemma-4-26B-A4B-it-GGUF"}, choice: {by_worth: false, gate_code: "kv_terms_one_card", why: "x",
+    gates_closed: [{axis: "switches", code: "kv_terms_one_card", opens_with: "kv_kld_second_card", generation: "ada", family: "gemma4_text", cards: 1}],
+    decided_on: {generation: "ada", cards: "RTX 4070 Ti, RTX 4090", lent: false, decides: true}}};
+  ok(H.gateTexts(gemma, tr).length === 1 && H.gateTexts(gemma, tr)[0].startsWith("gate_kv_terms_one_card") &&
+     H.decidedOnText(gemma, tr).startsWith("decidedOn"), "a closed switches gate and the reference card, independently");
   whole(EN("gate_no_reference_card", {gen: "Turing (RTX 20)"}) + ". " + EN("gateOpens", {what: EN("gateOpens_reference_factors", {gen: "Turing (RTX 20)"})}), "gate en");
   whole(RU("gate_family_unmeasured", {family: "gemma-4-12b-it-GGUF"}) + ". " + RU("gateOpens", {what: RU("gateOpens_family_kld_terms", {family: "gemma-4-12b-it-GGUF"})}), "gate ru");
   whole(RU("gate_quant_switches_closed", {gen: "Turing (RTX 20)"}), "quant gate ru");

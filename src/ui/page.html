@@ -2062,8 +2062,10 @@ function kvWhyText(o, tr) {
 }
 // The choice's gate, reference card, estimate bands and answer scale (/api/plan's choice:
 // gate_code, gates_closed, decided_on, chosen.band, answer_scale, chosen.quality_authority; #618).
-// A closed gate in words with the measurement that would open it; "" where the worth decided, and
-// the server's English why for a code this page does not know.
+// Every closed gate in words with the measurement that would open it (the switches' and the
+// quantization's are separate axes: the switches may be open while the quantization's gate is
+// closed); none where nothing is closed, and the server's English why for a switches gate code this
+// page does not know.
 const GATE_CODES = ["lent_generation", "no_reference_card", "reference_one_card", "family_unmeasured",
                     "kv_terms_one_card", "int8_unmeasured", "int8_one_card", "accuracy_gate_closed",
                     "quant_curve_unmeasured", "quant_curve_one_card", "quant_switches_closed"];
@@ -2078,17 +2080,27 @@ function modelNameOf(doc, tr) {
   return s.replace(/\.(gguf|ninferno)$/i, "") || tr("thisModel");
 }
 function gateVars(doc, g, tr) { return {gen: genLabel(g.generation, tr), family: modelNameOf(doc, tr)}; }
-function gateText(doc, tr) {
+function gateTexts(doc, tr) {
   const c = doc && doc.choice;
-  if (!c || !c.gate_code || c.gate_code === "open") return "";
-  if (!GATE_CODES.includes(c.gate_code)) return c.why || "";
-  const g = (c.gates_closed || []).find(x => x.code === c.gate_code) || {code: c.gate_code};
-  const vars = gateVars(doc, g, tr);
-  const text = tr("gate_" + g.code, vars);
-  return GATE_OPENS.includes(g.opens_with) ? text + ". " + tr("gateOpens", {what: tr("gateOpens_" + g.opens_with, vars)}) : text;
+  if (!c) return [];
+  const gates = (c.gates_closed || []).slice();
+  // The switches' gate the list does not carry (an older or partial document): said all the same.
+  if (c.gate_code && c.gate_code !== "open" && !gates.some(g => g.code === c.gate_code)) gates.unshift({code: c.gate_code});
+  const out = [];
+  for (const g of gates) {
+    if (!GATE_CODES.includes(g.code)) {
+      if (g.code === c.gate_code && c.why && !out.includes(c.why)) out.push(c.why);
+      continue;
+    }
+    const vars = gateVars(doc, g, tr);
+    const text = tr("gate_" + g.code, vars);
+    out.push(GATE_OPENS.includes(g.opens_with) ? text + ". " + tr("gateOpens", {what: tr("gateOpens_" + g.opens_with, vars)}) : text);
+  }
+  return out;
 }
 // Where the decision was priced (decided_on): the generation's reference card, beside this card's
-// estimates; "" without one, and for a lent generation, which decides nothing (its gate says so).
+// estimates, whatever the gates say (a closed switches gate can leave the prefill chunk decided on
+// it); "" without one, and for a lent generation, which decides nothing (its gate says so).
 function decidedOnText(doc, tr) {
   const on = doc && doc.choice && doc.choice.decided_on;
   if (!on || on.lent) return "";
@@ -2382,12 +2394,15 @@ function choicePanel(doc) {
     ["lower_worth", "within_resolution", "outside_resolution", "tie_context", "tie_order"].includes(r.why));
   const lambda = weighed && c.task && c.task.accuracy_weight > 0
     ? `<div class="sub" data-tip="${esc(t("lambdaTip"))}">${esc(fill(t("lambdaLine"), {l: c.task.accuracy_weight, pct: (c.task.accuracy_weight * 0.1).toFixed(1)}))}</div>` : "";
-  // Where it was decided (or which gate kept the family's defaults, and what opens it), the
-  // estimate's error bands, the KLD in answers and the quantization's authority (#618).
-  const gate = gateText(doc, planTr), decided = c.by_worth ? decidedOnText(doc, planTr) : "";
+  // Every closed gate and what opens it, and where it was decided, each on its own (the switches,
+  // the quantization and the chunk are separate axes: a gate on one leaves another decided on the
+  // reference card); the estimate's error bands, the KLD in answers and the quantization's
+  // authority (#618).
+  const gates = gateTexts(doc, planTr), decided = decidedOnText(doc, planTr);
   const bands = bandText(b, planTr), answers = answerText(doc, b, planTr), quality = qualityText(b, planTr);
-  const basis = [gate || decided, bands ? t("bandHead") + ": " + bands : ""].filter(Boolean).join(" · ");
-  const basisLine = basis ? `<div class="sub" data-tip="${esc([answers, quality].filter(Boolean).join("\n"))}">${esc(basis.charAt(0).toUpperCase() + basis.slice(1))}</div>` : "";
+  const basis = [...gates, decided, bands ? t("bandHead") + ": " + bands : ""].filter(Boolean)
+    .map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(" · ");
+  const basisLine = basis ? `<div class="sub" data-tip="${esc([answers, quality].filter(Boolean).join("\n"))}">${esc(basis)}</div>` : "";
   return `<div class="note" data-tip="${esc(c.why + "\n" + terms + "\n" + t("estBasis") + (bands ? "\n" + t("bandHead") + ": " + bands : ""))}"><b>${esc(t("choiceHead"))}:</b> ${esc(head)}${answers && typeof b.answer_points_lost === "number" ? " (" + esc(answers) + ")" : ""}${lambda}${basisLine}</div>` +
     (rows.length ? `<details class="choice" ${choiceOpen ? "open" : ""}><summary>${esc(t("choiceAlt"))}</summary><table class="choicet"><tr><th>${t("colAxis")}</th><th>${t("colValue")}</th><th>${t("colOwn")}</th><th>${t("colDecode")}</th><th>${t("colPrefill")}</th><th>${t("colTime")}</th><th data-tip="${esc(t("lambdaTip"))}">KLD</th><th>${t("colWhy")}</th></tr>${body}</table></details>` : "");
 }
