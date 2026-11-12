@@ -90,8 +90,10 @@ struct Calibration {
     double reg_alloc_per_warp          = route_cost::kRegAllocPerWarp.value();
     double cluster_reduce_cycles       = route_cost::kClusterReduceCycles.value();
     double warp_reduce_cycles          = route_cost::kWarpReduceCycles.value();
-    // The register-MMA law (#613 PR-7a): false, the fitted spill and the weight-only tensor term
-    // above; true, the terms counted from the kernel's K loop (RegisterMmaKernel::loop) where it
+    // The register-MMA law (#613 PR-7a): false, the fitted spill (spill_accesses_per_step and
+    // l1_bytes_per_sm_clock above) and price_register_mma's weight-only tensor term
+    // (2 x rows x sets x cols x kc over the tensor rate); true, the terms counted from the
+    // kernel's K loop (RegisterMmaKernel::loop) where it
     // carries a usable one, its spill waits at l1_hit_latency_cycles. The binary's law is
     // route_cost::kRmmaCountedLaw; price_routes takes rmma_counted_law() (a test's override).
     bool rmma_counted_law        = route_cost::kRmmaCountedLaw;
@@ -358,7 +360,8 @@ struct RegisterMmaTerms {
     // resident together span ceil(occ x sms / gx) token tiles (at most min(tiles, occ) on one
     // SM); the CTAs of one tile on an SM read it at the same K, so a residency round fetches each
     // of its tiles once for all of them, and never more tiles than its q CTAs (the legacy law does
-    // not cap that). A spilled register goes through the L1 twice a K step.
+    // not cap that). With the counted law off, a spilled register goes through the L1 twice a K
+    // step; under it, the loop's LDL / STL wait the L1 latency (below).
     const double l2_sm = cal.l2_bytes_per_sm_clock * clk;
     t.dram             = t.legacy ? call.n * call.k * call.bpw / bw : t.dram_law.total;
     t.l2_weight        = q * kc * k.rows * call.bpw / l2_sm;

@@ -32,10 +32,11 @@ private:
 // A kernel's committed facts (kernel_facts.h, #612) as the register-MMA launch describes it. The
 // block limit is the launch bounds' (Schedule::kThreads); the versions are the build's
 // architecture. Host code (rmma_resources, generic_rmma_describe.cpp) describes from the facts the
-// same way.
+// same way. Not noexcept: the K loop's counts (KernelResources::loop) copy a string, which may
+// allocate; both callers already throw (rmma_resources, the launch's describe mode).
 inline void describe_from_facts(KernelResources& out, const kernel_facts::KernelFacts& f,
                                 unsigned grid_x, unsigned grid_y, unsigned grid_z, int threads,
-                                std::size_t dynamic_smem, bool latency) noexcept {
+                                std::size_t dynamic_smem, bool latency) {
     out.registers             = f.registers;
     out.local_bytes           = f.spill_bytes();
     out.static_smem           = f.static_shared_bytes;
@@ -69,7 +70,7 @@ inline void describe_kernel(KernelResources& out, const cudaFuncAttributes& a, d
 }
 
 inline void describe_kernel(KernelResources& out, const kernel_facts::KernelFacts& f, dim3 grid,
-                            int threads, std::size_t dynamic_smem, bool latency) noexcept {
+                            int threads, std::size_t dynamic_smem, bool latency) {
     describe_from_facts(out, f, grid.x, grid.y, grid.z, threads, dynamic_smem, latency);
 }
 #endif

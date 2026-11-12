@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 namespace ninferno::ops::detail::generic {
 
@@ -236,8 +237,10 @@ struct RmmaKept {
     std::optional<kernel_facts::LoopCounts> loop; // the K loop's counts (#613), where known
 };
 
+// `counted_law`: the price reads the kernel's K loop (Calibration::rmma_counted_law), so the loop
+// is kept; off, it is not (nothing reads it).
 std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue epilogue,
-                                  std::int32_t tokens, std::int32_t rows) {
+                                  std::int32_t tokens, std::int32_t rows, bool counted_law) {
     std::optional<KernelResources> r;
     try {
         r = rmma_resources(schedule, weight, epilogue, tokens, rows);
@@ -245,7 +248,8 @@ std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue e
     if (!r) return std::nullopt;
     note_rmma_fact_read(RmmaFactRead{weight.qtype, schedule, epilogue, *r}); // never throws
     return RmmaKept{r->registers, static_cast<double>(r->local_bytes),
-                    static_cast<double>(r->static_smem), r->loop};
+                    static_cast<double>(r->static_smem),
+                    counted_law ? std::move(r->loop) : std::nullopt};
 }
 
 // The counted register-MMA terms (rmma_counted_terms.h, #613 PR-7a) in place of the fitted spill
@@ -356,7 +360,8 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         if (!rmma_schedule_launchable(i)) continue;
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         if (!a16_route_priced(r, !emulated)) continue;
-        const auto kept = heavy_decoder ? rmma_kept(i, weight, problem.epilogue, tokens, problem.n)
+        auto kept       = heavy_decoder ? rmma_kept(i, weight, problem.epilogue, tokens, problem.n,
+                                                    cal.rmma_counted_law)
                                         : std::optional<RmmaKept>{};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
         kr::RegisterMmaKernel kernel;
@@ -375,7 +380,7 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
             kernel.registers    = kept->registers;
             kernel.local_bytes  = kept->local_bytes;
             kernel.shared_bytes = kept->static_smem;
-            kernel.loop         = kept->loop; // read under the counted law (Calibration)
+            kernel.loop         = std::move(kept->loop); // kept under the counted law only
         }
         offer(r, kr::price_register_mma(chip, cal, call, kernel).total);
     }

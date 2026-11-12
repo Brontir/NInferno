@@ -28,7 +28,8 @@
 // bytes and tensor time, while the measured kernels overlap them (the best routes sit at 1.1-1.4
 // of the tensor floor). Raising an m1 route's tensor term by its ones share then moves picks to m2
 // routes that the sum prices lower but that measure slower; the remaining regressions of the
-// counted law against today's (worst x1.3-2.2 per board) are all of that form, plus the token tiles
+// counted law against today's (worst x1.3-2.2 per board, on the price before the DRAM law of #690;
+// to re-run on it before any A/B) are all of that form, plus the token tiles
 // of one weight block re-reading it from DRAM when they are not co-resident (blockIdx.x runs the
 // row blocks first). Both need the max form of the price, #613's one cost model, not a term here.
 

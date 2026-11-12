@@ -290,7 +290,7 @@ ninferno_add_op_test(ninferno_kernel_facts_lookup_test LABELS host
 # committed snapshots: the min-term MMAs' share equals (sets x m_tiles + 1) / (sets x m_tiles)
 # on every min-term kernel that does not add the sums, zero on every other; the iterations cover
 # the K range; the terms on a constructed loop. No GPU.
-ninferno_add_op_test(ninferno_rmma_counted_terms_test
+ninferno_add_op_test(ninferno_rmma_counted_terms_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmma_counted_terms.cpp"
   LIBRARIES ninferno_linear_test_support)
 
