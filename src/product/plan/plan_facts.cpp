@@ -523,9 +523,10 @@ gguf_expert_policy(const std::string& model_type, const std::string& format, boo
 // same rule) where its policy allows A8, A16 for the others. The layer's policy is the one its
 // banks run at, as the decode kind reads it (`policy`: an artifact's recorded Use,
 // gguf_expert_policy for a GGUF; #769), and the formats' kept policy (convert::kept_block_policy)
-// only where a bank has none. A bank the loader runs at A16 whatever format it keeps (`loader_a16`:
-// Gemma 4's GGUF MXFP4 experts) makes its layer A16, a route that rests on an assumed format
-// (assumed()). Under --activations int8 (route(true)) the start runs every bank at AllowA8
+// only where a bank has none. A bank kept as a format the header does not tell (`assumed`: Gemma
+// 4's GGUF MXFP4 experts) makes the route an assumed one (assumed()); where the loader runs it at
+// A16 whatever it keeps (`loader_a16`: those without an activation divisor) its layer is A16.
+// Under --activations int8 (route(true)) the start runs every bank at AllowA8
 // (models::effective_policy), so the formats alone decide. The trunk takes the route of the most of
 // its banks' bytes. The banks' 16-bit and float tensors (biases) do not decide.
 // It also keeps each layer's banks as stored (`layers`, #616 step 7): the gate/up bank's format,
@@ -538,14 +539,17 @@ public:
     // GGUF); none: unknown. `weight`: one of the layer's weight banks (else an auxiliary tensor:
     // a bias, a scale). A floating-point weight bank is one of the layer's kind (the op runs it
     // too: the route query is asked for it), not of the prefill route above; a floating-point
-    // auxiliary tensor neither. `loader_a16`: the loader runs the bank at A16 under fast
-    // activations whatever it keeps it as, a format the header does not tell (Gemma 4's GGUF
-    // MXFP4 experts: an NVFP4 site with no divisor where probe_mx fits, else the recipe's BF16 or
-    // Q8 site at the Recipe default A16Only); the decode kind keeps `policy` (none) for it.
+    // auxiliary tensor neither. `assumed`: the format the loader keeps the bank as is not the
+    // header's (Gemma 4's GGUF MXFP4 experts: an NVFP4 site where probe_mx fits, else the
+    // recipe's BF16 or Q8 site), so a route on it is assumed. `loader_a16`: whichever of those it
+    // keeps, the bank runs at A16 under fast activations (no activation divisor: the NVFP4 site
+    // A16Only, the recipe's sites at the Recipe default A16Only). With a divisor
+    // (`<stem>.input_scale`) the NVFP4 site is AllowA4, so the policy is the probe's and not
+    // known: `policy` (none) and the kept fallback stand, assumed. The decode kind keeps `policy`.
     void add(const std::string& layer, bool down, const std::string& format,
              const std::string& layout, std::uint64_t k, std::uint64_t x_width, std::uint64_t bytes,
              const std::optional<artifact::ActivationPolicy>& policy, bool weight,
-             bool loader_a16 = false) {
+             bool assumed = false, bool loader_a16 = false) {
         if (format == "bf16" || format == "fp32" || format == "int32") {
             if (!weight) { return; }
             Layer& l = layers_[layer];
@@ -569,6 +573,7 @@ public:
         }
         Layer& l = layers_[layer];
         l.bytes += bytes;
+        l.assumed    = l.assumed || assumed;
         l.loader_a16 = l.loader_a16 || loader_a16;
         try {
             const QType q = artifact::parse_format(format);
@@ -628,10 +633,11 @@ public:
                              : runtime::ExpertPrefill::Unknown;
     }
 
-    // Whether the route rests on a bank whose kept format the header does not tell (`loader_a16`).
+    // Whether the route rests on a bank whose kept format the header does not tell (add's
+    // `assumed`).
     [[nodiscard]] bool assumed() const {
         return std::any_of(layers_.begin(), layers_.end(), [](const auto& entry) {
-            return entry.second.loader_a16 && entry.second.bytes > 0;
+            return entry.second.assumed && entry.second.bytes > 0;
         });
     }
 
@@ -710,9 +716,10 @@ private:
         std::uint64_t bytes = 0, int8_bytes = 0;
         std::uint64_t float_bytes = 0; // its floating-point weight banks (not the prefill route's)
         std::uint64_t mxfp4_bytes = 0; // of an MXFP4 layer: its banks in whole blocks
-        // kept_a8: every bank a format the converter keeps at AllowA8 (int8 codes); loader_a16: a
-        // bank the loader runs at A16 whatever it keeps (add's `loader_a16`)
-        bool known = true, mxfp4 = true, kept_a8 = true, loader_a16 = false;
+        // kept_a8: every bank a format the converter keeps at AllowA8 (int8 codes); assumed: a
+        // bank kept as a format the header does not tell; loader_a16: a bank the loader runs at
+        // A16 whatever it keeps (add's `assumed`, `loader_a16`)
+        bool known = true, mxfp4 = true, kept_a8 = true, assumed = false, loader_a16 = false;
         Bank gate_up, down;
     };
 
@@ -1234,14 +1241,16 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
                 const bool input_scale =
                     t.name.ends_with(".weight") &&
                     names.count(t.name.substr(0, t.name.size() - 7) + ".input_scale") > 0;
-                // Gemma 4's MXFP4 experts run at A16 under fast activations whichever site the
-                // loader keeps (gguf_expert_policy: the decode kind's policy stays unknown).
+                // Gemma 4's MXFP4 experts are kept as a site the header does not tell; without an
+                // activation divisor every such site runs at A16 under fast activations, with one
+                // the NVFP4 site is AllowA4 where probe_mx fits (codex on #792): the policy is
+                // the probe's, not A16 (gguf_expert_policy: the decode kind's stays unknown).
                 const bool gemma4_mx =
                     g.model_type == "gemma4_text" && t.type == convert::ggml::MXFP4;
-                expert_routes.add(std::to_string(*block), down, format, "", t.ne[0],
-                                  down ? t.ne[0] : g.hidden, t.bytes,
-                                  gguf_expert_policy(g.model_type, format, input_scale),
-                                  t.name.ends_with("_exps.weight"), gemma4_mx);
+                expert_routes.add(
+                    std::to_string(*block), down, format, "", t.ne[0], down ? t.ne[0] : g.hidden,
+                    t.bytes, gguf_expert_policy(g.model_type, format, input_scale),
+                    t.name.ends_with("_exps.weight"), gemma4_mx, gemma4_mx && !input_scale);
             }
             // The banks' weights only: a bank's per-expert scale (Gemma 4's ffn_down_exps.scale,
             // FP32) is not one of them.

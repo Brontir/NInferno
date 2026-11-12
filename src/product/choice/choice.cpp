@@ -631,6 +631,11 @@ double tiled_chunk_seconds(const ModelFacts& model, const CardFacts& card, const
 // saturated rate).
 double linear_prefill(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
                       Route route, std::uint32_t filled, bool& transferred, bool tiles = true) noexcept {
+    // A prefill of banks on a kept format the file does not tell (Gemma 4's GGUF MXFP4 experts,
+    // QuantOption::expert_banks_assumed) is Transferred on every path: the tiles, and the share
+    // below where the tiles have no row or the linears beside the banks are not Q8. (`tiles` off:
+    // decode's compute bound, which reads no prefill route.)
+    if (tiles && model.moe() && quant.expert_banks_assumed) { transferred = true; }
     if (tiles && filled > 0) {
         const double seconds = tiled_chunk_seconds(model, card, quant, route, filled, transferred);
         if (seconds > 0) { return filled / seconds; }

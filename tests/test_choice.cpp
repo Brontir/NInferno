@@ -1511,6 +1511,24 @@ void moe_prefill_follows_the_activations(const json& fixture) {
     check(prefill(ch::ExpertBanks::A16, std::nullopt, int8) !=
               prefill(ch::ExpertBanks::Int8, std::nullopt, int8),
           "MoE prefill: no int8 route given, expert_banks under int8 too");
+    // An assumed route (Gemma 4's GGUF MXFP4 experts) where the tiles do not price it: linears
+    // beside the banks not Q8, so prefill_linears_seconds gives 0 and the share stands. The
+    // estimate is Transferred there too, where the same banks not assumed keep their basis (codex
+    // on #792).
+    {
+        ch::QuantOption k       = q;
+        k.rest_weights          = ch::WeightClass::KQuant;
+        k.expert_banks          = ch::ExpertBanks::Int8;
+        ch::QuantOption kk      = k;
+        kk.expert_banks_assumed = true;
+        const ch::Speed known   = ch::speed_of(model, card, k, fast, 1, 1536, 1536);
+        const ch::Speed assumed = ch::speed_of(model, card, kk, fast, 1, 1536, 1536);
+        check(ch::prefill_linears_seconds(model, card, kk, 2048) == 0 &&
+                  known.basis == ch::SpeedBasis::Own,
+              "MoE prefill, share path: K-quant linears, no tile price, the basis own");
+        check(assumed.basis == ch::SpeedBasis::Transferred && assumed.prefill == known.prefill,
+              "MoE prefill, share path: an assumed route Transferred at the same price");
+    }
 }
 
 // A dense model's Q8 linears by the same tiles: Qwen3.5 9B Q8_0, one 1819-token prompt in chunks
