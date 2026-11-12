@@ -416,11 +416,20 @@ def fit(derived, tolerance=DEFAULT_TOLERANCE):
             "clock_note": clock_note, "derived": derived}
 
 
+def fixup_rate_off(law, tolerance=DEFAULT_TOLERANCE):
+    """True where the fixup's measured rate is not the board's DRAM rate within the tolerance:
+    MmqLaunchLaw prices the fixup's bytes at the DRAM rate and has no field for another one, so a
+    row written from such a law would not be the law the holdouts checked (codex on #819)."""
+    ratio = law.get("fixup_rate_ratio")
+    return ratio is not None and abs(ratio - 1.0) > tolerance
+
+
 def cpp_row(name, law):
-    """The law as core/generation.h writes it; None where a value is missing or launch_seconds is
-    negative (a fixup that costs less than nothing is no row)."""
+    """The law as core/generation.h writes it; None where a value is missing, launch_seconds is
+    negative (a fixup that costs less than nothing is no row), or the fixup runs at another rate
+    than the DRAM rate the row would price it at."""
     if any(v is None for v in law["unit_clocks"]) or law["stream_k_unit"] is None or \
-            law["launch_seconds"] is None or law["launch_seconds"] < 0:
+            law["launch_seconds"] is None or law["launch_seconds"] < 0 or fixup_rate_off(law):
         return None
     units = ", ".join(str(int(round(v))) for v in law["unit_clocks"])
     return (f"inline constexpr MmqLaunchLaw {name}{{{{{units}}}, "
@@ -434,6 +443,9 @@ def row_problem(law, missing):
         return "incomplete (no fixup-alone timings)"
     if law["launch_seconds"] < 0:
         return f"refused: launch_seconds {law['launch_seconds'] * 1e6:.2f} us is negative"
+    if fixup_rate_off(law):
+        return (f"refused: the fixup runs at {law['fixup_rate_ratio']:.2f}x the DRAM rate, and "
+                "MmqLaunchLaw has no fixup-rate field (#785 PR-C)")
     return "incomplete (no stream-k grid)"
 
 
