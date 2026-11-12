@@ -30,6 +30,7 @@
 #include "ops/generic/generic_i8_schedules.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/route_table.h"
+#include "ops/generic/selector_facts.h"
 
 #include <cuda_runtime.h>
 
@@ -73,22 +74,28 @@ static_assert(generic::i8_stages(256, 128, 6, ops::shared_bytes_per_block_for_ar
               generic::i8_stages(256, 128, 6, ops::shared_bytes_per_block_for_arch(89)) == 3 &&
               generic::i8_stages(256, 128, 6, ops::shared_bytes_per_block_for_arch(120)) == 3);
 
+// A golden board by name (ops/generic/selector_facts.h kFactsBoards).
+constexpr generic::FactsBoard golden_board(std::string_view name) {
+    for (const generic::FactsBoard& b : generic::kFactsBoards) {
+        if (name == b.name) return b;
+    }
+    throw "not a golden board";
+}
+
 struct TestBoard {
-    const char* name;
-    std::uint32_t pci_device_id; // 0: unknown to the id table, the chip follows from the SM count
-    int major, minor, sms;
-    std::size_t l2_mib, memory_gib;
+    generic::FactsBoard facts; // pci id 0: unknown to the id table, the chip follows from the SMs
     const char* table; // the class of the nearest route table in routes/ ("" when none is near)
 };
 
 constexpr TestBoard kBoards[] = {
-    {"rtx5090", 0x2B85, 12, 0, 170, 96, 32, "gb202"},
-    {"rtx5080", 0x2C02, 12, 0, 84, 64, 16, "gb203"},
-    {"rtx4090", 0x2684, 8, 9, 128, 72, 24, "ad102"},
-    {"rtx4070", 0x2786, 8, 9, 46, 36, 12, "ad106"}, // no ad104 table: the RTX 4060 Ti's, 0.5 away
-    {"rtx3090", 0x2204, 8, 6, 82, 6, 24, "ga102"},
-    {"rtx2080ti", 0x1E07, 7, 5, 68, 5, 11, "tu102"},
-    {"unknown-sm120-48sm", 0, 12, 0, 48, 32, 12, "gb206"}, // the RTX 5060 Ti's, the nearest
+    {golden_board("rtx5090"), "gb202"},
+    {golden_board("rtx5080"), "gb203"},
+    {golden_board("rtx4090"), "ad102"},
+    // no ad104 table: the RTX 4060 Ti's, 0.5 away
+    {generic::registry_facts_board("rtx4070", 0x2786), "ad106"},
+    {golden_board("rtx3090"), "ga102"},
+    {golden_board("rtx2080ti"), "tu102"},
+    {golden_board("unknown-sm120-48sm"), "gb206"}, // the RTX 5060 Ti's, the nearest
 };
 
 constexpr QType kFormats[] = {
@@ -1009,8 +1016,10 @@ int run_resources(bool detail) {
 }
 
 int run_board(const TestBoard& b) {
-    const ScopedDeviceClass scoped(synthetic_device_class(
-        b.pci_device_id, b.major, b.minor, b.sms, b.l2_mib * kMiB, b.memory_gib * 1024 * kMiB));
+    const generic::FactsBoard& f = b.facts;
+    const ScopedDeviceClass scoped(synthetic_device_class(f.pci_device_id, f.major, f.minor, f.sms,
+                                                          static_cast<std::size_t>(f.l2_mib * kMiB),
+                                                          f.memory_gib * 1024 * kMiB));
     const DeviceClass& d = device_class();
     int failures = 0, checked = 0;
     int coverage_checked = 0;
@@ -1023,7 +1032,7 @@ int run_board(const TestBoard& b) {
     std::map<std::string, int> others_refused;    // W4A4, NVFP4 tiled, ggml: family and why
     std::map<std::string, int> manifest_checked;  // schedules the manifest holds or omits
     const auto fail = [&](const std::string& what) {
-        if (++failures <= 20) std::cerr << b.name << " (" << d.id() << "): " << what << '\n';
+        if (++failures <= 20) std::cerr << b.facts.name << " (" << d.id() << "): " << what << '\n';
     };
     const generic::BuildManifest manifest = generic::build_manifest();
     check_manifest_lists(manifest, fail);
@@ -1401,9 +1410,9 @@ int run_board(const TestBoard& b) {
         fail("route table class " + status.gpu_class + ", expected the nearest board's " + b.table);
     }
     if (checked < 1000) fail("only " + std::to_string(checked) + " choices checked");
-    std::cout << b.name << " (" << d.id() << ", " << d.arch() << "): " << checked
-              << " route choices, " << coverage_checked << " register-MMA coverages, "
-              << failures << " failures; the register-MMA pick refused:";
+    std::cout << b.facts.name << " (" << d.id() << ", " << d.arch() << "): " << checked
+              << " route choices, " << coverage_checked << " register-MMA coverages, " << failures
+              << " failures; the register-MMA pick refused:";
     for (const auto& [why, count] : heuristic_refused) std::cout << " " << why << " " << count;
     std::cout << "; R8 calls:";
     for (const auto& [why, count] : r8_calls) std::cout << " " << why << " " << count;
@@ -1429,7 +1438,7 @@ int main(int argc, char** argv) {
     try {
         if (argc == 3 && std::string_view(argv[1]) == "--board") {
             for (const TestBoard& b : kBoards) {
-                if (std::string_view(argv[2]) == b.name) return run_board(b);
+                if (std::string_view(argv[2]) == b.facts.name) return run_board(b);
             }
             std::cerr << "unknown board " << argv[2] << '\n';
             return 2;
@@ -1442,7 +1451,7 @@ int main(int argc, char** argv) {
         }
         int failed = 0;
         for (const TestBoard& b : kBoards) {
-            const std::string command = std::string(argv[0]) + " --board " + b.name;
+            const std::string command = std::string(argv[0]) + " --board " + b.facts.name;
             if (std::system(command.c_str()) != 0) ++failed;
         }
         if (std::system((std::string(argv[0]) + " --volta-tiled").c_str()) != 0) ++failed;

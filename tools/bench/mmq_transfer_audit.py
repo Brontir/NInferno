@@ -82,9 +82,9 @@ def registry_rows(path):
 
 def measured_boards(path, facts=None):
     """kMmqPrefillPays: [(name, cc, sms, l2, dram, pays)] from core/measured_boards.h. Each board
-    is `board_registry::board(pci id[, dram override])` (core/board_registry.h): its compute
-    capability, SMs and L2 come from the registry row, its DRAM from bus bits x Gbps / 8 unless
-    the override names it. A literal `Board{...}` is read as before."""
+    is `board_registry::board(pci id)` (core/board_registry.h): its compute capability, SMs and L2
+    come from the registry row, its DRAM from bus bits x Gbps / 8. A literal `Board{...}` is read
+    as before."""
     text = Path(path).read_text(encoding="utf-8")
     facts = Path(facts) if facts else Path(path).parent / "data" / "gpu_facts.json"
     rows = registry_rows(facts)
@@ -95,14 +95,13 @@ def measured_boards(path, facts=None):
             raise ValueError(f"{m[1]}: mma_slow boards are not mirrored")
         consts[m[1]] = (int(m[2]) * 10 + int(m[3]), int(m[4]), float(m[5]), float(m[6]))
     for m in re.finditer(r"constexpr\s+Board\s+(k\w+)\s*=\s*board_registry::board\("
-                         r"\s*(0x[0-9A-Fa-f]+)[uU]?\s*(?:,\s*([\d.]+)\s*)?\)", text):
+                         r"\s*(0x[0-9A-Fa-f]+)[uU]?\s*\)", text):
         row = rows.get(int(m[2], 16))
         if row is None:
             raise ValueError(f"{m[1]}: PCI id {m[2]} is not in {facts}")
         if row.get("mma_slow", False):
             raise ValueError(f"{m[1]}: mma_slow boards are not mirrored")
-        # an override of 0 names none, as board()'s default argument does
-        dram = float(m[3]) if m[3] and float(m[3]) != 0 else row["bus_bits"] * row["gbps"] / 8.0
+        dram = row["bus_bits"] * row["gbps"] / 8.0
         consts[m[1]] = (int(row["cc"]), int(row["sms"]), float(row.get("l2_mib", 0)), dram)
     table = re.search(r"kMmqPrefillPays\[\] = \{(.*?)\};", text, re.S)
     out = []
@@ -144,9 +143,7 @@ def load_cards(routes_dir, gen_rows, facts):
     for path in sorted(Path(routes_dir).glob("*.json")):
         doc = json.loads(path.read_text(encoding="utf-8"))
         # The table's board by its PCI id (gpu.pci_id), as route_table.cpp reads it: the
-        # registry row, without core/measured_boards.h kDramConflicts (the V100 SXM2's 900 GB/s):
-        # no paired card and no committed figure of the audit is a conflict's board. A table of a
-        # board the registry lacks records gpu.board instead.
+        # registry row. A table of a board the registry lacks records gpu.board instead.
         pci = doc["gpu"].get("pci_id")
         if pci is not None and not re.fullmatch(r"0[xX][0-9A-Fa-f]{4}", str(pci)):
             raise ValueError(f"{path.name}: gpu.pci_id {pci!r} is not a PCI product id")

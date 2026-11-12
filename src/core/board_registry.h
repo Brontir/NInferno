@@ -25,7 +25,8 @@ struct BoardRow {
     int bus_bits;
     double gbps; // memory data rate per pin
     int boost_mhz;
-    bool mma_slow; // no tensor cores (TU116, TU117, GTX 16 boards)
+    double vram_gib; // the marketed memory size
+    bool mma_slow;   // no tensor cores (TU116, TU117, GTX 16 boards)
 };
 
 inline constexpr BoardRow kRows[] = {
@@ -45,18 +46,18 @@ inline constexpr BoardRow kRows[] = {
     return nullptr;
 }
 
-// The Board (core/device_class.h) of a PCI id, from its row. `dram_gbps_override` (0: none) names
-// a bandwidth that the data keyed by this board was measured under and the row spells differently;
-// each use is a recorded conflict between tables (core/measured_boards.h), not a free parameter.
-[[nodiscard]] constexpr Board board(std::uint32_t pci_device_id, double dram_gbps_override = 0) {
-    const BoardRow* row = find(pci_device_id);
-    if (row == nullptr) { throw "board registry: unknown PCI device id"; }
-    return Board{row->major,
-                 row->minor,
-                 row->sms,
-                 row->l2_mib,
-                 dram_gbps_override != 0 ? dram_gbps_override : dram_gbps(*row),
-                 row->mma_slow};
+// The row of a PCI product id the table must have: an unknown id throws, a compile error where it
+// is read in a constant expression.
+[[nodiscard]] constexpr const BoardRow& row(std::uint32_t pci_device_id) {
+    const BoardRow* r = find(pci_device_id);
+    if (r == nullptr) { throw "board registry: unknown PCI device id"; }
+    return *r;
+}
+
+// The Board (core/device_class.h) of a PCI id, from its row.
+[[nodiscard]] constexpr Board board(std::uint32_t pci_device_id) {
+    const BoardRow& r = row(pci_device_id);
+    return Board{r.major, r.minor, r.sms, r.l2_mib, dram_gbps(r), r.mma_slow};
 }
 
 } // namespace ninferno::board_registry

@@ -127,9 +127,9 @@ using ninferno::RecurrentStateStorage;
 using nlohmann::json;
 
 // A fixture card by its PCI id (#612 step 9): the compute capability, SMs and DRAM rate the
-// measured data keyed by the board reads (core/measured_boards.h board_of_pci: the registry row,
-// with its recorded conflict) and the row's reference clock (its published boost), the fields these
-// fixtures price with. The L2 and FP4 stay unset, as the fixtures always had them.
+// measured data keyed by the board reads (core/measured_boards.h board_of_pci: the registry row)
+// and the row's reference clock (its published boost), the fields these fixtures price with. The L2
+// and FP4 stay unset, as the fixtures always had them.
 ch::CardFacts board_card(std::uint32_t pci_device_id) {
     const ninferno::Board b                       = ninferno::measured::board_of_pci(pci_device_id);
     const ninferno::board_registry::BoardRow* row = ninferno::board_registry::find(pci_device_id);

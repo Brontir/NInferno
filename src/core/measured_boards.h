@@ -32,35 +32,17 @@ inline constexpr Board kRtx3090      = board_registry::board(0x2204);
 inline constexpr Board kA10          = board_registry::board(0x2236);
 inline constexpr Board kA100Sxm40    = board_registry::board(0x20B0);
 inline constexpr Board kRtx2080Ti    = board_registry::board(0x1E07);
-
-// The recorded conflicts between a registry row and the bandwidth the data keyed by that board was
-// measured under (board_registry::board's override), in one place: the measured constants below
-// and every table that names its board by PCI id (board_of_pci) read them.
-struct DramConflict {
-    std::uint32_t pci_device_id;
-    double dram_gbps;
-};
-
-inline constexpr DramConflict kDramConflicts[] = {
-    // The row spells the V100 SXM2's 4096-bit HBM2 at 1.754 Gbps, 898.048 GB/s; the route and R8
-    // tables and the gates were measured under, and board_distance has always read, the published
-    // 900 GB/s. Kept at 900 so every distance is as before.
-    {0x1DB5, 900},
-};
-
-// The bandwidth a conflict records for a PCI id; 0 (none) for every other id.
-[[nodiscard]] constexpr double conflict_dram_gbps(std::uint32_t pci_device_id) noexcept {
-    for (const DramConflict& c : kDramConflicts) {
-        if (c.pci_device_id == pci_device_id) { return c.dram_gbps; }
-    }
-    return 0;
-}
+// The row's 4096-bit HBM2 at 1.754 Gbps, 898.048 GB/s. NVIDIA prints the rounded 900, which the
+// board carried as an override until #612. Dropping it moved no answer: every registry row keeps
+// the nearest entry of each table keyed by this board, and the V100 SXM2 and PCIe rows now read
+// those tables at distance 0 (Measured) instead of 0.003 (Carried).
+inline constexpr Board kV100Sxm2 = board_registry::board(0x1DB5);
 
 // The board data recorded by its PCI id was measured on (a route table's gpu.pci_id, an R8 decode
-// table's row): the registry's row with its recorded conflict. An id the registry lacks is a
-// compile error in a constant expression, as board_registry::board.
+// table's row): the registry's row. An id the registry lacks is a compile error in a constant
+// expression, as board_registry::board.
 [[nodiscard]] constexpr Board board_of_pci(std::uint32_t pci_device_id) {
-    return board_registry::board(pci_device_id, conflict_dram_gbps(pci_device_id));
+    return board_registry::board(pci_device_id);
 }
 
 // board_of_pci for an id read at run time (a route table's gpu.pci_id); nullopt where the registry
@@ -70,8 +52,6 @@ find_board_of_pci(std::uint32_t pci_device_id) noexcept {
     if (board_registry::find(pci_device_id) == nullptr) { return std::nullopt; }
     return board_of_pci(pci_device_id);
 }
-
-inline constexpr Board kV100Sxm2 = board_of_pci(0x1DB5);
 
 // Pins, checked in every translation unit that includes this header: a change of a gpu_facts.json
 // row that moves a measured board's figures fails every product build, not only the test.
@@ -97,7 +77,8 @@ constexpr bool row_board_facts(const Board& a, const Board& b) {
 }
 
 // The literals the measured boards carried before the registry (major, minor, SMs, L2 MiB, DRAM
-// GB/s): the value every derived distance and gate was computed from.
+// GB/s): the value every derived distance and gate was computed from; the V100 SXM2's is its
+// row's own bandwidth since #612 (above).
 static_assert(same_board_facts(measured::kRtx5090, Board{12, 0, 170, 96, 1792}));
 static_assert(same_board_facts(measured::kRtx5080, Board{12, 0, 84, 64, 960}));
 static_assert(same_board_facts(measured::kRtx5060Ti, Board{12, 0, 36, 32, 448}));
@@ -109,7 +90,7 @@ static_assert(same_board_facts(measured::kRtx3090, Board{8, 6, 82, 6, 936}));
 static_assert(same_board_facts(measured::kA10, Board{8, 6, 72, 6, 600}));
 static_assert(same_board_facts(measured::kA100Sxm40, Board{8, 0, 108, 40, 1555.2}));
 static_assert(same_board_facts(measured::kRtx2080Ti, Board{7, 5, 68, 5.5, 616}));
-static_assert(same_board_facts(measured::kV100Sxm2, Board{7, 0, 80, 6, 900}));
+static_assert(same_board_facts(measured::kV100Sxm2, Board{7, 0, 80, 6, 898.048}));
 
 // How far a measured choice carries (board_distance): to the variants of the board (a 4090 D or a
 // 3090 Ti, 0.17 and 0.14 from the 4090 and the 3090) and to its near neighbours (an A40 0.43 from

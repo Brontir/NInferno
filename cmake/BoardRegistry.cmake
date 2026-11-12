@@ -1,8 +1,8 @@
 # ninferno_generate_board_registry(JSON_FILE OUT_FILE): writes the rows of the board registry
 # (core/board_registry.h) from the PCI-ID reference table, one initializer per row:
 #
-#   {0x2B85u, 12, 0, 170, 96, 512, 28.0, 2407, false},   // pci id, cc major, minor, SMs, L2 MiB,
-#                                                   // bus bits, Gbps per pin, boost MHz, mma_slow
+#   {0x2B85u, 12, 0, 170, 96, 512, 28.0, 2407, 32, false}, // pci id, cc major, minor, SMs, L2 MiB,
+#                                     // bus bits, Gbps per pin, boost MHz, VRAM GiB, mma_slow
 #
 # in the table's order. A row without l2_mib gets 0 (unknown, as Board spells it). OUT_FILE is
 # rewritten only when its text changes, so an unchanged table rebuilds nothing.
@@ -19,6 +19,7 @@ function(ninferno_generate_board_registry json_file out_file)
     string(JSON bus GET "${text}" gpus ${i} bus_bits)
     string(JSON gbps GET "${text}" gpus ${i} gbps)
     string(JSON boost GET "${text}" gpus ${i} boost_mhz)
+    string(JSON vram GET "${text}" gpus ${i} vram_gib)
     string(JSON l2 ERROR_VARIABLE l2_error GET "${text}" gpus ${i} l2_mib)
     if(NOT l2_error STREQUAL "NOTFOUND")
       set(l2 0)
@@ -31,7 +32,7 @@ function(ninferno_generate_board_registry json_file out_file)
     endif()
     math(EXPR major "${cc} / 10")
     math(EXPR minor "${cc} % 10")
-    string(APPEND rows "{${id}u, ${major}, ${minor}, ${sms}, ${l2}, ${bus}, ${gbps}, ${boost}, ${slow}},\n")
+    string(APPEND rows "{${id}u, ${major}, ${minor}, ${sms}, ${l2}, ${bus}, ${gbps}, ${boost}, ${vram}, ${slow}},\n")
   endforeach()
   set(old "")
   if(EXISTS ${out_file})
