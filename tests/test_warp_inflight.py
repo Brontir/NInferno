@@ -711,6 +711,59 @@ class WarpInflight(unittest.TestCase):
             return row_line(mode, k, v, w, gbps=min(P_GBPS, w * cap_bytes / L_NS)).strip()
         return re.sub(r"^row (\S+) (\d+) (\S+) \d+ (\d+) .*$", one, text, flags=re.M)
 
+    @staticmethod
+    def isa_card(key):
+        with open(wi.DEFAULT_ISA_TABLE) as f:
+            return json.load(f)["arches"][key]["card"]
+
+    def test_probe5_cap_verdicts(self):
+        # The committed probe 5 runs of #757: chain8 and chain16 at one warp against their
+        # two-latency bounds (the ISA table's dram_tlbwarm_latency_ns_w1). Pinned per board with
+        # its margin, so that a change to the ISA table, to chain_bound or to a run fails here.
+        # chain16's margin is thin on sm_75 and sm_86 (inside the latency's own w1 / w2 spread:
+        # the verdict there is formal, see #765) and wide on sm_89.
+        want = {  # file: (latency is the card's own, chain8 reading / bound, chain16 the same)
+            "warp_inflight_75_rtx2080ti_probe5.txt": (True, 1.349, 1.025),
+            "warp_inflight_86_rtx3090_probe5.txt": (True, 1.313, 1.023),
+            "warp_inflight_89_rtx4090_probe5.txt": (True, 1.422, 1.141),
+            "warp_inflight_89_rtx4070ti_probe5.txt": (False, 1.410, 1.142),
+        }
+        runs = os.path.join(os.path.dirname(wi.SOURCE), "runs")
+        for name, (mine, m8, m16) in want.items():
+            with open(os.path.join(runs, name)) as f:
+                head, rows = wi.parse_run(f.read())
+            row = wi.facts_row(head, rows, name)
+            t = row["cap_test"]
+            self.assertEqual(t["latency_is_this_card"], mine, name)
+            self.assertEqual(t["decides"], mine, name)
+            for v, m in (("chain8", m8), ("chain16", m16)):
+                c = t["chains"][v]
+                self.assertAlmostEqual(c["b_w_w1"] / c["two_latency_bound"], m, delta=0.002,
+                                       msg=f"{name} {v}")
+                self.assertTrue(c["all_in_flight"], f"{name} {v}")
+            self.assertFalse(t["saturated"], name)
+            self.assertFalse(row["warp_bytes_saturated"], name)
+
+    def test_run_refuses_a_short_sass_count(self):
+        # `run` stops before it launches anything when the build's SASS keeps fewer loads in
+        # flight than a variant's count (ring8 without its clock read: 11 of 16).
+        from unittest import mock
+        args = argparse.Namespace(arch="89", nvcc="nvcc", cuobjdump="cuobjdump", out=None,
+                                  idle_unchecked=False, clocks_waived=False)
+        peaks = {v: wi.inflight_of(v) for v in wi.VARIANTS}
+        peaks["ring8"] = 11
+        done = mock.Mock(return_value=mock.Mock(stdout=""))
+        err = io.StringIO()
+        with mock.patch.object(wi.subprocess, "run", done), \
+                mock.patch.object(wi.subprocess, "Popen") as popen, \
+                mock.patch.object(wi, "sass_loads",
+                                  return_value={v: wi.sass_loads_of(v) for v in wi.VARIANTS}), \
+                mock.patch.object(wi, "sass_inflight", return_value=peaks), \
+                contextlib.redirect_stderr(err):
+            self.assertEqual(wi.cmd_run(args), 3)
+        popen.assert_not_called()
+        self.assertIn("ring8 11 of 16", err.getvalue())
+
     def test_warp_saturation(self):
         # The made-up card follows its count: its chains hold every load (no cap). A card held to
         # 2048 B a warp reads under both chains' two-latency bounds: it saturates, b_w_max (the
@@ -719,13 +772,45 @@ class WarpInflight(unittest.TestCase):
         row = wi.facts_row(head, rows, "warp_inflight_89.txt")
         self.assertFalse(row["warp_bytes_saturated"])
         self.assertAlmostEqual(row["ring4_over_ring2_w1"], 2.0, delta=0.01)
-        head, rows = wi.parse_run(self.capped(SAMPLE, 2048))
+        # The chain test decides with the card's own ISA latency: the sample as the ISA table's
+        # sm_89 card.
+        isa_card = self.isa_card("89")
+        head, rows = wi.parse_run(self.capped(SAMPLE, 2048).replace(
+            "card NVIDIA GeForce RTX 4070 Ti", f"card {isa_card}"))
         row = wi.facts_row(head, rows, "warp_inflight_89.txt")
+        self.assertTrue(row["cap_test"]["decides"])
         self.assertTrue(row["cap_test"]["saturated"])
         self.assertTrue(row["warp_bytes_saturated"])
         self.assertAlmostEqual(row["facts"]["max_warp_bytes_in_flight"]["value"], 2048, delta=4)
         ratios = wi.law_ratios(row, {v: row[f"{v}_rows"] for v in wi.CHECKED_RINGS})
         self.assertTrue(all(abs(r - 1) < 1e-3 for *_, r in ratios), ratios[:3])
+        # Mixed: held to 4096 B a warp, chain8 (4096 B by count) holds all its loads and chain16
+        # reads under its bound (4096 < 8192 x 256 / 468). One chain under is a cap.
+        head, rows = wi.parse_run(self.capped(SAMPLE, 4096).replace(
+            "card NVIDIA GeForce RTX 4070 Ti", f"card {isa_card}"))
+        t = wi.facts_row(head, rows, "warp_inflight_89.txt")
+        self.assertTrue(t["cap_test"]["chains"]["chain8"]["all_in_flight"])
+        self.assertFalse(t["cap_test"]["chains"]["chain16"]["all_in_flight"])
+        self.assertTrue(t["warp_bytes_saturated"])
+        self.assertAlmostEqual(t["facts"]["max_warp_bytes_in_flight"]["value"], 4096, delta=4)
+        # With another card's latency (a transfer: the sample's RTX 4070 Ti against the ISA
+        # table's sm_89 card) the chain verdict is reported only; the ring rule decides, and
+        # here the 4-load ring keeps its count (no cap) although chain16 reads under its bound.
+        head, rows = wi.parse_run(self.capped(SAMPLE, 4096))
+        t = wi.facts_row(head, rows, "warp_inflight_89.txt")
+        self.assertFalse(t["cap_test"]["latency_is_this_card"])
+        self.assertFalse(t["cap_test"]["decides"])
+        self.assertTrue(t["cap_test"]["saturated"])
+        self.assertFalse(t["warp_bytes_saturated"])
+        # No latency for the architecture in the ISA table: the chain test refuses.
+        with tempfile.TemporaryDirectory() as d:
+            empty = os.path.join(d, "isa.json")
+            with open(empty, "w") as f:
+                json.dump({"arches": {}}, f)
+            head, rows = wi.parse_run(SAMPLE)
+            with self.assertRaises(ValueError) as cm:
+                wi.facts_row(head, rows, "warp_inflight_89.txt", empty)
+            self.assertIn("no DRAM latency for the chain test", str(cm.exception))
         # A probe 3 run has no chains: the ring rule decides. Its 4-load ring reading the 2-load
         # ring's b_w saturates.
         text, _ = self.earlier()

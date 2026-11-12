@@ -654,7 +654,9 @@ FACTS_NOTE = (
     "counts. In a row whose run has chain8 and chain16 (probe 5 on), the warp saturates where "
     "either chain's lone-warp b_w is at or under the two-latency bound count x L0 / (2 x the ISA "
     "table's dram_tlbwarm_latency_ns_w1): a warp held to fewer loads than the chain's count "
-    "cannot pass it (cap_test: each chain's reading, its bound and the latency's source). In an "
+    "cannot pass it (cap_test: each chain's reading, its bound and the latency's source). The "
+    "test decides only with the card's own ISA latency; with another card's (a transfer) it is "
+    "reported, and the ring rule decides. In an "
     "earlier run's row, it saturates where the 4-load ring keeps less than x1.5 of the 2-load "
     "ring's b_w at W = 1 "
     "(ring4_over_ring2_w1; the midpoint between no gain and the doubling its count gives: sm_70 "
@@ -744,7 +746,9 @@ def cap_test(head, rows, summary, own, isa_table):
     """The chain test of whether one warp saturates below its count (#757), for a run with the
     CAP_CHAINS rows (probe 5 on); None for an earlier run, which keeps the ring rule. Each chain's
     lone-warp b_w (free, k = 1, W = 1) against chain_bound with the architecture's latency from
-    the ISA table: a reading at or under the bound is a warp held to fewer loads (a cap)."""
+    the ISA table: a reading at or under the bound is a warp held to fewer loads (a cap). The
+    verdict decides the row only with the run's own card's latency (`decides`); with another
+    card's, a transfer, it is reported and the row keeps the ring rule."""
     if not all(v in summary["variants"]["free"] for v in CAP_CHAINS):
         return None
     latency, why, card = isa_l0(int(head["cc"]), isa_table)
@@ -755,8 +759,9 @@ def cap_test(head, rows, summary, own, isa_table):
         b_w = summary["variants"]["free"][v]["b_w_w1"]
         bound = round(chain_bound(n * WARP_LOAD, own, latency), 1)
         chains[v] = {"b_w_w1": b_w, "two_latency_bound": bound, "all_in_flight": b_w > bound}
+    mine = card == head["card"]
     return {"latency_ns": latency, "latency_source": why, "latency_card": card,
-            "latency_is_this_card": card == head["card"], "chains": chains,
+            "latency_is_this_card": mine, "decides": mine, "chains": chains,
             "saturated": not all(c["all_in_flight"] for c in chains.values())}
 
 
@@ -790,8 +795,10 @@ def facts_row(head, rows, source, isa_table=DEFAULT_ISA_TABLE):
         "notes": head["notes"],
         "facts": {name: {"value": values[name], "unit": unit} for name, unit in FACT_UNITS.items()},
         # b_w_max is a cap only where the probe saw one warp saturate: by the chain test where
-        # the run has its chains (probe 5 on), else by the ring rule (SATURATION_GAIN).
-        "warp_bytes_saturated": chains["saturated"] if chains else gain < SATURATION_GAIN,
+        # the run has its chains (probe 5 on) and the latency is the card's own, else by the
+        # ring rule (SATURATION_GAIN).
+        "warp_bytes_saturated": (chains["saturated"] if chains and chains["decides"]
+                                 else gain < SATURATION_GAIN),
         "ring4_over_ring2_w1": round(gain, 3),
         "ring2_rows": ring_rows(rows, "ring2"),
         "ring4_rows": ring_rows(rows, "ring4"),
