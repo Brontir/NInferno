@@ -961,8 +961,9 @@ struct BuildManifest {
 // plane's work or its pre-pass launch, so the speed profile keeps them until the price has.
 // The plane is off by default (group_sums_plane_enabled false): its A/B (#709, kernel-proposals
 // entry A) refuted the prefill rows on the RTX 5090, so rmma_group_sums answers false until a
-// counted law makes the plane pay. NINFERNO_GROUP_SUMS_PLANE=1 (read once) or
-// set_group_sums_plane_enabled turns it on for the process: the plane's tests and an A/B.
+// counted law makes the plane pay. set_group_sums_plane_enabled turns it on for the process: the
+// plane's tests, and route-tune's --group-sums-plane 1 for its next A/B. No environment variable
+// decides it (principle 3).
 // rmma_plane_taken: whether a call that rmma_group_sums admits launches the plane's instance on
 // this device (rmma_plane_admitted, generic_gemm_launch.cuh: the format and epilogue's every
 // plane instance keeps the spill and the CTAs per SM of its twin with the MMA with ones, from the

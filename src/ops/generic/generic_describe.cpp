@@ -19,24 +19,10 @@ namespace ninferno::ops::detail::generic {
 
 namespace {
 thread_local KernelResources* t_describe = nullptr;
-thread_local std::vector<RmmaFactRead>* t_fact_sink = nullptr;
 } // namespace
 
 KernelResources* kernel_describe_target() noexcept { return t_describe; }
 
-ScopedRmmaFactsSink::ScopedRmmaFactsSink(std::vector<RmmaFactRead>& sink) noexcept
-    : previous_(t_fact_sink) {
-    t_fact_sink = &sink;
-}
-
-ScopedRmmaFactsSink::~ScopedRmmaFactsSink() { t_fact_sink = previous_; }
-
-void note_rmma_fact_read(const RmmaFactRead& read) noexcept {
-    // A sink that cannot grow loses the read (the test then fails on its digest); pricing goes on.
-    try {
-        if (t_fact_sink != nullptr) t_fact_sink->push_back(read);
-    } catch (...) {}
-}
 ScopedKernelDescribe::ScopedKernelDescribe(KernelResources& out) noexcept : previous_(t_describe) {
     t_describe = &out;
 }
@@ -44,11 +30,12 @@ ScopedKernelDescribe::~ScopedKernelDescribe() { t_describe = previous_; }
 
 namespace {
 
-// rmma_resources' launch, described: `plane` gives the call a group-sums plane (a stand-in, never
-// read; the described launch takes only its presence), as run_route does where resolve_route
-// takes one.
-std::optional<KernelResources> rmma_described(int schedule, const Weight& w, Epilogue epilogue,
-                                              std::int32_t tokens, std::int32_t rows, bool plane) {
+// The register-MMA launch run in describe mode: `plane` gives the call a group-sums plane (a
+// stand-in, never read; the described launch takes only its presence), as run_route does where
+// resolve_route takes one (#619).
+std::optional<KernelResources> rmma_described_by_launch(int schedule, const Weight& w,
+                                                        Epilogue epilogue, std::int32_t tokens,
+                                                        std::int32_t rows, bool plane) {
     if (schedule < 0 || schedule >= rmma_schedule_count() || !rmma_schedule_launchable(schedule) ||
         tokens < 1 || !supports(w)) {
         return std::nullopt;
@@ -87,16 +74,20 @@ std::optional<KernelResources> rmma_described(int schedule, const Weight& w, Epi
 
 } // namespace
 
-// The price's instance: the MMA with ones or the adds, whether or not the call reads the
-// group-sums plane (rmma_group_sums: the price has no term for the plane yet).
-std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epilogue epilogue,
-                                              std::int32_t tokens, std::int32_t rows) {
-    return rmma_described(schedule, w, epilogue, tokens, rows, false);
+// The register-MMA kernel a launch would run, found by running the launch in describe mode. The
+// selector's rmma_resources (generic_rmma_describe.cpp) answers the same from the committed facts
+// with no CUDA; ninferno_rmma_describe_test holds the two equal.
+std::optional<KernelResources> rmma_resources_by_launch(int schedule, const Weight& w,
+                                                        Epilogue epilogue, std::int32_t tokens,
+                                                        std::int32_t rows) {
+    return rmma_described_by_launch(schedule, w, epilogue, tokens, rows, false);
 }
 
+// Whether the call's launch, given a plane, takes the plane's instance (rmma_plane_admitted):
+// asked by the device's launch in describe mode, as only the device path reads the plane.
 bool rmma_plane_taken(int schedule, const Weight& w, Epilogue epilogue, std::int32_t tokens,
                       std::int32_t rows) {
-    const auto plane = rmma_described(schedule, w, epilogue, tokens, rows, true);
+    const auto plane = rmma_described_by_launch(schedule, w, epilogue, tokens, rows, true);
     return plane && plane->sums == 2; // RmmaSums::Plane
 }
 
@@ -204,7 +195,12 @@ std::optional<KernelResources> route_resources(Route route, const Weight& w, Epi
                                                bool group_sums) {
     switch (route.family) {
     case Family::RegisterMma:
-        return rmma_described(route.schedule, w, epilogue, tokens, rows_asked, group_sums);
+        // A call that reads the group-sums plane is described by the plane instance its launch
+        // takes; any other by the price's instance (rmma_resources).
+        if (group_sums) {
+            return rmma_described_by_launch(route.schedule, w, epilogue, tokens, rows_asked, true);
+        }
+        return rmma_resources(route.schedule, w, epilogue, tokens, rows_asked);
     case Family::R8Mma: {
         const auto r8 =
             r8_resources(route.schedule, w, epilogue, tokens, rows_asked, r8_prequantized);

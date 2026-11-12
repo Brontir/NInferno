@@ -22,7 +22,7 @@
 #include "ninferno/ops/moe.h"
 #include "ops/generic/generic_gemm.h"
 
-#include <cuda_runtime.h>
+#include "core/cuda_stream.h"
 
 #include <array>
 #include <cstdint>
@@ -364,6 +364,18 @@ struct A8RouteAnswer {
 
 // Whether every stage of the plan sums each dot product in one order whatever T is.
 [[nodiscard]] bool plan_is_token_invariant(const MoePlan& plan);
+
+// The streaming register-MMA schedule of a stage of K values, and the one schedule every
+// prefill-profile stage takes (moe_plan.cpp).
+[[nodiscard]] int streaming_schedule(std::int32_t k);
+inline constexpr int kPrefillSchedule = 5; // 4 x 1 warps, 64 rows x 64 columns
+
+// The plan with R8 schedules gate_up_r8 / down_r8 (-1: the stage's register MMA).
+[[nodiscard]] MoePlan with_r8(MoePlan p, int gate_up_r8, int down_r8);
+
+// The names of a register-MMA and of an R8 schedule, as a route table and a plan's name spell them.
+[[nodiscard]] std::string schedule_name(int index);
+[[nodiscard]] std::string r8_schedule_name(int index);
 
 // A plan's stable name in the route table: "<gate/up schedule>|<down schedule>", each schedule
 // named as the generic path names its register-MMA routes ("rmma.m1.n1.w1x8") or its R8 routes

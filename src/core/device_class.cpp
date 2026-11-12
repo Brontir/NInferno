@@ -1,5 +1,4 @@
 #include "core/device_class.h"
-#include "core/arch_registry.h"
 #include "core/generation.h"
 
 #include <cuda_runtime.h>

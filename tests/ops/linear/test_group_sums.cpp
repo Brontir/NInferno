@@ -30,7 +30,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <optional>
@@ -661,7 +660,7 @@ int gpu_checks() {
 int main() {
     // The plane is off by default (#709's A/B, kernel-proposals entry A): no profile reads it.
     // The checks below are of the plane itself, so they turn it on for the process.
-    if (std::getenv("NINFERNO_GROUP_SUMS_PLANE") == nullptr) {
+    {
         const ops::ScopedPrefillRoutes prefill(true);
         check(!generic::group_sums_plane_enabled() &&
                   !generic::rmma_group_sums(WeightCodec::GgmlQ4K) &&

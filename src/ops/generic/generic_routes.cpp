@@ -1,15 +1,20 @@
 // The host part of the generic path's selector (#620 step 11): schedule tables' accessors, the
 // route names and their parser, the register-MMA variant rules and the format admission tests that
-// read no device. Moved verbatim from generic_gemm.cpp, so it builds into ninferno_ops_host with no
-// CUDA runtime.
+// read no device. Moved verbatim from generic_gemm.cpp and, for the functions that sat in the .cu
+// files (tiled_supports, volta_hmma_takes, volta_gemv_takes and their kin: tiled_fits and
+// staged_fits read the shared-byte sizes of generic_shared_bytes.h), from those, so it builds into
+// ninferno_ops_host with no CUDA runtime.
 
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_gemm_internal.h"
+#include "ops/generic/generic_shared_bytes.h"
 #include "ops/common/arch_limits.h"
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/codec_traits.h"
 #include "ops/generic/format_traits.h"
 #include "ops/generic/generic_i8_schedules.h"
 #include "ops/generic/generic_schedule_tables.h"
+#include "ops/generic/generic_select_detail.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/generic_variant_rules.h"
@@ -17,6 +22,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
@@ -290,6 +296,142 @@ I8ScheduleInfo i8_schedule_info(int index) {
         throw std::out_of_range("generic I8: schedule index");
     }
     return kI8Schedules[index];
+}
+
+bool tiled_supports(WeightCodec codec) {
+    switch (codec) {
+    case WeightCodec::U4Zp:
+    case WeightCodec::U4ZpG32:
+    case WeightCodec::U4ZpG64:
+    case WeightCodec::GgmlQ4K:
+    case WeightCodec::GgmlQ5K:
+    case WeightCodec::Q4:
+    case WeightCodec::Q5:
+    case WeightCodec::Q6:
+    case WeightCodec::Q3G128:
+    case WeightCodec::Q3G64:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool volta_hmma_codec(WeightCodec codec) {
+    return codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
+           codec == WeightCodec::GgmlQ6K || codec == WeightCodec::Q8;
+}
+
+int volta_hmma_k_multiple(WeightCodec codec) { return codec == WeightCodec::Q8 ? 64 : 256; }
+
+bool tiled_fits(int schedule, WeightCodec codec) {
+    const int c = tiled_codec_index(codec);
+    if (c < 0 || schedule < 0 || schedule >= static_cast<int>(kTiledSharedBytes[0].size())) {
+        return false;
+    }
+    return static_cast<std::size_t>(tiled_shared_table(c, schedule)) <= kMaxSharedBytesPerBlock;
+}
+
+bool staged_fits(int schedule) {
+    if (schedule < 0 || schedule >= static_cast<int>(kStagedSharedBytes.size())) { return false; }
+    return static_cast<std::size_t>(kStagedSharedBytes[static_cast<std::size_t>(schedule)]) <=
+           kMaxSharedBytesPerBlock;
+}
+
+bool volta_gemv_takes(WeightCodec codec, const GemmArgs& args) {
+    if (args.lane_local == 0 || args.tokens < 1 || args.tokens > 4 || args.join_previous != 0) {
+        return false;
+    }
+    // The kernel reads each token's x in 16-byte words.
+    if ((args.ldx % 8) != 0 || (reinterpret_cast<std::uintptr_t>(args.x) % 16) != 0) return false;
+    if (codec == WeightCodec::Bf16) return (args.k % 8) == 0;
+    return (args.k % 256) == 0 && (codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
+                                   codec == WeightCodec::GgmlQ6K || codec == WeightCodec::Q8);
+}
+
+bool volta_hmma_takes(WeightCodec codec, const GemmArgs& args) {
+    // A join (Call::join_previous) needs programmatic dependent launch, which sm_70 does not have;
+    // the segmented chain asks for one only after a call that released, so a later part of a
+    // segmented projection takes this kernel (and the lane-local GEMV, which refuses a join) as a
+    // separate call does.
+    if (args.lane_local == 0 || args.tokens < kVoltaHmmaMinTokens ||
+        args.tokens > kVoltaHmmaMaxTokens) {
+        return false;
+    }
+    // Whole superblocks, or for Q8 G32 whole pairs of groups (gpt-oss's K = 2880: its LM head ran
+    // the register-MMA tile on FP32 FMAs, 1.9 ms a token on the GV100); the staging reads four
+    // bf16 values at a time.
+    return volta_hmma_codec(codec) && (args.k % volta_hmma_k_multiple(codec)) == 0 &&
+           (args.ldx % 4) == 0 && (reinterpret_cast<std::uintptr_t>(args.x) % 8) == 0;
+}
+
+Route r8_rules_route(const Problem& problem, std::int32_t tokens) {
+    return Route{Family::R8Mma, static_cast<std::uint8_t>(rules_r8(problem, tokens))};
+}
+
+std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight, const Problem& problem,
+                                          std::int32_t tokens) {
+    const auto tile = route_tile(route, problem.epilogue, tokens);
+    if (!tile || problem.n <= 0 || problem.k <= 0 || tokens <= 0) return std::nullopt;
+    const double n = problem.n, k = problem.k, t = tokens;
+    const auto cdiv = [](double a, double b) { return std::ceil(a / b); };
+    // The activation in the route's representation: bytes a value, the K and the tokens it holds.
+    // BF16 for the A16 tiles; W4A8 one byte a value and an FP16 scale a 32 (and the block sum,
+    // 40 bytes a 32, for a format with a min), K in whole 128-value tiles; I8 an FP32 scale and an
+    // int32 sum a 64-value group, tokens padded to whole 256-token tiles.
+    double x_bytes = 2.0, x_k = k, x_t = t;
+    const QType q      = problem.qtype;
+    const bool has_min = q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 || q == QType::GGML_Q4_K ||
+                         q == QType::GGML_Q5_K;
+    if (route.family == Family::W4a8Mma) {
+        x_bytes = (has_min ? 40.0 : 36.0) / 32.0;
+        x_k     = cdiv(k, 128.0) * 128.0;
+    } else if (route.family == Family::I8Mma) {
+        x_bytes = 1.0 + 8.0 / 64.0;
+        x_t     = i8_padded_tokens(tokens);
+    }
+    const double weight_reads = cdiv(t, tile->tokens);
+    // The register MMA holds its operands in registers: each of a CTA's row warps loads the
+    // activation slice itself (the shared-memory tiles stage it once for the CTA).
+    const double x_readers =
+        route.family == Family::RegisterMma ? rmma_schedule_info(route.schedule).warps_m : 1.0;
+    const double bpw = bytes_per_weight(weight, problem);
+    return RouteTraffic{n * k * bpw * weight_reads,
+                        x_t * x_k * x_bytes * cdiv(n, tile->out_rows) * x_readers, n * t * 2.0};
+}
+
+std::optional<PreparedRule> prepared_rule(const ResolvedRoute& route, const Weight& weight) {
+    using R = PreparedRepresentation;
+    switch (route.executed.family) {
+    case Family::GgmlVec:
+        return PreparedRule{R::GgmlQ8_1};
+    case Family::W4a8Mma:
+        return PreparedRule{R::W4a8Blocks, w4a8_ld(weight.k)};
+    case Family::R8Mma:
+        if (!route.r8_prequantized) { return std::nullopt; } // quantized inside the kernel
+        return PreparedRule{R::W4a8Blocks, weight.k};
+    case Family::I8Mma:
+        return PreparedRule{R::I8Blocks64};
+    case Family::GgmlMmq:
+        return PreparedRule{R::GgmlQ8_1Mmq, 0, static_cast<std::int32_t>(weight.qtype)};
+    case Family::W4a4Mma:
+        return PreparedRule{R::Nvfp4, 0, 0, true};
+    case Family::RegisterMma:
+    case Family::Scalar:
+    case Family::TiledMma:
+    case Family::StagedMma:
+    case Family::Nvfp4TiledMma:
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+std::optional<double> route_cost_seconds(const Problem& problem, const Weight& w, Route route,
+                                         std::int32_t tokens) {
+    std::optional<double> out;
+    price_routes(problem, w, tokens, [&](Route r, double time) {
+        if (r.family == route.family && r.schedule == route.schedule) out = time;
+    });
+    return out;
 }
 
 } // namespace ninferno::ops::detail::generic

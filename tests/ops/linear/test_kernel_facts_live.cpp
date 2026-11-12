@@ -30,6 +30,10 @@ using namespace ninferno;
 constexpr int kSkip = 77;
 
 int report(const std::string& where, const generic::LiveCheckResult& r) {
+    if (r.checked == 0) { // a check that read no kernel from the GPU checked nothing
+        std::cerr << where << ": the live check read no kernel from the running GPU\n";
+        return 1;
+    }
     if (r.mismatches.empty()) {
         std::cout << where << ": " << r.checked << " kernels agree with the snapshot\n";
         return 0;

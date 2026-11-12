@@ -18,9 +18,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -242,7 +244,14 @@ void loop_counts_read() {
     // schedule, in every snapshot that carries them: one loop, two K steps of 4 * kRun = 32 values
     // (k_iter 64), one m16n8k16 MMA per 16 K per tile (4 per iteration) on a tensor-core build,
     // the weights read by global loads, and the total above the parts it is made of. A snapshot
-    // without the columns (schema 1) reads nullopt and is named, not failed.
+    // without the columns (schema 1, `kernel_facts.py extract --no-sass`) fails: the tool writes
+    // schema 4, so a schema 1 file is one nobody regenerated since the loop columns came (#758:
+    // sm_80, sm_90 and sm_100 stayed so, because no stand builds those architectures and
+    // ninferno_kernel_facts_test checks only a build's own). kResourcesOnly names the snapshots
+    // still waiting for their build, each with its issue.
+    constexpr std::string_view kResourcesOnly[] = {
+        "70", // #762: the Volta engine needs CUDA 12.8 (not regenerated with #758)
+    };
     kf::RmmaKernelKey key;
     key.decoder = "Bf16Decoder";
     key.warps_m = 1;
@@ -252,10 +261,15 @@ void loop_counts_read() {
         const std::string name = "sm_" + std::string(arch);
         const auto facts       = kf::rmma_facts(arch, key);
         if (!facts) continue; // snapshots_parse reports it
+        const bool waived = std::find(std::begin(kResourcesOnly), std::end(kResourcesOnly), arch) !=
+                            std::end(kResourcesOnly);
         if (!facts->loop) {
             std::cout << name << ": no loop counts (schema 1)\n";
+            expect(waived, name + ": a schema 1 snapshot (no loop counts): regenerate it from a "
+                                  "build of the architecture (ninja ninferno_kernel_facts_update)");
             continue;
         }
+        expect(!waived, name + ": carries loop counts, take it off kResourcesOnly");
         const kf::LoopCounts& l = *facts->loop;
         std::cout << name << ": Bf16Decoder 1 4 1 1 1 loop: " << l.mma << ' ' << l.mma_shape
                   << ", k_iter " << l.k_iter << ", " << l.ldg << " LDG (" << l.ldg_bytes << " B), "

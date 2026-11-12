@@ -209,8 +209,11 @@ struct Profile {
     std::vector<LoadBound> load;
     // Where `load` comes from: "measured" (spec-tune --load, at home), "facts" (derived from the
     // round cost on this card, profile_for_target), "literal" (a flat plain decode from 2 streams
-    // where a pair is transferred, or stand_in_load's ceil(SMs / 10) on a published profile of
-    // another GPU: neither has facts to derive it from); "" where unsaid.
+    // where a pair is transferred or for another drafter, stand_in_load's ceil(SMs / 10) on a
+    // published profile of another GPU, or a built-in drafter's default table: none has facts to
+    // derive it from; or a table cut for a step taken for memory, plain decode from the first
+    // bound under which its depth was not shown to gain, product::served_shallower and
+    // served_fit_fallback); "" where unsaid.
     // Not written to a profile file.
     std::string load_basis;
     // What the requests decoded together do to a round's price (#303), by configuration label and

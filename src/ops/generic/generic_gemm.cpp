@@ -1,28 +1,19 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/format_traits.h"
 #include "core/per_device.h"
-#include "ops/common/arch_limits.h"
 #include "ops/common/native_nvfp4.h"
 
 #include "core/device_class.h"
 #include "core/generation.h"
-#include "core/measured_boards.h"
 #include "core/tensor.h"
 #include "core/layout.h"
 #include "ninferno/ops/prefill_routes.h"
-#include "ops/common/route_probe.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_select_internal.h"
-#include "ops/generic/route_cost_constants.h"
 #include "ops/generic/generic_ggml_internal.h"
-#include "ops/generic/generic_schedules.h"
-#include "ops/generic/generic_i8_schedules.h"
 #include "ops/generic/generic_select_detail.h"
-#include "ops/generic/generic_schedule_tables.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
-#include "ops/generic/r8_decode_table.h"
 #include "ops/generic/route_table.h"
-#include "ops/linear/nvfp4/nvfp4_a4_plan.h"
 #include "ops/route_pins.h"
 
 #include <cuda_bf16.h>
@@ -37,9 +28,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
-#include <span>
 #include <tuple>
-#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -47,89 +36,7 @@
 
 namespace ninferno::ops::detail::generic {
 
-GemmArgs weight_args(const Weight& w) {
-    GemmArgs a;
-    a.k      = w.k;
-    a.codes  = static_cast<const std::uint8_t*>(w.qdata);
-    a.high   = static_cast<const std::uint8_t*>(w.qhigh);
-    a.scales = static_cast<const std::uint8_t*>(w.scales);
-    switch (w.qtype) {
-    case QType::Q4_G64_FP16:
-    case QType::Q5_G64_FP16:
-    case QType::Q6_G64_FP16:
-        a.groups_per_row = w.padded_shape[1] / 64;
-        break;
-    case QType::Q8_G32_FP16:
-        a.groups_per_row = w.padded_shape[1] / 32;
-        break;
-    case QType::FP8_E4M3FN_B128_F32:
-        a.scale_tiles = (w.k + 127) / 128;
-        break;
-    case QType::U4_G128_ZP_FP16:
-    case QType::U4_G32_ZP_FP16:
-    case QType::U4_G64_ZP_FP16:
-        a.groups_per_row = w.k / static_cast<int>(u4_zp_group(w.qtype));
-        break;
-    case QType::Q3_G128_FP16:
-    case QType::Q3_G64_FP16:
-        a.groups_per_row = w.padded_shape[1] / static_cast<int>(q3_group(w.qtype));
-        break;
-    case QType::GGML_Q4_K:
-    case QType::GGML_Q5_K:
-    case QType::GGML_Q6_K:
-    case QType::GGML_Q3_K:
-    case QType::GGML_Q2_K:
-    case QType::GGML_IQ4_XS:
-    case QType::GGML_IQ3_XXS:
-    case QType::GGML_IQ3_S:
-    case QType::GGML_Q4_0:
-    case QType::GGML_Q4_1:
-    case QType::GGML_Q5_0:
-    case QType::GGML_Q5_1:
-    case QType::GGML_IQ4_NL:
-    case QType::GGML_IQ2_XXS:
-    case QType::GGML_IQ2_XS:
-    case QType::GGML_IQ2_S:
-    case QType::GGML_IQ1_S:
-    case QType::GGML_IQ1_M:
-    case QType::GGML_TQ1_0:
-    case QType::GGML_TQ2_0:
-    case QType::GGML_Q1_0:
-    case QType::GGML_Q2_0:
-        a.groups_per_row = w.k / static_cast<int>(ggml_block_values(w.qtype));
-        break;
-    case QType::NVFP4:
-        a.scale_tiles     = w.k / 64;
-        a.inverse_divisor = 1.0F / w.weight_scale_divisor;
-        if (w.weight_divisors != nullptr && w.weight_divisor_rows > 0 &&
-            w.weight_divisor_rows < w.n) {
-            a.divisors     = static_cast<const float*>(w.weight_divisors);
-            a.divisor_rows = w.weight_divisor_rows;
-        }
-        break;
-    default:
-        break;
-    }
-    return a;
-}
-
-bool allows_i8(const Weight& w, LinearPolicy policy) {
-    return allows_a8(policy) && i8_format(w.qtype) && i8_extent(w) && i8_planes_aligned(w);
-}
-
 namespace {
-
-// The classic W4A8 tile of a producer-warp tile's shape (the same bytes).
-Route w4a8_classic_twin(Route route) {
-    const auto s = w4a8_schedule_info(route.schedule);
-    for (int i = 0; i < w4a8_schedule_count(); ++i) {
-        const auto c = w4a8_schedule_info(i);
-        if (c.producers == 0 && c.block_m == s.block_m && c.block_n == s.block_n) {
-            return Route{Family::W4a8Mma, static_cast<std::uint8_t>(i)};
-        }
-    }
-    throw std::logic_error("generic W4A8: a producer-warp tile without a classic twin");
-}
 
 GemmArgs make_args(const Call& call) {
     GemmArgs a = weight_args(*call.weight);
@@ -254,18 +161,6 @@ void note_group_sums_demotion(Route route, int rows, int tokens, int k, std::siz
         free ? (std::to_string(*free) + " bytes of workspace free").c_str() : "no workspace", need);
 }
 
-// The producer-warp tile of a classic W4A8 tile's shape, or the route itself.
-Route w4a8_ws_twin(Route route) {
-    const auto s = w4a8_schedule_info(route.schedule);
-    for (int i = 0; i < w4a8_schedule_count(); ++i) {
-        const auto c = w4a8_schedule_info(i);
-        if (c.producers > 0 && c.block_m == s.block_m && c.block_n == s.block_n) {
-            return Route{Family::W4a8Mma, static_cast<std::uint8_t>(i)};
-        }
-    }
-    return route;
-}
-
 // Every distinct problem that reached the generic path on a thread collecting them (seen_problems:
 // an Engine's load, on its own thread, so another live Engine's calls stay out), and under
 // NINFERNO_ROUTE_RECORD=<file> each distinct (format, compute, epilogue, N, K) appended to the file
@@ -336,12 +231,6 @@ void record_projection_route(const char* op, const char* route, std::int32_t tok
         << op << ' ' << route << ' ' << tokens << ' ' << n << ' ' << k << '\n';
 }
 
-std::size_t vec_workspace_bytes(std::int32_t k, std::int32_t tokens) {
-    WorkspaceLayoutBuilder layout;
-    (void)layout.alloc_bytes(ggml_mmq::vec_activation_bytes(k, tokens), 256);
-    return layout.peak_bytes(1);
-}
-
 ggml_mmq::Planes ggml_rows_at(const GemmArgs& args, QType qtype, int bpr, int row) {
     const auto bytes  = mmq_plane_bytes(qtype);
     const auto blocks = static_cast<std::int64_t>(row) * bpr;
@@ -350,14 +239,6 @@ ggml_mmq::Planes ggml_rows_at(const GemmArgs& args, QType qtype, int bpr, int ro
     if (bytes.high > 0) p.high = args.high + blocks * bytes.high;
     if (bytes.scales > 0) p.scales = args.scales + blocks * bytes.scales;
     return p;
-}
-
-std::size_t mmq_workspace_bytes(std::int32_t k, std::int32_t plane_rows, std::int32_t tokens) {
-    WorkspaceLayoutBuilder layout;
-    (void)layout.alloc_bytes(ggml_mmq::activation_bytes(k, tokens), 256);
-    (void)layout.alloc_bytes(static_cast<std::size_t>(plane_rows) * tokens * sizeof(float), 256);
-    (void)layout.alloc_bytes(ggml_mmq::fixup_bound(tokens), 256);
-    return layout.peak_bytes(1);
 }
 
 void clear_seen_problems() {
@@ -376,17 +257,6 @@ std::vector<SeenProblem> seen_problems() {
                        parent_rows, static_cast<QuantLayout>(layout)});
     }
     return out;
-}
-
-// The W4A8 schedule run_route executes for `route`: a producer-warp tile the weight is not admitted
-// to runs the classic tile of its shape, and a w4a8_ws_extra format's classic tile its
-// producer-warp twin (the same bytes either way).
-Route w4a8_executed_route(Route route, const Weight& w) {
-    if (route.family != Family::W4a8Mma) return route;
-    const bool producers = w4a8_schedule_info(route.schedule).producers > 0;
-    if (producers && !w4a8_ws_admits(w)) return w4a8_classic_twin(route);
-    if (!producers && w4a8_ws_extra(w.qtype) && w4a8_ws_admits(w)) return w4a8_ws_twin(route);
-    return route;
 }
 
 void refuse_frag(const Weight& w, const char* op) {
@@ -463,9 +333,7 @@ bool qx_prefill_a8_pays() {
         // A generation without a row of its own has no measured kind: A16 (#300).
         const auto full_rate = fp32acc_full_rate_of(d.major, d.minor);
         return d.features.mma_tensor && !d.features.mma_slow && full_rate && !*full_rate;
-    } catch (const std::exception&) {
-        return false;
-    }
+    } catch (const std::exception&) { return false; }
 }
 
 bool qx_format(QType qtype) { return format_traits(qtype).qx_g64; }
@@ -497,7 +365,7 @@ LinearPolicy prefill_a8_policy(QType qtype, LinearPolicy policy) {
 }
 
 std::size_t prefill_a8_workspace_bytes(const Problem& problem, std::int32_t min_tokens,
-                                      std::int32_t max_tokens) {
+                                       std::int32_t max_tokens) {
     // NVFP4 under a policy with A8 and without W4A4 (owned_prefill_w4a8): the W4A8 planes of its
     // calls of 17 tokens or more, which the shape's own plan does not run.
     if (nvfp4_prefill_a8_policy(problem.qtype, problem.policy)) {
@@ -580,62 +448,48 @@ std::size_t fixed_parents_prefill_a8_workspace_bytes(std::initializer_list<Fixed
     return bytes;
 }
 
-// tiled_takes for a format named by its QType alone (workspace queries without a weight).
-bool volta_tiled_qtype(QType qtype) {
-    Weight w{};
-    w.qtype = qtype;
-    try {
-        return tiled_takes(codec_of(w));
-    } catch (const std::exception&) { return false; }
-}
-
-// volta_tiled_qtype, or a CUTLASS-only format (volta_cutlass_only): whose wide calls take the
-// decoded copy.
-bool volta_cutlass_qtype(QType qtype) {
-    if (volta_tiled_qtype(qtype)) return true;
-    Weight w{};
-    w.qtype = qtype;
-    try {
-        return volta_cutlass_only(codec_of(w));
-    } catch (const std::exception&) { return false; }
-}
-
-// volta_cutlass_only for a format named by its QType alone.
-bool volta_cutlass_only_qtype(QType qtype) {
-    Weight w{};
-    w.qtype = qtype;
-    try {
-        return volta_cutlass_only(codec_of(w));
-    } catch (const std::exception&) { return false; }
-}
-
 bool volta_tiled_format(QType qtype) {
     return !current_features().mma_tensor && volta_tiled_qtype(qtype);
 }
 
 std::string_view schedule_refusal_name(ScheduleRefusal why) noexcept {
     switch (why) {
-    case ScheduleRefusal::None: return "none";
-    case ScheduleRefusal::NotDeclared: return "not_declared";
-    case ScheduleRefusal::NotCompiled: return "not_compiled";
-    case ScheduleRefusal::Format: return "format";
-    case ScheduleRefusal::Instruction: return "instruction";
-    case ScheduleRefusal::Alignment: return "alignment";
-    case ScheduleRefusal::Extent: return "extent";
-    case ScheduleRefusal::CodecTile: return "codec_tile";
-    case ScheduleRefusal::Policy: return "policy";
-    case ScheduleRefusal::Resource: return "resource";
+    case ScheduleRefusal::None:
+        return "none";
+    case ScheduleRefusal::NotDeclared:
+        return "not_declared";
+    case ScheduleRefusal::NotCompiled:
+        return "not_compiled";
+    case ScheduleRefusal::Format:
+        return "format";
+    case ScheduleRefusal::Instruction:
+        return "instruction";
+    case ScheduleRefusal::Alignment:
+        return "alignment";
+    case ScheduleRefusal::Extent:
+        return "extent";
+    case ScheduleRefusal::CodecTile:
+        return "codec_tile";
+    case ScheduleRefusal::Policy:
+        return "policy";
+    case ScheduleRefusal::Resource:
+        return "resource";
     }
     return "none";
 }
 
 std::string_view r8_call_refusal_name(R8CallRefusal why) noexcept {
     switch (why) {
-    case R8CallRefusal::None: return "none";
-    case R8CallRefusal::NotAdmitted: return "not_admitted";
-    case R8CallRefusal::DecodeFit: return "decode_fit";
-    case R8CallRefusal::VerifyWidth: return "verify_width";
-    case R8CallRefusal::VerifyShape: return "verify_shape";
+    case R8CallRefusal::None:
+        return "none";
+    case R8CallRefusal::NotAdmitted:
+        return "not_admitted";
+    case R8CallRefusal::DecodeFit:
+        return "decode_fit";
+    case R8CallRefusal::VerifyWidth:
+        return "verify_width";
+    case R8CallRefusal::VerifyShape:
+        return "verify_shape";
     }
     return "none";
 }
@@ -643,120 +497,6 @@ std::string_view r8_call_refusal_name(R8CallRefusal why) noexcept {
 bool ggml_mmq_admits(const Weight& w, LinearPolicy policy) { return mmq_admits(w, policy); }
 
 bool ggml_vec_admits(const Weight& w, LinearPolicy policy) { return vec_admits(w, policy); }
-
-bool rmma_add_sums() {
-    return current_features().mma_tensor && bf16_mma_native() && !invariant_routes_active() &&
-           !prefill_routes_active();
-}
-
-namespace {
-// -1: not read yet (NINFERNO_GROUP_SUMS_PLANE, read once), else 0 / 1.
-std::atomic<int> g_group_sums_plane{-1};
-} // namespace
-
-bool group_sums_plane_enabled() noexcept {
-    int on = g_group_sums_plane.load(std::memory_order_acquire);
-    if (on < 0) {
-        const char* v = std::getenv("NINFERNO_GROUP_SUMS_PLANE");
-        int expected  = -1;
-        g_group_sums_plane.compare_exchange_strong(expected,
-                                                   v != nullptr && v[0] == '1' && v[1] == '\0');
-        on = g_group_sums_plane.load(std::memory_order_acquire);
-    }
-    return on == 1;
-}
-
-void set_group_sums_plane_enabled(bool on) noexcept {
-    g_group_sums_plane.store(on ? 1 : 0, std::memory_order_release);
-}
-
-bool rmma_group_sums(WeightCodec codec) {
-    return group_sums_plane_enabled() && rmma_group_sums_values(codec) > 0 &&
-           current_features().mma_tensor && !invariant_routes_active() && prefill_routes_active();
-}
-
-Route r8_rules_route(const Problem& problem, std::int32_t tokens) {
-    return Route{Family::R8Mma, static_cast<std::uint8_t>(rules_r8(problem, tokens))};
-}
-
-// The int8-activation tiles as candidates of cost_route, where the policy admits them: the W4A8
-// tiles (pipelined, at the generation's int8 tensor rate, GenerationRow::s8: 2048 per SM and
-// clock, 4096 on the full-rate datacenter rows ga100, hopper and gb100) and ggml's matrix kernel
-// (128-row tiles over the SMs, 512 tokens a slice), each with its activation quantizer (1.7 us
-// and 4.3 bytes of traffic per value) and a K chain per CTA (W4A8: 1390 cycles a 128-K step, the
-// producer-warp tile 1690; mmq: 4075 cycles per 862 K shared by the SMs). The int8 tile pays where
-// its grid fills the SMs and its rate outruns the BF16 MMA; a narrow weight (n <= 1024 rows below
-// 512 tokens) keeps the A16 split-K stream. A tile reaches a fraction of the int8 peak that depends
-// on its shape (its warp tile and what it keeps in registers): 0.31 / 0.28 / 0.24 for 32x128 /
-// 64x128 / 128x128, 0.47 for 128x64, 0.37 for 64x64, and 0.98 for the producer-warp 128x64, whose
-// producers hide the decode behind the multiplies; the minor-0 parts (A100) reach 0.46 of it.
-// SwiGLU: the weight has 2 n rows, a tile of block_n rows makes block_n / 2 outputs (gate and up
-// rows interleave), so a call takes twice the tiles and each multiplies block_n rows; `bpw` is the
-// payload over the n output rows, i.e. twice the bytes per weight. ggml's kernel takes its calls of
-// 17 tokens or more in 512-token slices on every device (ggml_mmq_slice_tokens, whose workspace the
-// planner reserves), so it is a candidate wherever the policy admits it; not yet on the minor-0
-// datacenter row, where its microbenchmark win (1.26..1.8x the W4A8 tile) and the 24K prefill
-// A/B (-15 %) disagree. ninferno_route_tune --a8 and --a8 --epilogue timings of the RTX 4090, 5090,
-// 4060 Ti, L4, A10 and A100 (six formats, n 48..28672, T 17..2048, quantizer in the sample; SwiGLU
-// and AddResidual on the A100), constants refit with the board held out: 1.06..1.09 of the best
-// route of either class on the consumer boards (the minor-0 row has one board: 1.13 in sample).
-std::optional<RouteTile> route_tile(Route route, Epilogue epilogue, std::int32_t tokens) {
-    const int sets = epilogue == Epilogue::SwiGlu ? 2 : 1;
-    switch (route.family) {
-    case Family::RegisterMma: {
-        const auto s = rmma_schedule_info(route.schedule);
-        return RouteTile{16 * s.m_tiles * s.warps_m, 8 * s.n_tiles, s.cluster};
-    }
-    case Family::TiledMma: {
-        const auto s = tiled_schedule_info(route.schedule);
-        return RouteTile{s.block_n / sets, s.block_m, 1};
-    }
-    case Family::StagedMma: {
-        const auto s = staged_schedule_info(route.schedule);
-        return RouteTile{s.rows / sets, s.tokens, 1};
-    }
-    case Family::W4a8Mma: {
-        const auto s = w4a8_schedule_info(route.schedule);
-        return RouteTile{s.block_n / sets, s.block_m, 1};
-    }
-    case Family::I8Mma: {
-        const auto s = i8_schedule_info(route.schedule);
-        return RouteTile{s.block_n / sets, s.block_m, 1};
-    }
-    default: return std::nullopt;
-    }
-}
-
-std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight,
-                                          const Problem& problem, std::int32_t tokens) {
-    const auto tile = route_tile(route, problem.epilogue, tokens);
-    if (!tile || problem.n <= 0 || problem.k <= 0 || tokens <= 0) return std::nullopt;
-    const double n = problem.n, k = problem.k, t = tokens;
-    const auto cdiv = [](double a, double b) { return std::ceil(a / b); };
-    // The activation in the route's representation: bytes a value, the K and the tokens it holds.
-    // BF16 for the A16 tiles; W4A8 one byte a value and an FP16 scale a 32 (and the block sum,
-    // 40 bytes a 32, for a format with a min), K in whole 128-value tiles; I8 an FP32 scale and an int32 sum a 64-value group, tokens padded to whole 256-token
-    // tiles.
-    double x_bytes = 2.0, x_k = k, x_t = t;
-    const QType q  = problem.qtype;
-    const bool has_min = q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 || q == QType::GGML_Q4_K ||
-                         q == QType::GGML_Q5_K;
-    if (route.family == Family::W4a8Mma) {
-        x_bytes = (has_min ? 40.0 : 36.0) / 32.0;
-        x_k     = cdiv(k, 128.0) * 128.0;
-    } else if (route.family == Family::I8Mma) {
-        x_bytes = 1.0 + 8.0 / 64.0;
-        x_t     = i8_padded_tokens(tokens);
-    }
-    const double weight_reads = cdiv(t, tile->tokens);
-    // The register MMA holds its operands in registers: each of a CTA's row warps loads the
-    // activation slice itself (the shared-memory tiles stage it once for the CTA).
-    const double x_readers =
-        route.family == Family::RegisterMma ? rmma_schedule_info(route.schedule).warps_m : 1.0;
-    const double bpw = bytes_per_weight(weight, problem);
-    return RouteTraffic{n * k * bpw * weight_reads,
-                        x_t * x_k * x_bytes * cdiv(n, tile->out_rows) * x_readers, n * t * 2.0};
-}
 
 std::optional<Route> volta_fixed_route(const Problem& problem, const Weight& weight,
                                        std::int32_t tokens) {
@@ -822,32 +562,6 @@ bool r8_tunable(const Problem& problem, const Weight& w, std::int32_t tokens) {
            (vec_rule(w, problem.policy, tokens) && r8_call(problem, w, tokens));
 }
 
-std::optional<PreparedRule> prepared_rule(const ResolvedRoute& route, const Weight& weight) {
-    using R = PreparedRepresentation;
-    switch (route.executed.family) {
-    case Family::GgmlVec:
-        return PreparedRule{R::GgmlQ8_1};
-    case Family::W4a8Mma:
-        return PreparedRule{R::W4a8Blocks, w4a8_ld(weight.k)};
-    case Family::R8Mma:
-        if (!route.r8_prequantized) { return std::nullopt; } // quantized inside the kernel
-        return PreparedRule{R::W4a8Blocks, weight.k};
-    case Family::I8Mma:
-        return PreparedRule{R::I8Blocks64};
-    case Family::GgmlMmq:
-        return PreparedRule{R::GgmlQ8_1Mmq, 0, static_cast<std::int32_t>(weight.qtype)};
-    case Family::W4a4Mma:
-        return PreparedRule{R::Nvfp4, 0, 0, true};
-    case Family::RegisterMma:
-    case Family::Scalar:
-    case Family::TiledMma:
-    case Family::StagedMma:
-    case Family::Nvfp4TiledMma:
-        return std::nullopt;
-    }
-    return std::nullopt;
-}
-
 bool prepared_rules_match(const PreparedRule& a, const PreparedRule& b) noexcept {
     return !a.weight_bound && !b.weight_bound && a.representation == b.representation &&
            a.ld == b.ld && a.variant == b.variant;
@@ -871,120 +585,6 @@ std::uint64_t instrumentation_joined_launches() noexcept {
 
 std::uint64_t route_demotion_count() noexcept {
     return route_demotions.load(std::memory_order_relaxed);
-}
-
-// GemmArgs::spread_smem. The eight-warp decode CTA (w1x8, one token tile, 72 registers) fits
-// three to an SM, and the block scheduler fills SMs that deep before it uses the rest: a call of
-// at most two CTAs per SM then runs on as few as a third of the SMs' memory pipes. Reserving a
-// third of an SM's shared memory per CTA holds it to two, spread over every SM. Same kernel, same
-// bytes. RTX 5090 at T = 1 under PDL (a kernel micro-bench, L2-cold weights): NVFP4 q/k/v
-// 4608x6656 11.8 -> 11.25 us, gate 4096x6656 11.1 -> 10.5 us; FP8 row-f32 20.2 -> 19.5 and 18.5
-// -> 17.8 us. At 416 CTAs and more it loses (6656x4096 NVFP4 9.4 -> 12.6 us) and so does SwiGLU
-// (two CTAs per SM already: 116 registers), which is why it is limited to thin Store calls. A
-// joined call (the attention gate beside q/k/v) takes it too: Muse Glimmer 30B NVFP4 decode 79.07
-// -> 79.97 t/s, and 78.93 with the chain head alone spread. Not Q8_G32: its six Muse layers side by
-// side lose what they gained with it (79.99 -> 79.63 t/s). The boards it was measured on, and any
-// other board by the nearest of them within measured::kCarryDistance (else off), never across
-// instruction sets: what decides is how many SMs a thin call spreads over, which the boards' SM
-// count, bandwidth and L2 carry. The RTX 5080 (84 SMs, same micro-bench): NVFP4 2048x4096 6.66
-// -> 6.10 us, 2560x2560 4.93 -> 4.68 us, 2688x4096 7.43 -> 7.06 us; FP8 2048x4096 11.04 -> 10.20
-// us, 2688x4096 13.21 -> 12.48 us; 64 CTAs (1024 rows) even. The RTX 5060 Ti (36 SMs; same
-// micro-bench, NVFP4/FP8/FP8 row-f32 at 1024..6656 rows, spread against packed, three rounds): even
-// on every problem, since only 1024 rows stay within two CTAs per SM there; the RTX 4080 SUPER:
-// even.
-
-namespace {
-
-struct SpreadMeasured {
-    Board board;
-    bool faster;
-};
-
-constexpr SpreadMeasured kSpreadMeasured[] = {{measured::kRtx5090, true},
-                                              {measured::kRtx5080, true},
-                                              {measured::kRtx5060Ti, false},
-                                              {measured::kRtx4080Super, false}};
-
-static_assert(measured_boards_known(std::span(kSpreadMeasured)));
-
-bool spread_by_board(const DeviceClass& d) {
-    const SpreadMeasured* m =
-        nearest_known_measured(std::span(kSpreadMeasured), board_of(d), measured::kCarryDistance);
-    return m != nullptr && m->faster;
-}
-
-// The current device's gates, once per ordinal: a process may drive boards of different classes
-// (an RTX 5090 beside a 4090), and each launch takes its own device's. Through PerDevice, so a
-// substituted DeviceClass (ScopedDeviceClass: the selector goldens, route_query) reads its own
-// board's gates, not the ones the host's GPU cached first. A device whose class cannot be read
-// throws and is asked again next time (caching "none" would turn PDL and the spread off for the
-// process on one transient failure).
-struct DeviceGates {
-    bool spread = false; // spread_smem measured faster on the nearest measured board
-    bool pdl    = false; // programmatic dependent launch (pdl_prefetch)
-};
-
-const DeviceGates& device_gates() {
-    static PerDevice<DeviceGates> gates;
-    static const DeviceGates none{};
-    // No current device (a host-only process without a substitute): no gates, as before.
-    if (substituted_device_class_key() == nullptr) {
-        int device = 0;
-        if (cudaGetDevice(&device) != cudaSuccess || device < 0 || device >= kMaxDevices) {
-            (void)cudaGetLastError();
-            return none;
-        }
-    }
-    return gates.get([](int) {
-        const DeviceClass& d = device_class();
-        return DeviceGates{spread_by_board(d), d.features.pdl};
-    });
-}
-
-bool spread_measured() { return device_gates().spread; }
-
-bool pdl_device() { return device_gates().pdl; }
-
-
-} // namespace
-
-int spread_smem(Route route, WeightCodec codec, Epilogue epilogue, const GemmArgs& args) {
-    if (route.family != Family::RegisterMma || route.schedule != rmma_index(1, 8, 1, 1, 1) ||
-        epilogue != Epilogue::Store || args.tokens > 8 ||
-        !(codec == WeightCodec::Nvfp4 || codec == WeightCodec::Fp8 ||
-          codec == WeightCodec::Fp8RowF32) ||
-        !spread_measured()) {
-        return 0;
-    }
-    try {
-        const auto& device      = device_class();
-        const std::int64_t ctas = (static_cast<std::int64_t>(args.rows) + 15) / 16;
-        const std::size_t pad   = (device.smem_per_sm / 3 + 1024) / 1024 * 1024;
-        if (ctas > 2 * static_cast<std::int64_t>(device.sms) || pad > kStaticSharedBytesPerBlock)
-            return 0;
-        return static_cast<int>(pad);
-    } catch (const std::exception&) {
-        return 0;
-    }
-}
-
-std::string_view demotion_name(Demotion demotion) noexcept {
-    switch (demotion) {
-    case Demotion::None: return "none";
-    case Demotion::Alignment: return "alignment";
-    case Demotion::W4a8Admission: return "w4a8_admission";
-    case Demotion::R8Fit: return "r8_fit";
-    case Demotion::GgmlLayout: return "ggml_layout";
-    case Demotion::GgmlWorkspace: return "ggml_workspace";
-    case Demotion::Workspace: return "workspace";
-    case Demotion::VoltaCopy:
-        return "volta_copy";
-    case Demotion::KStep:
-        return "k_step";
-    case Demotion::GroupSums:
-        return "group_sums";
-    }
-    return "none";
 }
 
 std::string_view overlap_refusal_name(OverlapRefusal why) noexcept {
@@ -1050,18 +650,6 @@ LaunchOverlap launch_overlap(const ResolvedRoute& resolved, Epilogue epilogue, i
         out.prefetch = pdl ? OverlapRefusal::None : OverlapRefusal::NoPdl;
     }
     return out;
-}
-
-Route workspace_free_route(Route selected, const Problem& problem, const Weight& weight,
-                           std::int32_t tokens, bool prefill, bool workspace) {
-    if ((selected.family == Family::W4a4Mma || selected.family == Family::W4a8Mma ||
-         selected.family == Family::I8Mma) &&
-        !workspace) {
-        return heuristic_route(
-            Problem{problem.qtype, LinearPolicy::A16Only, problem.n, problem.k, problem.epilogue},
-            weight, tokens, prefill);
-    }
-    return selected;
 }
 
 R8Coverage r8_coverage(const Problem& problem, const Weight& w, std::int32_t tokens) {
@@ -1132,139 +720,6 @@ std::vector<FamilyAlternative> family_alternatives(const Problem& problem, const
     for (const Family f :
          {Family::W4a4Mma, Family::Nvfp4TiledMma, Family::GgmlMmq, Family::GgmlVec}) {
         take(f, other_family_coverage(f, w, problem.policy), R8CallRefusal::None);
-    }
-    return out;
-}
-
-std::optional<double> route_cost_seconds(const Problem& problem, const Weight& w, Route route,
-                                         std::int32_t tokens) {
-    std::optional<double> out;
-    price_routes(problem, w, tokens, [&](Route r, double time) {
-        if (r.family == route.family && r.schedule == route.schedule) out = time;
-    });
-    return out;
-}
-
-bool r8_prequantized_takes(Route route, QType qtype, std::int32_t k, std::int32_t tokens,
-                           std::optional<std::size_t> workspace_free) {
-    return route.family == Family::R8Mma && tokens >= 2 && tokens <= kR8VerifyTokens &&
-           workspace_free.has_value() && r8_verify_compiled(qtype) &&
-           *workspace_free >= route_workspace_bytes(route, k, tokens);
-}
-
-// FUSION-SITE: r8_prequantized
-ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call) {
-    ResolvedRoute out{.asked = asked, .executed = asked};
-    Route& route      = out.executed;
-    const bool x16    = call.x_aligned16;
-    const bool staged = x16 && (call.ldx % 8) == 0; // each token in 16-byte copies
-    const auto demote = [&](Route to, Demotion why) {
-        if (to.family != route.family || to.schedule != route.schedule) out.reason = why;
-        route = to;
-    };
-    if (!x16 && route.family == Family::RegisterMma) demote(Route{Family::Scalar, 0}, Demotion::Alignment);
-    if (route.family == Family::TiledMma && !staged) demote(Route{Family::Scalar, 0}, Demotion::Alignment);
-    // The NVFP4 tiled route stages activations in 16-byte copies; otherwise the register MMA of
-    // the same order takes the call (or the scalar route where that cannot read x either).
-    if (route.family == Family::Nvfp4TiledMma && !staged) {
-        const int classes = nvfp4_tiled_schedule_info(route.schedule).classes;
-        demote(x16 ? Route{Family::RegisterMma,
-                           static_cast<std::uint8_t>(classes == 1 ? rmma_index(4, 1, 1, 8)
-                                                                  : rmma_index(1, classes, 1, 4))}
-                   : Route{Family::Scalar, 0},
-               Demotion::Alignment);
-    }
-    // The W4A8 quantizer reads 32 BF16 values of a token as four 16-byte words, the I8 one 64.
-    if ((route.family == Family::W4a8Mma || route.family == Family::I8Mma) && !staged) {
-        demote(Route{Family::Scalar, 0}, Demotion::Alignment);
-    }
-    // A producer-warp W4A8 tile the weight is not admitted to (another format, an IQ3_XXS sign
-    // plane off 8 bytes) runs the classic tile of its shape: the same bytes.
-    demote(w4a8_executed_route(route, w), Demotion::W4a8Admission);
-    if (route.family == Family::StagedMma && !staged) {
-        // The register MMA with WarpsK == 1 gives the same bytes; the scalar kernel where even it
-        // cannot read x, as for the register MMA.
-        demote(x16 ? Route{Family::RegisterMma, static_cast<std::uint8_t>(rmma_index(4, 1, 1, 8))}
-                   : Route{Family::Scalar, 0},
-               Demotion::Alignment);
-    }
-    // K off the register kernel's step runs the scalar kernel (other bytes and speed). The
-    // selector, the tuner and route-tune never ask it (rmma_refusal refuses the K, #693); a route
-    // asked past route_admits is resolved here, so the run and its description read one rule.
-    if (route.family == Family::RegisterMma && (w.k % k_multiple(codec_of(w))) != 0) {
-        demote(Route{Family::Scalar, 0}, Demotion::KStep);
-    }
-    // The A16 route a call the quantized families cannot take runs.
-    const auto a16 = [&] {
-        const Problem problem{w.qtype, LinearPolicy::A16Only, call.rows, w.k, call.epilogue};
-        Route r{Family::RegisterMma,
-                static_cast<std::uint8_t>(heuristic_rmma(problem, call.tokens, false))};
-        if (!x16 || (w.k % k_multiple(codec_of(w))) != 0) r = Route{Family::Scalar, 0};
-        return r;
-    };
-    // R8 quantizes 32 BF16 values of a token as four 16-byte words, and holds the call's tokens in
-    // shared memory; a call it cannot take (a route table or a probe naming it) runs A16.
-    // At verify widths a format with the pre-quantized form needs the workspace instead of the fit.
-    // Its planes in the workspace free to the call: a workspace short of them takes the CTA's own
-    // quantization where the tokens fit it, else A16 (said as a demotion), not an allocation
-    // failure at the launch.
-    out.r8_prequantized =
-        r8_prequantized_takes(route, w.qtype, w.k, call.tokens, call.workspace_free);
-    if (route.family == Family::R8Mma &&
-        (!staged || !(out.r8_prequantized || r8_fits(w.qtype, w.k, call.tokens)))) {
-        demote(a16(), staged ? Demotion::R8Fit : Demotion::Alignment);
-    }
-    if (route.family != Family::R8Mma) out.r8_prequantized = false;
-    // The quantized-activation families take their planes from the workspace: given less than
-    // they need, the call runs A16 (said as a demotion) instead of failing to allocate at the
-    // launch. Without any workspace run() already took A16 (workspace_free_route).
-    if ((route.family == Family::W4a4Mma || route.family == Family::W4a8Mma ||
-         route.family == Family::I8Mma) &&
-        call.workspace_free &&
-        *call.workspace_free <
-            executed_workspace_bytes(route, false, w.k, call.rows, call.epilogue, call.tokens)) {
-        demote(a16(), Demotion::Workspace);
-    }
-    // ggml's matrix kernel needs its planes in the workspace and x in 8-byte words; a call it
-    // cannot take runs A16 (the same route the heuristic gives without the band).
-    const auto free_for  = [&](std::size_t bytes) {
-        return call.workspace_free.has_value() && bytes <= *call.workspace_free;
-    };
-    if (route.family == Family::GgmlMmq) {
-        if (!call.workspace_free) {
-            demote(a16(), Demotion::GgmlWorkspace);
-        } else if (!x16 || (call.ldx % 4) != 0) {
-            demote(a16(), Demotion::Alignment);
-        } else if ((call.rows % ggml_mmq::kRowMultiple) != 0) {
-            demote(a16(), Demotion::GgmlLayout);
-        } else if (!free_for(executed_workspace_bytes(route, false, w.k, call.rows, call.epilogue,
-                                                      call.tokens))) {
-            demote(a16(), Demotion::GgmlWorkspace);
-        }
-        out.ggml_fallback = route.family != Family::GgmlMmq;
-    } else if (route.family == Family::GgmlVec) {
-        if (call.segments > ggml_mmq::kVecMaxSegments) {
-            demote(a16(), Demotion::GgmlLayout);
-        } else if (!free_for(executed_workspace_bytes(route, false, w.k, call.rows, call.epilogue,
-                                                      call.tokens))) {
-            demote(a16(), Demotion::GgmlWorkspace);
-        }
-        out.ggml_fallback = route.family != Family::GgmlVec;
-    }
-    // A min-term register-MMA call reads its group sums from a plane in its workspace where it
-    // takes one (rmma_group_sums, and the instance the launch takes: rmma_plane_taken); without
-    // room for it the same route runs the MMA with ones (other bytes: a demotion, counted and
-    // said by run_route, unless the call was demoted before: the first reason stands). The K the
-    // register kernel cannot step runs scalar at the launch, and so does Volta: neither reads a
-    // plane.
-    if (route.family == Family::RegisterMma && (w.k % k_multiple(codec_of(w))) == 0 &&
-        rmma_group_sums(codec_of(w)) &&
-        rmma_plane_taken(route.schedule, w, call.epilogue, call.tokens, call.rows)) {
-        if (free_for(rmma_group_sums_bytes(codec_of(w), w.k, call.tokens))) {
-            out.group_sums = true;
-        } else if (out.reason == Demotion::None) {
-            out.reason = Demotion::GroupSums;
-        }
     }
     return out;
 }

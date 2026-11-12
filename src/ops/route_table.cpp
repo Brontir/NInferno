@@ -501,8 +501,7 @@ DeviceTables& here() {
         if (!slot) slot = std::make_unique<DeviceTables>();
         return *slot;
     }
-    int device = 0;
-    if (cudaGetDevice(&device) != cudaSuccess || device < 0 || device >= kMaxDevices) device = 0;
+    const int device = std::max(current_device_ordinal_or_none(), 0);
     return g_devices[static_cast<std::size_t>(device)];
 }
 

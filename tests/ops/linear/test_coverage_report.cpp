@@ -5,8 +5,9 @@
 // emulates is a hole. The known holes are listed below (allowed_holes), each pinned to its bands
 // and to what the cells fall to, with its reason. A hole not listed fails; so does a listed band
 // where any sampled cell is covered or falls to another kind (the entry no longer describes it).
-// No GPU: the boards are substituted DeviceClasses and the weights are described by format and
-// shape, their bytes never read.
+// The boards are substituted DeviceClasses and the weights are described by format and shape,
+// their bytes never read; no GPU's timing is read, but one must be visible: ggml's matrix kernel
+// reads the device's properties when it describes a route (#763).
 //
 // What is served, read from the rules that decide it:
 // - boards: the golden boards (selector_facts.h kFactsBoards) of this build's compute capability,

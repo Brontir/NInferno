@@ -1,7 +1,7 @@
 // sass_arch(): the kernel-facts label of the device this thread runs on. The part that reads no
-// device is sass_arch_of (kernel_facts.cpp, ninferno_ops_host); this file adds the device's class,
-// current_device_class() of ninferno_core, so it is built into ninferno_ops and ninferno_ops_host
-// keeps no reference into ninferno_core.
+// device is sass_arch_of (kernel_facts.cpp); this file adds the device's class through the seam
+// device_class() (core/device_class.h): current_device_class() of ninferno_core in a product
+// binary, the no-device stub in a host-only test. Both files are in ninferno_ops_host.
 
 #include "core/device_class.h"
 #include "ops/generic/kernel_facts.h"

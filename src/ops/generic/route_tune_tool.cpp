@@ -7,6 +7,7 @@
 //                     [--samples 15] [--prefill-chunk 1024] [--prefill-only 1]
 //                     [--points T,T,...] [--rotate 0|1] [--routes-out FILE.csv]
 //                     [--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1]
+//                     [--group-sums-plane 1]
 //
 // FILE holds one problem per line, "<format> <compute> <epilogue> <n> <k>", for example
 // "nvfp4 a4 store 3584 1024" (format bf16|fp8|nvfp4|q4|q5|q6|q8, compute a16|a8|a4, epilogue
@@ -53,6 +54,9 @@
 // A decode or verify sample (T <= 16) is one call on each of a set of weight copies spanning 2x L2
 // and 128 MiB, as decode runs its layers back to back; --rotate 0 times one call after the L2
 // flush there too, as at the wider widths.
+// --group-sums-plane 1 turns on the min-term formats' group-sums plane (#619), off by default since
+// its A/B (#709, docs/maintainer/kernel-proposals.md entry A): a lab switch for the plane's next
+// A/B, which then times the plane where the prefill profile reads it.
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/device_class.h"
@@ -135,13 +139,16 @@ int route_tune_main(int argc, char** argv) {
                          "[--key chip|variant|arch] [--samples N] [--prefill-chunk C] "
                          "[--prefill-only 1] [--points T,...] [--routes-out FILE.csv] "
                          "[--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1] "
-                         "[--rotate 0|1] [--describe 1]\n";
+                         "[--rotate 0|1] [--describe 1] [--group-sums-plane 1]\n";
             return 2;
         }
         const int samples       = opt.count("--samples") ? std::stoi(opt["--samples"]) : 15;
         const int chunk         = opt.count("--prefill-chunk") ? std::stoi(opt["--prefill-chunk"]) : 1024;
         const bool prefill_only = opt.count("--prefill-only") && opt["--prefill-only"] == "1";
         const bool rotate       = !(opt.count("--rotate") && opt["--rotate"] == "0");
+        if (opt.count("--group-sums-plane") && opt["--group-sums-plane"] == "1") {
+            generic::set_group_sums_plane_enabled(true);
+        }
         const auto& device      = device_class();
         const std::string key_kind = opt.count("--key") ? opt["--key"] : "chip";
         if (key_kind != "chip" && key_kind != "variant" && key_kind != "arch") {
@@ -489,9 +496,9 @@ int route_tune_main(int argc, char** argv) {
             // One measurement per (route, T, profile): the band sweep, the prefill total and the
             // prefill bands share them where they run the same kernel. The prefill profile's are
             // its own: there a min-term register-MMA tile reads the group-sums plane at every width
-            // where the plane is on (NINFERNO_GROUP_SUMS_PLANE=1; off by default) and the board's
-            // facts admit it (rmma_group_sums, rmma_plane_taken), and outside it a tile of four or
-            // more token tiles adds (rmma_add_sums).
+            // where the plane is on (--group-sums-plane 1; off by default) and the board's facts
+            // admit it (rmma_group_sums, rmma_plane_taken), and outside it a tile of four or more
+            // token tiles adds (rmma_add_sums).
             std::map<std::tuple<int, std::int32_t, bool>, double> timed;
             const auto time_route = [&](generic::Route r, std::int32_t t) {
                 const std::tuple<int, std::int32_t, bool> key{

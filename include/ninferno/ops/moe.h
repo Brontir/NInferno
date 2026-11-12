@@ -13,7 +13,7 @@
 #include "ninferno/ops/linear.h"
 #include "ninferno/option_enums.h"
 
-#include <cuda_runtime.h>
+#include "core/cuda_stream.h"
 
 #include <cstddef>
 #include <cstdint>

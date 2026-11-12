@@ -1755,7 +1755,10 @@ int main() {
             return 1;
         }
     }
-    // The group-sums plane is off by default (#709's A/B); its checks below run it (#619).
+    // The group-sums plane is off by default (#709's A/B); its checks below run it (#619). The
+    // switch is process-wide, so the plane is on for this whole binary: the default-off path is
+    // the other binaries' (the selector goldens, the route and description tests), and
+    // ninferno_group_sums_test checks the default before it turns the plane on.
     ops::detail::generic::set_group_sums_plane_enabled(true);
     int failures = 0;
     std::mt19937 rng(20260924U);
