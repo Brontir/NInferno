@@ -97,7 +97,10 @@ reads (#613). `package.sh` (and `package-native.ps1`) check it twice: the nvcc v
 the snapshots, and each engine's kernels against its snapshot (`kernel_facts.py check` on the
 linked binary, the SASS pass included: minutes per engine; on a GPU of the generation also
 `ninferno-serve selector-facts`, the running kernels' attributes against it). A mismatch (another
-flag, source or compiler build) stops the release. After a kernel change, regenerate the snapshot
+flag, source or compiler build) stops the release. Before that, every test build checks its own
+architecture's snapshot (`ninferno_kernel_facts_test`), and `tools/dev/kernel_facts_archs.sh`
+checks those of the release architectures that no test machine builds (sm_80, sm_90, sm_100),
+on a CPU. After a kernel change, regenerate the snapshot
 of each architecture from a build of it (`ninja ninferno_kernel_facts_update` in a test tree, or
 `kernel_facts.py extract` on the release binary), then the selector goldens that move with it
 (`ninferno_selector_golden_test --update`).
