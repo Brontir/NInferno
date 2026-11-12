@@ -83,8 +83,11 @@ TARGETS=(ninferno-serve ninferno_linear_generic_test ninferno_route_classes_test
 [ -f "$BUILD/build.ninja" ] || die "$BUILD is not a Ninja build: its freshness cannot be checked"
 NINJA=$(cache CMAKE_MAKE_PROGRAM)   # the ninja the build was configured with, not PATH's
 [ -n "$NINJA" ] && [ -x "$NINJA" ] || die "the build's CMAKE_MAKE_PROGRAM '${NINJA:-?}' is not runnable"
-"$NINJA" -C "$BUILD" -n "${TARGETS[@]}" 2>&1 | grep -q "no work to do" ||
-  die "$BUILD is not up to date with this checkout: cmake --build $BUILD --target ${TARGETS[*]}"
+# Bring the three targets up to date from this checkout: a no-op when the build is fresh. A dry run
+# cannot tell: CMake's glob check (VerifyGlobs, CONFIGURE_DEPENDS) reruns on every invocation, so
+# `ninja -n` never answers "no work to do" even right after a build.
+"$NINJA" -C "$BUILD" "${TARGETS[@]}" > /dev/null 2>&1 ||
+  die "$BUILD did not build: cmake --build $BUILD --target ${TARGETS[*]}"
 # nvcc: the build's own CUDA compiler (CMakeCache.txt), never the one on PATH.
 NVCC_BIN=$(cache CMAKE_CUDA_COMPILER)
 if [ -n "$NVCC_BIN" ]; then

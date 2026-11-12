@@ -290,10 +290,11 @@ per-case CSVs stay on the stands (`docs/maintainer/sweep-archive.md`).
 with the GPU idle. It takes about 25 minutes on a lab board.
 
 **The build must be fresh from this checkout.** A build records no revision of its own, so the job
-ties the build to the checkout in two ways and refuses it otherwise:
-- `CMAKE_HOME_DIRECTORY` in its `CMakeCache.txt` must be this checkout;
-- `ninja -n` must have no work left for the job's three targets (`ninferno-serve`,
-  `ninferno_linear_generic_test`, `ninferno_route_classes_test`).
+ties the build to the checkout in two ways:
+- `CMAKE_HOME_DIRECTORY` in its `CMakeCache.txt` must be this checkout, else it refuses;
+- it builds the job's three targets (`ninferno-serve`, `ninferno_linear_generic_test`,
+  `ninferno_route_classes_test`) before measuring, which does nothing on a fresh build. A dry run
+  (`ninja -n`) cannot tell freshness: CMake's glob check reruns on every invocation.
 
 The report's `revision` is then the checkout's HEAD. `nvcc` is the version of the CUDA compiler
 the cache names. When the cache names none, `nvcc` is `unknown`: the job never reads the `nvcc`
