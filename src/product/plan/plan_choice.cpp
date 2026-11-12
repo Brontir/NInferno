@@ -45,16 +45,19 @@ Json estimates_json(const choice::Scored& s) {
                          {"source", t.source},
                          {"evidence", std::string(choice::evidence_name(t.evidence))}});
     }
-    return {{"own_context", s.own_context},
-            {"fits", s.fits},
-            {"decode_tok_s", round_to(s.speed.decode_per_stream, 1)},
-            {"prefill_tok_s", round_to(s.speed.prefill, 0)},
-            {"speed_transferred", s.speed.transferred},
-            {"speed_basis", std::string(choice::speed_basis_name(s.speed.basis))},
-            {"request_seconds", round_to(s.seconds, 3)},
-            {"kld", round_to(s.accuracy.kld, 5)},
-            {"kld_terms", terms},
-            {"worth", round_to(s.worth, 4)}};
+    Json out = {{"own_context", s.own_context},
+                {"fits", s.fits},
+                {"decode_tok_s", round_to(s.speed.decode_per_stream, 1)},
+                {"prefill_tok_s", round_to(s.speed.prefill, 0)},
+                {"speed_transferred", s.speed.transferred},
+                {"speed_basis", std::string(choice::speed_basis_name(s.speed.basis))},
+                {"request_seconds", round_to(s.seconds, 3)},
+                {"kld", round_to(s.accuracy.kld, 5)},
+                {"kld_terms", terms},
+                {"worth", round_to(s.worth, 4)}};
+    // Why the speed is Transferred where a rule names it ("MoE route not queried", #766).
+    if (!s.speed.why.empty()) { out["speed_why"] = std::string(s.speed.why); }
+    return out;
 }
 
 Json candidate_json(const choice::Candidate& c) {
@@ -269,6 +272,8 @@ choice::ExpertKernel expert_kernel_of(runtime::PlanExpertKernel kernel) noexcept
 void with_moe_routes(choice::ModelFacts& model, const PlanSourceFacts& facts,
                      const runtime::PlanDeviceFacts& device) {
     const runtime::PlanMoeRouteQuery& query = runtime::plan_moe_route_query();
+    // No query registered (ninferno-ui, #766): the MoE step's estimate says it was not asked.
+    model.moe_route_unqueried = !query && model.moe();
     if (!query || !model.moe() || facts.model.expert_layers.empty()) { return; }
     // What the query reads of the model: its routed layers and their geometry.
     runtime::PlanModelFacts layers;
@@ -346,6 +351,8 @@ choice::QuantOption quant_option_of(const PlanSourceFacts& facts, const std::str
     quant.routed_expert_bytes = static_cast<double>(facts.model.routed_expert_bytes);
     static_assert(static_cast<int>(runtime::ExpertPrefill::Mxfp4) == static_cast<int>(choice::ExpertBanks::Mxfp4));
     quant.expert_banks        = static_cast<choice::ExpertBanks>(facts.model.expert_prefill);
+    quant.expert_banks_int8    = static_cast<choice::ExpertBanks>(facts.model.expert_prefill_int8);
+    quant.expert_banks_assumed = facts.model.expert_prefill_assumed;
     quant.rest_weights        = choice::weight_class_of(facts.shape.rest_layer_formats, label);
     const auto& formats = facts.shape.weight_formats;
     quant.nvfp4         = std::find(formats.begin(), formats.end(), "nvfp4") != formats.end();

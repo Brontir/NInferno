@@ -289,12 +289,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 # The maintainer's route pins (docs/maintainer/environment.md, Route pins): an A/B of the automatic
-# kernel family choice against one family runs the same campaign with and without a pin.
+# kernel family choice against one family runs the same campaign with and without a pin. The
+# route policy (--route-policy, #614 F1: legacy or evidence) rides along: the first value of each
+# is the release's (auto; legacy), which is never passed and which a record without the key means.
 ROUTE_PINS = {
     "prefill_route": ("--prefill-route", ("auto", "a16", "w4a8", "i8", "mmq", "w4a4")),
     "decode_route": ("--decode-route", ("auto", "a16", "r8", "vec", "mmq")),
     "moe_path": ("--moe-path", ("auto", "fused", "generic")),
+    "route_policy": ("--route-policy", ("legacy", "evidence")),
 }
+
+
+def pin_default(name: str) -> str:
+    """The release's value of a pin: auto, legacy for the route policy."""
+    return ROUTE_PINS[name][1][0]
 
 
 def add_route_pin_arguments(parser: argparse.ArgumentParser) -> None:
@@ -303,19 +311,19 @@ def add_route_pin_arguments(parser: argparse.ArgumentParser) -> None:
             flag,
             dest=name,
             choices=values,
-            default="auto",
-            help=f"ninferno-serve {flag} (maintainer route pin; default: auto)",
+            default=values[0],
+            help=f"ninferno-serve {flag} (maintainer route pin; default: {values[0]})",
         )
 
 
 def route_pins_of(args: argparse.Namespace) -> dict[str, str]:
-    return {name: getattr(args, name, "auto") for name in ROUTE_PINS}
+    return {name: getattr(args, name, pin_default(name)) for name in ROUTE_PINS}
 
 
 def route_pin_flags(pins: dict[str, str]) -> list[str]:
     flags: list[str] = []
     for name, (flag, _) in ROUTE_PINS.items():
-        if pins.get(name, "auto") != "auto":
+        if pins.get(name, pin_default(name)) != pin_default(name):
             flags.extend([flag, pins[name]])
     return flags
 
@@ -323,26 +331,26 @@ def route_pin_flags(pins: dict[str, str]) -> list[str]:
 def require_route_pins(event: dict[str, Any], pins: dict[str, str]) -> None:
     """The server must report the pins it was asked for (server_start engine.maintainer)."""
     maintainer = event.get("engine", {}).get("maintainer", {})
-    actual = {name: maintainer.get(name, "auto") for name in ROUTE_PINS}
-    if actual != {name: pins.get(name, "auto") for name in ROUTE_PINS}:
+    actual = {name: maintainer.get(name, pin_default(name)) for name in ROUTE_PINS}
+    if actual != {name: pins.get(name, pin_default(name)) for name in ROUTE_PINS}:
         raise CampaignError(f"server_start route pins {actual!r} do not match {pins!r}")
 
 
 def bind_route_pins(output_dir: Path, pins: dict[str, str]) -> None:
     """One campaign directory, one set of pins: records of another pin set are never mixed in."""
     path = output_dir / "route_pins.json"
-    full = {name: pins.get(name, "auto") for name in ROUTE_PINS}
+    full = {name: pins.get(name, pin_default(name)) for name in ROUTE_PINS}
     runs = output_dir / "run.jsonl"
     if not path.exists() and runs.exists() and runs.stat().st_size > 0:
         # A campaign from before the marker measured the automatic routes only.
-        if any(value != "auto" for value in full.values()):
+        if any(value != pin_default(name) for name, value in full.items()):
             raise CampaignError(
                 f"{output_dir} holds results measured before route pins were recorded (all auto), "
                 f"not {pins!r}; use another --output"
             )
     if path.exists():
         stored = json.loads(path.read_text(encoding="utf-8"))
-        recorded = {name: stored.get(name, "auto") for name in ROUTE_PINS}
+        recorded = {name: stored.get(name, pin_default(name)) for name in ROUTE_PINS}
         if recorded != full:
             raise CampaignError(
                 f"{output_dir} holds results measured with route pins {recorded!r}, not {pins!r}; "

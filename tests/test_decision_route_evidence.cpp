@@ -15,6 +15,7 @@
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
+#include "ops/route_pins.h"
 
 #include <algorithm>
 #include <iostream>
@@ -256,7 +257,7 @@ int main() {
                 if (found->second.find(" donor=") != std::string::npos) ++lines_with_donor;
             }
             // Replayed from the text alone on the board's class, and the order is not an input.
-            check(rt::replay_route_evidence(d, evidence) == evidence,
+            check(rt::replay_route_evidence(d, evidence, RoutePolicy::Legacy) == evidence,
                   at + ": the evidence lines replay to themselves");
             // The replay asks the selector again: it keeps the key and the prefill chunk of a
             // recorded line and nothing else. A section whose runs were edited (another route, an
@@ -267,7 +268,7 @@ int main() {
                 value = "1-16 edited authority=nobody evidence=pin; prefill " +
                         std::to_string(chunk) + " edited";
             }
-            check(rt::replay_route_evidence(d, edited) == evidence,
+            check(rt::replay_route_evidence(d, edited, RoutePolicy::Legacy) == evidence,
                   at + ": an edited evidence section replays to the selector's lines");
             auto reversed = list;
             std::reverse(reversed.begin(), reversed.end());
@@ -284,6 +285,58 @@ int main() {
     }
     check(boards == 6, "all six boards ran");
     check(seen_sources.size() >= 3, "the lines name several authorities");
+
+    // --route-policy evidence (#614 F1): every run names the policy, a run whose answer demoted a
+    // borrowed route-table entry names it (the RTX 4090 borrows the q4_K 4096x4096 verify entries),
+    // and the lines replay to themselves under the policy the manifest's options record
+    // (route_policy_of), whatever the process's own. Under legacy no line names either.
+    {
+        const auto* fb = std::find_if(
+            std::begin(generic::kFactsBoards), std::end(generic::kFactsBoards),
+            [](const generic::FactsBoard& b) { return std::string_view(b.name) == "rtx4090"; });
+        check(fb != std::end(generic::kFactsBoards), "no facts board rtx4090");
+        if (fb != std::end(generic::kFactsBoards)) {
+            const DeviceClass d4090 = generic::board_device_class(*fb);
+            const auto legacy       = rt::route_evidence_of(d4090, list, chunk, false);
+            const auto evidence =
+                rt::route_evidence_of(d4090, list, chunk, false, RoutePolicy::Evidence);
+            check(ops::route_policy() == RoutePolicy::Legacy,
+                  "evidence policy: the section's scope left the process's policy as it was");
+            int demoted = 0;
+            for (const auto& [key, value] : evidence) {
+                if (key == rt::kDecisionRouteCount) continue;
+                check(value.find(" policy=evidence") != std::string::npos,
+                      "evidence policy: " + key + " does not name the policy: " + value);
+                if (value.find(" demoted=route-table:borrowed") != std::string::npos) ++demoted;
+            }
+            check(demoted > 0, "evidence policy: no line names a demoted borrowed entry");
+            // The options section of such a start records the policy, and the replay reads it.
+            EngineOptions options;
+            options.maintainer.route_policy = RoutePolicy::Evidence;
+            const RoutePolicy recorded =
+                rt::route_policy_of(rt::options_of(options, "id", "s", ""));
+            check(recorded == RoutePolicy::Evidence &&
+                      rt::route_policy_of(rt::options_of(EngineOptions{}, "id", "s", "")) ==
+                          RoutePolicy::Legacy &&
+                      rt::route_policy_of(rt::DecisionSection{}) == RoutePolicy::Legacy,
+                  "route_policy_of: the options' policy, legacy where none is recorded");
+            check(rt::replay_route_evidence(d4090, evidence, recorded) == evidence,
+                  "evidence policy: the lines replay to themselves under the recorded policy");
+            check(rt::replay_route_evidence(d4090, evidence, RoutePolicy::Legacy) == legacy,
+                  "evidence policy: replayed under legacy, the lines are legacy's");
+            const auto routes_evidence =
+                rt::routes_of(d4090, list, chunk, false, RoutePolicy::Evidence);
+            check(rt::replay_routes(d4090, routes_evidence, recorded) == routes_evidence,
+                  "evidence policy: the routes lines replay to themselves under the policy");
+            check(routes_evidence != rt::routes_of(d4090, list, chunk, false),
+                  "evidence policy: no routes line of the RTX 4090 moved");
+            for (const auto& [key, value] : legacy) {
+                check(value.find("policy=") == std::string::npos &&
+                          value.find("demoted=") == std::string::npos,
+                      "legacy policy: " + key + " names a policy: " + value);
+            }
+        }
+    }
     check(one_lane_clauses > 0, "no line has a 'one lane' clause: the lanes check saw none");
     std::cout << "lines with a 'one lane' clause: " << one_lane_clauses
               << ", 'several lanes': " << several_lanes_clauses << '\n';

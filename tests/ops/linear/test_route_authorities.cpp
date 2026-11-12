@@ -182,6 +182,28 @@ void check_words() {
         "authority=route-table evidence=borrowed donor=8.9:128sm d=0.500") {
         fail("evidence_text of a borrowed answer: '" + generic::evidence_text(borrowed) + "'");
     }
+    // The route policy (#614 F1): legacy prints nothing more; evidence names itself and the answer
+    // it demoted, after the donor.
+    generic::Evidence ranked;
+    ranked.kind           = K::Ranker;
+    ranked.ranker         = generic::Evidence::Ranker::Rule;
+    ranked.source         = "rmma-rule";
+    ranked.policy         = RoutePolicy::Evidence;
+    ranked.demoted_source = "route-table";
+    ranked.demoted_kind   = K::Borrowed;
+    if (generic::evidence_text(ranked) !=
+        "authority=rmma-rule evidence=ranker policy=evidence demoted=route-table:borrowed") {
+        fail("evidence_text of a demoting answer: '" + generic::evidence_text(ranked) + "'");
+    }
+    if (generic::evidence_columns(ranked) != "rmma-rule,ranker") {
+        fail("evidence_columns of a demoting answer: '" + generic::evidence_columns(ranked) + "'");
+    }
+    borrowed.policy = RoutePolicy::Evidence;
+    if (generic::evidence_text(borrowed) !=
+        "authority=route-table evidence=borrowed donor=8.9:128sm d=0.500 policy=evidence") {
+        fail("evidence_text of a borrowed answer standing under evidence: '" +
+             generic::evidence_text(borrowed) + "'");
+    }
 }
 
 bool same_evidence(const generic::Evidence& a, const generic::Evidence& b) {

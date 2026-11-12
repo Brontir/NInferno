@@ -27,6 +27,22 @@ cmake_language(DEFER CALL ninferno_assert_host_only ninferno_selector_golden_hos
 # It dumps every board twice over (once a process per board, then all in one): minutes of CPU.
 set_tests_properties(ninferno_selector_golden_host_test PROPERTIES TIMEOUT 1800)
 
+# The route policy (#614 F1, --route-policy): on the A5 regret sweep's boards and shapes, legacy is
+# unchanged, a borrowed or transferred route-table answer yields to the ranker under evidence, and
+# an answer of any other evidence is never demoted. `--write FILE` writes the moved decisions
+# (tools/bench/data/route_regret/policy_evidence_moves.json; each board from its own build set,
+# the others kept). Host only, with the golden twin's link.
+ninferno_add_test(ninferno_route_policy_test LABELS host NEEDS_SOURCE_DIR
+  SOURCES "${PROJECT_SOURCE_DIR}/tests/ops/linear/test_route_policy.cpp"
+  LIBRARIES ninferno_ops_host)
+target_sources(ninferno_route_policy_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
+target_link_libraries(ninferno_route_policy_test PRIVATE ninferno::json)
+target_compile_definitions(ninferno_route_policy_test PRIVATE NINFERNO_HOST_ONLY)
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_route_policy_test)
+
 # The host part of the generic selector (ops/generic/generic_routes.cpp, kernel_facts.cpp and the
 # rest of ninferno_ops_host, with the device seams of generic_nodevice.cpp): route names, the
 # register-MMA variant rules, the kernel-facts snapshots; no CUDA runtime, no GPU (#620 step 11).

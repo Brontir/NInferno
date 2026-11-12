@@ -404,38 +404,43 @@ struct PrefillEta {
 
 // The linears' share of the route's peak (fit_prefill.py). The exact rows (BF16) were fitted on 9B
 // at a 22K prompt without the attention term; they keep that fit's time with attention now apart.
-// Turing's BF16 row kept that time against the attention's former 0.069: with the census's 0.160
-// below it prices an exact prefill too fast at long prompts until a 22K point refits it.
+// Turing's BF16 row kept that time against the attention's former 0.069 (of the fitted 1536): with
+// the census's attention row below it prices an exact prefill too fast at long prompts until a 22K
+// point refits it. Turing's BF16 rows (this one and its attention row) are written against the
+// generation row's spec 512 since #781: the fitted-1536 figures times 3, the same times.
 inline constexpr PrefillEta kPrefillEta[] = {
     // Turing's int8 row: the nsys census of one Qwen3.5-9B Q4_K_M prefill on the RTX 2080 Ti
     // (2026-10-29, master 03afc418, 2K and 8K prompts: the step less its attention kernel, 0.182 /
-    // 0.187; one card). The facts behind it against the RTX 4070 Ti's 0.29 (the same census there; Ada's row is 0.306):
-    // ggml's MMQ runs the same launch on both (256 threads, 255 registers, 57.8 KB shared: one block,
-    // 8 warps a SM) yet takes 1.9x the SM-clocks per operation on Turing: its dequantize and scale
+    // 0.187; one card). The facts behind it against the RTX 4070 Ti's 0.29 (the same census there;
+    // Ada's row is 0.306): ggml's MMQ runs the same launch on both (256 threads, 255 registers,
+    // 57.8 KB shared: one block, 8 warps a SM) yet takes 1.9x the SM-clocks per operation on
+    // Turing: its dequantize and scale
     // math run on the CUDA cores, 64 FP32/INT32 lanes a SM on Turing against 128 on Ampere and Ada
     // (x0.5), and the 2080 Ti sustains ~1.9 GHz against its 1.545 GHz boost while Ada's run ~4 %
     // above theirs (x1.21): 0.175 from the facts, 0.185 measured. The former 0.241 (fitted at 22K
     // with attention apart) put a 2K prefill 27 % fast (the user kit, #210).
     {false, "turing", Route::Int8, 0.185, 1},
-    {false, "turing", Route::Bf16, 0.073, 1}, // RTX 2080 Ti, 9B exact (stale: see above)
+    {false, "turing", Route::Bf16, 0.219, 1}, // RTX 2080 Ti, 9B exact (stale: see above; 0.073
+                                              // of the fitted 1536 before #781)
     // Volta's int8 route is not Turing's: without an int8 MMA its prefill linears dequantize each
     // chunk's weights to FP16 (decode_rows_kernel) and multiply them on the HMMA tiles (CUTLASS
     // sm70, the m8n8k4 FP16 MMA: 1024 operations a SM-clock at FP32 accumulation, the row below
-// relative to this table's 1536 as every row), where the
-    // Turing row it took before (MMQ on the int8 MMA) put the Quadro GV100's 2048-token prefill
-    // 22 .. 28 % slow (user kits, master 59933708). The census of the GV100's prefill (nsys of the
-    // server, 962 / 1912 / 2862-token prompts twice, master 59933708; kernel time without the
-    // attention kernels and the tail calls, against this table's 1536 at the board's 1627 MHz
-    // boost): Qwen3.5-9B Q4_K_M 0.235, Gemma 4 12B Q4_K_M 0.261 (the CUTLASS kernel alone at 0.70 of
-    // the HMMA rate at the 1.28 GHz the board holds at its power limit). One card: transferred.
-    // Its exact route has no row: the int8 row times Turing's exact-to-int8 ratio (unmeasured).
+    // relative to Volta's 1536 in the generation row), where the Turing row it took before (MMQ on
+    // the int8 MMA) put the Quadro GV100's 2048-token prefill 22 .. 28 % slow (user kits, master
+    // 59933708). The census of the GV100's prefill (nsys of the server, 962 / 1912 / 2862-token
+    // prompts twice, master 59933708; kernel time without the attention kernels and the tail
+    // calls, against Volta's 1536 at the board's 1627 MHz boost): Qwen3.5-9B Q4_K_M 0.235, Gemma 4
+    // 12B Q4_K_M 0.261 (the CUTLASS kernel alone at 0.70 of the HMMA rate at the 1.28 GHz the
+    // board holds at its power limit). One card: transferred.
+    // Its exact route has no row: the int8 row times Turing's exact-to-int8 ratio (unmeasured; the
+    // BF16 row carried in Volta's BF16 unit, choice.cpp carried_eta).
     {false, "volta", Route::Int8, 0.248, 1},
-    {false, "ada", Route::Int8, 0.306, 3},    // RTX 4060 Ti, 4070 Ti, 4090: 9B, 27B, Gemma 12B, 31B
-    {false, "ada", Route::Bf16, 0.317, 1},    // RTX 4070 Ti, 9B exact
-    {false, "gb20x", Route::Int8, 0.324, 2},  // RTX 5070 Ti, 5090: 9B, 27B, Gemma 12B
-    {false, "ga10x", Route::Int8, 0.363, 1},  // RTX 3060: 9B, Gemma 12B (one card)
-    {true, "ada", Route::Int8, 0.210, 2},     // RTX 4060 Ti, 4090: Gemma 26B-A4B, 35B-A3B
-    {true, "gb20x", Route::Int8, 0.205, 2},   // RTX 5070 Ti, 5090: Gemma 26B-A4B, 35B-A3B
+    {false, "ada", Route::Int8, 0.306, 3},   // RTX 4060 Ti, 4070 Ti, 4090: 9B, 27B, Gemma 12B, 31B
+    {false, "ada", Route::Bf16, 0.317, 1},   // RTX 4070 Ti, 9B exact
+    {false, "gb20x", Route::Int8, 0.324, 2}, // RTX 5070 Ti, 5090: 9B, 27B, Gemma 12B
+    {false, "ga10x", Route::Int8, 0.363, 1}, // RTX 3060: 9B, Gemma 12B (one card)
+    {true, "ada", Route::Int8, 0.210, 2},    // RTX 4060 Ti, 4090: Gemma 26B-A4B, 35B-A3B
+    {true, "gb20x", Route::Int8, 0.205, 2},  // RTX 5070 Ti, 5090: Gemma 26B-A4B, 35B-A3B
 };
 
 // A dense model's int8 route on Q8 weights prefills on the generic int8 tiles (the W4A8 kernel's
@@ -766,7 +771,8 @@ inline constexpr GemmaAttentionCost kGemmaAttentionCost[] = {
 
 // The attention a prefill runs over its prompt (choice.cpp attention_seconds: the full layers over
 // every earlier token, the sliding ones over the window) reaches this share of the BF16 tensor peak
-// (fit_prefill.py, the same points; Turing's BF16 row is the composed aggregate, core/generation.h).
+// (fit_prefill.py, the same points; Volta's BF16 rate is the fitted aggregate, Turing's the spec
+// rate of its f16 MMA with FP32 accumulation, core/generation.h).
 struct GenerationEta {
     std::string_view generation;
     double eta;
@@ -774,16 +780,20 @@ struct GenerationEta {
 };
 
 // Turing's row: the census of the RTX 2080 Ti's prefill (int8_kv_tiled_mma_kernel: 111 ms of a 6.8K
-// prompt, 11.5 ms of a 2K one: 0.167 / 0.143; one card); the former 0.069 was fitted together with
-// the int8 row at 22K and priced the attention 2.4x slow while the linears ran fast.
+// prompt, 11.5 ms of a 2K one: 0.167 / 0.143 of the fitted 1536, 0.50 / 0.43 of the spec 512 the
+// generation row holds since #781; one card; the row: 0.160 then, times 3); the former 0.069 was
+// fitted together with the int8 row at 22K and priced the attention 2.4x slow while the linears
+// ran fast.
 // Volta's row: the same census (Quadro GV100), against the BF16 rate above: Gemma 4 12B's attention
 // (gemma4_attention_kernel on the m8n8k4 FP16 MMA, 256- and 512-wide heads) 0.097 at 2863 tokens,
 // Qwen3.5-9B's (sm70_d256 split kernels) 0.139. One share cannot hold both; the row takes Gemma's,
 // where the attention is the larger part of a prefill (8 % against 2 %: Qwen's 2048-token prefill
 // priced 0.6 % slow by it).
-inline constexpr GenerationEta kPrefillAttentionEta[] = {
-    {"ada", 0.742, 3}, {"gb20x", 0.740, 2}, {"turing", 0.160, 1}, {"ga10x", 0.497, 1},
-    {"volta", 0.100, 1}};
+inline constexpr GenerationEta kPrefillAttentionEta[] = {{"ada", 0.742, 3},
+                                                         {"gb20x", 0.740, 2},
+                                                         {"turing", 0.480, 1},
+                                                         {"ga10x", 0.497, 1},
+                                                         {"volta", 0.100, 1}};
 
 // What the exact route's compute adds to a decode step beyond the fast route's: its rows' flops
 // (C 2 P) at this share of the int8 tensor peak, its FP32 state's bytes apart (run_sw.sh, 9B at a

@@ -108,6 +108,10 @@ ninferno_label_tests(ninferno_selection_regret_test LABELS host)
 add_test(NAME ninferno_regret_collect_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_collect.py)
 ninferno_label_tests(ninferno_regret_collect_test LABELS host)
+# tools/bench/policy_moves_predict.py (#614 F1): the A5 ratio of the route policy's moved cells.
+add_test(NAME ninferno_policy_moves_predict_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_policy_moves_predict.py)
+ninferno_label_tests(ninferno_policy_moves_predict_test LABELS host)
 
 # tools/bench/mmq_width_grid.py (#524): the measurement against a fake server, the grid and A/B readers' refusals, no GPU.
 add_test(NAME ninferno_mmq_width_grid_test

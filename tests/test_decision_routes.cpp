@@ -125,14 +125,16 @@ int main() {
                   found->first + " prefill: " + found->second);
         }
         // Replayed from the text alone.
-        check(rt::replay_routes(d, lines) == lines, "the lines replay to themselves");
+        check(rt::replay_routes(d, lines, RoutePolicy::Legacy) == lines,
+              "the lines replay to themselves");
         // The problems' order is not an input.
         auto reversed = list;
         std::reverse(reversed.begin(), reversed.end());
         check(rt::routes_of(d, reversed, chunk, false) == lines, "the problems' order changes nothing");
         // An exact start's lines are its invariant routes, and say so.
         const auto exact = rt::routes_of(d, list, chunk, true);
-        check(rt::replay_routes(d, exact) == exact, "the invariant lines replay to themselves");
+        check(rt::replay_routes(d, exact, RoutePolicy::Legacy) == exact,
+              "the invariant lines replay to themselves");
         for (const auto& s : list) {
             const auto& p    = s.problem;
             const auto found = std::find_if(exact.begin(), exact.end(), [&](const auto& kv) {
@@ -178,7 +180,7 @@ int main() {
         "epilogue": "store", "n": 1024, "k": 4096, "bands": [[1, 16, ")"
                         << moved << R"("]]}]})";
     (void)ops::load_route_table(path.string());
-    const auto after = rt::replay_routes(device_class(), before);
+    const auto after = rt::replay_routes(device_class(), before, RoutePolicy::Legacy);
     const auto fresh = rt::routes_of(device_class(), list, chunk, false);
     ops::clear_route_table();
     // Without tensor mma.sync (Volta) the HMMA route takes Q8's decode widths before a table.
@@ -214,7 +216,8 @@ int main() {
           "q4k a16only store 4096x4096 of 4096 ggml_blocks_v1 fast"}) {
         bool refused = false;
         try {
-            (void)rt::replay_routes(device_class(), {{key, "1-16 scalar; prefill 1024 scalar"}});
+            (void)rt::replay_routes(device_class(), {{key, "1-16 scalar; prefill 1024 scalar"}},
+                                    RoutePolicy::Legacy);
         } catch (const std::invalid_argument&) { refused = true; }
         check(refused, "refused: \"" + key + "\"");
     }

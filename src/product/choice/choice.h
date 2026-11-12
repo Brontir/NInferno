@@ -261,6 +261,10 @@ struct ModelFacts {
     // step takes the pair its kMoeRoutedEta rows were measured on.
     std::function<std::vector<MoeStepRoute>(std::uint32_t rows, ActivationMode activations)>
         moe_routes;
+    // No route query could be asked: the program registers none (ninferno-ui, #766; with_moe_routes
+    // sets it). The step still takes the measured pair's share, but its estimate is Transferred
+    // past one row ("MoE route not queried"): which pair the op runs was never asked.
+    bool moe_route_unqueried = false;
     [[nodiscard]] bool moe() const noexcept { return experts > 1 && routed_expert_params > 0; }
 };
 
@@ -289,6 +293,11 @@ struct QuantOption {
     // An MoE's prefill apart (DECISIONS 66): its routed banks' GEMM, and the class of its linears
     // outside them (attention, the shared expert); Unknown: the MoE rows price the whole.
     ExpertBanks expert_banks = ExpertBanks::Unknown;
+    // The banks' GEMM under --activations int8 (every bank at AllowA8: their formats decide);
+    // none: expert_banks. `expert_banks_assumed`: the route rests on a format the file does not
+    // tell (Gemma 4's GGUF MXFP4 experts), so an estimate on it is Transferred.
+    std::optional<ExpertBanks> expert_banks_int8;
+    bool expert_banks_assumed = false;
     WeightClass rest_weights = WeightClass::KQuant;
 };
 
@@ -448,6 +457,11 @@ struct Speed {
     double prefill           = 0; // prompt tokens a second
     bool transferred         = false; // basis != Own
     SpeedBasis basis         = SpeedBasis::Own;
+    // A reason the decode estimate is Transferred, where a rule names one: "MoE route not queried"
+    // (no route query, ModelFacts::moe_route_unqueried), "MoE route not answered" (the query gave
+    // no kernels for a layer kind). Other rules may widen the basis too and are not named; empty
+    // where the basis is Own or lent_generation (the lent row is the reason there).
+    std::string_view why;
 };
 
 // Decode at `context` tokens in the window with `concurrency` rows, and prefill of a `prompt`

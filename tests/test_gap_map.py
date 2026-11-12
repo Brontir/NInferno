@@ -216,11 +216,12 @@ class Rows(unittest.TestCase):
         self.assertAlmostEqual(r["bytes"], 8_000_000 + 2 * (1000 * 100 + 2 * 700))
 
     def test_fitted_rates_give_no_tensor_law(self):
-        gens = gm.load_generations(HEADER + '    {7, 5, 9, "turing", 1536.0, 2048.0, false, 1.0, 1.11, true},')
+        gens = gm.load_generations(HEADER + '    {7, 5, 9, "turing", 512.0, 2048.0, false, 1.0, 1.11, true},')
         volta, turing = gm.generation_of(gens, 70), gm.generation_of(gens, 75)
         board = {"sms": 10, "boost_mhz": 1000.0, "dram_gbs": 100.0}
         self.assertIn("fitted", gm.tensor_rate(volta, board, "a16")[1])
-        self.assertIn("fitted", gm.tensor_rate(turing, board, "a16")[1])
+        # Turing's bf16 row is the spec rate since #781: a law, as its int8 row is.
+        self.assertEqual(gm.tensor_rate(turing, board, "a16")[0], 10 * 1000.0 * 1e6 * 512.0)
         self.assertIsNotNone(gm.tensor_rate(turing, board, "a8")[0])
         doc = self.decode_doc(active_params=1e9, input_table_params=0)
         doc["cards"]["C"].update(major=7, minor=0)

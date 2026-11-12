@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 namespace ninferno::ops::detail::generic {
 
@@ -40,8 +41,20 @@ namespace {
 template <class Offer>
 void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t tokens,
                    const DeviceClass& d, const Offer& offer) {
-    // BF16 operands in the MMA itself (sm_80 on) imply tensor mma.sync (device_features_for).
-    if (!d.features.mma_bf16_native || !allows_a8(problem.policy)) return;
+    // The A8 tiles multiply on the int8 MMA: tensor mma.sync (sm_75 on: Turing's build composes
+    // the s8 m16n8k32 from its m8n8k16, ops/common/mma.cuh), not on a chip that runs mma.sync on
+    // its FP16 units (mma_slow: TU116 / TU117), and an int8 rate in the generation row (Volta has
+    // none: its build composes the int8 MMA from dp4a). Whether the BF16 MMA is native says
+    // nothing about the int8 one (#781: Turing's W4A8 and ggml MMQ went unpriced, and the
+    // register MMA was taken at up to 4.7x the fastest route's time). The I8 tiles stay refused
+    // there (route_requires: ldmatrix and cp.async, sm_80 on). Turing's A8 prices carry
+    // efficiencies fitted on other generations (kW4a8Efficiency, kMmqEfficiency, its row's
+    // w4a8_eff_scale 1.0): on the RTX 2080 Ti A5 sweep they read 0.58 .. 0.75 of the measured
+    // time for ggml MMQ and 0.70 .. 0.74 for W4A8 (band geomeans), in the right order. OPEN: the
+    // chip fact they lack, MMQ's dequantize on 64 CUDA-core lanes a SM on Turing against 128 on
+    // Ampere and Ada (choice_constants.h kPrefillEta's Turing row).
+    if (!d.features.mma_tensor || d.features.mma_slow || !allows_a8(problem.policy)) return;
+    if (generation_row(d.major, d.minor).s8 <= 0) return;
     // A device without a roofline in its facts (an unknown id whose driver reports no clock or bus
     // width) has none here: the A16 routes stand alone. The clock and the bandwidth are the
     // board's reference facts (DeviceClass::facts, B2), never the driver's clocks.
@@ -188,9 +201,8 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         // efficiency was fitted on.
         // Never wider than the tile the device's shared memory holds for the format (Turing's
         // 64 KiB: Q2_K's 128-column tile does not fit, the kernel runs 64).
-        // The A8 routes are priced only where the MMA reads BF16 operands (sm_80 on: above), so a
-        // generation whose widths a launch law prices (Turing, DECISIONS 78) never reaches here;
-        // the facts are the product's grid on this card all the same.
+        // A generation whose widths a launch law prices (Turing, DECISIONS 78) takes the width
+        // that law picks for the product's grid on this card (the facts below).
         const bool format   = mmq_columns::work_tiles_format(problem.qtype);
         const int widest    = mmq_columns::widest_tile(problem.qtype, d.major, d.minor);
         const mmq_columns::LaunchFacts facts{static_cast<int>(n), static_cast<int>(k), d.sms, clk,
@@ -233,10 +245,13 @@ struct RmmaKept {
     int registers;
     double local_bytes;
     double static_smem;
+    std::optional<kernel_facts::LoopCounts> loop; // the K loop's counts (#613), where known
 };
 
+// `counted_law`: the price reads the kernel's K loop (Calibration::rmma_counted_law), so the loop
+// is kept; off, it is not (nothing reads it).
 std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue epilogue,
-                                  std::int32_t tokens, std::int32_t rows) {
+                                  std::int32_t tokens, std::int32_t rows, bool counted_law) {
     std::optional<KernelResources> r;
     try {
         r = rmma_resources(schedule, weight, epilogue, tokens, rows);
@@ -244,10 +259,26 @@ std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue e
     if (!r) return std::nullopt;
     note_rmma_fact_read(RmmaFactRead{weight.qtype, schedule, epilogue, *r}); // never throws
     return RmmaKept{r->registers, static_cast<double>(r->local_bytes),
-                    static_cast<double>(r->static_smem)};
+                    static_cast<double>(r->static_smem),
+                    counted_law ? std::move(r->loop) : std::nullopt};
 }
 
+// The counted register-MMA terms (rmma_counted_terms.h, #613 PR-7a) in place of the fitted spill
+// and the weight-only tensor term: route_cost::kRmmaCountedLaw says which law this binary prices
+// (false until the A/B of the counted law; off, the price is golden-equal to the fitted one), and a
+// test overrides it for its process. price_routes hands it to price_register_mma
+// (Calibration::rmma_counted_law) with the kernel's loop (RegisterMmaKernel::loop).
+std::optional<bool> g_rmma_counted_law_override;
+
 } // namespace
+
+bool rmma_counted_law() noexcept {
+    return g_rmma_counted_law_override.value_or(route_cost::kRmmaCountedLaw);
+}
+
+void rmma_counted_law_for_test(std::optional<bool> law) noexcept {
+    g_rmma_counted_law_override = law;
+}
 
 bool a16_route_priced(Route route, bool bf16_mma_native) {
     if (bf16_mma_native) return true;
@@ -270,8 +301,9 @@ bool a16_route_priced(Route route, bool bf16_mma_native) {
 // tiled) overlapped at 0.9 / 0.8 of the tensor rate. The device numbers come from its query (SMs,
 // threads, CTAs and shared memory per SM) and its facts (reference clock, bus width x memory
 // clock: DeviceClass::facts); the tensor rate per SM and clock from the generation row
-// (core/generation.h: 512 on the consumer and pro boards, 2048 on the full-rate HBM parts, 1536
-// where the BF16 MMA is emulated, which also takes no pipelined tile and no 8-tile token strip).
+// (core/generation.h: 512 on the consumer and pro boards, Turing's GeForce boards included, 2048
+// on the full-rate HBM parts, Volta's fitted 1536; where the BF16 MMA is emulated (Turing, Volta)
+// the model takes no pipelined tile and no 8-tile token strip).
 // ninferno_route_tune's timings of seven boards (each tile in the engine, L2 flushed; BF16, Q4
 // and Q8, T >= 17), the constants refit with the board held out: 1.095 of the best (geomean;
 // RTX 4090 1.083, RTX 5090 1.068) against 1.110 for the F-lite rule (heuristic_rmma) and 1.137
@@ -296,7 +328,12 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     }
     const bool emulated       = !d.features.mma_bf16_native;
     const kr::ChipFacts chip  = kr::chip_facts_of(d);
-    const kr::Calibration cal = kr::calibration_of(d.major, d.minor);
+    // The binary's register-MMA law, or a test's override of it (rmma_counted_law).
+    const kr::Calibration cal = [&] {
+        kr::Calibration c  = kr::calibration_of(d.major, d.minor);
+        c.rmma_counted_law = rmma_counted_law();
+        return c;
+    }();
     const double n = problem.n, k = problem.k;
     // SwiGLU: every output row multiplies its gate and its up row; `bpw` (bytes_per_weight) holds
     // both rows' bytes, so the bytes of a CTA stay rows x K x bpw.
@@ -335,7 +372,8 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         if (!rmma_schedule_launchable(i)) continue;
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         if (!a16_route_priced(r, !emulated)) continue;
-        const auto kept = heavy_decoder ? rmma_kept(i, weight, problem.epilogue, tokens, problem.n)
+        auto kept       = heavy_decoder ? rmma_kept(i, weight, problem.epilogue, tokens, problem.n,
+                                                    cal.rmma_counted_law)
                                         : std::optional<RmmaKept>{};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
         kr::RegisterMmaKernel kernel;
@@ -354,6 +392,7 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
             kernel.registers    = kept->registers;
             kernel.local_bytes  = kept->local_bytes;
             kernel.shared_bytes = kept->static_smem;
+            kernel.loop         = std::move(kept->loop); // kept under the counted law only
         }
         offer(r, kr::price_register_mma(chip, cal, call, kernel).total);
     }

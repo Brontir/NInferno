@@ -1398,14 +1398,27 @@ void moe_step_reads_the_route(const json& fixture) {
         const ch::ModelFacts mixed =
             with({{ch::ExpertKernel::R8, ch::ExpertKernel::RegisterMma, 3},
                   {ch::ExpertKernel::Unknown, ch::ExpertKernel::Unknown, 1}});
+        // No route query to ask (ninferno-ui, #766): the measured pair's price, never Own past
+        // one row.
+        ch::ModelFacts unqueried      = plain;
+        unqueried.moe_route_unqueried = true;
         for (const std::uint32_t rows : {1U, 2U, 4U, 8U}) {
             const ch::Speed a    = ch::speed_of(plain, card, q, c, rows, 1536, 0);
             const ch::Speed b    = ch::speed_of(measured, card, q, c, rows, 1536, 0);
             const ch::Speed r    = ch::speed_of(rmma, card, q, c, rows, 1536, 0);
             const ch::Speed x    = ch::speed_of(mixed, card, q, c, rows, 1536, 0);
+            const ch::Speed u    = ch::speed_of(unqueried, card, q, c, rows, 1536, 0);
             const std::string at = std::string(card_name) + " x" + std::to_string(rows);
-            check(b.decode_per_stream == a.decode_per_stream && b.basis == a.basis,
+            check(b.decode_per_stream == a.decode_per_stream && b.basis == a.basis && b.why.empty(),
                   "MoE step: the measured pair is the price of not asking (" + at + ")");
+            check(u.decode_per_stream == a.decode_per_stream,
+                  "MoE step: unqueried, the measured pair's share (" + at + ")");
+            check(rows > 1
+                      ? u.basis == ch::SpeedBasis::Transferred && u.why == "MoE route not queried"
+                      : u.basis == a.basis && u.why.empty(),
+                  "MoE step: unqueried, transferred past one row and says why (" + at + ")");
+            check(rows == 1 || x.why == "MoE route not answered",
+                  "MoE step: a kind with no answer says why (" + at + ")");
             check(std::abs(r.decode_per_stream / a.decode_per_stream - 1) < 1e-12 &&
                       std::abs(x.decode_per_stream / a.decode_per_stream - 1) < 1e-12,
                   "MoE step: an unmeasured pair keeps the measured pair's share (" + at + ")");
@@ -1421,6 +1434,23 @@ void moe_step_reads_the_route(const json& fixture) {
     check(lifts >= 3, "MoE step: the Own steps of several rows are the measured pair's alone");
 }
 
+// Qwen3.6-35B-A3B's linears a prefill token runs (the routed experts' marked), as the census reads
+// them.
+std::vector<ch::LinearShape> qwen36_moe_linears() {
+    std::vector<ch::LinearShape> out;
+    for (int i = 0; i < 10; ++i) {
+        out.push_back({9216, 2048, 1, false});
+        out.push_back({2048, 4096, 1, false});
+    }
+    out.push_back({12288, 2048, 30, false});
+    out.push_back({2048, 4096, 30, false});
+    out.push_back({1024, 2048, 40, false});
+    out.push_back({2048, 512, 40, false});
+    out.push_back({1024, 2048, 320, true});
+    out.push_back({2048, 512, 320, true});
+    return out;
+}
+
 // Contradictory pins say so instead of "nothing fits".
 // An MoE's prefill linears by their tiles (DECISIONS 66): Qwen3.6-35B-A3B UD-Q4_K_M on the RTX 4090,
 // one 1819-token chunk; the census (nsys, no PDL) put the experts at 50.5 ms, the int8 calls beside
@@ -1431,16 +1461,7 @@ void prices_moe_prefill_tiles() {
     m.experts              = 256;
     m.experts_per_token    = 8;
     m.routed_expert_params = 34e9;
-    for (int i = 0; i < 10; ++i) {
-        m.linears.push_back({9216, 2048, 1, false});
-        m.linears.push_back({2048, 4096, 1, false});
-    }
-    m.linears.push_back({12288, 2048, 30, false});
-    m.linears.push_back({2048, 4096, 30, false});
-    m.linears.push_back({1024, 2048, 40, false});
-    m.linears.push_back({2048, 512, 40, false});
-    m.linears.push_back({1024, 2048, 320, true});
-    m.linears.push_back({2048, 512, 320, true});
+    m.linears              = qwen36_moe_linears();
     ch::CardFacts rtx4090 = board_card(0x2684);
     ch::QuantOption q;
     q.expert_banks = ch::ExpertBanks::Int8;
@@ -1450,8 +1471,77 @@ void prices_moe_prefill_tiles() {
     check(std::abs(t / 0.0864 - 1) < 0.12, "an MoE's prefill linears by their tiles within 12 % of the census");
     ch::CardFacts v100 = board_card(0x1DB5);
     check(ch::prefill_linears_seconds(m, v100, q, 1819) == 0, "no int8 tile row on Volta: unknown");
+    // A route on a kept format the file does not tell (Gemma 4's GGUF MXFP4 experts, #769): the
+    // same price, transferred.
+    {
+        ch::QuantOption assumed      = q;
+        assumed.expert_banks_assumed = true;
+        bool was = false, is = false;
+        const double known = ch::prefill_linears_seconds(m, rtx4090, q, 1819, &was);
+        const double guess = ch::prefill_linears_seconds(m, rtx4090, assumed, 1819, &is);
+        check(guess == known && !was && is, "assumed banks: the same price, transferred");
+    }
     q.expert_banks = ch::ExpertBanks::Unknown;
     check(ch::prefill_linears_seconds(m, rtx4090, q, 1819) == 0, "unknown banks: unknown");
+}
+
+// The banks' GEMM follows the activations a candidate runs (#769): under --activations int8 the
+// start runs every routed bank at AllowA8 (models::effective_policy), so the prefill prices the
+// banks by their formats (QuantOption::expert_banks_int8); fast activations keep the recorded
+// policy's route; with no int8 route given, both read expert_banks.
+void moe_prefill_follows_the_activations(const json& fixture) {
+    const json& m35          = fixture.at("models").at("Qwen3.6-35B-A3B");
+    const ch::CardFacts card = card_of(fixture.at("cards").at("RTX 4090"));
+    ch::ModelFacts model     = model_at(m35, "UD-Q3_K_S");
+    // The banks' route reaches the prefill through its tiles (prefill_linears_seconds): the
+    // linears by shape, and the trunk's layers the small kernels count.
+    model.linears           = qwen36_moe_linears();
+    model.layers            = 40;
+    model.hidden            = 2048;
+    const ch::QuantOption q = quant_of("UD-Q3_K_S", m35.at("quants").at("UD-Q3_K_S"));
+    ch::Candidate fast;
+    fast.kv            = KvCacheStorage::Int8Group64;
+    fast.chunk         = 2048; // the chunk the tiles price
+    ch::Candidate int8 = fast;
+    int8.activations   = ActivationMode::Int8;
+    const auto prefill = [&](ch::ExpertBanks banks, std::optional<ch::ExpertBanks> under_int8,
+                             const ch::Candidate& c) {
+        ch::QuantOption o = q;
+        o.rest_weights    = ch::WeightClass::Q8; // the linears beside the experts on the int8 tiles
+        o.expert_banks    = banks;
+        o.expert_banks_int8 = under_int8;
+        return ch::speed_of(model, card, o, c, 1, 1536, 1536).prefill;
+    };
+    const double int8_banks = prefill(ch::ExpertBanks::Int8, std::nullopt, fast);
+    const double a16_banks  = prefill(ch::ExpertBanks::A16, std::nullopt, fast);
+    check(int8_banks > 0 && a16_banks > 0 && int8_banks != a16_banks,
+          "MoE prefill: the banks' route prices the prefill");
+    check(prefill(ch::ExpertBanks::A16, ch::ExpertBanks::Int8, int8) ==
+              prefill(ch::ExpertBanks::Int8, std::nullopt, int8),
+          "MoE prefill under int8: the formats' route");
+    check(prefill(ch::ExpertBanks::A16, ch::ExpertBanks::Int8, fast) == a16_banks,
+          "MoE prefill under fast activations: the recorded policy's route");
+    check(prefill(ch::ExpertBanks::A16, std::nullopt, int8) !=
+              prefill(ch::ExpertBanks::Int8, std::nullopt, int8),
+          "MoE prefill: no int8 route given, expert_banks under int8 too");
+    // An assumed route (Gemma 4's GGUF MXFP4 experts) where the tiles do not price it: linears
+    // beside the banks not Q8, so prefill_linears_seconds gives 0 and the share stands. The
+    // estimate is Transferred there too, where the same banks not assumed keep their basis (codex
+    // on #792).
+    {
+        ch::QuantOption k       = q;
+        k.rest_weights          = ch::WeightClass::KQuant;
+        k.expert_banks          = ch::ExpertBanks::Int8;
+        ch::QuantOption kk      = k;
+        kk.expert_banks_assumed = true;
+        const ch::Speed known   = ch::speed_of(model, card, k, fast, 1, 1536, 1536);
+        const ch::Speed assumed = ch::speed_of(model, card, kk, fast, 1, 1536, 1536);
+        check(ch::prefill_linears_seconds(model, card, kk, 2048) == 0 &&
+                  known.basis == ch::SpeedBasis::Own,
+              "MoE prefill, share path: K-quant linears, no tile price, the basis own");
+        check(assumed.basis == ch::SpeedBasis::Transferred && assumed.prefill == known.prefill,
+              "MoE prefill, share path: an assumed route Transferred at the same price");
+    }
 }
 
 // A dense model's Q8 linears by the same tiles: Qwen3.5 9B Q8_0, one 1819-token prompt in chunks
@@ -2440,8 +2530,64 @@ void choices_replay(const json& fixture) {
         (void)ch::replay_choice(old_record);
     } catch (const std::invalid_argument& e) { old_message = e.what(); }
     check(old_message.find("replay/1") != std::string::npos &&
-              old_message.find("replay/2") != std::string::npos,
+              old_message.find("replay/3") != std::string::npos,
           "a schema-1 record is refused with both versions named");
+    // A record of the schema before the banks' int8 route (/2) is refused too: its quantization
+    // has no expert_banks_int8 or expert_banks_assumed to replay.
+    {
+        auto two      = record.inputs;
+        two["schema"] = "ninferno-choice-replay/2";
+        two["quant"].erase("expert_banks_int8");
+        two["quant"].erase("expert_banks_assumed");
+        bool two_refused = false;
+        try {
+            (void)ch::replay_choice(two);
+        } catch (const std::invalid_argument&) { two_refused = true; }
+        check(two_refused, "a schema-2 record is refused");
+    }
+    // The banks' int8 route and the assumed flag go through the record (#769): an MoE whose banks
+    // are A16 under fast activations, Int8 under int8, on an assumed format, int8 pinned. The
+    // record replays to the same choice; without the two fields it would not.
+    {
+        const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
+        Bench moe{model_of(m35), card_of(fixture.at("cards").at("RTX 4090")), {}};
+        moe.model.linears      = qwen36_moe_linears();
+        moe.model.layers       = 40;
+        moe.model.hidden       = 2048;
+        ch::QuantOption q      = quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"));
+        q.rest_weights         = ch::WeightClass::Q8;
+        q.expert_banks         = ch::ExpertBanks::A16;
+        q.expert_banks_int8    = ch::ExpertBanks::Int8;
+        q.expert_banks_assumed = true;
+        moe.quants.push_back(q); // the oracle's weights
+        ch::Pins pins;
+        pins.activations              = ActivationMode::Int8;
+        const ch::Allowed moe_allowed = ch::allowed_axes(moe.model, KvCacheStorage::Int8Group64);
+        ch::Task task;
+        task.contexts = {4096, 2048};
+        const ch::ChoiceRecord rec =
+            ch::record_choice(moe.model, moe.card, q, moe_allowed, pins, task, oracle(moe, 40e9),
+                              ch::Gates{true, true});
+        const auto read_back = nlohmann::ordered_json::parse(rec.inputs.dump());
+        check(read_back.at("quant").at("expert_banks_int8") ==
+                      static_cast<int>(ch::ExpertBanks::Int8) &&
+                  read_back.at("quant").at("expert_banks_assumed") == true,
+              "replay: the banks' int8 route and the assumed flag are recorded");
+        check(ch::choice_summary(ch::replay_choice(read_back)) == ch::choice_summary(rec.choice),
+              "replay: an int8-pinned MoE on assumed banks replays to the same choice");
+        auto dropped                             = read_back;
+        dropped["quant"]["expert_banks_int8"]    = nullptr;
+        dropped["quant"]["expert_banks_assumed"] = false;
+        check(ch::choice_summary(ch::replay_choice(dropped)) != ch::choice_summary(rec.choice),
+              "replay: without the two fields the choice differs");
+        auto none                          = read_back;
+        none["quant"]["expert_banks_int8"] = nullptr;
+        bool none_read                     = true;
+        try {
+            (void)ch::replay_choice(none);
+        } catch (const std::exception&) { none_read = false; }
+        check(none_read, "replay: a null int8 route is read (none given)");
+    }
     auto no_gate = record.inputs;
     no_gate["gates"].erase("typed_resolution");
     bool gate_refused = false;
@@ -3511,6 +3657,7 @@ int main() {
     activations_by_generation(fixture);
     moe_family(fixture);
     moe_step_reads_the_route(fixture);
+    moe_prefill_follows_the_activations(fixture);
     prices_moe_prefill_tiles();
     prices_dense_prefill_tiles();
     prices_prefill_small_kernels();

@@ -326,6 +326,10 @@ json quant_json(const QuantOption& q) {
                 {"nvfp4", q.nvfp4},
                 {"weights", code(q.weights)},
                 {"expert_banks", code(q.expert_banks)},
+                // null: none given, expert_banks stands under int8 too
+                {"expert_banks_int8",
+                 q.expert_banks_int8 ? json(code(*q.expert_banks_int8)) : json(nullptr)},
+                {"expert_banks_assumed", q.expert_banks_assumed},
                 {"rest_weights", code(q.rest_weights)}};
 }
 
@@ -341,6 +345,10 @@ QuantOption quant_of(const json& j) {
     read(q.nvfp4, j.at("nvfp4"));
     q.weights             = enum_of<WeightClass>(j.at("weights"), 4);
     q.expert_banks        = enum_of<ExpertBanks>(j.at("expert_banks"), 4);
+    if (const json& int8 = j.at("expert_banks_int8"); !int8.is_null()) {
+        q.expert_banks_int8 = enum_of<ExpertBanks>(int8, 4);
+    }
+    read(q.expert_banks_assumed, j.at("expert_banks_assumed"));
     q.rest_weights        = enum_of<WeightClass>(j.at("rest_weights"), 4);
     return q;
 }

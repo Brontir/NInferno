@@ -67,6 +67,12 @@ void spellings() {
           "--moe-path sparse was accepted");
     check(refuses([] { (void)parse_prefill_route("MMQ"); }, {"--prefill-route"}),
           "spellings are case-sensitive, as every option's");
+    for (const RoutePolicy p : {RoutePolicy::Legacy, RoutePolicy::Evidence}) {
+        check(parse_route_policy(route_policy_name(p)) == p,
+              std::string("--route-policy round trip ") + route_policy_name(p));
+    }
+    check(refuses([] { (void)parse_route_policy("auto"); }, {"--route-policy", "evidence"}),
+          "--route-policy auto was accepted");
 }
 
 void engine_flags() {
@@ -88,9 +94,24 @@ void engine_flags() {
           "a pin is not auto by default");
     check(!(m == MaintainerOptions{}), "a pin does not enter MaintainerOptions' equality (the "
                                        "process-options lease compares it)");
-    for (const char* flag : {"--prefill-route", "--decode-route", "--moe-path"}) {
+    for (const char* flag : {"--prefill-route", "--decode-route", "--moe-path", "--route-policy"}) {
         check(std::string_view(product::kEngineFlagsUsage).find(flag) != std::string_view::npos,
               std::string("the engine usage omits ") + flag);
+    }
+    // --route-policy (#614 F1): legacy by default, parsed into the maintainer options, which the
+    // process-options lease compares; a scoring program takes it too.
+    {
+        MaintainerOptions p;
+        check(p.route_policy == RoutePolicy::Legacy, "--route-policy is not legacy by default");
+        check(product::parse_engine_flag(
+                  "--route-policy", [] { return std::string("evidence"); }, pacing, p,
+                  product::TunerFlags::Refused) &&
+                  p.route_policy == RoutePolicy::Evidence && !(p == MaintainerOptions{}),
+              "--route-policy evidence was not parsed into MaintainerOptions");
+        check(std::string_view(product::kScoringEngineFlagsUsage).find("--route-policy") !=
+                      std::string_view::npos &&
+                  !product::is_decode_only_flag("--route-policy"),
+              "a scoring program must take --route-policy");
     }
     check(std::string_view(product::kScoringEngineFlagsUsage).find("--decode-route") ==
                   std::string_view::npos &&
