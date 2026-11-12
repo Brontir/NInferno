@@ -156,6 +156,32 @@ equals S there. On the GV100 the `volta-tiled` rule decides, and it is what keep
 | RTX 5090 | T>=17 below ridge | cost-model | 60 | ranker 60 | +0.0% | +33.3% | +50.0% |
 | RTX 5090 | T>=17 above ridge | cost-model | 30 | ranker 30 | +0.0% | +5.8% | +11.1% |
 
+## Table exit metric (#616 step 9)
+
+The report's `table_exit` gives one entry per board. It is the number to watch over releases for
+whether the measured tables are still needed.
+- `answered_by` and `share` count the board's cases by the kind of answer. The kind comes from
+  the case's evidence:
+  - `table`: measured on this board;
+  - `carried`: borrowed, carried or transferred from another board;
+  - `priced`: the cost model's ranking;
+  - `rules`: any other rule or fallback of the selector;
+  - `pin`;
+  - `unknown`: a collection without the columns.
+- Of the board's measured overrides (`route-table`, `dense-tune`, `dense-tune-prefill-band`, the
+  ones `route_table_prune.py` prunes), the report splits them three ways:
+  - `caught_up`: the ranker's route is within the resolution of the override's (5 % by default,
+    `--resolution` there, `exit_resolution` here);
+  - `holds`: the ranker's route is still slower;
+  - `unscored`: the case has no ranker time.
+- `exit_share = caught_up / (caught_up + holds)`.
+
+As the cost model improves, `exit_share` rises toward 1, and `route_table_prune.py` deletes the
+entries that caught up. A board whose `table` share stays high while its `exit_share` is low still
+rests on its own measurements. The committed reports above were collected before the metric
+existed. They carry no per-case rows, so the first numbers come with the next regret run (#620
+step 10).
+
 ## What it found
 
 - **Turing (#781, #786):** the A8 routes were never priced (the gate read BF16-native MMA, not
