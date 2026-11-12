@@ -337,24 +337,20 @@ ninferno_add_op_test(ninferno_route_pin_selector_test
 # The same dump code as ninferno_selector_golden_test, built and linked with no CUDA runtime
 # (ninferno_ops_host): the committed goldens must read the same from a host-only selector (#620).
 # The stubs are the device seams (current_device_class, the device ordinal, the dense tuner, which
-# never times anything on a host with no device, the Volta CUTLASS route, which a host-only build
-# answers as compiled out, and the description of an executed kernel, which a host with no device
-# has none of). Not registered on an sm_70 tree built with CUTLASS: the real Volta CUTLASS route
-# is compiled there (volta_cutlass_compiled is true, generic_volta_cutlass.cu) and the goldens of
-# the Volta boards hold its tiled rows, which the stub, answering false, never takes; the device
-# test above covers that tree.
-if(NOT (NINFERNO_BUILD_ARCH STREQUAL "70" AND NINFERNO_VOLTA_CUTLASS))
-  ninferno_add_test(ninferno_selector_golden_host_test LABELS host golden slow
-    SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
-    LIBRARIES ninferno_ops_host)
-  target_sources(ninferno_selector_golden_host_test PRIVATE
-    ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
-    ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
-    ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
-  target_compile_definitions(ninferno_selector_golden_host_test PRIVATE
-    NINFERNO_HOST_ONLY
-    NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
-  cmake_language(DEFER CALL ninferno_assert_host_only ninferno_selector_golden_host_test)
-  # It dumps every board twice over (once a process per board, then all in one): minutes of CPU.
-  set_tests_properties(ninferno_selector_golden_host_test PROPERTIES TIMEOUT 1800)
-endif()
+# never times anything on a host with no device, and the description of an executed kernel, which a
+# host with no device has none of). The Volta CUTLASS route's sizes are host code
+# (generic_volta_cutlass_sizes.cpp, in ninferno_ops_host), so an sm_70 tree built with CUTLASS
+# answers here as its device build does: every tree registers the twin (#620 step 13).
+ninferno_add_test(ninferno_selector_golden_host_test LABELS host golden slow
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
+  LIBRARIES ninferno_ops_host)
+target_sources(ninferno_selector_golden_host_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
+target_compile_definitions(ninferno_selector_golden_host_test PRIVATE
+  NINFERNO_HOST_ONLY
+  NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_selector_golden_host_test)
+# It dumps every board twice over (once a process per board, then all in one): minutes of CPU.
+set_tests_properties(ninferno_selector_golden_host_test PROPERTIES TIMEOUT 1800)
