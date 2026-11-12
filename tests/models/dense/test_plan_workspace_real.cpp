@@ -9,13 +9,17 @@
 //
 // The artifacts: NINFERNO_TEST_PLAN_WORKSPACE_ARTIFACTS (paths joined by ':'), else the converted
 // artifacts in the Hugging Face cache (convert::default_hub_cache, ModelScope's repos under its
-// modelscope/ too): those ninferno-ui keeps (models--*/ninferno/<commit>/*.ninferno) and the
-// converter's cache (models--*/snapshots/<commit>/.ninferno-cache/*.ninferno); the smallest of
-// each family whose file fits this card's free memory. The scanned files and the picks are
-// printed. A family without one is skipped and said; none at all skips the test (77). A file in
-// this build's container (its "NInferno" magic) that the reader refuses fails the test: no silent
-// skip where artifacts exist. The scanner is checked first on a temporary layout (no GPU).
-// GPU.
+// modelscope/ too): those ninferno-ui keeps (models--*/ninferno/<commit>/*.ninferno, and a
+// conversion under options, ninferno/<commit>/options-<key>/, convert/acquire.cpp) and the
+// converter's cache (a .ninferno-cache/ anywhere under models--*/snapshots/). Of each family the
+// candidates that fit this card's free memory are tried smallest first: one whose load or plan says
+// this build or card cannot run it (an sm_120a-only format, a missing instruction) is reported and
+// the next is tried; any other error fails. The scanned files, the picks and the outcomes are
+// printed. A file in this build's container (its "NInferno" magic) that the reader refuses is
+// reported (the shared cache may hold another branch's conversion): a warning where an artifact
+// was tested, a failure where none was (no silent skip where artifacts exist). A family without a
+// candidate is skipped and said; nothing at all skips the test (77). The scanner and the verdict
+// are checked first on a temporary layout (no GPU). GPU.
 
 #include "artifact/reader.h"
 #include "convert/fetch.h"
@@ -68,39 +72,56 @@ bool family(const std::string& type) {
     return type == "dense_decoder" || type == "moe_decoder" || type == "nemotron_h";
 }
 
-// The .ninferno files of `dir` (none where it is not a directory).
-void ninferno_files(const fs::path& dir, std::vector<fs::path>& out) {
+// Calls `f` on each entry of `dir`, advancing with increment(error): a cache cleanup running beside
+// the scan ends the walk of that directory, never the test.
+template <class F>
+void each_entry(const fs::path& dir, F&& f) {
     std::error_code error;
-    for (const auto& file : fs::directory_iterator(dir, error)) {
-        std::error_code kind;
-        if (file.is_regular_file(kind) && file.path().extension() == ".ninferno") {
-            out.push_back(file.path());
-        }
+    for (fs::directory_iterator it(dir, error), end; !error && it != end; it.increment(error)) {
+        f(*it);
     }
 }
 
+bool is_ninferno(const fs::directory_entry& entry) {
+    std::error_code kind;
+    return entry.is_regular_file(kind) && entry.path().extension() == ".ninferno";
+}
+
 // Every converted artifact the hub cache `hub` holds, sorted: per repository (models--*, and
-// ModelScope's under modelscope/), ninferno-ui's kept conversions (ninferno/<commit>/, its
-// product/plan/plan_cached.cpp) and the converter's cache (snapshots/<commit>/.ninferno-cache/,
-// convert/cache.cpp).
+// ModelScope's under modelscope/), ninferno-ui's kept conversions (ninferno/<commit>/, and
+// ninferno/<commit>/options-<key>/: convert::conversion_directory) and the converter's cache (a
+// .ninferno-cache/ anywhere under snapshots/, as product/plan/plan_cached.cpp finds it).
 std::vector<fs::path> cached_artifacts(const fs::path& hub) {
     std::vector<fs::path> out;
+    const auto take = [&](const fs::directory_entry& entry) {
+        if (is_ninferno(entry)) { out.push_back(entry.path()); }
+    };
     for (const fs::path& root : {hub, hub / "modelscope"}) {
-        std::error_code error;
-        for (const auto& repo : fs::directory_iterator(root, error)) {
+        each_entry(root, [&](const fs::directory_entry& repo) {
             std::error_code kind;
             if (!repo.is_directory(kind) ||
                 !repo.path().filename().string().starts_with("models--")) {
-                continue;
+                return;
             }
-            std::error_code inner;
-            for (const auto& commit : fs::directory_iterator(repo.path() / "ninferno", inner)) {
-                ninferno_files(commit.path(), out);
+            each_entry(repo.path() / "ninferno", [&](const fs::directory_entry& commit) {
+                each_entry(commit.path(), [&](const fs::directory_entry& entry) {
+                    std::error_code dir_kind;
+                    if (entry.is_directory(dir_kind) &&
+                        entry.path().filename().string().starts_with("options-")) {
+                        each_entry(entry.path(), take);
+                    } else {
+                        take(entry);
+                    }
+                });
+            });
+            std::error_code error;
+            for (fs::recursive_directory_iterator it(repo.path() / "snapshots", error), end;
+                 !error && it != end; it.increment(error)) {
+                if (is_ninferno(*it) && it->path().parent_path().filename() == ".ninferno-cache") {
+                    out.push_back(it->path());
+                }
             }
-            for (const auto& commit : fs::directory_iterator(repo.path() / "snapshots", inner)) {
-                ninferno_files(commit.path() / ".ninferno-cache", out);
-            }
-        }
+        });
     }
     std::sort(out.begin(), out.end());
     return out;
@@ -137,18 +158,18 @@ Probe probe(const fs::path& path) {
     return out;
 }
 
-// The picks among `files`: the smallest of each family whose file fits `free_bytes` (the weights
-// and the arena: a fifth of the free memory left to the rest). `broken`: a file in this build's
-// container the reader refused (a bug path, not a skip). Says what it scanned and picked.
-struct Picks {
-    std::vector<fs::path> paths;
-    bool broken = false;
+// The scan's candidates: each family's readable files that fit `free_bytes` (the weights and the
+// arena: a fifth of the free memory left to the rest), smallest first; the files of this build's
+// container the reader refused (their family unknown). Says what it scanned.
+struct Candidates {
+    std::map<std::string, std::vector<fs::path>> family;
+    std::map<std::string, std::uintmax_t> too_large; // a family's smallest that does not fit
+    std::vector<fs::path> refused;
 };
 
-Picks pick(const std::vector<fs::path>& files, std::size_t free_bytes) {
-    Picks out;
-    std::map<std::string, std::pair<std::uintmax_t, fs::path>> smallest;
-    std::map<std::string, std::uintmax_t> too_large;
+Candidates candidates(const std::vector<fs::path>& files, std::size_t free_bytes) {
+    Candidates out;
+    std::map<std::string, std::vector<std::pair<std::uintmax_t, fs::path>>> sized;
     for (const fs::path& file : files) {
         const Probe p = probe(file);
         std::error_code size_error;
@@ -160,35 +181,48 @@ Picks pick(const std::vector<fs::path>& files, std::size_t free_bytes) {
         }
         if (!p.error.empty() || size_error) {
             std::cout << "REFUSED: " << (p.error.empty() ? size_error.message() : p.error) << '\n';
-            out.broken = true;
+            out.refused.push_back(file);
             continue;
         }
         std::cout << p.type << ", " << bytes << " bytes\n";
         if (!family(p.type)) { continue; }
         if (bytes > free_bytes / 5 * 4) {
-            too_large[p.type] = bytes;
+            auto& smallest = out.too_large[p.type];
+            smallest       = smallest == 0 ? bytes : std::min<std::uintmax_t>(smallest, bytes);
             continue;
         }
-        auto& best = smallest[p.type];
-        if (best.second.empty() || bytes < best.first) { best = {bytes, file}; }
+        sized[p.type].push_back({bytes, file});
     }
-    for (const char* type : {"dense_decoder", "moe_decoder", "nemotron_h"}) {
-        if (const auto it = smallest.find(type); it != smallest.end()) {
-            std::cout << "picked " << type << ": " << it->second.second << '\n';
-            out.paths.push_back(it->second.second);
-        } else if (too_large.contains(type)) {
-            std::cout << "skip " << type << ": its cached artifacts do not fit this card's "
-                      << free_bytes << " free bytes\n";
-        } else {
-            std::cout << "skip " << type << ": no cached artifact of it\n";
-        }
+    for (auto& [type, files_of] : sized) {
+        std::sort(files_of.begin(), files_of.end());
+        for (const auto& [bytes, file] : files_of) { out.family[type].push_back(file); }
     }
     return out;
 }
 
-// The scanner over a temporary layout: both locations found, only .ninferno files, ModelScope's
-// repositories included; a file in this build's container the reader refuses is broken, an older
-// container's is not read.
+// Whether `error` says this build or this card cannot run the artifact (its formats or the
+// instructions it needs), not that the start or the plan went wrong: linear.cpp's and
+// generic_gemm.cpp's sm_120a-only NVFP4 paths, a format this build has no kernels for, and
+// require_device_support's missing instructions.
+bool unsupported_here(const std::string& error) {
+    for (const char* says : {"sm_120a path", "this build has no kernels", "cannot run on"}) {
+        if (error.find(says) != std::string::npos) { return true; }
+    }
+    return false;
+}
+
+// The run's outcome where nothing else failed: 1 where files of this build's container were
+// refused and no artifact was tested (whatever families they hold, none was read and tested); 77
+// where nothing was tested and nothing refused; else 0, the refusals warnings beside a test.
+int verdict(std::size_t tested, std::size_t refused) {
+    if (tested == 0) { return refused != 0 ? 1 : 77; }
+    return 0;
+}
+
+// The scanner, the classifier and the verdict over a temporary layout: every location found
+// (a kept conversion, one under options, the converter's cache however deep, ModelScope's), only
+// .ninferno files; a file of this build's container the reader refuses is listed refused, an older
+// container's is not read; refusals fail only where nothing was tested.
 bool scanner_checks() {
     const fs::path root =
         fs::temp_directory_path() /
@@ -199,54 +233,65 @@ bool scanner_checks() {
         fs::create_directories(path.parent_path());
         std::ofstream(path, std::ios::binary) << bytes;
     };
-    const fs::path kept   = root / "models--org--a" / "ninferno" / "c1" / "a.Q4_K_M.ninferno";
-    const fs::path cached = root / "models--org--a" / "snapshots" / "c1" / ".ninferno-cache" /
-                            "a-Q8_0.dense_bf16.ninferno";
+    const fs::path repo    = root / "models--org--a";
+    const fs::path kept    = repo / "ninferno" / "c1" / "a.Q4_K_M.ninferno";
+    const fs::path options = repo / "ninferno" / "c1" / "options-0123abcd" / "a.Q4_K_M.ninferno";
+    const fs::path cached = repo / "snapshots" / "c1" / ".ninferno-cache" / "a-Q8_0.dense.ninferno";
+    const fs::path nested = repo / "snapshots" / "c1" / "q8" / ".ninferno-cache" / "a.ninferno";
     const fs::path scope =
         root / "modelscope" / "models--org--b" / "ninferno" / "c2" / "b.ninferno";
-    touch(kept, "NINFER, an older container");
+    for (const fs::path& older : {kept, options, nested, scope}) {
+        touch(older, "NINFER, an older container");
+    }
     touch(cached, "NInferno and then garbage");
-    touch(scope, "NINFER, an older container");
-    touch(root / "models--org--a" / "snapshots" / "c1" / "a-Q8_0.gguf", "GGUF");
-    touch(root / "models--org--a" / "ninferno" / "c1" / "a.ninfer", "NINFER");
-    touch(root / "models--org--a" / "snapshots" / "c1" / "a.ninferno", "not in the cache dir");
+    touch(repo / "snapshots" / "c1" / "a-Q8_0.gguf", "GGUF");
+    touch(repo / "ninferno" / "c1" / "a.ninfer", "NINFER");
+    touch(repo / "ninferno" / "c1" / "a.ninferno.relayout-journal", "NInferno");
+    touch(repo / "snapshots" / "c1" / "a.ninferno", "not in the cache dir");
     touch(root / "other--x" / "ninferno" / "c" / "x.ninferno", "not a repository");
     const auto found           = cached_artifacts(root);
-    std::vector<fs::path> want = {cached, kept, scope};
+    std::vector<fs::path> want = {cached, kept, nested, options, scope};
     std::sort(want.begin(), want.end());
-    bool ok = true;
-    if (found != want) {
-        std::cerr << "FAIL: the scanner found " << found.size() << " file(s), not the 3 laid out\n";
-        ok = false;
-    }
-    const Picks picks = pick(found, std::size_t{1} << 40);
-    if (!picks.broken || !picks.paths.empty()) {
-        std::cerr << "FAIL: a refused file in this build's container is not reported broken\n";
-        ok = false;
-    }
-    const Picks older = pick({kept, scope}, std::size_t{1} << 40);
-    if (older.broken || !older.paths.empty()) {
-        std::cerr << "FAIL: an older container's file is not skipped\n";
-        ok = false;
-    }
+    bool ok          = true;
+    const auto fails = [&](bool bad, const std::string& what) {
+        if (bad) {
+            std::cerr << "FAIL: scanner self-check: " << what << '\n';
+            ok = false;
+        }
+    };
+    fails(found != want, "found " + std::to_string(found.size()) + " file(s), not the 5 laid out");
+    const Candidates all = candidates(found, std::size_t{1} << 40);
+    fails(all.refused != std::vector<fs::path>{cached} || !all.family.empty(),
+          "the garbage in this build's container is not the one refused file");
+    const Candidates older = candidates({kept, scope}, std::size_t{1} << 40);
+    fails(!older.refused.empty() || !older.family.empty(), "an older container's file is read");
+    fails(verdict(0, 1) != 1, "refused files with nothing tested do not fail");
+    fails(verdict(1, 1) != 0, "refused files beside a tested artifact are not warnings");
+    fails(verdict(0, 0) != 77, "nothing to test does not skip");
+    fails(!unsupported_here("NVFP4 linear is a sm_120a path; this build has no kernels") ||
+              !unsupported_here("nemotron_h runtime cannot run on RTX 2080 Ti (sm_75): missing "
+                                "BF16 mma.sync") ||
+              unsupported_here("kv_capacity is outside the usable range"),
+          "the unsupported-here classifier");
     fs::remove_all(root);
     return ok;
 }
 
-// The artifacts to check: the environment's list, else the cache's picks.
-Picks artifacts(std::size_t free_bytes) {
+// The candidates to check: the environment's list (each probed the same way), else the cache's.
+Candidates artifacts(std::size_t free_bytes) {
     if (const char* env = std::getenv("NINFERNO_TEST_PLAN_WORKSPACE_ARTIFACTS"); env && *env) {
-        Picks out;
+        std::vector<fs::path> files;
         std::stringstream paths(env);
         std::string path;
         while (std::getline(paths, path, ':')) {
-            if (!path.empty()) { out.paths.emplace_back(path); }
+            if (!path.empty()) { files.emplace_back(path); }
         }
-        return out;
+        std::cout << "the artifacts NINFERNO_TEST_PLAN_WORKSPACE_ARTIFACTS names\n";
+        return candidates(files, free_bytes);
     }
     const fs::path hub = convert::default_hub_cache();
     std::cout << "scanning " << hub << '\n';
-    return pick(cached_artifacts(hub), free_bytes);
+    return candidates(cached_artifacts(hub), free_bytes);
 }
 
 // The plan a start's planner lays out for `options` (make_sequence_planner_impl: the options the
@@ -322,6 +367,63 @@ void run(const fs::path& path, DeviceContext& device) {
     }
 }
 
+// The families' candidates in order, each family's first that this build and card can run
+// tested; returns how many were tested.
+std::size_t test_families(const Candidates& found, DeviceContext* device, std::size_t free_bytes) {
+    std::size_t tested = 0;
+    for (const char* type : {"dense_decoder", "moe_decoder", "nemotron_h"}) {
+        const auto it = found.family.find(type);
+        if (it == found.family.end()) {
+            if (const auto large = found.too_large.find(type); large != found.too_large.end()) {
+                std::cout << "skip " << type << ": its smallest cached artifact (" << large->second
+                          << " bytes) does not fit this card's " << free_bytes << " free bytes\n";
+            } else {
+                std::cout << "skip " << type << ": no cached artifact of it\n";
+            }
+            continue;
+        }
+        bool done = false;
+        for (const fs::path& path : it->second) {
+            std::cout << "picked " << type << ": " << path << '\n';
+            if (device == nullptr) { // --scan-only: the pick alone
+                done = true;
+                break;
+            }
+            try {
+                run(path, *device);
+                done = true;
+            } catch (const std::exception& error) {
+                if (unsupported_here(error.what())) {
+                    std::cout << "  not runnable on this build or card (" << error.what()
+                              << "): the next candidate\n";
+                    continue;
+                }
+                check(false, path.string() + ": " + error.what());
+                done = true; // failed, said: not a skip
+            }
+            break;
+        }
+        if (done) {
+            ++tested;
+        } else {
+            std::cout << "skip " << type << ": none of its cached artifacts runs on this build "
+                      << "or card\n";
+        }
+    }
+    return tested;
+}
+
+// Says the outcome of the scan: a refusal is a warning where an artifact was tested, a failure
+// where none was.
+int outcome(const Candidates& found, std::size_t tested) {
+    const int v = verdict(tested, found.refused.size());
+    for (const fs::path& file : found.refused) {
+        std::cout << (v == 1 ? "FAIL: " : "WARNING: ") << "refused " << file
+                  << (v == 1 ? " and nothing was tested\n" : " (another artifact was tested)\n");
+    }
+    return v;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -330,11 +432,10 @@ int main(int argc, char** argv) {
         if (!scanner_checks()) { return 1; }
         if (argc > 1 && std::string(argv[1]) == "--scan-only") {
             // The host's own cache scanned and picked as the GPU run would, any size: no device.
-            const fs::path hub = convert::default_hub_cache();
-            std::cout << "scanning " << hub << '\n';
-            const Picks picks =
-                pick(cached_artifacts(hub), std::numeric_limits<std::size_t>::max());
-            return picks.broken ? 1 : 0;
+            const std::size_t any  = std::numeric_limits<std::size_t>::max();
+            const Candidates found = artifacts(any);
+            const int v            = outcome(found, test_families(found, nullptr, any));
+            return v == 77 ? 0 : v;
         }
         rt::register_plan_workspace_queries();
         int count = 0;
@@ -348,17 +449,15 @@ int main(int argc, char** argv) {
             std::cout << "SKIP: the device's memory is not known\n";
             return 77;
         }
-        const Picks picks = artifacts(free_bytes);
-        check(!picks.broken, "every cached artifact in this build's container is read (REFUSED "
-                             "above: a bug path, not a skip)");
-        const std::vector<fs::path>& paths = picks.paths;
-        if (paths.empty() && !picks.broken) {
-            std::cout << "SKIP: no dense_decoder, moe_decoder or nemotron_h artifact (set "
-                         "NINFERNO_TEST_PLAN_WORKSPACE_ARTIFACTS or convert one into the Hugging "
-                         "Face cache)\n";
+        const Candidates found = artifacts(free_bytes);
+        const int v            = outcome(found, test_families(found, &device, free_bytes));
+        if (failures == 0 && v == 77) {
+            std::cout << "SKIP: no dense_decoder, moe_decoder or nemotron_h artifact this build "
+                         "and card run (set NINFERNO_TEST_PLAN_WORKSPACE_ARTIFACTS or convert one "
+                         "into the Hugging Face cache)\n";
             return 77;
         }
-        for (const auto& path : paths) { run(path, device); }
+        if (v == 1) { ++failures; }
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;

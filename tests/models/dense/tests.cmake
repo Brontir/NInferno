@@ -17,11 +17,11 @@ target_include_directories(ninferno_decoder_plan_workspace_test PRIVATE
 
 # The same against a real start (#615 W3): one dense_decoder, one moe_decoder and one nemotron_h
 # artifact loaded as ninferno-serve loads them; the start's planned arena equals --plan's workspace
-# to the byte, fast and exact. NINFERNO_TEST_PLAN_WORKSPACE_ARTIFACTS names them, else the smallest
-# converted artifact of each family in the Hugging Face cache (models--*/ninferno/<commit>/ and
-# snapshots/<commit>/.ninferno-cache/) that fits the card; none skips, a cached artifact of this
-# container the reader refuses fails. `--scan-only` scans and picks without a device.
-# GPU + artifacts.
+# to the byte, fast and exact. NINFERNO_TEST_PLAN_WORKSPACE_ARTIFACTS names them, else the converted
+# artifacts in the Hugging Face cache (models--*/ninferno/<commit>/[options-<key>/] and any
+# .ninferno-cache/ under snapshots/), each family's smallest that fits and runs on this build and
+# card. None skips; a refused file of this container warns beside a tested artifact and fails where
+# none was tested. `--scan-only` scans and picks without a device. GPU + artifacts.
 ninferno_add_test(ninferno_decoder_plan_workspace_real_test LABELS real gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_plan_workspace_real.cpp"
   LIBRARIES ninferno_product_plan ninferno_engine ninferno_model_runtime ninferno_convert
