@@ -33,7 +33,8 @@ namespace ninferno::product {
 // routed layers, each kind's routed bytes at the kernels the op answers for it (Unknown where it
 // does not), the answers kept per rows and activations. Left unset where no query is registered
 // (a program that does not link the Ops: ninferno-ui), the model is dense, or the facts list no
-// routed layers.
+// routed layers. Where no query is registered and the model is an MoE, it marks the model
+// (ModelFacts::moe_route_unqueried): its decode estimates are Transferred past one row.
 void with_moe_routes(choice::ModelFacts& model, const PlanSourceFacts& facts,
                      const runtime::PlanDeviceFacts& device);
 

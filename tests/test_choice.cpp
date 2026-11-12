@@ -1398,14 +1398,27 @@ void moe_step_reads_the_route(const json& fixture) {
         const ch::ModelFacts mixed =
             with({{ch::ExpertKernel::R8, ch::ExpertKernel::RegisterMma, 3},
                   {ch::ExpertKernel::Unknown, ch::ExpertKernel::Unknown, 1}});
+        // No route query to ask (ninferno-ui, #766): the measured pair's price, never Own past
+        // one row.
+        ch::ModelFacts unqueried      = plain;
+        unqueried.moe_route_unqueried = true;
         for (const std::uint32_t rows : {1U, 2U, 4U, 8U}) {
             const ch::Speed a    = ch::speed_of(plain, card, q, c, rows, 1536, 0);
             const ch::Speed b    = ch::speed_of(measured, card, q, c, rows, 1536, 0);
             const ch::Speed r    = ch::speed_of(rmma, card, q, c, rows, 1536, 0);
             const ch::Speed x    = ch::speed_of(mixed, card, q, c, rows, 1536, 0);
+            const ch::Speed u    = ch::speed_of(unqueried, card, q, c, rows, 1536, 0);
             const std::string at = std::string(card_name) + " x" + std::to_string(rows);
-            check(b.decode_per_stream == a.decode_per_stream && b.basis == a.basis,
+            check(b.decode_per_stream == a.decode_per_stream && b.basis == a.basis && b.why.empty(),
                   "MoE step: the measured pair is the price of not asking (" + at + ")");
+            check(u.decode_per_stream == a.decode_per_stream,
+                  "MoE step: unqueried, the measured pair's share (" + at + ")");
+            check(rows > 1
+                      ? u.basis == ch::SpeedBasis::Transferred && u.why == "MoE route not queried"
+                      : u.basis == a.basis && u.why.empty(),
+                  "MoE step: unqueried, transferred past one row and says why (" + at + ")");
+            check(rows == 1 || x.why == "MoE route not answered",
+                  "MoE step: a kind with no answer says why (" + at + ")");
             check(std::abs(r.decode_per_stream / a.decode_per_stream - 1) < 1e-12 &&
                       std::abs(x.decode_per_stream / a.decode_per_stream - 1) < 1e-12,
                   "MoE step: an unmeasured pair keeps the measured pair's share (" + at + ")");

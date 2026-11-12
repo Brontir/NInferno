@@ -1403,10 +1403,23 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
         };
         if (asked > 0) {
             for (const MoeStepRoute& r : routes) {
-                if (r.share > 0) { reads += r.share / asked * routed_read / at(&r); }
+                if (r.share <= 0) { continue; }
+                reads += r.share / asked * routed_read / at(&r);
+                // A kind the query gave no kernels for: moe_routed_eta's measured pair,
+                // Transferred.
+                if (rows > 1 &&
+                    (r.gate_up == ExpertKernel::Unknown || r.down == ExpertKernel::Unknown)) {
+                    out.why = "MoE route not answered";
+                }
             }
         } else {
             reads += routed_read / at(nullptr);
+            // No query to ask (#766): the measured pair's share, but not the op's answer. One row
+            // reads at kDramEta whatever the pair (moe_routed_eta), so it stays as it is.
+            if (model.moe_route_unqueried && rows > 1) {
+                transferred = true;
+                out.why     = "MoE route not queried";
+            }
         }
     }
     bool flops_transferred = false;
@@ -1449,6 +1462,9 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
                       : transferred || prefill_transferred        ? SpeedBasis::Transferred
                                                                   : SpeedBasis::Own;
     out.transferred = out.basis != SpeedBasis::Own;
+    // A lent generation's estimate rests on another generation's rows whatever the route: the
+    // lent row is its reason, not the MoE step's.
+    if (out.basis != SpeedBasis::Transferred) { out.why = {}; }
     return out;
 }
 
