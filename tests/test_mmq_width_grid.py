@@ -953,13 +953,14 @@ class LaunchLaw(Base):
         # the work table, the widest tile 128), on the LaunchFacts it states, is the pick this copy of
         # the law makes: the least launch_seconds among the production widths, the narrower on a tie
         # (mmq_columns::pick keeps the first of the ascending widths on an equal cost). A change of
-        # launch_of, launch_seconds or the pins that this copy does not follow fails here (#772).
-        src = (Path(__file__).resolve().parents[1] / "tests" / "test_choice.cpp").read_text()
+        # launch_of, launch_seconds, the facts row or the pins that moves a pinned pick, and that this
+        # copy does not follow, fails here (#772); one that moves no pinned pick is not caught.
+        src = (Path(__file__).resolve().parents[1] / "tests" / "test_choice.cpp").read_text(encoding="utf-8")
         facts = {m[1]: (int(m[2]), int(m[3]), int(m[4]), float(m[5]), float(m[6])) for m in re.finditer(
             r"LaunchFacts\s+(\w+)\{(\d+),\s*(\d+),\s*(\d+),\s*([0-9.e+]+),\s*([0-9.e+]+)\}", src)}
         pins = [(int(m[1]), m[2], int(m[3])) for m in re.finditer(
             r"pick\((\d+),\s*7,\s*5,\s*true,\s*128,\s*(\w+)\)\s*==\s*(\d+)", src)]
-        self.assertGreaterEqual(len(pins), 13)
+        self.assertEqual(len(pins), 13)
         for cols, name, want in pins:
             rows, k, sms, clock, dram = facts[name]
             # The pins' board is the law's: the facts row the module reads.
