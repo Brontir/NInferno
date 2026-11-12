@@ -201,6 +201,11 @@ class Merge(unittest.TestCase):
         self.assertEqual([(f["card"], f["path"]) for f in doc["files"]],
                          [("rtx3060", "y.csv"), ("rtx3060", "z.csv"), ("rtx4090", "x.csv")])
         self.assertEqual(doc["totals"]["rtx3060"], {"routes": 0, "selected": 1, "errors": 1, "bytes": 5})
+        # An unreadable sweep counts among the errors, not the sweeps.
+        bad = {"schema": sm.SCHEMA, "card": "rtx5090",
+               "files": [{"path": "w.csv", "kind": "routes", "bytes": 3, "error": "unreadable rows"}]}
+        self.assertEqual(sm.merge([("b", bad)])["totals"]["rtx5090"],
+                         {"routes": 0, "selected": 0, "errors": 1, "bytes": 3})
         # A card whose scan found no route_tune CSV: zero totals, and a summary section.
         empty = {"schema": sm.SCHEMA, "card": "gv100", "files": []}
         doc = sm.merge([("a", a), ("e", empty)])

@@ -207,7 +207,9 @@ def merge(scans):
         t = totals[f["card"]]
         if "error" in f:
             t["errors"] += 1
-        if f.get("kind") in ("routes", "selected"):
+        # A card's sweeps and selections are its readable ones, as the summary's rows count them;
+        # an unreadable file counts among its errors only.
+        elif f.get("kind") in ("routes", "selected"):
             t[f["kind"]] += 1
         t["bytes"] += f.get("bytes", 0)
     return {"schema": SCHEMA, "cards": sorted(cards), "totals": totals, "files": files}
