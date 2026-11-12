@@ -843,7 +843,7 @@ const std::vector<NotRule>& not_rules() {
         {"generic_tiled.cuh", "kBlockBytes", 1, "a codec's block size (a layout fact)"},
         {"generic_tiled.cuh", "kGroupBytes", 1, "a codec's group size (a layout fact)"},
         {"generic_tiled.cuh", "kMinTerm", 5, "a kernel's own accumulation term (a codec fact)"},
-        {"generic_volta_cutlass.cu", "kChunkWeightBytes", 1,
+        {"generic_volta_cutlass_sizes.cpp", "kChunkWeightBytes", 1,
          "Volta's decode chunk: 140 MiB of FP16 (a scratch size, derived in the comment from the "
          "memory it may take)"},
         {"generic_volta_gemv.cu", "kBlockBytes", 1, "a codec's block size (a layout fact)"},

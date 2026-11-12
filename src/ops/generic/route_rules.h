@@ -728,7 +728,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "pre-quantized verify form; T = 1 is the decode rule (kR8DecodeTokens; the 2 is a bare "
      "literal, the complement of that rule, not defined from it); no board or margin recorded",
      ""},
-    {"kMinChunkWeightRows", Basis::Unknown, "generic_volta_cutlass.cu",
+    {"kMinChunkWeightRows", Basis::Unknown, "generic_volta_cutlass_sizes.cpp",
      "constexpr std::int32_t kMinChunkWeightRows = 256;", 256, "gv100:80sm", "V100 (80 SMs)",
      "the fewest weight rows a decode chunk holds: a fixed 4096 rows split the 27B gate_up "
      "(34816 x 5120) into nine GEMMs of 3.2 CTA waves each, one chunk of a third of it runs 10.8 "
