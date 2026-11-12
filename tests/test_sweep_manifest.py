@@ -69,6 +69,41 @@ class Scan(unittest.TestCase):
         self.assertEqual((sel["kind"], sel["rows"], sel["authority_column"]), ("selected", 1, False))
         self.assertIn("error", by["bad/short.csv"])  # listed with its error, not dropped
 
+    def test_a_cut_row_a_bom_and_a_vanished_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # A sweep killed mid-write: its last row stops after T. Recorded with its error.
+            (root / "cut.csv").write_text("format,compute,epilogue,n,k,T,route,median_us\n"
+                                          "q4k,a16,store,4096,4096,16,r8,1.5\n"
+                                          "q4k,a16,store,4096,4096,32\n")
+            # A byte-order mark before the header is still route_tune's header.
+            (root / "bom.csv").write_bytes(b"\xef\xbb\xbf" + ROUTES_OLD.encode())
+            by = {f["path"]: f for f in sm.scan(root, "rtx4090")["files"]}
+            # The cut row is left out and named; the rest is described.
+            self.assertNotIn("error", by["cut.csv"])
+            self.assertEqual((by["cut.csv"]["rows"], by["cut.csv"]["cut_last_row"]), (1, 3))
+            # A short row that is not the last makes the file unreadable.
+            (root / "mid.csv").write_text("format,compute,epilogue,n,k,T,route,median_us\n"
+                                          "q4k,a16,store,4096,4096,32\n"
+                                          "q4k,a16,store,4096,4096,16,r8,1.5\n")
+            by = {f["path"]: f for f in sm.scan(root, "rtx4090")["files"]}
+            self.assertIn("line 2 has too few columns", by["mid.csv"]["error"])
+            text = sm.summary(sm.merge([("s", {"schema": sm.SCHEMA, "card": "rtx4090",
+                                              "files": list(by.values())})]))
+            self.assertIn("(1 unreadable, 1 cut)", text)
+            self.assertEqual((by["bom.csv"]["kind"], by["bom.csv"]["rows"]), ("routes", 1))
+            # A file removed between the read and the stat is listed with its error.
+            real = Path.stat
+
+            def stat(self, *a, **k):
+                if self.name == "bom.csv" and not k and not a:
+                    raise FileNotFoundError(2, "No such file or directory")
+                return real(self, *a, **k)
+
+            with unittest.mock.patch.object(Path, "stat", stat):
+                by = {f["path"]: f for f in sm.scan(root, "rtx4090")["files"]}
+            self.assertIn("No such file", by["bom.csv"]["error"])
+
     def test_build_trees_are_not_walked(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

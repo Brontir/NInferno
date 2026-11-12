@@ -14,7 +14,8 @@ relative to ROOT, size, SHA-256 and modification date; the rows; the formats, co
 problems and widths it covers; its run, device and timing protocol where the file names them (files
 from before route_tune wrote those columns say "unnamed"); for a sweep, whether it carries the cost
 model's price (`model_us`) and with how many significant digits (six before route_tune printed 17,
-too few to tell a tie, see regret_bands.py); and the `--selected-out` files of the same directory,
+too few to tell a tie, see regret_bands.py); a last row cut short (a sweep killed mid-write) is left
+out and its line recorded as `cut_last_row`; and the `--selected-out` files of the same directory,
 the pairs a regret run needs. A file that cannot be read is listed with its error, not dropped.
 
 `merge` joins the per-card scans into one document sorted by card and path, refusing one card
@@ -71,27 +72,41 @@ def named(rows, column, first_word=False):
 
 
 def describe(path, root):
-    """One file's record, or None when it is no route_tune CSV."""
+    """One file's record, or None when it is no route_tune CSV. The header is read first, so an
+    unrelated CSV is not read whole; a UTF-8 byte-order mark before it is allowed."""
+    rel = path.relative_to(root).as_posix()
     try:
-        data = path.read_bytes()
-    except OSError as error:
-        return {"path": path.relative_to(root).as_posix(), "error": str(error)}
-    text = data.decode("utf-8", errors="replace")
-    reader = csv.reader(text.splitlines())
-    header = next(reader, None)
-    kind = kind_of(header) if header else None
-    if kind is None:
-        return None
+        with path.open("rb") as f:
+            first = f.readline(1 << 16)
+            line = first.decode("utf-8-sig", errors="replace")
+            header = next(csv.reader([line]), None)
+            kind = kind_of(header) if header else None
+            if kind is None:
+                return None
+            data = first + f.read()
+        modified = path.stat().st_mtime
+    except OSError as error:  # unreadable, or removed while the scan ran
+        return {"path": rel, "error": str(error)}
+    text = data.decode("utf-8-sig", errors="replace")
     record = {
-        "path": path.relative_to(root).as_posix(),
+        "path": rel,
         "kind": kind,
         "bytes": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),
-        "modified": datetime.datetime.fromtimestamp(path.stat().st_mtime,
+        "modified": datetime.datetime.fromtimestamp(modified,
                                                     datetime.timezone.utc).strftime("%Y-%m-%d"),
     }
     try:
         rows = list(csv.DictReader(text.splitlines()))
+        short = lambda r: any(r.get(c) is None for c in header) or None in r  # noqa: E731
+        # A sweep killed mid-write ends in a cut row: that row is left out and said so
+        # (`cut_last_row`, its line). A short or long row anywhere else makes the file unreadable.
+        if rows and short(rows[-1]) and None not in rows[-1]:
+            record["cut_last_row"] = len(rows) + 1
+            rows.pop()
+        for i, r in enumerate(rows, 2):
+            if short(r):
+                raise ValueError(f"line {i} has {'too few' if None not in r else 'too many'} columns")
         widths = sorted({int(r["T"]) for r in rows})
         record.update({
             "rows": len(rows),
@@ -112,7 +127,7 @@ def describe(path, root):
             record["model_us_digits"] = max((significant_digits(v) for v in priced), default=0)
         else:
             record["authority_column"] = "authority" in rows[0] if rows else False
-    except (KeyError, ValueError, TypeError) as error:  # a short or malformed row
+    except (KeyError, ValueError, TypeError, AttributeError) as error:  # a short or malformed row
         record["error"] = f"unreadable rows: {error}"
     return record
 
@@ -222,8 +237,11 @@ def summary(document):
                 f"{named_files}/{len(ok)}",
                 span(f["modified"] for f in fs if "modified" in f),
             ]
-            if len(ok) != len(fs):
-                cells[0] += f" ({len(fs) - len(ok)} unreadable)"
+            notes = [f"{len(fs) - len(ok)} unreadable"] if len(ok) != len(fs) else []
+            cut = sum(1 for f in ok if "cut_last_row" in f)
+            notes += [f"{cut} cut"] if cut else []
+            if notes:
+                cells[0] += f" ({', '.join(notes)})"
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
     return "\n".join(lines)
