@@ -45,6 +45,8 @@
 #include "core/device_class.h"
 #include "core/machine_facts.h"
 #include "core/weight_view.h"
+#include "models/qwen3_5/program/planning/sequence_bytes.h"
+#include "models/qwen3_5/program/planning/sequence_plan.h"
 #include "ninferno/ops/gemma4_attention.h"
 #include "ninferno/ops/gemma4_moe.h"
 #include "ninferno/ops/linear.h"
@@ -385,13 +387,41 @@ std::string gemma_pieces(const NamedBoard& b, const Subject& s) {
     const rt::PlanModelFacts& m = s.facts;
     const auto chunk =
         static_cast<std::int32_t>(std::min(s.options.prefill_chunk, s.options.max_context));
-    const auto batch   = static_cast<std::int32_t>(s.concurrency);
-    const bool mtp     = s.options.speculative.backend == SpeculativeBackend::Mtp;
-    const auto round   = static_cast<std::int32_t>(s.options.speculative.draft_tokens) + 1;
-    const auto context = static_cast<std::int32_t>(s.options.max_context);
+    const auto batch                  = static_cast<std::int32_t>(s.concurrency);
+    const bool mtp                    = s.options.speculative.backend == SpeculativeBackend::Mtp;
+    const auto context                = static_cast<std::int32_t>(s.options.max_context);
     std::vector<std::int32_t> columns = {1, batch, chunk};
-    if (mtp) { columns.push_back(batch * round); }
-    std::string out;
+    // The MTP round as a start lays it out (plan_workspace.cpp gemma4_workspace): the copy window
+    // resolved by Gemma 4's rule (an automatic one widens the 3 drafts asked to its own window),
+    // the round's rows and columns from the resolved launch windows. The configured depth's
+    // columns too.
+    std::int32_t width = 1, rows = 0;
+    if (mtp) {
+        namespace detail        = models::qwen3_5::detail;
+        const bool copy_rounds  = detail::family_copy_rounds(models::StateFamily::Gemma4);
+        EngineOptions planned   = s.options;
+        planned.max_concurrency = s.concurrency;
+        planned.speculative     = detail::resolve_copy_window(planned.speculative, copy_rounds);
+        const detail::SequencePlanningInputs in =
+            detail::sequence_planning_inputs(planned, copy_rounds, 0, false);
+        detail::SequencePlanImpl plan;
+        plan.max_concurrency         = in.max_concurrency;
+        plan.draft_window            = in.draft_window;
+        plan.launch_windows          = in.launch_windows;
+        plan.launch_window_batches   = in.launch_window_batches;
+        plan.speculative_batch_limit = in.speculative_batch_limit;
+        plan.speculative_backend     = in.speculative_backend;
+        width                        = static_cast<std::int32_t>(plan.draft_window) + 1;
+        rows = static_cast<std::int32_t>(detail::speculative_round_batches(plan));
+        check(width >= static_cast<std::int32_t>(s.options.speculative.draft_tokens) + 1 &&
+                  rows > 0,
+              b.name + ", " + s.name + ": the resolved MTP round covers the asked depth");
+        columns.push_back(batch *
+                          (static_cast<std::int32_t>(s.options.speculative.draft_tokens) + 1));
+        columns.push_back(static_cast<std::int32_t>(detail::speculative_round_columns(plan)));
+    }
+    std::string out =
+        "round width " + std::to_string(width) + ", rows " + std::to_string(rows) + "; ";
     const auto piece = [&](const std::string& what, const std::function<std::size_t()>& f) {
         try {
             out += what + " " + std::to_string(f()) + "; ";
@@ -466,7 +496,7 @@ std::string gemma_pieces(const NamedBoard& b, const Subject& s) {
     if (mtp) {
         piece("greedy acceptance", [&] {
             return ops::speculative_accept_greedy_drafts_workspace_capacity_bytes(
-                vocab, 1, round - 1, 1, batch);
+                vocab, 1, width - 1, 1, rows);
         });
     }
     if (mtp && m.drafter_geometry) {
@@ -489,18 +519,18 @@ std::string gemma_pieces(const NamedBoard& b, const Subject& s) {
              ops::linear_geglu_supports(gate_up.weight)},
             {QType::BF16, h, ir},
             {QType::BF16, static_cast<std::int32_t>(d.head_rows), h}};
-        for (const std::int32_t rows : {1, batch}) {
+        for (const std::int32_t pass : {1, batch, rows}) {
             for (const Projection& p : projections) {
                 const std::string name = "assistant " + std::to_string(p.n) + "x" +
-                                         std::to_string(p.k) + " at " + std::to_string(rows);
+                                         std::to_string(p.k) + " at " + std::to_string(pass);
                 piece(name, [&] {
                     return ops::linear_workspace_capacity_bytes(p.qtype, p.n, p.k, p.policy, 1,
-                                                                rows);
+                                                                pass);
                 });
                 if (p.geglu) {
                     piece(name + " geglu", [&] {
                         return ops::linear_geglu_workspace_capacity_bytes(p.qtype, p.n, p.k,
-                                                                          p.policy, 1, rows);
+                                                                          p.policy, 1, pass);
                     });
                 }
             }
