@@ -22,7 +22,7 @@
 #   The card's clocks and persistence mode are recorded, and its SM clock is sampled once a second
 #   during the sweep (min and max in the report).
 # Environment: SHAPES, PASSES, SAMPLES, ROUTE_POLICY, THRESHOLD, PREVIOUS (a file, auto, none),
-# BOARD (default: from the card's PCI id and gpu_facts.json), MODEL (the label of the shapes' source).
+# BOARD (from the card's PCI id and gpu_facts.json; a different value is refused), MODEL (the label of the shapes' source).
 # One card: with several, select it (CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=<i>).
 # The job refuses to start when a compute process is on the card, but that is a snapshot at the
 # start: it takes no lock, so a stand runs it through its own queue lock, which holds other GPU
@@ -55,6 +55,12 @@ GPU_SEL=()
 [ -n "${CUDA_VISIBLE_DEVICES:-}" ] && GPU_SEL=(-i "$CUDA_VISIBLE_DEVICES")
 case ${CUDA_VISIBLE_DEVICES:-} in *,*) false;; esac ||
   die "CUDA_VISIBLE_DEVICES names more than one card"
+# A numeric CUDA ordinal names the card nvidia-smi -i names only in PCI bus order (CUDA's default
+# order is fastest first): otherwise the checks below would read another card than the sweep runs.
+case ${CUDA_VISIBLE_DEVICES:-} in
+  [0-9]*) [ "${CUDA_DEVICE_ORDER:-}" = PCI_BUS_ID ] ||
+            die "a numeric CUDA_VISIBLE_DEVICES needs CUDA_DEVICE_ORDER=PCI_BUS_ID (nvidia-smi's order), or name the card by its GPU-<uuid>";;
+esac
 query() { nvidia-smi ${GPU_SEL[@]+"${GPU_SEL[@]}"} --query-gpu="$1" --format=csv,noheader; }
 cards=$(query name | grep -c . || true)
 [ "$cards" = 1 ] || die "$cards cards visible: select one (CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=<i>)"
@@ -66,7 +72,11 @@ DRIVER=$(query driver_version)
 GPU_FIELDS=$(nvidia-smi ${GPU_SEL[@]+"${GPU_SEL[@]}"} --format=csv,noheader,nounits \
   --query-gpu=name,power.limit,clocks.max.sm,clocks.applications.graphics,persistence_mode)
 board_card=$("$PY" "$HERE/regret_report.py" board "$PCI") || die "PCI id $PCI is not in gpu_facts.json"
-BOARD=${BOARD:-${board_card%%$'\t'*}}
+# BOARD only restates the measured card's label: another label would file this card's run, and its
+# delta, under another board.
+[ -z "${BOARD:-}" ] || [ "$BOARD" = "${board_card%%$'\t'*}" ] ||
+  die "BOARD=$BOARD, but the card is ${board_card%%$'\t'*} ($PCI)"
+BOARD=${board_card%%$'\t'*}
 CARD=${board_card#*$'\t'}
 
 # The revision: the checkout's HEAD, "-dirty" with uncommitted edits. The build records no
