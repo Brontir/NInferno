@@ -2269,16 +2269,19 @@ std::optional<product::GgufTensorTable> App::gguf_table(const std::string& repo,
                 convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
                                          head.bytes.size(), head.size, head.path);
             // A split part's head: read, no whole table (kept too: its file size stands and the
-            // rows above it are still read), at most its banks' prefill route.
+            // rows above it are still read), at most its banks' prefill route and its tensors'
+            // formats.
             const product::GgufTensorTable table =
                 product::gguf_tensor_table(product::plan_facts_of_gguf(file, head.size))
                     .value_or(product::GgufTensorTable{});
             std::lock_guard lock(sizes_mutex_);
             gguf_tables_[key] = table;
             gguf_failed_.erase(key);
-            // A table that prices its row: its tensors, or a split part's prefill route (#775).
+            // A table that prices its row: its tensors, or a split part's prefill route (#775) or
+            // formats (#811).
             if (table.tensor_bytes > 0 || table.expert_prefill != runtime::ExpertPrefill::Unknown ||
-                table.expert_prefill_int8 != runtime::ExpertPrefill::Unknown) {
+                table.expert_prefill_int8 != runtime::ExpertPrefill::Unknown ||
+                !table.weight_formats.empty()) {
                 ++tables_generation_[hub_key(repo, hub)];
                 if (read != nullptr) { read->stored = true; }
                 // The repository's plans priced before it (the catalog's too) are planned again.
