@@ -279,10 +279,12 @@ const std::vector<Spec>& specs() {
              "kTransferredDecodeError",
              "largest_transferred_decode_error",
              "kUnmeasuredCarryDecodeError",
-             // quoted, not fitted (#618 step 11): kPrefillEta's recorded in-sample error (its
-             // record holds the holdout) and the shortest prompt of the fit's 7K points, shown
+             // derived, not fitted (#618 step 11): the rms and worst of the prefill estimate over
+             // prefill_measured.json's rows, recomputed by ninferno_choice_test, and the shortest
+             // and longest prompt of those rows; shown, never a decision's
              "kPrefillPredictionError",
              "kPrefillErrorFromPrompt",
+             "kPrefillErrorToPrompt",
              "kReferenceCards",
              "kWorthTie",
              // names of an enum's values, no number

@@ -23,7 +23,7 @@ assert.ok(from >= 0 && to > from, "the plan helpers block is marked in the page"
 const NAMES = ["parseCtxText", "planTok", "ctxInput", "ctxNoteText", "planSpecOf", "planQuery", "catalogQuery", "planStateOf",
                "planRowOf", "launchContextOf", "reasonText", "unsupportedText", "cardGbOf", "cardGbText", "ruleText", "planRowState",
                "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf", "actOptions", "actAskOf", "ACT_MODES", "artifactPlanQuery", "replayDiff", "nowLine", "nowReasonText", "kvOptionsOf", "kvWhyText", "KV_CODECS", "KV_WHY_CODES",
-               "gateText", "decidedOnText", "bandText", "answerText", "qualityText", "GATE_CODES", "GATE_OPENS", "QUALITY_AUTHORITIES",
+               "gateText", "decidedOnText", "bandText", "answerText", "qualityText", "GATE_CODES", "GATE_OPENS", "QUALITY_AUTHORITIES", "GEN_LABELS", "PREFILL_WHY",
                "REASON_CODES", "UNSUPPORTED_CODES", "RULE_TIERS", "SPEC_BASES"];
 const ctx = vm.createContext({});
 vm.runInContext(html.slice(from, to) + `\n;globalThis.H = {${NAMES.join(", ")}};`, ctx);
@@ -538,45 +538,59 @@ for (const lang of ["en", "ru", "uk"]) for (const k of ["replayContext", "replay
 
 // ---- the choice's gate, reference card, estimate bands and answer scale (#618 step 11) ----
 {
-  const open = {choice: {by_worth: true, gate_code: "open", gates_closed: [], why: "x",
+  const open = {model: {source: "Qwen/Qwen3.5-9B-GGUF"}, choice: {by_worth: true, gate_code: "open", gates_closed: [], why: "x",
     decided_on: {generation: "ada", cards: "RTX 4070 Ti, RTX 4090", lent: false, decides: true},
-    answer_scale: {calibrated: true, family: "qwen3_5_text", benchmark: "mmlu_pro", points_per_kld: 40}}};
+    answer_scale: {calibrated: true, family: "qwen3_5_text", model: "Qwen3.5-9B", benchmark: "mmlu_pro", points_per_kld: 40}}};
   eq(H.gateText(open, tr), "", "the worth decided: no gate to say");
-  eq(H.decidedOnText(open, tr), 'decidedOn{"gen":"ada","cards":"RTX 4070 Ti, RTX 4090"}', "decided on the reference card");
+  eq(H.decidedOnText(open, tr), 'decidedOn{"gen":"Ada (RTX 40)","cards":"RTX 4070 Ti, RTX 4090"}', "decided on the reference card, by its generation's name");
   eq(H.decidedOnText({choice: {decided_on: null}}, tr), "", "no reference card: nothing");
-  eq(H.decidedOnText({choice: {decided_on: {generation: "gb20x", cards: "", lent: true}}}, tr), 'decidedLent{"gen":"gb20x"}', "a lent generation");
-  const closed = {choice: {by_worth: false, gate_code: "no_reference_card", why: "turing has no reference card", decided_on: null,
-    gates_closed: [{axis: "switches", code: "no_reference_card", opens_with: "reference_factors", generation: "turing", family: "", cards: 0}],
+  eq(H.decidedOnText({choice: {decided_on: {generation: "gb20x", cards: "", lent: true}}}, tr), "", "a lent generation decides nothing: its gate says so");
+  const closed = {model: {source: "google/gemma-4-12b-it-GGUF"}, choice: {by_worth: false, gate_code: "no_reference_card", why: "turing has no reference card", decided_on: null,
+    gates_closed: [{axis: "switches", code: "no_reference_card", opens_with: "reference_factors", generation: "turing", family: "", cards: 0},
+                   {axis: "quant", code: "quant_switches_closed", opens_with: "", generation: "turing", family: "gemma4_text", cards: 0}],
     answer_scale: {calibrated: false, family: "gemma4_text", why_code: "family_not_calibrated"}}};
-  eq(H.gateText(closed, tr), 'gate_no_reference_card{"gen":"turing","family":""}. gateOpens{"what":"gateOpens_reference_factors{\\"gen\\":\\"turing\\",\\"family\\":\\"\\"}"}',
-     "a closed gate in the page's words with what opens it");
+  const vars = '{"gen":"Turing (RTX 20)","family":"gemma-4-12b-it-GGUF"}';
+  eq(H.gateText(closed, tr), `gate_no_reference_card${vars}. gateOpens{"what":${JSON.stringify("gateOpens_reference_factors" + vars)}}`,
+     "a closed gate in the page's words, no raw key, with what opens it");
+  eq(H.gateText({choice: {gate_code: "family_unmeasured", gates_closed: [{code: "family_unmeasured", opens_with: "family_kld_terms", generation: "", family: "gemma4_text"}]}}, tr),
+     'gate_family_unmeasured{"gen":"genOther","family":"thisModel"}. gateOpens{"what":"gateOpens_family_kld_terms{\\"gen\\":\\"genOther\\",\\"family\\":\\"thisModel\\"}"}',
+     "no model name: this model");
   eq(H.gateText({choice: {gate_code: "new_gate", why: "an English why", gates_closed: []}}, tr), "an English why", "an unknown gate: the server's words");
-  whole(EN("gate_no_reference_card", {gen: "turing"}) + ". " + EN("gateOpens", {what: EN("gateOpens_reference_factors", {gen: "turing"})}), "gate en");
-  whole(RU("gate_family_unmeasured", {family: "gemma4_text"}) + ". " + RU("gateOpens", {what: RU("gateOpens_family_kld_terms", {family: "gemma4_text"})}), "gate ru");
-  const est = {answer_points: 0.69, quality_authority: "direct",
+  whole(EN("gate_no_reference_card", {gen: "Turing (RTX 20)"}) + ". " + EN("gateOpens", {what: EN("gateOpens_reference_factors", {gen: "Turing (RTX 20)"})}), "gate en");
+  whole(RU("gate_family_unmeasured", {family: "gemma-4-12b-it-GGUF"}) + ". " + RU("gateOpens", {what: RU("gateOpens_family_kld_terms", {family: "gemma-4-12b-it-GGUF"})}), "gate ru");
+  whole(RU("gate_quant_switches_closed", {gen: "Turing (RTX 20)"}), "quant gate ru");
+  for (const g of ["gb20x", "ada", "ga10x", "turing", "volta", "ga100", "hopper", "gb100", "thor"])
+    ok(typeof H.GEN_LABELS[g] === "string" && !H.GEN_LABELS[g].includes(g), `a name for ${g}, not its key`);
+  const est = {answer_points_lost: 0.69, quality_authority: "direct",
     band: {decode: {basis: "own", rms: 0.0226, decides: true, floor: 0.0226},
-           prefill: {kind: "dense", prompt: 2048, from_prompt: 7118, rms: null, worst: null, why_code: "short_prompt", fit_rms: 0.064, fit_worst: 0.187}}};
-  eq(H.bandText(est, tr), 'bandDecode{"pct":"2.3"}; bandPrefillShort{"from":"7K","pct":"6.4"}', "the bands: decode measured, prefill not at 2K");
-  eq(H.bandText({band: {decode: {basis: "transferred", rms: 0.2151, decides: false}, prefill: {rms: 0.064, worst: 0.187, why_code: ""}}}, tr),
-     'bandDecodeRough{"pct":"21.5"}; bandPrefill{"pct":"6.4","worst":"18.7"}', "a carried decode band, a prefill that holds");
-  eq(H.bandText({band: {prefill: {rms: null, why_code: "generation_not_in_fit"}}}, tr), "bandPrefillNone", "no prefill error on this generation");
+           prefill: {kind: "dense", prompt: 2048, from_prompt: 3122, to_prompt: 21928, rms: null, worst: null, why_code: "short_prompt", stated_rms: 0.048, stated_worst: 0.152, cards: 3}}};
+  eq(H.bandText(est, tr), 'bandDecode{"pct":"2.3"}; bandPrefillNo_short_prompt{"from":"3K","to":"21K"}', "the bands: decode measured, no prefill number below the measured prompts");
+  eq(H.bandText({band: {decode: {basis: "transferred", rms: 0.2151, decides: false}, prefill: {rms: 0.048, worst: 0.152, why_code: ""}}}, tr),
+     'bandDecodeRough{"pct":"21.5"}; bandPrefill{"pct":"4.8","worst":"15.2"}', "a carried decode band, a prefill that holds");
+  eq(H.bandText({band: {prefill: {rms: null, why_code: "not_fast_route"}}}, tr), 'bandPrefillNo_not_fast_route{"from":"0","to":"0"}', "the exact route: none, and why");
+  eq(H.bandText({band: {prefill: {rms: null, why_code: "odd"}}}, tr), "bandPrefillNone", "an unknown why: none");
   eq(H.bandText({}, tr), "", "an older document: no bands");
-  eq(H.answerText(open, est, tr), 'answersPoints{"pts":"0.69"}', "the KLD in answer points where calibrated");
+  eq(H.answerText(open, est, tr), 'answersPoints{"pts":"0.69"}', "the quantization's KLD in points lost where calibrated");
   eq(H.answerText(closed, est, tr), "answersNot", "not calibrated elsewhere");
   eq(H.qualityText(est, tr), "quality_direct", "the quantization's authority");
   eq(H.qualityText({quality_authority: "odd"}, tr), "", "an unknown authority: nothing");
-  whole(EN("bandPrefillShort", {from: "7K", pct: "6.4"}), "bandPrefillShort en");
+  ok(EN("answersPoints", {pts: "0.69"}).includes("lost"), "points read as a loss (en)");
+  ok(!/may decide/.test(EN("quality_transfer")), "a transferred term decides nothing");
+  ok(!/±/.test(EN("bandDecode", {pct: "2.3"})) && !/±/.test(RU("bandPrefill", {pct: "4.8", worst: "15.2"})), "rms, not ±");
+  ok(!/\d+ ?%/.test(EN("estBasis")) && !/\d+ ?%/.test(RU("estBasis")), "the tooltip's basis carries no numbers of its own: the band does");
   whole(RU("answersPoints", {pts: "0.69"}), "answersPoints ru");
 }
 for (const lang of ["en", "ru", "uk"]) {
   for (const code of H.GATE_CODES) ok(typeof T[lang]["gate_" + code] === "string" && T[lang]["gate_" + code].length > 0, `${lang}: gate_${code}`);
   for (const m of H.GATE_OPENS) ok(typeof T[lang]["gateOpens_" + m] === "string" && T[lang]["gateOpens_" + m].length > 0, `${lang}: gateOpens_${m}`);
   for (const a of H.QUALITY_AUTHORITIES) ok(typeof T[lang]["quality_" + a] === "string", `${lang}: quality_${a}`);
-  for (const k of ["gateOpens", "decidedOn", "decidedLent", "bandDecode", "bandDecodeRough", "bandPrefill", "bandPrefillShort", "bandPrefillNone", "bandHead", "answersPoints", "answersNot"])
+  for (const w of H.PREFILL_WHY) ok(typeof T[lang]["bandPrefillNo_" + w] === "string", `${lang}: bandPrefillNo_${w}`);
+  for (const k of ["gateOpens", "decidedOn", "genOther", "thisModel", "bandDecode", "bandDecodeRough", "bandPrefill", "bandPrefillNone", "bandHead", "answersPoints", "answersNot"])
     ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
+  ok(T[lang].decidedLent === undefined, `${lang}: no dead decidedLent`);
 }
 // Every gate code the server sends (choice.h ClosedGate) has words here.
 eq([...H.GATE_CODES].sort(), ["accuracy_gate_closed", "family_unmeasured", "int8_one_card", "int8_unmeasured", "kv_terms_one_card",
-   "lent_generation", "no_reference_card", "quant_curve_one_card", "quant_curve_unmeasured", "reference_one_card"], "the gate codes");
+   "lent_generation", "no_reference_card", "quant_curve_one_card", "quant_curve_unmeasured", "quant_switches_closed", "reference_one_card"], "the gate codes");
 
 console.log(`test_page_plan: ${checks} checks passed`);

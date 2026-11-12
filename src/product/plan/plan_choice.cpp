@@ -43,25 +43,27 @@ Json band_json(const choice::Resolution& r) {
             {"floor", round_to(r.floor, 4)}};
 }
 
-// The prefill estimate's recorded error (choice::prefill_band_of): `rms` and `worst` where it holds
-// at the estimate's prompt on this generation, else null and `why_code`; the fit's own numbers
-// beside them whatever it holds (in sample: fitted and checked on the same points).
+// The prefill estimate's measured error (choice::prefill_band_of): `rms` and `worst` only where it
+// holds for this estimate (a dense model, the fast route, an Own estimate, a prompt inside the
+// measured range, a generation with a row of two lab cards), else null and `why_code`. The
+// generation's stated row beside it (`stated_rms`, `stated_worst`, `cards`; null without one).
 Json prefill_band_json(const choice::PrefillBand& b) {
+    const bool row = b.cards > 0;
     return {{"kind", b.moe ? "moe" : "dense"},
             {"prompt", b.prompt},
             {"from_prompt", b.from_prompt},
-            {"rms", b.holds ? Json(round_to(b.fit_rms, 3)) : Json(nullptr)},
-            {"worst", b.holds ? Json(round_to(b.fit_worst, 3)) : Json(nullptr)},
+            {"to_prompt", b.to_prompt},
+            {"rms", b.holds ? Json(round_to(b.stated_rms, 4)) : Json(nullptr)},
+            {"worst", b.holds ? Json(round_to(b.stated_worst, 4)) : Json(nullptr)},
             {"why_code", std::string(b.why_code)},
-            {"fit_rms", round_to(b.fit_rms, 3)},
-            {"fit_worst", round_to(b.fit_worst, 3)},
-            {"in_sample", true}};
+            {"stated_rms", row ? Json(round_to(b.stated_rms, 4)) : Json(nullptr)},
+            {"stated_worst", row ? Json(round_to(b.stated_worst, 4)) : Json(nullptr)},
+            {"cards", b.cards}};
 }
 
 // What the estimates of one choice carry beside their numbers (#618 step 11).
 struct EstimateContext {
     const choice::Resolutions* board   = nullptr; // the board's bands by basis
-    const choice::PrefillBand* prefill = nullptr; // the prefill band of every estimate
     const choice::AnswerScale* answers = nullptr; // nullptr: the family is not calibrated
 };
 
@@ -96,17 +98,20 @@ Json estimates_json(const choice::Scored& s, const EstimateContext& ctx) {
         decided ? Json(std::string(choice::speed_basis_name(s.decision_basis))) : Json(nullptr);
     out["weighed_at"] = round_to(s.weighed_at, 4);
     // The bands of the numbers shown: decode by the board's generation and the estimate's basis,
-    // prefill by the fit's recorded error.
+    // prefill by its generation's measured error where that holds for it.
     Json band = Json::object();
     if (ctx.board != nullptr) {
         band["decode"] = band_json(choice::resolution_for(*ctx.board, s.speed.basis));
     }
-    if (ctx.prefill != nullptr) { band["prefill"] = prefill_band_json(*ctx.prefill); }
-    out["band"] = band;
-    // The KLD in answers where the family is calibrated (answer_scale), else null.
-    out["answer_points"] = ctx.answers != nullptr
-                               ? Json(round_to(ctx.answers->points_per_kld * s.accuracy.kld, 2))
-                               : Json(nullptr);
+    band["prefill"] = prefill_band_json(s.prefill_band);
+    out["band"]     = band;
+    // The MMLU-Pro points the quantization's KLD against Q8_0 stands for, lost against Q8_0 (the
+    // calibration's quantity: not the switches' terms), on the calibrated model's own measured
+    // files only; else null and why.
+    std::string_view why_not;
+    const auto points             = choice::answer_points(s.accuracy, ctx.answers, &why_not);
+    out["answer_points_lost"]     = points ? Json(round_to(*points, 2)) : Json(nullptr);
+    out["answer_points_why_code"] = std::string(why_not);
     return out;
 }
 
@@ -921,21 +926,28 @@ Json choice_json(const ServedChoice& served) {
     } else {
         out["decided_on"] = nullptr;
     }
-    // The KLD's answer scale: only where the family was calibrated (choice_constants.h
-    // kAnswerScales); elsewhere not calibrated, and no estimate carries answer points.
+    // The KLD's answer scale (choice_constants.h kAnswerScales): calibrated only for the one model
+    // it was measured on, on its own measured files (the chosen quantization's term says), and
+    // only for the quantization's KLD against Q8_0; elsewhere not calibrated and why.
     const choice::AnswerScale* answers = choice::answer_scale_of(served.family);
-    if (answers != nullptr) {
-        out["answer_scale"] = {{"calibrated", true},
-                               {"family", served.family},
-                               {"benchmark", std::string(answers->benchmark)},
-                               {"points_per_kld", answers->points_per_kld}};
-    } else {
-        out["answer_scale"] = {{"calibrated", false},
-                               {"family", served.family},
-                               {"why_code", "family_not_calibrated"}};
+    std::string_view uncalibrated      = answers == nullptr ? "family_not_calibrated" : "";
+    if (answers != nullptr && served.choice.chosen) {
+        (void)choice::answer_points(served.choice.scored[*served.choice.chosen].accuracy, answers,
+                                    &uncalibrated);
     }
-    const EstimateContext ctx{&served.choice.board_resolutions, &served.choice.prefill_band,
-                              answers};
+    Json scale = {{"calibrated", uncalibrated.empty()}, {"family", served.family}};
+    if (answers != nullptr) {
+        scale["model"]          = std::string(answers->model);
+        scale["benchmark"]      = std::string(answers->benchmark);
+        scale["points_per_kld"] = answers->points_per_kld;
+        scale["applies_to"]     = "quant_kld_vs_q8_0";
+        scale["basis"]          = {{"models", 1},
+                                   {"quantizations", answers->quantizations},
+                                   {"noise_points", answers->noise_points}};
+    }
+    if (!uncalibrated.empty()) { scale["why_code"] = std::string(uncalibrated); }
+    out["answer_scale"] = scale;
+    const EstimateContext ctx{&served.choice.board_resolutions, answers};
     // The chunk a carried curve predicts (an estimate for an A/B; the pick is the default).
     if (served.choice.chunk_estimate != 0) { out["chunk_estimate"] = served.choice.chunk_estimate; }
     if (!served.choice.chosen) {

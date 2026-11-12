@@ -534,12 +534,13 @@ struct Reference {
 // reference_one_card (the KV codec and the activations: their speed factors); family_unmeasured,
 // kv_terms_one_card, int8_unmeasured, int8_one_card (their accuracy terms); accuracy_gate_closed
 // (a test's Gates::accuracy, nothing to measure); quant_curve_unmeasured, quant_curve_one_card (the
-// quantizations' trade, plan_quants). The measurements (`opens_with`): generation_row (the compute
-// capability's generation row, core/generation.h, then its reference card), reference_factors (the
-// KV read factors and the exact-route factor on two lab cards of the generation), family_kld_terms
-// (the KV codecs' and the int8 activations' KLD terms on the family, two lab cards),
-// kv_kld_second_card, int8_kld (on the generation, two lab cards), quant_curve (the quantization
-// curve on the family, two lab cards); "" for none.
+// quantizations' trade, plan_quants), quant_switches_closed (the curve rests on two cards but the
+// trade waits on a closed gate of the switches: what opens that opens it). The measurements
+// (`opens_with`): generation_row (the compute capability's generation row, core/generation.h, then
+// its reference card), reference_factors (the KV read factors and the exact-route factor on two lab
+// cards of the generation), family_kld_terms (the KV codecs' and the int8 activations' KLD terms on
+// the family, two lab cards), kv_kld_second_card, int8_kld (on the generation, two lab cards),
+// quant_curve (the quantization curve on the family, two lab cards); "" for none.
 struct ClosedGate {
     std::string_view axis; // "switches" (the KV codec and the activations) or "quant"
     std::string_view code;
@@ -576,25 +577,42 @@ struct ClosedGate {
 [[nodiscard]] std::vector<ClosedGate> closed_gates(const ModelFacts& model, const CardFacts& card,
                                                    const Gates& gates = {});
 
-// The recorded error of a prefill estimate of a `prompt`-token request on this card
-// (kPrefillPredictionError; shown, never decides). `holds` false: no error is recorded there,
-// `why_code` says why (short_prompt: below kPrefillErrorFromPrompt; generation_not_in_fit: the
-// board's generation has no card in the fit); `fit_rms` and `fit_worst` are the fit's numbers
-// whatever it holds.
+// The measured error of the prefill estimate of `candidate`'s `prompt`-token request on this card,
+// its speed resting on `basis` (kPrefillPredictionError; shown, never decides). It holds only for
+// what it was measured on: a dense model on the fast (int8) route, an Own estimate, a prompt of
+// from_prompt .. to_prompt tokens, a generation with a row. Else `holds` is false and `why_code`
+// says why: moe_unchecked, generation_unchecked (no row: one lab card or none), not_fast_route
+// (exact, BF16, FP4), transferred (the estimate is not Own), short_prompt, long_prompt.
+// `stated_rms` and `stated_worst` are the generation's row (0: none) whatever it holds.
 struct PrefillBand {
-    bool moe       = false;
-    bool holds     = false;
-    double fit_rms = 0, fit_worst = 0;
+    bool moe                  = false;
+    bool holds                = false;
+    double stated_rms         = 0;
+    double stated_worst       = 0;
+    int cards                 = 0;
     std::uint32_t from_prompt = kPrefillErrorFromPrompt;
+    std::uint32_t to_prompt   = kPrefillErrorToPrompt;
     std::uint32_t prompt      = 0;
     std::string_view why_code;
 };
 
 [[nodiscard]] PrefillBand prefill_band_of(const ModelFacts& model, const CardFacts& card,
-                                          std::uint32_t prompt) noexcept;
+                                          const QuantOption& quant, const Candidate& candidate,
+                                          SpeedBasis basis, std::uint32_t prompt) noexcept;
 
 // The answer scale a KLD converts to on `family` (kAnswerScales); nullptr: not calibrated there.
+// It applies only to the quantization's own term against Q8_0 on the calibrated model's measured
+// files (answer_points).
 [[nodiscard]] const AnswerScale* answer_scale_of(std::string_view family) noexcept;
+
+// What a quantization's term means in answers: the scale times its KLD against Q8_0, where the
+// scale exists and the term is the calibrated model's own measured point (Evidence::Measured or
+// Reference); nullopt otherwise, `why_code` (when given) saying why: family_not_calibrated,
+// model_not_calibrated (another model of the family, or a point not measured on its files).
+struct Accuracy;
+[[nodiscard]] std::optional<double> answer_points(const Accuracy& accuracy,
+                                                  const AnswerScale* scale,
+                                                  std::string_view* why_code = nullptr) noexcept;
 
 // What an MoE's chunk decision rests on: Own (the generation the shares were measured on, priced on
 // its reference card: it decides), CarriedCurve (another generation whose MoE prefill rate rests on
@@ -714,6 +732,8 @@ struct Scored {
     double worth = 0;              // -ln(decision_seconds) - lambda kld (0 without a reference)
     bool variant = false;          // a coupled storage's other value beside the chosen (not eligible)
     std::string drafter = "plain"; // its drafter's configuration (DrafterOption::label)
+    // The measured error of its prefill estimate (`speed`, at the task's short prompt), shown only.
+    PrefillBand prefill_band;
 };
 
 // The own context per stream a candidate holds (the plan without the weights), 0 when none.
@@ -776,8 +796,6 @@ struct Choice {
     // estimates shown carry, beside the decision's bands above (`resolutions`, on the reference
     // card's comparisons). Set whatever the reference.
     Resolutions board_resolutions{};
-    // The prefill band of the estimates shown (each at the task's short prompt).
-    PrefillBand prefill_band;
 };
 
 // The axes' values the model and the card allow (a family's KV codecs, int8 activations only on

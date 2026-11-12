@@ -2318,10 +2318,16 @@ void test_choice_json_gates() {
                   on.at("lent") == false && on.at("decides") == true && on.at("sms") == 94 &&
                   on.at("clock_mhz") == 2565,
               "gates JSON: decided on Ada's reference card");
-        check(j.at("answer_scale").at("calibrated") == true &&
-                  j.at("answer_scale").at("benchmark") == "mmlu_pro" &&
-                  j.at("answer_scale").at("points_per_kld") == 40.0,
-              "gates JSON: Qwen 3.5's KLD in MMLU-Pro points");
+        // A 27B of the calibrated family: the scale is the 9B's, so it is not calibrated here.
+        const nlohmann::json& scale = j.at("answer_scale");
+        check(scale.at("calibrated") == false && scale.at("why_code") == "model_not_calibrated" &&
+                  scale.at("model") == "Qwen3.5-9B" && scale.at("benchmark") == "mmlu_pro" &&
+                  scale.at("points_per_kld") == 40.0 &&
+                  scale.at("applies_to") == "quant_kld_vs_q8_0" &&
+                  scale.at("basis").at("models") == 1 &&
+                  scale.at("basis").at("quantizations") == 2 &&
+                  scale.at("basis").at("noise_points") == 0.2,
+              "gates JSON: the 9B's answer scale, not the 27B's, with its basis");
         const nlohmann::json& c = j.at("chosen");
         check(c.at("decision_seconds").is_number() && c.at("decision_seconds").get<double>() > 0 &&
                   c.at("decision_basis").is_string() && c.at("weighed_at").is_number(),
@@ -2329,15 +2335,15 @@ void test_choice_json_gates() {
         const nlohmann::json& band = c.at("band");
         check(band.at("decode").at("basis").is_string() && band.at("decode").at("rms").is_number(),
               "gates JSON: the decode band");
-        check(band.at("prefill").at("rms").is_null() &&
-                  band.at("prefill").at("why_code") == "short_prompt" &&
-                  band.at("prefill").at("fit_rms") == 0.064 &&
-                  band.at("prefill").at("from_prompt") == 7118,
-              "gates JSON: a 2K prompt claims no prefill error, the fit's shown beside");
-        check(c.at("answer_points").is_number() &&
-                  std::abs(c.at("answer_points").get<double>() - 40.0 * c.at("kld").get<double>()) <
-                      0.01,
-              "gates JSON: the chosen's KLD in answer points");
+        const nlohmann::json& prefill = band.at("prefill");
+        check(prefill.at("rms").is_null() && prefill.at("worst").is_null() &&
+                  prefill.at("why_code").is_string() && prefill.at("why_code") != "" &&
+                  prefill.at("from_prompt") == 3122 && prefill.at("to_prompt") == 21928 &&
+                  prefill.at("stated_rms").is_number() && prefill.at("cards") == 3,
+              "gates JSON: a 2K prompt claims no prefill error, Ada's stated row beside it");
+        check(c.at("answer_points_lost").is_null() &&
+                  c.at("answer_points_why_code") == "model_not_calibrated",
+              "gates JSON: no answer points for a model the scale was not measured on");
         const std::string authority = c.at("quality_authority");
         check(authority == "direct" || authority == "transfer" || authority == "estimate" ||
                   authority == "unknown",
@@ -2345,7 +2351,7 @@ void test_choice_json_gates() {
         for (const nlohmann::json& a : j.at("alternatives")) {
             if (!a.contains("worth")) { continue; }
             check(a.contains("band") && a.contains("decision_seconds") &&
-                      a.contains("answer_points"),
+                      a.contains("answer_points_lost"),
                   "gates JSON: an alternative's estimates carry the same");
         }
     }

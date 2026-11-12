@@ -443,27 +443,31 @@ inline constexpr PrefillEta kPrefillEta[] = {
     {true, "gb20x", Route::Int8, 0.205, 2},  // RTX 5070 Ti, 5090: Gemma 26B-A4B, 35B-A3B
 };
 
-// The prefill estimate's recorded error, for a caller to show beside it (#618 step 11), never a
-// decision's: the rms and the worst of predicted / measured - 1 of kPrefillEta's fit, the numbers
-// the file head and fitted_holdouts.h's kPrefillEta record quote (fitted and checked on the same
-// points, so in sample; nothing here recomputes them). They hold from the fit's ~7K-token points
-// on (kPrefillErrorFromPrompt: the shortest of them in tools/fits/data/prefill/rows.json) and on
-// the generations of the cards they were measured on (the dense rows: RTX 2080 Ti, 3060, 4060 Ti,
-// 4070 Ti, 4090, 5070 Ti, 5090; the MoE rows: RTX 4060 Ti, 4090, 5070 Ti, 5090; the Quadro GV100 is
-// left out of the fit). Below that prompt no error is recorded: the estimate runs up to 30 % above
-// a measured prompt rate at 2K (a request's fixed time is not modeled).
+// The prefill estimate's measured error on a generation, for a caller to show beside it (#618 step
+// 11), never a decision's: the rms and the worst of predicted / measured - 1 of the dense model's
+// prefill on the fast (int8) route over tests/fixtures/choice/prefill_measured.json's rows of the
+// generation's cards at prompts of kPrefillErrorFromPrompt .. kPrefillErrorToPrompt tokens (Qwen3.5
+// 9B, Gemma 4 12B, Qwen3.5 4B; derived, not tuned: ninferno_choice_test recomputes each row in
+// prefills_by_format, as kDecodePredictionError's), over the rows whose estimate is Own. Only a
+// generation with such rows on two or more lab cards has a row: Ada today. Blackwell's estimates
+// there are Transferred (a prefill row of one card), ga10x and Turing rest on one card each,
+// Volta's rows have their own guard. An MoE's prefill, the exact route, an estimate that is not
+// Own, a shorter prompt (a request's fixed time is not modeled: up to 30 % above a measured rate at
+// 2K) or a longer one: no error stated.
 struct PrefillPredictionError {
-    bool moe;
+    std::string_view generation;
     double rms;
     double worst;
-    std::string_view generations[4]; // "" past the last
+    int cards;
 };
 
 inline constexpr PrefillPredictionError kPrefillPredictionError[] = {
-    {false, 0.064, 0.187, {"turing", "ga10x", "ada", "gb20x"}},
-    {true, 0.083, 0.189, {"ada", "gb20x"}},
+    {"ada", 0.0476, 0.1519, 3}, // RTX 4060 Ti, 4070 Ti, 4090: 70 points
 };
-inline constexpr std::uint32_t kPrefillErrorFromPrompt = 7118;
+// The shortest and the longest prompt of the fixture's rows the error is over (its 41K and 82K
+// rows have their own guard).
+inline constexpr std::uint32_t kPrefillErrorFromPrompt = 3122;
+inline constexpr std::uint32_t kPrefillErrorToPrompt   = 21928;
 
 // A dense model's int8 route on Q8 weights prefills on the generic int8 tiles (the W4A8 kernel's
 // Q8 codec, ops/generic q8_prefill_a8), not ggml's MMQ that kPrefillEta's int8 rows measured. Since
@@ -1057,15 +1061,23 @@ inline constexpr std::uint32_t kRequestAnswer = 512;  // the answer of either re
 // MMLU-Pro points lost per unit of KLD against Q8_0 (docs/maintainer/configuration-choice.md, "What
 // lambda means in answers": Qwen3.5-9B GGUF, 2026-10-25, full MMLU-Pro at temperature 0, two runs a
 // quantization on the RTX 4090 and 5070 Ti; Q4_K_M 0.73 points for 0.0172 KLD, UD-IQ2_M 4.48 for
-// 0.114: about 0.04 points per 0.001). One family: another's KLD is not on the same scale (Gemma
-// 4's terms are two orders larger for the same switches), so it is not calibrated.
+// 0.114: about 0.04 points per 0.001; a run's mean reproduces within 0.2 points). One model, two
+// quantizations: the scale applies to the quantization's KLD against Q8_0 (the calibration's
+// quantity), and only on the calibrated model's own measured files (kQuantKld's: Evidence::Measured
+// or Reference), not on another model of its family (the 27B shares the family key) nor on the
+// switches' terms. Another family's KLD is not on the same scale (Gemma 4's terms are two orders
+// larger for the same switches): not calibrated.
 struct AnswerScale {
     std::string_view family;
+    std::string_view model; // the one model calibrated
     std::string_view benchmark;
     double points_per_kld;
+    int quantizations;   // the calibration's points against Q8_0
+    double noise_points; // a run's mean reproduces within it
 };
 
-inline constexpr AnswerScale kAnswerScales[] = {{"qwen3_5_text", "mmlu_pro", 40.0}};
+inline constexpr AnswerScale kAnswerScales[] = {
+    {"qwen3_5_text", "Qwen3.5-9B", "mmlu_pro", 40.0, 2, 0.2}};
 // The request mix (DECISIONS 73; a convention from the published benchmark, not Fitted): the worth
 // weighs the short request's ln(T) by the number of short chats the benchmark sends (20 prompts,
 // docs/performance/methodology.md) and the long request's by its long prompts (6, of about 24K

@@ -530,6 +530,14 @@ void prefills_by_format(const json& fixture) {
     int xl_rows = 0;
     std::map<std::string, std::vector<double>> by_card;
     int n[2] = {0, 0};
+
+    struct Stated {
+        double sq = 0, worst = 0;
+        int n = 0;
+        std::set<std::string> cards;
+    };
+
+    std::map<std::string, Stated> stated; // by generation
     for (const json& row : fixture.at("rows")) {
         const json& m           = fixture.at("models").at(row.at("model").get<std::string>());
         const std::string q     = row.at("quant").get<std::string>();
@@ -551,6 +559,15 @@ void prefills_by_format(const json& fixture) {
                       << std::lround(d * 100) << " %\n";
             sq_volta += d * d, worst_volta = std::max(worst_volta, std::abs(d)), ++volta_rows;
             continue;
+        }
+        // kPrefillPredictionError's points: a dense model's Own estimate on the fast route.
+        const ch::Speed fast = ch::speed_of(mf, cf, qo, c, 1, prompt, prompt);
+        if (!mf.moe() && fast.basis == ch::SpeedBasis::Own &&
+            ch::route_of(qo, c.activations, cf) == ch::Route::Int8 &&
+            prompt >= ch::kPrefillErrorFromPrompt && prompt <= ch::kPrefillErrorToPrompt) {
+            auto& g = stated[std::string(ch::generation_of(cf))];
+            g.sq += d * d, g.worst = std::max(g.worst, std::abs(d)), ++g.n;
+            g.cards.insert(row.at("card").get<std::string>());
         }
         const int i    = qo.weights == ch::WeightClass::Q8 ? 1 : 0;
         by_card[q + " " + row.at("model").get<std::string>() + " " +
@@ -579,6 +596,30 @@ void prefills_by_format(const json& fixture) {
         ++n[i];
     }
     const double mmq = std::sqrt(sq[0] / n[0]), tiles = std::sqrt(sq[1] / n[1]);
+    // The prefill error a caller shows (kPrefillPredictionError, #618 step 11): derived here, not
+    // tuned, as kDecodePredictionError's; a row for each generation of two or more lab cards, none
+    // for one of a single card.
+    for (const auto& [gen, g] : stated) {
+        const double rms = std::sqrt(g.sq / g.n);
+        std::cout << "prefill error " << gen << ": " << g.n << " points on " << g.cards.size()
+                  << " cards, rms " << rms << ", worst " << g.worst << "\n";
+        const auto it = std::find_if(
+            std::begin(ch::kPrefillPredictionError), std::end(ch::kPrefillPredictionError),
+            [&](const ch::PrefillPredictionError& e) { return e.generation == gen; });
+        if (g.cards.size() < 2) {
+            check(it == std::end(ch::kPrefillPredictionError),
+                  "prefill error: " + gen + " (one card) states none");
+            continue;
+        }
+        check(it != std::end(ch::kPrefillPredictionError) &&
+                  it->cards == static_cast<int>(g.cards.size()) &&
+                  std::abs(it->rms - rms) < 0.0015 && std::abs(it->worst - g.worst) < 0.0015,
+              "prefill error: " + gen + "'s stated row is the measured one");
+    }
+    for (const ch::PrefillPredictionError& e : ch::kPrefillPredictionError) {
+        check(stated.count(std::string(e.generation)) == 1,
+              "prefill error: every stated row is measured here");
+    }
     for (const auto& [card, ds] : by_card) {
         std::cout << "  " << card << ":";
         for (const double d : ds) { std::cout << " " << std::lround(d * 100) << " %"; }
@@ -3645,25 +3686,45 @@ void reports_gates_and_bands(const json& fixture) {
     check(ch::resolution_for(c.board_resolutions, ch::SpeedBasis::LentGeneration).basis ==
               ch::ResolutionBasis::Unmeasured,
           "bands: a lent estimate, the assumed carry");
-    // The prefill at the short request's prompt: below the fit's 7K points no error is recorded.
-    check(!c.prefill_band.holds && c.prefill_band.why_code == "short_prompt" &&
-              c.prefill_band.fit_rms == 0.064 && c.prefill_band.fit_worst == 0.187 &&
-              !c.prefill_band.moe && c.prefill_band.prompt == task.prompt,
-          "bands: a 2K prompt claims no prefill error, the dense fit's 6.4 % beside it");
-    const ch::PrefillBand at7k = ch::prefill_band_of(a.model, a.card, ch::kPrefillErrorFromPrompt);
-    check(at7k.holds && at7k.why_code.empty(), "bands: from the fit's 7K points on, it holds");
-    const ch::PrefillBand volta = ch::prefill_band_of(a.model, board_card(0x1DBA), 22000);
-    check(!volta.holds && volta.why_code == "generation_not_in_fit",
-          "bands: Volta was left out of the prefill fit");
+    // The prefill band of each estimate: at the short request's 2K prompt, below the measured
+    // range, no error is stated; the generation's row beside it.
+    const ch::PrefillBand& cb = chosen(c).prefill_band;
+    check(!cb.holds && cb.why_code == "short_prompt" && cb.cards == 3 && cb.stated_rms > 0 &&
+              !cb.moe && cb.prompt == task.prompt,
+          "bands: a 2K prompt claims no prefill error, Ada's stated row beside it");
+    ch::Candidate fast;
+    const auto band_at = [&](const ch::ModelFacts& m, const ch::CardFacts& card,
+                             const ch::Candidate& cand, ch::SpeedBasis basis,
+                             std::uint32_t prompt) {
+        return ch::prefill_band_of(m, card, a.quants[0], cand, basis, prompt);
+    };
+    const ch::PrefillBand at3k =
+        band_at(a.model, a.card, fast, ch::SpeedBasis::Own, ch::kPrefillErrorFromPrompt);
+    check(at3k.holds && at3k.why_code.empty() &&
+              at3k.stated_rms == ch::kPrefillPredictionError[0].rms,
+          "bands: inside the measured range, the generation's row holds");
+    check(band_at(a.model, a.card, fast, ch::SpeedBasis::Own, 41221).why_code == "long_prompt",
+          "bands: beyond the measured range, none");
+    check(band_at(a.model, a.card, fast, ch::SpeedBasis::Transferred, 7406).why_code ==
+              "transferred",
+          "bands: a Transferred estimate, none");
+    ch::Candidate exact;
+    exact.activations = ActivationMode::Exact;
+    check(band_at(a.model, a.card, exact, ch::SpeedBasis::Own, 7406).why_code == "not_fast_route",
+          "bands: the exact route was not measured, none");
+    check(band_at(a.model, board_card(0x1DBA), fast, ch::SpeedBasis::Own, 7406).why_code ==
+                  "generation_unchecked" &&
+              band_at(a.model, card_of(fixture.at("cards").at("RTX 2080 Ti")), fast,
+                      ch::SpeedBasis::Own, 7406)
+                      .why_code == "generation_unchecked",
+          "bands: Volta and Turing (one card each) state none");
     ch::ModelFacts moe       = a.model;
     moe.experts              = 256;
     moe.experts_per_token    = 8;
     moe.routed_expert_params = moe.params * 0.8;
-    const ch::PrefillBand m  = ch::prefill_band_of(moe, a.card, 22000);
-    check(m.moe && m.holds && m.fit_rms == 0.083 && m.fit_worst == 0.189,
-          "bands: an MoE takes the MoE rows' 8.3 %");
-    check(!ch::prefill_band_of(moe, card_of(fixture.at("cards").at("RTX 3060")), 22000).holds,
-          "bands: no MoE prefill was measured on Ampere");
+    const ch::PrefillBand m  = band_at(moe, a.card, fast, ch::SpeedBasis::Own, 7406);
+    check(m.moe && !m.holds && m.why_code == "moe_unchecked",
+          "bands: an MoE's prefill states none");
     // Turing: no reference card; what opens it.
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
     const ch::Choice ct =
@@ -3673,6 +3734,10 @@ void reports_gates_and_bands(const json& fixture) {
               ct.gates_closed[0].opens_with == "reference_factors" &&
               ct.gates_closed[0].generation == "turing" && ct.gates_closed[0].cards == 0,
           "gates: Turing, no reference card, opened by its KV and exact factors on two cards");
+    check(ct.gates_closed.back().axis == "quant" &&
+              ct.gates_closed.back().code == "quant_switches_closed" &&
+              ct.gates_closed.back().opens_with.empty(),
+          "gates: Turing's quantizations wait on the switches' gate");
     // Another family on Ada: neither its switches' terms nor its curve were measured.
     ch::ModelFacts gemma = a.model;
     gemma.family         = "gemma4_text";
@@ -3691,9 +3756,9 @@ void reports_gates_and_bands(const json& fixture) {
           "gates: Qwen 3.5 MoE on Ada, only the curve closed");
     // A test's closed gate, and a compute capability with no generation row.
     const auto closed = ch::closed_gates(a.model, a.card, {false, true});
-    check(!closed.empty() && closed[0].code == "accuracy_gate_closed" &&
-              closed[0].opens_with.empty(),
-          "gates: a closed accuracy gate has nothing to measure");
+    check(closed.size() == 2 && closed[0].code == "accuracy_gate_closed" &&
+              closed[0].opens_with.empty() && closed[1].code == "quant_switches_closed",
+          "gates: a closed accuracy gate has nothing to measure, and closes the trade");
     ch::CardFacts lent = card_of(fixture.at("cards").at("RTX 5090"));
     lent.major         = 13;
     lent.minor         = 0;
@@ -3705,8 +3770,24 @@ void reports_gates_and_bands(const json& fixture) {
     // The answer scale: only the calibrated family.
     const ch::AnswerScale* scale = ch::answer_scale_of("qwen3_5_text");
     check(scale && scale->points_per_kld == 40.0 && scale->benchmark == "mmlu_pro" &&
-              !ch::answer_scale_of("gemma4_text") && !ch::answer_scale_of("qwen3_5_moe_text"),
+              scale->model == "Qwen3.5-9B" && !ch::answer_scale_of("gemma4_text") &&
+              !ch::answer_scale_of("qwen3_5_moe_text"),
           "answers: Qwen 3.5 dense only");
+    // Only the quantization's own term against Q8_0, on the calibrated model's measured files.
+    ch::Accuracy measured;
+    measured.kld   = 0.03;
+    measured.terms = {{ch::Axis::Quant, "Q4_K_M", 0.02, true, false, "", ch::Evidence::Measured},
+                      {ch::Axis::Kv, "int8", 0.01, true, false, "", ch::Evidence::Measured}};
+    std::string_view why = "x";
+    const auto pts       = ch::answer_points(measured, scale, &why);
+    check(pts && std::abs(*pts - 0.8) < 1e-12 && why.empty(),
+          "answers: 40 points a KLD of the quantization's term alone, not the switches'");
+    ch::Accuracy proxy      = measured;
+    proxy.terms[0].evidence = ch::Evidence::Proxy; // the same label on another model's files
+    check(!ch::answer_points(proxy, scale, &why) && why == "model_not_calibrated",
+          "answers: another model of the family (the 27B) is not calibrated");
+    check(!ch::answer_points(measured, nullptr, &why) && why == "family_not_calibrated",
+          "answers: another family is not calibrated");
     // The gate code agrees with the worth on every fixture board, and with decides_switches.
     for (const auto& [name, unused] : fixture.at("cards").items()) {
         const Bench b = nine_b(fixture, name);

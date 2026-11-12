@@ -562,6 +562,7 @@ Scored score(const ModelFacts& model, const CardFacts& card, const std::optional
     s.speed       = speed_of(model, card, quant, c, task.concurrency, task.prompt + task.answer / 2.0,
                              task.prompt);
     s.accuracy    = accuracy_of(model, quant, c, card);
+    s.prefill_band = prefill_band_of(model, card, quant, c, s.speed.basis, task.prompt);
     s.seconds     = request_seconds(model, card, quant, c, task);
     if (ref) {
         s.decision_seconds = request_seconds(model, ref->card, quant, c, task, &s.decision_basis);
@@ -1797,33 +1798,43 @@ std::vector<ClosedGate> closed_gates(const ModelFacts& model, const CardFacts& c
         out.push_back({"quant", "quant_curve_unmeasured", "quant_curve", "", family, 0});
     } else if (!gates.accuracy.has_value() && kQuantKldCards < 2) {
         out.push_back({"quant", "quant_curve_one_card", "quant_curve", "", family, kQuantKldCards});
+    } else if (!decides_switches(model, card, gates)) {
+        // The curve rests on two cards, but the trade waits on the switches' closed gate.
+        out.push_back({"quant", "quant_switches_closed", "", gen, family, 0});
     }
     return out;
 }
 
 PrefillBand prefill_band_of(const ModelFacts& model, const CardFacts& card,
+                            const QuantOption& quant, const Candidate& candidate, SpeedBasis basis,
                             std::uint32_t prompt) noexcept {
     PrefillBand out;
     out.moe                           = model.moe();
     out.prompt                        = prompt;
+    const std::string_view gen        = generation_of(card);
     const PrefillPredictionError* row = nullptr;
-    for (const PrefillPredictionError& e : kPrefillPredictionError) {
-        if (e.moe == out.moe) { row = &e; }
+    if (generation_known(card.major, card.minor)) {
+        for (const PrefillPredictionError& e : kPrefillPredictionError) {
+            if (e.generation == gen) { row = &e; }
+        }
     }
-    if (row == nullptr) {
-        out.why_code = "generation_not_in_fit";
-        return out;
+    if (row != nullptr) {
+        out.stated_rms   = row->rms;
+        out.stated_worst = row->worst;
+        out.cards        = row->cards;
     }
-    out.fit_rms                = row->rms;
-    out.fit_worst              = row->worst;
-    const std::string_view gen = generation_of(card);
-    const bool in_fit          = generation_known(card.major, card.minor) &&
-                        std::any_of(std::begin(row->generations), std::end(row->generations),
-                                    [&](std::string_view g) { return !g.empty() && g == gen; });
-    if (!in_fit) {
-        out.why_code = "generation_not_in_fit";
+    if (out.moe) {
+        out.why_code = "moe_unchecked";
+    } else if (row == nullptr || row->cards < 2) {
+        out.why_code = "generation_unchecked";
+    } else if (route_of(quant, candidate.activations, card) != Route::Int8) {
+        out.why_code = "not_fast_route";
+    } else if (basis != SpeedBasis::Own) {
+        out.why_code = "transferred";
     } else if (prompt < kPrefillErrorFromPrompt) {
         out.why_code = "short_prompt";
+    } else if (prompt > kPrefillErrorToPrompt) {
+        out.why_code = "long_prompt";
     } else {
         out.holds = true;
     }
@@ -1835,6 +1846,27 @@ const AnswerScale* answer_scale_of(std::string_view family) noexcept {
         if (s.family == family) { return &s; }
     }
     return nullptr;
+}
+
+std::optional<double> answer_points(const Accuracy& accuracy, const AnswerScale* scale,
+                                    std::string_view* why_code) noexcept {
+    const auto say = [&](std::string_view code) -> std::optional<double> {
+        if (why_code != nullptr) { *why_code = code; }
+        return std::nullopt;
+    };
+    if (scale == nullptr) { return say("family_not_calibrated"); }
+    for (const Term& t : accuracy.terms) {
+        if (t.axis != Axis::Quant) { continue; }
+        // The calibrated model's own measured files (the curve's points are its), never another
+        // model's estimate on the same family key.
+        if (t.transferred ||
+            (t.evidence != Evidence::Measured && t.evidence != Evidence::Reference)) {
+            return say("model_not_calibrated");
+        }
+        if (why_code != nullptr) { *why_code = {}; }
+        return scale->points_per_kld * t.kld;
+    }
+    return say("model_not_calibrated");
 }
 
 ChunkBasis chunk_basis_of(const ModelFacts& model, const CardFacts& card, const Gates& gates) {
@@ -2007,7 +2039,6 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     out.board_resolutions              = {resolution_of(card, SpeedBasis::Own),
                                           resolution_of(card, SpeedBasis::Transferred),
                                           resolution_of(card, SpeedBasis::LentGeneration)};
-    out.prefill_band                   = prefill_band_of(model, card, task.prompt);
     if (pins.activations == ActivationMode::Exact && model.recurrent && pins.state &&
         *pins.state != RecurrentStateStorage::FP32) {
         out.why      = "--activations exact refuses the rounded recurrent state pinned";
