@@ -325,9 +325,19 @@ class WarpInflight(unittest.TestCase):
 
     @staticmethod
     def body(lines):
-        """A SASS body of sass_counts' rows from `OPCODE operands` lines."""
-        sass = "\t\tFunction : k\n" + "".join(f"        /*{i * 16:04x}*/      {ln} ;\n"
-                                              for i, ln in enumerate(lines))
+        """A SASS body of sass_counts' rows from `OPCODE operands` lines; a line may be a pair
+        (text, control) with control a dict of the control code's fields (write_barrier,
+        wait_mask), written as the instruction's high word."""
+        out = []
+        for i, ln in enumerate(lines):
+            text, control = ln if isinstance(ln, tuple) else (ln, None)
+            out.append(f"        /*{i * 16:04x}*/      {text} ;")
+            if control is not None:
+                code = (control.get("wait_mask", 0) << 11 |
+                        control.get("write_barrier", wi.NO_SCOREBOARD) << 5 |
+                        7 << 8)  # no read barrier
+                out.append(f"                                 /* 0x{code << 41:016x} */")
+        sass = "\t\tFunction : k\n" + "".join(ln + "\n" for ln in out)
         return next(iter(wi.IP._sass_counts().parse_functions(sass.splitlines()).values()))
 
     def test_committed_runs_parse(self):
@@ -372,6 +382,19 @@ class WarpInflight(unittest.TestCase):
         # An address read of a load's register (R4.64 is R4 and R5) waits for it as well.
         chained = [ld.format(4, 0), "LDG.E.EF.128 R8, [R4.64]"]
         self.assertEqual(wi.peak_in_flight(self.body(chained)), 1)
+        # A control-code wait on the loads' scoreboard retires them although no register of
+        # theirs is read: four loads on SB5, a wait on SB5, four more: at most 4 in flight.
+        on5 = {"write_barrier": 5}
+        waited = ([(ld.format(4 * i + 4, 0x200 * i), on5) for i in range(4)] +
+                  [("IADD3 R60, R61, 0x1, RZ", {"wait_mask": 1 << 5})] +
+                  [(ld.format(4 * i + 20, 0x800 + 0x200 * i), on5) for i in range(4)])
+        self.assertEqual(wi.peak_in_flight(self.body(waited)), 4)
+        # A wait on another scoreboard retires none of them: 8.
+        other = [x if x[0].startswith("LDG") else (x[0], {"wait_mask": 1 << 2}) for x in waited]
+        self.assertEqual(wi.peak_in_flight(self.body(other)), 8)
+        # DEPBAR.LE SB5, 0x1 leaves one of the four outstanding: 1 + 4 = 5 at most.
+        depbar = (waited[:4] + [("DEPBAR.LE SB5, 0x1", {})] + waited[5:])
+        self.assertEqual(wi.peak_in_flight(self.body(depbar)), 5)
 
     def test_sass_inflight_is_the_count(self):
         # Probe 4 owes the line, it must be the variants' counts, and an earlier probe has none.
@@ -575,7 +598,7 @@ class WarpInflight(unittest.TestCase):
             self.assertAlmostEqual(c["two_latency_bound"],
                                    wi.chain_bound(n * 512, L_NS, t["latency_ns"]), delta=0.1)
             self.assertTrue(c["all_in_flight"], v)
-        self.assertFalse(t["saturated"])
+        self.assertEqual(t["verdict"], "no cap")
         self.assertFalse(row["warp_bytes_saturated"])
         # The law of the row against its own ring rows: the made-up card follows it exactly.
         ratios = wi.law_ratios(row, {v: row[f"{v}_rows"] for v in wi.CHECKED_RINGS})
@@ -701,12 +724,12 @@ class WarpInflight(unittest.TestCase):
                 self.assertEqual(f.read(), other_text)
 
     @staticmethod
-    def capped(text, cap_bytes):
-        """`text` with every variant counted above `cap_bytes` a warp reading as a warp held to
-        `cap_bytes` in flight: a card that saturates."""
+    def capped(text, cap_bytes, only=None):
+        """`text` with every variant counted above `cap_bytes` a warp (of `only`, when given)
+        reading as a warp held to `cap_bytes` in flight: a card that saturates."""
         def one(m):
             mode, k, v, w = m.group(1), int(m.group(2)), m.group(3), int(m.group(4))
-            if wi.inflight_of(v) * wi.WARP_LOAD <= cap_bytes:
+            if wi.inflight_of(v) * wi.WARP_LOAD <= cap_bytes or (only and v not in only):
                 return m.group(0)
             return row_line(mode, k, v, w, gbps=min(P_GBPS, w * cap_bytes / L_NS)).strip()
         return re.sub(r"^row (\S+) (\d+) (\S+) \d+ (\d+) .*$", one, text, flags=re.M)
@@ -741,7 +764,7 @@ class WarpInflight(unittest.TestCase):
                 self.assertAlmostEqual(c["b_w_w1"] / c["two_latency_bound"], m, delta=0.002,
                                        msg=f"{name} {v}")
                 self.assertTrue(c["all_in_flight"], f"{name} {v}")
-            self.assertFalse(t["saturated"], name)
+            self.assertEqual(t["verdict"], "no cap", name)
             self.assertFalse(row["warp_bytes_saturated"], name)
 
     def test_run_refuses_a_short_sass_count(self):
@@ -778,30 +801,49 @@ class WarpInflight(unittest.TestCase):
         head, rows = wi.parse_run(self.capped(SAMPLE, 2048).replace(
             "card NVIDIA GeForce RTX 4070 Ti", f"card {isa_card}"))
         row = wi.facts_row(head, rows, "warp_inflight_89.txt")
+        # Both chains under their bounds and the ring rule agreeing (ring4 reads ring2's b_w).
+        self.assertEqual(row["cap_test"]["verdict"], "cap")
         self.assertTrue(row["cap_test"]["decides"])
-        self.assertTrue(row["cap_test"]["saturated"])
         self.assertTrue(row["warp_bytes_saturated"])
         self.assertAlmostEqual(row["facts"]["max_warp_bytes_in_flight"]["value"], 2048, delta=4)
         ratios = wi.law_ratios(row, {v: row[f"{v}_rows"] for v in wi.CHECKED_RINGS})
         self.assertTrue(all(abs(r - 1) < 1e-3 for *_, r in ratios), ratios[:3])
-        # Mixed: held to 4096 B a warp, chain8 (4096 B by count) holds all its loads and chain16
-        # reads under its bound (4096 < 8192 x 256 / 468). One chain under is a cap.
+        # A reading under its bound alone is no cap (the bound proves only cap => under): held
+        # to 4096 B a warp, chain8 (4096 B by count) holds all its loads and chain16 reads under
+        # its bound (4096 < 8192 x 256 / 468). Undecided: the ring rule keeps the row, and its
+        # 4-load ring keeps its count, so no cap.
         head, rows = wi.parse_run(self.capped(SAMPLE, 4096).replace(
             "card NVIDIA GeForce RTX 4070 Ti", f"card {isa_card}"))
         t = wi.facts_row(head, rows, "warp_inflight_89.txt")
         self.assertTrue(t["cap_test"]["chains"]["chain8"]["all_in_flight"])
         self.assertFalse(t["cap_test"]["chains"]["chain16"]["all_in_flight"])
-        self.assertTrue(t["warp_bytes_saturated"])
-        self.assertAlmostEqual(t["facts"]["max_warp_bytes_in_flight"]["value"], 4096, delta=4)
-        # With another card's latency (a transfer: the sample's RTX 4070 Ti against the ISA
-        # table's sm_89 card) the chain verdict is reported only; the ring rule decides, and
-        # here the 4-load ring keeps its count (no cap) although chain16 reads under its bound.
-        head, rows = wi.parse_run(self.capped(SAMPLE, 4096))
+        self.assertEqual(t["cap_test"]["verdict"], "undecided")
+        self.assertFalse(t["cap_test"]["decides"])
+        self.assertFalse(t["warp_bytes_saturated"])
+        # Both chains under their bounds with the ring rule disagreeing: undecided, no cap.
+        head, rows = wi.parse_run(self.capped(SAMPLE, 2048, only=wi.CAP_CHAINS).replace(
+            "card NVIDIA GeForce RTX 4070 Ti", f"card {isa_card}"))
+        t = wi.facts_row(head, rows, "warp_inflight_89.txt")
+        self.assertFalse(any(c["all_in_flight"] for c in t["cap_test"]["chains"].values()))
+        self.assertEqual(t["cap_test"]["verdict"], "undecided")
+        self.assertFalse(t["warp_bytes_saturated"])
+        # Chains above their bounds while the ring rule reads a cap (ring4 held to ring2's
+        # 2048 B): with the card's own latency the chain verdict decides, no cap; with another
+        # card's (a transfer: the sample's RTX 4070 Ti against the ISA table's sm_89 card) it is
+        # reported only, and the ring rule's cap stands.
+        rings_capped = self.capped(SAMPLE, 2048, only=("ring4", "ring8"))
+        head, rows = wi.parse_run(rings_capped.replace("card NVIDIA GeForce RTX 4070 Ti",
+                                                       f"card {isa_card}"))
+        t = wi.facts_row(head, rows, "warp_inflight_89.txt")
+        self.assertEqual(t["cap_test"]["verdict"], "no cap")
+        self.assertTrue(t["cap_test"]["decides"])
+        self.assertFalse(t["warp_bytes_saturated"])
+        head, rows = wi.parse_run(rings_capped)
         t = wi.facts_row(head, rows, "warp_inflight_89.txt")
         self.assertFalse(t["cap_test"]["latency_is_this_card"])
+        self.assertEqual(t["cap_test"]["verdict"], "no cap")
         self.assertFalse(t["cap_test"]["decides"])
-        self.assertTrue(t["cap_test"]["saturated"])
-        self.assertFalse(t["warp_bytes_saturated"])
+        self.assertTrue(t["warp_bytes_saturated"])
         # No latency for the architecture in the ISA table: the chain test refuses.
         with tempfile.TemporaryDirectory() as d:
             empty = os.path.join(d, "isa.json")

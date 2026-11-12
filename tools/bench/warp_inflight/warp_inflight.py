@@ -655,8 +655,12 @@ FACTS_NOTE = (
     "either chain's lone-warp b_w is at or under the two-latency bound count x L0 / (2 x the ISA "
     "table's dram_tlbwarm_latency_ns_w1): a warp held to fewer loads than the chain's count "
     "cannot pass it (cap_test: each chain's reading, its bound and the latency's source). The "
-    "test decides only with the card's own ISA latency; with another card's (a transfer) it is "
-    "reported, and the ring rule decides. In an "
+    "bound proves that direction only, so a reading under it alone is no cap: the verdict is a "
+    "cap only where both chains read at or under their bounds and the ring rule agrees, no cap "
+    "where both read above, and undecided otherwise (the ring rule then decides); this tightens "
+    "the rule frozen in 665e190b after the codex review of #765, and changes no committed "
+    "verdict. The test decides only with the card's own ISA latency; with another card's (a "
+    "transfer) it is reported, and the ring rule decides. In an "
     "earlier run's row, it saturates where the 4-load ring keeps less than x1.5 of the 2-load "
     "ring's b_w at W = 1 "
     "(ring4_over_ring2_w1; the midpoint between no gain and the doubling its count gives: sm_70 "
@@ -746,9 +750,17 @@ def cap_test(head, rows, summary, own, isa_table):
     """The chain test of whether one warp saturates below its count (#757), for a run with the
     CAP_CHAINS rows (probe 5 on); None for an earlier run, which keeps the ring rule. Each chain's
     lone-warp b_w (free, k = 1, W = 1) against chain_bound with the architecture's latency from
-    the ISA table: a reading at or under the bound is a warp held to fewer loads (a cap). The
-    verdict decides the row only with the run's own card's latency (`decides`); with another
-    card's, a transfer, it is reported and the row keeps the ring rule."""
+    the ISA table. The bound proves one direction only: a cap below the count reads at or under
+    it. A reading under it is no proof of a cap (an issue or return-path stall reads low too), so
+    the verdict is:
+    - `no cap`: every chain above its bound;
+    - `cap`: every chain at or under its bound and the ring rule agreeing (ring4 under
+      SATURATION_GAIN x ring2), two readings and a rule that each show the limit;
+    - `undecided`: anything else; the row keeps the ring rule.
+    This tightens the rule frozen in 665e190b (codex review of #765): it removes the path where a
+    reading under a bound alone set a cap, and changes no committed verdict. The verdict decides
+    the row only with the run's own card's latency (`decides`); with another card's, a transfer,
+    it is reported and the row keeps the ring rule."""
     if not all(v in summary["variants"]["free"] for v in CAP_CHAINS):
         return None
     latency, why, card = isa_l0(int(head["cc"]), isa_table)
@@ -760,9 +772,17 @@ def cap_test(head, rows, summary, own, isa_table):
         bound = round(chain_bound(n * WARP_LOAD, own, latency), 1)
         chains[v] = {"b_w_w1": b_w, "two_latency_bound": bound, "all_in_flight": b_w > bound}
     mine = card == head["card"]
+    free = summary["variants"]["free"]
+    rings_say_cap = free["ring4"]["b_w_w1"] / free["ring2"]["b_w_w1"] < SATURATION_GAIN
+    if all(c["all_in_flight"] for c in chains.values()):
+        verdict = "no cap"
+    elif not any(c["all_in_flight"] for c in chains.values()) and rings_say_cap:
+        verdict = "cap"
+    else:
+        verdict = "undecided"
     return {"latency_ns": latency, "latency_source": why, "latency_card": card,
-            "latency_is_this_card": mine, "decides": mine, "chains": chains,
-            "saturated": not all(c["all_in_flight"] for c in chains.values())}
+            "latency_is_this_card": mine, "decides": mine and verdict != "undecided",
+            "chains": chains, "verdict": verdict}
 
 
 def facts_row(head, rows, source, isa_table=DEFAULT_ISA_TABLE):
@@ -797,7 +817,7 @@ def facts_row(head, rows, source, isa_table=DEFAULT_ISA_TABLE):
         # b_w_max is a cap only where the probe saw one warp saturate: by the chain test where
         # the run has its chains (probe 5 on) and the latency is the card's own, else by the
         # ring rule (SATURATION_GAIN).
-        "warp_bytes_saturated": (chains["saturated"] if chains and chains["decides"]
+        "warp_bytes_saturated": (chains["verdict"] == "cap" if chains and chains["decides"]
                                  else gain < SATURATION_GAIN),
         "ring4_over_ring2_w1": round(gain, 3),
         "ring2_rows": ring_rows(rows, "ring2"),
@@ -999,16 +1019,35 @@ def sass_loads(sass):
 SASS_REGISTER = re.compile(r"\bR(\d+)(\.64)?\b")
 
 
+DEPBAR_LE = re.compile(r"SB(\d)\s*,\s*(0x[0-9a-f]+|\d+)")
+NO_SCOREBOARD = 7  # the control code's write barrier when an instruction sets none
+
+
 def peak_in_flight(body):
-    """The most 16-byte loads the kernel's SASS keeps in flight a lane, read in program order: a
-    load stays in flight until an instruction reads or overwrites a register it writes (its
-    quad), which waits for it. The loop's body is read once, after the code before it, which is
-    where the probe's fetches meet; a guarded load counts as issued. A count of what the text
-    lets be in flight, not a schedule: DEPBAR waits and the loop's back edge are not followed
-    (the probe's kernels wait on their loads through the registers they read)."""
+    """The most 16-byte loads the kernel's SASS keeps in flight a lane, read in program order. A
+    load stays in flight until something waits for it:
+    - an instruction reads or overwrites a register it writes (its quad);
+    - an instruction's control-code wait mask names the scoreboard the load set (every load on
+      that scoreboard is then back);
+    - a `DEPBAR.LE SBx, n` leaves at most n loads outstanding on SBx (the oldest are back).
+    The loop's body is read once, after the code before it, which is where the probe's fetches
+    meet; a guarded load counts as issued. A count of what the text lets be in flight, not a
+    schedule: the loop's back edge is not followed. A body without control words (hand-made SASS)
+    is read by its registers alone."""
     sc = IP._sass_counts()
-    pending, peak = [], 0
-    for _, _, opcode, operands, _ in body:
+    pending, peak = [], 0  # [(registers, scoreboard)], in issue order
+    for _, _, opcode, operands, high in body:
+        control = sc.Control(high) if high is not None else None
+        if control is not None and control.wait_mask:
+            pending = [(q, sb) for q, sb in pending
+                       if sb == NO_SCOREBOARD or not control.wait_mask >> sb & 1]
+        if sc.base_opcode(opcode) == "DEPBAR":
+            m = DEPBAR_LE.search(operands)
+            if m:
+                sb, keep = int(m.group(1)), int(m.group(2), 0)
+                mine = [i for i, (_, b) in enumerate(pending) if b == sb]
+                done = set(mine[:max(0, len(mine) - keep)])
+                pending = [x for i, x in enumerate(pending) if i not in done]
         written = sc.written_registers(opcode, operands)
         fields = operands.split(",")
         reads = set()
@@ -1018,9 +1057,9 @@ def peak_in_flight(body):
             for m in SASS_REGISTER.finditer(f):
                 n = int(m.group(1))
                 reads.update({f"R{n}", f"R{n + 1}"} if m.group(2) else {f"R{n}"})
-        pending = [q for q in pending if not (q & reads or q & written)]
+        pending = [(q, sb) for q, sb in pending if not (q & reads or q & written)]
         if _is_ldg128(opcode):
-            pending.append(written)
+            pending.append((written, control.write_barrier if control else NO_SCOREBOARD))
             peak = max(peak, len(pending))
     return peak
 
