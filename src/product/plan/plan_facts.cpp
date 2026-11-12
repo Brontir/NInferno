@@ -731,6 +731,12 @@ private:
                 break;
             }
         }
+        // One bank known A16-only makes the layer A16 whatever the other records
+        // (ops::moe_policy), even where the other's policy is unknown (codex on #792).
+        const auto a16 = [](const Bank& b) {
+            return b.seen && b.policy_known && b.policy == artifact::ActivationPolicy::A16Only;
+        };
+        if (a16(l.gate_up) || a16(l.down)) { return false; }
         return l.kept_a8;
     }
     std::map<std::string, Layer> layers_;

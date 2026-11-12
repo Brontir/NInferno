@@ -343,7 +343,10 @@ struct PlanModelFacts {
     std::vector<PlanLinear> linears;
     // Their prefill GEMM (the trunk's banks; the most of their bytes where layers differ), at the
     // policy the banks run at under fast activations; under --activations int8, where the start
-    // runs every bank at AllowA8 (models::effective_policy), by their formats alone.
+    // runs every bank at AllowA8 (models::effective_policy), by their formats alone: the formats
+    // the file names, which for an assumed bank (below: Gemma 4's GGUF MXFP4) is the header's
+    // MXFP4, not the NVFP4, BF16 or Q8 site the loader keeps; the assumed flag keeps an estimate
+    // on it Transferred.
     ExpertPrefill expert_prefill = ExpertPrefill::Unknown;
     ExpertPrefill expert_prefill_int8 = ExpertPrefill::Unknown;
     // The route rests on banks whose kept format the header does not tell (Gemma 4's GGUF MXFP4

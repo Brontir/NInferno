@@ -6,6 +6,8 @@
 // CPU.
 
 #include "product/plan/plan_facts.h"
+#include "product/plan/plan_choice.h"
+#include "product/plan/plan_speculation.h"
 
 #include "convert/ggml_quants.h"
 #include "convert/gguf.h"
@@ -542,8 +544,66 @@ int gemma4() {
         failures +=
             check(facts.expert_prefill == rt::ExpertPrefill::A16 && facts.expert_prefill_assumed,
                   "gemma4 gguf: MXFP4 experts prefill A16, assumed");
+        // expert_prefill_int8 is the header's format (MXFP4), not the site the loader keeps
+        // (NVFP4, BF16 or Q8): the assumed flag keeps an estimate on it Transferred.
         failures += check(facts.expert_prefill_int8 == rt::ExpertPrefill::Mxfp4,
                           "gemma4 gguf: MXFP4 experts under int8, the MXFP4 route");
+    }
+    // End to end (#769): the plan's quantization (product::quant_option_of) and the choice's
+    // prefill (choice::speed_of) of a Gemma 4 MoE GGUF with MXFP4 experts and Q8_0 linears beside
+    // them, on the RTX 4090: the banks A16 under fast activations, the header's MXFP4 under int8,
+    // and an estimate on them Transferred.
+    {
+        json moe_md                                 = md;
+        moe_md["gemma4.expert_count"]               = 128;
+        moe_md["gemma4.expert_used_count"]          = 8;
+        moe_md["gemma4.expert_feed_forward_length"] = 704;
+        GgufFile mx;
+        mx.metadata = moe_md;
+        for (int b = 0; b < 60; ++b) {
+            const std::string blk = "blk." + std::to_string(b) + ".";
+            mx.tensors.push_back(tensor(blk + "ffn_gate_up_exps.weight", {5376, 1408, 128},
+                                        ninferno::convert::ggml::MXFP4, 200));
+            mx.tensors.push_back(tensor(blk + "ffn_down_exps.weight", {704, 5376, 128},
+                                        ninferno::convert::ggml::MXFP4, 100));
+            mx.tensors.push_back(
+                tensor(blk + "attn_q.weight", {5376, 8192}, ninferno::convert::ggml::Q8_0, 50));
+        }
+        const auto facts                               = pr::plan_facts_of_gguf(mx, 999999);
+        const ninferno::product::choice::QuantOption q = pr::quant_option_of(facts, "MXFP4");
+        using Banks                                    = ninferno::product::choice::ExpertBanks;
+        failures += check(q.expert_banks == Banks::A16 && q.expert_banks_int8 == Banks::Mxfp4 &&
+                              q.expert_banks_assumed,
+                          "gemma4 gguf e2e: the quantization's banks A16, MXFP4 under int8, "
+                          "assumed");
+        rt::PlanDeviceFacts device;
+        device.name               = "RTX 4090";
+        device.compute_capability = 89;
+        device.pci_device_id      = 0x2684;
+        device.sms                = 128;
+        device.total_bytes        = 24ULL << 30;
+        const ninferno::product::choice::CardFacts card =
+            pr::choice_card_of(pr::gpu_key_of(device));
+        const ninferno::product::choice::ModelFacts model = pr::choice_model_of(facts);
+        bool transferred                                  = false;
+        const double seconds =
+            ninferno::product::choice::prefill_linears_seconds(model, card, q, 2048, &transferred);
+        failures += check(model.moe() && seconds > 0 && transferred,
+                          "gemma4 gguf e2e: the banks' tiles priced, Transferred");
+        ninferno::product::choice::Candidate fast;
+        fast.kv                                   = ninferno::KvCacheStorage::BFloat16;
+        fast.chunk                                = 2048;
+        ninferno::product::choice::Candidate int8 = fast;
+        int8.activations                          = ninferno::ActivationMode::Int8;
+        const ninferno::product::choice::Speed f =
+            ninferno::product::choice::speed_of(model, card, q, fast, 1, 4096, 2048);
+        const ninferno::product::choice::Speed i =
+            ninferno::product::choice::speed_of(model, card, q, int8, 1, 4096, 2048);
+        failures += check(f.basis != ninferno::product::choice::SpeedBasis::Own &&
+                              i.basis != ninferno::product::choice::SpeedBasis::Own,
+                          "gemma4 gguf e2e: fast and int8 estimates Transferred");
+        failures += check(f.prefill > 0 && i.prefill > 0 && f.prefill != i.prefill,
+                          "gemma4 gguf e2e: an int8 candidate's prefill on another route");
     }
     const json config = {{"architectures", {"Gemma4ForConditionalGeneration"}},
                          {"text_config",
@@ -1057,6 +1117,10 @@ int artifact_prefill_policy() {
                       "artifact prefill: Q4_0 banks recorded AllowA8, the grouped W4A8");
     failures += check(route(QType::GGML_Q4_0, layers(a16, a16, a16, a16)) == rt::ExpertPrefill::A16,
                       "artifact prefill: Q4_0 banks recorded A16Only, A16 (not the kept AllowA8)");
+    // A bank known A16-only beside one with no recorded policy: the layer is A16 still
+    // (ops::moe_policy), not the kept fallback.
+    failures += check(route(QType::MXFP4, layers(a16, none, a16, none)) == rt::ExpertPrefill::A16,
+                      "artifact prefill: an A16-only bank beside an unknown one, A16");
     // Under --activations int8 the start runs every bank at AllowA8 (models::effective_policy),
     // whatever was recorded: the formats decide.
     failures +=

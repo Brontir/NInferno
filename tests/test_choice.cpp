@@ -2499,8 +2499,64 @@ void choices_replay(const json& fixture) {
         (void)ch::replay_choice(old_record);
     } catch (const std::invalid_argument& e) { old_message = e.what(); }
     check(old_message.find("replay/1") != std::string::npos &&
-              old_message.find("replay/2") != std::string::npos,
+              old_message.find("replay/3") != std::string::npos,
           "a schema-1 record is refused with both versions named");
+    // A record of the schema before the banks' int8 route (/2) is refused too: its quantization
+    // has no expert_banks_int8 or expert_banks_assumed to replay.
+    {
+        auto two      = record.inputs;
+        two["schema"] = "ninferno-choice-replay/2";
+        two["quant"].erase("expert_banks_int8");
+        two["quant"].erase("expert_banks_assumed");
+        bool two_refused = false;
+        try {
+            (void)ch::replay_choice(two);
+        } catch (const std::invalid_argument&) { two_refused = true; }
+        check(two_refused, "a schema-2 record is refused");
+    }
+    // The banks' int8 route and the assumed flag go through the record (#769): an MoE whose banks
+    // are A16 under fast activations, Int8 under int8, on an assumed format, int8 pinned. The
+    // record replays to the same choice; without the two fields it would not.
+    {
+        const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
+        Bench moe{model_of(m35), card_of(fixture.at("cards").at("RTX 4090")), {}};
+        moe.model.linears      = qwen36_moe_linears();
+        moe.model.layers       = 40;
+        moe.model.hidden       = 2048;
+        ch::QuantOption q      = quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"));
+        q.rest_weights         = ch::WeightClass::Q8;
+        q.expert_banks         = ch::ExpertBanks::A16;
+        q.expert_banks_int8    = ch::ExpertBanks::Int8;
+        q.expert_banks_assumed = true;
+        moe.quants.push_back(q); // the oracle's weights
+        ch::Pins pins;
+        pins.activations              = ActivationMode::Int8;
+        const ch::Allowed moe_allowed = ch::allowed_axes(moe.model, KvCacheStorage::Int8Group64);
+        ch::Task task;
+        task.contexts = {4096, 2048};
+        const ch::ChoiceRecord rec =
+            ch::record_choice(moe.model, moe.card, q, moe_allowed, pins, task, oracle(moe, 40e9),
+                              ch::Gates{true, true});
+        const auto read_back = nlohmann::ordered_json::parse(rec.inputs.dump());
+        check(read_back.at("quant").at("expert_banks_int8") ==
+                      static_cast<int>(ch::ExpertBanks::Int8) &&
+                  read_back.at("quant").at("expert_banks_assumed") == true,
+              "replay: the banks' int8 route and the assumed flag are recorded");
+        check(ch::choice_summary(ch::replay_choice(read_back)) == ch::choice_summary(rec.choice),
+              "replay: an int8-pinned MoE on assumed banks replays to the same choice");
+        auto dropped                             = read_back;
+        dropped["quant"]["expert_banks_int8"]    = nullptr;
+        dropped["quant"]["expert_banks_assumed"] = false;
+        check(ch::choice_summary(ch::replay_choice(dropped)) != ch::choice_summary(rec.choice),
+              "replay: without the two fields the choice differs");
+        auto none                          = read_back;
+        none["quant"]["expert_banks_int8"] = nullptr;
+        bool none_read                     = true;
+        try {
+            (void)ch::replay_choice(none);
+        } catch (const std::exception&) { none_read = false; }
+        check(none_read, "replay: a null int8 route is read (none given)");
+    }
     auto no_gate = record.inputs;
     no_gate["gates"].erase("typed_resolution");
     bool gate_refused = false;
