@@ -610,25 +610,6 @@ QuantOption prefill_quant(const QuantOption& quant, ActivationMode activations) 
     return out;
 }
 
-// The weight format a linear's file names (ggml_q4_k, ...) as the engine's QType; a name the matrix
-// kernel does not run (bf16, q8_g32_fp16) gives one with no tile of its own (widest_tile: 128).
-QType qtype_of_name(std::string_view name) noexcept {
-    static constexpr std::pair<std::string_view, QType> kNames[] = {
-        {"ggml_q2_k", QType::GGML_Q2_K},       {"ggml_q3_k", QType::GGML_Q3_K},
-        {"ggml_q4_k", QType::GGML_Q4_K},       {"ggml_q5_k", QType::GGML_Q5_K},
-        {"ggml_q6_k", QType::GGML_Q6_K},       {"ggml_iq4_xs", QType::GGML_IQ4_XS},
-        {"ggml_iq3_xxs", QType::GGML_IQ3_XXS}, {"ggml_iq3_s", QType::GGML_IQ3_S},
-        {"ggml_q4_0", QType::GGML_Q4_0},       {"ggml_q4_1", QType::GGML_Q4_1},
-        {"ggml_q5_0", QType::GGML_Q5_0},       {"ggml_q5_1", QType::GGML_Q5_1},
-        {"ggml_iq4_nl", QType::GGML_IQ4_NL},   {"ggml_iq2_xxs", QType::GGML_IQ2_XXS},
-        {"ggml_iq2_xs", QType::GGML_IQ2_XS},   {"ggml_iq2_s", QType::GGML_IQ2_S},
-        {"ggml_iq1_s", QType::GGML_IQ1_S}};
-    for (const auto& [n, q] : kNames) {
-        if (n == name) { return q; }
-    }
-    return QType::BF16;
-}
-
 // A dense model's int8 route on the int8 tiles (Q8 weights): the tile's clock count at the model's
 // hidden width (2 x 64 x 64 operations a tile over c0 + K c1 SM-clocks, against the s8 rate a
 // SM-clock), Turing's measured row, else the generation's int8 row, transferred.
@@ -683,9 +664,6 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
     return rate;
 }
 
-// A label's tokens (weight_class_of reads them too).
-std::vector<std::string> label_tokens(std::string_view label);
-
 // A dense model's Q8_0 / K-quant linears on Volta's CUTLASS route (kVoltaPrefillCost); 0 for another
 // class or a K-quant label without its format.
 double volta_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
@@ -695,12 +673,13 @@ double volta_linears_seconds(const ModelFacts& model, const CardFacts& card, con
     if (quant.weights == WeightClass::Q8) {
         decode = cost.q8;
     } else if (quant.weights == WeightClass::KQuant) {
-        const std::vector<std::string> t = label_tokens(quant.label);
-        for (std::size_t i = 0; i + 1 < t.size(); ++i) {
-            if (t[i + 1] != "K") { continue; }
-            if (t[i] == "Q4") { decode = cost.q4k; }
-            if (t[i] == "Q5") { decode = cost.q5k; }
-            if (t[i] == "Q6") { decode = cost.q6k; }
+        // The label's K-quant format (label_formats: Q4_K_M's Q4_K).
+        if (const std::optional<std::set<QType>> label = label_formats(quant.label)) {
+            for (const auto& [q, d] :
+                 {std::pair{QType::GGML_Q4_K, cost.q4k}, std::pair{QType::GGML_Q5_K, cost.q5k},
+                  std::pair{QType::GGML_Q6_K, cost.q6k}}) {
+                if (label->count(q) > 0) { decode = d; }
+            }
         }
     }
     if (decode <= 0) { return 0; }
@@ -744,39 +723,51 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         if (row.generation == gen) { cost = &row; }
     }
     if (cost == nullptr) { return 0; }
-    // The label's K-quant format (Q4_K_M: Q4_K), its bits a weight past that format's toward Q6_K.
+
+    // The formats whose K step the row reads, their bits a weight from the format facts (a block's
+    // bytes over its values). Q3_K: a Q3_K mix (WeightClass::Other), its K step read on the
+    // census's Q3_K_M calls. IQ4_XS: an IQ4_XS file (WeightClass::IQ4), its step read on the
+    // census's calls (IQ4_NL: not read). Q4_1: a Q4_1 file (WeightClass::Other), its step read
+    // where the census was (q41; else not read).
     struct Format {
-        std::string_view name;
-        double bits, step;
+        QType q;
+        double step;
     };
-    // Q3_K: a Q3_K mix (WeightClass::Other), its K step read on the census's Q3_K_M calls.
-    // IQ4_XS: an IQ4_XS file (WeightClass::IQ4), its step read on the census's calls (IQ4_NL: not read).
-    // Q4_1: a Q4_1 file (WeightClass::Other), its step read where the census was (q41; else not read).
-    const Format formats[] = {{"Q3", 3.4375, cost->q3},
-                              {"Q4", 4.5, cost->q4},
-                              {"Q5", 5.5, cost->q5},
-                              {"Q6", 6.5625, cost->q6},
-                              {"IQ4", 4.25, cost->iq4xs},
-                              {"Q4", 5.0, cost->q41}};
-    const Format* const iq4xs = &formats[4];
-    const Format* const q41   = &formats[5];
-    // The second token of a label's format: Q4_K_M's K, IQ4_XS's XS, Q4_1's 1.
-    const auto second = [&](const Format* f) { return f == iq4xs ? "XS" : f == q41 ? "1" : "K"; };
-    const std::vector<std::string> tokens_of = label_tokens(quant.label);
-    const Format* format = nullptr;
-    for (std::size_t i = 0; i + 1 < tokens_of.size(); ++i) {
-        // Not another engine's repacked layouts (Q4_K_R4: weight_class_of's Other).
-        const bool repacked = i + 2 < tokens_of.size() && tokens_of[i + 2].size() >= 2 && tokens_of[i + 2][0] == 'R' &&
-                              std::isdigit(static_cast<unsigned char>(tokens_of[i + 2][1]));
-        for (const Format& f : formats) {
-            if (tokens_of[i] == f.name && tokens_of[i + 1] == second(&f) && !repacked) { format = &f; }
-        }
-    }
+
+    const Format formats[] = {{QType::GGML_Q3_K, cost->q3},      {QType::GGML_Q4_K, cost->q4},
+                              {QType::GGML_Q5_K, cost->q5},      {QType::GGML_Q6_K, cost->q6},
+                              {QType::GGML_IQ4_XS, cost->iq4xs}, {QType::GGML_Q4_1, cost->q41}};
+    const double q6k_bits  = ggml_bits_per_value(QType::GGML_Q6_K);
+    // A linear's format as its file names it (artifact::format_name); none where not named.
+    const auto format_of = [](const LinearShape& l) -> std::optional<QType> {
+        return l.format.empty() ? std::nullopt : find_format(l.format);
+    };
     // Where the file names its linears' formats each takes its own (an unread one: the share), whatever
     // the class (UD-Q4_K_XL: IQ4 by its iq4_xs tensors). Else another class's label (Other: a format
     // beside the label's own) is priced only as a Q3_K mix, an IQ4_XS label only as its class's.
     const bool named = std::any_of(model.linears.begin(), model.linears.end(),
                                    [](const LinearShape& l) { return !l.format.empty(); });
+    // The format the file is priced as: where it names its linears' formats, the read format of
+    // most of their weights (a Q8_0 or 16-bit linear among them takes its step); else the label's
+    // (label_formats: a hub row's Q4_K_M, Q3_K_M, IQ4_XS or Q4_1), its bits a weight past that
+    // format's toward Q6_K.
+    const Format* format = nullptr;
+    if (named) {
+        double most = 0;
+        for (const Format& f : formats) {
+            double weights = 0;
+            for (const LinearShape& l : model.linears) {
+                if (format_of(l) == f.q) { weights += l.per_token * l.k * l.n; }
+            }
+            if (weights > most) { most = weights, format = &f; }
+        }
+    } else if (const std::optional<std::set<QType>> label = label_formats(quant.label)) {
+        for (const Format& f : formats) {
+            if (label->count(f.q) > 0) { format = &f; }
+        }
+    }
+    const Format* const iq4xs = &formats[4];
+    const Format* const q41   = &formats[5];
     // A codebook IQ linear's step on this generation's tile (kMmqIqStep; MMQ only, the W4A8 tiles run
     // none), nullptr where not read.
     const auto iq_step = [&](std::string_view name) -> const MmqIqStep* {
@@ -786,71 +777,49 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         }
         return nullptr;
     };
-    const bool reads_iq = named && std::any_of(model.linears.begin(), model.linears.end(),
-                                               [&](const LinearShape& l) { return iq_step(l.format) != nullptr; });
-    // A label that names no format (a renamed file: "the model's weights") over named linears: the
-    // format of most of their weights stands for the label's.
-    if (format == nullptr && named) {
-        const std::pair<const char*, const Format*> by_name[] = {
-            {"ggml_q3_k", &formats[0]}, {"ggml_q4_k", &formats[1]}, {"ggml_q5_k", &formats[2]},
-            {"ggml_q6_k", &formats[3]}, {"ggml_iq4_xs", &formats[4]}, {"ggml_q4_1", &formats[5]}};
-        double most = 0;
-        for (const auto& [name, f] : by_name) {
-            double weights = 0;
-            for (const LinearShape& l : model.linears) {
-                if (l.format == name) { weights += l.per_token * l.k * l.n; }
-            }
-            if (weights > most) { most = weights, format = f; }
-        }
-    }
+    const bool reads_iq =
+        named && std::any_of(model.linears.begin(), model.linears.end(),
+                             [&](const LinearShape& l) { return iq_step(l.format) != nullptr; });
     // A file of codebook IQ linears and none of those formats: the IQ steps alone, its Q8_0 and
     // 16-bit linears at no step (the share).
-    static constexpr Format kNoFormat{"", 0, 0};
+    static constexpr Format kNoFormat{QType::BF16, 0};
     if (format == nullptr && reads_iq) { format = &kNoFormat; }
     if (format == nullptr || (format->step <= 0 && !reads_iq) ||
         (!named && (format == iq4xs ? quant.weights != WeightClass::IQ4
-                                    : format != q41 && quant.weights != WeightClass::KQuant && format->bits >= 4))) {
+                                    : format != q41 && quant.weights != WeightClass::KQuant &&
+                                          ggml_bits_per_value(format->q) >= 4))) {
         return 0;
     }
-    const double toward = format->bits < 6.5625
-                              ? std::clamp((quant.bits_per_weight - format->bits) / (6.5625 - format->bits), 0.0, 1.0)
-                              : 0;
+    const double bits = ggml_bits_per_value(format->q);
+    const double toward =
+        bits < q6k_bits ? std::clamp((quant.bits_per_weight - bits) / (q6k_bits - bits), 0.0, 1.0)
+                        : 0;
     const double sms = card.sms, label_step = format->step + (cost->q6 - format->step) * toward;
-    // A linear whose file names its format takes that format's step. Else the label's: its bits
-    // toward Q6_K stand for the mix where no linear is named; where the file names them (its Q6_K
-    // parts priced as theirs), the label's format's own step (a Q8_0 or 16-bit linear among them).
+    // A linear whose file names its format takes that format's step. Else the file's: its bits
+    // toward Q6_K stand for the mix where no linear is named (the label's); where the file names
+    // them (its Q6_K parts priced as theirs), its format's own step (a Q8_0 or 16-bit linear among
+    // them).
     bool reads_q41            = false; // a Q4_1 linear's step, read on q41_cards cards
     bool reads_iq_transferred = false; // an IQ linear's step read on one card
-    const auto step_of = [&](const LinearShape& l) {
-        for (const auto& [name, f] : {std::pair{"ggml_q3_k", &formats[0]}, std::pair{"ggml_q4_k", &formats[1]},
-                                      std::pair{"ggml_q5_k", &formats[2]}, std::pair{"ggml_q6_k", &formats[3]},
-                                      std::pair{"ggml_iq4_xs", &formats[4]}, std::pair{"ggml_q4_1", &formats[5]}}) {
-            if (l.format == name) {
-                reads_q41 = reads_q41 || f == q41;
-                return f->step;
+    const auto step_of        = [&](const LinearShape& l) {
+        const std::optional<QType> q = format_of(l);
+        for (const Format& f : formats) {
+            if (q == f.q) {
+                reads_q41 = reads_q41 || &f == q41;
+                return f.step;
             }
         }
         if (const MmqIqStep* row = iq_step(l.format)) {
             reads_iq_transferred = reads_iq_transferred || row->cards < 2;
             return row->step;
         }
-        // A format not read (IQ4_NL: a 64 x 64 W4A8 tile; MXFP4, NVFP4: their block-scaled routes): none
-        // (the share, with_unread).
-        // Q8_0 and 16-bit linears among the named ones take the label's step (open: their own routes).
-        if (!l.format.empty() && l.format != "q8_g32_fp16" && l.format != "bf16" && l.format != "ggml_f16") {
-            return 0.0;
-        }
+        // A format not read (IQ4_NL: a 64 x 64 W4A8 tile; MXFP4, NVFP4: their block-scaled routes):
+        // none (the share, with_unread). Q8_0 and 16-bit linears among the named ones take the
+        // file's step (open: their own routes).
+        if (!l.format.empty() && q != QType::Q8_G32_FP16 && q != QType::BF16) { return 0.0; }
         reads_q41 = reads_q41 || format == q41;
         return named ? format->step : label_step;
     };
-    // The label's weight format as a QType (the formats table's order: Q3_K, Q4_K, Q5_K, Q6_K,
-    // IQ4_XS, Q4_1).
-    const QType label_qtype = format == &formats[0]   ? QType::GGML_Q3_K
-                              : format == &formats[1] ? QType::GGML_Q4_K
-                              : format == &formats[2] ? QType::GGML_Q5_K
-                              : format == &formats[3] ? QType::GGML_Q6_K
-                              : format == &formats[4] ? QType::GGML_IQ4_XS
-                                                      : QType::GGML_Q4_1;
     double clocks = 0, bytes = 0, launch_s = 0;
     // A linear of a format not read takes the share (the dense int8 prefill rate on its flops) beside
     // the read ones' tiles: one such tensor no longer drops the whole file's tiles for the share
@@ -870,7 +839,8 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     // The W4A8 tiles from 128 tokens (kW4a8WideMinTokens; a narrower call takes the 64-row, 32-row or
     // vector kernels, not read: the share) on sm_120 (sm_121 runs Q4_K / Q6_K on the classic tile).
     // A Q3_K label whose linears are not named: its Q3_K and Q4_K parts take two tiles (the share).
-    if (!mmq && (tokens < kW4a8KquantTokens || card.major != 12 || card.minor != 0 || (format->bits < 4 && !named))) {
+    if (!mmq && (tokens < kW4a8KquantTokens || card.major != 12 || card.minor != 0 ||
+                 (bits < 4 && !named))) {
         return 0;
     }
     if (transferred != nullptr && cost->cards < 2) { *transferred = true; }
@@ -881,11 +851,13 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                 unread_flops += 2 * l.per_token * tokens * l.k * l.n;
                 continue;
             }
-            // A Q3_K label's linear of no K format: the label's step is the 64 x 64 tile's (the share).
-            const bool k_format = l.format == "ggml_q3_k" || l.format == "ggml_q4_k" || l.format == "ggml_q5_k" ||
-                                  l.format == "ggml_q6_k";
-            if (format->bits < 4 && !k_format) { return 0; }
-            if (l.format == "ggml_q3_k") { // the classic 64 x 64 tile, two a SM (kW4a8Q3kTile)
+            // A Q3_K file's linear of no K format (Q3_K .. Q6_K, the first four of `formats`): its
+            // step is the 64 x 64 tile's (the share).
+            const std::optional<QType> q = format_of(l);
+            const bool k_format =
+                std::any_of(formats, formats + 4, [&](const Format& f) { return q == f.q; });
+            if (bits < 4 && !k_format) { return 0; }
+            if (q == QType::GGML_Q3_K) { // the classic 64 x 64 tile, two a SM (kW4a8Q3kTile)
                 const double tiles = std::ceil(l.n / kW4a8Q3kTile) * std::ceil(tokens / kW4a8Q3kTile);
                 clocks += l.per_token * std::ceil(tiles / (kW4a8Q3kResident * sms)) * l.k * step;
                 continue;
@@ -903,16 +875,15 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
             continue;
         }
         // The format the kernel's table is chosen by (mmq_columns::work_tiles_format): the
-        // linear's own, else the label's (Q4_K, Q6_K).
-        const bool measured_format = l.format.empty()
-                                         ? format == &formats[1] || format == &formats[3]
-                                         : l.format == "ggml_q4_k" || l.format == "ggml_q6_k";
+        // linear's own, else the file's (Q4_K, Q6_K). A name the matrix kernel does not run
+        // (bf16, q8_g32_fp16) has no tile of its own (widest_tile: 128).
+        const QType q = l.format.empty() ? format->q : find_format(l.format).value_or(QType::BF16);
+        const bool measured_format = q == QType::GGML_Q4_K || q == QType::GGML_Q6_K;
         // A guard for a future Q2_K step row: today step_of prices Q2_K as the int8 share, so no
         // Q2_K linear reaches here (cost_route, ops/generic/generic_cost.cpp, has the live cap).
         // The widest tile the card's shared memory holds for the linear's format (a label's
         // format: its tile's, Q3_K .. Q4_1 of `formats`).
-        const int widest = mmq_columns::widest_tile(
-            l.format.empty() ? label_qtype : qtype_of_name(l.format), card.major, card.minor);
+        const int widest = mmq_columns::widest_tile(q, card.major, card.minor);
         // One grid's shape on this card: what a generation with a launch law prices the widths by
         // (core/mmq_columns.h width_cost, the kernel's own ranking).
         const mmq_columns::LaunchFacts facts{static_cast<int>(n), static_cast<int>(l.k), card.sms,
@@ -1534,51 +1505,88 @@ std::vector<std::string> label_tokens(std::string_view label) {
     return out;
 }
 
+// The labels that spell a format otherwise than the table does (format_facts name, ggml's
+// without its "ggml_"): ggml's Q8_0, kept as q8_g32_fp16; a bare Q8 (the label's last word: not
+// Q8_KV, Q8_K_R8); unsloth's Q8_K_XL / _L / _M / _S, Q8_0 with 16-bit tensors.
+struct LabelSpelling {
+    std::string_view words; // as a label spells them, '_' between words
+    bool last;              // only as the label's last words
+    QType format;
+    bool bf16; // and 16-bit tensors beside it
+};
+
+constexpr LabelSpelling kLabelSpellings[] = {
+    {"Q8_0", false, QType::Q8_G32_FP16, false},   {"Q8", true, QType::Q8_G32_FP16, false},
+    {"Q8_K_XL", false, QType::Q8_G32_FP16, true}, {"Q8_K_L", false, QType::Q8_G32_FP16, true},
+    {"Q8_K_M", false, QType::Q8_G32_FP16, true},  {"Q8_K_S", false, QType::Q8_G32_FP16, true},
+};
+
 } // namespace
 
-WeightClass weight_class_of(const std::vector<std::string>& formats, std::string_view label) {
-    if (!formats.empty()) {
-        bool k = false, q8 = false, iq4 = false, other = false;
-        for (const std::string& f : formats) {
-            if (f == "ggml_iq4_xs" || f == "ggml_iq4_nl") {
-                iq4 = true;
-            } else if (f == "ggml_q4_k" || f == "ggml_q5_k" || f == "ggml_q6_k") {
-                k = true;
-            } else if (f == "q8_g32_fp16") {
-                q8 = true;
-            } else if (f != "bf16" && f != "f16" && f != "ggml_f16" && f != "fp32" && f != "int32") {
-                other = true;
-            }
+WeightClass weight_class_of(std::span<const QType> formats) noexcept {
+    bool k = false, q8 = false, iq4 = false;
+    for (const QType q : formats) {
+        switch (scheduling_class(q)) {
+        case SchedulingClass::KQuant:
+            k = true;
+            break;
+        case SchedulingClass::Q8:
+            q8 = true;
+            break;
+        case SchedulingClass::IQ4:
+            iq4 = true;
+            break;
+        case SchedulingClass::Other:
+            return WeightClass::Other;
+        case SchedulingClass::Unquantized:
+            break;
         }
-        return other ? WeightClass::Other
-               : iq4 ? WeightClass::IQ4
-               : k   ? WeightClass::KQuant
-               : q8  ? WeightClass::Q8
-                     : WeightClass::Other;
     }
-    // A label: Q8 / Q8_0 (not Q8_KV), or a Q4_K / Q5_K / Q6_K mix (Q4_K_M, UD-Q5_K_XL, Q6_K).
+    return iq4  ? WeightClass::IQ4
+           : k  ? WeightClass::KQuant
+           : q8 ? WeightClass::Q8
+                : WeightClass::Other;
+}
+
+std::optional<std::set<QType>> label_formats(std::string_view label) {
     const std::vector<std::string> t = label_tokens(label);
-    for (std::size_t i = 0; i < t.size(); ++i) {
-        const bool next_k = i + 1 < t.size() && t[i + 1] == "K";
-        // Not another engine's repacked layouts (Q4_K_R4, Q8_K_R8): their routes are not ours.
-        const bool repacked = i + 2 < t.size() && t[i + 2].size() >= 2 && t[i + 2][0] == 'R' &&
-                              std::isdigit(static_cast<unsigned char>(t[i + 2][1]));
-        if ((t[i] == "Q4" || t[i] == "Q5" || t[i] == "Q6") && next_k && !repacked) { return WeightClass::KQuant; }
-        if (t[i] == "IQ4" && i + 1 < t.size() && (t[i + 1] == "XS" || t[i + 1] == "NL") && !repacked) {
-            return WeightClass::IQ4;
+    std::set<QType> out;
+    // Whether `spelling` (words joined by '_') is the label's words from i on, not followed by
+    // another engine's repacked layout (Q4_K_R4, Q8_0_R8, IQ4_XS_R8: their routes are not ours);
+    // `last`: and ends the label.
+    const auto at = [&](std::size_t i, std::string_view spelling, bool last) {
+        const std::vector<std::string> words = label_tokens(spelling);
+        if (words.empty() || i + words.size() > t.size()) { return false; }
+        for (std::size_t j = 0; j < words.size(); ++j) {
+            if (t[i + j] != words[j]) { return false; }
         }
-        if (t[i] == "Q8") {
-            // Q8, Q8_0; unsloth's Q8_K_XL / _L / _M / _S (Q8_0 with 16-bit tensors), not Q8_KV or Q8_K_R8.
-            const std::string next  = i + 1 < t.size() ? t[i + 1] : "";
-            const std::string after = i + 2 < t.size() ? t[i + 2] : "";
-            if (repacked) { continue; }
-            if (next.empty() || next == "0" ||
-                (next == "K" && (after == "XL" || after == "L" || after == "M" || after == "S"))) {
-                return WeightClass::Q8;
-            }
+        const std::size_t end = i + words.size();
+        if (last && end != t.size()) { return false; }
+        return !(end < t.size() && t[end].size() >= 2 && t[end][0] == 'R' &&
+                 std::isdigit(static_cast<unsigned char>(t[end][1])));
+    };
+    for (std::size_t i = 0; i < t.size(); ++i) {
+        for (const FormatFacts& f : kFormatFacts) {
+            const std::string_view name = f.name.starts_with("ggml_")
+                                              ? f.name.substr(std::string_view("ggml_").size())
+                                              : f.name;
+            if (at(i, name, false)) { out.insert(f.q); }
+        }
+        for (const LabelSpelling& s : kLabelSpellings) {
+            if (!at(i, s.words, s.last)) { continue; }
+            out.insert(s.format);
+            if (s.bf16) { out.insert(QType::BF16); }
         }
     }
-    return WeightClass::Other;
+    if (out.empty()) { return std::nullopt; }
+    return out;
+}
+
+WeightClass label_class(std::string_view label) {
+    const std::optional<std::set<QType>> formats = label_formats(label);
+    if (!formats) { return WeightClass::Other; }
+    const std::vector<QType> read(formats->begin(), formats->end());
+    return weight_class_of(read);
 }
 
 bool class_measured(const CardFacts& card, WeightClass weights) noexcept {

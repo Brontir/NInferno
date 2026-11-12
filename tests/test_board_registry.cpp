@@ -20,10 +20,11 @@ namespace {
 
 using namespace ninferno;
 
-// The one conflict: the V100 SXM2 row's bandwidth is not the measured board's (898.048 against
-// 900), so the board carries an override; every other measured board takes the row's own.
+// Every measured board is its row's, the V100 SXM2 included (898.048 GB/s, not NVIDIA's rounded
+// 900, which it carried as an override until #612).
 static_assert(board_registry::dram_gbps(*board_registry::find(0x1DB5)) == 898.048);
-static_assert(board_registry::board(0x1DB5).dram_gbps == 898.048);
+static_assert(measured::kV100Sxm2.dram_gbps == 898.048);
+static_assert(measured::board_of_pci(0x1DB5).dram_gbps == 898.048);
 static_assert(board_registry::board(0x2B85).dram_gbps == 1792);
 
 int failures = 0;
@@ -51,6 +52,7 @@ void registry_matches_the_table() {
         expect(r.bus_bits == t.bus_bits, what + ": bus bits");
         expect(r.gbps == t.gbps, what + ": data rate");
         expect(r.boost_mhz == t.boost_mhz, what + ": boost clock");
+        expect(r.vram_gib == t.vram_gib, what + ": memory size");
         expect(r.mma_slow == t.mma_slow, what + ": mma_slow");
         expect(board_registry::find(t.pci_device_id) != nullptr, what + ": found by id");
     }

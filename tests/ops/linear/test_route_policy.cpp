@@ -108,28 +108,14 @@ constexpr RegretBoard kRegretBoards[] = {
     {"gv100", "Quadro GV100", 0x1DBA, "sm70"},
 };
 
-// The board as the CUDA query reports a stock one of its row (memory clock: half the data rate),
-// as ninferno_decision_properties_test builds its rows.
+// The board as the golden boards are built: its registry row (ops/generic/selector_facts.h
+// registry_facts_board), the L2 to the byte (2.25 MiB on the RTX 3060, 5.5 on the RTX 2080 Ti), so
+// the board is its route table's own, at distance 0, as the card itself reports it.
 DeviceClass board_class(const RegretBoard& b) {
-    const GpuFactsRow* r = find_gpu_facts(b.pci_device_id);
-    if (r == nullptr) throw std::runtime_error(std::string(b.name) + ": no gpu_facts row");
-    const generic::FactsBoard board{
-        b.name,
-        r->pci_device_id,
-        r->major,
-        r->minor,
-        r->sms,
-        static_cast<std::size_t>(std::lround(r->l2_mib)),
-        static_cast<std::size_t>(std::max(1L, std::lround(r->vram_gib))),
-        r->boost_mhz,
-        static_cast<int>(std::lround(r->gbps * 500.0)) + 1,
-        r->bus_bits};
-    DeviceClass d = generic::board_device_class(board);
-    // The row's L2 to the byte (2.25 MiB on the RTX 3060, 5.5 on the RTX 2080 Ti): the board is
-    // then its route table's own, at distance 0, as the card itself reports it.
-    d.l2_bytes = static_cast<std::size_t>(std::llround(r->l2_mib * 1024.0 * 1024.0));
-    d.facts    = machine_facts_of(d);
-    return d;
+    if (board_registry::find(b.pci_device_id) == nullptr) {
+        throw std::runtime_error(std::string(b.name) + ": no gpu_facts row");
+    }
+    return generic::board_device_class(generic::registry_facts_board(b.name, b.pci_device_id));
 }
 
 struct SweepShape {

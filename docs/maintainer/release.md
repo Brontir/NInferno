@@ -102,6 +102,13 @@ for Volta: `-Cuda70`), CMake, Ninja and vcpkg; `package-native.ps1`'s header has
     - Linux: `curl -fsSL https://raw.githubusercontent.com/Brontir/NInferno/master/tools/release/install.sh | sh`
       installs `<VERSION>`, and `ninferno-update --check` on the release before says it is available.
     - Windows: the GitHub release's `NInferno-Setup.exe` installs it.
+11. **The kit's release manifest.** A user's measurement is accepted only from a published
+    release's engines ([validation-protocol.md](validation-protocol.md)). For each archive, unpack
+    it and run, from a checkout of master:
+    `python3 tools/kit/releases.py add --version <VERSION> --commit $(git rev-parse v<VERSION>^{commit}) --platform linux-x86_64 <unpacked>/bin`
+    (`--platform windows-x86_64` for the Windows zip's `bin`). It adds the SHA-256 of every
+    `ninferno-serve-sm<tag>` engine to `tools/kit/releases.json`; merge that change through a pull
+    request.
 
 A published version is never changed; to fix a release, make a new version. For a broken or unsafe
 release, also pass `--min-version` to `publish.sh`. `github_release.sh` refuses a release that is

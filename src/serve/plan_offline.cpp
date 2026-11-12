@@ -145,7 +145,8 @@ void check_listed_projector(const std::string& spec, const convert::FetchOptions
 }
 
 // A hub GGUF quantization's own tensor table: its header read as read_hub reads one (nullopt: not
-// read, a split part). What a row of the table prices (product::plan_quants_read).
+// read; a split part's has no tensor bytes). What a row of the table prices
+// (product::plan_quants_read).
 std::optional<product::GgufTensorTable> hub_tensor_table(const std::string& spec,
                                                          const std::string& quant) {
     convert::FetchOptions fetch = fetch_options();
@@ -156,7 +157,8 @@ std::optional<product::GgufTensorTable> hub_tensor_table(const std::string& spec
             const auto file =
                 convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
                                          head.bytes.size(), head.size, head.path);
-            // A split part's head: read, no whole table (an empty one: the rows above are read).
+            // A split part's head: read, no whole table (no tensor bytes: the rows above are
+            // read), at most its banks' prefill route.
             return product::gguf_tensor_table(product::plan_facts_of_gguf(file, head.size))
                 .value_or(product::GgufTensorTable{});
         } catch (const convert::GgufTruncated&) {

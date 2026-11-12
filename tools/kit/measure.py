@@ -3,7 +3,8 @@
 stands measure, beside what the plan predicts for the same start, in one file you can send us.
 
     python tools/kit/measure.py --bin DIR [--full] [--budget-minutes 30] [--models auto|ID,...]
-        [--device N] [--passes 2] [--hard50] [--spec-tune SECONDS] [--routes] [--out FILE] [--yes]
+        [--device N] [--passes 2] [--hard50] [--spec-tune SECONDS] [--routes] [--switch-factors]
+        [--kld] [--out FILE] [--yes]
 
 DIR holds ninferno-serve: a release or a build (`ninferno-serve spec-tune` and `route-tune` run
 there; a build's own `ninferno` is used for --spec-tune where it is beside it). Standard library
@@ -12,8 +13,11 @@ hub cache, after the bytes are stated (--yes skips the question): the next model
 the kit measures the one before (--no-prefetch: all of them first), where the disk holds it. The
 budget counts the GPU time only. --full measures everything for this card, for hours: every model
 of the set that fits, plain passes, hard50, a speculation tune and the route sweep (the sweeps run
-last, once nothing downloads beside them). Nothing is sent anywhere: the kit writes
-FILE.json and FILE.md (a ready PR or issue body) and prints how to submit them yourself.
+last, once nothing downloads beside them). --switch-factors adds the KV codecs and exact against
+fast on one model (the quantities the configuration choice is gated on); --kld the KL divergence
+of each switch on the measured models (ninferno-perplexity: a build's, beside ninferno-serve).
+Nothing is sent anywhere: the kit writes FILE.json and FILE.md (a ready PR or issue body) and
+prints how to submit them yourself.
 """
 import argparse
 import collections
@@ -40,8 +44,8 @@ sys.path.insert(0, str(HERE))
 import gpu  # noqa: E402
 import validate  # noqa: E402
 
-KIT_VERSION = "2"
-SCHEMA = "ninferno-user-run/1.3"
+KIT_VERSION = "3"
+SCHEMA = "ninferno-user-run/1.4"
 HAYSTACK = ROOT / "examples/cli/messages/long_niah_256k.json"  # perf_matrix.py's long text
 QUESTION = "\n\nSummarize the text above in detail, section by section."
 START_TIMEOUT_S = 900
@@ -177,9 +181,58 @@ def kept_plan(doc):
     return out
 
 
-def run_flags(model, device, spec="none"):
-    return ["--max-context", str(model["context"]), "--max-concurrency", "1", "--spec", spec,
-            "--device", str(device)]
+def plan_record(plan, model):
+    """A run's `plan` (the plan's choice, the typical prompt it prices prefill at and the kept
+    document), the decode depth the plan priced and that prompt's length."""
+    choice = plan.get("choice") or {}
+    chosen = choice.get("chosen") or {}
+    depth = int(chosen.get("depth") or model["context"] // 4)
+    prompt_len = int((choice.get("task") or {}).get("prompt") or 2048)
+    return {"chosen": chosen, "prompt": prompt_len, "document": kept_plan(plan)}, depth, prompt_len
+
+
+def run_flags(model, device, spec="none", context=None, kv=None, activations=None):
+    flags = ["--max-context", str(context or model["context"]), "--max-concurrency", "1", "--spec", spec,
+             "--device", str(device)]
+    if kv:
+        flags += ["--kv-dtype", kv]
+    if activations:
+        flags += ["--activations", activations]
+    return flags
+
+
+# The build section of `ninferno-serve --build-manifest` kept in the file (the decision
+# fingerprint's build identity: no path).
+BUILD_KEEP = ("version", "git_commit", "arch", "arch_specific", "cuda_architectures", "embed_ptx",
+              "nvfp4", "cudart")
+
+
+def engine_tag(build):
+    """The engine's tag in a release (bin/ninferno-serve-sm<tag>): the arch, with "a" for an
+    architecture-specific build (120a)."""
+    arch = str(build.get("arch") or "")
+    if not re.fullmatch(r"\d+", arch):
+        return None
+    return arch + ("a" if str(build.get("arch_specific")) == "1" else "")
+
+
+def build_identity(serve, device):
+    """The build that measures (validate.py's P1): `ninferno-serve --build-manifest`'s build
+    section, from the engine the dispatcher starts for --device's GPU, and the SHA-256 of that
+    engine's executable, the file holding this card's kernels: a release's bin/ninferno-serve-sm<tag>,
+    or a build's ninferno-serve itself."""
+    try:
+        out = subprocess.run([serve, "--build-manifest", "--device", str(device)], capture_output=True,
+                             text=True, timeout=300)
+        build = (json.loads(out.stdout) or {}).get("build") or {}
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, AttributeError):
+        build = {}
+    build = {k: str(build[k]) for k in BUILD_KEEP if k in build}
+    tag = engine_tag(build)
+    serve_path = Path(serve)
+    engine = serve_path.with_name(f"ninferno-serve-sm{tag}" + (".exe" if os.name == "nt" else "")) if tag else None
+    path = engine if engine is not None and engine.is_file() else serve_path
+    return build, {"tag": tag, "sha256": sha256_of(path)}
 
 
 def port_free(port):
@@ -530,8 +583,13 @@ Kit {doc['kit']['version']} ({doc['schema']}), {doc['ninferno'].get('version')},
   `{name}`.
 
 The file holds your card's facts (name, driver, clocks, limits), the OS, the CPU and the RAM, the
-plan and the measurements. Local paths and your user name are replaced by `<local>`; no host name
-or GPU serial is collected. Read it before you send it.
+build that measured (its version and commit, the engine's SHA-256), the plan and the measurements.
+Local paths and your user name are replaced by `<local>`; no host name or GPU serial is collected.
+Read it before you send it.
+
+The maintainers' check also holds the build to the release manifest: a file measured with a
+published release is accepted, one measured with a build of your own is not (the report above
+does not check it).
 """
 
 
@@ -558,6 +616,13 @@ def main():
     ap.add_argument("--route-passes", type=int, default=2, help="route sweeps per model (a repeat each)")
     ap.add_argument("--full", action="store_true",
                     help="everything for this card: every fitting model, hard50, spec-tune, routes")
+    ap.add_argument("--switch-factors", action="store_true",
+                    help="also the switch factors: " + SWITCH_MODEL + " started at each KV codec under "
+                         "fast, and exact against fast at INT8 KV, decode at the lab's 22K depth "
+                         "(about 40 minutes)")
+    ap.add_argument("--kld", action="store_true",
+                    help="also each switch's KL divergence from the exact reference on every measured "
+                         "model (ninferno-perplexity beside ninferno-serve: a build; card-independent)")
     ap.add_argument("--no-prefetch", action="store_true",
                     help="fetch every model before measuring (default: the next while one is measured)")
     ap.add_argument("--port", type=int, default=18390)
@@ -587,6 +652,12 @@ def main():
     if missing:
         sys.exit(f"the kit's data is missing: {', '.join(missing)} (run measure.py from the source "
                  "tree or the release's bin/ninferno-kit)")
+    # --kld scores with ninferno-perplexity on the lab's corpus: a build's tool and the source
+    # tree's corpus (a release carries neither).
+    ppl = Path(args.bin) / ("ninferno-perplexity" + (".exe" if os.name == "nt" else ""))
+    if args.kld and (not ppl.is_file() or not KLD_CORPUS.is_file()):
+        sys.exit(f"--kld needs {ppl.name} beside ninferno-serve and {KLD_CORPUS.relative_to(ROOT)} "
+                 "(a build of the source tree; a release carries neither)")
 
     serve = exe(args.bin, "ninferno-serve")
     # A build's own CLI where it is beside ninferno-serve, else the release's `ninferno-serve
@@ -603,10 +674,12 @@ def main():
     smi_id = gpu.smi_id_of_cuda(args.device)  # the same card for nvidia-smi as for the engine
     card = {"smi": gpu.card_facts(smi_id)}
     wddm = str(card["smi"].get("driver_model.current") or "").upper() == "WDDM"
+    build, engine = build_identity(serve, args.device)
     doc = {"schema": SCHEMA, "kit": {"version": KIT_VERSION, "models_version": models_doc["version"],
                                      "models_sha256": hashlib.sha256(models_file.read_bytes()).hexdigest()[:16],
                                      "models_file": "custom" if args.models_file else None},
-           "created": created, "ninferno": {"version": version.splitlines()[0] if version else None},
+           "created": created, "ninferno": {"version": version.splitlines()[0] if version else None,
+                                            "build": build, "engine": engine},
            "host": gpu.host_facts(), "card": card, "runs": []}
     print(f"card: {card['smi'].get('name')}, driver {card['smi'].get('driver_version')}, "
           f"{card['smi'].get('memory.total')} MiB{', WDDM' if wddm else ''}", flush=True)
@@ -669,7 +742,9 @@ def main():
 
         per_pass = 150 + args.prompts * 90
         progress.steps = max(1, len(chosen) * (args.passes + (1 if args.hard50 else 0)
-                                               + (1 if args.spec_tune else 0) + (1 if args.routes else 0)))
+                                               + (1 if args.spec_tune else 0) + (1 if args.routes else 0)
+                                               + (1 if args.kld else 0))
+                             + (len(SWITCH_CONFIGS) * args.passes if args.switch_factors else 0))
         for index, (model, plan) in enumerate(chosen):
             if not fetches[index].done():
                 print(f"waiting for the fetch of {model['repo']} {model['quant']} ...", flush=True)
@@ -681,14 +756,10 @@ def main():
                 continue
             beside = fetching()
             flags = run_flags(model, args.device)
-            choice = plan.get("choice") or {}
-            chosen_plan = choice.get("chosen") or {}
-            depth = int(chosen_plan.get("depth") or model["context"] // 4)
-            prompt_len = int((choice.get("task") or {}).get("prompt") or 2048)
+            record, depth, prompt_len = plan_record(plan, model)
+            chosen_plan = record["chosen"]
             run = {"id": model["id"], "repo": model["repo"], "quant": model["quant"], "mode": "plain",
-                   "flags": flags, "plan": {"chosen": chosen_plan, "prompt": prompt_len,
-                                            "document": kept_plan(plan)}, "passes": [],
-                   "fetch_beside": beside}
+                   "flags": flags, "plan": record, "passes": [], "fetch_beside": beside}
             doc["runs"].append(run)
             # A model's passes are measured whole or not at all (one pass cannot be validated).
             if not progress.fits(per_pass * args.passes, f"{model['id']} ({args.passes} passes)"):
@@ -727,8 +798,23 @@ def main():
             # twenty (its distinct projection shapes).
             if args.routes:
                 sweeps.append((model, flags))
-        # The route sweeps once nothing downloads beside them.
+        # The switch factors, the KLD terms and the route sweeps once nothing downloads beside them.
         concurrent.futures.wait(fetches)
+        if args.switch_factors:
+            switch_model = next((m for m in models_doc["models"] if m["id"] == SWITCH_MODEL), None)
+            if switch_model is None:
+                print(f"--switch-factors: {SWITCH_MODEL} is not in the model set; not measured", flush=True)
+            else:
+                doc["runs"] += switch_factors(serve, switch_model, args, progress, smi_id, workdir, wddm)
+        if args.kld:
+            for model, _ in chosen:
+                if not progress.fits(KLD_COST_S, f"{model['id']} KLD terms"):
+                    continue
+                progress.step(f"{model['id']}: the KLD of each switch ({len(KLD_SWITCHES)} against the "
+                              "exact reference)")
+                started = time.time()
+                doc["runs"].append(kld_run(serve, ppl, model, args.device, workdir))
+                progress.spend(time.time() - started)
         route_cost = 180 + args.route_passes * 15 * 120
         for model, flags in sweeps:
             if progress.fits(route_cost, f"{model['id']} route sweep"):
@@ -1026,6 +1112,140 @@ def route_sweep(serve, model, flags, device, port, passes, workdir, smi_id=None,
     finally:
         if server:
             server.stop()
+    return run
+
+
+# The switch factors (docs/maintainer/validation-protocol.md): the lab's run_sw protocol on the model
+# it ran, Qwen3.5-9B Q4_K_M. INT8 KV under fast is the base the KV read factors and the exact
+# route's factor are measured against (choice_constants.h kKvReadFactor, kExactComputeEta).
+SWITCH_MODEL = "qwen35-9b-q4km"
+SWITCH_CONFIGS = (("int8", "fast"), ("bf16", "fast"), ("fp8", "fast"), ("k8v4", "fast"),
+                  ("nvfp4", "fast"), ("int8", "exact"))
+# The plan prices decode at a quarter of the asked context (plan_choice.cpp): this context puts it
+# at the lab's 22K-token depth. A card that cannot hold it measures at the model's own context.
+SWITCH_DEPTH = 22528
+SWITCH_CONTEXT = 4 * SWITCH_DEPTH
+
+
+def switch_factors(serve, model, args, progress, smi_id, workdir, wddm):
+    """One run per switch configuration (mode "switch"): a plain start with the KV codec and the
+    activations pinned, measured as the plain runs are (measure_pass), beside the plan's estimate
+    for that configuration. validate.py holds each configuration's decode over the base's to the
+    plan's ratio (W1)."""
+    plans, context = {}, SWITCH_CONTEXT
+    for context in (SWITCH_CONTEXT, model["context"]):
+        plans = {c: plan_json(serve, model, run_flags(model, args.device, context=context, kv=c[0],
+                                                      activations=c[1])) for c in SWITCH_CONFIGS}
+        if all(p and (p.get("plan") or {}).get("fits") for p, _ in plans.values()):
+            break
+    weights = max(int(((p or {}).get("model") or {}).get("weights_bytes") or 0) for p, _ in plans.values())
+    _, fetch_error = prepare(serve, model, weights_bytes=weights, device=args.device)
+    per_pass = 2 * (150 + args.prompts * 90)  # a 22K prompt a request, and its probes
+    runs = []
+    for kv, activations in SWITCH_CONFIGS:
+        plan, error = plans[(kv, activations)]
+        flags = run_flags(model, args.device, context=context, kv=kv, activations=activations)
+        run = {"id": model["id"], "repo": model["repo"], "quant": model["quant"], "mode": "switch",
+               "kv": kv, "activations": activations, "context": context, "flags": flags}
+        runs.append(run)
+        if fetch_error:
+            run["error"] = "fetch: " + fetch_error
+            continue
+        chosen = ((plan or {}).get("choice") or {}).get("chosen")
+        if plan is None or not chosen or not (plan.get("plan") or {}).get("fits"):
+            why = error or ((plan or {}).get("choice") or {}).get("why") or "the plan does not fit this card"
+            run["error"] = "not planned: " + scrub(why)
+            continue
+        run["plan"], depth, prompt_len = plan_record(plan, model)
+        run["passes"] = []
+        if not progress.fits(per_pass * args.passes, f"{model['id']} KV {kv}, {activations} ({args.passes} passes)"):
+            run["error"] = "skipped: the budget"
+            continue
+        for p in range(args.passes):
+            progress.step(f"{model['id']}: KV {kv}, activations {activations}, pass {p + 1} of "
+                          f"{args.passes} (decode at {depth}, prefill at {prompt_len} tokens)")
+            started = time.time()
+            result = measure_pass(serve, model, flags, args.port, depth, prompt_len, args.prompts, smi_id,
+                                  workdir, f"{model['id']}.switch.{kv}.{activations}.{p + 1}", wddm)
+            progress.spend(time.time() - started)
+            run["passes"].append(result)
+            m = result.get("measured") or {}
+            print(f"    decode {m.get('decode', {}).get('median')} tok/s (plan "
+                  f"{run['plan']['chosen'].get('decode_tok_s_at_depth')})"
+                  + (f"; error: {result['error']}" if result.get("error") else ""), flush=True)
+    return runs
+
+
+# The KLD terms (validate.py K1-K2): each switch alone against the exact reference (the exact route,
+# BF16 KV, ninferno-perplexity's FP32 state), on the lab's corpus, one stream a domain (--quick).
+KLD_CORPUS = ROOT / "eval/corpora/perplexity-1m/manifest.json"
+KLD_SWITCHES = (("kv", "int8"), ("kv", "fp8"), ("kv", "k8v4"), ("kv", "nvfp4"), ("activations", "fast"))
+KLD_CONTEXT, KLD_STRIDE = 4096, 2048
+KLD_COST_S = 1800  # six scorings of the quick corpus, generous on a slow card
+
+
+def perplexity(ppl, artifact, kv, activations, device, out_dir, kld_out=None, kld=None):
+    """ninferno-perplexity's report.json for one scoring of the quick corpus."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "report.json").unlink(missing_ok=True)  # never an earlier run's report
+    cmd = [str(ppl), artifact, "--corpus", str(KLD_CORPUS), "--quick", "--context", str(KLD_CONTEXT),
+           "--stride", str(KLD_STRIDE), "--kv-dtype", kv, "--activations", activations,
+           "--device", str(device), "--output", str(out_dir)]
+    cmd += ["--kld-out", str(kld_out)] if kld_out else []
+    cmd += ["--kld", str(kld)] if kld else []
+    done = subprocess.run(cmd, capture_output=True, text=True, timeout=3 * 3600)
+    if done.returncode != 0:
+        lines = (done.stderr or done.stdout).strip().splitlines()
+        raise RuntimeError("ninferno-perplexity failed: " + (lines[-1] if lines else str(done.returncode)))
+    return json.loads((out_dir / "report.json").read_text(encoding="utf-8"))
+
+
+def plan_term(serve, model, device, axis, kv, activations):
+    """The plan's KLD term of the switch on `axis` for this model (its value, its KLD, whether a
+    lab measured it), with the switch pinned: what the kit's term is held to."""
+    plan, error = plan_json(serve, model, run_flags(model, device, kv=kv, activations=activations))
+    terms = ((((plan or {}).get("choice") or {}).get("chosen") or {}).get("kld_terms")) or []
+    term = next((t for t in terms if t.get("axis") == axis), None)
+    if term is None:
+        return {"error": scrub(error) if error else "the plan names no term on this axis"}
+    return {k: term.get(k) for k in ("value", "kld", "measured", "transferred", "evidence", "source")}
+
+
+def kld_run(serve, ppl, model, device, workdir):
+    run = {"id": model["id"], "repo": model["repo"], "quant": model["quant"], "mode": "kld",
+           "reference": {"activations": "exact", "kv": "bf16", "state": "f32", "context": KLD_CONTEXT,
+                         "stride": KLD_STRIDE, "corpus": None}, "terms": []}
+    reference = workdir / f"{model['id']}.kld.reference"
+    try:
+        artifact, error = prepare(serve, model, device=device)
+        if not artifact:
+            raise RuntimeError(error or "no artifact")
+        reference.unlink(missing_ok=True)
+        ref = perplexity(ppl, artifact, "bf16", "exact", device, workdir / f"{model['id']}.kld.exact",
+                         kld_out=reference)
+        # As ninferno-perplexity names it: the manifest's corpus_id and the mode (validate.py K1).
+        corpus = ref.get("corpus") or {}
+        run["reference"]["corpus"] = f"{corpus.get('id')}/{corpus.get('mode')}"
+        run["reference"]["perplexity"] = (ref.get("overall") or {}).get("perplexity")
+        for axis, value in KLD_SWITCHES:
+            kv, activations = (value, "exact") if axis == "kv" else ("bf16", value)
+            term = {"axis": axis, "value": value, "plan": plan_term(serve, model, device, axis, kv, activations)}
+            run["terms"].append(term)
+            try:
+                rep = perplexity(ppl, artifact, kv, activations, device,
+                                 workdir / f"{model['id']}.kld.{axis}.{value}", kld=reference)
+                k = (rep.get("kld") or {}).get("overall") or {}
+                term.update({"kld": k.get("mean_kld"), "top1": k.get("top1_agreement"),
+                             "p99_kld": k.get("p99_kld"),
+                             "perplexity": (rep.get("overall") or {}).get("perplexity")})
+                print(f"    {axis} {value}: KLD {term['kld']}, top-1 {term['top1']} (plan "
+                      f"{term['plan'].get('kld')})", flush=True)
+            except Exception as e:  # noqa: BLE001 - the next switch goes on
+                term["error"] = scrub(e)
+    except Exception as e:  # noqa: BLE001
+        run["error"] = scrub(e)
+    finally:
+        reference.unlink(missing_ok=True)  # the reference's logits: large, and the user's to keep out
     return run
 
 

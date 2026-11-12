@@ -324,7 +324,7 @@ std::shared_ptr<Table> parse_table(const std::string& path) {
         table->status.gpu_class = root.at("gpu").at("class").get<std::string>();
         // The card it was measured on, which the default lookup ranks tables by (board_distance).
         // "pci_id": "0x27b8" names it: the registry's row of that id (core/measured_boards.h
-        // board_of_pci, with its recorded conflict), its facts spelled nowhere else. An id the
+        // board_of_pci), its facts spelled nowhere else. An id the
         // registry lacks reads "board": {"cc": 89, "sms": 58, "l2_mib": 48, "dram_gbps": 300},
         // which the writer records for such a board only; neither: no board. "mma_slow" (written
         // only when set) defaults to the class's chip fact, so a table without it keyed tu116 /

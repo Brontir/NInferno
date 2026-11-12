@@ -23,6 +23,7 @@
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_table.h"
+#include "ops/generic/selector_facts.h"
 #include "ops/route_pins.h"
 
 #include <cstdint>
@@ -45,20 +46,15 @@ namespace generic = ninferno::ops::detail::generic;
 using generic::Family;
 using ops::LinearPolicy;
 
-struct PinBoard {
-    const char* name;
-    std::uint32_t pci_device_id;
-    int major, minor, sms;
-    std::size_t l2_mib, memory_gib;
-    int sm_clock_mhz, memory_clock_mhz, bus_bits;
-};
+using PinBoard = generic::FactsBoard;
 
+// Golden boards by their registry rows (ops/generic/selector_facts.h).
 constexpr PinBoard kBoards[] = {
-    {"rtx5090", 0x2B85, 12, 0, 170, 96, 32, 2407, 14001, 512},
-    {"rtx4090", 0x2684, 8, 9, 128, 72, 24, 2520, 10501, 384},
-    {"a100", 0x20B0, 8, 0, 108, 40, 40, 1410, 1215, 5120},
-    {"rtx2080ti", 0x1E07, 7, 5, 68, 5, 11, 1545, 7000, 352},
-    {"v100", 0x1DB5, 7, 0, 80, 6, 32, 1530, 877, 4096},
+    generic::registry_facts_board("rtx5090", 0x2B85),
+    generic::registry_facts_board("rtx4090", 0x2684),
+    generic::registry_facts_board("a100", 0x20B0),
+    generic::registry_facts_board("rtx2080ti", 0x1E07),
+    generic::registry_facts_board("v100", 0x1DB5),
 };
 
 constexpr QType kFormats[] = {QType::BF16,      QType::Q4_G64_FP16, QType::Q8_G32_FP16,
@@ -145,13 +141,7 @@ std::string name_of(const Case& c) {
 std::map<std::pair<QType, int>, bool> g_prefill_took, g_decode_took;
 
 int run_board(const PinBoard& b) {
-    DeviceClass d      = synthetic_device_class(b.pci_device_id, b.major, b.minor, b.sms,
-                                                b.l2_mib * kMiB, b.memory_gib * 1024 * kMiB);
-    d.sm_clock_khz     = b.sm_clock_mhz * 1000;
-    d.memory_clock_khz = b.memory_clock_mhz * 1000;
-    d.memory_bus_bits  = b.bus_bits;
-    d.facts            = machine_facts_of(d);
-    const ScopedDeviceClass scoped(d);
+    const ScopedDeviceClass scoped(generic::board_device_class(b));
     ops::set_route_pins({});
     void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
 

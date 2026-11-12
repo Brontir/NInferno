@@ -3,9 +3,11 @@
 // The stored weight formats and what is true of their bytes, in one table (architecture review
 // item 3, F2). A row per QType: its two spellings (the artifact's and the route table's), the GGUF
 // type id it is kept from, the generic codec that reads it, ggml's MMQ loader for it, whether its
-// codes widen to int8 exactly, its ggml block geometry and the group lengths of the groupwise
-// formats. Every field holds for every build and every card; which kernels a build compiles for a
-// format and what a card was measured to prefer live elsewhere (ops/generic/format_traits.h).
+// codes widen to int8 exactly, its ggml block geometry (whose bytes over its values are the
+// format's bits), the group lengths of the groupwise formats and the routes the choice schedules
+// it on (#615 F7). Every field holds for every build and every card; which kernels a build
+// compiles for a format and what a card was measured to prefer live elsewhere
+// (ops/generic/format_traits.h).
 //
 // The table is host-only: lookups loop over a host constexpr array, so a device-side call would not
 // compile into anything useful. A QType without a row (a value the enum does not name) reads as the
@@ -170,6 +172,21 @@ struct GgmlPlaneBytes {
     std::uint32_t values, code, high, scale;
 };
 
+// The decode and prefill routes a format's sites take, as the choice schedules them
+// (product/choice WeightClass, the census rows of choice_constants.h): ggml's Q4_K, Q5_K and Q6_K
+// (KQuant: R8 at one row, ggml's vec kernel at 2-4, the register MMA or MMQ beyond); Q8_0 as
+// q8_g32_fp16 (Q8: R8 at every width, the int8 tiles in prefill); IQ4_XS and IQ4_NL (IQ4: R8 at
+// one row, vec and MMQ beyond). Other: a format whose routes no census measured. Unquantized: the
+// plain words (BF16, FP32, INT32), which a quantization carries beside its quantized tensors and
+// which set no class of their own (a file of them alone is Other).
+enum class SchedulingClass : std::uint8_t {
+    KQuant,
+    Q8,
+    IQ4,
+    Other,
+    Unquantized,
+};
+
 // Fields are in the order the rows below initialize them.
 struct FormatFacts {
     QType q = QType::BF16;
@@ -198,6 +215,9 @@ struct FormatFacts {
     };
 
     PlaneBytes planes;
+    // Bytes of one block of a format kept whole (ggml_blocks_v1: Q4_K, Q5_K); zero for every other
+    // format (a planes format's block is its planes' bytes).
+    std::uint16_t whole_block_bytes = 0;
     // A 256-value ggml superblock whose sub-blocks carry their own scales (and, for some, minima):
     // the K-quants and the codebook i-quants. A decoder of these unpacks scales and codes per
     // sub-block before the multiply, which is what keeps its tile's registers and its issue slots
@@ -209,12 +229,15 @@ struct FormatFacts {
     std::uint16_t u4_zp_group = 0;
     // The K values one scale of a 3-bit groupwise format covers; 0 otherwise.
     std::uint16_t q3_group = 0;
+    // The routes the choice schedules the format's sites on (SchedulingClass).
+    SchedulingClass scheduling_class = SchedulingClass::Other;
 };
 
 namespace format_fact_rows {
 using Q = QType;
 using C = WeightCodec;
 using M = MmqType;
+using S = SchedulingClass;
 // Rows in QType order. Every named QType has exactly one row (checked below).
 inline constexpr std::array kFormats{
     FormatFacts{.q          = Q::Q4_G64_FP16,
@@ -233,16 +256,23 @@ inline constexpr std::array kFormats{
                 .codec      = C::Q6,
                 .int8_input = true},
     // ggml's Q8_0 is kept as this format (the same words).
-    FormatFacts{.q          = Q::Q8_G32_FP16,
-                .name       = "q8_g32_fp16",
-                .route      = "q8",
-                .ggml_type  = 8,
-                .codec      = C::Q8,
-                .int8_input = true},
+    FormatFacts{.q                = Q::Q8_G32_FP16,
+                .name             = "q8_g32_fp16",
+                .route            = "q8",
+                .ggml_type        = 8,
+                .codec            = C::Q8,
+                .int8_input       = true,
+                .scheduling_class = S::Q8},
     // ggml's F16 lands here too (format_of_ggml); it is not a QType of its own.
-    FormatFacts{.q = Q::BF16, .name = "bf16", .route = "bf16", .ggml_type = 30, .codec = C::Bf16},
-    FormatFacts{.q = Q::FP32, .name = "fp32", .ggml_type = 0},
-    FormatFacts{.q = Q::INT32, .name = "int32", .ggml_type = 26},
+    FormatFacts{.q                = Q::BF16,
+                .name             = "bf16",
+                .route            = "bf16",
+                .ggml_type        = 30,
+                .codec            = C::Bf16,
+                .scheduling_class = S::Unquantized},
+    FormatFacts{.q = Q::FP32, .name = "fp32", .ggml_type = 0, .scheduling_class = S::Unquantized},
+    FormatFacts{
+        .q = Q::INT32, .name = "int32", .ggml_type = 26, .scheduling_class = S::Unquantized},
     FormatFacts{
         .q = Q::NVFP4, .name = "nvfp4", .route = "nvfp4", .ggml_type = 40, .codec = C::Nvfp4},
     FormatFacts{.q     = Q::FP8_E4M3FN_ROW_BF16,
@@ -270,34 +300,39 @@ inline constexpr std::array kFormats{
                 .codec       = C::U4Zp,
                 .int8_input  = true,
                 .u4_zp_group = 128},
-    FormatFacts{.q               = Q::GGML_Q4_K,
-                .name            = "ggml_q4_k",
-                .route           = "q4k",
-                .ggml_type       = 12,
-                .codec           = C::GgmlQ4K,
-                .mmq             = M::Q4_K,
-                .int8_input      = true,
-                .block_values    = 256,
-                .subblock_scales = true},
-    FormatFacts{.q               = Q::GGML_Q5_K,
-                .name            = "ggml_q5_k",
-                .route           = "q5k",
-                .ggml_type       = 13,
-                .codec           = C::GgmlQ5K,
-                .mmq             = M::Q5_K,
-                .int8_input      = true,
-                .block_values    = 256,
-                .subblock_scales = true},
-    FormatFacts{.q               = Q::GGML_Q6_K,
-                .name            = "ggml_q6_k",
-                .route           = "q6k",
-                .ggml_type       = 14,
-                .codec           = C::GgmlQ6K,
-                .mmq             = M::Q6_K,
-                .int8_input      = true,
-                .block_values    = 256,
-                .planes          = {192, 16, 2},
-                .subblock_scales = true},
+    FormatFacts{.q                 = Q::GGML_Q4_K,
+                .name              = "ggml_q4_k",
+                .route             = "q4k",
+                .ggml_type         = 12,
+                .codec             = C::GgmlQ4K,
+                .mmq               = M::Q4_K,
+                .int8_input        = true,
+                .block_values      = 256,
+                .whole_block_bytes = 144,
+                .subblock_scales   = true,
+                .scheduling_class  = S::KQuant},
+    FormatFacts{.q                 = Q::GGML_Q5_K,
+                .name              = "ggml_q5_k",
+                .route             = "q5k",
+                .ggml_type         = 13,
+                .codec             = C::GgmlQ5K,
+                .mmq               = M::Q5_K,
+                .int8_input        = true,
+                .block_values      = 256,
+                .whole_block_bytes = 176,
+                .subblock_scales   = true,
+                .scheduling_class  = S::KQuant},
+    FormatFacts{.q                = Q::GGML_Q6_K,
+                .name             = "ggml_q6_k",
+                .route            = "q6k",
+                .ggml_type        = 14,
+                .codec            = C::GgmlQ6K,
+                .mmq              = M::Q6_K,
+                .int8_input       = true,
+                .block_values     = 256,
+                .planes           = {192, 16, 2},
+                .subblock_scales  = true,
+                .scheduling_class = S::KQuant},
     FormatFacts{.q               = Q::GGML_Q3_K,
                 .name            = "ggml_q3_k",
                 .route           = "q3k",
@@ -318,16 +353,17 @@ inline constexpr std::array kFormats{
                 .block_values    = 256,
                 .planes          = {64, 16, 4},
                 .subblock_scales = true},
-    FormatFacts{.q               = Q::GGML_IQ4_XS,
-                .name            = "ggml_iq4_xs",
-                .route           = "iq4xs",
-                .ggml_type       = 23,
-                .codec           = C::GgmlIq4Xs,
-                .mmq             = M::IQ4_XS,
-                .int8_input      = true,
-                .block_values    = 256,
-                .planes          = {128, 4, 4},
-                .subblock_scales = true},
+    FormatFacts{.q                = Q::GGML_IQ4_XS,
+                .name             = "ggml_iq4_xs",
+                .route            = "iq4xs",
+                .ggml_type        = 23,
+                .codec            = C::GgmlIq4Xs,
+                .mmq              = M::IQ4_XS,
+                .int8_input       = true,
+                .block_values     = 256,
+                .planes           = {128, 4, 4},
+                .subblock_scales  = true,
+                .scheduling_class = S::IQ4},
     FormatFacts{.q               = Q::GGML_IQ3_XXS,
                 .name            = "ggml_iq3_xxs",
                 .route           = "iq3xxs",
@@ -384,15 +420,16 @@ inline constexpr std::array kFormats{
                 .int8_input   = true,
                 .block_values = 32,
                 .planes       = {16, 4, 4}},
-    FormatFacts{.q            = Q::GGML_IQ4_NL,
-                .name         = "ggml_iq4_nl",
-                .route        = "iq4nl",
-                .ggml_type    = 20,
-                .codec        = C::GgmlIq4Nl,
-                .mmq          = M::IQ4_NL,
-                .int8_input   = true,
-                .block_values = 32,
-                .planes       = {16, 0, 2}},
+    FormatFacts{.q                = Q::GGML_IQ4_NL,
+                .name             = "ggml_iq4_nl",
+                .route            = "iq4nl",
+                .ggml_type        = 20,
+                .codec            = C::GgmlIq4Nl,
+                .mmq              = M::IQ4_NL,
+                .int8_input       = true,
+                .block_values     = 32,
+                .planes           = {16, 0, 2},
+                .scheduling_class = S::IQ4},
     FormatFacts{.q               = Q::GGML_IQ2_XXS,
                 .name            = "ggml_iq2_xxs",
                 .route           = "iq2xxs",
@@ -560,6 +597,25 @@ constexpr GgmlPlaneBytes ggml_plane_bytes(QType q) noexcept {
     return {f.block_values, f.planes.code, f.planes.high, f.planes.scale};
 }
 
+// Bytes of one ggml block: its planes' bytes, or the whole block's (Q4_K, Q5_K); 0 for a format
+// that is not a ggml block format.
+constexpr std::uint32_t ggml_block_bytes(QType q) noexcept {
+    const FormatFacts& f = format_facts(q);
+    return f.whole_block_bytes != 0 ? f.whole_block_bytes
+                                    : std::uint32_t{f.planes.code} + f.planes.high + f.planes.scale;
+}
+
+// Bits a value of a ggml block format takes, scales and minima included: its block's bytes over
+// its values (Q3_K 3.4375, Q4_K 4.5, IQ4_XS 4.25, Q4_1 5, Q6_K 6.5625); 0 for any other format.
+constexpr double ggml_bits_per_value(QType q) noexcept {
+    const std::uint32_t values = ggml_block_values(q);
+    return values == 0 ? 0.0 : 8.0 * ggml_block_bytes(q) / values;
+}
+
+constexpr SchedulingClass scheduling_class(QType q) noexcept {
+    return format_facts(q).scheduling_class;
+}
+
 constexpr bool has_subblock_scales(QType q) noexcept { return format_facts(q).subblock_scales; }
 
 constexpr std::uint32_t u4_zp_group(QType q) noexcept { return format_facts(q).u4_zp_group; }
@@ -592,12 +648,21 @@ constexpr bool rows_distinct() noexcept {
     return true;
 }
 
-// The geometry is of one piece: planes only on a ggml block format, an MMQ loader or an int8
-// decoder only where a codec reads the format, and sub-block scales exactly on the 256-value ggml
-// blocks that are not the ternary pair.
+// The geometry is of one piece: a ggml block format's block is either its planes or kept whole
+// (never both), and nothing else has one; an MMQ loader or an int8 decoder only where a codec
+// reads the format; sub-block scales exactly on the 256-value ggml blocks that are not the ternary
+// pair; Unquantized exactly where the generic path reads plain words (no codec, or BF16's), and the
+// K-quant and IQ4 classes only on a format ggml's MMQ loads.
 constexpr bool rows_consistent() noexcept {
     for (const FormatFacts& f : kFormatFacts) {
-        if (f.planes.code != 0 && f.block_values == 0) return false;
+        const bool planes = f.planes.code != 0, whole = f.whole_block_bytes != 0;
+        if ((planes || whole) != (f.block_values != 0) || (planes && whole)) return false;
+        const bool plain = !f.codec || f.codec == WeightCodec::Bf16;
+        if ((f.scheduling_class == SchedulingClass::Unquantized) != plain) return false;
+        if ((f.scheduling_class == SchedulingClass::KQuant ||
+             f.scheduling_class == SchedulingClass::IQ4) &&
+            !f.mmq)
+            return false;
         if (f.mmq && (!f.codec || f.block_values == 0)) return false;
         if (f.int8_input && !f.codec) return false;
         const bool formula =

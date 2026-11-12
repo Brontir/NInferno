@@ -1,0 +1,7 @@
+# A user's measurement and the rules it is judged by need a maintainer's review
+# (docs/maintainer/validation-protocol.md).
+/docs/performance/user-runs/ @Brontir
+/tools/kit/validate.py @Brontir
+/tools/kit/releases.json @Brontir
+/.github/workflows/user-runs.yml @Brontir
+/.github/CODEOWNERS @Brontir
