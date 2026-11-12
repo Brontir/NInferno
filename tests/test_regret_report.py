@@ -15,7 +15,6 @@ BOARD = "rtx-test"
 META = {"card": "RTX Test", "revision": "0123456789abcdef0123456789abcdef01234567",
         "date": "2026-11-12T20:00:00Z", "nvcc": "12.8.93", "driver": "580.95.05",
         "qualification": "synthetic", "sweep": {"passes": 3, "samples": 7}}
-HAS_TABLE_EXIT = hasattr(regret, "table_exit")  # selection_regret.py of #616 step 9
 
 
 def ok(key, ms):
@@ -143,7 +142,6 @@ class BuildTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             rr.build(report, BOARD, META, previous={"schema": "x"}, previous_path="a")
 
-    @unittest.skipUnless(HAS_TABLE_EXIT, "selection_regret.py has no table_exit yet (#616 step 9)")
     def test_override_states_and_new_holds(self):
         before = rr.build(selection_report(document()), BOARD, META)
         self.assertEqual(before["table_exit"]["caught_up"], 1)
@@ -159,9 +157,10 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(d["table_exit"]["holds"], [1, 2])
         self.assertEqual(rr.check(after), [])
 
-    @unittest.skipIf(HAS_TABLE_EXIT, "selection_regret.py has table_exit")
     def test_without_table_exit_the_fields_are_null(self):
-        doc = rr.build(selection_report(document()), BOARD, META)
+        report = selection_report(document())  # as selection_regret.py wrote it before #814
+        del report["table_exit"]
+        doc = rr.build(report, BOARD, META)
         self.assertIsNone(doc["table_exit"])
         self.assertIsNone(doc["overrides"])
         self.assertEqual(rr.check(doc), [])
