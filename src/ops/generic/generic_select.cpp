@@ -19,6 +19,7 @@
 #include "ops/common/route_probe.h"
 #include "ops/generic/format_traits.h"
 #include "ops/generic/codec_traits.h"
+#include "ops/generic/compiled_codecs.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/generic_i8_schedules.h"
@@ -810,7 +811,7 @@ std::optional<R8TableHit> tuned_r8(const Problem& p) {
     return std::nullopt;
 }
 
-bool w4a8_ws_supports(QType q) { return format_traits(q).w4a8_ws; }
+bool w4a8_ws_supports(QType q) { return compiled(Variant::W4a8Ws, q); }
 
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
     const std::int32_t k = problem.k;
@@ -1267,7 +1268,8 @@ bool volta_cutlass_takes(std::int32_t tokens);
 bool volta_cutlass_runs(bool only, std::int32_t tokens);
 
 bool tiled_takes(WeightCodec codec) {
-    return tiled_supports(codec) || (codec == WeightCodec::Q8 && !current_features().mma_tensor);
+    return tiled_supports(codec) ||
+           (compiled(Variant::TiledVolta, codec) && !current_features().mma_tensor);
 }
 
 bool volta_cutlass_only(WeightCodec codec) {

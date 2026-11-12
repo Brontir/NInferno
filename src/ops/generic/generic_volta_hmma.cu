@@ -36,6 +36,7 @@
 #include "core/device.h"
 #include "core/device_class.h"
 #include "ops/common/mma.cuh"
+#include "ops/generic/compiled_codecs.h"
 #include "ops/generic/generic_gemm.cuh"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_volta_hmma.cuh"
@@ -270,18 +271,12 @@ void launch_epilogue(Epilogue epilogue, const GemmArgs& args, cudaStream_t strea
 void launch_volta_hmma(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                        cudaStream_t stream) {
     switch (codec) {
-    case WeightCodec::GgmlQ4K:
-        launch_epilogue<HK45<4>>(epilogue, args, stream);
+#define NINFERNO_VOLTA_HMMA_CASE(CODEC, TYPE)                                                      \
+    case WeightCodec::CODEC:                                                                       \
+        launch_epilogue<TYPE>(epilogue, args, stream);                                             \
         return;
-    case WeightCodec::GgmlQ5K:
-        launch_epilogue<HK45<5>>(epilogue, args, stream);
-        return;
-    case WeightCodec::GgmlQ6K:
-        launch_epilogue<HK6>(epilogue, args, stream);
-        return;
-    case WeightCodec::Q8:
-        launch_epilogue<HQ8>(epilogue, args, stream);
-        return;
+        NINFERNO_VOLTA_HMMA_CODECS(NINFERNO_VOLTA_HMMA_CASE)
+#undef NINFERNO_VOLTA_HMMA_CASE
     default:
         throw std::invalid_argument("volta_hmma: unsupported codec");
     }

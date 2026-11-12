@@ -5,9 +5,16 @@
 // name read as "no capability" in both. That every named QType has exactly one row, and every row a
 // named QType, is a static_assert in the header over the compiler's own names of the enumerators
 // (GCC and Clang), so a new QType without a row fails the build; no list here mirrors the enum.
+//
+// The compiled capability (#615 F4) left the table for the launch files' lists
+// (ops/generic/compiled_codecs.h): the legacy predicates of it (r8_supports, r8_verify_compiled,
+// w4a8_supports, w4a8_ws_supports, tiled_supports, volta_hmma_codec) are held to the lists' arrays
+// and to the engine's functions, for every QType and every WeightCodec value.
 #include "ops/common/native_nvfp4.h"
+#include "ops/generic/compiled_codecs.h"
 #include "ops/generic/format_traits.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_select_internal.h"
 
 #include <cstdint>
@@ -16,6 +23,7 @@
 
 namespace generic = ninferno::ops::detail::generic;
 using ninferno::QType;
+using ninferno::WeightCodec;
 using ninferno::ops::detail::kNativeNvfp4;
 
 namespace legacy {
@@ -226,6 +234,29 @@ bool w4a8_supports(QType qtype) {
     }
 }
 
+bool tiled_supports(WeightCodec codec) {
+    switch (codec) {
+    case WeightCodec::U4Zp:
+    case WeightCodec::U4ZpG32:
+    case WeightCodec::U4ZpG64:
+    case WeightCodec::GgmlQ4K:
+    case WeightCodec::GgmlQ5K:
+    case WeightCodec::Q4:
+    case WeightCodec::Q5:
+    case WeightCodec::Q6:
+    case WeightCodec::Q3G128:
+    case WeightCodec::Q3G64:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool volta_hmma_codec(WeightCodec codec) {
+    return codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
+           codec == WeightCodec::GgmlQ6K || codec == WeightCodec::Q8;
+}
+
 } // namespace legacy
 
 namespace {
@@ -245,8 +276,9 @@ void agree(bool old_value, bool new_value, const char* what, int q, long k = -1)
 } // namespace
 
 int main() {
-    using generic::admits;
+    using generic::compiled;
     using generic::format_traits;
+    using generic::Variant;
 
     // The table names each format once.
     for (std::size_t i = 0; i < generic::kFormatTraits.size(); ++i) {
@@ -261,9 +293,8 @@ int main() {
 
     // Every value a QType holds in a byte's range, named or not.
     for (int v = 0; v < 256; ++v) {
-        const QType q     = static_cast<QType>(v);
-        const auto& t     = format_traits(q);
-        const bool native = kNativeNvfp4;
+        const QType q = static_cast<QType>(v);
+        const auto& t = format_traits(q);
         agree(legacy::i8_format(q), t.qx_g64, "i8_format", v);
         agree(legacy::qx_format(q), t.qx_g64, "qx_format", v);
         agree(legacy::workspace_qx(q), t.qx_g64, "workspace I8 format", v);
@@ -273,19 +304,19 @@ int main() {
         agree(legacy::light_ggml_step(q), t.light_step, "light_ggml_step", v);
         agree(legacy::tall_tile_format(q), t.tall_tile, "tall_tile_format", v);
         agree(legacy::w4a8_ws_extra_format(q), t.w4a8_ws_tuned, "w4a8_ws_extra format", v);
-        agree(legacy::w4a8_ws_supports(q), t.w4a8_ws, "w4a8_ws_supports", v);
+        agree(legacy::w4a8_ws_supports(q), compiled(Variant::W4a8Ws, q), "w4a8_ws_supports", v);
         agree(legacy::w4a8_ws_supports(q), generic::w4a8_ws_supports(q), "engine w4a8_ws_supports",
               v);
-        agree(legacy::r8_supports(q), admits(t.r8, native), "r8_supports", v);
+        agree(legacy::r8_supports(q), compiled(Variant::R8, q), "r8_supports", v);
         agree(legacy::r8_supports(q), generic::r8_supports(q), "engine r8_supports", v);
         agree(legacy::r8_verify_supports(q), t.r8_verify, "r8_verify_supports", v);
         agree(legacy::r8_verify_supports(q), generic::r8_verify_supports(q),
               "engine r8_verify_supports", v);
-        agree(legacy::r8_verify_compiled(q), admits(t.r8, native) && t.r8_prequant,
-              "r8_verify_compiled", v);
+        agree(legacy::r8_verify_compiled(q), compiled(Variant::R8Prequant, q), "r8_verify_compiled",
+              v);
         agree(legacy::r8_verify_compiled(q), generic::r8_verify_compiled(q),
               "engine r8_verify_compiled", v);
-        agree(legacy::w4a8_supports(q), admits(t.w4a8, native), "w4a8_supports", v);
+        agree(legacy::w4a8_supports(q), compiled(Variant::W4a8, q), "w4a8_supports", v);
         agree(legacy::w4a8_supports(q), generic::w4a8_supports(q), "engine w4a8_supports", v);
         agree(legacy::r8_k_values(q) == t.r8_k_values, true, "r8_k_values", v);
         agree(legacy::r8_k_values(q) == generic::r8_k_values(q), true, "engine r8_k_values", v);
@@ -299,6 +330,20 @@ int main() {
                   v, k);
         }
     }
+
+    // The codec-keyed predicates, for every value a WeightCodec holds in a byte's range.
+    for (int v = 0; v < 256; ++v) {
+        const auto c = static_cast<WeightCodec>(v);
+        agree(legacy::tiled_supports(c), compiled(Variant::Tiled, c), "tiled_supports", v);
+        agree(legacy::tiled_supports(c), generic::tiled_supports(c), "engine tiled_supports", v);
+        agree(legacy::volta_hmma_codec(c), compiled(Variant::VoltaHmma, c), "volta_hmma_codec", v);
+        agree(legacy::volta_hmma_codec(c), generic::volta_hmma_codec(c), "engine volta_hmma_codec",
+              v);
+        // Q8 alone takes the Volta tiles (tiled_takes), and NVFP4's R8 decode is the build's
+        // without the native NVFP4 kernels.
+        agree(c == WeightCodec::Q8, compiled(Variant::TiledVolta, c), "tiled Volta codecs", v);
+    }
+    agree(compiled(Variant::R8, WeightCodec::Nvfp4), !kNativeNvfp4, "NVFP4 R8 without native", 0);
 
     if (failures != 0) {
         std::cerr << failures << " disagreements in " << comparisons << " comparisons\n";
