@@ -8,6 +8,7 @@
 #include "convert/drafters.h"
 #include "core/device_class.h"
 #include "core/weight_view.h"
+#include "product/choice/choice_constants.h"
 #include "product/plan/plan_cached.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
@@ -1282,20 +1283,26 @@ void test_speculation_order() {
         check(!none && !steps.empty() && steps.back() == "head", "nothing fits: plain, after the head");
     }
     // The pool rule (product::pool_rule): plain decode asked only inside the rule's range, the head
-    // only when plain decode holds more, kept at four fifths of plain decode's contexts.
+    // only when plain decode holds more. The 27B's profile prices nothing of the head (a published
+    // profile: no measurements, no joint verify, no step prices; the head's built-in mtp:3 under
+    // 8:2; this test's registry has no lab pairs), so the rule before #777 decides (#777's
+    // unpriced branch): the head where it holds four fifths of plain decode's whole contexts, or
+    // of every one served. The pools are whole contexts of one chat each (2048 + 512 tokens).
     {
         int plain_asked = 0, head_asked = 0;
-        const auto rule = [&](std::uint32_t with_drafter, std::uint32_t streams,
+        const std::uint32_t chat = pr::choice::kRequestPrompt + pr::choice::kRequestAnswer;
+        const auto rule          = [&](std::uint32_t with_drafter, std::uint32_t streams,
                               std::uint32_t plain, std::optional<std::uint32_t> head) {
             return pr::pool_rule(
                 drafted, false, with_drafter, streams,
                 [&] {
                     ++plain_asked;
-                    return plain;
+                    return pr::PoolSize{.contexts = plain, .tokens = plain * chat, .context = chat};
                 },
-                [&](const pr::ServedSpeculation&) {
+                [&](const pr::ServedSpeculation&) -> std::optional<pr::PoolSize> {
                     ++head_asked;
-                    return head;
+                    if (!head) { return std::nullopt; }
+                    return pr::PoolSize{.contexts = *head, .tokens = *head * chat, .context = chat};
                 });
         };
         check(rule(4, 4, 8, 8).keep == pr::PoolKeep::Drafter && plain_asked == 0,
@@ -1305,9 +1312,12 @@ void test_speculation_order() {
         check(rule(3, 4, 3, 4).keep == pr::PoolKeep::Drafter && plain_asked == 1 && head_asked == 0,
               "plain decode holds no more: the drafter");
         const auto kept = rule(3, 4, 5, 4);
-        check(kept.keep == pr::PoolKeep::Head && kept.head && kept.plain == 5 && head_asked == 1,
-              "the head at 4 of plain's 5 (4 streams): kept");
+        check(kept.keep == pr::PoolKeep::Head && kept.head && kept.plain == 5 && head_asked == 1 &&
+                  !kept.head_price,
+              "the head at 4 of plain's 5 (4 streams): kept, unpriced");
         check(rule(3, 4, 5, 3).keep == pr::PoolKeep::Plain, "the head at 3 of 4: plain decode");
+        check(rule(3, 8, 5, 4).keep == pr::PoolKeep::Head,
+              "the head at 4 of plain's 5 (8 streams): four fifths, kept unpriced");
         check(rule(3, 4, 5, std::nullopt).keep == pr::PoolKeep::Plain,
               "the head does not fit: plain decode");
     }

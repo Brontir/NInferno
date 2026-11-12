@@ -2440,8 +2440,24 @@ instead of an Engine build:
 5. plain decode.
 
 With an automatic pool at an explicit context, the pool rule follows. When the drafter leaves fewer
-whole contexts than `--max-concurrency` and plain decode holds more, the MTP head runs if it keeps
-four fifths of plain decode's contexts; otherwise plain decode runs.
+whole contexts than `--max-concurrency` and plain decode holds more, the rule has two branches
+(DECISIONS 80):
+
+- **Priced**: where the head's gain and the plain step's price at every number of active streams
+  come from the facts (its load table and the round-cost facts of the card's architecture), the
+  MTP head runs if its pool decodes the benchmark's mix at least as fast as plain decode's. The mix
+  is DECISIONS 73's: 20 short requests (2048 + 512 tokens) from `--max-concurrency` clients, a pool
+  serving as many of them at once as its KV tokens hold (at least its whole contexts), and 6 long
+  requests at the asked context (DECISIONS 73's long prompt, at most 24,576 tokens, and the
+  answer: 25,088 tokens at 32K), held by KV tokens alike; the two are weighted 20 : 6. The price
+  errs low for the head where it would verify more than 8 rows at once (`kPricedVerifyRows`: there
+  the facts run it plain); on the RTX 4090 it prices the head at 0.55-0.67 of the measured speed.
+- **Unpriced**: where any part is not priced, the rule before #777 stays, a literal with no
+  derivation: the MTP head runs if it keeps four fifths of plain decode's contexts; otherwise plain
+  decode runs. Today that is Ampere, Turing and Volta cards, which have no round-cost row (their
+  rounds are transferred from other generations' lab cards, unpriced), a lab card's own measured
+  record, whose load table is a literal with no step prices (the RTX 5070 Ti), and any head whose
+  load table is a literal.
 
 **The largest quantization that fits** (`runtime/engine/quant_rule.h`). A hub GGUF repository
 without `--quant` plans every listed quantization at the asked context and `--max-concurrency` on an

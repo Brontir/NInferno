@@ -66,9 +66,12 @@ struct SmRateRow {
     // L0: one warp alone on one SM, one 16-byte load a lane in flight, its fetch time (ns).
     double dram_stream_latency_ns = 0;
     // b_w_max: the most bytes one warp alone kept in flight, over every variant (B). A cap of the
-    // bytes the law counts only where the warp saturates (`warp_bytes_saturated`: the 4-load ring
-    // keeps less than x1.5 of the 2-load ring's b_w at W = 1, `ring4_over_ring2_w1`); elsewhere a
-    // lower bound of the warp's limit that caps nothing.
+    // bytes the law counts only where the warp saturates (`warp_bytes_saturated`); elsewhere a
+    // lower bound of the warp's limit that caps nothing. Saturated is the chain test's verdict
+    // where the row carries a deciding one (the JSON row's `cap_test`, probe 5 on, with the
+    // card's own ISA latency: `cap` or `no cap`, warp_inflight.py cap_test); otherwise the ring
+    // rule: the 4-load ring keeps less than x1.5 of the 2-load ring's b_w at W = 1
+    // (`ring4_over_ring2_w1`).
     double max_warp_bytes_in_flight = 0;
     bool warp_bytes_saturated       = false;
     double ring4_over_ring2_w1      = 0;

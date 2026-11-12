@@ -79,8 +79,36 @@ prediction so far.
   T 17-256 in an earlier ABBA, and lost at T <= 16 (+4..23 %).
 - Prototype: `ninferno_route_tune` ABBA on the 5090 and 3060, Gemma head and SwiGLU at T 17-64.
 - Acceptance / refutation (frozen): #709's body, items 1-5.
-- A/B: not run. It belongs to step 6, together with the plane's price.
-- Decision: open. 5a (#709, open) would take the plane only in the prefill profile's admitted cells.
+- A/B (12.11, #709): ABBA of master against the branch, `ninferno_route_tune --prefill-only 1
+  --rotate 1 --routes-out` at chunks 16, 34 and 48 (T 8-256), three passes (6 + 6 runs a cell),
+  medians; the prefill profile's admitted cells only (RTX 5090: Q2_K store and add; RTX 3060:
+  Q4_K add), shapes 4096x4096, 4096x12288 and 3840x15360. The timer ticks 1.024 µs, so the
+  RTX 5090's cells were also timed per kernel with nsys and read with ncu. Against the frozen
+  protocol: no Ada board ran, only the prefill profile was run (the speed profile reads no plane),
+  and 3840x15360 (Gemma 4 12B's down projection) is not in the frozen shape list.
+  - RTX 3060, Q4_K add: the fastest route −7..−20 % at T 17-256 against the predicted −10..−30 %;
+    item 1 holds at T >= 17 in every cell. Its frozen "T = 8 within ±1 %" clause fails: T = 8
+    moved −10..−15 %, because the prefill profile reads the plane below 17 tokens too. Item 2
+    fails: the m2.n2 plane instance runs +3..+10 % over its twin in 11 of 24 cells.
+  - RTX 5090, Q2_K store and add: the fastest route 0..−16 % at T 8-17 and 128-256, +8..−12 %
+    at T 24-32 (mostly under half of the predicted −8 %), +4..+14 % at T 48 (over the 1.03 bound),
+    0..+3 % at T 64. Items 1 and 2 fail: m1.n1 runs +3..+18 % over its twin at T 48-256 (+8 % at
+    T 24 on the store), m1.n8 and m2.n1 +3..+9 %.
+  - Finding, the term that was wrong: the law took the ones-MMA's tensor work as binding. On the
+    RTX 5090 (ncu, Q2_K store 4096x4096, T 24-128) tensor-active is 14-41 % on master; the plane
+    halves it, but long-scoreboard stalls per issue rise (m1.n1 1.0-1.7 to 2.3-2.4, m1.n8 2.1-2.4
+    to 3.5-5.9): the plane's group loads lengthen the K loop's load chain, and the narrow tiles'
+    kernel gets slower (nsys, Q2_K add 4096x12288: m1.n1 +6..+20 % at T 48-128). The pre-pass
+    costs 0.8 µs at T 8 to 2.9 µs at T 128 (K 12288): it grows with T·K/G, below the predicted
+    1.7-2.5 µs at small T and above it from T 96.
+  - Items 4-5 (e2e TTFT, KLD) were not run: items 1-2 already refute the prediction.
+- Decision (12.11): off by default, the code kept. `rmma_group_sums` answers false unless
+  `set_group_sums_plane_enabled` turns it on: the plane's tests, and `ninferno_route_tune
+  --group-sums-plane 1` for its next A/B (no environment variable decides it, principle 3). The
+  prefill profile needs one answer per format, epilogue and device, so the plane cannot be
+  narrowed by width; the RTX 3060's Q4_K add cell held per cell but failed item 2, and no fact
+  separates it from the RTX 5090's refuted cells. The plane comes back with a law for the narrow
+  tiles' load chain (step 6 prices it), and a new A/B.
 
 ### B. Blackwell MoE expert kernel at 4-8 rows (#619 step 11)
 - Regime: the routed experts on GB20x at 4 and 8 rows. They run at 0.74 and 0.63 of the DRAM-bound

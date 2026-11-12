@@ -8,11 +8,11 @@
 // CUDA runtime (#620 step 11): nothing is ever timed, so no tuned route exists (generic_tune.cpp
 // holds the real ones: the tuner's tables, filled at the first eager call on a device), and the
 // kernel an executed route would launch is not described (route_resources,
-// rmma_resources_by_launch: they read the device's binary; the last two stubs are here for the
-// link only, nothing a host-only test calls reaches them). The Volta CUTLASS route's sizes are no
-// seam: they are host code (generic_volta_cutlass_sizes.cpp), compiled with the route where the
-// tree has it. A host-only test adds this file to its own sources; nothing beside ninferno_ops
-// links it, which defines the real ones.
+// rmma_resources_by_launch, rmma_plane_taken: they read the device's binary; the last three stubs
+// are here for the link only, nothing a host-only test calls reaches them). The Volta CUTLASS
+// route's sizes are no seam: they are host code (generic_volta_cutlass_sizes.cpp), compiled with
+// the route where the tree has it. A host-only test adds this file to its own sources; nothing
+// beside ninferno_ops links it, which defines the real ones.
 namespace ninferno::ops::detail::generic {
 
 std::optional<Route> tuned_dense_route(const Problem&, std::int32_t) { return std::nullopt; }
@@ -24,9 +24,14 @@ std::optional<Route> tuned_prefill_route(const Problem&, std::int32_t, Route) {
 // The kernel a route would launch is read from the device's binary (generic_describe.cpp): a host
 // with no device describes none.
 std::optional<KernelResources> route_resources(Route, const Weight&, Epilogue, std::int32_t,
-                                               std::int32_t, std::optional<bool>) {
+                                               std::int32_t, std::optional<bool>, bool) {
     return std::nullopt;
 }
+
+// Whether a launch takes the group-sums plane's instance is the device's launch's answer
+// (generic_describe.cpp): a host with no device takes none. resolve_route asks it only where
+// rmma_group_sums admits the plane, which is off by default.
+bool rmma_plane_taken(int, const Weight&, Epilogue, std::int32_t, std::int32_t) { return false; }
 
 // The register-MMA launch run in describe mode (generic_describe.cpp): rmma_resources reaches it
 // only under the maintainer's live check, which needs a GPU.

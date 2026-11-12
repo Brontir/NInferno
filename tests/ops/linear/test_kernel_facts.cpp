@@ -355,7 +355,7 @@ void old_columns_refused() {
     // the schema 2 line (the loop's counts without the schedule): its rows would carry no
     // schedule, and the Python tool refuses it as well.
     const std::string resources = "family decoder warps_m warps_k m_tiles n_tiles cluster epilogue "
-                                  "latency add_sums registers "
+                                  "latency sums registers "
                                   "stack local shared";
     const std::string loop =
         " loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts "

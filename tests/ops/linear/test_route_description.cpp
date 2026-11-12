@@ -146,9 +146,16 @@ int main() {
                     if (ran.family != generic::Family::GgmlMmq &&
                         ran.family != generic::Family::GgmlVec &&
                         ran.family != generic::Family::R8Mma) {
-                        check(d->workspace_bytes == generic::route_workspace_bytes(ran, k, t),
-                              at + ": workspace is route_workspace_bytes'");
+                        // A register MMA reading the group-sums plane takes the plane (#619).
+                        const std::size_t ws =
+                            d->resolved.group_sums
+                                ? generic::rmma_group_sums_bytes(generic::codec_of(w), k, t)
+                                : generic::route_workspace_bytes(ran, k, t);
+                        check(d->workspace_bytes == ws,
+                              at + ": workspace is route_workspace_bytes' or the plane's");
                     }
+                    check(d->resolved.group_sums == rq->group_sums,
+                          at + ": the plane is resolved_route_query's");
                     const auto tile = generic::route_tile(ran, epilogue, t);
                     check(d->tile.has_value() == tile.has_value() &&
                               (!tile || (d->tile->out_rows == tile->out_rows &&

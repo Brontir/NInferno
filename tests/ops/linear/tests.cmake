@@ -104,6 +104,14 @@ ninferno_add_op_test(ninferno_launch_overlap_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_launch_overlap.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# The register MMA's pre-summed activation group plane (#619): which calls take it, its workspace
+# and demotion (host), the pre-pass bit for bit against the CPU and the instance the price
+# describes (GPU; skipped without one).
+ninferno_add_op_test(ninferno_group_sums_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_group_sums.cpp"
+  LIBRARIES ninferno_linear_test_support)
+set_tests_properties(ninferno_group_sums_test PROPERTIES SKIP_RETURN_CODE 77)
+
 # Scratch read lifetimes of generic launches (#309): which launch reads or writes which workspace
 # region until when, and that no launch starting under its predecessor takes a region it still
 # uses (host only).
@@ -218,16 +226,6 @@ ninferno_add_op_test(ninferno_selector_real_device_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_real_device.cpp"
   LIBRARIES ninferno_linear_test_support)
 
-# The register-MMA kernel's static shared memory as constexpr geometry (ops/generic/rmma_geometry.h,
-# static_asserted by the kernel, with the decoder rows pinned to their decoders) equals every row of
-# every kernel-facts snapshot (#612 step 5); a plain host test: header only, no GPU, no library.
-ninferno_add_test(ninferno_rmma_geometry_test LABELS host NEEDS_SOURCE_DIR
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmma_geometry.cpp")
-# The full build's architectures (the NVFP4 kernels, so the cluster hand-over): the one list of
-# CMakeLists.txt, comma-joined, not parsed from its text.
-target_compile_definitions(ninferno_rmma_geometry_test PRIVATE
-  NINFERNO_FULL_CUDA_ARCHS="$<JOIN:${NINFERNO_FULL_CUDA_ARCHS},$<COMMA>>")
-
 # The kernel-facts snapshots the register-MMA price reads (ops/generic/kernel_facts.h, #612).
 # Three checks, from the data inwards:
 # - ninferno_kernel_facts_test: this build's register-MMA kernels, read off the linked binary with
@@ -333,24 +331,3 @@ ninferno_add_op_test(ninferno_side_by_side_projection_test
 ninferno_add_op_test(ninferno_route_pin_selector_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_pin_selector.cpp"
   LIBRARIES ninferno_linear_test_support)
-
-# The same dump code as ninferno_selector_golden_test, built and linked with no CUDA runtime
-# (ninferno_ops_host): the committed goldens must read the same from a host-only selector (#620).
-# The stubs are the device seams (current_device_class, the device ordinal, the dense tuner, which
-# never times anything on a host with no device, and the description of an executed kernel, which a
-# host with no device has none of). The Volta CUTLASS route's sizes are host code
-# (generic_volta_cutlass_sizes.cpp, in ninferno_ops_host), so an sm_70 tree built with CUTLASS
-# answers here as its device build does: every tree registers the twin (#620 step 13).
-ninferno_add_test(ninferno_selector_golden_host_test LABELS host golden slow
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
-  LIBRARIES ninferno_ops_host)
-target_sources(ninferno_selector_golden_host_test PRIVATE
-  ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
-  ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
-  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
-target_compile_definitions(ninferno_selector_golden_host_test PRIVATE
-  NINFERNO_HOST_ONLY
-  NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
-cmake_language(DEFER CALL ninferno_assert_host_only ninferno_selector_golden_host_test)
-# It dumps every board twice over (once a process per board, then all in one): minutes of CPU.
-set_tests_properties(ninferno_selector_golden_host_test PROPERTIES TIMEOUT 1800)

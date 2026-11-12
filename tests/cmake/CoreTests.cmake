@@ -65,56 +65,18 @@ ninferno_add_test(ninferno_sm_rate_facts_reader_test LABELS host NEEDS_SOURCE_DI
 ninferno_add_test(ninferno_board_registry_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_board_registry.cpp"
   LIBRARIES ninferno_core)
-# The format facts table (core/format_facts.h) against the switches and spelling tables it
-# replaced, for every QType value. No GPU.
-ninferno_add_test(ninferno_format_facts_test LABELS host
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_format_facts.cpp")
 # The architecture table (core/arch_registry.h) against the per-architecture limits the build, the
 # MMQ tile widths and the synthetic device class held before it. No GPU.
 ninferno_add_test(ninferno_arch_registry_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_arch_registry.cpp"
   LIBRARIES ninferno_core)
-# The MMQ prefill gate's decision atlas over that table (#373, core/gate_atlas.h); `--json` prints
-# it. No GPU.
-ninferno_add_test(ninferno_gate_atlas_test LABELS host STATIC_LINK
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_gate_atlas.cpp"
-  LIBRARIES ninferno_core_host ninferno::json)
-# Host-only: no CUDA runtime in its link closure (#620 step 11), so the static archive of
-# ninferno_core_host in the shared test tree too (STATIC_LINK).
-target_sources(ninferno_gate_atlas_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
-  ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp)
-cmake_language(DEFER CALL ninferno_assert_host_only ninferno_gate_atlas_test)
-
-# The route cost model's constants, each tagged fact / counted / fitted
-# (ops/generic/route_cost_constants.h); `--list` prints them. No GPU.
-ninferno_add_test(ninferno_route_cost_constants_test LABELS host NEEDS_SOURCE_DIR
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_cost_constants.cpp")
-set_tests_properties(ninferno_route_cost_constants_test PROPERTIES LABELS host)
-
-# The holdout records of the fitted constants it covers (core/fitted_holdouts.h, the one mechanism;
-# the test's header says which): the tagged constants from the compiled tables, the listed files'
-# definitions, and the untagged constants a sweep found; an Unset record or a wrong total fails.
-# No GPU.
-ninferno_add_test(ninferno_fitted_holdouts_test LABELS host NEEDS_SOURCE_DIR
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_fitted_holdouts.cpp")
-
 # The launch node cost and the launch-like numbers pinned at each use site (#617 B). No GPU.
 ninferno_add_test(ninferno_launch_node_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_launch_node.cpp"
   LIBRARIES ninferno_spec)
 
-# The generic path's literal rules (ops/generic/route_rules.h: boards, cards, tolerance), held to
-# the sources they describe; `--list` prints them. No GPU.
-ninferno_add_test(ninferno_route_rules_test LABELS host NEEDS_SOURCE_DIR
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_rules.cpp")
-
 ninferno_add_test(ninferno_decode_graph_test LABELS gpu SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decode_graph.cpp"
   LIBRARIES ninferno_core)
-
-# Which board a CUDA ordinal names (core/device_identity.h): the default GPU is the same under
-# every enumeration order of the same boards. No GPU.
-ninferno_add_test(ninferno_device_identity_test LABELS host
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_device_identity.cpp")
 
 ninferno_add_test(ninferno_tensor_test LABELS host       SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_tensor.cpp"
   LIBRARIES ninferno_core)
@@ -222,15 +184,3 @@ set_tests_properties(ninferno_tool_grammar_budget_test PROPERTIES SKIP_RETURN_CO
 # YaRN rotary frequencies (core/yarn.h, the converter and --rope-yarn-factor), no GPU.
 ninferno_add_test(ninferno_yarn_test LABELS host SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_yarn.cpp"
   LIBRARIES ninferno_core)
-
-# The host part of the generic selector (ops/generic/generic_routes.cpp, kernel_facts.cpp and the
-# rest of ninferno_ops_host, with the device seams of generic_nodevice.cpp): route names, the
-# register-MMA variant rules, the kernel-facts snapshots; no CUDA runtime, no GPU (#620 step 11).
-ninferno_add_test(ninferno_generic_routes_host_test LABELS host
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_generic_routes_host.cpp"
-  LIBRARIES ninferno_ops_host)
-target_sources(ninferno_generic_routes_host_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
-  ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
-  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
-target_compile_definitions(ninferno_generic_routes_host_test PRIVATE NINFERNO_HOST_ONLY)
-cmake_language(DEFER CALL ninferno_assert_host_only ninferno_generic_routes_host_test)

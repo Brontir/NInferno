@@ -80,8 +80,10 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
     for (const spec::Measurement& m : profile.measurements) {
         if (m.config.enabled()) { modes.insert(m.config.mode); }
     }
-    // Every drafter the target carries, the profile's or not (each kind resolved alone).
+    // Every drafter the target carries, the profile's or not (each kind resolved alone); a kind
+    // that only prices the MTP head beside a published profile is no option (pricing_only, #777).
     for (const spec::ResolvedSpeculation& other : subject.resolved->other_kinds) {
+        if (other.pricing_only) { continue; }
         const auto drafts = spec::drafting_modes(other.profile);
         modes.insert(drafts.begin(), drafts.end());
     }

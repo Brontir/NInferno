@@ -109,9 +109,11 @@ void apply_builtin_default(SpeculationSubject& subject);
 // The subject with its profile chosen again for one speculation mode (the configuration choice's
 // drafter axis, product/choice/choice.h): a mode the profile does not draft with takes its own
 // resolution (ResolvedSpeculation::other_kinds); then over the profile's measurements of that mode
-// alone (a lab pair's, a local tune's), the Engine's served choices again, portable ones dropped. A profile
-// without measurements offers its fit fallback when that drafts with the mode, else is kept as it
-// is. A load table measured with another drafter kind gives way to one request at a time.
+// alone (a lab pair's, a local tune's), the Engine's served choices again, portable ones dropped. A
+// profile without measurements offers its fit fallback when that drafts with the mode, else is kept
+// as it is. A load table measured with another drafter kind gives way to one request at a time. A
+// mode taken from another kind's resolution keeps the rest as its other kinds (the profile it came
+// from among them): the pool rule prices the model's MTP head from them (head_priced_profile).
 [[nodiscard]] SpeculationSubject subject_of_mode(SpeculationSubject subject, spec::Mode mode);
 
 [[nodiscard]] std::optional<ServedSpeculation> served_speculation(const SpeculationSubject& subject,
@@ -205,24 +207,125 @@ enum class FallbackStep { FitFallback, Shallower, Head };
 fit_fallbacks(const SpeculationSubject& subject, const ServedSpeculation& refused, bool per_request,
               const std::function<bool(const ServedSpeculation&, FallbackStep)>& fits);
 
+// The pool rule's mix (#777) is DECISIONS 73's, the request mix the configuration choice's worth
+// prices (choice::request_seconds): choice::kMixShortRequests short requests, DECISIONS 73's short
+// request as the user's chat (choice::kRequestPrompt + choice::kRequestAnswer tokens), and, where
+// the asked context is longer than one (choice::Task::long_prompt), choice::kMixLongRequests long
+// ones at the asked context; each part sent as the benchmark sends its requests
+// (tools/bench/perf_matrix.py), from as many clients as the server has streams, client k sending
+// requests k, k + C, ... one after another, and a pool admitting them as it has room.
+//
+// The active streams of each turn of a pool of `streams` slots over `requests` requests: `streams`
+// while requests are left for every slot, then the rest (20 requests on 8 slots: 8, 8, 4). Empty
+// for no slot.
+[[nodiscard]] std::vector<std::uint32_t> mix_turns(std::uint32_t streams, std::uint32_t requests);
+
+// A price at a number of active streams; nullopt where it is not known.
+using StreamPrice = std::function<std::optional<double>(std::uint32_t streams)>;
+
+// A part's time on a pool of `streams` slots (mix_turns), in one-stream plain decode steps an
+// answer token: a turn of s streams decodes each answer at `gain(s)` over plain decode, whose step
+// of s streams costs `step(s)` one-stream steps. nullopt where a turn's gain or step is not known
+// (or not positive).
+[[nodiscard]] std::optional<double> mix_steps(std::uint32_t streams, std::uint32_t requests,
+                                              const StreamPrice& gain, const StreamPrice& step);
+
+// An automatic KV pool as the pool rule reads it: the whole contexts of the asked context it
+// holds, its KV tokens and the asked context.
+struct PoolSize {
+    std::uint32_t contexts = 0;
+    std::uint64_t tokens   = 0;
+    std::uint32_t context  = 0;
+};
+
+// The requests of `request` tokens a pool holds at once (#777): its KV tokens over the request's (a
+// request holds its pages, not a whole context), and never fewer than its whole contexts (a context
+// shorter than the request holds one, cut to it). Without `request`: DECISIONS 73's short request
+// as the user's chat, 2048 + 512 tokens.
+[[nodiscard]] std::uint32_t pool_slots(const PoolSize& pool) noexcept;
+[[nodiscard]] std::uint32_t pool_slots(const PoolSize& pool, std::uint64_t request) noexcept;
+
+// A part of the mix on the two pools: its requests, its weight in the mix (its requests over the
+// mix's), and the streams each pool serves it, at most `concurrency`, both by KV tokens
+// (pool_slots): the short requests at 2048 + 512 tokens, the long ones at DECISIONS 73's long
+// prompt at the asked context plus the answer (choice::Task::long_prompt() + kRequestAnswer:
+// 25,088 tokens at 32K, a whole context at 8K and below). The long part only where the asked
+// context holds a long request.
+struct MixPart {
+    std::uint32_t requests = 0;
+    double weight          = 0;
+    std::uint32_t head = 0, plain = 0;
+};
+
+[[nodiscard]] std::vector<MixPart> mix_parts(std::uint32_t concurrency, const PoolSize& head,
+                                             const PoolSize& plain);
+
+// The MTP head's pool against plain decode's at the mix (pool_rule, #777). Priced: the head pays
+// where the mix's time on its pool is no longer than on plain decode's, ln T weighted over the
+// parts as DECISIONS 73 weighs them (each part's mix_steps, plain decode at a gain of 1, both
+// under the same step prices); `over_plain` is the head pool's speed over plain decode's at the
+// mix, exp of minus that weighted log ratio. Not priced (any part: a gain or a step price the facts
+// do not give, such as on a card whose generation has no round-cost row, Ampere today): the rule
+// before #777, a literal kept until the facts exist (basis Unknown, DECISIONS 80): the head pays
+// where it holds at least four fifths of the whole contexts plain decode does (or of every one
+// served); `over_plain` is then nullopt.
+struct HeadPrice {
+    bool pays = false;
+    std::optional<double> over_plain;
+};
+
+[[nodiscard]] HeadPrice pool_head_price(std::uint32_t concurrency, const PoolSize& head,
+                                        const PoolSize& plain, const StreamPrice& head_gain,
+                                        const StreamPrice& step);
+
+// The profile that prices the model's own MTP head for `subject`: the subject's own where it
+// measured an MTP configuration, else its own resolution of MTP (ResolvedSpeculation::
+// other_kinds: this model's lab measurement, its rounds priced by this card's facts) where that
+// measured one, else the subject's own.
+[[nodiscard]] const spec::Profile& head_priced_profile(const SpeculationSubject& subject);
+
+// The served MTP head's gain over plain decode at `streams` active streams, from `priced`
+// (head_priced_profile): the depth its load table runs there (the table's last bound at or below
+// the streams, min(bound, its own depth); its own depth below the first bound), 1 where that depth
+// is 0 (plain decode); else that depth's one-request gain (spec::measured_gain over every section)
+// times the joint verify's price there (Profile::joint_scale, R_1 / R_C; 1 at one stream). nullopt
+// where either is not known, and where the head's table is not one the facts derived or the lab
+// measured (ServedSpeculation::load_basis "facts" or "measured"): a literal or stand-in table's
+// depths are no price, so the rule before #777 decides there.
+[[nodiscard]] std::optional<double>
+pool_head_gain(const spec::Profile& priced, const ServedSpeculation& head, std::uint32_t streams);
+// A plain decode step's price at `streams` streams in one-stream steps (Profile::plain_step_scale;
+// 1 at one stream); nullopt where nobody priced it.
+[[nodiscard]] std::optional<double> plain_step_price(const spec::Profile& priced,
+                                                     std::uint32_t streams);
+
 // The pool rule (--spec auto with an automatic KV pool): when the served drafter leaves the pool
 // `with_drafter` whole contexts, fewer than `concurrency`, and plain decode holds more
-// (`plain_contexts`, 0 when plain decode does not fit), requests waiting for pages cost more than
-// drafting saves. The model's own MTP head runs then when it holds at least four fifths of the
-// contexts plain decode does (or of every one served; `head_contexts`, nullopt when it does not
-// fit), else plain decode. One context always fits a drafter, so a server of one request never
-// loses it. `plain_contexts` is called only inside the rule's range, `head_contexts` only when
-// plain decode holds more; each builds or plans its configuration as `fits` above does.
+// (`plain_pool`'s contexts, 0 when plain decode does not fit), requests waiting for pages cost more
+// than drafting saves and the drafter gives way. The model's own MTP head runs then where its pool
+// (`head_pool`, nullopt when it does not fit) prices at least plain decode's over DECISIONS 73's
+// mix (pool_head_price: the head's load table's gain at each number of active streams,
+// pool_head_gain, against plain decode's, under the plain step's price, plain_step_price; both
+// from head_priced_profile; unpriced, the four fifths of plain decode's contexts that ruled before
+// #777), else plain decode. One context always fits a drafter, so a server of one request never
+// loses it. `plain_pool` is called only inside the rule's range, `head_pool` only when plain decode
+// holds more; each builds or plans its configuration as `fits` above does. `head_pool` sets the
+// head's `engine.load` to the table its build runs (a --spec-load table, bounds moved to captured
+// depths): the head is priced at the depths it runs (Codex on #791).
 enum class PoolKeep { Drafter, Head, Plain };
 struct PoolDecision {
     PoolKeep keep = PoolKeep::Drafter;
     std::optional<ServedSpeculation> head; // PoolKeep::Head: the head served
     std::uint32_t plain = 0;               // the contexts plain decode holds (0: not asked)
+    // The head pool's tokens/s over plain decode's at the mix (HeadPrice::over_plain), where the
+    // head fits and both are priced.
+    std::optional<double> head_price;
 };
+
 [[nodiscard]] PoolDecision
 pool_rule(const SpeculationSubject& subject, bool per_request, std::uint32_t with_drafter,
-          std::uint32_t concurrency, const std::function<std::uint32_t()>& plain_contexts,
-          const std::function<std::optional<std::uint32_t>(const ServedSpeculation&)>& head_contexts);
+          std::uint32_t concurrency, const std::function<PoolSize()>& plain_pool,
+          const std::function<std::optional<PoolSize>(ServedSpeculation&)>& head_pool);
 
 // The profile served_shallower serves: every choice `config` one draft shallower, with the drafter
 // the profile runs `config`'s mode with and the floor shallower_floor finds from `floor` (measured
