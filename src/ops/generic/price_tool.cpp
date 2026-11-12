@@ -3,6 +3,7 @@
 #include "core/device_class.h"
 #include "core/generation.h"
 #include "core/machine_facts.h"
+#include "core/sm_rate_facts.h"
 #include "core/units.h"
 #include "core/weight.h"
 #include "ninferno/ops/linear.h"
@@ -284,9 +285,19 @@ void print_grid(const kr::Grid& g) {
                 g.ctas, g.waves, g.occupancy, g.rounds, g.warps, g.fill);
 }
 
+// The DRAM law of #690 (kernel_roofline.h dram_terms): P, b_w, the busiest SM's first-round rate
+// R_sm(W) = min(P, W x b_w / L0), and which bound held.
+void print_dram_law(const kr::DramTerms& d) {
+    std::printf("  dram law: P %.1f GB/s an SM (%s carve-out), b_w %.0f B a warp (counted %.0f), "
+                "R_sm %.1f GB/s; bus %.2f us, busiest SM %.2f us: the %s bound\n",
+                d.peak / 1e9, d.shared_carved ? "shared-largest" : "L1-largest", d.warp_bytes,
+                d.counted, d.round_rate / 1e9, us(d.bus), us(d.sm), d.bus_bound ? "bus" : "per-SM");
+}
+
 void print_register_mma(const kr::RegisterMmaTerms& t, bool heavy, double a16,
                         std::optional<double> sel) {
     print_grid(t.grid);
+    if (!t.legacy) print_dram_law(t.dram_law);
     if (!heavy) {
         std::printf("  bytes (plain form): mem %.2f us\n", us(t.mem));
     } else {
@@ -299,18 +310,22 @@ void print_register_mma(const kr::RegisterMmaTerms& t, bool heavy, double a16,
                 us(t.reduce_warps), us(t.reduce));
     std::printf("  chain %.2f us\n", us(t.chain));
     const double scaled = t.total * a16;
-    std::printf("  total (bytes + mma + reduce) / fill + chain = %.2f us, x a16 scale %.2f = %.2f "
-                "us; selector %s%s\n",
+    const char* law     = t.legacy ? "(bytes + mma + reduce) / fill + chain (legacy DRAM law)"
+                          : heavy  ? "dram + (l2 + spill + mma) / fill + reduce + chain"
+                                   : "mem + mma / fill + reduce + chain";
+    std::printf("  total %s = %.2f us, x a16 scale %.2f = %.2f us; selector %s%s\n", law,
                 us(t.total), a16, us(scaled),
                 sel ? (std::to_string(us(*sel)) + " us ").c_str() : "", agreement(sel, scaled));
 }
 
 void print_pipelined(const kr::PipelinedTerms& t, double a16, std::optional<double> sel) {
     print_grid(t.grid);
+    if (!t.legacy) print_dram_law(t.dram_law);
     std::printf("  mem %.2f us, mma %.2f us, chain %.2f us\n", us(t.mem), us(t.mma), us(t.chain));
     const double scaled = t.total * a16;
-    std::printf("  total max(mem, mma) / fill + chain = %.2f us, x a16 scale %.2f = %.2f us; "
-                "selector %s%s\n",
+    std::printf("  total %s = %.2f us, x a16 scale %.2f = %.2f us; selector %s%s\n",
+                t.legacy ? "max(mem, mma) / fill + chain (legacy DRAM law)"
+                         : "max(mem, mma / fill) + chain",
                 us(t.total), a16, us(scaled),
                 sel ? (std::to_string(us(*sel)) + " us ").c_str() : "", agreement(sel, scaled));
 }
@@ -350,6 +365,23 @@ int run(const Options& o) {
         chip.clock_hz / 1e6, chip.dram_bytes_per_s / 1e9, chip.tensor_rate, chip.max_threads_per_sm,
         chip.max_ctas_per_sm, chip.registers_per_sm, chip.smem_per_sm / 1024.0,
         emulated ? " (BF16 MMA emulated: no pipelined tile)" : "");
+    if (kr::legacy_dram(chip)) {
+        const auto row = sm_rate_row(d.major, d.minor);
+        std::printf("sm rate facts: %s sm_%d%d (core/sm_rate_facts.h): the legacy DRAM law\n",
+                    row ? "another card refutes the row of" : "no row for", d.major, d.minor);
+    } else {
+        // b_w_max is a cap only where the probe saw a warp saturate; elsewhere the counted bytes
+        // stand (no cap).
+        std::printf("sm rate facts (core/sm_rate_facts.h): L0 %.1f ns, P %.2f B/clk free, %.2f "
+                    "B/clk placed, ",
+                    *chip.dram_latency_s * 1e9, *chip.sm_dram_bytes_per_clock_free,
+                    *chip.sm_dram_bytes_per_clock_placed);
+        if (chip.sm_max_warp_bytes) {
+            std::printf("b_w_max %.0f B\n", *chip.sm_max_warp_bytes);
+        } else {
+            std::printf("no b_w cap (no warp saturated in the probe)\n");
+        }
+    }
     std::printf("call %s %dx%d T=%d %s: payload %llu bytes, %.4f bytes/value, sets %.0f; "
                 "register-MMA terms: %s; a16 scale %.2f\n",
                 generic::qtype_name(qtype), o.n, o.k, o.t, generic::epilogue_name(o.epilogue),
@@ -446,7 +478,15 @@ int run(const Options& o) {
         kernel.cluster = tile.k_split;
         kernel.threads = 32.0 * s.warps_m * s.warps_k;
         kernel.warps_k = s.warps_k;
+        kernel.m_tiles = s.m_tiles;
+        kernel.k_step  = static_cast<double>(generic::rmma_step_values(qtype, o.k));
         kernel.heavy   = heavy;
+        // The instance's static shared memory by the geometry rule; the selector reads the
+        // compiled whole where it reads the kernel's facts (the heavy form), which this replica is
+        // not given.
+        kernel.shared_bytes = kr::register_mma_static_shared_bytes(
+            generic::rmma_geometry_decoder(qtype), s.warps_m, s.warps_k, s.m_tiles, s.n_tiles,
+            s.cluster, o.epilogue == Epilogue::SwiGlu, d.major * 10 + d.minor);
         if (heavy) { // the price reads compiled facts only in the heavy form, as price_routes does
             kernel.registers   = o.registers;
             kernel.local_bytes = o.local_bytes;

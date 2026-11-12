@@ -761,6 +761,18 @@ struct RouteTile {
 [[nodiscard]] std::optional<RouteTile> route_tile(Route route, Epilogue epilogue,
                                                   std::int32_t tokens);
 
+// The K values one register-MMA step of the format covers at K = `k`: four runs of the decoder
+// its codec launches (rmma_kernel's KStep = 4 x Decoder::kRun, generic_select.cpp rmma_k_step):
+// 32 for BF16, Q8 and U4 G32, 64 for FP8, NVFP4 and the 16-value groupwise runs, 128 for the
+// 32-value decoders and the ggml 32-blocks stepped four at a time. The price counts the bytes a
+// warp keeps in flight from it (kernel_roofline.h price_register_mma).
+[[nodiscard]] std::int64_t rmma_step_values(QType qtype, std::int32_t k);
+
+// The register-MMA decoder of the format by its geometry row's spelling (rmma_geometry.h
+// kDecoderGeometry), for the static shared memory it adds (a codebook, staged activations);
+// empty for a format whose decoder adds none.
+[[nodiscard]] std::string_view rmma_geometry_decoder(QType qtype);
+
 // Whether price_routes prices this A16 route on a device (generic_cost.cpp), a pricing rule and
 // not admission (route_admits): every route, except where the BF16 MMA is emulated (Turing,
 // Volta), which gets no pipelined tile (tiled, staged) and no 8-tile register-MMA token strip.

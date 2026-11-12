@@ -8,6 +8,11 @@ ninferno_embed_text(${CMAKE_CURRENT_SOURCE_DIR}/data/isa_facts.json NINFERNO_ISA
   NINFERNO_ISA_FACTS_JSON)
 configure_file(embedded_isa_facts.h.in
   ${CMAKE_CURRENT_BINARY_DIR}/generated/core/embedded_isa_facts.h @ONLY)
+# The SM DRAM rate facts per architecture (sm_rate_facts.cpp), the bytes-in-flight probe's table.
+ninferno_embed_text(${CMAKE_CURRENT_SOURCE_DIR}/data/sm_rate_facts.json NINFERNO_SMRATE
+  NINFERNO_SM_RATE_FACTS_JSON)
+configure_file(embedded_sm_rate_facts.h.in
+  ${CMAKE_CURRENT_BINARY_DIR}/generated/core/embedded_sm_rate_facts.h @ONLY)
 # The same table as constexpr rows (core/board_registry.h), for the data that is keyed by a board
 # at compile time (core/measured_boards.h). The directory is public: the header reaches every
 # target that includes it.
@@ -27,6 +32,7 @@ add_library(ninferno_core_host STATIC
   device_class_host.cpp
   machine_facts.cpp
   isa_facts.cpp
+  sm_rate_facts.cpp
   gate_atlas.cpp
 )
 ninferno_internal_includes(ninferno_core_host)

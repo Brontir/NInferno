@@ -5,7 +5,8 @@
 //     formats, four shapes, five widths, plain and SwiGLU epilogues, every register-MMA, tiled and
 //     staged route offered. Routes are matched by (family, schedule); a route a build gates in or
 //     out (cluster schedules, shared memory) is checked against its gate, so one file serves every
-//     build set.
+//     build set. On a board the DRAM law of #690 prices (its architecture has an SM rate row,
+//     core/sm_rate_facts.h), the roofline's legacy law is compared instead (check 1's comment).
 //  2. The selector's own priced routes (route_query.h priced_routes_query) are the roofline's
 //     terms times the A16 scale for the inputs the selector passes (the route's tile, the
 //     described weight's bytes, the compiled facts it read): the client's wiring.
@@ -23,6 +24,7 @@
 #include "ops/generic/selector_facts.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -30,6 +32,7 @@
 #include <exception>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -59,6 +62,80 @@ struct Shape {
 
 bool priceable(const DeviceClass& d) {
     return d.sms > 0 && d.registers_per_sm > 0 && d.facts.has_roofline();
+}
+
+// The roofline's price of an A16 route of the call on `chip` (the device's facts, or a variant of
+// them), times the board's A16 scale, from the inputs the selector passes: the route's tile, the
+// described weight's bytes, and the compiled facts the selector read for the route (`reads`, the
+// last read wins as the price's own lookup did; none where it read none). nullopt for an A8
+// route (a8_candidates prices those, not the roofline's tiles) or a shape the format's layout
+// does not take.
+std::optional<double> roofline_price(const DeviceClass& d, const kr::ChipFacts& chip, QType q,
+                                     g::Epilogue e, std::int32_t n_rows, std::int32_t k_cols,
+                                     std::int32_t t, g::Route r,
+                                     const std::vector<g::RmmaFactRead>& reads) {
+    const kr::Calibration cal = kr::calibration_of(d.major, d.minor);
+    const double a16          = ninferno::fitted_route_scales(d.major, d.minor)
+                           .value_or(ninferno::FittedRouteScales{})
+                           .a16_cost;
+    const bool heavy =
+        ninferno::has_subblock_scales(q) && ninferno::rmma_terms_measured(d.major, d.minor);
+    std::uint64_t payload = 0;
+    try {
+        payload = g::described_weight_bytes(q, e, n_rows, k_cols);
+    } catch (const std::exception&) { return std::nullopt; }
+    const double n = n_rows, k = k_cols;
+    const kr::Call call{n, k, static_cast<double>(t), e == g::Epilogue::SwiGlu ? 2.0 : 1.0,
+                        static_cast<double>(payload) / (n * k)};
+    const auto tile = g::route_tile(r, e, t);
+    if (r.family == g::Family::RegisterMma) {
+        const auto s = g::rmma_schedule_info(r.schedule);
+        kr::RegisterMmaKernel kernel;
+        kernel.rows         = tile->out_rows;
+        kernel.cols         = tile->tokens;
+        kernel.cluster      = tile->k_split;
+        kernel.threads      = 32.0 * s.warps_m * s.warps_k;
+        kernel.warps_k      = s.warps_k;
+        kernel.m_tiles      = s.m_tiles;
+        kernel.k_step       = static_cast<double>(g::rmma_step_values(q, k_cols));
+        kernel.heavy        = heavy;
+        kernel.shared_bytes = kr::register_mma_static_shared_bytes(
+            g::rmma_geometry_decoder(q), s.warps_m, s.warps_k, s.m_tiles, s.n_tiles, s.cluster,
+            e == g::Epilogue::SwiGlu, d.major * 10 + d.minor);
+        for (const auto& read : reads) {
+            if (read.schedule == r.schedule && read.qtype == q && read.epilogue == e) {
+                kernel.registers    = read.facts.registers;
+                kernel.local_bytes  = static_cast<double>(read.facts.local_bytes);
+                kernel.shared_bytes = static_cast<double>(read.facts.static_smem);
+            }
+        }
+        return kr::price_register_mma(chip, cal, call, kernel).total * a16;
+    }
+    if (r.family == g::Family::TiledMma) {
+        const auto s = g::tiled_schedule_info(r.schedule);
+        kr::PipelinedKernel kernel;
+        kernel.rows            = tile->out_rows;
+        kernel.cols            = tile->tokens;
+        kernel.threads         = 256;
+        kernel.stages          = 3;
+        kernel.stage_rows      = s.block_n;
+        kernel.stage_cols      = s.block_m;
+        kernel.tensor_fraction = g::route_cost::kTiledTensorFraction.value();
+        return kr::price_pipelined(chip, cal, call, kernel).total * a16;
+    }
+    if (r.family == g::Family::StagedMma) {
+        const auto s = g::staged_schedule_info(r.schedule);
+        kr::PipelinedKernel kernel;
+        kernel.rows            = tile->out_rows;
+        kernel.cols            = tile->tokens;
+        kernel.threads         = 32.0 * s.warps_m * s.warps_n;
+        kernel.stages          = s.stages;
+        kernel.stage_rows      = s.rows;
+        kernel.stage_cols      = s.tokens;
+        kernel.tensor_fraction = g::route_cost::kStagedTensorFraction.value();
+        return kr::price_pipelined(chip, cal, call, kernel).total * a16;
+    }
+    return std::nullopt;
 }
 
 // ---- Check 1: golden prices from the formula before #613 PR-4 ----
@@ -138,11 +215,27 @@ void check_golden() {
             return;
         }
     }
-    long prices = 0, gated_out = 0, bad = 0;
+    long prices = 0, gated_out = 0, bad = 0, legacy_law = 0;
     for (const GoldenCall& c : kGoldenCalls) {
         const DeviceClass d = g::board_device_class(g::kFactsBoards[c.board]);
-        const auto priced   = g::priced_routes_query(
-            d, kGoldenFormats[c.format], LinearPolicy::A16Only, c.epilogue, c.n, c.k, c.tokens);
+        const QType q       = kGoldenFormats[c.format];
+        std::vector<g::RmmaFactRead> reads;
+        std::vector<g::PricedRouteQuery> priced;
+        {
+            const g::ScopedRmmaFactsSink sink(reads);
+            priced =
+                g::priced_routes_query(d, q, LinearPolicy::A16Only, c.epilogue, c.n, c.k, c.tokens);
+        }
+        // A board whose architecture has an SM rate row is priced by the DRAM law of #690, which
+        // the golden predates: its routes are held to the golden through the roofline with the
+        // legacy law (the chip facts without the SM rate facts, kernel_roofline.h legacy_dram),
+        // whose wiring to the selector check 2 holds. Every other board's selector price is the
+        // golden's itself.
+        kr::ChipFacts legacy_chip    = kr::chip_facts_of(d);
+        const bool priced_by_new_law = !kr::legacy_dram(legacy_chip);
+        legacy_chip.dram_latency_s.reset();
+        legacy_chip.sm_dram_bytes_per_clock_free.reset();
+        legacy_chip.sm_dram_bytes_per_clock_placed.reset();
         const auto fail = [&](const char* what, int family, int schedule, double want, double got) {
             if (++bad <= 10) {
                 std::fprintf(
@@ -170,8 +263,16 @@ void check_golden() {
             seen[at]                = true;
             const GoldenRoute& want = kGoldenRoutes[c.first + static_cast<long>(at)];
             ++prices;
-            if (got.seconds != want.seconds) {
-                fail("price moved", family, schedule, want.seconds, got.seconds);
+            double seconds = got.seconds;
+            if (priced_by_new_law) {
+                ++legacy_law;
+                seconds = roofline_price(d, legacy_chip, q, c.epilogue, c.n, c.k, c.tokens,
+                                         got.route, reads)
+                              .value_or(0.0);
+            }
+            if (seconds != want.seconds) {
+                fail(priced_by_new_law ? "legacy-law price moved" : "price moved", family, schedule,
+                     want.seconds, seconds);
             }
         }
         for (std::size_t i = 0; i < c.count; ++i) {
@@ -187,10 +288,12 @@ void check_golden() {
             }
         }
     }
-    std::printf("golden: %zu calls, %ld route prices compared, %ld routes gated out by this build, "
+    std::printf("golden: %zu calls, %ld route prices compared (%ld of them through the legacy "
+                "law of a board the #690 law prices), %ld routes gated out by this build, "
                 "%ld differ\n",
-                sizeof(kGoldenCalls) / sizeof(kGoldenCalls[0]), prices, gated_out, bad);
-    if (bad > 0 || prices == 0) ++failures;
+                sizeof(kGoldenCalls) / sizeof(kGoldenCalls[0]), prices, legacy_law, gated_out, bad);
+    // Both laws must be compared: a board of each kind is in the golden.
+    if (bad > 0 || prices == 0 || legacy_law == 0 || legacy_law == prices) ++failures;
 }
 
 // ---- Check 2: the selector's wiring ----
@@ -206,24 +309,15 @@ void check_wiring() {
     for (const auto& board : g::kFactsBoards) {
         const DeviceClass d = g::board_device_class(board);
         if (!priceable(d)) continue;
-        const kr::ChipFacts chip  = kr::chip_facts_of(d);
-        const kr::Calibration cal = kr::calibration_of(d.major, d.minor);
-        const double a16          = ninferno::fitted_route_scales(d.major, d.minor)
-                               .value_or(ninferno::FittedRouteScales{})
-                               .a16_cost;
+        const kr::ChipFacts chip = kr::chip_facts_of(d);
         for (const QType q : kFormats) {
-            const bool heavy =
-                ninferno::has_subblock_scales(q) && ninferno::rmma_terms_measured(d.major, d.minor);
             for (const Shape shape : kWiringShapes) {
                 for (const g::Epilogue e : {g::Epilogue::Store, g::Epilogue::SwiGlu}) {
-                    const double sets     = e == g::Epilogue::SwiGlu ? 2.0 : 1.0;
-                    std::uint64_t payload = 0;
                     try {
-                        payload = g::described_weight_bytes(q, e, shape.n, shape.k);
+                        (void)g::described_weight_bytes(q, e, shape.n, shape.k);
                     } catch (const std::exception&) {
                         continue; // a shape the format's layout does not take
                     }
-                    const double n = shape.n, k = shape.k;
                     for (const std::int32_t t : kWiringTokens) {
                         std::vector<g::RmmaFactRead> reads;
                         std::vector<g::PricedRouteQuery> priced;
@@ -234,62 +328,13 @@ void check_wiring() {
                         } catch (const std::exception&) {
                             continue; // a call the selector refuses on this board
                         }
-                        const kr::Call call{n, k, static_cast<double>(t), sets,
-                                            static_cast<double>(payload) / (n * k)};
                         for (const auto& p : priced) {
                             const g::Route r = p.route;
-                            const auto tile  = g::route_tile(r, e, t);
-                            double want      = 0;
-                            if (r.family == g::Family::RegisterMma) {
-                                const auto s = g::rmma_schedule_info(r.schedule);
-                                kr::RegisterMmaKernel kernel;
-                                kernel.rows    = tile->out_rows;
-                                kernel.cols    = tile->tokens;
-                                kernel.cluster = tile->k_split;
-                                kernel.threads = 32.0 * s.warps_m * s.warps_k;
-                                kernel.warps_k = s.warps_k;
-                                kernel.heavy   = heavy;
-                                // The facts the selector read for this schedule (the last read
-                                // wins, as the price's own lookup did): none where it read none.
-                                for (const auto& read : reads) {
-                                    if (read.schedule == r.schedule && read.qtype == q &&
-                                        read.epilogue == e) {
-                                        kernel.registers = read.facts.registers;
-                                        kernel.local_bytes =
-                                            static_cast<double>(read.facts.local_bytes);
-                                    }
-                                }
-                                want = kr::price_register_mma(chip, cal, call, kernel).total * a16;
-                                ++priced_rmma;
-                            } else if (r.family == g::Family::TiledMma) {
-                                const auto s = g::tiled_schedule_info(r.schedule);
-                                kr::PipelinedKernel kernel;
-                                kernel.rows       = tile->out_rows;
-                                kernel.cols       = tile->tokens;
-                                kernel.threads    = 256;
-                                kernel.stages     = 3;
-                                kernel.stage_rows = s.block_n;
-                                kernel.stage_cols = s.block_m;
-                                kernel.tensor_fraction =
-                                    g::route_cost::kTiledTensorFraction.value();
-                                want = kr::price_pipelined(chip, cal, call, kernel).total * a16;
-                                ++priced_pipelined;
-                            } else if (r.family == g::Family::StagedMma) {
-                                const auto s = g::staged_schedule_info(r.schedule);
-                                kr::PipelinedKernel kernel;
-                                kernel.rows       = tile->out_rows;
-                                kernel.cols       = tile->tokens;
-                                kernel.threads    = 32.0 * s.warps_m * s.warps_n;
-                                kernel.stages     = s.stages;
-                                kernel.stage_rows = s.rows;
-                                kernel.stage_cols = s.tokens;
-                                kernel.tensor_fraction =
-                                    g::route_cost::kStagedTensorFraction.value();
-                                want = kr::price_pipelined(chip, cal, call, kernel).total * a16;
-                                ++priced_pipelined;
-                            } else {
-                                continue; // the A8 tiles are not moved yet
-                            }
+                            const auto priced_here =
+                                roofline_price(d, chip, q, e, shape.n, shape.k, t, r, reads);
+                            if (!priced_here) continue; // the A8 tiles are not moved yet
+                            const double want = *priced_here;
+                            ++(r.family == g::Family::RegisterMma ? priced_rmma : priced_pipelined);
                             if (p.seconds != want) {
                                 if (++bad <= 10) {
                                     std::fprintf(stderr,
@@ -625,9 +670,330 @@ void check_price_a8_rows() {
     if (bad > 0 || a8 == 0) ++failures;
 }
 
+// The bytes a warp of the probe's two-slot rings keeps in flight by count: 2 slots x 2 (ring2) or
+// 4 (ring4) 16-byte loads a lane x 32 lanes.
+constexpr double kRing2Bytes = 2 * 2 * 32 * 16, kRing4Bytes = 2 * 4 * 32 * 16;
+
+// ---- Check 7: the DRAM time of #690 (dram_time) ----
+// Over a grid of CTA counts, occupancies, warps and SM counts on an RTX 3090's facts with its
+// SM rate row: (a) the time never rises with the SM count; (b) a grid of fewer CTAs than SMs costs
+// the same on any larger chip (idle SMs are not billed: the charge of #690); (c) the time is at
+// least every CTA's bytes over the bus; (d) a round of one CTA moves at its warps' rate,
+// W x b_w / L0, while that is under P. Revert check: the legacy law (the busiest SM's share
+// bw / SMs) fails (a) and (b) on the same grid, so the check does not pass vacuously.
+void check_dram_time() {
+    long bad = 0, legacy_rises = 0, cases = 0;
+    const auto it =
+        std::find_if(std::begin(g::kFactsBoards), std::end(g::kFactsBoards),
+                     [](const g::FactsBoard& b) { return std::strcmp(b.name, "rtx3090") == 0; });
+    if (it == std::end(g::kFactsBoards)) {
+        std::fprintf(stderr, "FAIL: dram_time: no rtx3090 board\n");
+        ++failures;
+        return;
+    }
+    const DeviceClass d      = g::board_device_class(*it);
+    const kr::ChipFacts base = kr::chip_facts_of(d);
+    if (kr::legacy_dram(base)) {
+        std::fprintf(stderr, "FAIL: dram_time: the RTX 3090 has no SM rate facts (row sm_86)\n");
+        ++failures;
+        return;
+    }
+    const double bytes   = 64.0 * 4096 * 0.5625; // a 64-row CTA of a 4.5-bit weight, K 4096
+    const double b_w     = kRing2Bytes; // a BF16 m1 Store call's ring (under the 3090's b_w_max)
+    const auto legacy_of = [&](const kr::ChipFacts& c, double ctas) {
+        return std::ceil(ctas / c.sms) * bytes / (c.dram_bytes_per_s / c.sms);
+    };
+    for (const double ctas : {1.0, 7.0, 40.0, 82.0, 100.0, 164.0, 300.0, 1000.0, 5000.0}) {
+        for (const double occ : {1.0, 2.0, 4.0, 12.0}) {
+            for (const double wpc : {1.0, 4.0, 8.0}) {
+                kr::ChipFacts less = base;
+                for (const double sms : {41.0, 82.0, 103.0, 170.0}) {
+                    kr::ChipFacts more = base;
+                    more.sms           = sms;
+                    if (more.sms <= less.sms) continue;
+                    ++cases;
+                    const double a = kr::dram_time(less, ctas, occ, wpc, bytes, b_w, false);
+                    const double b = kr::dram_time(more, ctas, occ, wpc, bytes, b_w, false);
+                    if (b > a * (1 + 1e-12)) ++bad;
+                    if (ctas <= less.sms && b != a) ++bad;
+                    if (b < ctas * bytes / more.dram_bytes_per_s) ++bad;
+                    if (legacy_of(more, ctas) > legacy_of(less, ctas) * (1 + 1e-12)) {
+                        ++legacy_rises;
+                    }
+                    less = more;
+                }
+            }
+        }
+    }
+    // (d): one CTA of one warp on the 3090: 2048 B in flight over the measured L0, under P (the
+    // free carve-out's, and the placed one's for a shared-memory tile).
+    const double rate = b_w / *base.dram_latency_s;
+    for (const bool placed : {false, true}) {
+        const double p =
+            (placed ? *base.sm_dram_bytes_per_clock_placed : *base.sm_dram_bytes_per_clock_free) *
+            base.clock_hz;
+        const double one = kr::dram_time(base, 1.0, 1.0, 1.0, bytes, b_w, placed);
+        if (!(rate < p) ||
+            std::abs(one - std::max(bytes / rate, bytes / base.dram_bytes_per_s)) > one * 1e-12) {
+            ++bad;
+        }
+        // Saturated: 48 warps' worth of flight is over P, which then is the rate.
+        const double sat = kr::dram_time(base, 1.0, 1.0, 48.0, bytes, b_w, placed);
+        if (std::abs(sat - std::max(bytes / p, bytes / base.dram_bytes_per_s)) > sat * 1e-12) {
+            ++bad;
+        }
+    }
+    std::printf("dram_time: %ld cases, %ld differ; the legacy law rises in %ld of them\n", cases,
+                bad, legacy_rises);
+    if (bad > 0 || cases == 0 || legacy_rises == 0) ++failures;
+}
+
+// ---- Check 8: the law against the probe's own rows ----
+// For every architecture of core/sm_rate_facts.h, dram_time prices one CTA of W warps on one SM,
+// each warp keeping the counted bytes of one of the probe's two-slot rings in flight (ring2: 2048
+// B, ring4: 4096 B, under the row's b_w_max where its warp saturates: sm_70, sm_120a), and that
+// rate is held to the probe's measured ring rows (both carve-outs, every W, at each row's own SM
+// clock). P, L0 and the cap come from the table the rows sit in, so the check is about the
+// counted b_w and the law's form (ring4 at W = 1 equals the row where the cap is ring4's own
+// reading, sm_70). The law is Little's with the unloaded L0, the counted bytes and a hard corner
+// at P, an upper bound of the rate, so:
+//  - it is never below a measured row (to 1 %, kNeverBelow);
+//  - at W = 1 it is at most kAtOneWarp above it: the count against what a warp keeps in flight,
+//    ring2's 2048 B against 1767-1907 B (x1.07-1.16), ring4's 4096 B uncapped against 3340-3448 B
+//    (x1.19-1.23); a b_w counted twice over or a P in another unit fails here;
+//  - on every row at most kOnTheCurve above it. The worst reading, x1.16-1.37 at W = 6-16, is a gap
+//    of the model, not noise: the measured curve rounds off into P (a knee of queueing near the
+//    port's limit) where the law has a corner. It is recorded on #690; the law is optimistic there.
+// The bounds are this check's tolerances, the same as warp_inflight.py's (LAW_*), not constants of
+// the price. The other cards' runs of an architecture (its transfer checks) are held to the same
+// bounds under the row's facts and their own SM clocks: the verdict must be the table's
+// (`within_bounds`, `refuted`), and a refuted row gives no SM rate facts (fill_sm_rate_facts). The
+// RTX 5070 Ti refutes the sm_120a row: the law is x0.88-0.89 of its rows at W = 1 (its warps fetch
+// 12 % faster than the RTX 5090's) and x0.92 at its placed P (23.8 B/clk against 21.9).
+// Last, the boards of each law, written out: the legacy law on sm_80, sm_90, sm_100, sm_121 (no
+// row) and on sm_120a (refuted), the law of #690 on sm_70, sm_75, sm_86, sm_89.
+constexpr double kNeverBelow = 0.99, kAtOneWarp = 1.25, kOnTheCurve = 1.40;
+
+struct LawOverRows {
+    long rows = 0, outside = 0;
+    double lowest = 1e9, at_one = 0, highest = 0;
+};
+
+// The law of `row` over `rings`, both rings, both carve-outs. `report`: name each row outside the
+// bounds (a reference card's rows must all be inside; a transfer check's may refute).
+LawOverRows law_over(const ninferno::SmRateRow& row, const ninferno::SmRateRings& rings,
+                     const char* who, bool report) {
+    LawOverRows out;
+    kr::ChipFacts chip;
+    chip.sms                            = row.sms;
+    chip.dram_latency_s                 = row.dram_stream_latency_ns * 1e-9;
+    chip.sm_dram_bytes_per_clock_free   = row.bytes_per_clock_free;
+    chip.sm_dram_bytes_per_clock_placed = row.bytes_per_clock_placed;
+    if (row.warp_bytes_saturated) chip.sm_max_warp_bytes = row.max_warp_bytes_in_flight;
+    // One CTA on one SM: the bus is not the bound the probe measured.
+    chip.dram_bytes_per_s = 1e18;
+    const double bytes    = 1 << 20;
+    const std::tuple<const char*, double, bool, const std::vector<ninferno::SmRateRingRow>*> all[] =
+        {{"ring2", kRing2Bytes, false, &rings.ring2_free},
+         {"ring2", kRing2Bytes, true, &rings.ring2_placed},
+         {"ring4", kRing4Bytes, false, &rings.ring4_free},
+         {"ring4", kRing4Bytes, true, &rings.ring4_placed}};
+    for (const auto& [variant, counted, placed, measured] : all) {
+        for (const ninferno::SmRateRingRow& r : *measured) {
+            ++out.rows;
+            chip.clock_hz      = r.sm_mhz * 1e6;
+            const double law   = bytes / kr::dram_time(chip, 1.0, 1.0, r.w, bytes, counted, placed);
+            const double ratio = law / (r.gbps * 1e9);
+            out.lowest         = std::min(out.lowest, ratio);
+            out.highest        = std::max(out.highest, ratio);
+            if (r.w == 1) out.at_one = std::max(out.at_one, ratio);
+            if (ratio < kNeverBelow || ratio > kOnTheCurve || (r.w == 1 && ratio > kAtOneWarp)) {
+                ++out.outside;
+                if (report) {
+                    std::fprintf(stderr,
+                                 "FAIL: sm_%s %s %s %s W=%g: the law %.2f GB/s, the probe %.2f "
+                                 "(x%.3f)\n",
+                                 row.arch.c_str(), who, variant, placed ? "placed" : "free", r.w,
+                                 law / 1e9, r.gbps, ratio);
+                }
+            }
+        }
+    }
+    return out;
+}
+
+void check_law_against_probe() {
+    long rows = 0, bad = 0;
+    for (const ninferno::SmRateRow& row : ninferno::sm_rate_facts_table()) {
+        const LawOverRows own = law_over(row, row.rings, row.card.c_str(), true);
+        rows += own.rows;
+        bad += own.outside;
+        std::printf("law vs probe: sm_%s (%s, b_w_max %.0f B, %s): x%.3f..%.3f, x%.3f at W = 1\n",
+                    row.arch.c_str(), row.card.c_str(), row.max_warp_bytes_in_flight,
+                    row.warp_bytes_saturated ? "a cap" : "no cap", own.lowest, own.highest,
+                    own.at_one);
+        bool outside = false;
+        for (const ninferno::SmRateTransfer& t : row.transfers) {
+            const LawOverRows other = law_over(row, t.rings, t.card.c_str(), false);
+            const bool within       = other.outside == 0;
+            outside                 = outside || !within;
+            std::printf("law vs probe: sm_%s row against %s: x%.3f..%.3f, x%.3f at W = 1: %s\n",
+                        row.arch.c_str(), t.card.c_str(), other.lowest, other.highest, other.at_one,
+                        within ? "within the bounds" : "outside: refutes the row");
+            if (within != t.within_bounds) {
+                std::fprintf(stderr, "FAIL: sm_%s against %s: the table's verdict differs\n",
+                             row.arch.c_str(), t.card.c_str());
+                ++bad;
+            }
+        }
+        kr::ChipFacts filled;
+        kr::fill_sm_rate_facts(filled, row.major, row.minor);
+        if (outside != row.transfer_refuted || kr::legacy_dram(filled) != row.transfer_refuted) {
+            std::fprintf(stderr, "FAIL: sm_%s: refuted %d, the checks say %d, facts %s\n",
+                         row.arch.c_str(), row.transfer_refuted, outside,
+                         kr::legacy_dram(filled) ? "absent" : "filled");
+            ++bad;
+        }
+    }
+    // The boards of each law.
+    const std::pair<const char*, bool> boards[] = {
+        {"a100", true},       {"h100-sxm", true},   {"b300", true},
+        {"gb10-spark", true}, {"rtx5090", true},    {"rtx5080", true},
+        {"rtx5070ti", true},  {"rtx5060ti", true},  {"unknown-sm120-48sm", true},
+        {"v100", false},      {"rtx2080ti", false}, {"rtx3090", false},
+        {"a10", false},       {"rtx4090", false},   {"rtx4060ti", false},
+        {"l4", false}};
+    for (const auto& [name, legacy] : boards) {
+        const auto it =
+            std::find_if(std::begin(g::kFactsBoards), std::end(g::kFactsBoards),
+                         [&](const g::FactsBoard& b) { return std::strcmp(b.name, name) == 0; });
+        if (it == std::end(g::kFactsBoards)) {
+            std::fprintf(stderr, "FAIL: no %s board\n", name);
+            ++bad;
+            continue;
+        }
+        if (kr::legacy_dram(kr::chip_facts_of(g::board_device_class(*it))) != legacy) {
+            std::fprintf(stderr, "FAIL: %s is priced by the %s DRAM law, not the %s one\n", name,
+                         legacy ? "#690" : "legacy", legacy ? "legacy" : "#690");
+            ++bad;
+        }
+    }
+    std::printf("law vs probe: %ld rows of the reference cards, %ld outside the bounds or "
+                "miscalled\n",
+                rows, bad);
+    if (bad > 0 || rows == 0) ++failures;
+}
+
+// ---- Check 9: the register MMA's count of bytes in flight and its carve-out ----
+// The count of price_register_mma written out: 2 ring slots x m_tiles x 16 rows x the decoder's
+// K step x bpw. BF16 m1 Store is 2048 B, Q4_K m1 Store 2304 B; a Q6_K SwiGLU m2 schedule counts
+// 2 x 2 x 16 x 128 x 2 x 210 / 256 B, cut to b_w_max where the warp saturates (the V100's sm_70
+// row) and kept where it does not (the RTX 4090's sm_89 row). A kernel with static shared memory
+// takes the placed P, one without the free P; the IQ codebook and the K warps' partials are
+// shared memory by the geometry rule. A kernel without its K step is refused.
+void check_rmma_count() {
+    long bad        = 0;
+    const auto fail = [&](const std::string& what) {
+        std::fprintf(stderr, "FAIL: register-MMA count: %s\n", what.c_str());
+        ++bad;
+    };
+    const auto chip_of = [&](const char* name) -> std::optional<kr::ChipFacts> {
+        const auto it =
+            std::find_if(std::begin(g::kFactsBoards), std::end(g::kFactsBoards),
+                         [&](const g::FactsBoard& b) { return std::strcmp(b.name, name) == 0; });
+        if (it == std::end(g::kFactsBoards)) return std::nullopt;
+        return kr::chip_facts_of(g::board_device_class(*it));
+    };
+    const auto ada = chip_of("rtx4090"), volta = chip_of("v100");
+    if (!ada || !volta || kr::legacy_dram(*ada) || kr::legacy_dram(*volta)) {
+        fail("the rtx4090 and v100 boards with SM rate facts");
+        ++failures;
+        return;
+    }
+    if (ada->sm_max_warp_bytes || !volta->sm_max_warp_bytes) {
+        fail("a cap on sm_70 (its warp saturates) and none on sm_89");
+    }
+    const kr::Calibration cal = kr::calibration_of(8, 9);
+    const auto counted = [&](const kr::ChipFacts& chip, QType q, g::Epilogue e, double m_tiles,
+                             double shared) {
+        const std::int32_t n = 4096, k = 4096;
+        const kr::Call call{double(n), double(k), 32.0, e == g::Epilogue::SwiGlu ? 2.0 : 1.0,
+                            double(g::described_weight_bytes(q, e, n, k)) / (double(n) * k)};
+        kr::RegisterMmaKernel kernel;
+        kernel.rows         = 16 * m_tiles;
+        kernel.cols         = 8;
+        kernel.threads      = 32;
+        kernel.m_tiles      = m_tiles;
+        kernel.k_step       = double(g::rmma_step_values(q, k));
+        kernel.shared_bytes = shared;
+        return kr::price_register_mma(chip, cal, call, kernel).dram_law;
+    };
+    const auto near          = [](double a, double b) { return std::abs(a - b) <= 1e-9 * b; };
+    const kr::DramTerms bf16 = counted(*ada, QType::BF16, g::Epilogue::Store, 1, 0);
+    if (!near(bf16.counted, 2048) || !near(bf16.warp_bytes, 2048)) fail("BF16 m1 Store 2048 B");
+    const kr::DramTerms q4k = counted(*ada, QType::GGML_Q4_K, g::Epilogue::Store, 1, 0);
+    if (!near(q4k.counted, 2304))
+        fail("Q4_K m1 Store 2304 B, counted " + std::to_string(q4k.counted));
+    const double q6k_swiglu      = 2.0 * 2 * 16 * 128 * 2 * 210.0 / 256;
+    const kr::DramTerms on_ada   = counted(*ada, QType::GGML_Q6_K, g::Epilogue::SwiGlu, 2, 0);
+    const kr::DramTerms on_volta = counted(*volta, QType::GGML_Q6_K, g::Epilogue::SwiGlu, 2, 0);
+    if (!near(on_ada.counted, q6k_swiglu) || !near(on_ada.warp_bytes, q6k_swiglu)) {
+        fail("Q6_K SwiGLU m2 on sm_89: counted " + std::to_string(on_ada.counted) + ", no cap");
+    }
+    if (!near(on_volta.counted, q6k_swiglu) ||
+        !near(on_volta.warp_bytes, *volta->sm_max_warp_bytes)) {
+        fail("Q6_K SwiGLU m2 on sm_70: cut to b_w_max");
+    }
+    // The carve-out: P of the free one without shared memory, of the placed one with some.
+    if (bf16.shared_carved ||
+        !near(bf16.peak, *ada->sm_dram_bytes_per_clock_free * ada->clock_hz)) {
+        fail("no shared memory: the free P");
+    }
+    const kr::DramTerms shared = counted(*ada, QType::BF16, g::Epilogue::Store, 1, 1024);
+    if (!shared.shared_carved ||
+        !near(shared.peak, *ada->sm_dram_bytes_per_clock_placed * ada->clock_hz)) {
+        fail("shared memory: the placed P");
+    }
+    // The geometry rule: a codebook decoder and the K warps' partials declare shared memory, a
+    // BF16 one-warp-K instance none; every decoder named is a geometry row.
+    if (kr::register_mma_static_shared_bytes(g::rmma_geometry_decoder(QType::GGML_IQ2_S), 1, 1, 1,
+                                             1, 1, false, 89) <= 0) {
+        fail("an IQ2_S instance has its codebook in shared memory");
+    }
+    if (kr::register_mma_static_shared_bytes(g::rmma_geometry_decoder(QType::BF16), 1, 1, 1, 1, 1,
+                                             false, 89) != 0 ||
+        kr::register_mma_static_shared_bytes(g::rmma_geometry_decoder(QType::BF16), 1, 4, 1, 1, 1,
+                                             false, 89) <= 0) {
+        fail("BF16: no shared memory with one K warp, the partials with four");
+    }
+    for (const QType q :
+         {QType::GGML_IQ1_M, QType::GGML_IQ1_S, QType::GGML_IQ2_S, QType::GGML_IQ2_XS,
+          QType::GGML_IQ2_XXS, QType::GGML_IQ3_S, QType::GGML_IQ3_XXS, QType::GGML_Q3_K,
+          QType::GGML_Q4_K, QType::GGML_Q5_K, QType::GGML_Q6_K}) {
+        const std::string_view name = g::rmma_geometry_decoder(q);
+        if (name.empty() || g::geometry::decoder_geometry(name).run == 0) {
+            fail(std::string(g::qtype_name(q)) + ": no geometry row named " + std::string(name));
+        }
+    }
+    bool threw = false;
+    try {
+        kr::RegisterMmaKernel kernel;
+        kernel.rows = 16, kernel.cols = 8, kernel.threads = 32;
+        (void)kr::price_register_mma(*ada, cal, kr::Call{4096, 4096, 32, 1, 2}, kernel);
+    } catch (const std::invalid_argument&) { threw = true; }
+    if (!threw) fail("a kernel without its K step is refused");
+    std::printf("register-MMA count: BF16 %.0f B, Q4_K %.0f B, Q6_K SwiGLU m2 %.0f B (sm_70 %.0f "
+                "B), %ld wrong\n",
+                bf16.counted, q4k.counted, on_ada.counted, on_volta.warp_bytes, bad);
+    if (bad > 0) ++failures;
+}
+
 int main() {
     check_golden();
     check_wiring();
+    check_dram_time();
+    check_law_against_probe();
+    check_rmma_count();
     check_price_formats();
     check_price_admitted();
     check_price_arguments();
