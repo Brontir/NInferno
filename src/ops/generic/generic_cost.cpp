@@ -10,6 +10,7 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_ggml_internal.h"
+#include "ops/generic/generic_i8_schedules.h"
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
@@ -137,8 +138,18 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const auto tile      = *route_tile(r, problem.epilogue, tokens);
             const double rows_w  = s.block_n, cols = tile.tokens;
             const double rows_o  = tile.out_rows;
+            // The stages and shared memory the format's tile compiles with (generic_i8_schedules.h,
+            // which generic_i8.cu's kI8Stages reads): Q5 / Q6 add their high plane to every
+            // stage, and Q6 at 256x128 runs three stages, not the table's four (#761). The block
+            // limit is the board's architecture's build limit, not this tree's: the base goldens
+            // price sm_80/90/100 boards in an sm_86/89 build too, and their engines compile four.
+            const int bits   = i8_bits(problem.qtype);
+            const int stages = i8_stages(s.block_m, s.block_n, bits,
+                                         shared_bytes_per_block_for_arch(d.major * 10 + d.minor));
+            const double smem =
+                static_cast<double>(i8_smem_bytes(s.block_m, s.block_n, bits, stages));
             const double occ     = std::max(1.0, std::min({std::floor(max_thr / s.threads), max_cta,
-                                                           std::floor(smem_sm / s.smem_bytes)}));
+                                                           std::floor(smem_sm / smem)}));
             const double ctas    = cdiv(n, rows_o) * cdiv(t, cols);
             const double q       = std::ceil(ctas / sms);
             const double mma     = q * 2.0 * rows_w * cols * k / peak_sm;
@@ -158,8 +169,8 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double fill      = std::clamp(std::min(q, occ) * s.threads / 32 /
                                                     route_cost::kI8SaturatingWarps.value(),
                                                 route_cost::kMinWarpFill.value(), 1.0);
-            const double in_flight = (s.stages - 1.0) * rows_o * route_cost::kI8StageK.value() *
-                                     bpw / (s.threads / 32.0);
+            const double in_flight =
+                (stages - 1.0) * rows_o * route_cost::kI8StageK.value() * bpw / (s.threads / 32.0);
             const double mem =
                 kr::dram_time(chip, ctas, occ, s.threads / 32.0, rows_o * k * bpw, in_flight, true);
             offer(r, quant(tp) + std::max(mem, mma / eff / fill) + chain);
