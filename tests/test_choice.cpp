@@ -23,8 +23,10 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <random>
 #include <set>
+#include <span>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -238,7 +240,7 @@ ch::QuantOption quant_of(const std::string& label, const json& q) {
     out.bits_per_weight = q.at("bits_per_weight").get<double>();
     // What a decode step reads (product::quant_option_of): the file less its MTP layers and drafter.
     out.weight_bytes    = q.at("weight_bytes").get<double>() - q.value("speculation_bytes", 0.0);
-    out.weights         = ch::weight_class_of({}, label);
+    out.weights         = ch::label_class(label);
     // An MoE's routed banks as its GGUF's tensor table stores them (ffn_*_exps).
     out.routed_expert_bytes = q.value("routed_expert_bytes", 0.0);
     return out;
@@ -443,7 +445,7 @@ void counts_the_kernels(const json& census) {
     for (const json& row : census.at("rows")) {
         const std::string model = row.at("model").get<std::string>();
         const std::string family = model.rfind("gemma", 0) == 0 ? "gemma4_text" : "qwen3_5_text";
-        const ch::WeightClass w  = ch::weight_class_of({}, row.at("quant").get<std::string>());
+        const ch::WeightClass w  = ch::label_class(row.at("quant").get<std::string>());
         const auto* l = std::find_if(std::begin(ch::kDecodeLaunches), std::end(ch::kDecodeLaunches),
                                      [&](const ch::DecodeLaunches& r) { return !r.moe && r.family == family && r.weights == w; });
         if (l == std::end(ch::kDecodeLaunches)) {
@@ -461,19 +463,70 @@ void counts_the_kernels(const json& census) {
         ++n;
     }
     check(n >= 68, "the census rows");
-    // The weight class from formats, else the label.
-    check(ch::weight_class_of({"ggml_q4_k", "ggml_q6_k", "q8_g32_fp16", "bf16"}, "") == ch::WeightClass::KQuant,
+    // The weight class from formats (their scheduling class), else the label (label_formats).
+    using ninferno::QType;
+    const auto of = [](std::initializer_list<QType> formats) {
+        return ch::weight_class_of(std::span<const QType>(formats.begin(), formats.size()));
+    };
+    check(of({QType::GGML_Q4_K, QType::GGML_Q6_K, QType::Q8_G32_FP16, QType::BF16}) ==
+              ch::WeightClass::KQuant,
           "a K-quant mix with Q8_0 and 16-bit tensors");
-    check(ch::weight_class_of({"q8_g32_fp16", "bf16"}, "") == ch::WeightClass::Q8, "Q8_0 alone");
-    check(ch::weight_class_of({"ggml_iq4_nl", "q8_g32_fp16", "ggml_q5_k"}, "Q4_K_M") == ch::WeightClass::IQ4,
-          "IQ4_NL: the formats decide over the label");
-    for (const char* q : {"IQ4_XS", "IQ4_NL", "UD-IQ4_XS"}) { check(ch::weight_class_of({}, q) == ch::WeightClass::IQ4, "an IQ4 label"); }
-    for (const char* k : {"Q4_K_M", "UD-Q4_K_XL", "Q5_K_M", "UD-Q5_K_XL", "Q6_K", "q6_k"}) {
-        check(ch::weight_class_of({}, k) == ch::WeightClass::KQuant, "a K-quant label");
+    check(of({QType::Q8_G32_FP16, QType::BF16}) == ch::WeightClass::Q8, "Q8_0 alone");
+    check(of({QType::GGML_IQ4_NL, QType::Q8_G32_FP16, QType::GGML_Q5_K}) == ch::WeightClass::IQ4,
+          "IQ4_NL with K-quant tensors: IQ4");
+    check(of({QType::GGML_Q4_K, QType::GGML_Q3_K}) == ch::WeightClass::Other &&
+              of({QType::BF16, QType::FP32}) == ch::WeightClass::Other &&
+              of({}) == ch::WeightClass::Other,
+          "a format no census measured, plain words alone and no format: Other");
+    for (const char* q : {"IQ4_XS", "IQ4_NL", "UD-IQ4_XS"}) {
+        check(ch::label_class(q) == ch::WeightClass::IQ4, "an IQ4 label");
     }
-    for (const char* q : {"Q8_0", "Q8", "q8_0", "UD-Q8_K_XL"}) { check(ch::weight_class_of({}, q) == ch::WeightClass::Q8, "a Q8 label"); }
+    for (const char* k : {"Q4_K_M", "UD-Q4_K_XL", "Q5_K_M", "UD-Q5_K_XL", "Q6_K", "q6_k"}) {
+        check(ch::label_class(k) == ch::WeightClass::KQuant, "a K-quant label");
+    }
+    for (const char* q : {"Q8_0", "Q8", "q8_0", "UD-Q8_K_XL"}) {
+        check(ch::label_class(q) == ch::WeightClass::Q8, "a Q8 label");
+    }
     for (const char* o : {"UD-IQ3_XXS", "Q4_0", "Q3_K_M", "MXFP4", "NVFP4", "BF16", "Q8_KV", "Q8_K_R8", "Q8_0_R8", "Q4_K_R4", "IQ4_XS_R8", "Q4_1", "Q4_0"}) {
-        check(ch::weight_class_of({}, o) == ch::WeightClass::Other, "an unmeasured label");
+        check(ch::label_class(o) == ch::WeightClass::Other, "an unmeasured label");
+    }
+    // The formats a label names: its own, not a repacked layout's; none for a label of no format.
+    check(ch::label_formats("UD-Q4_K_XL") == std::set<QType>{QType::GGML_Q4_K} &&
+              ch::label_formats("Q8_0") == std::set<QType>{QType::Q8_G32_FP16} &&
+              ch::label_formats("UD-Q8_K_XL") == std::set<QType>{QType::Q8_G32_FP16, QType::BF16} &&
+              ch::label_formats("IQ4_XS") == std::set<QType>{QType::GGML_IQ4_XS} &&
+              ch::label_formats("Q4_1") == std::set<QType>{QType::GGML_Q4_1} &&
+              ch::label_formats("TQ1_0") == std::set<QType>{QType::GGML_TQ1_0} &&
+              ch::label_formats("NVFP4") == std::set<QType>{QType::NVFP4},
+          "a label names its formats");
+    for (const char* none :
+         {"Q8_KV", "Q4_K_R4", "Q8_0_R8", "IQ4_XS_R8", "the model's weights", ""}) {
+        check(!ch::label_formats(none), "a label of no format (or a repacked layout's) names none");
+    }
+}
+
+// Every label of the decode census (tests/fixtures/choice/decode_census.json) names formats whose
+// class is the one its rows were measured as (#615 F7: the label's parse, label_formats, gives the
+// class the string compare gave), and a family's launches are there for it.
+void census_labels_keep_their_class(const json& census) {
+    using ninferno::QType;
+    const std::map<std::string, ch::WeightClass> measured = {{"Q4_K_M", ch::WeightClass::KQuant},
+                                                             {"Q8_0", ch::WeightClass::Q8},
+                                                             {"IQ4_XS", ch::WeightClass::IQ4},
+                                                             {"IQ4_NL", ch::WeightClass::IQ4}};
+    std::set<std::string> labels;
+    for (const json& row : census.at("rows")) { labels.insert(row.at("quant").get<std::string>()); }
+    check(labels.size() == measured.size(), "the census's labels are the ones listed");
+    for (const std::string& label : labels) {
+        const auto want                              = measured.find(label);
+        const std::optional<std::set<QType>> formats = ch::label_formats(label);
+        if (want == measured.end() || !formats) {
+            check(false, "a census label names its formats");
+            continue;
+        }
+        const std::vector<QType> read(formats->begin(), formats->end());
+        check(ch::weight_class_of(read) == want->second && ch::label_class(label) == want->second,
+              "a census label's formats keep its measured class");
     }
 }
 
@@ -3640,7 +3693,9 @@ int main() {
         prices_gemma_attention_tiles(prefill_rows);
         prefills_pay_tail_calls(prefill_rows);
         std::ifstream census(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_census.json");
-        counts_the_kernels(json::parse(census));
+        const json census_rows = json::parse(census);
+        counts_the_kernels(census_rows);
+        census_labels_keep_their_class(census_rows);
     }
     prefills_moe_by_tiles(fixture);
     prices_attention(fixture);
