@@ -1105,8 +1105,7 @@ q5 p1 store 28672x8192 speed T=48..64 tiled.64x128 ws=0
 q5 p1 store 28672x8192 speed T=96..128 tiled.128x128 ws=0
 q5 p1 store 28672x8192 speed T=192..256 tiled.64x128 ws=0
 q5 p1 store 28672x8192 speed T=512 i8.128x128 ws=4718592
-q5 p1 store 28672x8192 speed T=1024 i8.128x128 ws=9437184
-q5 p1 store 28672x8192 speed T=2048 i8.128x128 ws=18874368
+q5 p1 store 28672x8192 speed T=1024..2048 tiled.128x128 ws=0
 q5 p1 store 28672x8192 prefill T=17..128 i8.128x128 ws=2359296
 q5 p1 store 28672x8192 prefill T=192..256 i8.128x64 ws=2359296
 q5 p1 store 28672x8192 prefill T=512 i8.128x128 ws=4718592
@@ -1122,8 +1121,7 @@ q5 p1 add 28672x8192 speed T=48..64 tiled.64x128 ws=0
 q5 p1 add 28672x8192 speed T=96..128 tiled.128x128 ws=0
 q5 p1 add 28672x8192 speed T=192..256 tiled.64x128 ws=0
 q5 p1 add 28672x8192 speed T=512 i8.128x128 ws=4718592
-q5 p1 add 28672x8192 speed T=1024 i8.128x128 ws=9437184
-q5 p1 add 28672x8192 speed T=2048 i8.128x128 ws=18874368
+q5 p1 add 28672x8192 speed T=1024..2048 tiled.128x128 ws=0
 q5 p1 add 28672x8192 prefill T=17..128 i8.128x128 ws=2359296
 q5 p1 add 28672x8192 prefill T=192..256 i8.128x64 ws=2359296
 q5 p1 add 28672x8192 prefill T=512 i8.128x128 ws=4718592
@@ -1139,8 +1137,7 @@ q5 p1 swiglu 14336x8192 speed T=48..64 tiled.64x128 ws=0
 q5 p1 swiglu 14336x8192 speed T=96..128 tiled.128x128 ws=0
 q5 p1 swiglu 14336x8192 speed T=192..256 tiled.64x128 ws=0
 q5 p1 swiglu 14336x8192 speed T=512 i8.128x128 ws=4718592
-q5 p1 swiglu 14336x8192 speed T=1024 i8.128x128 ws=9437184
-q5 p1 swiglu 14336x8192 speed T=2048 i8.128x128 ws=18874368
+q5 p1 swiglu 14336x8192 speed T=1024..2048 tiled.128x128 ws=0
 q5 p1 swiglu 14336x8192 prefill T=17..128 i8.128x128 ws=2359296
 q5 p1 swiglu 14336x8192 prefill T=192..256 i8.128x64 ws=2359296
 q5 p1 swiglu 14336x8192 prefill T=512 i8.128x128 ws=4718592
@@ -1676,8 +1673,7 @@ q6 p1 store 28672x8192 speed T=48..64 tiled.64x128 ws=0
 q6 p1 store 28672x8192 speed T=96..128 tiled.128x128 ws=0
 q6 p1 store 28672x8192 speed T=192..256 tiled.64x128 ws=0
 q6 p1 store 28672x8192 speed T=512 i8.128x128 ws=4718592
-q6 p1 store 28672x8192 speed T=1024 i8.128x128 ws=9437184
-q6 p1 store 28672x8192 speed T=2048 i8.128x128 ws=18874368
+q6 p1 store 28672x8192 speed T=1024..2048 tiled.128x128 ws=0
 q6 p1 store 28672x8192 prefill T=17..128 i8.128x128 ws=2359296
 q6 p1 store 28672x8192 prefill T=192..256 i8.128x64 ws=2359296
 q6 p1 store 28672x8192 prefill T=512 i8.128x128 ws=4718592
@@ -1693,8 +1689,7 @@ q6 p1 add 28672x8192 speed T=48..64 tiled.64x128 ws=0
 q6 p1 add 28672x8192 speed T=96..128 tiled.128x128 ws=0
 q6 p1 add 28672x8192 speed T=192..256 tiled.64x128 ws=0
 q6 p1 add 28672x8192 speed T=512 i8.128x128 ws=4718592
-q6 p1 add 28672x8192 speed T=1024 i8.128x128 ws=9437184
-q6 p1 add 28672x8192 speed T=2048 i8.128x128 ws=18874368
+q6 p1 add 28672x8192 speed T=1024..2048 tiled.128x128 ws=0
 q6 p1 add 28672x8192 prefill T=17..128 i8.128x128 ws=2359296
 q6 p1 add 28672x8192 prefill T=192..256 i8.128x64 ws=2359296
 q6 p1 add 28672x8192 prefill T=512 i8.128x128 ws=4718592
@@ -1712,8 +1707,7 @@ q6 p1 swiglu 14336x8192 speed T=48..64 tiled.64x128 ws=0
 q6 p1 swiglu 14336x8192 speed T=96..128 tiled.128x128 ws=0
 q6 p1 swiglu 14336x8192 speed T=192..256 tiled.64x128 ws=0
 q6 p1 swiglu 14336x8192 speed T=512 i8.128x128 ws=4718592
-q6 p1 swiglu 14336x8192 speed T=1024 i8.128x128 ws=9437184
-q6 p1 swiglu 14336x8192 speed T=2048 i8.128x128 ws=18874368
+q6 p1 swiglu 14336x8192 speed T=1024..2048 tiled.128x128 ws=0
 q6 p1 swiglu 14336x8192 prefill T=17..128 i8.128x128 ws=2359296
 q6 p1 swiglu 14336x8192 prefill T=192..256 i8.128x64 ws=2359296
 q6 p1 swiglu 14336x8192 prefill T=512 i8.128x128 ws=4718592
