@@ -416,6 +416,31 @@ class Snapshot(unittest.TestCase):
         self.assertIn("columns " + kernel_facts.COLUMNS, text)
         self.assertEqual(sum(1 for l in text.splitlines() if not l.startswith("#")), 6 + 1)
 
+    def test_replica_keeps_both_local_columns(self):
+        # A snapshot names two fields `local`: the kernel's local memory in bytes and the K
+        # loop's local-memory instructions. The replica matches a sweep's kernel by its stack and
+        # local bytes and prices the loop's reloads by their count: a spilled kernel (a stack
+        # frame, reloads in the loop) is found by its own bytes, not by its instruction count.
+        repo = Path(__file__).resolve().parents[1]
+        sys.path.insert(0, str(repo / "tools" / "bench"))
+        import rmma_counted_replica as replica
+        snap = replica.load_snapshot(str(repo), "86")
+        spilled = [(key, i) for key, insts in snap.items() for i in insts
+                   if i["stack"] > 0 and i["local"] > 0 and i["local"] != i["local_mem"]]
+        self.assertTrue(spilled)
+        fmt_of = {dec: fmt for fmt, decs in replica.DECODERS.items() for dec in decs}
+        found = 0
+        for (dec, wm, wk, mt, nt, c, epilogue), i in spilled:
+            if dec not in fmt_of:
+                continue
+            inst, how = replica.find_instance(snap, fmt_of[dec], (mt, nt, wm, wk, c), epilogue,
+                                              i["registers"], i["stack"] + i["local_mem"])
+            self.assertIn(how, ("ok", "ambiguous"))
+            self.assertEqual((inst["registers"], inst["stack"] + inst["local_mem"]),
+                             (i["registers"], i["stack"] + i["local_mem"]))
+            found += 1
+        self.assertGreater(found, 0)
+
     def test_schema_one_parses_without_loops(self):
         text = ("arch 89\nnvcc 13.4.92\nkernels 1\ncolumns " +
                 " ".join(kernel_facts.COLUMNS.split()[:14]) +

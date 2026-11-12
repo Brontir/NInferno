@@ -35,6 +35,8 @@
 #include "core/device_class.h"
 #include "core/generation.h"
 #include "core/sm_rate_facts.h"
+#include "ops/generic/kernel_facts.h"
+#include "ops/generic/rmma_counted_terms.h"
 #include "ops/generic/rmma_geometry.h"
 #include "ops/generic/route_cost_constants.h"
 
@@ -69,6 +71,7 @@ struct ChipFacts {
     double max_ctas_per_sm    = 0;
     double registers_per_sm   = 0;
     double smem_per_sm        = 0;
+    int major                 = 0; // the architecture: its pipes' ISA facts (rmma_counted_terms.h)
 };
 
 // The constants the price does not derive yet, with their tags in route_cost_constants.h. The
@@ -87,6 +90,14 @@ struct Calibration {
     double reg_alloc_per_warp          = route_cost::kRegAllocPerWarp.value();
     double cluster_reduce_cycles       = route_cost::kClusterReduceCycles.value();
     double warp_reduce_cycles          = route_cost::kWarpReduceCycles.value();
+    // The register-MMA law (#613 PR-7a): false, the fitted spill (spill_accesses_per_step and
+    // l1_bytes_per_sm_clock above) and price_register_mma's weight-only tensor term
+    // (2 x rows x sets x cols x kc over the tensor rate); true, the terms counted from the
+    // kernel's K loop (RegisterMmaKernel::loop) where it carries a usable one, its spill waits at
+    // l1_hit_latency_cycles. The binary's law is route_cost::kRmmaCountedLaw; price_routes takes
+    // rmma_counted_law() (a test's override).
+    bool rmma_counted_law        = route_cost::kRmmaCountedLaw;
+    double l1_hit_latency_cycles = route_cost::kL1HitLatencyCycles.value();
     // Pipelined tiles (tiled, staged).
     double pipelined_stage_cycles        = route_cost::kPipelinedStageCycles.value();
     double pipelined_stage_k             = route_cost::kPipelinedStageK.value();
@@ -212,6 +223,11 @@ struct RegisterMmaKernel {
     std::optional<int> registers; // per thread
     double local_bytes = 0;       // the spill per thread
     bool heavy         = false;
+    // The kernel's K loop counted off its SASS (kernel_facts::LoopCounts, #650), where the price
+    // reads its compiled facts (the heavy form): under Calibration::rmma_counted_law its MMAs and
+    // LDL / STL give the tensor and spill terms (rmma_counted_terms.h). Absent, or the law off:
+    // the fitted terms.
+    std::optional<kernel_facts::LoopCounts> loop;
 };
 
 // The static shared memory of a register-MMA instance of `decoder` (its kDecoderGeometry
@@ -256,6 +272,10 @@ struct RegisterMmaTerms {
     double bytes         = 0; // the form's sum
     // The MMA work over the tensor rate.
     double mma = 0;
+    // Whether `mma` and `spill` are the counted law's (rmma_counted_terms.h: every MMA of the K
+    // loop, the min-term ones included; its LDL / STL at the L1 latency over the warps a scheduler
+    // holds) rather than the fitted ones.
+    bool counted = false;
     // K split over a cluster and over the CTA's K warps.
     double reduce_cluster = 0;
     double reduce_warps   = 0;
@@ -340,7 +360,8 @@ struct RegisterMmaTerms {
     // resident together span ceil(occ x sms / gx) token tiles (at most min(tiles, occ) on one
     // SM); the CTAs of one tile on an SM read it at the same K, so a residency round fetches each
     // of its tiles once for all of them, and never more tiles than its q CTAs (the legacy law does
-    // not cap that). A spilled register goes through the L1 twice a K step.
+    // not cap that). With the counted law off, a spilled register goes through the L1 twice a K
+    // step; under it, the loop's LDL / STL wait the L1 latency (below).
     const double l2_sm = cal.l2_bytes_per_sm_clock * clk;
     t.dram             = t.legacy ? call.n * call.k * call.bpw / bw : t.dram_law.total;
     t.l2_weight        = q * kc * k.rows * call.bpw / l2_sm;
@@ -351,6 +372,16 @@ struct RegisterMmaTerms {
     t.spill         = q * k.threads * k.local_bytes * cal.spill_accesses_per_step *
               std::ceil(kc / (cal.rmma_heavy_step_k * k.warps_k)) /
               (cal.l1_bytes_per_sm_clock * clk);
+    // Under the counted law, the loop's own counts: every MMA of an iteration (the min-term ones
+    // included) over the tensor rate, its LDL / STL waits at the L1 latency shared by the warps a
+    // scheduler holds.
+    if (cal.rmma_counted_law && k.loop && rmma_counted::usable(*k.loop)) {
+        const auto c = rmma_counted::terms(*k.loop, q, k.threads / 32.0, kc, k.warps_k, peak_sm,
+                                           g.warps, cal.l1_hit_latency_cycles, clk, chip.major);
+        t.mma        = c.mma;
+        t.spill      = c.spill;
+        t.counted    = true;
+    }
     t.bytes                 = k.heavy ? t.dram + t.l2_weight + t.l2_activation + t.spill : t.mem;
     const double fill_warps = k.heavy ? cal.rmma_heavy_saturating_warps : cal.rmma_saturating_warps;
     t.reduce_cluster =
@@ -479,6 +510,7 @@ inline void fill_sm_rate_facts(ChipFacts& c, int major, int minor) {
     c.max_ctas_per_sm    = std::max(d.max_blocks_per_sm, 1);
     c.registers_per_sm   = d.registers_per_sm;
     c.smem_per_sm        = static_cast<double>(d.smem_per_sm);
+    c.major              = d.major;
     fill_sm_rate_facts(c, d.major, d.minor);
     return c;
 }

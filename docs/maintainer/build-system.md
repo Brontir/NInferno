@@ -49,12 +49,35 @@ The checked-in `CMakePresets.json` provides:
 
 - `release`: Release product binaries, tests and benchmarks disabled;
 - `dev`: Release products, tests and benchmarks enabled;
-- matching build presets and a `dev` test preset with failure output enabled.
+- matching build presets and a `dev` test preset with failure output enabled;
+- `decisions`: the decision core alone in `build-decisions/`, with matching build and test presets
+  (below).
 
-Both configure presets use `build/`. Switching between them explicitly resets all three build
-options; it does not create independent build trees. Build with `cmake --build build -j`.
-For a separate configuration, override the binary directory with `-B build-<name>` and use that
-directory in subsequent build/test commands.
+The `release` and `dev` configure presets use `build/`. Switching between them explicitly resets
+all three build options; it does not create independent build trees. Build with
+`cmake --build build -j`. For a separate configuration, override the binary directory with
+`-B build-<name>` and use that directory in subsequent build/test commands.
+
+`NINFERNO_DECISIONS_ONLY` (the `decisions` preset) configures with C and C++ only, so it needs no
+CUDA compiler, FFmpeg, libcurl or OpenSSL. It builds the host-only decision core
+(`ninferno_core_host`, the selector's host objects `ninferno_ops_host`, `ninferno_product_choice`;
+together the INTERFACE target `ninferno_decisions`, which adds the stubs of the device seams and
+`NINFERNO_HOST_ONLY`) and its tests (`tests/cmake/DecisionTests.cmake`, which every test tree
+includes too), so `ctest --preset decisions` (`-L host`) is the decisions suite the `decisions`
+workflow runs. `CMAKE_CUDA_ARCHITECTURES` still picks the build set (`120a` full, `89` base, `75`,
+`70` with CUTLASS fetched) and with it the committed selector goldens the host twin reads. Of the
+toolkit only `cuda_occupancy.h` is read: found under `CUDA_PATH`, `CUDA_HOME` or `/usr/local/cuda*`,
+or named with `-DNINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR=<dir>`; the CUDA runtime's development package
+alone (`cuda-cudart-dev-12-8`) carries it. The first toolkit found wins, and its header feeds the
+occupancy calculator (`kernel_occupancy.cpp`, a decision path), so the configure prints its CUDA
+version. The `decisions` workflow reads CUDA 12.8's; a local decisions tree that is to agree with
+it should name a 12.8 include directory.
+
+```bash
+cmake --preset decisions -DCMAKE_CUDA_ARCHITECTURES=89
+cmake --build --preset decisions
+ctest --preset decisions
+```
 
 Keep machine paths in the ignored `CMakeUserPresets.json`. For example, replacing the interpreter
 placeholder with the interpreter from the selected environment:

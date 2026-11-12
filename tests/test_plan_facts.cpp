@@ -6,12 +6,15 @@
 // CPU.
 
 #include "product/plan/plan_facts.h"
+#include "product/plan/plan_choice.h"
+#include "product/plan/plan_speculation.h"
 
 #include "convert/ggml_quants.h"
 #include "convert/gguf.h"
 #include "runtime/engine/plan_dry_run.h"
 #include "artifact/formats.h"
 #include "artifact/schema.h"
+#include "core/ggml_frag.h"
 #include "core/weight_view.h"
 
 #include <nlohmann/json.hpp>
@@ -529,10 +532,121 @@ int gemma4() {
                                     ninferno::convert::ggml::MXFP4, 200));
         mx.tensors.push_back(tensor("blk.0.ffn_down_exps.weight", {704, 5376, 128},
                                     ninferno::convert::ggml::MXFP4, 100));
-        const auto layers = pr::plan_facts_of_gguf(mx, 999999).model.expert_layers;
+        const auto facts  = pr::plan_facts_of_gguf(mx, 999999).model;
+        const auto layers = facts.expert_layers;
         failures += check(layers.size() == 1 && layers[0].gate_up_format == "mxfp4" &&
                               layers[0].policy == rt::PlanExpertPolicy::Unknown,
                           "gemma4 gguf: MXFP4 experts, the policy unknown");
+        // Their prefill (#769): every site the loader keeps them as runs A16 under fast
+        // activations (an NVFP4 site with no divisor, or the recipe's BF16 / Q8 at the Recipe
+        // default A16Only): A16, on a format the header does not tell (assumed: Transferred).
+        // Under --activations int8 every bank runs AllowA8: the file's format decides.
+        failures +=
+            check(facts.expert_prefill == rt::ExpertPrefill::A16 && facts.expert_prefill_assumed,
+                  "gemma4 gguf: MXFP4 experts prefill A16, assumed");
+        // expert_prefill_int8 is the header's format (MXFP4), not the site the loader keeps
+        // (NVFP4, BF16 or Q8): the assumed flag keeps an estimate on it Transferred.
+        failures += check(facts.expert_prefill_int8 == rt::ExpertPrefill::Mxfp4,
+                          "gemma4 gguf: MXFP4 experts under int8, the MXFP4 route");
+    }
+    // End to end (#769): the plan's quantization (product::quant_option_of) and the choice's
+    // prefill (choice::speed_of) of a Gemma 4 MoE GGUF with MXFP4 experts and Q8_0 linears beside
+    // them, on the RTX 4090: the banks A16 under fast activations, the header's MXFP4 under int8,
+    // and an estimate on them Transferred.
+    // With an activation divisor (<stem>.input_scale) the NVFP4 site the loader keeps where
+    // probe_mx fits is AllowA4 (codex on #792): the policy is the probe's, so the prefill is not
+    // forced A16; the kept fallback (MXFP4) stands, assumed.
+    {
+        GgufFile mx;
+        mx.metadata = md;
+        for (const char* bank : {"ffn_gate_up_exps", "ffn_down_exps"}) {
+            const bool down = std::string(bank) == "ffn_down_exps";
+            mx.tensors.push_back(tensor(std::string("blk.0.") + bank + ".weight",
+                                        down ? std::vector<std::uint64_t>{704, 5376, 128}
+                                             : std::vector<std::uint64_t>{5376, 1408, 128},
+                                        ninferno::convert::ggml::MXFP4, down ? 100 : 200));
+            mx.tensors.push_back(tensor(std::string("blk.0.") + bank + ".input_scale", {1},
+                                        ninferno::convert::ggml::F32, 4));
+        }
+        const auto facts = pr::plan_facts_of_gguf(mx, 999999).model;
+        failures +=
+            check(facts.expert_prefill == rt::ExpertPrefill::Mxfp4 && facts.expert_prefill_assumed,
+                  "gemma4 gguf: MXFP4 experts with a divisor, the kept route, assumed");
+    }
+    // `linears`: the ggml type of the linears beside the banks (Q8_0: the tiles price the prefill;
+    // another: prefill_linears_seconds gives 0 and the share path stands).
+    const auto gemma4_mx_gguf = [&](std::uint32_t linears) {
+        json moe_md                                 = md;
+        moe_md["gemma4.expert_count"]               = 128;
+        moe_md["gemma4.expert_used_count"]          = 8;
+        moe_md["gemma4.expert_feed_forward_length"] = 704;
+        GgufFile mx;
+        mx.metadata = moe_md;
+        for (int b = 0; b < 60; ++b) {
+            const std::string blk = "blk." + std::to_string(b) + ".";
+            mx.tensors.push_back(tensor(blk + "ffn_gate_up_exps.weight", {5376, 1408, 128},
+                                        ninferno::convert::ggml::MXFP4, 200));
+            mx.tensors.push_back(tensor(blk + "ffn_down_exps.weight", {704, 5376, 128},
+                                        ninferno::convert::ggml::MXFP4, 100));
+            mx.tensors.push_back(tensor(blk + "attn_q.weight", {5376, 8192}, linears, 50));
+        }
+        return pr::plan_facts_of_gguf(mx, 999999);
+    };
+    rt::PlanDeviceFacts rtx4090;
+    rtx4090.name               = "RTX 4090";
+    rtx4090.compute_capability = 89;
+    rtx4090.pci_device_id      = 0x2684;
+    rtx4090.sms                = 128;
+    rtx4090.total_bytes        = 24ULL << 30;
+    {
+        const auto facts = gemma4_mx_gguf(ninferno::convert::ggml::Q8_0);
+        const ninferno::product::choice::QuantOption q = pr::quant_option_of(facts, "MXFP4");
+        using Banks                                    = ninferno::product::choice::ExpertBanks;
+        failures += check(q.expert_banks == Banks::A16 && q.expert_banks_int8 == Banks::Mxfp4 &&
+                              q.expert_banks_assumed,
+                          "gemma4 gguf e2e: the quantization's banks A16, MXFP4 under int8, "
+                          "assumed");
+        const ninferno::product::choice::CardFacts card =
+            pr::choice_card_of(pr::gpu_key_of(rtx4090));
+        const ninferno::product::choice::ModelFacts model = pr::choice_model_of(facts);
+        bool transferred                                  = false;
+        const double seconds =
+            ninferno::product::choice::prefill_linears_seconds(model, card, q, 2048, &transferred);
+        failures += check(model.moe() && seconds > 0 && transferred,
+                          "gemma4 gguf e2e: the banks' tiles priced, Transferred");
+        ninferno::product::choice::Candidate fast;
+        fast.kv                                   = ninferno::KvCacheStorage::BFloat16;
+        fast.chunk                                = 2048;
+        ninferno::product::choice::Candidate int8 = fast;
+        int8.activations                          = ninferno::ActivationMode::Int8;
+        const ninferno::product::choice::Speed f =
+            ninferno::product::choice::speed_of(model, card, q, fast, 1, 4096, 2048);
+        const ninferno::product::choice::Speed i =
+            ninferno::product::choice::speed_of(model, card, q, int8, 1, 4096, 2048);
+        failures += check(f.basis != ninferno::product::choice::SpeedBasis::Own &&
+                              i.basis != ninferno::product::choice::SpeedBasis::Own,
+                          "gemma4 gguf e2e: fast and int8 estimates Transferred");
+        failures += check(f.prefill > 0 && i.prefill > 0 && f.prefill != i.prefill,
+                          "gemma4 gguf e2e: an int8 candidate's prefill on another route");
+    }
+    // The same with Q4_K linears beside the banks (codex on #792): the tiles price nothing
+    // (prefill_linears_seconds 0), the share path stands, and the estimate is Transferred still.
+    {
+        const auto facts = gemma4_mx_gguf(ninferno::convert::ggml::Q4_K);
+        const ninferno::product::choice::QuantOption q = pr::quant_option_of(facts, "MXFP4");
+        const ninferno::product::choice::CardFacts card =
+            pr::choice_card_of(pr::gpu_key_of(rtx4090));
+        const ninferno::product::choice::ModelFacts model = pr::choice_model_of(facts);
+        ninferno::product::choice::Candidate fast;
+        fast.kv    = ninferno::KvCacheStorage::BFloat16;
+        fast.chunk = 2048;
+        const ninferno::product::choice::Speed f =
+            ninferno::product::choice::speed_of(model, card, q, fast, 1, 4096, 2048);
+        failures += check(
+            q.expert_banks_assumed &&
+                ninferno::product::choice::prefill_linears_seconds(model, card, q, 2048) == 0 &&
+                f.prefill > 0 && f.basis == ninferno::product::choice::SpeedBasis::Transferred,
+            "gemma4 gguf e2e, Q4_K linears: the share path, Transferred");
     }
     const json config = {{"architectures", {"Gemma4ForConditionalGeneration"}},
                          {"text_config",
@@ -856,6 +970,24 @@ int artifact_errors() {
     return check(false, "a missing artifact did not throw");
 }
 
+// A two-layer gpt-oss text config (E32 k4 H2880 F2880): the artifact tests' routed geometry.
+json gpt_oss_text_config() {
+    return {{"architectures", {"GptOssForCausalLM"}},
+            {"model_type", "gpt_oss"},
+            {"hidden_size", 2880},
+            {"num_hidden_layers", 2},
+            {"layer_types", {"sliding_attention", "full_attention"}},
+            {"sliding_window", 128},
+            {"num_attention_heads", 64},
+            {"num_key_value_heads", 8},
+            {"head_dim", 64},
+            {"intermediate_size", 2880},
+            {"num_local_experts", 32},
+            {"num_experts_per_tok", 4},
+            {"max_position_embeddings", 131072},
+            {"vocab_size", 201088}};
+}
+
 // An artifact's routed layers by kind (#616 step 7, plan_facts_of_directory): each bank's policy is
 // the one its Use records (what a start reads, models/common/weight_use.cpp); a layer of a bank
 // whose use records none has an unknown policy; the MTP layer's banks are not the trunk's.
@@ -863,20 +995,7 @@ int artifact_expert_layers() {
     namespace art = ninferno::artifact;
     int failures  = 0;
     art::Directory dir;
-    dir.components["text"].config = {{"architectures", {"GptOssForCausalLM"}},
-                                     {"model_type", "gpt_oss"},
-                                     {"hidden_size", 2880},
-                                     {"num_hidden_layers", 2},
-                                     {"layer_types", {"sliding_attention", "full_attention"}},
-                                     {"sliding_window", 128},
-                                     {"num_attention_heads", 64},
-                                     {"num_key_value_heads", 8},
-                                     {"head_dim", 64},
-                                     {"intermediate_size", 2880},
-                                     {"num_local_experts", 32},
-                                     {"num_experts_per_tok", 4},
-                                     {"max_position_embeddings", 131072},
-                                     {"vocab_size", 201088}};
+    dir.components["text"].config = gpt_oss_text_config();
     const std::string mx =
         std::string(art::layout_name(ninferno::default_weight_layout(ninferno::QType::MXFP4)));
     const auto bank = [&](const std::string& name, std::uint64_t rows, std::uint64_t bytes,
@@ -971,6 +1090,91 @@ int artifact_expert_layers() {
     return failures;
 }
 
+// An artifact's MoE prefill route reads the policy its banks' Uses record, as the decode kind does
+// (#769), not the format's kept policy (convert::kept_block_policy: MXFP4 and Q4_0 AllowA8): banks
+// recorded A16Only prefill on the 16-bit register MMA (ops/moe w4a8_bank_refusal Policy), one
+// A16-only bank of a layer makes the layer A16 (ops::moe_policy), and the kept policy stands only
+// where a Use records none.
+int artifact_prefill_policy() {
+    namespace art = ninferno::artifact;
+    using ninferno::QType;
+    using Policy = std::optional<art::ActivationPolicy>;
+
+    struct Bank {
+        std::string name;
+        std::uint64_t rows;
+        Policy policy;
+    };
+
+    // `int8`: the route under --activations int8 (expert_prefill_int8), else fast activations'.
+    const auto route = [](QType format, const std::vector<Bank>& banks, bool int8 = false) {
+        art::Directory dir;
+        dir.components["text"].config      = gpt_oss_text_config();
+        const ninferno::QuantLayout layout = format == QType::MXFP4
+                                                 ? ninferno::default_weight_layout(format)
+                                                 : ninferno::ggml_published_layout(format);
+        for (const Bank& bank : banks) {
+            art::TensorObject t;
+            t.id     = bank.name;
+            t.shape  = {32, bank.rows, 2880};
+            t.format = std::string(art::format_name(format));
+            t.layout = std::string(art::layout_name(layout));
+            t.bytes  = bank.rows;
+            const art::ObjectHandle handle{dir.objects.size()};
+            dir.objects.emplace_back(t);
+            dir.object_index[bank.name] = handle;
+            art::Binding b;
+            b.whole_object          = true;
+            b.elements              = 32 * bank.rows * 2880;
+            b.parts                 = {art::Part{handle, 0, b.elements}};
+            dir.bindings[bank.name] = b;
+            art::Use use;
+            use.parameter              = bank.name;
+            use.input                  = "x";
+            use.activation_policy      = bank.policy;
+            dir.uses[{bank.name, "x"}] = use;
+        }
+        const auto facts = pr::plan_facts_of_directory(dir, "a test directory").model;
+        return int8 ? facts.expert_prefill_int8 : facts.expert_prefill;
+    };
+    const auto layers = [](Policy gate_up0, Policy down0, Policy gate_up1, Policy down1) {
+        return std::vector<Bank>{{"text/layers/0/experts/gate_up", 5760, gate_up0},
+                                 {"text/layers/0/experts/down", 2880, down0},
+                                 {"text/layers/1/experts/gate_up", 5760, gate_up1},
+                                 {"text/layers/1/experts/down", 2880, down1}};
+    };
+    const Policy a16 = art::ActivationPolicy::A16Only;
+    const Policy a8  = art::ActivationPolicy::AllowA8;
+    const Policy none;
+    int failures = 0;
+    failures += check(route(QType::MXFP4, layers(a8, a8, a8, a8)) == rt::ExpertPrefill::Mxfp4,
+                      "artifact prefill: MXFP4 banks recorded AllowA8, the MXFP4 route");
+    failures += check(route(QType::MXFP4, layers(a16, a16, a16, a16)) == rt::ExpertPrefill::A16,
+                      "artifact prefill: MXFP4 banks recorded A16Only, A16 (not the kept AllowA8)");
+    failures += check(route(QType::MXFP4, layers(a8, a16, a8, a16)) == rt::ExpertPrefill::A16,
+                      "artifact prefill: one A16-only bank a layer makes the layer A16");
+    failures +=
+        check(route(QType::MXFP4, layers(none, none, none, none)) == rt::ExpertPrefill::Mxfp4,
+              "artifact prefill: no recorded policy, the format's kept policy");
+    failures += check(route(QType::GGML_Q4_0, layers(a8, a8, a8, a8)) == rt::ExpertPrefill::Int8,
+                      "artifact prefill: Q4_0 banks recorded AllowA8, the grouped W4A8");
+    failures += check(route(QType::GGML_Q4_0, layers(a16, a16, a16, a16)) == rt::ExpertPrefill::A16,
+                      "artifact prefill: Q4_0 banks recorded A16Only, A16 (not the kept AllowA8)");
+    // A bank known A16-only beside one with no recorded policy: the layer is A16 still
+    // (ops::moe_policy), not the kept fallback.
+    failures += check(route(QType::MXFP4, layers(a16, none, a16, none)) == rt::ExpertPrefill::A16,
+                      "artifact prefill: an A16-only bank beside an unknown one, A16");
+    // Under --activations int8 the start runs every bank at AllowA8 (models::effective_policy),
+    // whatever was recorded: the formats decide.
+    failures +=
+        check(route(QType::MXFP4, layers(a16, a16, a16, a16), true) == rt::ExpertPrefill::Mxfp4,
+              "artifact prefill under int8: MXFP4 banks recorded A16Only, the MXFP4 route");
+    failures +=
+        check(route(QType::GGML_Q4_0, layers(a16, a8, a16, a8), true) == rt::ExpertPrefill::Int8,
+              "artifact prefill under int8: Q4_0 banks with A16-only ones, the grouped W4A8");
+    return failures;
+}
+
 } // namespace
 
 // A GGUF's linears take their tensors' formats by role: a recurrent layer's attn_qkv is its mixer's
@@ -1014,7 +1218,8 @@ int gguf_linear_formats() {
 int main() {
     const int failures = gguf_qwen35() + config_qwen35() + qwen35_moe() + gemma4() + gpt_oss() +
                          nemotron_h() + llama() + model_types() + boards() + artifact_errors() +
-                         artifact_expert_layers() + gguf_linear_formats();
+                         artifact_expert_layers() + artifact_prefill_policy() +
+                         gguf_linear_formats();
     if (failures == 0) { std::cout << "plan facts OK\n"; }
     return failures == 0 ? 0 : 1;
 }

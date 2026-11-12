@@ -58,10 +58,11 @@
 //   - any generation without a rate row of its own (MoeBoardFacts::generation_known false: the
 //     lent row's rates are not a fact of that chip);
 //   - the BF16 MMA where the generation has no native one (Volta, Turing: DeviceFeatures::
-//     mma_bf16_native false): the row's `bf16` there is a fitted aggregate of an emulated path
+//     mma_bf16_native false): Volta's row `bf16` is a fitted aggregate of an emulated path
 //     (core/generation.h), not a fact of the chip, and the same figure would price Volta's native
-//     HMMA (m8n8k4) like the emulated register MMA. The facts of those two generations need their
-//     own rate rows (#668 measures Volta's) before the law can price them.
+//     HMMA (m8n8k4) like the emulated register MMA (#668 measures Volta's). Turing's row holds the
+//     spec rate of its f16 MMA with FP32 accumulation since #781, but its kernels' BF16-to-f16
+//     rounding has no term here yet. OPEN: Turing is not priced by this law until it has.
 // Also absent from every price: launch and fixed overheads, the kernel's DRAM efficiency below
 // the peak bandwidth, tile and wave effects (the MMAs a tile issues past the call's rows and
 // columns; fitted quantities elsewhere, route_cost_constants.h), the shared expert, and the

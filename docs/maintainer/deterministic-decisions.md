@@ -46,6 +46,13 @@ This page states the rule and its target. The engine does not meet all of it yet
 - `tools/audit/decision_inputs.sh` reads each listed decision file's own text, not what it includes:
   the Qwen3.5 planning files still reach the Program's CUDA event timers through `program_impl.h`;
 - MMQ prefill bytes depend on where a chunk is cut;
+- Turing's A8 routes (W4A8 and ggml MMQ, `generic_cost.cpp` `a8_candidates`) are priced with
+  efficiencies fitted on Ampere and Ada (`kW4a8Efficiency`, `kMmqEfficiency`, its row's
+  `w4a8_eff_scale` 1.0): no Turing card is in the fit, so they are a transfer. On the RTX 2080 Ti
+  A5 sweep they read 0.58-0.75 of the measured time (MMQ) and 0.70-0.74 (W4A8), in the right
+  order. Without them Turing took the register MMA at up to 4.7x the fastest route's time (#781).
+  The gap closes with the chip fact they lack, MMQ's dequantize on 64 CUDA-core lanes a SM against
+  128 on Ampere and Ada, or with a fit on a second Turing card (#789);
 - a speculation round's cost from facts (`spec/round_cost.h`) has its small-T tensor share (eta)
   only for Ada and Blackwell, each fitted on two lab cards (DECISIONS 53, 56); Ampere (RTX 3060),
   Turing (RTX 2080 Ti) and Volta (Quadro GV100) each rest on one lab card, so their cards keep the

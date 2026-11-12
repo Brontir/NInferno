@@ -1,4 +1,18 @@
 ninferno_directory_warnings()
+# The configuration choice (choice/choice.h): memory, speed and accuracy of every candidate
+# configuration from facts, and the one rule that picks among them. Pure: a decisions-only tree
+# (NINFERNO_DECISIONS_ONLY, CMakeLists.txt) builds it alone of src/product.
+add_library(ninferno_product_choice STATIC
+  choice/choice.cpp
+  choice/choice_replay.cpp
+)
+ninferno_internal_includes(ninferno_product_choice)
+target_link_libraries(ninferno_product_choice PUBLIC ninferno::core_host ninferno::json)
+
+if(NINFERNO_DECISIONS_ONLY)
+  return()
+endif()
+
 add_library(ninferno_media_acquire STATIC
   media_acquire/acquire.cpp
 )
@@ -33,15 +47,6 @@ add_library(ninferno_product_speculation STATIC
 )
 ninferno_internal_includes(ninferno_product_speculation)
 target_link_libraries(ninferno_product_speculation PUBLIC ninferno_spec PRIVATE ninferno::core)
-
-# The configuration choice (choice/choice.h): memory, speed and accuracy of every candidate
-# configuration from facts, and the one rule that picks among them. Pure.
-add_library(ninferno_product_choice STATIC
-  choice/choice.cpp
-  choice/choice_replay.cpp
-)
-ninferno_internal_includes(ninferno_product_choice)
-target_link_libraries(ninferno_product_choice PUBLIC ninferno::core_host ninferno::json)
 
 # The plan without the weights (runtime/engine/plan_dry_run.h) from what a model says about itself
 # and what a device is, the speculation a start would serve with, and the largest quantization that

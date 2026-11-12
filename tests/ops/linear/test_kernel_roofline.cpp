@@ -166,6 +166,9 @@ struct GoldenRoute {
 
 constexpr QType kGoldenFormats[] = {QType::GGML_Q4_K, QType::BF16};
 
+// The BF16 rate Turing's generation row held when the golden was made (#781 set the spec 512).
+constexpr double kGoldenTuringBf16 = 1536.0;
+
 #include "kernel_roofline_golden.inc"
 
 constexpr bool is_golden_family(g::Family f) {
@@ -231,11 +234,16 @@ void check_golden() {
         // legacy law (the chip facts without the SM rate facts, kernel_roofline.h legacy_dram),
         // whose wiring to the selector check 2 holds. Every other board's selector price is the
         // golden's itself.
+        // Turing's BF16 rate moved by design after the golden was made (#781: the fitted 1536 to
+        // the spec 512, core/generation.h), so its routes are held to the golden through the
+        // roofline at the golden's rate, as the DRAM law's boards are through the legacy law.
         kr::ChipFacts legacy_chip    = kr::chip_facts_of(d);
-        const bool priced_by_new_law = !kr::legacy_dram(legacy_chip);
+        const bool rate_moved        = ninferno::turing_cc(d.major, d.minor);
+        const bool priced_by_new_law = !kr::legacy_dram(legacy_chip) || rate_moved;
         legacy_chip.dram_latency_s.reset();
         legacy_chip.sm_dram_bytes_per_clock_free.reset();
         legacy_chip.sm_dram_bytes_per_clock_placed.reset();
+        if (rate_moved) legacy_chip.tensor_rate = kGoldenTuringBf16;
         const auto fail = [&](const char* what, int family, int schedule, double want, double got) {
             if (++bad <= 10) {
                 std::fprintf(

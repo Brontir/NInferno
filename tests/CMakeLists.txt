@@ -1,6 +1,9 @@
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 include(cmake/NInfernoTests.cmake)
+# The decision core's host-only tests: the same registrations a decisions-only tree builds
+# (tests/decisions/CMakeLists.txt).
+include(cmake/DecisionTests.cmake)
 include(cmake/CoreTests.cmake)
 include(artifact/tests.cmake)
 include(cmake/RuntimeTests.cmake)

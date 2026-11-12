@@ -32,10 +32,11 @@ private:
 // A kernel's committed facts (kernel_facts.h, #612) as the register-MMA launch describes it. The
 // block limit is the launch bounds' (Schedule::kThreads); the versions are the build's
 // architecture. Host code (rmma_resources, generic_rmma_describe.cpp) describes from the facts the
-// same way.
+// same way. Not noexcept: the K loop's counts (KernelResources::loop) copy a string, which may
+// allocate; both callers already throw (rmma_resources, the launch's describe mode).
 inline void describe_from_facts(KernelResources& out, const kernel_facts::KernelFacts& f,
                                 unsigned grid_x, unsigned grid_y, unsigned grid_z, int threads,
-                                std::size_t dynamic_smem, bool latency) noexcept {
+                                std::size_t dynamic_smem, bool latency) {
     out.registers             = f.registers;
     out.local_bytes           = f.spill_bytes();
     out.static_smem           = f.static_shared_bytes;
@@ -48,6 +49,7 @@ inline void describe_from_facts(KernelResources& out, const kernel_facts::Kernel
     out.grid_y                = grid_y;
     out.grid_z                = grid_z;
     out.latency_variant       = latency;
+    out.loop                  = f.loop;
 }
 
 #ifndef NINFERNO_HOST_ONLY // the launch describes a kernel; the selector does not
@@ -68,7 +70,7 @@ inline void describe_kernel(KernelResources& out, const cudaFuncAttributes& a, d
 }
 
 inline void describe_kernel(KernelResources& out, const kernel_facts::KernelFacts& f, dim3 grid,
-                            int threads, std::size_t dynamic_smem, bool latency) noexcept {
+                            int threads, std::size_t dynamic_smem, bool latency) {
     describe_from_facts(out, f, grid.x, grid.y, grid.z, threads, dynamic_smem, latency);
 }
 #endif
@@ -197,7 +199,9 @@ void launch_tiled(int schedule, WeightCodec codec, Epilogue epilogue, const Gemm
 // Volta prefill on CUTLASS's sm_70 GEMM over weight rows decoded once to FP16
 // (generic_volta_cutlass.cu; built for sm_70 alone). launch_volta_cutlass returns false, having
 // launched nothing, when the build lacks it, the GEMM refuses the shape or the workspace left
-// cannot hold one chunk; the tiled route then takes the call.
+// cannot hold one chunk; the tiled route then takes the call. volta_cutlass_compiled and the sizes
+// below are host code (generic_volta_cutlass_sizes.cpp, with the selector), so a host-only build
+// answers them as the device build does.
 bool volta_cutlass_compiled() noexcept;
 std::size_t volta_cutlass_workspace_bytes(std::int32_t n, std::int32_t k, std::int32_t tokens,
                                           bool swiglu);

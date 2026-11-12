@@ -74,11 +74,12 @@ src/core/arch_family.cuh
 src/ops/generic/random_weight.h
 src/ops/generic/ggml_mmq/ggml_mmq.cu
 src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
-# device files that also define host functions the selector calls (tiled_supports, tiled_fits,
-# staged_fits, volta_hmma_takes, volta_cutlass_workspace_bytes, vec_supported, ...).
-# tests/test_golden_gate.py finds such a function by name wherever it is defined, so a new one in
-# another .cu file fails by name. If those functions move into src/ops/generic/*.cpp files (the
-# globs below list them), these lines may stay: a literal line is only checked to name a file.
+# device files of the routes the selector decides on. The host functions it calls that they once
+# defined (tiled_supports, tiled_fits, staged_fits, volta_hmma_takes, vec_supported, the Volta
+# CUTLASS sizes) have moved to src/ops/generic/*.cpp files (generic_routes.cpp, ggml_mmq_host.cpp,
+# generic_volta_cutlass_sizes.cpp; the globs below list them). tests/test_golden_gate.py finds such
+# a function by name wherever it is defined, so a new one in another .cu file fails by name. These
+# lines stay: a literal line is only checked to name a file.
 src/ops/generic/generic_tiled.cu
 src/ops/generic/generic_staged.cu
 src/ops/generic/generic_volta_hmma.cu
@@ -97,20 +98,27 @@ cmake/EmbedText.cmake
 src/core/CMakeLists.txt
 src/core/embedded_gpu_facts.h.in
 src/core/embedded_sm_rate_facts.h.in
-# which kernel-facts snapshots are embedded (sources.cmake lists the sm_*.txt, the .in turns them
-# into ops/generic/embedded_kernel_facts.h) and which sources and kernels the selector's library
-# is built from; the root file defines the build architecture and feature macros that pick the
-# device class features and the golden build set
+# which kernel-facts snapshots are embedded (host_sources.cmake lists the sm_*.txt, the .in turns
+# them into ops/generic/embedded_kernel_facts.h) and which sources and kernels the selector's library
+# is built from (host_sources.cmake: the selector's host objects and every definition and option on
+# them, among them NINFERNO_DEFAULT_ROUTE_DIR on route_table.cpp: the golden test reads its routes
+# through route_table_dir(), which returns that define when no routes directory sits beside the
+# executable); the root file defines the build architecture and feature macros that pick the device
+# class features and the golden build set
+src/ops/generic/host_sources.cmake
 src/ops/generic/sources.cmake
 src/ops/generic/embedded_kernel_facts.h.in
 src/ops/generic/ggml_mmq/sources.cmake
 CMakeLists.txt
-# sets NINFERNO_DEFAULT_ROUTE_DIR on route_table.cpp: the golden test reads its routes through
-# route_table_dir(), which returns that define when no routes directory sits beside the executable
+# the rest of ninferno_ops' own sources beside the selector's (route_table.cpp's define is set in
+# generic/host_sources.cmake, with the selector's objects)
 src/ops/basic_sources.cmake
 # the golden producer, what it builds weights with, and its target (source, support library and
 # NINFERNO_SELECTOR_GOLDEN_DIR are set in tests.cmake)
 tests/ops/linear/tests.cmake
+# the golden producer's host twin and the other host-only decision tests: their sources, stubs and
+# compile definitions (NINFERNO_HOST_ONLY, NINFERNO_SELECTOR_GOLDEN_DIR)
+tests/cmake/DecisionTests.cmake
 # what every test target is built with: ninferno_add_test / ninferno_add_op_test (sources,
 # compile definitions, libraries, oracle compile options), ninferno_link_ops (which ops
 # implementation the test links: archive or shared library). The files that include it only wire

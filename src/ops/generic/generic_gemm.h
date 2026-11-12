@@ -13,6 +13,7 @@
 #include "core/weight.h"
 #include "ninferno/ops/linear.h"
 #include "ninferno/option_enums.h"
+#include "ops/generic/kernel_facts.h"
 #include "ops/route_pins.h"
 
 #include "core/cuda_stream.h"
@@ -688,7 +689,17 @@ struct KernelResources {
     // The min-term sums the register-MMA instance takes (RmmaSums, generic_gemm.cuh: 0 the MMA
     // with ones, 1 the FP32 adds, 2 the group-sums plane).
     int sums = 0;
+    // The register-MMA kernel's K loop counted off its SASS (kernel_facts::LoopCounts, #613): the
+    // snapshot's, where it carries them; nullopt for the other families and a schema 1 snapshot.
+    std::optional<kernel_facts::LoopCounts> loop;
 };
+
+// Which register-MMA law price_routes applies (#613 PR-7a): route_cost::kRmmaCountedLaw, the one
+// law of the binary, unless a test set an override for its process (nullopt clears it). The
+// counted law reads KernelResources::loop in place of the fitted spill and weight-only tensor
+// terms; off, the price is golden-equal to the fitted one.
+[[nodiscard]] bool rmma_counted_law() noexcept;
+void rmma_counted_law_for_test(std::optional<bool> law) noexcept;
 
 // The compiled facts the cost model read for one register-MMA schedule of one format (#556): what
 // price_routes took from rmma_resources. A test installs a sink to digest exactly these reads (the
@@ -840,7 +851,8 @@ struct BuildManifest {
     int arch           = 0; // the architecture the tree compiles for (NINFERNO_BUILD_ARCH)
     bool arch_specific = false;
     bool native_nvfp4  = false;
-    // Volta's CUTLASS prefill (generic_volta_cutlass.cu, volta_cutlass_compiled): on a build
+    // Volta's CUTLASS prefill (generic_volta_cutlass.cu; volta_cutlass_compiled, host code in
+    // generic_volta_cutlass_sizes.cpp, says whether the tree compiled it in): on a build
     // without tensor mma.sync, what the tiled route's schedule 0 runs for the formats without a
     // tile of their own; without it those formats are omitted there.
     bool volta_cutlass = false;

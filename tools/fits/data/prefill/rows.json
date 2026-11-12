@@ -44,7 +44,7 @@
    "generation": "turing",
    "sms": 68,
    "boost_mhz": 1545,
-   "bf16": 1536,
+   "bf16": 512,
    "s8": 2048,
    "dram_gbs": 616
   },

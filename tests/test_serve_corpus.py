@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from argparse import Namespace
 import json
+import re
 
 import pytest
 
@@ -308,3 +309,13 @@ def test_route_pins_reach_server_and_bind_the_campaign(tmp_path, concurrent):
                                                          "decode_route": "vec"}}}, pins)
     with pytest.raises(corpus.CampaignError, match="another --output"):
         corpus.bind_route_pins(tmp_path, evidence)
+
+
+def test_server_log_schema_matches_the_server() -> None:
+    # The corpus runner refuses a log whose schema it does not expect; the server's version lives in
+    # src/serve/request_log.h. A bump there without one here made every real log fail to parse
+    # (#687 moved the server to 34, the runner stayed at 33).
+    header = (Path(__file__).resolve().parents[1] / "src/serve/request_log.h").read_text()
+    m = re.search(r"kRequestLogSchemaVersion\s*=\s*(\d+);", header)
+    assert m, "kRequestLogSchemaVersion not found in src/serve/request_log.h"
+    assert corpus.SERVER_LOG_SCHEMA_VERSION == int(m.group(1))

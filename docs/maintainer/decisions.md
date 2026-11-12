@@ -2144,10 +2144,11 @@ rows, the register MMA on both stages at eight, the invariant profile's under ex
 **Open.** A step on the register-MMA pair (gpt-oss-20b, or Qwen3.6 at 16 rows) on two cards of a
 generation would give that pair its own share; the gpt-oss step rows as regression rows once their
 windows are re-measured; ninferno-ui links no Ops and registers neither this query nor the
-workspace ones, so its plan document differs from `ninferno-serve --plan --no-load --json` for an
-MoE where the op runs another pair (gpt-oss-20b on the RTX 4090 at 2 streams: the UI's basis own,
-resolution 0.0226; serve's transferred, 0.5447): the estimate and the choice are the same; a hub row priced from another quantization's header has no layers
-of its own (the measured pair, as before).
+workspace ones (#766, held for the #620 host split: either query pulls the Ops' kernels into the
+UI). Its MoE steps keep the measured pair's share, but an estimate no query was asked for is
+Transferred past one row, `speed_why` "MoE route not queried" (`ModelFacts::moe_route_unqueried`),
+never Own; a kind the query gives no kernels for says "MoE route not answered". A hub row priced
+from another quantization's header has no layers of its own (the measured pair, as before).
 
 ## 80. The pool rule prices the MTP head's pool over the benchmark's mix where the facts price it (#777, 12.11, rule)
 

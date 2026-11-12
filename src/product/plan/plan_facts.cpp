@@ -517,11 +517,18 @@ gguf_expert_policy(const std::string& model_type, const std::string& format, boo
 // generic::w4a8_supports names) whose K and activation are whole 32-value blocks
 // (moe_w4a8_whole_blocks, the op's own rule: `x_width` is the router's width for a gate/up bank,
 // which a zero-padded bank's K exceeds, and the bank's K for a down bank), in fragment order only
-// the formats ggml_frag_w4a8 names, and prefills it on int8 activations, unless another bank of
-// its layer is A16-only (the layer's expert policy is then A16); any other bank runs the 16-bit
-// register MMA; a layer of MXFP4 banks is its own route for its banks in whole blocks (the same
-// rule), A16 for the others. The trunk takes the route of the most of its banks' bytes. The banks'
-// 16-bit and float tensors (biases) do not decide.
+// the formats ggml_frag_w4a8 names, and prefills it on int8 activations, unless the layer's expert
+// policy is A16 (ops/moe moe_policy: one A16-only bank makes it so); any other bank runs the
+// 16-bit register MMA; a layer of MXFP4 banks is its own route for its banks in whole blocks (the
+// same rule) where its policy allows A8, A16 for the others. The layer's policy is the one its
+// banks run at, as the decode kind reads it (`policy`: an artifact's recorded Use,
+// gguf_expert_policy for a GGUF; #769), and the formats' kept policy (convert::kept_block_policy)
+// only where a bank has none. A bank kept as a format the header does not tell (`assumed`: Gemma
+// 4's GGUF MXFP4 experts) makes the route an assumed one (assumed()); where the loader runs it at
+// A16 whatever it keeps (`loader_a16`: those without an activation divisor) its layer is A16.
+// Under --activations int8 (route(true)) the start runs every bank at AllowA8
+// (models::effective_policy), so the formats alone decide. The trunk takes the route of the most of
+// its banks' bytes. The banks' 16-bit and float tensors (biases) do not decide.
 // It also keeps each layer's banks as stored (`layers`, #616 step 7): the gate/up bank's format,
 // layout, K and activation policy, the down bank's, for the MoE op's route query
 // (runtime::PlanExpertLayers).
@@ -532,10 +539,17 @@ public:
     // GGUF); none: unknown. `weight`: one of the layer's weight banks (else an auxiliary tensor:
     // a bias, a scale). A floating-point weight bank is one of the layer's kind (the op runs it
     // too: the route query is asked for it), not of the prefill route above; a floating-point
-    // auxiliary tensor neither.
+    // auxiliary tensor neither. `assumed`: the format the loader keeps the bank as is not the
+    // header's (Gemma 4's GGUF MXFP4 experts: an NVFP4 site where probe_mx fits, else the
+    // recipe's BF16 or Q8 site), so a route on it is assumed. `loader_a16`: whichever of those it
+    // keeps, the bank runs at A16 under fast activations (no activation divisor: the NVFP4 site
+    // A16Only, the recipe's sites at the Recipe default A16Only). With a divisor
+    // (`<stem>.input_scale`) the NVFP4 site is AllowA4, so the policy is the probe's and not
+    // known: `policy` (none) and the kept fallback stand, assumed. The decode kind keeps `policy`.
     void add(const std::string& layer, bool down, const std::string& format,
              const std::string& layout, std::uint64_t k, std::uint64_t x_width, std::uint64_t bytes,
-             const std::optional<artifact::ActivationPolicy>& policy, bool weight) {
+             const std::optional<artifact::ActivationPolicy>& policy, bool weight,
+             bool assumed = false, bool loader_a16 = false) {
         if (format == "bf16" || format == "fp32" || format == "int32") {
             if (!weight) { return; }
             Layer& l = layers_[layer];
@@ -559,6 +573,8 @@ public:
         }
         Layer& l = layers_[layer];
         l.bytes += bytes;
+        l.assumed    = l.assumed || assumed;
+        l.loader_a16 = l.loader_a16 || loader_a16;
         try {
             const QType q = artifact::parse_format(format);
             const QuantLayout at =
@@ -574,38 +590,55 @@ public:
             note(b, format, std::string(artifact::layout_name(kept)), k, policy);
             const bool frag = at == QuantLayout::GgmlFrag;
             l.mxfp4 = l.mxfp4 && q == QType::MXFP4;
-            const bool a8 = convert::kept_block_policy(q) == artifact::ActivationPolicy::AllowA8;
-            l.a8          = l.a8 && a8;
+            // A format with int8 codes (the grouped W4A8 reads it), which the converter keeps at
+            // AllowA8: the layer's policy where a bank records none (layer_allows_a8).
+            const bool int8_codes =
+                convert::kept_block_policy(q) == artifact::ActivationPolicy::AllowA8;
+            l.kept_a8        = l.kept_a8 && int8_codes;
             const bool whole = moe_w4a8_whole_blocks(static_cast<std::int64_t>(k),
                                                      static_cast<std::int64_t>(x_width));
-            if (whole && a8 && (!frag || ggml_frag_w4a8(q))) { l.int8_bytes += bytes; }
+            if (whole && int8_codes && (!frag || ggml_frag_w4a8(q))) { l.int8_bytes += bytes; }
             // An MXFP4 bank takes its layer's MXFP4 route (the int8 tier or the block-scaled MMA)
             // only in whole blocks too: the op refuses it otherwise (KGroup) and runs it A16.
             if (whole && q == QType::MXFP4) { l.mxfp4_bytes += bytes; }
         } catch (const std::exception&) { l.known = false; }
     }
-    [[nodiscard]] runtime::ExpertPrefill route() const {
+
+    // `int8`: under --activations int8 (every bank at AllowA8), else fast activations.
+    [[nodiscard]] runtime::ExpertPrefill route(bool int8 = false) const {
         std::array<std::uint64_t, 4> by{};
         const auto at = [&](runtime::ExpertPrefill r) -> std::uint64_t& {
             return by[static_cast<std::size_t>(r)];
         };
         for (const auto& [name, l] : layers_) {
+            const bool a8 = int8 || (!l.loader_a16 && layer_allows_a8(l));
             if (!l.known) {
                 at(runtime::ExpertPrefill::Unknown) += l.bytes;
             } else if (l.mxfp4) {
-                // A bank the op refuses for its blocks (w4a8_bank_refusal KGroup) runs A16.
-                at(runtime::ExpertPrefill::Mxfp4) += l.mxfp4_bytes;
-                at(runtime::ExpertPrefill::A16) += l.bytes - l.mxfp4_bytes;
+                // A bank the op refuses for its blocks (w4a8_bank_refusal KGroup), or under an A16
+                // policy (Policy), runs A16.
+                const std::uint64_t mx = a8 ? l.mxfp4_bytes : 0;
+                at(runtime::ExpertPrefill::Mxfp4) += mx;
+                at(runtime::ExpertPrefill::A16) += l.bytes - mx;
             } else {
-                // One A16-only bank makes the layer's expert policy A16 (ops/moe moe_policy).
-                const std::uint64_t int8 = l.a8 ? l.int8_bytes : 0;
-                at(runtime::ExpertPrefill::Int8) += int8;
-                at(runtime::ExpertPrefill::A16) += l.bytes - int8;
+                // An A16 expert policy refuses the grouped W4A8 every bank (w4a8_bank_refusal
+                // Policy).
+                const std::uint64_t int8_bytes = a8 ? l.int8_bytes : 0;
+                at(runtime::ExpertPrefill::Int8) += int8_bytes;
+                at(runtime::ExpertPrefill::A16) += l.bytes - int8_bytes;
             }
         }
         const auto most = std::max_element(by.begin() + 1, by.end());
         return *most > by[0] ? static_cast<runtime::ExpertPrefill>(most - by.begin())
                              : runtime::ExpertPrefill::Unknown;
+    }
+
+    // Whether the route rests on a bank whose kept format the header does not tell (add's
+    // `assumed`).
+    [[nodiscard]] bool assumed() const {
+        return std::any_of(layers_.begin(), layers_.end(), [](const auto& entry) {
+            return entry.second.assumed && entry.second.bytes > 0;
+        });
     }
 
     // The layers by kind (runtime::PlanExpertLayers), `gated` the model's; a layer whose banks are
@@ -683,9 +716,36 @@ private:
         std::uint64_t bytes = 0, int8_bytes = 0;
         std::uint64_t float_bytes = 0; // its floating-point weight banks (not the prefill route's)
         std::uint64_t mxfp4_bytes = 0; // of an MXFP4 layer: its banks in whole blocks
-        bool known = true, mxfp4 = true, a8 = true;
+        // kept_a8: every bank a format the converter keeps at AllowA8 (int8 codes); assumed: a
+        // bank kept as a format the header does not tell; loader_a16: a bank the loader runs at
+        // A16 whatever it keeps (add's `assumed`, `loader_a16`)
+        bool known = true, mxfp4 = true, kept_a8 = true, assumed = false, loader_a16 = false;
         Bank gate_up, down;
     };
+
+    // Whether the layer's expert policy allows int8 activations in prefill (ops::allows_a8 of
+    // ops::moe_policy): the policy its banks run at (layer_policy, the decode kind's, #769), and
+    // the formats' kept policy only where a bank has none (or a bank is missing).
+    static bool layer_allows_a8(const Layer& l) {
+        if (l.gate_up.seen && l.down.seen) {
+            switch (layer_policy(l.gate_up, l.down)) {
+            case runtime::PlanExpertPolicy::A16Only:
+                return false;
+            case runtime::PlanExpertPolicy::AllowA8:
+            case runtime::PlanExpertPolicy::AllowA4:
+                return true;
+            case runtime::PlanExpertPolicy::Unknown:
+                break;
+            }
+        }
+        // One bank known A16-only makes the layer A16 whatever the other records
+        // (ops::moe_policy), even where the other's policy is unknown (codex on #792).
+        const auto a16 = [](const Bank& b) {
+            return b.seen && b.policy_known && b.policy == artifact::ActivationPolicy::A16Only;
+        };
+        if (a16(l.gate_up) || a16(l.down)) { return false; }
+        return l.kept_a8;
+    }
     std::map<std::string, Layer> layers_;
 };
 
@@ -1181,10 +1241,16 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
                 const bool input_scale =
                     t.name.ends_with(".weight") &&
                     names.count(t.name.substr(0, t.name.size() - 7) + ".input_scale") > 0;
-                expert_routes.add(std::to_string(*block), down, format, "", t.ne[0],
-                                  down ? t.ne[0] : g.hidden, t.bytes,
-                                  gguf_expert_policy(g.model_type, format, input_scale),
-                                  t.name.ends_with("_exps.weight"));
+                // Gemma 4's MXFP4 experts are kept as a site the header does not tell; without an
+                // activation divisor every such site runs at A16 under fast activations, with one
+                // the NVFP4 site is AllowA4 where probe_mx fits (codex on #792): the policy is
+                // the probe's, not A16 (gguf_expert_policy: the decode kind's stays unknown).
+                const bool gemma4_mx =
+                    g.model_type == "gemma4_text" && t.type == convert::ggml::MXFP4;
+                expert_routes.add(
+                    std::to_string(*block), down, format, "", t.ne[0], down ? t.ne[0] : g.hidden,
+                    t.bytes, gguf_expert_policy(g.model_type, format, input_scale),
+                    t.name.ends_with("_exps.weight"), gemma4_mx, gemma4_mx && !input_scale);
             }
             // The banks' weights only: a bank's per-expert scale (Gemma 4's ffn_down_exps.scale,
             // FP32) is not one of them.
@@ -1248,6 +1314,8 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.model.token_table_bytes = embedding_bytes;
     out.model.routed_expert_bytes     = whole ? routed : 0;
     out.model.expert_prefill          = expert_routes.route();
+    out.model.expert_prefill_int8     = expert_routes.route(true);
+    out.model.expert_prefill_assumed  = expert_routes.assumed();
     // A split part's table lists its own layers only.
     if (whole) { out.model.expert_layers = expert_routes.layers(g.ffn_matrices != 2); }
     out.model.mtp_routed_expert_bytes = whole ? mtp_routed : 0;
@@ -1513,6 +1581,7 @@ PlanSourceFacts plan_facts_of_directory(const artifact::Directory& dir, const st
     out.model.own_drafter_bytes = drafter_bytes;
     out.model.routed_expert_bytes = routed_bytes;
     out.model.expert_prefill      = expert_routes.route();
+    out.model.expert_prefill_int8 = expert_routes.route(true);
     out.model.expert_layers       = expert_routes.layers(artifact_geometry.ffn_matrices != 2);
     out.shape.input_table_bytes = input_table_bytes;
     out.model.weight_elements   = elements;
@@ -1586,7 +1655,9 @@ PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
         facts.shape.weight_formats.clear();
         facts.shape.layer_formats.clear();
         facts.shape.rest_layer_formats.clear();
-        facts.model.expert_prefill = runtime::ExpertPrefill::Unknown;
+        facts.model.expert_prefill         = runtime::ExpertPrefill::Unknown;
+        facts.model.expert_prefill_int8    = runtime::ExpertPrefill::Unknown;
+        facts.model.expert_prefill_assumed = false;
         facts.model.expert_layers.clear();
     }
     facts.model.weight_bytes      = bytes;

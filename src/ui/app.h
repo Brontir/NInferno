@@ -242,8 +242,9 @@ private:
     // --no-load --json would print it for an idle card of that GPU, but for the queries
     // ninferno-serve registers from the Ops this program does not link: a family's workspace
     // (runtime::set_plan_workspace_query) and an MoE step's routes (set_plan_moe_route_query,
-    // DECISIONS 79: here the step keeps the measured route's basis, so an MoE estimate the server
-    // types Transferred can read Own here). Throws when the repository's shape cannot be read.
+    // DECISIONS 79: here the step keeps the measured pair's share, and its estimate is Transferred
+    // past one row with speed_why "MoE route not queried", #766). Throws when the repository's
+    // shape cannot be read.
     nlohmann::json plan_json(const std::string& repo, const std::string& hub, int gpu,
                              const std::string& quant, const product::LaunchAsk& launch);
     // read_tables: the chosen GGUF row's own tensor table is read when not known (a user's plan);

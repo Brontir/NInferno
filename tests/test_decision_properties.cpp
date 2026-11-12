@@ -25,6 +25,13 @@
 //         - a register-MMA route of the heavy form whose larger board runs another compiled
 //           instance of the schedule (the launcher's latency and wide variants are chosen by the
 //           board's DRAM bytes per SM and cycle): two kernels, not one priced twice.
+//       And on both scales, ggml's matrix kernel on a generation whose launch law picks its column
+//       width (Turing, DECISIONS 78: core/mmq_columns.h pick) where the larger board picks another
+//       width: two launches, not one priced twice. The price is the A8 fit's tile count at the
+//       law's width, not the law's own time, so it can rise there (#786: up to x1.04 on the
+//       Tesla T4). OPEN: pricing that launch by the law itself was tried and moved the RTX 2080
+//       Ti's A8 regret from +0.3 % to +14 .. +31 %, against the W4A8 tiles still priced at 0.7 of
+//       their time; counted and printed, not failed.
 //   P3  fields the selector does not read: the board's labels (names, PCI address, UUID, ordinal),
 //       the table row's name, sources and note, and (each on its own) its TDP, nominal VRAM, PCIe
 //       generation and segment, and the memory size the driver reports, move no route. Every
@@ -56,6 +63,7 @@
 #include "core/format_facts.h"
 #include "core/generation.h"
 #include "core/machine_facts.h"
+#include "core/mmq_columns.h"
 #include "core/units.h"
 #include "core/weight.h"
 #include "core/weight_view.h"
@@ -328,6 +336,8 @@ int sms_cases_fell = 0, sms_cases_equal = 0; // the price fell / stayed (to 1e-9
 // (compared, the rise explained), with the worst such rises.
 int sms_cases_legacy = 0, sms_cases_shared_read = 0, sms_cases_instance = 0;
 double shared_read_worst = 1, instance_worst = 1;
+int mmq_width_cases    = 0; // either scale: another MMQ width on the larger board (header)
+double mmq_width_worst = 1;
 // The legacy boards' SM-scale cases are counted, not compared: how many rose, and the worst.
 int sms_cases_legacy_rose = 0;
 double legacy_worst       = 1;
@@ -445,6 +455,19 @@ Explained explain_rmma_rise(const DeviceClass& base, const DeviceClass& more,
                : Explained::None;
 }
 
+// The column width ggml's matrix kernel takes for the call on `d` where the generation's launch law
+// picks it, as a8_candidates reads it (the slice's columns, the widest tile the device's shared
+// memory holds, the board's reference clock and DRAM rate); 0 where no law picks it.
+int mmq_law_width(const DeviceClass& d, const generic::Problem& p, std::int32_t tokens) {
+    const bool format = mmq_columns::work_tiles_format(p.qtype);
+    if (mmq_columns::launch_law(d.major, d.minor, format) == nullptr) return 0;
+    const int columns = std::min(tokens, generic::kMmqPrefillSlice);
+    const mmq_columns::LaunchFacts facts{p.n, p.k, d.sms, d.facts.reference_clock_hz(),
+                                         d.facts.dram_bytes_per_s()};
+    return mmq_columns::pick(columns, d.major, d.minor, true,
+                             mmq_columns::widest_tile(p.qtype, d.major, d.minor), facts);
+}
+
 void property_price_monotone(const std::vector<Row>& rows) {
     std::size_t unpriced_rows = 0;
     for (const Row& row : rows) {
@@ -524,6 +547,17 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                         worst         = std::max(worst, it->second / seconds);
                                         continue;
                                     }
+                                    if (r.family == generic::Family::GgmlMmq) {
+                                        const DeviceClass& larger =
+                                            prices == &sms ? more_sms : more_bw;
+                                        const int at = mmq_law_width(base, problem, t);
+                                        if (at != 0 && at != mmq_law_width(larger, problem, t)) {
+                                            ++mmq_width_cases;
+                                            mmq_width_worst =
+                                                std::max(mmq_width_worst, it->second / seconds);
+                                            continue;
+                                        }
+                                    }
                                     std::string key = family_name(route.first);
                                     if (prices == &sms) {
                                         key += it->second <= seconds *
@@ -558,6 +592,9 @@ void property_price_monotone(const std::vector<Row>& rows) {
               << " by the shared activation read alone (worst x" << shared_read_worst << ") and "
               << sms_cases_instance << " by another compiled instance on the larger board (worst x"
               << instance_worst << ")\n";
+    std::cout << "    either scale: " << mmq_width_cases
+              << " ggml_mmq rises where the larger board's launch law picks another width (worst x"
+              << mmq_width_worst << "): counted, not failed\n";
     std::cout << "    SM scale not compared on " << legacy_rows.size()
               << " rows of the legacy DRAM law (no SM rate row, or one another card refutes; "
                  "#690): "

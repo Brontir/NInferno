@@ -54,7 +54,10 @@ std::optional<double> bf16_mma_rate(const MoeBoardFacts& board, std::string& not
         return 0.0;
     }
     if (!board.bf16_native) {
-        note = "no native BF16 MMA: the generation's rate is a fitted aggregate";
+        // Volta's rate is a fitted aggregate; Turing's is the spec rate since #781, but its
+        // kernels' BF16-to-f16 rounding has no term in this law yet (moe_cost.h).
+        note = "no native BF16 MMA: Volta's rate is a fitted aggregate, Turing's BF16-to-f16 "
+               "rounding has no term here";
         return 0.0;
     }
     const double rate = board.bf16_ops_per_clock_sm * board.sms * board.clock_hz;

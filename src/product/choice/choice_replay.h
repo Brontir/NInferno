@@ -21,7 +21,9 @@
 
 namespace ninferno::product::choice {
 
-inline constexpr std::string_view kChoiceReplaySchema = "ninferno-choice-replay/2";
+// /3 (#769): the quantization's expert_banks_int8 and expert_banks_assumed. Records of an older
+// schema are refused (replay_choice), not read with defaults.
+inline constexpr std::string_view kChoiceReplaySchema = "ninferno-choice-replay/3";
 
 struct ReplayIncomplete : std::runtime_error {
     using std::runtime_error::runtime_error;

@@ -22,17 +22,37 @@
         "BUILD_TESTING": "ON",
         "NINFERNO_BUILD_BENCHMARKS": "ON"
       }
+    },
+    {
+      "name": "decisions",
+      "displayName": "Decision core and its host-only tests (no CUDA compiler; -DCMAKE_CUDA_ARCHITECTURES picks the golden set)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-decisions",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "NINFERNO_DECISIONS_ONLY": "ON",
+        "NINFERNO_BUILD_APPS": "OFF",
+        "BUILD_TESTING": "ON",
+        "NINFERNO_BUILD_BENCHMARKS": "OFF"
+      }
     }
   ],
   "buildPresets": [
     { "name": "release", "configurePreset": "release" },
-    { "name": "dev", "configurePreset": "dev" }
+    { "name": "dev", "configurePreset": "dev" },
+    { "name": "decisions", "configurePreset": "decisions" }
   ],
   "testPresets": [
     {
       "name": "dev",
       "configurePreset": "dev",
       "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "decisions",
+      "configurePreset": "decisions",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "label": "host" } }
     }
   ]
 }

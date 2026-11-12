@@ -10,8 +10,23 @@
 // Rates are the cost model's tensor rate per SM and clock (the 2 x rows x cols x K of a tile over
 // rate x clock is its MMA time), with FP32 accumulation, the unit route_tune's fit used:
 //   bf16  the BF16 MMA. Ampere, Ada and Blackwell consumer and pro boards 512, the full-rate HBM
-//         parts 2048; where the BF16 MMA is emulated (Turing's f16 k8 pairs, Volta's FP32 FMAs,
-//         DeviceFeatures::mma_bf16_native false) the fitted aggregate 1536.
+//         parts 2048. Turing (#781) 512 from the spec: its build rounds BF16 operands to f16 and
+//         issues mma.sync m16n8k8 .f32.f16.f16.f32 (two per k16, ops/common/mma.cuh), the f16
+//         MMA with FP32 accumulation; an SM's 8 tensor cores do 64 FMA a clock each, 8 x 64 x 2 =
+//         1024 FLOP with f16 accumulation, and the GeForce Turing boards accumulate FP32 at half
+//         that, 512 (the Turing whitepaper's RTX 2080 Ti: 107.6 TFLOPS f16-accumulate, 53.8 with
+//         FP32 accumulation, at 68 SMs and the 1545 MHz reference boost). The f16 conversion is
+//         not in this rate. OPEN (#781): the Tesla T4, the Quadro RTX and the TITAN RTX run FP32
+//         accumulation at the full 1024, a fact of the board, not of the compute capability; the
+//         facts have no per-board tensor rate (gpu_facts.json carries mma_slow, the one per-board
+//         MMA fact) and every reader of the kind (fp32acc_full_rate_of) is keyed by generation,
+//         so those boards are priced at 512 here (TITAN RTX is segment geforce in gpu_facts.json,
+//         so not even the segment separates them). Turing's A8 prices (W4A8, MMQ, priced since
+//         #781) carry efficiencies fitted on other generations (route_cost_constants.h
+//         kW4a8Efficiency, kMmqEfficiency; w4a8_eff_scale 1.0 below): 0.58 .. 0.75 of the
+//         measured time for MMQ and 0.70 .. 0.74 for W4A8 on the RTX 2080 Ti A5 sweep. OPEN: the
+//         missing fact, MMQ's dequantize on 64 CUDA-core lanes a SM against 128 on Ampere and Ada.
+//         Volta (FP32 FMAs, mma_bf16_native false) keeps the fitted aggregate 1536.
 //   s8    the int8 MMA, 0 where the card has none (Volta, whose build composes it from dp4a).
 //   fp32_fma  not a tensor rate: the FP32 fused multiply-adds an SM issues per clock (the CUDA C++
 //         Programming Guide's arithmetic instruction throughput table, "32-bit floating-point
@@ -134,7 +149,7 @@ struct GenerationRow {
 inline constexpr GenerationRow kGenerations[] = {
     //  major minor     name       bf16    s8     fp32   full   w4a8  a16   mmq    chain
     {7, 0, 4, "volta", 1536.0, 0.0, 64.0, false, 1.0, 1.11, true},
-    {7, 5, 9, "turing", 1536.0, 2048.0, 64.0, false, 1.0, 1.11, true, false, true, 0.43,
+    {7, 5, 9, "turing", 512.0, 2048.0, 64.0, false, 1.0, 1.11, true, false, true, 0.43,
      &kTuringMmqLaw},
     {8, 0, 0, "ga100", 2048.0, 4096.0, 64.0, true, 0.46, 1.64, false},
     {8, 1, 8, "ga10x", 512.0, 2048.0, 128.0, false, 1.0, 1.11, true, false, true, 0.20},
