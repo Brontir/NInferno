@@ -361,12 +361,14 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
     // ggml's matrix kernel: its activation, FP32 plane (SwiGLU: gate and up rows) and fixup.
     const int plane_rows =
         model_call.epilogue == Epilogue::SwiGlu ? 2 * model_call.rows : model_call.rows;
-    // A min-term register-MMA call in the prefill profile reads the group-sums plane (#619).
+    // A min-term register-MMA call in the prefill profile reads the group-sums plane (#619), only
+    // while the switch is on (as workspace_capacity_bytes reserves it).
+    const std::size_t plane_bytes =
+        group_sums_plane_enabled() ? rmma_group_sums_bytes(codec_of(weight), k, t_max) : 0;
     DeviceArena workspace(
         std::max<std::size_t>({route_workspace_bytes(Route{Family::W4a8Mma, 0}, k, kR8VerifyTokens),
                                ggml_mmq_workspace_bytes(k, plane_rows, t_max) + 256,
-                               ggml_vec_workspace_bytes(k, t_max) + 256,
-                               rmma_group_sums_bytes(codec_of(weight), k, t_max), 256}));
+                               ggml_vec_workspace_bytes(k, t_max) + 256, plane_bytes, 256}));
     Bench bench{};
     bench.workspace            = &workspace;
     bench.call.weight          = &weight;
@@ -522,10 +524,12 @@ void time_prefill_bands(const Problem& problem, const Call& model_call, cudaStre
     try {
         x.emplace(static_cast<std::size_t>(k) * t_max * 2);
         out.emplace(static_cast<std::size_t>(model_call.rows) * t_max * 2);
-        // The register MMA of a min-term format reads the group-sums plane there (#619).
+        // The register MMA of a min-term format reads the group-sums plane there (#619), only
+        // while the switch is on.
         workspace.emplace(std::max<std::size_t>(
             {w4a8 ? route_workspace_bytes(Route{Family::W4a8Mma, 0}, k, t_max) : 0,
-             rmma_group_sums_bytes(codec_of(weight), k, t_max), 256}));
+             group_sums_plane_enabled() ? rmma_group_sums_bytes(codec_of(weight), k, t_max) : 0,
+             256}));
     } catch (const std::exception&) {
         (void)cudaGetLastError();
         tuned.prefill_base       = {};
