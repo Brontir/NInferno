@@ -156,6 +156,9 @@ void measured_points(const json& fixture) {
               << std::sqrt(sq_moved_before / std::max(moves, 1)) * 100 << " % -> "
               << std::sqrt(sq_moved_after / std::max(moves, 1)) * 100 << " %\n";
     check(seen == expected, "the measured points that move are the listed ones");
+    // #613 PR-9's gate: the measured points' rms with the selector's routes at most 6.4 %.
+    check(points > 0 && std::sqrt(sq_after / points) <= 0.064,
+          "the prefill estimate on the selector's routes within #613 PR-9's 6.4 % rms");
 }
 
 // Every board of the registry with tensor cores at the fixtures' models and quantizations, a
@@ -232,6 +235,10 @@ int main() {
                   query(rtx4090, "not_a_format", 4096, 4096, false, 1024, fast) ==
                       rt::PlanPrefillKernel::Unknown,
               "exact activations: a 16-bit kernel; a format the facts do not name: no answer");
+        // A BF16 linear asked at AllowA8 (Fast) answers as its recorded A16Only would: no A8 route
+        // reads a 16-bit weight.
+        check(query(rtx4090, "bf16", 4096, 4096, false, 1024, fast) == rt::PlanPrefillKernel::A16,
+              "a BF16 linear under fast activations: a 16-bit kernel");
     }
     measured_points(fixture);
     every_board(fixture);

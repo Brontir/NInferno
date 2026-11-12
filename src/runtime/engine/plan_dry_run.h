@@ -510,7 +510,9 @@ enum class PlanPrefillKernel : std::uint8_t { Unknown, Mmq, W4a8, OtherA8, A16 }
 // The kernel a prefill call of `tokens` tokens of an `n` x `k` linear stored as `format` (the
 // format facts' name: "ggml_q4_k", "q8_g32_fp16"; a gated pair `gated`, `n` both matrices' rows,
 // called as SwiGLU on n / 2) takes on `device` under `activations`: Exact A16 only, Fast and Int8
-// with int8 activations allowed (the policy a GGUF's linears record, models::effective_policy).
+// with int8 activations allowed. Under Fast that is the policy a GGUF's quantized linears record;
+// its BF16 and F16 linears record A16Only, which asks the same: the selector admits no A8 route
+// for a 16-bit weight, so it answers A16 under either policy.
 // The engine registers it (it links the Ops this library does not:
 // register_plan_prefill_route_query); unset, the choice's prefill prices the kernels its tile laws
 // assume (product/choice ModelFacts::prefill_routes).
