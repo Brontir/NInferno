@@ -424,26 +424,27 @@ def fixup_rate_off(law, tolerance=DEFAULT_TOLERANCE):
     return ratio is not None and abs(ratio - 1.0) > tolerance
 
 
-def cpp_row(name, law):
+def cpp_row(name, law, tolerance=DEFAULT_TOLERANCE):
     """The law as core/generation.h writes it; None where a value is missing, launch_seconds is
     negative (a fixup that costs less than nothing is no row), or the fixup runs at another rate
     than the DRAM rate the row would price it at."""
     if any(v is None for v in law["unit_clocks"]) or law["stream_k_unit"] is None or \
-            law["launch_seconds"] is None or law["launch_seconds"] < 0 or fixup_rate_off(law):
+            law["launch_seconds"] is None or law["launch_seconds"] < 0 or \
+            fixup_rate_off(law, tolerance):
         return None
     units = ", ".join(str(int(round(v))) for v in law["unit_clocks"])
     return (f"inline constexpr MmqLaunchLaw {name}{{{{{units}}}, "
             f"{law['stream_k_unit']:.2f}, {law['launch_seconds']:.2g}}};")
 
 
-def row_problem(law, missing):
+def row_problem(law, missing, tolerance=DEFAULT_TOLERANCE):
     if any(v is None for v in law["unit_clocks"]):
         return f"incomplete (missing widths {missing})"
     if law["launch_seconds"] is None:
         return "incomplete (no fixup-alone timings)"
     if law["launch_seconds"] < 0:
         return f"refused: launch_seconds {law['launch_seconds'] * 1e6:.2f} us is negative"
-    if fixup_rate_off(law):
+    if fixup_rate_off(law, tolerance):
         return (f"refused: the fixup runs at {law['fixup_rate_ratio']:.2f}x the DRAM rate, and "
                 "MmqLaunchLaw has no fixup-rate field (#785 PR-C)")
     return "incomplete (no stream-k grid)"
@@ -690,8 +691,9 @@ def cmd_fit(a):
         print_derived(d)
     r = fit(derived, a.tolerance)
     print(f"\n{r['generation']} law from {', '.join(r['cards'])} ({r['format']}):")
-    row = cpp_row(r["name"], r["law"])
-    print("  " + (row or row_problem(r["law"], r["missing_widths"])))
+    row = cpp_row(r["name"], r["law"], a.tolerance)
+    problem = None if row else row_problem(r["law"], r["missing_widths"], a.tolerance)
+    print("  " + (row or problem))
     print("  clock / reference: " + ", ".join(f"{c} {ratio(v)}" for c, v in
                                               r["clock_ratios"].items()))
     if r["clock_note"]:
@@ -710,6 +712,10 @@ def cmd_fit(a):
         with open(a.out, "w", newline="\n") as f:
             json.dump(r, f, indent=1)
             f.write("\n")
+    if r["within_tolerance"] and not row:
+        # Within tolerance but no row core/generation.h could hold: not a success either.
+        print(f"  no row: {problem}")
+        return 5
     return 0 if r["within_tolerance"] else 4
 
 

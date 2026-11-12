@@ -294,6 +294,21 @@ class Fit(unittest.TestCase):
         hopper = dict(CARD_B, cc="9.0")
         self.assertIsNone(ml.derive(card_doc(hopper))["generation"])
 
+    def test_cli_fit_without_a_row_is_no_success(self):
+        # Two cards that agree, whose fixup runs at twice the DRAM rate: within tolerance, but
+        # MmqLaunchLaw cannot hold the law, so fit exits 5 and names why (unless --tolerance
+        # admits the rate).
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = (os.path.join(tmp, n) for n in ("a.json", "b.json"))
+            for path, info in ((a, CARD_A), (b, CARD_B)):
+                with open(path, "w") as f:
+                    json.dump(card_doc(info, fixup_rate=2 * info["dram_bytes_per_s"]), f)
+            code, text = quiet(ml.main, ["fit", "--input", a, "--input", b])
+            self.assertEqual(code, 5)
+            self.assertIn("no row: refused: the fixup runs at 2.00x", text)
+            code, _ = quiet(ml.main, ["fit", "--input", a, "--input", b, "--tolerance", "1.5"])
+            self.assertEqual(code, 0)
+
     def test_cli(self):
         with tempfile.TemporaryDirectory() as tmp:
             a, b, c = (os.path.join(tmp, n) for n in ("a.json", "b.json", "c.json"))
