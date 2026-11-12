@@ -140,9 +140,12 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double rows_o  = tile.out_rows;
             // The stages and shared memory the format's tile compiles with (generic_i8_schedules.h,
             // which generic_i8.cu's kI8Stages reads): Q5 / Q6 add their high plane to every
-            // stage, and Q6 at 256x128 runs three stages, not the table's four (#761).
+            // stage, and Q6 at 256x128 runs three stages, not the table's four (#761). The block
+            // limit is the board's architecture's build limit, not this tree's: the base goldens
+            // price sm_80/90/100 boards in an sm_86/89 build too, and their engines compile four.
             const int bits   = i8_bits(problem.qtype);
-            const int stages = i8_stages(s.block_m, s.block_n, bits);
+            const int stages = i8_stages(s.block_m, s.block_n, bits,
+                                         shared_bytes_per_block_for_arch(d.major * 10 + d.minor));
             const double smem =
                 static_cast<double>(i8_smem_bytes(s.block_m, s.block_n, bits, stages));
             const double occ     = std::max(1.0, std::min({std::floor(max_thr / s.threads), max_cta,

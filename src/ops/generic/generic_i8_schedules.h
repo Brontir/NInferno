@@ -45,10 +45,14 @@ inline constexpr I8ScheduleInfo kI8Schedules[] = {
            i8_ring_bytes(rows);
 }
 
-// The stages a tile compiles with: four, or three where four do not fit one block's shared memory
-// (Q6's high plane at 256x128: 100 KiB against 99).
-[[nodiscard]] constexpr int i8_stages(int tokens, int rows, int bits) noexcept {
-    return i8_smem_bytes(tokens, rows, bits, 4) <= kMaxSharedBytesPerBlock ? 4 : 3;
+// The stages a tile compiles with under a block limit of `block_bytes`: four, or three where four
+// do not fit (Q6's high plane at 256x128: 100 KiB against 99). The kernel passes this tree's limit
+// (kMaxSharedBytesPerBlock); the price passes the priced board's own build limit
+// (shared_bytes_per_block_for_arch of its compute capability), the tile its release engine
+// compiles, so a board's price does not depend on the build the selector runs in.
+[[nodiscard]] constexpr int i8_stages(int tokens, int rows, int bits,
+                                      std::size_t block_bytes) noexcept {
+    return i8_smem_bytes(tokens, rows, bits, 4) <= block_bytes ? 4 : 3;
 }
 
 // The 4-bit rows of the table are these formulas' (the table stays the 4-bit tile's for the
