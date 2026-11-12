@@ -61,13 +61,6 @@ std::string class_text(const runtime::PlanDeviceFacts& device) {
     return std::to_string(card_gb(device)) + " GB";
 }
 
-std::string ascii_upper(std::string text) {
-    for (char& c : text) {
-        if (c >= 'a' && c <= 'z') { c = static_cast<char>(c - 'a' + 'A'); }
-    }
-    return text;
-}
-
 struct Unsupported {
     std::string code;
     std::string text;
@@ -86,9 +79,10 @@ Unsupported unsupported(const QuantListing& q, double bits_per_weight,
     if (q.bits > 8 || (q.bits == 0 && bits_per_weight > 9.0)) {
         return {"above_8_bits", "above 8 bits per weight: the engine serves 8 bits or fewer"};
     }
-    // NVFP4 weights run on cards with FP4 tensor cores (compute capability 10.0 and up).
-    if (ascii_upper(q.quant).find("NVFP4") != std::string::npos &&
-        !nvfp4_planned_on(device.compute_capability)) {
+    // NVFP4 weights run on cards with FP4 tensor cores (compute capability 10.0 and up): a listing
+    // whose label names NVFP4 (choice::label_formats).
+    const std::optional<std::set<QType>> named = choice::label_formats(q.quant);
+    if (named && named->count(QType::NVFP4) > 0 && !nvfp4_planned_on(device.compute_capability)) {
         return {"nvfp4_card", "NVFP4 weights need an RTX 50 / Blackwell card"};
     }
     return {};

@@ -1825,6 +1825,34 @@ void test_quant_option_one_rule() {
           "the artifact's NVFP4 encodings price its route, the source label its accuracy");
     artifact.shape.quant_label.clear();
     check(pr::quant_option_of(artifact).label == "the model's weights", "no label: said so");
+    // #615 F7: the class and routes from the formats' facts, the label's (label_formats) only where
+    // the facts name none. UD-Q4_K_XL by its tensors (iq4_xs among its K-quants) is IQ4; a hub
+    // row's ternary label keeps BF16 activations, an FP8 file takes 8-bit ones, a GGUF type the
+    // table does not name makes the file Other.
+    namespace ch            = ninferno::product::choice;
+    pr::PlanSourceFacts xl  = gguf;
+    xl.shape.layer_formats  = {"bf16", "ggml_iq4_xs", "ggml_q4_k", "ggml_q6_k", "q8_g32_fp16"};
+    xl.shape.weight_formats = xl.shape.layer_formats;
+    const ch::QuantOption xl_option = pr::quant_option_of(xl, "UD-Q4_K_XL");
+    check(xl_option.weights == ch::WeightClass::IQ4 && xl_option.int8_route && !xl_option.nvfp4,
+          "UD-Q4_K_XL's iq4_xs tensors make it IQ4");
+    check(pr::quant_option_of(gguf, "UD-Q4_K_XL").weights == ch::WeightClass::KQuant &&
+              pr::quant_option_of(gguf, "Q8_0").weights == ch::WeightClass::Q8 &&
+              pr::quant_option_of(gguf, "Q3_K_M").weights == ch::WeightClass::Other,
+          "a hub row without its formats: its label's class");
+    check(!pr::quant_option_of(gguf, "TQ1_0").int8_route &&
+              !pr::quant_option_of(gguf, "Q2_0").int8_route &&
+              pr::quant_option_of(gguf, "Q4_K_M").int8_route &&
+              pr::quant_option_of(gguf, "the model's weights").int8_route &&
+              pr::quant_option_of(gguf, "NVFP4").nvfp4 && !pr::quant_option_of(gguf, "MXFP4").nvfp4,
+          "a hub row's routes from the formats its label names");
+    pr::PlanSourceFacts ternary = gguf, fp8 = gguf, unknown = gguf;
+    ternary.shape.weight_formats = {"bf16", "fp32", "ggml_tq1_0"};
+    fp8.shape.weight_formats     = {"bf16", "fp8_e4m3fn_row_bf16"};
+    unknown.shape.layer_formats  = {"ggml_q4_k", "ggml_q8_k"};
+    check(!pr::quant_option_of(ternary).int8_route && pr::quant_option_of(fp8).int8_route &&
+              pr::quant_option_of(unknown).weights == ch::WeightClass::Other,
+          "a file's routes and class from its formats");
 }
 
 // The KV codecs a start takes, from the engine's rules (product::kv_options): the family's codecs,

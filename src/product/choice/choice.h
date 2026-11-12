@@ -32,6 +32,7 @@
 
 #include "product/choice/choice_constants.h"
 
+#include "core/format_facts.h"
 #include "ninferno/types.h"
 
 #include <algorithm>
@@ -40,6 +41,8 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -304,11 +307,20 @@ struct QuantOption {
 // The card's generation as the per-generation tables name it ("ada", "gb20x", ...).
 [[nodiscard]] std::string_view generation_of(const CardFacts& card) noexcept;
 
-// The weight class of a quantization: from its weight formats where known (as
-// artifact::format_name spells them), else from its label (a hub row: Q4_K / Q5_K / Q6_K mixes;
-// Q8, Q8_0 and unsloth's Q8_K_XL, which is Q8_0 with 16-bit tensors). A K-quant mix may carry Q8_0
-// and 16-bit tensors; anything else is Other.
-[[nodiscard]] WeightClass weight_class_of(const std::vector<std::string>& formats, std::string_view label);
+// The weight class of a quantization's stored formats, by each one's scheduling class
+// (format_facts.h): a K-quant mix may carry Q8_0 and plain tensors, an IQ4 mix K-quant ones too;
+// any other format makes it Other, and plain words alone are Other.
+[[nodiscard]] WeightClass weight_class_of(std::span<const QType> formats) noexcept;
+
+// The formats a quantization's label names, for a hub row that has no tensor table: each format
+// the table spells (format_facts name, ggml's without its "ggml_": Q4_K_M and UD-Q4_K_XL name Q4_K,
+// IQ4_XS, MXFP4, BF16), ggml's Q8_0 and a bare Q8 (q8_g32_fp16), unsloth's Q8_K_XL / _L / _M / _S
+// (Q8_0 with 16-bit tensors). Not another engine's repacked layouts (Q4_K_R4, Q8_0_R8): none
+// where the label names no format.
+[[nodiscard]] std::optional<std::set<QType>> label_formats(std::string_view label);
+
+// A label's weight class: its formats' (label_formats), Other where it names none.
+[[nodiscard]] WeightClass label_class(std::string_view label);
 
 // Whether this card's generation measured the class's decode routes on two cards (kRowsEta).
 [[nodiscard]] bool class_measured(const CardFacts& card, WeightClass weights) noexcept;
