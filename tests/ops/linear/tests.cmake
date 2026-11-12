@@ -142,14 +142,16 @@ ninferno_add_op_test(ninferno_route_classes_test LABELS host
 # every served format, activation mode and width band has a family on the device's own
 # instructions, not only the scalar kernel or an emulated MMA; the known holes are listed in the
 # test with their reasons. The served modes are convert's kept_policy / head_policy under each
-# --activations mode (ninferno_convert). No GPU; skips (77) on an architecture the release does
-# not ship.
+# --activations mode (ninferno_convert). It reads no GPU's timing, but needs one visible: ggml's
+# matrix kernel reads the device's properties when it describes a route, as in the selector golden
+# test (without a device: cudaErrorNoDevice). Skips (77) on an architecture the release does not
+# ship.
 ninferno_add_op_test(ninferno_coverage_report_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_coverage_report.cpp"
   LIBRARIES ninferno_linear_test_support ninferno_convert)
 target_compile_definitions(ninferno_coverage_report_test PRIVATE
   NINFERNO_RELEASE_CUDA_ARCHS="$<JOIN:${NINFERNO_CUDA_ARCHS},$<COMMA>>")
-set_tests_properties(ninferno_coverage_report_test PROPERTIES LABELS host)
+set_tests_properties(ninferno_coverage_report_test PROPERTIES LABELS gpu)
 
 # The format traits table against the predicates it replaced, for every QType.
 ninferno_add_op_test(ninferno_format_traits_test LABELS host
