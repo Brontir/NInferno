@@ -361,11 +361,11 @@ void sections_read() {
     // (Q4_K, Q6_K) with one loop, two barriers per 128-value K tile and k_iter 16 x 32.
     // sm_70 has none: its snapshot is made with CUDA 12.8 (#762), and Volta takes no MMQ law.
     constexpr std::string_view kWithoutSections[] = {"70"};
-    int with_sections = 0;
+    int with_sections                             = 0;
     for (const auto arch : kf::snapshot_archs()) {
         const std::string name = "sm_" + std::string(arch);
-        const bool waived = std::find(std::begin(kWithoutSections), std::end(kWithoutSections),
-                                      arch) != std::end(kWithoutSections);
+        const bool waived      = std::find(std::begin(kWithoutSections), std::end(kWithoutSections),
+                                           arch) != std::end(kWithoutSections);
         for (const auto family : kf::kSectionFamilies) {
             const auto header = kf::section_header(arch, family);
             expect(header.has_value() != waived,
