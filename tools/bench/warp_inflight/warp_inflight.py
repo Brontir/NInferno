@@ -73,6 +73,19 @@ EARLIER_PROBES = {
 }
 W_GRID = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
 K_GRID = (1, 2, 4, 8)
+
+
+def all_in_flight(b_w_w1, inflight_bytes, l0_ns, latency_ns):
+    """Whether one warp alone had every load of the variant in flight at once (#757). A warp held
+    to fewer loads than its count issues the next one only once its first has returned, a DRAM
+    latency after it left, and that load returns a latency later: its step takes at least twice
+    the shortest DRAM latency (`latency_ns`, the ISA table's TLB-warm pointer chase, which the
+    streaming fetch never beats), and by Little's law at W = 1 (b_w = count x L0 / step, `l0_ns`
+    the run's own L0) it keeps at most count x L0 / (2 x latency). A reading above that refutes a
+    cap below the count. Not a fitted bound: the 2 is the two latencies, both facts measured. The
+    probe 3 rows: sm_70's ring4 (2121 B, bound 2612 B) and sm_120a's (1832 B, bound 2543 B) are
+    caps; sm_75 / sm_86 / sm_89's ring4 (3340-3448 B, bounds 2200-2370 B) are not."""
+    return b_w_w1 > inflight_bytes * l0_ns / (2.0 * latency_ns)
 MODES = ("free", "placed")
 COLUMNS = ("mode", "k", "variant", "inflight", "w", "gbps", "gbps_lo", "gbps_hi", "ns_fetch",
            "sm_mhz", "mib")
@@ -784,9 +797,14 @@ def cmd_show(a):
         for mode, p in s["p_gbps"].items():
             print(f"  {mode}: P {p:.2f} GB/s an SM ({s['p_bytes_per_clk'][mode]} B/clk)")
             for v, d in s["variants"].get(mode, {}).items():
+                cap = ""
+                if l0["table_ns"]:
+                    held = all_in_flight(d["b_w_w1"], d["warp_bytes_in_flight"], l0["own_ns"],
+                                         l0["table_ns"])
+                    cap = "; every load in flight at once" if held else "; a cap below the count"
                 print(f"    {v:7s} in flight {d['warp_bytes_in_flight']:5d} B a warp: b_w at W=1 "
                       f"{d['b_w_w1']:7.1f} B, linear to W={d['linear_to_w']} (b_w there "
-                      f"{d['b_w_at_linear_w']:.1f} B)")
+                      f"{d['b_w_at_linear_w']:.1f} B){cap}")
         for r in run["rows"]:
             if r["k"] == 1:
                 print(f"  {r['mode']:6s} {r['variant']:7s} W={r['w']:2d} {r['gbps']:8.3f} GB/s "

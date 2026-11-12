@@ -332,6 +332,17 @@ class WarpInflight(unittest.TestCase):
                 head, rows = wi.parse_run(f.read())
             self.assertIn(head["probe"], (wi.checked_in_probe(), *wi.EARLIER_PROBES), name)
             self.assertTrue(any(r["variant"] == "ring8" for r in rows), name)
+            # #757: on sm_75, sm_86 and sm_89 a lone warp has all 16 ring8 loads in flight at
+            # once (no cap below the count), whatever share of its count it keeps.
+            run = wi.run_of(head, rows, name, wi.DEFAULT_ISA_TABLE)
+            d = run["summary"]["variants"]["free"]["ring8"]
+            self.assertTrue(wi.all_in_flight(d["b_w_w1"], d["warp_bytes_in_flight"],
+                                             run["l0"]["own_ns"], run["l0"]["table_ns"]), name)
+        # The probe 3 readings that are caps (#735's sm_rate_facts rows): sm_70's and sm_120a's
+        # ring4 at one warp, with each run's own L0 and the ISA latency; and one that is no cap.
+        self.assertFalse(wi.all_in_flight(2121.3, 4096, 408.1, 320.0))
+        self.assertFalse(wi.all_in_flight(1832.2, 4096, 373.6, 300.875))
+        self.assertTrue(wi.all_in_flight(3341.5, 4096, 252.9, 234.0))
 
     def test_peak_in_flight(self):
         ld = "LDG.E.EF.128 R{}, [R2.64+0x{:x}]"
