@@ -1625,7 +1625,12 @@ PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
     // A Gemma 4 row whose label names MXFP4 banks, its header not read (a plan that reads none:
     // the catalog, /api/quants): the kept site its header would not tell either (NVFP4, BF16 or
     // Q8 by the loader's probe), so an estimate on it is Transferred as a read one's is.
-    if (!row.listing.table && out.model.model_type == "gemma4_text") {
+    // A table that read neither a route nor a format (the UI's past-128-MiB or failed read caches
+    // an engaged empty one) is no header either (codex on #833).
+    const bool header_read = own.expert_prefill != runtime::ExpertPrefill::Unknown ||
+                             own.expert_prefill_int8 != runtime::ExpertPrefill::Unknown ||
+                             !own.weight_formats.empty();
+    if (!header_read && out.model.model_type == "gemma4_text") {
         const std::optional<std::set<QType>> named = choice::label_formats(row.listing.quant);
         out.model.expert_prefill_assumed           = named && named->count(QType::MXFP4) > 0;
     }

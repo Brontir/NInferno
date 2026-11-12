@@ -715,6 +715,12 @@ int gemma4() {
         failures += check(bare_mx.model.expert_prefill == rt::ExpertPrefill::Unknown &&
                               bare_mx.model.expert_prefill_assumed,
                           "unread Gemma 4 MXFP4 row: no route, assumed by its label");
+        // An engaged but empty table (the UI caches one for a header past 128 MiB): unread too.
+        pr::QuantRow empty_mx     = row_of(mxfp4, "MXFP4_MOE");
+        empty_mx.listing.table    = pr::GgufTensorTable{};
+        const auto empty_table_mx = pr::row_facts(q4_0, empty_mx);
+        failures += check(empty_table_mx.model.expert_prefill_assumed,
+                          "Gemma 4 MXFP4 row with an empty table: assumed by its label");
         // Through the quantization the choice prices (linear_prefill: an assumed MoE prefill is
         // Transferred on every path, the share path of Unknown banks too).
         failures += check(
