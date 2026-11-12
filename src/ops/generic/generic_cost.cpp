@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 namespace ninferno::ops::detail::generic {
 
@@ -244,10 +245,13 @@ struct RmmaKept {
     int registers;
     double local_bytes;
     double static_smem;
+    std::optional<kernel_facts::LoopCounts> loop; // the K loop's counts (#613), where known
 };
 
+// `counted_law`: the price reads the kernel's K loop (Calibration::rmma_counted_law), so the loop
+// is kept; off, it is not (nothing reads it).
 std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue epilogue,
-                                  std::int32_t tokens, std::int32_t rows) {
+                                  std::int32_t tokens, std::int32_t rows, bool counted_law) {
     std::optional<KernelResources> r;
     try {
         r = rmma_resources(schedule, weight, epilogue, tokens, rows);
@@ -255,10 +259,26 @@ std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue e
     if (!r) return std::nullopt;
     note_rmma_fact_read(RmmaFactRead{weight.qtype, schedule, epilogue, *r}); // never throws
     return RmmaKept{r->registers, static_cast<double>(r->local_bytes),
-                    static_cast<double>(r->static_smem)};
+                    static_cast<double>(r->static_smem),
+                    counted_law ? std::move(r->loop) : std::nullopt};
 }
 
+// The counted register-MMA terms (rmma_counted_terms.h, #613 PR-7a) in place of the fitted spill
+// and the weight-only tensor term: route_cost::kRmmaCountedLaw says which law this binary prices
+// (false until the A/B of the counted law; off, the price is golden-equal to the fitted one), and a
+// test overrides it for its process. price_routes hands it to price_register_mma
+// (Calibration::rmma_counted_law) with the kernel's loop (RegisterMmaKernel::loop).
+std::optional<bool> g_rmma_counted_law_override;
+
 } // namespace
+
+bool rmma_counted_law() noexcept {
+    return g_rmma_counted_law_override.value_or(route_cost::kRmmaCountedLaw);
+}
+
+void rmma_counted_law_for_test(std::optional<bool> law) noexcept {
+    g_rmma_counted_law_override = law;
+}
 
 bool a16_route_priced(Route route, bool bf16_mma_native) {
     if (bf16_mma_native) return true;
@@ -308,7 +328,12 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     }
     const bool emulated       = !d.features.mma_bf16_native;
     const kr::ChipFacts chip  = kr::chip_facts_of(d);
-    const kr::Calibration cal = kr::calibration_of(d.major, d.minor);
+    // The binary's register-MMA law, or a test's override of it (rmma_counted_law).
+    const kr::Calibration cal = [&] {
+        kr::Calibration c  = kr::calibration_of(d.major, d.minor);
+        c.rmma_counted_law = rmma_counted_law();
+        return c;
+    }();
     const double n = problem.n, k = problem.k;
     // SwiGLU: every output row multiplies its gate and its up row; `bpw` (bytes_per_weight) holds
     // both rows' bytes, so the bytes of a CTA stay rows x K x bpw.
@@ -347,7 +372,8 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         if (!rmma_schedule_launchable(i)) continue;
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         if (!a16_route_priced(r, !emulated)) continue;
-        const auto kept = heavy_decoder ? rmma_kept(i, weight, problem.epilogue, tokens, problem.n)
+        auto kept       = heavy_decoder ? rmma_kept(i, weight, problem.epilogue, tokens, problem.n,
+                                                    cal.rmma_counted_law)
                                         : std::optional<RmmaKept>{};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
         kr::RegisterMmaKernel kernel;
@@ -366,6 +392,7 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
             kernel.registers    = kept->registers;
             kernel.local_bytes  = kept->local_bytes;
             kernel.shared_bytes = kept->static_smem;
+            kernel.loop         = std::move(kept->loop); // kept under the counted law only
         }
         offer(r, kr::price_register_mma(chip, cal, call, kernel).total);
     }
