@@ -35,10 +35,15 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace ninferno::artifact {
+struct Directory;
+} // namespace ninferno::artifact
 
 namespace ninferno::models::qwen3_5::detail {
 struct SequencePlanImpl;
@@ -370,6 +375,10 @@ struct PlanModelFacts {
     bool offline_bytes = false;
     std::string offline_reason;
     models::StateShape state;
+    // The parsed directory of the artifact the facts are read from (plan_facts_of_directory, a
+    // Qwen 3.5 artifact's), null for any other source: what the family's workspace query binds
+    // the model over, as a start binds it (#615; its payload is never read). Shared: facts copy.
+    std::shared_ptr<const artifact::Directory> artifact_directory;
 
     // Whether the shape is enough to plan: a context and some attention.
     [[nodiscard]] bool known() const noexcept {

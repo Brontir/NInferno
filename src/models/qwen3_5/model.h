@@ -22,6 +22,15 @@ struct InstanceInfo {
 
 class LoadPlan;
 
+// What a linear reads of a bound weight's use `use_index` (Model::input): its view, the policy
+// its artifact records at the run's activations (models::effective_policy; under
+// --activations int8 a head or embedding recorded A16Only keeps BF16 activations) and its
+// activation divisor. Without `use_index` the weight must have one use.
+[[nodiscard]] ops::WeightInput
+bound_weight_input(const BoundWeight& parameter, std::size_t use_index, const LoadOptions& options);
+[[nodiscard]] ops::WeightInput bound_weight_input(const BoundWeight& parameter,
+                                                  const LoadOptions& options);
+
 class Model {
 public:
     ~Model();

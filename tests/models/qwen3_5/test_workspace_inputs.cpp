@@ -12,10 +12,20 @@
 //   without the weights can describe;
 // - the arenas the plan's features ask for are sized, the others are 0, and the widest is the
 //   capacity (no Vision region: qwen3_5_workspace_plan adds it);
-// - a plan whose features read a part the view does not carry is refused.
+// - a plan whose features read a part the view does not carry is refused;
+// - the plan without the weights (#615 W2): the same model as a converted artifact's directory, in
+//   the same packing, read by --plan's facts (product::plan_facts_of_directory), sizes the dry
+//   run's rung (runtime::plan_rung_bytes, the workspace query registered as ninferno-serve
+//   registers it) at the start's capacity to the byte, with "start" as its basis; facts without
+//   the directory (a config.json, a GGUF header) keep the formula and say so.
 // The capacity queries answer for a substituted board (the RTX 5090, the RTX 4060 Ti).
 
+#include "artifact/formats.h"
+#include "artifact/schema.h"
 #include "core/device_class.h"
+#include "product/plan/plan_facts.h"
+#include "runtime/engine/plan_dry_run.h"
+#include "runtime/engine/plan_workspace.h"
 #include "core/weight_view.h"
 #include "models/qwen3_5/config.h"
 #include "models/qwen3_5/execution/parameter_types.h"
@@ -46,6 +56,8 @@ using namespace ninferno;
 namespace qwen   = ninferno::models::qwen3_5;
 namespace ex     = ninferno::models::qwen3_5::execution;
 namespace detail = ninferno::models::qwen3_5::detail;
+namespace art    = ninferno::artifact;
+namespace rt     = ninferno::runtime;
 
 int failures = 0;
 
@@ -254,6 +266,218 @@ private:
     Described d_;
 };
 
+// The same model as a converted artifact's directory, without its payload: Forms' parents as its
+// objects (each bank one object where the layout packs it, else one object a tensor), every
+// parameter a load binds (load/text.cpp, load/mtp.cpp, bind_proposal) as a row range of its
+// object with the Uses it reads, each recording the converter's policy for its format, the MTP
+// component and an indexed proposal head of `proposal_rows`, and the text config as the converter
+// writes it (convert/qwen3_5.cpp text_config).
+class DirectoryOf {
+public:
+    DirectoryOf(const qwen::Config& config, const Layout& layout) : c_(config), f_(layout) {}
+
+    art::Directory build(std::uint32_t proposal_rows) {
+        const std::uint64_t h = c_.text.hidden_size, v = c_.text.vocab_size;
+        const bool moe               = std::holds_alternative<qwen::MoeConfig>(c_.text.ffn);
+        d_.components["text"].config = text_config(moe);
+        d_.components["mtp"].config =
+            art::Json{{"architectures", art::Json::array({moe ? "Qwen3_5MoeMTP" : "Qwen3_5MTP"})}};
+        d_.components["mtp"].target = "text";
+        object(f_.head, h, {{"text/token_embedding", v, {}}});
+        object(f_.head, h, {{"text/output_head", v, {"text/final_hidden", "mtp/final_hidden"}}});
+        direct("text/final_norm", {h});
+        for (std::size_t i = 0; i < c_.text.layer_types.size(); ++i) {
+            block("text/layers/" + std::to_string(i) + "/", c_.text.layer_types[i]);
+        }
+        object(f_.linear, 2 * h, {{"mtp/input_projection", h, {"mtp/stem_input"}}});
+        for (const char* norm : {"mtp/embedding_norm", "mtp/hidden_norm", "mtp/final_norm"}) {
+            direct(norm, {h});
+        }
+        block("mtp/layers/0/", qwen::MixerKind::FullAttention);
+        art::Proposal proposal;
+        proposal.indexed               = true;
+        proposal.rows                  = proposal_rows;
+        d_.components["text"].proposal = proposal;
+        object(f_.head, h, {{"proposal/head", proposal_rows, {"mtp/final_hidden"}}});
+        direct("proposal/token_ids", {proposal_rows}, QType::INT32);
+        return std::move(d_);
+    }
+
+private:
+    struct Member {
+        std::string name;
+        std::uint64_t rows = 0;
+        std::vector<std::string> inputs;
+    };
+
+    // One object of the members' rows stacked, `k` wide, in `qtype`: each member a row range.
+    void object(QType qtype, std::uint64_t k, const std::vector<Member>& members) {
+        std::uint64_t total = 0;
+        for (const Member& m : members) { total += m.rows; }
+        const std::vector<std::uint64_t> shape{total, k};
+        add(qtype, shape, members, k);
+    }
+
+    // A bank as one object where the layout packs it, else one object a member.
+    void inputs(bool packed, QType qtype, std::uint64_t k, const std::vector<Member>& members) {
+        if (packed) {
+            object(qtype, k, members);
+            return;
+        }
+        for (const Member& m : members) { object(qtype, k, {m}); }
+    }
+
+    // A parameter a load reads as a Tensor (a norm, a convolution, the ids): its own object.
+    void direct(const std::string& name, std::vector<std::uint64_t> shape,
+                QType qtype = QType::BF16) {
+        std::uint64_t elements = 1;
+        for (const std::uint64_t d : shape) { elements *= d; }
+        add(qtype, shape, {{name, elements, {}}}, 1);
+    }
+
+    void add(QType qtype, const std::vector<std::uint64_t>& shape,
+             const std::vector<Member>& members, std::uint64_t row_elements) {
+        const QuantLayout layout = default_weight_layout(qtype);
+        const WeightGeometry g   = weight_geometry(qtype, layout, shape);
+        offset_                  = (offset_ + g.alignment - 1) / g.alignment * g.alignment;
+        art::TensorObject t;
+        t.id     = members.front().name + "#object";
+        t.shape  = shape;
+        t.format = std::string(art::format_name(qtype));
+        t.layout = std::string(art::layout_name(layout));
+        t.offset = offset_;
+        t.bytes  = g.bytes;
+        offset_ += g.bytes;
+        const art::ObjectHandle handle{d_.objects.size()};
+        d_.objects.emplace_back(t);
+        d_.object_index[t.id] = handle;
+        std::uint64_t row     = 0;
+        for (const Member& m : members) {
+            art::Binding b;
+            b.whole_object = members.size() == 1;
+            b.elements     = m.rows * row_elements;
+            b.parts        = {art::Part{handle, row * row_elements, (row + m.rows) * row_elements}};
+            row += m.rows;
+            d_.bindings[m.name] = b;
+            for (const std::string& input : m.inputs) {
+                art::Use use;
+                use.parameter             = m.name;
+                use.input                 = input;
+                const ops::LinearPolicy p = policy_of(qtype);
+                use.activation_policy =
+                    p == ops::LinearPolicy::A16Only   ? art::ActivationPolicy::A16Only
+                    : p == ops::LinearPolicy::AllowA4 ? art::ActivationPolicy::AllowA4
+                                                      : art::ActivationPolicy::AllowA8;
+                d_.uses[{m.name, input}] = use;
+            }
+        }
+    }
+
+    void block(const std::string& p, qwen::MixerKind kind) {
+        const std::uint64_t h = c_.text.hidden_size;
+        direct(p + "input_norm", {h});
+        direct(p + "post_attention_norm", {h});
+        const std::vector<std::string> mixer{p + "mixer_input"};
+        if (kind == qwen::MixerKind::FullAttention) {
+            const auto& a         = *c_.text.attention;
+            const std::uint64_t q = a.query_width(), kv = a.key_width();
+            inputs(f_.packed, f_.linear, h,
+                   {{p + "attention/query", q, mixer},
+                    {p + "attention/key", kv, mixer},
+                    {p + "attention/gate", q, mixer},
+                    {p + "attention/value", kv, mixer}});
+            direct(p + "attention/query_norm", {a.head_dim});
+            direct(p + "attention/key_norm", {a.head_dim});
+            object(f_.linear, q, {{p + "attention/output", h, {p + "attention/gated_output"}}});
+        } else {
+            const auto& g          = *c_.text.gdn;
+            const std::uint64_t kw = g.key_width(), vw = g.value_width(),
+                                heads = g.linear_num_value_heads;
+            inputs(f_.packed, f_.linear, h,
+                   {{p + "gdn/query", kw, mixer},
+                    {p + "gdn/key", kw, mixer},
+                    {p + "gdn/value", vw, mixer},
+                    {p + "gdn/z", vw, mixer}});
+            inputs(
+                f_.packed, f_.control, h,
+                {{p + "gdn/a_projection", heads, mixer}, {p + "gdn/b_projection", heads, mixer}});
+            direct(p + "gdn/a_log", {heads}, QType::FP32);
+            direct(p + "gdn/dt_bias", {heads}, QType::FP32);
+            direct(p + "gdn/convolution", {g.linear_conv_kernel_dim, g.conv_channels()});
+            direct(p + "gdn/norm", {g.linear_value_head_dim});
+            object(f_.linear, vw, {{p + "gdn/output", h, {p + "gdn/gated_output"}}});
+        }
+        const std::vector<std::string> in{p + "ffn_input"};
+        if (const auto* dense = std::get_if<qwen::DenseConfig>(&c_.text.ffn)) {
+            const std::uint64_t i = dense->intermediate_size;
+            inputs(f_.packed, f_.linear, h, {{p + "mlp/gate", i, in}, {p + "mlp/up", i, in}});
+            object(f_.linear, i, {{p + "mlp/down", h, {p + "mlp/product"}}});
+            return;
+        }
+        const auto& m         = std::get<qwen::MoeConfig>(c_.text.ffn);
+        const std::uint64_t e = m.num_experts, ff = m.moe_intermediate_size,
+                            s = m.shared_expert_intermediate_size;
+        inputs(f_.packed, QType::BF16, h,
+               {{p + "moe/router", e, in}, {p + "moe/shared_score", 1, in}});
+        std::vector<Member> gate_up, down;
+        for (std::uint64_t x = 0; x < e; ++x) {
+            const std::string ep = p + "moe/experts/" + std::to_string(x) + "/";
+            gate_up.push_back({ep + "gate", ff, in});
+            gate_up.push_back({ep + "up", ff, in});
+            down.push_back({ep + "down", h, {ep + "product"}});
+        }
+        object(f_.expert_up, h, gate_up);
+        object(f_.expert_down, ff, down);
+        object(f_.linear, h, {{p + "moe/shared/gate", s, in}, {p + "moe/shared/up", s, in}});
+        object(f_.linear, s, {{p + "moe/shared/down", h, {p + "moe/shared/product"}}});
+    }
+
+    art::Json text_config(bool moe) const {
+        const auto& t    = c_.text;
+        art::Json layers = art::Json::array();
+        for (const qwen::MixerKind kind : t.layer_types) {
+            layers.push_back(kind == qwen::MixerKind::FullAttention ? "full_attention"
+                                                                    : "linear_attention");
+        }
+        art::Json out = {{"architectures",
+                          art::Json::array({moe ? "Qwen3_5MoeForCausalLM" : "Qwen3_5ForCausalLM"})},
+                         {"model_type", moe ? "qwen3_5_moe_text" : "qwen3_5_text"},
+                         {"hidden_size", t.hidden_size},
+                         {"vocab_size", t.vocab_size},
+                         {"num_hidden_layers", t.num_hidden_layers},
+                         {"max_position_embeddings", t.max_position_embeddings},
+                         {"tie_word_embeddings", false},
+                         {"rms_norm_eps", 1e-6},
+                         {"layer_types", layers},
+                         {"num_attention_heads", t.attention->num_attention_heads},
+                         {"num_key_value_heads", t.attention->num_key_value_heads},
+                         {"head_dim", t.attention->head_dim},
+                         {"rope_parameters",
+                          {{"rope_theta", 10000000.0},
+                           {"partial_rotary_factor", 0.25},
+                           {"mrope_section", art::Json::array({11, 11, 10})}}},
+                         {"linear_num_key_heads", t.gdn->linear_num_key_heads},
+                         {"linear_key_head_dim", t.gdn->linear_key_head_dim},
+                         {"linear_num_value_heads", t.gdn->linear_num_value_heads},
+                         {"linear_value_head_dim", t.gdn->linear_value_head_dim},
+                         {"linear_conv_kernel_dim", t.gdn->linear_conv_kernel_dim}};
+        if (const auto* m = std::get_if<qwen::MoeConfig>(&t.ffn)) {
+            out["num_experts"]                     = m->num_experts;
+            out["num_experts_per_tok"]             = m->num_experts_per_tok;
+            out["moe_intermediate_size"]           = m->moe_intermediate_size;
+            out["shared_expert_intermediate_size"] = m->shared_expert_intermediate_size;
+        } else {
+            out["intermediate_size"] = std::get<qwen::DenseConfig>(t.ffn).intermediate_size;
+        }
+        return out;
+    }
+
+    const qwen::Config& c_;
+    Layout f_;
+    art::Directory d_;
+    std::uint64_t offset_ = 0;
+};
+
 std::vector<qwen::MixerKind> hybrid_layers(std::uint32_t layers) {
     std::vector<qwen::MixerKind> out;
     for (std::uint32_t i = 0; i < layers; ++i) {
@@ -451,14 +675,50 @@ void run(const Case& k) {
             check(refused, k.name + ": an optimized-head plan without the head is refused");
         }
     }
+
+    // The plan without the weights (#615 W2): the same model as an artifact's directory, its
+    // facts as --plan reads them, the dry run's rung at the case's options and context.
+    const art::Directory directory = DirectoryOf(config, k.layout).build(kProposalRows);
+    const rt::PlanModelFacts facts = product::plan_facts_of_directory(directory, k.name).model;
+    check(facts.offline_bytes && facts.artifact_directory != nullptr,
+          k.name + ": the artifact's facts lay out its state and keep its directory (" +
+              facts.offline_reason + ")");
+    rt::PlanRung rung;
+    rung.max_context   = k.options.max_context;
+    rung.prefill_chunk = k.options.prefill_chunk;
+    const auto dry = rt::plan_rung_bytes(facts, rung, k.options, k.options.max_concurrency, false);
+    // The same facts without the directory: a config.json's or a GGUF header's.
+    rt::PlanModelFacts bare = facts;
+    bare.artifact_directory.reset();
+    const auto formula =
+        rt::plan_rung_bytes(bare, rung, k.options, k.options.max_concurrency, false);
+    std::cout << "  --plan workspace " << dry.workspace << " (" << dry.workspace_basis
+              << "), the formula's " << formula.workspace << " (" << formula.workspace_basis
+              << ")\n";
+    check(dry.workspace_basis.rfind("start", 0) == 0,
+          k.name + ": the dry run sizes the workspace by the start's planner (" +
+              dry.workspace_basis + ")");
+    check(dry.workspace == start.capacity,
+          k.name + ": the dry run's workspace " + std::to_string(dry.workspace) +
+              " is the start's capacity " + std::to_string(start.capacity));
+    check(formula.workspace_basis.rfind("formula: ", 0) == 0,
+          k.name + ": facts without the artifact's bindings keep the formula and say why (" +
+              formula.workspace_basis + ")");
+    // The rest of the rung is the start's whatever sizes the workspace.
+    check(dry.total() - dry.workspace == formula.total() - formula.workspace,
+          k.name + ": only the workspace differs");
 }
 
 } // namespace
 
 int main() {
     try {
+        // The plan's workspace query, as ninferno-serve registers it.
+        rt::register_plan_workspace_queries();
         const DeviceClass rtx5090   = board(0x2B85, 12, 0, 170, 96);
         const DeviceClass rtx4060ti = board(0x2805, 8, 9, 34, 32);
+        const DeviceClass rtx4070ti = board(0x2782, 8, 9, 60, 48);
+        const DeviceClass rtx2080ti = board(0x1E07, 7, 5, 68, 5);
         const Layout converter_q8{};
         // A GGUF: one parent a tensor (the generic segmented projections), K-quant experts (the
         // generic MoE), a Q8_0 control.
@@ -490,6 +750,16 @@ int main() {
             {"Qwen3.6-35B-A3B GGUF, RTX 4060 Ti, no speculation, 1 stream", qwen36_35b_a3b, gguf,
              rtx4060ti, options_of(32768, 2048, 1, SpeculativeBackend::None, ProposalHead::Full),
              "segmented/segmented/segmented/generic moe"},
+            // The boards of the lab's --plan against the start's log (#615 W2).
+            {"Qwen3.5-9B Q8_0, RTX 4070 Ti, MTP 3 optimized head, 2 streams", qwen35_9b,
+             converter_q8, rtx4070ti,
+             options_of(32768, 2048, 2, SpeculativeBackend::Mtp, ProposalHead::Optimized), nine_b},
+            {"Qwen3.5-9B Q8_0, RTX 2080 Ti, no speculation, 1 stream", qwen35_9b, converter_q8,
+             rtx2080ti, options_of(16384, 1024, 1, SpeculativeBackend::None, ProposalHead::Full),
+             nine_b},
+            {"Qwen3.6-35B-A3B Q8, RTX 2080 Ti, MTP 3, 1 stream", qwen36_35b_a3b, converter_q8,
+             rtx2080ti, options_of(16384, 1024, 1, SpeculativeBackend::Mtp, ProposalHead::Full),
+             a3b_q8},
         };
         for (const Case& k : cases) { run(k); }
     } catch (const std::exception& error) {

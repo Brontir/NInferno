@@ -1619,6 +1619,10 @@ PlanSourceFacts plan_facts_of_directory(const artifact::Directory& dir, const st
     out.model.head_format         = bound.head_format;
     if (out.model.hidden != 0) { out.model.head_rows = bound.head_elements / out.model.hidden; }
     split_linears_by_format(out.model.linears, bound.roles);
+    // The directory itself for the family whose workspace query binds the model over it (#615).
+    if (out.model.model_type == "qwen3_5_text" || out.model.model_type == "qwen3_5_moe_text") {
+        out.model.artifact_directory = std::make_shared<const artifact::Directory>(dir);
+    }
     return out;
 }
 
@@ -1659,6 +1663,7 @@ PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
         facts.model.expert_prefill_int8    = runtime::ExpertPrefill::Unknown;
         facts.model.expert_prefill_assumed = false;
         facts.model.expert_layers.clear();
+        facts.model.artifact_directory.reset(); // its bindings are this file's too
     }
     facts.model.weight_bytes      = bytes;
     facts.model.weight_basis      = basis;

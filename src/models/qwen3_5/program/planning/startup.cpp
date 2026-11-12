@@ -294,23 +294,32 @@ StateShape qwen3_5_state_shape(const qwen3_5::Config& config, std::int32_t publi
     return out;
 }
 
-WorkspacePlan qwen3_5_workspace_plan(const execution::Parameters& parameters,
-                                     const SequencePlanImpl& plan) {
-    // The text, MTP, proposal and drafter arenas over the start's own prepared forms
-    // (workspace_plan.h), then the Vision encoder's region above them.
+WorkspacePlan prepared_workspace_plan(const qwen3_5::Config& config, std::int32_t public_tokens,
+                                      const execution::PreparedParameters& forms,
+                                      const SequencePlanImpl& plan) {
+    // The text, MTP, proposal and drafter arenas over the prepared forms (workspace_plan.h), then
+    // the Vision encoder's region above them.
     WorkspacePlan out = build_workspace_plan(
-        workspace_inputs(parameters.model.config(),
-                         dimension(parameters.model.resources().public_token_count),
-                         parameters.text, parameters.mtp, parameters.proposal, parameters.draft),
+        workspace_inputs(config, public_tokens, forms.text, forms.mtp, forms.proposal, forms.draft),
         plan);
     if (plan.features.vision) {
+        if (!config.vision || !forms.vision) {
+            throw std::invalid_argument("workspace inputs: a Vision plan without the encoder");
+        }
         const std::uint32_t merged = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(plan.capacity, kMaximumVisionItemTokens));
-        out.vision = execution::VisionContext::plan_workspace(
-            *parameters.model.config().vision, *parameters.vision, merged, out.general_capacity);
+        out.vision = execution::VisionContext::plan_workspace(*config.vision, *forms.vision, merged,
+                                                              out.general_capacity);
         out.capacity = std::max(out.capacity, out.vision->capacity_bytes);
     }
     return out;
+}
+
+WorkspacePlan qwen3_5_workspace_plan(const execution::Parameters& parameters,
+                                     const SequencePlanImpl& plan) {
+    return prepared_workspace_plan(parameters.model.config(),
+                                   dimension(parameters.model.resources().public_token_count),
+                                   parameters, plan);
 }
 
 std::unique_ptr<qwen3_5::detail::SequencePlannerImpl>
