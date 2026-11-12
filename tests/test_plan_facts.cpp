@@ -7,6 +7,7 @@
 
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_choice.h"
+#include "product/plan/plan_quants.h"
 #include "product/plan/plan_speculation.h"
 
 #include "convert/ggml_quants.h"
@@ -574,8 +575,10 @@ int gemma4() {
                   "gemma4 gguf: MXFP4 experts with a divisor, the kept route, assumed");
     }
     // `linears`: the ggml type of the linears beside the banks (Q8_0: the tiles price the prefill;
-    // another: prefill_linears_seconds gives 0 and the share path stands).
-    const auto gemma4_mx_gguf = [&](std::uint32_t linears) {
+    // another: prefill_linears_seconds gives 0 and the share path stands). `banks`: the experts'
+    // ggml type, at the same stored bytes whatever it is.
+    const auto gemma4_mx_gguf = [&](std::uint32_t linears,
+                                    std::uint32_t banks = ninferno::convert::ggml::MXFP4) {
         json moe_md                                 = md;
         moe_md["gemma4.expert_count"]               = 128;
         moe_md["gemma4.expert_used_count"]          = 8;
@@ -584,10 +587,10 @@ int gemma4() {
         mx.metadata = moe_md;
         for (int b = 0; b < 60; ++b) {
             const std::string blk = "blk." + std::to_string(b) + ".";
-            mx.tensors.push_back(tensor(blk + "ffn_gate_up_exps.weight", {5376, 1408, 128},
-                                        ninferno::convert::ggml::MXFP4, 200));
-            mx.tensors.push_back(tensor(blk + "ffn_down_exps.weight", {704, 5376, 128},
-                                        ninferno::convert::ggml::MXFP4, 100));
+            mx.tensors.push_back(
+                tensor(blk + "ffn_gate_up_exps.weight", {5376, 1408, 128}, banks, 200));
+            mx.tensors.push_back(
+                tensor(blk + "ffn_down_exps.weight", {704, 5376, 128}, banks, 100));
             mx.tensors.push_back(tensor(blk + "attn_q.weight", {5376, 8192}, linears, 50));
         }
         return pr::plan_facts_of_gguf(mx, 999999);
@@ -647,6 +650,62 @@ int gemma4() {
                 ninferno::product::choice::prefill_linears_seconds(model, card, q, 2048) == 0 &&
                 f.prefill > 0 && f.basis == ninferno::product::choice::SpeedBasis::Transferred,
             "gemma4 gguf e2e, Q4_K linears: the share path, Transferred");
+    }
+    // Two quantizations of equal tensor bytes (#775): one of MXFP4 experts (A16, MXFP4 under
+    // int8, assumed), one of Q4_0 experts (Int8 both ways, known). A row reads its own header's
+    // prefill route, never the parsed file's at equal bytes; a row without its table has none.
+    {
+        using Banks      = ninferno::product::choice::ExpertBanks;
+        const auto mxfp4 = gemma4_mx_gguf(ninferno::convert::ggml::Q8_0);
+        const auto q4_0 =
+            gemma4_mx_gguf(ninferno::convert::ggml::Q8_0, ninferno::convert::ggml::Q4_0);
+        failures += check(mxfp4.model.weight_bytes == q4_0.model.weight_bytes &&
+                              q4_0.model.weight_basis == rt::WeightBasis::GgufTensors,
+                          "equal-bytes rows: the two files' tensors weigh the same");
+        failures += check(q4_0.model.expert_prefill == rt::ExpertPrefill::Int8 &&
+                              q4_0.model.expert_prefill_int8 == rt::ExpertPrefill::Int8 &&
+                              !q4_0.model.expert_prefill_assumed,
+                          "equal-bytes rows: Q4_0 experts prefill Int8, known");
+        const auto row_of = [](const pr::PlanSourceFacts& own, const std::string& quant) {
+            pr::QuantRow row;
+            row.listing.format = "gguf";
+            row.listing.quant  = quant;
+            row.listing.table  = pr::gguf_tensor_table(own);
+            row.weight_bytes   = row.listing.table ? row.listing.table->tensor_bytes : 0;
+            row.basis          = rt::WeightBasis::GgufTensors;
+            return row;
+        };
+        const ninferno::product::choice::CardFacts card =
+            pr::choice_card_of(pr::gpu_key_of(rtx4090));
+        ninferno::product::choice::Candidate fast;
+        fast.kv               = ninferno::KvCacheStorage::BFloat16;
+        fast.chunk            = 2048;
+        const auto prefill_of = [&](const pr::PlanSourceFacts& facts, const std::string& quant) {
+            return ninferno::product::choice::speed_of(pr::choice_model_of(facts), card,
+                                                       pr::quant_option_of(facts, quant), fast, 1,
+                                                       4096, 2048)
+                .prefill;
+        };
+        // The Q4_0 row beside the parsed MXFP4 file, and the reverse.
+        const auto q4_row = pr::row_facts(mxfp4, row_of(q4_0, "Q4_0"));
+        const auto q4     = pr::quant_option_of(q4_row, "Q4_0");
+        failures += check(q4.expert_banks == Banks::Int8 && q4.expert_banks_int8 == Banks::Int8 &&
+                              !q4.expert_banks_assumed,
+                          "equal-bytes rows: the Q4_0 row's own route, not the parsed MXFP4's");
+        const auto mx_row = pr::row_facts(q4_0, row_of(mxfp4, "MXFP4"));
+        const auto mx     = pr::quant_option_of(mx_row, "MXFP4");
+        failures += check(mx.expert_banks == Banks::A16 && mx.expert_banks_int8 == Banks::Mxfp4 &&
+                              mx.expert_banks_assumed,
+                          "equal-bytes rows: the MXFP4 row's own route, int8 and assumed");
+        failures += check(prefill_of(q4_row, "Q4_0") != prefill_of(mx_row, "MXFP4"),
+                          "equal-bytes rows: two prefill estimates");
+        pr::QuantRow unread = row_of(q4_0, "Q4_0");
+        unread.listing.table.reset();
+        const auto bare = pr::row_facts(mxfp4, unread).model;
+        failures += check(bare.expert_prefill == rt::ExpertPrefill::Unknown &&
+                              bare.expert_prefill_int8 == rt::ExpertPrefill::Unknown &&
+                              !bare.expert_prefill_assumed,
+                          "equal-bytes rows: a row without its table, no route");
     }
     const json config = {{"architectures", {"Gemma4ForConditionalGeneration"}},
                          {"text_config",

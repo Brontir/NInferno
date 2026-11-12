@@ -1133,6 +1133,70 @@ void test_proposal_bytes_per_quant() {
         check(table && table->expert_layers.size() == 1 &&
                   table->expert_layers[0].gate_up_format == "ggml_q4_k",
               "a head read's table keeps its routed layers");
+        // The banks' prefill route likewise (#775): the row's own table's, never the shape's at
+        // equal bytes; a row without its table has none (Unknown: the MoE rows price the whole).
+        pr::PlanSourceFacts routed          = kinds;
+        routed.model.expert_prefill         = rt::ExpertPrefill::Int8;
+        routed.model.expert_prefill_int8    = rt::ExpertPrefill::Int8;
+        routed.model.expert_prefill_assumed = false;
+        pr::QuantRow bare                   = same_bytes;
+        bare.listing.table.reset();
+        const auto bare_facts = pr::row_facts(routed, bare).model;
+        check(bare_facts.expert_prefill == rt::ExpertPrefill::Unknown &&
+                  bare_facts.expert_prefill_int8 == rt::ExpertPrefill::Unknown &&
+                  !bare_facts.expert_prefill_assumed,
+              "a row of the shape's bytes without its table: no prefill route of the shape's");
+        pr::QuantRow own_route                          = same_bytes;
+        own_route.listing.table->expert_prefill         = rt::ExpertPrefill::A16;
+        own_route.listing.table->expert_prefill_int8    = rt::ExpertPrefill::Mxfp4;
+        own_route.listing.table->expert_prefill_assumed = true;
+        const auto own_facts                            = pr::row_facts(routed, own_route).model;
+        check(own_facts.expert_prefill == rt::ExpertPrefill::A16 &&
+                  own_facts.expert_prefill_int8 == rt::ExpertPrefill::Mxfp4 &&
+                  own_facts.expert_prefill_assumed,
+              "a row of the shape's bytes with its table: its own prefill, int8 and assumed");
+        // An assumed shape does not mark a row whose own banks are read (the flag is the row's).
+        pr::PlanSourceFacts assumed_shape          = routed;
+        assumed_shape.model.expert_prefill_assumed = true;
+        pr::QuantRow known                         = same_bytes;
+        known.listing.table->expert_prefill        = rt::ExpertPrefill::Int8;
+        known.listing.table->expert_prefill_int8   = rt::ExpertPrefill::Int8;
+        check(!pr::row_facts(assumed_shape, known).model.expert_prefill_assumed,
+              "a row's own known banks: not assumed for the shape's");
+        // A head read's table carries the three; a split part's head (its file size stands)
+        // carries its banks' route alone, with no tensor bytes; one with no route gives none.
+        pr::PlanSourceFacts read_route          = routed;
+        read_route.model.weight_basis           = rt::WeightBasis::GgufTensors;
+        read_route.model.expert_prefill_assumed = true;
+        const auto read_table                   = pr::gguf_tensor_table(read_route);
+        check(read_table && read_table->expert_prefill == rt::ExpertPrefill::Int8 &&
+                  read_table->expert_prefill_int8 == rt::ExpertPrefill::Int8 &&
+                  read_table->expert_prefill_assumed,
+              "a head read's table keeps its prefill route");
+        pr::PlanSourceFacts part    = routed;
+        part.model.weight_basis     = rt::WeightBasis::FileSize;
+        part.model.gguf_data_offset = 4096;
+        part.model.expert_prefill   = rt::ExpertPrefill::Mxfp4;
+        const auto part_table       = pr::gguf_tensor_table(part);
+        check(part_table && part_table->tensor_bytes == 0 && part_table->expert_layers.empty() &&
+                  part_table->expert_prefill == rt::ExpertPrefill::Mxfp4 &&
+                  part_table->expert_prefill_int8 == rt::ExpertPrefill::Int8,
+              "a split part's head: no tensor bytes, its banks' prefill route");
+        pr::QuantRow part_row;
+        part_row.listing.format = "gguf";
+        part_row.listing.table  = part_table;
+        part_row.weight_bytes   = part.model.weight_bytes;
+        part_row.basis          = rt::WeightBasis::FileSize;
+        check(pr::row_facts(routed, part_row).model.expert_prefill == rt::ExpertPrefill::Mxfp4,
+              "a split row: its own part's prefill route");
+        // Read off the first part's banks alone (a later part may hold another format): assumed.
+        check(!part.model.expert_prefill_assumed && part_table->expert_prefill_assumed &&
+                  pr::row_facts(routed, part_row).model.expert_prefill_assumed,
+              "a split row's prefill route is an assumed one (Transferred)");
+        pr::PlanSourceFacts dense_part  = part;
+        dense_part.model.expert_prefill = dense_part.model.expert_prefill_int8 =
+            rt::ExpertPrefill::Unknown;
+        check(!pr::gguf_tensor_table(dense_part), "a split part with no prefill route: no table");
     }
     // The 9B's verify as the converter reads it (the embedding out): the rows its conversions
     // logged (147,456 with DFlash, 57,344 for MTP alone), from the whole tensor table.
