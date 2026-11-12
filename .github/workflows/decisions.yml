@@ -57,9 +57,8 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.arch }} -DNINFERNO_BUILD_APPS=OFF -DBUILD_TESTING=ON \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      # ccache keeps its default directory, ~/.cache/ccache, the path the cache step restores.
       - name: Build the host-only decision tests
-        env:
-          CCACHE_DIR: ~/.cache/ccache
         run: |
           cmake --build build --target ninferno_selector_golden_host_test \
             ninferno_generic_routes_host_test ninferno_choice_test ninferno_gate_atlas_test \
