@@ -2348,9 +2348,10 @@ assumed but one kind, a Q8_0 linear in a K-quant file (Qwen3.5 9B's Gated DeltaN
 out-projection in its Q6_K and UD-Q4_K_XL files), which it runs on the W4A8 int8 tile where the
 choice priced it on MMQ's (or the K-quant W4A8) tile at the file's step. Of the 329 measured
 prefill points (`prefill_measured.json`) 28 move, those two files on seven cards at 7K and 22K
-tokens: rms of all points 5.09 % -> 5.10 %, of the moved ones 3.00 % -> 3.24 % (the Q6_K file +0.4
-.. +1.2 % faster on Ada and Blackwell, where it was already priced fast, closer on the RTX 4060 Ti
-and 4070 Ti). Over every registry board with tensor cores at the fixtures' models and
+tokens: rms of all points 5.09 % -> 5.10 %, of the moved ones 3.00 % -> 3.24 % (the Q6_K file
++0.9 .. +1.2 % faster on Ada and Blackwell: further from the RTX 4090's, 5090's and 5070 Ti's
+measurements, which it already priced fast, closer to the RTX 4060 Ti's and 4070 Ti's; the
+UD-Q4_K_XL file -0.4 .. +0.4 %). Over every registry board with tensor cores at the fixtures' models and
 quantizations (1326 estimates at a 7K prompt), 158 move, the same two files only: Ada -0.5 .. +1.5 %,
 Ampere -1.0 .. +0.6 %, Blackwell -0.2 .. +2.3 %, Turing -0.5 .. +0.2 %; no basis changes. The
 datacenter rows (A100, H100, B200) do not move: no tile law reads them, and the selector runs
