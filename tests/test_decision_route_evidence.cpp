@@ -288,7 +288,8 @@ int main() {
 
     // --route-policy evidence (#614 F1): every run names the policy, a run whose answer demoted a
     // borrowed route-table entry names it (the RTX 4090 borrows the q4_K 4096x4096 verify entries),
-    // and the lines replay to themselves under the same policy. Under legacy no line names either.
+    // and the lines replay to themselves under the policy the manifest's options record
+    // (route_policy_of), whatever the process's own. Under legacy no line names either.
     {
         const auto* fb = std::find_if(
             std::begin(generic::kFactsBoards), std::end(generic::kFactsBoards),
@@ -297,9 +298,11 @@ int main() {
         if (fb != std::end(generic::kFactsBoards)) {
             const DeviceClass d4090 = generic::board_device_class(*fb);
             const auto legacy       = rt::route_evidence_of(d4090, list, chunk, false);
-            ops::set_route_policy(RoutePolicy::Evidence);
-            const auto evidence = rt::route_evidence_of(d4090, list, chunk, false);
-            int demoted         = 0;
+            const auto evidence =
+                rt::route_evidence_of(d4090, list, chunk, false, RoutePolicy::Evidence);
+            check(ops::route_policy() == RoutePolicy::Legacy,
+                  "evidence policy: the section's scope left the process's policy as it was");
+            int demoted = 0;
             for (const auto& [key, value] : evidence) {
                 if (key == rt::kDecisionRouteCount) continue;
                 check(value.find(" policy=evidence") != std::string::npos,
@@ -307,16 +310,31 @@ int main() {
                 if (value.find(" demoted=route-table:borrowed") != std::string::npos) ++demoted;
             }
             check(demoted > 0, "evidence policy: no line names a demoted borrowed entry");
-            check(rt::replay_route_evidence(d4090, evidence) == evidence,
-                  "evidence policy: the lines replay to themselves under the policy");
-            ops::set_route_policy(RoutePolicy::Legacy);
+            // The options section of such a start records the policy, and the replay reads it.
+            EngineOptions options;
+            options.maintainer.route_policy = RoutePolicy::Evidence;
+            const RoutePolicy recorded =
+                rt::route_policy_of(rt::options_of(options, "id", "s", ""));
+            check(recorded == RoutePolicy::Evidence &&
+                      rt::route_policy_of(rt::options_of(EngineOptions{}, "id", "s", "")) ==
+                          RoutePolicy::Legacy &&
+                      rt::route_policy_of(rt::DecisionSection{}) == RoutePolicy::Legacy,
+                  "route_policy_of: the options' policy, legacy where none is recorded");
+            check(rt::replay_route_evidence(d4090, evidence, recorded) == evidence,
+                  "evidence policy: the lines replay to themselves under the recorded policy");
+            check(rt::replay_route_evidence(d4090, evidence) == legacy,
+                  "evidence policy: replayed under legacy, the lines are legacy's");
+            const auto routes_evidence =
+                rt::routes_of(d4090, list, chunk, false, RoutePolicy::Evidence);
+            check(rt::replay_routes(d4090, routes_evidence, recorded) == routes_evidence,
+                  "evidence policy: the routes lines replay to themselves under the policy");
+            check(routes_evidence != rt::routes_of(d4090, list, chunk, false),
+                  "evidence policy: no routes line of the RTX 4090 moved");
             for (const auto& [key, value] : legacy) {
                 check(value.find("policy=") == std::string::npos &&
                           value.find("demoted=") == std::string::npos,
                       "legacy policy: " + key + " names a policy: " + value);
             }
-            check(rt::route_evidence_of(d4090, list, chunk, false) == legacy,
-                  "the legacy lines are as before the evidence run");
         }
     }
     check(one_lane_clauses > 0, "no line has a 'one lane' clause: the lanes check saw none");

@@ -186,27 +186,50 @@ read on a CPU before any GPU run: `tools/bench/data/route_regret/policy_evidence
 written by `ninferno_route_policy_test --write <file>` (each board from its own build set: run it in
 a base, a full (sm_120a) and an sm_75 tree; a run keeps the boards of the other sets). The grid is
 this sweep's shapes at route_tune's points (T 1..512) under A16Only and AllowA8, and the prefill
-chunk (T 1024) under the prefill profile, 400 cells a board. The Quadro GV100 needs an sm_70 tree
-(CUDA 12.x) and is not in the file; in the other build sets it has no route-table answer in the
-grid, so nothing of it moves.
+chunk (T 1024) under the prefill profile, 400 cells a board. Each board is asked twice: under the
+shipped tables (`own`), and under them without its own table (`without own`: its nearest table is
+another board's, as on a card the tables do not hold; `--route-dir` to a copy of `routes/` without
+that file runs it). The Quadro GV100 needs an sm_70 tree (CUDA 12.x) and is not in the file; in the
+other build sets it has no route-table answer in the grid, so nothing of it moves. The RTX 2080 Ti
+without its own table has no other sm_75 table, so the rules decide there under both policies.
 
-| board | build set | borrowed (legacy) | moved | a8 verify T5-16 | a16 decode T<=4 | a16 verify T5-16 | a16 T>=17 | a16 prefill | demoted, same route |
-|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| RTX 5090 | full | 26 | 16 | 4 | 4 | 4 | 3 | 1 | 10 |
-| RTX 5070 Ti | full | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| RTX 4090 | base | 50 | 31 | 8 | 4 | 6 | 13 | 0 | 19 |
-| RTX 4070 Ti | base | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| RTX 4060 Ti | base | 52 | 38 | 11 | 8 | 11 | 8 | 0 | 14 |
-| RTX 3090 | base | 48 | 18 | 4 | 0 | 0 | 14 | 0 | 30 |
-| RTX 3060 | base | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| RTX 2080 Ti | sm75 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| board | tables | build set | borrowed | transferred | moved | a8 verify T5-16 | a16 decode T<=4 | a16 verify T5-16 | a16 T>=17 | a16 prefill | demoted, same route | model ratio (median) |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| RTX 5090 | own | full | 26 | 0 | 16 | 4 | 4 | 4 | 3 | 1 | 10 | 0.81 |
+| RTX 5090 | without own | full | 124 | 0 | 75 | 20 | 15 | 14 | 25 | 1 | 49 | 0.85 |
+| RTX 5070 Ti | own | full | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | - |
+| RTX 5070 Ti | without own | full | 98 | 0 | 64 | 16 | 9 | 10 | 29 | 0 | 34 | 0.92 |
+| RTX 4090 | own | base | 50 | 0 | 31 | 8 | 4 | 6 | 13 | 0 | 19 | 0.64 |
+| RTX 4090 | without own | base | 0 | 128 | 61 | 15 | 8 | 13 | 25 | 0 | 67 | 0.70 |
+| RTX 4070 Ti | own | base | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | - |
+| RTX 4070 Ti | without own | base | 50 | 0 | 32 | 8 | 4 | 6 | 14 | 0 | 18 | 0.93 |
+| RTX 4060 Ti | own | base | 52 | 0 | 38 | 11 | 8 | 11 | 8 | 0 | 14 | 0.93 |
+| RTX 4060 Ti | without own | base | 52 | 76 | 66 | 19 | 12 | 17 | 18 | 0 | 62 | 0.93 |
+| RTX 3090 | own | base | 48 | 0 | 18 | 4 | 0 | 0 | 14 | 0 | 30 | 0.90 |
+| RTX 3090 | without own | base | 0 | 100 | 36 | 8 | 0 | 4 | 24 | 0 | 64 | 0.94 |
+| RTX 3060 | own | base | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | - |
+| RTX 3060 | without own | base | 0 | 50 | 27 | 6 | 4 | 4 | 13 | 0 | 23 | 0.96 |
+| RTX 2080 Ti | own | sm75 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | - |
+| RTX 2080 Ti | without own | sm75 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | - |
 
-No AllowA8 cell outside verify moves: there the route table stands aside (the vector kernel, R8,
-the MMQ verify rule and the W4A8 calls from 17 tokens). Every moved cell's evidence answer is the
-register-MMA rule's (T <= 16, and the prefill chunk) or the cost model's (T >= 17). The RTX 5090's
-moves are all the q6_K 248320 x 4096 output projection, whose entry it borrows from the RTX 5070
-Ti's table. The A16Only moves are outside this sweep's scoring (AllowA8 only): the A/B measures
-them for the first time.
+`borrowed` and `transferred` count the cells whose legacy answer is a route-table entry of that
+kind. No AllowA8 cell outside verify moves: there the route table stands aside (the vector kernel,
+R8, the MMQ verify rule and the W4A8 calls from 17 tokens). Every moved cell's evidence answer is
+the register-MMA rule's (T <= 16, and the prefill chunk) or the cost model's (T >= 17). The RTX
+5090's own-table moves are all the q6_K 248320 x 4096 output projection, whose entry it borrows from
+the RTX 5070 Ti's table. Without their own tables the RTX 5090, 5070 Ti and 4070 Ti find a nearest
+table within the carry distance (`carried`, kept) and move only on the entries it lacks
+(`borrowed`); the RTX 4090, 3090, 3060 and part of the 4060 Ti's grid are `transferred`. The A16Only
+moves are outside this sweep's scoring (AllowA8 only): the A/B measures them for the first time.
+
+Each move carries two ratios of the evidence route's time over the legacy route's, stated before any
+run: `model_ratio`, the cost model's own prices of the two routes (`priced_routes_query`; below 17
+tokens a figure of the formula, which the selector does not rank by there), and `a5_ratio`, the
+two routes' medians in this sweep's routes CSVs, which stay on the stands: filled by
+`tools/bench/policy_moves_predict.py --moves <file> --board <board> --routes routes_p1.csv
+routes_p2.csv routes_p3.csv --write` before the A/B (null until then; `ninferno_route_policy_test
+--write` resets it). A model ratio below 1 is the cost model's prediction that the evidence pick is
+faster.
 
 A new sweep is the same commands on a later master. The summaries are rewritten by board, and the
 per-case CSVs stay on the stands (`docs/maintainer/sweep-archive.md`).

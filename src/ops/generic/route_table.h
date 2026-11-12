@@ -78,7 +78,9 @@ struct TableAnswer {
 
 // Whether a claiming entry (RouteEntry::claim) holds the exact problem and a route for this call
 // under an A16Only policy: then the generic path computes it even though its shape has a
-// shape-owned Linear table.
+// shape-owned Linear table. Under --route-policy evidence (#614 F1) a claim whose answer is
+// Borrowed or Transferred (route_authorities.h table_evidence_kind) is refused: the call keeps
+// its shape's kernel.
 [[nodiscard]] bool table_claims(const Problem& problem, std::int32_t tokens, bool prefill);
 
 // The board a table file was measured on as the default lookup reads it (gpu.pci_id's registry

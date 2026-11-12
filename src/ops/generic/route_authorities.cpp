@@ -200,15 +200,11 @@ std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& prob
     e.ranker   = Evidence::Ranker::None;
     e.source   = "route-table";
     e.distance = hit->distance;
-    if (!hit->lender.empty()) {
-        e.kind     = Evidence::Kind::Borrowed;
+    e.kind     = table_evidence_kind(!hit->lender.empty(), hit->distance);
+    if (e.kind == Evidence::Kind::Borrowed) {
         e.donor    = hit->lender;
         e.distance = hit->lender_distance;
-    } else if (hit->distance == 0) {
-        e.kind = Evidence::Kind::Measured;
-    } else {
-        e.kind  = hit->distance <= measured::kCarryDistance ? Evidence::Kind::Carried
-                                                            : Evidence::Kind::Transferred;
+    } else if (e.kind != Evidence::Kind::Measured) {
         e.donor = hit->gpu_class;
     }
     return RouteAnswer{hit->route, std::move(e)};
@@ -489,6 +485,13 @@ RouteAnswer under_policy(RouteAnswer answer, const Ask& ask, const RouteAnswer* 
 }
 
 } // namespace
+
+Evidence::Kind table_evidence_kind(bool lent, double distance) noexcept {
+    if (lent) return Evidence::Kind::Borrowed;
+    if (distance == 0) return Evidence::Kind::Measured;
+    return distance <= measured::kCarryDistance ? Evidence::Kind::Carried
+                                                : Evidence::Kind::Transferred;
+}
 
 bool profile_admits(Route route, const Ask& ask, const Weight* weight) {
     if (!ask.prefill_band()) return true;

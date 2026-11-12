@@ -155,17 +155,33 @@ record.
 `--route-policy legacy|evidence` (`ninferno`, `ninferno-serve`, `ninferno-perplexity` and
 `ninferno-serve route-tune`) sets the generic selector's precedence over evidence (#614 F1,
 `src/ops/generic/route_authorities.h`). `legacy`, the default, is the release's selection: the first
-authority that answers decides (`ninferno_selector_golden_test` holds it). `evidence` demotes a
-route-table answer whose evidence is `borrowed` (an entry lent by a farther board's table) or
-`transferred` (the nearest table lies past the carry distance) below the ranker: the walk goes on
-to the dense tuner's entry, then the cost model where it prices the call, else the rules. Where the
-ranker has no candidate (only the scalar fallback answers) the demoted entry stands. `pin`,
-`measured`, `carried` and `ranker` answers are never demoted. It is an A/B setting, not a pin of a
-family: nothing is refused, the startup log prints a `routes | pinned |` line for it, and the
-manifest's `route_evidence` lines end in ` policy=evidence` and, where an answer was demoted,
-` demoted=<authority>:<kind>`. The moved decisions of the lab boards, read on a CPU before any GPU
-run, are in `tools/bench/data/route_regret/policy_evidence_moves.json`
-(`ninferno_route_policy_test --write`).
+authority that answers decides (`ninferno_selector_golden_test` holds it). `evidence` demotes
+route-table entries only: a route-table answer whose evidence is `borrowed` (an entry lent by a
+farther board's table) or `transferred` (the nearest table lies past the carry distance) goes
+below the ranker. The walk goes on to the dense tuner's entry, then the cost model where it prices
+the call, else the rules. Where the ranker has no candidate (only the scalar fallback answers) the
+demoted entry stands. `pin`, `measured`, `carried` and `ranker` answers are never demoted.
+
+The one other authority that can answer `transferred`, the MMQ prefill gate (`mmq-prefill-gate`,
+a measured board's gate carried to every board of its instruction set), keeps its answer: it is a
+rule of the ranker's own list and comes after the cost model already, so it answers only where the
+cost model abstains (the prefill band, a board without clocks, NVFP4). Demoting it would hand those
+calls to the rules below it, which no measurement compared with it either.
+
+A claiming entry of the route table (an entry that moves a call of a shape with its own Linear
+table onto the generic path, `table_claims`) is refused under `evidence` when its answer is
+`borrowed` or `transferred`: the call keeps its shape's own kernel, since the entry was compared
+with that kernel on another board only. A board's own and carried claims stand.
+
+It is an A/B setting, not a pin of a family: nothing is refused, the startup log prints a
+`routes | pinned |` line for it, and the manifest's `route_evidence` lines end in
+` policy=evidence` and, where an answer was demoted, ` demoted=<authority>:<kind>`. A manifest's
+replay asks the selector under the policy its options section records
+(`options.maintainer.route_policy`, `route_policy_of`). The moved decisions of the lab boards, read
+on a CPU before any GPU run, are in `tools/bench/data/route_regret/policy_evidence_moves.json`
+(`ninferno_route_policy_test --write`): under the shipped tables, and under them without each
+board's own table (its nearest table another board's, as for a card the tables do not hold). The
+serve bench tools take `--route-policy` with the route pins.
 
 ### Speculation data
 

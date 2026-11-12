@@ -952,7 +952,15 @@ bool table_claims(const Problem& problem, std::int32_t tokens, bool prefill) {
     const auto it =
         table->generic.find(key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
     if (it == table->generic.end() || !it->second.claim) return false;
-    return table_route(problem, tokens, prefill).has_value();
+    const auto answer = table_route_answer(problem, tokens, prefill);
+    if (!answer) return false;
+    // --route-policy evidence (#614 F1): a claim measured on another board (a Transferred nearest
+    // table; a Borrowed entry, which fill_from never lets claim) does not move the call off its
+    // shape's own kernel. Its route was compared with that kernel on the other board only, and
+    // auto_answer demotes the same entry, so the generic path would run a ranker's route nobody
+    // compared with the shape's kernel. Legacy keeps every claim.
+    return !policy_demotes(route_policy(),
+                           table_evidence_kind(!answer->lender.empty(), answer->distance));
 }
 
 std::optional<Board> route_table_board(const std::string& path) { return parse_table(path)->board; }

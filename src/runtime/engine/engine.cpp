@@ -200,11 +200,13 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     in.taint    = runtime::taint_of(in);
     {
         const auto seen = ops::detail::generic::seen_problems();
-        in.routes       = runtime::routes_of(device_class(resolved.device), seen, memory.prefill_chunk,
-                                             resolved.activations == ActivationMode::Exact);
-        in.route_evidence =
-            runtime::route_evidence_of(device_class(resolved.device), seen, memory.prefill_chunk,
-                                       resolved.activations == ActivationMode::Exact);
+        // Under the start's --route-policy, which the options section records (route_policy_of).
+        in.routes = runtime::routes_of(device_class(resolved.device), seen, memory.prefill_chunk,
+                                       resolved.activations == ActivationMode::Exact,
+                                       resolved.maintainer.route_policy);
+        in.route_evidence = runtime::route_evidence_of(
+            device_class(resolved.device), seen, memory.prefill_chunk,
+            resolved.activations == ActivationMode::Exact, resolved.maintainer.route_policy);
     }
     in.observed = runtime::observed_of(memory);
     in.observed.merge(runtime::observed_of(device_class(resolved.device)));

@@ -7,7 +7,7 @@
 //                     [--samples 15] [--prefill-chunk 1024] [--prefill-only 1]
 //                     [--points T,T,...] [--rotate 0|1] [--routes-out FILE.csv]
 //                     [--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1]
-//                     [--group-sums-plane 1] [--route-policy legacy|evidence]
+//                     [--group-sums-plane 1] [--route-policy legacy|evidence] [--route-dir DIR]
 //
 // FILE holds one problem per line, "<format> <compute> <epilogue> <n> <k>", for example
 // "nvfp4 a4 store 3584 1024" (format bf16|fp8|nvfp4|q4|q5|q6|q8, compute a16|a8|a4, epilogue
@@ -62,7 +62,9 @@
 // yields to the ranker. It moves what --selected-out and --describe report as the production pick
 // (the evidence columns then name the authority that answered under it), never what is timed or
 // written to the table: the two arms of an A/B are one sweep each, legacy (the default) and
-// evidence.
+// evidence. --route-dir DIR selects with the default lookup in DIR instead of the shipped routes/
+// (the engine's --route-dir): a copy of routes/ without the board's own table runs the board as a
+// card the tables do not hold, its nearest table another board's.
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/device_class.h"
@@ -147,20 +149,26 @@ int route_tune_main(int argc, char** argv) {
                          "[--prefill-only 1] [--points T,...] [--routes-out FILE.csv] "
                          "[--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1] "
                          "[--rotate 0|1] [--describe 1] [--group-sums-plane 1] "
-                         "[--route-policy legacy|evidence]\n";
+                         "[--route-policy legacy|evidence] [--route-dir DIR]\n";
             return 2;
         }
 
-        // The arm's policy, for this run alone (the process's is back to legacy on return).
+        // The arm's policy and table directory, for this run alone (the process's are back to
+        // legacy and the shipped tables on return).
         struct PolicyReset {
-            ~PolicyReset() { ops::set_route_policy(RoutePolicy::Legacy); }
+            ~PolicyReset() {
+                ops::set_route_policy(RoutePolicy::Legacy);
+                ops::set_route_table_dir({});
+            }
         } policy_reset;
 
         const RoutePolicy policy = opt.count("--route-policy")
                                        ? parse_route_policy(opt["--route-policy"])
                                        : RoutePolicy::Legacy;
         ops::set_route_policy(policy);
-        std::cerr << "route-tune: --route-policy " << route_policy_name(policy) << '\n';
+        if (opt.count("--route-dir")) ops::set_route_table_dir(opt["--route-dir"]);
+        std::cerr << "route-tune: --route-policy " << route_policy_name(policy) << ", tables "
+                  << ops::route_table_dir() << '\n';
         const int samples       = opt.count("--samples") ? std::stoi(opt["--samples"]) : 15;
         const int chunk         = opt.count("--prefill-chunk") ? std::stoi(opt["--prefill-chunk"]) : 1024;
         const bool prefill_only = opt.count("--prefill-only") && opt["--prefill-only"] == "1";

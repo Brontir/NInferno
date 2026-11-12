@@ -16,13 +16,19 @@
 //   - an answer of any other evidence (pin, measured, carried, ranker), and a Transferred answer
 //     of the rules list (mmq-prefill-gate, which already ranks below the cost model), is the same
 //     answer under evidence: measured-on-this-board is never demoted;
-//   - the grid holds borrowed and measured answers (both checks are exercised).
+//   - the grid holds borrowed, transferred and measured answers (each check is exercised).
+// Each board is asked twice: under the shipped tables, and under them without its own table, so
+// that its nearest table is another board's (a user's card with no table: Carried or
+// Transferred), as `--route-dir` to such a directory would run it. And a claiming entry
+// (table_claims) of a Transferred nearest table claims under legacy and not under evidence, while
+// a board's own claim is kept (check_transferred_claim).
 // The routes under legacy are the goldens' (ninferno_selector_golden_test pins the legacy policy).
 //
 // `--write FILE` also writes the cells whose route moves, per board (the A/B list of F1, read on a
 // CPU before any GPU run): tools/bench/data/route_regret/policy_evidence_moves.json. A board's
 // answers depend on the routes its build compiles, so each board is written from its own build set
-// (kOwnBuildSet: the set its release engine is built as); a run writes the boards of its build set
+// (RegretBoard::own_build_set: the set its release engine is built as); a run writes the boards
+// of its build set
 // and keeps the others the file already holds. `--board NAME` asks one board, `--verbose` prints
 // every cell's two answers.
 #include "core/device_class.h"
@@ -33,6 +39,7 @@
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
+#include "ninferno/ops/route_table.h"
 #include "ops/route_pins.h"
 
 #include <nlohmann/json.hpp>
@@ -221,8 +228,19 @@ struct BoardTally {
     Json moves = Json::array();
 };
 
-void check_cell(const Cell& c, const std::string& at, const generic::RouteAnswer& legacy,
-                const generic::RouteAnswer& evidence, BoardTally& tally) {
+// The cost model's price of `route` for the cell (priced_routes_query: the selector's own formula,
+// at any width; below 17 tokens the formula's figure, which the selector does not rank by).
+std::optional<double> model_seconds(const DeviceClass& d, const Cell& c, generic::Route route) {
+    for (const auto& p : generic::priced_routes_query(
+             d, c.shape->qtype, c.policy, c.shape->epilogue, c.shape->n, c.shape->k, c.tokens)) {
+        if (p.route == route && p.seconds > 0) return p.seconds;
+    }
+    return std::nullopt;
+}
+
+void check_cell(const DeviceClass& d, const Cell& c, const std::string& at,
+                const generic::RouteAnswer& legacy, const generic::RouteAnswer& evidence,
+                BoardTally& tally) {
     const generic::Evidence& le     = legacy.evidence;
     const generic::Evidence& ee     = evidence.evidence;
     const std::string legacy_text   = generic::evidence_text(le);
@@ -276,6 +294,13 @@ void check_cell(const Cell& c, const std::string& at, const generic::RouteAnswer
     ++tally.moved;
     const char* regime = regime_of(c.tokens, c.prefill);
     ++tally.moved_by_regime[regime];
+    // The prediction before any run: the cost model's price of the evidence route over the legacy
+    // route's (null where it prices either not), and the A5 sweep's measured ratio, which
+    // tools/bench/policy_moves_predict.py fills from that sweep's routes CSVs on the stand.
+    const auto model_legacy = model_seconds(d, c, legacy.route);
+    const auto model_new    = model_seconds(d, c, evidence.route);
+    Json model_ratio        = nullptr;
+    if (model_legacy && model_new) model_ratio = *model_new / *model_legacy;
     tally.moves.push_back(Json{{"format", generic::qtype_name(c.shape->qtype)},
                                {"policy", policy_word(c.policy)},
                                {"epilogue", generic::epilogue_name(c.shape->epilogue)},
@@ -285,7 +310,9 @@ void check_cell(const Cell& c, const std::string& at, const generic::RouteAnswer
                                {"profile", c.prefill ? "prefill" : "speed"},
                                {"regime", regime},
                                {"legacy", answer_json(legacy)},
-                               {"evidence", answer_json(evidence)}});
+                               {"evidence", answer_json(evidence)},
+                               {"model_ratio", model_ratio},
+                               {"a5_ratio", nullptr}});
 }
 
 BoardTally run_board(const RegretBoard& b, const std::vector<SweepShape>& shapes) {
@@ -316,16 +343,95 @@ BoardTally run_board(const RegretBoard& b, const std::vector<SweepShape>& shapes
         }
         if (!legacy) continue;
         ++tally.cells;
-        check_cell(c, at, *legacy, *evidence, tally);
+        check_cell(d, c, at, *legacy, *evidence, tally);
     }
     return tally;
 }
 
-Json board_json(const RegretBoard& b, const BoardTally& t) {
+// The two table sets a board is asked under: the shipped tables (its own among them), and the
+// same without its own table, so that its nearest table is another board's (a user's card with no
+// table of its own: Carried within kCarryDistance, Transferred past it).
+constexpr const char* kOwnTables  = "own";
+constexpr const char* kWithoutOwn = "without_own";
+
+// The shipped table measured on `b` (gpu.pci_id), if any, in `dir`.
+std::optional<std::filesystem::path> own_table(const std::filesystem::path& dir,
+                                               const RegretBoard& b) {
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".json") continue;
+        std::ifstream in(entry.path());
+        const Json table = Json::parse(in, nullptr, false);
+        if (table.is_discarded() || !table.contains("gpu")) continue;
+        const std::string id = table["gpu"].value("pci_id", std::string());
+        if (!id.empty() && std::stoul(id, nullptr, 16) == b.pci_device_id) return entry.path();
+    }
+    return std::nullopt;
+}
+
+// A directory of the shipped tables but `skip`, for the default lookup (set_route_table_dir).
+std::filesystem::path tables_without(const std::filesystem::path& dir,
+                                     const std::filesystem::path& skip, const RegretBoard& b) {
+    const auto out = std::filesystem::temp_directory_path() /
+                     (std::string("ninferno_route_policy_") + b.name + "_" + kBuildSet);
+    std::filesystem::remove_all(out);
+    std::filesystem::create_directories(out);
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".json") continue;
+        if (std::filesystem::equivalent(entry.path(), skip)) continue;
+        std::filesystem::copy_file(entry.path(), out / entry.path().filename());
+    }
+    return out;
+}
+
+// --route-policy evidence and a claiming entry (RouteEntry::claim; table_claims): on a board whose
+// nearest table is another board's past kCarryDistance, the claim moves the call off its shape's
+// own kernel under legacy and does not under evidence. The board: sm_120, the RTX 5080's 84 SMs and
+// 64 MiB L2 on a 64-bit bus, so the RTX 5080's table (gb203, which claims five FP8 shapes) is
+// the nearest and Transferred (its bandwidth a quarter of the RTX 5080's).
+void check_transferred_claim() {
+    const generic::FactsBoard board{"sm120-84sm-64bit", 0, 12, 0, 84, 64, 16, 2617, 14001, 64};
+    const DeviceClass d = generic::board_device_class(board);
+    const generic::Problem claimed{QType::FP8_E4M3FN_ROW_BF16, LinearPolicy::A16Only, 14336, 5120,
+                                   generic::Epilogue::Store};
+    for (const std::int32_t t : {6, 64, 512}) {
+        const std::string at = "claim fp8 14336x5120 T=" + std::to_string(t);
+        ops::set_route_policy(RoutePolicy::Legacy);
+        const auto answer = generic::route_answer_query(d, claimed.qtype, claimed.policy,
+                                                        claimed.epilogue, claimed.n, claimed.k, t);
+        if (!answer || answer->evidence.source != "route-table" ||
+            answer->evidence.kind != Kind::Transferred) {
+            fail(at + ": the nearest table is not a Transferred one here: " +
+                 (answer ? generic::evidence_text(answer->evidence) : std::string("no answer")));
+            continue;
+        }
+        const ScopedDeviceClass scoped(d);
+        const bool legacy_claims = generic::table_claims(claimed, t, false);
+        ops::set_route_policy(RoutePolicy::Evidence);
+        const bool evidence_claims = generic::table_claims(claimed, t, false);
+        ops::set_route_policy(RoutePolicy::Legacy);
+        if (!legacy_claims) fail(at + ": the Transferred claim does not claim under legacy");
+        if (evidence_claims) fail(at + ": the Transferred claim still claims under evidence");
+    }
+    // The board's own (measured) claims are kept under evidence: the RTX 5080 itself.
+    const GpuFactsRow* r5080 = find_gpu_facts(0x2C02);
+    if (r5080 == nullptr) {
+        fail("claim: no gpu_facts row of the RTX 5080");
+        return;
+    }
+    const generic::FactsBoard own{"rtx5080", 0x2C02, 12, 0, 84, 64, 16, 2617, 15001, 256};
+    const ScopedDeviceClass scoped(generic::board_device_class(own));
+    ops::set_route_policy(RoutePolicy::Evidence);
+    const bool kept = generic::table_claims(claimed, 64, false);
+    ops::set_route_policy(RoutePolicy::Legacy);
+    if (!kept) fail("claim: the RTX 5080's own claim is refused under evidence");
+}
+
+Json board_json(const RegretBoard& b, const char* tables, const BoardTally& t) {
     Json regimes = Json::object();
     for (const auto& [regime, n] : t.moved_by_regime) regimes[regime] = n;
     return Json{{"board", b.name},
                 {"card", b.card},
+                {"tables", tables},
                 {"build_set", kBuildSet},
                 {"cells", t.cells},
                 {"legacy_borrowed", t.borrowed},
@@ -345,7 +451,9 @@ void write_moves(const std::string& path, const std::map<std::string, Json>& wri
     if (std::filesystem::exists(path)) {
         std::ifstream in(path);
         const Json old = Json::parse(in);
-        for (const Json& b : old.at("boards")) boards[b.at("board").get<std::string>()] = b;
+        for (const Json& b : old.at("boards")) {
+            boards[b.at("board").get<std::string>() + "/" + b.value("tables", kOwnTables)] = b;
+        }
     }
     for (const auto& [name, b] : written) boards[name] = b;
     Json speed = Json::array();
@@ -354,7 +462,12 @@ void write_moves(const std::string& path, const std::map<std::string, Json>& wri
                 {"what",
                  "the cells of the A5 regret grid whose production pick moves under "
                  "--route-policy evidence against legacy (#614 F1), per board, each from its own "
-                 "build set; written by ninferno_route_policy_test --write"},
+                 "build set, under the shipped tables (tables: own) and under them without the "
+                 "board's own table (tables: without_own, its nearest table another board's); "
+                 "written by ninferno_route_policy_test --write. model_ratio: the cost model's "
+                 "price of the evidence route over the legacy one; a5_ratio: the A5 sweep's "
+                 "measured ratio, filled by tools/bench/policy_moves_predict.py from the stand's "
+                 "routes CSVs (null until then)"},
                 {"grid",
                  {{"shapes", "tools/bench/data/route_regret/shapes.txt"},
                   {"policies", {"a16", "a8"}},
@@ -362,8 +475,10 @@ void write_moves(const std::string& path, const std::map<std::string, Json>& wri
                   {"prefill_T", {kPrefillChunk}}}},
                 {"boards", Json::array()}};
     for (const RegretBoard& b : kRegretBoards) {
-        if (const auto it = boards.find(b.name); it != boards.end())
-            out["boards"].push_back(it->second);
+        for (const char* tables : {kOwnTables, kWithoutOwn}) {
+            if (const auto it = boards.find(std::string(b.name) + "/" + tables); it != boards.end())
+                out["boards"].push_back(it->second);
+        }
     }
     std::ofstream file(path, std::ios::binary);
     file << out.dump(1) << '\n';
@@ -397,26 +512,45 @@ int main(int argc, char** argv) {
             if (arg == "--verbose") g_verbose = true;
         }
         check_policy_words();
+        check_transferred_claim();
         const std::vector<SweepShape> shapes = read_shapes();
+        const std::filesystem::path shipped  = ops::route_table_dir();
+        if (shipped.empty() || !std::filesystem::is_directory(shipped)) {
+            throw std::runtime_error("no shipped route-table directory");
+        }
         std::map<std::string, Json> written;
-        int borrowed = 0, measured = 0;
+        int borrowed = 0, transferred = 0, measured = 0;
         for (const RegretBoard& b : kRegretBoards) {
             if (!only.empty() && only != b.name) continue;
-            const BoardTally t = run_board(b, shapes);
-            borrowed += t.borrowed + t.transferred;
-            measured += t.measured;
-            std::cout << b.name << " (" << kBuildSet << "): " << t.cells << " cells; legacy "
-                      << t.borrowed << " borrowed, " << t.transferred << " transferred, "
-                      << t.measured << " measured, " << t.kept_rules
-                      << " rules' transferred (kept); under evidence " << t.moved << " moved";
-            for (const auto& [regime, n] : t.moved_by_regime) {
-                std::cout << " [" << regime << ": " << n << ']';
+            const auto own = own_table(shipped, b);
+            for (const char* tables : {kOwnTables, kWithoutOwn}) {
+                const bool without = std::string_view(tables) == kWithoutOwn;
+                if (without && !own) continue; // no table of its own: the first pass was this one
+                std::optional<std::filesystem::path> dir;
+                if (without) dir = tables_without(shipped, *own, b);
+                ops::set_route_table_dir(dir ? *dir : std::filesystem::path());
+                const BoardTally t = run_board(b, shapes);
+                ops::set_route_table_dir({});
+                if (dir) std::filesystem::remove_all(*dir);
+                borrowed += t.borrowed;
+                transferred += t.transferred;
+                measured += t.measured;
+                std::cout << b.name << " " << tables << " (" << kBuildSet << "): " << t.cells
+                          << " cells; legacy " << t.borrowed << " borrowed, " << t.transferred
+                          << " transferred, " << t.measured << " measured, " << t.kept_rules
+                          << " rules' transferred (kept); under evidence " << t.moved << " moved";
+                for (const auto& [regime, n] : t.moved_by_regime) {
+                    std::cout << " [" << regime << ": " << n << ']';
+                }
+                std::cout << ", " << t.demoted_same_route << " demoted to the same route\n";
+                if (std::string_view(b.own_build_set) == kBuildSet) {
+                    written[std::string(b.name) + "/" + tables] = board_json(b, tables, t);
+                }
             }
-            std::cout << ", " << t.demoted_same_route << " demoted to the same route\n";
-            if (std::string_view(b.own_build_set) == kBuildSet) written[b.name] = board_json(b, t);
         }
-        if (only.empty() && borrowed == 0) {
-            fail("no borrowed or transferred answer in the grid: nothing demoted");
+        if (only.empty() && borrowed == 0) fail("no borrowed answer in the grid: nothing demoted");
+        if (only.empty() && transferred == 0) {
+            fail("no transferred answer in the grid, even without the boards' own tables");
         }
         if (only.empty() && measured == 0) {
             fail("no measured answer in the grid: the never-demoted check is idle");

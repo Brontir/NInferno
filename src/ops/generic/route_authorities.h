@@ -129,6 +129,13 @@ struct Evidence {
            (kind == Evidence::Kind::Borrowed || kind == Evidence::Kind::Transferred);
 }
 
+// The evidence kind of a route-table answer (route_table.h TableAnswer): Borrowed where a farther
+// table lent the entry (`lent`), else Measured at distance 0, Carried within kCarryDistance and
+// Transferred past it. The one classification route_table_entry prints and table_claims gates
+// its claim by (#614 F1: under RoutePolicy::Evidence a claim of a Borrowed or Transferred entry
+// does not move a call off its shape's own kernel).
+[[nodiscard]] Evidence::Kind table_evidence_kind(bool lent, double distance) noexcept;
+
 [[nodiscard]] constexpr const char* evidence_kind_name(Evidence::Kind k) noexcept {
     switch (k) {
     case Evidence::Kind::Pin:
