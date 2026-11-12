@@ -61,6 +61,8 @@
 #include "core/weight_view.h"
 #include "ops/common/arch_limits.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_gemm_internal.h"
+#include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/kernel_roofline.h"
 #include "ops/generic/route_query.h"
@@ -72,6 +74,7 @@
 #include <cstdint>
 #include <exception>
 #include <functional>
+#include <iterator>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -164,9 +167,56 @@ constexpr QType kFormats[] = {
     QType::BF16,      QType::Q4_G64_FP16, QType::Q8_G32_FP16, QType::NVFP4,     QType::MXFP4,
     QType::GGML_Q4_K, QType::GGML_Q6_K,   QType::GGML_IQ2_S,  QType::GGML_Q4_0, QType::GGML_IQ4_XS};
 constexpr Shape kShapes[] = {{1024, 4096}, {17408, 5120}};
-// Every width of the decode, verify and prefill bands the selector tells apart.
-constexpr std::int32_t kTokens[]      = {1, 2, 4, 8, 12, 16, 17, 32, 64, 256, 1024};
-constexpr std::int32_t kPriceTokens[] = {17, 32, 64, 256, 1024};
+// Every width of the decode, verify and prefill bands the selector tells apart: both sides of each
+// width bound it switches at (held below), and widths inside the bands.
+// Besides the named bounds: 3 / 4 (rules_r8's IQ2-class formats from 4), 64 / 65 (heuristic_w4a8's
+// 64x64 tile up to 64 and the prefill narrow band, then a choice by the SM count), 8 / 9
+// (kMmqVerifyMinTokens), 255 / 256 (kVoltaTileMaxTokens), local to generic_select.cpp.
+constexpr std::int32_t kTokens[] = {1,  2,  3,  4,   5,   8,   9,   12,  16,  17,  32,
+                                    33, 64, 65, 127, 128, 255, 256, 512, 513, 1024};
+// The widths the price is checked at: from the first the cost model ranks (17), both sides of
+// each bound there.
+constexpr std::int32_t kPriceTokens[] = {17, 32, 33, 64, 65, 127, 128, 255, 256, 512, 513, 1024};
+
+template <std::size_t N>
+constexpr bool has(const std::int32_t (&grid)[N], std::int32_t t) {
+    return std::find(std::begin(grid), std::end(grid), t) != std::end(grid);
+}
+
+// The selector's width bounds (#719): a "from B on" bound needs B - 1 and B in the grid, an "up to
+// B" bound B and B + 1, so P3 / P6 compare decisions on both sides of each.
+template <std::size_t N>
+constexpr bool from_bound(const std::int32_t (&grid)[N], std::int32_t bound) {
+    return has(grid, bound - 1) && has(grid, bound);
+}
+
+template <std::size_t N>
+constexpr bool upto_bound(const std::int32_t (&grid)[N], std::int32_t bound) {
+    return has(grid, bound) && has(grid, bound + 1);
+}
+
+static_assert(upto_bound(kTokens, generic::kR8MaxTokens) &&
+                  upto_bound(kTokens, generic::kR8VerifyTokens) &&
+                  upto_bound(kTokens, generic::kMmqMaxTokens) &&
+                  upto_bound(kTokens, generic::kVoltaHmmaMaxTokens) && upto_bound(kTokens, 64) &&
+                  from_bound(kTokens, 4) && from_bound(kTokens, generic::kMmqMinTokens) &&
+                  upto_bound(kTokens, generic::kGgmlVecMaxTokens) &&
+                  upto_bound(kTokens, generic::kGgmlMmqMaxTokens) &&
+                  upto_bound(kTokens, generic::kDenseTuneMaxTokens) &&
+                  upto_bound(kTokens, generic::kPdlPrefetchMaxTokens) &&
+                  from_bound(kTokens, generic::kPrefillBandMinTokens) &&
+                  from_bound(kTokens, generic::kRmmaMidMinTokens) &&
+                  from_bound(kTokens, generic::kTiledSpeedMinTokens) &&
+                  from_bound(kTokens, generic::kW4a8WideMinTokens) &&
+                  from_bound(kTokens, generic::kStagedSpeedMinTokens) &&
+                  upto_bound(kTokens, generic::kStreamMaxTokens),
+              "a width bound of the selector lacks a width on one side in the grid");
+static_assert(from_bound(kPriceTokens, generic::kRmmaMidMinTokens) &&
+                  from_bound(kPriceTokens, generic::kTiledSpeedMinTokens) &&
+                  from_bound(kPriceTokens, generic::kW4a8WideMinTokens) &&
+                  from_bound(kPriceTokens, generic::kStagedSpeedMinTokens) &&
+                  upto_bound(kPriceTokens, generic::kStreamMaxTokens),
+              "a width bound the price is ranked across lacks a width on one side");
 
 std::vector<LinearPolicy> policies_of(QType q) {
     std::vector<LinearPolicy> out = {LinearPolicy::A16Only, LinearPolicy::AllowA8};
@@ -186,7 +236,9 @@ std::string decisions_of(const DeviceClass& d) {
                     const std::int32_t rows = e == Epilogue::SwiGlu ? s.n / 2 : s.n;
                     for (const std::int32_t t : kTokens) {
                         for (const bool prefill : {false, true}) {
-                            if (prefill && t < 256) { continue; }
+                            // The prefill profile from its first width: the selector's prefill
+                            // band switches inside 17..255 too (#719).
+                            if (prefill && t < generic::kPrefillBandMinTokens) { continue; }
                             out << static_cast<int>(q) << '/' << static_cast<int>(policy) << '/'
                                 << static_cast<int>(e) << '/' << s.n << 'x' << s.k << "/T" << t
                                 << (prefill ? "p" : "") << '=';
