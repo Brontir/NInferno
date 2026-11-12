@@ -167,17 +167,18 @@ whether the measured tables are still needed.
   - `priced`: the cost model's ranking;
   - `rules`: any other rule or fallback of the selector;
   - `pin`;
-  - `unknown`: a collection without the columns.
+  - `unknown`: a collection without the columns, or an evidence name the tool does not know.
 - Of the board's measured overrides (`route-table`, `dense-tune`, `dense-tune-prefill-band`, the
   ones `route_table_prune.py` prunes), the report splits them three ways:
   - `caught_up`: the ranker's route is within the resolution of the override's (5 % by default,
     `--resolution` there, `exit_resolution` here);
   - `holds`: the ranker's route is still slower;
   - `unscored`: the case has no ranker time.
-- `exit_share = caught_up / (caught_up + holds)`.
+- `exit_share = caught_up / (caught_up + holds)`. It counts cases, not table entries.
 
-As the cost model improves, `exit_share` rises toward 1, and `route_table_prune.py` deletes the
-entries that caught up. A board whose `table` share stays high while its `exit_share` is low still
+As the cost model improves, `exit_share` rises toward 1. `route_table_prune.py` may then delete
+an entry whose cases all caught up; it keeps one for its other reasons too (a claim, a borrower,
+a prefill range, an uncovered segment). A board whose `table` share stays high while its `exit_share` is low still
 rests on its own measurements. The committed reports above were collected before the metric
 existed. They carry no per-case rows, so the first numbers come with the next regret run (#620
 step 10).
