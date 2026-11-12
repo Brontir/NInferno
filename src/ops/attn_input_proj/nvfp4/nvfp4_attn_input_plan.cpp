@@ -24,7 +24,13 @@ enum class Nvfp4AttnInputRoute : std::uint8_t {
 // width. AllowA8 has no 8-bit form among these kernels: it keeps the tuned A16 routes below 17
 // tokens and outside a prefill (decode, any verify), and a prefill call from 17 takes the generic
 // W4A8, the four parts in one call (the dispatch asks generic::owned_prefill_w4a8; the workspace
-// query, which cannot know the profile, reserves its planes).
+// query, which cannot know the profile, reserves its planes). The 17 is the prefill class's first
+// width, not a fitted edge.
+//
+// Under AllowA4 the A4 route from this width, A16 below: the A16 / A4 selection of "select measured
+// nvfp4 activation routes" (no board or timing in the repository).
+constexpr std::int32_t kNvfp4AttnInputFirstA4Tokens = 4;
+
 Nvfp4AttnInputRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
     if (tokens <= 0) { throw std::invalid_argument("nvfp4 attn_input_proj: T must be positive"); }
     if (policy == LinearPolicy::A16Only) { return Nvfp4AttnInputRoute::A16Exact; }
@@ -34,8 +40,9 @@ Nvfp4AttnInputRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
     if (!allows_a4(policy)) {
         throw std::invalid_argument("nvfp4 attn_input_proj: unsupported policy");
     }
-    return route_quantized_activations(tokens >= 4) ? Nvfp4AttnInputRoute::A4
-                                                    : Nvfp4AttnInputRoute::A16;
+    return route_quantized_activations(tokens >= kNvfp4AttnInputFirstA4Tokens)
+               ? Nvfp4AttnInputRoute::A4
+               : Nvfp4AttnInputRoute::A16;
 }
 
 const char* route_name(Nvfp4AttnInputRoute route) {

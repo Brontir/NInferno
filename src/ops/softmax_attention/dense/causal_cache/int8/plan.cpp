@@ -9,6 +9,9 @@
 namespace ninferno::ops::detail {
 namespace {
 constexpr int kGroupedPrefillMaxWidth = 256;
+// The wave rules' two CTAs an SM, measured on four and two KV heads (make_int8_kv_causal_plan):
+// four KV heads at every width, other geometries through this width.
+constexpr int kTwoCtasPerSmMaxWidth = 4;
 } // namespace
 
 Int8KvCausalPlan make_int8_kv_causal_plan(int heads, int kv_heads, int width, int batch,
@@ -39,7 +42,7 @@ Int8KvCausalPlan make_int8_kv_causal_plan(int heads, int kv_heads, int width, in
     const int independent_tiles = batch * kv_heads * tiles;
     // NINFERNO-SPECIAL(geometry:24/4,16/2): the wave rules were measured on four and two KV
     // heads; the other geometries take the rules of their KV head count.
-    const bool two_ctas_per_sm = kv_heads == 4 || width <= 4;
+    const bool two_ctas_per_sm = kv_heads == 4 || width <= kTwoCtasPerSmMaxWidth;
     const auto partition       = causal_wave_partition(independent_tiles, two_ctas_per_sm,
                                                        envelope.max_visible_keys, multiprocessor_count);
     return {family, heads, kv_heads, width, batch, envelope, partition, launch_columns};

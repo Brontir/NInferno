@@ -1,5 +1,6 @@
 #include "product/plan/plan_quants.h"
 
+#include "product/plan/nvfp4_card.h"
 #include "product/plan/plan_choice.h"
 
 #include "artifact/formats.h"
@@ -86,8 +87,8 @@ Unsupported unsupported(const QuantListing& q, double bits_per_weight,
         return {"above_8_bits", "above 8 bits per weight: the engine serves 8 bits or fewer"};
     }
     // NVFP4 weights run on cards with FP4 tensor cores (compute capability 10.0 and up).
-    if (ascii_upper(q.quant).find("NVFP4") != std::string::npos && device.compute_capability != 0 &&
-        device.compute_capability < 100) {
+    if (ascii_upper(q.quant).find("NVFP4") != std::string::npos &&
+        !nvfp4_planned_on(device.compute_capability)) {
         return {"nvfp4_card", "NVFP4 weights need an RTX 50 / Blackwell card"};
     }
     return {};
