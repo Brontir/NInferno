@@ -1101,6 +1101,38 @@ void test_proposal_bytes_per_quant() {
         own_formats.listing.table->linears = {{1024, 2048, 1, false, false, rt::LinearRole::FfnDown, "ggml_q6_k"}};
         check(pr::row_facts(named, own_formats).model.linears.front().format == "ggml_q6_k",
               "a row's own table gives its linears' formats");
+        // The routed layers by kind (#616 step 7, Codex on #764): a row's own table's, never the
+        // shape's, even at the shape's very bytes; a row without its table has none.
+        pr::PlanSourceFacts kinds = moe;
+        rt::PlanExpertLayers q4;
+        q4.gate_up_format = q4.down_format = "ggml_q4_k";
+        q4.layers                          = 40;
+        kinds.model.expert_layers          = {q4};
+        rt::PlanExpertLayers mx            = q4;
+        mx.gate_up_format = mx.down_format = "mxfp4";
+        pr::QuantRow same_bytes;
+        same_bytes.listing.format = "gguf";
+        same_bytes.weight_bytes   = kinds.model.weight_bytes;
+        same_bytes.basis          = rt::WeightBasis::GgufTensors;
+        check(pr::row_facts(kinds, same_bytes).model.expert_layers.empty(),
+              "a row of the shape's bytes without its table: no routed layers of the shape's");
+        same_bytes.listing.table =
+            pr::GgufTensorTable{.tensor_bytes = same_bytes.weight_bytes, .expert_layers = {mx}};
+        const auto own_kinds = pr::row_facts(kinds, same_bytes).model.expert_layers;
+        check(own_kinds.size() == 1 && own_kinds[0].gate_up_format == "mxfp4",
+              "a row of the shape's bytes with its table: its own routed layers");
+        pr::QuantRow read                 = row;
+        read.listing.table->expert_layers = {mx};
+        const auto read_kinds             = pr::row_facts(kinds, read).model.expert_layers;
+        check(read_kinds.size() == 1 && read_kinds[0].gate_up_format == "mxfp4",
+              "a row whose header was read: its own routed layers");
+        // The table a head read gives carries them.
+        pr::PlanSourceFacts parsed = kinds;
+        parsed.model.weight_basis  = rt::WeightBasis::GgufTensors;
+        const auto table           = pr::gguf_tensor_table(parsed);
+        check(table && table->expert_layers.size() == 1 &&
+                  table->expert_layers[0].gate_up_format == "ggml_q4_k",
+              "a head read's table keeps its routed layers");
     }
     // The 9B's verify as the converter reads it (the embedding out): the rows its conversions
     // logged (147,456 with DFlash, 57,344 for MTP alone), from the whole tensor table.

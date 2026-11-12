@@ -3,7 +3,7 @@
  "gpu": {
   "class": "gb203",
   "name": "NVIDIA GeForce RTX 5080",
-  "board": {"cc": 120, "sms": 84, "l2_mib": 64, "dram_gbps": 960}
+  "pci_id": "0x2c02"
  },
  "entries": [
   {

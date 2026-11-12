@@ -1,0 +1,1711 @@
+{
+ "board": "gv100",
+ "card": "Quadro GV100",
+ "measure": "Quadro GV100, 1912 MHz, 250.00 W",
+ "model_bands": {
+  "bands": {
+   "batch129": [
+    129,
+    null
+   ],
+   "decode": [
+    1,
+    8
+   ],
+   "narrow": [
+    17,
+    32
+   ],
+   "verify": [
+    9,
+    16
+   ],
+   "wide": [
+    33,
+    128
+   ]
+  },
+  "by_board": {
+   "gv100": {
+    "batch129": {
+     "best_ms": 76.452916,
+     "cases": 30,
+     "cases_over_5pct": 30,
+     "geomean_regret": 6.6296994004027345,
+     "selected_ms": 728.8973599999999,
+     "skipped": 0,
+     "tokens": 9600,
+     "weighted_regret": 8.533937986093296,
+     "worst_regret": 16.022869660460017
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 80,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 27.367492,
+     "cases": 20,
+     "cases_over_5pct": 15,
+     "geomean_regret": 0.443919908434393,
+     "selected_ms": 45.847480000000004,
+     "skipped": 0,
+     "tokens": 560,
+     "weighted_regret": 0.6752532530200432,
+     "worst_regret": 1.753721244925576
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 20,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 76.518434,
+     "cases": 40,
+     "cases_over_5pct": 39,
+     "geomean_regret": 1.6117344074616975,
+     "selected_ms": 245.919824,
+     "skipped": 0,
+     "tokens": 3360,
+     "weighted_regret": 2.2138637860780057,
+     "worst_regret": 3.8517204733455888
+    }
+   }
+  },
+  "by_family": {
+   "(no pick)": {
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 80,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 20,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    }
+   },
+   "rmma": {
+    "batch129": {
+     "best_ms": 76.452916,
+     "cases": 30,
+     "cases_over_5pct": 30,
+     "geomean_regret": 6.6296994004027345,
+     "selected_ms": 728.8973599999999,
+     "skipped": 0,
+     "tokens": 9600,
+     "weighted_regret": 8.533937986093296,
+     "worst_regret": 16.022869660460017
+    },
+    "narrow": {
+     "best_ms": 27.367492,
+     "cases": 20,
+     "cases_over_5pct": 15,
+     "geomean_regret": 0.443919908434393,
+     "selected_ms": 45.847480000000004,
+     "skipped": 0,
+     "tokens": 560,
+     "weighted_regret": 0.6752532530200432,
+     "worst_regret": 1.753721244925576
+    },
+    "wide": {
+     "best_ms": 76.518434,
+     "cases": 40,
+     "cases_over_5pct": 39,
+     "geomean_regret": 1.6117344074616975,
+     "selected_ms": 245.919824,
+     "skipped": 0,
+     "tokens": 3360,
+     "weighted_regret": 2.2138637860780057,
+     "worst_regret": 3.8517204733455888
+    }
+   }
+  },
+  "by_format": {
+   "q4k": {
+    "batch129": {
+     "best_ms": 20.9255,
+     "cases": 21,
+     "cases_over_5pct": 21,
+     "geomean_regret": 6.3402211132729525,
+     "selected_ms": 215.83975999999998,
+     "skipped": 0,
+     "tokens": 6720,
+     "weighted_regret": 9.31467635181955,
+     "worst_regret": 16.022869660460017
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 56,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 6.58336,
+     "cases": 14,
+     "cases_over_5pct": 11,
+     "geomean_regret": 0.5455371334568364,
+     "selected_ms": 11.933688,
+     "skipped": 0,
+     "tokens": 392,
+     "weighted_regret": 0.8127047586642688,
+     "worst_regret": 1.753721244925576
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 14,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 21.720038,
+     "cases": 28,
+     "cases_over_5pct": 27,
+     "geomean_regret": 1.5234528556773346,
+     "selected_ms": 64.215996,
+     "skipped": 0,
+     "tokens": 2352,
+     "weighted_regret": 1.9565323964902825,
+     "worst_regret": 2.974320023148148
+    }
+   },
+   "q6k": {
+    "batch129": {
+     "best_ms": 55.527415999999995,
+     "cases": 9,
+     "cases_over_5pct": 9,
+     "geomean_regret": 7.350325911865465,
+     "selected_ms": 513.0576,
+     "skipped": 0,
+     "tokens": 2880,
+     "weighted_regret": 8.239716827449705,
+     "worst_regret": 11.346854537608587
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 24,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 20.784132,
+     "cases": 6,
+     "cases_over_5pct": 4,
+     "geomean_regret": 0.2320404839302217,
+     "selected_ms": 33.913792,
+     "skipped": 0,
+     "tokens": 168,
+     "weighted_regret": 0.6317155799433916,
+     "worst_regret": 0.709138249801148
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 6,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 54.798396000000004,
+     "cases": 12,
+     "cases_over_5pct": 12,
+     "geomean_regret": 1.8299227412709809,
+     "selected_ms": 181.70382800000002,
+     "skipped": 0,
+     "tokens": 1008,
+     "weighted_regret": 2.3158603401457225,
+     "worst_regret": 3.8517204733455888
+    }
+   }
+  },
+  "cases_skipped": 100,
+  "legacy_qualification": "full ctest of master 752bae56 on sm_70 (this board): 394/394 passed; f24d0079 itself was not run on sm_70",
+  "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
+  "overall": {
+   "batch129": {
+    "best_ms": 76.452916,
+    "cases": 30,
+    "cases_over_5pct": 30,
+    "geomean_regret": 6.6296994004027345,
+    "selected_ms": 728.8973599999999,
+    "skipped": 0,
+    "tokens": 9600,
+    "weighted_regret": 8.533937986093296,
+    "worst_regret": 16.022869660460017
+   },
+   "decode": {
+    "best_ms": 0.0,
+    "cases": 0,
+    "cases_over_5pct": 0,
+    "geomean_regret": null,
+    "selected_ms": 0.0,
+    "skipped": 80,
+    "tokens": 0,
+    "weighted_regret": null,
+    "worst_regret": null
+   },
+   "narrow": {
+    "best_ms": 27.367492,
+    "cases": 20,
+    "cases_over_5pct": 15,
+    "geomean_regret": 0.443919908434393,
+    "selected_ms": 45.847480000000004,
+    "skipped": 0,
+    "tokens": 560,
+    "weighted_regret": 0.6752532530200432,
+    "worst_regret": 1.753721244925576
+   },
+   "verify": {
+    "best_ms": 0.0,
+    "cases": 0,
+    "cases_over_5pct": 0,
+    "geomean_regret": null,
+    "selected_ms": 0.0,
+    "skipped": 20,
+    "tokens": 0,
+    "weighted_regret": null,
+    "worst_regret": null
+   },
+   "wide": {
+    "best_ms": 76.518434,
+    "cases": 40,
+    "cases_over_5pct": 39,
+    "geomean_regret": 1.6117344074616975,
+    "selected_ms": 245.919824,
+    "skipped": 0,
+    "tokens": 3360,
+    "weighted_regret": 2.2138637860780057,
+    "worst_regret": 3.8517204733455888
+   }
+  },
+  "prefill_profile_rows_excluded": 336,
+  "schema": "ninferno-regret-bands/1",
+  "skipped_cases": [
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "gv100",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   }
+  ]
+ },
+ "regret_report": {
+  "build_id": "a5-f24d0079-gv100",
+  "by_board": {
+   "gv100": {
+    "cases": 190,
+    "geomean_slowdown": 1.0829465148001207,
+    "max_regret": 1.6347415783173735,
+    "median_regret": 0.0018272003173332996,
+    "p95_regret": 0.5576682762770175,
+    "scored_cases": 190,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 190
+    }
+   }
+  },
+  "by_board_regime_authority": [
+   {
+    "authority": "r8-rules",
+    "board": "gv100",
+    "cases": 10,
+    "evidence": {
+     "ranker": 10
+    },
+    "geomean_slowdown": 1.0144450294041985,
+    "max_regret": 0.06270627062706247,
+    "median_regret": 0.006947365890596968,
+    "p95_regret": 0.06270627062706247,
+    "regime": "decode T<=4",
+    "ridge_t": null,
+    "scored_cases": 10,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 10
+    }
+   },
+   {
+    "authority": "vec-rule",
+    "board": "gv100",
+    "cases": 30,
+    "evidence": {
+     "ranker": 30
+    },
+    "geomean_slowdown": 1.0754324386249752,
+    "max_regret": 0.3742690058479532,
+    "median_regret": 0.03532934907463048,
+    "p95_regret": 0.3449275362318842,
+    "regime": "decode T<=4",
+    "ridge_t": null,
+    "scored_cases": 30,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 30
+    }
+   },
+   {
+    "authority": "volta-hmma",
+    "board": "gv100",
+    "cases": 60,
+    "evidence": {
+     "ranker": 60
+    },
+    "geomean_slowdown": 1.0323417408977658,
+    "max_regret": 0.4081008063439904,
+    "median_regret": 0.002222266118837135,
+    "p95_regret": 0.20209250138431467,
+    "regime": "verify T5-16",
+    "ridge_t": null,
+    "scored_cases": 60,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 60
+    }
+   },
+   {
+    "authority": "volta-tiled",
+    "board": "gv100",
+    "cases": 90,
+    "evidence": {
+     "ranker": 90
+    },
+    "geomean_slowdown": 1.1288177044581176,
+    "max_regret": 1.6347415783173735,
+    "median_regret": 0.0,
+    "p95_regret": 1.1822102864583335,
+    "regime": "T>=17 ridge unknown",
+    "ridge_t": null,
+    "scored_cases": 90,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 90
+    }
+   }
+  ],
+  "by_model": {
+   "qwen3.5-9b+gemma4-12b-dense": {
+    "cases": 190,
+    "geomean_slowdown": 1.0829465148001207,
+    "max_regret": 1.6347415783173735,
+    "median_regret": 0.0018272003173332996,
+    "p95_regret": 0.5576682762770175,
+    "scored_cases": 190,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 190
+    }
+   }
+  },
+  "device": "gv100:80sm",
+  "fit_boards": [],
+  "fit_models": [],
+  "holdout": "board",
+  "input_sha256": "772d43202de98fd46c7546a3fd111890162fa2ceece2b342cdaf7d72eeb9d1ff",
+  "max_regret": null,
+  "passed": true,
+  "schema": "ninferno-selection-regret-report/1",
+  "scope": "best observed qualified candidate in the supplied inventory; not a global optimum",
+  "selector_revision": "f24d0079",
+  "summary": {
+   "cases": 190,
+   "geomean_slowdown": 1.0829465148001207,
+   "max_regret": 1.6347415783173735,
+   "median_regret": 0.0018272003173332996,
+   "p95_regret": 0.5576682762770175,
+   "scored_cases": 190,
+   "single_pass_cases": 0,
+   "statuses": {
+    "complete": 190
+   }
+  }
+ },
+ "selected_bands": {
+  "bands": {
+   "batch129": [
+    129,
+    null
+   ],
+   "decode": [
+    1,
+    8
+   ],
+   "narrow": [
+    17,
+    32
+   ],
+   "verify": [
+    9,
+    16
+   ],
+   "wide": [
+    33,
+    128
+   ]
+  },
+  "by_board": {
+   "gv100": {
+    "batch129": {
+     "best_ms": 76.452916,
+     "cases": 30,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0002695842595659137,
+     "selected_ms": 76.46118,
+     "skipped": 0,
+     "tokens": 9600,
+     "weighted_regret": 0.00010809267235800668,
+     "worst_regret": 0.003454231433505983
+    },
+    "decode": {
+     "best_ms": 15.57096702,
+     "cases": 80,
+     "cases_over_5pct": 20,
+     "geomean_regret": 0.04547447444319852,
+     "selected_ms": 17.416600719999998,
+     "skipped": 0,
+     "tokens": 360,
+     "weighted_regret": 0.1185304482136138,
+     "worst_regret": 0.3742690058479532
+    },
+    "narrow": {
+     "best_ms": 27.367492,
+     "cases": 20,
+     "cases_over_5pct": 19,
+     "geomean_regret": 0.48811148557629247,
+     "selected_ms": 38.72886,
+     "skipped": 0,
+     "tokens": 560,
+     "weighted_regret": 0.41514100013256594,
+     "worst_regret": 1.6347415783173735
+    },
+    "verify": {
+     "best_ms": 6.243176600000001,
+     "cases": 20,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.034440903277376256,
+     "selected_ms": 6.4658925,
+     "skipped": 0,
+     "tokens": 280,
+     "weighted_regret": 0.03567349031901457,
+     "worst_regret": 0.4081008063439904
+    },
+    "wide": {
+     "best_ms": 76.518434,
+     "cases": 40,
+     "cases_over_5pct": 14,
+     "geomean_regret": 0.07646037026354491,
+     "selected_ms": 79.4349,
+     "skipped": 0,
+     "tokens": 3360,
+     "weighted_regret": 0.0381145542001029,
+     "worst_regret": 0.5590063079199441
+    }
+   }
+  },
+  "by_family": {
+   "ggml_vec": {
+    "decode": {
+     "best_ms": 5.704522,
+     "cases": 30,
+     "cases_over_5pct": 12,
+     "geomean_regret": 0.07543243862497517,
+     "selected_ms": 6.6652721999999995,
+     "skipped": 0,
+     "tokens": 90,
+     "weighted_regret": 0.16841905421698788,
+     "worst_regret": 0.3742690058479532
+    }
+   },
+   "r8": {
+    "decode": {
+     "best_ms": 1.7124883199999998,
+     "cases": 10,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.01444502940419845,
+     "selected_ms": 1.7180224199999998,
+     "skipped": 0,
+     "tokens": 10,
+     "weighted_regret": 0.003231613281893697,
+     "worst_regret": 0.06270627062706247
+    }
+   },
+   "rmma": {
+    "decode": {
+     "best_ms": 8.1539567,
+     "cases": 40,
+     "cases_over_5pct": 7,
+     "geomean_regret": 0.031293757663245714,
+     "selected_ms": 9.0333061,
+     "skipped": 0,
+     "tokens": 260,
+     "weighted_regret": 0.10784327564555252,
+     "worst_regret": 0.2071146574733096
+    },
+    "verify": {
+     "best_ms": 6.243176600000001,
+     "cases": 20,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.034440903277376256,
+     "selected_ms": 6.4658925,
+     "skipped": 0,
+     "tokens": 280,
+     "weighted_regret": 0.03567349031901457,
+     "worst_regret": 0.4081008063439904
+    }
+   },
+   "tiled": {
+    "batch129": {
+     "best_ms": 76.452916,
+     "cases": 30,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0002695842595659137,
+     "selected_ms": 76.46118,
+     "skipped": 0,
+     "tokens": 9600,
+     "weighted_regret": 0.00010809267235800668,
+     "worst_regret": 0.003454231433505983
+    },
+    "narrow": {
+     "best_ms": 27.367492,
+     "cases": 20,
+     "cases_over_5pct": 19,
+     "geomean_regret": 0.48811148557629247,
+     "selected_ms": 38.72886,
+     "skipped": 0,
+     "tokens": 560,
+     "weighted_regret": 0.41514100013256594,
+     "worst_regret": 1.6347415783173735
+    },
+    "wide": {
+     "best_ms": 76.518434,
+     "cases": 40,
+     "cases_over_5pct": 14,
+     "geomean_regret": 0.07646037026354491,
+     "selected_ms": 79.4349,
+     "skipped": 0,
+     "tokens": 3360,
+     "weighted_regret": 0.0381145542001029,
+     "worst_regret": 0.5590063079199441
+    }
+   }
+  },
+  "by_format": {
+   "q4k": {
+    "batch129": {
+     "best_ms": 20.9255,
+     "cases": 21,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.00038514261732114363,
+     "selected_ms": 20.933764,
+     "skipped": 0,
+     "tokens": 6720,
+     "weighted_regret": 0.00039492485245284925,
+     "worst_regret": 0.003454231433505983
+    },
+    "decode": {
+     "best_ms": 3.47099042,
+     "cases": 56,
+     "cases_over_5pct": 8,
+     "geomean_regret": 0.023333693428322366,
+     "selected_ms": 3.52887472,
+     "skipped": 0,
+     "tokens": 252,
+     "weighted_regret": 0.016676594572681003,
+     "worst_regret": 0.20209250138431467
+    },
+    "narrow": {
+     "best_ms": 6.58336,
+     "cases": 14,
+     "cases_over_5pct": 14,
+     "geomean_regret": 0.6683447407488892,
+     "selected_ms": 12.062784,
+     "skipped": 0,
+     "tokens": 392,
+     "weighted_regret": 0.8323141982209694,
+     "worst_regret": 1.6347415783173735
+    },
+    "verify": {
+     "best_ms": 1.7278486,
+     "cases": 14,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.04220971782114957,
+     "selected_ms": 1.7525078,
+     "skipped": 0,
+     "tokens": 196,
+     "weighted_regret": 0.014271620788997463,
+     "worst_regret": 0.4081008063439904
+    },
+    "wide": {
+     "best_ms": 21.720038,
+     "cases": 28,
+     "cases_over_5pct": 14,
+     "geomean_regret": 0.11099343905801096,
+     "selected_ms": 24.636504,
+     "skipped": 0,
+     "tokens": 2352,
+     "weighted_regret": 0.13427536360663828,
+     "worst_regret": 0.5590063079199441
+    }
+   },
+   "q6k": {
+    "batch129": {
+     "best_ms": 55.527415999999995,
+     "cases": 9,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0,
+     "selected_ms": 55.527415999999995,
+     "skipped": 0,
+     "tokens": 2880,
+     "weighted_regret": 0.0,
+     "worst_regret": 0.0
+    },
+    "decode": {
+     "best_ms": 12.0999766,
+     "cases": 24,
+     "cases_over_5pct": 12,
+     "geomean_regret": 0.09901716249490922,
+     "selected_ms": 13.887725999999999,
+     "skipped": 0,
+     "tokens": 108,
+     "weighted_regret": 0.14774817002538665,
+     "worst_regret": 0.3742690058479532
+    },
+    "narrow": {
+     "best_ms": 20.784132,
+     "cases": 6,
+     "cases_over_5pct": 5,
+     "geomean_regret": 0.1396846618747003,
+     "selected_ms": 26.666075999999997,
+     "skipped": 0,
+     "tokens": 168,
+     "weighted_regret": 0.283001666848536,
+     "worst_regret": 0.30932249472748174
+    },
+    "verify": {
+     "best_ms": 4.515328,
+     "cases": 6,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.016538129689209313,
+     "selected_ms": 4.7133847,
+     "skipped": 0,
+     "tokens": 84,
+     "weighted_regret": 0.04386319221992285,
+     "worst_regret": 0.05680508462417677
+    },
+    "wide": {
+     "best_ms": 54.798396000000004,
+     "cases": 12,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0,
+     "selected_ms": 54.798396000000004,
+     "skipped": 0,
+     "tokens": 1008,
+     "weighted_regret": 0.0,
+     "worst_regret": 0.0
+    }
+   }
+  },
+  "cases_skipped": 0,
+  "legacy_qualification": "full ctest of master 752bae56 on sm_70 (this board): 394/394 passed; f24d0079 itself was not run on sm_70",
+  "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
+  "overall": {
+   "batch129": {
+    "best_ms": 76.452916,
+    "cases": 30,
+    "cases_over_5pct": 0,
+    "geomean_regret": 0.0002695842595659137,
+    "selected_ms": 76.46118,
+    "skipped": 0,
+    "tokens": 9600,
+    "weighted_regret": 0.00010809267235800668,
+    "worst_regret": 0.003454231433505983
+   },
+   "decode": {
+    "best_ms": 15.57096702,
+    "cases": 80,
+    "cases_over_5pct": 20,
+    "geomean_regret": 0.04547447444319852,
+    "selected_ms": 17.416600719999998,
+    "skipped": 0,
+    "tokens": 360,
+    "weighted_regret": 0.1185304482136138,
+    "worst_regret": 0.3742690058479532
+   },
+   "narrow": {
+    "best_ms": 27.367492,
+    "cases": 20,
+    "cases_over_5pct": 19,
+    "geomean_regret": 0.48811148557629247,
+    "selected_ms": 38.72886,
+    "skipped": 0,
+    "tokens": 560,
+    "weighted_regret": 0.41514100013256594,
+    "worst_regret": 1.6347415783173735
+   },
+   "verify": {
+    "best_ms": 6.243176600000001,
+    "cases": 20,
+    "cases_over_5pct": 3,
+    "geomean_regret": 0.034440903277376256,
+    "selected_ms": 6.4658925,
+    "skipped": 0,
+    "tokens": 280,
+    "weighted_regret": 0.03567349031901457,
+    "worst_regret": 0.4081008063439904
+   },
+   "wide": {
+    "best_ms": 76.518434,
+    "cases": 40,
+    "cases_over_5pct": 14,
+    "geomean_regret": 0.07646037026354491,
+    "selected_ms": 79.4349,
+    "skipped": 0,
+    "tokens": 3360,
+    "weighted_regret": 0.0381145542001029,
+    "worst_regret": 0.5590063079199441
+   }
+  },
+  "prefill_profile_rows_excluded": 336,
+  "schema": "ninferno-regret-bands/1",
+  "skipped_cases": []
+ },
+ "source_sha": "f24d0079613133f8e19f9bcc40b9357c761292b9",
+ "sweep": "ninferno_route_tune --a8-candidates 1 --samples 7, three passes (#614 A5)"
+}

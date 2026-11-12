@@ -130,9 +130,10 @@ class PathMatching(unittest.TestCase):
         for f in ["src/ops/generic/generic_tiled.cu", "src/ops/generic/generic_staged.cu",
                   "src/ops/generic/generic_volta_hmma.cu", "src/ops/generic/generic_volta_cutlass.cu",
                   "src/ops/generic/generic_volta_gemv.cu", "src/ops/generic/ggml_mmq/ggml_vec.cu",
-                  # the files these functions move to (generic_routes.cpp, ggml_mmq_host.cpp) match the
-                  # src/ops/generic/*.cpp glob, whichever change lands first
-                  "src/ops/generic/generic_routes.cpp", "src/ops/generic/ggml_mmq_host.cpp"]:
+                  # the files these functions moved to (generic_routes.cpp, ggml_mmq_host.cpp,
+                  # generic_volta_cutlass_sizes.cpp) match the src/ops/generic/*.cpp glob
+                  "src/ops/generic/generic_routes.cpp", "src/ops/generic/ggml_mmq_host.cpp",
+                  "src/ops/generic/generic_volta_cutlass_sizes.cpp"]:
             self.assertTrue(self.match(f), f)
 
     def test_glob_ends_are_anchored(self):
@@ -722,10 +723,15 @@ class HostFunctions(unittest.TestCase):
         finally:
             PATHS[:] = saved
         # tiled_fits, tiled_supports, staged_fits and volta_hmma_takes moved to generic_routes.cpp,
-        # vec_supported to ggml_mmq_host.cpp (#620): listed .cpp files, which the finder does not scan
-        for f, name in [("src/ops/generic/generic_volta_cutlass.cu", "volta_cutlass_workspace_bytes"),
-                        ("src/ops/generic/generic_volta_cutlass.cu", "volta_cutlass_chunk_bytes")]:
-            self.assertIn(name, found.get(f, []), f"{f}: {name}")
+        # vec_supported to ggml_mmq_host.cpp, volta_cutlass_workspace_bytes and
+        # volta_cutlass_chunk_bytes to generic_volta_cutlass_sizes.cpp (#620): listed .cpp files,
+        # which the finder does not scan, and the files they moved to are decision files by the
+        # src/ops/generic/*.cpp glob. The listed device file that still defines some is found.
+        self.assertIn("column_tile", found.get("src/ops/generic/ggml_mmq/ggml_mmq.cu", []))
+        self.assertNotIn("src/ops/generic/generic_volta_cutlass.cu", found)
+        for f in ["src/ops/generic/generic_routes.cpp", "src/ops/generic/ggml_mmq_host.cpp",
+                  "src/ops/generic/generic_volta_cutlass_sizes.cpp"]:
+            self.assertTrue(gg.decision_files([f], PATHS), f)
 
     def test_a_launcher_is_not_a_decision(self):
         new = {"src/ops/generic/generic_new_kernel.cu":

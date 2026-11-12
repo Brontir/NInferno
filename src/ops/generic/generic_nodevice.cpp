@@ -6,30 +6,19 @@
 
 // The answers of the generic path that belong to a device or to the CUDA build, in a build with no
 // CUDA runtime (#620 step 11): nothing is ever timed, so no tuned route exists (generic_tune.cpp
-// holds the real ones: the tuner's tables, filled at the first eager call on a device), the Volta
-// CUTLASS route is answered as compiled out (generic_volta_cutlass.cu's answer of a build without
-// it; the real one is compiled on an sm_70 tree with CUTLASS, where a test that prices Volta boards
-// must not take this file: tests.cmake), and the kernel an executed route would launch is not
-// described (route_resources, rmma_resources_by_launch, rmma_plane_taken: they read the device's
-// binary; the last three stubs are here for the link only, nothing a host-only test calls reaches
-// them). A host-only test adds this file to its own sources; nothing beside ninferno_ops links
-// it, which defines the real ones.
+// holds the real ones: the tuner's tables, filled at the first eager call on a device), and the
+// kernel an executed route would launch is not described (route_resources,
+// rmma_resources_by_launch, rmma_plane_taken: they read the device's binary; the last three stubs
+// are here for the link only, nothing a host-only test calls reaches them). The Volta CUTLASS
+// route's sizes are no seam: they are host code (generic_volta_cutlass_sizes.cpp), compiled with
+// the route where the tree has it. A host-only test adds this file to its own sources; nothing
+// beside ninferno_ops links it, which defines the real ones.
 namespace ninferno::ops::detail::generic {
 
 std::optional<Route> tuned_dense_route(const Problem&, std::int32_t) { return std::nullopt; }
 
 std::optional<Route> tuned_prefill_route(const Problem&, std::int32_t, Route) {
     return std::nullopt;
-}
-
-bool volta_cutlass_compiled() noexcept { return false; }
-
-std::size_t volta_cutlass_workspace_bytes(std::int32_t, std::int32_t, std::int32_t, bool) {
-    return 0;
-}
-
-std::size_t volta_cutlass_chunk_bytes(std::int32_t, std::int32_t, std::int32_t, bool, std::size_t) {
-    return 0;
 }
 
 // The kernel a route would launch is read from the device's binary (generic_describe.cpp): a host

@@ -474,6 +474,37 @@ int main() {
                               "the fallback's mtp:2 without its gain, its table cut: " +
                                   lower_load(p, "mtp:3"));
         }
+        // (iii b') The derivation follows the root profile's basis, not the parent table's label
+        // (#760). A facts profile whose default drafts with DFlash2 and whose fit fallback mtp:3
+        // has no known gain (no tok_s, not measured): the fallback's table is cut from the
+        // default's (another drafter: one request speculates, two or more decode plainly), a
+        // literal 2:0. The fallback's shallower mtp:2, measured at x1.2 (x 0.95, x 0.9: 1.14 and
+        // 1.08 at two and three streams), is derived from the facts at its own gain, 2:2,4:0;
+        // before #760 it was cut again from the fallback's literal (2:0).
+        {
+            sp::Profile p;
+            p.overall = p.thinking = p.non_thinking = chosen("dflash2:7", "dflash2", 2.0);
+            sp::Choice no_gain                      = chosen("mtp:3", "mtp", 1.0);
+            no_gain.tok_s                           = 0;
+            no_gain.plain_tok_s                     = 0;
+            p.fit_fallback                          = no_gain;
+            p.measurements                          = measured({{"mtp:2", 1.0 / 1.2}});
+            p.joint_scale                           = {{"mtp:2", {{2, 0.95}, {3, 0.9}}}};
+            p.load                                  = sp::parse_load("2:3");
+            p.load_basis                            = "facts";
+            const auto fallback = ninferno::product::served_fit_fallback(subject_of(p), false);
+            failures += check(fallback && engine_label(*fallback) == "2:0" &&
+                                  fallback->load_basis == "literal",
+                              "a fit fallback with no known gain, its table cut: " +
+                                  (fallback ? engine_label(*fallback) + "/" + fallback->load_basis
+                                            : std::string("none")));
+            const auto lower = shallower_profile(p, sp::SpecConfig::parse("mtp:3"), 1.5);
+            failures += check(lower && sp::load_label(lower->load) == "2:2,4:0" &&
+                                  lower->load_basis == "facts",
+                              "the no-gain fallback's mtp:2 from the facts at its own gain: " +
+                                  (lower ? sp::load_label(lower->load) + "/" + lower->load_basis
+                                         : std::string("no profile")));
+        }
         // (iii c) A bound measured with the full head shows nothing for a proposal head (another
         // verify cost a round): the shallower mtp:2+head of a fit fallback mtp:3+head beside a
         // default mtp:5 measured at 2:2,4:1 decodes plainly from two streams; the default's own

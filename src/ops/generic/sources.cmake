@@ -41,6 +41,7 @@ add_library(ninferno_ops_host_objects OBJECT
   "${CMAKE_CURRENT_LIST_DIR}/generic_gates.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_cost.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_workspace.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_volta_cutlass_sizes.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/route_query.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/route_authorities.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/../prefill_routes.cpp"
@@ -158,4 +159,8 @@ if(NINFERNO_CUTLASS_INCLUDE)
     PROPERTIES INCLUDE_DIRECTORIES "${NINFERNO_CUTLASS_INCLUDE}"
                COMPILE_DEFINITIONS NINFERNO_VOLTA_CUTLASS
                COMPILE_OPTIONS "--expt-relaxed-constexpr")
+  # The route's sizes (host code) answer for the route the .cu compiles.
+  set_source_files_properties("${CMAKE_CURRENT_LIST_DIR}/generic_volta_cutlass_sizes.cpp"
+    TARGET_DIRECTORY ninferno_ops_host_objects
+    PROPERTIES COMPILE_DEFINITIONS NINFERNO_VOLTA_CUTLASS)
 endif()

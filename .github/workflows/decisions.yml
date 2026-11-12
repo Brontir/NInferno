@@ -1,0 +1,83 @@
+name: decisions
+
+# The decision core on a machine with no GPU (#620 step 13): the host-only closure of the selector,
+# the price and the choice (ninferno_core_host, ninferno_ops_host_objects, ninferno_product_choice)
+# is built with no CUDA runtime in its link (ninferno_assert_host_only checks it at configure) and
+# its tests are run, among them the selector golden's host twin, which must read the committed
+# goldens of the arch's build set byte-equal. One configure per set: the sets are compile-time facts
+# of the build (NINFERNO_BUILD_ARCH, NVFP4 present or not), as the release archives differ. nvcc is
+# installed only because CMake's CUDA language check needs it; no device code is built. The sm_70
+# set joins once the Volta CUTLASS workspace arithmetic is host code (step 13, PR 2).
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push to a PR replaces its run. A master push is its own group (its sha), so a merge
+  # batch runs every commit: a group holds one running and one pending run, and a newer pending
+  # run would cancel the older one whatever cancel-in-progress says.
+  group: decisions-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      # One arch's host objects take well under this; the repository's cache space is shared.
+      CCACHE_MAXSIZE: 500M
+    strategy:
+      fail-fast: false
+      matrix:
+        # 120a: the full set (NVFP4); 89: the base set; 75: the sm75 set.
+        arch: ["120a", "89", "75"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: System packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends ninja-build pkg-config ccache \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
+            libcurl4-openssl-dev libssl-dev
+      - name: CUDA 12.8 compiler and headers (for CMake's language check; no device code is built)
+        run: |
+          wget -q --tries=5 --waitretry=5 --retry-connrefused \
+            --retry-on-http-error=429,500,502,503,504 \
+            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get -o Acquire::Retries=3 update -q
+          sudo apt-get -o Acquire::Retries=3 install -y -q --no-install-recommends cuda-nvcc-12-8 cuda-cudart-dev-12-8 \
+            cuda-driver-dev-12-8 cuda-nvtx-12-8
+          echo /usr/local/cuda-12.8/bin >> "$GITHUB_PATH"
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: decisions-ccache-${{ matrix.arch }}-${{ github.sha }}
+          restore-keys: decisions-ccache-${{ matrix.arch }}-
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.arch }} -DNINFERNO_BUILD_APPS=OFF -DBUILD_TESTING=ON \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      # ccache keeps its default directory, ~/.cache/ccache, the path the cache step restores.
+      - name: Build the host-only decision tests
+        run: |
+          cmake --build build --target ninferno_selector_golden_host_test \
+            ninferno_generic_routes_host_test ninferno_choice_test ninferno_gate_atlas_test \
+            ninferno_route_cost_constants_test ninferno_fitted_holdouts_test ninferno_route_rules_test \
+            ninferno_rmma_geometry_test ninferno_device_identity_test ninferno_format_facts_test
+          ccache -s
+      - name: Run them (no GPU on this machine)
+        run: |
+          re='^ninferno_(selector_golden_host|generic_routes_host|choice|gate_atlas|route_cost_constants|fitted_holdouts|route_rules|rmma_geometry|device_identity|format_facts)_test$'
+          # All ten registered: a registration made conditional or renamed (its target still built)
+          # would otherwise drop out of the regex and pass unseen.
+          n=$(ctest --test-dir build -N -R "$re" | sed -n 's/^Total Tests: //p')
+          [ "$n" = 10 ] || { echo "expected 10 decision tests registered, found ${n:-none}"; exit 1; }
+          ctest --test-dir build --output-on-failure --no-tests=error -R "$re"

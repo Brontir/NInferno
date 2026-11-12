@@ -5266,12 +5266,7 @@
   }
  ],
  "gpu": {
-  "board": {
-   "cc": 75,
-   "dram_gbps": 616.0,
-   "l2_mib": 5.5,
-   "sms": 68
-  },
+  "pci_id": "0x1e07",
   "class": "tu102",
   "name": "NVIDIA GeForce RTX 2080 Ti"
  },

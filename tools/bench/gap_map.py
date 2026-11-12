@@ -117,6 +117,22 @@ def board_from_facts(facts: dict, chip: str, sms: int, dram_gbps: float | None) 
     return c[0] if len(c) == 1 else None
 
 
+def board_from_pci(facts: dict, pci_id: str | None) -> dict | None:
+    """The gpu_facts board of a PCI id ("0x2684", a route table's gpu.pci_id); None for no id or
+    an id the table lacks."""
+    if not pci_id:
+        return None
+    if not re.fullmatch(r"0[xX][0-9A-Fa-f]{4}", str(pci_id)):  # refused as route_table.cpp does
+        raise ValueError(f"gpu.pci_id {pci_id!r} is not a PCI product id")
+    # The row's own figures: core/measured_boards.h kDramConflicts (the V100 SXM2 read at 900
+    # GB/s, not 898.048) is not applied, as board_from_facts never did; no law row depends on it.
+    for g in facts["gpus"]:
+        if int(g["id"], 16) == int(pci_id, 16):
+            return {"name": g["name"], "cc": g["cc"], "sms": g["sms"], "boost_mhz": g["boost_mhz"],
+                    "dram_gbs": g["gbps"] * g["bus_bits"] / 8.0, "l2_mib": g.get("l2_mib")}
+    return None
+
+
 def board_candidates(facts: dict, chip: str, sms: int, dram_gbps: float | None) -> list[dict]:
     """Distinct facts (clock, bandwidth, L2) among the matching rows, closest bandwidth first."""
     found = {}
@@ -211,8 +227,11 @@ def rows_from_route_table(doc: dict, name: str, facts: dict, gens: list[dict],
     gpu = doc.get("gpu", {})
     board_in = gpu.get("board", {})
     chip = str(gpu.get("class", "")).split(":")[0]
-    own_sms = board_in.get("sms", 0)
-    own = board_from_facts(facts, chip, own_sms, board_in.get("dram_gbps"))
+    # The table's board by its PCI id (gpu.pci_id), as route_table.cpp reads it; a table of a
+    # board the registry lacks records its facts (gpu.board) instead.
+    by_id = board_from_pci(facts, gpu.get("pci_id"))
+    own_sms = by_id["sms"] if by_id else board_in.get("sms", 0)
+    own = by_id or board_from_facts(facts, chip, own_sms, board_in.get("dram_gbps"))
     own_why = (f"ambiguous board: several gpu_facts rows for {chip} with {own_sms} SMs differ"
                if len(board_candidates(facts, chip, own_sms, board_in.get("dram_gbps"))) > 1
                else f"no gpu_facts row for {chip} with {own_sms} SMs")

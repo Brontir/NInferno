@@ -651,12 +651,25 @@ def same_sizes(data: Data, labels: list[str]) -> list[int]:
 # prices every cell with it beside the tile law: with the law's constants as they stand (no refit;
 # one C_N per size and one D_r per run fitted as in FIT), and refitted (units by launch mode and the
 # fixup launches free), naming each pick's launch modes.
-# Facts of the board and the model the kit measures (the RTX 2080 Ti's facts row: 68 SMs, a 1545 MHz
-# reference clock, 352 bits at 14 Gbps; Qwen3-8B's linears on the MMQ path, routes/tu102.json and
-# generic_gemm.cpp: gate and up two products, down K 12288; 36 layers):
-LAW_SMS = 68
-LAW_CLOCK_HZ = 1545e6
-LAW_DRAM_BYTES_PER_S = 616e9
+# Facts of the board and the model the kit measures. The board is the RTX 2080 Ti's row of
+# core/data/gpu_facts.json (PCI id 0x1E07: 68 SMs, a 1545 MHz reference clock, 352 bits at 14 Gbps),
+# read from the file so a change of the row moves the law here too (#772). The model is Qwen3-8B's
+# linears on the MMQ path (routes/tu102.json and generic_gemm.cpp: gate and up two products, down
+# K 12288; 36 layers):
+LAW_PCI_ID = 0x1E07
+GPU_FACTS = Path(__file__).resolve().parents[2] / "src" / "core" / "data" / "gpu_facts.json"
+
+
+def law_board(path: Path = GPU_FACTS, pci_id: int = LAW_PCI_ID) -> tuple[int, float, float]:
+    """(SMs, reference clock in Hz, DRAM bytes/s) of the board's gpu_facts row, as the C++
+    LaunchFacts reads them (bus bits x Gbps / 8)."""
+    for row in json.loads(path.read_text(encoding="utf-8"))["gpus"]:
+        if int(row["id"], 16) == pci_id:
+            return int(row["sms"]), row["boost_mhz"] * 1e6, row["bus_bits"] * row["gbps"] / 8 * 1e9
+    raise Fail(f"{path}: no row for PCI id {pci_id:#06x}")
+
+
+LAW_SMS, LAW_CLOCK_HZ, LAW_DRAM_BYTES_PER_S = law_board()
 LAW_LINEARS = [(5120, 4096), (1024, 4096), (4096, 4096), (12288, 4096), (12288, 4096), (4096, 12288)]
 LAW_LAYERS = 36
 # kTuringMmqLaw (MEASURED; core/generation.h names the source of each value)

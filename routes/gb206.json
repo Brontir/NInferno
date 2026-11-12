@@ -2977,7 +2977,7 @@
  "gpu": {
   "class": "gb206",
   "name": "NVIDIA GeForce RTX 5060 Ti",
-  "board": {"cc": 120, "sms": 36, "l2_mib": 32, "dram_gbps": 448}
+  "pci_id": "0x2d04"
  },
  "schema": "ninferno-route-table/1",
  "moe": [

@@ -86,6 +86,7 @@ src/ops/generic/generic_volta_cutlass.cu
 src/ops/generic/generic_volta_gemv.cu
 src/ops/generic/ggml_mmq/ggml_vec.cu
 src/ops/moe/moe_internal.h
+src/ops/moe/moe_route_query.*
 include/ninferno/ops/linear.h
 include/ninferno/ops/moe.h
 include/ninferno/option_enums.h
