@@ -1,5 +1,6 @@
 import io
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -257,6 +258,123 @@ class CliTest(unittest.TestCase):
             lines = out.rstrip("\n").splitlines()
             self.assertIn("no decision changes (facts digest: aaa -> bbb)", out)
             self.assertEqual(lines[-1], "no golden changes")
+
+
+def split_board(text):
+    """A single-file dump as the per-format layout writes it: {file name: text}."""
+    files = {gd.HEADER_FILE: ""}
+    for line in text.splitlines(keepends=True):
+        name = gd.HEADER_FILE if line.startswith("#") else line.split(" ", 1)[0] + ".txt"
+        files[name] = files.get(name, "") + line
+    return files
+
+
+def git_repo(d, *commits):
+    """A repository at d with one commit per {path: text or None (deleted)}; returns the shas."""
+
+    def g(*args):
+        return subprocess.run(["git", "-C", d, *args], check=True, capture_output=True, text=True).stdout
+
+    g("init", "-q")
+    g("config", "user.email", "t@example.com")
+    g("config", "user.name", "t")
+    g("config", "commit.gpgsign", "false")
+    shas = []
+    for files in commits:
+        for rel, text in files.items():
+            p = Path(d) / rel
+            if text is None:
+                p.unlink()
+            else:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(text, encoding="utf-8", newline="\n")
+        g("add", "-A")
+        g("commit", "-q", "-m", "c")
+        shas.append(g("rev-parse", "HEAD").strip())
+    return shas
+
+
+class LayoutTest(unittest.TestCase):
+    """Both layouts are read (#620 step 8): one file per board, and a board directory with
+    header.txt and one file per format."""
+
+    def test_header_file_matches_the_test_source(self):
+        src = (Path(__file__).resolve().parent / "ops" / "linear" / "test_selector_golden.cpp").read_text(
+            encoding="utf-8"
+        )
+        m = re.search(r'kHeaderFile\s*=\s*"([^"]+)"', src)
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), gd.HEADER_FILE)
+
+    def test_directory_reads_as_the_single_file(self):
+        files = split_board(BASE)
+        self.assertEqual(sorted(files), ["bf16.txt", "header.txt", "q4.txt"])
+        a, b = gd.parse_checked(BASE, "v100.txt"), gd.parse_checked(files, "v100/")
+        self.assertEqual((a.header, a.not_packed, dict(a.runs)), (b.header, b.not_packed, dict(b.runs)))
+
+    def test_layout_change_alone_is_no_change(self):
+        out = []
+        old, new = {"full": {"v100.txt": BASE}}, {"full": {"v100/": split_board(BASE)}}
+        self.assertEqual(gd.summarize(old, new, 20, out), (0, 0, 0))
+        self.assertEqual(out, [])
+        self.assertEqual(gd.summarize(new, old, 20, out), (0, 0, 0))
+
+    def test_change_across_the_layouts_is_counted(self):
+        out = []
+        old, new = {"full": {"v100.txt": BASE}}, {"full": {"v100/": split_board(HEAD)}}
+        self.assertEqual(gd.summarize(old, new, 20, out)[0], 5)
+        self.assertIn("full/v100 (file v100.txt -> v100/): 5 decisions changed in 1 problems", out)
+
+    def test_bad_directories_fail(self):
+        files = split_board(BASE)
+        cases = {
+            "no header": {k: v for k, v in files.items() if k != gd.HEADER_FILE},
+            "misplaced line": dict(files, **{"bf16.txt": files["bf16.txt"] + files["q4.txt"]}),
+            "comment in a format file": dict(files, **{"q4.txt": "# v100 a b\n" + files["q4.txt"]}),
+            "decision in the header": dict(files, **{gd.HEADER_FILE: files[gd.HEADER_FILE] + files["q4.txt"]}),
+            "overlap": dict(files, **{"q4.txt": files["q4.txt"] + "q4 p0 store 256x2048 speed T=1 x\n"}),
+        }
+        for what, case in cases.items():
+            with self.subTest(what=what), self.assertRaises(gd.GoldenParseError):
+                gd.parse_checked(case, "full/v100/")
+
+    def test_both_layouts_of_one_board_fail(self):
+        with self.assertRaises(gd.GoldenParseError):
+            gd.resolve({"full": {"v100.txt": BASE, "v100/": split_board(BASE)}}, None)
+
+    def test_dirs_cli_across_the_layouts(self):
+        with tempfile.TemporaryDirectory() as d:
+            tree(d, {"a/full/v100.txt": BASE, "a/full/l4.txt": BASE})
+            tree(d, {f"b/full/v100/{k}": v for k, v in split_board(BASE).items()})
+            tree(d, {f"c/full/v100/{k}": v for k, v in split_board(HEAD).items()})
+            code, out, _ = run(f"{d}/a", f"{d}/b", "--fail-on-change")
+            self.assertEqual(code, 1)
+            self.assertIn("full/l4: REMOVED board file (5 runs)", out)
+            self.assertNotIn("full/v100", out)
+            tree(d, {"b/full/l4.txt": BASE})
+            self.assertEqual(run(f"{d}/a", f"{d}/b", "--fail-on-change")[:2], (0, "no golden changes\n"))
+            code, out, _ = run(f"{d}/b", f"{d}/c")
+            self.assertIn("full/v100: 5 decisions changed in 1 problems", out)
+
+    def test_revisions_across_the_layout_change(self):
+        rel = gd.GOLDEN_REL + "/full/"
+        split = {rel + "v100/" + k: v for k, v in split_board(BASE).items()}
+        moved = {rel + "v100/" + k: v for k, v in split_board(HEAD).items()}
+        with tempfile.TemporaryDirectory() as d:
+            one, two, three = git_repo(d, {rel + "v100.txt": BASE}, dict(split, **{rel + "v100.txt": None}), moved)
+            code, out, err = run("--repo", d, "--base", one, "--head", two, "--fail-on-change")
+            self.assertEqual((code, out, err), (0, "no golden changes\n", ""))
+            code, out, _ = run("--repo", d, "--base", one, "--head", three, "--fail-on-change")
+            self.assertEqual(code, 1)
+            self.assertIn("full/v100 (file v100.txt -> v100/): 5 decisions changed in 1 problems", out)
+            code, out, _ = run("--repo", d, "--range", f"{two}...{three}")
+            self.assertIn("full/v100: 5 decisions changed in 1 problems", out)
+
+    def test_missing_blob_is_a_tool_failure(self):
+        with tempfile.TemporaryDirectory() as d:
+            (one,) = git_repo(d, {"x.txt": "x\n"})
+            with self.assertRaises(gd.GoldenParseError):
+                gd.read_blobs(one, ["no/such/file.txt"], d)
 
 
 if __name__ == "__main__":

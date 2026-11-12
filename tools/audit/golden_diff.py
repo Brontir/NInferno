@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Compact summary of what changed between two selector golden trees (#620 step 8).
 
-The goldens (tests/ops/linear/selector_golden/<build set>/<board>[.<facts digest>].txt) are written
-by tests/ops/linear/test_selector_golden.cpp (dump_body / dump_board). A decision change moves
+The goldens are written by tests/ops/linear/test_selector_golden.cpp (dump_body / dump_board), in
+one of two layouts; both are read, so a --base before the split compares with a head after it:
+  <build set>/<board>/header.txt + <format>.txt   one file per format (#620 step 8); the files of a
+                                                  board are read as the one dump they join into
+  <build set>/<board>[.<facts digest>].txt        one file per board (before #620 step 8)
+A decision change moves
 thousands of lines; this prints, per build set and board, how many decisions changed (one decision
 = one sampled token width T of one (format, policy, epilogue, shape, profile) problem), grouped by problem
 with the T ranges collapsed and by (old route -> new route).
@@ -33,6 +37,7 @@ from pathlib import Path
 
 GOLDEN_REL = "tests/ops/linear/selector_golden"
 INDEX_NAME = "facts_index.txt"
+HEADER_FILE = "header.txt"  # kHeaderFile in test_selector_golden.cpp (a unit test compares them)
 
 DECISION = re.compile(
     r"^(?P<fmt>\S+) p(?P<policy>\d+) (?P<epi>\S+) (?P<rows>\d+)x(?P<k>\d+) (?P<profile>\S+)"
@@ -98,6 +103,38 @@ def parse_golden(text, name="<golden>"):
         for (_, hi, _), (lo, _, _) in zip(runs, runs[1:]):
             if lo <= hi:
                 raise GoldenParseError(f"{name}: overlapping widths for {' '.join(key)}")
+    return g
+
+
+def parse_board_dir(files, name):
+    """A board directory of the per-format layout ({file name: text}): header.txt holds the comment
+    lines, <format>.txt that format's lines; read as the one dump they join into. A line in the
+    file of another format, or a comment line outside header.txt, is an error (a bad merge)."""
+    if HEADER_FILE not in files:
+        raise GoldenParseError(f"{name}: no {HEADER_FILE}")
+    g = parse_golden(files[HEADER_FILE], name + HEADER_FILE)
+    if g.runs or g.not_packed:
+        raise GoldenParseError(f"{name}{HEADER_FILE}: decision lines in the header file")
+    for fname in sorted(files):
+        if fname == HEADER_FILE:
+            continue
+        where = name + fname
+        if not fname.endswith(".txt"):
+            raise GoldenParseError(f"{where}: not a .txt file")
+        fmt = fname[:-4]
+        part = parse_golden(files[fname], where)
+        if part.header is not None or part.facts is not None:
+            raise GoldenParseError(f"{where}: a comment line outside {HEADER_FILE}")
+        # Every key of this file carries its format, so the files' keys never meet: the overlap
+        # check parse_golden ran per file holds for the board.
+        for key, runs in part.runs.items():
+            if key[0] != fmt:
+                raise GoldenParseError(f"{where}: a line of format {key[0]}")
+            g.runs[key] = runs
+        for key, why in part.not_packed.items():
+            if key[0] != fmt:
+                raise GoldenParseError(f"{where}: a line of format {key[0]}")
+            g.not_packed[key] = why
     return g
 
 
@@ -208,7 +245,10 @@ def show(route):
 
 
 def split_name(name):
-    """'rtx3090.0ae580162b29.txt' -> ('rtx3090', '0ae580162b29'); 'v100.txt' -> ('v100', None)."""
+    """'rtx3090.0ae580162b29.txt' -> ('rtx3090', '0ae580162b29'); 'v100.txt' -> ('v100', None);
+    'v100/' (a board directory of the per-format layout) -> ('v100', None)."""
+    if name.endswith("/"):
+        return name[:-1], None
     stem = name[:-4] if name.endswith(".txt") else name
     board, dot, digest = stem.rpartition(".")
     if dot and re.fullmatch(r"[0-9a-f]{12}", digest):
@@ -233,9 +273,10 @@ def parse_index(text):
 
 
 def resolve(tree, index_text):
-    """{(set, board): (file name, text, note)}: the file holding the release's choices of each
-    board. With a facts index that is the file of the row of the release nvcc; a board without
-    a row has one file. A board with several files and no row is an error."""
+    """{(set, board): (file name, golden, note)}: the file holding the release's choices of each
+    board (its text, or {file name: text} of a board directory). With a facts index that is the
+    file of the row of the release nvcc; a board without a row has one file or one directory. A
+    board with several files and no row, or with both a directory and a file, is an error."""
     release, rows = parse_index(index_text) if index_text is not None else (None, {})
     out = {}
     for s, files in tree.items():
@@ -245,6 +286,10 @@ def resolve(tree, index_text):
         for board, names in by_board.items():
             note = ""
             entries = rows.get(f"{s}/{board}", [])
+            if len(names) > 1 and any(n.endswith("/") for n in names):
+                raise GoldenParseError(
+                    f"{s}/{board}: both layouts, a directory and {', '.join(sorted(n for n in names if not n.endswith('/')))}"
+                )
             if entries:
                 hit = [e for e in entries if e[2] == release]
                 if not hit:
@@ -267,8 +312,9 @@ def resolve(tree, index_text):
     return out
 
 
-def parse_checked(text, name):
-    g = parse_golden(text, name)
+def parse_checked(golden, name):
+    """A golden file's text, or a board directory's {file name: text} (name ends with '/')."""
+    g = parse_board_dir(golden, name) if isinstance(golden, dict) else parse_golden(golden, name)
     check_widths(g, name)
     return g
 
@@ -322,13 +368,22 @@ def summarize(old_tree, new_tree, detail, out, old_index=None, new_index=None):
 
 
 def load_dir(root):
-    """(tree {set: {file name: text}}, facts_index text or None) from a selector_golden dir."""
+    """(tree {set: {file name: text, or 'board/': {file name: text}}}, facts_index text or None)
+    from a selector_golden dir, in either layout."""
     root = Path(root)
     if not root.is_dir():
         raise GoldenParseError(f"not a directory: {root}")
     tree = {}
     for sub in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")):
-        tree[sub.name] = {f.name: f.read_text(encoding="utf-8") for f in sorted(sub.glob("*.txt"))}
+        files = {}
+        for f in sorted(sub.iterdir()):
+            if f.is_file() and f.suffix == ".txt":
+                files[f.name] = f.read_text(encoding="utf-8")
+            elif f.is_dir() and not f.name.startswith("."):
+                files[f.name + "/"] = {
+                    g.name: g.read_text(encoding="utf-8") for g in sorted(f.glob("*.txt")) if g.is_file()
+                }
+        tree[sub.name] = files
     index = root / INDEX_NAME
     return tree, (index.read_text(encoding="utf-8") if index.is_file() else None)
 
@@ -339,15 +394,45 @@ def git(args, repo):
     ).stdout
 
 
+def read_blobs(rev, paths, top):
+    """{path: text} of files at one revision, read by one `git cat-file --batch` (the per-format
+    layout has thousands of files; a `git show` each would take minutes)."""
+    if not paths:
+        return {}
+    request = "".join(f"{rev}:{p}\n" for p in paths).encode("utf-8")
+    out = subprocess.run(
+        ["git", "-C", str(top), "cat-file", "--batch"], input=request, check=True, capture_output=True
+    ).stdout
+    blobs, at = {}, 0
+    for path in paths:
+        end = out.find(b"\n", at)
+        head = out[at:end].decode("utf-8", "replace").split()
+        if end < 0 or len(head) != 3 or head[1] != "blob":
+            raise GoldenParseError(f"git cat-file {rev}:{path}: {' '.join(head) or 'no answer'}")
+        size = int(head[2])
+        blobs[path] = out[end + 1 : end + 1 + size].decode("utf-8")
+        at = end + 1 + size + 1  # the blob, then a newline
+    return blobs
+
+
 def load_rev(rev, top):
     names = git(["ls-tree", "-r", "--name-only", rev, "--", GOLDEN_REL], top).splitlines()
-    tree, index = {}, None
+    wanted = {}  # path -> its place: (set, file name) or (set, board dir, file name), or index
     for path in names:
         parts = path[len(GOLDEN_REL) + 1 :].split("/")
         if parts == [INDEX_NAME]:
-            index = git(["show", f"{rev}:{path}"], top)
-        elif len(parts) == 2 and parts[1].endswith(".txt"):
-            tree.setdefault(parts[0], {})[parts[1]] = git(["show", f"{rev}:{path}"], top)
+            wanted[path] = ()
+        elif len(parts) in (2, 3) and parts[-1].endswith(".txt"):
+            wanted[path] = tuple(parts)
+    blobs = read_blobs(rev, list(wanted), top)
+    tree, index = {}, None
+    for path, place in wanted.items():
+        if not place:
+            index = blobs[path]
+        elif len(place) == 2:
+            tree.setdefault(place[0], {})[place[1]] = blobs[path]
+        else:
+            tree.setdefault(place[0], {}).setdefault(place[1] + "/", {})[place[2]] = blobs[path]
     return tree, index
 
 
