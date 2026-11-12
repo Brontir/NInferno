@@ -49,6 +49,12 @@ bool rmma_wide_rule(double bytes_per_sm_cycle, int compute_capability, bool occu
            wide_local_bytes <= plain_local_bytes + kRmmaWideSpillSlack;
 }
 
+bool rmma_plane_rule(std::size_t plane_local_bytes, std::size_t twin_local_bytes, int plane_ctas,
+                     int twin_ctas) noexcept {
+    return plane_ctas > 0 && twin_ctas > 0 && plane_ctas >= twin_ctas &&
+           plane_local_bytes <= twin_local_bytes;
+}
+
 bool operator==(Route a, Route b) { return a.family == b.family && a.schedule == b.schedule; }
 
 int rmma_schedule_count() { return static_cast<int>(kRmmaSchedules.size()); }

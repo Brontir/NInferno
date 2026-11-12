@@ -79,19 +79,60 @@ WARP_LOAD = 512  # one warp-wide 16-byte load: 32 lanes x 16 B
 # F loads a lane in flight, a ring 2F; the SASS of a chain's loop holds F 16-byte loads, a ring's
 # 3F (the first fetch before the loop, two in it).
 VARIANTS = {"chain1": (1, False), "chain2": (2, False), "chain4": (4, False),
-            "ring1": (1, True), "ring2": (2, True), "ring4": (4, True)}
+            "ring1": (1, True), "ring2": (2, True), "ring4": (4, True), "ring8": (8, True),
+            "chain8": (8, False), "chain16": (16, False)}
+# The runs of an earlier probe still parse, as what that probe measured: its source's sha256 (the
+# warp_inflight.cu of that version, in the history) and its variants. Probe 3 (#739) had no ring8,
+# which probe 4 (#757) added; probe 5 (#757) added chain8 and chain16. The kernels an earlier
+# probe shares with the checked-in one compile to the same SASS.
+EARLIER_PROBES = {
+    "warp_inflight 3": {
+        "source_sha256": "c903f40008fb45fa109c837b07bd78d9a5dbb565c9906afa1cbcd9b4711d93e8",
+        "variants": ("chain1", "chain2", "chain4", "ring1", "ring2", "ring4")},
+    "warp_inflight 4": {
+        "source_sha256": "58670da851b02a489eff542a37b9f4baf3f97221db6952c82641e20204ff83d1",
+        "variants": ("chain1", "chain2", "chain4", "ring1", "ring2", "ring4", "ring8")},
+}
 W_GRID = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
 K_GRID = (1, 2, 4, 8)
+# The chains whose lone-warp reading decides whether a warp holds every load of its count at once
+# (chain_all_in_flight, #757): name -> loads a lane.
+CAP_CHAINS = {"chain8": 8, "chain16": 16}
+
+
+def chain_bound(inflight_bytes, l0_ns, latency_ns):
+    """The most bytes a lone warp on a chain keeps by Little's law (b_w = count x L0 / step) when
+    it is held to fewer loads than its count: it issues the load past its cap only once its first
+    load has returned, a DRAM latency after it left, and that load returns a latency later. The
+    chain's compute waits on every load of the fetch and the next fetch's address depends on it,
+    so the step takes at least two latencies. `latency_ns` is the ISA table's TLB-warm pointer
+    chase (dram_tlbwarm_latency_ns_w1), which the streaming fetch never beats; `l0_ns` the run's
+    own L0. Not a fitted bound: the 2 is the two latencies, both facts measured. A ring's steps
+    overlap (the next fetch's loads issue while this one's are out), so this bound does not hold
+    for a ring, and no ring reading is read against it."""
+    return inflight_bytes * l0_ns / (2.0 * latency_ns)
+
+
+def chain_all_in_flight(b_w_w1, inflight_bytes, l0_ns, latency_ns):
+    """Whether a lone warp on a chain had every load of the fetch in flight at once: its reading
+    is above chain_bound, which a warp held to fewer loads cannot pass."""
+    return b_w_w1 > chain_bound(inflight_bytes, l0_ns, latency_ns)
+
+
 MODES = ("free", "placed")
 COLUMNS = ("mode", "k", "variant", "inflight", "w", "gbps", "gbps_lo", "gbps_hi", "ns_fetch",
            "sm_mhz", "mib")
 HEADER = ("probe", "card", "cc", "sms", "l2_bytes", "mem_clock_khz", "max_warps_per_sm",
           "smem_per_sm", "driver", "runtime", "nvcc", "span_ns")
 RUN_HEADER = ("source_sha256", "arch", "sass_ldg128")
+# Run header lines from a probe version on: sass_inflight, the most 16-byte loads a lane each
+# kernel's SASS keeps in flight (peak_in_flight), which must be the variant's count.
+RUN_HEADER_SINCE = {"sass_inflight": 4}
 COUNTS = ("cc", "sms", "l2_bytes", "max_warps_per_sm", "smem_per_sm", "driver", "runtime")
 PROBE_LINE = re.compile(r'printf\("probe (warp_inflight \d+)\\n"\)')
 PROBE_VALUE = re.compile(r"warp_inflight (\d+)")
-NO_ROW = re.compile(r"placed (\w+) w(\d+): \d+ of \d+ CTAs fit an SM \(registers\), no row")
+NO_ROW = re.compile(r"(free|placed) (\w+) w(\d+): \d+ of \d+ CTAs fit an SM \(registers\), "
+                    r"no row")
 REFUSED_LINE = "refused"
 REFUSED = ".refused"
 # b_w's linear region: the rows from W = 1 up whose b_w stays within this share of b_w at W = 1
@@ -303,24 +344,35 @@ def source_sha256():
     return IP.source_sha256(SOURCE)
 
 
-def expected_points(head, no_row):
+def expected_points(head, no_row, variants=tuple(VARIANTS)):
     """Every (mode, k, variant, w) the probe measures on this card: the free rows up to 32 warps,
-    the placed rows up to the SM's resident warps (two CTAs above 32), less the placed pairs the
-    run noted the registers do not fit."""
+    the placed rows up to the SM's resident warps (two CTAs above 32), of `variants` (the run's
+    probe's), less the (mode, variant, w) the run noted the registers do not fit."""
     sms, max_w = int(head["sms"]), int(head["max_warps_per_sm"])
     points = set()
     for mode in MODES:
         for k in K_GRID:
             if k > sms:
                 continue
-            for v in VARIANTS:
+            for v in variants:
                 for w in W_GRID:
-                    if w > max_w or (mode == "free" and w > 32):
+                    if w > max_w or (mode == "free" and w > 32) or (mode, v, w) in no_row:
                         continue
-                    if mode == "placed" and (w > 32 and w % 2 or (v, w) in no_row):
+                    if mode == "placed" and w > 32 and w % 2:
                         continue
                     points.add((mode, k, v, w))
     return points
+
+
+def probe_variants(probe):
+    """The variants a run of `probe` (its header value) measured: the checked-in probe's, or an
+    earlier probe's (EARLIER_PROBES); ValueError for any other."""
+    if probe == checked_in_probe():
+        return tuple(VARIANTS)
+    if probe in EARLIER_PROBES:
+        return EARLIER_PROBES[probe]["variants"]
+    raise ValueError(f"{probe} is not the checked-in probe ({checked_in_probe()}), nor an "
+                     f"earlier one this parser reads ({', '.join(EARLIER_PROBES)})")
 
 
 def _positive(text, what):
@@ -336,7 +388,8 @@ def _positive(text, what):
 def parse_run(text):
     """The header fields and the rows of one warp_inflight output (as `run` saves it); ValueError
     when a line is odd or unknown, the columns are not the parser's, a row is malformed, out of
-    the grid, given twice or missing, the probe version or source hash is not the checked-in one,
+    the grid, given twice or missing, the probe version and source hash are not the checked-in
+    probe's or a recorded earlier one's (EARLIER_PROBES: its rows are its own variants'),
     the build's -arch is not the card's, the SASS load counts are not the variants', the
     self-check failed, the run did not end, or the process notes do not show the GPU idle."""
     head, rows, notes, ended, checked, failures = {}, {}, [], False, False, []
@@ -383,7 +436,7 @@ def parse_run(text):
             ended = True
         elif word == REFUSED_LINE:
             raise ValueError(f"`run` refused this run: {' '.join(parts[1:])}")
-        elif word in HEADER or word in RUN_HEADER:
+        elif word in HEADER or word in RUN_HEADER or word in RUN_HEADER_SINCE:
             if word in head:
                 raise ValueError(f"{word} line given twice")
             head[word] = " ".join(parts[1:])
@@ -403,29 +456,42 @@ def parse_run(text):
         raise ValueError(f"mem_clock_khz is no count: {head['mem_clock_khz']!r}")
     if not PROBE_VALUE.fullmatch(head["probe"]):
         raise ValueError(f"odd probe line: {head['probe']!r}")
-    # A run is of the checked-in probe: its version and its source's hash.
-    if head["probe"] != checked_in_probe():
-        raise ValueError(f"{head['probe']} is not the checked-in probe ({checked_in_probe()})")
-    if head["source_sha256"] != source_sha256():
-        raise ValueError(f"source_sha256 {head['source_sha256']} is not the checked-in "
-                         f"warp_inflight.cu's ({source_sha256()}): a changed probe bumps its "
-                         "version")
+    # A run is of the checked-in probe (its version and its source's hash) or of an earlier one
+    # (that version's recorded hash), and holds that probe's variants.
+    variants = probe_variants(head["probe"])
+    want_sha = (source_sha256() if head["probe"] == checked_in_probe()
+                else EARLIER_PROBES[head["probe"]]["source_sha256"])
+    if head["source_sha256"] != want_sha:
+        raise ValueError(f"source_sha256 {head['source_sha256']} is not that of {head['probe']}'s "
+                         f"warp_inflight.cu ({want_sha}): a changed probe bumps its version")
     own = "sm_" + IP.arch_key(int(head["cc"]), "")
     if head["arch"] != own:
         raise ValueError(f"built for {head['arch']}, not {own} (cc {head['cc']})")
-    want = " ".join(f"{v}:{sass_loads_of(v)}" for v in VARIANTS)
+    want = " ".join(f"{v}:{sass_loads_of(v)}" for v in variants)
     if head["sass_ldg128"] != want:
         raise ValueError(f"the build's 16-byte loads per kernel are {head['sass_ldg128']!r}, not "
                          f"the variants' {want!r}")
+    version = int(PROBE_VALUE.fullmatch(head["probe"]).group(1))
+    for k, since in RUN_HEADER_SINCE.items():
+        if version >= since and not head.get(k):
+            raise ValueError(f"no {k} line (owed from probe {since})")
+        if version < since and k in head:
+            raise ValueError(f"a {k} line in a run of {head['probe']} (it began with probe "
+                             f"{since})")
+    if "sass_inflight" in head:
+        want = " ".join(f"{v}:{inflight_of(v)}" for v in variants)
+        if head["sass_inflight"] != want:
+            raise ValueError(f"the build's SASS keeps {head['sass_inflight']!r} 16-byte loads a "
+                             f"lane in flight, not the variants' {want!r}")
     max_w = int(head["max_warps_per_sm"])
     no_row = set()
     for n in notes:
         m = NO_ROW.fullmatch(n)
         if m:
-            if m.group(1) not in VARIANTS:
+            if m.group(2) not in variants:
                 raise ValueError(f"odd note: {n!r}")
-            no_row.add((m.group(1), int(m.group(2))))
-    want_points = expected_points(head, no_row)
+            no_row.add((m.group(1), m.group(2), int(m.group(3))))
+    want_points = expected_points(head, no_row, variants)
     extra = sorted(set(rows) - want_points)
     if extra:
         raise ValueError(f"rows outside the grid (max {max_w} warps, {head['sms']} SMs): {extra}")
@@ -542,7 +608,8 @@ def run_of(head, rows, source, isa_table):
         "smem_per_sm": int(head["smem_per_sm"]), "mem_clock_khz": int(head["mem_clock_khz"]),
         "tool": {"probe": head["probe"], "nvcc": head["nvcc"], "driver": head["driver"],
                  "runtime": head["runtime"], "arch": head["arch"],
-                 "source_sha256": head["source_sha256"], "sass_ldg128": head["sass_ldg128"]},
+                 "source_sha256": head["source_sha256"], "sass_ldg128": head["sass_ldg128"],
+                 "sass_inflight": head.get("sass_inflight")},
         "notes": head["notes"],
         "clocks_waived": any(n.startswith(CLOCK_WAIVED) for n in head["notes"]),
         "l0": {"own_ns": own, "own_source": "this run's free, k = 1, chain1, W = 1 ns_fetch (so "
@@ -584,7 +651,18 @@ FACTS_NOTE = (
     "the same card). max_warp_bytes_in_flight: b_w_max, the most bytes in flight one warp alone "
     "reached (b_w at W = 1 by Little's law on L0, the largest over every variant and both "
     "carve-outs). warp_bytes_saturated: the warp saturates, so b_w_max caps the bytes the law "
-    "counts, where the 4-load ring keeps less than x1.5 of the 2-load ring's b_w at W = 1 "
+    "counts. In a row whose run has chain8 and chain16 (probe 5 on), cap_test sets each chain's "
+    "lone-warp b_w against the two-latency bound count x L0 / (2 x the ISA table's "
+    "dram_tlbwarm_latency_ns_w1): a warp held to fewer loads than the chain's count reads at or "
+    "under it (cap_test: each chain's reading, its bound and the latency's source). The "
+    "bound proves that direction only, so a reading under it alone is no cap: the verdict is a "
+    "cap only where both chains read at or under their bounds and the ring rule agrees, no cap "
+    "where both read above, and undecided otherwise (the ring rule then decides); this tightens "
+    "the rule frozen in 665e190b after the codex review of #765, and changes no committed "
+    "verdict. The test decides only with the card's own ISA latency; with another card's (a "
+    "transfer) it is reported, and the ring rule decides. In an "
+    "earlier run's row, it saturates where the 4-load ring keeps less than x1.5 of the 2-load "
+    "ring's b_w at W = 1 "
     "(ring4_over_ring2_w1; the midpoint between no gain and the doubling its count gives: sm_70 "
     "x1.20, sm_120a x1.00 saturate, sm_75 / sm_86 / sm_89 x1.80-1.81 do not); elsewhere b_w_max "
     "is a lower bound of the warp's limit and caps nothing. ring2_* / chain4_* / ring4_*: b_w at "
@@ -602,7 +680,8 @@ FACTS_NOTE = (
     "of the warp_inflight.cu it was built from; a board of the architecture other than the "
     "reference card is priced by the reference row, a transfer. tests/test_warp_inflight.py pins "
     "that the table equals its regeneration and that every committed run is of the checked-in "
-    "probe.")
+    "probe or of an earlier one it records (warp_inflight.py EARLIER_PROBES: that version's "
+    "source sha256 and variants).")
 # The facts of a row: name -> unit.
 FACT_UNITS = {
     "sm_dram_bytes_per_clock_free": "B/clk", "sm_dram_bytes_per_clock_placed": "B/clk",
@@ -667,7 +746,46 @@ def within_bounds(ratios):
                for _, _, w, r in ratios)
 
 
-def facts_row(head, rows, source):
+def cap_test(head, rows, summary, own, isa_table):
+    """The chain test of whether one warp saturates below its count (#757), for a run with the
+    CAP_CHAINS rows (probe 5 on); None for an earlier run, which keeps the ring rule. Each chain's
+    lone-warp b_w (free, k = 1, W = 1) against chain_bound with the architecture's latency from
+    the ISA table. The bound proves one direction only: a cap below the count reads at or under
+    it. A reading under it is no proof of a cap (an issue or return-path stall reads low too), so
+    the verdict is:
+    - `no cap`: every chain above its bound;
+    - `cap`: every chain at or under its bound and the ring rule agreeing (ring4 under
+      SATURATION_GAIN x ring2), two readings and a rule that each show the limit;
+    - `undecided`: anything else; the row keeps the ring rule.
+    This tightens the rule frozen in 665e190b (codex review of #765): it removes the path where a
+    reading under a bound alone set a cap, and changes no committed verdict. The verdict decides
+    the row only with the run's own card's latency (`decides`); with another card's, a transfer,
+    it is reported and the row keeps the ring rule."""
+    if not all(v in summary["variants"]["free"] for v in CAP_CHAINS):
+        return None
+    latency, why, card = isa_l0(int(head["cc"]), isa_table)
+    if latency is None:
+        raise ValueError(f"no DRAM latency for the chain test: {why}")
+    chains = {}
+    for v, n in CAP_CHAINS.items():
+        b_w = summary["variants"]["free"][v]["b_w_w1"]
+        bound = round(chain_bound(n * WARP_LOAD, own, latency), 1)
+        chains[v] = {"b_w_w1": b_w, "two_latency_bound": bound, "all_in_flight": b_w > bound}
+    mine = card == head["card"]
+    free = summary["variants"]["free"]
+    rings_say_cap = free["ring4"]["b_w_w1"] / free["ring2"]["b_w_w1"] < SATURATION_GAIN
+    if all(c["all_in_flight"] for c in chains.values()):
+        verdict = "no cap"
+    elif not any(c["all_in_flight"] for c in chains.values()) and rings_say_cap:
+        verdict = "cap"
+    else:
+        verdict = "undecided"
+    return {"latency_ns": latency, "latency_source": why, "latency_card": card,
+            "latency_is_this_card": mine, "decides": mine and verdict != "undecided",
+            "chains": chains, "verdict": verdict}
+
+
+def facts_row(head, rows, source, isa_table=DEFAULT_ISA_TABLE):
     """One architecture's row of sm_rate_facts.json from a parsed run (its transfer checks are
     added by build_facts)."""
     own = own_l0(rows)
@@ -686,7 +804,8 @@ def facts_row(head, rows, source):
     values["max_warp_bytes_in_flight"] = max(d["b_w_w1"] for mode in MODES
                                              for d in summary["variants"][mode].values())
     gain = values["ring4_b_w_w1_free"] / values["ring2_b_w_w1_free"]
-    return {
+    chains = cap_test(head, rows, summary, own, isa_table)
+    row = {
         "provenance": "Measured", "source": source, "card": head["card"],
         "cc": int(head["cc"]), "sms": int(head["sms"]),
         "tool": {"probe": head["probe"], "nvcc": head["nvcc"], "driver": head["driver"],
@@ -695,12 +814,18 @@ def facts_row(head, rows, source):
         "clocks_waived": any(n.startswith(CLOCK_WAIVED) for n in head["notes"]),
         "notes": head["notes"],
         "facts": {name: {"value": values[name], "unit": unit} for name, unit in FACT_UNITS.items()},
-        # b_w_max is a cap only where the probe saw one warp saturate (SATURATION_GAIN).
-        "warp_bytes_saturated": gain < SATURATION_GAIN,
+        # b_w_max is a cap only where the probe saw one warp saturate: by the chain test where
+        # the run has its chains (probe 5 on) and the latency is the card's own, else by the
+        # ring rule (SATURATION_GAIN).
+        "warp_bytes_saturated": (chains["verdict"] == "cap" if chains and chains["decides"]
+                                 else gain < SATURATION_GAIN),
         "ring4_over_ring2_w1": round(gain, 3),
         "ring2_rows": ring_rows(rows, "ring2"),
         "ring4_rows": ring_rows(rows, "ring4"),
     }
+    if chains:
+        row["cap_test"] = chains
+    return row
 
 
 def transfer_of(row, runs):
@@ -864,9 +989,8 @@ def cmd_merge(a):
     return 0
 
 
-def sass_loads(sass):
-    """{variant: 16-byte global loads in its kernel} of `cuobjdump -sass` text, read with
-    sass_counts' parser: LDG instructions whose opcode carries .128."""
+def _kernels(sass):
+    """{variant: its kernel's SASS body} of `cuobjdump -sass` text (sass_counts' parser)."""
     sc = IP._sass_counts()
     tag = {f"streamILi{f}ELb{int(ring)}E": v for v, (f, ring) in VARIANTS.items()}
     out = {}
@@ -875,12 +999,76 @@ def sass_loads(sass):
         variant = next(v for t, v in tag.items() if t in name)
         if variant in out:
             raise ValueError(f"two kernels of {variant} in the build's SASS")
-        out[variant] = sum(1 for row in body
-                           if sc.base_opcode(row[2]) == "LDG" and ".128" in row[2])
+        out[variant] = body
     missing = [v for v in VARIANTS if v not in out]
     if missing:
         raise ValueError(f"no kernel of {missing} in the build's SASS")
     return out
+
+
+def _is_ldg128(opcode):
+    return IP._sass_counts().base_opcode(opcode) == "LDG" and ".128" in opcode
+
+
+def sass_loads(sass):
+    """{variant: 16-byte global loads in its kernel} of `cuobjdump -sass` text, read with
+    sass_counts' parser: LDG instructions whose opcode carries .128."""
+    return {v: sum(1 for row in body if _is_ldg128(row[2])) for v, body in _kernels(sass).items()}
+
+
+SASS_REGISTER = re.compile(r"\bR(\d+)(\.64)?\b")
+
+
+DEPBAR_LE = re.compile(r"SB(\d)\s*,\s*(0x[0-9a-f]+|\d+)")
+NO_SCOREBOARD = 7  # the control code's write barrier when an instruction sets none
+
+
+def peak_in_flight(body):
+    """The most 16-byte loads the kernel's SASS keeps in flight a lane, read in program order. A
+    load stays in flight until something waits for it:
+    - an instruction reads or overwrites a register it writes (its quad);
+    - an instruction's control-code wait mask names the scoreboard the load set (every load on
+      that scoreboard is then back);
+    - a `DEPBAR.LE SBx, n` leaves at most n loads outstanding on SBx (the oldest are back).
+    The loop's body is read once, after the code before it, which is where the probe's fetches
+    meet; a guarded load counts as issued. A count of what the text lets be in flight, not a
+    schedule: the loop's back edge is not followed. A body without control words (hand-made SASS)
+    is read by its registers alone."""
+    sc = IP._sass_counts()
+    pending, peak = [], 0  # [(registers, scoreboard)], in issue order
+    for _, _, opcode, operands, high in body:
+        control = sc.Control(high) if high is not None else None
+        if control is not None and control.wait_mask:
+            pending = [(q, sb) for q, sb in pending
+                       if sb == NO_SCOREBOARD or not control.wait_mask >> sb & 1]
+        if sc.base_opcode(opcode) == "DEPBAR":
+            m = DEPBAR_LE.search(operands)
+            if m:
+                sb, keep = int(m.group(1)), int(m.group(2), 0)
+                mine = [i for i, (_, b) in enumerate(pending) if b == sb]
+                done = set(mine[:max(0, len(mine) - keep)])
+                pending = [x for i, x in enumerate(pending) if i not in done]
+        written = sc.written_registers(opcode, operands)
+        fields = operands.split(",")
+        reads = set()
+        # The registers read: every one named after the destination (its first operand, where
+        # the instruction writes one), a .64 address as its pair.
+        for f in fields[1:] if written else fields:
+            for m in SASS_REGISTER.finditer(f):
+                n = int(m.group(1))
+                reads.update({f"R{n}", f"R{n + 1}"} if m.group(2) else {f"R{n}"})
+        pending = [(q, sb) for q, sb in pending if not (q & reads or q & written)]
+        if _is_ldg128(opcode):
+            pending.append((written, control.write_barrier if control else NO_SCOREBOARD))
+            peak = max(peak, len(pending))
+    return peak
+
+
+def sass_inflight(sass):
+    """{variant: the most 16-byte loads a lane its kernel's SASS keeps in flight} (peak_in_flight):
+    a chain's F, a ring's 2F, when ptxas issues every load of a fetch before the data it waits
+    on; fewer when it recycles a fetch's registers (ring8 without its clock read)."""
+    return {v: peak_in_flight(body) for v, body in _kernels(sass).items()}
 
 
 def cmd_run(a):
@@ -900,11 +1088,18 @@ def cmd_run(a):
         sass = subprocess.run([cuobjdump, "-sass", exe], stdout=subprocess.PIPE, text=True,
                               check=True).stdout
         try:
-            loads = sass_loads(sass)
+            loads, peaks = sass_loads(sass), sass_inflight(sass)
         except ValueError as e:
             print(f"warp_inflight: {e}; no run", file=sys.stderr)
             return 3
         head.append("sass_ldg128 " + " ".join(f"{v}:{loads[v]}" for v in VARIANTS))
+        head.append("sass_inflight " + " ".join(f"{v}:{peaks[v]}" for v in VARIANTS))
+        short = [f"{v} {peaks[v]} of {inflight_of(v)}" for v in VARIANTS
+                 if peaks[v] != inflight_of(v)]
+        if short:
+            print("warp_inflight: the build's SASS does not keep each variant's loads in flight ("
+                  + ", ".join(short) + "); no run", file=sys.stderr)
+            return 3
         before = IP._compute_apps()
 
         # Both nvidia-smi streams drained as they come (IP.Sampler, #741).
@@ -1017,9 +1212,15 @@ def cmd_show(a):
         for mode, p in s["p_gbps"].items():
             print(f"  {mode}: P {p:.2f} GB/s an SM ({s['p_bytes_per_clk'][mode]} B/clk)")
             for v, d in s["variants"].get(mode, {}).items():
+                cap = ""
+                if v in CAP_CHAINS and l0["table_ns"]:
+                    bound = chain_bound(d["warp_bytes_in_flight"], l0["own_ns"], l0["table_ns"])
+                    cap = (f"; the two-latency bound {bound:.0f} B: "
+                           + ("every load in flight at once" if d["b_w_w1"] > bound
+                              else "at or under it, which alone is no verdict (cap_test decides)"))
                 print(f"    {v:7s} in flight {d['warp_bytes_in_flight']:5d} B a warp: b_w at W=1 "
                       f"{d['b_w_w1']:7.1f} B, linear to W={d['linear_to_w']} (b_w there "
-                      f"{d['b_w_at_linear_w']:.1f} B)")
+                      f"{d['b_w_at_linear_w']:.1f} B){cap}")
         for r in run["rows"]:
             if r["k"] == 1:
                 print(f"  {r['mode']:6s} {r['variant']:7s} W={r['w']:2d} {r['gbps']:8.3f} GB/s "

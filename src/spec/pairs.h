@@ -200,11 +200,15 @@ struct RoundCostEstimate {
 // bit class (DECISIONS 48) with basis "preliminary" (another commit may hold other weights:
 // no sibling, nor without a commit); else the best of its groups' choices (one per kind, the
 // fastest overall) with basis "preliminary"; else nullopt. `source` names where it came from (and,
-// with `gpu`, how its rounds were priced on that card: profile_for_target).
+// with `gpu`, how its rounds were priced on that card: profile_for_target). `step` says which of
+// the three answered: the target's own weights, a sibling quantization of its revision (the same
+// weights quantized otherwise), or a group of other models.
+enum class PairStep { Own, Sibling, Group };
 struct PairChoice {
     Profile profile;
     std::string basis;
     std::string source;
+    PairStep step = PairStep::Own;
 };
 [[nodiscard]] std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
                                                     std::string_view target,

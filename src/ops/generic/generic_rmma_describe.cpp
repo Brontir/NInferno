@@ -108,7 +108,7 @@ const std::optional<kernel_facts::KernelFacts>& facts_of(const Instance& in, con
                               *in.memo->arch,
                               {variant == Variant::Wide ? dec.wide : dec.name, s.warps_m, s.warps_k,
                                s.m_tiles, s.n_tiles, s.cluster, static_cast<int>(in.epilogue),
-                               variant == Variant::Latency, variant == Variant::AddSums}))
+                               variant == Variant::Latency, variant == Variant::AddSums ? 1 : 0}))
                  .first;
     }
     return it->second; // node-based map: the reference outlives the lock
@@ -260,6 +260,9 @@ std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epi
     describe_from_facts(out, *facts, static_cast<unsigned>(grid_x), static_cast<unsigned>(grid_y),
                         static_cast<unsigned>(s.cluster), s.warps_m * s.warps_k * 32,
                         static_cast<std::size_t>(args.spread_smem), variant == Variant::Latency);
+    // The price's instance: the MMA with ones or the adds (RmmaSums 0 / 1), as the launch's own
+    // description says; never the group-sums plane's (rmma_plane_taken, the device's launch).
+    out.sums = variant == Variant::AddSums ? 1 : 0;
     return out;
 }
 

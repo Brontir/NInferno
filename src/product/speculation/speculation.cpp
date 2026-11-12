@@ -1,6 +1,8 @@
 #include "product/speculation/speculation.h"
 
 #include "artifact/reader.h"
+#include "product/choice/choice.h"
+#include "product/choice/choice_constants.h"
 #include "spec/fingerprint.h"
 #include "spec/gpu_identity.h"
 #include "spec/manifest.h"
@@ -8,6 +10,7 @@
 #include "spec/registry.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -484,15 +487,25 @@ void apply_builtin_default(SpeculationSubject& subject) {
 
 SpeculationSubject subject_of_mode(SpeculationSubject subject, spec::Mode mode) {
     if (!subject.resolved) { return subject; }
-    // A drafter the profile does not draft with: its own resolution (other_kinds).
+    // A drafter the profile does not draft with: its own resolution (other_kinds), never one that
+    // only prices the head beside a published profile (pricing_only, #777).
     if (!spec::drafting_modes(subject.resolved->profile).contains(mode)) {
         auto& others   = subject.resolved->other_kinds;
         const auto own = std::find_if(others.begin(), others.end(), [&](const auto& other) {
-            return spec::drafting_modes(other.profile).contains(mode);
+            return !other.pricing_only && spec::drafting_modes(other.profile).contains(mode);
         });
         if (own != others.end()) {
             spec::ResolvedSpeculation chosen = std::move(*own);
-            subject.resolved                 = std::move(chosen);
+            // The kinds it does not draft with stay its other kinds (the profile it came from and
+            // the rest): the pool rule prices the model's MTP head from them (head_priced_profile).
+            const auto taken               = static_cast<std::size_t>(own - others.begin());
+            spec::ResolvedSpeculation from = std::move(*subject.resolved);
+            for (std::size_t i = 0; i < from.other_kinds.size(); ++i) {
+                if (i != taken) { chosen.other_kinds.push_back(std::move(from.other_kinds[i])); }
+            }
+            from.other_kinds.clear();
+            chosen.other_kinds.insert(chosen.other_kinds.begin(), std::move(from));
+            subject.resolved = std::move(chosen);
         }
     }
     spec::Profile& p = subject.resolved->profile;
@@ -705,22 +718,161 @@ fit_fallbacks(const SpeculationSubject& subject, const ServedSpeculation& refuse
 
 PoolDecision
 pool_rule(const SpeculationSubject& subject, bool per_request, std::uint32_t with_drafter,
-          std::uint32_t concurrency, const std::function<std::uint32_t()>& plain_contexts,
-          const std::function<std::optional<std::uint32_t>(const ServedSpeculation&)>& head_contexts) {
+          std::uint32_t concurrency, const std::function<PoolSize()>& plain_pool,
+          const std::function<std::optional<PoolSize>(ServedSpeculation&)>& head_pool) {
     PoolDecision out;
     if (with_drafter == 0 || with_drafter >= concurrency) { return out; }
-    out.plain = plain_contexts();
+    const PoolSize plain = plain_pool();
+    out.plain            = plain.contexts;
     if (out.plain <= with_drafter) { return out; }
     out.keep = PoolKeep::Plain;
     if (auto head = served_head_fallback(subject, per_request)) {
-        const auto contexts = head_contexts(*head);
-        if (contexts && 5 * static_cast<std::uint64_t>(*contexts) >=
-                            4 * static_cast<std::uint64_t>(std::min(out.plain, concurrency))) {
+        // The build sets the table it runs (head_pool), so the head is priced at those depths.
+        const auto pool = head_pool(*head);
+        if (!pool) { return out; }
+        // The profile that measured the model's MTP prices the head (served_head_fallback's).
+        const spec::Profile& priced = head_priced_profile(subject);
+        const HeadPrice price       = pool_head_price(
+            concurrency, *pool, plain,
+            [&](std::uint32_t streams) { return pool_head_gain(priced, *head, streams); },
+            [&](std::uint32_t streams) { return plain_step_price(priced, streams); });
+        out.head_price = price.over_plain;
+        if (price.pays) {
             out.keep = PoolKeep::Head;
             out.head = std::move(head);
         }
     }
     return out;
+}
+
+std::vector<std::uint32_t> mix_turns(std::uint32_t streams, std::uint32_t requests) {
+    std::vector<std::uint32_t> out;
+    if (streams == 0) { return out; }
+    for (std::uint32_t left = requests; left > 0;) {
+        out.push_back(std::min(streams, left));
+        left -= out.back();
+    }
+    return out;
+}
+
+std::optional<double> mix_steps(std::uint32_t streams, std::uint32_t requests,
+                                const StreamPrice& gain, const StreamPrice& step) {
+    if (streams == 0) { return std::nullopt; }
+    double total = 0;
+    for (const std::uint32_t active : mix_turns(streams, requests)) {
+        const auto g = gain(active);
+        const auto s = step(active);
+        if (!g || !s || !(*g > 0) || !(*s > 0)) { return std::nullopt; }
+        // Each answer of the turn at g / s tokens a one-stream plain step.
+        total += *s / *g;
+    }
+    return total;
+}
+
+std::uint32_t pool_slots(const PoolSize& pool, std::uint64_t request) noexcept {
+    const std::uint64_t held = request == 0 ? 0 : pool.tokens / request;
+    return static_cast<std::uint32_t>(
+        std::max<std::uint64_t>(pool.contexts, std::min<std::uint64_t>(held, UINT32_MAX)));
+}
+
+std::uint32_t pool_slots(const PoolSize& pool) noexcept {
+    return pool_slots(pool, std::uint64_t{choice::kRequestPrompt} + choice::kRequestAnswer);
+}
+
+std::vector<MixPart> mix_parts(std::uint32_t concurrency, const PoolSize& head,
+                               const PoolSize& plain) {
+    const auto shorts = static_cast<std::uint32_t>(choice::kMixShortRequests);
+    const auto longs  = static_cast<std::uint32_t>(choice::kMixLongRequests);
+    choice::Task task;
+    task.contexts = {plain.context};
+    std::vector<MixPart> out;
+    const std::uint32_t long_prompt = plain.context > 0 ? task.long_prompt() : 0;
+    const bool has_long             = long_prompt > 0;
+    const double all                = has_long ? double(shorts) + double(longs) : double(shorts);
+    out.push_back({.requests = shorts,
+                   .weight   = double(shorts) / all,
+                   .head     = std::min(concurrency, pool_slots(head)),
+                   .plain    = std::min(concurrency, pool_slots(plain))});
+    if (has_long) {
+        // DECISIONS 73's long request holds its prompt and answer's pages, as a short one does.
+        const std::uint64_t request = std::uint64_t{long_prompt} + task.answer;
+        out.push_back({.requests = longs,
+                       .weight   = double(longs) / all,
+                       .head     = std::min(concurrency, pool_slots(head, request)),
+                       .plain    = std::min(concurrency, pool_slots(plain, request))});
+    }
+    return out;
+}
+
+// The share of plain decode's whole contexts an unpriced head must hold, kUnpricedHeadShare of
+// kUnpricedHeadOf (four fifths): the pool rule before #777, a literal with no derivation (basis
+// Unknown, DECISIONS 80), kept only where the facts do not price the trade.
+constexpr std::uint64_t kUnpricedHeadShare = 4;
+constexpr std::uint64_t kUnpricedHeadOf    = 5;
+
+HeadPrice pool_head_price(std::uint32_t concurrency, const PoolSize& head, const PoolSize& plain,
+                          const StreamPrice& head_gain, const StreamPrice& step) {
+    HeadPrice out;
+    const std::vector<MixPart> parts = mix_parts(concurrency, head, plain);
+    // The mix's time as DECISIONS 73 weighs its requests (choice::request_seconds): ln T the
+    // parts' ln T weighted by their requests, so the head against plain decode is the weighted
+    // sum of each part's ln(T_head / T_plain).
+    double log_ratio = 0;
+    bool priced      = true;
+    for (const MixPart& part : parts) {
+        if (part.head == 0) { return out; }
+        const auto with_head = mix_steps(part.head, part.requests, head_gain, step);
+        const auto plainly =
+            mix_steps(part.plain, part.requests, [](std::uint32_t) { return 1.0; }, step);
+        if (!with_head || !plainly) {
+            priced = false;
+            break;
+        }
+        log_ratio += part.weight * std::log(*with_head / *plainly);
+    }
+    if (priced) {
+        out.over_plain = std::exp(-log_ratio);
+        out.pays       = log_ratio <= 0;
+        return out;
+    }
+    // Not priced (a gain or a step price the facts do not give: a card whose generation has no
+    // round-cost row, such as Ampere, or a profile without measurements): the rule before #777,
+    // a literal kept until the facts exist (basis Unknown). The head runs where it holds at least
+    // four fifths of the whole contexts plain decode does (or of every one served).
+    out.pays =
+        kUnpricedHeadOf * static_cast<std::uint64_t>(head.contexts) >=
+        kUnpricedHeadShare * static_cast<std::uint64_t>(std::min(plain.contexts, concurrency));
+    return out;
+}
+
+std::optional<double> pool_head_gain(const spec::Profile& priced, const ServedSpeculation& head,
+                                     std::uint32_t streams) {
+    spec::SpecConfig at = head.menu.primary.config;
+    if (!at.enabled() || streams == 0) { return std::nullopt; }
+    // A literal or stand-in table's depths are no price (DECISIONS 80): only a table the facts
+    // derived or the lab measured.
+    if (head.load_basis != "facts" && head.load_basis != "measured") { return std::nullopt; }
+    // The last bound at or below these streams, as the Engine reads its load table.
+    for (const SpeculationLoad& bound : head.engine.load) {
+        if (bound.lanes > streams) { break; }
+        at.k = std::min(static_cast<std::int32_t>(bound.draft_tokens), head.menu.primary.config.k);
+    }
+    if (at.k <= 0) { return 1.0; }
+    const auto gain = spec::measured_gain(priced, at, std::nullopt);
+    if (!gain) { return std::nullopt; }
+    if (streams == 1) { return gain; }
+    const auto by_streams = priced.joint_scale.find(at.label());
+    if (by_streams == priced.joint_scale.end()) { return std::nullopt; }
+    const auto scale = by_streams->second.find(static_cast<std::int32_t>(streams));
+    if (scale == by_streams->second.end()) { return std::nullopt; }
+    return *gain * scale->second;
+}
+
+std::optional<double> plain_step_price(const spec::Profile& priced, std::uint32_t streams) {
+    if (streams == 1) { return 1.0; }
+    const auto found = priced.plain_step_scale.find(static_cast<std::int32_t>(streams));
+    if (found == priced.plain_step_scale.end()) { return std::nullopt; }
+    return found->second;
 }
 
 void require_named_tune(const std::filesystem::path& artifact, int device,
@@ -763,6 +915,23 @@ std::optional<ServedSpeculation> served_fit_fallback(const SpeculationSubject& s
     return out;
 }
 
+const spec::Profile& head_priced_profile(const SpeculationSubject& subject) {
+    static const spec::Profile none;
+    if (!subject.resolved) { return none; }
+    const auto measures_mtp = [](const spec::Profile& p) {
+        return std::any_of(p.measurements.begin(), p.measurements.end(),
+                           [](const spec::Measurement& m) {
+                               return m.config.enabled() && m.config.mode == spec::Mode::Mtp;
+                           });
+    };
+    const spec::Profile& own = subject.resolved->profile;
+    if (measures_mtp(own)) { return own; }
+    for (const spec::ResolvedSpeculation& other : subject.resolved->other_kinds) {
+        if (measures_mtp(other.profile)) { return other.profile; }
+    }
+    return own;
+}
+
 std::optional<ServedSpeculation> served_head_fallback(const SpeculationSubject& subject,
                                                       bool per_request) {
     const auto& resolved = subject.resolved;
@@ -782,8 +951,10 @@ std::optional<ServedSpeculation> served_head_fallback(const SpeculationSubject& 
     // Profile::joint_scale); else the built-in literal stays, labelled
     // (default_for_builtin_drafter). A measured or literal table at home is not derived again,
     // though the lab's record prices its joint verify too: those keep their tables (load_for,
-    // subject_of_mode), so the head's stays the built-in one.
-    const spec::Profile& priced = resolved->profile;
+    // subject_of_mode), so the head's stays the built-in one. The profile that prices it is the
+    // one that measured the model's MTP (head_priced_profile: the subject's own, else its own
+    // resolution of MTP).
+    const spec::Profile& priced = head_priced_profile(subject);
     const spec::Choice& runs    = head.profile.overall;
     if (const auto gain = spec::measured_gain(priced, runs.config, std::nullopt);
         priced.load_basis == "facts" && gain && priced.joint_scale.contains(runs.config.label())) {

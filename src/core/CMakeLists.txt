@@ -26,8 +26,8 @@ ninferno_generate_arch_registry(${CMAKE_CURRENT_SOURCE_DIR}/data/gpu_facts.json
 # The decision code's part of core, with no CUDA runtime: the headers of the facts it reads
 # (generation.h, cost_constants.h, mmq_columns.h, board_registry.h and its generated rows) and the
 # sources they need. ninferno_core links it; a target that links only this and no cudart can be
-# built and run on a machine with no GPU and no CUDA runtime library (tests/cmake/ProductTests.cmake
-# asserts the closure); the toolkit's headers are still read (kernel_occupancy.cpp, below).
+# built and run on a machine with no GPU and no CUDA runtime library (tests/cmake/DecisionTests.cmake
+# asserts the closure); one toolkit header is still read (kernel_occupancy.cpp, below).
 add_library(ninferno_core_host STATIC
   dtype.cpp
   device_class_host.cpp
@@ -47,8 +47,14 @@ target_include_directories(ninferno_core_host PRIVATE ${CMAKE_CURRENT_BINARY_DIR
 target_include_directories(ninferno_core_host PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/generated_public)
 target_link_libraries(ninferno_core_host PRIVATE ninferno::json)
 # kernel_occupancy.cpp reads the toolkit's cuda_occupancy.h, a header-only calculator: the include
-# directory, no library.
-target_include_directories(ninferno_core_host SYSTEM PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+# directory, no library (the toolkit's, or in a decisions-only tree the one found by path,
+# cmake/Dependencies.cmake).
+target_include_directories(ninferno_core_host SYSTEM PRIVATE ${NINFERNO_CUDA_OCCUPANCY_INCLUDE_DIRS})
+
+# A decisions-only tree (NINFERNO_DECISIONS_ONLY, CMakeLists.txt) builds core's host part alone.
+if(NINFERNO_DECISIONS_ONLY)
+  return()
+endif()
 
 # core/device_class_nodevice.cpp is current_device_class() of a build with no CUDA runtime: it
 # always throws. core/per_device_nodevice.cpp is the same for current_device_ordinal() (it throws)

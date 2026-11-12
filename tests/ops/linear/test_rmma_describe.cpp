@@ -83,7 +83,7 @@ bool same(const generic::KernelResources& a, const generic::KernelResources& b) 
            a.threads == b.threads && a.max_threads_per_block == b.max_threads_per_block &&
            a.ptx_version == b.ptx_version && a.binary_version == b.binary_version &&
            a.grid_x == b.grid_x && a.grid_y == b.grid_y && a.grid_z == b.grid_z &&
-           a.latency_variant == b.latency_variant;
+           a.latency_variant == b.latency_variant && a.sums == b.sums;
 }
 
 std::string text(const std::optional<generic::KernelResources>& r) {

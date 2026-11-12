@@ -1,13 +1,16 @@
 name: decisions
 
-# The decision core on a machine with no GPU (#620 step 13): the host-only closure of the selector,
-# the price and the choice (ninferno_core_host, ninferno_ops_host_objects, ninferno_product_choice)
-# is built with no CUDA runtime in its link (ninferno_assert_host_only checks it at configure) and
-# its tests are run, among them the selector golden's host twin, which must read the committed
-# goldens of the arch's build set byte-equal. One configure per set: the sets are compile-time facts
-# of the build (NINFERNO_BUILD_ARCH, NVFP4 present or not), as the release archives differ. nvcc is
-# installed only because CMake's CUDA language check needs it; no device code is built. The sm_70
-# set joins once the Volta CUTLASS workspace arithmetic is host code (step 13, PR 2).
+# The decision core on a machine with no GPU and no CUDA compiler (#620 step 13): the host-only
+# closure of the selector, the price and the choice (ninferno_core_host, ninferno_ops_host_objects,
+# ninferno_product_choice) is built in a decisions-only tree (NINFERNO_DECISIONS_ONLY: C and C++
+# only, no media, converter or device code) and its tests are run, among them the selector golden's
+# host twin, which must read the committed goldens of the arch's build set byte-equal. One
+# configure per set: the sets are compile-time facts of the build (NINFERNO_BUILD_ARCH, NVFP4 present
+# or not), as the release archives differ; CMAKE_CUDA_ARCHITECTURES picks them as in a full build.
+# Of the toolkit only cuda_occupancy.h is read: the CUDA runtime's development package (headers, no
+# nvcc) is installed for it. The sm_70 set builds with CUTLASS fetched, as its release does: the
+# Volta CUTLASS sizes are host code (generic_volta_cutlass_sizes.cpp, #783), so its twin reads sm70/
+# as the device build does.
 
 on:
   pull_request:
@@ -34,50 +37,61 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 120a: the full set (NVFP4); 89: the base set; 75: the sm75 set.
-        arch: ["120a", "89", "75"]
+        # 120a: the full set (NVFP4); 89: the base set; 75: the sm75 set; 70: the sm70 set
+        # (CUTLASS fetched at configure).
+        arch: ["120a", "89", "75", "70"]
     steps:
       - uses: actions/checkout@v4
       - name: System packages
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends ninja-build pkg-config ccache \
-            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
-            libcurl4-openssl-dev libssl-dev
-      - name: CUDA 12.8 compiler and headers (for CMake's language check; no device code is built)
+          sudo apt-get install -y -q --no-install-recommends ninja-build ccache
+      - name: CUDA 12.8 runtime headers (cuda_occupancy.h; no compiler)
         run: |
           wget -q --tries=5 --waitretry=5 --retry-connrefused \
             --retry-on-http-error=429,500,502,503,504 \
             https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get -o Acquire::Retries=3 update -q
-          sudo apt-get -o Acquire::Retries=3 install -y -q --no-install-recommends cuda-nvcc-12-8 cuda-cudart-dev-12-8 \
-            cuda-driver-dev-12-8 cuda-nvtx-12-8
-          echo /usr/local/cuda-12.8/bin >> "$GITHUB_PATH"
+          sudo apt-get -o Acquire::Retries=3 install -y -q --no-install-recommends cuda-cudart-dev-12-8
+          # The package's headers live under targets/; include/ links there once the toolkit's
+          # links are installed. Take whichever holds the header.
+          dir=""
+          for d in /usr/local/cuda-12.8/include /usr/local/cuda-12.8/targets/x86_64-linux/include; do
+            if [ -f "$d/cuda_occupancy.h" ]; then dir=$d; break; fi
+          done
+          test -n "$dir" || { echo "no cuda_occupancy.h under /usr/local/cuda-12.8"; exit 1; }
+          echo "CUDA_OCCUPANCY_DIR=$dir" >> "$GITHUB_ENV"
+          # The runtime's headers alone: no compiler came with them.
+          test ! -e /usr/local/cuda-12.8/bin/nvcc
       - name: ccache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
           key: decisions-ccache-${{ matrix.arch }}-${{ github.sha }}
           restore-keys: decisions-ccache-${{ matrix.arch }}-
-      - name: Configure
+      - name: Configure (decisions only)
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.arch }} -DNINFERNO_BUILD_APPS=OFF -DBUILD_TESTING=ON \
+          cmake --preset decisions -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.arch }} \
+            -DNINFERNO_CUDA_OCCUPANCY_INCLUDE_DIR="$CUDA_OCCUPANCY_DIR" \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          # No CUDA language in the tree.
+          ! grep -q '^CMAKE_CUDA_COMPILER' build-decisions/CMakeCache.txt
       # ccache keeps its default directory, ~/.cache/ccache, the path the cache step restores.
-      - name: Build the host-only decision tests
+      - name: Build the decision core and its tests
         run: |
-          cmake --build build --target ninferno_selector_golden_host_test \
-            ninferno_generic_routes_host_test ninferno_choice_test ninferno_gate_atlas_test \
-            ninferno_route_cost_constants_test ninferno_fitted_holdouts_test ninferno_route_rules_test \
-            ninferno_rmma_geometry_test ninferno_device_identity_test ninferno_format_facts_test
+          cmake --build --preset decisions
           ccache -s
       - name: Run them (no GPU on this machine)
         run: |
-          re='^ninferno_(selector_golden_host|generic_routes_host|choice|gate_atlas|route_cost_constants|fitted_holdouts|route_rules|rmma_geometry|device_identity|format_facts)_test$'
-          # All ten registered: a registration made conditional or renamed (its target still built)
-          # would otherwise drop out of the regex and pass unseen.
-          n=$(ctest --test-dir build -N -R "$re" | sed -n 's/^Total Tests: //p')
-          [ "$n" = 10 ] || { echo "expected 10 decision tests registered, found ${n:-none}"; exit 1; }
-          ctest --test-dir build --output-on-failure --no-tests=error -R "$re"
+          # The tree's host suite is exactly the ten decision tests: a registration dropped, renamed
+          # or added (made conditional, say) shows here instead of passing unseen.
+          names='selector_golden_host generic_routes_host choice gate_atlas route_cost_constants
+                 fitted_holdouts route_rules rmma_geometry device_identity format_facts'
+          expected=$(for n in $names; do echo "ninferno_${n}_test"; done | sort)
+          found=$(ctest --test-dir build-decisions -N | sed -n 's/^ *Test *#[0-9]*: //p' | sort)
+          host=$(ctest --test-dir build-decisions -N -L host | sed -n 's/^ *Test *#[0-9]*: //p' | sort)
+          [ "$found" = "$expected" ] && [ "$host" = "$expected" ] || {
+            echo "expected the ten decision tests, all labeled host; registered:"; echo "$found"
+            echo "labeled host:"; echo "$host"; exit 1; }
+          ctest --preset decisions --no-tests=error

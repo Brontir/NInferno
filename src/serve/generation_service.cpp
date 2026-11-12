@@ -367,6 +367,16 @@ std::uint32_t pool_contexts(const ninferno::MemorySummary& memory) {
     return memory.kv_capacity / memory.max_context;
 }
 
+// The pool as the pool rule reads it: its full contexts, its KV tokens and the asked context (none
+// where pool_contexts has none).
+product::PoolSize pool_size(const ninferno::MemorySummary& memory) {
+    const std::uint32_t contexts = pool_contexts(memory);
+    if (contexts == 0) { return {}; }
+    return {.contexts = contexts,
+            .tokens   = memory.kv_capacity,
+            .context  = static_cast<std::uint32_t>(memory.max_context)};
+}
+
 ninferno::EngineOptions engine_options_of(const ServeOptions& options) {
     ninferno::EngineOptions engine_options;
     engine_options.artifact_path           = options.artifact_path;
@@ -617,7 +627,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         // The configuration the Engine standing was built with, as the rule's steps build them.
         enum class Built { Drafter, Plain, Head } standing = Built::Drafter;
         std::uint32_t plain_tokens = 0;
-        const auto plain_contexts = [&]() -> std::uint32_t {
+        const auto plain_pool                              = [&]() -> product::PoolSize {
             engine_.reset();
             engine_options.speculative = SpeculativeOptions{};
             mark_fit_fallback(engine_options.speculative, "pool_plain");
@@ -626,21 +636,25 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                 engine_ = std::make_unique<ninferno::Engine>(engine_options);
                 const ninferno::MemorySummary memory = engine_->memory_summary();
                 plain_tokens                         = memory.kv_capacity;
-                return pool_contexts(memory);
+                return pool_size(memory);
             } catch (const ninferno::CapacityError&) {
                 engine_.reset();
-                return 0;
+                return product::PoolSize{};
             }
         };
         // The model's own MTP head weighs far less than a separate drafter, so it can leave the
         // pool every context plain decode does, and drafting still pays at these loads (RTX 4090,
         // Qwen3.8 27B at --max-context 32768 and --max-concurrency 4: dflash2 K=7 left 3 of 4
         // contexts and the server decoded plainly at 48.9 tok/s a request; MTP 3 88.8, at 8: 46.2
-        // against 69.4). Four fifths: one context fewer costs only when every request runs a full
-        // one, while plain decode costs every request (RTX 3090, the same at 8: plain 38.3 tok/s a
-        // request in 5 contexts, MTP 3 51.1 in 4).
-        const auto head_contexts =
-            [&](const product::ServedSpeculation& head) -> std::optional<std::uint32_t> {
+        // against 69.4; RTX 3090 at 8: plain 38.3 tok/s a request in 5 contexts, MTP 3 51.1 in 4).
+        // It runs where its pool prices at least plain decode's over DECISIONS 73's mix
+        // (product::pool_head_price, #777): its load table's gain at each number of active
+        // streams, each pool serving as many requests as its KV tokens hold (pool_slots). Where
+        // the facts do not price that (no round-cost row for the card's generation, a literal
+        // table), the rule before #777 decides: the head where it holds four fifths of plain
+        // decode's contexts (the RTX 3090 above).
+        const auto head_pool =
+            [&](product::ServedSpeculation& head) -> std::optional<product::PoolSize> {
             engine_.reset();
             auto served         = head;
             served.fit_fallback = drafted_label + " leaves the KV pool " +
@@ -655,7 +669,10 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             standing = Built::Head;
             try {
                 build();
-                return pool_contexts(engine_->memory_summary());
+                // The table the build runs (--spec-load, bounds moved to captured depths): the
+                // pool rule prices the head at those depths (Codex on #791).
+                head.engine.load = served_speculation_->engine.load;
+                return pool_size(engine_->memory_summary());
             } catch (const ninferno::CapacityError&) { return std::nullopt; }
         };
         // --spec auto with an automatic KV pool (product::pool_rule): requests waiting for pages
@@ -663,8 +680,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         // tokens, 34.9 tok/s aggregate; plain 506K, 239.4). An explicit --spec keeps its drafter.
         const product::PoolDecision pool =
             product::pool_rule(speculation_subject(), options_.per_request_speculation,
-                               with_drafter, options_.max_concurrency, plain_contexts,
-                               head_contexts);
+                               with_drafter, options_.max_concurrency, plain_pool, head_pool);
         if (pool.keep == product::PoolKeep::Drafter && standing != Built::Drafter) {
             engine_.reset();
             served_speculation_        = drafted;
@@ -676,8 +692,16 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
                 std::to_string(with_drafter) + " of " + std::to_string(options_.max_concurrency) +
                 " full contexts (" + std::to_string(drafting.kv_capacity) +
                 " tokens) beside its drafter; plain decode holds " + std::to_string(pool.plain) +
-                " (" + std::to_string(plain_tokens) +
-                "), so the server decodes plainly (an explicit --spec keeps the drafter)";
+                " (" + std::to_string(plain_tokens) + ")";
+            if (pool.head_price) {
+                char price[32];
+                std::snprintf(price, sizeof price, "%.3f", *pool.head_price);
+                speculation_plain_reason_ += "; the MTP head's pool decodes the benchmark's mix "
+                                             "at x" +
+                                             std::string(price) + " of plain decode's";
+            }
+            speculation_plain_reason_ +=
+                ", so the server decodes plainly (an explicit --spec keeps the drafter)";
             served_speculation_.reset();
             if (standing != Built::Plain) {
                 engine_.reset();

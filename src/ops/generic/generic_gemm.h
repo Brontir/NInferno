@@ -131,8 +131,18 @@ struct GemmArgs {
     // (generic_gemm.cuh mma_step), a sum in another order than a narrower tile's (same_summation).
     // run_route sets it outside the invariant and prefill profiles, whose calls keep one order at
     // every T; narrower tiles ignore it, and Volta's build always adds. Host side only: the launch
-    // takes the kernel instance that adds (rmma_kernel's AddSums), the kernel reads none.
+    // takes the kernel instance that adds (rmma_kernel's RmmaSums::Adds), the kernel reads none.
     int add_sums = 0;
+    // Register MMA of a min-term format (Q4_K, Q5_K, Q2_K, Q4_1, Q5_1; #619): token t's activation
+    // sum over each scale group of group_sums_values values (32; Q2_K 16) at group_sums + t *
+    // group_sums_ld, one FP32 per group in one fixed order (rmma_group_sums_kernel, the call's
+    // pre-pass, in its workspace). Given, the launch takes the kernel instance that reads it
+    // (rmma_kernel's RmmaSums::Plane) in place of the MMA with ones and of the adds (run_route:
+    // rmma_group_sums). Null: the plane is not read. Appended last: the offsets before it are
+    // tools/pdl_prewait_loads.txt's, and the plane is read after the PDL wait.
+    const float* group_sums = nullptr;
+    int group_sums_ld       = 0;
+    int group_sums_values   = 0;
 };
 
 // An activation quantized to int8 per 32 values (the W4A8 quantizer's output): what the W4A8
@@ -675,6 +685,9 @@ struct KernelResources {
     // The register-MMA kernel variant the launch took: its latency form (rmma_latency_pays), or
     // neither form (the wide decoder or the plain kernel, told apart by the registers).
     bool latency_variant = false;
+    // The min-term sums the register-MMA instance takes (RmmaSums, generic_gemm.cuh: 0 the MMA
+    // with ones, 1 the FP32 adds, 2 the group-sums plane).
+    int sums = 0;
 };
 
 // The compiled facts the cost model read for one register-MMA schedule of one format (#556): what
@@ -742,9 +755,12 @@ r8_resources(int schedule, const Weight& weight, Epilogue epilogue, std::int32_t
 // not described. nullopt where resolve_route takes the call off `route`, on Volta's CUTLASS band of
 // a tiled call, and for the scalar route. `rows` and `r8_prequantized` as r8_resources'; `rows` of
 // any family: the call's output rows, where the weight is a fused parent the call reads a slice of.
+// `group_sums`: a register-MMA call that reads the group-sums plane (ResolvedRoute::group_sums)
+// is described by the plane instance it launches, not the price's (rmma_resources).
 [[nodiscard]] std::optional<KernelResources>
 route_resources(Route route, const Weight& weight, Epilogue epilogue, std::int32_t tokens,
-                std::int32_t rows = 0, std::optional<bool> r8_prequantized = std::nullopt);
+                std::int32_t rows = 0, std::optional<bool> r8_prequantized = std::nullopt,
+                bool group_sums = false);
 
 // The output tile one CTA of `route` computes for a `tokens`-token call (#298), as the cost model
 // prices it (price_routes, a8_candidates read this): output rows (under SwiGLU each reads its gate
@@ -824,7 +840,8 @@ struct BuildManifest {
     int arch           = 0; // the architecture the tree compiles for (NINFERNO_BUILD_ARCH)
     bool arch_specific = false;
     bool native_nvfp4  = false;
-    // Volta's CUTLASS prefill (generic_volta_cutlass.cu, volta_cutlass_compiled): on a build
+    // Volta's CUTLASS prefill (generic_volta_cutlass.cu; volta_cutlass_compiled, host code in
+    // generic_volta_cutlass_sizes.cpp, says whether the tree compiled it in): on a build
     // without tensor mma.sync, what the tiled route's schedule 0 runs for the formats without a
     // tile of their own; without it those formats are omitted there.
     bool volta_cutlass = false;
@@ -930,6 +947,38 @@ struct BuildManifest {
 [[nodiscard]] std::size_t executed_workspace_bytes(Route route, bool r8_prequantized,
                                                    std::int32_t k, std::int32_t rows,
                                                    Epilogue epilogue, std::int32_t tokens);
+
+// The pre-summed activation group plane of a min-term format's register MMA (#619,
+// GemmArgs::group_sums). rmma_group_sums_values: the values of the format's scale group (32 for
+// Q4_K, Q5_K, Q4_1, Q5_1; 16 for Q2_K), 0 for a format without a min term. rmma_group_sums_ld:
+// the floats of a token's row, K's groups rounded up to whole 128-value K steps (the kernel loads
+// a step's groups as 16-byte words; the pre-pass writes the groups past K as zero).
+// rmma_group_sums_bytes: the plane's workspace for `tokens` tokens (256-aligned, as run_route
+// allocates it; 0 for a format without a min term). rmma_group_sums: whether the profile reads
+// the plane for the format: a min-term format on tensor-core MMA, in the prefill profile only, at
+// every width (one order for all its routes and widths). Not in the invariant profile (its bytes
+// are the MMA with ones at every width), and not yet in the speed profile: the price describes
+// the instances with the MMA with ones and the adds (rmma_resources) and has no term for the
+// plane's work or its pre-pass launch, so the speed profile keeps them until the price has.
+// The plane is off by default (group_sums_plane_enabled false): its A/B (#709, kernel-proposals
+// entry A) refuted the prefill rows on the RTX 5090, so rmma_group_sums answers false until a
+// counted law makes the plane pay. set_group_sums_plane_enabled turns it on for the process: the
+// plane's tests, and route-tune's --group-sums-plane 1 for its next A/B. No environment variable
+// decides it (principle 3).
+// rmma_plane_taken: whether a call that rmma_group_sums admits launches the plane's instance on
+// this device (rmma_plane_admitted, generic_gemm_launch.cuh: the format and epilogue's every
+// plane instance keeps the spill and the CTAs per SM of its twin with the MMA with ones, from the
+// committed kernel facts; false without facts and on a build without the plane's instance);
+// described, not launched. resolve_route reads both.
+[[nodiscard]] int rmma_group_sums_values(WeightCodec codec) noexcept;
+[[nodiscard]] std::int32_t rmma_group_sums_ld(std::int32_t k, int values) noexcept;
+[[nodiscard]] std::size_t rmma_group_sums_bytes(WeightCodec codec, std::int32_t k,
+                                                std::int32_t tokens);
+[[nodiscard]] bool group_sums_plane_enabled() noexcept;
+void set_group_sums_plane_enabled(bool on) noexcept;
+[[nodiscard]] bool rmma_group_sums(WeightCodec codec);
+[[nodiscard]] bool rmma_plane_taken(int schedule, const Weight& weight, Epilogue epilogue,
+                                    std::int32_t tokens, std::int32_t rows = 0);
 // Family::GgmlMmq's workspace for a call of `plane_rows` weight rows (SwiGlu: gate and up) and T
 // tokens: the q8_1 activation, the FP32 plane and the stream-k fixup bound.
 // Whether ggml's matrix kernel (Family::GgmlMmq) reads the format.
@@ -1174,6 +1223,8 @@ enum class Demotion : std::uint8_t {
     Workspace,     // W4A4, W4A8 or I8 given less workspace than their activation planes take
     VoltaCopy,     // Volta: a CUTLASS-only format's tiled call with no room for a decoded chunk
     KStep,         // the register MMA asked with K off its kernel's step: the scalar kernel
+    GroupSums,     // a min-term register-MMA call without room for its group-sums plane: the same
+                   // route with the MMA with ones (other bytes; ResolvedRoute::group_sums)
 };
 [[nodiscard]] std::string_view demotion_name(Demotion demotion) noexcept;
 
@@ -1187,7 +1238,10 @@ struct ResolvedRoute {
     Route executed;
     bool r8_prequantized = false;
     bool ggml_fallback   = false; // a ggml route the call could not take (ggml_mmq_fallback_count)
-    Demotion reason      = Demotion::None;
+    // A min-term register-MMA call that reads the pre-summed group plane (rmma_group_sums) from
+    // its workspace; one that would but has no room for it runs the MMA with ones (GroupSums).
+    bool group_sums = false;
+    Demotion reason = Demotion::None;
 };
 [[nodiscard]] ResolvedRoute resolve_route(Route asked, const Weight& weight, const CallLayout& call);
 
@@ -1225,7 +1279,17 @@ struct PreparedRule {
 // stream order, nor releases: the next call's quantizer could take the workspace it still reads),
 // no programmatic dependent launch on the device, a call wider than the prefetch's tokens, or a
 // joined call.
-enum class OverlapRefusal { None, NotAsked, Family, Epilogue, PrequantizedR8, NoPdl, Wide, Joined };
+enum class OverlapRefusal {
+    None,
+    NotAsked,
+    Family,
+    Epilogue,
+    PrequantizedR8,
+    NoPdl,
+    Wide,
+    Joined,
+    GroupSums, // a register-MMA call that reads the group-sums plane (ResolvedRoute::group_sums)
+};
 [[nodiscard]] std::string_view overlap_refusal_name(OverlapRefusal why) noexcept;
 struct LaunchOverlap {
     OverlapRefusal join     = OverlapRefusal::NotAsked;

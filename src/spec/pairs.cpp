@@ -275,7 +275,26 @@ std::map<std::string, std::vector<RoundLaunches>> round_launches(const Profile& 
 void price_joint(Profile& p, const MeasuredPair& pair, const CardRates& lab,
                  const ProposalRows* head_rows = nullptr) {
     p.joint_scale.clear();
+    p.plain_step_scale.clear();
     if (!pair.round_facts || !lab.known()) { return; }
+    // A plain step of C streams over one stream's, on the same rates: the weights read once, the
+    // rows' compute C times, and the launches of a plain step (its kernels pooled over the tune's
+    // plain decode, where counted and `lab` has a launch time) alike at any C. The KV and attention
+    // bytes, which grow with C, are left out as in R_C, so the price errs low at more streams.
+    double step_kernels = 0, steps = 0;
+    for (const Measurement& m : pair.tune.measurements) {
+        if (!m.config.enabled() && m.graph_kernels > 0 && m.graph_rounds > 0) {
+            step_kernels += double(m.graph_kernels);
+            steps += double(m.graph_rounds);
+        }
+    }
+    const double step_launch =
+        steps > 0 && lab.launch_bytes() > 0 ? lab.launch_bytes() * step_kernels / steps : 0.0;
+    const double one_step = plain_step_cost(*pair.round_facts, lab.kappa(), 1) + step_launch;
+    for (std::int32_t streams = 2; one_step > 0 && streams <= kPricedVerifyRows; ++streams) {
+        p.plain_step_scale[streams] =
+            (plain_step_cost(*pair.round_facts, lab.kappa(), streams) + step_launch) / one_step;
+    }
     std::vector<SpecConfig> configs;
     std::set<std::string> seen;
     const auto add = [&](const SpecConfig& config) {
@@ -1357,7 +1376,8 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
                               .source  = "registry sibling " + std::string(repo.substr(0, at)) +
                                         " " + named + " (" + std::to_string(siblings.cards.size()) +
                                         " lab card(s); this quantization not measured)" +
-                                        priced(note)};
+                                        priced(note),
+                              .step = PairStep::Sibling};
         }
     }
     // 3. Nobody measured it: the group of each kind it carries, the fastest overall.
@@ -1372,7 +1392,8 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
                               .basis   = "preliminary",
                               .source  = "registry group " + std::string(engine) + " + " + kind +
                                         " (" + std::to_string(group.size()) +
-                                        " measured pairs; this one not measured)"};
+                                        " measured pairs; this one not measured)",
+                              .step = PairStep::Group};
         }
     }
     return best;

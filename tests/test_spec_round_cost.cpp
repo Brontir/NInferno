@@ -392,6 +392,26 @@ int main() {
             }
         }
         expect(compared > 0, "the joint scale was compared with load_gain");
+        // The plain step's price at 2..kPricedVerifyRows streams (#777) on the same rates: the
+        // weights read once, so above one stream's and below C of them, never falling with C;
+        // without a launch time on the board, plain_step_cost's ratio itself.
+        const sp::CardRates lab_rates = sp::card_rates_of_board(lab.lab_board);
+        expect(home.plain_step_scale.size() == std::size_t(sp::kPricedVerifyRows - 1),
+               "the plain step priced at every count the joint verify may be");
+        double previous = 1.0;
+        for (const auto& [streams, scale] : home.plain_step_scale) {
+            expect(scale >= previous && scale >= 1.0 && scale <= double(streams),
+                   "a plain step of " + std::to_string(streams) + " streams costs " +
+                       std::to_string(scale) + " of one stream's");
+            if (lab_rates.launch_bytes() <= 0) {
+                expect(near(scale,
+                            sp::plain_step_cost(*lab.round_facts, kappa, streams) /
+                                sp::plain_step_cost(*lab.round_facts, kappa, 1),
+                            1e-12),
+                       "the plain step's price is plain_step_cost's at " + std::to_string(streams));
+            }
+            previous = scale;
+        }
         // Not only the choices: every measured configuration is priced (a reselection, the plan's
         // per-mode drafter axis or an engine that runs only the served choices, picks among them).
         std::set<std::string> by_choice; // what pricing the choices' depths alone would cover
@@ -415,8 +435,9 @@ int main() {
         expect(unchosen > 0, "the pair has a measured configuration that no choice names");
         // One card of the generation is no home (the portable choice): the joint verify is
         // priced only for a profile at home.
-        expect(sp::profile_for_target({&lab}, "sm89").joint_scale.empty(),
-               "a profile that is not at home prices no joint verify");
+        expect(sp::profile_for_target({&lab}, "sm89").joint_scale.empty() &&
+                   sp::profile_for_target({&lab}, "sm89").plain_step_scale.empty(),
+               "a profile that is not at home prices no joint verify and no plain step");
     }
     // Under the generation median the profile is selected on the record that measured the most
     // configurations, which may be another card's. A card with a lab record of its own takes the

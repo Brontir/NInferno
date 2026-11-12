@@ -217,7 +217,9 @@ round's graphs), the server, the CLI and the plan without the weights take one o
 (`product::fit_fallbacks`): the profile's fit fallback, then the deepest shallower draft, then the
 model's own MTP head, else plain decode; with an automatic KV pool, `product::pool_rule` keeps a
 drafter only while it leaves as many whole contexts as the streams asked, else the MTP head where
-it holds four fifths of plain decode's contexts, else plain decode. The plan is drawn again at the
+its pool prices at least plain decode's over the benchmark's mix, or, where the facts do not price
+it, where it holds four fifths of plain decode's contexts (DECISIONS 80), else plain decode.
+The plan is drawn again at the
 choice's drafter (`product::plan_at_choice`), so the plan, the CLI and the server start the same
 configuration. The server thinks by default; each request runs its own thinking flag's
 configuration (`--spec-select thinking`) only where the profile's measurements say the other

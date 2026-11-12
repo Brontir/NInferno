@@ -225,6 +225,12 @@ struct Profile {
     // profile file, so an empty table says only that nobody priced it: the one-request gain then
     // stands as a ceiling.
     std::map<std::string, std::map<std::int32_t, double>> joint_scale;
+    // What the requests decoded together do to a plain decode step's price (#777), by number of
+    // streams: the step of C streams over one stream's (spec::plain_step_cost, with the launches
+    // of a plain step where joint_scale counts them), at C = 2..kPricedVerifyRows, priced with
+    // joint_scale on the same rates. The pool rule (product::pool_rule) weighs a pool of fewer
+    // streams by it. Not written to a profile file; empty where nobody priced it.
+    std::map<std::int32_t, double> plain_step_scale;
     // The longest prompt its choices speculate on (SpeculativeOptions::context_limit), measured
     // where rounds stop paying at long context. 0: every length.
     std::uint32_t context_limit = 0;
