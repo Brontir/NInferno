@@ -450,9 +450,9 @@ inline constexpr FittedHoldout kGenerationHoldouts[] = {
          "core/generation.h comment (fitted constants)")},
     {kGeneration, "a16_cost_scale",
      Holdout::none(
-         "the same route_tune timings: 1.11 on the consumer rows, 1.64 on the A100's (with the "
-         "busy-SM fill it moved 0.89 -> 1.11, which also prices the K-quant and codebook dequant: "
-         "5070 Ti ISTA T 17..32 1.20 -> 1.04)",
+         "the same route_tune timings: 1.11 on the consumer rows, 1.64 on the A100's, none on the "
+         "hopper and gb100 rows (#618 step 12) (with the busy-SM fill it moved 0.89 -> 1.11, "
+         "which also prices the K-quant and codebook dequant: 5070 Ti ISTA T 17..32 1.20 -> 1.04)",
          "the A100 is one board; the consumer value is checked on the same cards (and a 5070 Ti "
          "before / after case)",
          "core/generation.h; generic_cost.cpp price_routes comment")},
