@@ -59,6 +59,33 @@ std::unique_ptr<ArtifactBacking> Demands::materialize(DeviceContext& device) {
     return backing;
 }
 
+std::unique_ptr<ArtifactBacking> Demands::describe() {
+    // Every binding of a component this model loads must be bound, as materialize refuses.
+    (void)std::move(binder_).finish(artifact::UnusedBindings::RefuseInLoadedComponents);
+    auto backing = std::make_unique<ArtifactBacking>();
+    std::vector<const WeightParent*> parents(reader_.directory().objects.size(), nullptr);
+    for (const auto& item : items_) {
+        if (item.reference.residency == artifact::Residency::Values) {
+            throw artifact::ArtifactError(item.reference.name +
+                                          ": owning values do not have parent backing");
+        }
+        WeightView view;
+        view.shape = item.reference.shape;
+        for (const auto& part : item.reference.binding.parts) {
+            const std::size_t i = part.object.index;
+            if (parents.at(i) == nullptr) {
+                const auto& geometry = reader_.geometry(part.object);
+                parents[i]           = &backing->described.emplace_back(WeightParent{
+                    geometry, reinterpret_cast<const std::byte*>((std::uintptr_t{i} + 1) << 32),
+                    geometry.format == QType::NVFP4 ? 1.0F : 0.0F});
+            }
+            view.parts.push_back({parents[i], part.begin, part.end});
+        }
+        backing->views.push_back(std::move(view));
+    }
+    return backing;
+}
+
 ops::WeightInput Prepare::input(Id id) const {
     const auto& use = items_.at(id).use;
     if (!use) {

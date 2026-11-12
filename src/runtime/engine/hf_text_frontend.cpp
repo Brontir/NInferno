@@ -29,6 +29,26 @@ void refuse_qwen_only_options(const EngineOptions& options, std::string_view fam
 
 HfTextFiles read_hf_text_files(const std::filesystem::path& artifact) {
     const artifact::Reader reader(artifact);
+    return read_hf_text_files(reader);
+}
+
+std::uint32_t hf_public_token_count(const artifact::Reader& reader) {
+    const HfTextFiles files = read_hf_text_files(reader);
+    models::qwen3_5::FrontendResources resources{
+        .tokenizer_json         = files.tokenizer_json,
+        .tokenizer_config_json  = files.tokenizer_config_json,
+        .chat_template_jinja    = files.chat_template_jinja,
+        .generation_config_json = files.generation_config_json,
+    };
+    models::qwen3_5::attach_hf_text_tokenizer(resources);
+    const std::size_t vocabulary = resources.public_token_count;
+    if (vocabulary == 0 || !resources.tokenizer->has_exact_token_domain(vocabulary)) {
+        throw std::invalid_argument("the tokenizer must expose a contiguous public domain");
+    }
+    return static_cast<std::uint32_t>(vocabulary);
+}
+
+HfTextFiles read_hf_text_files(const artifact::Reader& reader) {
     artifact::Binder binder(reader);
     const auto resource = [&](std::string_view role) {
         const auto bytes = binder.host_object(binder.resource("text", role));

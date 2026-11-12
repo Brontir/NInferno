@@ -3,6 +3,18 @@ ninferno_add_test(ninferno_dense_session_real_test LABELS real gpu
   LIBRARIES ninferno_dense)
 set_tests_properties(ninferno_dense_session_real_test PROPERTIES SKIP_RETURN_CODE 77)
 
+# The plan without the weights for the dense decoder, moe_decoder and NemotronH (#615 W3): --plan's
+# dry run over a lab model's artifact directory (Qwen3-8B, Llama-3.1-8B, gpt-oss-20b, Nemotron 3
+# Nano) sizes the start planner's capacity over the described model, to the byte, on substituted
+# RTX 5090, 4070 Ti and 4060 Ti boards; the declines keep the formula and say why. No GPU, no
+# files (NINFERNO_PLAN_WORKSPACE_ARTIFACTS adds real artifact files).
+ninferno_add_test(ninferno_decoder_plan_workspace_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_plan_workspace.cpp"
+  LIBRARIES ninferno_product_plan ninferno_engine ninferno_model_runtime ninferno_core
+    ninferno::json)
+target_include_directories(ninferno_decoder_plan_workspace_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src)
+
 # Prefix reuse through the Engine on a dense artifact whose prompt ends on an execution boundary
 # (SmolLM3): a zero-suffix restore of a shared prefix, cold == warm. GPU + artifact.
 ninferno_add_test(ninferno_dense_reuse_real_test LABELS real gpu
