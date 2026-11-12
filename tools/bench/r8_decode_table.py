@@ -68,7 +68,9 @@ GPU_FACTS = Path(__file__).resolve().parents[2] / "src" / "core" / "data" / "gpu
 EPILOGUES = {"store": "Store", "swiglu": "SwiGlu"}
 
 
-# The facts each sweep's board line printed, by PCI id: checked against the id's registry row.
+# The facts every sweep's board line printed, by PCI id (each one: a --merge of several sweeps
+# under one id may mix the stock board with a variant on other memory): each is checked against
+# the id's registry row.
 printed = {}
 
 
@@ -99,7 +101,8 @@ def read_run(path, gpu):
             # against the id's row (main).
             if m.group(5):
                 cc, sms, l2, bw = m.groups()[:4]
-                printed[pci_text(m.group(5))] = (int(cc), int(sms), float(l2), float(bw))
+                printed.setdefault(pci_text(m.group(5)), set()).add(
+                    (int(cc), int(sms), float(l2), float(bw)))
             board = pci_text(m.group(5)) if m.group(5) else None
             continue
         if line.strip() == "done":
@@ -241,9 +244,13 @@ def main():
         # 8 GB RTX 3060 on 128 bits, the RTX 4070 with GDDR6) is not its id's row: its id would
         # read back as the row's facts.
         cc, sms, l2, bw = known[board]
-        seen = printed.get(board)
-        if seen and (seen[0] != cc or seen[1] != sms or abs(seen[2] - l2) > 1e-3 * max(l2, 1)
-                     or abs(seen[3] - bw) > 1e-4 * bw):
+        # The rule of measured::row_board_facts (core/measured_boards.h): cc and SMs exact, L2 and
+        # bandwidth to a part in 10^4.
+        def close(x, y):
+            return abs(x - y) <= 1e-4 * max(x, y)
+        for seen in sorted(printed.get(board, ())):
+            if seen[0] == cc and seen[1] == sms and close(seen[2], l2) and close(seen[3], bw):
+                continue
             sys.exit(f"{gpu}: the sweeps' board (cc {seen[0]}, {seen[1]} SMs, L2 {seen[2]:g} MiB, "
                      f"{seen[3]:g} GB/s) is not the row of its PCI id {board} (cc {cc}, {sms} SMs, "
                      f"L2 {l2:g} MiB, {bw:g} GB/s): a variant under the id, which the table "
