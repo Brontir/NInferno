@@ -1063,10 +1063,11 @@ inline constexpr std::uint32_t kRequestAnswer = 512;  // the answer of either re
 // quantization on the RTX 4090 and 5070 Ti; Q4_K_M 0.73 points for 0.0172 KLD, UD-IQ2_M 4.48 for
 // 0.114: about 0.04 points per 0.001; a run's mean reproduces within 0.2 points). One model, two
 // quantizations: the scale applies to the quantization's KLD against Q8_0 (the calibration's
-// quantity), and only on the calibrated model's own measured files (kQuantKld's: Evidence::Measured
-// or Reference), not on another model of its family (the 27B shares the family key) nor on the
-// switches' terms. Another family's KLD is not on the same scale (Gemma 4's terms are two orders
-// larger for the same switches): not calibrated.
+// quantity), and only on the calibrated model's own measured files (kQuantKld's:
+// Evidence::Measured, its Q8_0 file included), not on another model of its family (the 27B shares
+// the family key, its Q8_0 too: Evidence::Reference is the curve's zero, not the model's identity)
+// nor on the switches' terms. Another family's KLD is not on the same scale (Gemma 4's terms are
+// two orders larger for the same switches): not calibrated.
 struct AnswerScale {
     std::string_view family;
     std::string_view model; // the one model calibrated

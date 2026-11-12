@@ -606,9 +606,10 @@ struct PrefillBand {
 [[nodiscard]] const AnswerScale* answer_scale_of(std::string_view family) noexcept;
 
 // What a quantization's term means in answers: the scale times its KLD against Q8_0, where the
-// scale exists and the term is the calibrated model's own measured point (Evidence::Measured or
-// Reference); nullopt otherwise, `why_code` (when given) saying why: family_not_calibrated,
-// model_not_calibrated (another model of the family, or a point not measured on its files).
+// scale exists and the term is the calibrated model's own measured point (Evidence::Measured: the
+// measured file itself, Q8_0's included); nullopt otherwise, `why_code` (when given) saying why:
+// family_not_calibrated, model_not_calibrated (another model of the family, its Q8_0 too: being
+// the curve's zero says nothing of the model; or a point not measured on its files).
 struct Accuracy;
 [[nodiscard]] std::optional<double> answer_points(const Accuracy& accuracy,
                                                   const AnswerScale* scale,

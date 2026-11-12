@@ -1858,9 +1858,11 @@ std::optional<double> answer_points(const Accuracy& accuracy, const AnswerScale*
     for (const Term& t : accuracy.terms) {
         if (t.axis != Axis::Quant) { continue; }
         // The calibrated model's own measured files (the curve's points are its), never another
-        // model's estimate on the same family key.
-        if (t.transferred ||
-            (t.evidence != Evidence::Measured && t.evidence != Evidence::Reference)) {
+        // model's estimate on the same family key. Q8_0 being the curve's zero
+        // (Evidence::Reference) says nothing of the model: a 27B's Q8_0 is 0 against its own Q8_0,
+        // not on the 9B's file. Only the measured file's identity (Evidence::Measured, the
+        // reference's file included) makes the term the calibrated model's.
+        if (t.transferred || t.evidence != Evidence::Measured) {
             return say("model_not_calibrated");
         }
         if (why_code != nullptr) { *why_code = {}; }

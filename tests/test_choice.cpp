@@ -3786,6 +3786,41 @@ void reports_gates_and_bands(const json& fixture) {
     proxy.terms[0].evidence = ch::Evidence::Proxy; // the same label on another model's files
     check(!ch::answer_points(proxy, scale, &why) && why == "model_not_calibrated",
           "answers: another model of the family (the 27B) is not calibrated");
+    // Q8_0 is the curve's zero on any model (Evidence::Reference): that is not the 9B's identity.
+    // A 27B of the family at Q8_0 gets no points; the 9B's own measured Q8_0 file gets 0.
+    {
+        ch::Candidate c;
+        c.kv            = KvCacheStorage::BFloat16;
+        const json& m27 = fixture.at("models").at("Qwen3.8-27B");
+        const Bench big{model_of(m27), a.card, {}};
+        ch::QuantOption q8        = quant_of("UD-Q4_K_XL", m27.at("quants").at("UD-Q4_K_XL"));
+        q8.label                  = "Q8_0";
+        q8.bits_per_weight        = 8.5;
+        q8.files                  = "27b-q8_0-files"; // not the 9B's measured file
+        const ch::Accuracy big_q8 = ch::accuracy_of(big.model, q8, c, big.card);
+        const ch::Term* q8_term   = nullptr;
+        for (const ch::Term& t : big_q8.terms) {
+            if (t.axis == ch::Axis::Quant) { q8_term = &t; }
+        }
+        why = "x";
+        check(big.model.family == "qwen3_5_text" && q8_term && q8_term->kld == 0 &&
+                  q8_term->evidence == ch::Evidence::Reference &&
+                  !ch::answer_points(big_q8, ch::answer_scale_of(big.model.family), &why) &&
+                  why == "model_not_calibrated",
+              "answers: a 27B's Q8_0 (the curve's zero, not the 9B's file) is not calibrated");
+        q8.files = "";
+        why      = "x";
+        check(!ch::answer_points(ch::accuracy_of(big.model, q8, c, big.card), scale, &why) &&
+                  why == "model_not_calibrated",
+              "answers: a Q8_0 of unknown files is not calibrated");
+        ch::QuantOption own = q8;
+        own.files           = std::string(ch::kQuantKld[0].file); // the 9B's measured Q8_0
+        own.bits_per_weight = ch::kQuantKld[0].bits_per_weight;
+        why                 = "x";
+        const auto zero = ch::answer_points(ch::accuracy_of(a.model, own, c, a.card), scale, &why);
+        check(ch::kQuantKld[0].label == "Q8_0" && zero && *zero == 0 && why.empty(),
+              "answers: the 9B's own Q8_0 file loses 0 points");
+    }
     check(!ch::answer_points(measured, nullptr, &why) && why == "family_not_calibrated",
           "answers: another family is not calibrated");
     // The gate code agrees with the worth on every fixture board, and with decides_switches.

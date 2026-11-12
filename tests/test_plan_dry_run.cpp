@@ -2383,6 +2383,31 @@ void test_choice_json_gates() {
               o.at("why_code") == "kv_not_run" && o.at("chosen").is_null() &&
               o.at("decided_on").is_null(),
           "gates JSON: another family is not calibrated; a refusal says its code");
+    // A Q8_0 of the calibrated family: the curve's zero (Evidence::Reference) on a 27B is not the
+    // 9B's measured file, so no scale and no points; the 9B's own Q8_0 file loses 0 points.
+    for (const bool own : {false, true}) {
+        namespace ch = pr::choice;
+        pr::ServedChoice q8;
+        q8.family = "qwen3_5_text";
+        ch::Scored s;
+        s.accuracy.terms = {{ch::Axis::Quant, "Q8_0", 0, own, false, "",
+                             own ? ch::Evidence::Measured : ch::Evidence::Reference}};
+        q8.choice.scored.push_back(s);
+        q8.choice.chosen       = 0;
+        const nlohmann::json q = pr::choice_json(q8);
+        const auto& sc         = q.at("answer_scale");
+        const auto& c          = q.at("chosen");
+        if (own) {
+            check(sc.at("calibrated") == true && !sc.contains("why_code") &&
+                      c.at("answer_points_lost") == 0.0 && c.at("answer_points_why_code") == "",
+                  "gates JSON: the 9B's own Q8_0 file is calibrated, 0 points lost");
+        } else {
+            check(sc.at("calibrated") == false && sc.at("why_code") == "model_not_calibrated" &&
+                      c.at("answer_points_lost").is_null() &&
+                      c.at("answer_points_why_code") == "model_not_calibrated",
+                  "gates JSON: a 27B's Q8_0 is not calibrated, no points");
+        }
+    }
     // A quantization row's authority.
     pr::QuantPlan plan;
     pr::QuantRow row;
