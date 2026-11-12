@@ -8,7 +8,8 @@ machines, not in the repository. This lists them so a replica or a regret run ca
   sweep_manifest.py merge rtx4090.json rtx3060.json ... > tools/bench/data/sweep_archive.json
 
 `scan` walks ROOT for CSVs whose header is route_tune's `--routes-out` or `--selected-out` (other
-CSVs are skipped; build and worktree directories are not walked) and records, per file: its path
+CSVs are skipped; build and worktree directories are not walked; a directory that cannot be
+listed is recorded with its error) and records, per file: its path
 relative to ROOT, size, SHA-256 and modification date; the rows; the formats, compute classes,
 problems and widths it covers; its run, device and timing protocol where the file names them (files
 from before route_tune wrote those columns say "unnamed"); for a sweep, whether it carries the cost
@@ -35,7 +36,9 @@ KEY = ("format", "compute", "epilogue", "n", "k", "T")
 # these grew over time (run, device, protocol, authority, evidence), so a prefix tells the kind.
 ROUTES_PREFIX = KEY + ("route", "median_us")
 SELECTED_PREFIX = KEY + ("asked", "selected")
-SKIP_DIRS = re.compile(r"^(build_|wt_|\.git$|__pycache__$)")
+# Build trees (the lab's build_TAG_ARCH, CMake's build, build-*, cmake-build-*) and worktrees hold
+# copies or generated files, not archive measurements.
+SKIP_DIRS = re.compile(r"^(build$|build[_-]|cmake-build-|wt_|\.git$|__pycache__$)")
 CARD = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 UNNAMED = "unnamed"
 
@@ -114,13 +117,16 @@ def describe(path, root):
     return record
 
 
-def walk(root):
+def walk(root, unreadable):
+    """The CSV files under root. A directory that cannot be listed (permission denied, gone) is
+    appended to `unreadable` as a record with its error, so the manifest says what it did not see."""
     stack = [root]
     while stack:
         here = stack.pop()
         try:
             entries = sorted(here.iterdir())
-        except OSError:
+        except OSError as error:
+            unreadable.append({"path": here.relative_to(root).as_posix(), "error": f"unlisted: {error}"})
             continue
         for entry in entries:
             if entry.is_symlink():
@@ -138,7 +144,9 @@ def scan(root, card):
     root = Path(root)
     if not root.is_dir():
         raise ValueError(f"{root}: not a directory")
-    files = [r for r in (describe(p, root) for p in walk(root)) if r is not None]
+    unreadable = []
+    files = [r for r in (describe(p, root) for p in walk(root, unreadable)) if r is not None]
+    files += unreadable
     files.sort(key=lambda r: r["path"])
     # The selections a sweep pairs with: the --selected-out files of its directory.
     selected = {}

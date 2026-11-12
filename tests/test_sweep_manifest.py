@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "bench"))
@@ -67,6 +68,35 @@ class Scan(unittest.TestCase):
         sel = by["rw/sel_p1.csv"]
         self.assertEqual((sel["kind"], sel["rows"], sel["authority_column"]), ("selected", 1, False))
         self.assertIn("error", by["bad/short.csv"])  # listed with its error, not dropped
+
+    def test_build_trees_are_not_walked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for d in ("build", "build-release", "cmake-build-debug", "build_mst1_89", "wt_x", "builds"):
+                (root / d).mkdir()
+                (root / d / "r.csv").write_text(ROUTES_OLD)
+            # "builds" is no build tree's name: it is walked.
+            self.assertEqual([f["path"] for f in sm.scan(root, "rtx4090")["files"]], ["builds/r.csv"])
+
+    def test_an_unlisted_directory_is_recorded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "locked").mkdir()
+            (root / "r.csv").write_text(ROUTES_OLD)
+            real = Path.iterdir
+
+            def iterdir(self):
+                if self.name == "locked":
+                    raise PermissionError(13, "Permission denied")
+                return real(self)
+
+            with unittest.mock.patch.object(Path, "iterdir", iterdir):
+                files = sm.scan(root, "rtx4090")["files"]
+            by = {f["path"]: f for f in files}
+            self.assertEqual(sorted(by), ["locked", "r.csv"])
+            self.assertIn("Permission denied", by["locked"]["error"])
+            text = sm.summary(sm.merge([("s", {"schema": sm.SCHEMA, "card": "rtx4090", "files": files})]))
+            self.assertIn("1 unreadable", text)
 
     def test_digits(self):
         self.assertEqual(sm.significant_digits("12.3456"), 6)
