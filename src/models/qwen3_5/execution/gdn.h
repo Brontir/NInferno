@@ -1,7 +1,9 @@
 #pragma once
 
-#include "models/qwen3_5/execution/parameters.h"
+#include "core/arena.h"
 #include "core/device.h"
+#include "models/qwen3_5/config.h"
+#include "models/qwen3_5/execution/parameter_types.h"
 
 namespace ninferno::models::qwen3_5::execution {
 

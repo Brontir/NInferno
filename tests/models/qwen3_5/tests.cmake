@@ -53,6 +53,15 @@ ninferno_add_test(ninferno_qwen3_5_runtime_mechanisms_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_runtime_mechanisms.cpp"
   LIBRARIES ninferno_engine ninferno_core)
 
+# The workspace planner over a view of prepared forms (#615 W1): the start's view of its own forms
+# and one built over the same forms described at other addresses size the same arenas, for the
+# 9B and 35B-A3B geometries on a substituted RTX 5090 and RTX 4060 Ti. No GPU, no files.
+ninferno_add_test(ninferno_qwen3_5_workspace_inputs_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_workspace_inputs.cpp"
+  LIBRARIES ninferno_model_runtime ninferno_core)
+target_include_directories(ninferno_qwen3_5_workspace_inputs_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src)
+
 # The MTP layer's packed Q/K/gate/V parent (the unregistered-split check reads the device): fused Op forms, and a BF16 MoE parent
 # (nvidia / RedHatAI NVFP4 35B-A3B releases) sized for the generic linear instead of refused.
 ninferno_add_test(ninferno_qwen3_5_mtp_projection_plan_test LABELS gpu
