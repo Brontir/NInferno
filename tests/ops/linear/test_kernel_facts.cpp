@@ -350,6 +350,109 @@ void schedules_read() {
     }
 }
 
+void sections_read() {
+    // The section families (#785): ggml's matrix kernel and the W4A8 tiles, in every snapshot
+    // that has their sections (no price reads them yet). Every row parses with its schedule and
+    // pipe counts within a kernel's bounds; and the rows the launch laws of #785 read are there,
+    // counted as the unit they price: Q4_K, Q5_K and Q6_K at J 32 and 128, one or two candidate
+    // loops (the stream-k body holds the unit's loop twice), four CTA barriers per iteration and
+    // k_iter 32 J (a 128-row x J-column tile over 256 K on 8 warps, per m16n8 tile); the int8 MMA
+    // the generation has (Turing's m8n8k16, m16n8k32 from sm_80 on); and the W4A8 32 x 128 tile
+    // (Q4_K, Q6_K) with one loop, two barriers per 128-value K tile and k_iter 16 x 32.
+    // sm_70 has none: its snapshot is made with CUDA 12.8 (#762), and Volta takes no MMQ law.
+    constexpr std::string_view kWithoutSections[] = {"70"};
+    int with_sections = 0;
+    for (const auto arch : kf::snapshot_archs()) {
+        const std::string name = "sm_" + std::string(arch);
+        const bool waived = std::find(std::begin(kWithoutSections), std::end(kWithoutSections),
+                                      arch) != std::end(kWithoutSections);
+        for (const auto family : kf::kSectionFamilies) {
+            const auto header = kf::section_header(arch, family);
+            expect(header.has_value() != waived,
+                   name + (waived ? ": has a " : ": no ") + std::string(family) + " section");
+            if (!header) continue;
+            const auto rows = kf::section_rows(arch, family);
+            expect(rows.size() == header->kernels && !rows.empty(),
+                   name + " " + std::string(family) + ": " + std::to_string(rows.size()) +
+                       " rows read, the section says " + std::to_string(header->kernels));
+            expect(!header->nvcc.empty() && header->nvcc != "unknown",
+                   name + " " + std::string(family) + " records no nvcc");
+            int bad = 0;
+            std::string first;
+            for (const auto& [key, f] : rows) {
+                if (!f.loop) continue;
+                const kf::LoopCounts& l = *f.loop;
+                const bool ok =
+                    l.schedule && l.pipes && l.schedule->stall_sum >= l.total &&
+                    l.schedule->sb_waits <= l.total && l.pipes->bar <= l.total &&
+                    l.pipes->i2f + l.pipes->i2fp + l.pipes->ffma + l.pipes->fmul + l.pipes->fadd <=
+                        l.fp_alu &&
+                    l.pipes->imad <= l.int_alu;
+                if (!ok && bad++ == 0) first = key;
+            }
+            expect(bad == 0, name + " " + std::string(family) + ": " + std::to_string(bad) +
+                                 " rows out of bounds, first " + first);
+            std::cout << name << ' ' << family << ": " << rows.size() << " rows, nvcc "
+                      << header->nvcc << '\n';
+        }
+        if (!kf::section_header(arch, "mmq")) continue;
+        ++with_sections;
+        for (const int type : {12, 13, 14}) {
+            for (const int J : {32, 128}) {
+                const auto f = kf::mmq_facts(arch, {type, J, false, 30});
+                const std::string what =
+                    name + " mmq type " + std::to_string(type) + " J " + std::to_string(J);
+                expect(f && f->loop, what + ": no row with a loop");
+                if (!f || !f->loop) continue;
+                const kf::LoopCounts& l = *f->loop;
+                expect(l.loops == 1 || l.loops == 2,
+                       what + ": " + std::to_string(l.loops) + " loops");
+                expect(l.pipes && l.pipes->bar == 4, what + ": not four barriers");
+                expect(l.k_iter == 32 * J, what + ": k_iter " + std::to_string(l.k_iter));
+                // Q6_K's 16-value scales take the k16 form from sm_80 on.
+                const bool shape = arch == "75" ? l.mma_shape.rfind("IMMA.8816.", 0) == 0
+                                                : l.mma_shape.rfind("IMMA.16832.", 0) == 0 ||
+                                                      l.mma_shape.rfind("IMMA.16816.", 0) == 0;
+                expect(l.mma > 0 && shape,
+                       what + ": " + std::to_string(l.mma) + " MMAs of " + l.mma_shape);
+            }
+        }
+        if (!kf::section_header(arch, "w4a8")) continue;
+        for (const char* codec : {"W4a8Q45K<4>", "W4a8Q6K"}) {
+            bool found = false;
+            for (const auto& [key, f] : kf::section_rows(arch, "w4a8")) {
+                if (key.rfind(std::string(codec) + " 32 128 2 4 0 ", 0) != 0 || !f.loop) continue;
+                found                   = true;
+                const kf::LoopCounts& l = *f.loop;
+                expect(l.loops == 1 && l.k_iter == 16 * 32 && l.pipes && l.pipes->bar == 2,
+                       name + " w4a8 " + key + ": loops " + std::to_string(l.loops) + ", k_iter " +
+                           std::to_string(l.k_iter));
+            }
+            expect(found, name + " w4a8: no " + codec + " 32 x 128 store row with a loop");
+        }
+    }
+    std::cout << "sections: " << with_sections << " snapshots with the mmq section\n";
+    // The reader takes a section after the rows and refuses one that breaks its form.
+    const std::string base = "arch 89\nnvcc 13.4.92\nkernels 0\ncolumns family decoder warps_m "
+                             "warps_k m_tiles n_tiles cluster epilogue latency sums registers "
+                             "stack local shared\n";
+    const std::string head = "family mmq\nfamily_nvcc 13.4.92\nfamily_kernels 1\n"
+                             "family_columns family type J fallback prec registers stack local "
+                             "shared\n";
+    const std::string row  = "mmq 12 32 0 30 128 0 0 0\n";
+    expect(kf::snapshot_text_accepted(base + head + row), "a resources-only mmq section is read");
+    expect(!kf::snapshot_text_accepted(base + head + "mmq 12 32 0 30 128 0 0\n"),
+           "a short mmq row is refused");
+    expect(!kf::snapshot_text_accepted(base + head + row +
+                                       "rmma Bf16Decoder 1 4 1 1 1 0 0 0 48 0 0 1536\n"),
+           "an rmma row inside a section is refused");
+    expect(!kf::snapshot_text_accepted(base + head + row + head + row),
+           "a repeated section is refused");
+    expect(!kf::snapshot_text_accepted(base + head + "mmq q4 32 0 30 128 0 0 0\n"),
+           "a text key in the mmq section is refused");
+    expect(!kf::snapshot_text_accepted(base + head), "a section without its rows is refused");
+}
+
 void old_columns_refused() {
     // The reader takes the full (schema 4) columns line and the resources-only one, and refuses
     // the schema 2 line (the loop's counts without the schedule): its rows would carry no
@@ -382,6 +485,7 @@ int main() {
         canonical_names();
         loop_counts_read();
         schedules_read();
+        sections_read();
         old_columns_refused();
         occupancy_from_facts();
         boards_read_facts();

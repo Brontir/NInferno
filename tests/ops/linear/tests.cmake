@@ -240,10 +240,13 @@ ninferno_add_op_test(ninferno_selector_real_device_test
 #   so a snapshot no stand builds (sm_80, sm_90, sm_100) is checked only by the release's
 #   package.sh (#758). The label is slow in every build, so `ctest -L host -LE slow` leaves it out
 #   even where it would be quick: a label that depended on the snapshot would make the fast set
-#   differ between builds.
+#   differ between builds. The snapshot's sections (#785: ggml's matrix kernel and the W4A8 tiles,
+#   facts no price reads yet) are compared the same way, each under the nvcc it records: in full
+#   where it is this build's, by their kernel set otherwise.
 # - ninferno_kernel_facts_lookup_test: every snapshot parses and carries the loop counts (schema
 #   4; sm_70 waived until #762), the release engine of each lab capability is found, and every facts-priced golden board's
-#   price reads facts; no GPU.
+#   price reads facts; the sections' rows are within a kernel's bounds and count the unit #785's
+#   launch laws read; no GPU.
 # - ninferno_kernel_facts_live_test: on a GPU that runs this build's SASS, the running kernels'
 #   attributes and the driver's occupancy equal the snapshot and the pure occupancy.
 get_filename_component(ninferno_cuda_bin "${CMAKE_CUDA_COMPILER}" DIRECTORY)

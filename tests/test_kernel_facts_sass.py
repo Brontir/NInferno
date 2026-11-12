@@ -717,5 +717,122 @@ class StampKey(unittest.TestCase):
             self.assertNotEqual(self.key(root, b"text a"), self.key(root, b"text b"))
 
 
+class Sections(unittest.TestCase):
+    """The section families after the register-MMA rows (#785): ggml's matrix kernel and the
+    W4A8 tiles keyed from their demangled symbols, their pipe counts, the section's round trip,
+    `extract --update` keeping the rest of the file byte for byte, and `check` comparing a
+    section in full under its own nvcc and by its kernel set under another."""
+
+    RMMA = Check.SYMBOL
+    MMQ = "_ZL9mul_mat_qIL9ggml_type12ELi32ELb0EL9ggml_prec30EEvPKc"
+    MMQ_NAME = "void mul_mat_q<(ggml_type)12, 32, false, (ggml_prec)30>(const char *, int)"
+    MMQ_KEY = (12, 32, 0, 30)
+
+    def test_keys(self):
+        self.assertEqual(kernel_facts.mmq_key(self.MMQ_NAME), self.MMQ_KEY)
+        self.assertIsNone(kernel_facts.mmq_key(
+            "void mul_mat_q_stream_k_fixup<(ggml_type)12, 32, false, (ggml_prec)30>(int *)"))
+        ns = kernel_facts.NAMESPACE
+        classic = (f"void {ns}w4a8_kernel<{ns}W4a8Q45K<(int)4>, {ns}W4a8Schedule<(int)32, "
+                   f"(int)128, (int)2, (int)4>, ({ns}Epilogue)2, (int)1>({ns}GemmArgs, "
+                   f"{ns}W4a8Activation)")
+        self.assertEqual(kernel_facts.w4a8_key(classic), ("W4a8Q45K<4>", 32, 128, 2, 4, 2, 1, 0, 0))
+        ws = (f"void {ns}w4a8_ws_kernel<{ns}W4a8Q6K, {ns}W4a8Schedule<128, 64, 4, 2>, "
+              f"({ns}Epilogue)0, 3, 4>({ns}GemmArgs, {ns}W4a8Activation)")
+        self.assertEqual(kernel_facts.w4a8_key(ws), ("W4a8Q6K", 128, 64, 4, 2, 0, 0, 3, 4))
+        self.assertIsNone(kernel_facts.w4a8_key(f"void {ns}w4a8_quantize_kernel(float *)"))
+        self.assertIsNone(kernel_facts.rmma_key(self.MMQ_NAME))
+
+    def test_pipe_counts(self):
+        c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=1)
+        # The counted iteration's FFMA (0x180); the FMUL and the barrier are outside the loop.
+        self.assertEqual((c.ffma, c.fmul, c.fadd, c.i2f, c.i2fp, c.imad, c.bar),
+                         (1, 0, 0, 0, 0, 0, 0))
+        self.assertEqual(len(c.row()), len(sc.COLUMNS))  # no pipe columns unless asked
+        piped = c.with_pipes()
+        self.assertEqual(len(piped.row()), len(sc.COLUMNS) + len(sc.PIPE_FIELDS))
+        self.assertEqual(sc.LoopCounts.from_row(piped.row()), piped)
+        lines = [(o, {0x170: "I2F.F32.S32 R25, R24 ;", 0x1d0: "IMAD R9, R9, R10, RZ ;",
+                      0x210: "BAR.SYNC.DEFER_BLOCKING 0x0 ;"}.get(o, t)) for o, t in KERNEL]
+        c = sc.loop_counts(body_of(lines), tiles=1)
+        self.assertEqual((c.i2f, c.imad, c.bar), (1, 1, 1))
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name)
+        dump = Check.DUMP + "\n".join((" Function " + self.MMQ + ":",
+                                       "  REG:195 STACK:0 SHARED:0 LOCAL:0", ""))
+        (self.root / "usage.txt").write_text(dump)
+        text = sass(KERNEL).replace("_Z6kernelv", self.RMMA) + \
+            sass(KERNEL).split("\n", 1)[1].replace("_Z6kernelv", self.MMQ)
+        (self.root / "sass.txt").write_text(text)
+        self.saved = (kernel_facts.demangle, kernel_facts.rmma_key)
+        names = {self.RMMA: self.RMMA, self.MMQ: self.MMQ_NAME}
+        kernel_facts.demangle = lambda wanted, cuda_bin: {n: names[n] for n in wanted}
+        kernel_facts.rmma_key = lambda name: Snapshot.KEY if name == self.RMMA else None
+
+    def tearDown(self):
+        kernel_facts.demangle, kernel_facts.rmma_key = self.saved
+        self.dir.cleanup()
+
+    def extract(self, *extra):
+        out = self.root / "out.txt"
+        argv = ["extract", "--dump", str(self.root / "usage.txt"), "--sass-dump",
+                str(self.root / "sass.txt"), "--arch", "89", "--nvcc", "13.4.92", *extra]
+        if "--update" not in extra:
+            argv += ["-o", str(out)]
+        kernel_facts.main(argv)
+        return out
+
+    def check(self, expected, nvcc="13.4.92"):
+        return kernel_facts.main(["check", "--dump", str(self.root / "usage.txt"), "--sass-dump",
+                                  str(self.root / "sass.txt"), "--expected", str(expected),
+                                  "--nvcc", nvcc])
+
+    def test_round_trip_update_and_check(self):
+        # A file of the register-MMA rows alone, then the mmq section added to it: the old text
+        # is the new one's prefix, byte for byte.
+        out = self.extract("--families", "rmma")
+        old = out.read_text()
+        self.assertNotIn("family mmq", old)
+        (self.root / "old.txt").write_text(old)
+        self.extract("--families", "mmq", "--update", str(out))
+        new = out.read_text()
+        self.assertTrue(new.startswith(old))
+        header, sections = kernel_facts.parse_sections(new)
+        self.assertEqual(set(sections), {"rmma", "mmq"})
+        self.assertEqual(sections["mmq"]["nvcc"], "13.4.92")
+        row = sections["mmq"]["rows"][self.MMQ_KEY]
+        self.assertEqual(row[:4], (195, 0, 0, 0))
+        self.assertTrue(row[4].pipes and row[4].scheduled)
+        self.assertEqual(new.count("\nnvcc "), 1)  # the file's nvcc line stays the only one
+        _, rows = kernel_facts.parse_snapshot(new)
+        self.assertEqual(list(rows), [Snapshot.KEY])
+        # A full extract (every family; none of this build's W4A8 kernels) writes the same text.
+        full = self.root / "full.txt"
+        kernel_facts.main(["extract", "--dump", str(self.root / "usage.txt"), "--sass-dump",
+                           str(self.root / "sass.txt"), "--arch", "89", "--nvcc", "13.4.92",
+                           "--families", "rmma,mmq", "-o", str(full)])
+        self.assertEqual(full.read_text(), new)
+        # The section is checked: equal, changed, under another nvcc its set alone.
+        self.assertEqual(self.check(out), 0)
+        changed = new.replace("mmq 12 32 0 30 195 ", "mmq 12 32 0 30 194 ")
+        self.assertNotEqual(changed, new)
+        (self.root / "changed.txt").write_text(changed)
+        self.assertEqual(self.check(self.root / "changed.txt"), 1)
+        other = changed.replace("family_nvcc 13.4.92", "family_nvcc 13.2.86")
+        (self.root / "other.txt").write_text(other)
+        self.assertEqual(self.check(self.root / "other.txt"), 0)
+        # A snapshot without the section does not check those kernels.
+        self.assertEqual(self.check(self.root / "old.txt"), 0)
+        # Malformed sections fail.
+        for bad in (new.replace("family_kernels 1", "family_kernels 2"),
+                    new + "rmma Bf16Decoder 1 4 1 1 1 0 0 0 48 0 0 1536\n",
+                    new.replace("family mmq", "family other"),
+                    new + new[new.index("family mmq"):]):
+            with self.assertRaises(SystemExit):
+                kernel_facts.parse_sections(bad)
+
+
 if __name__ == "__main__":
     unittest.main()
