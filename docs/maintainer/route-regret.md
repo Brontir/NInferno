@@ -178,5 +178,35 @@ equals S there. On the GV100 the `volta-tiled` rule decides, and it is what keep
   DRAM bytes per SM-clock are high (q6_K most). The counted SASS refutes an issue-rate crossover;
   an L1-sector law fits 6 of 8 boards for each format and waits for its facts.
 
+## The route policy's moved decisions (#614 F1)
+
+`--route-policy evidence` (`docs/maintainer/environment.md#route-policy`) demotes a route-table
+answer that is `borrowed` or `transferred` below the ranker. Which cells of this sweep's grid move,
+read on a CPU before any GPU run: `tools/bench/data/route_regret/policy_evidence_moves.json`,
+written by `ninferno_route_policy_test --write <file>` (each board from its own build set: run it in
+a base, a full (sm_120a) and an sm_75 tree; a run keeps the boards of the other sets). The grid is
+this sweep's shapes at route_tune's points (T 1..512) under A16Only and AllowA8, and the prefill
+chunk (T 1024) under the prefill profile, 400 cells a board. The Quadro GV100 needs an sm_70 tree
+(CUDA 12.x) and is not in the file; in the other build sets it has no route-table answer in the
+grid, so nothing of it moves.
+
+| board | build set | borrowed (legacy) | moved | a8 verify T5-16 | a16 decode T<=4 | a16 verify T5-16 | a16 T>=17 | a16 prefill | demoted, same route |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| RTX 5090 | full | 26 | 16 | 4 | 4 | 4 | 3 | 1 | 10 |
+| RTX 5070 Ti | full | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| RTX 4090 | base | 50 | 31 | 8 | 4 | 6 | 13 | 0 | 19 |
+| RTX 4070 Ti | base | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| RTX 4060 Ti | base | 52 | 38 | 11 | 8 | 11 | 8 | 0 | 14 |
+| RTX 3090 | base | 48 | 18 | 4 | 0 | 0 | 14 | 0 | 30 |
+| RTX 3060 | base | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| RTX 2080 Ti | sm75 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+No AllowA8 cell outside verify moves: there the route table stands aside (the vector kernel, R8,
+the MMQ verify rule and the W4A8 calls from 17 tokens). Every moved cell's evidence answer is the
+register-MMA rule's (T <= 16, and the prefill chunk) or the cost model's (T >= 17). The RTX 5090's
+moves are all the q6_K 248320 x 4096 output projection, whose entry it borrows from the RTX 5070
+Ti's table. The A16Only moves are outside this sweep's scoring (AllowA8 only): the A/B measures
+them for the first time.
+
 A new sweep is the same commands on a later master. The summaries are rewritten by board, and the
 per-case CSVs stay on the stands (`docs/maintainer/sweep-archive.md`).

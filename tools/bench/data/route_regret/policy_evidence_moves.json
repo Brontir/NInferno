@@ -1,0 +1,2332 @@
+{
+ "schema": "ninferno-route-policy-moves/1",
+ "what": "the cells of the A5 regret grid whose production pick moves under --route-policy evidence against legacy (#614 F1), per board, each from its own build set; written by ninferno_route_policy_test --write",
+ "grid": {
+  "shapes": "tools/bench/data/route_regret/shapes.txt",
+  "policies": [
+   "a16",
+   "a8"
+  ],
+  "speed_T": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   12,
+   16,
+   24,
+   32,
+   48,
+   64,
+   96,
+   128,
+   192,
+   256,
+   512
+  ],
+  "prefill_T": [
+   1024
+  ]
+ },
+ "boards": [
+  {
+   "board": "rtx5090",
+   "card": "RTX 5090",
+   "build_set": "full",
+   "cells": 400,
+   "legacy_borrowed": 26,
+   "legacy_transferred": 0,
+   "legacy_measured": 108,
+   "legacy_transferred_rules_kept": 0,
+   "moved": 16,
+   "demoted_same_route": 10,
+   "moved_by_regime": {
+    "T>=17": 3,
+    "decode T<=4": 4,
+    "prefill": 1,
+    "verify T5-16": 8
+   },
+   "moves": [
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 1,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 2,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 3,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 4,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 5,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 6,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 7,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 8,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 24,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n4.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m2.n4.w4x1",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 32,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n4.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m2.n4.w4x1",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 96,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n4.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m2.n4.w4x1",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 1024,
+     "profile": "prefill",
+     "regime": "prefill",
+     "legacy": {
+      "route": "rmma.m1.n8.w8x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n8.w4x1",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 5,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 6,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 7,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 8,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "gb203:70sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    }
+   ]
+  },
+  {
+   "board": "rtx5070ti",
+   "card": "RTX 5070 Ti",
+   "build_set": "full",
+   "cells": 400,
+   "legacy_borrowed": 0,
+   "legacy_transferred": 0,
+   "legacy_measured": 124,
+   "legacy_transferred_rules_kept": 0,
+   "moved": 0,
+   "demoted_same_route": 0,
+   "moved_by_regime": {},
+   "moves": []
+  },
+  {
+   "board": "rtx4090",
+   "card": "RTX 4090",
+   "build_set": "base",
+   "cells": 400,
+   "legacy_borrowed": 50,
+   "legacy_transferred": 0,
+   "legacy_measured": 88,
+   "legacy_transferred_rules_kept": 0,
+   "moved": 31,
+   "demoted_same_route": 19,
+   "moved_by_regime": {
+    "T>=17": 13,
+    "decode T<=4": 4,
+    "verify T5-16": 14
+   },
+   "moves": [
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 1,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 2,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 3,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 4,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 5,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 6,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 7,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 8,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 12,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n2.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 16,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n2.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 24,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n1.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n4.w1x8",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 32,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n4.w1x8",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 48,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n2.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n4.w1x4",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 64,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n1.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n4.w1x4",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 96,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n2.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n4.w1x4",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 128,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n2.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n4.w1x4",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 192,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n2.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "tiled.64x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 256,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n2.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "tiled.64x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 512,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n4.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "tiled.128x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 5,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 6,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 7,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 8,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 12,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n2.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 16,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n2.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "swiglu",
+     "n": 12288,
+     "k": 4096,
+     "T": 48,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n4.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "tiled.64x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "swiglu",
+     "n": 12288,
+     "k": 4096,
+     "T": 64,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n4.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "tiled.64x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "swiglu",
+     "n": 12288,
+     "k": 4096,
+     "T": 96,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n4.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "tiled.64x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "swiglu",
+     "n": 12288,
+     "k": 4096,
+     "T": 128,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "tiled.128x128",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "tiled.64x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "swiglu",
+     "n": 12288,
+     "k": 4096,
+     "T": 12,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "ggml_mmq",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "swiglu",
+     "n": 12288,
+     "k": 4096,
+     "T": 16,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "ggml_mmq",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    }
+   ]
+  },
+  {
+   "board": "rtx4070ti",
+   "card": "RTX 4070 Ti",
+   "build_set": "base",
+   "cells": 400,
+   "legacy_borrowed": 0,
+   "legacy_transferred": 0,
+   "legacy_measured": 128,
+   "legacy_transferred_rules_kept": 0,
+   "moved": 0,
+   "demoted_same_route": 0,
+   "moved_by_regime": {},
+   "moves": []
+  },
+  {
+   "board": "rtx4060ti",
+   "card": "RTX 4060 Ti",
+   "build_set": "base",
+   "cells": 400,
+   "legacy_borrowed": 52,
+   "legacy_transferred": 0,
+   "legacy_measured": 86,
+   "legacy_transferred_rules_kept": 0,
+   "moved": 38,
+   "demoted_same_route": 14,
+   "moved_by_regime": {
+    "T>=17": 8,
+    "decode T<=4": 8,
+    "verify T5-16": 22
+   },
+   "moves": [
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 1,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 2,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 3,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 4,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 5,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 6,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 7,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 8,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 16,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n4.w1x4",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 24,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n4.w1x4",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m2.n4.w4x1",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 32,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n4.w1x4",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m2.n4.w4x1",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 96,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n8.w8x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n8.w4x1",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 5,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 6,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 7,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 8,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x16",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q6k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 248320,
+     "k": 4096,
+     "T": 16,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n4.w1x4",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 1,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 2,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 3,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 4,
+     "profile": "speed",
+     "regime": "decode T<=4",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 5,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 6,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 7,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 8,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 12,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 16,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 48,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n2.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "tiled.64x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 64,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n2.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "tiled.64x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 96,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n2.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "tiled.128x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 128,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "tiled.64x128",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "tiled.128x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 192,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n2.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "tiled.64x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 5,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 6,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 7,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 8,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w1x8",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 12,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 3840,
+     "k": 15360,
+     "T": 16,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "rmma.m1.n1.w2x2",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ad104:60sm"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    }
+   ]
+  },
+  {
+   "board": "rtx3090",
+   "card": "RTX 3090",
+   "build_set": "base",
+   "cells": 400,
+   "legacy_borrowed": 48,
+   "legacy_transferred": 0,
+   "legacy_measured": 50,
+   "legacy_transferred_rules_kept": 0,
+   "moved": 18,
+   "demoted_same_route": 30,
+   "moved_by_regime": {
+    "T>=17": 14,
+    "verify T5-16": 4
+   },
+   "moves": [
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 24,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n1.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "rmma.m1.n1.w1x4",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 32,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n4.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "rmma.m1.n4.w1x4",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 48,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n2.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w2x2",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 64,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n4.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "rmma.m1.n4.w4x1",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 96,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n4.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "tiled.64x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 128,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n4.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "tiled.64x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 256,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n4.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "tiled.128x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 512,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m2.n4.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "tiled.128x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 12,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "ggml_mmq",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "store",
+     "n": 4096,
+     "k": 4096,
+     "T": 16,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "ggml_mmq",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "swiglu",
+     "n": 15360,
+     "k": 3840,
+     "T": 48,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n8.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "tiled.64x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "swiglu",
+     "n": 15360,
+     "k": 3840,
+     "T": 64,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n8.w4x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "tiled.64x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "swiglu",
+     "n": 15360,
+     "k": 3840,
+     "T": 128,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n8.w8x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "tiled.128x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "swiglu",
+     "n": 15360,
+     "k": 3840,
+     "T": 192,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n8.w8x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "rmma.m1.n8.w4x1",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "swiglu",
+     "n": 15360,
+     "k": 3840,
+     "T": 256,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n8.w8x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "tiled.128x128",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a16",
+     "epilogue": "swiglu",
+     "n": 15360,
+     "k": 3840,
+     "T": 512,
+     "profile": "speed",
+     "regime": "T>=17",
+     "legacy": {
+      "route": "rmma.m1.n8.w8x1",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "rmma.m1.n8.w4x1",
+      "authority": "cost-model",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "swiglu",
+     "n": 15360,
+     "k": 3840,
+     "T": 12,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "ggml_mmq",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    },
+    {
+     "format": "q4k",
+     "policy": "a8",
+     "epilogue": "swiglu",
+     "n": 15360,
+     "k": 3840,
+     "T": 16,
+     "profile": "speed",
+     "regime": "verify T5-16",
+     "legacy": {
+      "route": "ggml_mmq",
+      "authority": "route-table",
+      "evidence": "borrowed",
+      "donor": "ga106"
+     },
+     "evidence": {
+      "route": "rmma.m1.n2.w1x4",
+      "authority": "rmma-rule",
+      "evidence": "ranker"
+     }
+    }
+   ]
+  },
+  {
+   "board": "rtx3060",
+   "card": "RTX 3060",
+   "build_set": "base",
+   "cells": 400,
+   "legacy_borrowed": 0,
+   "legacy_transferred": 0,
+   "legacy_measured": 100,
+   "legacy_transferred_rules_kept": 10,
+   "moved": 0,
+   "demoted_same_route": 0,
+   "moved_by_regime": {},
+   "moves": []
+  },
+  {
+   "board": "rtx2080ti",
+   "card": "RTX 2080 Ti",
+   "build_set": "sm75",
+   "cells": 400,
+   "legacy_borrowed": 0,
+   "legacy_transferred": 0,
+   "legacy_measured": 120,
+   "legacy_transferred_rules_kept": 0,
+   "moved": 0,
+   "demoted_same_route": 0,
+   "moved_by_regime": {},
+   "moves": []
+  }
+ ]
+}

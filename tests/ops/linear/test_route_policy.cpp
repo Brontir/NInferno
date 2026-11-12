@@ -4,22 +4,27 @@
 // measured on another board) yields to the ranker.
 //
 // Asked on the nine boards of the A5 regret sweep (tools/bench/data/route_regret/, the boards by
-// their PCI id's row of gpu_facts.json, substituted as the selector goldens are), over that sweep's
-// shapes (shapes.txt) and widths (route_tune's decode and band points, 1..512) under A16Only and
-// AllowA8, and at the prefill chunk (1024) under the prefill profile:
+// the PCI id of the lab's card, their gpu_facts.json row substituted as the selector goldens
+// substitute a board), over that sweep's shapes (shapes.txt) and widths (route_tune's decode and
+// band points, 1..512) under A16Only and AllowA8, and at the prefill chunk (1024) under the
+// prefill profile:
 //   - legacy: every answer carries the legacy policy and no demotion, and its text reads as before
 //     the policy existed (no policy= or demoted= field);
-//   - a Borrowed or Transferred route-table answer of legacy yields under evidence: another
-//     authority answers, its evidence is neither, and it names the demoted answer; under legacy
-//     that entry wins;
-//   - an answer of any other evidence (pin, measured, carried, ranker) is the same answer under
-//     evidence: measured-on-this-board is never demoted;
-//   - at least one borrowed answer exists in the grid (the demotion is exercised).
+//   - a Borrowed or Transferred answer of the auto list (the route table) yields under evidence:
+//     an authority past it answers, its evidence is neither, and it names the demoted answer;
+//     under legacy that entry wins;
+//   - an answer of any other evidence (pin, measured, carried, ranker), and a Transferred answer
+//     of the rules list (mmq-prefill-gate, which already ranks below the cost model), is the same
+//     answer under evidence: measured-on-this-board is never demoted;
+//   - the grid holds borrowed and measured answers (both checks are exercised).
 // The routes under legacy are the goldens' (ninferno_selector_golden_test pins the legacy policy).
 //
 // `--write FILE` also writes the cells whose route moves, per board (the A/B list of F1, read on a
-// CPU before any GPU run): tools/bench/data/route_regret/policy_evidence_moves.json. The answers
-// depend on the build set (the routes a build compiles), which the file names.
+// CPU before any GPU run): tools/bench/data/route_regret/policy_evidence_moves.json. A board's
+// answers depend on the routes its build compiles, so each board is written from its own build set
+// (kOwnBuildSet: the set its release engine is built as); a run writes the boards of its build set
+// and keeps the others the file already holds. `--board NAME` asks one board, `--verbose` prints
+// every cell's two answers.
 #include "core/device_class.h"
 #include "core/machine_facts.h"
 #include "ninferno/option_enums.h"
@@ -30,11 +35,14 @@
 #include "ops/generic/selector_facts.h"
 #include "ops/route_pins.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -52,14 +60,17 @@ using namespace ninferno;
 namespace generic = ninferno::ops::detail::generic;
 using ops::LinearPolicy;
 using Kind = generic::Evidence::Kind;
+using Json = nlohmann::ordered_json;
 
-int g_failed = 0;
+int g_failed   = 0;
+bool g_verbose = false;
 
 void fail(const std::string& what) {
     ++g_failed;
     if (g_failed <= 40) std::cerr << "FAIL: " << what << '\n';
 }
 
+// The build set this binary compiles (as ninferno_selector_golden_test names its directories).
 constexpr const char* kBuildSet =
 #if NINFERNO_BUILD_ARCH == 70
     "sm70";
@@ -71,19 +82,22 @@ constexpr const char* kBuildSet =
     "full";
 #endif
 
-// The regret sweep's boards (docs/maintainer/route-regret.md), by the PCI id of the lab's card.
+// The regret sweep's boards (docs/maintainer/route-regret.md), by the PCI id of the lab's card,
+// and the build set of the engine each runs (sm_120a: full; sm_75, sm_70: their own; the rest:
+// base).
 struct RegretBoard {
     const char* name; // the summary's file name in tools/bench/data/route_regret/
     const char* card;
     std::uint32_t pci_device_id;
+    const char* own_build_set;
 };
 
 constexpr RegretBoard kRegretBoards[] = {
-    {"rtx5090", "RTX 5090", 0x2B85},      {"rtx5070ti", "RTX 5070 Ti", 0x2C05},
-    {"rtx4090", "RTX 4090", 0x2684},      {"rtx4070ti", "RTX 4070 Ti", 0x2782},
-    {"rtx4060ti", "RTX 4060 Ti", 0x2805}, {"rtx3090", "RTX 3090", 0x2204},
-    {"rtx3060", "RTX 3060", 0x2503},      {"rtx2080ti", "RTX 2080 Ti", 0x1E07},
-    {"gv100", "Quadro GV100", 0x1DBA},
+    {"rtx5090", "RTX 5090", 0x2B85, "full"},      {"rtx5070ti", "RTX 5070 Ti", 0x2C05, "full"},
+    {"rtx4090", "RTX 4090", 0x2684, "base"},      {"rtx4070ti", "RTX 4070 Ti", 0x2782, "base"},
+    {"rtx4060ti", "RTX 4060 Ti", 0x2805, "base"}, {"rtx3090", "RTX 3090", 0x2204, "base"},
+    {"rtx3060", "RTX 3060", 0x2504, "base"},      {"rtx2080ti", "RTX 2080 Ti", 0x1E07, "sm75"},
+    {"gv100", "Quadro GV100", 0x1DBA, "sm70"},
 };
 
 // The board as the CUDA query reports a stock one of its row (memory clock: half the data rate),
@@ -102,7 +116,12 @@ DeviceClass board_class(const RegretBoard& b) {
         r->boost_mhz,
         static_cast<int>(std::lround(r->gbps * 500.0)) + 1,
         r->bus_bits};
-    return generic::board_device_class(board);
+    DeviceClass d = generic::board_device_class(board);
+    // The row's L2 to the byte (2.25 MiB on the RTX 3060, 5.5 on the RTX 2080 Ti): the board is
+    // then its route table's own, at distance 0, as the card itself reports it.
+    d.l2_bytes = static_cast<std::size_t>(std::llround(r->l2_mib * 1024.0 * 1024.0));
+    d.facts    = machine_facts_of(d);
+    return d;
 }
 
 struct SweepShape {
@@ -125,20 +144,22 @@ std::vector<SweepShape> read_shapes() {
         SweepShape s{};
         fields >> format >> compute >> epilogue >> s.n >> s.k;
         if (!fields) throw std::runtime_error("shapes.txt: cannot read '" + line + "'");
-        if (format == "q4k")
+        if (format == "q4k") {
             s.qtype = QType::GGML_Q4_K;
-        else if (format == "q6k")
+        } else if (format == "q6k") {
             s.qtype = QType::GGML_Q6_K;
-        else
+        } else {
             throw std::runtime_error("shapes.txt: format " + format + " is not in this test");
-        if (epilogue == "store")
+        }
+        if (epilogue == "store") {
             s.epilogue = generic::Epilogue::Store;
-        else if (epilogue == "swiglu")
+        } else if (epilogue == "swiglu") {
             s.epilogue = generic::Epilogue::SwiGlu;
-        else if (epilogue == "add")
+        } else if (epilogue == "add") {
             s.epilogue = generic::Epilogue::AddResidual;
-        else
+        } else {
             throw std::runtime_error("shapes.txt: epilogue " + epilogue);
+        }
         s.line = line;
         out.push_back(s);
     }
@@ -151,12 +172,10 @@ constexpr std::int32_t kSpeedPoints[] = {1,  2,  3,  4,  5,  6,   7,   8,   12, 
                                          24, 32, 48, 64, 96, 128, 192, 256, 512};
 constexpr std::int32_t kPrefillChunk  = 1024;
 
-const char* band_of(std::int32_t t) {
-    return t <= 8     ? "decode"
-           : t <= 16  ? "verify"
-           : t <= 32  ? "narrow"
-           : t <= 128 ? "wide"
-                      : "batch129";
+// The regime of selection_regret.py's report (docs/maintainer/route-regret.md, "By regime and
+// authority"): decode T <= 4, verify T 5..16, T >= 17; the prefill profile's chunk apart.
+const char* regime_of(std::int32_t t, bool prefill) {
+    return prefill ? "prefill" : t <= 4 ? "decode T<=4" : t <= 16 ? "verify T5-16" : "T>=17";
 }
 
 struct Cell {
@@ -172,34 +191,102 @@ std::optional<generic::RouteAnswer> ask(const DeviceClass& d, const Cell& c, Rou
                                        c.shape->k, c.tokens, c.prefill);
 }
 
+const char* policy_word(LinearPolicy p) { return p == LinearPolicy::AllowA8 ? "a8" : "a16"; }
+
 std::string where(const RegretBoard& b, const Cell& c) {
-    return std::string(b.name) + " " + c.shape->line + " " +
-           (c.policy == LinearPolicy::AllowA8 ? "a8" : "a16") + " T=" + std::to_string(c.tokens) +
-           (c.prefill ? " prefill" : "");
+    return std::string(b.name) + " " + c.shape->line + " " + policy_word(c.policy) +
+           " T=" + std::to_string(c.tokens) + (c.prefill ? " prefill" : "");
 }
 
-std::string json_text(std::string_view s) {
-    std::string out = "\"";
-    for (const char ch : s) {
-        if (ch == '"' || ch == '\\') out += '\\';
-        out += ch;
+Json answer_json(const generic::RouteAnswer& a) {
+    Json out = {{"route", generic::route_name(a.route)},
+                {"authority", std::string(a.evidence.source)},
+                {"evidence", generic::evidence_kind_name(a.evidence.kind)}};
+    if (!a.evidence.donor.empty()) out["donor"] = a.evidence.donor;
+    return out;
+}
+
+// Whether `source` names an authority of the auto list, the one the policy applies to.
+bool in_auto_list(std::string_view source) {
+    for (const generic::NamedAuthority& a : generic::auto_authorities()) {
+        if (a.name == source) return true;
     }
-    return out + "\"";
-}
-
-std::string answer_json(const generic::RouteAnswer& a) {
-    std::string out = "{\"route\": " + json_text(generic::route_name(a.route)) +
-                      ", \"authority\": " + json_text(a.evidence.source) +
-                      ", \"evidence\": " + json_text(generic::evidence_kind_name(a.evidence.kind));
-    if (!a.evidence.donor.empty()) out += ", \"donor\": " + json_text(a.evidence.donor);
-    return out + "}";
+    return false;
 }
 
 struct BoardTally {
-    int cells = 0, borrowed = 0, transferred = 0, measured = 0, moved = 0, demoted_kept_route = 0;
-    std::map<std::string, int> moved_by_band;
-    std::vector<std::string> moves; // JSON objects
+    int cells = 0, borrowed = 0, transferred = 0, measured = 0, moved = 0, demoted_same_route = 0;
+    int kept_rules = 0; // Borrowed or Transferred answers of the rules list, kept by design
+    std::map<std::string, int> moved_by_regime;
+    Json moves = Json::array();
 };
+
+void check_cell(const Cell& c, const std::string& at, const generic::RouteAnswer& legacy,
+                const generic::RouteAnswer& evidence, BoardTally& tally) {
+    const generic::Evidence& le     = legacy.evidence;
+    const generic::Evidence& ee     = evidence.evidence;
+    const std::string legacy_text   = generic::evidence_text(le);
+    const std::string evidence_text = generic::evidence_text(ee);
+    if (g_verbose) {
+        std::cout << at << ": " << generic::route_name(legacy.route) << ' ' << legacy_text << " | "
+                  << generic::route_name(evidence.route) << ' ' << evidence_text << '\n';
+    }
+    // Legacy: the policy recorded, nothing demoted, the text as before F1.
+    if (le.policy != RoutePolicy::Legacy || !le.demoted_source.empty() ||
+        legacy_text.find("policy=") != std::string::npos ||
+        legacy_text.find("demoted=") != std::string::npos) {
+        fail(at + ": legacy answer reads '" + legacy_text + "'");
+    }
+    if (ee.policy != RoutePolicy::Evidence ||
+        evidence_text.find(" policy=evidence") == std::string::npos) {
+        fail(at + ": evidence answer does not name its policy: '" + evidence_text + "'");
+    }
+    if (le.kind == Kind::Measured) ++tally.measured;
+    const bool auto_list = in_auto_list(le.source);
+    if (le.kind == Kind::Borrowed) ++(auto_list ? tally.borrowed : tally.kept_rules);
+    if (le.kind == Kind::Transferred) ++(auto_list ? tally.transferred : tally.kept_rules);
+    if (auto_list && generic::policy_demotes(RoutePolicy::Evidence, le.kind)) {
+        // Under legacy the entry won; under evidence it yields to the ranker. It would stand only
+        // where the ranker has no candidate (the scalar fallback), which no cell of this grid is.
+        if (ee.kind == Kind::Borrowed || ee.kind == Kind::Transferred || in_auto_list(ee.source)) {
+            fail(at + ": the " + generic::evidence_kind_name(le.kind) + " entry did not yield: '" +
+                 evidence_text + "'");
+        }
+        if (ee.demoted_source != le.source || ee.demoted_kind != le.kind) {
+            fail(at + ": the evidence answer does not name the demoted one: '" + evidence_text +
+                 "'");
+        }
+        const std::string demoted = std::string(" demoted=") + std::string(le.source) + ":" +
+                                    generic::evidence_kind_name(le.kind);
+        if (evidence_text.find(demoted) == std::string::npos) {
+            fail(at + ": evidence text '" + evidence_text + "' lacks" + demoted);
+        }
+    } else if (!(evidence.route == legacy.route) || ee.source != le.source || ee.kind != le.kind ||
+               ee.donor != le.donor || !ee.demoted_source.empty()) {
+        // Pin, Measured, Carried and Ranker answers are never demoted, nor a Transferred answer of
+        // the rules list (mmq-prefill-gate: below the cost model already, answering where it
+        // abstains).
+        fail(at + ": a " + generic::evidence_kind_name(le.kind) + " answer moved: '" + legacy_text +
+             "' -> '" + evidence_text + "'");
+    }
+    if (evidence.route == legacy.route) {
+        if (!ee.demoted_source.empty()) ++tally.demoted_same_route;
+        return;
+    }
+    ++tally.moved;
+    const char* regime = regime_of(c.tokens, c.prefill);
+    ++tally.moved_by_regime[regime];
+    tally.moves.push_back(Json{{"format", generic::qtype_name(c.shape->qtype)},
+                               {"policy", policy_word(c.policy)},
+                               {"epilogue", generic::epilogue_name(c.shape->epilogue)},
+                               {"n", c.shape->n},
+                               {"k", c.shape->k},
+                               {"T", c.tokens},
+                               {"profile", c.prefill ? "prefill" : "speed"},
+                               {"regime", regime},
+                               {"legacy", answer_json(legacy)},
+                               {"evidence", answer_json(evidence)}});
+}
 
 BoardTally run_board(const RegretBoard& b, const std::vector<SweepShape>& shapes) {
     const DeviceClass d = board_class(b);
@@ -218,6 +305,7 @@ BoardTally run_board(const RegretBoard& b, const std::vector<SweepShape>& shapes
             legacy   = ask(d, c, RoutePolicy::Legacy);
             evidence = ask(d, c, RoutePolicy::Evidence);
         } catch (const std::exception& error) {
+            ops::set_route_policy(RoutePolicy::Legacy);
             fail(at + ": threw " + error.what());
             continue;
         }
@@ -228,151 +316,113 @@ BoardTally run_board(const RegretBoard& b, const std::vector<SweepShape>& shapes
         }
         if (!legacy) continue;
         ++tally.cells;
-        const generic::Evidence& le = legacy->evidence;
-        const generic::Evidence& ee = evidence->evidence;
-        // Legacy: the policy recorded, nothing demoted, the text as before F1.
-        const std::string legacy_text = generic::evidence_text(le);
-        if (le.policy != RoutePolicy::Legacy || !le.demoted_source.empty() ||
-            legacy_text.find("policy=") != std::string::npos ||
-            legacy_text.find("demoted=") != std::string::npos) {
-            fail(at + ": legacy answer reads '" + legacy_text + "'");
-        }
-        if (ee.policy != RoutePolicy::Evidence ||
-            generic::evidence_text(ee).find(" policy=evidence") == std::string::npos) {
-            fail(at + ": evidence answer does not name its policy: '" + generic::evidence_text(ee) +
-                 "'");
-        }
-        if (le.kind == Kind::Measured) ++tally.measured;
-        if (le.kind == Kind::Borrowed) ++tally.borrowed;
-        if (le.kind == Kind::Transferred) ++tally.transferred;
-        if (generic::policy_demotes(RoutePolicy::Evidence, le.kind)) {
-            // Under legacy the entry won; under evidence it yields to the ranker.
-            if (le.source != "route-table") {
-                fail(at + ": a " + generic::evidence_kind_name(le.kind) + " answer of " +
-                     std::string(le.source) + ", not of the route table");
-            }
-            if (ee.kind == Kind::Borrowed || ee.kind == Kind::Transferred ||
-                ee.source == "route-table") {
-                // Only where the ranker has no candidate (the scalar fallback), which no cell of
-                // this grid is: these formats always have a rule's route.
-                fail(at + ": the " + generic::evidence_kind_name(le.kind) +
-                     " entry did not yield: '" + generic::evidence_text(ee) + "'");
-            }
-            if (ee.demoted_source != le.source || ee.demoted_kind != le.kind) {
-                fail(at + ": the evidence answer does not name the demoted one: '" +
-                     generic::evidence_text(ee) + "'");
-            }
-            const std::string demoted = std::string(" demoted=") + std::string(le.source) + ":" +
-                                        generic::evidence_kind_name(le.kind);
-            if (generic::evidence_text(ee).find(demoted) == std::string::npos) {
-                fail(at + ": evidence text '" + generic::evidence_text(ee) + "' lacks" + demoted);
-            }
-        } else {
-            // Pin, Measured, Carried and Ranker answers are never demoted: the same answer.
-            if (!(evidence->route == legacy->route) || ee.source != le.source ||
-                ee.kind != le.kind || ee.donor != le.donor || !ee.demoted_source.empty()) {
-                fail(at + ": a " + generic::evidence_kind_name(le.kind) + " answer moved: '" +
-                     generic::evidence_text(le) + "' -> '" + generic::evidence_text(ee) + "'");
-            }
-        }
-        if (evidence->route == legacy->route) {
-            if (!ee.demoted_source.empty()) ++tally.demoted_kept_route;
-            continue;
-        }
-        ++tally.moved;
-        ++tally.moved_by_band[c.prefill ? "prefill" : band_of(c.tokens)];
-        std::ostringstream move;
-        move << "{\"format\": " << json_text(generic::qtype_name(c.shape->qtype))
-             << ", \"policy\": " << json_text(c.policy == LinearPolicy::AllowA8 ? "a8" : "a16")
-             << ", \"epilogue\": " << json_text(generic::epilogue_name(c.shape->epilogue))
-             << ", \"n\": " << c.shape->n << ", \"k\": " << c.shape->k << ", \"T\": " << c.tokens
-             << ", \"profile\": " << json_text(c.prefill ? "prefill" : "speed")
-             << ", \"band\": " << json_text(c.prefill ? "prefill" : band_of(c.tokens))
-             << ", \"legacy\": " << answer_json(*legacy)
-             << ", \"evidence\": " << answer_json(*evidence) << "}";
-        tally.moves.push_back(move.str());
+        check_cell(c, at, *legacy, *evidence, tally);
     }
     return tally;
 }
 
-void write_moves(const std::string& path,
-                 const std::vector<std::pair<const RegretBoard*, BoardTally>>& boards) {
-    std::ofstream out(path, std::ios::binary);
-    out << "{\n \"schema\": \"ninferno-route-policy-moves/1\",\n"
-        << " \"what\": \"the cells of the A5 regret grid whose production pick moves under "
-           "--route-policy evidence against legacy (#614 F1), per board; written by "
-           "ninferno_route_policy_test --write\",\n"
-        << " \"build_set\": " << json_text(kBuildSet) << ",\n"
-        << " \"grid\": {\"shapes\": \"tools/bench/data/route_regret/shapes.txt\", "
-           "\"policies\": [\"a16\", \"a8\"], \"speed_T\": [";
-    for (std::size_t i = 0; i < std::size(kSpeedPoints); ++i) {
-        out << (i ? ", " : "") << kSpeedPoints[i];
+Json board_json(const RegretBoard& b, const BoardTally& t) {
+    Json regimes = Json::object();
+    for (const auto& [regime, n] : t.moved_by_regime) regimes[regime] = n;
+    return Json{{"board", b.name},
+                {"card", b.card},
+                {"build_set", kBuildSet},
+                {"cells", t.cells},
+                {"legacy_borrowed", t.borrowed},
+                {"legacy_transferred", t.transferred},
+                {"legacy_measured", t.measured},
+                {"legacy_transferred_rules_kept", t.kept_rules},
+                {"moved", t.moved},
+                {"demoted_same_route", t.demoted_same_route},
+                {"moved_by_regime", regimes},
+                {"moves", t.moves}};
+}
+
+// The file with this build set's boards replaced and every other board kept, in kRegretBoards'
+// order.
+void write_moves(const std::string& path, const std::map<std::string, Json>& written) {
+    std::map<std::string, Json> boards;
+    if (std::filesystem::exists(path)) {
+        std::ifstream in(path);
+        const Json old = Json::parse(in);
+        for (const Json& b : old.at("boards")) boards[b.at("board").get<std::string>()] = b;
     }
-    out << "], \"prefill_T\": [" << kPrefillChunk << "]},\n \"boards\": [\n";
-    for (std::size_t i = 0; i < boards.size(); ++i) {
-        const auto& [b, t] = boards[i];
-        out << "  {\"board\": " << json_text(b->name) << ", \"card\": " << json_text(b->card)
-            << ", \"cells\": " << t.cells << ", \"legacy_borrowed\": " << t.borrowed
-            << ", \"legacy_transferred\": " << t.transferred
-            << ", \"legacy_measured\": " << t.measured << ", \"moved\": " << t.moved
-            << ", \"demoted_same_route\": " << t.demoted_kept_route << ", \"moved_by_band\": {";
-        bool first = true;
-        for (const auto& [band, n] : t.moved_by_band) {
-            out << (first ? "" : ", ") << json_text(band) << ": " << n;
-            first = false;
-        }
-        out << "},\n   \"moves\": [";
-        for (std::size_t m = 0; m < t.moves.size(); ++m) {
-            out << (m ? ",\n    " : "\n    ") << t.moves[m];
-        }
-        out << (t.moves.empty() ? "]" : "\n   ]") << "}" << (i + 1 < boards.size() ? "," : "")
-            << '\n';
+    for (const auto& [name, b] : written) boards[name] = b;
+    Json speed = Json::array();
+    for (const std::int32_t t : kSpeedPoints) speed.push_back(t);
+    Json out = {{"schema", "ninferno-route-policy-moves/1"},
+                {"what",
+                 "the cells of the A5 regret grid whose production pick moves under "
+                 "--route-policy evidence against legacy (#614 F1), per board, each from its own "
+                 "build set; written by ninferno_route_policy_test --write"},
+                {"grid",
+                 {{"shapes", "tools/bench/data/route_regret/shapes.txt"},
+                  {"policies", {"a16", "a8"}},
+                  {"speed_T", speed},
+                  {"prefill_T", {kPrefillChunk}}}},
+                {"boards", Json::array()}};
+    for (const RegretBoard& b : kRegretBoards) {
+        if (const auto it = boards.find(b.name); it != boards.end())
+            out["boards"].push_back(it->second);
     }
-    out << " ]\n}\n";
-    if (!out.good()) throw std::runtime_error("cannot write " + path);
-    std::cout << "route policy: wrote " << path << '\n';
+    std::ofstream file(path, std::ios::binary);
+    file << out.dump(1) << '\n';
+    if (!file.good()) throw std::runtime_error("cannot write " + path);
+    std::cout << "route policy: wrote " << path << " (" << written.size() << " boards of "
+              << kBuildSet << ")\n";
+}
+
+void check_policy_words() {
+    if (ops::route_policy() != RoutePolicy::Legacy) fail("the default route policy");
+    for (const Kind k : {Kind::Pin, Kind::Measured, Kind::Ranker, Kind::Carried, Kind::Transferred,
+                         Kind::Borrowed}) {
+        const bool demoted = k == Kind::Borrowed || k == Kind::Transferred;
+        if (generic::policy_demotes(RoutePolicy::Legacy, k)) fail("legacy demotes an answer");
+        if (generic::policy_demotes(RoutePolicy::Evidence, k) != demoted) {
+            fail(std::string("evidence ") + (demoted ? "keeps" : "demotes") + " a " +
+                 generic::evidence_kind_name(k) + " answer");
+        }
+    }
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
     try {
-        std::string write;
+        std::string write, only;
         for (int i = 1; i < argc; ++i) {
-            if (std::string_view(argv[i]) == "--write" && i + 1 < argc) write = argv[++i];
+            const std::string_view arg = argv[i];
+            if (arg == "--write" && i + 1 < argc) write = argv[++i];
+            if (arg == "--board" && i + 1 < argc) only = argv[++i];
+            if (arg == "--verbose") g_verbose = true;
         }
-        if (ops::route_policy() != RoutePolicy::Legacy) fail("the default route policy");
-        if (!generic::policy_demotes(RoutePolicy::Evidence, Kind::Borrowed) ||
-            !generic::policy_demotes(RoutePolicy::Evidence, Kind::Transferred)) {
-            fail("evidence does not demote borrowed and transferred answers");
-        }
-        for (const Kind k : {Kind::Pin, Kind::Measured, Kind::Ranker, Kind::Carried,
-                             Kind::Transferred, Kind::Borrowed}) {
-            if (generic::policy_demotes(RoutePolicy::Legacy, k)) fail("legacy demotes an answer");
-            if (k != Kind::Borrowed && k != Kind::Transferred &&
-                generic::policy_demotes(RoutePolicy::Evidence, k)) {
-                fail(std::string("evidence demotes a ") + generic::evidence_kind_name(k) +
-                     " answer");
-            }
-        }
+        check_policy_words();
         const std::vector<SweepShape> shapes = read_shapes();
-        std::vector<std::pair<const RegretBoard*, BoardTally>> boards;
+        std::map<std::string, Json> written;
         int borrowed = 0, measured = 0;
         for (const RegretBoard& b : kRegretBoards) {
-            BoardTally t = run_board(b, shapes);
+            if (!only.empty() && only != b.name) continue;
+            const BoardTally t = run_board(b, shapes);
             borrowed += t.borrowed + t.transferred;
             measured += t.measured;
-            std::cout << b.name << " (" << kBuildSet << "): " << t.cells << " cells, legacy "
+            std::cout << b.name << " (" << kBuildSet << "): " << t.cells << " cells; legacy "
                       << t.borrowed << " borrowed, " << t.transferred << " transferred, "
-                      << t.measured << " measured; under evidence " << t.moved << " moved";
-            for (const auto& [band, n] : t.moved_by_band) std::cout << ' ' << band << '=' << n;
-            std::cout << ", " << t.demoted_kept_route << " demoted to the same route\n";
-            boards.emplace_back(&b, std::move(t));
+                      << t.measured << " measured, " << t.kept_rules
+                      << " rules' transferred (kept); under evidence " << t.moved << " moved";
+            for (const auto& [regime, n] : t.moved_by_regime) {
+                std::cout << " [" << regime << ": " << n << ']';
+            }
+            std::cout << ", " << t.demoted_same_route << " demoted to the same route\n";
+            if (std::string_view(b.own_build_set) == kBuildSet) written[b.name] = board_json(b, t);
         }
-        if (borrowed == 0) fail("no borrowed or transferred answer in the grid: nothing demoted");
-        if (measured == 0) fail("no measured answer in the grid: the never-demoted check is idle");
+        if (only.empty() && borrowed == 0) {
+            fail("no borrowed or transferred answer in the grid: nothing demoted");
+        }
+        if (only.empty() && measured == 0) {
+            fail("no measured answer in the grid: the never-demoted check is idle");
+        }
         ops::set_route_policy(RoutePolicy::Legacy);
-        if (!write.empty()) write_moves(write, boards);
+        if (!write.empty()) write_moves(write, written);
     } catch (const std::exception& error) {
         std::cerr << "route policy: " << error.what() << '\n';
         return 1;
