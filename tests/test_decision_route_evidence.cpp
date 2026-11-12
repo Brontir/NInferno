@@ -257,7 +257,7 @@ int main() {
                 if (found->second.find(" donor=") != std::string::npos) ++lines_with_donor;
             }
             // Replayed from the text alone on the board's class, and the order is not an input.
-            check(rt::replay_route_evidence(d, evidence) == evidence,
+            check(rt::replay_route_evidence(d, evidence, RoutePolicy::Legacy) == evidence,
                   at + ": the evidence lines replay to themselves");
             // The replay asks the selector again: it keeps the key and the prefill chunk of a
             // recorded line and nothing else. A section whose runs were edited (another route, an
@@ -268,7 +268,7 @@ int main() {
                 value = "1-16 edited authority=nobody evidence=pin; prefill " +
                         std::to_string(chunk) + " edited";
             }
-            check(rt::replay_route_evidence(d, edited) == evidence,
+            check(rt::replay_route_evidence(d, edited, RoutePolicy::Legacy) == evidence,
                   at + ": an edited evidence section replays to the selector's lines");
             auto reversed = list;
             std::reverse(reversed.begin(), reversed.end());
@@ -322,7 +322,7 @@ int main() {
                   "route_policy_of: the options' policy, legacy where none is recorded");
             check(rt::replay_route_evidence(d4090, evidence, recorded) == evidence,
                   "evidence policy: the lines replay to themselves under the recorded policy");
-            check(rt::replay_route_evidence(d4090, evidence) == legacy,
+            check(rt::replay_route_evidence(d4090, evidence, RoutePolicy::Legacy) == legacy,
                   "evidence policy: replayed under legacy, the lines are legacy's");
             const auto routes_evidence =
                 rt::routes_of(d4090, list, chunk, false, RoutePolicy::Evidence);

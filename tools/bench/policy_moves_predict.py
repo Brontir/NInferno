@@ -7,9 +7,10 @@ the CSVs stay on the stand, docs/maintainer/sweep-archive.md). For every moved c
 (speed profile; the prefill chunk's rows carry no profile column and are left out) it takes the
 median over the passes of each route's median_us at the cell, and gives a5_ratio = t(evidence
 route) / t(legacy route): the ratio the A/B's B/A should come out at if the sweep's timings hold.
-A cell whose two routes are not both timed in every pass keeps a5_ratio null. The A5 sweep ran
+A cell whose two routes are not both timed in every pass gets a5_ratio null. The A5 sweep ran
 AllowA8 only (--a8-candidates 1, compute a8), so an A16Only cell is matched only by an A16 sweep's
-rows (compute a16) given in --routes.
+rows (compute a16) given in --routes; a move of a compute class the CSVs hold no row of, and a
+prefill-profile move, is left untouched, so the two classes' runs do not reset each other.
 
   policy_moves_predict.py --moves MOVES.json --board rtx4090 [--tables own|without_own]
                           --routes routes_p1.csv routes_p2.csv routes_p3.csv [--write]
@@ -55,21 +56,31 @@ def median_time(passes, key, route):
     return statistics.median(values)
 
 
+def compute_classes(passes):
+    """The compute classes (a16, a8, ...) the passes hold rows of."""
+    return {key[1] for times in passes for key in times}
+
+
 def predict(moves_doc, board, tables, passes):
-    """Fills a5_ratio of the board's moved cells; returns the (move, ratio) pairs."""
+    """Fills a5_ratio of the board's moved cells the passes speak for; returns (move, ratio) pairs.
+
+    A move whose compute class no pass holds (an a8 cell under an A16 sweep's CSVs, or the other
+    way round) and a prefill-profile move are left as they are, their a5_ratio untouched: a run of
+    one class's CSVs never resets the other class's ratios.
+    """
+    classes = compute_classes(passes)
     out = []
     for entry in moves_doc["boards"]:
         if entry["board"] != board or entry.get("tables", "own") != tables:
             continue
         for move in entry["moves"]:
-            ratio = None
-            if move["profile"] == "speed":
-                key = cell_key(move["format"], move["policy"], move["epilogue"], move["n"],
-                               move["k"], move["T"])
-                old = median_time(passes, key, move["legacy"]["route"])
-                new = median_time(passes, key, move["evidence"]["route"])
-                if old and new:
-                    ratio = new / old
+            if move["profile"] != "speed" or move["policy"] not in classes:
+                continue
+            key = cell_key(move["format"], move["policy"], move["epilogue"], move["n"], move["k"],
+                           move["T"])
+            old = median_time(passes, key, move["legacy"]["route"])
+            new = median_time(passes, key, move["evidence"]["route"])
+            ratio = new / old if old and new else None
             move["a5_ratio"] = ratio
             out.append((move, ratio))
     return out
@@ -84,9 +95,12 @@ def main(argv=None):
     ap.add_argument("--write", action="store_true")
     args = ap.parse_args(argv)
     doc = json.loads(args.moves.read_text(encoding="utf-8"))
-    pairs = predict(doc, args.board, args.tables, read_passes(args.routes))
+    passes = read_passes(args.routes)
+    pairs = predict(doc, args.board, args.tables, passes)
     if not pairs:
-        print(f"{args.board} {args.tables}: no moved cell in {args.moves}", file=sys.stderr)
+        print(f"{args.board} {args.tables}: no moved speed cell of the CSVs' compute classes "
+              f"({', '.join(sorted(compute_classes(passes))) or 'none'}) in {args.moves}",
+              file=sys.stderr)
         return 2
     known = [r for _, r in pairs if r is not None]
     for move, ratio in pairs:

@@ -70,14 +70,13 @@ inline constexpr int kDecisionRouteSeveralLanes    = 4;          // "several lan
 [[nodiscard]] RoutePolicy route_policy_of(const DecisionSection& options);
 
 // The lines `recorded` asked again on `device` under `policy` (route_policy_of the manifest's
-// options): each key parsed back into its problem and chunk. A key that does not parse is
-// std::invalid_argument.
+// options; no default, so a replay cannot forget the start's policy): each key parsed back into
+// its problem and chunk. A key that does not parse is std::invalid_argument.
 [[nodiscard]] DecisionSection replay_routes(const DeviceClass& device,
-                                            const DecisionSection& recorded,
-                                            RoutePolicy policy = RoutePolicy::Legacy);
+                                            const DecisionSection& recorded, RoutePolicy policy);
 // The same for a recorded route_evidence section.
 [[nodiscard]] DecisionSection replay_route_evidence(const DeviceClass& device,
                                                     const DecisionSection& recorded,
-                                                    RoutePolicy policy = RoutePolicy::Legacy);
+                                                    RoutePolicy policy);
 
 } // namespace ninferno::runtime

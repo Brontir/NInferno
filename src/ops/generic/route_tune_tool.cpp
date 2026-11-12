@@ -64,7 +64,8 @@
 // written to the table: the two arms of an A/B are one sweep each, legacy (the default) and
 // evidence. --route-dir DIR selects with the default lookup in DIR instead of the shipped routes/
 // (the engine's --route-dir): a copy of routes/ without the board's own table runs the board as a
-// card the tables do not hold, its nearest table another board's.
+// card the tables do not hold, its nearest table another board's. Both settings are in every
+// row's run id ("-policy.evidence", "-routedir.<name>"), so a CSV says which arm wrote it.
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/device_class.h"
@@ -90,6 +91,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -196,12 +198,31 @@ int route_tune_main(int argc, char** argv) {
             }
         }
         // Every row names the run that wrote it and the board it ran on, so a collector pairs a
-        // pass's --routes-out with its own --selected-out and never mixes boards (#518).
+        // pass's --routes-out with its own --selected-out and never mixes boards (#518). An A/B
+        // arm's settings are in it too (#614 F1), so its rows say which arm they are:
+        // "-policy.evidence" under --route-policy evidence, "-routedir.<name>" under --route-dir
+        // (the directory's last component, characters outside [A-Za-z0-9._] as '_').
         const std::string run_id = [&] {
             std::random_device entropy;
             char hex[17];
             std::snprintf(hex, sizeof(hex), "%08x%08x", entropy(), entropy());
-            return file_key + "-" + hex;
+            std::string arm;
+            if (policy != RoutePolicy::Legacy)
+                arm += std::string("-policy.") + route_policy_name(policy);
+            if (opt.count("--route-dir")) {
+                std::string name = std::filesystem::path(opt["--route-dir"]).filename().string();
+                if (name.empty()) {
+                    name =
+                        std::filesystem::path(opt["--route-dir"]).parent_path().filename().string();
+                }
+                for (char& ch : name) {
+                    const bool kept = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                                      (ch >= '0' && ch <= '9') || ch == '.' || ch == '_';
+                    if (!kept) ch = '_';
+                }
+                arm += "-routedir." + name;
+            }
+            return file_key + arm + "-" + hex;
         }();
         // The board itself, not only its class: two GPUs of one chip and SM count share
         // device.id(), their UUIDs differ.

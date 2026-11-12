@@ -227,9 +227,32 @@ run: `model_ratio`, the cost model's own prices of the two routes (`priced_route
 tokens a figure of the formula, which the selector does not rank by there), and `a5_ratio`, the
 two routes' medians in this sweep's routes CSVs, which stay on the stands: filled by
 `tools/bench/policy_moves_predict.py --moves <file> --board <board> --routes routes_p1.csv
-routes_p2.csv routes_p3.csv --write` before the A/B (null until then; `ninferno_route_policy_test
---write` resets it). A model ratio below 1 is the cost model's prediction that the evidence pick is
-faster.
+routes_p2.csv routes_p3.csv --write` (it touches only the moves of the compute classes the CSVs
+hold, so this sweep's AllowA8 CSVs fill the a8 cells and leave the a16 ones null). A rewrite by
+`ninferno_route_policy_test --write` keeps a move's `a5_ratio` while its cell and both routes are
+unchanged. A ratio below 1 predicts the evidence pick faster.
+
+The measured prediction, committed before any A/B run (f24d0079's sweeps, three passes; the median
+over the moved cells this sweep timed):
+
+| board | own tables (cells timed) | without own table: median, worst |
+|---|---|---|
+| RTX 5090 | 0.996 (4 of 16) | 0.954, worst 1.693 |
+| RTX 5070 Ti | no move | 1.061, worst 1.759 |
+| RTX 4090 | 0.821 (8 of 31) | 0.897, worst 1.077 |
+| RTX 4070 Ti | no move | 1.026, worst 1.093 |
+| RTX 4060 Ti | 1.002 (11 of 38) | 1.005, worst 1.061 |
+| RTX 3090 | 1.126 (4 of 18) | 1.032, worst 1.186 |
+| RTX 3060 | no move | 0.981, worst 1.358 |
+
+The evidence policy wins on the RTX 4090's borrowed verify entries and loses on the RTX 3090's:
+there the borrowed entries are ggml's MMQ at T 12-16, and the register MMA the evidence walk hands
+the call to runs 1.07-1.19x their time. At these widths the register-MMA rule decides, not the cost
+model. The cost model orders the two the measured way but prices the gap wrong (the register MMA at
+1.25-1.76x the MMQ against a measured 1.07-1.19x), and a ranker that is to stand in for borrowed
+MMQ entries needs MMQ priced right over the verify and narrow widths, which is #785's question.
+**F2 (evidence as the default) is blocked on #785, the narrow-band MMQ price:** a blanket default
+would regress the RTX 3090 as the tables stand.
 
 A new sweep is the same commands on a later master. The summaries are rewritten by board, and the
 per-case CSVs stay on the stands (`docs/maintainer/sweep-archive.md`).

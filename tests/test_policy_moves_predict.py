@@ -42,8 +42,19 @@ class Predict(unittest.TestCase):
         ratios = {m["T"]: r for m, r in pairs}
         self.assertAlmostEqual(ratios[5], 9 / 11)   # medians: legacy 11, evidence 9
         self.assertIsNone(ratios[12])               # the evidence route is not timed
-        self.assertIsNone(ratios[1024])             # the prefill chunk is left out
+        self.assertNotIn(1024, ratios)              # the prefill chunk is left out, untouched
         self.assertIsNone(self.doc["boards"][1]["moves"][0]["a5_ratio"])  # other tables kept
+
+    def test_another_class_leaves_the_ratios_alone(self):
+        """An A16 sweep's CSVs touch no a8 move: a committed a5_ratio survives such a run."""
+        self.doc["boards"][0]["moves"][0]["a5_ratio"] = 0.821
+        self.doc["boards"][0]["moves"][2]["a5_ratio"] = 0.5   # a prefill move, never touched
+        a16 = self.csv("a16.csv", ["q4k,a16,store,4096,4096,5,rmma.a,10,",
+                                   "q4k,a16,store,4096,4096,5,rmma.b,8,"])
+        pairs = predict.predict(self.doc, "rtx4090", "own", predict.read_passes([a16]))
+        self.assertEqual(pairs, [])
+        self.assertEqual(self.doc["boards"][0]["moves"][0]["a5_ratio"], 0.821)
+        self.assertEqual(self.doc["boards"][0]["moves"][2]["a5_ratio"], 0.5)
 
     def test_a_pass_without_the_route_leaves_it_null(self):
         one = self.csv("p1.csv", ["q4k,a8,store,4096,4096,5,rmma.a,10,",

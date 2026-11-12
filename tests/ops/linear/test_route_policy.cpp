@@ -54,6 +54,7 @@
 #include <iostream>
 #include <iterator>
 #include <map>
+#include <set>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -226,7 +227,58 @@ struct BoardTally {
     int kept_rules = 0; // Borrowed or Transferred answers of the rules list, kept by design
     std::map<std::string, int> moved_by_regime;
     Json moves = Json::array();
+    std::set<std::string> moved_problems; // "<format>|<epilogue>|n<N>|k<K>"
 };
+
+// The grid is asked without the dense tuner: its entries are a device's own timings, which a
+// substituted board never reads (tuned_dense_route), while the engine and route-tune read the
+// release's routes/tuner/dense_tune.json. Under evidence the dense tuner's entry is what a demoted
+// route-table entry yields to first, so a release entry for a moved problem of a board would
+// answer there instead of the ranker, and the moves file would not be the A/B's list. Fails when
+// the release file gains an entry of the board's class (its device id, the file's key) for a moved
+// problem: then the moves must be asked with that entry.
+std::vector<std::string> dense_tune_hits(const DeviceClass& d, const std::set<std::string>& moved) {
+    const auto path = std::filesystem::path(ops::route_table_dir()) / "tuner" / "dense_tune.json";
+    std::ifstream in(path);
+    if (!in) throw std::runtime_error("no release dense tuner file " + path.string());
+    const Json file          = Json::parse(in);
+    const std::string prefix = d.id() + "|";
+    std::vector<std::string> hits;
+    for (const auto& [key, entry] : file.at("problems").items()) {
+        if (!key.starts_with(prefix)) continue;
+        // "<class>|<format>|<compute>|<epilogue>|n<N>|k<K>|<schedule set>..."
+        std::vector<std::string> fields;
+        for (std::size_t at = 0; at <= key.size();) {
+            const std::size_t end = std::min(key.find('|', at), key.size());
+            fields.push_back(key.substr(at, end - at));
+            at = end + 1;
+        }
+        if (fields.size() < 6) continue;
+        const std::string problem = fields[1] + "|" + fields[3] + "|" + fields[4] + "|" + fields[5];
+        if (moved.contains(problem)) hits.push_back(key);
+    }
+    return hits;
+}
+
+void check_dense_tune_free(const DeviceClass& d, const RegretBoard& b, const char* tables,
+                           const std::set<std::string>& moved) {
+    for (const std::string& key : dense_tune_hits(d, moved)) {
+        fail(std::string(b.name) + " " + tables + ": the release dense tuner holds " + key +
+             ", a moved problem: ask the moves with the dense tuner's entry");
+    }
+}
+
+// The check sees an entry where one is: the RTX 2080 Ti's release entries hold the q4_K 4096 x 4096
+// store problem (a board with no move, so check_dense_tune_free never meets it).
+void check_dense_tune_reader() {
+    for (const RegretBoard& b : kRegretBoards) {
+        if (std::string_view(b.name) != "rtx2080ti") continue;
+        if (dense_tune_hits(board_class(b), {"q4k|store|n4096|k4096"}).empty()) {
+            fail("the dense tuner check finds no RTX 2080 Ti q4_K 4096x4096 entry: it reads "
+                 "nothing");
+        }
+    }
+}
 
 // The cost model's price of `route` for the cell (priced_routes_query: the selector's own formula,
 // at any width; below 17 tokens the formula's figure, which the selector does not rank by).
@@ -294,6 +346,9 @@ void check_cell(const DeviceClass& d, const Cell& c, const std::string& at,
     ++tally.moved;
     const char* regime = regime_of(c.tokens, c.prefill);
     ++tally.moved_by_regime[regime];
+    tally.moved_problems.insert(std::string(generic::qtype_name(c.shape->qtype)) + "|" +
+                                generic::epilogue_name(c.shape->epilogue) + "|n" +
+                                std::to_string(c.shape->n) + "|k" + std::to_string(c.shape->k));
     // The prediction before any run: the cost model's price of the evidence route over the legacy
     // route's (null where it prices either not), and the A5 sweep's measured ratio, which
     // tools/bench/policy_moves_predict.py fills from that sweep's routes CSVs on the stand.
@@ -444,8 +499,20 @@ Json board_json(const RegretBoard& b, const char* tables, const BoardTally& t) {
                 {"moves", t.moves}};
 }
 
+// A move's identity across rewrites: the cell and both routes.
+std::string move_key(const Json& m) {
+    return m.at("format").get<std::string>() + "|" + m.at("policy").get<std::string>() + "|" +
+           m.at("epilogue").get<std::string>() + "|" + std::to_string(m.at("n").get<int>()) + "|" +
+           std::to_string(m.at("k").get<int>()) + "|" + std::to_string(m.at("T").get<int>()) + "|" +
+           m.at("profile").get<std::string>() + "|" +
+           m.at("legacy").at("route").get<std::string>() + "|" +
+           m.at("evidence").at("route").get<std::string>();
+}
+
 // The file with this build set's boards replaced and every other board kept, in kRegretBoards'
-// order.
+// order. A rewritten move whose cell and two routes the file already held keeps its a5_ratio (the
+// measured prediction tools/bench/policy_moves_predict.py wrote); a move whose routes changed gets
+// none.
 void write_moves(const std::string& path, const std::map<std::string, Json>& written) {
     std::map<std::string, Json> boards;
     if (std::filesystem::exists(path)) {
@@ -455,7 +522,28 @@ void write_moves(const std::string& path, const std::map<std::string, Json>& wri
             boards[b.at("board").get<std::string>() + "/" + b.value("tables", kOwnTables)] = b;
         }
     }
-    for (const auto& [name, b] : written) boards[name] = b;
+    for (const auto& [name, b] : written) {
+        Json fresh = b;
+        if (const auto it = boards.find(name); it != boards.end()) {
+            std::map<std::string, const Json*> before;
+            for (const Json& m : it->second.at("moves")) before[move_key(m)] = &m;
+            for (Json& m : fresh["moves"]) {
+                const auto was = before.find(move_key(m));
+                if (was == before.end()) continue;
+                const Json& old = *was->second;
+                m["a5_ratio"]   = old.value("a5_ratio", Json());
+                // The same price written by another writer (Python's repr, nlohmann's 17 digits):
+                // the file keeps its text.
+                const Json price = old.value("model_ratio", Json());
+                if (price.is_number() && m["model_ratio"].is_number() &&
+                    std::abs(price.get<double>() - m["model_ratio"].get<double>()) <=
+                        1e-12 * std::abs(m["model_ratio"].get<double>())) {
+                    m["model_ratio"] = price;
+                }
+            }
+        }
+        boards[name] = std::move(fresh);
+    }
     Json speed = Json::array();
     for (const std::int32_t t : kSpeedPoints) speed.push_back(t);
     Json out = {{"schema", "ninferno-route-policy-moves/1"},
@@ -513,6 +601,7 @@ int main(int argc, char** argv) {
         }
         check_policy_words();
         check_transferred_claim();
+        check_dense_tune_reader();
         const std::vector<SweepShape> shapes = read_shapes();
         const std::filesystem::path shipped  = ops::route_table_dir();
         if (shipped.empty() || !std::filesystem::is_directory(shipped)) {
@@ -532,6 +621,7 @@ int main(int argc, char** argv) {
                 const BoardTally t = run_board(b, shapes);
                 ops::set_route_table_dir({});
                 if (dir) std::filesystem::remove_all(*dir);
+                check_dense_tune_free(board_class(b), b, tables, t.moved_problems);
                 borrowed += t.borrowed;
                 transferred += t.transferred;
                 measured += t.measured;
