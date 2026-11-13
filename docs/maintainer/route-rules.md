@@ -12,7 +12,7 @@ branch's gate and its rules, the Turing and Volta rules), `w4a8_ws_wins` and its
 `route_authorities.cpp`, with its weight-bytes factor) and, in the same file, the R8 table's
 one-token gate, the narrow register-MMA fallback tiles and the source of the lane count,
 `spread_smem` with its table of measured boards, the verify widths (`kR8VerifyTokens`,
-`kMmqMinTokens`, `kMmqVerifyMinTokens`), Volta's routes and the byte thresholds of the register
+`kMmqMinTokens`; `kMmqVerifyMinTokens` is in format_rules.h), Volta's routes and the byte thresholds of the register
 MMA. Each entry says what the rule is (its literal, as written in the source), what it rests on
 (a basis class and the boards and cards it was measured on, as device class ids and products) and
 how much margin the record gives (the tolerance). Where the source gives no record the entry says

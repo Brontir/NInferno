@@ -242,7 +242,7 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
 
     // --- w4a8_ws_tuned: the producer-warp W4A8 tile where a measured choice names it ---
     {Rule::W4a8WsTuned, Basis::Measured, FormatSet{Q::GGML_IQ4_XS, Q::GGML_IQ2_XS, Q::GGML_IQ2_XXS},
-     0, "gb206:36sm, ad106:34sm", "RTX 5060 Ti, RTX 4060 Ti", Evidence::TwoCards,
+     0, "gb206:36sm", "RTX 5060 Ti", Evidence::SingleCard,
      "w4a8_ws_wins' and w4a8_ws_extra's comments (generic_select.cpp); the comment stands in "
      "the first public commit (54ef5203), the lab runs behind it predate the repository's "
      "history; route_rules.h's 'w4a8_ws_extra: sm_89 and sm_120 only'",
@@ -250,7 +250,8 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "ISTA GSQ IQ3_S mix, 24K prefill, A B B A, greedy byte-identical: RTX 5060 Ti 981 -> 1011 "
      "t/s, RTX 4060 Ti 900 -> 901; against ninfer-all's MMQ on the RTX 5060 Ti (nsys) these "
      "classic-tile formats carried the gap (IQ4_XS 16.1 s against 10.99, IQ2_XS 2.81 / 2.32, "
-     "IQ2_XXS 1.00 / 0.79); taken where the shipped dense tuner table names the tile"},
+     "IQ2_XXS 1.00 / 0.79); taken where the shipped dense tuner table names the tile. The RTX "
+     "4060 Ti ran it neutral (900 -> 901), so it is no second confirming card"},
     {Rule::W4a8WsTuned, Basis::Measured, FormatSet{Q::GGML_IQ3_S}, 0, "ad106:34sm", "RTX 4060 Ti",
      Evidence::SingleCard,
      "w4a8_ws_wins' and w4a8_ws_extra's comments (generic_select.cpp); the comment stands in "
