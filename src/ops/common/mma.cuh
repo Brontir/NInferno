@@ -180,12 +180,19 @@ __device__ __forceinline__ float2 bf16x2_pair(unsigned v) {
 // The emulated products are called, not inlined: ~100 instructions per MMA unrolled into every
 // tile multiplied the sm_70 build's code (ptxas past 3 GB per generic GEMM translation unit). The
 // operands travel in registers (float4 / uint4 / uint2 by value); the call costs a few moves.
-static __device__ __noinline__ float4 mma_f16_fma_call(float4 c, uint4 a, uint2 b) {
+// EXPERIMENT (#877): a translation unit that defines NINFERNO_FMA_MMA_INLINE before this header
+// inlines them, so its shuffles are SHFL, not calls of the sm_70 shuffle helpers.
+#if defined(NINFERNO_FMA_MMA_INLINE)
+#    define NINFERNO_FMA_MMA_CALL __forceinline__
+#else
+#    define NINFERNO_FMA_MMA_CALL __noinline__
+#endif
+static __device__ NINFERNO_FMA_MMA_CALL float4 mma_f16_fma_call(float4 c, uint4 a, uint2 b) {
     mma_k16_fma(c.x, c.y, c.z, c.w, a.x, a.y, a.z, a.w, b.x, b.y, f16x2_pair);
     return c;
 }
 
-static __device__ __noinline__ float4 mma_bf16_fma_call(float4 c, uint4 a, uint2 b) {
+static __device__ NINFERNO_FMA_MMA_CALL float4 mma_bf16_fma_call(float4 c, uint4 a, uint2 b) {
     mma_k16_fma(c.x, c.y, c.z, c.w, a.x, a.y, a.z, a.w, b.x, b.y, bf16x2_pair);
     return c;
 }

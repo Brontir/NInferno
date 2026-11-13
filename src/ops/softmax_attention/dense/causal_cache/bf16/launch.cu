@@ -1,3 +1,6 @@
+// EXPERIMENT (#877): the sm_70 FMA products inlined in this translation unit.
+#define NINFERNO_FMA_MMA_INLINE 1
+
 #include "ops/softmax_attention/dense/causal_cache/bf16/launch.h"
 #include "ops/softmax_attention/common/causal_column_chunks.h"
 #include "ops/softmax_attention/dense/causal_cache/bf16/template_launch.cuh"
