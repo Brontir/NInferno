@@ -24,13 +24,13 @@ inline constexpr int kBf16KvVoltaStepKeys = 32;
 inline constexpr int kBf16KvVoltaWarps    = 4;
 
 template <class G>
-inline constexpr bool kBf16KvVoltaKeyMajor = G::kHeadDim == 256 && G::GroupSize <= 8 &&
-                                             G::GroupSize % 2 == 0;
+inline constexpr bool kBf16KvVoltaKeyMajor =
+    G::kHeadDim == 256 && G::GroupSize <= 8 && G::GroupSize % 2 == 0;
 
 #if NINFERNO_HMMA884
 // D(32x8 f32) += A(32x4 f16, column-major) * B(4x8 f16, row-major): a lane holds A rows
-// 8 * (lane >> 2) + 4 * half .. + 3 at k = lane % 4 (a0, a1) and B[lane % 4][4 * (lane >> 4) .. + 3]
-// (b0, b1) (PTX ISA, mma.m8n8k4 .col.row; int8_kv_key_major_kt_kernel's PV product).
+// 8 * (lane >> 2) + 4 * half .. + 3 at k = lane % 4 (a0, a1) and B[lane % 4][4 * (lane >> 4) .. +
+// 3] (b0, b1) (PTX ISA, mma.m8n8k4 .col.row; int8_kv_key_major_kt_kernel's PV product).
 __device__ __forceinline__ void bf16_volta_mma_col_row(float (&d)[8], unsigned a0, unsigned a1,
                                                        unsigned b0, unsigned b1) {
     asm("mma.sync.aligned.m8n8k4.col.row.f32.f16.f16.f32 "
@@ -42,13 +42,12 @@ __device__ __forceinline__ void bf16_volta_mma_col_row(float (&d)[8], unsigned a
 #endif
 
 template <class G, bool MultiBatch, bool Masked, class Input>
-__launch_bounds__(128, 2) __global__
-    void bf16_kv_key_major_volta_kernel(const __nv_bfloat16* q, Input input, const int* positions,
-                                        typename Bf16KvCacheView<Input::writes_cache>::Key* cache_k,
-                                        typename Bf16KvCacheView<Input::writes_cache>::Value* cache_v,
-                                        const int* tables, const int* validity,
-                                        const int* table_rows, int table_stride, float scale,
-                                        Bf16KvPartition partition, CausalPartialView partial) {
+__launch_bounds__(128, 2) __global__ void bf16_kv_key_major_volta_kernel(
+    const __nv_bfloat16* q, Input input, const int* positions,
+    typename Bf16KvCacheView<Input::writes_cache>::Key* cache_k,
+    typename Bf16KvCacheView<Input::writes_cache>::Value* cache_v, const int* tables,
+    const int* validity, const int* table_rows, int table_stride, float scale,
+    Bf16KvPartition partition, CausalPartialView partial) {
 #if NINFERNO_HMMA884
     static_assert(kBf16KvVoltaKeyMajor<G>);
     constexpr int D        = G::kHeadDim;
@@ -153,11 +152,12 @@ __launch_bounds__(128, 2) __global__
 #    pragma unroll
         for (int g = 0; g < R; ++g) s[g][0] = s[g][1] = 0.0f;
         uint4 kb[2][8];
-        const auto load_k = [&](uint4 (&dst)[8], int chunk) {
+        const auto load_k = [&](uint4(&dst)[8], int chunk) {
 #    pragma unroll
             for (int j = 0; j < 8; ++j)
-                dst[j] = key_live ? __ldg(reinterpret_cast<const uint4*>(k_row + chunk * 64 + j * 8))
-                                  : make_uint4(0u, 0u, 0u, 0u);
+                dst[j] = key_live
+                             ? __ldg(reinterpret_cast<const uint4*>(k_row + chunk * 64 + j * 8))
+                             : make_uint4(0u, 0u, 0u, 0u);
         };
         load_k(kb[0], 0);
 #    pragma unroll
@@ -165,12 +165,13 @@ __launch_bounds__(128, 2) __global__
             if (chunk + 1 < D / 64) load_k(kb[(chunk + 1) & 1], chunk + 1);
 #    pragma unroll
             for (int j = 0; j < 8; ++j) {
-                const uint4 w = kb[chunk & 1][j];
-                const float kf[8] = {__uint_as_float(w.x << 16), __uint_as_float(w.x & 0xffff0000u),
-                                     __uint_as_float(w.y << 16), __uint_as_float(w.y & 0xffff0000u),
-                                     __uint_as_float(w.z << 16), __uint_as_float(w.z & 0xffff0000u),
-                                     __uint_as_float(w.w << 16), __uint_as_float(w.w & 0xffff0000u)};
-                const int d       = chunk * 64 + j * 8;
+                const uint4 w     = kb[chunk & 1][j];
+                const float kf[8] = {
+                    __uint_as_float(w.x << 16), __uint_as_float(w.x & 0xffff0000u),
+                    __uint_as_float(w.y << 16), __uint_as_float(w.y & 0xffff0000u),
+                    __uint_as_float(w.z << 16), __uint_as_float(w.z & 0xffff0000u),
+                    __uint_as_float(w.w << 16), __uint_as_float(w.w & 0xffff0000u)};
+                const int d = chunk * 64 + j * 8;
 #    pragma unroll
                 for (int g = 0; g < R; ++g) {
                     const float4 qa = *reinterpret_cast<const float4*>(q_s + g * D + d);
@@ -233,7 +234,7 @@ __launch_bounds__(128, 2) __global__
 #    pragma unroll
             for (int u = 0; u < 8; ++u) {
                 const int vkey = k0 + 4 * u + (lane & 3);
-                vb[u] = make_uint4(0u, 0u, 0u, 0u);
+                vb[u]          = make_uint4(0u, 0u, 0u, 0u);
                 if (vkey >= end) continue;
                 if constexpr (Input::writes_cache) {
                     if (vkey >= first) {
@@ -279,8 +280,8 @@ __launch_bounds__(128, 2) __global__
         for (int mt = 0; mt < 2; ++mt)
 #    pragma unroll
             for (int e = 0; e < 8; ++e) {
-                const int row = (lane & 2) + (e & 5);
-                const int m   = (e & 2) + (lane & ~2);
+                const int row                                            = (lane & 2) + (e & 5);
+                const int m                                              = (e & 2) + (lane & ~2);
                 red[row * D + db * 64 + 8 * (m >> 2) + 4 * mt + (m & 3)] = acc[db][mt][e];
             }
     __syncthreads();
@@ -293,7 +294,7 @@ __launch_bounds__(128, 2) __global__
 #    pragma unroll
         for (int w = 0; w < Warps; ++w) {
             const float weight = bf16_kv_state_weight(m_s[w * 8 + g], l_s[w * 8 + g], maximum);
-            const float2 x = *reinterpret_cast<const float2*>(&red_s[(w * 8 + g) * D + d]);
+            const float2 x     = *reinterpret_cast<const float2*>(&red_s[(w * 8 + g) * D + d]);
             sum += weight * l_s[w * 8 + g];
             a += weight * x.x;
             b += weight * x.y;

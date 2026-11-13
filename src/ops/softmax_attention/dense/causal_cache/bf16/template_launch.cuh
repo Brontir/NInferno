@@ -89,8 +89,9 @@ void launch_bf16_kv_key_major_volta(const CausalAttentionOperands& p,
     validate_bf16_kv_operands<G>(p, cache);
     if (p.width != 1 || partition.aligned || partition.key_rows != kBf16KvVoltaStepKeys ||
         partition.capacity < 1 || partition.capacity > 256 || partition.normal_target < 1 ||
-        partition.long_target < 1 || partition.live(p.visible_capacity).splits > partition.capacity ||
-        !partials.acc || !partials.maximum || !partials.sum || MultiBatch != (p.batch > 1) ||
+        partition.long_target < 1 ||
+        partition.live(p.visible_capacity).splits > partition.capacity || !partials.acc ||
+        !partials.maximum || !partials.sum || MultiBatch != (p.batch > 1) ||
         Masked != (cache.valid_columns != nullptr))
         throw std::invalid_argument("BF16 Volta decode: invalid partition or metadata");
     if constexpr (Input::writes_cache) {
