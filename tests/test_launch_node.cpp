@@ -86,10 +86,12 @@ int main() {
         }
         if (!row) continue;
         expect(row->floor_ctas[0] == 1 && row->floor_ctas[1] == row->sms &&
-                   row->floor_ctas[2] == 4 * row->sms && row->floor_ctas[3] == 1024,
-               where + ": the floors are grids of 1, SMs, 4 x SMs and 1024 CTAs");
+                   row->floor_ctas[2] == 4 * row->sms && row->floor_ctas[3] == 1024 &&
+                   row->floor_ctas[4] == 4096,
+               where + ": the floors are grids of 1, SMs, 4 x SMs, 1024 and 4096 CTAs");
         expect(same(row->floor_s[0], isa.launch->floor_ns_1) &&
-                   same(row->floor_s[3], isa.launch->floor_ns_1024),
+                   same(row->floor_s[3], isa.launch->floor_ns_1024) &&
+                   same(row->floor_s[4], isa.launch->floor_ns_4096),
                where + ": the floors are the entry's");
         // The ramp (#613 PR-8a): piecewise linear between the four measured grids, each point
         // reproduced exactly (floor_s[i] - floor_s[0]), none at one CTA or fewer, between two
