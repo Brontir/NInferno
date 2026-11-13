@@ -385,6 +385,27 @@ prediction so far.
   - With `--activations exact` the aligned partition runs ceil(keys / 512) splits (16 at 7843
     keys, 43 at 21961). There the old loop's cost grows with depth and part of the gain moves
     into the slope; that cell is not predicted.
+- Prediction 2, measured (13.11, kv_decode_attention_bench ABBA, master against the change merged
+  with master; the drop of the two-context intercept a call x 8 layers, µs a step):
+
+  | Board | BF16 | FP8 | INT8 | NVFP4 | K8V4 |
+  |---|---|---|---|---|---|
+  | RTX 5090 | -27.4 holds | -26.6 holds | -24.6 holds | -14.2 holds | -15.8 holds |
+  | RTX 4090 | holds | holds | holds | holds | holds |
+  | RTX 5070 Ti | -11.4 holds | -13.1 holds | -13.0 holds | **-6.5 under** (8-15) | -8.5 holds (low edge) |
+  | RTX 3090 | **-25 over** (9-18) | holds | holds | **-5.8 under** (6-12) | **-1.3 refuted** (one noisy run) |
+  | RTX 2080 Ti | rerun (the first run's DRAM share moved 55 -> 84 % between rounds of one arm) | | | | |
+
+  The RTX 5090 and 4090 rows were measured against prediction 1, whose cells law 2 keeps for them
+  (they narrow); the 5070 Ti and 3090 rows are law 2's first test.
+  The read rates do not move. The 64-column codecs hold law 2, except the RTX 3090's BF16, which
+  gains more than predicted. The rotated merges (NVFP4, K8V4) keep 256 columns and get the
+  staged loop only. They gain less than the law gives them on the RTX 3090 and 5070 Ti (S 41 and
+  35), and as predicted on the 5090 and 4090. So the law's term for the staged loop without the
+  narrower chunk is wrong there, not the boards: refuted for NVFP4 on two boards, recorded, not
+  fitted. The change is no slower on any codec on any board measured, so it ships. The next
+  prediction for the rotated merges has to count the staged loop's own fill against the old
+  loop's round trips at that S.
 - Other widths: the same law holds at every W.
   - The staged loop runs at every width, and the bits are unchanged.
   - At the wave partition's S = SMs / 2 (INT8, and BF16's targets), law 2 narrows up to:
