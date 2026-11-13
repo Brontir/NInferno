@@ -1573,7 +1573,10 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
                                .expert_prefill_assumed = route,
                                .weight_formats         = shape.weight_formats,
                                .layer_formats          = shape.layer_formats,
-                               .rest_layer_formats     = shape.rest_layer_formats};
+                               .rest_layer_formats     = shape.rest_layer_formats,
+                               .expert_up_formats      = facts.model.expert_up_formats,
+                               .expert_down_formats    = facts.model.expert_down_formats,
+                               .head_format            = facts.model.head_format};
     }
     if (facts.model.weight_basis != runtime::WeightBasis::GgufTensors ||
         facts.model.weight_bytes == 0) {
@@ -1595,6 +1598,9 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
     table.weight_formats         = shape.weight_formats;
     table.layer_formats          = shape.layer_formats;
     table.rest_layer_formats     = shape.rest_layer_formats;
+    table.expert_up_formats      = facts.model.expert_up_formats;
+    table.expert_down_formats    = facts.model.expert_down_formats;
+    table.head_format            = facts.model.head_format;
     return table;
 }
 
@@ -1645,6 +1651,12 @@ PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
     out.shape.weight_formats     = own.weight_formats;
     out.shape.layer_formats      = own.layer_formats;
     out.shape.rest_layer_formats = own.rest_layer_formats;
+    // Its banks' and head's formats likewise (#834): the workspace plan sizes the MoE layer and
+    // the head by them, and the shape's are another file's even at equal bytes; without its
+    // table, none (plan_workspace: the formula stands).
+    out.model.expert_up_formats   = own.expert_up_formats;
+    out.model.expert_down_formats = own.expert_down_formats;
+    out.model.head_format         = own.head_format;
     // Its stored routed banks and token table where its table counted them (a GGUF's).
     if (const auto& table = row.listing.table) {
         if (table->routed_expert_bytes) {
