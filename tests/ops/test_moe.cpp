@@ -458,11 +458,12 @@ bool reference_token(const Case& c, const Layer& l, const std::vector<double>& x
     return true;
 }
 
-// NINFERNO_MOE_TEST_CASE=<text> runs only the cases whose label holds the text (the checks
-// without a case are skipped), so one case can loop alone.
+// NINFERNO_TEST_MOE_CASE=<text> runs only the cases whose label holds the text (the checks
+// without a case are skipped), so one case can loop alone. A filter that matches no case fails
+// the run (main): a mistyped or stale one would otherwise pass having checked nothing.
 const std::string& case_filter() {
     static const std::string filter = [] {
-        const char* v = std::getenv("NINFERNO_MOE_TEST_CASE");
+        const char* v = std::getenv("NINFERNO_TEST_MOE_CASE");
         return std::string(v != nullptr ? v : "");
     }();
     return filter;
@@ -470,8 +471,13 @@ const std::string& case_filter() {
 
 bool filtering() { return !case_filter().empty(); }
 
+int matched_cases = 0; // the case checks the filter let through
+
 bool filtered_out(const std::string& label) {
-    return filtering() && label.find(case_filter()) == std::string::npos;
+    if (!filtering()) return false;
+    if (label.find(case_filter()) == std::string::npos) return true;
+    ++matched_cases;
+    return false;
 }
 
 struct Run {
@@ -2386,6 +2392,14 @@ int main(int argc, char** argv) {
     } catch (const std::exception& e) {
         std::cerr << "moe test: unexpected exception: " << e.what() << '\n';
         return 1;
+    }
+    if (filtering()) {
+        std::cout << "moe: NINFERNO_TEST_MOE_CASE=\"" << case_filter() << "\" ran " << matched_cases
+                  << " case check(s)\n";
+        if (matched_cases == 0) {
+            std::cerr << "moe: the case filter matched no case\n";
+            return 1;
+        }
     }
     if (failures != 0) {
         std::cerr << "moe: " << failures << " failure(s)\n";
