@@ -907,6 +907,7 @@ Json choice_json(const ServedChoice& served) {
                   {"accuracy_weight", served.task.accuracy_weight}}},
                 {"why", served.choice.why},
                 {"by_worth", served.choice.by_worth},
+                {"activations_by_worth", served.choice.activations_by_worth},
                 {"resolution", round_to(served.choice.resolution, 4)},
                 {"resolution_basis",
                  std::string(choice::resolution_basis_name(served.choice.resolution_basis))},
@@ -951,6 +952,7 @@ Json choice_json(const ServedChoice& served) {
                              {"cards", std::string(ref->cards)},
                              {"lent", ref->lent},
                              {"decides", ref->decides},
+                             {"activations_decide", ref->activations_decide},
                              {"sms", ref->card.sms},
                              {"clock_mhz", round_to(ref->card.clock_hz / 1e6, 0)},
                              {"dram_gb_s", round_to(ref->card.dram_bytes_per_s / 1e9, 0)}};

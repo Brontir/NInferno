@@ -412,17 +412,21 @@ inline constexpr FittedHoldout kChoiceHoldouts[] = {
          "two Ada cards averaged, Turing one: none left out", "choice_constants.h at RouteEta")},
     {kChoice, "kKvReadFactor",
      Holdout::none(
-         "run_sw.sh, 9B at a 22K prompt, against INT8 on the same card: Turing's one card; Ada the "
-         "mean of the RTX 4070 Ti and 4090 (BF16 1.03 / 1.09, FP8 1.03 / 1.08, K8V4 1.01 / 1.04, "
-         "NVFP4 1.25 / 1.22: within 6 %)",
+         "Ada and Blackwell BF16 and FP8, Blackwell K8V4: the nsys census of the decode attention "
+         "kernel (#618 step 1, Qwen3.5-9B at 7.8K and 21.9K tokens, against INT8 on the same "
+         "card), the mean of two cards each (RTX 4070 Ti / 4090, RTX 5070 Ti / 5090: within 2.3 "
+         "%); Ada's K8V4 and NVFP4 "
+         "run_sw.sh at a 22K prompt (1.01 / 1.04, 1.25 / 1.22); Turing run_sw.sh on one card",
          "none left out", "choice_constants.h at KvReadFactor")},
     {kChoice, "kKvSmRate",
      Holdout::none(
          "Turing: Qwen3.5 9B's int8 kernel and Gemma 4 12B's BF16 one on the RTX 2080 Ti; Volta: "
-         "the "
-         "Quadro GV100's census at 7K and 82K (Gemma 4 12B's BF16 full layer 707 us a call for 153 "
-         "MB)",
-         "one card a row: nothing left out", "choice_constants.h at KvSmRate")},
+         "the Quadro GV100's census at 7K and 82K (Gemma 4 12B's BF16 full layer 707 us a call for "
+         "153 MB); Ampere, Ada and Blackwell: the census of #618 step 1 (Qwen3.5-9B, the RTX 3090 "
+         "and 3060, 4070 Ti and 4090, 5070 Ti and 5090: the mean of two cards, within 2.7 %, "
+         "Blackwell's NVFP4 6.4 %)",
+         "one card a Turing or Volta row, two an Ampere, Ada or Blackwell one: nothing left out",
+         "choice_constants.h at KvSmRate")},
     {kChoice, "kMoeChunkShare",
      Holdout::none(
          "run_chunk.sh at a 22K prompt, 2026-10-23/24: Gemma 4 26B on the RTX 4070 Ti and 4090, "
