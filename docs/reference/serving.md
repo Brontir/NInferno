@@ -1867,6 +1867,7 @@ contract.
 | `--no-load` | with `--plan`: plan without loading or downloading the weights and without a GPU, from the model's header or config ([the plan without the weights](#the-plan-without-the-weights)) | off |
 | `--plan-device NAME` | with `--plan --no-load`: plan for a named board of the PCI-ID table (`"RTX 4090"`, `0x2684`, then `,headless`/`,display`, `,linux`/`,wddm`) instead of the CUDA device | the CUDA device |
 | `--plan-idle` | with `--plan --no-load`: plan the idle card, and put what a start right now would get at the free memory beside it (`now`); ninferno-ui plans a model converted here this way. The exit code then says whether the idle card fits (0) or not (2); `now.fits_now` says whether a start right now would | the free memory now |
+| `--plan-free-now BYTES` | with `--plan --no-load --plan-idle`: the card's free memory as the caller reads it (NVML), for `now` where serve cannot read it itself: a card too busy to open a context still names its board. ninferno-ui passes it. Refused without `--plan-idle` or with `--plan-device` | none (serve's own reading) |
 | `--with-drafters` | always attach the drafters of a GGUF hub model (a separate download), and fail the start when one cannot be had | attached when the choice drafts with one |
 | `--model-id ID` | override the public OpenAI model alias | the artifact's `metadata.name`, else its file name; a Hugging Face id when serving one |
 | `--chat-template FILE` | local Jinja chat template | the artifact's |
@@ -2392,7 +2393,8 @@ memory less 512 MiB for the CUDA context, and less a desktop's share when the ca
 With `--plan-idle` a real device's plan is the idle card's too, and the document's `now` (with
 `device.free_now_bytes` and `device.fits_now`) is what a start right now would get at the free
 memory: ninferno-ui runs `ninferno-serve <artifact> --plan --no-load --plan-idle --json` for a model
-converted here, so its plan has the start's workspace (#843).
+converted here, so its plan has the start's workspace (#843). It passes NVML's free memory too
+(`--plan-free-now`): a card too busy to open a context still gets its `now` (#891).
 
 **What is the start's, and what is estimated.** A rung's persistent bytes are the family planner's
 own: the start and the dry run call the same function (`plan_persistent_layout` over a

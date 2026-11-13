@@ -521,6 +521,11 @@ OfflinePlan plan_without_load(const ServeOptions& options, std::optional<std::ui
                 throw std::runtime_error(std::string("no GPU to plan for (") + measured.what() +
                                          "): name a board with --plan-device");
             }
+            // The caller's reading of the free memory (--plan-free-now: ninferno-ui's NVML), so
+            // `now` still says whether a start right now would fit (#891).
+            if (options.plan_free_now) {
+                device.free_bytes = product::plan_free_now_of_nvml(*options.plan_free_now);
+            }
         }
         gpu = spec::gpu_identity(options.device).key;
     }
