@@ -156,10 +156,10 @@ struct Call {
 //    pdl_prefetch), which one call's price does not see, so it keeps the plain node, the slower
 //    one, #886) plus the dispatch ramp of its grid, read piecewise linear between the probe's
 //    measured grids (core/launch_facts.h; past the last one the last segment's slope,
-//    `launch_extrapolated`), where the architecture's launch facts are known. Unknown (`launch_known` false), it is the
-//    slowest launch of that grid any measured architecture has (`launch_bound`): an unknown fact
-//    is conservative and labelled (deterministic-decisions principle 7), one rule for every
-//    launch the price counts (#886 item 1).
+//    `launch_extrapolated`), where the architecture's launch facts are known. Unknown
+//    (`launch_known` false), it is the slowest launch of that grid any measured architecture has
+//    (`launch_bound`): an unknown fact is conservative and labelled (deterministic-decisions
+//    principle 7), one rule for every launch the price counts (#886 item 1).
 // The output and residual are additive, not under the warp fill: the epilogue is the CTA's tail,
 // after its last MMA, and its bytes add to the bus. A term common to every route of a call moves no
 // argmin among them; the quantizer and the second launch separate A8 from A16, and the ramp the
