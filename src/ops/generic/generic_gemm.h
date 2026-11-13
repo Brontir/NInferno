@@ -13,6 +13,7 @@
 #include "core/weight.h"
 #include "ninferno/ops/linear.h"
 #include "ninferno/option_enums.h"
+#include "ops/generic/family_facts.h"
 #include "ops/generic/kernel_facts.h"
 #include "ops/route_pins.h"
 
@@ -187,6 +188,27 @@ struct Route {
 };
 
 bool operator==(Route a, Route b);
+
+// The tile, step and stage facts of a family's kernel (family_facts.h, #619 step 3): an empty
+// record for a family that exports none yet.
+[[nodiscard]] constexpr FamilyFacts family_facts(Family family) noexcept {
+    switch (family) {
+    case Family::RegisterMma:
+        return kRegisterMmaFacts;
+    case Family::TiledMma:
+        return kTiledMmaFacts;
+    case Family::W4a8Mma:
+        return kW4a8MmaFacts;
+    case Family::StagedMma:
+        return kStagedMmaFacts;
+    case Family::GgmlMmq:
+        return kGgmlMmqFacts;
+    case Family::I8Mma:
+        return kI8MmaFacts;
+    default:
+        return {};
+    }
+}
 
 // Compiled schedules. RegisterMma: (warps_m, warps_k, m_tiles, n_tiles, cluster: K split over a
 // thread-block cluster of that many CTAs); W4a4Mma: (block_m, block_n) with warps fixed per entry.
@@ -700,6 +722,9 @@ struct KernelResources {
     // The register-MMA kernel's K loop counted off its SASS (kernel_facts::LoopCounts, #613): the
     // snapshot's, where it carries them; nullopt for the other families and a schema 1 snapshot.
     std::optional<kernel_facts::LoopCounts> loop;
+    // The tile, step and stage facts of the kernel's family (family_facts): route_resources sets
+    // them; rmma_resources and r8_resources leave them empty.
+    FamilyFacts family;
 };
 
 // Which register-MMA law price_routes applies (#613 PR-7a): route_cost::kRmmaCountedLaw, the one
@@ -782,7 +807,8 @@ r8_resources(int schedule, const Weight& weight, Epilogue epilogue, std::int32_t
 // a tiled call, and for the scalar route. `rows` and `r8_prequantized` as r8_resources'; `rows` of
 // any family: the call's output rows, where the weight is a fused parent the call reads a slice of.
 // `group_sums`: a register-MMA call that reads the group-sums plane (ResolvedRoute::group_sums)
-// is described by the plane instance it launches, not the price's (rmma_resources).
+// is described by the plane instance it launches, not the price's (rmma_resources). The kernel
+// comes with its family's record (KernelResources::family, family_facts(route.family)).
 [[nodiscard]] std::optional<KernelResources>
 route_resources(Route route, const Weight& weight, Epilogue epilogue, std::int32_t tokens,
                 std::int32_t rows = 0, std::optional<bool> r8_prequantized = std::nullopt,

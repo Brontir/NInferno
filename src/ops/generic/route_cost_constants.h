@@ -10,8 +10,11 @@
 // A new number in the cost model belongs here with its tag, so the fitted ones stay listed in one
 // place (kRouteCostConstants, test_route_cost_constants) instead of hiding inside expressions.
 // The board-row scales (core/generation.h: w4a8_eff_scale, a16_cost_scale) are tagged there.
+// A Counted constant of a kernel is read from its family's record (family_facts.h, #619 step 3),
+// which the kernel's template is static_asserted against: the value is not retyped here.
 
 #include "core/cost_constants.h"
+#include "ops/generic/family_facts.h"
 
 #include <array>
 #include <optional>
@@ -44,8 +47,9 @@ using Scalar = Constant<1>;
 // --- A16 tiles (price_routes) ---
 // Register MMA: the exposed load latency of one 16-K step per warp, in cycles.
 inline constexpr Scalar kRmmaStepCycles{{150.0}, Provenance::Fitted, "rmma_step_cycles"};
-// Register MMA: K per warp step.
-inline constexpr Scalar kRmmaStepK{{16.0}, Provenance::Counted, "rmma_step_k"};
+// Register MMA: K per warp step (one m16n8k16 MMA's).
+inline constexpr Scalar kRmmaStepK{
+    {static_cast<double>(kRegisterMmaFacts.mma_k)}, Provenance::Counted, "rmma_step_k"};
 // Register MMA: resident warps per SM at which the tile reaches its roofline.
 inline constexpr Scalar kRmmaSaturatingWarps{{11.0}, Provenance::Fitted, "rmma_saturating_warps"};
 // Register MMA of the K-quant and codebook decoders (#301): resident warps per SM at which the
@@ -70,7 +74,8 @@ inline constexpr Scalar kL2BytesPerSmClockGb20x{
 // Register MMA, same decoders: K per step of their decoders (four lanes of one 32-value run), and
 // what a spilled register costs per step: one store and one load of its local-memory byte through
 // the L1, whose data path is 128 B per clock and SM.
-inline constexpr Scalar kRmmaHeavyStepK{{128.0}, Provenance::Counted, "rmma_heavy_step_k"};
+inline constexpr Scalar kRmmaHeavyStepK{
+    {static_cast<double>(kRegisterMmaFacts.step_k)}, Provenance::Counted, "rmma_heavy_step_k"};
 // The spill count is a modelling assumption (a spilled value is stored once and loaded once a
 // step; the compiler may keep it longer), so it is tagged Fitted, not Counted: it moved the regret
 // by under 0.5 % where it applies.
@@ -98,20 +103,29 @@ inline constexpr Scalar kWarpReduceCycles{{2.75}, Provenance::Fitted, "warp_redu
 // Pipelined tiles (tiled, staged): one stage's barrier and cp.async wait, in cycles.
 inline constexpr Scalar kPipelinedStageCycles{
     {500.0}, Provenance::Fitted, "pipelined_stage_cycles"};
-// Pipelined tiles: K per pipeline stage.
-inline constexpr Scalar kPipelinedStageK{{64.0}, Provenance::Counted, "pipelined_stage_k"};
+// Pipelined tiles: K per pipeline stage (one value for both tiles).
+inline constexpr Scalar kPipelinedStageK{
+    {static_cast<double>(kStagedMmaFacts.stage_k)}, Provenance::Counted, "pipelined_stage_k"};
+static_assert(kTiledMmaFacts.stage_k == kStagedMmaFacts.stage_k);
 // Pipelined tiles: resident warps per SM at which the tile reaches its roofline.
 inline constexpr Scalar kPipelinedSaturatingWarps{
     {4.0}, Provenance::Fitted, "pipelined_saturating_warps"};
 // Pipelined tiles: fraction of the tensor rate (staged, tiled).
 inline constexpr Scalar kStagedTensorFraction{{0.9}, Provenance::Fitted, "staged_tensor_fraction"};
 inline constexpr Scalar kTiledTensorFraction{{0.8}, Provenance::Fitted, "tiled_tensor_fraction"};
-// Pipelined tiles: shared bytes per stage and row or token of the tile (64 K of BF16).
+// Pipelined tiles: shared bytes per stage and row or token of the tile (64 K of BF16): the staged
+// tile's, and the tiled one's per token. The price takes it for the tiled tile's weight rows too,
+// which stage the codec's raw chunks (TiledShared::raw) and decode into one BF16 buffer.
 inline constexpr Scalar kPipelinedStageBytesPerRow{
-    {128.0}, Provenance::Counted, "pipelined_stage_bytes_per_row"};
+    {static_cast<double>(kStagedMmaFacts.stage_row_bytes)},
+    Provenance::Counted,
+    "pipelined_stage_bytes_per_row"};
+static_assert(kStagedMmaFacts.stage_token_bytes == kStagedMmaFacts.stage_row_bytes &&
+              kTiledMmaFacts.stage_token_bytes == kStagedMmaFacts.stage_row_bytes);
 // Shared memory one CTA may take: the opt-in cap of sm_86 / sm_89 / sm_12x (99 KiB), which the
 // model takes on every part (sm_80 allows 163 KiB, sm_90 227 KiB, sm_75 64 KiB): a modelling
-// choice read off those parts, not a fact of every chip.
+// choice read off those parts, not a fact of every chip. test_route_cost_constants holds it equal
+// to those parts' chip column of the archs table (core/arch_registry.h smem_per_block_optin).
 inline constexpr Scalar kMaxTileSharedBytes{
     {99.0 * 1024.0}, Provenance::Counted, "max_tile_shared_bytes"};
 // Every tile: the floor of the warp slowdown factor (a lone warp runs at most 20x slow).
@@ -172,24 +186,30 @@ inline constexpr Scalar kQuantMmqValuesPerCta{
 inline constexpr Constant<6> kW4a8Efficiency{
     {0.31, 0.28, 0.24, 0.47, 0.37, 0.98}, Provenance::Fitted, "w4a8_efficiency"};
 // W4A8 tiles: shared bytes per stage and row or token (128 K of codes, scales and sums).
-inline constexpr Scalar kW4a8StageBytesPerRow{
-    {160.0}, Provenance::Counted, "w4a8_stage_bytes_per_row"};
+inline constexpr Scalar kW4a8StageBytesPerRow{{static_cast<double>(kW4a8MmaFacts.stage_row_bytes)},
+                                              Provenance::Counted,
+                                              "w4a8_stage_bytes_per_row"};
+static_assert(kW4a8MmaFacts.stage_token_bytes == kW4a8MmaFacts.stage_row_bytes);
 // W4A8 tiles: K per step, and the exposed chain of one step (with / without producer warps).
-inline constexpr Scalar kW4a8StepK{{128.0}, Provenance::Counted, "w4a8_step_k"};
+inline constexpr Scalar kW4a8StepK{
+    {static_cast<double>(kW4a8MmaFacts.step_k)}, Provenance::Counted, "w4a8_step_k"};
 inline constexpr Scalar kW4a8StepCycles{{1390.0}, Provenance::Fitted, "w4a8_step_cycles"};
 inline constexpr Scalar kW4a8ProducerStepCycles{
     {1690.0}, Provenance::Fitted, "w4a8_producer_step_cycles"};
 // I8 tiles: fraction of the int8 peak by kI8Schedules index (256x128, 128x128, 128x64).
 inline constexpr Constant<3> kI8Efficiency{{0.53, 0.46, 0.42}, Provenance::Fitted, "i8_efficiency"};
 // I8 tiles: K per pipeline stage (one activation scale group) and its barrier and copy wait.
-inline constexpr Scalar kI8StageK{{64.0}, Provenance::Counted, "i8_stage_k"};
+inline constexpr Scalar kI8StageK{
+    {static_cast<double>(kI8MmaFacts.stage_k)}, Provenance::Counted, "i8_stage_k"};
 inline constexpr Scalar kI8StageCycles{{250.0}, Provenance::Fitted, "i8_stage_cycles"};
 // I8 tiles: resident warps per SM at which the tile reaches its roofline.
 inline constexpr Scalar kI8SaturatingWarps{{8.0}, Provenance::Fitted, "i8_saturating_warps"};
 // ggml MMQ: tile rows and the token columns' granularity (ggml_mmq), its fraction of the int8
 // peak, the K of one exposed chain step and that step's cycles, and a slice's fixed cost.
-inline constexpr Scalar kMmqTileRows{{128.0}, Provenance::Counted, "mmq_tile_rows"};
-inline constexpr Scalar kMmqColumnStep{{8.0}, Provenance::Counted, "mmq_column_step"};
+inline constexpr Scalar kMmqTileRows{
+    {static_cast<double>(kGgmlMmqFacts.tile_rows)}, Provenance::Counted, "mmq_tile_rows"};
+inline constexpr Scalar kMmqColumnStep{
+    {static_cast<double>(kGgmlMmqFacts.column_step)}, Provenance::Counted, "mmq_column_step"};
 inline constexpr Scalar kMmqEfficiency{{0.44}, Provenance::Fitted, "mmq_efficiency"};
 inline constexpr Scalar kMmqChainK{{862.0}, Provenance::Fitted, "mmq_chain_k"};
 inline constexpr Scalar kMmqChainCycles{{4075.0}, Provenance::Fitted, "mmq_chain_cycles"};

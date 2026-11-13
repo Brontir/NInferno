@@ -133,8 +133,9 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double rows_o  = tile.out_rows;
             const double threads =
                 s.producers > 0 ? 384.0 : rows_w == 64.0 && cols == 64.0 ? 128.0 : 256.0;
-            // Two stages, three with producer warps (generic_w4a8.cuh kStages).
-            const double stages = s.producers > 0 ? 3.0 : 2.0;
+            // Two stages, three with producer warps (family_facts.h, generic_w4a8.cuh).
+            const double stages =
+                s.producers > 0 ? kW4a8MmaFacts.producer_stages : kW4a8MmaFacts.stages;
             const double smem =
                 stages * (rows_w + cols) * route_cost::kW4a8StageBytesPerRow.value();
             const double occ     = std::max(
