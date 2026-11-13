@@ -346,3 +346,11 @@ have frozen predictions so far.
   refitted: its t_imb term stays a hypothesis this A/B did not confirm, and the three terms above
   wait for their ncu facts before any kernel (c1 for the Q6_K ring, the prologue's price on
   sm_120 and sm_75).
+- Carried to unmeasured boards (kR8CarryDistance 0.5, same feature set): the RTX 3060 non-LHR
+  (0x2503, 0.0, the 3060 table), the 4070 SUPER (0.10, the 4070 Ti's), the 4080 Laptop
+  (0x27A0 / 0x27E0, 0.27, the 4070 Ti's) and the 5090 Laptop (0x2C18 / 0x2C58, 0.44, the 5070
+  Ti's). The last sits near a bound that is itself `Basis::Unknown`, its runtime memory clock
+  decides whether it lands inside it, and the 5070 Ti entries it takes win by 0.9 % (Q6_K `w4r1`)
+  and 1.9 % (Q4_K); the sweeps show the schedule order flipping between 70 and 170 SMs on sm_120.
+  The schedules are bit-identical, so a wrong carry costs speed, never bits; a laptop sweep
+  settles it. The RTX 5080 (0.57) takes nothing.

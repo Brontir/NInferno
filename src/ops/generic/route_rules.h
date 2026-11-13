@@ -800,7 +800,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the nearest measured board's decode table is consulted at one token only: its entries are "
      "T = 1 timings (r8_decode_table.h, written by tools/bench/r8_decode_table.py) and none exist "
      "for other widths; the gate follows from the table's layout, and no board places it (the "
-     "table holds nine boards, none of them the RTX 5080 of the decode rule kR8DecodeTokens); "
+     "table holds twelve boards, none of them the RTX 5080 of the decode rule kR8DecodeTokens); "
      "the same bare 1 is written in heuristic_r8 (generic_select.cpp, the next descriptor)",
      ""},
     {"heuristic_r8: the decode table's width", Basis::Structural, "generic_select.cpp",
