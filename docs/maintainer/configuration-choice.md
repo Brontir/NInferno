@@ -125,7 +125,14 @@ where the KV read factors and the exact-route factor were measured on two lab ca
 generation (principle 4); elsewhere the family's defaults stand (the automatic KV codec,
 `--activations fast`), and the choice says so. Ada has them (RTX 4070 Ti and 4090: KV factors within
 6 %, exact within 20 %); Blackwell GB20x has the KV factors on two cards (RTX 5070 Ti and 5090,
-DECISIONS 82) but no exact-route factor; Turing has one lab card.
+DECISIONS 82) but no exact-route factor; Turing has one lab card. A reference card decides only for
+the compute capability its lab cards share (DECISIONS 83): the GB10 (12.1) lies in gb20x's row,
+whose lab cards are 12.0, and keeps the family's defaults (gate `reference_other_capability`).
+Within one capability every board decides the same, even where its own DRAM bytes a SM-clock put a
+codec in another bound form than the reference card's (the L4 and L40S read Qwen 3.5's NVFP4 KV
+DRAM-bound where Ada's reference card reads it SM-bound; the RTX 4060 and 4070 lie above the lab
+cards' span): the byte class reads no continuous fact (B1), and the estimate, priced on the board,
+shows the difference.
 
 **Auto's steps.** Each own-context step (`quant_own_targets`: min(native, 32K), 16K, 8K) is tried
 above the quality floor before any quantization below it. Where the worth decides, a narrower KV

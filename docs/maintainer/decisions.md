@@ -2557,3 +2557,42 @@ streams (`drafter_by_worth`), as on Ada.
 - No gate code says that gb20x's activations, or a carried codec, stayed the default: the
   alternatives say it (`why_code` default) and `activations_by_worth` is in the plan's JSON; the
   UI shows the decision as made on the Blackwell reference card.
+
+## 83. A reference card decides for its lab cards' compute capability only; a board's bound form stays an estimate (#863, 13.11, rule)
+
+**The question** (the review of #861). A generation's reference card decides the KV codec for every
+board of the generation. Some boards read a codec in another bound form than the reference card:
+the KV law is max(bytes / DRAM, bytes / (SMs x clock x r)), and a codec flips from DRAM-bound to
+SM-bound where the board's DRAM bytes a SM-clock, b, cross r / kDramEta. Per gpu_facts.json (boost
+clock):
+- Ada's lab cards read b = 3.13 (RTX 4090) and 3.22 (RTX 4070 Ti), the reference 3.17. Qwen 3.5's
+  NVFP4 rate 2.56 crosses at b = 2.71: the L4 (2.54) and the L40S (2.41) read it DRAM-bound, the
+  reference SM-bound. The RTX 4080 (3.77), 4070 (4.43) and 4060 (4.61) lie above the span the
+  factor rows were read over.
+- gb20x's lab cards read 4.38 (RTX 5090) and 5.22 (RTX 5070 Ti); the RTX 5070 (5.57) and 5060 (5.98)
+  lie above. The GB10 (12.1: 48 SMs, 273 GB/s, about 2.3) lies far below, and is another chip with
+  memory shared with the host.
+
+**A rule on b was written and not taken.** Gating each codec on the board's bound form (an SM-rate
+row where b lies on the reference's side of r, within 6 %; a factor row up to the higher lab card's
+b, within 6 %) held every prediction written before it ran (14 boards, test_choice). It reads the
+board's clock and DRAM rate, continuous facts, into the KV codec: the byte class (B1,
+deterministic-decisions.md) reads only discrete device facts, so that a generation's boards write the
+same bytes. It is not merged.
+
+**Rule.** A reference card decides only for the compute capability its lab cards share
+(`ReferenceCard::minor`, a discrete fact): Ada's 8.9, gb20x's 12.0. A board of the generation with
+another minor (the GB10, 12.1) runs and estimates on the generation's rows, and its reference
+decides nothing (`Reference::other_capability`; gate `reference_other_capability`, opened by the KV
+read factors on two lab cards of its own capability, `capability_lab_cards`). This is the rule the
+selector's measured rules already keep (generation.h: a rule measured on one capability's boards
+keeps that capability exactly).
+
+**What stays.** Within one capability every board decides as its reference card. Where a board's b
+puts a codec in another bound form, the decision may not be that board's fastest; the estimate,
+priced on the board, shows its own time, and the choice says the decision was made on the reference
+card. The L4 / L40S NVFP4 case and the boards above the span are named here, not gated.
+
+**What moves.** The GB10's plan: the family's defaults (the automatic KV codec, `--activations
+fast`) where gb20x's reference card decided before. No lab board moves: every lab card's minor is
+its reference card's.

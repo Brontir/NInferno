@@ -2611,6 +2611,30 @@ void lent_generation_does_not_decide(const json& fixture) {
     const Bench ada = nine_b(fixture, "RTX 4090");
     check(ch::choose(ada.model, ada.card, ada.quants[0], allowed, {}, task, oracle(ada, 20e9), open).by_worth,
           "the RTX 4090: the switches by worth");
+    // A capability of a known generation that no lab card has (#863): the GB10 (12.1, 48 SMs,
+    // 273 GB/s) runs and estimates on gb20x's rows, whose lab cards are 12.0, and decides nothing.
+    Bench gb10                 = known;
+    gb10.card.minor            = 1;
+    gb10.card.sms              = 48;
+    gb10.card.dram_bytes_per_s = 273e9;
+    const auto gr              = ch::reference_of(gb10.card, open);
+    const auto gg              = ch::closed_gates(gb10.model, gb10.card, open);
+    check(gr && !gr->decides && !gr->activations_decide && !gr->chunk_decides &&
+              gr->other_capability && !gr->lent && gr->generation == "gb20x" &&
+              gr->why.find("12.1 is not its gb20x lab cards' (12.0)") != std::string::npos &&
+              !gg.empty() && gg[0].code == "reference_other_capability" &&
+              gg[0].opens_with == "capability_lab_cards",
+          "compute capability 12.1: gb20x's rows, a reference that never decides, and why");
+    const ch::Choice spark = ch::choose(gb10.model, gb10.card, gb10.quants[0], allowed, {}, task,
+                                        oracle(gb10, 20e9), open);
+    check(!spark.by_worth && spark.chosen &&
+              spark.why.find("is not its gb20x lab cards'") != std::string::npos &&
+              ch::speed_of(gb10.model, gb10.card, gb10.quants[0], c, 1, 4096).basis !=
+                  ch::SpeedBasis::LentGeneration,
+          "compute capability 12.1: the family's defaults, its estimate on gb20x's own rows");
+    const auto fr = ch::reference_of(known.card, open);
+    check(fr && fr->decides && !fr->other_capability,
+          "the RTX 5090 (12.0): gb20x's reference decides");
 }
 
 // #304: a choice made again from its record alone. On every fixture card, for the dense 9B and the

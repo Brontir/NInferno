@@ -662,6 +662,6 @@ for (const lang of ["en", "ru", "uk"]) {
 }
 // Every gate code the server sends (choice.h ClosedGate) has words here.
 eq([...H.GATE_CODES].sort(), ["accuracy_gate_closed", "family_unmeasured", "int8_one_card", "int8_unmeasured", "kv_terms_one_card",
-   "lent_generation", "no_reference_card", "quant_curve_one_card", "quant_curve_unmeasured", "quant_switches_closed", "reference_one_card"], "the gate codes");
+   "lent_generation", "no_reference_card", "quant_curve_one_card", "quant_curve_unmeasured", "quant_switches_closed", "reference_one_card", "reference_other_capability"], "the gate codes");
 
 console.log(`test_page_plan: ${checks} checks passed`);
