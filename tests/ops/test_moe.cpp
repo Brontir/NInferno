@@ -1828,14 +1828,14 @@ int check_concurrent_streams() {
 
     const auto make_case = [](std::int32_t experts) {
         Case c;
-        c.label          = "streams q4 a8 E" + std::to_string(experts) + " k8 H1024 F64";
-        c.experts        = experts;
-        c.top_k          = 8;
-        c.hidden         = 1024;
-        c.inter          = 64;
-        c.shared_inter   = 0;
-        c.gate_up        = QType::Q4_G64_FP16;
-        c.down           = QType::Q4_G64_FP16;
+        c.label        = "streams q4 a8 E" + std::to_string(experts) + " k8 H1024 F64";
+        c.experts      = experts;
+        c.top_k        = 8;
+        c.hidden       = 1024;
+        c.inter        = 64;
+        c.shared_inter = 0;
+        c.gate_up      = QType::Q4_G64_FP16;
+        c.down         = QType::Q4_G64_FP16;
         // A8: both stages on R8 where the banks take it (below), whose down stage combines in
         // its epilogue (no shared expert).
         c.expert_policy  = ops::LinearPolicy::AllowA8;
