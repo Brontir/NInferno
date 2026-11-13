@@ -1030,11 +1030,12 @@ void test_artifact_plan_via_serve() {
     const auto root =
         fs::temp_directory_path() / ("ninferno_ui_serve_plan_" + std::to_string(::getpid()));
     fs::remove_all(root);
-    const auto commit = root / "hub/models--org--m/ninferno" / std::string(40, 'c');
-    fs::create_directories(commit);
-    const fs::path artifact = commit / "m.dense_bf16.ninferno";
-    std::ofstream(artifact) << "x";
-    const fs::path args = root / "args.txt";
+    fs::create_directories(root);
+    // A readable artifact (/api/local lists only those), found through --models-dir.
+    const ninferno::test::artifact_fixture::Fixture fixture;
+    fixture.write();
+    const fs::path artifact = fixture.entry;
+    const fs::path args     = root / "args.txt";
     const auto script   = [&](const fs::path& path, const std::string& body) {
         std::ofstream(path) << "#!/bin/sh\nprintf '%s\\n' \"$@\" \"gpu=$CUDA_VISIBLE_DEVICES\" > '"
                             << args.string() << "'\n"
@@ -1061,6 +1062,7 @@ void test_artifact_plan_via_serve() {
         options.offline      = true;
         options.serve_binary = serve;
         options.hub_cache    = root / "hub";
+        options.model_dirs   = {fixture.directory};
         App app(options, std::make_unique<NoGpu>());
         httplib::Server server;
         app.install(server);
