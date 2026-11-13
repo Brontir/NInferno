@@ -263,6 +263,14 @@ struct PlanDrafterGeometry {
     std::vector<std::string> projection_formats;
 };
 
+// The families whose start reads an HF text frontend and whose workspace the start's own planner
+// sizes since #615 W3: the dense decoder (dense_decoder, moe_decoder) and NemotronH. One list for
+// plan_facts.cpp (binds_directory) and plan_workspace.cpp (the query and the tokenizer count).
+inline bool hf_decoder_family(std::string_view model_type) {
+    return model_type == "dense_decoder" || model_type == "moe_decoder" ||
+           model_type == "nemotron_h";
+}
+
 struct PlanModelFacts {
     std::string model_type;   // the family (qwen3_5_text, gemma4_text, dense_decoder, ...); ""
     std::string architecture; // as the source names it (GGUF general.architecture, HF class)
