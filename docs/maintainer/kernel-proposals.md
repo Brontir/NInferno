@@ -401,7 +401,7 @@ prediction so far.
 
   - The read rates do not move.
   - The findings: K8V4 on the RTX 3090 (1.3 against a half lower edge of 3); NVFP4 and K8V4 on the
-    RTX 3060 (2.1 and 2.2 against 2.5); NVFP4 on the RTX 4070 Ti (2.2, its rerun pending); INT8 on
+    RTX 3060 (2.1 and 2.2 against 2.5); NVFP4 on the RTX 4070 Ti (2.2, and -0.6 on the rerun); INT8 on
     the RTX 2080 Ti (24.2 against 1.5 x 16 = 24). ncu of those merges names the wrong term, as the
     rule says. Every BF16, FP8 and INT8 cell of the six readable boards except the 2080 Ti's INT8
     is at or over half its lower edge.
@@ -417,12 +417,15 @@ prediction so far.
     (which always take 256 columns) at or under the lower edge.
   - The RTX 2080 Ti cannot be read for BF16, FP8 and NVFP4 until its cooling is checked: one arm
     moved 20-40 % between its rounds, and the card logged hardware thermal slowdown.
-  - The 4070 Ti NVFP4 cell needs a rerun before it counts: one arm's spread is larger than the
-    drop it is read against.
-  - Acceptance is not met yet. Six of the seven stand boards are measured, but three hold
-    findings: the RTX 3090, 3060 and 4070 Ti on the rotated merges, and the 2080 Ti on INT8.
-    Still open: the ncu of the 3060's rotated merges (queued), the 4070 Ti NVFP4 rerun and a
-    readable 2080 Ti. The Decision below stands as written until they are in.
+  - The 4070 Ti NVFP4 rerun (k867f, ABBA twice, master d761ced3 against the branch merged with
+    it) confirms the finding. The card is bimodal at 21961 keys: a run lands at 608-613 or at
+    636-645 µs a step, on both arms. The slope moves with it, the intercept much less: master
+    132.2, 124.4, 124.4, 124.4 µs a step, the branch 125.5, 120.8, 124.5, 125.9. The medians
+    give a drop of -0.6 µs (the means +2.1). Either way it is under half the lower edge (2.5),
+    so NVFP4 gains nothing measurable there, as on the RTX 3060.
+  - Acceptance is not met. Six of the seven stand boards are measured, and four hold findings:
+    the RTX 3090, 3060 and 4070 Ti on the rotated merges, and the 2080 Ti on INT8. Still open:
+    the ncu of the 3060's rotated merges (queued) and a readable 2080 Ti. The Decision below stands as written until they are in.
 - Other widths: the same law holds at every W.
   - The staged loop runs at every width, and the bits are unchanged.
   - At the wave partition's S = SMs / 2 (INT8, and BF16's targets), law 2 narrows up to:
