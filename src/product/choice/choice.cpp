@@ -2276,8 +2276,10 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     // (#618 step 6). Among the candidates of the chosen storages and chunk that hold the settled
     // context, the fewest seconds on the board wins by more than the tie. The storages stay the
     // reference card's (B1). Same chip, same facts, same drafter; where the board is the reference
-    // card nothing moves.
-    if (out.drafter_by_worth && ref && !same_rates(card, ref->card)) {
+    // card nothing moves. Under --activations exact the drafter is B1 too (its bytes are the same
+    // across a generation): it stays the reference card's.
+    if (out.drafter_by_worth && ref && !same_rates(card, ref->card) &&
+        out.scored[*chosen].candidate.activations != ActivationMode::Exact) {
         const Candidate kept = out.scored[*chosen].candidate;
         std::size_t pick     = *chosen;
         for (std::size_t i = 0; i < out.scored.size(); ++i) {

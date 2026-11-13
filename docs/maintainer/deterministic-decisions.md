@@ -519,6 +519,8 @@ schedule) and carries no accuracy term, so where the worth decides it, it is pri
 own canonical facts
 (#618 step 6): among the candidates of the storages the reference card chose, the fewest seconds on
 the board. The same chip type gets the same drafter; the storages stay the reference card's.
+Under `--activations exact` the drafter stays the reference card's, so that exact reads no board
+fact.
 The quantization stays the rule above until a measured KLD curve over the quantizations exists.
 
 ### The fingerprint
