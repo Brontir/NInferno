@@ -182,11 +182,11 @@ __device__ __forceinline__ float2 bf16x2_pair(unsigned v) {
 // operands travel in registers (float4 / uint4 / uint2 by value); the call costs a few moves.
 // EXPERIMENT (#877): a translation unit that defines NINFERNO_FMA_MMA_INLINE before this header
 // inlines them, so its shuffles are SHFL, not calls of the sm_70 shuffle helpers.
-#if defined(NINFERNO_FMA_MMA_INLINE)
-#    define NINFERNO_FMA_MMA_CALL __forceinline__
-#else
-#    define NINFERNO_FMA_MMA_CALL __noinline__
-#endif
+#    if defined(NINFERNO_FMA_MMA_INLINE)
+#        define NINFERNO_FMA_MMA_CALL __forceinline__
+#    else
+#        define NINFERNO_FMA_MMA_CALL __noinline__
+#    endif
 static __device__ NINFERNO_FMA_MMA_CALL float4 mma_f16_fma_call(float4 c, uint4 a, uint2 b) {
     mma_k16_fma(c.x, c.y, c.z, c.w, a.x, a.y, a.z, a.w, b.x, b.y, f16x2_pair);
     return c;
