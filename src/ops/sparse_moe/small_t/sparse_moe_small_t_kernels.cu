@@ -38,16 +38,16 @@ __device__ __forceinline__ float token_router_score(const float* partial_scores,
     return sum;
 }
 
-// Ticket for the last-arriving S1 block, as D1's: atomicInc wraps at gridDim.x-1, so the counter
-// returns to zero on its own.
-__device__ unsigned int g_sparse_moe_small_t_route_ticket = 0;
-
+// `ticket` (Select only) counts the S1 blocks in, as D1's: the call's own (workspace, zeroed by the
+// launch in stream order), not a device global another engine's grid in flight counts on too
+// (#882). atomicInc wraps at gridDim.x-1, so the last block leaves it at zero.
 template <int Tokens, bool Select>
 __global__ void
 sparse_moe_small_t_s1_kernel(const __nv_bfloat16* __restrict__ x,
                              const __nv_bfloat16* __restrict__ router,
                              float* __restrict__ partial_scores, int* __restrict__ token_ids,
-                             float* __restrict__ token_alpha, float* __restrict__ shared_scale) {
+                             float* __restrict__ token_alpha, float* __restrict__ shared_scale,
+                             unsigned int* __restrict__ ticket) {
     static_assert(Tokens >= 1 && Tokens <= kSparseMoeSmallTMax);
     static_assert(!Select || Tokens <= kS1SelectMax);
     __shared__ float partial[kRouterWarps][Tokens];
@@ -106,9 +106,8 @@ sparse_moe_small_t_s1_kernel(const __nv_bfloat16* __restrict__ x,
         __threadfence();
         __syncthreads();
         if (threadIdx.x == 0) {
-            const unsigned int ticket =
-                atomicInc(&g_sparse_moe_small_t_route_ticket, gridDim.x - 1u);
-            is_last_block = ticket == gridDim.x - 1u;
+            const unsigned int arrived = atomicInc(ticket, gridDim.x - 1u);
+            is_last_block              = arrived == gridDim.x - 1u;
         }
         __syncthreads();
         if (!is_last_block) { return; }
@@ -153,11 +152,17 @@ __global__ void sparse_moe_small_t_s2_kernel(const float* __restrict__ partial_s
 template <int Tokens, bool Select>
 void launch_s1(const __nv_bfloat16* x, const __nv_bfloat16* router, float* partial_scores,
                const SparseMoeSmallTWorkspace& workspace, cudaStream_t stream) {
+    if constexpr (Select) {
+        // The ticket is zero in stream order when S1 starts: the workspace's bytes are another
+        // op's in between (#882).
+        CUDA_CHECK(cudaMemsetAsync(workspace.ticket.data, 0, workspace.ticket.bytes(), stream));
+    }
     sparse_moe_small_t_s1_kernel<Tokens, Select>
         <<<kRouterRows * kRouterPartitions, kRouterWarps * 32, 0, stream>>>(
             x, router, partial_scores, static_cast<int*>(workspace.token_ids.data),
             static_cast<float*>(workspace.token_alpha.data),
-            static_cast<float*>(workspace.shared_scale.data));
+            static_cast<float*>(workspace.shared_scale.data),
+            Select ? static_cast<unsigned int*>(workspace.ticket.data) : nullptr);
     CUDA_CHECK(cudaGetLastError());
 }
 

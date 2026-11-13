@@ -14,8 +14,6 @@
 #include <math_constants.h>
 
 #include <algorithm>
-#include <array>
-#include <atomic>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -199,29 +197,6 @@ void launch_select_plan(const SelectArgs& select, const PlanArgs& plan, cudaStre
     ::ninferno::allow_dynamic_smem(attribute, select_plan_kernel, static_cast<int>(kPlanSharedCeiling));
     CUDA_CHECK(pdl::launch({dim3(1), dim3(kPlanWarps * 32), smem, stream}, false, true,
                            select_plan_kernel, select, plan));
-}
-
-namespace {
-__device__ int g_combine_tickets[kCombineTickets]; // zero-initialized with the module
-} // namespace
-
-// The array's address on the current device (every device has its own copy of the module).
-int* combine_tickets() {
-    constexpr int kDevices = 64;
-    static std::array<std::atomic<int*>, kDevices> cache{};
-    int device = 0;
-    CUDA_CHECK(cudaGetDevice(&device));
-    if (device < 0 || device >= kDevices) {
-        throw std::runtime_error("moe: device ordinal past the combine ticket cache");
-    }
-    int* tickets = cache[device].load(std::memory_order_acquire);
-    if (tickets == nullptr) {
-        void* p = nullptr;
-        CUDA_CHECK(cudaGetSymbolAddress(&p, g_combine_tickets));
-        tickets = static_cast<int*>(p);
-        cache[device].store(tickets, std::memory_order_release);
-    }
-    return tickets;
 }
 
 void launch_combine(const CombineArgs& args, cudaStream_t stream) {
