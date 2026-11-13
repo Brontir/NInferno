@@ -122,11 +122,12 @@ inline constexpr std::string_view kR8T8Sweep =
     "moe_bench H 2048 F 512 E 128 k 8, published layout, R8 w4r1 gate/up against the A16 "
     "register MMA, T = 1..8, Q3_K/Q4_K/Q5_K/Q6_K/IQ3_XXS (2026-11-03, 55333b90 and be7fa880; "
     "commit 9aa7e431)";
-// The same command on the two Ampere cards (13.11, #616 step 5): the PR's tree with the ga10x
-// rule's limit at kR8Tokens so that the forced R8 plan runs at T = 5..8, two passes each.
+// The same command on the two Ampere cards (13.11, #616 step 5): the tree of 2b37dfa7f with the
+// ga10x rule's limit at kR8Tokens so that the forced R8 plan runs at T = 5..8, two passes each.
 inline constexpr std::string_view kR8SwSweep =
     "moe_bench H 2048 F 512 E 128 k 8, published layout, R8 w4r1 gate/up against the A16 "
-    "register MMA, T = 1..8, Q3_K/Q4_K/Q5_K/Q6_K/IQ3_XXS, two passes (2026-11-13, DECISIONS 82)";
+    "register MMA, T = 1..8, Q3_K/Q4_K/Q5_K/Q6_K/IQ3_XXS, two passes (2026-11-13, 2b37dfa7f with "
+    "the ga10x limit at eight, DECISIONS 82)";
 inline constexpr std::string_view kConservative =
     "none: no card of the generation was swept; conservative, the narrow limit (kR8NarrowTokens), "
     "where R8 measured at or ahead of the register MMA on the swept boards but two Q6_K cells";
@@ -304,7 +305,8 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      "RTX 4090 (3.1) -9..-10 / -6..-8 %, 4060 Ti (3.3) -3..-6 / -2..-4 %, 5090 (4.4) -4..-8 / "
      "-4..-8 %, 5070 Ti (5.2, narrow) -1..-4 / -1..-6 %, which turned end to end: C8 UD-Q3_K_S "
      "(frag IQ3_XXS) RTX 5070 Ti 104.9 -> 102.8 tok/s at eight tokens against four, RTX 4090 "
-     "129.1 -> 134.0, 4060 Ti 45.2 -> 45.6",
+     "129.1 -> 134.0, 4060 Ti 45.2 -> 45.6; the narrowing side rests on the RTX 5070 Ti alone "
+     "(the one board at or above the 4.5 line), the other three bound it from below",
      "moe_bench Qwen3.6-35B's shape (H 2048, F 512, E 256, k 8), frag; end to end C8"},
 
     // --- Measured cells the table does not act on ---
