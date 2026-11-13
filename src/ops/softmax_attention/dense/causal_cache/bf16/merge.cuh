@@ -115,7 +115,7 @@ __launch_bounds__(Schedule::kThreads) __global__
 
     const float value = (head_l > 0.0f) ? numerator / head_l : 0.0f;
     const auto index  = causal_q_index<Geometry>(q_head, d, output_column);
-    out[index]        = causal_gated_output(value, gate ? &gate_value : nullptr);
+    out[index]        = causal_gated_output(value, gate != nullptr, gate_value);
 }
 
 

@@ -125,7 +125,7 @@ __launch_bounds__(256) __global__
             causal_store_inverse_rotated_row<Geometry>(normalized, out, q_head, output_column);
     } else {
         const auto index = causal_q_index<Geometry>(q_head, d, output_column);
-        out[index]       = causal_gated_output(value, gate ? &gate_value : nullptr);
+        out[index]       = causal_gated_output(value, gate != nullptr, gate_value);
     }
 }
 
