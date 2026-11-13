@@ -59,6 +59,10 @@ ninferno_add_op_bench(ninferno_nvfp4_linear_add_bench SOURCES "${CMAKE_CURRENT_L
 ninferno_add_op_bench(ninferno_fp8_linear_add_bench SOURCES "${CMAKE_CURRENT_LIST_DIR}/fp8_linear_add_bench.cu")
 ninferno_add_op_bench(ninferno_causal_softmax_attention_bench
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/causal_softmax_attention_bench.cu")
+# One decode step of the KV-grouped attention (Qwen3.5-9B geometry, every layer's cache), for ncu
+# outside the server (#849, #853, #856).
+ninferno_add_op_bench(ninferno_kv_decode_attention_bench
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/kv_decode_attention_bench.cu")
 ninferno_add_op_bench(ninferno_context_softmax_attention_bench
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/context_softmax_attention_bench.cu")
 ninferno_add_op_bench(ninferno_sliding_window_attention_bench
