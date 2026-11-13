@@ -542,7 +542,8 @@ VoltaDecodeKernel kernel_for(std::int32_t head_dim, std::int32_t rows) {
 
 namespace {
 
-// The instance's MaxRows (kernel_for_rows's choice) and whether it is the tiled kernel.
+// The instance's MaxRows: kernel_for_rows's choice, step for step (keep the two together; the
+// facts' key and the launched kernel must name the same instance).
 template <int D>
 int max_rows_for(std::int32_t rows) {
     if (rows <= 4) return 4;
