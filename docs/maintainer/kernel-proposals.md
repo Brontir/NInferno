@@ -223,7 +223,9 @@ prediction so far.
     KV bytes a call.
   - RTX 2080 Ti: at least 1.025x. Over 1.25x is a finding: the tile's compute term was wrong.
   - RTX 4070 Ti, 4090, 5070 Ti, 5090: within 0.97-1.03x.
-  - Bytes: `ninferno_softmax_attention_bf16_test` passes, and BF16 decode outputs are
-    bit-identical to master.
+  - Bytes: `ninferno_softmax_attention_bf16_test` passes, and
+    `ninferno_bf16_decode_identity_test` finds the output, the split partials and the appended
+    cache byte-identical to the former instance (one D warp, compiled in the test; its SASS is
+    master's).
 - A/B: not run.
 - Decision: open.
