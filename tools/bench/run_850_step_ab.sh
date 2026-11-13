@@ -37,7 +37,8 @@
 #
 # Environment (defaults): MODEL (unsloth/Qwen3.5-9B-GGUF), QUANT (Q4_K_M; its down projections are
 # Q6_K and Q4_K; QUANT=Q5_K_M runs the Q5_K down entries), ROUNDS (6 a build, even), REQUESTS (2 a
-# round), OUT_TOKENS (512), CHARS (95940), MAX_CONTEXT (32768), PORT (18850), BASE (origin/master),
+# round), OUT_TOKENS (512), CHARS (95940: step_ab.py refuses a prompt outside 22,184 tokens ±3 %,
+# the frozen workload), MAX_CONTEXT (32768), PORT (18850), BASE (origin/master),
 # NO_FETCH (0), JOBS (16), ARCH (the card's), BUILD_ROOT (OUT/trees), MIN_FREE_GB (20),
 # STARTUP_TIMEOUT (900 s a server start), KEEP_BUILDS (0), ALLOW_BUSY (0), NO_CCACHE (0), PYTHON.
 #

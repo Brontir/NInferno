@@ -38,7 +38,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import perf_matrix  # noqa: E402  (the long-context prompt set: its text and question)
 
-MIN_PROMPT_TOKENS = 16384
+# The frozen workload (kernel proposal P): the default CHARS (95940) makes a 22,184-token prompt.
+# A prompt outside ±3 % of it is another context and cache regime, and the A/B refuses it.
+FROZEN_PROMPT_TOKENS = 22184
+PROMPT_TOKEN_SLACK   = 0.03
 
 
 def prompt_text(chars):
@@ -101,8 +104,11 @@ def request(args):
             row["speculation"] = timings.get("speculation")
             if (timings.get("draft_n") or 0) > 0:
                 sys.exit(f"the request drafted ({timings}): the A/B is plain decode (--spec none)")
-            if (row["prompt_tokens"] or 0) < MIN_PROMPT_TOKENS:
-                sys.exit(f"prompt of {row['prompt_tokens']} tokens: the A/B decodes at ~22K")
+            tokens = row["prompt_tokens"] or 0
+            if abs(tokens - FROZEN_PROMPT_TOKENS) > PROMPT_TOKEN_SLACK * FROZEN_PROMPT_TOKENS:
+                sys.exit(f"prompt of {tokens} tokens: the frozen A/B decodes at "
+                         f"{FROZEN_PROMPT_TOKENS} (±{PROMPT_TOKEN_SLACK:.0%}); keep CHARS at its "
+                         "default")
             if (row["completion_tokens"] or 0) < args.out_tokens or row["decode_tok_s"] <= 0:
                 sys.exit(f"the request decoded {row['completion_tokens']} of {args.out_tokens} "
                          f"tokens (rate {row['decode_tok_s']}): no full decode to time")
