@@ -63,6 +63,8 @@ ninferno_add_op_bench(ninferno_causal_softmax_attention_bench
 # outside the server (#849, #853, #856).
 ninferno_add_op_bench(ninferno_kv_decode_attention_bench
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/kv_decode_attention_bench.cu")
+# The server's ordinary decode graph profiles (models/qwen3_5/program/planning/graph_profiles.cpp).
+target_link_libraries(ninferno_kv_decode_attention_bench PRIVATE ninferno_sequence_layout)
 ninferno_add_op_bench(ninferno_context_softmax_attention_bench
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/context_softmax_attention_bench.cu")
 ninferno_add_op_bench(ninferno_sliding_window_attention_bench

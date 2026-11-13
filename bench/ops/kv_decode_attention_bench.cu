@@ -13,8 +13,12 @@
 // quantizer, with varied BF16 values.
 //
 // Timing: CUDA events around each step (all layers), median and minimum over --iters steps after
-// --warmup steps; the read rate is over the codec's KV bytes (visible keys x bytes per token), the
-// census convention of #618. The timed steps run between cudaProfilerStart and cudaProfilerStop.
+// --warmup steps, L2 evicted before each timed step outside the events (--no-flush keeps it). The
+// read rate is the census's (#618): the slope between two or more depths (--context A,B, default
+// 7843,21961) of the call time against the codec's KV bytes (visible keys x bytes per token),
+// which drops the fixed part of a call (launch, Q, partials, merge, gate); the intercept is that
+// fixed part. Each depth's call average (bytes / whole call) is printed beside it. The timed steps
+// run between cudaProfilerStart and cudaProfilerStop.
 
 #include "ninferno/ops/kv_cache_append.h"
 #include "ninferno/ops/prefill_routes.h"
@@ -24,6 +28,7 @@
 #include "core/device_class.h"
 #include "core/paged_kv_cache.h"
 #include "core/paged_kv_storage.h"
+#include "models/qwen3_5/program/planning/graph_profiles.h"
 #include "ninferno_bench_common.h"
 #include "ops/softmax_attention/dense/causal_cache/bf16/plan.h"
 #include "ops/softmax_attention/dense/causal_cache/fp8/plan.h"
@@ -65,13 +70,18 @@ enum class Execution : std::uint8_t { Eager, Graph };
 
 struct Options {
     KvCacheStorage storage = KvCacheStorage::BFloat16;
-    std::int32_t context   = 21961;
-    std::int32_t layers    = 8;
-    int iters              = 50;
-    int warmup             = 5;
-    Execution execution    = Execution::Eager;
-    bool exact             = false;
-    // 0: the eager engine's envelope, {context, context} (decode.cpp without a CUDA graph).
+    // Visible keys of the step at each depth; two or more give the slope rate.
+    std::vector<std::int32_t> contexts{7843, 21961};
+    std::int32_t layers = 8;
+    int iters           = 50;
+    int warmup          = 5;
+    Execution execution = Execution::Eager;
+    bool exact          = false;
+    bool flush          = true;
+    // The session's KV capacity: the server's last ordinary graph profile ends at capacity - 1.
+    std::uint32_t capacity = 262144;
+    // 0: the engine's envelope for the execution: {N, N} eager (decode.cpp without a CUDA graph),
+    // the server's ordinary graph profile around N with --execution graph.
     std::uint32_t envelope_min = 0;
     std::uint32_t envelope_max = 0;
 };
@@ -81,14 +91,19 @@ struct Options {
         stderr,
         "error: %s\n"
         "usage: ninferno_kv_decode_attention_bench [--codec bf16|int8|fp8|nvfp4|k8v4] "
-        "[--context N] [--layers L] [--iters N] [--warmup N] "
-        "[--execution eager|graph] [--activations fast|exact] [--envelope MIN,MAX]\n"
-        "  --context N   visible keys of the step: the new token sits at position N-1 "
-        "(default 21961)\n"
-        "  --layers L    full-attention layers a step runs, each over its own cache "
+        "[--context N[,N...]] [--layers L] [--iters N] [--warmup N] "
+        "[--execution eager|graph] [--activations fast|exact] [--no-flush] [--capacity C] "
+        "[--envelope MIN,MAX]\n"
+        "  --context N,...  visible keys of the step at each depth: the new token sits at "
+        "position N-1 (default 7843,21961; two or more depths give the slope rate)\n"
+        "  --layers L       full-attention layers a step runs, each over its own cache "
         "(default 8, Qwen3.5-9B)\n"
-        "  --envelope    the execution envelope (default N,N, the eager engine's); a graph "
-        "profile's window widens the partition capacity\n",
+        "  --execution      eager: envelope {N,N}, as the engine without CUDA graphs; graph: the "
+        "step replayed as a graph over the server's ordinary graph profile around N\n"
+        "  --no-flush       keep L2 between timed steps (default: evict it before each step)\n"
+        "  --capacity C     session KV capacity, where the server's last graph profile ends "
+        "(default 262144)\n"
+        "  --envelope       an explicit execution envelope (one depth only)\n",
         message);
     std::exit(2);
 }
@@ -125,8 +140,15 @@ Options parse_options(int argc, char** argv) {
             }
             if (!found) usage("--codec expects bf16, int8, fp8, nvfp4 or k8v4");
         } else if (argument == "--context") {
-            options.context = static_cast<std::int32_t>(
-                parse_long(next("--context requires a value"), 1, max_keys, "--context"));
+            const std::string value(next("--context requires a value"));
+            options.contexts.clear();
+            std::size_t begin = 0;
+            while (begin <= value.size()) {
+                const std::size_t comma = std::min(value.find(',', begin), value.size());
+                options.contexts.push_back(static_cast<std::int32_t>(parse_long(
+                    value.substr(begin, comma - begin).c_str(), 1, max_keys, "--context")));
+                begin = comma + 1;
+            }
         } else if (argument == "--layers") {
             options.layers = static_cast<std::int32_t>(
                 parse_long(next("--layers requires a value"), 1, 64, "--layers"));
@@ -152,6 +174,11 @@ Options parse_options(int argc, char** argv) {
                 options.exact = true;
             else
                 usage("--activations expects fast or exact");
+        } else if (argument == "--no-flush") {
+            options.flush = false;
+        } else if (argument == "--capacity") {
+            options.capacity = static_cast<std::uint32_t>(
+                parse_long(next("--capacity requires a value"), 1, max_keys, "--capacity"));
         } else if (argument == "--envelope") {
             const std::string value(next("--envelope requires MIN,MAX"));
             const std::size_t comma = value.find(',');
@@ -166,15 +193,30 @@ Options parse_options(int argc, char** argv) {
             usage("unknown argument");
         }
     }
-    if (options.envelope_max == 0) {
-        options.envelope_min = static_cast<std::uint32_t>(options.context);
-        options.envelope_max = static_cast<std::uint32_t>(options.context);
+    for (const std::int32_t context : options.contexts) {
+        if (static_cast<std::uint32_t>(context) > options.capacity)
+            usage("every --context must fit the --capacity");
     }
-    const auto context = static_cast<std::uint32_t>(options.context);
-    if (options.envelope_min > options.envelope_max || context < options.envelope_min ||
-        context > options.envelope_max)
-        usage("--envelope must satisfy MIN <= context <= MAX");
+    if (options.envelope_max != 0) {
+        const auto context = static_cast<std::uint32_t>(options.contexts.front());
+        if (options.contexts.size() != 1) usage("--envelope takes one --context");
+        if (options.envelope_min > options.envelope_max || context < options.envelope_min ||
+            context > options.envelope_max)
+            usage("--envelope must satisfy MIN <= context <= MAX");
+    }
     return options;
+}
+
+// The server's ordinary decode graph profile whose frontiers hold position N-1, as the envelope
+// its captured step runs over (program/graphs.cpp: {min + 1, max + 1}).
+ops::CausalAttentionExecutionEnvelope server_graph_envelope(std::int32_t visible,
+                                                            std::uint32_t capacity) {
+    const auto frontier = static_cast<std::uint32_t>(visible - 1);
+    for (const auto& profile : models::qwen3_5::detail::ordinary_graph_profiles(capacity)) {
+        if (profile.min <= frontier && frontier <= profile.max)
+            return {profile.min + 1, profile.max + 1};
+    }
+    throw std::invalid_argument("no ordinary graph profile holds the context");
 }
 
 __global__ void initialize_values(__nv_bfloat16* data, std::size_t count, unsigned seed,
@@ -219,13 +261,15 @@ Tensor plane(DeviceBuffer& buffer, const PagedKVVectorLayout& vector, std::int32
 // step's inputs, as the engine binds them for an ordinary decode of one sequence.
 class Layer {
 public:
-    Layer(const PagedKVStorageLayout& layout, std::int32_t pages, std::int32_t position,
-          unsigned seed, cudaStream_t stream)
+    // `pages` physical pages hold the visible keys; the block table spans `logical_pages` (the
+    // envelope's capacity), its pages past the physical ones pointing at page 0, never read.
+    Layer(const PagedKVStorageLayout& layout, std::int32_t pages, std::int32_t logical_pages,
+          std::int32_t position, unsigned seed, cudaStream_t stream)
         : pages_(pages), k_pages_(plane_bytes(layout.key, pages, false)),
           v_pages_(plane_bytes(layout.value, pages, false)),
           k_scales_(layout.key.has_scale() ? plane_bytes(layout.key, pages, true) : 1),
           v_scales_(layout.value.has_scale() ? plane_bytes(layout.value, pages, true) : 1),
-          table_(static_cast<std::size_t>(pages) * sizeof(std::int32_t)),
+          table_(static_cast<std::size_t>(logical_pages) * sizeof(std::int32_t)),
           q_(std::size_t{kHeadDim} * kQueryHeads * 2),
           gate_(std::size_t{kHeadDim} * kQueryHeads * 2), k_(std::size_t{kHeadDim} * kKvHeads * 2),
           v_(std::size_t{kHeadDim} * kKvHeads * 2), out_(std::size_t{kHeadDim} * kQueryHeads * 2),
@@ -235,8 +279,9 @@ public:
         k_scales_.fill();
         v_scales_.fill();
         out_.fill();
-        std::vector<std::int32_t> table(static_cast<std::size_t>(pages));
-        for (std::int32_t page = 0; page < pages; ++page) table[page] = page;
+        std::vector<std::int32_t> table(static_cast<std::size_t>(logical_pages), 0);
+        for (std::int32_t page = 0; page < std::min(pages, logical_pages); ++page)
+            table[page] = page;
         table_.copy_from_host(table.data(), table_.bytes);
         const std::int32_t row = 0;
         position_.copy_from_host(&position, sizeof(position));
@@ -250,7 +295,7 @@ public:
             .v_pages       = plane(v_pages_, layout.value, pages, false),
             .k_scale_pages = plane(k_scales_, layout.key, pages, true),
             .v_scale_pages = plane(v_scales_, layout.value, pages, true),
-            .block_table   = Tensor(table_.p, DType::I32, {pages}),
+            .block_table   = Tensor(table_.p, DType::I32, {logical_pages}),
             .head_dim      = kHeadDim,
             .num_kv_heads  = kKvHeads,
             .storage       = layout.storage,
@@ -470,6 +515,41 @@ double median(std::vector<double> samples) {
     return n % 2 == 1 ? samples[n / 2] : 0.5 * (samples[n / 2 - 1] + samples[n / 2]);
 }
 
+// The attention kernels of a call: every kernel but the merges, the gate and the appends.
+bool attention_kernel(const LaunchRecord& record) {
+    if (record.params.func == nullptr) return false;
+    for (const char* other : {"merge", "sigmoid_mul", "append"}) {
+        if (record.name.find(other) != std::string::npos) return false;
+    }
+    return true;
+}
+
+// An ncu -k regex for the attention kernels: "kv_grouped" when it names them all (the census
+// spelling), else their names (Volta's INT8 key-major kernel, a tiled or chunked call).
+std::string attention_regex(const std::vector<LaunchRecord>& launches) {
+    std::vector<std::string> names;
+    bool grouped = true;
+    for (const LaunchRecord& record : launches) {
+        if (!attention_kernel(record)) continue;
+        grouped = grouped && record.name.find("kv_grouped") != std::string::npos;
+        if (std::find(names.begin(), names.end(), record.name) == names.end())
+            names.push_back(record.name);
+    }
+    if (names.empty()) return "kv";
+    if (grouped) return "kv_grouped";
+    std::string regex;
+    for (const std::string& name : names) regex += (regex.empty() ? "" : "|") + name;
+    return regex;
+}
+
+struct Depth {
+    std::int32_t visible = 0;
+    double kv_bytes      = 0;
+    double call_us       = 0;
+};
+
+double share(double gbs, double roof) { return roof > 0 ? 100.0 * gbs / roof : 0.0; }
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -489,121 +569,186 @@ int main(int argc, char** argv) {
         const DeviceClass& gpu              = device_class();
         const double dram_gbs               = gpu.dram_gbps();
         const double read_gbs               = bench::device_roofs().read_gbs;
+        const double l2_mib                 = static_cast<double>(gpu.l2_bytes) / 1048576.0;
 
-        const ops::CausalAttentionExecutionEnvelope envelope{options.envelope_min,
-                                                             options.envelope_max};
         const PagedKVStorageLayout layout = paged_kv_storage_layout(options.storage, kHeadDim);
         const std::size_t token_bytes =
             (layout.key.physical_bytes() + layout.value.physical_bytes()) * kKvHeads;
-        const std::int32_t pages = static_cast<std::int32_t>(
-            (options.envelope_max + kPagedKVPageSize - 1) / kPagedKVPageSize);
-        const std::int32_t slots   = pages * kPagedKVPageSize;
-        const std::int32_t visible = options.context;
+        // Evicting L2 reads a preinitialized buffer of twice its size (bench::L2FlushBuffer: a
+        // read leaves no dirty lines whose writeback the next step would pay).
+        std::optional<bench::L2FlushBuffer> flush;
+        if (options.flush)
+            flush.emplace(std::max<std::size_t>(2 * gpu.l2_bytes, std::size_t{64} << 20));
 
         std::printf("device: %s (%s, %s), %d SMs, L2 %.1f MiB, DRAM %.1f GB/s (facts), read "
                     "ceiling %.1f GB/s\n",
-                    gpu.name.c_str(), gpu.id().c_str(), gpu.arch().c_str(), gpu.sms,
-                    static_cast<double>(gpu.l2_bytes) / 1048576.0, dram_gbs, read_gbs);
-        std::printf("call: causal_softmax_attention append, D%d H%d/KV%d (Qwen3.5-9B full "
-                    "attention), B=1 W=1, gate, %d layers; visible keys %d (position %d), "
-                    "envelope [%u,%u], activations %s, execution %s\n",
-                    kHeadDim, kQueryHeads, kKvHeads, options.layers, visible, visible - 1,
-                    envelope.min_visible_keys, envelope.max_visible_keys,
-                    options.exact ? "exact" : "fast",
-                    options.execution == Execution::Eager ? "eager" : "graph");
+                    gpu.name.c_str(), gpu.id().c_str(), gpu.arch().c_str(), gpu.sms, l2_mib,
+                    dram_gbs, read_gbs);
+        std::printf(
+            "call: causal_softmax_attention append, D%d H%d/KV%d (Qwen3.5-9B full "
+            "attention), B=1 W=1, gate, %d layers; activations %s, execution %s, L2 %s "
+            "before each timed step\n",
+            kHeadDim, kQueryHeads, kKvHeads, options.layers, options.exact ? "exact" : "fast",
+            options.execution == Execution::Eager ? "eager" : "graph", flush ? "evicted" : "kept");
         std::printf("codec: %s, %zu B a token a layer (key %zu + value %zu per KV head), %zu B a "
                     "token over %d layers\n",
                     kv_cache_storage_name(options.storage).data(), token_bytes,
                     layout.key.physical_bytes(), layout.value.physical_bytes(),
                     token_bytes * options.layers, options.layers);
-        print_plan(options.storage, envelope, execution.multiprocessor_count, visible);
 
-        // The caches, filled through the codec's quantizer; the staging values are freed after.
-        std::vector<std::unique_ptr<Layer>> layers;
-        {
-            DeviceBuffer keys(std::size_t{kHeadDim} * kKvHeads * slots * 2);
-            DeviceBuffer values(std::size_t{kHeadDim} * kKvHeads * slots * 2);
-            std::vector<std::int32_t> host_positions(static_cast<std::size_t>(slots));
-            for (std::int32_t slot = 0; slot < slots; ++slot) host_positions[slot] = slot;
-            DeviceBuffer positions(host_positions.size() * sizeof(std::int32_t));
-            positions.copy_from_host(host_positions.data(), positions.bytes);
-            const Tensor position_tensor(positions.p, DType::I32, {slots});
-            for (std::int32_t index = 0; index < options.layers; ++index) {
-                const unsigned seed = 1000U * static_cast<unsigned>(index + 1);
-                layers.push_back(std::make_unique<Layer>(layout, pages, visible - 1, seed, stream));
-                layers.back()->populate(keys, values, position_tensor, seed, stream);
+        std::vector<Depth> depths;
+        // Attention-kernel launches so far, for ncu's --launch-skip.
+        long launched = 0;
+        for (const std::int32_t visible : options.contexts) {
+            const auto graph_envelope = server_graph_envelope(visible, options.capacity);
+            ops::CausalAttentionExecutionEnvelope envelope{static_cast<std::uint32_t>(visible),
+                                                           static_cast<std::uint32_t>(visible)};
+            if (options.envelope_max != 0)
+                envelope = {options.envelope_min, options.envelope_max};
+            else if (options.execution == Execution::Graph)
+                envelope = graph_envelope;
+            std::printf("\ndepth: visible keys %d (position %d), envelope [%u,%u]; the server's "
+                        "ordinary graph profile here: [%u,%u] (capacity %u)\n",
+                        visible, visible - 1, envelope.min_visible_keys, envelope.max_visible_keys,
+                        graph_envelope.min_visible_keys, graph_envelope.max_visible_keys,
+                        options.capacity);
+            print_plan(options.storage, envelope, execution.multiprocessor_count, visible);
+
+            const std::int32_t pages = (visible + kPagedKVPageSize - 1) / kPagedKVPageSize;
+            const auto logical_pages = static_cast<std::int32_t>(
+                (envelope.max_visible_keys + kPagedKVPageSize - 1) / kPagedKVPageSize);
+            const std::int32_t slots = pages * kPagedKVPageSize;
+            // The caches, filled through the codec's quantizer; the staging values are freed
+            // after.
+            std::vector<std::unique_ptr<Layer>> layers;
+            {
+                DeviceBuffer keys(std::size_t{kHeadDim} * kKvHeads * slots * 2);
+                DeviceBuffer values(std::size_t{kHeadDim} * kKvHeads * slots * 2);
+                std::vector<std::int32_t> host_positions(static_cast<std::size_t>(slots));
+                for (std::int32_t slot = 0; slot < slots; ++slot) host_positions[slot] = slot;
+                DeviceBuffer positions(host_positions.size() * sizeof(std::int32_t));
+                positions.copy_from_host(host_positions.data(), positions.bytes);
+                const Tensor position_tensor(positions.p, DType::I32, {slots});
+                for (std::int32_t index = 0; index < options.layers; ++index) {
+                    const unsigned seed = 1000U * static_cast<unsigned>(index + 1);
+                    layers.push_back(std::make_unique<Layer>(layout, pages, logical_pages,
+                                                             visible - 1, seed, stream));
+                    layers.back()->populate(keys, values, position_tensor, seed, stream);
+                }
+                CUDA_CHECK(cudaStreamSynchronize(stream));
             }
+            const std::size_t workspace_bytes =
+                ops::causal_softmax_attention_workspace_capacity_bytes(
+                    {kHeadDim, kQueryHeads, kKvHeads}, options.storage, envelope, 1, 1, 1,
+                    execution);
+            WorkspaceArena workspace(std::max<std::size_t>(workspace_bytes, 1));
+            const auto step = [&](cudaStream_t target) {
+                for (const auto& layer : layers)
+                    layer->launch(envelope, workspace, execution.on_stream(target));
+            };
+
+            // One step primes the kernels' attributes; then one layer's call is captured to read
+            // its launches back.
+            step(stream);
             CUDA_CHECK(cudaStreamSynchronize(stream));
+            const auto launches = capture_launches(*layers.front(), envelope, workspace, execution);
+            std::printf("launches a call (%zu B workspace):\n", workspace_bytes);
+            print_launches(launches);
+            const auto per_call = static_cast<long>(
+                std::count_if(launches.begin(), launches.end(), attention_kernel));
+            const double working_set = static_cast<double>(token_bytes) * visible * options.layers;
+            std::printf("KV read a step: %.1f MiB over %d layers (L2 %.1f MiB)\n",
+                        working_set / 1048576.0, options.layers, l2_mib);
+            if (working_set < 2.0 * static_cast<double>(gpu.l2_bytes))
+                std::printf("warning: the KV read of a step is below 2x L2; %s\n",
+                            flush ? "L2 is evicted before each timed step, but a step's later "
+                                    "layers may still hit lines its earlier ones left"
+                                  : "with --no-flush the steps read partly from L2");
+            // The attention launches before this depth's timed steps: the earlier depths, this
+            // depth's priming step and its warmup.
+            launched += per_call * options.layers * (1 + options.warmup);
+            std::printf("ncu: %ld attention kernel(s) a call; this depth's timed steps start "
+                        "after %ld of them: -k regex:%s --launch-skip %ld (or "
+                        "--profile-from-start off with one --context)\n",
+                        per_call, launched, attention_regex(launches).c_str(), launched);
+            launched += per_call * options.layers * options.iters;
+
+            bench::TimedGraph graph;
+            if (options.execution == Execution::Graph) graph.capture(stream, step);
+            const auto run = [&] {
+                if (options.execution == Execution::Graph)
+                    graph.launch(stream);
+                else
+                    step(stream);
+            };
+            for (int index = 0; index < options.warmup; ++index) run();
+            CUDA_CHECK(cudaStreamSynchronize(stream));
+
+            // A start and a stop event a step; the eviction runs between steps, untimed.
+            const auto steps = static_cast<std::size_t>(options.iters);
+            std::vector<cudaEvent_t> events(2 * steps);
+            for (cudaEvent_t& event : events) CUDA_CHECK(cudaEventCreate(&event));
+            CUDA_CHECK(cudaProfilerStart());
+            for (std::size_t index = 0; index < steps; ++index) {
+                if (flush) bench::flush_l2(*flush, stream);
+                CUDA_CHECK(cudaEventRecord(events[2 * index], stream));
+                run();
+                CUDA_CHECK(cudaEventRecord(events[2 * index + 1], stream));
+            }
+            CUDA_CHECK(cudaEventSynchronize(events.back()));
+            CUDA_CHECK(cudaProfilerStop());
+            std::vector<double> samples;
+            for (std::size_t index = 0; index < steps; ++index) {
+                float milliseconds = 0.F;
+                CUDA_CHECK(
+                    cudaEventElapsedTime(&milliseconds, events[2 * index], events[2 * index + 1]));
+                samples.push_back(static_cast<double>(milliseconds) * 1000.0);
+            }
+            for (cudaEvent_t event : events) CUDA_CHECK(cudaEventDestroy(event));
+
+            const double step_us  = median(samples);
+            const double min_us   = *std::min_element(samples.begin(), samples.end());
+            const double call_us  = step_us / options.layers;
+            const double kv_bytes = static_cast<double>(token_bytes) * visible;
+            const double gbs      = kv_bytes / (call_us * 1.0e3);
+            std::printf("result: codec=%s context=%d layers=%d step_us=%.2f (min %.2f) "
+                        "call_us=%.3f kv_bytes_per_call=%.0f call_average_GB/s=%.1f "
+                        "(%.1f%% of DRAM, fixed part included)\n",
+                        kv_cache_storage_name(options.storage).data(), visible, options.layers,
+                        step_us, min_us, call_us, kv_bytes, gbs, share(gbs, dram_gbs));
+            depths.push_back({visible, kv_bytes, call_us});
         }
-        const std::size_t workspace_bytes = ops::causal_softmax_attention_workspace_capacity_bytes(
-            {kHeadDim, kQueryHeads, kKvHeads}, options.storage, envelope, 1, 1, 1, execution);
-        WorkspaceArena workspace(std::max<std::size_t>(workspace_bytes, 1));
-        const auto step = [&](cudaStream_t target) {
-            for (const auto& layer : layers)
-                layer->launch(envelope, workspace, execution.on_stream(target));
-        };
 
-        // One step primes the kernels' attributes; then one layer's call is captured to read
-        // its launches back.
-        step(stream);
-        CUDA_CHECK(cudaStreamSynchronize(stream));
-        const auto launches = capture_launches(*layers.front(), envelope, workspace, execution);
-        std::printf("launches a call (%zu B workspace):\n", workspace_bytes);
-        print_launches(launches);
-        const auto matching = static_cast<int>(
-            std::count_if(launches.begin(), launches.end(), [](const LaunchRecord& record) {
-                return record.name.find("kv_grouped") != std::string::npos;
-            }));
-        const double working_set = static_cast<double>(token_bytes) * visible * options.layers;
-        std::printf("KV read a step: %.1f MiB over %d layers (L2 %.1f MiB)\n",
-                    working_set / 1048576.0, options.layers,
-                    static_cast<double>(gpu.l2_bytes) / 1048576.0);
-        // The kv_grouped launches before the timed steps: the priming step and the warmup.
-        std::printf("ncu: %d kv_grouped kernel(s) a call; the timed steps start after %d of "
-                    "them: -k regex:kv_grouped --launch-skip %d (or --profile-from-start off)\n",
-                    matching, matching * options.layers * (1 + options.warmup),
-                    matching * options.layers * (1 + options.warmup));
-
-        bench::TimedGraph graph;
-        if (options.execution == Execution::Graph) graph.capture(stream, step);
-        const auto run = [&] {
-            if (options.execution == Execution::Graph)
-                graph.launch(stream);
-            else
-                step(stream);
-        };
-        for (int index = 0; index < options.warmup; ++index) run();
-        CUDA_CHECK(cudaStreamSynchronize(stream));
-
-        std::vector<cudaEvent_t> events(static_cast<std::size_t>(options.iters) + 1);
-        for (cudaEvent_t& event : events) CUDA_CHECK(cudaEventCreate(&event));
-        CUDA_CHECK(cudaProfilerStart());
-        CUDA_CHECK(cudaEventRecord(events[0], stream));
-        for (int index = 0; index < options.iters; ++index) {
-            run();
-            CUDA_CHECK(cudaEventRecord(events[static_cast<std::size_t>(index) + 1], stream));
+        // Least squares of the call time against the KV bytes: the slope is the read rate, the
+        // intercept the fixed part of a call (for two depths, the two-point slope).
+        std::printf("\n");
+        double mean_x = 0, mean_y = 0;
+        for (const Depth& depth : depths) {
+            mean_x += depth.kv_bytes / static_cast<double>(depths.size());
+            mean_y += depth.call_us / static_cast<double>(depths.size());
         }
-        CUDA_CHECK(cudaEventSynchronize(events.back()));
-        CUDA_CHECK(cudaProfilerStop());
-        std::vector<double> samples;
-        for (int index = 0; index < options.iters; ++index) {
-            float milliseconds = 0.F;
-            CUDA_CHECK(cudaEventElapsedTime(&milliseconds, events[static_cast<std::size_t>(index)],
-                                            events[static_cast<std::size_t>(index) + 1]));
-            samples.push_back(static_cast<double>(milliseconds) * 1000.0);
+        double sxy = 0, sxx = 0;
+        for (const Depth& depth : depths) {
+            sxy += (depth.kv_bytes - mean_x) * (depth.call_us - mean_y);
+            sxx += (depth.kv_bytes - mean_x) * (depth.kv_bytes - mean_x);
         }
-        for (cudaEvent_t event : events) CUDA_CHECK(cudaEventDestroy(event));
-
-        const double step_us  = median(samples);
-        const double min_us   = *std::min_element(samples.begin(), samples.end());
-        const double call_us  = step_us / options.layers;
-        const double kv_bytes = static_cast<double>(token_bytes) * visible;
-        const double gbs      = kv_bytes / (call_us * 1.0e3);
-        std::printf("result: codec=%s context=%d layers=%d step_us=%.2f (min %.2f) call_us=%.3f "
-                    "kv_bytes_per_call=%.0f GB/s=%.1f of_dram=%.1f%% of_read_ceiling=%.1f%%\n",
-                    kv_cache_storage_name(options.storage).data(), visible, options.layers, step_us,
-                    min_us, call_us, kv_bytes, gbs, dram_gbs > 0 ? 100.0 * gbs / dram_gbs : 0.0,
-                    read_gbs > 0 ? 100.0 * gbs / read_gbs : 0.0);
+        if (sxx <= 0) {
+            std::printf("rate: one depth only, no slope; the call average above includes the "
+                        "fixed part\n");
+            return 0;
+        }
+        const double us_per_byte = sxy / sxx;
+        const double fixed_us    = mean_y - us_per_byte * mean_x;
+        const double slope_gbs   = us_per_byte > 0 ? 1.0 / (us_per_byte * 1.0e3) : 0.0;
+        std::string over;
+        for (const Depth& depth : depths)
+            over += (over.empty() ? "" : ",") + std::to_string(depth.visible);
+        std::printf("rate: codec=%s slope over contexts %s: read_rate_GB/s=%.1f of_dram=%.1f%% "
+                    "of_read_ceiling=%.1f%%; fixed part (intercept) %.3f us a call, %.2f us a "
+                    "step\n",
+                    kv_cache_storage_name(options.storage).data(), over.c_str(), slope_gbs,
+                    share(slope_gbs, dram_gbs), share(slope_gbs, read_gbs), fixed_us,
+                    fixed_us * options.layers);
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "ninferno_kv_decode_attention_bench: %s\n", error.what());
