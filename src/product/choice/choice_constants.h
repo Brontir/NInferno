@@ -1174,20 +1174,26 @@ struct ReferenceCard {
     bool kv_two_cards;    // kKvReadFactor's and kKvSmRate's rows of the generation on two lab cards
     bool exact_two_cards; // kExactComputeEta's row likewise
     std::string_view cards;
+    // The compute capability's minor the lab cards share (#863). A generation row spans minors no
+    // lab card has (gb20x: 12.0-12.9, the GB10 12.1); a board of another minor runs and estimates
+    // on the row, and the reference card decides nothing for it, as a selector rule measured on one
+    // capability keeps that capability (generation.h). The minor is a discrete device fact, so the
+    // byte class (B1, deterministic-decisions.md) still reads nothing continuous.
+    int minor;
 };
 
 inline constexpr ReferenceCard kReferenceCards[] = {
     // RTX 4070 Ti (60 SMs, 2610 MHz, 504 GB/s: 3.22 B a SM-clock) and RTX 4090 (128, 2520,
     // 1008: 3.13); the KV and exact factors measured on both (2026-10-23; the KV factors read again
     // by the census of #618 step 1, 2026-11-13).
-    {"ada", 94, 2.565e9, 3.17 * 94 * 2.565e9, true, true, "RTX 4070 Ti, RTX 4090"},
+    {"ada", 94, 2.565e9, 3.17 * 94 * 2.565e9, true, true, "RTX 4070 Ti, RTX 4090", 9},
     // RTX 5070 Ti (70 SMs, 2452 MHz, 896 GB/s: 5.22 B a SM-clock) and RTX 5090 (170, 2407, 1792:
     // 4.38); the KV factors from the census of #618 step 1 on both (NVFP4's SM rate not: 6.4 %
     // apart, kKvSmRate). The exact
     // route's extra is about 1.3 ms a step on both cards while their int8 tensor peaks differ 2.4x
     // (#851): not the flops law kExactComputeEta prices, so no row, and the activations keep the
     // default.
-    {"gb20x", 120, 2.4295e9, 4.80 * 120 * 2.4295e9, true, false, "RTX 5070 Ti, RTX 5090"},
+    {"gb20x", 120, 2.4295e9, 4.80 * 120 * 2.4295e9, true, false, "RTX 5070 Ti, RTX 5090", 0},
 };
 
 // Two configurations whose worth differs by less than this are a tie (then: the longer own context,

@@ -10,8 +10,14 @@
 // (ops/generic/compiled_codecs.h): the legacy predicates of it (r8_supports, r8_verify_compiled,
 // w4a8_supports, w4a8_ws_supports, tiled_supports, volta_hmma_codec) are held to the lists' arrays
 // and to the engine's functions, for every QType and every WeightCodec value.
+//
+// The measured per-format rules (#615 F6) left the table for format_rules.h's rows: the legacy
+// predicates of them (mmq_verify_format, light_ggml_step, tall_tile_format, w4a8_ws_extra's
+// formats, r8_verify_supports, and the Q4_0 of r8_verify_takes_shape) are held to `holds`, so
+// adding or removing a format of a rule fails here as well as in the selector goldens.
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/compiled_codecs.h"
+#include "ops/generic/format_rules.h"
 #include "ops/generic/format_traits.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
@@ -279,6 +285,8 @@ int main() {
     using generic::compiled;
     using generic::format_traits;
     using generic::Variant;
+    using generic::format_rules::holds;
+    using generic::format_rules::Rule;
 
     // The table names each format once.
     for (std::size_t i = 0; i < generic::kFormatTraits.size(); ++i) {
@@ -300,16 +308,19 @@ int main() {
         agree(legacy::workspace_qx(q), t.qx_g64, "workspace I8 format", v);
         agree(legacy::sched_iq2(q), t.sched_iq2, "rules_r8 iq2 class", v);
         agree(legacy::decode_heavy(q), t.decode_heavy, "rules_r8 decode_heavy", v);
-        agree(legacy::mmq_verify_format(q), t.mmq_verify, "mmq_verify_format", v);
-        agree(legacy::light_ggml_step(q), t.light_step, "light_ggml_step", v);
-        agree(legacy::tall_tile_format(q), t.tall_tile, "tall_tile_format", v);
-        agree(legacy::w4a8_ws_extra_format(q), t.w4a8_ws_tuned, "w4a8_ws_extra format", v);
+        agree(legacy::mmq_verify_format(q), holds(Rule::MmqVerify, q), "mmq_verify_format", v);
+        agree(legacy::light_ggml_step(q), holds(Rule::LightStep, q), "light_ggml_step", v);
+        agree(legacy::tall_tile_format(q), holds(Rule::TallTile, q), "tall_tile_format", v);
+        agree(legacy::w4a8_ws_extra_format(q), holds(Rule::W4a8WsTuned, q), "w4a8_ws_extra format",
+              v);
+        agree(q == QType::GGML_Q4_0, holds(Rule::R8VerifyQ40MinValues, q),
+              "r8_verify_takes_shape's Q4_0", v);
         agree(legacy::w4a8_ws_supports(q), compiled(Variant::W4a8Ws, q), "w4a8_ws_supports", v);
         agree(legacy::w4a8_ws_supports(q), generic::w4a8_ws_supports(q), "engine w4a8_ws_supports",
               v);
         agree(legacy::r8_supports(q), compiled(Variant::R8, q), "r8_supports", v);
         agree(legacy::r8_supports(q), generic::r8_supports(q), "engine r8_supports", v);
-        agree(legacy::r8_verify_supports(q), t.r8_verify, "r8_verify_supports", v);
+        agree(legacy::r8_verify_supports(q), holds(Rule::R8Verify, q), "r8_verify_supports", v);
         agree(legacy::r8_verify_supports(q), generic::r8_verify_supports(q),
               "engine r8_verify_supports", v);
         agree(legacy::r8_verify_compiled(q), compiled(Variant::R8Prequant, q), "r8_verify_compiled",

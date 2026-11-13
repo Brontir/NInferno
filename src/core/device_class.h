@@ -361,11 +361,46 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
 // from the PCI id or the SM count, the architecture's features, and the per-block and per-SM
 // limits of the architecture. Its driver clocks are 0 and its `facts` empty (FactSource::None):
 // a test that wants the table's facts sets `facts = machine_facts_of(d)`. For host tests of the
-// heuristics and route tables that read a class, on GPUs this machine lacks, and for a named board
-// (product::gpu_key_of). Host only (device_class_host.cpp, in ninferno_core_host).
+// heuristics and route tables that want arbitrary fields, on GPUs this machine lacks; not a board
+// (a named board's class is board_class below). Host only (device_class_host.cpp, in
+// ninferno_core_host).
 [[nodiscard]] DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int minor,
                                                  int sms, std::size_t l2_bytes,
                                                  std::size_t global_bytes);
+
+// What the CUDA query reports of a board besides its identity and memory size: the L2 and the
+// clocks and bus width DeviceClass carries as the driver's, the input of machine_facts().
+struct BoardDriverView {
+    std::size_t l2_bytes = 0;
+    int sm_clock_khz     = 0;
+    int memory_clock_khz = 0;
+    int memory_bus_bits  = 0;
+};
+
+// A registry row's values as a stock board's driver spells them: the row's L2 (0 where the row has
+// none), the boost clock, half the data rate (rounded as machine_facts reads the row) and the bus
+// width, so machine_facts() of the class is the row's own.
+[[nodiscard]] BoardDriverView registry_driver_view(const GpuFactsRow& row) noexcept;
+
+// A board known by its facts (#612 step 10): the PCI id, the compute capability, the SMs and the
+// memory size; the rest from the registry.
+struct BoardClassSpec {
+    std::uint32_t pci_device_id = 0; // 0: an id the registry has no row of
+    int major = 0, minor = 0, sms = 0;
+    std::size_t global_bytes = 0; // a driver's total, or plan_board_total_bytes of the row's VRAM
+    // The driver's view. nullopt: the registry row of the id and architecture
+    // (registry_driver_view), all 0 for an id the registry lacks.
+    std::optional<BoardDriverView> driver;
+    // The features of the engine the board would run under. nullopt: the architecture's row
+    // (device_features_for). mma_slow is the board's own (board_mma_slow) either way.
+    std::optional<DeviceFeatures> engine;
+};
+
+// The one class builder for a named board: synthetic_device_class's identity, features and
+// architecture limits, the driver's view of `spec`, and `facts = machine_facts_of` of it. What the
+// plan (runtime::plan_device_class), the selector golden boards (board_device_class) and
+// `ninferno-serve price` substitute for a board. Host only, like synthetic_device_class.
+[[nodiscard]] DeviceClass board_class(const BoardClassSpec& spec);
 
 // While alive, device_class() (the current device's form) answers `substitute` on this thread;
 // device_class(int) still queries the ordinal. A PerDevice cache (core/per_device.h) and the route

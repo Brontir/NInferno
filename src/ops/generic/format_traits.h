@@ -2,7 +2,7 @@
 
 // What the generic path knows about each stored format, as one table: a row per QType, read by the
 // admission predicates of generic_routes.cpp and generic_select.cpp (r8_k_values, w4a8_k_admits,
-// r8_verify_supports, ...). A new format is one row here, not a case label in a dozen switches.
+// the I8 formats, ...). A new format is one row here, not a case label in a dozen switches.
 // Reading a row never queries the device: a predicate that also looks at the card keeps that part
 // and reads only the format from here.
 //
@@ -10,9 +10,12 @@
 //   codec fact       true of the bytes of the format, for every build and card;
 //   measured rule    a per-card sweep result, not derived from the format: it holds on the cards
 //                    named in its comment, and must be re-checked when a kernel it was measured on
-//                    changes. No field is a threshold; a measured rule is one bit per format.
+//                    changes (decode_heavy, the one left here).
 // What this binary compiles for a format (its R8, W4A8, producer-warp and tiled codecs) is not
-// here: it is the launch files' lists, compiled_codecs.h (#615 F4).
+// here: it is the launch files' lists, compiled_codecs.h (#615 F4). The measured per-format rules
+// of the selection (light_step, tall_tile, mmq_verify, w4a8_ws_tuned, r8_verify) and their
+// thresholds are not here either: they are format_rules.h's rows, with the cards and the source of
+// their evidence (#615 F6).
 //
 // A QType without a row (a value the enum does not name) reads as the default row: no capability,
 // the 32-value R8 step.
@@ -33,38 +36,11 @@ struct FormatTraits {
     // [codec fact] The Q4/Q5/Q6 G64 weights (one scale and one high plane per 64 values): the
     // formats of the I8 tile and of the int8 prefill tiers (i8_format, qx_format).
     bool qx_g64 = false;
-    // [measured rule] The codebook formats, whose register-MMA dequant looks every value up in a
-    // grid per token tile: they take MMQ at verify widths (mmq_verify_format). Evidence: ISTA IQ3_S
-    // 27B C4 MTP3, 16-token verify, every iq / K-quant band on mmq: L4 79.4 -> 89.2 tok/s
-    // (+12.3 %), RTX 5070 Ti 242.7 -> 270.9 (+11.6 %); RTX 4090 cellgt ABBA (UD-Q4_K_XL 27B
-    // DFlash2, Muse 30B Q4_K_M) is why the K-quants are NOT in the set (their affine dequant is
-    // cheap); RTX 2080 Ti (IQ4_XS lost 23-38 % on the register MMA there). See mmq_verify_rule.
-    bool mmq_verify = false;
-    // [measured rule] Formats measured faster on the four-warp ring step of the ggml-step decoder
-    // (light_ggml_step): RTX 5080, T = 1, n = 3840..12288 (the comment of light_ggml_step).
-    bool light_step = false;
-    // [measured rule] The format whose 128x32 register-MMA tile was 10..20 % faster than the 64x64
-    // one from 97 tokens, on all seven boards timed. [compiled fact behind it]
-    // ptxas shows the 64x64 tile spilling where the 128x32 tile spills less (sm_86..sm_120); that
-    // is the reason, not the evidence.
-    bool tall_tile = false;
-    // [measured rule] Of the formats the producer-warp W4A8 tile is compiled for
-    // (w4a8_ws_supports, compiled_codecs.h), those a measured dense-tune choice may move to it on
-    // sm_89 / sm_120 (w4a8_ws_extra).
-    bool w4a8_ws_tuned = false;
     // [codec fact] K values of the group the W4A8 tile's zero tail may start on when K is not a
     // whole 128-value tile (w4a8_k_admits): 32 for the 32-value blocks, 64 for the 64-value groups
     // (a K of whole groups past the last 128-value tile, e.g. gpt-oss's 2880 in a native G64
     // conversion), or 0 for a format that needs whole tiles.
     std::uint8_t w4a8_tail_k = 0;
-    // [measured rule] R8 takes the format at verify widths on every card (r8_verify_supports).
-    // Evidence by row: IQ2_S, IQ3_S, IQ3_XXS: RTX 5080 shape micro-benchmark, T = 4, quantize + R8
-    // against the register MMA 0.73-0.91 on the large shapes; IQ2_XXS and IQ2_XS: not separately
-    // measured (they follow their family); Q8_G32: RTX 5090 and 5070 Ti bench, RTX 4090 spec-tune;
-    // Q4_0: end to end on RTX 4090 / 5090 (generic_gemm.h, r8_verify_supports comment), and the
-    // Q4_0 RTX 4090 / 3090 A B B A of r8_verify_takes_shape is the shape-threshold evidence
-    // (n * k >= 24M values), not the format's.
-    bool r8_verify = false;
     // [codec fact] The K values one R8 step of the format covers (r8_k_values).
     std::uint8_t r8_k_values = 32;
     // [codec fact] A grid-lookup decoder of IQ2's weight (IQ2_XXS, IQ2_XS, IQ2_S and IQ1_S / IQ1_M,
@@ -84,7 +60,7 @@ inline constexpr std::array kFormats{
     FormatTraits{.q = Q::Q4_G64_FP16, .qx_g64 = true, .w4a8_tail_k = 64},
     FormatTraits{.q = Q::Q5_G64_FP16, .qx_g64 = true, .w4a8_tail_k = 64},
     FormatTraits{.q = Q::Q6_G64_FP16, .qx_g64 = true, .w4a8_tail_k = 64},
-    FormatTraits{.q = Q::Q8_G32_FP16, .w4a8_tail_k = 32, .r8_verify = true},
+    FormatTraits{.q = Q::Q8_G32_FP16, .w4a8_tail_k = 32},
     FormatTraits{.q = Q::BF16},
     FormatTraits{.q = Q::FP32},
     FormatTraits{.q = Q::INT32},
@@ -94,49 +70,24 @@ inline constexpr std::array kFormats{
     FormatTraits{.q = Q::FP8_E4M3FN_ROW_F32},
     FormatTraits{.q = Q::FP8_E4M3FN_B128_F32},
     FormatTraits{.q = Q::U4_G128_ZP_FP16},
-    FormatTraits{.q = Q::GGML_Q4_K, .light_step = true, .tall_tile = true, .r8_k_values = 64},
-    FormatTraits{.q = Q::GGML_Q5_K, .light_step = true, .r8_k_values = 64},
+    FormatTraits{.q = Q::GGML_Q4_K, .r8_k_values = 64},
+    FormatTraits{.q = Q::GGML_Q5_K, .r8_k_values = 64},
     FormatTraits{.q = Q::GGML_Q6_K, .r8_k_values = 128},
     FormatTraits{.q = Q::GGML_Q3_K, .r8_k_values = 128, .decode_heavy = true},
     FormatTraits{.q = Q::GGML_Q2_K, .r8_k_values = 128},
-    FormatTraits{
-        .q = Q::GGML_IQ4_XS, .mmq_verify = true, .light_step = true, .w4a8_ws_tuned = true},
-    FormatTraits{.q            = Q::GGML_IQ3_XXS,
-                 .mmq_verify   = true,
-                 .light_step   = true,
-                 .r8_verify    = true,
-                 .decode_heavy = true},
-    FormatTraits{.q             = Q::GGML_IQ3_S,
-                 .mmq_verify    = true,
-                 .light_step    = true,
-                 .w4a8_ws_tuned = true,
-                 .r8_verify     = true,
-                 .decode_heavy  = true},
-    FormatTraits{.q = Q::GGML_Q4_0, .light_step = true, .w4a8_tail_k = 32, .r8_verify = true},
-    FormatTraits{.q = Q::GGML_Q4_1, .light_step = true, .w4a8_tail_k = 32},
-    FormatTraits{.q = Q::GGML_Q5_0, .light_step = true, .w4a8_tail_k = 32},
-    FormatTraits{.q = Q::GGML_Q5_1, .light_step = true, .w4a8_tail_k = 32},
-    FormatTraits{.q = Q::GGML_IQ4_NL, .mmq_verify = true, .light_step = true, .w4a8_tail_k = 32},
-    FormatTraits{.q             = Q::GGML_IQ2_XXS,
-                 .mmq_verify    = true,
-                 .w4a8_ws_tuned = true,
-                 .r8_verify     = true,
-                 .sched_iq2     = true,
-                 .decode_heavy  = true},
-    FormatTraits{.q             = Q::GGML_IQ2_XS,
-                 .mmq_verify    = true,
-                 .w4a8_ws_tuned = true,
-                 .r8_verify     = true,
-                 .sched_iq2     = true,
-                 .decode_heavy  = true},
-    FormatTraits{.q            = Q::GGML_IQ2_S,
-                 .mmq_verify   = true,
-                 .light_step   = true,
-                 .r8_verify    = true,
-                 .sched_iq2    = true,
-                 .decode_heavy = true},
-    FormatTraits{.q = Q::GGML_IQ1_S, .mmq_verify = true, .sched_iq2 = true, .decode_heavy = true},
-    FormatTraits{.q = Q::GGML_IQ1_M, .mmq_verify = true, .sched_iq2 = true, .decode_heavy = true},
+    FormatTraits{.q = Q::GGML_IQ4_XS},
+    FormatTraits{.q = Q::GGML_IQ3_XXS, .decode_heavy = true},
+    FormatTraits{.q = Q::GGML_IQ3_S, .decode_heavy = true},
+    FormatTraits{.q = Q::GGML_Q4_0, .w4a8_tail_k = 32},
+    FormatTraits{.q = Q::GGML_Q4_1, .w4a8_tail_k = 32},
+    FormatTraits{.q = Q::GGML_Q5_0, .w4a8_tail_k = 32},
+    FormatTraits{.q = Q::GGML_Q5_1, .w4a8_tail_k = 32},
+    FormatTraits{.q = Q::GGML_IQ4_NL, .w4a8_tail_k = 32},
+    FormatTraits{.q = Q::GGML_IQ2_XXS, .sched_iq2 = true, .decode_heavy = true},
+    FormatTraits{.q = Q::GGML_IQ2_XS, .sched_iq2 = true, .decode_heavy = true},
+    FormatTraits{.q = Q::GGML_IQ2_S, .sched_iq2 = true, .decode_heavy = true},
+    FormatTraits{.q = Q::GGML_IQ1_S, .sched_iq2 = true, .decode_heavy = true},
+    FormatTraits{.q = Q::GGML_IQ1_M, .sched_iq2 = true, .decode_heavy = true},
     FormatTraits{.q = Q::GGML_TQ1_0},
     FormatTraits{.q = Q::GGML_TQ2_0},
     FormatTraits{.q = Q::GGML_Q1_0},

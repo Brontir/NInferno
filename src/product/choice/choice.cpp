@@ -1767,6 +1767,17 @@ std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates)
         out.chunk_decides      = gates.moe_chunk;
         out.generation         = r.generation;
         out.cards              = r.cards;
+        if (card.minor != r.minor) {
+            // A capability no lab card of the generation has (#863: the GB10, 12.1, under gb20x's
+            // 12.0 cards): the rows price its estimate, never a decision.
+            out.decides = out.activations_decide = out.chunk_decides = false;
+            out.other_capability                                     = true;
+            out.why = "compute capability " + std::to_string(card.major) + "." +
+                      std::to_string(card.minor) + " is not its " + std::string(gen) +
+                      " lab cards' (" + std::to_string(card.major) + "." + std::to_string(r.minor) +
+                      "): their rates stand in for the estimate, not for a decision";
+            return out;
+        }
         if (!out.decides) { out.why = std::string(gen) + "'s KV factors rest on one lab card"; }
         return out;
     }
@@ -1783,6 +1794,9 @@ std::vector<ClosedGate> closed_gates(const ModelFacts& model, const CardFacts& c
         out.push_back({"switches", "no_reference_card", "reference_factors", gen, "", 0});
     } else if (ref->lent) {
         out.push_back({"switches", "lent_generation", "generation_row", gen, "", 0});
+    } else if (ref->other_capability) {
+        out.push_back(
+            {"switches", "reference_other_capability", "capability_lab_cards", gen, "", 0});
     } else if (!ref->decides) {
         out.push_back({"switches", "reference_one_card", "reference_factors", gen, "", 1});
     }

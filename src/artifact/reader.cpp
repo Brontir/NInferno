@@ -22,6 +22,11 @@ struct Reader::Impl {
     std::uint64_t file_bytes          = 0;
     mutable std::vector<std::unique_ptr<InputFile>> files;
     mutable std::vector<std::optional<WeightGeometry>> geometries;
+    bool detached = false; // Reader::detached: no files behind the directory
+
+    explicit Impl(Directory described) : directory(std::move(described)), detached(true) {
+        geometries.resize(directory.objects.size());
+    }
 
     Impl(const std::filesystem::path& path, PendingRelayout pending) : entry(path) {
         std::error_code error;
@@ -71,6 +76,7 @@ struct Reader::Impl {
     }
 
     InputFile& file(std::size_t index) const {
+        if (detached) { throw ArtifactError("a directory without its files has no payload"); }
         if (index >= files.size()) { throw ArtifactError("invalid continuation index"); }
         if (!files[index]) {
             const auto& record = directory.files[index];
@@ -99,6 +105,12 @@ std::filesystem::path relayout_journal_path(const std::filesystem::path& entry) 
 
 Reader::Reader(const std::filesystem::path& path, PendingRelayout pending)
     : impl_(std::make_unique<Impl>(path, pending)) {}
+
+Reader::Reader(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+
+Reader Reader::detached(Directory directory) {
+    return Reader(std::make_unique<Impl>(std::move(directory)));
+}
 
 Reader::~Reader()                            = default;
 Reader::Reader(Reader&&) noexcept            = default;
@@ -135,6 +147,7 @@ void Reader::validate_object(ObjectHandle handle) const {
 }
 
 std::vector<ReadSegment> Reader::segments(std::uint64_t offset, std::uint64_t bytes) const {
+    if (impl_->detached) { throw ArtifactError("a directory without its files has no payload"); }
     const auto& data = directory();
     if (offset > data.payload_bytes || bytes > data.payload_bytes - offset) {
         throw ArtifactError("read range exceeds logical payload");
