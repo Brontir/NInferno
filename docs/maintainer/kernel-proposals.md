@@ -231,9 +231,17 @@ prediction so far.
      - Bytes. Its k CTAs stream k x S x D x 4 B at 32 B/clk.
 
      The rule takes the chunk with the smaller max(issue, bytes) on the most loaded SM, with
-     F = 500 (the sm_120a count of 391 moves no decision at a decode token) and S the partition's
-     capacity. The L2 round trip both chunks share is left out. Both terms are counted, nothing is
-     fitted. What follows from them:
+     F = 500 (the sm_120a count of 391 moves no decision at W 1-11; the counts' source is in
+     `causal_merge_shape.h`) and S the partition's capacity. Both terms are counted, nothing is
+     fitted. What the law leaves out:
+     - the L2 round trip both chunks share;
+     - the stage chain. Two stages are in flight, so the law holds while the wide chunk has at
+       most two stages (S <= 32). Past that, the wide chunk adds an uncounted round trip every
+       two stages, which makes the rule favour 256 columns on small boards at large capacity;
+     - the live splits. The law prices the partition's capacity, the most a call can run, not the
+       splits a call's window actually runs.
+
+     What follows from the terms:
      - every narrow CTA repeats the fixed work, so where k narrow CTAs share an SM the fixed work
        is issued k times. The bytes-only rule never counted this;
      - at W = 1 (n = 16, S = SMs / 2) narrowing pays only where each narrow CTA has an SM to
@@ -380,6 +388,16 @@ prediction so far.
     (3,084 against 1,112 issue clocks), about 9 µs a step. The measured gap between the narrowed
     codecs (INT8, FP8: -4, -8) and the 256-column ones (NVFP4, K8V4: 2, 1) is 6-10 µs a step.
     Law 2 keeps 256 columns on the 3060.
+  - The narrowed codec that goes the other way: BF16 was narrowed by the same rule (through
+    causal_merge_d_chunk in launch_bf16_kv_merge). It measured about +10 µs a step, a gain,
+    where law 2 puts the narrowing's cost at about 9 µs a step. Taken at face value, the cell
+    contradicts law 2.
+    - Its two A runs disagree by 39 µs a step (169.8 and 130.5), four times the effect, so the
+      cell cannot decide in either direction. The noise is the likely reason, but this run does
+      not show it.
+    - It is reported with the cells that agree, not left out. The rerun under prediction 2 runs
+      BF16 at 256 columns on the 3060 and must repeat it with at least four passes before it
+      counts either way.
   - Not explained, on the 256-column codecs: NVFP4 and K8V4 gain 1-2 µs a step against 6 (5-10)
     under either law. No counted term accounts for it. The next step is ncu of master's and the
     branch's 256-column merge on the 3060, L2-hot (`--cache-control none`): issue-active, stall

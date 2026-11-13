@@ -30,9 +30,26 @@ namespace ninferno::ops::detail {
 // 256 columns. The chunk changes which CTA sums a column, never the order of its sum: the output
 // is the same bits either way.
 inline constexpr int kCausalMergeNarrowDChunk = 64;
-// SASS counts, per warp, of the 256-thread merge (sm_75/86/89: 497-500; sm_120a: 391, which moves
-// no decision at a decode token): the fixed work of a CTA, each stage past the first, and the
-// owner's chain per split (an x16 body of 60 instructions: weight, test, value, FFMA).
+// SASS counts, per warp, of the 256-thread merge. Their source (#867):
+// - the instances: causal_natural_merge_kernel<CausalGeometry<256, 16, 4>, D, false, false,
+//   false, false> at D = 64 and 256 (the decode-token form; both chunks give the same counts);
+// - the commands: `nvcc -std=c++20 -O3 -cubin -arch=sm_XX` (CUDA 13.2) of a file that takes their
+//   addresses, then `cuobjdump -sass` (CUDA 13.1);
+// - fixed work: the static instructions from the entry to the end of the first stage's refetch
+//   (the twelfth LDG.E.128), plus those from the last barrier to the final EXIT. That is
+//   sm_75 500, sm_86 497, sm_89 497, sm_120a 391;
+// - a further stage: from the barrier after the first chain to the sixteenth LDG.E.128. That is
+//   sm_75 65, sm_86 74, sm_89 74, sm_120a 67, rounded to 70;
+// - a split: the chain's x16 body is 60 instructions (weight, test, value, FFMA), 3.75 a split,
+//   rounded up to 4.
+// One F = 500 serves every architecture, the largest count, so a board is never priced as
+// narrowing more cheaply than its SASS says. sm_120a's own 391 is deliberately not used: on the
+// RTX 5090 and 5070 Ti it changes no decision at W 1-11 with the wave partition's splits. At
+// W = 1 a board's decision moves only for F under 210 (RTX 4070 Ti; 119 on the 4060 Ti, 61 on the
+// 3060), far below every count. These counts are not yet in the kernel-facts snapshots
+// (tools/kernel_facts, ninferno_kernel_facts_test). That tool reads the register-MMA kernels only,
+// and adding the merges needs its kernel set and a snapshot per architecture, which is not a small
+// change. Until then the counts are pinned here by hand.
 inline constexpr std::int64_t kCausalMergeFixedWarpInstructions = 500;
 inline constexpr std::int64_t kCausalMergeStageWarpInstructions = 70;
 inline constexpr std::int64_t kCausalMergeSplitInstructions     = 4;

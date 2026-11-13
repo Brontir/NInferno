@@ -5,6 +5,7 @@
 #include "ops/softmax_attention/dense/causal_cache/bf16/softmax.cuh"
 #include "ops/softmax_attention/common/causal_epilogue.cuh"
 #include "ops/softmax_attention/common/causal_merge_columns.cuh"
+#include "ops/softmax_attention/common/causal_merge_shape.h"
 
 namespace ninferno::ops::detail {
 
@@ -51,6 +52,7 @@ __launch_bounds__(Schedule::kThreads) __global__
     constexpr int DChunk  = Schedule::kDChunk;
     static_assert(DChunk <= Geometry::kHeadDim);
     using Columns = CausalMergeColumns<Geometry, DChunk, Schedule::kThreads>;
+    static_assert(Columns::kStageFloats == kCausalMergeStageFloats); // the chunk law's stage
 
     const int q_head      = static_cast<int>(blockIdx.x);
     const int d_start     = static_cast<int>(blockIdx.y) * DChunk;

@@ -56,7 +56,8 @@ __launch_bounds__(256) __global__
     static_assert(Geometry::kHeadDim == kCausalHeadDim);
     static_assert(DChunk > 0 && DChunk <= kCausalHeadDim);
     static_assert(!InverseRotation || DChunk == kCausalHeadDim);
-    using Columns         = CausalMergeColumns<Geometry, DChunk, 256>;
+    using Columns = CausalMergeColumns<Geometry, DChunk, 256>;
+    static_assert(Columns::kStageFloats == kCausalMergeStageFloats); // the chunk law's stage
     const int q_head      = static_cast<int>(blockIdx.x);
     const int d_start     = static_cast<int>(blockIdx.y) * DChunk;
     const int flat_column = static_cast<int>(blockIdx.z);

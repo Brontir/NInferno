@@ -272,6 +272,8 @@ static_assert(causal_merge_d_chunk(256, false, 16, 2, 64, 128) == 64);
 static_assert(causal_merge_d_chunk(256, false, 16, 3, 64, 128) == 256);
 static_assert(causal_merge_d_chunk(256, false, 16, 2, 41, 82) == 256);
 // Bytes past the repeated work: 256 splits on 28 SMs narrow.
+static_assert(causal_merge_d_chunk(256, false, 16, 1, 147, 28) == 256);
+static_assert(causal_merge_d_chunk(256, false, 16, 1, 148, 28) == 64);
 static_assert(causal_merge_d_chunk(256, false, 16, 1, 256, 28) == 64);
 static_assert(causal_merge_d_chunk(256, true, 16, 1, 85, 170) == 256);
 static_assert(causal_merge_d_chunk(64, false, 16, 1, 85, 170) == 64);
@@ -286,8 +288,9 @@ void with_sms(int sms, Launch&& launch) {
     launch();
 }
 
-// The SM counts the production launches are run under: a board that narrows a decode token and
-// one that keeps 256 columns.
+// The SM counts the production launches are run under: a board that narrows a decode token, and
+// one that keeps 256 columns at the plan's S (14 splits; at a capacity of 148 or more the
+// 28-SM launch narrows too, by the bytes term).
 constexpr int kLaunchSms[] = {170, 28};
 
 bool cuda_available() {
@@ -682,6 +685,7 @@ int main() {
             bf16_case<true, true, true>(c, b);
         }
     }
+    cudaStreamDestroy(g_stream);
     if (g_failures != 0) {
         std::printf("FAIL: %d of %d comparisons\n", g_failures, g_compared);
         return 1;
