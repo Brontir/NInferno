@@ -2168,8 +2168,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     // Under the worth, the activations only where the exact-route factor decides too and the user
     // pinned no mode (a pinned one is theirs, as a pinned chunk or drafter is), and each KV codec
     // only where its own read cost on the generation rests on two lab cards (kv_decides).
-    out.activations_by_worth = out.by_worth && ref && ref->activations_decide &&
-                               !pins.activations;
+    out.activations_by_worth = out.by_worth && ref && ref->activations_decide && !pins.activations;
     if (out.by_worth) {
         for (const KvCacheStorage kv : kvs) {
             if (!kv_decides(model, generation_of(card), kv)) { out.kv_not_decided.push_back(kv); }
