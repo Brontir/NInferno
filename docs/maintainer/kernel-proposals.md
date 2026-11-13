@@ -395,22 +395,34 @@ prediction so far.
   | RTX 4090 | 22.7 | 24.2 | 19.7 | 11.4 | 10.6 | A/B 1: BF16 and FP8 over the upper edge (20), under 1.5x of it |
   | RTX 5070 Ti | 11.4 | 13.1 | 13.0 | 6.5 | 8.5 | NVFP4 under its band (8-15), above half its lower edge |
   | RTX 3090 | 25.0 | 16.4 | 15.6 | 5.8 | **1.3** | K8V4 a finding (under half its lower edge, 3); NVFP4 under its band (6-12), above 3; BF16 over its band (18), under 1.5x (27) |
-  | RTX 2080 Ti | | | | | | rerun: the first run's DRAM share moved 55 -> 84 % between rounds of one arm |
+  | RTX 4070 Ti | 5.5 | 7.4 | 4.2 | **2.2** | 3.9 | 256 columns, band 5-11: BF16 and FP8 in range; INT8 and K8V4 under it, above half its lower edge (2.5); NVFP4 a finding by the rule, but its master arm moved 4.6 % between its two rounds (642 and 613 µs a step at 21961 keys), more than the drop |
+  | RTX 3060 | 13.6 | 5.6 | 5.8 | **2.1** | **2.2** | 256 columns, band 5-10, four passes an arm (two runs, each run alone 13.6-13.7 / 5.4-5.7 / 5.7-5.9 / 1.9-2.2 / 1.2-3.1): BF16 over the band, under 1.5x (15); FP8 and INT8 in range; NVFP4 and K8V4 findings (under half the lower edge, 2.5), ncu of their merge queued |
+  | RTX 2080 Ti | - | - | **24.2** | - | 11.7 | second run: INT8 over 1.5x the upper edge (24) by 0.2, a finding; K8V4 in range; BF16, FP8 and NVFP4 unreadable (one arm moved 20-40 % between its rounds; the card logged 21.7 s of hardware thermal slowdown and 36 s of power capping) |
 
   - The read rates do not move.
-  - The one finding is K8V4 on the RTX 3090 (1.3 against a half lower edge of 3): ncu of that
-    merge names the wrong term, as the rule says.
+  - The findings: K8V4 on the RTX 3090 (1.3 against a half lower edge of 3); NVFP4 and K8V4 on the
+    RTX 3060 (2.1 and 2.2 against 2.5); NVFP4 on the RTX 4070 Ti (2.2, its rerun pending); INT8 on
+    the RTX 2080 Ti (24.2 against 1.5 x 16 = 24). ncu of those merges names the wrong term, as the
+    rule says. Every BF16, FP8 and INT8 cell of the six readable boards except the 2080 Ti's INT8
+    is at or over half its lower edge.
   - The rotated merges (NVFP4, K8V4) keep 256 columns and get the staged loop only. They gain less
     than the law gives them on the RTX 3090 and 5070 Ti (S 41 and 35), and as predicted on the
     5090 and 4090: the law prices the staged loop without the narrower chunk too high at that S.
     Recorded, not fitted; the next prediction for the rotated merges counts the staged loop's own
     fill against the old loop's round trips there.
   - What these rows do not test: on the RTX 3090 and 5070 Ti law 2 takes the 64 columns the
-    bytes-only rule took too, so they retest prediction 1's cells. The boards where law 2 changes
-    the decision (256 columns on the 3060, 4070 Ti and 4060 Ti) are not measured yet.
-  - Acceptance is not met yet: four of the seven stand boards are measured (five needed), the
-    3060's BF16 rerun with at least four passes, its ncu and the 2080 Ti's rerun are open. The
-    Decision below stands as written until they are in.
+    bytes-only rule took too, so they retest prediction 1's cells. Of the boards where law 2
+    changes the decision (256 columns on the 3060, 4070 Ti and 4060 Ti), the 3060 and 4070 Ti
+    are measured: their BF16, FP8 and INT8 cells are in range or over it, their rotated cells
+    (which always take 256 columns) at or under the lower edge.
+  - The RTX 2080 Ti cannot be read for BF16, FP8 and NVFP4 until its cooling is checked: one arm
+    moved 20-40 % between its rounds, and the card logged hardware thermal slowdown.
+  - The 4070 Ti NVFP4 cell needs a rerun before it counts: one arm's spread is larger than the
+    drop it is read against.
+  - Acceptance is not met yet. Six of the seven stand boards are measured, but three hold
+    findings: the RTX 3090, 3060 and 4070 Ti on the rotated merges, and the 2080 Ti on INT8.
+    Still open: the ncu of the 3060's rotated merges (queued), the 4070 Ti NVFP4 rerun and a
+    readable 2080 Ti. The Decision below stands as written until they are in.
 - Other widths: the same law holds at every W.
   - The staged loop runs at every width, and the bits are unchanged.
   - At the wave partition's S = SMs / 2 (INT8, and BF16's targets), law 2 narrows up to:
