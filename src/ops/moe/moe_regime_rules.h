@@ -13,8 +13,9 @@
 // the generation), or Unmeasured (the conservative answer, with no card). A generation the table
 // does not know (generation_known false: a lent row carries no evidence, #300) takes the Unknown
 // rule: conservative, and labelled so. Conservative is the narrow limit, kR8NarrowTokens: up to
-// four tokens R8 measured at or ahead of the register MMA on five of the six boards of the
-// 2026-11-03 sweep (the sixth, the RTX 2080 Ti's Q6_K at four tokens, is the cell recorded below).
+// four tokens R8 measured at or ahead of the register MMA on every swept board and format but
+// Q6_K on two boards (the RTX 2080 Ti at four tokens, the cell recorded below; the RTX 3090 at one
+// to three tokens, +1..+7 %).
 // A widened limit (above kR8NarrowTokens) must be Measured, which tests/ops/test_moe_regime_rules
 // holds.
 //
@@ -22,14 +23,13 @@
 // measurement and why it is kept, for the regret collector and the next sweep, never read by the
 // lookup.
 //
-// The law under test (not used by any rule): R8 decodes each weight on the SM's integer lanes
-// (dp4a), the register MMA on its tensor cores, so R8's margin above four tokens should follow the
-// integer lanes an SM has per DRAM byte it must consume a cycle, lanes / dram_bytes_per_sm_cycle:
-// RTX 2080 Ti 64 / 5.86 = 10.9 (R8 loses Q6_K and Q3_K at T 5..8), RTX 4060 Ti 64 / 3.34 = 19.2
-// and RTX 4090 64 / 3.12 = 20.5 (R8 ahead by -0.4..-7 %), RTX 5070 Ti 128 / 5.22 = 24.5 and RTX
-// 5090 128 / 4.38 = 29.2 (R8 ahead by -5..-15 %; consumer Blackwell's cores are all INT32 capable,
-// 128 a SM, the others 64). It orders the six measured boards; the RTX 3090 (64 / 6.73 = 9.5) and
-// 3060 (64 / 7.24 = 8.8) are its prediction for Ampere (DECISIONS 82).
+// The law that was put to the Ampere sweep and refuted (DECISIONS 82): R8 decodes each weight on
+// the SM's integer lanes (dp4a), the register MMA on its tensor cores, so R8's margin above four
+// tokens was predicted to follow the integer lanes an SM has per DRAM byte it must consume a cycle
+// (lanes / dram_bytes_per_sm_cycle: RTX 2080 Ti 10.9, RTX 4060 Ti 19.2, RTX 4090 20.5, RTX 5070 Ti
+// 24.5, RTX 5090 29.2, which orders those five boards' T = 5..8 margins). The RTX 3090 (9.5) and
+// 3060 (8.8) sit below the RTX 2080 Ti, and the law predicted Q6_K +40..+60 % and Q3_K +15..+30 %
+// there; they measured +3..+11 % and -3..-8 %. No rule reads it; the limits stay a table.
 
 #include "core/generation.h"
 #include "core/weight.h"
@@ -107,6 +107,8 @@ struct RegimeRule {
 inline constexpr std::string_view kUnknownGeneration = "unknown";
 
 inline constexpr Card kRtx2080Ti{0x1E07, "RTX 2080 Ti"};
+inline constexpr Card kRtx3060{0x2503, "RTX 3060"};
+inline constexpr Card kRtx3090{0x2204, "RTX 3090"};
 inline constexpr Card kRtx4060Ti{0x2805, "RTX 4060 Ti"};
 inline constexpr Card kRtx4090{0x2684, "RTX 4090"};
 inline constexpr Card kRtx5070Ti{0x2C05, "RTX 5070 Ti"};
@@ -120,9 +122,14 @@ inline constexpr std::string_view kR8T8Sweep =
     "moe_bench H 2048 F 512 E 128 k 8, published layout, R8 w4r1 gate/up against the A16 "
     "register MMA, T = 1..8, Q3_K/Q4_K/Q5_K/Q6_K/IQ3_XXS (2026-11-03, 55333b90 and be7fa880; "
     "commit 9aa7e431)";
+// The same command on the two Ampere cards (13.11, #616 step 5): the PR's tree with the ga10x
+// rule's limit at kR8Tokens so that the forced R8 plan runs at T = 5..8, two passes each.
+inline constexpr std::string_view kR8SwSweep =
+    "moe_bench H 2048 F 512 E 128 k 8, published layout, R8 w4r1 gate/up against the A16 "
+    "register MMA, T = 1..8, Q3_K/Q4_K/Q5_K/Q6_K/IQ3_XXS, two passes (2026-11-13, DECISIONS 82)";
 inline constexpr std::string_view kConservative =
     "none: no card of the generation was swept; conservative, the narrow limit (kR8NarrowTokens), "
-    "where R8 measured at or ahead of the register MMA on five of the six swept boards";
+    "where R8 measured at or ahead of the register MMA on the swept boards but two Q6_K cells";
 
 inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
     // --- The widest R8 call per generation (r8_token_limit()) ---
@@ -156,15 +163,21 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      {},
      kConservative,
      "no sweep"},
+    // The two cards disagree above four tokens on Q4_K and Q5_K and both lose Q6_K there: a wider
+    // limit needs both, so the generation keeps four.
     {"r8_token_limit: ga10x",
      Regime::TokenLimit,
      "ga10x",
      nullptr,
      kR8NarrowTokens,
-     Label::Unmeasured,
-     {},
-     kConservative,
-     "no sweep"},
+     Label::Measured,
+     {kRtx3090, kRtx3060},
+     "R8 against the register MMA at T = 5..8: RTX 3090 Q6_K +3..+6 %, Q3_K -5..-8 %, Q4_K "
+     "-3..-5 %, Q5_K -5..-9 %, IQ3_XXS -8..-10 %; RTX 3060 Q6_K +8..+11 %, Q3_K -3..-7 %, Q4_K "
+     "+1..+8 %, Q5_K -1..+6 %, IQ3_XXS -6..-10 %; at T = 1..4 R8 ahead by 11..28 % on both but "
+     "Q6_K (RTX 3090 +1..+7 % at T = 1..3, -1..-2 % at 4; RTX 3060 -2..+1 %); the two passes "
+     "within 2 %, the RTX 3090's medians within 3 us of nsys kernel sums",
+     kR8SwSweep},
     {"r8_token_limit: ada",
      Regime::TokenLimit,
      "ada",
