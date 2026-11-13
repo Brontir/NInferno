@@ -7,6 +7,8 @@
 #include "ops/softmax_attention/dense/causal_cache/bf16/tiled_mma.cuh"
 #include "ops/softmax_attention/dense/causal_cache/bf16/merge.cuh"
 #include "ops/common/arch_limits.h"
+#include "ops/softmax_attention/common/causal_merge_shape.h"
+#include "core/device_class.h"
 #include <stdexcept>
 
 namespace ninferno::ops::detail {
@@ -84,20 +86,35 @@ void launch_bf16_kv_merge(const CausalAttentionOperands& p, Bf16KvCacheView<Writ
                           cudaStream_t stream) {
     if (partition.capacity > S::kThreads)
         throw std::invalid_argument("BF16 merge capacity exceeds the reduction block");
-    const dim3 grid(G::QHeads, div_up(G::kHeadDim, S::kDChunk), p.width * p.batch);
-    const auto launch = [&]<bool Aligned>() {
-        bf16_kv_merge_kernel<G, S, MultiBatch, Masked, Aligned><<<grid, S::kThreads, 0, stream>>>(
-            partials.acc, partials.maximum, partials.sum, p.positions, cache.valid_columns, p.width,
-            p.batch, partition, p.out, p.gate);
+    if (!aligned_to(partials.acc, 16))
+        throw std::invalid_argument("BF16 merge: the partials need 16-byte alignment");
+    const int columns = p.width * p.batch;
+    // The column chunk by the law of causal_merge_shape.h: the grid, the splits and the SMs.
+    const int d_chunk = causal_merge_d_chunk(S::kDChunk, false, G::QHeads, columns,
+                                             partition.capacity, device_class().sms);
+    const auto launch = [&]<bool Aligned, class Schedule>() {
+        const dim3 grid(G::QHeads, div_up(G::kHeadDim, Schedule::kDChunk), columns);
+        bf16_kv_merge_kernel<G, Schedule, MultiBatch, Masked, Aligned>
+            <<<grid, Schedule::kThreads, 0, stream>>>(partials.acc, partials.maximum, partials.sum,
+                                                      p.positions, cache.valid_columns, p.width,
+                                                      p.batch, partition, p.out, p.gate);
         CUDA_CHECK(cudaGetLastError());
     };
+    const auto shaped = [&]<bool Aligned>() {
+        if constexpr (S::kDChunk > kCausalMergeNarrowDChunk) {
+            if (d_chunk == kCausalMergeNarrowDChunk)
+                return launch.template
+                operator()<Aligned, Bf16KvMergeSchedule<kCausalMergeNarrowDChunk, S::kThreads>>();
+        }
+        launch.template operator()<Aligned, S>();
+    };
     if constexpr (AlignedCapable) {
-        if (partition.aligned) return launch.template operator()<true>();
+        if (partition.aligned) return shaped.template operator()<true>();
     } else {
         if (partition.aligned)
             throw std::invalid_argument("BF16 merge: aligned splits need the aligned instance");
     }
-    launch.template operator()<false>();
+    shaped.template operator()<false>();
 }
 
 template <class Geometry, class Schedule>
