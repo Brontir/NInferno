@@ -34,7 +34,8 @@ int resident_ctas_per_sm(const DeviceClass& d, const KernelShape& k) {
     a.numRegs                   = k.registers;
     a.sharedSizeBytes           = k.static_shared_bytes;
     a.partitionedGCConfig       = PARTITIONED_GC_OFF;
-    a.shmemLimitConfig = k.dynamic_shared_opt_in ? FUNC_SHMEM_LIMIT_OPTIN : FUNC_SHMEM_LIMIT_DEFAULT;
+    a.shmemLimitConfig =
+        k.dynamic_shared_opt_in ? FUNC_SHMEM_LIMIT_OPTIN : FUNC_SHMEM_LIMIT_DEFAULT;
     a.maxDynamicSharedSizeBytes = k.dynamic_shared_opt_in ? k.dynamic_shared_bytes : 0;
     a.numBlockBarriers          = 1;
     const cudaOccDeviceState state; // the default carveout: the whole shared memory of the SM

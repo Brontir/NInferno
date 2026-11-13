@@ -753,8 +753,9 @@ int gemma4_resident_ctas_per_sm(const generic::kernel_facts::Gemma4KernelKey& ke
                                         dynamic_shared_bytes, /*dynamic_shared_opt_in=*/true});
         if (per_sm < 1) {
             throw std::runtime_error(
-                "gemma4_attention: the " + key.kernel + " kernel does not fit one SM by its facts (sm_" +
-                *arch + ": D " + std::to_string(key.D) + " G " + std::to_string(key.G) + " slice " +
+                "gemma4_attention: the " + key.kernel +
+                " kernel does not fit one SM by its facts (sm_" + *arch + ": D " +
+                std::to_string(key.D) + " G " + std::to_string(key.G) + " slice " +
                 std::to_string(key.slice) + " rows " + std::to_string(key.rows) + " Bc " +
                 std::to_string(key.Bc) + ", " + std::to_string(facts->registers) + " registers, " +
                 std::to_string(facts->static_shared_bytes) + " B static and " +
