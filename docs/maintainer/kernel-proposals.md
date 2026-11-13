@@ -269,6 +269,15 @@ have frozen predictions so far.
   |---|---|---|---|---|
   | RTX 3060 | 31.4 %, 36.2 % | 94.7 %, 94.4 % (x 2.8) | 78-88 % | above the upper edge |
   | RTX 4090 | 75.1 %, 75.0 % | 80.8 %, 81.1 % (x 1.08) | 88-93 % | below the range |
+  | RTX 5090 | 64.7 %, 64.5 % | 89.1 %, 88.6 % (x 1.38) | 88-93 % | inside |
+  | RTX 3090 | 36.4 %, 36.6 % | 85.4 %, 84.8 % (x 2.33) | 80-90 % | inside |
+  | RTX 4070 Ti | 78.3 %, 78.1 % | 96.4 %, 96.6 % (x 1.23) | 88-93 % | above the upper edge |
+  | RTX 5070 Ti | 58.6 %, 57.6 % | 95.5 %, 94.5 % (x 1.64) | 85-92 % | above the upper edge |
+
+  The 5090, 3090, 4070 Ti and 5070 Ti rows are the 13.11 afternoon ABBA (kvab2, branch merged with
+  master). The fixed part per call rose on two boards (RTX 3090 15.7 -> 19.2 us, RTX 5070 Ti
+  10.0 -> 11.8 us) and fell on the RTX 5090 (11.8 -> 11.1 us); the slope gain outweighs it from
+  about 1K keys up. The RTX 5090's KV term at 21961 keys is 27.0 us a call (frozen bound 100 us).
 
   - The RTX 4090 passes the frozen acceptance (at least 74.8 %, 85 % of 88 %). It gains +6
     points against a predicted +13 or more: under half the predicted gain, so it is a finding.
@@ -326,8 +335,12 @@ have frozen predictions so far.
       - the call's fixed part rises by under 2 us per 8 layers.
     - Acceptance: RTX 4090 at 85 % or more with ncu idle under 10 %.
     - Refutation: idle unchanged (the spread is not the cause), or the RTX 3060 under 92 %.
-- Decision: open. The A/B of the RTX 5090, 5070 Ti, 3090 and 4070 Ti is pending, and so is the
-  ncu source view of the RTX 4090's short-scoreboard waits.
+- Decision (13.11): every card is at or above 85 % of its predicted lower edge and none is under 75 %
+  of the DRAM line, so the frozen acceptance holds on all six boards. The band itself is refuted on
+  four of them: under it on the RTX 4090, over it on the RTX 3060, 4070 Ti and 5070 Ti (the band
+  assumed a DRAM efficiency below the 94-96 % INT8 and K8V4 reach on those cards). The byte rule's
+  KLD run (Qwen3.5-9B, NVFP4 KV, --step-tokens 1, master against the branch on the RTX 5090) is
+  pending; the ncu source view of the RTX 4090's short-scoreboard waits stays open.
 
 ### M. MMQ column widths per arch and format (#619 step 13, DECISIONS 74)
 - Regime: MMQ on short prompts. Ada and Turing are done (#597, #717). Q2_K and the IQ formats still
