@@ -1,5 +1,6 @@
 #include "ops/softmax_attention/dense/causal_cache/nvfp4/plan.h"
 #include "ops/softmax_attention/dense/causal_cache/nvfp4/operands.h"
+#include "ops/softmax_attention/dense/causal_cache/nvfp4/slab_rule.h"
 #include "ops/softmax_attention/dense/causal_cache/plan_rules.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/common/native_nvfp4.h"
@@ -46,8 +47,9 @@ Nvfp4KvCausalPlan make_nvfp4_kv_causal_plan(int heads, int kv_heads, int width, 
     const int query_tile        = family == Nvfp4KvFamily::ParallelGrouped && width <= 16
                                       ? (width + 1) / 2
                                       : std::min(width, grouped_limit);
-    const int row_tiles         = (query_tile * (heads / kv_heads) + 15) / 16;
-    const bool two_ctas_per_sm  = row_tiles <= 2;
+    // The CTAs per SM of the instance that runs the query tile: a fact of its schedule (the slab
+    // kernel's one, the grouped kernel's two up to 32 rows), as instances.h asserts.
+    const bool two_ctas_per_sm = nvfp4_kv_grouped_min_blocks(query_tile * (heads / kv_heads)) >= 2;
     const auto partition =
         causal_wave_partition(independent_tiles, two_ctas_per_sm, envelope.max_visible_keys, multiprocessor_count);
     return {family, heads, kv_heads, width, batch, query_tile, envelope, partition, launch_columns};

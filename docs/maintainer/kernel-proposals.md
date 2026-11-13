@@ -58,8 +58,8 @@ A new family also costs a `Family` enum entry, which every route table parses, a
 
 ## Register
 
-The entries below come from the candidates table of #619 (section 4). Only A has a frozen
-prediction so far.
+The entries below come from the candidates table of #619 (section 4), and G from #849. A and G
+have frozen predictions so far.
 
 ### A. Pre-summed activation groups for the min-term formats (#619 steps 5-6, #709)
 - Regime: the register MMA on the min-term formats, T >= 17; Gemma heads and SwiGLU. The formats
@@ -157,6 +157,112 @@ prediction so far.
 - Prototype: `tools/bench/run_521_gateup.sh` (#606, not run).
 - Decision: run the kit first. Build only if the loss is above 3 % and #606's rule holds on the
   3090.
+
+### G. NVFP4 KV decode attention: register decode on warp-private key slabs (#849)
+- Regime: causal attention over the NVFP4 G16 KV cache at decode, the grouped calls whose query
+  rows fit one n8 tile (W = 1 on every geometry, W = 2 at four query heads per KV head), sm_80
+  and later. The census (#618, `ninferno_kv_decode_attention_bench --codec nvfp4`, the slope
+  between 7843 and 21961 keys) reads the KV at 2.2-2.8 B per SM clock: 64 % of the DRAM line on
+  the RTX 5090, 57 % on the 5070 Ti, about 80 % on the 4070 Ti and 4090, 30-34 % on the 3090 and
+  3060. INT8's kernel, with the same warps, keys and occupancy, reads at 90-92 %.
+- Weight: the KV term of a Qwen3.5-9B decode step, 1152 B per token per full-attention layer:
+  0.8 % of a 4.1 ms step at 22K keys, about 6 % at 128K, times the streams.
+- Law of today's kernel (`nvfp4/grouped_mma.cuh`, one CTA of 8 warps per 32-key tile, 2 CTAs per
+  SM, 9216 B a tile). Counted from `cuobjdump -sass` of the CUDA 13.2 build
+  (`nvfp4_kv_grouped_mma_kernel<CausalGeometry<256,16,4>, T = 1>`), cycles from `isa_facts.json`:
+  - four `__syncthreads` per tile;
+  - K decode: two 16-value groups per thread. A group costs 166 instructions on sm_86 (the
+    bit-form E2M1, the E4M3 scale in software, two 16-byte stores of FP16), 125 on sm_89 (the
+    scale by cvt) and 50-78 on sm_120a (its hardware E2M1 cvt). That is 2650, 2000 and 800-1250
+    warp instructions a tile, mostly on the 2-clock integer pipe: 1000-2650 and 400-800 clocks
+    with the other CTA. V decode costs the same.
+  - QK: 64 HMMA m16n8k16 on warp 0 alone (`ProducerWarps = RowTiles = 1`), 2048 clocks of one
+    partition's tensor pipe (32 clocks each), while seven warps wait at the barrier after it;
+  - PV: 8 HMMA a warp, 512 clocks;
+  - the next tile's `cp.async` goes out only after the V decode, so 200-1150 clocks of DRAM
+    latency (540 sm_86, 690 sm_89, 837 sm_120a, w8) show every tile;
+  - sum: 5300-8900 clocks a tile on sm_86/89, 4200-5700 on sm_120a, so 2.1-3.5 and 3.2-4.4
+    B/SM-clk. Measured: 2.2 on the 3090, 2.6 on the 4070 Ti, 2.8 on the 5090. ncu on the three
+    generations has the barrier as the main stall (46 % of samples on the 4070 Ti), and DRAM bytes
+    equal the KV bytes (3090).
+  - The residual on sm_120a: when the QK warps of the two resident CTAs share a partition, their
+    2048-clock sections serialize, which gives 2.5-3.0. The rate does not move with the
+    generation, because the serial QK, the latency and the barriers are 60-75 % of the tile.
+- Variant: `nvfp4/slab_mma.cuh`, one CTA of 8 warps per SM. Every warp owns a 16-key slab of
+  every 128 keys, with a two-stage `cp.async` ring of its own (2 x 8 x 4608 B = 72 KiB), waited
+  with `cp.async.wait_group` and `__syncwarp`: there is no CTA barrier in the loop. S^T = K Q^T,
+  with the 16 keys as M and the query rows as one n8 tile, so Q's B fragments stay in registers.
+  K and V go from `ldmatrix` of the raw code tile straight into FP16 MMA fragments: on sm_100+
+  one `cvt.rn.f16x2.e2m1x2` a pair; elsewhere the bit form at 2^-14 of the value, restored
+  exactly in FP32. Then one HMUL2 by the group's E4M3 scale per pair. The V^T and P^T fragments
+  are transposed by `movmatrix`. Each warp keeps its own online softmax, and the 8 states merge
+  once per CTA. The plan's wave partition counts one CTA per SM (`slab_rule.h`). The aligned
+  launches of the invariant profile, RowTiles >= 2, rows 9-16, and sm_70/75 keep today's kernel.
+- Counts of the variant (SASS, CUDA 13.2; one slab per warp; the loop is identical in every
+  instance):
+  - static loop: 1238 instructions on sm_86, 1171 on sm_89, 921 on sm_120a. That includes 64 FMUL
+    of the softmax rescale, which a warp skips when no row's maximum moved, and about 12
+    divergence stubs that never execute. So about 1160, 1095 and 853 issue a slab.
+  - per slab: 32 HMMA, 66 MOVM, 8 LDSM, 9 LDGSTS, 10 LDS, 6 SHFL;
+  - integer pipe: about 540 (sm_86), 470 (sm_89) and 320 (sm_120a). LOP3, SHF, PRMT and IADD3
+    are the decode. ptxas moves the left shifts to IMAD.SHL on the FMA pipe: 263 IMAD on
+    sm_86/89, plus 160 / 128 HMUL2;
+  - sm_120a: 162 F2FP (128 E2M1 pairs, 32 scales, 2 P);
+  - registers: 255 on sm_86/89, 226-238 on sm_120a, no local memory, 72 KiB dynamic and 4.5 KiB
+    static shared memory, 1 CTA per SM.
+- Capacity of the variant per SM and 128 keys (36864 B; two slabs per partition):
+  - issue: 2 x 1160 = 2320 clocks on sm_86 (15.9 B/SM-clk) and 2 x 1095 = 2190 on sm_89 (16.8).
+    sm_120a: 1706 clocks (21.6); with F2FP at 8 clocks a warp instruction (no fact yet), 2592
+    (14.2);
+  - integer pipe: 2 x 540 x 2.02 = 2180 clocks (sm_86) and 1900 (sm_89), under the issue term;
+  - tensor: 2 x 32 x 32 = 2048 clocks (18.0) on every arch;
+  - MIO: about 100 a slab. movmatrix has no measured rate; at 4 clocks it would still be under
+    the issue term;
+  - latency: two 8-long HMMA chains (264 clocks) and 37-74 KiB in flight per SM, against
+    Little's need of 4-11 KiB (line x DRAM latency, w8 to lanes-chasing).
+  - The binding term is DRAM on all six boards. The margin min(capacity) / line is 2.2 on the
+    3060, 2.4 on the 3090, 5.2 on the 4070 Ti, 5.4 on the 4090, 2.7-3.4 on the 5070 Ti and 3.2-4.1
+    on the 5090. The fixed part per CTA (the Q prologue, the first load, the last slab of an
+    uneven split, the merge) does not grow with the context, and the census slope drops it.
+- Prediction (frozen 13.11.2026, before any run): the census share of the DRAM line, from
+  `--codec nvfp4 --context 7843,21961`, eager and graph:
+
+  | card | today | predicted | KV term at 21961 keys |
+  |---|---|---|---|
+  | RTX 5090 | 64 % | 88-93 % | 130 µs -> 90-95 µs (call 207 -> 165-172 µs; the fixed 77 µs unchanged) |
+  | RTX 5070 Ti | 57 % | 85-92 % | x 0.62-0.67 |
+  | RTX 4090 | ~80 % | 88-93 % | x 0.86-0.91 |
+  | RTX 4070 Ti | 80 % | 88-93 % | x 0.86-0.91 |
+  | RTX 3090 | 30-34 % | 80-90 % | x 0.36-0.42 |
+  | RTX 3060 | 30-34 % | 78-88 % | x 0.37-0.44 |
+
+  Ampere's lower edge comes from its issue margin of only 2.2-2.4x (the bit-form decode). INT8's
+  90-92 % is the ceiling the census allows. W = 2 at four query heads per KV head (8 rows, MTP
+  verify) reads the same bytes per key at the same capacity, so it gets the same shares (the bench
+  runs W = 1 only; the e2e MTP decode measures it). The RTX 2080 Ti (sm_75) and Volta are
+  unchanged.
+- Prototype: `ninferno_kv_decode_attention_bench --codec nvfp4 --context 7843,21961` (`--execution
+  eager` and `graph`), ABBA master against the branch. `--activations exact` is the control, since
+  aligned launches keep today's kernel. ncu `--set full` of `nvfp4_kv_slab_mma_kernel` on one card
+  per generation: long scoreboard should lead, as INT8's does, with `alu` and `fma` pipe use below
+  the issue term.
+- Cost: one kernel file, its codec header and its occupancy rule. The plan's split partition
+  follows the schedule's CTAs per SM. There are no route tables (the attention plan has none), no
+  family and no selector change.
+- Numerics: Q in FP16, and K and V the codec's FP16 values times an exact power of two, with FP32
+  accumulation: the products are the same. The summation order changes: the k permutation inside
+  an MMA, a softmax per warp over 16-key slabs, the 8-way merge. `kAttentionNvfp4Criterion` is
+  unchanged. The invariant (`exact`) profile keeps today's kernel bit for bit.
+- Acceptance / refutation (frozen):
+  - accepted: every card at or above 85 % of its predicted share's lower edge;
+  - refuted: any card under 75 % of the DRAM line, or the RTX 5090 KV term at or above 100 µs at
+    21961 keys;
+  - no regression: RowTiles >= 2, prefill, `exact` and sm_70/75 run today's kernel, and the
+    attention tests pass with the criterion unchanged;
+  - byte rule: the criterion, plus a KLD run of Qwen3.5-9B with NVFP4 KV against master on one
+    card, which must be noise.
+- A/B: not run.
+- Decision: open.
 
 ### M. MMQ column widths per arch and format (#619 step 13, DECISIONS 74)
 - Regime: MMQ on short prompts. Ada and Turing are done (#597, #717). Q2_K and the IQ formats still
