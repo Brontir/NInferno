@@ -61,6 +61,12 @@ struct GgufTensorTable {
     std::vector<std::string> weight_formats;
     std::vector<std::string> layer_formats;
     std::vector<std::string> rest_layer_formats;
+    // Its routed banks' and output head's formats (PlanModelFacts::expert_up_formats,
+    // expert_down_formats, head_format; #834): the workspace plan sizes the MoE layer and the head
+    // by them. Likewise its own only, whatever its bytes (empty: none read, the formula stands).
+    std::vector<std::string> expert_up_formats;
+    std::vector<std::string> expert_down_formats;
+    std::string head_format;
 };
 
 // The table from the facts of a head read (nullopt: no tensor table). A split part's: no tensor

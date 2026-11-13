@@ -1565,6 +1565,9 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
     // may add a format (a mixed recipe's other layers), never another file's: closer than the
     // label, which may name none of them (a gpt-oss file's MXFP4 banks under an F16 or Q4_K
     // label). The parsed part read them before too (with_weights kept the shape's at equal bytes).
+    // Not its banks' and head's formats (#834): the workspace takes the widest over every pair
+    // of bank formats, and a sample that misses a later part's would size it short; none, and
+    // the formula stands.
     const auto& shape = facts.shape;
     if (facts.model.weight_basis == runtime::WeightBasis::FileSize &&
         facts.model.gguf_data_offset != 0 && (route || !shape.weight_formats.empty())) {
@@ -1595,11 +1598,20 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
     table.weight_formats         = shape.weight_formats;
     table.layer_formats          = shape.layer_formats;
     table.rest_layer_formats     = shape.rest_layer_formats;
+    table.expert_up_formats      = facts.model.expert_up_formats;
+    table.expert_down_formats    = facts.model.expert_down_formats;
+    table.head_format            = facts.model.head_format;
     return table;
 }
 
 PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
     PlanSourceFacts out = with_weights(shape, row.weight_bytes, row.basis);
+    // The source artifact's directory (the start's forms) only for the row that is that file:
+    // equal bytes do not make another packing's or quantization's bindings this file's (codex on
+    // #832). Identity is the files' digests; unknown on either side, the row has no directory.
+    if (row.listing.weights.empty() || row.listing.weights != shape.shape.weights) {
+        out.model.artifact_directory.reset();
+    }
     // Its own files (the shape's are another row's): their measurement, if any, is its own.
     out.shape.weights = row.listing.weights;
     // Its linears' formats from its own table; the shape's are another file's (the label stands).
@@ -1645,6 +1657,12 @@ PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
     out.shape.weight_formats     = own.weight_formats;
     out.shape.layer_formats      = own.layer_formats;
     out.shape.rest_layer_formats = own.rest_layer_formats;
+    // Its banks' and head's formats likewise (#834): the workspace plan sizes the MoE layer and
+    // the head by them, and the shape's are another file's even at equal bytes; without its
+    // table, none (plan_workspace: the formula stands).
+    out.model.expert_up_formats   = own.expert_up_formats;
+    out.model.expert_down_formats = own.expert_down_formats;
+    out.model.head_format         = own.head_format;
     // Its stored routed banks and token table where its table counted them (a GGUF's).
     if (const auto& table = row.listing.table) {
         if (table->routed_expert_bytes) {

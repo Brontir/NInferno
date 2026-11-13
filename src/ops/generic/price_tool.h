@@ -11,6 +11,7 @@
 // compiled facts when a GPU is present (cudaFuncGetAttributes), so it can differ from machine to
 // machine, and the tool marks such a row `!=`.
 
+#include "core/device_class.h"
 #include "core/weight.h"
 
 #include <optional>
@@ -34,5 +35,9 @@ int price_main(int argc, char** argv);
 [[nodiscard]] std::optional<QType> price_find_format(std::string_view name);
 // The text printed on a usage error.
 [[nodiscard]] std::string price_usage_text();
+
+// The board the tool prices: core's board_class of the row, its driver view the row's own
+// (registry_driver_view) and its memory the row's whole VRAM.
+[[nodiscard]] DeviceClass price_board_class(const GpuFactsRow& row);
 
 } // namespace ninferno::tools

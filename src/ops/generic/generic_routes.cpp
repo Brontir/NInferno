@@ -12,6 +12,7 @@
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/codec_traits.h"
 #include "ops/generic/compiled_codecs.h"
+#include "ops/generic/format_rules.h"
 #include "ops/generic/format_traits.h"
 #include "ops/generic/generic_i8_schedules.h"
 #include "ops/generic/generic_schedule_tables.h"
@@ -116,7 +117,10 @@ bool r8_supports(QType qtype) { return compiled(Variant::R8, qtype); }
 
 std::int32_t r8_k_values(QType qtype) { return format_traits(qtype).r8_k_values; }
 
-bool r8_verify_supports(QType qtype) { return format_traits(qtype).r8_verify; }
+// The formats, their cards and sources: format_rules.h (Rule::R8Verify).
+bool r8_verify_supports(QType qtype) {
+    return format_rules::holds(format_rules::Rule::R8Verify, qtype);
+}
 
 std::int32_t r8_verify_widest(QType qtype) {
     return qtype == QType::Q8_G32_FP16 ? kR8VerifyTokens : 4;

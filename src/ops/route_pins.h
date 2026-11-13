@@ -113,8 +113,9 @@ void note_moe_choice(bool fused_ready) noexcept;
 // The MoE path of one layer whose fused kernels can (`fused_ready`) or cannot run it: true for the
 // fused kernels. Auto takes them where they can run (the release's choice); Generic never does;
 // Fused refuses (std::invalid_argument naming `why_not`, what keeps the fused kernels out, and that
-// the generic MoE runs it) a layer they cannot run. Notes the choice in the ledger.
-[[nodiscard]] bool moe_takes_fused(bool fused_ready, const std::string& why_not);
+// the generic MoE runs it) a layer they cannot run. Notes the choice in the ledger (`note`; a plan
+// without the weights asks the same choice and leaves the start's ledger alone).
+[[nodiscard]] bool moe_takes_fused(bool fused_ready, const std::string& why_not, bool note = true);
 
 // For a registered shape's own choice between BF16 activations and its quantized kernel at T
 // tokens (NVFP4: A4; FP8: A8, which no pin names: `quantized` empty): the pin's answer, nullopt

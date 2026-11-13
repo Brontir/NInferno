@@ -23,7 +23,7 @@
 // measurement and why it is kept, for the regret collector and the next sweep, never read by the
 // lookup.
 //
-// The law that was put to the Ampere sweep and refuted (DECISIONS 82): R8 decodes each weight on
+// The law that was put to the Ampere sweep and refuted (DECISIONS 84): R8 decodes each weight on
 // the SM's integer lanes (dp4a), the register MMA on its tensor cores, so R8's margin above four
 // tokens was predicted to follow the integer lanes an SM has per DRAM byte it must consume a cycle
 // (lanes / dram_bytes_per_sm_cycle: RTX 2080 Ti 10.9, RTX 4060 Ti 19.2, RTX 4090 20.5, RTX 5070 Ti
@@ -127,7 +127,7 @@ inline constexpr std::string_view kR8T8Sweep =
 inline constexpr std::string_view kR8SwSweep =
     "moe_bench H 2048 F 512 E 128 k 8, published layout, R8 w4r1 gate/up against the A16 "
     "register MMA, T = 1..8, Q3_K/Q4_K/Q5_K/Q6_K/IQ3_XXS, two passes (2026-11-13, 2b37dfa7f with "
-    "the ga10x limit at eight, DECISIONS 82)";
+    "the ga10x limit at eight, DECISIONS 84)";
 inline constexpr std::string_view kConservative =
     "none: no card of the generation was swept; conservative, the narrow limit (kR8NarrowTokens), "
     "where R8 measured at or ahead of the register MMA on the swept boards but two Q6_K cells";

@@ -107,7 +107,7 @@ This page states the rule and its target. The engine does not meet all of it yet
   (`sources.context_cost.transfer`, `.prefill`), and a carried machine that still prices one of
   them is the taint `carried_context_cost`;
 - the MoE R8 token limit is a table of declared rules, not a law (`src/ops/moe/moe_regime_rules.h`,
-  DECISIONS 82): Ada, consumer Blackwell and Ampere rest on two lab cards each, Turing on one, and
+  DECISIONS 84): Ada, consumer Blackwell and Ampere rest on two lab cards each, Turing on one, and
   Volta, the A100, Hopper and datacenter Blackwell take the conservative four, unmeasured;
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
 - decode/verify parity is unverified for 18 formats;
