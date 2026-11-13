@@ -986,6 +986,8 @@ Json choice_json(const ServedChoice& served) {
     const EstimateContext ctx{&served.choice.board_resolutions, answers};
     // The chunk a carried curve predicts (an estimate for an A/B; the pick is the default).
     if (served.choice.chunk_estimate != 0) { out["chunk_estimate"] = served.choice.chunk_estimate; }
+    // The drafter priced on the board took another than the reference card's (#618 step 6).
+    if (served.choice.drafter_on_board) { out["drafter_on_board"] = true; }
     if (!served.choice.chosen) {
         out["chosen"] = nullptr;
         return out;

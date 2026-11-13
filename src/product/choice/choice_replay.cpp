@@ -539,7 +539,6 @@ json choice_summary(const Choice& c) {
                 {"chunk_by_speed", c.chunk_by_speed},
                 {"chunk_basis", std::string(chunk_basis_name(c.chunk_basis))},
                 {"drafter_by_worth", c.drafter_by_worth},
-                {"drafter_on_board", c.drafter_on_board},
                 {"resolution", c.resolution},
                 {"resolution_basis", std::string(resolution_basis_name(c.resolution_basis))},
                 {"resolution_decides", c.resolution_decides},
