@@ -547,16 +547,17 @@ struct Reference {
 
 // A gate that keeps a decision on the family's defaults (#618 step 11), as a code a caller words,
 // with the measurement that would open it. Codes: lent_generation, no_reference_card,
-// reference_one_card (the KV codec and the activations: their speed factors); family_unmeasured,
+// reference_one_card (the KV codec: its speed factors); family_unmeasured,
 // kv_terms_one_card, int8_unmeasured, int8_one_card (their accuracy terms); accuracy_gate_closed
 // (a test's Gates::accuracy, nothing to measure); quant_curve_unmeasured, quant_curve_one_card (the
 // quantizations' trade, plan_quants), quant_switches_closed (the curve rests on two cards but the
 // trade waits on a closed gate of the switches: what opens that opens it). The measurements
 // (`opens_with`): generation_row (the compute capability's generation row, core/generation.h, then
-// its reference card), reference_factors (the KV read factors and the exact-route factor on two lab
-// cards of the generation), family_kld_terms (the KV codecs' and the int8 activations' KLD terms on
-// the family, two lab cards), kv_kld_second_card, int8_kld (on the generation, two lab cards),
-// quant_curve (the quantization curve on the family, two lab cards); "" for none.
+// its reference card), reference_factors (the KV read factors on two lab cards of the generation;
+// the activations also need the exact-route factor, Reference::activations_decide),
+// family_kld_terms (the KV codecs' and the int8 activations' KLD terms on the family, two lab
+// cards), kv_kld_second_card, int8_kld (on the generation, two lab cards), quant_curve (the
+// quantization curve on the family, two lab cards); "" for none.
 struct ClosedGate {
     std::string_view axis; // "switches" (the KV codec and the activations) or "quant"
     std::string_view code;

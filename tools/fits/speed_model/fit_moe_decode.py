@@ -34,8 +34,12 @@ LAUNCHES = {"qwen3_5_moe_text": (311, 267), "moe_decoder": (97, 199), "gemma4_te
 # Families whose rows check the table but do not make it: Gemma 4 26B-A4B's routed eta rises with
 # the rows (0.81 at one row to 0.94 at eight, the others' falls), not yet explained (DECISIONS 65).
 CHECK_ONLY = {"gemma4_text"}
-# kKvReadFactor (Blackwell takes Ada's: the transfer generation).
-KV_READ = {"bf16": 1.06, "fp8": 1.055, "k8v4": 1.025, "nvfp4": 1.235}
+# kKvReadFactor as the MoE family reads it (no kKvSmRate row of its geometry): each generation's own
+# rows (#618 step 1, DECISIONS 81), Blackwell's NVFP4 Ada's (the transfer generation). kMoeRoutedEta
+# was fitted with the rows before, BF16 1.06, FP8 1.055, K8V4 1.025, NVFP4 1.235 on both: a refit
+# with these would move it (not run).
+KV_READ = {"ada": {"bf16": 1.0145, "fp8": 0.9985, "k8v4": 1.025, "nvfp4": 1.235},
+           "gb20x": {"bf16": 0.983, "fp8": 0.9605, "k8v4": 1.047, "nvfp4": 1.235}}
 
 
 def interp(points, rows, one=ETA):
@@ -57,7 +61,8 @@ def terms(m, q, r, bw, gen):
     # A row's own reads: its KV over the context, its recurrent state, its sliding layers' ring.
     window = min(r["context"], m.get("window", 0))
     ring = m.get("ring_bytes_per_token", {}).get(r.get("ring", "bf16"), 0)
-    row = (m["kv_bytes_per_token"][r["kv"]] * r["context"] * KV_READ.get(r["kv"], 1.0)
+    kv_read = KV_READ.get(gen, KV_READ["ada"]).get(r["kv"], 1.0)
+    row = (m["kv_bytes_per_token"][r["kv"]] * r["context"] * kv_read
            + 2 * m["state_bytes"][r["state"]] + window * ring)
     ng, ns = LAUNCHES[m["family"]]
     tg, ts = COST[gen]

@@ -1069,9 +1069,10 @@ void decides_by_generation(const json& fixture) {
     }
     // Blackwell gb20x (#618 step 1): its KV factors rest on two cards (the RTX 5070 Ti and 5090),
     // its exact-route factor on none: the worth decides the KV codec, the activations keep fast.
-    // Every codec of Qwen3.5-9B has a row of its own there (NVFP4 its SM rate for that geometry);
-    // the MoE family's NVFP4, of another geometry, carries Ada's factor, so the worth never takes
-    // it there (kv_decides), while on Ada, whose NVFP4 factor row is its own, it decides.
+    // Qwen3.5-9B's BF16, FP8 and K8V4 have two-card rows of their own there; its NVFP4 SM rate is
+    // one card's (the two 6.4 % apart per reference SM-clock), and the MoE family's NVFP4, of
+    // another geometry, carries Ada's factor: the worth takes neither (kv_decides), while on Ada
+    // every codec decides.
     const Bench g = nine_b(fixture, "RTX 5070 Ti");
     const Bench h = nine_b(fixture, "RTX 5090");
     const auto rg = ch::reference_of(g.card), rh = ch::reference_of(h.card);
@@ -1090,7 +1091,8 @@ void decides_by_generation(const json& fixture) {
     for (const KvCacheStorage kv :
          {KvCacheStorage::Int8Group64, KvCacheStorage::BFloat16, KvCacheStorage::Fp8E4M3Row256,
           KvCacheStorage::Fp8KeyNvfp4Value, KvCacheStorage::Nvfp4Group16}) {
-        check(ch::kv_decides(g.model, "gb20x", kv) && ch::kv_decides(a.model, "ada", kv),
+        check(ch::kv_decides(g.model, "gb20x", kv) == (kv != KvCacheStorage::Nvfp4Group16) &&
+                  ch::kv_decides(a.model, "ada", kv),
               std::string("kv_decides ") + std::string(ninferno::kv_cache_storage_name(kv)));
     }
     {
@@ -1116,8 +1118,16 @@ void decides_by_generation(const json& fixture) {
                 activations_default = alt.why_code == "default";
             }
         }
-        check(activations_default && choice.kv_not_decided.empty(),
-              "gb20x: exact is the family's default's alternative, not weighed; every codec is");
+        bool nvfp4_default = false;
+        for (const ch::Alternative& alt : ch::explain(choice)) {
+            if (alt.axis == ch::Axis::Kv && alt.value == "nvfp4") {
+                nvfp4_default = alt.why_code == "default";
+            }
+        }
+        check(activations_default && nvfp4_default &&
+                  choice.kv_not_decided ==
+                      std::vector<KvCacheStorage>{KvCacheStorage::Nvfp4Group16},
+              "gb20x: exact and NVFP4 are the family's default's alternatives, not weighed");
         if (choice.chosen) { std::cout << choice.why << '\n'; }
     }
     const Bench t = nine_b(fixture, "RTX 2080 Ti");

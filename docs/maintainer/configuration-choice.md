@@ -108,8 +108,8 @@ overrides the constant where a generation's routes differ. The state's and the r
 price the candidates they follow (they are not decided), so they do not gate.
 
 Today Ada decides (its reference card's factors and every term above rest on two cards); Blackwell
-GB20x decides the KV codec (its factors and NVFP4's SM rate rest on the RTX 5070 Ti and 5090; a
-codec carried from Ada, such as the MoE family's NVFP4, stays the default or a pin) and keeps
+GB20x decides the KV codec (its BF16, FP8 and K8V4 factors rest on the RTX 5070 Ti and 5090; NVFP4,
+whose SM rate the two cards read 6.4 % apart, stays the default or a pin) and keeps
 `--activations fast` (its exact-route cost is not the flops law kExactComputeEta prices, #851); Turing keeps the family's defaults (its
 factors rest on one card). On Qwen3.5-9B Q4_K_M fast's
 0.004 KLD is worth less than exact's time (+34 % on the RTX 4090's mixed workload; `lambda` 25 sets

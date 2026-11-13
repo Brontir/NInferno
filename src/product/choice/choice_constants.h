@@ -849,8 +849,8 @@ inline constexpr RouteEta kExactComputeEta[] = {{"turing", 0.0165}, {"ada", 0.02
 // rate against INT8's at the old 0.90 DRAM share: K8V4 1.01 / 1.04, NVFP4 1.25 / 1.22 on the RTX
 // 4070 Ti / 4090): the census has K8V4 on the 4070 Ti only (0.988), and NVFP4 is bound by the SMs,
 // not the DRAM (kKvSmRate), so its row here prices only the geometries the SM rate was not read on.
-// gb20x has no NVFP4 row: its SM rate (below) prices Qwen3.5's geometry, another one carries Ada's
-// factor (transferred) and never decides.
+// gb20x has no NVFP4 row: its SM rate (below, one card's: it never decides) prices Qwen3.5's
+// geometry, another one carries Ada's factor (transferred) and never decides.
 // Turing (run_sw.sh, one card: the RTX 2080 Ti) reads BF16 and FP8 without native support.
 struct KvReadFactor {
     std::string_view generation;
@@ -899,8 +899,10 @@ inline constexpr KvReadFactor kKvReadFactor[] = {
 //          FP8   4.45, 4.57 (2.7 %); NVFP4 2.50, 2.45 (1.9 %); K8V4 3.46, 3.44 (0.7 %)
 //   ada    NVFP4 RTX 4070 Ti 2.58, RTX 4090 2.54 (1.6 %; 80 / 81 % of the DRAM rate)
 //   gb20x  NVFP4 RTX 5090 2.82, RTX 5070 Ti 3.00 (64 / 57 % of the DRAM rate): 5.4 % apart per
-//          held SM-clock (2.60 at 2610 MHz, 2.74 at 2685), 6.4 % per reference SM-clock (the two
-//          hold 1.08 and 1.10 of it), at the edge of the two-card tolerance of 6 %
+//          held SM-clock (2.60 at 2610 MHz, 2.74 at 2685), 6.4 % per reference SM-clock, the
+//          clock the row prices at (the two hold 1.08 and 1.10 of it): past the two-card tolerance
+//          of 6 %, so the row is one card's (it prices the estimate, never a decision) until a
+//          re-census or a third card brings the two inside it
 // On Ampere every codec but INT8 (91-92 % of the DRAM rate) is SM-bound. Its BF16 row is today's
 // kernel (bf16_kv_grouped_mma_kernel, which reads at 92 % of the DRAM rate on the RTX 4090): a
 // kernel finding is open (#856), and the row is measured again when that kernel changes.
@@ -926,7 +928,7 @@ inline constexpr KvSmRate kKvSmRate[] = {
     {"ga10x", "qwen3_5_text", KvCacheStorage::Fp8KeyNvfp4Value, 256, 16, 4, 3.45, 2},
     {"ga10x", "qwen3_5_text", KvCacheStorage::Nvfp4Group16, 256, 16, 4, 2.48, 2},
     {"ada", "qwen3_5_text", KvCacheStorage::Nvfp4Group16, 256, 16, 4, 2.56, 2},
-    {"gb20x", "qwen3_5_text", KvCacheStorage::Nvfp4Group16, 256, 16, 4, 2.91, 2},
+    {"gb20x", "qwen3_5_text", KvCacheStorage::Nvfp4Group16, 256, 16, 4, 2.91, 1}, // 6.4 % apart
 };
 
 // The prefill chunk. An MoE's prefill grows with the tokens each expert takes from a chunk (chunk x
@@ -1180,7 +1182,8 @@ inline constexpr ReferenceCard kReferenceCards[] = {
     // by the census of #618 step 1, 2026-11-13).
     {"ada", 94, 2.565e9, 3.17 * 94 * 2.565e9, true, true, "RTX 4070 Ti, RTX 4090"},
     // RTX 5070 Ti (70 SMs, 2452 MHz, 896 GB/s: 5.22 B a SM-clock) and RTX 5090 (170, 2407, 1792:
-    // 4.38); the KV factors and NVFP4's SM rate from the census of #618 step 1 on both. The exact
+    // 4.38); the KV factors from the census of #618 step 1 on both (NVFP4's SM rate not: 6.4 %
+    // apart, kKvSmRate). The exact
     // route's extra is about 1.3 ms a step on both cards while their int8 tensor peaks differ 2.4x
     // (#851): not the flops law kExactComputeEta prices, so no row, and the activations keep the
     // default.

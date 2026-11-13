@@ -2318,8 +2318,10 @@ claimed; a head faster at every depth is never refused where the slower one is k
 read per generation from the nsys census of its decode attention kernel, never fitted: a codec the
 DRAM bounds has a read factor against INT8 (kKvReadFactor), one the SMs bound a rate in bytes a
 reference SM-clock for the family's kernel and geometry (kKvSmRate, DECISIONS 71's form). A row is
-written only where two lab cards of the generation agree within 6 %, in the row's own form (factor,
-or bytes a reference SM-clock), and its comment names the census. With those rows Blackwell gb20x
+written as two cards' only where two lab cards of the generation agree within 6 %, in the row's own
+form (factor, or bytes a reference SM-clock: the clock it prices at), and its comment names the
+census; a pair further apart is a row of one card (`cards` 1: it prices the estimate, never a
+decision). With those rows Blackwell gb20x
 gets a reference card (kReferenceCards: the mean of the RTX 5070 Ti and 5090, 120 SMs, 2429.5 MHz,
 4.80 DRAM bytes a SM-clock), whose KV factors rest on two cards (`kv_two_cards`) and whose
 exact-route factor does not (`exact_two_cards` false): there the worth decides the KV codec, and the
@@ -2329,8 +2331,9 @@ activations keep the family's default (`--activations fast`). Two gates follow:
 - Under the worth a KV codec is taken only where its own read cost on the generation rests on two
   cards (`kv_decides`: its kKvSmRate row for the model's family and geometry, else its own
   kKvReadFactor row; INT8 is the reference codec). A codec priced on a row carried from Ada stays
-  the default or a pin (`Choice::kv_not_decided`): on gb20x the MoE family's NVFP4, whose geometry
-  has no SM rate. Every codec of Ada and every Qwen3.5-9B codec of gb20x decides.
+  the default or a pin (`Choice::kv_not_decided`), and so does one priced on a row of one card: on
+  gb20x NVFP4, whose Qwen3.5 SM rate is one card's (below) and whose other geometries carry Ada's
+  factor. Every codec of Ada decides; on gb20x every codec but NVFP4.
 
 **The census** (mcb.sh on each card: Qwen3.5-9B Q4_K_M, one stream, 128 decode steps at 7.8K and
 21.9K tokens of context; per step the attention kernel's time between the sampling kernels, 8 full
@@ -2361,7 +2364,7 @@ BF16 DRAM-bound (wrong: 53 %, the kernel's finding #856).
 | gb20x | BF16 | factor 0.983 | Ada's 1.06, carried | 1.4 % |
 | gb20x | FP8 | factor 0.9605 | Ada's 1.055 | 0.9 % |
 | gb20x | K8V4 | factor 1.047 | Ada's 1.025 | 1.2 % |
-| gb20x | NVFP4, Qwen3.5 256/16/4 | 2.91 B/rclk (1.560 on the reference card) | Ada's 1.235 | 6.4 % |
+| gb20x | NVFP4, Qwen3.5 256/16/4 | 2.91 B/rclk (1.560 on the reference card), one card's: does not decide | Ada's 1.235 | 6.4 % |
 | ga10x | BF16, FP8, K8V4, NVFP4, Qwen3.5 | 3.585, 4.51, 3.45, 2.48 B/rclk | Ada's factors, carried | 0.4, 2.7, 0.7, 1.9 % |
 
 Kept: Ada's K8V4 1.025 (the census has K8V4 on the 4070 Ti only) and Ada's NVFP4 factor 1.235 for
@@ -2373,8 +2376,10 @@ again when that kernel changes.
 
 **The gb20x NVFP4 spread.** Per held SM-clock the two cards read 2.60 (5090, 2610 MHz) and 2.74
 (5070 Ti, 2685 MHz), 5.4 % apart; per reference SM-clock, the table's form, 2.82 and 3.00, 6.4 %
-apart (the 5090 holds 1.08 of its 2407 MHz, the 5070 Ti 1.10 of its 2452). The row is written on
-the held-clock agreement; in the table's form it sits 0.4 % past the tolerance (open, below).
+apart (the 5090 holds 1.08 of its 2407 MHz, the 5070 Ti 1.10 of its 2452). The row prices at the
+reference clock, so 6.4 % is the carry error between the two cards: past the tolerance, the row is
+written as one card's (`cards` 1). It prices gb20x's NVFP4 estimate (Own no longer: transferred) and
+does not decide (`kv_decides` false) until a re-census or a third card brings the two within 6 %.
 
 **The exact route on gb20x.** Its extra is about 1.3 ms a step on both cards while their int8
 tensor peaks differ 2.4x: not the flops law kExactComputeEta prices (#851). No row; the
@@ -2414,9 +2419,11 @@ there. The drafter axis decides on gb20x where every drafter's gain is measured 
 streams (`drafter_by_worth`), as on Ada.
 
 **Open.**
-- gb20x's NVFP4 row is 6.4 % apart per reference SM-clock (5.4 % per held SM-clock): written on
-  the held-clock agreement. A third Blackwell card, or the rate per held clock as the table's
-  form, settles it.
+- gb20x's NVFP4 row: 6.4 % apart per reference SM-clock (5.4 % per held SM-clock), one card's
+  until a re-census or a third Blackwell card brings it within 6 %.
+- kMoeRoutedEta was fitted (tools/fits/speed_model/fit_moe_decode.py) with the KV factors before
+  this entry (BF16 1.06, FP8 1.055, K8V4 1.025, NVFP4 1.235 on Ada and Blackwell); the script now
+  mirrors the new rows, and a refit would move it (not run).
 - Ada's K8V4 row is the end-to-end one: the RTX 4090's K8V4 census is not run.
 - The exact route on gb20x: #851 (a kernel-rate law for the exact trunk's A16 linears).
 - Ampere's BF16 row is the current kernel's (#856).

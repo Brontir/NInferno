@@ -423,9 +423,9 @@ inline constexpr FittedHoldout kChoiceHoldouts[] = {
          "Turing: Qwen3.5 9B's int8 kernel and Gemma 4 12B's BF16 one on the RTX 2080 Ti; Volta: "
          "the Quadro GV100's census at 7K and 82K (Gemma 4 12B's BF16 full layer 707 us a call for "
          "153 MB); Ampere, Ada and Blackwell: the census of #618 step 1 (Qwen3.5-9B, the RTX 3090 "
-         "and 3060, 4070 Ti and 4090, 5070 Ti and 5090: the mean of two cards, within 2.7 %, "
-         "Blackwell's NVFP4 6.4 %)",
-         "one card a Turing or Volta row, two an Ampere, Ada or Blackwell one: nothing left out",
+         "and 3060, 4070 Ti and 4090, 5070 Ti and 5090: the mean of two cards, within 2.7 %; "
+         "Blackwell's NVFP4 6.4 % apart, so a row of one card's standing)",
+         "one card a Turing, Volta or Blackwell row, two an Ampere or Ada one: nothing left out",
          "choice_constants.h at KvSmRate")},
     {kChoice, "kMoeChunkShare",
      Holdout::none(
