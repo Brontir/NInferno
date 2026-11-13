@@ -480,6 +480,16 @@ bool filtered_out(const std::string& label) {
     return false;
 }
 
+// Every exit of a filtered run says what the filter let through; false when it let nothing.
+bool filter_matched() {
+    if (!filtering()) return true;
+    std::cout << "moe: NINFERNO_TEST_MOE_CASE=\"" << case_filter() << "\" ran " << matched_cases
+              << " case check(s)\n";
+    if (matched_cases != 0) return true;
+    std::cerr << "moe: the case filter matched no case\n";
+    return false;
+}
+
 struct Run {
     std::vector<std::uint16_t> out;
     std::size_t peak = 0, capacity = 0;
@@ -1867,6 +1877,7 @@ int main(int argc, char** argv) {
             std::cerr << "mx8: " << e.what() << '\n';
             ++failures;
         }
+        if (!filter_matched()) return 1;
         if (failures != 0) {
             std::cerr << "moe mx8: " << failures << " failure(s)\n";
             return 1;
@@ -2393,14 +2404,7 @@ int main(int argc, char** argv) {
         std::cerr << "moe test: unexpected exception: " << e.what() << '\n';
         return 1;
     }
-    if (filtering()) {
-        std::cout << "moe: NINFERNO_TEST_MOE_CASE=\"" << case_filter() << "\" ran " << matched_cases
-                  << " case check(s)\n";
-        if (matched_cases == 0) {
-            std::cerr << "moe: the case filter matched no case\n";
-            return 1;
-        }
-    }
+    if (!filter_matched()) return 1;
     if (failures != 0) {
         std::cerr << "moe: " << failures << " failure(s)\n";
         return 1;
