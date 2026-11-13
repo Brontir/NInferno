@@ -103,9 +103,10 @@ The guard is a text scan, and the list is not every literal comparison in `gener
   the selector goldens hold;
 - the format membership of the measured rules: `heuristic_w4a8: 65..127 formats` holds the
   `tokens < kW4a8WideMinTokens` edge, not the `wide_format` switch in `generic_select.cpp` that says
-  which formats take the wider tile, and the per-format flags in `format_traits.h` (`r8_verify`,
-  `mmq_verify`, `light_step`) are not held at all: adding or removing a format in either passes
-  the test;
+  which formats take the wider tile. The format sets of the measured per-format rules
+  (`light_step`, `tall_tile`, `mmq_verify`, `w4a8_ws_tuned`, `r8_verify`) are not this record's:
+  they are `format_rules.h`'s rows (below), held by `ninferno_format_rules_test` and
+  `ninferno_format_traits_test`;
 - the bare kernel counts of the cost model in `generic_cost.cpp` (the 384, 128 and 256 threads a
   CTA, the stage factors 3 and 2): they are not constants the guard names, and the cost model's
   constants registered in `route_cost_constants.h` are not these;
@@ -205,3 +206,22 @@ Where the provenance of a rule was found: the comments at its use in `generic_se
 `decisions.md` 58 for the verify widths, and `deterministic-decisions.md` for the rules that rest
 on few boards (the R8 rule's SM-count edge, placed between the two measured boards, 84 and 170
 SMs). The history before the 0.1.0 squash is not in the repository.
+
+## Format rules (`format_rules.h`)
+
+The measured per-format rules of the selection are rows of `src/ops/generic/format_rules.h`
+(#615 F6): `light_step` (`light_ggml_step`), `tall_tile` (`tall_tile_format`), `mmq_verify`
+(`mmq_verify_format`), `w4a8_ws_tuned` (`w4a8_ws_extra`'s formats), `r8_verify`
+(`r8_verify_supports`), and the two thresholds `kR8VerifyQ40MinValues` and `kMmqVerifyMinTokens`,
+which are defined there. The code reads the rows (`format_rules::holds`) and the two constants;
+nothing else holds these format sets. A rule has one row per group of formats whose evidence
+differs, each with its formats, a basis, the boards and cards, an evidence tag, the source and a
+date. The tag says how many cards stand behind the row (principle 4): `TwoCards`, `SingleCard`
+(the rule still decides on every card) or `Carried` (no timing of the format's own: the record
+says it follows its family, and the row names no card). `ninferno_format_rules_test` checks the
+tags against the cards, one row per format and rule, that every rule has a row with cards, and that
+each threshold's row and its descriptor here (`kRouteRules`, file `format_rules.h`) agree on value,
+basis, boards and cards; `--list` prints the rows, and the test prints the `single_card` ones,
+the list a two-card measurement works from. Most evidence predates the public history (the
+comments stand in its first commit, 54ef5203, 2026-10-20); such a row says so and is dated "before
+2026-10-20". `decode_heavy` (RTX 2080 Ti, `rules_r8`) is still a bit of `format_traits.h`.
