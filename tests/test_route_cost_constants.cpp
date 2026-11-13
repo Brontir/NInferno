@@ -58,6 +58,36 @@ constexpr CountedSource kCountedSources[] = {
 };
 static_assert(tile_shared_cap() > 0, "sm_86, sm_89 and sm_120 no longer share one block cap");
 
+// The Counted constants whose source is the kernel itself (#613 PR-8a): the activation quantizers'
+// bytes a value and grids, which the kernel's own translation unit static_asserts against the
+// block it writes and the threads it launches. No host record restates them; the test reads that
+// each named file holds the static_assert of the constant.
+struct KernelChecked {
+    std::string_view name;     // the descriptor's name
+    std::string_view constant; // the C++ name the static_assert spells
+    std::string_view file;     // under src/ops/generic
+};
+
+constexpr KernelChecked kCheckedInKernel[] = {
+    {"quant_w4a8_bytes_per_value", "kQuantW4a8BytesPerValue", "generic_w4a8.cu"},
+    {"quant_w4a8_pad_bytes_per_value", "kQuantW4a8PadBytesPerValue", "generic_w4a8.cu"},
+    {"quant_i8_bytes_per_value", "kQuantI8BytesPerValue", "generic_i8.cu"},
+    {"quant_i8_pad_bytes_per_value", "kQuantI8PadBytesPerValue", "generic_i8.cu"},
+    {"quant_threads_per_cta", "kQuantThreadsPerCta", "generic_w4a8.cu"},
+    {"quant_mmq_bytes_per_value", "kQuantMmqBytesPerValue", "ggml_mmq/ggml_mmq.cu"},
+    {"quant_mmq_values_per_cta", "kQuantMmqValuesPerCta", "ggml_mmq/ggml_mmq.cu"},
+};
+
+// Whether `file` (under src/ops/generic) static_asserts route_cost::`constant`.
+bool kernel_asserts(std::string_view file, std::string_view constant) {
+    const std::filesystem::path path =
+        std::filesystem::path(NINFERNO_SOURCE_DIR) / "src/ops/generic" / std::string(file);
+    std::ifstream in(path);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return text.find("static_assert(route_cost::" + std::string(constant) + ".value() ==") !=
+           std::string::npos;
+}
+
 const char* provenance_name(rc::Provenance p) {
     switch (p) {
     case rc::Provenance::Fact:
@@ -183,6 +213,20 @@ int main(int argc, char** argv) {
         for (const auto& s : kCountedSources) {
             if (s.name == c.name) source = &s;
         }
+        const KernelChecked* checked = nullptr;
+        for (const auto& k : kCheckedInKernel) {
+            if (k.name == c.name) checked = &k;
+        }
+        if (source == nullptr && checked != nullptr) {
+            if (!kernel_asserts(checked->file, checked->constant)) {
+                std::fprintf(stderr, "%.*s: src/ops/generic/%.*s holds no static_assert of %.*s\n",
+                             static_cast<int>(c.name.size()), c.name.data(),
+                             static_cast<int>(checked->file.size()), checked->file.data(),
+                             static_cast<int>(checked->constant.size()), checked->constant.data());
+                ++failures;
+            }
+            continue;
+        }
         if (source == nullptr) {
             std::fprintf(stderr,
                          "%.*s is Counted but names no source in kCountedSources (its kernel "
@@ -197,6 +241,12 @@ int main(int argc, char** argv) {
                          static_cast<int>(c.name.size()), c.name.data(), value, source->value);
             ++failures;
         }
+    }
+    for (const auto& k : kCheckedInKernel) {
+        if (counted.count(k.name) != 0) continue;
+        std::fprintf(stderr, "kCheckedInKernel names %.*s, which is no Counted constant\n",
+                     static_cast<int>(k.name.size()), k.name.data());
+        ++failures;
     }
     for (const auto& s : kCountedSources) {
         if (counted.count(s.name) != 0) continue;
