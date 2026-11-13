@@ -216,13 +216,24 @@ prediction so far.
      statistics. One stage in flight (16 KiB) is more than 32 B/clk x the L2 latency (6-10 KiB)
      on every card, so the loop runs at the SM's fill rate: S x DChunk x 4 B / 32 B/clk.
   2. The maxima, the sums and the gate are loaded beside the positions: one round trip, not four.
-  3. A 256-column schedule launches 64 columns a CTA wherever that lowers the bytes on the most
-     loaded SM (`common/causal_merge_shape.h`):
-     - the condition is ceil(4 n / SMs) x 64 < ceil(n / SMs) x 256, where n = query heads x
-       columns is the CTA count at 256 columns;
-     - within one wave (n < SMs) that is 4 n <= 3 SMs;
-     - at W = 1 the merge then runs 64 CTAs on every board from 22 SMs up, with a quarter of the
-       bytes on the most loaded SM. On the RTX 3060's 28 SMs three CTAs share an SM, so it is 3/4.
+  3. A 256-column schedule launches 64 columns a CTA only within one wave, and only where that
+     lowers the bytes on the most loaded SM (`common/causal_merge_shape.h`):
+     - n = query heads x columns is the CTA count at 256 columns. At 64 columns the most loaded
+       SM streams ceil(4 n / SMs) x 64 columns a split, against ceil(n / SMs) x 256;
+     - the rule narrows only while 4 n <= 3 SMs, so the narrow grid puts at most three CTAs on
+       an SM and fits in one wave;
+     - it is restricted to one wave on purpose. Past a wave the byte inequality still holds in
+       places: at n = SMs + 1 it is ceil(4 + 4 / SMs) x 64 = 320 against 2 x 256 = 512. But each
+       narrow CTA repeats the head's statistics (the m and l loads, the reductions and their
+       barriers), and the registers cap the merge at 4 CTAs a SM (Cost, below). So past
+       4 x SMs narrow CTAs a second wave runs that whole chain again. The bytes saved then no
+       longer pay for a serial statistics phase that this law does not count, and the schedule
+       keeps 256 columns there;
+     - at W = 1 the merge runs 64 CTAs on every board from 22 SMs up. The most loaded SM streams
+       ceil(64 / SMs) / 4 of the old bytes: a quarter from 64 SMs up (RTX 5090, 4090, 3090,
+       5070 Ti, 2080 Ti), a half from 32 to 63 SMs (4070 Ti's 60 and 4060 Ti's 34, two CTAs an
+       SM), and 3/4 from 22 to 31 (3060's 28, three CTAs an SM). The table's 64-column columns
+       price these shares.
 
      The NVFP4 and K8V4 merges store whole rows through the inverse rotation, so they keep 256
      columns: 16 CTAs, each at the fill-rate bound.
@@ -258,6 +269,10 @@ prediction so far.
     than the new one's two.
   - Under ncu, every cell adds the same unmeasured per-kernel floor to old and new. So the ncu
     prediction is the drop in duration a call: the DRAM-cold old column minus the new one.
+  - ncu's default `--clock-control base` also locks the base clock, while the cold columns use
+    boost clocks. Only the clock-counted terms (700 clk of statistics, the fill rate, the FFMA
+    chain) stretch, by about boost / base: about +0.05 µs a call on the RTX 5090. That is inside
+    the ncu range, so no column is restated.
   - The read rate (the slope) does not change.
   - With `--activations exact` the aligned partition runs ceil(keys / 512) splits (16 at 7843
     keys, 43 at 21961). There the old loop's cost grows with depth and part of the gain moves
@@ -286,7 +301,11 @@ prediction so far.
   It is not a new route: the summation, the selector goldens and the build manifest are unchanged.
 - Acceptance / refutation (frozen, two-sided):
   - kept where the bench intercept a step drops by at least half the lower edge on at least five
-    of the seven boards, and the slope stays within ±2 %;
+    of the seven stand boards (RTX 3090, 3060, 2080 Ti, 4070 Ti, 4090, 5070 Ti, 5090), and the
+    slope stays within ±2 %. The RTX 4060 Ti row is an ncu-only cell: it is there to check the
+    law against the one measurement made before this entry, and it is not counted in the bench
+    criterion. If the 4060 Ti bench runs, its cell is a finding under the next item like any
+    other, but it counts toward neither the five nor the seven;
   - a board whose drop is under half the lower edge, or over 1.5x the upper edge, is a finding.
     ncu of the merge there names the term that was wrong (the per-SM fill rate for L2 hits, the
     latency of the statistics, or the round-trip count), and the law is fixed;

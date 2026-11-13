@@ -14,10 +14,12 @@ namespace ninferno::ops::detail {
 // columns against 256). A decode token of 16 query heads narrows on every board from 22 SMs up:
 // 64 CTAs, a quarter of the bytes on the most loaded SM from 64 SMs up. Between 3/4 of the SMs and
 // a full wave the narrow grid streams the same 256 columns on its most loaded SM at four times the
-// CTAs, each repeating the head's statistics, and past a wave the bytes no longer fall in step,
-// so the schedule's chunk stays. A merge that stores whole rotated rows (whole_rows: the NVFP4
-// and K8V4 inverse rotation) keeps 256 columns. The chunk changes which CTA sums a column, never
-// the order of its sum: the output is the same bits either way.
+// CTAs, each repeating the head's statistics. Past a wave the narrow grid can still stream fewer
+// bytes (n = SMs + 1: 320 columns against 512), but the registers cap the merge at 4 CTAs a SM,
+// so 4n narrow CTAs past 4 x SMs run the statistics again in a second wave: the schedule's
+// chunk stays (kernel-proposals.md, entry O, Variant 3). A merge that stores whole rotated rows
+// (whole_rows: the NVFP4 and K8V4 inverse rotation) keeps 256 columns. The chunk changes which CTA
+// sums a column, never the order of its sum: the output is the same bits either way.
 inline constexpr int kCausalMergeNarrowDChunk = 64;
 
 [[nodiscard]] constexpr int causal_merge_d_chunk(int schedule_d_chunk, bool whole_rows,

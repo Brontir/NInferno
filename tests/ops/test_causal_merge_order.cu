@@ -1,13 +1,14 @@
 // The natural merges' split loop (common/causal_merge.cuh, dense/causal_cache/bf16/merge.cuh,
 // #865) against the per-thread loop it replaced, bit for bit. The merges now load the partials
 // with every thread of the CTA, in 16-byte stages two ahead, load the splits' maxima and sums
-// beside the positions, and a 256-column schedule narrows to 64 columns when its grid leaves SMs
-// idle (causal_merge_shape.h); none of it may change a column's sum. The legacy kernels below are
-// master's code at 66c53fca, renamed. Each case runs them at their schedule's chunk and the new
-// kernels at 256 and 64 columns (whole rotated rows: 256 only) and requires the same BF16 bits
-// at every split count from 1 to 256 (the partition's maximum), with zero-weight splits (no sum,
-// or an underflowing maximum) holding NaN partials, garbage in the splits past the live count,
-// several tokens and batch rows, masked columns, the output gate and the aligned partitions.
+// beside the positions, and a 256-column schedule narrows to 64 columns only while the narrow grid
+// stays within 3/4 of a wave (4 x query heads x columns <= 3 x SMs, causal_merge_shape.h); none
+// of it may change a column's sum. The legacy kernels below are master's code at 66c53fca, renamed.
+// Each case runs them at their schedule's chunk and the new kernels at 256 and 64 columns (whole
+// rotated rows: 256 only) and requires the same BF16 bits at every split count from 1 to 256 (the
+// partition's maximum), with zero-weight splits (no sum, or an underflowing maximum) holding NaN
+// partials, garbage in the splits past the live count, several tokens and batch rows, masked
+// columns, the output gate and the aligned partitions.
 
 #include "ops/softmax_attention/common/causal_merge.cuh"
 #include "ops/softmax_attention/common/causal_merge_shape.h"
