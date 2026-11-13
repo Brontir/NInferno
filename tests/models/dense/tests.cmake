@@ -17,9 +17,15 @@ target_include_directories(ninferno_decoder_plan_workspace_test PRIVATE
 # With every CUDA device hidden, as the W4 plan tests run: a device read the substitute does not
 # answer throws. The start's planner still reads the host GPU through the attention decode plan
 # (the known escape #830): hidden, the test checks that escape and the declines; the bytes are
-# compared with a device visible and by ninferno_decoder_plan_workspace_real_test.
+# compared with a device visible (the gpu run below) and by
+# ninferno_decoder_plan_workspace_real_test.
 set_tests_properties(ninferno_decoder_plan_workspace_test PROPERTIES
   ENVIRONMENT CUDA_VISIBLE_DEVICES=-1)
+# The same executable with the stand's device visible: the dry run against the start's capacity
+# to the byte on every lab shape and substituted board, the arenas and "only the workspace
+# differs" (the attention's occupancy is the host GPU's while #830 escapes, read by both sides).
+add_test(NAME ninferno_decoder_plan_workspace_gpu_test COMMAND ninferno_decoder_plan_workspace_test)
+ninferno_label_tests(ninferno_decoder_plan_workspace_gpu_test LABELS gpu)
 
 # The same against a real start (#615 W3): one dense_decoder, one moe_decoder and one nemotron_h
 # artifact loaded as ninferno-serve loads them; the start's planned arena equals --plan's workspace

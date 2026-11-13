@@ -495,6 +495,10 @@ bool device_hidden = false;
 // (tests/test_plan_device_class.cpp checks the same for Gemma 4).
 constexpr std::string_view kDecodePlanEscape = "#830 (gemma4_attention_decode_plan)";
 
+// The refused query's basis carrying cudaErrorNoDevice. Its limit: it names the error, not the
+// call site, so another device read on the planner's path that fails the same way passes as this
+// escape too (cuda_check prints the site on stderr: core/per_device.h, cudaFuncSetAttribute of the
+// decode plan's kernel, on every refused case of this file).
 bool is_escape(const std::string& basis) {
     return basis.rfind("formula: an Op's capacity query refused the facts", 0) == 0 &&
            basis.find("cudaErrorNoDevice") != std::string::npos;
