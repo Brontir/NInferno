@@ -12,7 +12,9 @@ Per problem: each R8 schedule's median over the sweeps; the shape-class rules' c
 mark: master's pick where the card has no table entry for it); the best schedule and its distance
 to the rules'; and whether r8_decode_table.py would write a table entry for it (the best is not the
 rules', at least --min-gain faster in the median and faster in every sweep; an add problem is
-looked up as its store problem, so only a store row writes one where both were swept).
+looked up as its store problem, so only a store row writes one where both were swept). The add
+check below then drops a store entry whose schedule does not also win on the add call, as the
+generator does (r8_decode_table.py add_check_holds): the "entry if merged" column is before it.
 
 Then two verdicts, both frozen in docs/maintainer/kernel-proposals.md (entry P) before any sweep:
 - the card's prediction for the Q6_K down projection 4096x12288: the candidate schedule's median
@@ -91,8 +93,9 @@ def name(schedule):
 def add_check(problems, entries, median):
     """The add call against each store entry. A model step runs its down projection as an add call
     (ops::linear_add), which looks the store entry up, so an entry stays only where its schedule
-    also beats the add call's rules schedule in the median; one whose add call was not swept rests
-    on store alone."""
+    also beats the add call's rules schedule in the median and in every sweep, over the sweeps that
+    timed both (r8_decode_table.py add_check_holds); one whose add call was not swept rests on store
+    alone."""
     if not entries:
         return
     print("**Add check (an add call takes the store entry; it stays only where its schedule also "
@@ -105,17 +108,23 @@ def add_check(problems, entries, median):
                   "entry rests on store alone")
             continue
         rule = problems[key]["rules"]
-        t_rule, t_best = (median(key, rule) if rule else None), median(key, best)
-        if t_rule is None or t_best is None:
-            print(f"- {fmt} {n}x{k}: store entry {name(best)}; the add call's rules or entry "
-                  "schedule was not timed")
+        if rule == best:
+            print(f"- {fmt} {n}x{k}: store entry {name(best)}: keep (the add call's rules already "
+                  "pick it)")
             continue
+        # Over the sweeps that timed both, as the generator reads them.
+        pairs = [(r[best], r[rule]) for r in problems[key]["runs"]
+                 if rule is not None and best in r and rule in r]
+        if not pairs:
+            print(f"- {fmt} {n}x{k}: store entry {name(best)}; the add call's rules or entry "
+                  "schedule was not timed in one sweep with the other: DROP (not shown to win)")
+            continue
+        t_best = statistics.median(b for b, _ in pairs)
+        t_rule = statistics.median(r for _, r in pairs)
         d = t_best - t_rule
-        every = all(r[best] < r[rule] for r in problems[key]["runs"] if best in r and rule in r)
+        every = all(b < r for b, r in pairs)
         # The same rule r8_decode_table.py applies when it writes the table (add_check_holds).
-        if best == rule:
-            verdict = "keep (the add call's rules already pick it)"
-        elif d < 0 and every:
+        if d < 0 and every:
             verdict = "keep"
         elif d < 0:
             verdict = "DROP (faster in the median, not in every sweep)"

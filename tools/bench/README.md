@@ -433,7 +433,9 @@ complete sweep (its `done` line) with at least one T = 1 R8 line in the bench's 
 (`t=`, `decode=` and `h=` since #155, also read without them); a file of no such line is refused,
 since under `--merge` it would keep every old entry silently. A problem gets an entry when the fastest schedule differs from the
 shape-class rule, beats it by at least `--min-gain` in the median and in every sweep, and all
-schedules produced identical bytes. Each table records the board its sweeps ran on (the bench's
+schedules produced identical bytes. A store entry is also checked on the add call where the sweeps
+time it (an add call looks the store entry up): it is written only where its schedule wins there
+too, in the median and in every sweep that timed both. Each table records the board its sweeps ran on (the bench's
 `board` line: compute capability, SMs, L2, DRAM bandwidth; `--merge` keeps a header's), and a
 device takes the table of the nearest board within a variant's distance of it (`board_distance`,
 `kR8CarryDistance` in `generic_select.cpp`).
