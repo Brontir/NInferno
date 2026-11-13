@@ -24,9 +24,10 @@ struct Bf16KvPartition {
     // CausalKvPartition::aligned_to_positions does (the kernels' Aligned instances, aligned_live).
     // Otherwise the window is spread over the targets (live).
     // Always 0: the fixed split of the row-aligned partition this replaced. It stays, with its
-    // branch in live(), because the fast instances then compile to their former code (ptxas -v on
-    // sm_89: the GroupedDecode instances and a merge move one register and their spills without
-    // it). Nothing sets it; the aligned instances use aligned_live.
+    // branch in live(), so that the fast instances keep their former code: without it, ptxas -v
+    // on sm_89 moved a register in the merge and in the GroupedDecode instances, which spilled
+    // then. They no longer spill (#856); nothing has rechecked the branch since. Nothing sets it;
+    // the aligned instances use aligned_live.
     int aligned_keys = 0;
     bool aligned     = false;
 

@@ -138,7 +138,7 @@ struct RoundCostEstimate {
 // one-request gain times R_1 / R_C above 1; among those the one whose sorted gains are greatest
 // least first (leximin, the shallower on a full tie), plain decode where none serves them all
 // (clipped_load writes it). An unpriced count runs plain decode, so the table ends at plain
-// decode by kPricedVerifyRows + 1 streams at the latest.
+// decode by kPricedStreams + 1 streams at the latest.
 [[nodiscard]] std::vector<LoadBound> facts_load(const Profile& profile);
 
 // The profile of a target from its pairs measured on the lab's cards (the same target and drafters),
