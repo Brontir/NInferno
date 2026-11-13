@@ -192,19 +192,25 @@ int main() {
         std::printf("SKIP: no CUDA device\n");
         return 77;
     }
-    Failures* device = nullptr;
-    if (cudaMalloc(&device, sizeof(Failures)) != cudaSuccess ||
-        cudaMemset(device, 0, sizeof(Failures)) != cudaSuccess)
+    // One explicit stream for the fill, the kernels and the read-back.
+    cudaStream_t stream = nullptr;
+    Failures* device    = nullptr;
+    if (cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking) != cudaSuccess ||
+        cudaMalloc(&device, sizeof(Failures)) != cudaSuccess ||
+        cudaMemsetAsync(device, 0, sizeof(Failures), stream) != cudaSuccess)
         return 1;
-    decode_all<<<kScales, 256>>>(device);
-    mma_fold<<<kMmaRuns, 32>>>(device);
-    transpose<<<1, 32>>>(device);
+    decode_all<<<kScales, 256, 0, stream>>>(device);
+    mma_fold<<<kMmaRuns, 32, 0, stream>>>(device);
+    transpose<<<1, 32, 0, stream>>>(device);
     Failures host{};
-    if (cudaMemcpy(&host, device, sizeof(Failures), cudaMemcpyDeviceToHost) != cudaSuccess) {
+    if (cudaMemcpyAsync(&host, device, sizeof(Failures), cudaMemcpyDeviceToHost, stream) !=
+            cudaSuccess ||
+        cudaStreamSynchronize(stream) != cudaSuccess) {
         std::printf("FAIL: kernel or copy: %s\n", cudaGetErrorString(cudaGetLastError()));
         return 1;
     }
     cudaFree(device);
+    cudaStreamDestroy(stream);
     if (host.decode != 0)
         std::printf("FAIL decode: %u values; first word 0x%08x scale 0x%02x nibble %u slab "
                     "0x%08x\n",
