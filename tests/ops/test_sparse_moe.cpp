@@ -941,17 +941,18 @@ public:
         return failures;
     }
 
-    // Two calls in flight on one GPU at once (#882), as two engines run them: decode (T = 1, D1's
-    // 257 blocks) on one stream and a small-T window whose S1 selects (T = 4, 1028 blocks) on the
-    // other, each with its own workspace. Each grid's last-block ticket is the call's own, so every
-    // call gives the bytes it gives alone. On one device counter both grids counted in, a block
-    // could elect itself last before its grid had stored and select on the scores the workspace
-    // held from the previous call: every call takes the next pattern, so those are another
-    // input's. Eager calls first, then each stream's calls replayed from its graph.
-    int run_streams(DeviceExecutionView execution) {
+    // Two calls in flight on one GPU at once (#882), as two engines run them, each on its own
+    // stream and workspace: T = tokens_a beside T = tokens_b. Both decode (T = 1: D1, 257 blocks)
+    // or both small-T windows whose S1 selects (T <= 8: 1028 blocks) share one kernel's ticket.
+    // Each grid's last-block ticket is the call's own, so every call gives the bytes it gives
+    // alone. On one device counter both grids counted in, a block could elect itself last before
+    // its grid had stored and select on the scores the workspace held from the previous call:
+    // every call takes the next pattern, so those are another input's. Eager calls first, then
+    // each stream's calls replayed from its graph.
+    int run_streams(DeviceExecutionView execution, std::int32_t tokens_a, std::int32_t tokens_b) {
         constexpr int kCalls   = 6; // a multiple of the three patterns
-        constexpr int kEager   = 100;
-        constexpr int kReplays = 100;
+        constexpr int kEager   = 500;
+        constexpr int kReplays = 500;
         const int patterns     = static_cast<int>(kRoutePatterns.size());
         const ops::SparseMoeWeights weights{
             dense_bf16_weight(device_router_.p, kExperts + 1, kHidden),
@@ -972,8 +973,8 @@ public:
         };
 
         std::array<Side, 2> sides;
-        sides[0].tokens = 1;
-        sides[1].tokens = 4;
+        sides[0].tokens = tokens_a;
+        sides[1].tokens = tokens_b;
         for (Side& side : sides) {
             const std::size_t elements = static_cast<std::size_t>(kHidden) * side.tokens;
             cuda_check(cudaStreamCreateWithFlags(&side.stream, cudaStreamNonBlocking),
@@ -1034,9 +1035,10 @@ public:
         }
         int failures = 0;
         for (const Side& side : sides) {
-            std::printf("  STREAMS %s T=%d: %d of %d eager calls beside the other stream differ "
-                        "from the call alone (must be 0)\n",
-                        profile_.name, side.tokens, side.wrong, kEager * kCalls);
+            std::printf("  STREAMS %s T=%d (beside T=%d): %d of %d eager calls differ from the "
+                        "call alone (must be 0)\n",
+                        profile_.name, side.tokens, &side == &sides[0] ? tokens_b : tokens_a,
+                        side.wrong, kEager * kCalls);
             failures += side.wrong != 0 ? 1 : 0;
         }
         for (Side& side : sides) {
@@ -1057,9 +1059,10 @@ public:
             for (Side& side : sides) collect(side);
         }
         for (Side& side : sides) {
-            std::printf("  STREAMS %s T=%d: %d of %d graph-replayed calls beside the other stream "
-                        "differ from the call alone (must be 0)\n",
-                        profile_.name, side.tokens, side.wrong, kReplays * kCalls);
+            std::printf("  STREAMS %s T=%d (beside T=%d): %d of %d graph-replayed calls differ "
+                        "from the call alone (must be 0)\n",
+                        profile_.name, side.tokens, &side == &sides[0] ? tokens_b : tokens_a,
+                        side.wrong, kReplays * kCalls);
             failures += side.wrong != 0 ? 1 : 0;
             cuda_check(cudaGraphExecDestroy(side.graph), "destroy SparseMoe streams graph exec");
             cuda_check(cudaStreamDestroy(side.stream), "destroy SparseMoe streams stream");
@@ -1133,7 +1136,10 @@ int run_profile(DeviceExecutionView execution, const CodecProfile& profile, bool
         std::cerr << profile.name << ": interval workspace capacity missed a route witness\n";
         ++failures;
     }
-    if (streams) { failures += fixture.run_streams(execution); }
+    if (streams) {
+        failures += fixture.run_streams(execution, 1, 1); // D1 beside D1
+        failures += fixture.run_streams(execution, 2, 4); // S1 beside S1
+    }
     failures += fixture.verify_persistent_inputs();
     return failures;
 }
