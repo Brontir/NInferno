@@ -5,7 +5,8 @@
 // geometry, B = 1 and B = 8, append and cached, with and without the valid-column mask, at
 // contexts on both sides of the split and page boundaries. The output, every split's partials
 // (O, the log2 maximum, the sum; unwritten entries included) and, for append, the cache must
-// match byte for byte.
+// match byte for byte. --self compares each schedule with a second run of itself instead (the
+// kernels' determinism).
 
 #include "ops/softmax_attention/common/causal_geometry.h"
 #include "ops/softmax_attention/dense/causal_cache/bf16/plan.h"
@@ -38,6 +39,13 @@ static_assert(Shipped::kWarpsD == 2 && Former::kWarpsD == 1);
 
 constexpr int D = kCausalHeadDim;
 
+// Every copy, fill and launch goes through this one stream, then a synchronize: a non-blocking
+// stream does not wait for cudaMemcpy/cudaMemset on the legacy default stream (a pageable
+// cudaMemcpy may return before its DMA lands), so the kernels would race the cache restore and the
+// sentinel fill.
+cudaStream_t g_stream = nullptr;
+bool g_self           = false;
+
 void check(cudaError_t status, const char* what) {
     if (status == cudaSuccess) return;
     std::fprintf(stderr, "FAIL: %s: %s\n", what, cudaGetErrorString(status));
@@ -59,14 +67,23 @@ struct DeviceArray {
     DeviceArray& operator=(const DeviceArray&) = delete;
 
     void upload(const std::vector<T>& host) {
-        check(cudaMemcpy(data, host.data(), size * sizeof(T), cudaMemcpyHostToDevice), "upload");
+        check(
+            cudaMemcpyAsync(data, host.data(), size * sizeof(T), cudaMemcpyHostToDevice, g_stream),
+            "upload");
+        check(cudaStreamSynchronize(g_stream), "upload");
     }
 
-    void fill(unsigned char byte) { check(cudaMemset(data, byte, size * sizeof(T)), "memset"); }
+    void fill(unsigned char byte) {
+        check(cudaMemsetAsync(data, byte, size * sizeof(T), g_stream), "memset");
+        check(cudaStreamSynchronize(g_stream), "memset");
+    }
 
     std::vector<T> download() const {
         std::vector<T> host(size);
-        check(cudaMemcpy(host.data(), data, size * sizeof(T), cudaMemcpyDeviceToHost), "download");
+        check(
+            cudaMemcpyAsync(host.data(), data, size * sizeof(T), cudaMemcpyDeviceToHost, g_stream),
+            "download");
+        check(cudaStreamSynchronize(g_stream), "download");
         return host;
     }
 };
@@ -161,7 +178,8 @@ struct Outputs {
 };
 
 template <class G, class S, bool MultiBatch, bool Masked, bool Append>
-Outputs run(Inputs<G>& in, const Bf16KvCausalPlan& plan, cudaStream_t stream) {
+Outputs run(Inputs<G>& in, const Bf16KvCausalPlan& plan) {
+    const cudaStream_t stream = g_stream;
     in.k.upload(in.k_host);
     in.v.upload(in.v_host);
     const int capacity = plan.partition.capacity;
@@ -224,24 +242,38 @@ int compare(const std::string& label, const char* what, const std::vector<T>& a,
     return 1;
 }
 
-template <class G, bool MultiBatch, bool Masked, bool Append>
-int run_both(Inputs<G>& in, const Bf16KvCausalPlan& plan, const std::string& label,
-             cudaStream_t stream) {
-    const Outputs former  = run<G, Former, MultiBatch, Masked, Append>(in, plan, stream);
-    const Outputs shipped = run<G, Shipped, MultiBatch, Masked, Append>(in, plan, stream);
-    int failures          = compare(label, "output", former.out, shipped.out) +
-                   compare(label, "partial O", former.acc, shipped.acc) +
-                   compare(label, "partial maximum", former.maximum, shipped.maximum) +
-                   compare(label, "partial sum", former.sum, shipped.sum);
+// 1 when the two runs differ in any compared byte.
+template <class G, class A, class B, bool MultiBatch, bool Masked, bool Append>
+int run_pair(Inputs<G>& in, const Bf16KvCausalPlan& plan, const std::string& label) {
+    const Outputs a = run<G, A, MultiBatch, Masked, Append>(in, plan);
+    const Outputs b = run<G, B, MultiBatch, Masked, Append>(in, plan);
+    int differs     = compare(label, "output", a.out, b.out) +
+                  compare(label, "partial O", a.acc, b.acc) +
+                  compare(label, "partial maximum", a.maximum, b.maximum) +
+                  compare(label, "partial sum", a.sum, b.sum);
     if constexpr (Append) {
-        failures += compare(label, "cache K", former.k, shipped.k) +
-                    compare(label, "cache V", former.v, shipped.v);
+        differs += compare(label, "cache K", a.k, b.k) + compare(label, "cache V", a.v, b.v);
     }
-    return failures;
+    return differs ? 1 : 0;
+}
+
+// The pairs that differ; pairs counts those run: former against shipped, or with --self each
+// schedule against itself.
+template <class G, bool MultiBatch, bool Masked, bool Append>
+int run_both(Inputs<G>& in, const Bf16KvCausalPlan& plan, const std::string& label, int& pairs) {
+    if (g_self) {
+        pairs += 2;
+        return run_pair<G, Former, Former, MultiBatch, Masked, Append>(in, plan,
+                                                                       label + " [former]") +
+               run_pair<G, Shipped, Shipped, MultiBatch, Masked, Append>(in, plan,
+                                                                         label + " [shipped]");
+    }
+    pairs += 1;
+    return run_pair<G, Former, Shipped, MultiBatch, Masked, Append>(in, plan, label);
 }
 
 template <class G>
-int run_case(const Case& c, int sms, std::uint64_t seed, int& runs, cudaStream_t stream) {
+int run_case(const Case& c, int sms, std::uint64_t seed, int& pairs) {
     const auto [lo, hi] = std::minmax_element(c.contexts.begin(), c.contexts.end());
     const CausalAttentionExecutionEnvelope envelope{static_cast<std::uint32_t>(*lo),
                                                     static_cast<std::uint32_t>(*hi)};
@@ -260,26 +292,23 @@ int run_case(const Case& c, int sms, std::uint64_t seed, int& runs, cudaStream_t
         if (empty_row && batch == 1) continue;
         Inputs<G> in(c, seed, empty_row);
         const auto both = [&]<bool MultiBatch>() {
-            failures += run_both<G, MultiBatch, false, false>(in, plan, label + " cached", stream);
-            failures += run_both<G, MultiBatch, false, true>(in, plan, label + " append", stream);
+            failures += run_both<G, MultiBatch, false, false>(in, plan, label + " cached", pairs);
+            failures += run_both<G, MultiBatch, false, true>(in, plan, label + " append", pairs);
             failures +=
-                run_both<G, MultiBatch, true, false>(in, plan, label + " cached masked", stream);
+                run_both<G, MultiBatch, true, false>(in, plan, label + " cached masked", pairs);
             failures +=
-                run_both<G, MultiBatch, true, true>(in, plan, label + " append masked", stream);
+                run_both<G, MultiBatch, true, true>(in, plan, label + " append masked", pairs);
         };
         if (empty_row) {
             // Only the masked runs differ: a valid-column count of 0 empties the middle row.
             failures +=
-                run_both<G, true, true, false>(in, plan, label + " cached, a row empty", stream);
+                run_both<G, true, true, false>(in, plan, label + " cached, a row empty", pairs);
             failures +=
-                run_both<G, true, true, true>(in, plan, label + " append, a row empty", stream);
-            runs += 2;
+                run_both<G, true, true, true>(in, plan, label + " append, a row empty", pairs);
         } else if (batch > 1) {
             both.template operator()<true>();
-            runs += 4;
         } else {
             both.template operator()<false>();
-            runs += 4;
         }
     }
     return failures;
@@ -287,7 +316,15 @@ int run_case(const Case& c, int sms, std::uint64_t seed, int& runs, cudaStream_t
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--self") == 0) {
+            g_self = true;
+        } else {
+            std::fprintf(stderr, "usage: %s [--self]\n", argv[0]);
+            return 2;
+        }
+    }
     int count = 0;
     if (cudaGetDeviceCount(&count) != cudaSuccess || count == 0) {
         std::printf("SKIP: no CUDA device\n");
@@ -295,8 +332,7 @@ int main() {
     }
     int sms = 0;
     check(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, 0), "SM count");
-    cudaStream_t stream = nullptr;
-    check(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking), "stream");
+    check(cudaStreamCreateWithFlags(&g_stream, cudaStreamNonBlocking), "stream");
     // One row: page (64) and key-tile (32) edges, the split rounding near the targets, the long
     // target from 32768 keys. Eight rows: ragged contexts in one envelope, and equal ones.
     const std::vector<Case> cases = {
@@ -317,19 +353,21 @@ int main() {
         {{1, 63, 64, 65, 2049, 4096, 8191, 12000}},
         {{7843, 7843, 7843, 7843, 7843, 7843, 7843, 7843}},
     };
-    int failures = 0, runs = 0;
+    int failures = 0, pairs = 0;
     std::uint64_t seed = 856;
     for (const Case& c : cases) {
 #define NINFERNO_IDENTITY_GEOMETRY(Q, KV)                                                          \
-    failures += run_case<CausalGeometry<D, (Q), (KV)>>(c, sms, seed++, runs, stream);
+    failures += run_case<CausalGeometry<D, (Q), (KV)>>(c, sms, seed++, pairs);
         NINFERNO_CAUSAL_GEOMETRIES(NINFERNO_IDENTITY_GEOMETRY)
 #undef NINFERNO_IDENTITY_GEOMETRY
     }
-    cudaStreamDestroy(stream);
+    cudaStreamDestroy(g_stream);
+    const char* mode = g_self ? "self" : "former vs shipped";
     if (failures) {
-        std::printf("FAIL: %d of %d decode pairs differ\n", failures, runs);
+        std::printf("FAIL (%s): %d of %d decode pairs differ\n", mode, failures, pairs);
         return 1;
     }
-    std::printf("bf16 decode identity: %d decode pairs bit-identical on %d SMs\n", runs, sms);
+    std::printf("bf16 decode identity (%s): %d decode pairs bit-identical on %d SMs\n", mode, pairs,
+                sms);
     return 0;
 }
