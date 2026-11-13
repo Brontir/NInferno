@@ -594,6 +594,8 @@ for (const lang of ["en", "ru", "uk"]) for (const k of ["replayContext", "replay
   eq(H.decidedOnText({choice: {decided_on: {generation: "ada", cards: "RTX 4090", lent: false}}}, tr), 'decidedOn{"gen":"Ada (RTX 40)","cards":"RTX 4090"}',
      "an older document without decides: said");
   // Blackwell (#618 step 1): the KV codec decided there, the activations not weighed: said so.
+  eq(H.decidedOnText({choice: {decided_on: {generation: "gb20x", cards: "RTX 5070 Ti, RTX 5090", lent: false, decides: true, activations_decide: false}}}, tr, true).startsWith("decidedOnKvPinned"), true,
+     "activations the user pinned: the KV line says they are the user's, not the family's default");
   eq(H.decidedOnText({choice: {decided_on: {generation: "gb20x", cards: "RTX 5070 Ti, RTX 5090", lent: false, decides: true, activations_decide: false}}}, tr),
      'decidedOnKv{"gen":"Blackwell (RTX 50)","cards":"RTX 5070 Ti, RTX 5090"}', "the KV codec alone decided on the reference card");
   eq(H.decidedOnText({choice: {decided_on: {generation: "ada", cards: "RTX 4090", lent: false, decides: true, activations_decide: true}}}, tr),
