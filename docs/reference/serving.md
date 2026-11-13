@@ -2611,13 +2611,14 @@ ESTIMATES: `own_context`, `fits`, `decode_tok_s`, `prefill_tok_s` (on this board
 measurements), `speed_transferred` (true unless `speed_basis` is `own`), `speed_basis` (`own`: the
 card's generation's rows, each on two lab cards; `transferred`: a constant from another generation or
 one lab card, or an MoE decode step whose kernel pair the op was not asked (no route query in the
-program, or no answer for a layer kind) or was asked of assumed banks; `lent_generation`: the card's compute capability has no generation row of its own and
+program, or no answer for a layer kind), or one on assumed banks; `lent_generation`: the card's compute capability has no generation row of its own and
 the nearest one's stand in, a rough estimate that decides nothing), `speed_why` (present only with
 `speed_basis` `transferred` where a rule names a reason, one reason among any others: `MoE route not
 queried`: the program registers no MoE route query (ninferno-ui), so the step takes the measured
 kernel pair's share past one stream; `MoE route not answered`: the query gave no kernels for a
 layer kind; `MoE banks assumed`: the file does not tell the format its routed banks are kept as
-(Gemma 4's GGUF MXFP4 experts), so the answered pair may not be the one the start runs), `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
+(Gemma 4's GGUF MXFP4 experts, a split MoE GGUF's parts), so the bytes priced and the pair asked
+may not be what the start runs; at any stream count), `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
 measured, transferred, source, evidence}]`: `measured` true only for `evidence` `measured`,
 `transferred` for a term measured on another family; `evidence` what the term rests on: `measured` (a
 quantization's own files, or the family's switch), `proxy` (the same quantization label measured on

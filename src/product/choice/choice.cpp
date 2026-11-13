@@ -1447,14 +1447,6 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
                     out.why = "MoE route not answered";
                 }
             }
-            // The answer was asked of banks whose kept format the file does not tell
-            // (QuantOption::expert_banks_assumed: Gemma 4's GGUF MXFP4 experts, which the loader
-            // keeps as NVFP4, BF16 or Q8 by their bytes; #784): past one row the pair it names may
-            // not be the one the start runs, so the step is Transferred, as the prefill's is.
-            if (rows > 1 && quant.expert_banks_assumed) {
-                transferred = true;
-                if (out.why.empty()) { out.why = "MoE banks assumed"; }
-            }
         } else {
             reads += routed_read / at(nullptr);
             // No query to ask (#766): the measured pair's share, but not the op's answer. One row
@@ -1463,6 +1455,15 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
                 transferred = true;
                 out.why     = "MoE route not queried";
             }
+        }
+        // Banks whose kept format the file does not tell (QuantOption::expert_banks_assumed:
+        // Gemma 4's GGUF MXFP4 experts, which the loader keeps as NVFP4, BF16 or Q8 by their
+        // bytes; a split MoE GGUF's parts): the bytes priced are the file's and the pair is the
+        // one asked of its format, at any row, so the step is Transferred (the prefill's term
+        // already makes it so, #813) and names why (#784).
+        if (quant.expert_banks_assumed) {
+            transferred = true;
+            if (out.why.empty()) { out.why = "MoE banks assumed"; }
         }
     }
     bool flops_transferred = false;

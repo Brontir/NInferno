@@ -471,7 +471,9 @@ struct Speed {
     SpeedBasis basis         = SpeedBasis::Own;
     // A reason the decode estimate is Transferred, where a rule names one: "MoE route not queried"
     // (no route query, ModelFacts::moe_route_unqueried), "MoE route not answered" (the query gave
-    // no kernels for a layer kind). Other rules may widen the basis too and are not named; empty
+    // no kernels for a layer kind), "MoE banks assumed" (QuantOption::expert_banks_assumed: the
+    // routed banks' kept format, so their bytes and pair, is not the file's to tell; #784). Other
+    // rules may widen the basis too and are not named; empty
     // where the basis is Own or lent_generation (the lent row is the reason there).
     std::string_view why;
 };
