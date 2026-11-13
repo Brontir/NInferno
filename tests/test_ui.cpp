@@ -1127,6 +1127,51 @@ void test_artifact_plan_via_serve() {
     std::tie(status, body) = plan(root / "serve-plan", "", "-1");
     check(status == 400 && body.find("no GPU -1") != std::string::npos,
           "gpu -1 is refused: " + body);
+    // A card NVML reads: its free memory goes to serve (--plan-free-now), for a card too busy to
+    // open a context (#891).
+    {
+        struct OneGpu final : GpuSource {
+            std::vector<GpuStat> snapshot() override {
+                GpuStat g;
+                g.index        = 0;
+                g.uuid         = "GPU-test-uuid";
+                g.name         = "NVIDIA GeForce RTX 4090";
+                g.memory_total = 24ULL << 30;
+                g.memory_free  = 3ULL << 30;
+                g.cc_major     = 8;
+                g.cc_minor     = 9;
+                return {g};
+            }
+
+            std::string error() const override { return {}; }
+        };
+
+        UiOptions options;
+        options.offline      = true;
+        options.serve_binary = root / "serve-plan";
+        options.model_dirs   = {fixture.directory};
+        App app(options, std::make_unique<OneGpu>());
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        httplib::Client client("127.0.0.1", port);
+        auto res = client.Get("/api/plan?gpu=0&par=1&artifact=" +
+                              httplib::encode_query_component(artifact.string()));
+        server.stop();
+        thread.join();
+        check(res && res->status == 200, "the plan on a card NVML reads answers");
+        std::ifstream again(args);
+        std::vector<std::string> seen;
+        for (std::string line; std::getline(again, line);) { seen.push_back(line); }
+        const auto at = std::find(seen.begin(), seen.end(), "--plan-free-now");
+        check(at != seen.end() && at + 1 != seen.end() && *(at + 1) == "3221225472",
+              "serve is given NVML's free memory (--plan-free-now 3221225472)");
+        check(!seen.empty() && seen.back() == "gpu=GPU-test-uuid",
+              "the planner is bound to the card by NVML's UUID, not '" +
+                  (seen.empty() ? std::string() : seen.back()) + "'");
+    }
     fs::remove_all(root);
 }
 #endif

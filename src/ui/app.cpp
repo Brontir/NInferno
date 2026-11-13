@@ -1048,6 +1048,13 @@ std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
     for (const auto& s : stats) {
         if (s.index == gpu) { stat = &s; }
     }
+    // NVML's free memory, for serve to plan `now` at where the card is too busy to open a context
+    // (#891): without it the document would carry no `now`, and the page would take the idle
+    // card's fit for a start right now.
+    if (stat != nullptr && stat->memory_total > 0) {
+        spec.argv.push_back("--plan-free-now");
+        spec.argv.push_back(std::to_string(static_cast<std::uint64_t>(stat->memory_free)));
+    }
     bind_gpu(spec, gpu, stat);
     if (!options_.hub_cache.empty()) { spec.env["HF_HUB_CACHE"] = utf8_of(options_.hub_cache); }
 
@@ -1072,7 +1079,8 @@ std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
     const bool ended =
         planner_.find(id, info) && (info.state == "exited" || info.state == "failed");
     const std::vector<std::string> lines = planner_.log(id);
-    // Another request's run still being read is younger than this.
+    // This run's log is read: drop it now (#891), and any other ended run left behind.
+    planner_.forget(id);
     planner_.forget_ended(std::chrono::seconds(60));
     // serve ran: its answer or its refusal is the plan's, never the formula's (#843): a start of
     // it would refuse as it does.

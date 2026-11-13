@@ -50,6 +50,10 @@ struct ServeOptions {
     // planned, with what a start right now would get at the free memory beside it ("now");
     // ninferno-ui's plan of a local artifact (#843). Without it the plan is at the free memory.
     bool plan_idle = false;
+    // --plan-free-now BYTES (with --plan-idle): the card's free memory as the caller reads it
+    // (NVML's memory_free), taken only where serve cannot read it itself: a busy card that refuses
+    // a context still names its board, and `now` is then planned at this figure (#891).
+    std::optional<std::uint64_t> plan_free_now;
     // --with-drafters: attach the drafters the registry names to a GGUF hub model too (fetched
     // and converted beside it); a checkpoint's are attached without it.
     bool with_drafters = false;
