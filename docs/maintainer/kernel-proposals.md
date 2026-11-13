@@ -192,9 +192,9 @@ have frozen predictions so far.
   every 128 keys, with a two-stage `cp.async` ring of its own (2 x 8 x 4608 B = 72 KiB), waited
   with `cp.async.wait_group` and `__syncwarp`: there is no CTA barrier in the loop. S^T = K Q^T,
   with the 16 keys as M and the query rows as one n8 tile, so Q's B fragments stay in registers.
-  K and V go from `ldmatrix` of the raw code tile straight into FP16 MMA fragments: on sm_100+
-  one `cvt.rn.f16x2.e2m1x2` a pair; elsewhere the bit form at 2^-14 of the value, restored
-  exactly in FP32. Then one HMUL2 by the group's E4M3 scale per pair. The V^T and P^T fragments
+  K and V go from `ldmatrix` of the raw code tile straight into FP16 MMA fragments: in sm_100+
+  family-specific builds (`NINFERNO_ARCH_FAMILY_SPECIFIC`) one `cvt.rn.f16x2.e2m1x2` a pair;
+  elsewhere the bit form at 2^-14 of the value, restored exactly in FP32. Then one HMUL2 by the group's E4M3 scale per pair. The V^T and P^T fragments
   are transposed by `movmatrix`. Each warp keeps its own online softmax, and the 8 states merge
   once per CTA. The plan's wave partition counts one CTA per SM (`slab_rule.h`). The aligned
   launches of the invariant profile, RowTiles >= 2, rows 9-16, and sm_70/75 keep today's kernel.
@@ -349,8 +349,10 @@ have frozen predictions so far.
     branch 0.010923 (96.92 %, 1.0037). The branch is -0.1 % of master's, inside ±15 %. Both are
     within KLD_TOLERANCE (0.15) of the recorded NVFP4 KV term, 0.00982 (choice_constants.h).
   - The NVFP4 KV error is unchanged, so the byte rule holds.
-- Decision (13.11): kept where it is dispatched (NVFP4 KV, RowTiles 1, sm_80+, not `exact`); every
-  frozen acceptance item holds.
+- Decision (13.11): kept where it is dispatched (NVFP4 KV, at most 8 query rows a tile
+  (`kNvfp4KvSlabMaxRows`), sm_80+, not `exact`); every frozen acceptance item holds. Width-1
+  grouped append chunks, and width-2 chunks at G = 4, fit in 8 rows and so also take the slab; the
+  identity test covers them.
 
 ### M. MMQ column widths per arch and format (#619 step 13, DECISIONS 74)
 - Regime: MMQ on short prompts. Ada and Turing are done (#597, #717). Q2_K and the IQ formats still
