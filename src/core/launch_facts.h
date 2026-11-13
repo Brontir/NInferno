@@ -49,7 +49,7 @@ struct LaunchRow {
     std::string arch; // the ISA row's key ("120a")
     int major = 0, minor = 0;
     std::string card;  // the card the launch probe ran on
-    std::string probe; // "launch_probe 1"
+    std::string probe; // "launch_probe 2" (a launch_probe 1 row has no 4096-CTA floor)
     int sms = 0;       // that card's SMs
     std::optional<double> node_s, node_pdl_s, stream_s;
     std::array<int, 5> floor_ctas{};
