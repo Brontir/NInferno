@@ -1036,7 +1036,7 @@ void test_artifact_plan_via_serve() {
     fixture.write();
     const fs::path artifact = fixture.entry;
     const fs::path args     = root / "args.txt";
-    const auto script   = [&](const fs::path& path, const std::string& body) {
+    const auto script       = [&](const fs::path& path, const std::string& body) {
         std::ofstream(path) << "#!/bin/sh\nprintf '%s\\n' \"$@\" \"gpu=$CUDA_VISIBLE_DEVICES\" > '"
                             << args.string() << "'\n"
                             << body;
