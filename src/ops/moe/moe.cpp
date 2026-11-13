@@ -383,7 +383,25 @@ struct Workspace {
     Tensor x_h;
     // MoePlan::w4a8: the quantized x ([T] rows) and intermediate ([T * top_k] slot rows).
     Tensor x_codes, x_scales, x_sums, mid_codes, mid_scales, mid_sums;
+    // The call's last-block tickets (#882): [0] the SIMT router's route ticket, then the fused
+    // combine's run tickets (combine_ticket_count). They were device globals, shared by every
+    // engine's MoE on the GPU: two grids in flight on one counter could elect a last CTA early.
+    Tensor tickets;
 };
+
+// The fused combine's run tickets a layer may take: one per CTA column of an R8 down stage at the
+// fewest rows a CTA holds (32 lanes a row), at most kCombineTickets (r8_down_fuses_combine); none
+// with a shared expert, which keeps the separate combine. Geometry only, so every plan's
+// workspace bound holds them.
+std::int32_t combine_ticket_count(const Geometry& g) {
+    if (g.shared) { return 0; }
+    int rows = r8_schedule_info(0).rows_per_cta();
+    for (int s = 1; s < r8_schedule_count(); ++s) {
+        rows = std::min(rows, r8_schedule_info(s).rows_per_cta());
+    }
+    return static_cast<std::int32_t>(std::min<std::int64_t>(
+        kCombineTickets, (static_cast<std::int64_t>(g.hidden) + rows - 1) / rows));
+}
 
 // The router's CTAs quantize x for an R8 gate/up (GemmArgs::xq) where x is the bank's input as
 // it is (no zero-padded copy).
@@ -453,6 +471,8 @@ Workspace allocate(Arena& arena, const Geometry& g, const MoeConfig& c, std::int
         w.shared_out = arena.alloc(DType::BF16, {g.hidden, tokens});
         if (g.shared_gate) { w.shared_gate = arena.alloc(DType::BF16, {1, tokens}); }
     }
+    // Last, so the buffers above keep their offsets.
+    w.tickets = arena.alloc(DType::I32, {1 + combine_ticket_count(g)});
     return w;
 }
 
@@ -1482,7 +1502,6 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     const Workspace ws = allocate(workspace, g, c, t, p);
     const std::int32_t a = t * c.top_k;
     const std::int32_t jobs = max_jobs(a, g.experts, p.job_columns);
-    bool fused_combine      = false; // the R8 down stage combines (GemmArgs::combine_tickets)
 
     // The shared expert, through the generic projection path: x and its own buffers only, and
     // (A8) its activation planes in `arena`. On the branch it runs beside steps 1-5, which take
@@ -1533,6 +1552,21 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         }
     };
 
+    // Whether the R8 down stage combines (step 5, GemmArgs::combine_tickets), on how many runs of
+    // rows: each run counts on a ticket of the call's own (ws.tickets past the route ticket), which
+    // the plan zeroes in stream order before the down stage.
+    std::int32_t combine_runs = 0;
+    if (branch == nullptr && !p.volta_hmma && !p.w4a8_down && p.down_r8 >= 0 &&
+        fused_combine_enabled() && r8_down_fuses_combine(w, g, p.down_r8)) {
+        const int rows = r8_schedule_info(p.down_r8).rows_per_cta() * (32 / r8_lanes(w.down));
+        combine_runs   = static_cast<std::int32_t>(blocks(g.hidden, rows));
+        if (combine_runs > ws.tickets.ne[0] - 1) {
+            fail("the fused combine's tickets exceed the workspace's");
+        }
+    }
+    const bool fused_combine = combine_runs > 0;
+    int* const tickets       = static_cast<int*>(ws.tickets.data);
+
     // 2. Selection and 3. plan: one launch for a call of at most kPlanWarps tokens.
     SelectArgs select;
     {
@@ -1562,6 +1596,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         plan.job_begin    = static_cast<int*>(ws.job_begin.data);
         plan.job_count    = static_cast<int*>(ws.job_count.data);
         plan.job_total    = static_cast<int*>(ws.job_total.data);
+        plan.zero_tickets = tickets + 1;
+        plan.zero_count   = combine_runs;
     }
     // The router's kernel (router_kernel, the rule the layer price reads too).
     const MoeRouterKernel router = router_kernel(w, g, p, t);
@@ -1602,7 +1638,10 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         }
         const bool router_hmma = router == MoeRouterKernel::VoltaHmma;
         if (router_simt) {
-            launch_router_simt(args, stream, route_in_router ? &select : nullptr, &plan);
+            // The route ticket is zero in stream order when the router starts: the workspace's
+            // bytes are another op's in between (#882).
+            if (route_in_router) { CUDA_CHECK(cudaMemsetAsync(tickets, 0, sizeof(int), stream)); }
+            launch_router_simt(args, stream, route_in_router ? &select : nullptr, &plan, tickets);
         } else if (router_hmma) {
             launch_moe_volta_hmma(generic::WeightCodec::Bf16, false, Stage::Router, args,
                                   dim3(blocks(g.experts, kVoltaHmmaRows), blocks(t, kVoltaHmmaSlots)),
@@ -1752,11 +1791,9 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         } else if (p.down_r8 >= 0) {
             args.r8_lanes  = r8_lanes(w.down);
             const int rows = r8_schedule_info(p.down_r8).rows_per_cta() * (32 / args.r8_lanes);
-            if (branch == nullptr && fused_combine_enabled() &&
-                r8_down_fuses_combine(w, g, p.down_r8)) {
-                args.combine_tickets = combine_tickets();
+            if (fused_combine) {
+                args.combine_tickets = tickets + 1;
                 args.combine         = combine_args(ws, g, c, epilogue, out, t, false);
-                fused_combine        = true;
             }
             launch_r8_gemm(generic::codec_of(w.down), is_frag(w.down), Stage::Down, p.down_r8, t,
                            args, dim3(blocks(g.hidden, rows), static_cast<unsigned>(jobs)), stream);

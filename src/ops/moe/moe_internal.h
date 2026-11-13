@@ -78,6 +78,11 @@ struct PlanArgs {
     int* job_begin    = nullptr;
     int* job_count    = nullptr;
     int* job_total    = nullptr; // [1]
+    // The call's fused-combine tickets (GemmArgs::combine_tickets), which the plan sets to zero
+    // before the down stage counts on them (#882): zero_count ints, none when the call keeps the
+    // separate combine.
+    int* zero_tickets = nullptr;
+    int zero_count    = 0;
 };
 
 // The SIMT router (moe_router_simt.cu): warps per CTA, the widest call, and its dynamic shared
@@ -160,7 +165,9 @@ struct GemmArgs {
     // Down (R8): the combine in the down stage (moe_r8.cuh). The last CTA of each run of output
     // rows to finish, counted on combine_tickets[blockIdx.x], adds the run's rows of every token's
     // experts into combine.out as combine_kernel does (combine.shared unset: no shared expert),
-    // and the separate combine launch is skipped. nullptr: the down stage stores y only.
+    // and the separate combine launch is skipped. nullptr: the down stage stores y only. The
+    // tickets are the call's own (its workspace, zeroed by its plan), never shared with another
+    // call in flight.
     int* combine_tickets = nullptr;
     CombineArgs combine;
     // Host only: launch as a programmatic dependent of the stream's previous kernel (core/pdl.cuh).
@@ -679,16 +686,19 @@ void launch_plan(const PlanArgs& args, cudaStream_t stream);
 void launch_select_plan(const SelectArgs& select, const PlanArgs& plan, cudaStream_t stream);
 
 void launch_combine(const CombineArgs& args, cudaStream_t stream);
-// Run tickets of the fused combine (GemmArgs::combine_tickets): zero at load, each run's last CTA
-// sets its ticket back to zero. A down grid of more runs keeps the separate combine. One such
-// down stage runs at a time on a device (a MoE layer's calls are in stream order).
+// The most run tickets of the fused combine (GemmArgs::combine_tickets) a down grid takes: one of
+// more runs keeps the separate combine. The tickets are in the call's workspace (#882: a device
+// global was shared by every engine's MoE on the GPU), its plan zeroes them, and each run's last
+// CTA sets its ticket back to zero.
 inline constexpr int kCombineTickets = 1024;
-[[nodiscard]] int* combine_tickets();
 // The BF16 router at 1..kRouterSimtMaxTokens tokens, one warp per expert (GemmArgs of the
 // register-MMA router: weights, x, bias, logits and xq). With select and plan (at most 32
-// assignments) its last CTA also selects and plans: launch_select_plan's results.
+// assignments) its last CTA also selects and plans: launch_select_plan's results. The CTAs then
+// count themselves in on route_ticket, one int of the call's own workspace that is zero in stream
+// order when the router starts (#882); the last CTA sets it back to zero.
 void launch_router_simt(const GemmArgs& args, cudaStream_t stream,
-                        const SelectArgs* select = nullptr, const PlanArgs* plan = nullptr);
+                        const SelectArgs* select = nullptr, const PlanArgs* plan = nullptr,
+                        int* route_ticket = nullptr);
 
 
 // Route choices the test compares with their alternatives, process-wide: the MXFP4 banks'

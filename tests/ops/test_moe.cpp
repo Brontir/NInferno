@@ -29,6 +29,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -36,6 +37,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <numeric>
 #include <random>
 #include <string>
@@ -1796,15 +1798,182 @@ int check_bank_refusals() {
     return failures;
 }
 
+// Two MoE layers in flight on one GPU at once (#882), as two engines run them: each its own stream
+// and workspace, E = 128 at T = 1 and E = 256 at T = 4 (router grids of 32 and 64 CTAs). The
+// last-block tickets (the SIMT router's route ticket where its last CTA routes, the R8 down stage's
+// fused combine) are each call's own, so every call gives the bytes it gives alone. On one device
+// counter both grids counted in, a CTA could elect itself last before its own grid had stored and
+// route on the logits buffer's previous bytes: every call takes the next of three inputs, so those
+// bytes are another input's. Eager calls first, then each stream's calls replayed from its graph
+// (the tickets' addresses fixed in the graph, one workspace per stream).
+int check_concurrent_streams() {
+    namespace mo           = ops::detail::moe;
+    constexpr int kInputs  = 3;   // a call's x is input (call % kInputs)
+    constexpr int kCalls   = 8;   // calls a stream holds between two synchronizations
+    constexpr int kEager   = 250; // rounds of kCalls eager calls per stream
+    constexpr int kReplays = 250; // replays of each stream's graph of kCalls calls
+
+    struct Side {
+        Case c;
+        Layer l;
+        std::int32_t t = 0;
+        std::vector<DeviceBuffer> x, out;
+        std::vector<std::vector<std::uint16_t>> want; // per input, the call alone
+        cudaStream_t stream = nullptr;
+        std::unique_ptr<DeviceArena> workspace;
+        cudaGraphExec_t graph = nullptr;
+        int wrong             = 0;
+    };
+
+    const auto make_case = [](std::int32_t experts) {
+        Case c;
+        c.label          = "streams q4 E" + std::to_string(experts) + " k8 H1024 F64";
+        c.experts        = experts;
+        c.top_k          = 8;
+        c.hidden         = 1024;
+        c.inter          = 64;
+        c.shared_inter   = 0;
+        c.gate_up        = QType::Q4_G64_FP16;
+        c.down           = QType::Q4_G64_FP16;
+        c.config.top_k   = 8;
+        c.router_bias    = false;
+        c.selection_bias = false;
+        c.expert_scale   = false;
+        c.expert_bias    = false;
+        c.shared_gate    = false;
+        c.epilogue       = ops::MoeEpilogue::Store;
+        return c;
+    };
+    int failures = 0;
+    std::array<Side, 2> sides;
+    const std::array<std::int32_t, 2> experts{128, 256};
+    const std::array<std::int32_t, 2> widths{1, 4};
+    for (std::size_t s = 0; s < sides.size(); ++s) {
+        Side& side              = sides[s];
+        side.c                  = make_case(experts[s]);
+        side.l                  = make_layer(side.c, 4100U + static_cast<std::uint32_t>(s));
+        side.t                  = widths[s];
+        const std::size_t bytes = static_cast<std::size_t>(side.t) * side.c.hidden * 2;
+        check(cudaStreamCreateWithFlags(&side.stream, cudaStreamNonBlocking), "stream");
+        side.workspace = std::make_unique<DeviceArena>(std::max<std::size_t>(
+            ops::moe_workspace_bytes(side.l.weights, side.c.config, side.t, side.t), 256));
+        for (int i = 0; i < kInputs; ++i) {
+            const auto x =
+                random_bf16(bytes / 2, 4200U + static_cast<std::uint32_t>(10 * s + i), -1.0, 1.0);
+            side.x.emplace_back(bytes);
+            side.x.back().copy_from_host(x.data(), bytes);
+            // The call alone (one stream, nothing beside it), against the oracle.
+            const Run run   = run_op(side.c, side.l, x, 0, side.t, {});
+            const auto plan = mo::select_plan(side.l.weights, side.c.config, side.t,
+                                              ops::prefill_routes_active());
+            const std::string label =
+                side.c.label + " T=" + std::to_string(side.t) + " input " + std::to_string(i);
+            failures +=
+                compare_run(side.c, side.l, x, {}, 0, side.t, run, a8_stages(side.c, plan), label);
+            side.want.push_back(run.out);
+            if (i == 0) {
+                const bool simt = mo::moe_router_kernel(side.l.weights, side.c.config, plan,
+                                                        side.t) == mo::MoeRouterKernel::Simt;
+                std::cout << label << ": plan " << mo::plan_name(plan) << ", SIMT router "
+                          << (simt ? "yes" : "no") << ", routes in the router "
+                          << (simt && side.t * side.c.top_k <= 32 && !device_class().features.pdl
+                                  ? "yes"
+                                  : "no")
+                          << ", fused combine "
+                          << (plan.down_r8 >= 0 && mo::moe_r8_down_fuses_combine(
+                                                       side.l.weights, side.c.config, plan.down_r8)
+                                  ? "yes"
+                                  : "no")
+                          << '\n';
+            }
+        }
+        for (int i = 0; i < kCalls; ++i) side.out.emplace_back(bytes);
+    }
+    const auto enqueue = [&](Side& side, int call) {
+        Tensor tx(side.x[static_cast<std::size_t>(call % kInputs)].p, DType::BF16,
+                  {side.c.hidden, side.t});
+        Tensor tout(side.out[static_cast<std::size_t>(call)].p, DType::BF16,
+                    {side.c.hidden, side.t});
+        ops::moe(tx, side.l.weights, side.c.config, side.c.epilogue, tout, *side.workspace,
+                 side.stream);
+    };
+    const auto collect = [&](Side& side) {
+        check(cudaStreamSynchronize(side.stream), "streams sync");
+        for (int i = 0; i < kCalls; ++i) {
+            std::vector<std::uint16_t> got(static_cast<std::size_t>(side.t) * side.c.hidden);
+            check(cudaMemcpy(got.data(), side.out[static_cast<std::size_t>(i)].p, got.size() * 2,
+                             cudaMemcpyDeviceToHost),
+                  "streams download");
+            if (got != side.want[static_cast<std::size_t>(i % kInputs)]) ++side.wrong;
+            check(cudaMemset(side.out[static_cast<std::size_t>(i)].p, 0xff, got.size() * 2),
+                  "streams poison");
+        }
+    };
+    // Eager: the two streams' calls enqueued in turn, so their grids overlap.
+    for (int round = 0; round < kEager; ++round) {
+        for (int i = 0; i < kCalls; ++i) {
+            for (Side& side : sides) enqueue(side, i);
+        }
+        for (Side& side : sides) collect(side);
+    }
+    for (const Side& side : sides) {
+        std::cout << side.c.label << " T=" << side.t << ": " << side.wrong << " of "
+                  << kEager * kCalls << " eager calls beside the other stream differ from the call "
+                  << "alone (must be 0)\n";
+        failures += side.wrong != 0 ? 1 : 0;
+    }
+    // Graphs: each stream's kCalls calls captured once, both replayed together.
+    for (Side& side : sides) {
+        side.wrong        = 0;
+        cudaGraph_t graph = nullptr;
+        check(cudaStreamBeginCapture(side.stream, cudaStreamCaptureModeThreadLocal), "capture");
+        for (int i = 0; i < kCalls; ++i) enqueue(side, i);
+        check(cudaStreamEndCapture(side.stream, &graph), "end capture");
+        check(cudaGraphInstantiate(&side.graph, graph, nullptr, nullptr, 0), "instantiate");
+        check(cudaGraphDestroy(graph), "destroy graph");
+    }
+    for (int replay = 0; replay < kReplays; ++replay) {
+        for (Side& side : sides) check(cudaGraphLaunch(side.graph, side.stream), "replay");
+        for (Side& side : sides) collect(side);
+    }
+    for (Side& side : sides) {
+        std::cout << side.c.label << " T=" << side.t << ": " << side.wrong << " of "
+                  << kReplays * kCalls << " graph-replayed calls beside the other stream differ "
+                  << "from the call alone (must be 0)\n";
+        failures += side.wrong != 0 ? 1 : 0;
+        check(cudaGraphExecDestroy(side.graph), "destroy graph exec");
+        check(cudaStreamDestroy(side.stream), "destroy stream");
+    }
+    return failures;
+}
+
 // --part random0|random1|random2|layers runs one share of the cases, no argument all of them:
 // ctest runs the four shares apart (tests/ops/tests.cmake), 125 s in one process on the RTX 5090.
 // Every random case is still drawn in each share, so the generator's sequence never moves.
 int main(int argc, char** argv) {
     const std::string part = argc == 3 && std::string_view(argv[1]) == "--part" ? argv[2] : "";
     if (argc != 1 && part != "random0" && part != "random1" && part != "random2" &&
-        part != "layers" && part != "mx8" && part != "int8") {
-        std::cerr << "usage: ninferno_moe_test [--part random0|random1|random2|layers|mx8|int8]\n";
+        part != "layers" && part != "mx8" && part != "int8" && part != "streams") {
+        std::cerr << "usage: ninferno_moe_test "
+                     "[--part random0|random1|random2|layers|mx8|int8|streams]\n";
         return 2;
+    }
+    if (part == "streams") {
+        // Two layers' calls in flight on two streams at once (#882).
+        if (!cuda_available()) return 77;
+        int failures = 0;
+        try {
+            failures += check_concurrent_streams();
+        } catch (const std::exception& e) {
+            std::cerr << "streams: " << e.what() << '\n';
+            ++failures;
+        }
+        if (failures != 0) {
+            std::cerr << "moe streams: " << failures << " failure(s)\n";
+            return 1;
+        }
+        std::cout << "moe streams: OK\n";
+        return 0;
     }
     // int8: random0 with the MXFP4 banks on the int8 W4A8, which sm_120a builds otherwise leave
     // for the block-scaled MMA.

@@ -59,7 +59,11 @@ ninferno_label_tests(ninferno_moe_mx8_test LABELS gpu)
 # The int8 W4A8 of MXFP4 banks, which sm_120a builds otherwise leave for the block-scaled MMA.
 add_test(NAME ninferno_moe_int8_test COMMAND ninferno_moe_test --part int8)
 ninferno_label_tests(ninferno_moe_int8_test LABELS gpu)
-list(APPEND ninferno_moe_runs ninferno_moe_mx8_test ninferno_moe_int8_test)
+# Two layers' calls in flight on two streams, eager and from graphs: each call's own last-block
+# tickets (#882).
+add_test(NAME ninferno_moe_streams_test COMMAND ninferno_moe_test --part streams)
+ninferno_label_tests(ninferno_moe_streams_test LABELS gpu)
+list(APPEND ninferno_moe_runs ninferno_moe_mx8_test ninferno_moe_int8_test ninferno_moe_streams_test)
 set_tests_properties(${ninferno_moe_runs} PROPERTIES SKIP_RETURN_CODE 77)
 
 ninferno_add_op_test(ninferno_linear_topk_test

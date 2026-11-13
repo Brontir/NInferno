@@ -941,6 +941,132 @@ public:
         return failures;
     }
 
+    // Two calls in flight on one GPU at once (#882), as two engines run them: decode (T = 1, D1's
+    // 257 blocks) on one stream and a small-T window whose S1 selects (T = 4, 1028 blocks) on the
+    // other, each with its own workspace. Each grid's last-block ticket is the call's own, so every
+    // call gives the bytes it gives alone. On one device counter both grids counted in, a block
+    // could elect itself last before its grid had stored and select on the scores the workspace
+    // held from the previous call: every call takes the next pattern, so those are another
+    // input's. Eager calls first, then each stream's calls replayed from its graph.
+    int run_streams(DeviceExecutionView execution) {
+        constexpr int kCalls   = 6; // a multiple of the three patterns
+        constexpr int kEager   = 100;
+        constexpr int kReplays = 100;
+        const int patterns     = static_cast<int>(kRoutePatterns.size());
+        const ops::SparseMoeWeights weights{
+            dense_bf16_weight(device_router_.p, kExperts + 1, kHidden),
+            routed_gate_.weight(),
+            routed_down_.weight(),
+            shared_gate_.weight(),
+            shared_down_device_.weight(),
+        };
+
+        struct Side {
+            std::int32_t tokens = 0;
+            std::vector<DeviceBuffer> x, residual, out;
+            std::vector<std::vector<std::uint16_t>> want; // per first pattern, the call alone
+            cudaStream_t stream = nullptr;
+            std::unique_ptr<WorkspaceArena> workspace;
+            cudaGraphExec_t graph = nullptr;
+            int wrong             = 0;
+        };
+
+        std::array<Side, 2> sides;
+        sides[0].tokens = 1;
+        sides[1].tokens = 4;
+        for (Side& side : sides) {
+            const std::size_t elements = static_cast<std::size_t>(kHidden) * side.tokens;
+            cuda_check(cudaStreamCreateWithFlags(&side.stream, cudaStreamNonBlocking),
+                       "create SparseMoe streams stream");
+            side.workspace =
+                std::make_unique<WorkspaceArena>(ops::sparse_moe_workspace_capacity_bytes(
+                    weights.routed_gate_up.qtype, weights.routed_down.qtype, side.tokens,
+                    side.tokens));
+            for (int first = 0; first < patterns; ++first) {
+                std::vector<float> input(elements), residual(elements);
+                for (std::int32_t token = 0; token < side.tokens; ++token) {
+                    const int pattern = (first + token) % patterns;
+                    std::copy(inputs_[pattern].begin(), inputs_[pattern].end(),
+                              input.begin() + static_cast<std::size_t>(token) * kHidden);
+                    std::copy(residuals_[pattern].begin(), residuals_[pattern].end(),
+                              residual.begin() + static_cast<std::size_t>(token) * kHidden);
+                }
+                side.x.push_back(to_device(bf16_bits(input)));
+                side.residual.push_back(to_device(bf16_bits(residual)));
+            }
+            for (int call = 0; call < kCalls; ++call) side.out.emplace_back(elements * 2);
+        }
+        const auto enqueue = [&](Side& side, int call) {
+            const auto first  = static_cast<std::size_t>(call % patterns);
+            DeviceBuffer& out = side.out[static_cast<std::size_t>(call)];
+            cuda_check(cudaMemcpyAsync(out.p, side.residual[first].p, out.bytes,
+                                       cudaMemcpyDeviceToDevice, side.stream),
+                       "seed SparseMoe streams destination");
+            Tensor x(side.x[first].p, DType::BF16, {kHidden, side.tokens});
+            Tensor destination(out.p, DType::BF16, {kHidden, side.tokens});
+            ops::sparse_moe(x, weights, ops::SparseMoeEpilogue::AddResidual, destination,
+                            *side.workspace, execution.on_stream(side.stream));
+        };
+        // The calls alone, one stream at a time.
+        for (Side& side : sides) {
+            for (int first = 0; first < patterns; ++first) {
+                enqueue(side, first);
+                cuda_synchronize(side.stream);
+                side.want.push_back(from_device<std::uint16_t>(
+                    side.out[static_cast<std::size_t>(first)], side.out[0].bytes / 2));
+            }
+        }
+        const auto collect = [&](Side& side) {
+            cuda_synchronize(side.stream);
+            for (int call = 0; call < kCalls; ++call) {
+                DeviceBuffer& out = side.out[static_cast<std::size_t>(call)];
+                if (from_device<std::uint16_t>(out, out.bytes / 2) !=
+                    side.want[static_cast<std::size_t>(call % patterns)]) {
+                    ++side.wrong;
+                }
+            }
+        };
+        for (int round = 0; round < kEager; ++round) {
+            for (int call = 0; call < kCalls; ++call) {
+                for (Side& side : sides) enqueue(side, call);
+            }
+            for (Side& side : sides) collect(side);
+        }
+        int failures = 0;
+        for (const Side& side : sides) {
+            std::printf("  STREAMS %s T=%d: %d of %d eager calls beside the other stream differ "
+                        "from the call alone (must be 0)\n",
+                        profile_.name, side.tokens, side.wrong, kEager * kCalls);
+            failures += side.wrong != 0 ? 1 : 0;
+        }
+        for (Side& side : sides) {
+            side.wrong        = 0;
+            cudaGraph_t graph = nullptr;
+            cuda_check(cudaStreamBeginCapture(side.stream, cudaStreamCaptureModeThreadLocal),
+                       "begin SparseMoe streams capture");
+            for (int call = 0; call < kCalls; ++call) enqueue(side, call);
+            cuda_check(cudaStreamEndCapture(side.stream, &graph), "end SparseMoe streams capture");
+            cuda_check(cudaGraphInstantiate(&side.graph, graph, nullptr, nullptr, 0),
+                       "instantiate SparseMoe streams graph");
+            cuda_check(cudaGraphDestroy(graph), "destroy SparseMoe streams graph");
+        }
+        for (int replay = 0; replay < kReplays; ++replay) {
+            for (Side& side : sides) {
+                cuda_check(cudaGraphLaunch(side.graph, side.stream), "replay SparseMoe streams");
+            }
+            for (Side& side : sides) collect(side);
+        }
+        for (Side& side : sides) {
+            std::printf("  STREAMS %s T=%d: %d of %d graph-replayed calls beside the other stream "
+                        "differ from the call alone (must be 0)\n",
+                        profile_.name, side.tokens, side.wrong, kReplays * kCalls);
+            failures += side.wrong != 0 ? 1 : 0;
+            cuda_check(cudaGraphExecDestroy(side.graph), "destroy SparseMoe streams graph exec");
+            cuda_check(cudaStreamDestroy(side.stream), "destroy SparseMoe streams stream");
+        }
+        return failures;
+    }
+
     int verify_persistent_inputs() const {
         int failures = 0;
         failures += verify_exact((std::string(profile_.name) + " router preservation").c_str(),
@@ -985,7 +1111,9 @@ private:
     std::vector<std::vector<double>> swapped_;
 };
 
-int run_profile(DeviceExecutionView execution, const CodecProfile& profile) {
+// `streams`: also the two-stream check (SparseMoeFixture::run_streams), whose tickets do not
+// depend on the codec: one profile runs it.
+int run_profile(DeviceExecutionView execution, const CodecProfile& profile, bool streams) {
     SparseMoeFixture fixture(profile);
     int failures        = 0;
     std::size_t witness = 0;
@@ -1005,6 +1133,7 @@ int run_profile(DeviceExecutionView execution, const CodecProfile& profile) {
         std::cerr << profile.name << ": interval workspace capacity missed a route witness\n";
         ++failures;
     }
+    if (streams) { failures += fixture.run_streams(execution); }
     failures += fixture.verify_persistent_inputs();
     return failures;
 }
@@ -1044,7 +1173,9 @@ int main() {
     const DeviceExecutionView execution = context.execution_view().on_stream(nullptr);
     int failures = 0;
     for (const CodecProfile& profile : profiles) {
-        if (qtype_runs(profile.routed_gate_up, profile.name)) { failures += run_profile(execution, profile); }
+        if (qtype_runs(profile.routed_gate_up, profile.name)) {
+            failures += run_profile(execution, profile, &profile == &profiles.front());
+        }
     }
     std::cout << (failures == 0 ? "OK" : "FAIL") << " sparse_moe correctness\n";
     return failures == 0 ? 0 : 1;
