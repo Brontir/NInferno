@@ -462,6 +462,35 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
     return d;
 }
 
+BoardDriverView registry_driver_view(const GpuFactsRow& row) noexcept {
+    return {.l2_bytes         = static_cast<std::size_t>(row.l2_mib * (1 << 20)),
+            .sm_clock_khz     = row.boost_mhz * 1000,
+            .memory_clock_khz = static_cast<int>(std::llround(row.gbps * 1e6 / 2.0)),
+            .memory_bus_bits  = row.bus_bits};
+}
+
+DeviceClass board_class(const BoardClassSpec& spec) {
+    BoardDriverView view;
+    if (spec.driver) {
+        view = *spec.driver;
+    } else if (const GpuFactsRow* row = find_gpu_facts(spec.pci_device_id);
+               row != nullptr && row->major == spec.major && row->minor == spec.minor) {
+        view = registry_driver_view(*row);
+    }
+    DeviceClass d = synthetic_device_class(spec.pci_device_id, spec.major, spec.minor, spec.sms,
+                                           view.l2_bytes, spec.global_bytes);
+    if (spec.engine) {
+        const bool mma_slow = d.features.mma_slow;
+        d.features          = *spec.engine;
+        d.features.mma_slow = mma_slow;
+    }
+    d.sm_clock_khz     = view.sm_clock_khz;
+    d.memory_clock_khz = view.memory_clock_khz;
+    d.memory_bus_bits  = view.memory_bus_bits;
+    d.facts            = machine_facts_of(d);
+    return d;
+}
+
 namespace {
 thread_local const DeviceClass* t_substitute     = nullptr;
 thread_local const std::string* t_substitute_key = nullptr;

@@ -18,6 +18,7 @@
 #include "core/generation.h"
 #include "core/machine_facts.h"
 #include "ops/generic/format_requires.h"
+#include "ops/generic/format_rules.h"
 #include "ops/generic/format_traits.h"
 #include "ops/generic/generic_select_detail.h"
 
@@ -195,7 +196,9 @@ void selector_reads_the_requirements() {
         expect(same_facts(generic::current_arch_facts(), arch_facts_of(d, build_arch)),
                board + ": current_arch_facts");
         for (const generic::FormatTraits& t : generic::kFormatTraits) {
-            const bool old_answer = t.w4a8_ws_tuned && legacy::w4a8_ws_tuned_arch(d);
+            const bool old_answer =
+                generic::format_rules::holds(generic::format_rules::Rule::W4a8WsTuned, t.q) &&
+                legacy::w4a8_ws_tuned_arch(d);
             expect(generic::w4a8_ws_extra(t.q) == old_answer,
                    board + ": w4a8_ws_extra(" + std::to_string(static_cast<int>(t.q)) + ")");
         }

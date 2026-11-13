@@ -19,8 +19,9 @@
 // - the registered workspace query itself (plan_workspace_estimate) and plan_rung_bytes, for the
 //   three Gemma 4 subjects and for
 //   Qwen3.6-27B and Qwen3.6-35B-A3B (the family planner's KV, states, rings, graphs and context
-//   capacity; Qwen 3.5 has no query yet, its workspace is the formula); the Gemma 4 query refused
-//   by the hidden device (the escape);
+//   capacity; Qwen 3.5's query (#615 W2) declines facts without an artifact's directory, so its
+//   workspace is the formula, with that reason); the Gemma 4 query refused by the hidden device
+//   (the escape);
 // - dry_run_plan over the board's own PlanDeviceFacts with no class substituted by the test: the
 //   dry run substitutes the named board's itself (#829), so it plans as above, by the family
 //   planner, a ladder sized; a probe query in place of the workspace query sees it run under the
@@ -594,8 +595,13 @@ std::string text_of(const std::optional<rt::PlanExpertRoute>& r) {
 }
 
 // The workspace the registered query answers under the board's class: the formula for Qwen 3.5
-// (no query yet); for Gemma 4 the query refused by the hidden device (#830, whose reach
-// gemma_pieces pins to the attention's capacity).
+// (its query declines facts without the artifact's directory, #615 W2); for Gemma 4 the query
+// refused by the hidden device (#830, whose reach gemma_pieces pins to the attention's capacity).
+// Qwen 3.5's query declines facts that carry no converted artifact's directory
+// (plan_workspace.cpp).
+constexpr std::string_view kQwenWithoutDirectory =
+    "formula: the start's forms are a converted artifact's bindings, not in these facts";
+
 void check_workspace(const NamedBoard& b, const Subject& s, const std::string& basis,
                      const std::string& where) {
     const std::string what = b.name + ", " + s.name + ", " + where;
@@ -605,7 +611,8 @@ void check_workspace(const NamedBoard& b, const Subject& s, const std::string& b
               what + ": the Gemma 4 query is refused by the known escape " +
                   std::string(kDecodePlanEscape) + ", not '" + basis + "'");
     } else {
-        check(basis == "formula", what + ": the formula, not '" + basis + "'");
+        check(basis == kQwenWithoutDirectory,
+              what + ": the formula without the artifact's directory, not '" + basis + "'");
     }
 }
 

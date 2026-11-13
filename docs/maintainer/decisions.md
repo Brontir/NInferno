@@ -2087,8 +2087,9 @@ The MTP layer's banks are apart on both paths, as the runtime keeps them). The e
 the query for the plan (`runtime::register_plan_moe_route_query`, as it registers the workspace
 queries); `product::with_moe_routes` asks it per kind and rows and hands the choice the routed
 bytes by kernel pair (`ModelFacts::moe_routes`). The class the plan asks on is the board's
-synthetic one (`synthetic_device_class` with the board's machine facts: no L2 size, clocks or
-bus, its features not intersected with the build's), so the answer is `moe()`'s on that class,
+class built from its facts (`runtime::plan_device_class`: core `board_class` with an empty driver
+view, the board's machine facts, no L2 size, clocks or bus, its features not intersected with the
+build's), so the answer is `moe()`'s on that class,
 not exactly the real card's; it labels the estimate's basis only and moves no number. `kMoeRoutedEta`'s rows are keyed by the pair their
 steps ran: R8 on the gate/up bank over the register MMA on the down bank. A step whose layers the op
 runs on another pair takes its generation's measured pair's share, transferred past one row; one

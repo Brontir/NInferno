@@ -17,6 +17,7 @@
 #include "ops/common/arch_limits.h"
 #include "ops/common/native_nvfp4.h"
 #include "ops/common/route_probe.h"
+#include "ops/generic/format_rules.h"
 #include "ops/generic/format_traits.h"
 #include "ops/generic/format_requires.h"
 #include "ops/generic/codec_traits.h"
@@ -278,9 +279,11 @@ namespace {
 // cheap, and there the register MMA keeps the band (RTX 4090, cellgt ABBA: UD-Q4_K_XL 27B DFlash2
 // C1 115.7 -> 111.7 and C4 271.5 -> 263.1 with them in the rule, Muse 30B Q4_K_M C4 282.7 ->
 // 267.6).
-bool mmq_verify_format(QType q) { return format_traits(q).mmq_verify; }
+// The formats, their cards and sources: format_rules.h (Rule::MmqVerify).
+bool mmq_verify_format(QType q) { return format_rules::holds(format_rules::Rule::MmqVerify, q); }
 
-constexpr std::int32_t kMmqVerifyMinTokens = 9;
+// The band's first width, with its cards: format_rules.h.
+using format_rules::kMmqVerifyMinTokens;
 
 } // namespace
 
@@ -343,7 +346,8 @@ namespace {
 // decode rather than the weight stream bounds them, by 11-16% at n = 4096..12288 (IQ3_S
 // 4096x2560 11.4 -> 9.7 us, IQ2_S 9216x2560 21.0 -> 18.6 us). Q8 (Q8_0) and Q6_K at K >= 12288
 // were faster on eight warps at every size.
-bool light_ggml_step(QType q) { return format_traits(q).light_step; }
+// The formats, their cards and sources: format_rules.h (Rule::LightStep).
+bool light_ggml_step(QType q) { return format_rules::holds(format_rules::Rule::LightStep, q); }
 
 // Shape-class heuristic for the register MMA. It follows what ninferno_route_tune measured across
 // the recorded problems (Qwen3.5 0.8B in four formats on an RTX 5090): at T <= 16 one 16-row M tile
@@ -395,7 +399,8 @@ bool heavy_decode(QType q) { return q != QType::BF16; }
 
 // The format whose 64x64 register-MMA tile spills where its 128x32 tile spills less (ptxas,
 // sm_86..sm_120): Q4_K, whose 128x32 tile was 10..20 % faster on all seven boards from 97 tokens.
-bool tall_tile_format(QType q) { return format_traits(q).tall_tile; }
+// The format, its cards and source: format_rules.h (Rule::TallTile).
+bool tall_tile_format(QType q) { return format_rules::holds(format_rules::Rule::TallTile, q); }
 
 // Q6_K's one-tile call on a grid of one to two eight-warp CTAs per SM (sms < ctas <= 2 sms),
 // where the board's DRAM bytes per SM cycle are below this: the four-warp CTA, half the warps on
@@ -601,7 +606,8 @@ int heuristic_w4a4(std::int32_t rows, std::int32_t tokens, bool prefill_band) {
 // table) names it, since those measurements had no producer-warp tile of these formats to time.
 // The architectures are a declared requirement (format_requires::kW4a8WsTunedArch).
 bool w4a8_ws_extra(QType q) {
-    if (!format_traits(q).w4a8_ws_tuned) return false;
+    // The formats, their cards and sources: format_rules.h (Rule::W4a8WsTuned).
+    if (!format_rules::holds(format_rules::Rule::W4a8WsTuned, q)) return false;
     try {
         return satisfied(format_requires::kW4a8WsTunedArch, current_arch_facts());
     } catch (const std::exception&) { return false; }
@@ -1081,10 +1087,12 @@ bool r8_fits(QType qtype, std::int32_t k, std::int32_t tokens) {
 // Q4_0 at the verify widths (T = 2..4): R8 pays on a large matrix and loses on a small one
 // (A B B A, C = 4: Gemma 4 31B QAT, every dense matrix >= 44M values, RTX 4090 +15.7 %,
 // RTX 3090 +26 %; Gemma 4 26B QAT, at most 12M, -0.7 % and -2.7 %, its MTP verify -1.1 %).
-inline constexpr std::int64_t kR8VerifyQ40MinValues = 24ll << 20;
+// The threshold and its format, with their cards: format_rules.h (Rule::R8VerifyQ40MinValues).
+using format_rules::kR8VerifyQ40MinValues;
 
 bool r8_verify_takes_shape(QType qtype, std::int64_t n, std::int64_t k) {
-    if (qtype != QType::GGML_Q4_0 || n * k >= kR8VerifyQ40MinValues) {
+    if (!format_rules::holds(format_rules::Rule::R8VerifyQ40MinValues, qtype) ||
+        n * k >= kR8VerifyQ40MinValues) {
         return r8_verify_takes(qtype);
     }
     // A small Q4_0 matrix keeps the A16 register MMA where it is native (Turing: R8, as for
