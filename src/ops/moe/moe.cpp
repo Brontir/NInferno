@@ -1531,7 +1531,15 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         }
     }
     const bool fused_combine = combine_runs > 0;
-    int* const tickets       = static_cast<int*>(ws.tickets.data);
+    // The tickets: the arena's ticket page where it has one (#889: zero since its construction,
+    // each grid leaves its ticket at zero, no launch), else the call's workspace (#882), whose
+    // route ticket is zeroed in stream order below. The combine tickets are the plan's to zero
+    // either way, at no cost.
+    int* const page = workspace.ticket_page();
+    int* const route_ticket =
+        page != nullptr ? page + arena_tickets::kMoeRoute : static_cast<int*>(ws.tickets.data);
+    int* const run_tickets = page != nullptr ? page + arena_tickets::kMoeCombine
+                                             : static_cast<int*>(ws.tickets.data) + 1;
 
     // 2. Selection and 3. plan: one launch for a call of at most kPlanWarps tokens.
     SelectArgs select;
@@ -1562,7 +1570,7 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         plan.job_begin    = static_cast<int*>(ws.job_begin.data);
         plan.job_count    = static_cast<int*>(ws.job_count.data);
         plan.job_total    = static_cast<int*>(ws.job_total.data);
-        plan.zero_tickets = tickets + 1;
+        plan.zero_tickets = run_tickets;
         plan.zero_count   = combine_runs;
     }
     // The router's kernel (router_kernel, the rule the layer price reads too).
@@ -1606,8 +1614,11 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         if (router_simt) {
             // The route ticket is zero in stream order when the router starts: the workspace's
             // bytes are another op's in between (#882).
-            if (route_in_router) { CUDA_CHECK(cudaMemsetAsync(tickets, 0, sizeof(int), stream)); }
-            launch_router_simt(args, stream, route_in_router ? &select : nullptr, &plan, tickets);
+            if (route_in_router && page == nullptr) {
+                CUDA_CHECK(cudaMemsetAsync(route_ticket, 0, sizeof(int), stream));
+            }
+            launch_router_simt(args, stream, route_in_router ? &select : nullptr, &plan,
+                               route_ticket);
         } else if (router_hmma) {
             launch_moe_volta_hmma(generic::WeightCodec::Bf16, false, Stage::Router, args,
                                   dim3(blocks(g.experts, kVoltaHmmaRows), blocks(t, kVoltaHmmaSlots)),
@@ -1758,7 +1769,7 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
             args.r8_lanes  = r8_lanes(w.down);
             const int rows = r8_schedule_info(p.down_r8).rows_per_cta() * (32 / args.r8_lanes);
             if (fused_combine) {
-                args.combine_tickets = tickets + 1;
+                args.combine_tickets = run_tickets;
                 args.combine         = combine_args(ws, g, c, epilogue, out, t, false);
             }
             launch_r8_gemm(generic::codec_of(w.down), is_frag(w.down), Stage::Down, p.down_r8, t,

@@ -72,10 +72,10 @@ __device__ __forceinline__ float router_row_dot(const __nv_bfloat16* x, const __
     return warp_reduce_sum(sum);
 }
 
-// `ticket` counts the D1 blocks in; the last to arrive selects. It is the call's own (workspace,
-// zeroed by the launch in stream order), not a device global: two engines' D1 grids in flight on
-// one GPU each count on their own (#882). atomicInc wraps at gridDim.x-1, so the last block
-// leaves it at zero.
+// `ticket` counts the D1 blocks in; the last to arrive selects. It is the arena's ticket page's
+// (#889) or the call's workspace's (zeroed by the launch in stream order), not a device global: two
+// engines' D1 grids in flight on one GPU each count on their own (#882). atomicInc wraps at
+// gridDim.x-1, so the last block leaves it at zero.
 __global__ void sparse_moe_d1_kernel(const __nv_bfloat16* __restrict__ x,
                                      const __nv_bfloat16* __restrict__ router,
                                      float* __restrict__ scores,
@@ -607,9 +607,12 @@ unsigned long long shared_down_code_bytes(QType qtype) {
 
 void launch_d1(const Tensor& x, const SparseMoeWeights& weights,
                const SparseMoeDecodeWorkspace& workspace, cudaStream_t stream) {
-    // The ticket is zero in stream order when D1 starts: the workspace's bytes are another op's in
-    // between (#882).
-    CUDA_CHECK(cudaMemsetAsync(workspace.ticket.data, 0, workspace.ticket.bytes(), stream));
+    // The ticket is zero in stream order when D1 starts: on the arena's ticket page it has been
+    // since the page was made (#889); in the workspace the bytes are another op's in between
+    // (#882), so it is zeroed here.
+    if (!workspace.ticket_zeroed) {
+        CUDA_CHECK(cudaMemsetAsync(workspace.ticket.data, 0, workspace.ticket.bytes(), stream));
+    }
     sparse_moe_d1_kernel<<<kRouterRows, kD1Warps * 32, 0, stream>>>(
         static_cast<const __nv_bfloat16*>(x.data),
         static_cast<const __nv_bfloat16*>(weights.router_shared_gate.qdata),

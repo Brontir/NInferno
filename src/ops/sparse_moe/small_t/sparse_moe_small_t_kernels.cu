@@ -38,8 +38,9 @@ __device__ __forceinline__ float token_router_score(const float* partial_scores,
     return sum;
 }
 
-// `ticket` (Select only) counts the S1 blocks in, as D1's: the call's own (workspace, zeroed by the
-// launch in stream order), not a device global another engine's grid in flight counts on too
+// `ticket` (Select only) counts the S1 blocks in, as D1's: the arena's ticket page's (#889) or the
+// call's workspace's (zeroed by the launch in stream order), not a device global another engine's
+// grid in flight counts on too
 // (#882). atomicInc wraps at gridDim.x-1, so the last block leaves it at zero.
 template <int Tokens, bool Select>
 __global__ void
@@ -153,9 +154,12 @@ template <int Tokens, bool Select>
 void launch_s1(const __nv_bfloat16* x, const __nv_bfloat16* router, float* partial_scores,
                const SparseMoeSmallTWorkspace& workspace, cudaStream_t stream) {
     if constexpr (Select) {
-        // The ticket is zero in stream order when S1 starts: the workspace's bytes are another
-        // op's in between (#882).
-        CUDA_CHECK(cudaMemsetAsync(workspace.ticket.data, 0, workspace.ticket.bytes(), stream));
+        // The ticket is zero in stream order when S1 starts: on the arena's ticket page it has
+        // been since the page was made (#889); in the workspace the bytes are another op's in
+        // between (#882), so it is zeroed here.
+        if (!workspace.ticket_zeroed) {
+            CUDA_CHECK(cudaMemsetAsync(workspace.ticket.data, 0, workspace.ticket.bytes(), stream));
+        }
     }
     sparse_moe_small_t_s1_kernel<Tokens, Select>
         <<<kRouterRows * kRouterPartitions, kRouterWarps * 32, 0, stream>>>(

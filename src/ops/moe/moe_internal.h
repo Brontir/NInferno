@@ -16,6 +16,7 @@
 // job is (expert, run of up to kJobColumns slots); its rows come from the expert's span of the
 // stacked plane and its columns are gathered through the slot -> token map.
 
+#include "core/arena.h"
 #include "core/device_class.h"
 #include "core/measured_disposition.h"
 #include "core/tensor.h"
@@ -693,11 +694,14 @@ void launch_combine(const CombineArgs& args, cudaStream_t stream);
 // global was shared by every engine's MoE on the GPU), its plan zeroes them, and each run's last
 // CTA sets its ticket back to zero.
 inline constexpr int kCombineTickets = 1024;
+static_assert(arena_tickets::kMoeCombine + kCombineTickets <= kArenaTicketInts,
+              "the fused combine's tickets fit the arena's ticket page");
 // The BF16 router at 1..kRouterSimtMaxTokens tokens, one warp per expert (GemmArgs of the
 // register-MMA router: weights, x, bias, logits and xq). With select and plan (at most 32
 // assignments) its last CTA also selects and plans: launch_select_plan's results. The CTAs then
-// count themselves in on route_ticket, one int of the call's own workspace that is zero in stream
-// order when the router starts (#882); the last CTA sets it back to zero.
+// count themselves in on route_ticket, one int of the arena's ticket page (#889) or of the call's
+// workspace, zero in stream order when the router starts (#882); the last CTA sets it back to
+// zero.
 void launch_router_simt(const GemmArgs& args, cudaStream_t stream,
                         const SelectArgs* select = nullptr, const PlanArgs* plan = nullptr,
                         int* route_ticket = nullptr);
