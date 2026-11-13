@@ -1089,7 +1089,7 @@ void test_artifact_plan_via_serve() {
                                            "--plan-idle",
                                            "--json",
                                            "--log-level",
-                                           "off",
+                                           "critical",
                                            "--max-concurrency",
                                            "2",
                                            "--max-context",

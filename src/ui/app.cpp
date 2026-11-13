@@ -1024,7 +1024,7 @@ std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
                   "--plan-idle",
                   "--json",
                   "--log-level",
-                  "off",
+                  "critical", // a failure's one line (its reason) on stderr, nothing else
                   "--max-concurrency",
                   std::to_string(launch.max_concurrency == 0 ? 1U : launch.max_concurrency)};
     // The ask as a start of it passes it (make_launch; product::launch_options plans the same).
