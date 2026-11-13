@@ -164,7 +164,7 @@ prediction so far.
 - Prototype: the forced-J grid on the 4090 and 2080 Ti.
 - Decision: open. These are data rows.
 
-### N. The natural merges' split loop and CTA count at one decode token (#865)
+### O. The natural merges' split loop and CTA count at one decode token (#865)
 - Regime: the split merge after the KV-grouped decode attention, `causal_natural_merge_kernel`
   (INT8, FP8, NVFP4, K8V4) and `bf16_kv_merge_kernel` (BF16), at W = 1 on the Qwen3.5 geometry
   (16 query heads over 4 KV heads, D 256). The schedule's chunk is 256 columns there, so the grid
@@ -173,77 +173,127 @@ prediction so far.
   part of an INT8 step at 32.6-46.5 µs on Ada and Blackwell and 66.9-74.2 µs on Ampere.
 - Weight: every decode step at every context; the KV term it sits beside is ~115 µs a step at 8K
   on the RTX 5090.
-- Law (counted, master 66c53fca): the merge reads splits x 16 heads x 1 KiB of FP32 partials,
-  just written by the attention kernel and so in L2. Its time is not bytes:
-  - each thread owns one output column and runs the split loop alone. The sm_120a SASS of the
-    loop is an x8 body that issues its loads in two rounds of four (the second round waits for
-    the first FFMA), then x4, x2 and x1 tails: R(S) = 2 floor(S/8) + [S mod 8 >= 4] +
-    [S mod 4 >= 2] + [S odd] dependent L2 round trips for S splits;
-  - before the loop, four more dependent round trips: the positions, then the maxima, then (after
-    two barriers) the sums, and after the loop the gate;
-  - the statistics' barriers and shuffles, ~700 SM clocks;
+- Law (counted, master 66c53fca): the merge reads splits x 16 heads x 1 KiB of FP32 partials. Its
+  time is not bytes:
+  - each thread owns one output column and runs the split loop alone. The SASS keeps four 4-byte
+    loads a thread in flight and waits for them before the next four. sm_75/86/89 have an x4 body
+    and an x1 tail: R(S) = floor(S/4) + (S mod 4) dependent round trips for S splits. sm_120a has
+    an x8 body issued as two rounds of four, then x4, x2 and x1 tails: R(S) = 2 floor(S/8) +
+    [S mod 8 >= 4] + [S mod 4 >= 2] + [S odd];
+  - before the loop come four more dependent round trips: the positions, then the maxima, then
+    (after two barriers) the sums, and after the loop the gate;
+  - the statistics' barriers and shuffles take ~700 SM clocks;
   - plus one launch, t0: 0.84-0.96 µs a node on the RTX 3090 (`core/pdl.cuh`), 1.5 µs fitted on
     Ada (`core/cost_constants.h`).
 
-  So the old call is t0 + (R(S) + 4) x L2 + 700 clk, with S = the wave partition's 2 x SMs / 4
-  splits (`plan_rules.h`, the same for BF16's targets), and L2 = the ISA table's lone-warp L2
-  latency (`isa_facts.json` l2_latency_ns_w1: sm_75 110, sm_86 115, sm_89 94, sm_120a 123 ns).
-  The 16 SMs in use each hold 8 warps x 4 loads x 128 B = 4 KiB in flight, under the 32 B/clk
-  one SM can fill (`sm_rate_facts.json`, 31.7-32.0 B/clk on every architecture) times its L2
-  latency: the loop is latency-bound.
+  So the old call is t0 + (R(S) + 4) x L + 700 clk. S is the wave partition's 2 x SMs / 4 splits
+  (`plan_rules.h`, the same for BF16's targets). L is the round trip to wherever the partials are:
+  - **L2-hot** (the bench, and serving): the attention kernel has just written them, so L is the
+    ISA table's lone-warp L2 latency (`isa_facts.json` l2_latency_ns_w1: sm_75 110, sm_86 115,
+    sm_89 94, sm_120a 123 ns);
+  - **DRAM-cold** (ncu): ncu's default `--cache-control all` flushes the caches before the
+    profiled kernel. The partials then come from DRAM, and L is the lone-warp DRAM fetch time
+    (`sm_rate_facts.json` dram_stream_latency_ns: sm_75 275, sm_86 303, sm_89 253, sm_120a
+    374 ns; the RTX 4060 Ti's own probe 254 ns).
+
+  Each of the 16 SMs in use holds 8 warps x 4 loads x 128 B = 4 KiB in flight. That is under what
+  one SM can fill (`sm_rate_facts.json`: 31.7-32.0 B/clk on every architecture) times its latency,
+  so the loop is latency-bound in both cases.
+- Check against the one measurement made before this entry (#865's comment): ncu on the RTX 4060 Ti
+  (34 SMs, S = 17, R = 5), INT8 at 21,961 keys, 4.86-5.06 µs a call at 21-22 % of DRAM.
+  - The DRAM-cold law gives (5 + 4) x 254 ns + 700 clk = 2.6 µs. The L2-hot law (1.1 µs) does not
+    apply to that cell.
+  - The bytes match a cold read: 17 x 16 KiB of partials, plus the statistics and the gate, is
+    290 KB in 5 µs, 20 % of 288 GB/s.
+  - The remaining 2.3-2.5 µs is put down to ncu's own per-kernel floor: the gpu__time_duration of
+    an empty 16 x 256 kernel under the same flags. Nobody has measured it yet.
+  - It is a named residual, not a fitted constant. The ncu A/B measures it (below), and if it
+    reads under 1.5 µs the cell is refuted.
 - Variant (#865's PR):
-  1. Every thread of the CTA loads the partials, 16-byte vectors, in stages of 16 KiB, two
-     stages in flight in registers while the column owners sum the current one out of shared
+  1. Every thread of the CTA loads the partials as 16-byte vectors, in stages of 16 KiB. Two
+     stages are in flight in registers while the column owners sum the current one out of shared
      memory (`common/causal_merge_columns.cuh`). The first two stages go out before the
-     statistics. A stage in flight (16 KiB) exceeds 32 B/clk x the L2 latency (6-10 KiB) on
-     every card, so the loop runs at the SM's fill rate: S x DChunk x 4 B / 32 B/clk.
+     statistics. One stage in flight (16 KiB) is more than 32 B/clk x the L2 latency (6-10 KiB)
+     on every card, so the loop runs at the SM's fill rate: S x DChunk x 4 B / 32 B/clk.
   2. The maxima, the sums and the gate are loaded beside the positions: one round trip, not four.
-  3. A 256-column schedule whose grid leaves SMs idle (query heads x columns < SMs) launches 64
-     columns a CTA (`common/causal_merge_shape.h`): 64 CTAs, a quarter of the bytes on the most
-     loaded SM (on the RTX 3060's 28 SMs, three CTAs share an SM: 3/4). The NVFP4 and K8V4
-     merges store whole rows through the inverse rotation and keep 256 columns: 16 CTAs, each
-     at the fill-rate bound.
+  3. A 256-column schedule launches 64 columns a CTA wherever that lowers the bytes on the most
+     loaded SM (`common/causal_merge_shape.h`):
+     - the condition is ceil(4 n / SMs) x 64 < ceil(n / SMs) x 256, where n = query heads x
+       columns is the CTA count at 256 columns;
+     - within one wave (n < SMs) that is 4 n <= 3 SMs;
+     - at W = 1 the merge then runs 64 CTAs on every board from 22 SMs up, with a quarter of the
+       bytes on the most loaded SM. On the RTX 3060's 28 SMs three CTAs share an SM, so it is 3/4.
 
-  New call: t0 + L2 + max(700 clk, L2 + bytes on the most loaded SM / 32 B/clk) + the last
-  stage's FFMA chain (5 clk a split) + 40 clk of barriers a stage.
-- Numerics: no change. A column's sum is the same FFMA chain in split order, zero-weight splits
-  skipped, as before; the statistics are the same code. The chunk only changes which CTA owns a
-  column. The output is bit-identical at every codec, width, batch and partition, including the
-  invariant route profile's aligned splits. `test_causal_merge_order` pins this against master's
-  kernels, at split counts 1-256.
-- Prediction (frozen 13.11, before any run). Merge call time without t0, at the boards' boost
-  clocks (`gpu_facts.json`), at both bench depths (7843 and 21961 keys run the same S):
+     The NVFP4 and K8V4 merges store whole rows through the inverse rotation, so they keep 256
+     columns: 16 CTAs, each at the fill-rate bound.
 
-  | Board | SMs | S | R(S) | old µs | new, 64 cols µs | new, 256 cols µs | intercept drop a step (8 layers), BF16 / FP8 / INT8 µs | NVFP4 / K8V4 µs |
-  |---|---|---|---|---|---|---|---|---|
-  | RTX 3090 | 82 | 41 | 11 | 2.1 | 0.7 | 1.1 | 12 (9-18) | 8 (6-12) |
-  | RTX 3060 | 28 | 14 | 4 | 1.3 | 0.6 | 0.6 | 6 (4-9) | 6 (4-9) |
-  | RTX 2080 Ti | 68 | 34 | 9 | 1.9 | 0.7 | 1.0 | 9 (7-14) | 7 (5-10) |
-  | RTX 4070 Ti | 60 | 30 | 8 | 1.4 | 0.4 | 0.6 | 8 (6-11) | 6 (5-9) |
-  | RTX 4090 | 128 | 64 | 16 | 2.2 | 0.5 | 1.1 | 13 (10-20) | 9 (6-13) |
-  | RTX 5070 Ti | 70 | 35 | 10 | 2.0 | 0.5 | 0.8 | 12 (9-18) | 10 (8-15) |
-  | RTX 5090 | 170 | 85 | 22 | 3.5 | 0.6 | 1.5 | 23 (17-35) | 16 (12-24) |
+  New call: t0 + L + max(700 clk, L + bytes on the most loaded SM / 32 B/clk) + the last stage's
+  FFMA chain (5 clk a split) + 40 clk of barriers a stage. DRAM-cold, the call is also bounded
+  below by L + all its bytes / the board's DRAM bandwidth (`gpu_facts.json`).
+- Numerics: no change.
+  - A column's sum is the same FFMA chain in split order, with zero-weight splits skipped, as
+    before. The statistics are the same code.
+  - The chunk only changes which CTA owns a column.
+  - The output is bit-identical at every codec, width, batch and partition, including the
+    invariant route profile's aligned splits. `test_causal_merge_order` pins this against
+    master's kernels at split counts 1-256.
+- Prediction (frozen 13.11, before any run). It was revised the same day after review, before
+  any result came back, for three things: the per-arch R(S), the DRAM-cold case and the narrowing
+  bound. The table gives the merge's call time without t0, at the boards' boost clocks
+  (`gpu_facts.json`), at both bench depths (7843 and 21961 keys run the same S):
 
-  The range is 0.75-1.5x the point: the L2 latency under load lies between the lone-warp figure
-  and 1.5x it, and lengthens the old loop's 4 + R(S) round trips more than the new one's two. The
-  read rate (the slope) does not change. With `--activations exact` the aligned partition runs
-  ceil(keys / 512) splits (16 at 7843 keys, 43 at 21961), so there the old loop's cost grows with
-  depth and part of the gain moves into the slope; that cell is not predicted here.
-- Other widths: the same law at every W. The staged loop runs at every width (bits unchanged).
-  The 64-column chunk applies while 16 x W x B < SMs (RTX 5090 W <= 10, 4090 <= 7, 3090 <= 5,
-  5070 Ti and 2080 Ti <= 4, 4070 Ti <= 3, 3060 W = 1); wider grids keep their 256-column
-  launches. The geometries whose schedule is already 64 columns (KV heads other than 4) keep
-  their grid and get the staged loop. No W > 1 cell is predicted here.
-- Prototype: `ninferno_kv_decode_attention_bench --codec <c> --context 7843,21961 --layers 8`
-  on master and the branch; read "fixed part (intercept) ... us a step", and the merge's grid in
-  the launch list.
-- Cost: one more merge instance per (batch, mask, aligned) form of the 256-column schedules. It
-  is no new route: the summation, the selector goldens and the build manifest are unchanged.
-- Acceptance / refutation (frozen): kept where the intercept a step drops by at least half the
-  lower edge on at least five of the seven boards, and the slope stays within ±2 %. Refuted on a
-  board where it drops by less than half the lower edge: ncu of the merge there names the term
-  (the per-SM fill rate for L2 hits, or the latency of the statistics), and the law is fixed. The
-  byte rule: `exact`, bit-identical (`test_causal_merge_order`, and the softmax attention tests
-  unchanged).
+  | Board | S | R(S) | L2-hot old µs | new, 64 cols | new, 256 cols | bench intercept drop a step (8 layers), BF16 / FP8 / INT8 µs | NVFP4 / K8V4 µs | DRAM-cold (ncu) old µs | new, 64 cols | new, 256 cols |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | RTX 3090 | 41 | 11 | 2.1 | 0.7 | 1.1 | 12 (9-18) | 8 (6-12) | 5.0 | 1.0 | 1.5 |
+  | RTX 3060 | 14 | 5 | 1.4 | 0.6 | 0.6 | 7 (5-10) | 7 (5-10) | 3.1 | 1.0 | 1.0 |
+  | RTX 2080 Ti | 34 | 10 | 2.0 | 0.7 | 1.0 | 10 (8-16) | 8 (6-12) | 4.3 | 1.2 | 1.3 |
+  | RTX 4070 Ti | 30 | 9 | 1.5 | 0.4 | 0.6 | 8 (6-13) | 7 (5-11) | 3.6 | 1.3 | 1.3 |
+  | RTX 4090 | 64 | 16 | 2.2 | 0.5 | 1.1 | 13 (10-20) | 9 (6-13) | 5.3 | 1.3 | 1.4 |
+  | RTX 5070 Ti | 35 | 10 | 2.0 | 0.5 | 0.8 | 12 (9-18) | 10 (8-15) | 5.5 | 1.0 | 1.3 |
+  | RTX 5090 | 85 | 22 | 3.5 | 0.6 | 1.5 | 23 (17-35) | 16 (12-24) | 10.0 | 1.2 | 2.0 |
+  | RTX 4060 Ti | 17 | 5 | 1.1 | 0.4 | 0.4 | 6 (4-8) | 6 (4-8) | 2.6 | 1.3 | 1.3 |
+
+  - The bench drop's range is 0.75-1.5x the point. The L2 latency under load lies between the
+    lone-warp figure and 1.5x that, and it lengthens the old loop's 4 + R(S) round trips more
+    than the new one's two.
+  - Under ncu, every cell adds the same unmeasured per-kernel floor to old and new. So the ncu
+    prediction is the drop in duration a call: the DRAM-cold old column minus the new one.
+  - The read rate (the slope) does not change.
+  - With `--activations exact` the aligned partition runs ceil(keys / 512) splits (16 at 7843
+    keys, 43 at 21961). There the old loop's cost grows with depth and part of the gain moves
+    into the slope; that cell is not predicted.
+- Other widths: the same law holds at every W.
+  - The staged loop runs at every width, and the bits are unchanged.
+  - The 64-column chunk applies while 64 x W x B <= 3 x SMs: RTX 5090 W <= 7, 4090 <= 6; 3090,
+    5070 Ti and 2080 Ti <= 3; 4070 Ti <= 2; 3060 W = 1 only. Wider grids keep their 256-column
+    launches.
+  - The geometries whose schedule is already 64 columns (KV heads other than 4) keep their grid
+    and get the staged loop.
+  - No W > 1 cell is predicted here.
+- Prototype:
+  - `ninferno_kv_decode_attention_bench --codec <c> --context 7843,21961 --layers 8` on master
+    and the branch. Read "fixed part (intercept) ... us a step", and the merge's grid in the
+    launch list.
+  - ncu: the merge's gpu__time_duration through the same bench with default flags, plus an empty
+    16 x 256 kernel under the same flags (the floor).
+- Cost: one more merge instance per (batch, mask, aligned) form of the 256-column schedules, and
+  some residency:
+  - the merge now uses 56-79 registers a thread, against master's 32-42 (42 on sm_120a);
+  - so registers cap it at 4 CTAs a SM on sm_86/89/120a, where master ran 6 (thread-limited; 5 on
+    sm_120a), and at 3 on sm_75, where master ran 4 (thread-limited);
+  - the 17-18 KiB of static shared memory would allow 5 (3 on sm_75).
+
+  It is not a new route: the summation, the selector goldens and the build manifest are unchanged.
+- Acceptance / refutation (frozen, two-sided):
+  - kept where the bench intercept a step drops by at least half the lower edge on at least five
+    of the seven boards, and the slope stays within ±2 %;
+  - a board whose drop is under half the lower edge, or over 1.5x the upper edge, is a finding.
+    ncu of the merge there names the term that was wrong (the per-SM fill rate for L2 hits, the
+    latency of the statistics, or the round-trip count), and the law is fixed;
+  - ncu cells: the duration drop a call must fall within 0.5-1.5x the DRAM-cold old minus new.
+    Outside that range it is a finding, handled the same way. An empty-kernel floor under 1.5 µs
+    on the RTX 4060 Ti refutes the DRAM-cold law's account of the 4.86-5.06 µs cell;
+  - the byte rule: `exact`, bit-identical (`test_causal_merge_order`, and the softmax attention
+    tests unchanged).
 - A/B: not run.
 - Decision: open.

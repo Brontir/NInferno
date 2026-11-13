@@ -15,12 +15,15 @@ namespace ninferno::ops::detail {
 // kept four 4-byte loads a thread in flight (sm_120a SASS: the x8 body issues two rounds of four),
 // one L2 round trip a fourth of the splits; here a stage is 16 KiB a CTA and two are in flight,
 // which is more than one SM's fill rate times its L2 latency on every card in gpu_facts, so the
-// loop runs at the SM's fill rate (kernel-proposals.md, entry N).
+// loop runs at the SM's fill rate (kernel-proposals.md, entry O).
 //
 // The loads are not gated by the weights: the first two stages go out before the statistics run,
 // so their latency hides behind them. They read every split below `splits`, all inside the
 // partials' allocation (the partition's capacity); a split with no keys for this row (its weight
-// is zero) may hold another call's values, which the owners skip as before.
+// is zero) may hold another call's values, which the owners skip as before. The merges' statistics
+// are read the same way, every split below the capacity before the live count is known. Both
+// reads past the live splits are discarded, so compute-sanitizer --tool initcheck flags them where
+// the attention kernel left those splits unwritten.
 template <class Geometry, int DChunk, int Threads>
 class CausalMergeColumns {
 public:

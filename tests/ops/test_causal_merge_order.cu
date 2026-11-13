@@ -13,6 +13,7 @@
 #include "ops/softmax_attention/common/causal_merge_shape.h"
 #include "ops/softmax_attention/dense/causal_cache/bf16/merge.cuh"
 #include "ops/softmax_attention/dense/causal_cache/bf16/schedule.cuh"
+#include "ops/softmax_attention/dense/causal_cache/bf16/template_launch.cuh"
 
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
@@ -251,11 +252,16 @@ namespace {
 using namespace ninferno::ops::detail;
 using G = CausalGeometry<256, 16, 4>;
 
-// The chunk rule (causal_merge_shape.h): a decode token of 16 query heads narrows on every board
-// from 28 SMs up; a grid that covers the SMs, a narrow schedule and whole rows keep their chunk.
+// The chunk rule (causal_merge_shape.h): 64 columns where 4 x query heads x columns <= 3 x SMs (a
+// decode token of 16 query heads on every board from 22 SMs up); between 3/4 of a wave and a
+// full one, past a wave, a narrow schedule and whole rows keep their chunk.
+static_assert(causal_merge_d_chunk(256, false, 16, 1, 22) == 64);
+static_assert(causal_merge_d_chunk(256, false, 16, 1, 21) == 256);
+static_assert(causal_merge_d_chunk(256, false, 16, 1, 20) == 256);
 static_assert(causal_merge_d_chunk(256, false, 16, 1, 28) == 64);
 static_assert(causal_merge_d_chunk(256, false, 16, 1, 170) == 64);
-static_assert(causal_merge_d_chunk(256, false, 16, 10, 170) == 64);
+static_assert(causal_merge_d_chunk(256, false, 16, 7, 170) == 64);
+static_assert(causal_merge_d_chunk(256, false, 16, 8, 170) == 256);
 static_assert(causal_merge_d_chunk(256, false, 16, 11, 170) == 256);
 static_assert(causal_merge_d_chunk(256, false, 16, 2, 28) == 256);
 static_assert(causal_merge_d_chunk(256, true, 16, 1, 170) == 256);
@@ -478,7 +484,9 @@ void causal_case(const Case& c, Buffers& b) {
     compare(c, "causal", "launch", want, got);
 }
 
-// The BF16 merge: legacy at its schedule's chunk (256), new at 256 and 64.
+// The BF16 merge: legacy at its schedule's chunk (256), new at 256 and 64, and the production
+// launch (its chunk from this device's SM count: the narrow Bf16KvMergeSchedule<64> instance at a
+// decode token).
 template <bool MultiBatch, bool Masked, bool Aligned>
 void bf16_case(const Case& c, Buffers& b) {
     const auto partition = bf16_partition(c);
@@ -503,6 +511,24 @@ void bf16_case(const Case& c, Buffers& b) {
     compare(c, "bf16", "256", want, got);
     if (!run(b, [&] { launch.template operator()<64, false>(); }, got)) got.clear();
     compare(c, "bf16", "64", want, got);
+    CausalAttentionOperands p{};
+    p.positions = b.positions;
+    p.out       = b.out;
+    p.width     = c.width;
+    p.batch     = c.batch;
+    p.gate      = b.gate;
+    // The merge reads only the view's valid columns.
+    const Bf16KvCacheView<false> cache{nullptr, nullptr, nullptr, b.valid,
+                                       nullptr, 0,       256,     G::KVHeads};
+    if (!run(
+            b,
+            [&] {
+                launch_bf16_kv_merge<G, Bf16KvMergeSchedule<256>, MultiBatch, Masked, false, true>(
+                    p, cache, partition, CausalPartialView{b.acc, b.m, b.l}, nullptr);
+            },
+            got))
+        got.clear();
+    compare(c, "bf16", "launch", want, got);
 }
 
 // Not aligned: the last column sees splits x 64 keys (the call's window runs `splits`), earlier
@@ -534,6 +560,11 @@ int main() {
     const int split_counts[] = {1,  2,  3,  4,  5,  7,  8,   9,   15,  16,  17,  31, 32,
                                 33, 41, 63, 64, 65, 85, 127, 128, 129, 200, 255, 256};
     std::uint64_t seed       = 865;
+    const int sms            = ninferno::device_class().sms;
+    const int decode_chunk   = causal_merge_d_chunk(256, false, G::QHeads, 1, sms);
+    std::printf("device: %d SMs; the launches take %d columns at a decode token%s\n", sms,
+                decode_chunk,
+                decode_chunk == 256 ? " (the narrow launch branch is not reached here)" : "");
     for (const int splits : split_counts) {
         const int capacity = std::min(256, splits + 3);
         {
