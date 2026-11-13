@@ -512,6 +512,14 @@ PlanWorkspaceAnswer decoder_workspace(const PlanModelFacts& m, const EngineOptio
                               "resources)"};
     }
     if (plan == nullptr) { return {std::nullopt, "no sequence plan laid out for the rung"}; }
+    // The start's own refusals of the Qwen-only options (--rope-yarn-factor, --activations int8,
+    // --state-dtype bf16|f16), with its words (#892), first, as the start refuses them before
+    // anything else.
+    try {
+        refuse_qwen_only_options(options, dense ? "the dense decoder" : "Nemotron-H");
+    } catch (const std::invalid_argument& error) {
+        return {std::nullopt, std::string("the start refuses it: ") + error.what()};
+    }
     // A dense_decoder without routed experts (Llama, Qwen3-8B) has no MoE layer a pin could move.
     const bool routes_experts = m.model_type != "dense_decoder" || m.experts > 1;
     if (const char* pinned = route_override(options, routes_experts)) {
@@ -520,13 +528,6 @@ PlanWorkspaceAnswer decoder_workspace(const PlanModelFacts& m, const EngineOptio
     if (options.speculative.backend != SpeculativeBackend::None) {
         return {std::nullopt, "speculation: the drafter is an artifact of its own, not in these "
                               "facts"};
-    }
-    // The start's own refusals of the Qwen-only options (--rope-yarn-factor, --activations int8,
-    // --state-dtype bf16|f16), with its words (#892).
-    try {
-        refuse_qwen_only_options(options, dense ? "the dense decoder" : "Nemotron-H");
-    } catch (const std::invalid_argument& error) {
-        return {std::nullopt, std::string("the start refuses it: ") + error.what()};
     }
     try {
         if (device_class().sms <= 0) { throw std::runtime_error("no multiprocessors"); }

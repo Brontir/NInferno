@@ -604,6 +604,9 @@ void declines(const std::string& name, const rt::PlanModelFacts& facts,
         // engine is not these options' (#842 review).
         EngineOptions pinned       = options;
         pinned.maintainer.moe_path = MoePath::Generic;
+        // The facts themselves, not only the rule: a dense decoder routes no experts.
+        check(facts.model_type != "dense_decoder" || facts.experts <= 1,
+              name + ": a dense_decoder's facts name no routed experts");
         if (facts.model_type == "dense_decoder" && facts.experts <= 1) {
             // No MoE layer for the pin to move: the answer is the unpinned one (#892).
             check(basis_of(facts, pinned, device) == answered,
