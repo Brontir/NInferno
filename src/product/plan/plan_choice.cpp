@@ -36,7 +36,40 @@ double round_to(double value, int digits) {
     return std::round(value * scale) / scale;
 }
 
-Json estimates_json(const choice::Scored& s) {
+// A band an estimate carries (choice::Resolution): its basis, its rms of ln(predicted / measured),
+// whether it would decide at its full width, and the Own floor a decision on it is held to.
+Json band_json(const choice::Resolution& r) {
+    return {{"basis", std::string(choice::resolution_basis_name(r.basis))},
+            {"rms", round_to(r.rms, 4)},
+            {"decides", r.decides},
+            {"floor", round_to(r.floor, 4)}};
+}
+
+// The prefill estimate's measured error (choice::prefill_band_of): `rms` and `worst` only where it
+// holds for this estimate (a dense model, the fast route, an Own estimate, a prompt inside the
+// measured range, a generation with a row of two lab cards), else null and `why_code`. The
+// generation's stated row beside it (`stated_rms`, `stated_worst`, `cards`; null without one).
+Json prefill_band_json(const choice::PrefillBand& b) {
+    const bool row = b.cards > 0;
+    return {{"kind", b.moe ? "moe" : "dense"},
+            {"prompt", b.prompt},
+            {"from_prompt", b.from_prompt},
+            {"to_prompt", b.to_prompt},
+            {"rms", b.holds ? Json(round_to(b.stated_rms, 4)) : Json(nullptr)},
+            {"worst", b.holds ? Json(round_to(b.stated_worst, 4)) : Json(nullptr)},
+            {"why_code", std::string(b.why_code)},
+            {"stated_rms", row ? Json(round_to(b.stated_rms, 4)) : Json(nullptr)},
+            {"stated_worst", row ? Json(round_to(b.stated_worst, 4)) : Json(nullptr)},
+            {"cards", b.cards}};
+}
+
+// What the estimates of one choice carry beside their numbers (#618 step 11).
+struct EstimateContext {
+    const choice::Resolutions* board   = nullptr; // the board's bands by basis
+    const choice::AnswerScale* answers = nullptr; // nullptr: the family is not calibrated
+};
+
+Json estimates_json(const choice::Scored& s, const EstimateContext& ctx) {
     Json terms = Json::array();
     for (const choice::Term& t : s.accuracy.terms) {
         terms.push_back({{"axis", std::string(choice::axis_name(t.axis))},
@@ -59,6 +92,28 @@ Json estimates_json(const choice::Scored& s) {
                 {"worth", round_to(s.worth, 4)}};
     // Why the speed is Transferred where a rule names it ("MoE route not queried", #766).
     if (!s.speed.why.empty()) { out["speed_why"] = std::string(s.speed.why); }
+    // The decision's own price: the request mix on the reference card (null without one), what it
+    // rests on, and the width the resolution rule weighed it at (0: not weighed).
+    const bool decided      = s.decision_seconds > 0;
+    out["decision_seconds"] = decided ? Json(round_to(s.decision_seconds, 3)) : Json(nullptr);
+    out["decision_basis"] =
+        decided ? Json(std::string(choice::speed_basis_name(s.decision_basis))) : Json(nullptr);
+    out["weighed_at"] = round_to(s.weighed_at, 4);
+    // The bands of the numbers shown: decode by the board's generation and the estimate's basis,
+    // prefill by its generation's measured error where that holds for it.
+    Json band = Json::object();
+    if (ctx.board != nullptr) {
+        band["decode"] = band_json(choice::resolution_for(*ctx.board, s.speed.basis));
+    }
+    band["prefill"] = prefill_band_json(s.prefill_band);
+    out["band"]     = band;
+    // The MMLU-Pro points the quantization's KLD against Q8_0 stands for, lost against Q8_0 (the
+    // calibration's quantity: not the switches' terms), on the calibrated model's own measured
+    // files only; else null and why.
+    std::string_view why_not;
+    const auto points             = choice::answer_points(s.accuracy, ctx.answers, &why_not);
+    out["answer_points_lost"]     = points ? Json(round_to(*points, 2)) : Json(nullptr);
+    out["answer_points_why_code"] = std::string(why_not);
     return out;
 }
 
@@ -426,6 +481,8 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     const choice::CardFacts card   = choice_card_of(inputs.gpu);
     const choice::QuantOption quant = quant_option_of(facts, label);
     out.quant = quant;
+    out.family                      = model.family;
+    out.quant_authority             = choice::quant_authority(model, quant);
 
     choice::Pins p;
     // The drafter: an axis of the choice where the subject's profile offers one; --spec given pins
@@ -503,13 +560,15 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     // choice to make at it.
     if (p.activations && std::find(allowed.activations.begin(), allowed.activations.end(),
                                    *p.activations) == allowed.activations.end()) {
-        out.choice.why = activation_refusal(facts, *p.activations);
+        out.choice.why      = activation_refusal(facts, *p.activations);
+        out.choice.why_code = "activations_not_run";
         return out;
     }
     // A KV codec pinned that the model does not take: the start refuses it, likewise.
     if (p.kv) {
         if (std::string why = kv_refusal(facts, *p.kv); !why.empty()) {
-            out.choice.why = std::move(why);
+            out.choice.why      = std::move(why);
+            out.choice.why_code = "kv_not_run";
             return out;
         }
     }
@@ -870,6 +929,58 @@ Json choice_json(const ServedChoice& served) {
     }
     out["kv_options"] = kv;
     out["activations_allowed"] = modes;
+    // The why and the gates as codes a caller words (#618 step 11): what kind of why, the first
+    // closed gate of the switches ("open" where the worth decides them), every closed gate with
+    // the measurement that would open it.
+    out["why_code"]  = served.choice.why_code;
+    out["gate_code"] = served.choice.gate_code;
+    Json gates       = Json::array();
+    for (const choice::ClosedGate& g : served.choice.gates_closed) {
+        gates.push_back({{"axis", std::string(g.axis)},
+                         {"code", std::string(g.code)},
+                         {"opens_with", std::string(g.opens_with)},
+                         {"generation", g.generation},
+                         {"family", g.family},
+                         {"cards", g.cards}});
+    }
+    out["gates_closed"] = gates;
+    // The reference card the decision priced on, beside the board the estimates are for (null:
+    // none, so nothing was decided by worth).
+    if (const auto& ref = served.choice.reference) {
+        out["decided_on"] = {{"generation", std::string(ref->generation)},
+                             {"cards", std::string(ref->cards)},
+                             {"lent", ref->lent},
+                             {"decides", ref->decides},
+                             {"sms", ref->card.sms},
+                             {"clock_mhz", round_to(ref->card.clock_hz / 1e6, 0)},
+                             {"dram_gb_s", round_to(ref->card.dram_bytes_per_s / 1e9, 0)}};
+    } else {
+        out["decided_on"] = nullptr;
+    }
+    // The KLD's answer scale (choice_constants.h kAnswerScales): calibrated only for the one model
+    // it was measured on, on its own measured files (the chosen quantization's term says), and
+    // only for the quantization's KLD against Q8_0; elsewhere not calibrated and why. Only a
+    // chosen candidate's measured quantization clears it: without one (no fit, a refused pin)
+    // nothing says the files are the calibrated model's (no_choice).
+    const choice::AnswerScale* answers = choice::answer_scale_of(served.family);
+    std::string_view uncalibrated      = answers == nullptr ? "family_not_calibrated" : "no_choice";
+    if (answers != nullptr && served.choice.chosen) {
+        (void)choice::answer_points(served.choice.scored[*served.choice.chosen].accuracy, answers,
+                                    &uncalibrated);
+    }
+    Json scale = {{"calibrated", uncalibrated.empty()}, {"family", served.family}};
+    if (answers != nullptr) {
+        scale["model"]          = std::string(answers->model);
+        scale["benchmark"]      = std::string(answers->benchmark);
+        scale["points_per_kld"] = answers->points_per_kld;
+        scale["applies_to"]     = "quant_kld_vs_q8_0";
+        scale["basis"]          = {{"models", 1},
+                                   {"quantizations", answers->quantizations},
+                                   {"noise_points", answers->noise_points}};
+    }
+    if (!uncalibrated.empty()) { scale["why_code"] = std::string(uncalibrated); }
+    out["answer_scale"] = scale;
+    const EstimateContext ctx{&served.choice.board_resolutions, answers};
     // The chunk a carried curve predicts (an estimate for an A/B; the pick is the default).
     if (served.choice.chunk_estimate != 0) { out["chunk_estimate"] = served.choice.chunk_estimate; }
     if (!served.choice.chosen) {
@@ -940,7 +1051,10 @@ Json choice_json(const ServedChoice& served) {
     }
     chosen["depth"]         = served.depth;
     chosen["decode_tok_s_at_depth"] = round_to(served.decode_at_depth, 1);
-    chosen.update(estimates_json(s));
+    // Whether the quantization's accuracy term may decide between quantizations.
+    chosen["quality_authority"] =
+        std::string(choice::quality_authority_name(served.quant_authority));
+    chosen.update(estimates_json(s, ctx));
     out["chosen"]    = chosen;
     Json alternatives = Json::array();
     for (const choice::Alternative& a : choice::explain(served.choice)) {
@@ -950,7 +1064,7 @@ Json choice_json(const ServedChoice& served) {
                     {"why_not", a.why_not},
                     {"why_code", a.why_code}};
         if (a.scored != nullptr) {
-            row.update(estimates_json(*a.scored));
+            row.update(estimates_json(*a.scored, ctx));
             row["worth_delta"] = round_to(a.scored->worth - s.worth, 4);
         }
         alternatives.push_back(row);

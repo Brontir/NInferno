@@ -261,6 +261,9 @@ const std::vector<Spec>& specs() {
              "kQuantKldSource",
              "kQuantKldCards",
              "kQuantKld",
+             // a measurement of answers against KLD (configuration-choice.md, #618 step 11): data
+             // a caller shows, never a decision's, not fitted
+             "kAnswerScales",
              // the benchmark's request mix and the trade (DECISIONS 73: declared conventions)
              "kRequestPrompt",
              "kRequestAnswer",
@@ -276,6 +279,12 @@ const std::vector<Spec>& specs() {
              "kTransferredDecodeError",
              "largest_transferred_decode_error",
              "kUnmeasuredCarryDecodeError",
+             // derived, not fitted (#618 step 11): the rms and worst of the prefill estimate over
+             // prefill_measured.json's rows, recomputed by ninferno_choice_test, and the shortest
+             // and longest prompt of those rows; shown, never a decision's
+             "kPrefillPredictionError",
+             "kPrefillErrorFromPrompt",
+             "kPrefillErrorToPrompt",
              "kReferenceCards",
              "kWorthTie",
              // names of an enum's values, no number

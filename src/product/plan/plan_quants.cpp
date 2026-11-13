@@ -893,11 +893,14 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
     // Only a measurement of a row's own files decides on its accuracy (#368,
     // choice::quant_authority): the trade weighs the rows that have one, against the rule's pick
     // only where it has one too; an estimate is shown, never decisive.
+    // Each row's authority is kept for the plan JSON (`quality_authority`, #618 step 11).
     const choice::ModelFacts quality_model = choice_model_of(shape);
-    const auto authorized = [&](const QuantRow& row) {
-        return choice::quant_authority(quality_model,
-                                       quant_option_of(row_facts(shape, row), row.listing.quant)) ==
-               choice::QualityAuthority::Direct;
+    for (QuantRow& row : out.rows) {
+        row.quality_authority = choice::quant_authority(
+            quality_model, quant_option_of(row_facts(shape, row), row.listing.quant));
+    }
+    const auto authorized = [](const QuantRow& row) {
+        return row.quality_authority == choice::QualityAuthority::Direct;
     };
     const bool weighs = out.pick && bits_known &&
                         choice::weighs_quantizations(quality_model, choice_card_of(inputs.gpu)) &&
@@ -1351,6 +1354,8 @@ Json quant_plan_json(const QuantPlan& plan) {
                         {"fits", row.fit.state == runtime::QuantFitState::Own},
                         {"fits_shared", row.fit.state == runtime::QuantFitState::Shared},
                         {"largest", row.largest}};
+        item["quality_authority"] =
+            std::string(choice::quality_authority_name(row.quality_authority));
         item["plan"] = row.planned.plan.planned ? planned_json(row.planned, false) : Json(nullptr);
         if (row.estimate) {
             item["estimate"] = {

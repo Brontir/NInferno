@@ -532,6 +532,34 @@ struct Reference {
     bool decides = false;
     bool chunk_decides = false;
     std::string why; // "" when the factors decide, else why the family's defaults stand
+    // Whose rows it is (#618 step 11, what a caller shows as "decided on"): the generation, and
+    // the lab cards its reference card is the mean of (kReferenceCards). `lent`: a compute
+    // capability with no generation row, priced on the board itself at the nearest generation's
+    // rates (`cards` empty), which never decides.
+    std::string_view generation;
+    std::string_view cards;
+    bool lent = false;
+};
+
+// A gate that keeps a decision on the family's defaults (#618 step 11), as a code a caller words,
+// with the measurement that would open it. Codes: lent_generation, no_reference_card,
+// reference_one_card (the KV codec and the activations: their speed factors); family_unmeasured,
+// kv_terms_one_card, int8_unmeasured, int8_one_card (their accuracy terms); accuracy_gate_closed
+// (a test's Gates::accuracy, nothing to measure); quant_curve_unmeasured, quant_curve_one_card (the
+// quantizations' trade, plan_quants), quant_switches_closed (the curve rests on two cards but the
+// trade waits on a closed gate of the switches: what opens that opens it). The measurements
+// (`opens_with`): generation_row (the compute capability's generation row, core/generation.h, then
+// its reference card), reference_factors (the KV read factors and the exact-route factor on two lab
+// cards of the generation), family_kld_terms (the KV codecs' and the int8 activations' KLD terms on
+// the family, two lab cards), kv_kld_second_card, int8_kld (on the generation, two lab cards),
+// quant_curve (the quantization curve on the family, two lab cards); "" for none.
+struct ClosedGate {
+    std::string_view axis; // "switches" (the KV codec and the activations) or "quant"
+    std::string_view code;
+    std::string_view opens_with;
+    std::string generation; // the generation it is closed on ("" where it is the family's)
+    std::string family;     // the model family ("" where it is the generation's)
+    int cards = 0;          // the lab cards the constant behind it rests on now
 };
 // A prefill's linears over a chunk of `tokens` by their tiles (DECISIONS 66): every linear's rounds
 // of tiles, an MoE's experts by jobs and its routing's gather and scatter of the tokens' rows;
@@ -554,6 +582,50 @@ struct Reference {
                                                      std::uint32_t chunk, bool* transferred = nullptr);
 
 [[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates = {});
+
+// Every gate closed for `model` on this card, in the order choose() reads them (the first of the
+// switches' is why the family's defaults stand: Choice::gate_code); empty where the worth decides
+// the switches and weighs the quantizations.
+[[nodiscard]] std::vector<ClosedGate> closed_gates(const ModelFacts& model, const CardFacts& card,
+                                                   const Gates& gates = {});
+
+// The measured error of the prefill estimate of `candidate`'s `prompt`-token request on this card,
+// its speed resting on `basis` (kPrefillPredictionError; shown, never decides). It holds only for
+// what it was measured on: a dense model on the fast (int8) route, an Own estimate, a prompt of
+// from_prompt .. to_prompt tokens, a generation with a row. Else `holds` is false and `why_code`
+// says why: moe_unchecked, generation_unchecked (no row: one lab card or none), not_fast_route
+// (exact, BF16, FP4), transferred (the estimate is not Own), short_prompt, long_prompt.
+// `stated_rms` and `stated_worst` are the generation's row (0: none) whatever it holds.
+struct PrefillBand {
+    bool moe                  = false;
+    bool holds                = false;
+    double stated_rms         = 0;
+    double stated_worst       = 0;
+    int cards                 = 0;
+    std::uint32_t from_prompt = kPrefillErrorFromPrompt;
+    std::uint32_t to_prompt   = kPrefillErrorToPrompt;
+    std::uint32_t prompt      = 0;
+    std::string_view why_code;
+};
+
+[[nodiscard]] PrefillBand prefill_band_of(const ModelFacts& model, const CardFacts& card,
+                                          const QuantOption& quant, const Candidate& candidate,
+                                          SpeedBasis basis, std::uint32_t prompt) noexcept;
+
+// The answer scale a KLD converts to on `family` (kAnswerScales); nullptr: not calibrated there.
+// It applies only to the quantization's own term against Q8_0 on the calibrated model's measured
+// files (answer_points).
+[[nodiscard]] const AnswerScale* answer_scale_of(std::string_view family) noexcept;
+
+// What a quantization's term means in answers: the scale times its KLD against Q8_0, where the
+// scale exists and the term is the calibrated model's own measured point (Evidence::Measured: the
+// measured file itself, Q8_0's included); nullopt otherwise, `why_code` (when given) saying why:
+// family_not_calibrated, model_not_calibrated (another model of the family, its Q8_0 too: being
+// the curve's zero says nothing of the model; or a point not measured on its files).
+struct Accuracy;
+[[nodiscard]] std::optional<double> answer_points(const Accuracy& accuracy,
+                                                  const AnswerScale* scale,
+                                                  std::string_view* why_code = nullptr) noexcept;
 
 // What an MoE's chunk decision rests on: Own (the generation the shares were measured on, priced on
 // its reference card: it decides), CarriedCurve (another generation whose MoE prefill rate rests on
@@ -673,6 +745,8 @@ struct Scored {
     double worth = 0;              // -ln(decision_seconds) - lambda kld (0 without a reference)
     bool variant = false;          // a coupled storage's other value beside the chosen (not eligible)
     std::string drafter = "plain"; // its drafter's configuration (DrafterOption::label)
+    // The measured error of its prefill estimate (`speed`, at the task's short prompt), shown only.
+    PrefillBand prefill_band;
 };
 
 // The own context per stream a candidate holds (the plan without the weights), 0 when none.
@@ -720,6 +794,21 @@ struct Choice {
     std::size_t anchor              = 0;
     double anchor_worth             = 0;
     std::string why; // "" when the factors decide, else why the family's defaults stand
+    // What a caller shows in words of its own (#618 step 11). `why_code`: by_worth (the worth
+    // decided the switches), defaults (a gate kept the family's defaults: `gate_code`), no_fit,
+    // pin_refused (exact with a rounded state pinned); a caller that refuses a pin before
+    // choosing sets its own (product/plan: activations_not_run, kv_not_run). `gate_code`: "open"
+    // where the worth decides the switches, else the first closed gate of the switches
+    // (ClosedGate::code); `gates_closed` every closed gate (closed_gates).
+    std::string why_code;
+    std::string gate_code;
+    std::vector<ClosedGate> gates_closed;
+    // The reference card the decision priced on (reference_of; nullopt: none, no decision).
+    std::optional<Reference> reference;
+    // The band of an estimate ON THE BOARD by its basis (resolution_of(board, basis)): what the
+    // estimates shown carry, beside the decision's bands above (`resolutions`, on the reference
+    // card's comparisons). Set whatever the reference.
+    Resolutions board_resolutions{};
 };
 
 // The axes' values the model and the card allow (a family's KV codecs, int8 activations only on
