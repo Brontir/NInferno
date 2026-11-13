@@ -26,6 +26,7 @@
 #include <vector>
 
 namespace legacy {
+using namespace ninferno::ops;
 using namespace ninferno::ops::detail;
 
 template <class Geometry>
