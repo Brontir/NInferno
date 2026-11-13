@@ -79,6 +79,8 @@ public:
     [[nodiscard]] std::vector<std::string> log(std::uint64_t id, std::size_t max = 0) const;
     // Drops ended processes older than `age`.
     void forget_ended(std::chrono::seconds age);
+    // Drops one ended process (its log read); a running one is kept.
+    void forget(std::uint64_t id);
 
     // A TCP port on 127.0.0.1 nobody listens on and no running child was given, from `first` up.
     [[nodiscard]] int free_port(int first = 8100) const;

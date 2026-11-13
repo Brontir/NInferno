@@ -37,6 +37,13 @@ namespace ninferno::product {
 // (ModelFacts::moe_route_unqueried): its decode estimates are Transferred past one row.
 void with_moe_routes(choice::ModelFacts& model, const PlanSourceFacts& facts,
                      const runtime::PlanDeviceFacts& device);
+// The kernels the model's trunk linears prefill on, on `device` (choice::ModelFacts::
+// prefill_routes, #613 PR-9): the registered prefill route query (runtime::
+// set_plan_prefill_route_query: the generic selector's route_query), the answers kept per linear
+// shape and format, tokens and activations. Left unset where no query is registered (a program
+// that does not link the Ops: ninferno-ui) or the device has no compute capability: the prefill
+// then prices the kernels its tile laws assume.
+void with_prefill_routes(choice::ModelFacts& model, const runtime::PlanDeviceFacts& device);
 
 // The drafter axis: beside plain decode, one option per speculation
 // mode the subject's profile chose or measured and its Engine runs. A profile with measurements

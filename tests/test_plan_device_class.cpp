@@ -27,11 +27,21 @@
 //   planner, a ladder sized; a probe query in place of the workspace query sees it run under the
 //   board's class (runtime::plan_device_class);
 // - the registered MoE route query (register_plan_moe_route_query) for the 26B-A4B's and the
-//   35B-A3B's routed layers at 1, 4 and 512 tokens under fast and exact activations: answered.
+//   35B-A3B's routed layers at 1, 4 and 512 tokens under fast and exact activations: answered;
+// - the registered prefill route query (register_plan_prefill_route_query, #613 PR-9) for a dense
+//   trunk's Q4_K, Q6_K and Q8_0 linears at 512 and 1024 tokens under fast and exact activations:
+//   answered.
 // Every answer is the same with the boards taken in the reverse order (no cache keeps the first
 // board's answer for the next), and each Gemma 4 subject's capacities and each dry run differ
 // between boards (the substitute is read). The Qwen 3.5 workspace planner (build_workspace_plan) is
 // checked the same way in tests/models/qwen3_5/test_workspace_inputs.cpp. CPU, no files.
+//
+// Not escapes, by design (#884): w4a8_ws_extra and prefill_a8_format's device read
+// (qx_prefill_a8_pays, made on every call; only the Q4/Q5/Q6 G64 answer depends on it) answer
+// false where no device class can be read, instead of throwing. Under a substitute they
+// read the substitute; outside one, on a host with no GPU, those A8 planes and the producer-warp
+// tile are left out of the size, not refused. A new caller outside the substitute's
+// scope gets that answer silently: keep the plan's reads inside plan_device_class.
 //
 // Known escape (kept by name and checked as it is, so the list only shrinks):
 // - #830: Gemma 4's attention decode plan reads the host GPU (kDecodePlanEscape, below). While it
@@ -59,6 +69,7 @@
 #include "product/plan/plan_quants.h"
 #include "runtime/engine/plan_dry_run.h"
 #include "runtime/engine/plan_moe_routes.h"
+#include "runtime/engine/plan_prefill_routes.h"
 #include "runtime/engine/plan_workspace.h"
 #include "support/named_board.h"
 #include "support/no_device.h"
@@ -697,6 +708,35 @@ std::map<std::string, std::string> run_board(const NamedBoard& b, const std::vec
             }
         }
     }
+    // The prefill route query (#613 PR-9) substitutes the board's class itself too (route_query):
+    // a dense trunk's Q4_K, Q6_K and Q8_0 linears (a gated pair among them) at prefill widths.
+    const auto& prefill_routes = rt::plan_prefill_route_query();
+
+    struct Linear {
+        const char* format;
+        double n, k;
+        bool gated;
+    };
+
+    const Linear linears[] = {{"ggml_q4_k", 4096, 4096, false},
+                              {"ggml_q6_k", 4096, 12288, false},
+                              {"q8_g32_fp16", 24576, 4096, true}};
+    for (const Linear& l : linears) {
+        for (const std::uint32_t tokens : {512U, 1024U}) {
+            for (const ActivationMode mode : {ActivationMode::Fast, ActivationMode::Exact}) {
+                const std::string what = std::string(l.format) + " prefill route at " +
+                                         std::to_string(tokens) +
+                                         (mode == ActivationMode::Exact ? " exact" : " fast");
+                guarded(what, [&] {
+                    const rt::PlanPrefillKernel kernel =
+                        prefill_routes(b.device, l.format, l.n, l.k, l.gated, tokens, mode);
+                    check(kernel != rt::PlanPrefillKernel::Unknown,
+                          b.name + ", " + what + ": answered");
+                    return std::to_string(static_cast<int>(kernel));
+                });
+            }
+        }
+    }
     return out;
 }
 
@@ -711,6 +751,7 @@ int main() {
     }
     rt::register_plan_workspace_queries();
     rt::register_plan_moe_route_query();
+    rt::register_plan_prefill_route_query();
     const std::vector<Subject> all      = subjects();
     const std::vector<NamedBoard> every = boards();
     check(every.size() >= 50, "the registry has its target boards");

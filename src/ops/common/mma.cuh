@@ -144,6 +144,24 @@ __device__ __forceinline__ void ldmatrix_x4_t(unsigned& r0, unsigned& r1, unsign
 #endif
 }
 
+// An 8x8 b16 matrix held as an MMA fragment (lane (g, t) = (lane / 4, lane % 4) holds row g's
+// elements 2t and 2t + 1, the low half first) transposed in registers: lane (g, t) receives
+// elements g of rows 2t (low half) and 2t + 1, the fragment of the transpose. From sm_75 one
+// movmatrix; Volta reads the two elements from their lanes.
+__device__ __forceinline__ unsigned movmatrix_trans(unsigned value) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 750
+    const int lane      = threadIdx.x & 31;
+    const int source    = 8 * (lane & 3) + ((lane >> 3) & 3); // row 2t, the lane of column g
+    const unsigned row0 = __shfl_sync(0xffffffffU, value, source);
+    const unsigned row1 = __shfl_sync(0xffffffffU, value, source + 4);
+    return __byte_perm(row0, row1, ((lane >> 2) & 1) != 0 ? 0x7632U : 0x5410U);
+#else
+    unsigned out;
+    asm volatile("movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;\n" : "=r"(out) : "r"(value));
+    return out;
+#endif
+}
+
 #if NINFERNO_FMA_MMA
 // The m16n8k16 product of 16-bit operands in FP32 FMAs. Lane (g, t) holds A[g][2t..2t+1] (a0),
 // A[g + 8][2t..2t+1] (a1), A[g][2t+8..2t+9] (a2), A[g + 8][2t+8..2t+9] (a3), B[2t..2t+1][g] (b0),
