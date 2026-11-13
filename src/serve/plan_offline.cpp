@@ -531,8 +531,9 @@ OfflinePlan plan_without_load(const ServeOptions& options, std::optional<std::ui
     // A quantization is chosen on an idle card of this GPU (as the fetch without --quant does:
     // the same card type, the same flags, the same file); the free memory now is reported beside.
     const bool table = model.kind == "hub" && model.gguf && options.quant.empty();
+    // --plan-idle: any model's plan is the idle card's too, the free memory now beside it (#843).
     const std::optional<std::uint64_t> free_now = device.free_bytes;
-    if (table) { device.free_bytes.reset(); }
+    if (table || options.plan_idle) { device.free_bytes.reset(); }
     Planning planning       = planning_of(options, model, device, gpu);
     planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
     OfflinePlan out;
@@ -637,6 +638,19 @@ OfflinePlan plan_without_load(const ServeOptions& options, std::optional<std::ui
                         std::to_string(*free_now / (std::uint64_t{1} << 20)) +
                         " MiB: " + row.listing.quant + " would not start right now (" +
                         at_now.plan.reason + ")\n";
+        }
+    } else if (!table && options.plan_idle && free_now) {
+        // One model's idle plan: a start right now replays its choice at the free memory, as
+        // ninferno-ui's plan of a local artifact says it (product::plan_now).
+        const product::PlannedSpeculation at_now = product::plan_now(
+            facts, planning.inputs, served ? &*served : nullptr, pins_of(options), *free_now);
+        out.json["device"]["free_now_bytes"] = *free_now;
+        out.json["device"]["fits_now"]       = at_now.plan.fits;
+        out.json["now"]                      = product::plan_now_json(at_now, *free_now);
+        if (!at_now.plan.fits) {
+            out.text += "now    | free now " +
+                        std::to_string(*free_now / (std::uint64_t{1} << 20)) +
+                        " MiB: would not start right now (" + at_now.plan.reason + ")\n";
         }
     }
     return out;

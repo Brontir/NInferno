@@ -263,6 +263,14 @@ struct PlanDrafterGeometry {
     std::vector<std::string> projection_formats;
 };
 
+// The families whose start reads an HF text frontend and whose workspace the start's own planner
+// sizes since #615 W3: the dense decoder (dense_decoder, moe_decoder) and NemotronH. One list for
+// plan_facts.cpp (binds_directory) and plan_workspace.cpp (the query and the tokenizer count).
+inline bool hf_decoder_family(std::string_view model_type) {
+    return model_type == "dense_decoder" || model_type == "moe_decoder" ||
+           model_type == "nemotron_h";
+}
+
 struct PlanModelFacts {
     std::string model_type;   // the family (qwen3_5_text, gemma4_text, dense_decoder, ...); ""
     std::string architecture; // as the source names it (GGUF general.architecture, HF class)
@@ -383,8 +391,9 @@ struct PlanModelFacts {
     std::string offline_reason;
     models::StateShape state;
     // The parsed directory of the artifact the facts are read from (plan_facts_of_directory, a
-    // Qwen 3.5 artifact's), null for any other source: what the family's workspace query binds
-    // the model over, as a start binds it (#615; its payload is never read). Shared: facts copy.
+    // Qwen 3.5, dense decoder or NemotronH artifact's), null for any other source: what the
+    // family's workspace query binds the model over, as a start binds it (#615; its payload is
+    // never read). Shared: facts copy.
     std::shared_ptr<const artifact::Directory> artifact_directory;
     // The ids the artifact's tokenizer makes public (a start's public_token_count: the sampler's
     // domain, the bound of an indexed proposal head), read from its resources when the facts come
