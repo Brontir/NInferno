@@ -96,7 +96,10 @@ def request(args):
                 "prompt_ms": timings.get("prompt_ms"), "wall_s": round(elapsed, 3),
                 "output_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
             }
-            if "draft_n" in timings or timings.get("speculation"):
+            # `speculation` describes how the server runs (also "plain"); only drafted tokens mean
+            # the request ran speculatively (openai_chat_response.cpp: draft_n only when nonzero).
+            row["speculation"] = timings.get("speculation")
+            if (timings.get("draft_n") or 0) > 0:
                 sys.exit(f"the request drafted ({timings}): the A/B is plain decode (--spec none)")
             if (row["prompt_tokens"] or 0) < MIN_PROMPT_TOKENS:
                 sys.exit(f"prompt of {row['prompt_tokens']} tokens: the A/B decodes at ~22K")
