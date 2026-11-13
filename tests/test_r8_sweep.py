@@ -156,7 +156,7 @@ class SweepKit(unittest.TestCase):
 class StepAB(unittest.TestCase):
     """tools/bench/step_ab.py summarize on rounds as run_850_step_ab.sh writes them."""
 
-    def run_summary(self, a, b, same=True, order="ABBAABBAABBA"):
+    def run_summary(self, a, b, same=True, order="ABBAABBAABBA", rounds=None):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         out = Path(tmp.name)
@@ -173,7 +173,8 @@ class StepAB(unittest.TestCase):
         (out / "rounds.jsonl").write_text("\n".join(lines) + "\n")
         (out / "meta.txt").write_text("gpu NVIDIA GeForce RTX 4090\nrounds per build 6\n")
         argv = sys.argv
-        sys.argv = ["step_ab.py", "summarize", str(out)]
+        sys.argv = ["step_ab.py", "summarize", str(out)] + (
+            ["--rounds", str(rounds)] if rounds else [])
         try:
             with contextlib.redirect_stdout(io.StringIO()):
                 step_ab.main()
@@ -202,6 +203,16 @@ class StepAB(unittest.TestCase):
             self.run_summary([100.0, 100.1, 99.9, 100.0], [100.2, 100.0, 100.1, 99.8],
                              order="ABBAABBA")
         self.assertIn("6 each needed (frozen)", str(raised.exception))
+
+    def test_more_than_six_rounds_refused(self):
+        with self.assertRaises(SystemExit) as raised:
+            self.run_summary([100.0] * 8, [100.1] * 8, order="ABBA" * 4)
+        self.assertIn("6 each needed (frozen)", str(raised.exception))
+
+    def test_rounds_argument_as_the_kit_passes_it(self):
+        text = self.run_summary([100.0, 101.0, 100.5, 99.5, 100.0, 100.2],
+                                [100.1, 100.0, 99.8, 100.6, 100.3, 99.9], rounds=6)
+        self.assertIn("Verdict: no slower", text)
 
 
 if __name__ == "__main__":

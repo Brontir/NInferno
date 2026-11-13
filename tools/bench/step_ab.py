@@ -194,7 +194,7 @@ def summarize(args):
 
     text = ["# #850 whole-step A/B (kernel proposal P, acceptance item 4)", "",
             "Plain decode, C = 1, `--spec none`, greedy, ~22K-token prompt, ABBA rounds; "
-            "A = master, B = the PR.", "", "```", meta.strip(), "```", "",
+            "A = the master B branched from, B = the PR.", "", "```", meta.strip(), "```", "",
             f"Prompt tokens: {', '.join(str(t) for t in prompt_tokens)}; output tokens a request: "
             f"{rows[0]['completion_tokens']}.", "", *lines, "",
             "| arm | rounds | median tok/s | min | max | spread (max - min) / median |",

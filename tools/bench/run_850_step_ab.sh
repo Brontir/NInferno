@@ -13,9 +13,9 @@
 # the protocol's).
 #
 # Steps:
-#   1. sources: `git fetch origin master`, then a detached worktree of BASE (origin/master) and of
-#      HEAD under BUILD_ROOT/a/src and BUILD_ROOT/b/src (the same layout, so ccache shares B's
-#      unchanged objects with A's: CCACHE_BASEDIR=BUILD_ROOT).
+#   1. sources: `git fetch origin master`, then a detached worktree of the merge base of BASE
+#      (origin/master) and HEAD, and of HEAD, under BUILD_ROOT/a/src and BUILD_ROOT/b/src (the
+#      same layout, so ccache shares B's unchanged objects with A's: CCACHE_BASEDIR=BUILD_ROOT).
 #   2. builds: cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=<ARCH>
 #      -DBUILD_TESTING=OFF -DNINFERNO_CUDA_LINEINFO=OFF with ccache launchers, target ninferno-serve
 #      only, -j JOBS. ARCH is the card's (nvidia-smi compute_cap: 8.9 -> 89, 12.0 -> 120a).
@@ -122,7 +122,7 @@ if [[ -z ${ARCH:-} ]]; then
     case $ARCH in 120 | 121) ARCH=${ARCH}a ;; esac
 fi
 
-# The revisions: B is HEAD, committed; A is BASE after a fetch.
+# The revisions: B is HEAD, committed; A is the merge base of BASE (after a fetch) and HEAD.
 [[ -z $(git -C "$root" status --porcelain --untracked-files=no) ]] ||
     die "the checkout has uncommitted changes: B is its HEAD, commit them first"
 [[ ${NO_FETCH:-0} == 1 ]] || git -C "$root" fetch -q origin master || die "git fetch origin master failed"
@@ -132,7 +132,7 @@ SHA_B=$(git -C "$root" rev-parse HEAD)
 # since would put its own changes into B/A.
 SHA_A=$(git -C "$root" merge-base "$BASE" "$SHA_B") || die "HEAD shares no history with $BASE"
 BRANCH_B=$(git -C "$root" rev-parse --abbrev-ref HEAD)
-[[ $SHA_A != "$SHA_B" ]] || die "HEAD is $BASE ($SHA_A): nothing to compare"
+[[ $SHA_A != "$SHA_B" ]] || die "HEAD is already in $BASE ($SHA_A): nothing to compare"
 
 card_tag=$(tr -c 'A-Za-z0-9\n' _ <<<"${GPU_NAME#NVIDIA GeForce }" | sed 's/__*/_/g; s/_$//')
 OUT=${1:-${TMPDIR:-/tmp}/r8_850_step_${card_tag}_$(date +%m%d_%H%M)}
@@ -171,7 +171,7 @@ scrub() {
     echo "gpu $GPU_NAME, compute capability $CC, driver $(query driver_version)"
     echo "gpu clocks (sm, mem, max sm, max mem), power limit, persistence:" \
         "$(query clocks.sm,clocks.mem,clocks.max.sm,clocks.max.mem,power.limit,persistence_mode)"
-    echo "A $BASE $SHA_A"
+    echo "A merge-base($BASE, HEAD) $SHA_A ($BASE at $(git -C "$root" rev-parse "$BASE^{commit}"))"
     echo "B $BRANCH_B $SHA_B"
     echo "model $MODEL --quant $QUANT"
     echo "server ${SERVE_FLAGS[*]}"
