@@ -33,6 +33,12 @@
 // between boards (the substitute is read). The Qwen 3.5 workspace planner (build_workspace_plan) is
 // checked the same way in tests/models/qwen3_5/test_workspace_inputs.cpp. CPU, no files.
 //
+// Not escapes, by design (#884): w4a8_ws_extra and prefill_a8_format (generic_select_detail.h,
+// generic_gemm.h) answer false where no device class can be read, instead of throwing. Read under
+// a substitute they read the substitute; outside one, on a host with no GPU, the A8 planes and the
+// producer-warp tile are left out of the size, not refused. A new caller outside the substitute's
+// scope gets that answer silently: keep the plan's reads inside plan_device_class.
+//
 // Known escape (kept by name and checked as it is, so the list only shrinks):
 // - #830: Gemma 4's attention decode plan reads the host GPU (kDecodePlanEscape, below). While it
 //   escapes, the registered Gemma 4 query never answers "start" under a substitute: the pieces

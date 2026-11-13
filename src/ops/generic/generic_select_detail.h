@@ -44,7 +44,9 @@ ArchFacts current_arch_facts();
 
 // Whether the producer-warp tile also replaces the classic one for format `q` on this device
 // (sm_89 / sm_120, where a measured choice names it: format_requires::kW4a8WsTunedArch); false
-// where the device cannot be read.
+// where the device cannot be read. Non-throwing on purpose (#884): a plan path that asks it
+// outside a ScopedDeviceClass on a host with no GPU gets false, not the throw the #615 W4 escape
+// check relies on elsewhere (tests/test_plan_device_class.cpp lists it as such).
 bool w4a8_ws_extra(QType q);
 
 // The R8 decode table of the nearest measured board (null where none is near enough) with that
