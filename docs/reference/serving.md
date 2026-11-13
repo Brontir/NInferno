@@ -1866,6 +1866,7 @@ contract.
 | `--json` | with `--plan`: print it as JSON | off |
 | `--no-load` | with `--plan`: plan without loading or downloading the weights and without a GPU, from the model's header or config ([the plan without the weights](#the-plan-without-the-weights)) | off |
 | `--plan-device NAME` | with `--plan --no-load`: plan for a named board of the PCI-ID table (`"RTX 4090"`, `0x2684`, then `,headless`/`,display`, `,linux`/`,wddm`) instead of the CUDA device | the CUDA device |
+| `--plan-idle` | with `--plan --no-load`: plan the idle card, and put what a start right now would get at the free memory beside it (`now`); ninferno-ui plans a model converted here this way. The exit code then says whether the idle card fits (0) or not (2); `now.fits_now` says whether a start right now would | the free memory now |
 | `--with-drafters` | always attach the drafters of a GGUF hub model (a separate download), and fail the start when one cannot be had | attached when the choice drafts with one |
 | `--model-id ID` | override the public OpenAI model alias | the artifact's `metadata.name`, else its file name; a Hugging Face id when serving one |
 | `--chat-template FILE` | local Jinja chat template | the artifact's |
@@ -2388,6 +2389,10 @@ has an automatic axis (`plan_automatic_fit`: the driver's default per-thread sta
 0.09-0.19 GiB on the lab's cards, returned first). On a named board, and in ninferno-ui, the dry run takes an idle card: the
 memory less 512 MiB for the CUDA context, and less a desktop's share when the card drives one
 (Linux 256 MiB, Windows and WSL 2 1.5 GiB). These shares are declared, not measured.
+With `--plan-idle` a real device's plan is the idle card's too, and the document's `now` (with
+`device.free_now_bytes` and `device.fits_now`) is what a start right now would get at the free
+memory: ninferno-ui runs `ninferno-serve <artifact> --plan --no-load --plan-idle --json` for a model
+converted here, so its plan has the start's workspace (#843).
 
 **What is the start's, and what is estimated.** A rung's persistent bytes are the family planner's
 own: the start and the dry run call the same function (`plan_persistent_layout` over a
@@ -2611,12 +2616,14 @@ ESTIMATES: `own_context`, `fits`, `decode_tok_s`, `prefill_tok_s` (on this board
 measurements), `speed_transferred` (true unless `speed_basis` is `own`), `speed_basis` (`own`: the
 card's generation's rows, each on two lab cards; `transferred`: a constant from another generation or
 one lab card, or an MoE decode step whose kernel pair the op was not asked (no route query in the
-program, or no answer for a layer kind); `lent_generation`: the card's compute capability has no generation row of its own and
+program, or no answer for a layer kind), or one on assumed banks; `lent_generation`: the card's compute capability has no generation row of its own and
 the nearest one's stand in, a rough estimate that decides nothing), `speed_why` (present only with
 `speed_basis` `transferred` where a rule names a reason, one reason among any others: `MoE route not
 queried`: the program registers no MoE route query (ninferno-ui), so the step takes the measured
 kernel pair's share past one stream; `MoE route not answered`: the query gave no kernels for a
-layer kind), `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
+layer kind; `MoE banks assumed`: the file does not tell the format its routed banks are kept as
+(Gemma 4's GGUF MXFP4 experts, a split MoE GGUF's parts), so the bytes priced and the pair asked
+may not be what the start runs; at any stream count), `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
 measured, transferred, source, evidence}]`: `measured` true only for `evidence` `measured`,
 `transferred` for a term measured on another family; `evidence` what the term rests on: `measured` (a
 quantization's own files, or the family's switch), `proxy` (the same quantization label measured on

@@ -118,25 +118,31 @@ __host__ __device__ constexpr int i8_position(int v) {
 
 // One thread per (token, group) of the padded token range: the group's int8 codes rint(x*127/amax)
 // in the k-permutation, the scale amax/127 and the codes' integer sum, [groups][padded tokens].
-__global__ __launch_bounds__(256) void i8_quantize_kernel(const __nv_bfloat16* __restrict__ x,
-                                                          int ldx, int k, int tokens, int padded,
-                                                          std::int8_t* __restrict__ codes,
-                                                          float* __restrict__ scales,
-                                                          int* __restrict__ sums) {
-    const int groups         = k / 64;
+// The group and the CTA are the kernel's own constants below, which its indexing, its launch
+// bounds, its launch and the cost model's counts (the asserts after it) all read.
+constexpr int kI8QuantGroup   = 64;  // values a thread quantizes: one activation scale group
+constexpr int kI8QuantThreads = 256; // threads a CTA
+using I8QuantCodes            = unsigned[kI8QuantGroup / 4]; // a group's int8 codes, packed
+constexpr int kI8QuantLoads   = kI8QuantGroup * sizeof(__nv_bfloat16) / sizeof(uint4);
+constexpr int kI8QuantStores  = sizeof(I8QuantCodes) / sizeof(uint4);
+
+__global__ __launch_bounds__(kI8QuantThreads) void i8_quantize_kernel(
+    const __nv_bfloat16* __restrict__ x, int ldx, int k, int tokens, int padded,
+    std::int8_t* __restrict__ codes, float* __restrict__ scales, int* __restrict__ sums) {
+    const int groups         = k / kI8QuantGroup;
     const std::int64_t task  = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (task >= static_cast<std::int64_t>(padded) * groups) return;
     const int group = static_cast<int>(task / padded);
     const int token = static_cast<int>(task - static_cast<std::int64_t>(group) * padded);
-    unsigned words[16] = {};
+    I8QuantCodes words = {};
     float amax         = 0.0F;
     int qsum           = 0;
     if (token < tokens) {
-        float v[64];
+        float v[kI8QuantGroup];
         const auto* p = reinterpret_cast<const uint4*>(x + static_cast<std::int64_t>(token) * ldx +
-                                                       group * 64);
+                                                       group * kI8QuantGroup);
 #pragma unroll
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < kI8QuantLoads; ++i) {
             const uint4 w       = p[i];
             const unsigned u[4] = {w.x, w.y, w.z, w.w};
 #pragma unroll
@@ -146,23 +152,44 @@ __global__ __launch_bounds__(256) void i8_quantize_kernel(const __nv_bfloat16* _
             }
         }
 #pragma unroll
-        for (int i = 0; i < 64; ++i) amax = fmaxf(amax, fabsf(v[i]));
+        for (int i = 0; i < kI8QuantGroup; ++i) amax = fmaxf(amax, fabsf(v[i]));
         const float inv = amax > 0.0F ? 127.0F / amax : 0.0F;
 #pragma unroll
-        for (int i = 0; i < 64; ++i) {
+        for (int i = 0; i < kI8QuantGroup; ++i) {
             const int q   = max(-127, min(127, __float2int_rn(v[i] * inv)));
             const int pos = i8_position(i);
             words[pos >> 2] |= (static_cast<unsigned>(q) & 0xffU) << (8 * (pos & 3));
             qsum += q;
         }
     }
-    auto* dst = reinterpret_cast<uint4*>(codes + static_cast<std::int64_t>(token) * k + group * 64);
+    auto* dst = reinterpret_cast<uint4*>(codes + static_cast<std::int64_t>(token) * k +
+                                         group * kI8QuantGroup);
 #pragma unroll
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < kI8QuantStores; ++i)
         dst[i] = make_uint4(words[4 * i], words[4 * i + 1], words[4 * i + 2], words[4 * i + 3]);
     scales[task] = amax / 127.0F;
     sums[task]   = qsum;
 }
+
+// The quantizer's DRAM bytes and grid, counted from the kernel above for the cost model
+// (route_cost::kQuantI8BytesPerValue / kQuantI8PadBytesPerValue / kQuantThreadsPerCta, #613
+// PR-8a): a thread's group of a real token reads its kI8QuantGroup BF16 values (kI8QuantLoads
+// uint4 loads) and writes its codes (kI8QuantStores uint4 stores of I8QuantCodes), an FP32 scale
+// and an int32 sum; a padding token's group writes the same and reads nothing. The group is the
+// tiles' activation scale group (i8_position's k-permutation, kI8StageK). A change of the group,
+// the loads, the stores or the CTA breaks these.
+static_assert(kI8QuantLoads * sizeof(uint4) == kI8QuantGroup * sizeof(__nv_bfloat16));
+static_assert(kI8QuantStores * sizeof(uint4) == sizeof(I8QuantCodes));
+static_assert(sizeof(I8QuantCodes) == kI8QuantGroup * sizeof(std::int8_t));
+static_assert(kI8QuantGroup == route_cost::kI8StageK.value());
+static_assert(route_cost::kQuantI8BytesPerValue.value() ==
+              (static_cast<double>(kI8QuantLoads * sizeof(uint4)) + sizeof(I8QuantCodes) +
+               sizeof(float) + sizeof(int)) /
+                  kI8QuantGroup);
+static_assert(route_cost::kQuantI8PadBytesPerValue.value() ==
+              static_cast<double>(sizeof(I8QuantCodes) + sizeof(float) + sizeof(int)) /
+                  kI8QuantGroup);
+static_assert(route_cost::kQuantThreadsPerCta.value() == kI8QuantThreads);
 
 template <int WT, int WN, int Stages, int Bits, Epilogue E>
 __global__ void __launch_bounds__(32 * WT * WN, 1)
@@ -407,12 +434,13 @@ void launch_epilogue(int schedule, int bits, const GemmArgs& args, const std::in
 void launch_i8(int schedule, int bits, Epilogue epilogue, const GemmArgs& args,
                std::int8_t* codes, float* scales, int* sums, cudaStream_t stream) {
     const int padded         = i8_padded_tokens(args.tokens);
-    const std::int64_t tasks = static_cast<std::int64_t>(padded) * (args.k / 64);
+    const std::int64_t tasks = static_cast<std::int64_t>(padded) * (args.k / kI8QuantGroup);
     // A described launch (i8 route_resources) quantizes nothing.
     if (kernel_describe_target() == nullptr) {
-        i8_quantize_kernel<<<static_cast<unsigned>((tasks + 255) / 256), 256, 0, stream>>>(
-            static_cast<const __nv_bfloat16*>(args.x), args.ldx, args.k, args.tokens, padded,
-            codes, scales, sums);
+        i8_quantize_kernel<<<static_cast<unsigned>((tasks + kI8QuantThreads - 1) / kI8QuantThreads),
+                             kI8QuantThreads, 0, stream>>>(
+            static_cast<const __nv_bfloat16*>(args.x), args.ldx, args.k, args.tokens, padded, codes,
+            scales, sums);
         CUDA_CHECK(cudaGetLastError());
     }
     switch (epilogue) {

@@ -88,6 +88,16 @@ ninferno_add_op_test(ninferno_fp8_e4m3_widen_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_fp8_e4m3.cu"
   LIBRARIES ninferno_ops)
 
+# The NVFP4 KV slab kernel's register decoders (#849): every code byte times every legal scale
+# against the cache codec, folded MMA sums, the movmatrix transpose; and its instances' resources
+# on the running GPU (no local memory, the CTAs per SM the plan assumes).
+ninferno_add_op_test(ninferno_nvfp4_kv_slab_decode_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_nvfp4_kv_slab_decode.cu"
+  LIBRARIES ninferno_ops)
+ninferno_add_op_test(ninferno_nvfp4_kv_slab_resources_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_nvfp4_kv_slab_resources.cpp"
+  LIBRARIES ninferno_ops)
+
 # The register-fragment MMAs and ldmatrix forms (ops/common/mma.cuh) against a host product, bit for
 # bit: sm_80 instructions, Turing's composed k8 shapes or the sm_70 FMA / dp4a forms.
 ninferno_add_op_test(ninferno_mma_fragments_test
@@ -332,6 +342,13 @@ ninferno_add_op_test(ninferno_causal_admission_test LABELS host
 ninferno_add_test(ninferno_causal_position_partition_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/test_causal_position_partition.cpp"
   LIBRARIES ninferno::cudart)
+
+# The MoE R8 regime rules (ops/moe/moe_regime_rules.h, #616 step 5): each rule labelled by the
+# cards it was measured on (two or more, one, or none and conservative), one per generation, and
+# the limits the substituted boards take. Host only.
+ninferno_add_op_test(ninferno_moe_regime_rules_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_moe_regime_rules.cpp"
+  LIBRARIES ninferno_ops)
 
 # What the measured value tables' answers rest on (#616 step 3): the MoE class A8 route and the
 # sparse MoE Q4 groupwise frontier per SKU of the reference table, as Measured, Carried, Incomplete

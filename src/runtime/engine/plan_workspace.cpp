@@ -5,9 +5,13 @@
 #include "artifact/schema.h"
 #include "core/device_class.h"
 #include "core/weight_view.h"
+#include "models/dense/model.h"
+#include "models/dense/program_family.h"
 #include "models/gemma4/config.h"
 #include "models/gemma4/workspace.h"
 #include "models/load_options.h"
+#include "models/nemotron_h/model.h"
+#include "models/nemotron_h/program_family.h"
 #include "models/qwen3_5/load.h"
 #include "models/qwen3_5/program/planning/described_start.h"
 #include "models/qwen3_5/program/planning/sequence_bytes.h"
@@ -20,6 +24,7 @@
 #include "ninferno/ops/sampling.h"
 #include "ninferno/ops/speculative_round.h"
 #include "ops/route_pins.h"
+#include "runtime/engine/hf_text_frontend.h"
 #include "runtime/engine/plan_dry_run.h"
 
 #include <algorithm>
@@ -28,11 +33,34 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace ninferno::runtime {
 namespace {
+
+// A maintainer's route override the plan does not model, from the options planned (a dry run
+// constructs no Engine, so the process-wide pins are not these options'): the formula stands, and
+// the answer names the override. nullptr: none.
+const char* route_override(const EngineOptions& options) {
+    const MaintainerOptions& m = options.maintainer;
+    if (m.moe_path != MoePath::Auto) {
+        return "--moe-path is pinned: the plan sizes the automatic MoE path";
+    }
+    if (m.prefill_route != PrefillRoute::Auto || m.decode_route != DecodeRoute::Auto) {
+        return "a route is pinned (--prefill-route, --decode-route): the plan sizes the release's "
+               "selection";
+    }
+    if (m.route_policy != RoutePolicy::Legacy) {
+        return "--route-policy evidence: the plan sizes the release's selection";
+    }
+    if (!m.route_table.empty() || !m.route_dir.empty()) {
+        return "a route table is named (--route-table, --route-dir): the plan sizes the release's";
+    }
+    return nullptr;
+}
 
 namespace gemma4 = models::gemma4;
 namespace detail = models::qwen3_5::detail;
@@ -396,9 +424,7 @@ PlanWorkspaceAnswer qwen3_5_workspace(const PlanModelFacts& m, const EngineOptio
                               "resources)"};
     }
     if (plan == nullptr) { return {std::nullopt, "no sequence plan laid out for the rung"}; }
-    if (ops::route_pins().moe != MoePath::Auto) {
-        return {std::nullopt, "--moe-path is pinned: the plan sizes the automatic MoE path"};
-    }
+    if (const char* pinned = route_override(options)) { return {std::nullopt, pinned}; }
     std::string why;
     const auto start = described_start(m.artifact_directory, models::load_options(options),
                                        m.tokenizer_tokens, why);
@@ -420,6 +446,115 @@ PlanWorkspaceAnswer qwen3_5_workspace(const PlanModelFacts& m, const EngineOptio
     return {arenas.capacity, "the start's planner over the artifact's bindings"};
 }
 
+// A dense decoder's or NemotronH's model described once for a directory and its activation
+// profile (Model::describe: the parameters load binds and prepares, without the payload), or why
+// it cannot be. `Family` the family's Model; a plan asks at every rung of every ladder.
+template <class Family, class Profile>
+std::shared_ptr<const Family>
+described_model(const std::shared_ptr<const artifact::Directory>& directory, Profile profile,
+                std::string& why) {
+    struct Entry {
+        std::weak_ptr<const artifact::Directory> directory; // expired: the key may be reused
+        const artifact::Directory* key = nullptr;
+        Profile profile{};
+        std::shared_ptr<const Family> model;
+        std::string why;
+    };
+
+    static std::mutex mutex;
+    static std::vector<Entry> cache;
+    const std::lock_guard lock(mutex);
+    std::erase_if(cache, [](const Entry& e) { return e.directory.expired(); });
+    for (const Entry& e : cache) {
+        if (e.key == directory.get() && e.profile == profile) {
+            why = e.why;
+            return e.model;
+        }
+    }
+    Entry entry{directory, directory.get(), profile, nullptr, {}};
+    try {
+        entry.model = Family::describe(*directory, profile);
+    } catch (const std::exception& error) {
+        entry.why = std::string("the start's weights need what the directory does not hold: ") +
+                    error.what();
+    }
+    if (cache.size() >= 4) { cache.erase(cache.begin()); }
+    cache.push_back(entry);
+    why = entry.why;
+    return entry.model;
+}
+
+// A dense decoder's (dense_decoder, moe_decoder) or NemotronH's arena by the start's own planner
+// (models/dense/program_family.h, models/nemotron_h/program_family.h: target_workspace_plan, which
+// the start's execution sizes its arena with) over the model the artifact's directory describes,
+// prepared with the profile the start loads it with (A16 under --activations exact), for the
+// rung's sequence plan and the tokenizer's public ids. Equal to the start's for the same device
+// class (the capacity queries read device_class()).
+// Declines, and the formula stands, where the facts are not an artifact's, the tokenizer was not
+// read, no sequence plan is laid out, under a --moe-path pin, under speculation (the DFlash
+// drafter and the NemotronH MTP head are artifacts of their own, not in these facts), under
+// --activations int8 (the start refuses it), where the tokenizer names more ids than the
+// embedding has rows (the start refuses), where load would refuse the weights or a binding needs
+// the payload, and where no device class is known.
+PlanWorkspaceAnswer decoder_workspace(const PlanModelFacts& m, const EngineOptions& options,
+                                      const detail::SequencePlanImpl* plan) {
+    const bool dense = m.model_type == "dense_decoder" || m.model_type == "moe_decoder";
+    if (!dense && m.model_type != "nemotron_h") { return {}; }
+    if (!m.artifact_directory) {
+        return {std::nullopt,
+                "the start's weights are a converted artifact's bindings, not in these facts"};
+    }
+    if (m.tokenizer_tokens == 0) {
+        return {std::nullopt, "the tokenizer's public tokens were not read (the artifact's "
+                              "resources)"};
+    }
+    if (plan == nullptr) { return {std::nullopt, "no sequence plan laid out for the rung"}; }
+    if (const char* pinned = route_override(options)) { return {std::nullopt, pinned}; }
+    if (options.speculative.backend != SpeculativeBackend::None) {
+        return {std::nullopt, "speculation: the drafter is an artifact of its own, not in these "
+                              "facts"};
+    }
+    if (options.activations == ActivationMode::Int8) {
+        return {std::nullopt, "--activations int8: the start refuses it for this family"};
+    }
+    try {
+        if (device_class().sms <= 0) { throw std::runtime_error("no multiprocessors"); }
+    } catch (const std::exception&) {
+        return {std::nullopt, "no device class to size the routes for"};
+    }
+    const bool exact  = options.activations == ActivationMode::Exact;
+    const auto tokens = static_cast<std::int32_t>(m.tokenizer_tokens);
+    std::string why;
+    detail::WorkspacePlan arenas;
+    const auto size = [&](const auto& model) -> bool {
+        if (!model) { return false; }
+        if (tokens > model->config().vocab_size) {
+            why = "the tokenizer names more ids than the embedding has rows (the start refuses)";
+            return false;
+        }
+        // --activations exact: the invariant route profile, as the start's execution sizes.
+        const ops::ScopedInvariantRoutes routes(exact);
+        if constexpr (std::is_same_v<std::decay_t<decltype(*model)>, models::dense::Model>) {
+            arenas = models::dense::target_workspace_plan(*model, tokens, *plan);
+        } else {
+            arenas = models::nemotron_h::target_workspace_plan(*model, tokens, *plan);
+        }
+        return true;
+    };
+    const bool sized = dense ? size(described_model<models::dense::Model>(
+                                   m.artifact_directory,
+                                   exact ? models::dense::ActivationProfile::A16
+                                         : models::dense::ActivationProfile::Artifact,
+                                   why))
+                             : size(described_model<models::nemotron_h::Model>(
+                                   m.artifact_directory,
+                                   exact ? models::nemotron_h::ActivationProfile::A16
+                                         : models::nemotron_h::ActivationProfile::Artifact,
+                                   why));
+    if (!sized) { return {std::nullopt, why}; }
+    return {arenas.capacity, "the start's planner over the artifact's bindings"};
+}
+
 } // namespace
 
 void register_plan_workspace_queries() {
@@ -430,6 +565,10 @@ void register_plan_workspace_queries() {
             if (model.model_type == "gemma4_text") {
                 return gemma4_workspace(model, rung, options, concurrency, plan);
             }
+            if (model.model_type == "dense_decoder" || model.model_type == "moe_decoder" ||
+                model.model_type == "nemotron_h") {
+                return decoder_workspace(model, options, plan);
+            }
             return qwen3_5_workspace(model, options, plan);
         } catch (const std::exception& error) {
             // A geometry an Op's query refuses: the formula stands, as for a family without one,
@@ -437,10 +576,18 @@ void register_plan_workspace_queries() {
             return {std::nullopt, std::string("an Op's capacity query refused the facts: ") + error.what()};
         }
     });
-    // A Qwen 3.5 artifact's public tokens, from its tokenizer resources (load.h): what its start
-    // samples over and checks an indexed proposal head against.
+    // An artifact's public tokens, from its tokenizer resources, as its family's start reads them:
+    // Qwen 3.5's (load.h; what its start samples over and checks an indexed proposal head
+    // against), and the HF text frontend's of the dense decoder and NemotronH (hf_text_frontend.h).
     set_plan_tokenizer_query([](const artifact::Reader& reader) -> std::optional<std::uint32_t> {
         try {
+            const auto& directory = reader.directory();
+            const auto text       = directory.components.find("text");
+            if (text == directory.components.end()) { return std::nullopt; }
+            const std::string type = text->second.config.value("model_type", std::string());
+            if (type == "dense_decoder" || type == "moe_decoder" || type == "nemotron_h") {
+                return hf_public_token_count(reader);
+            }
             return models::qwen3_5::public_token_count(reader);
         } catch (const std::exception&) { return std::nullopt; }
     });

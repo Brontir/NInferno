@@ -34,6 +34,8 @@ cd "$root"
 # One entry per decision file or per directory pattern (relative to the repository root).
 decision_patterns=(
   src/core/host_cpu_quota.h
+  src/core/arch_requires.h
+  src/ops/generic/format_requires.h
   src/core/machine_facts.cpp
   src/core/isa_facts.cpp
   src/core/sm_rate_facts.cpp
@@ -58,6 +60,7 @@ decision_patterns=(
   src/ops/generic/selector_facts_host.cpp
   src/ops/generic/generic_facts_sink.cpp
   src/ops/moe/moe_plan.cpp
+  src/ops/moe/moe_regime_rules.h
   src/ops/generic/generic_variant_rules.h
   src/ops/generic/generic_ggml.cpp
   src/ops/generic/generic_ggml_internal.h

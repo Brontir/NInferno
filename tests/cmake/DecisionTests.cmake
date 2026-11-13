@@ -123,3 +123,17 @@ ninferno_add_test(ninferno_device_identity_test LABELS host
 # replaced, for every QType value. No GPU.
 ninferno_add_test(ninferno_format_facts_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_format_facts.cpp")
+
+# The format predicates' arch requirements (core/arch_requires.h, ops/generic/format_requires.h;
+# #615 F5): each resolves from the board registry row of every board of gpu_facts.json and answers
+# as the code it replaced, under every build; the selector reads them under each board as the
+# substituted device. Host only, with the golden twin's link. No GPU.
+ninferno_add_test(ninferno_arch_requires_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_arch_requires.cpp"
+  LIBRARIES ninferno_ops_host)
+target_sources(ninferno_arch_requires_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
+target_compile_definitions(ninferno_arch_requires_test PRIVATE NINFERNO_HOST_ONLY)
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_arch_requires_test)
