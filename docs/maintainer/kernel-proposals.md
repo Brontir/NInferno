@@ -229,3 +229,43 @@ prediction so far.
     master's).
 - A/B: not run.
 - Decision: open.
+
+### P. Volta BF16 KV width-1 decode on a key-major kernel (#877, #893)
+- Regime: the BF16 KV width-1 decode (GroupedDecode, D = 256, every listed head geometry) on
+  sm_70 builds: Quadro GV100. At #866 it read the cache at about 175 GB/s (20 % of the 871 GB/s
+  DRAM line; 228 / 558 µs a call at 7843 / 21961 keys, Qwen3.5-9B geometry, 8 layers), against
+  672 GB/s (77 %) for the INT8 key-major kernel on the same card and run (#877).
+- Weight: GV100's whole BF16-KV decode attention term. At 21961 keys that is about 4.5 ms of an
+  8-layer step at today's rate.
+- Law: issue on the MMA emulation. sm_70 has no BF16 MMA and none of the m16n8k16 shapes the grouped
+  kernel issues; each product is `mma_bf16_fma_call` / `mma_f16_fma_call` (`__noinline__`), 552
+  SASS instructions and 32 shuffle-helper calls for 16 query rows, of which a decode fills G
+  (4 here) (CUDA 12.8 SASS of `CausalGeometry<256,16,4>`; the kernel 13,536 instructions, 484
+  CALLs). 175 GB/s at GV100's ~464 G warp instructions a second is ~86 k instructions per 32 KB of
+  K/V; a 32-key tile per D warp takes 64-96 emulated products, 40-86 k at 600-900 each.
+- Variant: S on CUDA cores with one key a lane: the key's BF16 row widened to FP32 by a shift, G
+  FMAs a dimension against Q in shared memory (FP32), no cross-lane product. O^T += V^T P^T on
+  Volta's native `mma.m8n8k4` (f16 operands, FP32 accumulation; V is stored FP16 and P rounded
+  to FP16 as before), with `int8_kv_key_major_kt_kernel`'s PV fragments. Four warps own every
+  fourth 32-key step of the split and merge their softmax states in the CTA. The grouped
+  kernel's partition, partials and merge are kept. Counted: about 10 B a warp instruction, so
+  ~4.6 TB/s of issue against the 871 GB/s line: DRAM-bound.
+- Prediction (frozen 13.11 on #877, before any code): the BF16 slope read rate on GV100 at
+  0.85-1.05x of INT8's measured 672 GB/s (570-705 GB/s, 65-81 % of DRAM), and the fixed part a
+  call within ±10 µs of INT8's (about 30 µs today).
+- Prototype: `CODECS="bf16 int8" kvab2.sh gv100 perf/877-bf16-kv-volta-key-major k877k`
+  (`ninferno_kv_decode_attention_bench --codec bf16 --context 7843,21961 --layers 8`).
+- Cost: not a linear route, so no selector goldens or route classes. It is built for sm_70 only
+  and dispatched in `causal_cache/bf16/launch.cu`. ptxas 0.15 s an instance, 190-206 registers,
+  no spills (the forceinline experiment on the emulation did not finish in 1 h 27 min, #877).
+- Acceptance / refutation (frozen): kept at a slope rate of at least 0.75x INT8's; refuted below
+  that. No other arch builds it. Bytes: not `exact` (other FP32 order).
+  `ninferno_bf16_decode_identity_test` holds it to the shipped schedule:
+  - the appended cache and the set of written partials byte for byte;
+  - numerators within 2^-9 of their row's largest, the log2 maximum within 1e-5, the sum within
+    2^-10, the output within one BF16 step;
+  - its own bits with `--self`.
+
+  The FP64 oracle of `ninferno_softmax_attention_test --kv-dtype bf16` also applies.
+- A/B: running on GV100 (ABBA, INT8 the control).
+- Decision: open.
