@@ -18,9 +18,11 @@
 //                cost per stream launch, not the host's submit rate (that is the machine's CPU
 //                and only a note);
 //   floor_ns_C   an empty grid of C CTAs of 128 threads (the decode linears' four warps) as a
-//                graph node of a chain, C = 1, SMs, 4 x SMs and 1024: what a call of C empty
-//                CTAs costs, so floor_ns_C - floor_ns_1 is the CTA dispatch ramp of a C-CTA grid
-//                (#850's grids are 256 to 3072 CTAs, 1024 on 170 SMs the typical one).
+//                graph node of a chain, C = 1, SMs, 4 x SMs, 1024 and 4096: what a call of C
+//                empty CTAs costs, so floor_ns_C - floor_ns_1 is the CTA dispatch ramp of a
+//                C-CTA grid (#850's grids are 256 to 3072 CTAs, 1024 on 170 SMs the typical one;
+//                27 % of the selector goldens' routes are past 1024 CTAs, so 4096 is read, not
+//                extrapolated: #886; from launch_probe 2).
 //
 // Timer. CUDA events, whose tick is 1.024 us on the consumer boards and the GV100
 // (route_tune_tool.cpp): one launch of about 1 us cannot be timed by them, a series can. Each
@@ -326,7 +328,7 @@ int main() {
     const int cc = p.major * 10 + p.minor;
     char pci[32] = {};
     CHECK(cudaDeviceGetPCIBusId(pci, sizeof pci, 0));
-    std::printf("probe launch_probe 1\n");
+    std::printf("probe launch_probe 2\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -452,7 +454,8 @@ int main() {
     } floors[] = {{"floor_ns_1", 1},
                   {"floor_ns_sms", pr.sms},
                   {"floor_ns_4sms", 4 * pr.sms},
-                  {"floor_ns_1024", 1024}};
+                  {"floor_ns_1024", 1024},
+                  {"floor_ns_4096", 4096}};
 
     for (const auto& f : floors) {
         const int ctas = f.ctas;

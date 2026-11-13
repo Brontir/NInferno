@@ -26,13 +26,13 @@
 //   Stream        the one-warp kernel launched on a stream from a backlog: the GPU's own cost per
 //                 stream launch (the host's submit rate is the machine's CPU, not a fact).
 // The floors: an empty grid of floor_ctas[i] CTAs of 128 threads (1, the probe card's SMs, 4 x its
-// SMs, 1024) as a graph-chain node, so floor_s[i] - floor_s[0] is the CTA dispatch ramp of that
+// SMs, 1024, 4096; the last unknown on a row launch_probe 1 measured, #886) as a graph-chain node, so floor_s[i] - floor_s[0] is the CTA dispatch ramp of that
 // grid on the probe card. It is not rounds of resident CTAs (the RTX 5070 Ti's equals the RTX
 // 5090's at 1024 CTAs), and it is not one figure a CTA either: the slope between the points
 // falls with the CTA count on Ada, Ampere and Turing (the RTX 4090: 1.13, 0.81, 0.44 ns a CTA),
 // rises on gb20x (0.23, 0.40, 0.43) and is flat only on Volta (1.5; #870). A law that prices
-// another grid reads the four points as they are (between them, not past 1024 without saying
-// so); that is the law's business, not this table's.
+// another grid reads the points as they are (between them, not past the last known one without
+// saying so); that is the law's business, not this table's.
 
 #include "core/isa_facts.h"
 
@@ -51,8 +51,8 @@ struct LaunchRow {
     std::string probe; // "launch_probe 1"
     int sms = 0;       // that card's SMs
     std::optional<double> node_s, node_pdl_s, stream_s;
-    std::array<int, 4> floor_ctas{};
-    std::array<std::optional<double>, 4> floor_s{};
+    std::array<int, 5> floor_ctas{};
+    std::array<std::optional<double>, 5> floor_s{};
 };
 
 namespace launch_facts_detail {
@@ -78,9 +78,9 @@ inline std::optional<double> seconds(const std::optional<double>& ns) {
     r.node_s     = seconds(l.node_ns);
     r.node_pdl_s = seconds(l.node_pdl_ns);
     r.stream_s   = seconds(l.stream_ns);
-    r.floor_ctas = {1, l.sms, 4 * l.sms, 1024};
+    r.floor_ctas = {1, l.sms, 4 * l.sms, 1024, 4096};
     r.floor_s    = {seconds(l.floor_ns_1), seconds(l.floor_ns_sms), seconds(l.floor_ns_4sms),
-                    seconds(l.floor_ns_1024)};
+                    seconds(l.floor_ns_1024), seconds(l.floor_ns_4096)};
     return r;
 }
 
