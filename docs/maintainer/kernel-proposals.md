@@ -58,7 +58,7 @@ A new family also costs a `Family` enum entry, which every route table parses, a
 
 ## Register
 
-Entries A-F and M come from the candidates table of #619 (section 4), G from #850's plan. A and G
+Entries A-F and M come from the candidates table of #619 (section 4), P from #850's plan. A and P
 have frozen predictions so far.
 
 ### A. Pre-summed activation groups for the min-term formats (#619 steps 5-6, #709)
@@ -158,7 +158,13 @@ have frozen predictions so far.
 - Decision: run the kit first. Build only if the loss is above 3 % and #606's rule holds on the
   3090.
 
-### G. R8 decode schedule of the wide-K Q6_K down projection (#850 candidate (a))
+### M. MMQ column widths per arch and format (#619 step 13, DECISIONS 74)
+- Regime: MMQ on short prompts. Ada and Turing are done (#597, #717). Q2_K and the IQ formats still
+  keep the fewest tiles.
+- Prototype: the forced-J grid on the 4090 and 2080 Ti.
+- Decision: open. These are data rows.
+
+### P. R8 decode schedule of the wide-K Q6_K down projection (#850 candidate (a))
 - Regime: the R8 decode kernel (`r8_kernel`, A8) at T = 1, store and add epilogues: Qwen3.5-9B's
   down projection, Q6_K 4096x12288. On the boards with native BF16 MMA (sm_80 and up) `rules_r8`'s
   K rule (K >= 8192) picks `w8r2`; on the RTX 2080 Ti its Turing Q6_K rule picks `w4r2`. No R8
@@ -256,9 +262,3 @@ have frozen predictions so far.
 - A/B: not run. TODO(#850 (a)): the sweeps on the RTX 3090, 3060, 2080 Ti, 4070 Ti, 4090, 5070 Ti
   and 5090; the merge of their down files; the 9B step ABBA; then this field and the decision.
 - Decision: open.
-
-### M. MMQ column widths per arch and format (#619 step 13, DECISIONS 74)
-- Regime: MMQ on short prompts. Ada and Turing are done (#597, #717). Q2_K and the IQ formats still
-  keep the fewest tiles.
-- Prototype: the forced-J grid on the 4090 and 2080 Ti.
-- Decision: open. These are data rows.
