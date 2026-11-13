@@ -2270,8 +2270,8 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         out.why_code = "no_fit";
         return out;
     }
-    // The drafter is B2 (lossless; deterministic-decisions.md: routes and depth under fast may read
-    // the board's canonical facts), and it carries no accuracy term: where the worth decides it and
+    // The drafter is B2 (deterministic-decisions.md: routes and depth under fast may read the
+    // board's canonical facts), and it carries no accuracy term: where the worth decides it and
     // the board is not its generation's reference card, it is priced on the board's own rates
     // (#618 step 6). Among the candidates of the chosen storages and chunk that hold the settled
     // context, the fewest seconds on the board wins by more than the tie. The storages stay the
