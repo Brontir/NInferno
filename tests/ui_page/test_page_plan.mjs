@@ -600,6 +600,17 @@ for (const lang of ["en", "ru", "uk"]) for (const k of ["replayContext", "replay
      'decidedOnKv{"gen":"Blackwell (RTX 50)","cards":"RTX 5070 Ti, RTX 5090"}', "the KV codec alone decided on the reference card");
   eq(H.decidedOnText({choice: {decided_on: {generation: "ada", cards: "RTX 4090", lent: false, decides: true, activations_decide: true}}}, tr),
      'decidedOn{"gen":"Ada (RTX 40)","cards":"RTX 4090"}', "both decided: the plain line");
+  // A value the user pinned is never the reference card's (codex on #861).
+  const gbOn = {choice: {decided_on: {generation: "gb20x", cards: "RTX 5070 Ti, RTX 5090", lent: false, decides: true, activations_decide: false}}};
+  const adaOn = {choice: {decided_on: {generation: "ada", cards: "RTX 4090", lent: false, decides: true, activations_decide: true}}};
+  eq(H.decidedOnText(gbOn, tr, false, true), "", "gb20x, the KV codec pinned: nothing was decided on the reference card");
+  eq(H.decidedOnText(gbOn, tr, true, true), "", "gb20x, both pinned: nothing");
+  eq(H.decidedOnText(adaOn, tr, false, true).startsWith("decidedOnActKvPinned"), true, "Ada, the KV codec pinned: the activations decided there, the codec the user's");
+  eq(H.decidedOnText(adaOn, tr, true, false).startsWith("decidedOnKvPinned"), true, "Ada, the activations pinned: the KV codec decided there, the activations the user's");
+  eq(H.decidedOnText(adaOn, tr, true, true), "", "Ada, both pinned: nothing");
+  eq(H.decidedText({choice: {...adaOn.choice, by_worth: true}}, tr, false, true).startsWith("decidedOnActKvPinned"), true, "decidedText passes the KV pin");
+  whole(EN("decidedOnActKvPinned", {gen: "Ada (RTX 40)", cards: "RTX 4090"}), "act-only en");
+  whole(RU("decidedOnActKvPinned", {gen: "Ada (RTX 40)", cards: "RTX 4090"}), "act-only ru");
   whole(EN("decidedOnKv", {gen: "Blackwell (RTX 50)", cards: "RTX 5070 Ti, RTX 5090"}), "kv-only en");
   whole(RU("decidedOnKv", {gen: "Blackwell (RTX 50)", cards: "RTX 5070 Ti, RTX 5090"}), "kv-only ru");
   ok(!/exact-route/.test(EN("gate_reference_one_card", {gen: "Turing (RTX 20)"})) &&
