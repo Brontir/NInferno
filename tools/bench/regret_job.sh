@@ -95,7 +95,7 @@ SOURCE=$(cache CMAKE_HOME_DIRECTORY)
 # card's, and the report would file that selector under this board.
 WANT_ARCH=$("$PY" -c 'import json, sys
 cc = next(int(r["cc"]) for r in json.load(open(sys.argv[1]))["gpus"] if int(r["id"], 16) == int(sys.argv[2], 16))
-print(f"{cc}a" if cc >= 90 else cc)' "$ROOT/src/core/data/gpu_facts.json" "$PCI") ||
+print(f"{cc}a" if cc in (120, 121) else cc)' "$ROOT/src/core/data/gpu_facts.json" "$PCI") ||
   die "no compute capability for $PCI in gpu_facts.json"
 BUILD_ARCH=$(cache CMAKE_CUDA_ARCHITECTURES | sed -E 's/-(real|virtual)//g')
 [ "$BUILD_ARCH" = "$WANT_ARCH" ] ||
