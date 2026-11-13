@@ -1021,6 +1021,116 @@ void test_catalog() {
     check(!e.recommended && !e.preferred.has_value(), "8 GB: 35B does not fit");
 }
 
+#ifndef _WIN32
+// #843: the plan of a local artifact is ninferno-serve's own (--plan --no-load --plan-idle, its
+// workspace the start's planner's), with the ask's flags and the GPU bound; a serve that ran and
+// gave no document is no plan; the in-process plan only when no serve is beside the UI.
+void test_artifact_plan_via_serve() {
+    namespace fs = std::filesystem;
+    const auto root =
+        fs::temp_directory_path() / ("ninferno_ui_serve_plan_" + std::to_string(::getpid()));
+    fs::remove_all(root);
+    fs::create_directories(root);
+    // A readable artifact (/api/local lists only those), found through --models-dir.
+    const ninferno::test::artifact_fixture::Fixture fixture;
+    fixture.write();
+    const fs::path artifact = fixture.entry;
+    const fs::path args     = root / "args.txt";
+    const auto script       = [&](const fs::path& path, const std::string& body) {
+        std::ofstream(path) << "#!/bin/sh\nprintf '%s\\n' \"$@\" \"gpu=$CUDA_VISIBLE_DEVICES\" > '"
+                            << args.string() << "'\n"
+                            << body;
+        fs::permissions(path, fs::perms::owner_all);
+    };
+    // A plan that does not fit (exit 2) still prints its document; a log line on stderr beside it.
+    script(root / "serve-plan",
+           "echo 'note | a line on stderr' >&2\n"
+           "printf '{\\n \"schema\": \"ninferno-dry-plan/1\",\\n \"source\": \"serve\",\\n"
+           " \"now\": {\\n  \"fits\": false\\n }\\n}\\n'\nexit 2\n");
+    script(root / "serve-refuses", "echo 'error: no' >&2\nexit 1\n");
+    script(root / "serve-garbled", "echo 'not a plan'\nexit 0\n");
+
+    struct NoGpu final : GpuSource {
+        std::vector<GpuStat> snapshot() override { return {}; }
+
+        std::string error() const override { return {}; }
+    };
+
+    const auto plan = [&](const fs::path& serve, const std::string& extra,
+                          const std::string& gpu = "0") {
+        UiOptions options;
+        options.offline      = true;
+        options.serve_binary = serve;
+        options.hub_cache    = root / "hub";
+        options.model_dirs   = {fixture.directory};
+        App app(options, std::make_unique<NoGpu>());
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        httplib::Client client("127.0.0.1", port);
+        auto res = client.Get("/api/plan?gpu=" + gpu + "&par=2&ctx=8192" + extra +
+                              "&artifact=" + httplib::encode_query_component(artifact.string()));
+        std::pair<int, std::string> out{res ? res->status : 0, res ? res->body : std::string()};
+        server.stop();
+        thread.join();
+        return out;
+    };
+    auto [status, body] = plan(root / "serve-plan", "&precision=exact");
+    check(status == 200, "the plan of a local artifact answers: " + body);
+    const auto doc = nlohmann::json::parse(body, nullptr, false);
+    check(doc.is_object() && doc.value("source", "") == "serve" && doc.contains("now"),
+          "it is serve's document, its \"now\" with it");
+    std::ifstream in(args);
+    std::vector<std::string> argv;
+    for (std::string line; std::getline(in, line);) { argv.push_back(line); }
+    const std::vector<std::string> want = {artifact.string(),
+                                           "--plan",
+                                           "--no-load",
+                                           "--plan-idle",
+                                           "--json",
+                                           "--log-level",
+                                           "critical",
+                                           "--max-concurrency",
+                                           "2",
+                                           "--max-context",
+                                           "8192",
+                                           "--kv-dtype",
+                                           "bf16",
+                                           "--activations",
+                                           "exact",
+                                           "--spec",
+                                           "auto",
+                                           "gpu=0"};
+    check(argv == want, "serve plans the ask a start passes, on the GPU asked for");
+
+    // serve refuses: its refusal is the answer, with its last line, never the formula's plan.
+    std::tie(status, body) = plan(root / "serve-refuses", "");
+    check(status == 502 && body.find("refused (exit 1): error: no") != std::string::npos,
+          "serve's refusal is the plan's: " + body);
+    // serve exits 0 without a document: no plan, said so.
+    std::tie(status, body) = plan(root / "serve-garbled", "");
+    check(status == 502 && body.find("no ninferno-dry-plan/1 document") != std::string::npos,
+          "a serve without a document gives no plan: " + body);
+    // No serve beside the UI: the plan here answers (here: no GPU 0 to plan for).
+    std::tie(status, body) = plan(root / "no-such-serve", "");
+    check(status == 502 && body.find("no GPU 0") != std::string::npos,
+          "without serve the plan here answers: " + body);
+    // A serve that cannot be executed (no execute bit: the child's execve fails) is no serve.
+    std::ofstream(root / "serve-noexec") << "#!/bin/sh\nexit 0\n";
+    fs::permissions(root / "serve-noexec", fs::perms::owner_read | fs::perms::owner_write);
+    std::tie(status, body) = plan(root / "serve-noexec", "");
+    check(status == 502 && body.find("no GPU 0") != std::string::npos,
+          "a serve that cannot run: the plan here answers: " + body);
+    // A negative GPU is refused before any child runs.
+    std::tie(status, body) = plan(root / "serve-plan", "", "-1");
+    check(status == 400 && body.find("no GPU -1") != std::string::npos,
+          "gpu -1 is refused: " + body);
+    fs::remove_all(root);
+}
+#endif
+
 #ifdef _WIN32
 // The children of test_processes on Windows, as the /bin/sh lines print them on Linux: "prepare"
 // writes serve's lines and a download's progress and exits 3; "serve" runs until Ctrl+Break
@@ -1489,6 +1599,9 @@ int main(int argc, char** argv) {
     test_processes(ninferno::sys::self_exe().string());
     test_http();
     test_delete_options();
+#ifndef _WIN32
+    test_artifact_plan_via_serve();
+#endif
     if (failures != 0) {
         std::cerr << failures << " ui check(s) failed" << std::endl;
         return 1;
