@@ -698,9 +698,11 @@ inline constexpr double kVoltaCutlassMinTokens = 17; // volta_cutlass_takes: the
 inline constexpr double kVoltaCopyMinTokens   = 256;   // kVoltaTileMaxTokens
 inline constexpr double kVoltaCopyMinDramBps  = 870e9 / 1.13; // kVoltaCopyMinDramGbps
 
-// An MoE's expert grid: the host launches the bound on the jobs (ops/moe max_jobs: a job is an
-// expert's run of up to kExpertJobSlots of the chunk's slots, token x pick; at most one partial job
-// an expert), ceil(slots / 64) + min(slots, experts) rows of tiles, before the routing is known.
+// An MoE's expert grid: a job is an expert's run of up to kExpertJobSlots of the chunk's slots
+// (token x pick), a whole tile however few it holds. The host launches the bound on the jobs before
+// the routing is known (ops/moe max_jobs: ceil(slots / 64) + min(slots, experts) rows of tiles);
+// the rows past the plan kernel's job total exit at once, so the tiles run are the jobs the routing
+// makes (choice.h expected_expert_jobs: about slots / 64 + experts / 2 where an expert holds many).
 inline constexpr double kExpertJobSlots = 64; // ops/moe kJobColumns at prefill widths
 
 // The INT8-KV prompt kernel (ops/softmax_attention int8/prompt_fast.cuh, sm_80 on, a head width of

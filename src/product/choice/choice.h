@@ -561,6 +561,15 @@ struct ClosedGate {
     std::string family;     // the model family ("" where it is the generation's)
     int cards = 0;          // the lab cards the constant behind it rests on now
 };
+
+// The jobs an MoE's expert grid runs over a chunk of `tokens`, each routed to `picks` of `experts`
+// (DECISIONS 66): the plan kernel cuts every expert's n slots into ceil(n / width) runs (ops/moe
+// moe_route.cuh, the job list); a run takes a whole tile, its padding columns computed
+// (moe_w4a8.cuh, moe_gemm.cuh: the full MMA and weight decode for any count); the grid's rows past
+// the job total exit before any work. Expected over the routing, independent and uniform per token
+// (ops/moe expected_experts_touched's): n ~ Binomial(ceil(tokens), picks / experts).
+[[nodiscard]] double expected_expert_jobs(double tokens, double picks, double experts,
+                                          double width) noexcept;
 // A prefill's linears over a chunk of `tokens` by their tiles (DECISIONS 66): every linear's rounds
 // of tiles, an MoE's experts by jobs and its routing's gather and scatter of the tokens' rows;
 // seconds, 0 where the card's generation or the weights' GEMM has no row (a dense model: Q8_0

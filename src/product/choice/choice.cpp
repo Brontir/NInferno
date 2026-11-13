@@ -933,6 +933,33 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
 
 } // namespace
 
+double expected_expert_jobs(double tokens, double picks, double experts, double width) noexcept {
+    if (tokens <= 0 || picks <= 0 || experts <= 0 || width <= 0) { return 0; }
+    const double t     = std::ceil(tokens);
+    const double p     = std::min(picks / experts, 1.0);
+    const auto jobs_of = [width](double n) { return std::ceil(n / width); };
+    if (p >= 1) { return experts * jobs_of(t); }
+    // An expert's slots n ~ Binomial(t, p): its probabilities summed outward from the mode, each
+    // the last times the ratio of neighbours (no factorials: a chunk of thousands of tokens stays
+    // in range), until a term no longer adds to the sum.
+    const double odds = p / (1 - p);
+    const double mode = std::min(std::floor((t + 1) * p), t);
+    double mass = 1, jobs = jobs_of(mode);
+    for (double n = mode, w = 1; n < t;) {
+        w *= (t - n) / (n + 1) * odds;
+        ++n;
+        if (w < 1e-17 * mass) { break; }
+        mass += w, jobs += w * jobs_of(n);
+    }
+    for (double n = mode, w = 1; n > 0;) {
+        w *= n / (t - n + 1) / odds;
+        --n;
+        if (w < 1e-17 * mass) { break; }
+        mass += w, jobs += w * jobs_of(n);
+    }
+    return experts * jobs / mass;
+}
+
 double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
                                 double tokens, bool* transferred) noexcept {
     if (model.linears.empty() || tokens <= 0 || card.sms <= 0 || card.clock_hz <= 0 ||
@@ -976,8 +1003,8 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
     if (rest == nullptr || bank == nullptr) { return 0; }
     if (transferred != nullptr && (rest->cards < 2 || (moe && bank->cards < 2))) { *transferred = true; }
     const double picks = moe ? model.experts_per_token : 1;
-    const double slots = std::ceil(tokens) * picks;
-    const double jobs  = moe ? std::ceil(slots / kExpertJobSlots) + std::min<double>(slots, model.experts) : 0;
+    const double jobs =
+        moe ? expected_expert_jobs(tokens, picks, model.experts, kExpertJobSlots) : 0;
 
     const double sms = card.sms;
     double seconds = 0, hidden = 0, moe_layers = 0;
