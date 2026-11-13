@@ -60,7 +60,8 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     // board's reference facts (DeviceClass::facts, B2), never the driver's clocks.
     if (d.sms <= 0 || !d.facts.has_roofline()) return;
     // The A8 routes' cost rests on the generation's fitted W4A8 efficiency and A16 factor; a lent
-    // row carries neither (#300), so a generation the table does not know keeps the A16 routes.
+    // row carries neither (#300), nor do Hopper and GB100, with no board of their own in the fit
+    // (#618 step 12), so those generations keep the A16 routes.
     const auto fitted = fitted_route_scales(d.major, d.minor);
     if (!fitted) return;
     const GenerationRow& g = generation_row(d.major, d.minor);
@@ -353,8 +354,8 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         has_subblock_scales(problem.qtype) && rmma_terms_measured(d.major, d.minor);
     // The A16 model reads 11 % slow against the A8 one (fitted with it, 0.81..0.89 with any board
     // held out); on the minor-0 row (A100) it reads 39 % fast (one board); a constant factor leaves
-    // the order of the A16 tiles as it was. 1 on a lent row, where no A8 candidate is offered
-    // (a8_candidates).
+    // the order of the A16 tiles as it was. 1 on a lent row and on Hopper and GB100, where no A8
+    // candidate is offered (a8_candidates).
     const double kA16Scale =
         fitted_route_scales(d.major, d.minor).value_or(FittedRouteScales{}).a16_cost;
     const auto offer = [&](Route r, double time) {
