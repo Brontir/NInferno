@@ -4,6 +4,7 @@
 // with the selector (generic_select.cpp): lifted out of anonymous namespaces so the selector can
 // be its own translation unit.
 
+#include "core/arch_requires.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/r8_decode_table.h"
 
@@ -36,8 +37,14 @@ bool w4a8_ws_admits(const Weight& w);
 // The bytes per block of each plane of format `q`.
 MmqPlaneBytes mmq_plane_bytes(QType q);
 
+// The discrete facts of this device and this build that the format requirements read
+// (format_requires.h): device_class() (the probed device or this thread's substitute) in a tree
+// built for NINFERNO_BUILD_ARCH. Throws where device_class() does.
+ArchFacts current_arch_facts();
+
 // Whether the producer-warp tile also replaces the classic one for format `q` on this device
-// (sm_89 / sm_120, where a measured choice names it).
+// (sm_89 / sm_120, where a measured choice names it: format_requires::kW4a8WsTunedArch); false
+// where the device cannot be read.
 bool w4a8_ws_extra(QType q);
 
 // The R8 decode table of the nearest measured board (null where none is near enough) with that
