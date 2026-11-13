@@ -158,11 +158,11 @@ struct Call {
 // argmin among them; the quantizer and the second launch separate A8 from A16, and the ramp the
 // grids. Computed always; offered only under Calibration::completeness_terms.
 struct Completeness {
-    double output_bytes = 0; // n x T x 2
-    double output       = 0;
-    double residual     = 0;
-    double quant        = 0;
-    double launch       = 0;
+    double output_bytes      = 0; // n x T x 2
+    double output            = 0;
+    double residual          = 0;
+    double quant             = 0;
+    double launch            = 0;
     bool launch_known        = false;
     bool launch_extrapolated = false; // the grid is past the probe's largest (1024 CTAs)
 
@@ -184,14 +184,14 @@ struct Completeness {
 [[nodiscard]] inline Completeness completeness(const ChipFacts& chip, const Call& call, double ctas,
                                                double quant = 0) {
     Completeness c;
-    c.output_bytes                     = call.n * call.tokens * 2.0;
-    c.output                           = c.output_bytes / chip.dram_bytes_per_s;
-    c.residual                         = call.residual ? c.output : 0.0;
-    c.quant                            = quant;
-    const std::optional<Ramp> launch   = launch_seconds_of(chip, ctas);
-    c.launch_known                     = launch.has_value();
-    c.launch                           = launch ? launch->seconds : 0.0;
-    c.launch_extrapolated              = launch && launch->extrapolated;
+    c.output_bytes                   = call.n * call.tokens * 2.0;
+    c.output                         = c.output_bytes / chip.dram_bytes_per_s;
+    c.residual                       = call.residual ? c.output : 0.0;
+    c.quant                          = quant;
+    const std::optional<Ramp> launch = launch_seconds_of(chip, ctas);
+    c.launch_known                   = launch.has_value();
+    c.launch                         = launch ? launch->seconds : 0.0;
+    c.launch_extrapolated            = launch && launch->extrapolated;
     return c;
 }
 
@@ -395,13 +395,13 @@ struct RegisterMmaTerms {
 // Writes the completeness terms `c` into a family's terms `t` and their sum with t.total.
 template <class Terms>
 void set_completeness(Terms& t, const Completeness& c) {
-    t.output       = c.output;
-    t.residual     = c.residual;
-    t.quant        = c.quant;
+    t.output              = c.output;
+    t.residual            = c.residual;
+    t.quant               = c.quant;
     t.launch              = c.launch;
     t.launch_extrapolated = c.launch_extrapolated;
-    t.launch_known = c.launch_known;
-    t.complete     = t.total + c.sum();
+    t.launch_known        = c.launch_known;
+    t.complete            = t.total + c.sum();
 }
 
 // The CTAs of `threads` threads one SM holds: its thread and CTA limits and, where the kernel's
@@ -550,7 +550,7 @@ struct PipelinedTerms {
     double output = 0, residual = 0, quant = 0, launch = 0;
     bool launch_known        = false;
     bool launch_extrapolated = false;
-    double complete   = 0;
+    double complete          = 0;
 };
 
 // The CTAs one SM holds of a pipelined tile: its thread and CTA limits and the shared memory of
