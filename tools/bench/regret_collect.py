@@ -308,7 +308,10 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
             raise ValueError(f"--pci-id names {facts['name']} ({facts['chip']}, sm{facts['cc']}, "
                              f"{facts['sms']} SMs); the rows' device is {device}")
         document["board_facts"] = {board: facts}
-    document["device"] = device  # route_tune's device class id, as every row named it
+    # route_tune's device class id. Rows may append the card's own GPU UUID after it; the passes
+    # above must agree on that too (one physical card), but a published report names the class
+    # only: the UUID identifies one person's card and tells a reader nothing about the selector.
+    document["device"] = device.split()[0]
     if recorded is not None:
         document["pci_device_id"] = f"0x{recorded:04x}"
     return document

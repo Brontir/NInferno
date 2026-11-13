@@ -302,7 +302,7 @@ def evaluate(document, max_regret=None, ridges=None, exit_resolution=EXIT_RESOLU
     # Compare slowdown factors: subtracting one first can turn 1.1 into a regret just above 0.1.
     violations = [r["id"] for r in rows if r["status"] != "complete" or
                   (max_regret is not None and 1 + r["regret"] > 1 + max_regret)]
-    # The measured device (route_tune's class id and UUID, regret_collect's `device`), passed on:
+    # The measured device (route_tune's class id; regret_collect drops the card's UUID), passed on:
     # route_table_prune.py matches it to the table it prunes.
     if "device" in document:
         provenance["device"] = name(document["device"], "device")
