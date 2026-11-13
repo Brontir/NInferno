@@ -53,12 +53,23 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
     const int width = S::kFixedWidth ? S::kFixedWidth : runtime_width;
     constexpr int D = G::kHeadDim, M = S::kQueryRows, N = S::kKeyRows;
     constexpr int NK = N / S::kWarpsKV, QKNt = NK / 8, QKKs = D / 16;
-    constexpr int PVNt = D / 8, PVKs = NK / 16;
+    // PVNt: the 8-column blocks of the output this warp accumulates, from its first column d0.
+    constexpr int PVNt = D / 8 / S::kWarpsD, PVKs = NK / 16;
     // Turing converts a K tile in place once when more than one query warp reads it; with one,
     // each K register reaches one MMA either way, and only Q (held in registers) is prepared.
     constexpr bool kStageK = kBf16KvStagedF16 && M / 16 > 1;
+    // Width-1 decode: a lane's second MMA row (gid + 8: a1/a3 of the Q and P fragments, c2/c3 of
+    // the scores and the output) never holds a query (kBf16KvLowRowsOnly). Those halves enter the
+    // MMAs as the zeros the tile holds there and their sums are dropped (an MMA row's sums read
+    // only that row of A, so the kept rows' bits are those of the full MMA), and Q stays in shared
+    // memory, its fragments read per key tile. With S::kWarpsD = 2 a lane then keeps 64
+    // accumulator registers across the key loop instead of Q's 64 and O's 128 at D=256, which
+    // ptxas spilled on sm_75/80/86/89, reloading Q from local memory every tile (#856).
+    constexpr bool kLowRowsOnly = kBf16KvLowRowsOnly<G, S>;
+    constexpr int kRowHalves    = kLowRowsOnly ? 1 : 2;
     // Aligned: one KV warp, and a row's split closes on a key tile boundary.
     static_assert(!Aligned || S::kWarpsKV == 1);
+    static_assert(!Aligned || !kLowRowsOnly);
     static_assert((1 << CausalKvPartition::kAlignedMinKeyShift) % N == 0);
     using Storage = Bf16KvGroupedStorage<G, S>;
     static_assert(sizeof(Storage) <= kMaxSharedBytesPerBlock);
@@ -73,7 +84,12 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
     auto* k_s     = reinterpret_cast<__nv_bfloat16*>(storage->qkv);
     auto* v_s     = reinterpret_cast<__half*>(storage->qkv + N * D);
     const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
-    const int warp_q = warp % S::kWarpsQ, warp_kv = warp / S::kWarpsQ;
+    // The warps of one query and key slice split the output columns (S::kWarpsD); each scores
+    // the slice's keys itself, so its P equals its partners'.
+    const int warp_q  = warp % S::kWarpsQ;
+    const int warp_kv = S::kWarpsD > 1 ? warp / S::kWarpsQ % S::kWarpsKV : warp / S::kWarpsQ;
+    const int warp_d  = S::kWarpsD > 1 ? warp / (S::kWarpsQ * S::kWarpsKV) : 0;
+    const int d0      = warp_d * PVNt * 8;
     const int head  = S::kFixedWidth ? blockIdx.x : blockIdx.x % G::KVHeads;
     const int tile  = S::kFixedWidth ? 0 : blockIdx.x / G::KVHeads;
     const int split = blockIdx.y, batch = MultiBatch ? blockIdx.z : 0;
@@ -134,30 +150,52 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
         if constexpr (!Aligned) neutral();
         return;
     }
-    for (int i = tid; i < M * (D / 8); i += S::kThreads) {
-        const int row = i / (D / 8), d = i % (D / 8) * 8, packed = row_begin + row;
-        const int token = packed / G::GroupSize, h = head * G::GroupSize + packed % G::GroupSize;
-        auto* dst = k_s + row * D + causal_swizzle(row, d);
-        if (token < live)
-            cp_async<16>(dst, q + causal_q_index<G>(h, d, token));
-        else
-            store_vec(dst, make_int4(0, 0, 0, 0));
-    }
-    cp_commit();
-    cp_wait<0>();
-    __syncthreads();
-    unsigned q_frag[QKKs][4];
-    const int a_row = warp_q * 16 + (lane & 7) + ((lane >> 3) & 1) * 8;
+    // kLowRowsOnly: Q's rows 0-7, prepared for the MMA (mma_a_bf16), after the K and V tiles;
+    // the first key tile's barrier publishes them.
+    [[maybe_unused]] auto* q_s = storage->qkv + 2 * N * D;
+    [[maybe_unused]] unsigned q_frag[kLowRowsOnly ? 1 : QKKs][4];
+    if constexpr (kLowRowsOnly) {
+        for (int i = tid; i < 8 * (D / 8); i += S::kThreads) {
+            const int row = i / (D / 8), d = i % (D / 8) * 8, packed = row_begin + row;
+            const int token = packed / G::GroupSize,
+                      h     = head * G::GroupSize + packed % G::GroupSize;
+            uint4 v         = make_uint4(0, 0, 0, 0);
+            if (token < live) {
+                v   = load_vec<uint4>(q + causal_q_index<G>(h, d, token));
+                v.x = mma_a_bf16(v.x);
+                v.y = mma_a_bf16(v.y);
+                v.z = mma_a_bf16(v.z);
+                v.w = mma_a_bf16(v.w);
+            }
+            store_vec(q_s + row * D + causal_swizzle(row, d), v);
+        }
+    } else {
+        for (int i = tid; i < M * (D / 8); i += S::kThreads) {
+            const int row = i / (D / 8), d = i % (D / 8) * 8, packed = row_begin + row;
+            const int token = packed / G::GroupSize,
+                      h     = head * G::GroupSize + packed % G::GroupSize;
+            auto* dst       = k_s + row * D + causal_swizzle(row, d);
+            if (token < live)
+                cp_async<16>(dst, q + causal_q_index<G>(h, d, token));
+            else
+                store_vec(dst, make_int4(0, 0, 0, 0));
+        }
+        cp_commit();
+        cp_wait<0>();
+        __syncthreads();
+        const int a_row = warp_q * 16 + (lane & 7) + ((lane >> 3) & 1) * 8;
 #pragma unroll
-    for (int k = 0; k < QKKs; ++k) {
-        const int d = k * 16 + (lane >> 4) * 8;
-        ldmatrix_x4(q_frag[k][0], q_frag[k][1], q_frag[k][2], q_frag[k][3],
-                    smem_addr(k_s + a_row * D + causal_swizzle(a_row, d)));
+        for (int k = 0; k < QKKs; ++k) {
+            const int d = k * 16 + (lane >> 4) * 8;
+            ldmatrix_x4(q_frag[k][0], q_frag[k][1], q_frag[k][2], q_frag[k][3],
+                        smem_addr(k_s + a_row * D + causal_swizzle(a_row, d)));
 #pragma unroll
-        for (int i = 0; i < 4; ++i) { q_frag[k][i] = mma_a_bf16(q_frag[k][i]); }
+            for (int i = 0; i < 4; ++i) { q_frag[k][i] = mma_a_bf16(q_frag[k][i]); }
+        }
+        __syncthreads();
     }
-    __syncthreads();
-    float acc[PVNt][4] = {};
+    // Per 8-column block n: c0/c1 (row gid) and, unless kLowRowsOnly, c2/c3 (row gid + 8).
+    float acc[PVNt][2 * kRowHalves] = {};
     Bf16KvSoftmaxRow state[2];
     const float scale_log2 = scale * kLog2E;
     const int gid = lane >> 2, lid = lane & 3;
@@ -190,11 +228,10 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
                         const int h = head * G::GroupSize + rows[J] % G::GroupSize;
 #pragma unroll
                         for (int n = 0; n < PVNt; ++n)
-                            bf16_kv_store_pair<G, true>(partial, nullptr, h, tokens[J],
-                                                        n * 8 + 2 * lid, width, closed,
-                                                        acc[n][2 * J], acc[n][2 * J + 1],
-                                                        state[J].maximum * scale_log2,
-                                                        closed_sum[J]);
+                            bf16_kv_store_pair<G, true>(
+                                partial, nullptr, h, tokens[J], d0 + n * 8 + 2 * lid, width, closed,
+                                acc[n][2 * J], acc[n][2 * J + 1], state[J].maximum * scale_log2,
+                                closed_sum[J]);
                     }
                     state[J] = Bf16KvSoftmaxRow();
 #pragma unroll
@@ -227,25 +264,47 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
             bf16_tile_to_mma_form<N * D, S::kThreads>(k_s, tid);
             __syncthreads();
         }
-        float score[QKNt][4] = {};
-        // Q and O already occupy 192 registers per lane at D=256. Keep one
-        // K fragment live at a time; double buffering all N fragments spills.
-#pragma unroll
-        for (int n = 0; n < QKNt; ++n) {
+        float score[QKNt][2 * kRowHalves] = {};
+        if constexpr (kLowRowsOnly) {
+            // Per K step, a0 and a2 of Q (the x4 form's matrices 0 and 2: rows 0-7 at d and
+            // d + 8) once for every 8-key block; each score still sums its K steps in order.
 #pragma unroll
             for (int k = 0; k < QKKs; ++k) {
-                unsigned bf[2];
-                const int row = warp_kv * NK + n * 8 + (lane & 7);
-                const int d   = k * 16 + ((lane >> 3) & 1) * 8;
-                ldmatrix_x2(bf[0], bf[1], smem_addr(k_s + row * D + causal_swizzle(row, d)));
-                if constexpr (kStageK) {
-                    mma_bf16_staged(score[n][0], score[n][1], score[n][2], score[n][3],
-                                    q_frag[k][0], q_frag[k][1], q_frag[k][2], q_frag[k][3],
-                                    bf[0], bf[1]);
-                } else {
-                    mma_bf16_prepared(score[n][0], score[n][1], score[n][2], score[n][3],
-                                      q_frag[k][0], q_frag[k][1], q_frag[k][2], q_frag[k][3],
-                                      bf[0], bf[1]);
+                unsigned qa[2];
+                const int d = k * 16 + ((lane >> 3) & 1) * 8;
+                ldmatrix_x2(qa[0], qa[1],
+                            smem_addr(q_s + (lane & 7) * D + causal_swizzle(lane & 7, d)));
+#pragma unroll
+                for (int n = 0; n < QKNt; ++n) {
+                    unsigned bf[2];
+                    const int row = warp_kv * NK + n * 8 + (lane & 7);
+                    ldmatrix_x2(bf[0], bf[1], smem_addr(k_s + row * D + causal_swizzle(row, d)));
+                    static_assert(!kStageK);
+                    float dropped[2] = {};
+                    mma_bf16_prepared(score[n][0], score[n][1], dropped[0], dropped[1], qa[0], 0u,
+                                      qa[1], 0u, bf[0], bf[1]);
+                }
+            }
+        } else {
+            // Q and O already occupy 192 registers per lane at D=256. Keep one
+            // K fragment live at a time; double buffering all N fragments spills.
+#pragma unroll
+            for (int n = 0; n < QKNt; ++n) {
+#pragma unroll
+                for (int k = 0; k < QKKs; ++k) {
+                    unsigned bf[2];
+                    const int row = warp_kv * NK + n * 8 + (lane & 7);
+                    const int d   = k * 16 + ((lane >> 3) & 1) * 8;
+                    ldmatrix_x2(bf[0], bf[1], smem_addr(k_s + row * D + causal_swizzle(row, d)));
+                    if constexpr (kStageK) {
+                        mma_bf16_staged(score[n][0], score[n][1], score[n][2], score[n][3],
+                                        q_frag[k][0], q_frag[k][1], q_frag[k][2], q_frag[k][3],
+                                        bf[0], bf[1]);
+                    } else {
+                        mma_bf16_prepared(score[n][0], score[n][1], score[n][2], score[n][3],
+                                          q_frag[k][0], q_frag[k][1], q_frag[k][2], q_frag[k][3],
+                                          bf[0], bf[1]);
+                    }
                 }
             }
         }
@@ -253,44 +312,66 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
 #pragma unroll
         for (int n = 0; n < QKNt; ++n) {
 #pragma unroll
-            for (int j = 0; j < 4; ++j) {
+            for (int j = 0; j < 2 * kRowHalves; ++j) {
                 const int key = k0 + warp_kv * NK + n * 8 + 2 * lid + (j & 1);
                 if (key >= end || key > qabs[j / 2]) score[n][j] = -CUDART_INF_F;
                 maximum[j / 2] = fmaxf(maximum[j / 2], score[n][j]);
             }
         }
-        const float alpha[2] = {state[0].update(warp_max<4>(maximum[0], 0xffffffffu), scale_log2),
-                                state[1].update(warp_max<4>(maximum[1], 0xffffffffu), scale_log2)};
         unsigned pf[PVKs][4];
-        float tile_sum[2] = {};
+        if constexpr (kLowRowsOnly) {
+            // Row gid only: pf[k][0] and pf[k][2] are written and read.
+            const float alpha = state[0].update(warp_max<4>(maximum[0], 0xffffffffu), scale_log2);
+            float tile_sum    = 0.0f;
 #pragma unroll
-        for (int n = 0; n < QKNt; ++n) {
-            const float p0 = state[0].probability(score[n][0], scale_log2);
-            const float p1 = state[0].probability(score[n][1], scale_log2);
-            const float p2 = state[1].probability(score[n][2], scale_log2);
-            const float p3 = state[1].probability(score[n][3], scale_log2);
-            tile_sum[0] += p0 + p1;
-            tile_sum[1] += p2 + p3;
-            pf[n / 2][(n % 2) * 2]     = pack_f16x2(p0, p1);
-            pf[n / 2][(n % 2) * 2 + 1] = pack_f16x2(p2, p3);
-        }
-        state[0].accumulate(alpha[0], tile_sum[0]);
-        state[1].accumulate(alpha[1], tile_sum[1]);
+            for (int n = 0; n < QKNt; ++n) {
+                const float p0 = state[0].probability(score[n][0], scale_log2);
+                const float p1 = state[0].probability(score[n][1], scale_log2);
+                tile_sum += p0 + p1;
+                pf[n / 2][(n % 2) * 2] = pack_f16x2(p0, p1);
+            }
+            state[0].accumulate(alpha, tile_sum);
 #pragma unroll
-        for (int n = 0; n < PVNt; ++n) {
-            acc[n][0] *= alpha[0];
-            acc[n][1] *= alpha[0];
-            acc[n][2] *= alpha[1];
-            acc[n][3] *= alpha[1];
+            for (int n = 0; n < PVNt; ++n) {
+                acc[n][0] *= alpha;
+                acc[n][1] *= alpha;
+            }
+        } else {
+            const float alpha[2] = {
+                state[0].update(warp_max<4>(maximum[0], 0xffffffffu), scale_log2),
+                state[1].update(warp_max<4>(maximum[1], 0xffffffffu), scale_log2)};
+            float tile_sum[2] = {};
+#pragma unroll
+            for (int n = 0; n < QKNt; ++n) {
+                const float p0 = state[0].probability(score[n][0], scale_log2);
+                const float p1 = state[0].probability(score[n][1], scale_log2);
+                const float p2 = state[1].probability(score[n][2], scale_log2);
+                const float p3 = state[1].probability(score[n][3], scale_log2);
+                tile_sum[0] += p0 + p1;
+                tile_sum[1] += p2 + p3;
+                pf[n / 2][(n % 2) * 2]     = pack_f16x2(p0, p1);
+                pf[n / 2][(n % 2) * 2 + 1] = pack_f16x2(p2, p3);
+            }
+            state[0].accumulate(alpha[0], tile_sum[0]);
+            state[1].accumulate(alpha[1], tile_sum[1]);
+#pragma unroll
+            for (int n = 0; n < PVNt; ++n) {
+                acc[n][0] *= alpha[0];
+                acc[n][1] *= alpha[0];
+                acc[n][2] *= alpha[1];
+                acc[n][3] *= alpha[1];
+            }
         }
         // Batched and read-only wide tiles benefit from paired V loads. Single-row
         // fused append uses scalar fragments to leave room for its input state.
         if constexpr (S::kWarpsQ >= 4 && (MultiBatch || !Input::writes_cache)) {
+            // Rows gid + 8 are read here: a low-rows instance cannot take this path.
+            static_assert(!kLowRowsOnly);
             unsigned vf[2][4];
             const auto load_v = [&](int i, int slot) {
                 const int k = i / (PVNt / 2), n = i % (PVNt / 2) * 2;
                 const int row = warp_kv * NK + k * 16 + ((lane >> 3) & 1) * 8 + (lane & 7);
-                const int d   = n * 8 + (lane >> 4) * 8;
+                const int d   = d0 + n * 8 + (lane >> 4) * 8;
                 ldmatrix_x4_t(vf[slot][0], vf[slot][1], vf[slot][2], vf[slot][3],
                               smem_addr(v_s + row * D + causal_swizzle(row, d)));
             };
@@ -312,31 +393,47 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
                 for (int k = 0; k < PVKs; ++k) {
                     unsigned vf[2];
                     const int row = warp_kv * NK + k * 16 + ((lane >> 3) & 1) * 8 + (lane & 7);
-                    const int d   = n * 8;
+                    const int d   = d0 + n * 8;
                     ldmatrix_x2_t(vf[0], vf[1], smem_addr(v_s + row * D + causal_swizzle(row, d)));
-                    mma_f16(acc[n][0], acc[n][1], acc[n][2], acc[n][3], pf[k][0], pf[k][1],
-                            pf[k][2], pf[k][3], vf[0], vf[1]);
+                    if constexpr (kLowRowsOnly) {
+                        float dropped[2] = {};
+                        mma_f16(acc[n][0], acc[n][1], dropped[0], dropped[1], pf[k][0], 0u,
+                                pf[k][2], 0u, vf[0], vf[1]);
+                    } else {
+                        mma_f16(acc[n][0], acc[n][1], acc[n][2], acc[n][3], pf[k][0], pf[k][1],
+                                pf[k][2], pf[k][3], vf[0], vf[1]);
+                    }
                 }
             }
         }
         __syncthreads();
     }
-    state[0].finish();
-    state[1].finish();
-    float m[2]    = {state[0].maximum * scale_log2, state[1].maximum * scale_log2};
-    float sums[2] = {state[0].sum, state[1].sum};
+    // m and sums of the rows a lane keeps (row gid alone with kLowRowsOnly).
+    float m[kRowHalves], sums[kRowHalves];
+    if constexpr (kLowRowsOnly) {
+        state[0].finish();
+        m[0]    = state[0].maximum * scale_log2;
+        sums[0] = state[0].sum;
+    } else {
+        state[0].finish();
+        state[1].finish();
+        m[0]    = state[0].maximum * scale_log2;
+        m[1]    = state[1].maximum * scale_log2;
+        sums[0] = state[0].sum;
+        sums[1] = state[1].sum;
+    }
     if constexpr (S::kWarpsKV > 1) {
         __syncthreads();
 #pragma unroll
-        for (int j = 0; j < 2; ++j) {
+        for (int j = 0; j < kRowHalves; ++j) {
             const int row = warp_kv * M + warp_q * 16 + gid + j * 8;
-            if (lid == 0) {
+            if (lid == 0 && warp_d == 0) {
                 storage->maximum[row] = m[j];
                 storage->sum[row]     = sums[j];
             }
 #pragma unroll
             for (int n = 0; n < PVNt; ++n) {
-                const int d = n * 8 + 2 * lid;
+                const int d = d0 + n * 8 + 2 * lid;
                 *reinterpret_cast<float2*>(storage->reduction + row * D + d) =
                     make_float2(acc[n][j * 2], acc[n][j * 2 + 1]);
             }
@@ -344,7 +441,7 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
         __syncthreads();
         if (warp_kv != 0) return;
 #pragma unroll
-        for (int j = 0; j < 2; ++j) {
+        for (int j = 0; j < kRowHalves; ++j) {
             const int row = warp_q * 16 + gid + j * 8;
             m[j]          = -CUDART_INF_F;
             sums[j]       = 0;
@@ -363,7 +460,7 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
 #pragma unroll
                 for (int w = 0; w < S::kWarpsKV; ++w) {
                     const auto x = *reinterpret_cast<const float2*>(
-                        storage->reduction + (w * M + row) * D + n * 8 + 2 * lid);
+                        storage->reduction + (w * M + row) * D + d0 + n * 8 + 2 * lid);
                     a += weights[w] * x.x;
                     b += weights[w] * x.y;
                 }
@@ -381,22 +478,22 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
             const int h = head * G::GroupSize + rows[J] % G::GroupSize;
 #pragma unroll
             for (int n = 0; n < PVNt; ++n)
-                bf16_kv_store_pair<G, true>(partial, nullptr, h, tokens[J], n * 8 + 2 * lid, width,
-                                            row_split, acc[n][2 * J], acc[n][2 * J + 1], m[J],
-                                            sums[J]);
+                bf16_kv_store_pair<G, true>(partial, nullptr, h, tokens[J], d0 + n * 8 + 2 * lid,
+                                            width, row_split, acc[n][2 * J], acc[n][2 * J + 1],
+                                            m[J], sums[J]);
         };
         store_row.template operator()<0>();
         store_row.template operator()<1>();
     } else {
 #pragma unroll
-        for (int j = 0; j < 2; ++j) {
+        for (int j = 0; j < kRowHalves; ++j) {
             if (tokens[j] < width) {
                 const int h = head * G::GroupSize + rows[j] % G::GroupSize;
 #pragma unroll
                 for (int n = 0; n < PVNt; ++n)
-                    bf16_kv_store_pair<G, true>(partial, nullptr, h, tokens[j], n * 8 + 2 * lid,
-                                                width, split, acc[n][2 * j], acc[n][2 * j + 1],
-                                                m[j], sums[j]);
+                    bf16_kv_store_pair<G, true>(partial, nullptr, h, tokens[j],
+                                                d0 + n * 8 + 2 * lid, width, split, acc[n][2 * j],
+                                                acc[n][2 * j + 1], m[j], sums[j]);
             }
         }
     }

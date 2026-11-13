@@ -166,6 +166,9 @@ NOT_DECIDING = {
     "src/core/tune_timer.cu", "src/core/tune_timer.h", "src/core/units.h",
     "src/core/weight_view.cpp", "src/core/weight_view.h",
     "src/core/cuda_stream.h",  # the cudaStream_t handle type for host-only builds (#675)
+    # the dry run's workspace query (#615 W2): it reads the route pins to size the MoE path a
+    # start takes (#844), it decides no route; the selector goldens do not call it
+    "src/runtime/engine/plan_workspace.cpp",
     # rmsnorm_rope's fused-width bound (#661): it reads route_cost_constants.h for its pending fit and
     # decides the rope fusion of Qwen's text attention, not a linear route; the golden test does not
     # call it
@@ -1026,6 +1029,7 @@ REVERSE_HEADERS = {
     "src/ops/generic/selector_facts.h", "src/ops/generic/route_query.h", "src/ops/generic/route_table.h",
     "include/ninferno/ops/route_table.h", "src/ops/generic/route_cost_constants.h",
     "src/ops/generic/generic_select_internal.h", "src/ops/generic/format_traits.h",
+    "src/ops/generic/format_rules.h",
     "src/ops/generic/generic_gemm.h", "src/ops/route_pins.h", "src/core/mmq_columns.h",
     "src/core/board_registry.h", "src/core/cost_constants.h", "src/core/machine_facts.h",
     "src/ops/generic/generic_gemm_internal.h", "src/ops/generic/ggml_mmq/ggml_mmq.h",

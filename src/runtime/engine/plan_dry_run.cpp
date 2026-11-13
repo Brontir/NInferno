@@ -293,11 +293,14 @@ std::uint64_t plan_idle_free_bytes(const PlanDeviceFacts& device) noexcept {
 }
 
 DeviceClass plan_device_class(const PlanDeviceFacts& device) {
-    DeviceClass d =
-        synthetic_device_class(device.pci_device_id, device.compute_capability / 10,
-                               device.compute_capability % 10, device.sms, 0, device.total_bytes);
-    d.facts = machine_facts_of(d);
-    return d;
+    // An explicit empty driver view: no L2 and no driver clocks, as the plan's class had before
+    // the one builder (#612 step 10; the row's L2 for the plan is a later, decision-moving PR).
+    return board_class({.pci_device_id = device.pci_device_id,
+                        .major         = device.compute_capability / 10,
+                        .minor         = device.compute_capability % 10,
+                        .sms           = device.sms,
+                        .global_bytes  = static_cast<std::size_t>(device.total_bytes),
+                        .driver        = BoardDriverView{}});
 }
 
 std::uint64_t plan_board_total_bytes(double vram_gib) noexcept {
@@ -368,6 +371,21 @@ PlanWorkspaceQuery& workspace_query() {
 } // namespace
 
 void set_plan_workspace_query(PlanWorkspaceQuery query) { workspace_query() = std::move(query); }
+
+namespace {
+PlanTokenizerQuery& tokenizer_query() {
+    static PlanTokenizerQuery query;
+    return query;
+}
+} // namespace
+
+void set_plan_tokenizer_query(PlanTokenizerQuery query) { tokenizer_query() = std::move(query); }
+
+std::optional<std::uint32_t> plan_tokenizer_tokens(const artifact::Reader& reader) {
+    const PlanTokenizerQuery& query = tokenizer_query();
+    if (!query) { return std::nullopt; }
+    return query(reader);
+}
 
 namespace {
 PlanMoeRouteQuery& moe_route_query() {

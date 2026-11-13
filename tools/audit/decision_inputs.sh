@@ -58,6 +58,7 @@ decision_patterns=(
   src/ops/generic/selector_facts_host.cpp
   src/ops/generic/generic_facts_sink.cpp
   src/ops/moe/moe_plan.cpp
+  src/ops/moe/moe_regime_rules.h
   src/ops/generic/generic_variant_rules.h
   src/ops/generic/generic_ggml.cpp
   src/ops/generic/generic_ggml_internal.h

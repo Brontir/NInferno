@@ -1011,8 +1011,9 @@ void chooses(const json& fixture) {
                                         pins, task, oracle(b, 9.6e9));
         check(c.chosen && chosen(c).candidate.activations == ActivationMode::Exact &&
                   chosen(c).candidate.kv == KvCacheStorage::BFloat16 &&
-                  chosen(c).candidate.state == RecurrentStateStorage::FP32,
-              "pins kept; exact couples the FP32 state");
+                  chosen(c).candidate.state == RecurrentStateStorage::FP32 && c.by_worth &&
+                  !c.activations_by_worth,
+              "pins kept; exact couples the FP32 state; pinned activations are not weighed");
     }
     {
         // The state one step finer than the KV cache: BF16 KV under fast takes the FP32 state; a
@@ -1066,6 +1067,69 @@ void decides_by_generation(const json& fixture) {
                   ch::decides_switches(a.model, a.card, {true, true}) &&
                   !ch::decides_switches(a.model, a.card, {false, true}),
               "Ada decides once the accuracy terms rest on two cards");
+    }
+    // Blackwell gb20x (#618 step 1): its KV factors rest on two cards (the RTX 5070 Ti and 5090),
+    // its exact-route factor on none: the worth decides the KV codec, the activations keep fast.
+    // Qwen3.5-9B's BF16, FP8 and K8V4 have two-card rows of their own there; its NVFP4 SM rate is
+    // one card's (the two 6.4 % apart per reference SM-clock), and the MoE family's NVFP4, of
+    // another geometry, carries Ada's factor: the worth takes neither (kv_decides), while on Ada
+    // every codec decides.
+    const Bench g = nine_b(fixture, "RTX 5070 Ti");
+    const Bench h = nine_b(fixture, "RTX 5090");
+    const auto rg = ch::reference_of(g.card), rh = ch::reference_of(h.card);
+    check(rg && rh && rg->decides && !rg->activations_decide && ra && ra->activations_decide,
+          "gb20x decides the KV codec, not the activations; Ada both");
+    if (rg && rh) {
+        ch::Task task;
+        ch::Candidate c;
+        c.kv            = KvCacheStorage::Int8Group64;
+        c.state         = RecurrentStateStorage::FP16;
+        const double sg = ch::request_seconds(g.model, rg->card, g.quants[0], c, task);
+        const double sh = ch::request_seconds(h.model, rh->card, h.quants[0], c, task);
+        check(sg == sh && sg > 0, "the 5070 Ti and the 5090 price a decision alike");
+        check(ch::decides_switches(g.model, g.card, {true, true}), "gb20x's worth decides");
+    }
+    for (const KvCacheStorage kv :
+         {KvCacheStorage::Int8Group64, KvCacheStorage::BFloat16, KvCacheStorage::Fp8E4M3Row256,
+          KvCacheStorage::Fp8KeyNvfp4Value, KvCacheStorage::Nvfp4Group16}) {
+        check(ch::kv_decides(g.model, "gb20x", kv) == (kv != KvCacheStorage::Nvfp4Group16) &&
+                  ch::kv_decides(a.model, "ada", kv),
+              std::string("kv_decides ") + std::string(ninferno::kv_cache_storage_name(kv)));
+    }
+    {
+        const ch::ModelFacts moe = model_of(fixture.at("models").at("Qwen3.6-35B-A3B"));
+        check(!ch::kv_decides(moe, "gb20x", KvCacheStorage::Nvfp4Group16) &&
+                  ch::kv_decides(moe, "gb20x", KvCacheStorage::Fp8KeyNvfp4Value) &&
+                  ch::kv_decides(moe, "ada", KvCacheStorage::Nvfp4Group16),
+              "the MoE family's NVFP4 does not decide on gb20x (Ada's factor carried)");
+    }
+    {
+        ch::Task task;
+        task.contexts           = {32768};
+        const ch::Choice choice = ch::choose(g.model, g.card, g.quants[0],
+                                             ch::allowed_axes(g.model, KvCacheStorage::Int8Group64),
+                                             {}, task, oracle(g, 15e9));
+        check(choice.by_worth && !choice.activations_by_worth && choice.chosen &&
+                  chosen(choice).candidate.activations == ActivationMode::Fast &&
+                  ch::kv_decides(g.model, "gb20x", chosen(choice).candidate.kv),
+              "gb20x: the KV codec by worth among its own rows, the activations fast");
+        bool activations_default = false;
+        for (const ch::Alternative& alt : ch::explain(choice)) {
+            if (alt.axis == ch::Axis::Activations && alt.value == "exact") {
+                activations_default = alt.why_code == "default";
+            }
+        }
+        bool nvfp4_default = false;
+        for (const ch::Alternative& alt : ch::explain(choice)) {
+            if (alt.axis == ch::Axis::Kv && alt.value == "nvfp4") {
+                nvfp4_default = alt.why_code == "default";
+            }
+        }
+        check(activations_default && nvfp4_default &&
+                  choice.kv_not_decided ==
+                      std::vector<KvCacheStorage>{KvCacheStorage::Nvfp4Group16},
+              "gb20x: exact and NVFP4 are the family's default's alternatives, not weighed");
+        if (choice.chosen) { std::cout << choice.why << '\n'; }
     }
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
     check(!ch::reference_of(t.card), "Turing has no reference card");
@@ -1523,6 +1587,19 @@ void moe_step_reads_the_route(const json& fixture) {
                   "MoE step: an unmeasured pair past one row is transferred (" + at + ")");
             check(rows > 1 || (r.basis == a.basis && x.basis == a.basis),
                   "MoE step: one row reads at kDramEta on every pair (" + at + ")");
+            // Banks whose kept format the file does not tell (Gemma 4's GGUF MXFP4 experts,
+            // #784): the same price, Transferred at every row and named, whether a route was
+            // answered or none was asked (a row known by its label: no layers to ask about).
+            ch::QuantOption assumed_q      = q;
+            assumed_q.expert_banks_assumed = true;
+            const ch::Speed s  = ch::speed_of(measured, card, assumed_q, c, rows, 1536, 0);
+            const ch::Speed sp = ch::speed_of(plain, card, assumed_q, c, rows, 1536, 0);
+            check(s.decode_per_stream == b.decode_per_stream &&
+                      sp.decode_per_stream == a.decode_per_stream,
+                  "MoE step: assumed banks keep the price (" + at + ")");
+            check(s.basis == ch::SpeedBasis::Transferred && s.why == "MoE banks assumed" &&
+                      sp.basis == ch::SpeedBasis::Transferred && sp.why == "MoE banks assumed",
+                  "MoE step: assumed banks are transferred and named (" + at + ")");
         }
     }
     check(lifts >= 3, "MoE step: the Own steps of several rows are the measured pair's alone");
@@ -2543,10 +2620,62 @@ void lent_generation_does_not_decide(const json& fixture) {
     check(!theirs.by_worth && theirs.chosen && theirs.why.find("no generation row of its own") != std::string::npos,
           "compute capability 13.0: the family's defaults, and why");
     check(!ch::weighs_quantizations(lent.model, lent.card, open), "compute capability 13.0: the quantizations by the rule");
+    // Hopper and GB100 (#878): rows of their own that are lent (the A100's rates under their
+    // names), so a reference that decides nothing, the lent gate, and the family's defaults.
+    for (const auto& [major, minor] : {std::pair{9, 0}, std::pair{10, 0}, std::pair{10, 3}}) {
+        Bench dc             = known;
+        dc.card.major        = major;
+        dc.card.minor        = minor;
+        const std::string at = std::to_string(major) + "." + std::to_string(minor);
+        const ch::Speed s    = ch::speed_of(dc.model, dc.card, dc.quants[0], c, 1, 4096);
+        const auto r         = ch::reference_of(dc.card, open);
+        const auto g         = ch::closed_gates(dc.model, dc.card, open);
+        check(s.basis == ch::SpeedBasis::LentGeneration && s.transferred,
+              "compute capability " + at + ": its estimate marked lent");
+        check(r && r->lent && !r->decides && !r->chunk_decides && !g.empty() &&
+                  g[0].code == "lent_generation" && g[0].opens_with == "generation_row",
+              "compute capability " + at + ": a lent reference that never decides, its gate");
+        const ch::Choice ch_dc =
+            ch::choose(dc.model, dc.card, dc.quants[0], allowed, {}, task, oracle(dc, 20e9), open);
+        check(!ch_dc.by_worth && ch_dc.chosen && !ch::weighs_quantizations(dc.model, dc.card, open),
+              "compute capability " + at +
+                  ": the family's defaults, the quantizations by the rule");
+    }
     // A known generation with a reference card still decides (the RTX 4090: Ada).
     const Bench ada = nine_b(fixture, "RTX 4090");
     check(ch::choose(ada.model, ada.card, ada.quants[0], allowed, {}, task, oracle(ada, 20e9), open).by_worth,
           "the RTX 4090: the switches by worth");
+    // A capability of a known generation that no lab card has (#863): the GB10 (12.1, 48 SMs,
+    // 273 GB/s) runs and estimates on gb20x's rows, whose lab cards are 12.0, and decides nothing.
+    Bench gb10                 = known;
+    gb10.card.minor            = 1;
+    gb10.card.sms              = 48;
+    gb10.card.dram_bytes_per_s = 273e9;
+    const auto gr              = ch::reference_of(gb10.card, open);
+    const auto gg              = ch::closed_gates(gb10.model, gb10.card, open);
+    check(gr && !gr->decides && !gr->activations_decide && !gr->chunk_decides &&
+              gr->other_capability && !gr->lent && gr->generation == "gb20x" &&
+              gr->why.find("12.1 is not its gb20x lab cards' (12.0)") != std::string::npos &&
+              !gg.empty() && gg[0].code == "reference_other_capability" &&
+              gg[0].opens_with == "capability_lab_cards",
+          "compute capability 12.1: gb20x's rows, a reference that never decides, and why");
+    const ch::Choice spark = ch::choose(gb10.model, gb10.card, gb10.quants[0], allowed, {}, task,
+                                        oracle(gb10, 20e9), open);
+    check(!spark.by_worth && spark.chosen &&
+              spark.why.find("is not its gb20x lab cards'") != std::string::npos &&
+              ch::speed_of(gb10.model, gb10.card, gb10.quants[0], c, 1, 4096).basis !=
+                  ch::SpeedBasis::LentGeneration,
+          "compute capability 12.1: the family's defaults, its estimate on gb20x's own rows");
+    check(
+        !ch::weighs_quantizations(gb10.model, gb10.card, open) &&
+            spark.gate_code == "reference_other_capability" && !spark.drafter_by_worth &&
+            spark.chosen && chosen(spark).candidate.kv == allowed.automatic_kv &&
+            std::any_of(gg.begin(), gg.end(),
+                        [](const ch::ClosedGate& g) { return g.code == "quant_switches_closed"; }),
+        "compute capability 12.1: the automatic KV codec, the quant rule, the profile's drafter");
+    const auto fr = ch::reference_of(known.card, open);
+    check(fr && fr->decides && !fr->other_capability,
+          "the RTX 5090 (12.0): gb20x's reference decides");
 }
 
 // #304: a choice made again from its record alone. On every fixture card, for the dense 9B and the

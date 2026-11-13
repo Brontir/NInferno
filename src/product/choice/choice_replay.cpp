@@ -526,10 +526,16 @@ json choice_summary(const Choice& c) {
                           {"variant", s.variant},
                           {"drafter", s.drafter}});
     }
+    json kv_not_decided = json::array();
+    for (const KvCacheStorage kv : c.kv_not_decided) {
+        kv_not_decided.push_back(static_cast<int>(kv));
+    }
     return json{{"scored", std::move(scored)},
                 {"chosen", c.chosen ? json(*c.chosen) : json(nullptr)},
                 {"context", c.context},
                 {"by_worth", c.by_worth},
+                {"activations_by_worth", c.activations_by_worth},
+                {"kv_not_decided", kv_not_decided},
                 {"chunk_by_speed", c.chunk_by_speed},
                 {"chunk_basis", std::string(chunk_basis_name(c.chunk_basis))},
                 {"drafter_by_worth", c.drafter_by_worth},

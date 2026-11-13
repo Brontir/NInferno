@@ -377,6 +377,24 @@ double exact_eta(std::string_view generation, bool& transferred) noexcept {
     return row != nullptr ? row->eta : kExactComputeEta[0].eta;
 }
 
+// The kKvSmRate row of `model`'s family, full-layer geometry and `kv` on `generation` (nullptr:
+// none, the codec's factor stands).
+const KvSmRate* kv_sm_rate(const ModelFacts& model, std::string_view generation,
+                           KvCacheStorage kv) noexcept {
+    const double full_heads =
+        model.full_layers > 0 && model.full_head_dim > 0
+            ? std::round(model.full_attention_width / (model.full_layers * 2 * model.full_head_dim))
+            : 0;
+    for (const KvSmRate& r : kKvSmRate) {
+        if (r.generation == generation && r.family == model.family && r.kv == kv &&
+            r.head_dim == model.full_head_dim && r.heads == full_heads &&
+            r.kv_heads == model.full_kv_heads) {
+            return &r;
+        }
+    }
+    return nullptr;
+}
+
 double kv_read_factor(std::string_view generation, KvCacheStorage kv, bool& transferred) noexcept {
     if (kv == KvCacheStorage::Int8Group64) { return 1.0; } // the reference codec
     for (const std::string_view gen : {generation, kTransferGeneration}) {
@@ -1332,27 +1350,23 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const double params        = model.active_params > 0 ? model.active_params : model.params;
 
     bool transferred = false;
-    const double kv  = model.kv_bytes_per_token ? model.kv_bytes_per_token(candidate.kv) : 0;
-    const double kkv = kv_read_factor(gen, candidate.kv, transferred);
+    const double kv    = model.kv_bytes_per_token ? model.kv_bytes_per_token(candidate.kv) : 0;
     const double state = model.state_bytes ? model.state_bytes(candidate.state) : 0;
     const double ring  = model.ring_bytes_per_token ? model.ring_bytes_per_token(candidate.ring) : 0;
     const double window_rows = model.window > 0 ? std::min<double>(context, model.window) : 0;
     // A row's own reads: its KV over the context, its recurrent state (read and written), its ring.
-    // A kernel the SMs bound (kKvSmRate: the family's own kernel, in place of the codec's factor read
-    // on another family's) reads its KV no faster than SMs x clock x its rate, nor than the DRAM: the
-    // KV counts as the bytes the DRAM reads in that time.
-    double kv_factor = kkv;
-    const double full_heads = model.full_layers > 0 && model.full_head_dim > 0
-                                  ? std::round(model.full_attention_width / (model.full_layers * 2 * model.full_head_dim))
-                                  : 0;
-    for (const KvSmRate& r : kKvSmRate) {
-        if (r.generation == gen && r.family == model.family && r.kv == candidate.kv && r.head_dim == model.full_head_dim &&
-            r.heads == full_heads && r.kv_heads == model.full_kv_heads && card.sms > 0 && card.clock_hz > 0) {
-            kv_factor = std::max(1.0, dram_eta(gen) * card.dram_bytes_per_s /
-                                           (card.sms * card.clock_hz * r.bytes_per_sm_clock));
-            if (r.cards < 2) { transferred = true; }
-            break;
-        }
+    // A kernel the SMs bound (kKvSmRate: the family's own kernel, in place of the codec's factor
+    // read on another family's) reads its KV no faster than SMs x clock x its rate, nor than the
+    // DRAM: the KV counts as the bytes the DRAM reads in that time. Else the codec's factor
+    // (kKvReadFactor: the generation's own row, else the transfer generation's, transferred).
+    double kv_factor        = 0;
+    const KvSmRate* sm_rate = kv_sm_rate(model, gen, candidate.kv);
+    if (sm_rate != nullptr && card.sms > 0 && card.clock_hz > 0) {
+        kv_factor = std::max(1.0, dram_eta(gen) * card.dram_bytes_per_s /
+                                      (card.sms * card.clock_hz * sm_rate->bytes_per_sm_clock));
+        if (sm_rate->cards < 2) { transferred = true; }
+    } else {
+        kv_factor = kv_read_factor(gen, candidate.kv, transferred);
     }
     const double row_bytes = context * kv * kv_factor + 2 * state + window_rows * ring;
     // The exact route's compute beyond the fast route's (choice_constants.h kExactComputeEta).
@@ -1441,6 +1455,15 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
                 transferred = true;
                 out.why     = "MoE route not queried";
             }
+        }
+        // Banks whose kept format the file does not tell (QuantOption::expert_banks_assumed:
+        // Gemma 4's GGUF MXFP4 experts, which the loader keeps as NVFP4, BF16 or Q8 by their
+        // bytes; a split MoE GGUF's parts): the bytes priced are the file's and the pair is the
+        // one asked of its format, at any row, so the step is Transferred (the prefill's term
+        // already makes it so, #813) and names why (#784).
+        if (quant.expert_banks_assumed) {
+            transferred = true;
+            if (out.why.empty()) { out.why = "MoE banks assumed"; }
         }
     }
     bool flops_transferred = false;
@@ -1647,7 +1670,7 @@ Resolution resolution_of(const CardFacts& board, SpeedBasis estimates) noexcept 
                     decided_floor};
         }
     }
-    return assumed; // ga100, hopper, gb100, thor: no row of either kind
+    return assumed; // ga100, thor: no row of either kind (hopper, gb100: lent rows, above)
 }
 
 double single_request_seconds(const ModelFacts& model, const CardFacts& card,
@@ -1748,11 +1771,23 @@ std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates)
         Reference out;
         out.card          = {.major = card.major, .minor = card.minor, .sms = r.sms, .clock_hz = r.clock_hz,
                              .dram_bytes_per_s = r.dram_bytes_per_s, .fp4 = card.fp4};
-        out.decides       = r.kv_two_cards && r.exact_two_cards;
-        out.chunk_decides = gates.moe_chunk;
-        out.generation    = r.generation;
-        out.cards         = r.cards;
-        if (!out.decides) { out.why = std::string(gen) + "'s KV and exact-route factors rest on one lab card"; }
+        out.decides       = r.kv_two_cards;
+        out.activations_decide = r.kv_two_cards && r.exact_two_cards;
+        out.chunk_decides      = gates.moe_chunk;
+        out.generation         = r.generation;
+        out.cards              = r.cards;
+        if (card.minor != r.minor) {
+            // A capability no lab card of the generation has (#863: the GB10, 12.1, under gb20x's
+            // 12.0 cards): the rows price its estimate, never a decision.
+            out.decides = out.activations_decide = out.chunk_decides = false;
+            out.other_capability                                     = true;
+            out.why = "compute capability " + std::to_string(card.major) + "." +
+                      std::to_string(card.minor) + " is not its " + std::string(gen) +
+                      " lab cards' (" + std::to_string(card.major) + "." + std::to_string(r.minor) +
+                      "): their rates stand in for the estimate, not for a decision";
+            return out;
+        }
+        if (!out.decides) { out.why = std::string(gen) + "'s KV factors rest on one lab card"; }
         return out;
     }
     return std::nullopt;
@@ -1768,6 +1803,9 @@ std::vector<ClosedGate> closed_gates(const ModelFacts& model, const CardFacts& c
         out.push_back({"switches", "no_reference_card", "reference_factors", gen, "", 0});
     } else if (ref->lent) {
         out.push_back({"switches", "lent_generation", "generation_row", gen, "", 0});
+    } else if (ref->other_capability) {
+        out.push_back(
+            {"switches", "reference_other_capability", "capability_lab_cards", gen, "", 0});
     } else if (!ref->decides) {
         out.push_back({"switches", "reference_one_card", "reference_factors", gen, "", 1});
     }
@@ -1895,6 +1933,15 @@ ChunkBasis chunk_basis_of(const ModelFacts& model, const CardFacts& card, const 
         if (row.moe && row.generation == gen && row.cards >= 2) { return ChunkBasis::CarriedCurve; }
     }
     return ChunkBasis::Transferred;
+}
+
+bool kv_decides(const ModelFacts& model, std::string_view generation, KvCacheStorage kv) noexcept {
+    if (kv == KvCacheStorage::Int8Group64) { return true; } // the reference codec
+    if (const KvSmRate* r = kv_sm_rate(model, generation, kv)) { return r->cards >= 2; }
+    for (const KvReadFactor& row : kKvReadFactor) {
+        if (row.generation == generation && row.kv == kv) { return row.cards >= 2; }
+    }
+    return false;
 }
 
 bool decides_switches(const ModelFacts& model, const CardFacts& card, const Gates& gates) {
@@ -2141,12 +2188,25 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     out.drafter_by_worth = out.by_worth && !pins.drafter &&
                            std::all_of(model.drafters.begin(), model.drafters.end(),
                                        [&](const DrafterOption& d) { return d.measured_at(streams); });
+    // Under the worth, the activations only where the exact-route factor decides too and the user
+    // pinned no mode (a pinned one is theirs, as a pinned chunk or drafter is), and each KV codec
+    // only where its own read cost on the generation rests on two lab cards (kv_decides).
+    out.activations_by_worth = out.by_worth && ref && ref->activations_decide && !pins.activations;
+    if (out.by_worth) {
+        for (const KvCacheStorage kv : kvs) {
+            if (!kv_decides(model, generation_of(card), kv)) { out.kv_not_decided.push_back(kv); }
+        }
+    }
+    const auto kv_by_worth = [&](KvCacheStorage kv) {
+        return out.by_worth && std::find(out.kv_not_decided.begin(), out.kv_not_decided.end(),
+                                         kv) == out.kv_not_decided.end();
+    };
     const auto eligible = [&](const Scored& s) {
         const bool chunk_ok   = out.chunk_by_speed || s.candidate.chunk == default_chunk;
         const bool drafter_ok = out.drafter_by_worth || s.candidate.drafter == default_drafter;
         return chunk_ok && drafter_ok &&
-               (out.by_worth || (s.candidate.kv == default_kv &&
-                                 s.candidate.activations == default_activations));
+               (kv_by_worth(s.candidate.kv) || s.candidate.kv == default_kv) &&
+               (out.activations_by_worth || s.candidate.activations == default_activations);
     };
     // Each stream's own context in turn (a pinned one, or Auto's steps): the first that holds an
     // eligible candidate takes its best.
@@ -2267,6 +2327,10 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
                               "at its own floor, " +
                               fixed(100 * out.resolution_floor, 1) + " %")
              : ": the family's defaults (" + defaults_why + ")") +
+        (out.by_worth && !out.activations_by_worth && !pins.activations
+             ? "; activations: the family's default (" + std::string(generation_of(card)) +
+                   "'s exact-route factor does not rest on two lab cards)"
+             : std::string()) +
         (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
                                   ": the fastest prefill on the reference card"
                             : "") +
@@ -2448,6 +2512,17 @@ std::vector<Alternative> explain(const Choice& choice) {
                 alt.why_not  = choice.by_worth
                                    ? "the speculation profile's choice stands (its gain is not measured on this card)"
                                    : "the speculation profile's choice stands (no decision constants for this generation)";
+            } else if (choice.by_worth && axis == Axis::Activations &&
+                       !choice.activations_by_worth) {
+                alt.why_code = "default";
+                alt.why_not  = "the family's default stands (the exact route's factor on this "
+                               "generation does not rest on two lab cards)";
+            } else if (choice.by_worth && axis == Axis::Kv &&
+                       std::find(choice.kv_not_decided.begin(), choice.kv_not_decided.end(),
+                                 s.candidate.kv) != choice.kv_not_decided.end()) {
+                alt.why_code = "default";
+                alt.why_not  = "the family's default stands (this codec's read cost on this "
+                               "generation does not rest on two lab cards)";
             } else if (axis == Axis::Chunk ? !choice.chunk_by_speed : !choice.by_worth) {
                 alt.why_code = "default";
                 alt.why_not  = axis == Axis::Chunk
