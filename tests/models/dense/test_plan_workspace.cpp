@@ -600,11 +600,11 @@ void declines(const std::string& name, const rt::PlanModelFacts& facts,
     {
         // The overrides of the options planned decline; a pin left in the process by an earlier
         // engine is not these options' (#842 review).
-        EngineOptions pinned = options;
+        EngineOptions pinned       = options;
         pinned.maintainer.moe_path = MoePath::Generic;
         refuses(basis_of(facts, pinned, device), "--moe-path", "a pinned MoE path");
-        EngineOptions routed            = options;
-        routed.maintainer.decode_route  = DecodeRoute::A16;
+        EngineOptions routed           = options;
+        routed.maintainer.decode_route = DecodeRoute::A16;
         refuses(basis_of(facts, routed, device), "route is pinned", "a pinned decode route");
         EngineOptions evidence           = options;
         evidence.maintainer.route_policy = RoutePolicy::Evidence;

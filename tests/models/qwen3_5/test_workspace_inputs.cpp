@@ -732,10 +732,10 @@ void run(const Case& k) {
     }
     {
         // A --moe-path pin in the options planned: the plan sizes the automatic path only.
-        EngineOptions pinned_options        = k.options;
-        pinned_options.maintainer.moe_path  = MoePath::Generic;
-        const auto pinned = rt::plan_rung_bytes(facts, rung, pinned_options,
-                                                pinned_options.max_concurrency, false);
+        EngineOptions pinned_options       = k.options;
+        pinned_options.maintainer.moe_path = MoePath::Generic;
+        const auto pinned =
+            rt::plan_rung_bytes(facts, rung, pinned_options, pinned_options.max_concurrency, false);
         check(pinned.workspace_basis.find("--moe-path") != std::string::npos,
               k.name + ": a pinned MoE path keeps the formula (" + pinned.workspace_basis + ")");
         // A pin left in the process by an earlier engine is not these options' (#842 review).
