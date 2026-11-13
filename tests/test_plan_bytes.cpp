@@ -1282,12 +1282,12 @@ void test_proposal_bytes_per_quant() {
         pr::PlanSourceFacts banks_part       = formats_part;
         banks_part.model.expert_up_formats   = banked.model.expert_up_formats;
         banks_part.model.expert_down_formats = banked.model.expert_down_formats;
-        banks_part.model.head_format         = "bf16";
         const auto banks_part_table          = pr::gguf_tensor_table(banks_part);
         check(banks_part_table && banks_part_table->tensor_bytes == 0 &&
-                  banks_part_table->expert_up_formats == banked.model.expert_up_formats &&
-                  banks_part_table->head_format == "bf16",
-              "a split part's head: the bank and head formats it read");
+                  banks_part_table->expert_up_formats.empty() &&
+                  banks_part_table->expert_down_formats.empty() &&
+                  banks_part_table->head_format.empty(),
+              "a split part's head: no bank or head formats (a sample of the banks sizes short)");
     }
     // The 9B's verify as the converter reads it (the embedding out): the rows its conversions
     // logged (147,456 with DFlash, 57,344 for MTP alone), from the whole tensor table.
