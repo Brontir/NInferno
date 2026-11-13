@@ -31,7 +31,11 @@ NINFERNO_BF16_KV_INSTANCE(Tiled64, false,
 NINFERNO_BF16_KV_INSTANCE(Tiled128, false,
                         fitting_schedule<Bf16KvTiledMmaSchedule<128, 32>,
                                          Bf16KvTiledMmaSchedule<64, 32>>);
-NINFERNO_BF16_KV_INSTANCE(GroupedDecode, true, Bf16KvGroupedMmaSchedule<16, 32, 2, 2, 1>);
+// Width-1 decode: two D warps per key slice (128 threads), so a lane keeps half of D=256's
+// accumulators, and Q in shared memory (kBf16KvLowRowsOnly). With one D warp and Q in registers,
+// Q and O took 192 of a lane's 255 registers and ptxas spilled Q to local memory on sm_75/80/86/89,
+// reloaded every key tile (#856). The K/V tiles and the CTAs an SM holds are the same.
+NINFERNO_BF16_KV_INSTANCE(GroupedDecode, true, Bf16KvGroupedMmaSchedule<16, 32, 2, 2, 1, 2>);
 #undef NINFERNO_BF16_KV_INSTANCE
 
 constexpr Bf16KvInstanceDescription bf16_kv_instance_description(Bf16KvInstance id) {

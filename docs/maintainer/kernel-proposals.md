@@ -58,7 +58,7 @@ A new family also costs a `Family` enum entry, which every route table parses, a
 
 ## Register
 
-The entries below come from the candidates table of #619 (section 4). Only A has a frozen
+The entries below come from the candidates table of #619 (section 4). Only A and N have a frozen
 prediction so far.
 
 ### A. Pre-summed activation groups for the min-term formats (#619 steps 5-6, #709)
@@ -163,3 +163,67 @@ prediction so far.
   keep the fewest tiles.
 - Prototype: the forced-J grid on the 4090 and 2080 Ti.
 - Decision: open. These are data rows.
+
+### N. BF16 KV width-1 decode attention without register spills (#856)
+- Regime: `bf16_kv_grouped_mma_kernel`, the GroupedDecode instance (width 1, 16 packed query rows,
+  32-key tiles, 2 KV warps), D = 256, every listed head geometry; decode with a BF16 KV cache.
+  The #618 census put it at 53 % of DRAM on the RTX 3090, 50 % on the RTX 3060 and 42 % on the
+  RTX 2080 Ti (#853), against 92 % on the RTX 4090.
+- Law: register spills, and where their traffic goes. `__launch_bounds__(128, 2)` caps a lane at
+  255 registers, the ISA maximum. Across the key loop a lane kept Q's fragments (16 K steps x 4 =
+  64 registers) and O's accumulators (32 column blocks x 4 = 128); the tile's scores, P, K/V
+  fragments, softmax state and addresses take the rest. ptxas (CUDA 13.2, the decode call:
+  unbatched, unmasked, append) spilled Q to local memory on sm_86/89 (392 B a lane: per key
+  tile 408 B of LDL and 120 B of STL a lane, 33.8 KB a CTA against the tile's 32 KB of K/V), on
+  sm_75 (120 B; 112 B LDL and 68 B STL a tile) and in 8 of the 32 variants on sm_80 (496 B);
+  sm_90/100/120a did not spill. A spilled line reaches DRAM when the device traffic between its
+  store and its reload, one key tile on every resident CTA, exceeds the L2: RTX 3090
+  82 x 2 x 65.8 KB = 10.8 MB > 6 MB, RTX 3060 3.7 MB > 2.25 MB, but RTX 4070 Ti 7.9 MB < 48 MB and
+  RTX 4090 16.8 MB < 72 MB. The ncu run through the #862 bench agrees: the RTX 3090 read 1.50x the
+  KV bytes and wrote 19 MB a call, the RTX 4070 Ti read 1.00x. The RTX 2080 Ti holds one CTA an
+  SM (2 x 33.2 KB > 64 KB), and its window (68 x 43.5 KB = 3.0 MB) fits its 5.5 MB L2: there the
+  spill is latency on a serial load-then-compute tile, not DRAM bytes.
+- Variant: two D warps per key slice (128 threads; each scores the slice's keys and accumulates
+  half of D: O 64 registers), and Q in shared memory (rows 0-7 only, 4 KiB in the MMA's A form,
+  read per key tile). The packed rows are one token's G::GroupSize <= 8 heads, so a lane's second
+  MMA row (gid + 8) holds no query; it enters the MMAs as zeros and its sums are dropped. The K/V
+  tiles, the plan and the split count are unchanged, and so are the CTAs an SM holds (2 on
+  sm_86/89/120, 1 on sm_75; sm_80/90 register-bound at 2-3, above the plan's 2 CTAs an SM).
+  The other candidates, each compiled: a lower register cap (`MinBlocks` 3, 168) forces spills
+  under a 192-register live set; D warps alone still spilled 136 B on sm_80/86/89; Q in shared
+  memory with the dropped rows alone still spilled 64 B on sm_86/89 and 40-96 B on sm_75, since
+  the m16n8k16 accumulator is a 4-register tuple and dropping its rows frees no registers; O in
+  shared memory adds a 32 KB read-modify-write a tile. After (ptxas, all 32 GroupedDecode
+  variants): no stack, no LDL/STL on sm_75/80/86/89/90/100/120a; 154-158 registers on sm_75,
+  122-223 on sm_80/86/89, 127-132 on sm_90, 168-184 on sm_100/120a. Every other kernel of the
+  translation unit compiles to the same SASS. The kept rows' bits are those of master: the same
+  operands, MMAs and order (an MMA row's sums read only that row of A).
+- Prediction (frozen 2026-11-13), Qwen3.5-9B, 21,961 keys, one layer (89.95 MB of KV), the call's
+  KV term; DRAM from `gpu_facts.json`:
+
+  | card | DRAM GB/s | master | predicted | gain | source |
+  |---|---|---|---|---|---|
+  | RTX 3090 | 936 | 192 us | 107-120 us | 1.6-1.8x | 154.6 -> 90 MB at ncu's 805 GB/s |
+  | RTX 3060 | 360 | 503 us | 272-293 us | 1.72-1.85x | INT8's 91.8 % share .. the 3090's byte ratio |
+  | RTX 2080 Ti | 616 | 351 us | 280-335 us | 1.05-1.25x | DRAM bytes unchanged; tile compute 0.75-0.85x |
+  | RTX 4070 Ti | 504 | 203 us | 197-206 us | 0.99-1.03x | DRAM bytes unchanged (spill in L2) |
+  | RTX 4090 | 1008 | 97 us | 94-99 us | 0.98-1.03x | no spill reached DRAM |
+  | RTX 5070 Ti | 896 | 118 us | 115-122 us | 0.97-1.03x | no spill before |
+  | RTX 5090 | 1792 | not run | +-3 % | 0.97-1.03x | no spill before |
+
+  The 2080 Ti's 1.49x of #853 (INT8's share) is not predicted by this change: with one CTA an SM
+  a tile's load and compute are serial; it needs a second CTA an SM or a second K/V stage.
+- Prototype: `ninferno_kv_decode_attention_bench --codec bf16` (#862) on each card, master
+  against the branch; ncu of the 3090 call for its DRAM bytes.
+- Cost: none beyond the instance: no plan, split or price change. Once measured, the ga10x BF16
+  rows of `kKvSmRate` (#861) become a read factor of about 1.0.
+- Acceptance / refutation (frozen): the bench's read rate (the slope), ABBA, master against the
+  branch.
+  - RTX 3090 and RTX 3060: at least 1.35x. Refuted below it, or when ncu reads more than 1.05x the
+    KV bytes a call.
+  - RTX 2080 Ti: at least 1.025x. Over 1.25x is a finding: the tile's compute term was wrong.
+  - RTX 4070 Ti, 4090, 5070 Ti, 5090: within 0.97-1.03x.
+  - Bytes: `ninferno_softmax_attention_bf16_test` passes, and BF16 decode outputs are
+    bit-identical to master.
+- A/B: not run.
+- Decision: open.
