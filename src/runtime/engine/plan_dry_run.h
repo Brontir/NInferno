@@ -384,8 +384,8 @@ struct PlanModelFacts {
     models::StateShape state;
     // The parsed directory of the artifact the facts are read from (plan_facts_of_directory, a
     // Qwen 3.5, dense decoder or NemotronH artifact's), null for any other source: what the
-    // family's workspace query binds
-    // the model over, as a start binds it (#615; its payload is never read). Shared: facts copy.
+    // family's workspace query binds the model over, as a start binds it (#615; its payload is
+    // never read). Shared: facts copy.
     std::shared_ptr<const artifact::Directory> artifact_directory;
     // The ids the artifact's tokenizer makes public (a start's public_token_count: the sampler's
     // domain, the bound of an indexed proposal head), read from its resources when the facts come

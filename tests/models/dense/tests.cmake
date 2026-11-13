@@ -14,6 +14,10 @@ ninferno_add_test(ninferno_decoder_plan_workspace_test LABELS host
     ninferno::json)
 target_include_directories(ninferno_decoder_plan_workspace_test PRIVATE
   ${PROJECT_SOURCE_DIR}/src)
+# With every CUDA device hidden, as the W4 plan tests run: a device read the substitute does not
+# answer throws.
+set_tests_properties(ninferno_decoder_plan_workspace_test PROPERTIES
+  ENVIRONMENT CUDA_VISIBLE_DEVICES=-1)
 
 # The same against a real start (#615 W3): one dense_decoder, one moe_decoder and one nemotron_h
 # artifact loaded as ninferno-serve loads them; the start's planned arena equals --plan's workspace
