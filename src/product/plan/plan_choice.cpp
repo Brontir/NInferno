@@ -90,7 +90,8 @@ Json estimates_json(const choice::Scored& s, const EstimateContext& ctx) {
                 {"kld", round_to(s.accuracy.kld, 5)},
                 {"kld_terms", terms},
                 {"worth", round_to(s.worth, 4)}};
-    // Why the speed is Transferred where a rule names it ("MoE route not queried", #766).
+    // Why the speed is Transferred where a rule names it ("MoE route not queried", #766; "MoE route
+    // not answered"; "MoE banks assumed", #784).
     if (!s.speed.why.empty()) { out["speed_why"] = std::string(s.speed.why); }
     // The decision's own price: the request mix on the reference card (null without one), what it
     // rests on, and the width the resolution rule weighed it at (0: not weighed).

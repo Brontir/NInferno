@@ -1587,6 +1587,19 @@ void moe_step_reads_the_route(const json& fixture) {
                   "MoE step: an unmeasured pair past one row is transferred (" + at + ")");
             check(rows > 1 || (r.basis == a.basis && x.basis == a.basis),
                   "MoE step: one row reads at kDramEta on every pair (" + at + ")");
+            // Banks whose kept format the file does not tell (Gemma 4's GGUF MXFP4 experts,
+            // #784): the same price, Transferred at every row and named, whether a route was
+            // answered or none was asked (a row known by its label: no layers to ask about).
+            ch::QuantOption assumed_q      = q;
+            assumed_q.expert_banks_assumed = true;
+            const ch::Speed s  = ch::speed_of(measured, card, assumed_q, c, rows, 1536, 0);
+            const ch::Speed sp = ch::speed_of(plain, card, assumed_q, c, rows, 1536, 0);
+            check(s.decode_per_stream == b.decode_per_stream &&
+                      sp.decode_per_stream == a.decode_per_stream,
+                  "MoE step: assumed banks keep the price (" + at + ")");
+            check(s.basis == ch::SpeedBasis::Transferred && s.why == "MoE banks assumed" &&
+                      sp.basis == ch::SpeedBasis::Transferred && sp.why == "MoE banks assumed",
+                  "MoE step: assumed banks are transferred and named (" + at + ")");
         }
     }
     check(lifts >= 3, "MoE step: the Own steps of several rows are the measured pair's alone");
