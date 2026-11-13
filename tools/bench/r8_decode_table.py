@@ -11,7 +11,10 @@ least --min-gain in the median and is faster in every sweep, and every schedule 
 without a table) is read by its "picked" mark, which then is the rules' choice.
 
 The add epilogue has no entries of its own: the engine looks an add call up as a store call. An add
-row stands for its store problem only where the sweep has no store row of that problem.
+row stands for its store problem only where the sweep has no store row of that problem. Where it has
+both, the add row checks the store entry: an entry is written only where its schedule also wins on
+the add call, in the median and in every sweep that timed both (a model step runs its down
+projection as an add call); r8_sweep_summary.py reports the same check.
 
 --merge HEADER keeps HEADER's entries (another format family's sweeps, another GPU's) for every
 problem the given sweeps of that GPU did not measure; a measured problem takes the new verdict.
@@ -138,15 +141,21 @@ def read_run(path, gpu):
     if not times:
         sys.exit(f"{path}: no T = 1 R8 schedule line (a sweep of another output format?)")
     base = rules if rules else picked
-    # An add row stands for its store problem where the sweep has no store row of it.
-    run, run_base = {}, {}
+    # An add row stands for its store problem where the sweep has no store row of it. Where it has
+    # both, the add row is the store entry's check (adds): a model step runs its down projection
+    # as an add call, which looks the store entry up.
+    run, run_base, adds = {}, {}, {}
     for key in sorted(times, key=lambda k: k[1] == "add"):
         fmt, epi, n, k = key
         target = (fmt, "store" if epi == "add" else epi, n, k)
-        if target in run or key not in base:
+        if key not in base:
+            continue
+        if target in run:
+            if epi == "add":
+                adds[target] = (times[key], base[key])
             continue
         run[target], run_base[target] = times[key], base[key]
-    return run, run_base, board
+    return run, run_base, board, adds
 
 
 def read_header(path):
@@ -176,7 +185,7 @@ def measured_keys(paths, gpu):
     """Every (qtype, epilogue, n, k) the sweeps timed, in the header's spelling."""
     keys = set()
     for path in paths:
-        run, _, _ = read_run(path, gpu)
+        run, _, _, _ = read_run(path, gpu)
         for fmt, epi, n, k in run:
             if fmt in QTYPES:
                 keys.add((QTYPES[fmt], EPILOGUES[epi], n, k))
@@ -184,10 +193,11 @@ def measured_keys(paths, gpu):
 
 
 def entries_for(gpu, paths, min_gain):
-    runs, base = [], {}
+    runs, base, add_runs = [], {}, []
     for path in paths:
-        run, run_base, _ = read_run(path, gpu)
+        run, run_base, _, adds = read_run(path, gpu)
         runs.append(run)
+        add_runs.append(adds)
         for key, value in run_base.items():
             if base.setdefault(key, value) != value:
                 sys.exit(f"{path}: another rules choice for {key}")
@@ -202,8 +212,29 @@ def entries_for(gpu, paths, min_gain):
             continue
         if not all(r[key][best] < r[key][rule] for r in runs):
             continue
+        if not add_check_holds(key, best, add_runs):
+            continue
         out.append((key, best, median[best], rule, median[rule]))
     return out
+
+
+def add_check_holds(key, best, add_runs):
+    """A store entry stays only where its schedule also wins on the add call, in the median and in
+    every sweep that timed both (r8_sweep_summary.py's add check, as a filter, not a report). A
+    problem whose add call no sweep timed rests on store alone."""
+    timed = [adds[key] for adds in add_runs if key in adds]
+    if not timed:
+        return True
+    rule = timed[0][1]
+    if any(t[1] != rule for t in timed):
+        sys.exit(f"{key}: another add rules choice in another sweep")
+    if best == rule:
+        return True
+    pairs = [(t[0][best], t[0][rule]) for t in timed if best in t[0] and rule in t[0]]
+    if not pairs:
+        return False  # the add call was swept, but not at both schedules: not shown to win
+    return (statistics.median(b for b, _ in pairs) < statistics.median(r for _, r in pairs)
+            and all(b < r for b, r in pairs))
 
 
 def table_name(gpu):

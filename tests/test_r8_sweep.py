@@ -56,12 +56,13 @@ class Reader(unittest.TestCase):
 
     def test_current_format_rows_and_entry(self):
         paths = self.files([sweep(45.00), sweep(45.30), sweep(44.90)])
-        run, base, board = tool.read_run(paths[0], "ad102:128sm")
+        run, base, board, adds = tool.read_run(paths[0], "ad102:128sm")
         key = ("q6k", "store", 4096, 12288)
         self.assertEqual(board, "0x2684")
         self.assertEqual(base[key], (8, 2))
         self.assertEqual(sorted(run[key]), [(4, 1), (4, 2), (8, 1), (8, 2)])
         self.assertEqual(run[key][(8, 1)], 45.00)  # the t=2 row did not overwrite it
+        self.assertEqual(adds[key][1], (8, 2))  # the add row checks the store entry
         entries = tool.entries_for("ad102:128sm", paths, 0.005)
         self.assertEqual([(e[0], e[1]) for e in entries], [(key, (8, 1))])
 
@@ -95,6 +96,22 @@ class Reader(unittest.TestCase):
         text = self.summarize(paths)
         self.assertIn("- q6k 4096x12288: store entry w8r1; add w8r2 48.70 -> w8r1 49.00 us "
                       "(+0.30, faster in every sweep: no): DROP (slower on the add call)", text)
+
+    def test_table_drops_an_entry_slower_on_the_add_call(self):
+        # The generator applies the add check the summary reports (codex on #874): w8r1 wins the
+        # store call but not the add call, so no entry is written.
+        paths = self.files([sweep(45.50, add_w8r1=49.0), sweep(45.60, add_w8r1=49.1),
+                            sweep(45.40, add_w8r1=48.9)])
+        self.assertEqual(tool.entries_for("ad102:128sm", paths, 0.005), [])
+
+    def test_add_check_needs_every_sweep(self):
+        # Faster on the add call in the median (47.0 < 48.7) but not in the third sweep (48.8):
+        # the summary drops it and the generator writes no entry.
+        paths = self.files([sweep(45.50, add_w8r1=47.0), sweep(45.60, add_w8r1=46.9),
+                            sweep(45.40, add_w8r1=48.8)])
+        self.assertEqual(tool.entries_for("ad102:128sm", paths, 0.005), [])
+        self.assertIn("faster in every sweep: no): DROP (faster in the median, not in every sweep)",
+                      self.summarize(paths))
 
     def test_summary_verdicts(self):
         paths = self.files([sweep(45.50), sweep(45.60), sweep(45.40)])

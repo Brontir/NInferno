@@ -112,10 +112,13 @@ def add_check(problems, entries, median):
             continue
         d = t_best - t_rule
         every = all(r[best] < r[rule] for r in problems[key]["runs"] if best in r and rule in r)
+        # The same rule r8_decode_table.py applies when it writes the table (add_check_holds).
         if best == rule:
             verdict = "keep (the add call's rules already pick it)"
-        elif d < 0:
+        elif d < 0 and every:
             verdict = "keep"
+        elif d < 0:
+            verdict = "DROP (faster in the median, not in every sweep)"
         else:
             verdict = "DROP (slower on the add call)"
         print(f"- {fmt} {n}x{k}: store entry {name(best)}; add {name(rule)} {t_rule:.2f} -> "
