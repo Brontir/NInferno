@@ -317,8 +317,10 @@ def gemma4_key(demangled):
     for name, kind in (("gemma4_volta_decode_tiled_kernel", "volta_tiled"),
                        ("gemma4_volta_decode_kernel", "volta")):
         head = "void " + GEMMA4_NAMESPACE + "detail::(anonymousnamespace)::" + name + "<"
-        args = template_args(demangled.replace("(anonymous namespace)", "(anonymousnamespace)"),
-                             head)
+        # cu++filt spells the anonymous namespace "<unnamed>"; other demanglers
+        # "(anonymous namespace)".
+        unnamed = demangled.replace("(anonymous namespace)", "(anonymousnamespace)")
+        args = template_args(unnamed.replace("<unnamed>", "(anonymousnamespace)"), head)
         if args is None:
             continue
         if len(args) != 2 or not all(re.fullmatch(r"\d+", a) for a in args):

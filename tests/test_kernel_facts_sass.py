@@ -889,6 +889,9 @@ class Sections(unittest.TestCase):
         self.assertEqual(kernel_facts.gemma4_key(volta), ("volta_tiled", 128, 0, 0, 16, 0, 0, 0, 0))
         self.assertEqual(kernel_facts.gemma4_key(volta.replace("_tiled", "")),
                          ("volta", 128, 0, 0, 16, 0, 0, 0, 0))
+        # cu++filt's spelling of the anonymous namespace (the snapshots are made with it).
+        self.assertEqual(kernel_facts.gemma4_key(volta.replace("(anonymous namespace)", "<unnamed>")),
+                         ("volta_tiled", 128, 0, 0, 16, 0, 0, 0, 0))
         self.assertIsNone(kernel_facts.gemma4_key(
             "void ninferno::ops::gemma4_attention_combine_kernel<ninferno::ops::Gemma4Geometry<"
             "(int)256, (int)8, (int)256>, (int)64>(ninferno::ops::Gemma4CombineArgs)"))
