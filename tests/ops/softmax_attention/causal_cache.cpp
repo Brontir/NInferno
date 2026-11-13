@@ -2752,6 +2752,13 @@ int run_nvfp4_slab_cases(DeviceExecutionView execution) {
                 failures +=
                     run_a1_case(partitioned, geometry, storage,
                                 {width, 1001, 1001u + width, seed++}, MappingPattern::Fragmented);
+            // W = 2 (eight rows, the MTP verify width at four query heads per KV head) on both
+            // sides of the warps' 128 keys and of 1024.
+            if (widest == 2)
+                for (const int base : {127, 128, 1023, 1024})
+                    failures += run_a3_case(partitioned, geometry, storage,
+                                            {2, base, static_cast<std::uint32_t>(base + 2), seed++},
+                                            MappingPattern::Fragmented);
         }
     }
     // The census depths on the RTX 5090's partition: 42 splits of 32-33 slabs over four KV heads.
