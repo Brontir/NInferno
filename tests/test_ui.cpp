@@ -1021,6 +1021,80 @@ void test_catalog() {
     check(!e.recommended && !e.preferred.has_value(), "8 GB: 35B does not fit");
 }
 
+#ifndef _WIN32
+// #843: the plan of a local artifact is ninferno-serve's own (--plan --no-load --plan-idle, its
+// workspace the start's planner's), with the ask's flags and the GPU bound; the in-process plan
+// only when serve gives no document.
+void test_artifact_plan_via_serve() {
+    namespace fs = std::filesystem;
+    const auto root =
+        fs::temp_directory_path() / ("ninferno_ui_serve_plan_" + std::to_string(::getpid()));
+    fs::remove_all(root);
+    const auto commit = root / "hub/models--org--m/ninferno" / std::string(40, 'c');
+    fs::create_directories(commit);
+    const fs::path artifact = commit / "m.dense_bf16.ninferno";
+    std::ofstream(artifact) << "x";
+    const fs::path args = root / "args.txt";
+    const auto script   = [&](const fs::path& path, const std::string& body) {
+        std::ofstream(path) << "#!/bin/sh\nprintf '%s\\n' \"$@\" \"gpu=$CUDA_VISIBLE_DEVICES\" > '"
+                            << args.string() << "'\n"
+                            << body;
+        fs::permissions(path, fs::perms::owner_all);
+    };
+    // A plan that does not fit (exit 2) still prints its document; a log line on stderr beside it.
+    script(root / "serve-plan",
+           "echo 'note | a line on stderr' >&2\n"
+           "printf '{\\n \"schema\": \"ninferno-dry-plan/1\",\\n \"source\": \"serve\",\\n"
+           " \"now\": {\\n  \"fits\": false\\n }\\n}\\n'\nexit 2\n");
+    script(root / "serve-refuses", "echo 'error: no' >&2\nexit 1\n");
+
+    struct NoGpu final : GpuSource {
+        std::vector<GpuStat> snapshot() override { return {}; }
+
+        std::string error() const override { return {}; }
+    };
+    const auto plan = [&](const fs::path& serve, const std::string& extra) {
+        UiOptions options;
+        options.offline      = true;
+        options.serve_binary = serve;
+        options.hub_cache    = root / "hub";
+        App app(options, std::make_unique<NoGpu>());
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        httplib::Client client("127.0.0.1", port);
+        auto res = client.Get("/api/plan?gpu=0&par=2&ctx=8192" + extra + "&artifact=" +
+                              httplib::encode_query_param(artifact.string()));
+        std::pair<int, std::string> out{res ? res->status : 0, res ? res->body : ""};
+        server.stop();
+        thread.join();
+        return out;
+    };
+    auto [status, body] = plan(root / "serve-plan", "&precision=exact");
+    check(status == 200, "the plan of a local artifact answers: " + body);
+    const auto doc = nlohmann::json::parse(body, nullptr, false);
+    check(doc.is_object() && doc.value("source", "") == "serve" && doc.contains("now"),
+          "it is serve's document, its \"now\" with it");
+    std::ifstream in(args);
+    std::vector<std::string> argv;
+    for (std::string line; std::getline(in, line);) { argv.push_back(line); }
+    const std::vector<std::string> want = {
+        artifact.string(), "--plan",  "--no-load",     "--plan-idle", "--json",
+        "--log-level",     "off",     "--max-concurrency", "2",       "--max-context",
+        "8192",            "--kv-dtype", "bf16",       "--activations", "exact",
+        "--spec",          "auto",    "gpu=0"};
+    check(argv == want, "serve plans the ask a start passes, on the GPU asked for");
+
+    // serve refuses: the in-process plan answers (here: no GPU 0 to plan for).
+    std::tie(status, body) = plan(root / "serve-refuses", "");
+    check(status == 502 && body.find("no GPU 0") != std::string::npos,
+          "no document from serve: the plan here answers: " + body);
+    fs::remove_all(root);
+}
+#endif
+
 #ifdef _WIN32
 // The children of test_processes on Windows, as the /bin/sh lines print them on Linux: "prepare"
 // writes serve's lines and a download's progress and exits 3; "serve" runs until Ctrl+Break
@@ -1489,6 +1563,9 @@ int main(int argc, char** argv) {
     test_processes(ninferno::sys::self_exe().string());
     test_http();
     test_delete_options();
+#ifndef _WIN32
+    test_artifact_plan_via_serve();
+#endif
     if (failures != 0) {
         std::cerr << failures << " ui check(s) failed" << std::endl;
         return 1;

@@ -232,10 +232,16 @@ private:
     nlohmann::json quants_json(const std::string& repo, int gpu,
                                const std::string& hub           = "huggingface",
                                const product::LaunchAsk& launch = {});
-    // The plan of a model converted here (My models), as its start plans it
-    // (product::plan_artifact).
+    // The plan of a model converted here (My models), as its start plans it: ninferno-serve
+    // <artifact> --plan --no-load --plan-idle --json on that GPU, whose workspace is the start's
+    // own planner's (the Ops' queries this binary does not link, #843); product::plan_artifact
+    // here when that binary does not answer.
     nlohmann::json artifact_plan_json(const std::filesystem::path& artifact, int gpu,
                                       const product::LaunchAsk& launch);
+    // ninferno-serve's plan of `artifact` on GPU `gpu`, nullopt when it gives none (no binary, a
+    // refusal, no "ninferno-dry-plan/1" document on its output).
+    std::optional<nlohmann::json> serve_plan_json(const std::filesystem::path& artifact, int gpu,
+                                                  const product::LaunchAsk& launch);
     // The plan without the weights of a repository's quantization (all of them when `quant` is
     // empty, with the largest that fits) on GPU `gpu` for what a launch asks: the
     // "ninferno-dry-plan/1" document (product/plan/plan_quants.h), as ninferno-serve <repo> --plan
@@ -339,6 +345,9 @@ private:
     UiOptions options_;
     std::unique_ptr<GpuSource> gpus_;
     ProcessPool processes_;
+    // ninferno-serve --plan runs (artifact_plan_json): not the page's processes, every line of
+    // the JSON document kept.
+    ProcessPool planner_{std::size_t{1} << 20};
     std::unique_ptr<httplib::Server> server_;
     mutable std::mutex sizes_mutex_;
     // Which Hugging Face token the caches below hold answers for (under sizes_mutex_): a new one

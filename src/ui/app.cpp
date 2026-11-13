@@ -996,7 +996,91 @@ std::optional<std::uint64_t> free_now_of(const std::vector<GpuStat>& stats, int 
 
 } // namespace
 
+std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
+                                         const product::LaunchAsk& launch) {
+    std::error_code ec;
+    if (options_.serve_binary.empty() || !fs::is_regular_file(options_.serve_binary, ec)) {
+        return std::nullopt;
+    }
+    LaunchSpec spec;
+    spec.kind  = "plan";
+    spec.model = artifact.string();
+    spec.gpu   = gpu;
+    spec.argv  = {options_.serve_binary.string(),
+                  artifact.string(),
+                  "--plan",
+                  "--no-load",
+                  "--plan-idle",
+                  "--json",
+                  "--log-level",
+                  "off",
+                  "--max-concurrency",
+                  std::to_string(launch.max_concurrency == 0 ? 1U : launch.max_concurrency)};
+    // The ask as a start of it passes it (make_launch; product::launch_options plans the same).
+    if (launch.max_context > 0) {
+        spec.argv.push_back("--max-context");
+        spec.argv.push_back(std::to_string(launch.max_context));
+    }
+    const std::string kv = launch.kv_dtype == "auto" ? std::string() : launch.kv_dtype;
+    if (!kv.empty() || launch.exact) {
+        spec.argv.push_back("--kv-dtype");
+        spec.argv.push_back(kv.empty() ? "bf16" : kv);
+    }
+    if (launch.activations_pinned()) {
+        spec.argv.push_back("--activations");
+        spec.argv.push_back(launch.exact ? "exact" : launch.activations);
+    }
+    spec.argv.push_back("--spec");
+    spec.argv.push_back(launch.spec.empty() ? "auto" : launch.spec);
+    const auto stats    = gpus_->snapshot();
+    const GpuStat* stat = nullptr;
+    for (const auto& s : stats) {
+        if (s.index == gpu) { stat = &s; }
+    }
+    if (gpu >= 0) { bind_gpu(spec, gpu, stat); }
+    if (!options_.hub_cache.empty()) { spec.env["HF_HUB_CACHE"] = options_.hub_cache.string(); }
+
+    std::uint64_t id = 0;
+    try {
+        id = planner_.start(std::move(spec));
+    } catch (const std::exception&) { return std::nullopt; }
+    // A plan reads the artifact's header and tokenizer and the device: seconds, not minutes.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+    ProcessInfo info;
+    bool timed_out = false;
+    while (planner_.find(id, info) && info.state != "exited" && info.state != "failed") {
+        if (std::chrono::steady_clock::now() > deadline) {
+            timed_out = true;
+            planner_.stop(id, std::chrono::seconds(2));
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    // The pool marks a child ended only after its output is read to the end (read_loop).
+    const bool ended = planner_.find(id, info) && (info.state == "exited" || info.state == "failed");
+    const std::vector<std::string> lines = planner_.log(id);
+    // Another request's run still being read is younger than this.
+    planner_.forget_ended(std::chrono::seconds(60));
+    // Exit 0: the plan fits, 2: it does not; both print the document (apps/serve/main.cpp).
+    if (timed_out || !ended || (info.exit_code != 0 && info.exit_code != 2)) { return std::nullopt; }
+    // stdout and stderr share the pipe: the document is the lines from its "{" to its "}".
+    const auto first = std::find(lines.begin(), lines.end(), "{");
+    const auto last  = std::find(lines.rbegin(), lines.rend(), "}");
+    if (first == lines.end() || last == lines.rend() || last.base() <= first) {
+        return std::nullopt;
+    }
+    std::string text;
+    for (auto it = first; it != last.base(); ++it) { text += *it + '\n'; }
+    Json doc = Json::parse(text, nullptr, false);
+    if (!doc.is_object() || doc.value("schema", std::string()) != "ninferno-dry-plan/1") {
+        return std::nullopt;
+    }
+    return doc;
+}
+
 Json App::artifact_plan_json(const fs::path& artifact, int gpu, const product::LaunchAsk& launch) {
+    // The start's own plan when its binary answers (#843): its workspace is the start's planner's.
+    if (auto doc = serve_plan_json(artifact, gpu, launch)) { return std::move(*doc); }
     const auto stats  = gpus_->snapshot();
     const auto device = plan_device(stats, gpu);
     if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
