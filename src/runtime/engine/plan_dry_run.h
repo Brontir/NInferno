@@ -417,9 +417,10 @@ struct PlanDeviceFacts {
     int cuda_device = -1;
 };
 
-// The device class the plan reads for a board known by its facts (#829): the chip from the PCI id
-// or the SM count, the architecture's limits, the board table's facts, no L2 size or driver
-// clocks, the architecture's features not intersected with this build's. What a named board's
+// The device class the plan reads for a board known by its facts (#829): core's board_class with
+// an empty driver view, so the chip from the PCI id or the SM count, the architecture's limits,
+// the board table's facts, no L2 size or driver clocks, the architecture's features not
+// intersected with this build's. What a named board's
 // rung sizing (dry_run_plan), its speculation key (product::gpu_key_of) and its MoE routes
 // (register_plan_moe_route_query) read; a rule that reads what the class leaves out can answer
 // otherwise than on the real card.

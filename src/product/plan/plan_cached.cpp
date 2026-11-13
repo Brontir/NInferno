@@ -202,7 +202,10 @@ std::optional<GgufTensorTable> read_tensor_table(const fs::path& path) {
                                .expert_prefill_assumed = facts.model.expert_prefill_assumed,
                                .weight_formats         = facts.shape.weight_formats,
                                .layer_formats          = facts.shape.layer_formats,
-                               .rest_layer_formats     = facts.shape.rest_layer_formats};
+                               .rest_layer_formats     = facts.shape.rest_layer_formats,
+                               .expert_up_formats      = facts.model.expert_up_formats,
+                               .expert_down_formats    = facts.model.expert_down_formats,
+                               .head_format            = facts.model.head_format};
     } catch (const std::exception&) { return std::nullopt; }
 }
 

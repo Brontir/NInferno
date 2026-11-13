@@ -261,6 +261,9 @@ const std::vector<Spec>& specs() {
              "kQuantKldSource",
              "kQuantKldCards",
              "kQuantKld",
+             // a measurement of answers against KLD (configuration-choice.md, #618 step 11): data
+             // a caller shows, never a decision's, not fitted
+             "kAnswerScales",
              // the benchmark's request mix and the trade (DECISIONS 73: declared conventions)
              "kRequestPrompt",
              "kRequestAnswer",
@@ -276,6 +279,12 @@ const std::vector<Spec>& specs() {
              "kTransferredDecodeError",
              "largest_transferred_decode_error",
              "kUnmeasuredCarryDecodeError",
+             // derived, not fitted (#618 step 11): the rms and worst of the prefill estimate over
+             // prefill_measured.json's rows, recomputed by ninferno_choice_test, and the shortest
+             // and longest prompt of those rows; shown, never a decision's
+             "kPrefillPredictionError",
+             "kPrefillErrorFromPrompt",
+             "kPrefillErrorToPrompt",
              "kReferenceCards",
              "kWorthTie",
              // names of an enum's values, no number
@@ -283,16 +292,23 @@ const std::vector<Spec>& specs() {
              "axis_name",
          }},
         // The row's identity; the rates are whitepaper facts except the emulated BF16 aggregate
-        // (recorded); the tensor core's kind (full-rate FP32-accumulate HMMA) is a chip fact.
+        // (recorded); the tensor core's kind (full-rate FP32-accumulate HMMA) is a chip fact; a
+        // lent row (Hopper, GB100) lends another generation's rates and carries no evidence.
         {fit::kGeneration,
          Mode::RowFields,
          {"major", "minor_lo", "minor_hi", "name", "s8", "fp32acc_full_rate",
-          "fp32_fma"}}, // the FP32 FMA issue rate: the Programming Guide's throughput table
+          "fp32_fma", // the FP32 FMA issue rate: the Programming Guide's throughput table
+          "lent"}},   // no board of the generation in the lab: a flag, no number
         {fit::kCostConstants,
          Mode::Definitions,
          {"kDp4aOpsPerSmClock",    // a chip fact
           "launch_node_seconds"}}, // a lookup of kLaunchNode (recorded)
-        {fit::kRoundCost, Mode::Definitions, {"kPricedVerifyRows"}}, // a bound, not a fit
+        {fit::kRoundCost,
+         Mode::Definitions,
+         {"kPricedVerifyRows",   // a bound, not a fit
+          "kPricedStreams",      // the same bound, as stream counts
+          "kVerifyTokenTile",    // a chip fact: mma.sync's n of 8 tokens
+          "kVerifyColumnRows"}}, // counted: the register MMA's widest token column, 8 tiles
         {fit::kMoeShare, Mode::Definitions, {}},
         {fit::kWave,
          Mode::Definitions,

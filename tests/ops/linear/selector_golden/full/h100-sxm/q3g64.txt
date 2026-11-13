@@ -248,8 +248,7 @@ q3g64 p1 swiglu 1024x1024 speed T=2..16 rmma.m1.n1.w1x8.c2 ws=0
 q3g64 p1 swiglu 1024x1024 speed T=17..32 rmma.m1.n1.w1x8 ws=0
 q3g64 p1 swiglu 1024x1024 speed T=48..64 rmma.m1.n1.w1x4 ws=0
 q3g64 p1 swiglu 1024x1024 speed T=96..192 rmma.m1.n2.w1x4 ws=0
-q3g64 p1 swiglu 1024x1024 speed T=256 w4a8.64x64 ws=327680
-q3g64 p1 swiglu 1024x1024 speed T=512 tiled.64x128 ws=0
+q3g64 p1 swiglu 1024x1024 speed T=256..512 tiled.64x128 ws=0
 q3g64 p1 swiglu 1024x1024 speed T=1024..2048 tiled.128x128 ws=0
 q3g64 p1 swiglu 1024x1024 prefill T=17 w4a8.32x128 ws=21888
 q3g64 p1 swiglu 1024x1024 prefill T=24 w4a8.32x128 ws=30720

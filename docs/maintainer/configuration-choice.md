@@ -87,11 +87,11 @@ choice falls back and says why. `choice_constants.h` holds the gates:
 
 | Gate | Holds | Closed: what stands |
 |---|---|---|
-| `kReferenceCards` row's `kv_two_cards`, `exact_two_cards` | the generation's KV read and exact-route factors | the family's defaults |
+| `kReferenceCards` row's `kv_two_cards`, `exact_two_cards`; each `kKvReadFactor` and `kKvSmRate` row's `cards` (`kv_decides`) | the generation's KV read factors (the KV codec, each codec by its own row) and exact-route factor (the activations) | the family's defaults; under `kv_two_cards` alone the KV codec is decided and the activations stay `fast`, and a codec whose own row rests on one card (or is carried from Ada) stays only as the default or a pin |
 | each `kKldTerms` row's `cards`, `kQuantKldCards` (`accuracy_decides`) | the KV codecs' and the int8 activations' terms (model constants, or a generation's own row), the quantization curve | the quant rule's largest and the family's defaults (automatic KV codec, `--activations fast`) |
 | `KldTerm::family`, `kQuantKldFamily` | the families the switches' terms (Qwen 3.5 dense and MoE; dense decoders: FP8 KV and fast, Qwen3-8B on two Ada cards and a Blackwell one) and the quantization curve (Qwen 3.5 dense) were measured on | another family (Gemma 4, gpt-oss, Nemotron-H) keeps its defaults; a family with switch terms but no curve (Qwen 3.5 MoE, dense decoders) keeps the quant rule's largest |
 | `kMoeChunkTwoCards` | the MoE chunk shares | the default chunk (1024) |
-| `Gates::typed_resolution` (default true), `kDecodePredictionError` (`cards`), `kTransferredDecodeError` (`cards`, `card`) | the resolution of a comparison the resolution rule weighs (the best worth against a candidate), typed by the wider of the two estimates' bases (`resolution_of(board, estimates)`, #618; each candidate's `Scored::decision_basis` on the reference card): `own` where both are Own and the board's generation has a `kDecodePredictionError` row (Ada, Blackwell gb20x); `transferred` where either is Transferred: the generation's `kTransferredDecodeError` row where it has one (ga10x, Turing, Volta: Ada's rows carried onto it), else (a generation with its own error, an estimate on a weight class or a row not measured on two of its cards) the largest measured carry, assumed; `unmeasured`, the same assumed number (`kUnmeasuredCarryDecodeError`, a label, not a bound), for lent estimates (a compute capability with no generation row) and for a known generation with neither row (ga100, Hopper, gb100, Thor). It is never narrower than the Own band its estimates rest on or are carried from. A band decides (`Resolution::decides`) only on a row of two or more lab cards: Ada's own rests on three, gb20x's on two, each carry on one (RTX 3060, RTX 2080 Ti, Quadro GV100: one board's residual, the basis of a `route_rules.h` `ScaledFromOneBoard` rule), the assumed number on none. A comparison whose band does not decide is resolved at its Own floor (`Resolution::floor`, `resolution_width`; `Scored::weighed_at` records the width each candidate was weighed at), never beyond: widening alone would not be conservative (a wider band lets a slower, more accurate candidate displace the best worth, up to 72 % slower at the largest carry), and falling back to the best worth would let a one-card point estimate decide below the floor, within which the estimates are indistinguishable. A moved pick is never dominated on both axes by an eligible candidate. `Choice::resolution` and `resolution_basis` report the best worth's own band, `resolution_decides` whether it decides at full width, `resolution_floor` its floor; the worth still ranks by point estimates. `choose()` sets it only when `reference_of()` finds a reference card (`kReferenceCards` holds Ada only; a compute capability with no generation row is given a lent one). So the served `resolution_basis` is `own` (0.0226) or, where the best worth reads a one-card Ada row or an unmeasured class, `transferred` (0.5447, not deciding: resolved at the 0.0226 floor) on Ada, `unmeasured` on a compute capability with no generation row, and `none` with resolution 0 on every other board, whatever its generation | closed (`false`, a test switch): the one number of the reference card's generation (`worth_band`: its `kDecodePredictionError`, 0 where it has none), basis `own` for a known generation, `transferred` for a lent one, weighing every comparison whatever its estimates rest on |
+| `Gates::typed_resolution` (default true), `kDecodePredictionError` (`cards`), `kTransferredDecodeError` (`cards`, `card`) | the resolution of a comparison the resolution rule weighs (the best worth against a candidate), typed by the wider of the two estimates' bases (`resolution_of(board, estimates)`, #618; each candidate's `Scored::decision_basis` on the reference card): `own` where both are Own and the board's generation has a `kDecodePredictionError` row (Ada, Blackwell gb20x); `transferred` where either is Transferred: the generation's `kTransferredDecodeError` row where it has one (ga10x, Turing, Volta: Ada's rows carried onto it), else (a generation with its own error, an estimate on a weight class or a row not measured on two of its cards) the largest measured carry, assumed; `unmeasured`, the same assumed number (`kUnmeasuredCarryDecodeError`, a label, not a bound), for lent estimates (a compute capability with no generation row) and for a known generation with neither row (ga100, Thor; Hopper and GB100 are lent rows). It is never narrower than the Own band its estimates rest on or are carried from. A band decides (`Resolution::decides`) only on a row of two or more lab cards: Ada's own rests on three, gb20x's on two, each carry on one (RTX 3060, RTX 2080 Ti, Quadro GV100: one board's residual, the basis of a `route_rules.h` `ScaledFromOneBoard` rule), the assumed number on none. A comparison whose band does not decide is resolved at its Own floor (`Resolution::floor`, `resolution_width`; `Scored::weighed_at` records the width each candidate was weighed at), never beyond: widening alone would not be conservative (a wider band lets a slower, more accurate candidate displace the best worth, up to 72 % slower at the largest carry), and falling back to the best worth would let a one-card point estimate decide below the floor, within which the estimates are indistinguishable. A moved pick is never dominated on both axes by an eligible candidate. `Choice::resolution` and `resolution_basis` report the best worth's own band, `resolution_decides` whether it decides at full width, `resolution_floor` its floor; the worth still ranks by point estimates. `choose()` sets it only when `reference_of()` finds a reference card (`kReferenceCards` holds Ada and Blackwell GB20x; a compute capability with no generation row is given a lent one). So the served `resolution_basis` is `own` (Ada 0.0226, GB20x 0.0170) or, where the best worth reads a one-card row, a carried row or an unmeasured class, `transferred` (0.5447, not deciding: resolved at the generation's Own floor) on Ada and GB20x, `unmeasured` on a compute capability with no generation row, and `none` with resolution 0 on every other board, whatever its generation | closed (`false`, a test switch): the one number of the reference card's generation (`worth_band`: its `kDecodePredictionError`, 0 where it has none), basis `own` for a known generation, `transferred` for a lent one, weighing every comparison whatever its estimates rest on |
 
 The switches' terms are per family: Qwen 3.5 MoE (Qwen3.6-35B-A3B) loses 3.4 times dense's KLD
 to INT8 KV (0.0033 against 0.00095) and more to fast (0.0049 against 0.0039), so one family's terms
@@ -108,7 +108,10 @@ overrides the constant where a generation's routes differ. The state's and the r
 price the candidates they follow (they are not decided), so they do not gate.
 
 Today Ada decides (its reference card's factors and every term above rest on two cards); Blackwell
-and Turing keep the family's defaults (their factors rest on one card). On Qwen3.5-9B Q4_K_M fast's
+GB20x decides the KV codec (its BF16, FP8 and K8V4 factors rest on the RTX 5070 Ti and 5090; NVFP4,
+whose SM rate the two cards read 6.4 % apart, stays the default or a pin) and keeps
+`--activations fast` (its exact-route cost is not the flops law kExactComputeEta prices, #851); Turing keeps the family's defaults (its
+factors rest on one card). On Qwen3.5-9B Q4_K_M fast's
 0.004 KLD is worth less than exact's time (+34 % on the RTX 4090's mixed workload; `lambda` 25 sets
 the break-even at 0.012): fast. The chunk shares rest on two Ada cards, so an MoE's chunk is decided
 on Ada too.
@@ -121,7 +124,16 @@ and a board's own facts feed only the estimates a caller shows. The reference ca
 where the KV read factors and the exact-route factor were measured on two lab cards of the
 generation (principle 4); elsewhere the family's defaults stand (the automatic KV codec,
 `--activations fast`), and the choice says so. Ada has them (RTX 4070 Ti and 4090: KV factors within
-6 %, exact within 20 %); Blackwell and Turing have one lab card each.
+6 %, exact within 20 %); Blackwell GB20x has the KV factors on two cards (RTX 5070 Ti and 5090,
+DECISIONS 82) but no exact-route factor; Turing has one lab card. A reference card decides only for
+the compute capability its lab cards share (DECISIONS 83): the GB10 (12.1) lies in gb20x's row,
+whose lab cards are 12.0, and keeps the family's defaults (gate `reference_other_capability`: the
+KV codec, the quantization by the rule, the drafter by the profile, and no MoE chunk decided there).
+Within one capability every board decides the same, even where its own DRAM bytes a SM-clock put a
+codec in another bound form than the reference card's (the L4, L40 and L40S read Qwen 3.5's NVFP4 KV
+DRAM-bound where Ada's reference card reads it SM-bound; the RTX 4060 and 4070 lie above the lab
+cards' span): the byte class reads no continuous fact (B1), and the estimate, priced on the board,
+shows the difference.
 
 **Auto's steps.** Each own-context step (`quant_own_targets`: min(native, 32K), 16K, 8K) is tried
 above the quality floor before any quantization below it. Where the worth decides, a narrower KV
@@ -186,9 +198,12 @@ streams, each the lab's sections averaged as the estimate averages a round; `Dra
 held to the least gain priced at a smaller count (the gain never climbs back as the load grows), and
 an entry whose bound or whose option is unmeasured supplies nothing (the estimate does not count the
 drafter there, and the plan says the same). The plan's `chosen.drafter_gain` names the supplying
-count and its scale, or says the gain is a ceiling. Reach, stated plainly: a count is priced only
-where `streams x (depth + 1) <= spec::kPricedVerifyRows` (8), so depth 3 or less at 2 streams, depth
-1 at 3 or 4 streams, nothing from 5 streams; and none of the registry's measured pairs carries a
+count and its scale, or says the gain is a ceiling. Reach, stated plainly: a count is priced at
+C = 2..`spec::kPricedVerifyRows` (8) streams where `streams x (depth + 1) <= spec::kVerifyColumnRows`
+(64), so any depth up to 7 at 8 streams. Within 8 verify rows (the measured range) a pass's
+operations are counted by its rows; past them at the rows its tiles compute
+(`spec::verify_tile_rows`: 16, 32 or 64, a column of 8-token MMA tiles; DECISIONS 81). A DFlash
+drafter's block (16 rows a stream) stays unpriced from 2 streams. None of the registry's measured pairs carries a
 load table, so a registry target's profile speculates for one request only and no `/api/plan` number
 changes for it today (`tests/test_spec_round_cost.cpp` pins this: the day a pair gets a load table
 the scan fails and the plans it prices are looked at). The price is taken at the asking card's own

@@ -37,7 +37,8 @@
 // workstation and inference parts (sm_75, sm_86, sm_89, sm_110, sm_120/121) run it at half rate,
 // a quarter of int8. Measured data does not carry between the two kinds (board_distance).
 // The fitted constants (ninferno_route_tune timings of the RTX 4090, 5090, 4060 Ti, L4, A10 and
-// A100, 18.10; the full-rate rows have one board, the A100):
+// A100, 18.10; the full-rate rows have one board, the A100, so only ga100's row holds them: the
+// hopper and gb100 rows hold 0, not fitted, and fitted_route_scales answers nullopt there):
 //   w4a8_eff_scale  the W4A8 tiles' fraction of the consumer fit's efficiency (A100 0.46)
 //   a16_cost_scale  the A16 model's factor against the A8 one (1.11; A100 1.64: with
 //                   the busy-SM fill it moves 0.89 -> 1.11, which also prices the dequant of the
@@ -73,7 +74,8 @@
 
 //
 // What a lent row carries (#300): generation_row answers every compute capability, lending the
-// newest (or the oldest) row to one the table does not know, so that the code runs there. Beside
+// newest (or the oldest) row to one the table does not know, so that the code runs there; a row
+// marked lent (Hopper, GB100: no board of their own) is such a row written out. Beside
 // the device's capability, which is not in this table, its fields are of four kinds, and only the
 // rates are lent:
 //   capability   what the device can execute: not in this table (DeviceFeatures, the query)
@@ -144,6 +146,10 @@ struct GenerationRow {
     // With mmq_work_tiles: the launch law that prices the widths instead of mmq_tile_fixed (null:
     // the tile law, ceil(columns / J) x step_share(J, mmq_tile_fixed)).
     const MmqLaunchLaw* mmq_launch_law = nullptr;
+    // A lent row (#300, #619 step 14): written for a generation with no board in the lab, it lends
+    // rates only, as generation_row's fallback does to a capability the table does not know;
+    // generation_known answers false for it, so its kind, fits and preferences are not read.
+    bool lent = false;
 };
 
 inline constexpr GenerationRow kGenerations[] = {
@@ -154,17 +160,26 @@ inline constexpr GenerationRow kGenerations[] = {
     {8, 0, 0, "ga100", 2048.0, 4096.0, 64.0, true, 0.46, 1.64, false},
     {8, 1, 8, "ga10x", 512.0, 2048.0, 128.0, false, 1.0, 1.11, true, false, true, 0.20},
     {8, 9, 9, "ada", 512.0, 2048.0, 128.0, false, 1.0, 1.11, true, false, true, 0.20},
-    {9, 0, 9, "hopper", 2048.0, 4096.0, 128.0, true, 0.46, 1.64, false},
-    {10, 0, 9, "gb100", 2048.0, 4096.0, 128.0, true, 0.46, 1.64, false},
+    // Lent rows: no board of either generation in the lab or the fit. They lend the A100's tensor
+    // rates (the nearest generation of the full-rate kind, not their own) and the FP32 FMA rate so
+    // that the code runs; generation_known is false, so their speed estimates are lent_generation
+    // ("no estimate") and nothing measured on the A100 is carried: not its kind (the full-rate
+    // flag below records the chip and is not read), not its 0.46 / 1.64 (0: not fitted), not its
+    // preferences.
+    {9, 0, 9, "hopper", 2048.0, 4096.0, 128.0, true, 0.0, 0.0, false, false, false, 0.43, nullptr,
+     true},
+    {10, 0, 9, "gb100", 2048.0, 4096.0, 128.0, true, 0.0, 0.0, false, false, false, 0.43, nullptr,
+     true},
     {11, 0, 9, "thor", 512.0, 2048.0, 128.0, false, 1.0, 1.11, true},
     {12, 0, 9, "gb20x", 512.0, 2048.0, 128.0, false, 1.0, 1.11, true, true, true, 0.10},
 };
 
 // Whether the table has a row of its own for compute capability major.minor (generation_row lends
-// one otherwise): a lent row runs the code, never carries its generation's evidence (#300).
+// one otherwise, and a row marked lent is not its own): a lent row runs the code, never carries
+// its generation's evidence (#300).
 [[nodiscard]] constexpr bool generation_known(int major, int minor) noexcept {
     for (const GenerationRow& row : kGenerations) {
-        if (row.major == major && minor >= row.minor_lo && minor <= row.minor_hi) return true;
+        if (row.major == major && minor >= row.minor_lo && minor <= row.minor_hi) return !row.lent;
     }
     return false;
 }
@@ -187,7 +202,9 @@ inline constexpr GenerationRow kGenerations[] = {
     return generation_row(major, minor).fp32acc_full_rate;
 }
 
-// The fitted route-cost scales of the generation's own row, nullopt on a lent row (#300).
+// The fitted route-cost scales of the generation's own row, nullopt on a lent row (#300; Hopper
+// and GB100, whose one full-rate relative, the A100, is another generation: #618 step 12, #619
+// step 14) and on a row whose scales are 0 (not fitted).
 struct FittedRouteScales {
     double w4a8_eff = 1.0;
     double a16_cost = 1.0;
@@ -196,6 +213,7 @@ struct FittedRouteScales {
                                                                              int minor) noexcept {
     if (!generation_known(major, minor)) return std::nullopt;
     const GenerationRow& row = generation_row(major, minor);
+    if (row.w4a8_eff_scale <= 0.0 || row.a16_cost_scale <= 0.0) return std::nullopt;
     return FittedRouteScales{row.w4a8_eff_scale, row.a16_cost_scale};
 }
 

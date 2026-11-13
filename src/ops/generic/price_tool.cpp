@@ -115,19 +115,6 @@ const GpuFactsRow* find_board(std::string_view arg) {
     return nullptr;
 }
 
-// The board as a substituted class: its row's facts, the architecture's limits (as the selector
-// golden boards are built, selector_facts.cpp).
-DeviceClass board_class(const GpuFactsRow& row) {
-    DeviceClass d      = synthetic_device_class(row.pci_device_id, row.major, row.minor, row.sms,
-                                                static_cast<std::size_t>(row.l2_mib * kMiB),
-                                                static_cast<std::size_t>(row.vram_gib * 1024 * kMiB));
-    d.sm_clock_khz     = row.boost_mhz * 1000;
-    d.memory_clock_khz = static_cast<int>(row.gbps * 1e6 / 2.0); // half the data rate, kHz
-    d.memory_bus_bits  = row.bus_bits;
-    d.facts            = machine_facts_of(d);
-    return d;
-}
-
 std::optional<QType> find_format(std::string_view arg) {
     std::string want;
     for (const char c : arg) {
@@ -342,7 +329,7 @@ int run(const Options& o) {
     }
     const GpuFactsRow& row = *o.board;
     const QType qtype      = *o.format;
-    const DeviceClass d    = board_class(row);
+    const DeviceClass d    = price_board_class(row);
     if (d.sms <= 0 || d.registers_per_sm <= 0 || !d.facts.has_roofline()) {
         std::fprintf(stderr, "price: %s has no roofline in its facts\n", row.name.c_str());
         return 1;
@@ -604,6 +591,14 @@ std::vector<std::string> price_format_names() {
 std::optional<QType> price_find_format(std::string_view name) { return find_format(name); }
 
 std::string price_usage_text() { return usage_text(); }
+
+DeviceClass price_board_class(const GpuFactsRow& row) {
+    return board_class({.pci_device_id = row.pci_device_id,
+                        .major         = row.major,
+                        .minor         = row.minor,
+                        .sms           = row.sms,
+                        .global_bytes  = static_cast<std::size_t>(row.vram_gib * 1024 * kMiB)});
+}
 
 int price_main(int argc, char** argv) {
     Options options;

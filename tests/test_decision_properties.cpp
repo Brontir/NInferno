@@ -179,7 +179,8 @@ constexpr Shape kShapes[] = {{1024, 4096}, {17408, 5120}};
 // width bound it switches at (held below), and widths inside the bands.
 // Besides the named bounds: 3 / 4 (rules_r8's IQ2-class formats from 4), 64 / 65 (heuristic_w4a8's
 // 64x64 tile up to 64 and the prefill narrow band, then a choice by the SM count), 8 / 9
-// (kMmqVerifyMinTokens), 255 / 256 (kVoltaTileMaxTokens), local to generic_select.cpp.
+// (kMmqVerifyMinTokens, format_rules.h), 255 / 256 (kVoltaTileMaxTokens, local to
+// generic_select.cpp).
 constexpr std::int32_t kTokens[] = {1,  2,  3,  4,   5,   8,   9,   12,  16,  17,  32,
                                     33, 64, 65, 127, 128, 255, 256, 512, 513, 1024};
 // The widths the price is checked at: from the first the cost model ranks (17), both sides of

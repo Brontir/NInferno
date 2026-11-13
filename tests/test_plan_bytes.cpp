@@ -1251,6 +1251,43 @@ void test_proposal_bytes_per_quant() {
         dense_row.listing.table = dense_table;
         check(pr::row_facts(routed, dense_row).shape.layer_formats == formatted.shape.layer_formats,
               "a split row: its own part's formats");
+        // The banks' and head's formats likewise (#834): the workspace plan sizes the MoE layer
+        // and the head by them, so a row reads its own table's, never the parsed file's at equal
+        // bytes; without its table, none (the formula stands).
+        pr::PlanSourceFacts banked       = formatted;
+        banked.model.expert_up_formats   = {"mxfp4"};
+        banked.model.expert_down_formats = {"mxfp4"};
+        banked.model.head_format         = "bf16";
+        const auto unread_banks          = pr::row_facts(banked, unread_row).model;
+        check(
+            unread_banks.expert_up_formats.empty() && unread_banks.expert_down_formats.empty() &&
+                unread_banks.head_format.empty(),
+            "a row of the shape's bytes without its table: no bank or head formats of the shape's");
+        pr::QuantRow banks_row                       = same_bytes;
+        banks_row.listing.table->expert_up_formats   = {"ggml_q4_k"};
+        banks_row.listing.table->expert_down_formats = {"ggml_q6_k"};
+        banks_row.listing.table->head_format         = "ggml_q6_k";
+        const auto own_banks                         = pr::row_facts(banked, banks_row).model;
+        check(own_banks.expert_up_formats == std::vector<std::string>{"ggml_q4_k"} &&
+                  own_banks.expert_down_formats == std::vector<std::string>{"ggml_q6_k"} &&
+                  own_banks.head_format == "ggml_q6_k",
+              "a row of the shape's bytes with its table: its own bank and head formats");
+        pr::PlanSourceFacts read_banks = banked;
+        read_banks.model.weight_basis  = rt::WeightBasis::GgufTensors;
+        const auto banks_table         = pr::gguf_tensor_table(read_banks);
+        check(banks_table && banks_table->expert_up_formats == banked.model.expert_up_formats &&
+                  banks_table->expert_down_formats == banked.model.expert_down_formats &&
+                  banks_table->head_format == "bf16",
+              "a head read's table keeps its bank and head formats");
+        pr::PlanSourceFacts banks_part       = formats_part;
+        banks_part.model.expert_up_formats   = banked.model.expert_up_formats;
+        banks_part.model.expert_down_formats = banked.model.expert_down_formats;
+        const auto banks_part_table          = pr::gguf_tensor_table(banks_part);
+        check(banks_part_table && banks_part_table->tensor_bytes == 0 &&
+                  banks_part_table->expert_up_formats.empty() &&
+                  banks_part_table->expert_down_formats.empty() &&
+                  banks_part_table->head_format.empty(),
+              "a split part's head: no bank or head formats (a sample of the banks sizes short)");
     }
     // The 9B's verify as the converter reads it (the embedding out): the rows its conversions
     // logged (147,456 with DFlash, 57,344 for MTP alone), from the whole tensor table.

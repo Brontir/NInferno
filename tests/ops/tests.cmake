@@ -156,6 +156,12 @@ ninferno_label_tests(ninferno_softmax_attention_unwritten_test LABELS gpu slow)
 list(APPEND ninferno_softmax_attention_runs ninferno_softmax_attention_unwritten_test)
 set_tests_properties(${ninferno_softmax_attention_runs} PROPERTIES SKIP_RETURN_CODE 77)
 
+# The BF16 KV width-1 decode (GroupedDecode, #856) bit for bit against the instance it replaced,
+# both compiled here: output, split partials and the appended cache, every listed geometry.
+ninferno_add_op_test(ninferno_bf16_decode_identity_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/test_bf16_decode_identity.cu"
+  LIBRARIES ninferno_ops)
+
 ninferno_add_op_test(ninferno_sliding_window_attention_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_sliding_window_attention.cpp"
   LIBRARIES ninferno_ops)
@@ -326,6 +332,13 @@ ninferno_add_op_test(ninferno_causal_admission_test LABELS host
 ninferno_add_test(ninferno_causal_position_partition_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/test_causal_position_partition.cpp"
   LIBRARIES ninferno::cudart)
+
+# The MoE R8 regime rules (ops/moe/moe_regime_rules.h, #616 step 5): each rule labelled by the
+# cards it was measured on (two or more, one, or none and conservative), one per generation, and
+# the limits the substituted boards take. Host only.
+ninferno_add_op_test(ninferno_moe_regime_rules_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_moe_regime_rules.cpp"
+  LIBRARIES ninferno_ops)
 
 # What the measured value tables' answers rest on (#616 step 3): the MoE class A8 route and the
 # sparse MoE Q4 groupwise frontier per SKU of the reference table, as Measured, Carried, Incomplete

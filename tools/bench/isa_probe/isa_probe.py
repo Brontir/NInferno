@@ -19,6 +19,19 @@ architecture) and regenerates the table from every file there; `regenerate` alon
 table from the inputs. Adding an architecture is one file plus a regenerate. A row records its
 source file, the card, the probe version, nvcc, driver and runtime, so a fact's origin is on the
 row. No fact is reasoned here: the table holds what the card said.
+
+The launch facts (#613 PR-8b) come from a probe of their own, launch_probe.cu beside isa_probe.cu,
+so a row's other facts stay what isa_probe measured (a change of isa_probe.cu makes every row
+stale):
+
+    isa_probe.py run   --section launch --arch 89 [--nvcc ...] [--out launch_probe_89.txt]
+    isa_probe.py merge --input launch_probe_89.txt [--check]
+
+`run --section launch` builds and runs it with the same idle and clock notes; `merge` of its
+output writes src/core/data/isa_probe/launch_probe_<arch>.txt, whose facts `regenerate` puts in
+the architecture's row under "launch" (an architecture needs its ISA row first). `--check` merges
+the run of another card of the architecture as a transfer check instead, launch_probe_<arch>_<card
+label>.txt (rtx5070ti), kept under the launch row's "checks"; the reader takes the row alone.
 """
 
 import argparse
@@ -496,6 +509,155 @@ def row_of(head, facts, source):
     return row
 
 
+# ---- The launch facts (launch_probe.cu) ----
+LAUNCH_SOURCE = os.path.join(HERE, "launch_probe.cu")
+LAUNCH_PROBE_LINE = re.compile(r'printf\("probe (launch_probe \d+)\\n"\)')
+LAUNCH_PROBE_VALUE = re.compile(r"launch_probe (\d+)")
+LAUNCH_PREFIX = "launch_probe_"
+# Every fact a launch run reports, all in wall ns: the cost of one more launch in a series of
+# empty kernels (launch_probe.cu's head): a graph node, the node with the programmatic
+# serialization attribute, a stream launch from a backlog, and an empty grid of 1, SMs, 4 x SMs
+# and 1024 CTAs of 128 threads as a graph node.
+LAUNCH_FACTS = ("node_ns", "node_pdl_ns", "stream_ns", "floor_ns_1", "floor_ns_sms",
+                "floor_ns_4sms", "floor_ns_1024")
+# node_pdl_ns may be absent below sm_90 only, where the driver refused the attribute, and then
+# with the probe's note saying so (the engine sets it from sm_90 on, so there it is owed).
+PDL_NOT_MEASURED = "node_pdl_ns not measured"
+# The probe's own range of a fact (launch_probe.cu kFactMinNs, kFactMaxNs).
+LAUNCH_RANGE_NS = (10.0, 100000.0)
+LAUNCH_HEADER = ("probe", "card", "cc", "sms", "driver", "runtime", "nvcc", "source_sha256", "arch")
+LAUNCH_COUNTS = ("cc", "sms", "driver", "runtime")
+
+
+def checked_in_launch_probe():
+    """The `probe` header value the checked-in launch_probe.cu prints (`launch_probe <n>`)."""
+    with open(LAUNCH_SOURCE) as f:
+        m = LAUNCH_PROBE_LINE.search(f.read())
+    if not m:
+        raise ValueError("launch_probe.cu prints no probe version")
+    return m.group(1)
+
+
+def is_launch_run(text):
+    """Whether a probe output is launch_probe's (its probe line), not isa_probe's."""
+    return re.search(r"^probe launch_probe\b", text, re.M) is not None
+
+
+def parse_launch_run(text):
+    """The header fields and the facts of one launch_probe output, as `run --section launch`
+    writes it; ValueError when a line is odd, a fact is unknown, given twice, not a positive
+    finite number of ns or outside the probe's range, a fact is missing (node_pdl_ns may be
+    absent below sm_90 with the probe's note), a header line is missing or no count, the run did
+    not end or its self-check failed, the version is newer than the checked-in probe, the source
+    is not the checked-in one at the checked-in version, the build is not the card's own
+    architecture, or the notes do not show the GPU idle (idle_refusal)."""
+    head, facts, ended, failures, checked = {}, {}, False, [], False
+    for line in text.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] == "fact":
+            if len(parts) != 4:
+                raise ValueError(f"odd fact line: {line!r}")
+            name = parts[1]
+            if name not in LAUNCH_FACTS:
+                raise ValueError(f"unknown fact: {line!r}")
+            if name in facts:
+                raise ValueError(f"fact given twice: {name}")
+            try:
+                value = float(parts[2])
+            except ValueError:
+                raise ValueError(f"odd fact line: {line!r}") from None
+            if not (math.isfinite(value) and value > 0.0):
+                raise ValueError(f"{name} is not a positive finite number: {line!r}")
+            if parts[3] != "ns":
+                raise ValueError(f"{name} is in ns, not {parts[3]}: {line!r}")
+            low, high = LAUNCH_RANGE_NS
+            if not low <= value <= high:
+                raise ValueError(f"{name} {value} ns is outside the probe's {low:g}..{high:g}")
+            facts[name] = {"value": value, "unit": "ns"}
+        elif parts[0] == "end":
+            ended = True
+        elif parts[0] == "selfcheck":
+            checked = True
+            if parts[1:2] != ["ok"]:
+                failures.append(" ".join(parts[2:]))
+        elif parts[0] == "note":
+            head.setdefault("notes", []).append(" ".join(parts[1:]))
+        elif parts[0] == REFUSED_LINE:
+            raise ValueError(f"`run` refused this run: {' '.join(parts[1:])}")
+        elif parts[0] in LAUNCH_HEADER:
+            if parts[0] in head:
+                raise ValueError(f"{parts[0]} line given twice")
+            head[parts[0]] = " ".join(parts[1:])
+        else:
+            raise ValueError(f"unknown line: {line!r}")
+    if not ended or not checked:
+        raise ValueError(f"incomplete run: ended={ended}, selfcheck={checked}")
+    if failures:
+        raise ValueError("the probe's self-check failed: " + "; ".join(failures))
+    for k in LAUNCH_HEADER:
+        if not head.get(k):
+            raise ValueError(f"no {k} line")
+    version = LAUNCH_PROBE_VALUE.fullmatch(head["probe"])
+    if not version:
+        raise ValueError(f"odd probe line: {head['probe']!r}")
+    now = checked_in_launch_probe()
+    if int(version.group(1)) > int(now.split()[1]):
+        raise ValueError(f"{head['probe']} is newer than the checked-in probe ({now})")
+    for k in LAUNCH_COUNTS:
+        if not (head[k].isdigit() and int(head[k]) > 0):
+            raise ValueError(f"{k} is no positive count: {head[k]!r}")
+    refusal = idle_refusal(head.get("notes", []))
+    if refusal:
+        raise ValueError(refusal)
+    if not SHA256.fullmatch(head["source_sha256"]):
+        raise ValueError(f"odd source_sha256 line: {head['source_sha256']!r}")
+    if head["probe"] == now and head["source_sha256"] != source_sha256(LAUNCH_SOURCE):
+        raise ValueError(f"source_sha256 {head['source_sha256']} is not the checked-in "
+                         f"launch_probe.cu's ({source_sha256(LAUNCH_SOURCE)}): a changed probe "
+                         f"bumps its version")
+    cc = int(head["cc"])
+    own = "sm_" + arch_key(cc, None)
+    if head["arch"] != own:
+        raise ValueError(f"built for {head['arch']}, not {own} (cc {cc})")
+    unmeasured = any(n.startswith(PDL_NOT_MEASURED) for n in head.get("notes", []))
+    for name in LAUNCH_FACTS:
+        if name in facts:
+            continue
+        if name == "node_pdl_ns" and unmeasured and cc < 90:
+            continue
+        raise ValueError(f"incomplete run: missing {name}" +
+                         (" (owed from sm_90 on)" if name == "node_pdl_ns" and unmeasured else ""))
+    if "node_pdl_ns" in facts and unmeasured:
+        raise ValueError("node_pdl_ns is given and noted as not measured")
+    return head, facts
+
+
+def launch_of(head, facts, source):
+    """The "launch" entry of an architecture's row (or of a check under it) from one launch run;
+    `source` names the committed probe output it came from."""
+    return {
+        "provenance": "Measured",
+        "source": source,
+        "card": head["card"],
+        "cc": int(head["cc"]),
+        "sms": int(head["sms"]),
+        "tool": {"probe": head["probe"], "nvcc": head["nvcc"], "driver": head["driver"],
+                 "runtime": head["runtime"], "arch": head["arch"],
+                 "source_sha256": head["source_sha256"]},
+        "notes": list(head.get("notes", [])),
+        "facts": {name: facts[name] for name in LAUNCH_FACTS if name in facts},
+    }
+
+
+def card_label(card):
+    """The file label of a card's transfer check: its name in lower-case letters and digits,
+    without the vendor and brand words ("NVIDIA GeForce RTX 5070 Ti" -> "rtx5070ti")."""
+    words = [w for w in card.lower().split() if w not in ("nvidia", "geforce", "quadro")]
+    return re.sub(r"[^a-z0-9]", "", "".join(words))
+
+
 NOTE = ("ISA facts per architecture, regenerated by `tools/bench/isa_probe/isa_probe.py "
         "regenerate` from the committed probe outputs in src/core/data/isa_probe/ (one "
         "isa_probe_<arch>.txt per architecture, written by `isa_probe.py run` on one card of it; "
@@ -527,7 +689,12 @@ NOTE = ("ISA facts per architecture, regenerated by `tools/bench/isa_probe/isa_p
         "the L1 / L2 / DRAM chains carried the chain's index-to-address ops beside the load, up "
         "to probe 16 the sm_70 shared link a shift beside the LDS. tests/test_isa_facts.py pins "
         "the schema, that the table equals its regeneration, and that every row comes from the "
-        "checked-in probe source.")
+        "checked-in probe source. A row's `launch` entry, where there is one, is the launch "
+        "facts of launch_probe.cu (#613 PR-8b), a probe of its own (launch_probe_<arch>.txt): "
+        "the cost in wall ns of one more launch in a long series of empty kernels, as a graph "
+        "node, as a node with the programmatic serialization attribute, as a stream launch from "
+        "a backlog, and as an empty graph-node grid of 1, SMs, 4 x SMs and 1024 CTAs; its "
+        "`checks` are runs of other cards of the architecture, kept as transfer checks.")
 
 
 def build_table(inputs_dir, replace=None):
@@ -537,16 +704,18 @@ def build_table(inputs_dir, replace=None):
     built before anything is written."""
     arches = {}
     names = set(os.listdir(inputs_dir)) | ({replace[0]} if replace else set())
+
+    def read(name):
+        if replace and name == replace[0]:
+            return replace[1]
+        with open(os.path.join(inputs_dir, name)) as f:
+            return f.read()
+
     for name in sorted(names):
         if not (name.startswith("isa_probe_") and name.endswith(".txt")):
             continue
         try:
-            if replace and name == replace[0]:
-                text = replace[1]
-            else:
-                with open(os.path.join(inputs_dir, name)) as f:
-                    text = f.read()
-            head, facts = parse_run(text)
+            head, facts = parse_run(read(name))
         except ValueError as e:
             raise ValueError(f"{name}: {e}") from None
         row = row_of(head, facts, name)
@@ -554,6 +723,37 @@ def build_table(inputs_dir, replace=None):
         if key in arches:
             raise ValueError(f"{name}: sm_{key} is already given by {arches[key]['source']}")
         arches[key] = row
+    # The launch facts: launch_probe_<arch>.txt into the architecture's row, a transfer check
+    # launch_probe_<arch>_<card label>.txt under that launch entry.
+    launches, checks = {}, []
+    for name in sorted(names):
+        if not (name.startswith(LAUNCH_PREFIX) and name.endswith(".txt")):
+            continue
+        key, _, label = name[len(LAUNCH_PREFIX):-len(".txt")].partition("_")
+        try:
+            head, facts = parse_launch_run(read(name))
+        except ValueError as e:
+            raise ValueError(f"{name}: {e}") from None
+        entry = launch_of(head, facts, name)
+        own = arch_key(entry["cc"], None)
+        if key != own:
+            raise ValueError(f"{name}: a run of sm_{own}, not of sm_{key}")
+        if label:
+            if label != card_label(entry["card"]):
+                raise ValueError(f"{name}: a check is named after its card "
+                                 f"({LAUNCH_PREFIX}{own}_{card_label(entry['card'])}.txt)")
+            checks.append((key, entry))
+        else:
+            launches[key] = entry
+    for key, entry in launches.items():
+        if key not in arches:
+            raise ValueError(f"{entry['source']}: sm_{key} has no ISA row to carry its launch "
+                             "facts")
+        arches[key]["launch"] = entry
+    for key, entry in checks:
+        if key not in launches:
+            raise ValueError(f"{entry['source']}: a check of sm_{key}, which has no launch row")
+        launches[key].setdefault("checks", []).append(entry)
     arches = dict(sorted(arches.items(), key=lambda kv: kv[1]["cc"]))
     return {"schema": SCHEMA, "note": NOTE, "arches": arches}
 
@@ -698,6 +898,8 @@ REFUSED_LINE = "refused"
 
 
 def cmd_run(a):
+    if getattr(a, "section", "isa") == "launch":
+        return _run_launch(a)
     arch = a.arch
     src = SOURCE
     # Lines `run` adds before the probe's output: which source the build was of, its -arch, and
@@ -723,23 +925,56 @@ def cmd_run(a):
             print(f"isa_probe: {e}; no run", file=sys.stderr)
             return 3
         head.append(f"sass_per_mma {len(mmas)}")
-        before = _compute_apps()
 
-        def rows_of(s, fields):
-            return None if s is None else s.rows(fields)
+        def mma_refusal(parsed):
+            # The SASS MMAs of one mma.sync are its flops, by sass_counts' shape table: so a
+            # count of SASS MMAs priced at these facts over sass_per_mma is the same work.
+            shape = parsed["shape"].split()[0]
+            if any(s is None for _, s in mmas) or \
+                    sum(2 * s[0] * s[1] * s[2] for _, s in mmas) != SHAPE_FLOPS[shape]:
+                return (f"the SASS of one {shape} ({', '.join(op for op, _ in mmas)}) is not "
+                        f"its {SHAPE_FLOPS[shape]} flops by sass_counts' shapes")
+            return None
 
-        # The clocks (the memory clock is the P-state's, which the device API does not give) and
-        # the compute processes, nvidia-smi every 200 ms through the run.
-        clocks = sampler("--query-gpu=pci.bus_id,pstate,clocks.sm,clocks.mem", 200)
-        apps = sampler("--query-compute-apps=timestamp,gpu_bus_id,pid", 200)
-        # The probe's stderr (CUDA errors) passes through; its stdout is kept whole, so a failed
-        # or refused run still shows what it measured before stopping.
-        probe = subprocess.Popen([exe], stdout=subprocess.PIPE, text=True)
-        stdout, _ = probe.communicate()
-        run = subprocess.CompletedProcess([exe], probe.returncode, stdout, None)
-        samples = rows_of(clocks, 4) or []
-        during = rows_of(apps, 3)
-        after = _compute_apps()
+        return _run_probe(a, exe, head, parse_run, mma_refusal, a.out or f"isa_probe_{arch}.txt")
+
+
+def _run_launch(a):
+    """`run --section launch`: launch_probe.cu built for sm_<arch> and run as isa_probe is, its
+    output headed by the source's sha256 and the build's -arch."""
+    arch = a.arch
+    head = [f"source_sha256 {source_sha256(LAUNCH_SOURCE)}", f"arch sm_{arch}"]
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = os.path.join(tmp, "launch_probe.exe" if os.name == "nt" else "launch_probe")
+        cmd = [a.nvcc, "-O3", "-std=c++17", f"-arch=sm_{arch}", "-o", exe, LAUNCH_SOURCE]
+        print("+", " ".join(cmd), file=sys.stderr)
+        subprocess.run(cmd, check=True)
+        return _run_probe(a, exe, head, parse_launch_run, None,
+                          a.out or f"{LAUNCH_PREFIX}{arch}.txt")
+
+
+def _run_probe(a, exe, head, parse, extra_refusal, path):
+    """Runs a built probe `exe` with nvidia-smi watching the compute processes and the clocks on
+    its GPU, and writes `head` (the lines `run` owes before the output), the probe's output and
+    the notes to `path` when `parse` (and `extra_refusal`, given the parsed header, where there is
+    one) take it as a row, else to <path>.refused with the reason. The exit code of `run`."""
+    before = _compute_apps()
+
+    def rows_of(s, fields):
+        return None if s is None else s.rows(fields)
+
+    # The clocks (the memory clock is the P-state's, which the device API does not give) and
+    # the compute processes, nvidia-smi every 200 ms through the run.
+    clocks = sampler("--query-gpu=pci.bus_id,pstate,clocks.sm,clocks.mem", 200)
+    apps = sampler("--query-compute-apps=timestamp,gpu_bus_id,pid", 200)
+    # The probe's stderr (CUDA errors) passes through; its stdout is kept whole, so a failed
+    # or refused run still shows what it measured before stopping.
+    probe = subprocess.Popen([exe], stdout=subprocess.PIPE, text=True)
+    stdout, _ = probe.communicate()
+    run = subprocess.CompletedProcess([exe], probe.returncode, stdout, None)
+    samples = rows_of(clocks, 4) or []
+    during = rows_of(apps, 3)
+    after = _compute_apps()
     m = re.search(r"^note device 0 is the GPU at PCI (\S+)$", run.stdout, re.M)
     bus = _bus(m.group(1)) if m else None
     tail = [_apps_note("before", before, bus), _apps_note("after", after, bus),
@@ -771,20 +1006,13 @@ def cmd_run(a):
         refusal = f"the probe exited {run.returncode}"
     else:
         try:
-            parsed, _ = parse_run(out)
+            parsed, _ = parse(out)
         except ValueError as e:
             refusal = str(e)
         else:
-            # The SASS MMAs of one mma.sync are its flops, by sass_counts' shape table: so a
-            # count of SASS MMAs priced at these facts over sass_per_mma is the same work.
-            shape = parsed["shape"].split()[0]
-            if any(s is None for _, s in mmas) or \
-                    sum(2 * s[0] * s[1] * s[2] for _, s in mmas) != SHAPE_FLOPS[shape]:
-                refusal = (f"the SASS of one {shape} ({', '.join(op for op, _ in mmas)}) is not "
-                           f"its {SHAPE_FLOPS[shape]} flops by sass_counts' shapes")
+            refusal = extra_refusal(parsed) if extra_refusal else None
     # A refused run is kept for its numbers, under a name that is no row's: `--out` is written
     # only by a run that is one, so "merge the first run" can never pick up a refused one.
-    path = a.out or f"isa_probe_{arch}.txt"
     if refusal:
         # The reason goes into the file too, so a copy under a row's name is refused by merge.
         path += REFUSED
@@ -824,13 +1052,33 @@ def cmd_merge(a):
     # Read whole before the destination opens: the input may be the destination itself.
     with open(a.input) as f:
         text = f.read()
+    launch, check = is_launch_run(text), getattr(a, "check", False)
     try:
-        head, _ = parse_run(text)
+        if check and not launch:
+            raise ValueError("--check takes a launch_probe run (an ISA row has no checks)")
+        head, _ = (parse_launch_run if launch else parse_run)(text)
     except ValueError as e:
         print(f"isa_probe: {a.input}: {e}; nothing merged", file=sys.stderr)
         return 1
-    key = arch_key(int(head["cc"]), head["shape"])
-    dest = os.path.join(a.inputs, f"isa_probe_{key}.txt")
+    key = arch_key(int(head["cc"]), head.get("shape"))
+    if not launch:
+        name = f"isa_probe_{key}.txt"
+    elif check:
+        name = f"{LAUNCH_PREFIX}{key}_{card_label(head['card'])}.txt"
+    else:
+        name = f"{LAUNCH_PREFIX}{key}.txt"
+    dest = os.path.join(a.inputs, name)
+    # A row's card changes only on purpose: a run of another card does not replace the row's
+    # run under its architecture's name unless --other-card says so (a check is named after its
+    # card, so it never replaces another card's).
+    if os.path.exists(dest) and not getattr(a, "other_card", False):
+        with open(dest) as f:
+            m = re.search(r"^card (.+)$", f.read(), re.M)
+        if m and m.group(1).strip() != head["card"]:
+            print(f"isa_probe: {dest} is a run of {m.group(1).strip()}, {a.input} of "
+                  f"{head['card']}: the row's card changes only with --other-card; nothing merged",
+                  file=sys.stderr)
+            return 1
     # The table the merge makes is built first, with the run read in place of the destination:
     # a table that cannot be built writes nothing.
     try:
@@ -880,6 +1128,16 @@ def cmd_show(a):
                 print(f"  {name:36s} {'-':>10s} (not measured by this row's probe)")
                 continue
             print(f"  {name:36s} {v['value']:10.3f} {v['unit']}")
+        launch = row.get("launch")
+        if launch is None:
+            print("  launch: not measured (no launch_probe run of this architecture)")
+            continue
+        for entry, what in [(launch, "launch")] + [(c, "check") for c in launch.get("checks", [])]:
+            print(f"  {what}: {entry['card']} ({entry['tool']['probe']}, {entry['source']})")
+            for name in LAUNCH_FACTS:
+                v = entry["facts"].get(name)
+                shown = f"{v['value']:10.3f} ns" if v else f"{'-':>10s} (not measured)"
+                print(f"    {name:34s} {shown}")
     return 0
 
 
@@ -894,9 +1152,15 @@ def main():
                    "<out>" + REFUSED)
     r.add_argument("--idle-unchecked", action="store_true",
                    help="accept a run whose compute-process list nvidia-smi could not give")
+    r.add_argument("--section", choices=("isa", "launch"), default="isa",
+                   help="isa_probe.cu (the default) or launch_probe.cu (the launch facts)")
     r.set_defaults(fn=cmd_run)
     m = sub.add_parser("merge")
     m.add_argument("--input", required=True)
+    m.add_argument("--check", action="store_true",
+                   help="a launch run of another card of the architecture: a transfer check")
+    m.add_argument("--other-card", action="store_true",
+                   help="let a run of another card replace the row's run of its architecture")
     m.add_argument("--inputs", default=DEFAULT_INPUTS)
     m.add_argument("--table", default=DEFAULT_TABLE)
     m.set_defaults(fn=cmd_merge)

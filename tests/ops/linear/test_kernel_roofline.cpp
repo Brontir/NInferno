@@ -32,6 +32,7 @@
 #include <exception>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -168,6 +169,9 @@ constexpr QType kGoldenFormats[] = {QType::GGML_Q4_K, QType::BF16};
 
 // The BF16 rate Turing's generation row held when the golden was made (#781 set the spec 512).
 constexpr double kGoldenTuringBf16 = 1536.0;
+// The A16 factor the hopper and gb100 rows held when the golden was made: ga100's 1.64, which they
+// no longer carry (#618 step 12: fitted_route_scales nullopt there, factor 1).
+constexpr double kGoldenFullRateA16 = 1.64;
 
 #include "kernel_roofline_golden.inc"
 
@@ -244,6 +248,11 @@ void check_golden() {
         legacy_chip.sm_dram_bytes_per_clock_free.reset();
         legacy_chip.sm_dram_bytes_per_clock_placed.reset();
         if (rate_moved) legacy_chip.tensor_rate = kGoldenTuringBf16;
+        // Hopper's and GB100's A16 factor moved by design after the golden was made (#618 step
+        // 12: 1.64 -> none). The selector and the roofline price total x 1 now, so the golden's
+        // total x 1.64 is that price times the old factor, one multiply as it was.
+        const std::string_view generation = ninferno::generation_row(d.major, d.minor).name;
+        const bool a16_factor_moved       = generation == "hopper" || generation == "gb100";
         const auto fail = [&](const char* what, int family, int schedule, double want, double got) {
             if (++bad <= 10) {
                 std::fprintf(
@@ -278,6 +287,7 @@ void check_golden() {
                                          got.route, reads)
                               .value_or(0.0);
             }
+            if (a16_factor_moved) seconds *= kGoldenFullRateA16;
             if (seconds != want.seconds) {
                 fail(priced_by_new_law ? "legacy-law price moved" : "price moved", family, schedule,
                      want.seconds, seconds);

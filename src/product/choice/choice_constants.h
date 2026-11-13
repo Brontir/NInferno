@@ -379,8 +379,9 @@ constexpr double largest_transferred_decode_error() noexcept {
 
 // An assumed worst case: the largest measured carry (all of them Ada onto older generations). No
 // measured row bounds a carry onto a newer architecture or below Volta (Pascal); it is a label, not
-// a bound. A board whose compute capability has no generation row (rows lent forward) takes it, and
-// so do the known generations with no row of their own (ga100, hopper, gb100, thor), and a
+// a bound. A board whose compute capability has no generation row (rows lent forward, and the lent
+// rows of Hopper and GB100) takes it, and so do the known generations with no row of their own
+// (ga100, thor), and a
 // generation with its own error whose compared estimates are Transferred (a weight class or a row
 // measured on fewer than two of its cards: no carry onto those was measured). Basis: an assumption
 // over one-card rows; it never decides (resolution_of).
@@ -442,6 +443,32 @@ inline constexpr PrefillEta kPrefillEta[] = {
     {true, "ada", Route::Int8, 0.210, 2},    // RTX 4060 Ti, 4090: Gemma 26B-A4B, 35B-A3B
     {true, "gb20x", Route::Int8, 0.205, 2},  // RTX 5070 Ti, 5090: Gemma 26B-A4B, 35B-A3B
 };
+
+// The prefill estimate's measured error on a generation, for a caller to show beside it (#618 step
+// 11), never a decision's: the rms and the worst of predicted / measured - 1 of the dense model's
+// prefill on the fast (int8) route over tests/fixtures/choice/prefill_measured.json's rows of the
+// generation's cards at prompts of kPrefillErrorFromPrompt .. kPrefillErrorToPrompt tokens (Qwen3.5
+// 9B, Gemma 4 12B, Qwen3.5 4B; derived, not tuned: ninferno_choice_test recomputes each row in
+// prefills_by_format, as kDecodePredictionError's), over the rows whose estimate is Own. Only a
+// generation with such rows on two or more lab cards has a row: Ada today. Blackwell's estimates
+// there are Transferred (a prefill row of one card), ga10x and Turing rest on one card each,
+// Volta's rows have their own guard. An MoE's prefill, the exact route, an estimate that is not
+// Own, a shorter prompt (a request's fixed time is not modeled: up to 30 % above a measured rate at
+// 2K) or a longer one: no error stated.
+struct PrefillPredictionError {
+    std::string_view generation;
+    double rms;
+    double worst;
+    int cards;
+};
+
+inline constexpr PrefillPredictionError kPrefillPredictionError[] = {
+    {"ada", 0.0476, 0.1519, 3}, // RTX 4060 Ti, 4070 Ti, 4090: 70 points
+};
+// The shortest and the longest prompt of the fixture's rows the error is over (its 41K and 82K
+// rows have their own guard).
+inline constexpr std::uint32_t kPrefillErrorFromPrompt = 3122;
+inline constexpr std::uint32_t kPrefillErrorToPrompt   = 21928;
 
 // A dense model's int8 route on Q8 weights prefills on the generic int8 tiles (the W4A8 kernel's
 // Q8 codec, ops/generic q8_prefill_a8), not ggml's MMQ that kPrefillEta's int8 rows measured. Since
@@ -808,38 +835,78 @@ struct RouteEta {
 
 inline constexpr RouteEta kExactComputeEta[] = {{"turing", 0.0165}, {"ada", 0.0243}};
 
-// What reading a KV codec costs over its bytes (run_sw.sh, 9B at a 22K prompt, against INT8 on the
-// same card): Turing reads BF16 and FP8 without native support. Ada: the mean of the RTX 4070 Ti
-// and the 4090 (BF16 1.03 / 1.09, FP8 1.03 / 1.08, K8V4 1.01 / 1.04, NVFP4 1.25 / 1.22: within 6 %).
+// What reading a KV codec costs over its bytes where the DRAM bounds it: its read rate against
+// INT8's on the same card (the reference codec, priced at kDramEta), the codec's bytes those of
+// plan_kv_bytes_per_token. `cards`: the lab cards the row rests on; a codec the worth decides on a
+// generation rests on two (kv_decides; a row of one only prices the estimate).
+// Ada and Blackwell gb20x: the nsys census of the decode attention kernel (#618 step 1, mcb.sh,
+// 2026-11-13: Qwen3.5-9B Q4_K_M, one stream, 128 steps at 7.8K and 21.9K tokens; a step's kernel
+// time between the sampling kernels; BF16 and FP8 at 21.9K after INT8's fixed part). Both codecs
+// read at 92 .. 96 % of the DRAM rate on every one of the four cards, the factors the mean of two:
+//   BF16  RTX 4070 Ti 1.011, RTX 4090 1.018 (0.7 % apart); RTX 5070 Ti 0.990, 5090 0.976 (1.4 %)
+//   FP8   RTX 4070 Ti 1.010, RTX 4090 0.987 (2.3 %);      RTX 5070 Ti 0.965, 5090 0.956 (0.9 %)
+//   K8V4  RTX 5070 Ti 1.053, RTX 5090 1.041 (1.2 %; 88 / 87 % of the DRAM rate)
+// Ada's K8V4 and NVFP4 rows are the end-to-end ones (run_sw.sh, 9B at a 22K prompt, the decode
+// rate against INT8's at the old 0.90 DRAM share: K8V4 1.01 / 1.04, NVFP4 1.25 / 1.22 on the RTX
+// 4070 Ti / 4090): the census has K8V4 on the 4070 Ti only (0.988), and NVFP4 is bound by the SMs,
+// not the DRAM (kKvSmRate), so its row here prices only the geometries the SM rate was not read on.
+// gb20x has no NVFP4 row: its SM rate (below, one card's: it never decides) prices Qwen3.5's
+// geometry, another one carries Ada's factor (transferred) and never decides.
+// Turing (run_sw.sh, one card: the RTX 2080 Ti) reads BF16 and FP8 without native support.
 struct KvReadFactor {
     std::string_view generation;
     KvCacheStorage kv;
     double factor;
+    int cards;
 };
 
 inline constexpr KvReadFactor kKvReadFactor[] = {
-    {"turing", KvCacheStorage::BFloat16, 3.38},      {"turing", KvCacheStorage::Fp8E4M3Row256, 2.26},
-    {"turing", KvCacheStorage::Fp8KeyNvfp4Value, 3.12}, {"turing", KvCacheStorage::Nvfp4Group16, 3.75},
-    {"ada", KvCacheStorage::BFloat16, 1.06},         {"ada", KvCacheStorage::Fp8E4M3Row256, 1.055},
-    {"ada", KvCacheStorage::Fp8KeyNvfp4Value, 1.025}, {"ada", KvCacheStorage::Nvfp4Group16, 1.235},
+    {"turing", KvCacheStorage::BFloat16, 3.38, 1},
+    {"turing", KvCacheStorage::Fp8E4M3Row256, 2.26, 1},
+    {"turing", KvCacheStorage::Fp8KeyNvfp4Value, 3.12, 1},
+    {"turing", KvCacheStorage::Nvfp4Group16, 3.75, 1},
+    {"ada", KvCacheStorage::BFloat16, 1.0145, 2},
+    {"ada", KvCacheStorage::Fp8E4M3Row256, 0.9985, 2},
+    {"ada", KvCacheStorage::Fp8KeyNvfp4Value, 1.025, 2},
+    {"ada", KvCacheStorage::Nvfp4Group16, 1.235, 2},
+    {"gb20x", KvCacheStorage::BFloat16, 0.983, 2},
+    {"gb20x", KvCacheStorage::Fp8E4M3Row256, 0.9605, 2},
+    {"gb20x", KvCacheStorage::Fp8KeyNvfp4Value, 1.047, 2},
 };
 
 // A decode attention kernel whose KV read the SMs bound below the DRAM rate: the bytes it reads a
-// SM-clock (at the board's reference clock), the family's kernel on the generation. A row's KV takes
-// the longer of its time at the DRAM rate and at SMs x clock x this, in place of kKvReadFactor's
-// codec factor (read on another family's kernel). The rate is per reference clock: a board holding
-// another share of its reference clock than the 2080 Ti's 1.15 (a power-capped one) moves off it.
-// One card: the rows feed the estimate a Turing or Volta board shows (transferred), never a decision
-// (neither has a kReferenceCards row: their KV codec, activations and quantization keep the family's
-// defaults).
-// A row holds for the geometry it was read on (a full layer's head width, query and KV heads: the
-// grouped kernels' rows and tiles follow the group); another geometry keeps the codec's factor. From the nsys census of one
-// stream's decode at 7K and 82K (mdcen.sh, 2026-10-31, the RTX 2080 Ti: 68 SMs, 1545 MHz reference,
-// 1770 held): the kernel's time per call over the KV bytes the 75K tokens between add, Qwen3.5 9B's
-// int8 grouped kernel (int8_kv_grouped_mma) 423 us for 159 MB, Gemma 4 12B's BF16 full layer
-// (gemma4_attention_kernel, 512-wide heads) 545 us for 153 MB: 376 and 281 GB/s, 61 and 46 % of the
-// card's 616. The same kernels on the RTX 3060 (360 GB/s, 28 SMs) and the RTX 4070 Ti reach 92 .. 94 %
-// of their DRAM rate: their generations have no row.
+// SM-clock (at the board's reference clock), the family's kernel on the generation. A row's KV
+// takes the longer of its time at the DRAM rate and at SMs x clock x this, in place of
+// kKvReadFactor's codec factor (read on another family's kernel). The rate is per reference clock:
+// a board holding another share of its reference clock than the cards it was read on (a
+// power-capped one) moves off it. A row of one card feeds the estimate a board shows (transferred),
+// never a decision. A row holds for the geometry it was read on (a full layer's head width, query
+// and KV heads: the grouped kernels' rows and tiles follow the group); another geometry keeps the
+// codec's factor.
+//
+// Turing, from the nsys census of one stream's decode at 7K and 82K (mdcen.sh, 2026-10-31, the RTX
+// 2080 Ti: 68 SMs, 1545 MHz reference, 1770 held): the kernel's time per call over the KV bytes the
+// 75K tokens between add, Qwen3.5 9B's int8 grouped kernel (int8_kv_grouped_mma) 423 us for 159 MB,
+// Gemma 4 12B's BF16 full layer (gemma4_attention_kernel, 512-wide heads) 545 us for 153 MB: 376
+// and 281 GB/s, 61 and 46 % of the card's 616. The same kernels on the RTX 3060 (360 GB/s, 28 SMs)
+// and the RTX 4070 Ti reach 92 .. 94 % of their DRAM rate on INT8.
+//
+// Ampere ga10x, Ada and Blackwell gb20x, from the census of #618 step 1 (mcb.sh, as
+// kKvReadFactor's: Qwen3.5-9B, the slope between 7.8K and 21.9K tokens, BF16 and FP8 at 21.9K after
+// INT8's fixed part), the rate over SMs x the board's reference clock (the SM clock sampled during
+// the decode: the RTX 3090 1.04-1.09 of its 1695 MHz, the 3060 1.04-1.06 of 1777, the 4070
+// Ti 1.04-1.05 of 2610, the 5090 1.08 of 2407, the 5070 Ti 1.10 of 2452):
+//   ga10x  BF16  RTX 3090 3.58, RTX 3060 3.59 (0.4 % apart; 53 / 50 % of the DRAM rate)
+//          FP8   4.45, 4.57 (2.7 %); NVFP4 2.50, 2.45 (1.9 %); K8V4 3.46, 3.44 (0.7 %)
+//   ada    NVFP4 RTX 4070 Ti 2.58, RTX 4090 2.54 (1.6 %; 80 / 81 % of the DRAM rate)
+//   gb20x  NVFP4 RTX 5090 2.82, RTX 5070 Ti 3.00 (64 / 57 % of the DRAM rate): 5.4 % apart per
+//          held SM-clock (2.60 at 2610 MHz, 2.74 at 2685), 6.4 % per reference SM-clock, the
+//          clock the row prices at (the two hold 1.08 and 1.10 of it): past the two-card tolerance
+//          of 6 %, so the row is one card's (it prices the estimate, never a decision) until a
+//          re-census or a third card brings the two inside it
+// On Ampere every codec but INT8 (91-92 % of the DRAM rate) is SM-bound. Its BF16 row is today's
+// kernel (bf16_kv_grouped_mma_kernel, which reads at 92 % of the DRAM rate on the RTX 4090): a
+// kernel finding is open (#856), and the row is measured again when that kernel changes.
 struct KvSmRate {
     std::string_view generation;
     std::string_view family;
@@ -852,10 +919,17 @@ struct KvSmRate {
 inline constexpr KvSmRate kKvSmRate[] = {
     {"turing", "qwen3_5_text", KvCacheStorage::Int8Group64, 256, 16, 4, 3.58, 1}, // Qwen3.5 9B
     {"turing", "gemma4_text", KvCacheStorage::BFloat16, 512, 16, 1, 2.67, 1},     // Gemma 4 12B
-    // The Quadro GV100 (80 SMs, 1627 MHz reference; mdcenv.sh, the census at 7K and 82K): Gemma 4 12B's
-    // BF16 full layer 707 us a call for 153 MB, 216 GB/s, 25 % of its 870 (Qwen3.5's int8 kernel,
-    // int8_kv_key_major_kt, reaches 643 GB/s, 97 % of the 660 its HBM2 holds: no row).
+    // The Quadro GV100 (80 SMs, 1627 MHz reference; mdcenv.sh, the census at 7K and 82K): Gemma 4
+    // 12B's BF16 full layer 707 us a call for 153 MB, 216 GB/s, 25 % of its 870 (Qwen3.5's int8
+    // kernel, int8_kv_key_major_kt, reaches 643 GB/s, 97 % of the 660 its HBM2 holds: no row).
     {"volta", "gemma4_text", KvCacheStorage::BFloat16, 512, 16, 1, 1.66, 1},
+    // Qwen3.5 9B, the census of #618 step 1 (above).
+    {"ga10x", "qwen3_5_text", KvCacheStorage::BFloat16, 256, 16, 4, 3.585, 2},
+    {"ga10x", "qwen3_5_text", KvCacheStorage::Fp8E4M3Row256, 256, 16, 4, 4.51, 2},
+    {"ga10x", "qwen3_5_text", KvCacheStorage::Fp8KeyNvfp4Value, 256, 16, 4, 3.45, 2},
+    {"ga10x", "qwen3_5_text", KvCacheStorage::Nvfp4Group16, 256, 16, 4, 2.48, 2},
+    {"ada", "qwen3_5_text", KvCacheStorage::Nvfp4Group16, 256, 16, 4, 2.56, 2},
+    {"gb20x", "qwen3_5_text", KvCacheStorage::Nvfp4Group16, 256, 16, 4, 2.91, 1}, // 6.4 % apart
 };
 
 // The prefill chunk. An MoE's prefill grows with the tokens each expert takes from a chunk (chunk x
@@ -1030,6 +1104,32 @@ inline constexpr QuantKldPoint kQuantKld[] = {
 inline constexpr double kAccuracyWeight      = 25.0; // lambda: 0.001 KLD = 2.5 % of a request's time
 inline constexpr std::uint32_t kRequestPrompt = 2048; // the short request: a chat
 inline constexpr std::uint32_t kRequestAnswer = 512;  // the answer of either request
+
+// What a KLD means in answers, where it was calibrated (#618 step 11: shown, never a decision's):
+// MMLU-Pro points lost per unit of KLD against Q8_0 (docs/maintainer/configuration-choice.md, "What
+// lambda means in answers": Qwen3.5-9B GGUF, 2026-10-25, full MMLU-Pro at temperature 0, two runs a
+// quantization on the RTX 4090 and 5070 Ti; Q4_K_M 0.73 points for 0.0172 KLD, UD-IQ2_M 4.48 for
+// 0.114: about 0.04 points per 0.001; a run's mean reproduces within 0.2 points). One model, two
+// quantizations: the scale applies to the quantization's KLD against Q8_0 (the calibration's
+// quantity), and only on the calibrated model's own measured files (kQuantKld's:
+// Evidence::Measured, its Q8_0 file included), not on another model of its family (the 27B shares
+// the family key, its Q8_0 too: Evidence::Reference is the curve's zero, not the model's identity)
+// nor on the switches' terms. Another family's KLD is not on the same scale (Gemma 4's terms are
+// two orders larger for the same switches): not calibrated.
+struct AnswerScale {
+    std::string_view family;
+    std::string_view model; // the one model calibrated
+    std::string_view benchmark;
+    double points_per_kld;
+    int quantizations;   // the calibration's points against Q8_0
+    double noise_points; // a run's mean reproduces within it
+};
+
+// `model` is not checked against kQuantKld: the scale trusts that every kQuantKld file (the files
+// whose term is Evidence::Measured) under a scale's family key is that model's own. A row of
+// another model's files there would take the 9B's scale.
+inline constexpr AnswerScale kAnswerScales[] = {
+    {"qwen3_5_text", "Qwen3.5-9B", "mmlu_pro", 40.0, 2, 0.2}};
 // The request mix (DECISIONS 73; a convention from the published benchmark, not Fitted): the worth
 // weighs the short request's ln(T) by the number of short chats the benchmark sends (20 prompts,
 // docs/performance/methodology.md) and the long request's by its long prompts (6, of about 24K
@@ -1064,21 +1164,37 @@ inline constexpr std::uint32_t kLongPrompt = 24576;
 // reference clock, DRAM bytes per SM and clock). Its constants decide only where they rest on two
 // lab cards of the generation (principle 4): the KV read factors and the exact-route factor each
 // name whether they do. A generation without such a row, or whose factors rest on one card, keeps
-// the family's defaults (the engine's automatic KV codec, --activations fast).
+// the family's defaults (the engine's automatic KV codec, --activations fast). The two sets decide
+// apart: a generation whose KV factors rest on two cards decides the KV codec (each codec where its
+// own read cost does: kv_decides), and the activations only where the exact-route factor does too.
 struct ReferenceCard {
     std::string_view generation;
     int sms;
     double clock_hz;
     double dram_bytes_per_s;
-    bool kv_two_cards;    // kKvReadFactor's rows of the generation fitted on two lab cards
+    bool kv_two_cards;    // kKvReadFactor's and kKvSmRate's rows of the generation on two lab cards
     bool exact_two_cards; // kExactComputeEta's row likewise
     std::string_view cards;
+    // The compute capability's minor the lab cards share (#863). A generation row spans minors no
+    // lab card has (gb20x: 12.0-12.9, the GB10 12.1); a board of another minor runs and estimates
+    // on the row, and the reference card decides nothing for it, as a selector rule measured on one
+    // capability keeps that capability (generation.h). The minor is a discrete device fact, so the
+    // byte class (B1, deterministic-decisions.md) still reads nothing continuous.
+    int minor;
 };
 
 inline constexpr ReferenceCard kReferenceCards[] = {
     // RTX 4070 Ti (60 SMs, 2610 MHz, 504 GB/s: 3.22 B a SM-clock) and RTX 4090 (128, 2520,
-    // 1008: 3.13); the KV and exact factors measured on both (2026-10-23).
-    {"ada", 94, 2.565e9, 3.17 * 94 * 2.565e9, true, true, "RTX 4070 Ti, RTX 4090"},
+    // 1008: 3.13); the KV and exact factors measured on both (2026-10-23; the KV factors read again
+    // by the census of #618 step 1, 2026-11-13).
+    {"ada", 94, 2.565e9, 3.17 * 94 * 2.565e9, true, true, "RTX 4070 Ti, RTX 4090", 9},
+    // RTX 5070 Ti (70 SMs, 2452 MHz, 896 GB/s: 5.22 B a SM-clock) and RTX 5090 (170, 2407, 1792:
+    // 4.38); the KV factors from the census of #618 step 1 on both (NVFP4's SM rate not: 6.4 %
+    // apart, kKvSmRate). The exact
+    // route's extra is about 1.3 ms a step on both cards while their int8 tensor peaks differ 2.4x
+    // (#851): not the flops law kExactComputeEta prices, so no row, and the activations keep the
+    // default.
+    {"gb20x", 120, 2.4295e9, 4.80 * 120 * 2.4295e9, true, false, "RTX 5070 Ti, RTX 5090", 0},
 };
 
 // Two configurations whose worth differs by less than this are a tie (then: the longer own context,

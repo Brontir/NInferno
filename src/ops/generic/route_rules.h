@@ -195,8 +195,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     {"kGgmlVecMaxTokens", Basis::Structural, "generic_gemm.h",
      "inline constexpr std::int32_t kGgmlVecMaxTokens = 8;", 8, kUnknown, kUnknown,
      "ggml_mmq::kVecMaxColumns, the kernel's own width; no margin recorded", ""},
-    {"kMmqVerifyMinTokens", Basis::Measured, "generic_select.cpp",
-     "constexpr std::int32_t kMmqVerifyMinTokens = 9;", 9,
+    {"kMmqVerifyMinTokens", Basis::Measured, "format_rules.h",
+     "inline constexpr std::int32_t kMmqVerifyMinTokens = 9;", 9,
      "ad104:58sm (L4), gb203:70sm, ad102:128sm, tu102:68sm",
      "L4, RTX 5070 Ti, RTX 4090, RTX 2080 Ti",
      "ISTA IQ3_S 27B C4 MTP3 (16-token verify): L4 79.4 -> 89.2 tok/s (+12.3 %), RTX 5070 Ti "
@@ -291,7 +291,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the decode and verify widths the dense tuner times; no margin recorded; equal to "
      "kDecodePinMaxTokens today, not defined from it",
      ""},
-    {"kR8VerifyQ40MinValues", Basis::PlacedBetweenMeasured, "generic_select.cpp",
+    {"kR8VerifyQ40MinValues", Basis::PlacedBetweenMeasured, "format_rules.h",
      "inline constexpr std::int64_t kR8VerifyQ40MinValues = 24ll << 20;", 25165824,
      "ad102:128sm, ga102:82sm", "RTX 4090, RTX 3090",
      "Q4_0 R8 at T = 2..4 pays on a large matrix (Gemma 4 31B QAT, every dense matrix >= 44M "
