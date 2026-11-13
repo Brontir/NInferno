@@ -30,6 +30,7 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `make_bench_corpus.py` | Bake the token-id corpus used by `ninferno_bench`. |
 | `build_text_examples.py` | Build the long-context and long-decode CLI examples ([examples/cli](../../examples/cli/README.md)) from recent public-domain text and new problems. |
 | `r8_decode_table.py` | Generate `src/ops/generic/r8_decode_table.h` from R8 schedule sweeps. |
+| `run_850_r8_sweep.sh`, `r8_sweep_summary.py` | Three `ninferno_r8_schedule_bench` sweeps of Qwen3.5-9B's decode problems on one idle card (#850 (a), [kernel proposal G](../../docs/maintainer/kernel-proposals.md)): the down projections (the merge's input) apart from the rest of the step and the K >= 8192 rule-check shapes; then a paste-ready table per problem (each schedule's median, the rules' choice, the best, whether `r8_decode_table.py` would write an entry), the frozen prediction's verdict for the card and the K rule's check, and the card's `--merge` argument. `--summarize OUT` prints it again without a GPU. |
 | `hard_set.py` | One serving configuration through the hard question set ([eval/corpora/hard50](../../eval/corpora/hard50/README.md)): answers graded against the references, decode rate and, at a fixed speculative depth, tokens per round. |
 | `selection_regret.py` | Offline regret of recorded production choices against qualified, matched alternatives on held-out boards or models ([below](#offline-selection-regret)). |
 | `regret_bands.py` | Regret weighted by T band, per board, format and route family, from regret documents or plain route_tune CSVs ([below](#regret-by-t-band)). |
@@ -427,7 +428,9 @@ python3 tools/bench/make_bench_corpus.py --check
 `r8_decode_table.py` writes `src/ops/generic/r8_decode_table.h` from repeated
 `ninferno_r8_schedule_bench` sweeps. Each positional argument is `GPU=FILE[,FILE...]` where `GPU` is
 the class id printed on the bench's `device` line (for example `gb202:170sm`) and every file is a
-complete sweep (its `done` line). A problem gets an entry when the fastest schedule differs from the
+complete sweep (its `done` line) with at least one T = 1 R8 line in the bench's current format
+(`t=`, `decode=` and `h=` since #155, also read without them); a file of no such line is refused,
+since under `--merge` it would keep every old entry silently. A problem gets an entry when the fastest schedule differs from the
 shape-class rule, beats it by at least `--min-gain` in the median and in every sweep, and all
 schedules produced identical bytes. Each table records the board its sweeps ran on (the bench's
 `board` line: compute capability, SMs, L2, DRAM bandwidth; `--merge` keeps a header's), and a
