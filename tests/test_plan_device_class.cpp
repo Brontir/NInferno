@@ -573,7 +573,8 @@ std::string gemma_pieces(const NamedBoard& b, const Subject& s) {
             refusal = "the hidden device: " + std::string(cudaGetErrorName(error.code()));
         } catch (const std::exception& error) { refusal = error.what(); }
         if (covered) {
-            check(refusal.empty(), what + ": the snapshots cover the board, yet refused: " + refusal);
+            check(refusal.empty(),
+                  what + ": the snapshots cover the board, yet refused: " + refusal);
         } else {
             check(refusal.find("no kernel facts") != std::string::npos,
                   what + ": no snapshot covers the board, so the refusal names the facts, not '" +
