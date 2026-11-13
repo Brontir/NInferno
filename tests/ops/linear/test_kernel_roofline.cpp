@@ -1056,8 +1056,10 @@ void check_rmma_count() {
 //      architecture has a launch row;
 //  (d) with the switch off the selector offers total x a16 (golden-equal); with it on
 //      (completeness_terms_for_test) it offers total x a16 + the terms, bit for bit.
-// And on one AddResidual call of every board, the residual read is the output's bytes again; with
-// the switch on every A8 candidate of a board that prices them moves and stays finite.
+// And on one AddResidual call of every board, the residual read is the output's bytes again and the
+// selector's own price under the switch carries it; with the switch on every A8 candidate of a
+// board that prices them moves and stays finite, and on an AddResidual call moves by the residual
+// read more than on a Store call.
 void check_completeness() {
     long routes = 0, known = 0, extrapolated = 0, bad = 0;
     const auto fail = [&](const std::string& what) {
@@ -1140,7 +1142,7 @@ void check_completeness() {
         }
     }
     // The residual read, and the A8 candidates under the switch.
-    long residual = 0, a8 = 0;
+    long residual = 0, a8 = 0, a8_residual = 0;
     for (const auto& board : g::kFactsBoards) {
         const DeviceClass d = g::board_device_class(board);
         if (!priceable(d)) continue;
@@ -1152,41 +1154,89 @@ void check_completeness() {
             priced = g::priced_routes_query(d, QType::GGML_Q4_K, LinearPolicy::A16Only,
                                             g::Epilogue::AddResidual, 4096, 4096, 64);
         }
-        for (const auto& p : priced) {
+        // The selector's own AddResidual price under the switch: total x a16 + the terms, the
+        // residual among them (a price_routes that dropped the epilogue would miss it).
+        g::completeness_terms_for_test(true);
+        const auto residual_on = g::priced_routes_query(d, QType::GGML_Q4_K, LinearPolicy::A16Only,
+                                                        g::Epilogue::AddResidual, 4096, 4096, 64);
+        g::completeness_terms_for_test(std::nullopt);
+        if (residual_on.size() != priced.size()) {
+            fail(std::string(board.name) + ": the switch changed the AddResidual routes offered");
+        }
+        const double residual_bytes = 4096.0 * 64 * 2;
+        for (std::size_t i = 0; i < priced.size(); ++i) {
+            const auto& p = priced[i];
             const auto t = roofline_terms(d, chip, QType::GGML_Q4_K, g::Epilogue::AddResidual, 4096,
                                           4096, 64, p.route, reads);
             if (!t) continue;
             ++residual;
-            if (t->residual != t->output || t->output != 4096.0 * 64 * 2 / chip.dram_bytes_per_s) {
-                fail(std::string(board.name) + " " + g::route_name(p.route) +
-                     ": AddResidual reads the output's bytes once");
+            const std::string at = std::string(board.name) + " " + g::route_name(p.route);
+            if (!(t->residual > 0) || t->residual != t->output ||
+                t->output != residual_bytes / chip.dram_bytes_per_s) {
+                fail(at + ": AddResidual reads the output's bytes once");
+            }
+            if (i >= residual_on.size() || !(residual_on[i].route == p.route) ||
+                residual_on[i].seconds !=
+                    t->total * t->a16 + (t->output + t->residual + t->quant + t->launch)) {
+                fail(at + ": the selector's AddResidual price under the switch is not total x a16 "
+                          "+ output + residual + launch");
             }
         }
-        const auto a8_off = g::priced_routes_query(d, QType::GGML_Q4_K, LinearPolicy::AllowA8,
-                                                   g::Epilogue::Store, 4096, 4096, 64);
-        g::completeness_terms_for_test(true);
-        const auto a8_on = g::priced_routes_query(d, QType::GGML_Q4_K, LinearPolicy::AllowA8,
-                                                  g::Epilogue::Store, 4096, 4096, 64);
-        g::completeness_terms_for_test(std::nullopt);
-        if (a8_off.size() != a8_on.size()) {
+        // The A8 candidates under the switch, on a Store and an AddResidual call: each moves and
+        // stays finite, and the AddResidual call's move exceeds the Store call's by the residual
+        // read (a8_candidates reads the epilogue).
+        const auto a8_prices = [&](g::Epilogue e, bool on) {
+            g::completeness_terms_for_test(on);
+            auto p = g::priced_routes_query(d, QType::GGML_Q4_K, LinearPolicy::AllowA8, e, 4096,
+                                            4096, 64);
+            g::completeness_terms_for_test(std::nullopt);
+            return p;
+        };
+        const auto a8_off     = a8_prices(g::Epilogue::Store, false);
+        const auto a8_on      = a8_prices(g::Epilogue::Store, true);
+        const auto a8_res_off = a8_prices(g::Epilogue::AddResidual, false);
+        const auto a8_res_on  = a8_prices(g::Epilogue::AddResidual, true);
+        if (a8_off.size() != a8_on.size() || a8_res_off.size() != a8_res_on.size()) {
             fail(std::string(board.name) + ": the switch changed the A8 routes offered");
             continue;
         }
+        const auto find = [](const std::vector<g::PricedRouteQuery>& v,
+                             g::Route r) -> std::optional<double> {
+            for (const auto& p : v) {
+                if (p.route == r) return p.seconds;
+            }
+            return std::nullopt;
+        };
+        const double residual_seconds = residual_bytes / chip.dram_bytes_per_s;
         for (std::size_t i = 0; i < a8_off.size(); ++i) {
             if (is_golden_family(a8_off[i].route.family)) continue;
             ++a8;
+            const std::string at = std::string(board.name) + " " + g::route_name(a8_off[i].route);
             if (!(a8_on[i].route == a8_off[i].route) || !std::isfinite(a8_on[i].seconds) ||
                 !(a8_on[i].seconds > 0) || a8_on[i].seconds == a8_off[i].seconds) {
-                fail(std::string(board.name) + " " + g::route_name(a8_off[i].route) +
-                     ": an A8 candidate does not move under the switch");
+                fail(at + ": an A8 candidate does not move under the switch");
+            }
+            const auto res_off = find(a8_res_off, a8_off[i].route);
+            const auto res_on  = find(a8_res_on, a8_off[i].route);
+            if (!res_off || !res_on) {
+                fail(at + ": an A8 candidate of the Store call is not offered for AddResidual");
+                continue;
+            }
+            ++a8_residual;
+            const double moved_store = a8_on[i].seconds - a8_off[i].seconds;
+            const double moved_res   = *res_on - *res_off;
+            if (std::fabs(moved_res - moved_store - residual_seconds) > 1e-6 * residual_seconds) {
+                fail(at + ": under the switch the AddResidual call does not add the residual read");
             }
         }
     }
     std::printf("completeness: %ld golden routes (%ld with a known launch, %ld of them past 1024 "
                 "CTAs), %ld "
-                "AddResidual routes, %ld A8 candidates under the switch, %ld wrong\n",
-                routes, known, extrapolated, residual, a8, bad);
-    if (bad > 0 || routes == 0 || known == 0 || known == routes || residual == 0 || a8 == 0) {
+                "AddResidual routes, %ld A8 candidates under the switch (%ld also on AddResidual), "
+                "%ld wrong\n",
+                routes, known, extrapolated, residual, a8, a8_residual, bad);
+    if (bad > 0 || routes == 0 || known == 0 || known == routes || residual == 0 || a8 == 0 ||
+        a8_residual == 0) {
         ++failures;
     }
 }
