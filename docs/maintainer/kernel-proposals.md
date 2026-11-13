@@ -216,31 +216,43 @@ prediction so far.
      statistics. One stage in flight (16 KiB) is more than 32 B/clk x the L2 latency (6-10 KiB)
      on every card, so the loop runs at the SM's fill rate: S x DChunk x 4 B / 32 B/clk.
   2. The maxima, the sums and the gate are loaded beside the positions: one round trip, not four.
-  3. A 256-column schedule launches 64 columns a CTA only within one wave, and only where that
-     lowers the bytes on the most loaded SM (`common/causal_merge_shape.h`):
-     - n = query heads x columns is the CTA count at 256 columns. At 64 columns the most loaded
-       SM streams ceil(4 n / SMs) x 64 columns a split, against ceil(n / SMs) x 256;
-     - the rule narrows only while 4 n <= 3 SMs, so the narrow grid puts at most three CTAs on
-       an SM and fits in one wave;
-     - it is restricted to one wave on purpose. Past a wave the byte inequality still holds in
-       places: at n = SMs + 1 it is ceil(4 + 4 / SMs) x 64 = 320 against 2 x 256 = 512. But each
-       narrow CTA repeats the head's statistics (the m and l loads, the reductions and their
-       barriers), and the registers cap the merge at 4 CTAs a SM (Cost, below). So past
-       4 x SMs narrow CTAs a second wave runs that whole chain again. The bytes saved then no
-       longer pay for a serial statistics phase that this law does not count, and the schedule
-       keeps 256 columns there;
-     - at W = 1 the merge runs 64 CTAs on every board from 22 SMs up. The most loaded SM streams
-       ceil(64 / SMs) / 4 of the old bytes: a quarter from 64 SMs up (RTX 5090, 4090, 3090,
-       5070 Ti, 2080 Ti), a half from 32 to 63 SMs (4070 Ti's 60 and 4060 Ti's 34, two CTAs an
-       SM), and 3/4 from 22 to 31 (3060's 28, three CTAs an SM). The table's 64-column columns
-       price these shares.
+  3. The column chunk comes from the law of the most loaded SM, `common/causal_merge_shape.h`
+     (law 2: it replaced the bytes-only rule after the RTX 3060's A/B, below). The terms:
+     - n = query heads x columns is the CTA count at 256 columns. At chunk D there are n x 256 / D
+       CTAs, and the most loaded SM holds k = ceil(n x 256 / D / SMs) of them.
+     - Issue. Every CTA runs the same fixed work whatever its chunk: the prologue, the two-stage
+       fetch, the head's statistics (the m and l loads, the reductions, their barriers), one
+       stage's store and the epilogue. The SASS of the W = 1 instances counts F = 497-500 warp
+       instructions a warp on sm_75/86/89 (391 on sm_120a), 8 warps a CTA. Each further stage
+       adds 67-74 a warp. Each split adds 4 a warp that owns columns (an x16 chain body of 60:
+       weight, test, value, FFMA), and D / 32 warps own columns. An SM issues at most 4 warp
+       instructions a clock, so its k CTAs take at least k x (8 F + 8 x 70 x (stages - 1) +
+       (D / 32) x 4 S) / 4 clocks.
+     - Bytes. Its k CTAs stream k x S x D x 4 B at 32 B/clk.
+
+     The rule takes the chunk with the smaller max(issue, bytes) on the most loaded SM, with
+     F = 500 (the sm_120a count of 391 moves no decision at a decode token) and S the partition's
+     capacity. The L2 round trip both chunks share is left out. Both terms are counted, nothing is
+     fitted. What follows from them:
+     - every narrow CTA repeats the fixed work, so where k narrow CTAs share an SM the fixed work
+       is issued k times. The bytes-only rule never counted this;
+     - at W = 1 (n = 16, S = SMs / 2) narrowing pays only where each narrow CTA has an SM to
+       itself, from 64 SMs up (RTX 5090, 4090, 3090, 5070 Ti, 2080 Ti). There it issues the same
+       fixed work, a quarter of the chain and a quarter of the bytes;
+     - below 64 SMs (RTX 4070 Ti, 4060 Ti, 3060), two or three narrow CTAs share an SM and their
+       repeated fixed work outweighs the bytes saved: 2,120 against 1,380 clocks on the 4070 Ti,
+       2,068 against 1,276 on the 4060 Ti, 3,084 against 1,112 on the 3060. These keep 256
+       columns. A shared SM pays only where the wide chunk's bytes exceed the repeated work, for
+       example 256 splits on 28 SMs.
 
      The NVFP4 and K8V4 merges store whole rows through the inverse rotation, so they keep 256
      columns: 16 CTAs, each at the fill-rate bound.
 
-  New call: t0 + L + max(700 clk, L + bytes on the most loaded SM / 32 B/clk) + the last stage's
-  FFMA chain (5 clk a split) + 40 clk of barriers a stage. DRAM-cold, the call is also bounded
-  below by L + all its bytes / the board's DRAM bandwidth (`gpu_facts.json`).
+  New call: t0 + max(L + max(700 clk, L + bytes on the most loaded SM / 32 B/clk) + the last
+  stage's FFMA chain (5 clk a split) + 40 clk of barriers a stage, the issue term above).
+  DRAM-cold, the call is also bounded below by L + all its bytes / the board's DRAM bandwidth
+  (`gpu_facts.json`). The old call's issue term, 8 x (200 + 6 S) / 4 clocks from its SASS, never
+  binds.
 - Numerics: no change.
   - A column's sum is the same FFMA chain in split order, with zero-weight splits skipped, as
     before. The statistics are the same code.
@@ -248,10 +260,9 @@ prediction so far.
   - The output is bit-identical at every codec, width, batch and partition, including the
     invariant route profile's aligned splits. `test_causal_merge_order` pins this against
     master's kernels at split counts 1-256.
-- Prediction (frozen 13.11, before any run). It was revised the same day after review, before
-  any result came back, for three things: the per-arch R(S), the DRAM-cold case and the narrowing
-  bound. The table gives the merge's call time without t0, at the boards' boost clocks
-  (`gpu_facts.json`), at both bench depths (7843 and 21961 keys run the same S):
+- Prediction 1 (frozen 13.11, before any run, by the bytes-only rule; revised the same day after
+  review and before any result, for the per-arch R(S), the DRAM-cold case and the narrowing
+  bound). It is kept for the record; the A/B below refuted it on the RTX 3060.
 
   | Board | S | R(S) | L2-hot old µs | new, 64 cols | new, 256 cols | bench intercept drop a step (8 layers), BF16 / FP8 / INT8 µs | NVFP4 / K8V4 µs | DRAM-cold (ncu) old µs | new, 64 cols | new, 256 cols |
   |---|---|---|---|---|---|---|---|---|---|---|
@@ -264,6 +275,29 @@ prediction so far.
   | RTX 5090 | 85 | 22 | 3.5 | 0.6 | 1.5 | 23 (17-35) | 16 (12-24) | 10.0 | 1.2 | 2.0 |
   | RTX 4060 Ti | 17 | 5 | 1.1 | 0.4 | 0.4 | 6 (4-8) | 6 (4-8) | 2.6 | 1.3 | 1.3 |
 
+- Prediction 2 (frozen 13.11 after the RTX 4090 and 3060 A/B, before any rerun, by law 2). The
+  merge's call time without t0, at the boards' boost clocks (`gpu_facts.json`), at both bench
+  depths (7843 and 21961 keys run the same S). D is the chunk law 2 takes for BF16, FP8 and INT8;
+  NVFP4 and K8V4 always take 256:
+
+  | Board | SMs | S | R(S) | D | L2-hot old µs | new at D | new, 256 cols | bench intercept drop a step (8 layers), BF16 / FP8 / INT8 µs | NVFP4 / K8V4 µs | DRAM-cold (ncu) old µs | new at D | new, 256 cols |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | RTX 3090 | 82 | 41 | 11 | 64 | 2.1 | 0.7 | 1.1 | 12 (9-18) | 8 (6-12) | 5.0 | 1.0 | 1.5 |
+  | RTX 3060 | 28 | 14 | 5 | 256 | 1.4 | 0.6 | 0.6 | 6 (5-10) | 6 (5-10) | 3.1 | 1.0 | 1.0 |
+  | RTX 2080 Ti | 68 | 34 | 10 | 64 | 2.0 | 0.7 | 1.0 | 10 (8-16) | 8 (6-12) | 4.3 | 1.2 | 1.3 |
+  | RTX 4070 Ti | 60 | 30 | 9 | 256 | 1.5 | 0.6 | 0.6 | 7 (5-11) | 7 (5-11) | 3.6 | 1.3 | 1.3 |
+  | RTX 4090 | 128 | 64 | 16 | 64 | 2.2 | 0.5 | 1.1 | 13 (10-20) | 9 (6-13) | 5.3 | 1.3 | 1.4 |
+  | RTX 5070 Ti | 70 | 35 | 10 | 64 | 2.0 | 0.5 | 0.8 | 12 (9-18) | 10 (8-15) | 5.5 | 1.0 | 1.3 |
+  | RTX 5090 | 170 | 85 | 22 | 64 | 3.5 | 0.6 | 1.5 | 23 (17-35) | 16 (12-24) | 10.0 | 1.2 | 2.0 |
+  | RTX 4060 Ti | 34 | 17 | 5 | 256 | 1.1 | 0.5 | 0.5 | 5 (4-7) | 5 (4-7) | 2.6 | 1.3 | 1.3 |
+
+  - The boards that narrow keep their prediction-1 cells: there each narrow CTA has its own SM,
+    so the issue term does not bind.
+  - The RTX 3060, 4070 Ti and 4060 Ti take 256 columns for every codec. Their BF16 / FP8 / INT8
+    cells are now the 256-column cells.
+  - Under law 2, 64 columns would cost those three boards +1.1 µs a call on the 3060 (1.74
+    against 0.63), +0.2 on the 4070 Ti (0.81 against 0.61) and +0.3 on the 4060 Ti (0.82 against
+    0.50).
   - The bench drop's range is 0.75-1.5x the point. The L2 latency under load lies between the
     lone-warp figure and 1.5x that, and it lengthens the old loop's 4 + R(S) round trips more
     than the new one's two.
@@ -271,17 +305,25 @@ prediction so far.
     prediction is the drop in duration a call: the DRAM-cold old column minus the new one.
   - ncu's default `--clock-control base` also locks the base clock, while the cold columns use
     boost clocks. Only the clock-counted terms (700 clk of statistics, the fill rate, the FFMA
-    chain) stretch, by about boost / base: about +0.05 µs a call on the RTX 5090. That is inside
-    the ncu range, so no column is restated.
+    chain, the issue term) stretch, by about boost / base: about +0.05 µs a call on the RTX 5090.
+    That is inside the ncu range, so no column is restated.
   - The read rate (the slope) does not change.
   - With `--activations exact` the aligned partition runs ceil(keys / 512) splits (16 at 7843
     keys, 43 at 21961). There the old loop's cost grows with depth and part of the gain moves
     into the slope; that cell is not predicted.
 - Other widths: the same law holds at every W.
   - The staged loop runs at every width, and the bits are unchanged.
-  - The 64-column chunk applies while 64 x W x B <= 3 x SMs: RTX 5090 W <= 7, 4090 <= 6; 3090,
-    5070 Ti and 2080 Ti <= 3; 4070 Ti <= 2; 3060 W = 1 only. Wider grids keep their 256-column
-    launches.
+  - At the wave partition's S = SMs / 2 (INT8, and BF16's targets), law 2 narrows up to:
+
+    | Board | Narrows up to |
+    |---|---|
+    | RTX 5090 | W <= 5 |
+    | RTX 4090 | W <= 2 |
+    | RTX 3090, 5070 Ti, 2080 Ti | W = 1 |
+    | RTX 4070 Ti, 4060 Ti, 3060 | never at this S |
+
+    A partition with other splits (FP8's speculative widths keep one CTA a SM) is decided by the
+    same law with its own capacity. Wider grids keep their 256-column launches.
   - The geometries whose schedule is already 64 columns (KV heads other than 4) keep their grid
     and get the staged loop.
   - No W > 1 cell is predicted here.
@@ -299,7 +341,7 @@ prediction so far.
   - the 17-18 KiB of static shared memory would allow 5 (3 on sm_75).
 
   It is not a new route: the summation, the selector goldens and the build manifest are unchanged.
-- Acceptance / refutation (frozen, two-sided):
+- Acceptance / refutation (frozen, two-sided; prediction 2 is judged by the same bounds):
   - kept where the bench intercept a step drops by at least half the lower edge on at least five
     of the seven stand boards (RTX 3090, 3060, 2080 Ti, 4070 Ti, 4090, 5070 Ti, 5090), and the
     slope stays within ±2 %. The RTX 4060 Ti row is an ncu-only cell: it is there to check the
@@ -314,5 +356,35 @@ prediction so far.
     on the RTX 4060 Ti refutes the DRAM-cold law's account of the 4.86-5.06 µs cell;
   - the byte rule: `exact`, bit-identical (`test_causal_merge_order`, and the softmax attention
     tests unchanged).
-- A/B: not run.
-- Decision: open.
+- A/B 1 (13.11, #867): ABBA, master against the branch at 4b22771d merged with master. Both runs
+  use the chunk rule of prediction 1. `kv_decode_attention_bench`, Qwen3.5-9B, 8 layers, slope
+  over contexts 7843 and 21961. Each cell is the drop of the fixed part a step: the mean of the
+  A runs minus the mean of the B runs.
+
+  | Board | BF16 | INT8 | FP8 | NVFP4 | K8V4 | slope |
+  |---|---|---|---|---|---|---|
+  | RTX 4090, predicted | 13 (10-20) | 13 (10-20) | 13 (10-20) | 9 (6-13) | 9 (6-13) | ±2 % |
+  | RTX 4090, measured | 22.7 | 19.7 | 24.2 | 11.4 | 10.6 | -0.3 .. +0.4 % |
+  | RTX 3060, predicted | 7 (5-10) | 7 (5-10) | 7 (5-10) | 7 (5-10) | 7 (5-10) | ±2 % |
+  | RTX 3060, measured | ~10 (its A runs disagree, 169.8 / 130.5) | -4 | -8 | 2 | 1 | 0 .. +1 % |
+
+  - RTX 4090: every cell is kept. INT8, NVFP4 and K8V4 fall inside their ranges. BF16 and FP8
+    are above the upper edge but under 1.5x of it. The law under-counts the 4090's old call by
+    about 1.6x; that is an open finding.
+  - RTX 3060: refuted. INT8 and FP8 got slower (-4 and -8 µs a step), and NVFP4 and K8V4 dropped
+    by 2 and 1 against 7 (5-10).
+  - The old law's miss, on the narrowed codecs: the bytes-only rule narrowed the 3060's decode
+    token to 64 CTAs on 28 SMs, three a SM. It priced that as a quarter less of the bytes per SM.
+    It did not count the fixed work that every narrow CTA repeats (F x 8 warps, the statistics
+    among it), which three CTAs issue three times on one SM. Law 2 counts it: +1.1 µs a call
+    (3,084 against 1,112 issue clocks), about 9 µs a step. The measured gap between the narrowed
+    codecs (INT8, FP8: -4, -8) and the 256-column ones (NVFP4, K8V4: 2, 1) is 6-10 µs a step.
+    Law 2 keeps 256 columns on the 3060.
+  - Not explained, on the 256-column codecs: NVFP4 and K8V4 gain 1-2 µs a step against 6 (5-10)
+    under either law. No counted term accounts for it. The next step is ncu of master's and the
+    branch's 256-column merge on the 3060, L2-hot (`--cache-control none`): issue-active, stall
+    reasons, and the L2 hit rate of the partials. Until then it stays a finding against the
+    staged loop's gain at 14 splits, and prediction 2 keeps the law's cell (6) rather than refit.
+- Decision: narrowed. The narrow chunk is now taken by law 2 only, and keeps 256 columns on the
+  RTX 3060, 4070 Ti and 4060 Ti at a decode token. The staged loop stays everywhere, pending the
+  rerun of A/B 1 on all boards under prediction 2 and the 3060's ncu.

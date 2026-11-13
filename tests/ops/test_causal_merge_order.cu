@@ -1,14 +1,14 @@
 // The natural merges' split loop (common/causal_merge.cuh, dense/causal_cache/bf16/merge.cuh,
 // #865) against the per-thread loop it replaced, bit for bit. The merges now load the partials
 // with every thread of the CTA, in 16-byte stages two ahead, load the splits' maxima and sums
-// beside the positions, and a 256-column schedule narrows to 64 columns only while the narrow grid
-// stays within 3/4 of a wave (4 x query heads x columns <= 3 x SMs, causal_merge_shape.h); none
-// of it may change a column's sum. The legacy kernels below are master's code at 66c53fca, renamed.
-// Each case runs them at their schedule's chunk and the new kernels at 256 and 64 columns (whole
-// rotated rows: 256 only) and requires the same BF16 bits at every split count from 1 to 256 (the
-// partition's maximum), with zero-weight splits (no sum, or an underflowing maximum) holding NaN
-// partials, garbage in the splits past the live count, several tokens and batch rows, masked
-// columns, the output gate and the aligned partitions.
+// beside the positions, and a 256-column schedule narrows to 64 columns where entry O's law (the
+// most loaded SM's issue and bytes, with the fixed work every narrow CTA repeats) says it is
+// faster (causal_merge_shape.h); none of it may change a column's sum. The legacy kernels below are
+// master's code at 66c53fca, renamed. Each case runs them at their schedule's chunk and the new
+// kernels at 256 and 64 columns (whole rotated rows: 256 only) and requires the same BF16 bits at
+// every split count from 1 to 256 (the partition's maximum), with zero-weight splits (no sum, or an
+// underflowing maximum) holding NaN partials, garbage in the splits past the live count, several
+// tokens and batch rows, masked columns, the output gate and the aligned partitions.
 
 #include "ops/softmax_attention/common/causal_merge.cuh"
 #include "ops/softmax_attention/common/causal_merge_shape.h"
@@ -253,20 +253,42 @@ namespace {
 using namespace ninferno::ops::detail;
 using G = CausalGeometry<256, 16, 4>;
 
-// The chunk rule (causal_merge_shape.h): 64 columns where 4 x query heads x columns <= 3 x SMs (a
-// decode token of 16 query heads on every board from 22 SMs up); between 3/4 of a wave and a
-// full one, past a wave, a narrow schedule and whole rows keep their chunk.
-static_assert(causal_merge_d_chunk(256, false, 16, 1, 22) == 64);
-static_assert(causal_merge_d_chunk(256, false, 16, 1, 21) == 256);
-static_assert(causal_merge_d_chunk(256, false, 16, 1, 20) == 256);
-static_assert(causal_merge_d_chunk(256, false, 16, 1, 28) == 64);
-static_assert(causal_merge_d_chunk(256, false, 16, 1, 170) == 64);
-static_assert(causal_merge_d_chunk(256, false, 16, 7, 170) == 64);
-static_assert(causal_merge_d_chunk(256, false, 16, 8, 170) == 256);
-static_assert(causal_merge_d_chunk(256, false, 16, 11, 170) == 256);
-static_assert(causal_merge_d_chunk(256, false, 16, 2, 28) == 256);
-static_assert(causal_merge_d_chunk(256, true, 16, 1, 170) == 256);
-static_assert(causal_merge_d_chunk(64, false, 16, 1, 170) == 64);
+// The chunk rule (causal_merge_shape.h, entry O's law: issue and bytes of the most loaded SM, the
+// fixed work repeated by every narrow CTA). A decode token of 16 query heads at the wave
+// partition's SMs / 2 splits keeps 256 columns below 64 SMs (the RTX 3060, 4060 Ti, 4070 Ti) and
+// narrows from 64 SMs up; wider grids narrow while the narrow CTAs' repeated work stays under the
+// wide chunk's bytes; whole rows and a 64-column schedule keep their chunk.
+static_assert(causal_merge_d_chunk(256, false, 16, 1, 14, 28) == 256);
+static_assert(causal_merge_d_chunk(256, false, 16, 1, 17, 34) == 256);
+static_assert(causal_merge_d_chunk(256, false, 16, 1, 30, 60) == 256);
+static_assert(causal_merge_d_chunk(256, false, 16, 1, 31, 63) == 256);
+static_assert(causal_merge_d_chunk(256, false, 16, 1, 32, 64) == 64);
+static_assert(causal_merge_d_chunk(256, false, 16, 1, 34, 68) == 64);
+static_assert(causal_merge_d_chunk(256, false, 16, 1, 41, 82) == 64);
+static_assert(causal_merge_d_chunk(256, false, 16, 1, 85, 170) == 64);
+static_assert(causal_merge_d_chunk(256, false, 16, 5, 85, 170) == 64);
+static_assert(causal_merge_d_chunk(256, false, 16, 6, 85, 170) == 256);
+static_assert(causal_merge_d_chunk(256, false, 16, 2, 64, 128) == 64);
+static_assert(causal_merge_d_chunk(256, false, 16, 3, 64, 128) == 256);
+static_assert(causal_merge_d_chunk(256, false, 16, 2, 41, 82) == 256);
+// Bytes past the repeated work: 256 splits on 28 SMs narrow.
+static_assert(causal_merge_d_chunk(256, false, 16, 1, 256, 28) == 64);
+static_assert(causal_merge_d_chunk(256, true, 16, 1, 85, 170) == 256);
+static_assert(causal_merge_d_chunk(64, false, 16, 1, 85, 170) == 64);
+
+// Runs `launch` while device_class() answers `sms` multiprocessors: the production launches take
+// their chunk from it, so both chunks run through them on any device.
+template <class Launch>
+void with_sms(int sms, Launch&& launch) {
+    ninferno::DeviceClass d = ninferno::device_class();
+    d.sms                   = sms;
+    const ninferno::ScopedDeviceClass scoped(d);
+    launch();
+}
+
+// The SM counts the production launches are run under: a board that narrows a decode token and
+// one that keeps 256 columns.
+constexpr int kLaunchSms[] = {170, 28};
 
 bool cuda_available() {
     int count = 0;
@@ -324,11 +346,17 @@ struct Buffers {
     }
 };
 
+// Every copy, fill and launch of the test runs on this non-blocking stream (main makes it), none
+// on the legacy stream (tools/audit/legacy_stream_calls.sh).
+cudaStream_t g_stream = nullptr;
+
 template <class T>
 bool upload(T** device, const std::vector<T>& host) {
     const std::size_t bytes = host.size() * sizeof(T);
     return check(cudaMalloc(reinterpret_cast<void**>(device), bytes), "cudaMalloc") &&
-           check(cudaMemcpy(*device, host.data(), bytes, cudaMemcpyHostToDevice), "copy");
+           check(cudaMemcpyAsync(*device, host.data(), bytes, cudaMemcpyHostToDevice, g_stream),
+                 "copy") &&
+           check(cudaStreamSynchronize(g_stream), "copy");
 }
 
 bool fill(const Case& c, std::uint64_t seed, Buffers& b) {
@@ -389,12 +417,16 @@ int g_compared = 0;
 // Runs one launch into b.out (a pattern first) and returns the output bits.
 template <class Launch>
 bool run(Buffers& b, Launch&& launch, std::vector<std::uint16_t>& bits) {
-    if (!check(cudaMemset(b.out, 0x7f, b.out_count * 2), "cudaMemset")) return false;
+    if (!check(cudaMemsetAsync(b.out, 0x7f, b.out_count * 2, g_stream), "cudaMemsetAsync"))
+        return false;
     launch();
-    if (!check(cudaGetLastError(), "launch") || !check(cudaDeviceSynchronize(), "kernel"))
+    if (!check(cudaGetLastError(), "launch") || !check(cudaStreamSynchronize(g_stream), "kernel"))
         return false;
     bits.resize(b.out_count);
-    return check(cudaMemcpy(bits.data(), b.out, b.out_count * 2, cudaMemcpyDeviceToHost), "copy");
+    return check(cudaMemcpyAsync(bits.data(), b.out, b.out_count * 2, cudaMemcpyDeviceToHost,
+                                 g_stream),
+                 "copy") &&
+           check(cudaStreamSynchronize(g_stream), "copy");
 }
 
 void compare(const Case& c, const char* family, const char* variant,
@@ -449,12 +481,12 @@ void causal_case(const Case& c, Buffers& b) {
         const dim3 grid(G::QHeads, 256 / DChunk, columns);
         if constexpr (Legacy)
             legacy::legacy_causal_natural_merge_kernel<G, DChunk, MultiBatch, Masked, Rotated,
-                                                       Aligned><<<grid, 256>>>(
+                                                       Aligned><<<grid, 256, 0, g_stream>>>(
                 b.acc, b.m, b.l, b.positions, b.valid, c.width, c.batch, partition, b.out, gate);
         else
             causal_natural_merge_kernel<G, DChunk, MultiBatch, Masked, Rotated, Aligned>
-                <<<grid, 256>>>(b.acc, b.m, b.l, b.positions, b.valid, c.width, c.batch, partition,
-                                b.out, gate);
+                <<<grid, 256, 0, g_stream>>>(b.acc, b.m, b.l, b.positions, b.valid, c.width,
+                                             c.batch, partition, b.out, gate);
     };
     if (!run(b, [&] { launch.template operator()<256, true>(); }, want)) {
         ++g_failures;
@@ -474,15 +506,21 @@ void causal_case(const Case& c, Buffers& b) {
     p.width     = c.width;
     p.batch     = c.batch;
     p.gate      = gate;
-    if (!run(
-            b,
-            [&] {
-                launch_causal_natural_merge<G, WideSchedule, MultiBatch, Masked, Rotated, true>(
-                    p, b.valid, partition, CausalPartialView{b.acc, b.m, b.l}, nullptr);
-            },
-            got))
-        got.clear();
-    compare(c, "causal", "launch", want, got);
+    for (const int sms : kLaunchSms) {
+        if (!run(
+                b,
+                [&] {
+                    with_sms(sms, [&] {
+                        launch_causal_natural_merge<G, WideSchedule, MultiBatch, Masked, Rotated,
+                                                    true>(
+                            p, b.valid, partition, CausalPartialView{b.acc, b.m, b.l}, g_stream);
+                    });
+                },
+                got))
+            got.clear();
+        compare(c, "causal", sms == kLaunchSms[0] ? "launch, 170 SMs" : "launch, 28 SMs", want,
+                got);
+    }
 }
 
 // The BF16 merge: legacy at its schedule's chunk (256), new at 256 and 64, and the production
@@ -498,11 +536,12 @@ void bf16_case(const Case& c, Buffers& b) {
         const dim3 grid(G::QHeads, 256 / DChunk, columns);
         if constexpr (Legacy)
             legacy::legacy_bf16_kv_merge_kernel<G, S, MultiBatch, Masked, Aligned>
-                <<<grid, S::kThreads>>>(b.acc, b.m, b.l, b.positions, b.valid, c.width, c.batch,
-                                        partition, b.out, b.gate);
+                <<<grid, S::kThreads, 0, g_stream>>>(b.acc, b.m, b.l, b.positions, b.valid, c.width,
+                                                     c.batch, partition, b.out, b.gate);
         else
-            bf16_kv_merge_kernel<G, S, MultiBatch, Masked, Aligned><<<grid, S::kThreads>>>(
-                b.acc, b.m, b.l, b.positions, b.valid, c.width, c.batch, partition, b.out, b.gate);
+            bf16_kv_merge_kernel<G, S, MultiBatch, Masked, Aligned>
+                <<<grid, S::kThreads, 0, g_stream>>>(b.acc, b.m, b.l, b.positions, b.valid, c.width,
+                                                     c.batch, partition, b.out, b.gate);
     };
     if (!run(b, [&] { launch.template operator()<256, true>(); }, want)) {
         ++g_failures;
@@ -521,15 +560,20 @@ void bf16_case(const Case& c, Buffers& b) {
     // The merge reads only the view's valid columns.
     const Bf16KvCacheView<false> cache{nullptr, nullptr, nullptr, b.valid,
                                        nullptr, 0,       256,     G::KVHeads};
-    if (!run(
-            b,
-            [&] {
-                launch_bf16_kv_merge<G, Bf16KvMergeSchedule<256>, MultiBatch, Masked, false, true>(
-                    p, cache, partition, CausalPartialView{b.acc, b.m, b.l}, nullptr);
-            },
-            got))
-        got.clear();
-    compare(c, "bf16", "launch", want, got);
+    for (const int sms : kLaunchSms) {
+        if (!run(
+                b,
+                [&] {
+                    with_sms(sms, [&] {
+                        launch_bf16_kv_merge<G, Bf16KvMergeSchedule<256>, MultiBatch, Masked, false,
+                                             true>(p, cache, partition,
+                                                   CausalPartialView{b.acc, b.m, b.l}, g_stream);
+                    });
+                },
+                got))
+            got.clear();
+        compare(c, "bf16", sms == kLaunchSms[0] ? "launch, 170 SMs" : "launch, 28 SMs", want, got);
+    }
 }
 
 // Not aligned: the last column sees splits x 64 keys (the call's window runs `splits`), earlier
@@ -558,14 +602,15 @@ int main() {
         std::printf("SKIP: no CUDA device\n");
         return 77;
     }
+    if (!check(cudaStreamCreateWithFlags(&g_stream, cudaStreamNonBlocking), "stream")) return 1;
     const int split_counts[] = {1,  2,  3,  4,  5,  7,  8,   9,   15,  16,  17,  31, 32,
                                 33, 41, 63, 64, 65, 85, 127, 128, 129, 200, 255, 256};
     std::uint64_t seed       = 865;
-    const int sms            = ninferno::device_class().sms;
-    const int decode_chunk   = causal_merge_d_chunk(256, false, G::QHeads, 1, sms);
-    std::printf("device: %d SMs; the launches take %d columns at a decode token%s\n", sms,
-                decode_chunk,
-                decode_chunk == 256 ? " (the narrow launch branch is not reached here)" : "");
+    // The production launches run under 170 and 28 SMs (kLaunchSms): a decode token's chunk there.
+    static_assert(causal_merge_d_chunk(256, false, G::QHeads, 1, 85, kLaunchSms[0]) == 64);
+    static_assert(causal_merge_d_chunk(256, false, G::QHeads, 1, 14, kLaunchSms[1]) == 256);
+    std::printf("device: %d SMs; the production launches run as on 170 and 28 SMs\n",
+                ninferno::device_class().sms);
     for (const int splits : split_counts) {
         const int capacity = std::min(256, splits + 3);
         {

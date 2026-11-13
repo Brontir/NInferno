@@ -143,9 +143,9 @@ void launch_causal_natural_merge(const CausalAttentionOperands& p,
     if (!aligned_to(partial.acc, 16))
         throw std::invalid_argument("causal merge: the partials need 16-byte alignment");
     const int columns = p.width * p.batch;
-    // The column chunk from the grid against the SM count (causal_merge_shape.h).
-    const int d_chunk =
-        causal_merge_d_chunk(S::kDChunk, InverseRotation, G::QHeads, columns, device_class().sms);
+    // The column chunk by the law of causal_merge_shape.h: the grid, the splits and the SMs.
+    const int d_chunk = causal_merge_d_chunk(S::kDChunk, InverseRotation, G::QHeads, columns,
+                                             partition.capacity, device_class().sms);
     const auto launch = [&]<bool Aligned, int DChunk>() {
         const dim3 grid(G::QHeads, div_up(G::kHeadDim, DChunk), columns);
         causal_natural_merge_kernel<G, DChunk, MultiBatch, Masked, InverseRotation, Aligned>

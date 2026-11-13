@@ -89,9 +89,9 @@ void launch_bf16_kv_merge(const CausalAttentionOperands& p, Bf16KvCacheView<Writ
     if (!aligned_to(partials.acc, 16))
         throw std::invalid_argument("BF16 merge: the partials need 16-byte alignment");
     const int columns = p.width * p.batch;
-    // The column chunk from the grid against the SM count (causal_merge_shape.h).
-    const int d_chunk =
-        causal_merge_d_chunk(S::kDChunk, false, G::QHeads, columns, device_class().sms);
+    // The column chunk by the law of causal_merge_shape.h: the grid, the splits and the SMs.
+    const int d_chunk = causal_merge_d_chunk(S::kDChunk, false, G::QHeads, columns,
+                                             partition.capacity, device_class().sms);
     const auto launch = [&]<bool Aligned, class Schedule>() {
         const dim3 grid(G::QHeads, div_up(G::kHeadDim, Schedule::kDChunk), columns);
         bf16_kv_merge_kernel<G, Schedule, MultiBatch, Masked, Aligned>
