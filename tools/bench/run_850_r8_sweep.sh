@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# #850 (a), docs/maintainer/kernel-proposals.md entry G: three sweeps of every R8 decode schedule on
+# #850 (a), docs/maintainer/kernel-proposals.md entry P: three sweeps of every R8 decode schedule on
 # Qwen3.5-9B's decode problems on one idle card, then a table to paste and the arguments of the
 # R8 decode table's merge. Nothing here chooses a route; the bench times the schedules it compiles.
 #

@@ -14,7 +14,7 @@ to the rules'; and whether r8_decode_table.py would write a table entry for it (
 rules', at least --min-gain faster in the median and faster in every sweep; an add problem is
 looked up as its store problem, so only a store row writes one where both were swept).
 
-Then two verdicts, both frozen in docs/maintainer/kernel-proposals.md (entry G) before any sweep:
+Then two verdicts, both frozen in docs/maintainer/kernel-proposals.md (entry P) before any sweep:
 - the card's prediction for the Q6_K down projection 4096x12288: the candidate schedule's median
   against the rules', inside or outside the band, against the acceptance edge;
 - the rule check: on every K-quant problem at K >= 8192 that is not a SwiGLU call, w8r1 against
@@ -30,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import r8_decode_table as tool  # noqa: E402  (the reader of the merge tool, its regexes)
 
-# Entry G of docs/maintainer/kernel-proposals.md, frozen 13.11 before any sweep: per board class,
+# Entry P of docs/maintainer/kernel-proposals.md, frozen 13.11 before any sweep: per board class,
 # the card, the candidate schedule (warps, rows), the predicted change of the Q6_K 4096x12288 call
 # in us (lower edge, upper edge: the upper the larger gain) and the acceptance edge (half the lower).
 FROZEN = {
@@ -151,7 +151,7 @@ def main():
     print()
 
     frozen = FROZEN.get(gpu)
-    print("**Frozen prediction (kernel-proposals G), Q6_K 4096x12288:**", end=" ")
+    print("**Frozen prediction (kernel-proposals P), Q6_K 4096x12288:**", end=" ")
     if frozen is None:
         print(f"no frozen band for {gpu}.")
     else:
@@ -212,7 +212,7 @@ def main():
     print()
     holds = worst <= 0.0
     print(f"On this card w8r1 is {'never slower' if holds else 'slower somewhere'} than w8r2 "
-          f"(worst row {worst:+.1f} %); the rule's criterion (entry G): at least 4 boards with "
+          f"(worst row {worst:+.1f} %); the rule's criterion (entry P): at least 4 boards with "
           "native BF16 MMA (sm_80 and up; Turing and Volta keep their own branch) where it is "
           "never slower, and none where a row is slower by more than 0.5 % "
           f"({'met' if worst <= 0.5 else 'NOT met'} here).")
