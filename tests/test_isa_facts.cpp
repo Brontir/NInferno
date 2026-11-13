@@ -75,6 +75,18 @@ std::vector<Expected> expected_facts() {
     return v;
 }
 
+// The launch facts of a row's launch entry, by the entry's name (all ns), written out here apart
+// from the reader.
+std::vector<std::pair<std::string, std::optional<double> IsaLaunch::*>> expected_launch_facts() {
+    return {{"node_ns", &IsaLaunch::node_ns},
+            {"node_pdl_ns", &IsaLaunch::node_pdl_ns},
+            {"stream_ns", &IsaLaunch::stream_ns},
+            {"floor_ns_1", &IsaLaunch::floor_ns_1},
+            {"floor_ns_sms", &IsaLaunch::floor_ns_sms},
+            {"floor_ns_4sms", &IsaLaunch::floor_ns_4sms},
+            {"floor_ns_1024", &IsaLaunch::floor_ns_1024}};
+}
+
 Json table_file() {
     const std::string path = std::string(NINFERNO_SOURCE_DIR) + "/src/core/data/isa_facts.json";
     std::ifstream in(path);
@@ -94,6 +106,37 @@ void names_are_the_tests() {
     for (const std::string& n : want) expect(got.count(n) == 1, "the reader takes " + n);
     for (const std::string& n : got) {
         expect(want.count(n) == 1, "the reader takes " + n + ", which this test does not check");
+    }
+    std::vector<std::string> launch_want, launch_got;
+    for (const auto& [name, member] : expected_launch_facts()) launch_want.push_back(name);
+    for (const std::string& n : isa_launch_fact_names()) launch_got.push_back(n);
+    expect(launch_want == launch_got, "the reader takes the launch facts this test checks");
+}
+
+// A row's launch entry as the file has it: the card, the probe, the SMs and every launch fact,
+// unknown where the entry lacks it; no entry, no launch.
+void launch_equals(const std::optional<IsaLaunch>& got, const Json& j, const std::string& where) {
+    if (!j.contains("launch")) {
+        expect(!got.has_value(), where + ": no launch entry, the launch is unknown");
+        return;
+    }
+    const Json& l = j.at("launch");
+    expect(got.has_value(), where + ": the launch entry is read");
+    if (!got) return;
+    expect(got->card == l.at("card").get<std::string>(), where + ": launch card");
+    expect(got->probe == l.at("tool").at("probe").get<std::string>(), where + ": launch probe");
+    expect(got->sms == l.at("sms").get<int>(), where + ": launch sms");
+    const Json& lf = l.at("facts");
+    for (const auto& [name, member] : expected_launch_facts()) {
+        const std::optional<double>& v = (*got).*member;
+        const auto it                  = lf.find(name);
+        if (it == lf.end()) {
+            expect(!v.has_value(), where + ": launch " + name + " is not in the entry: unknown");
+            continue;
+        }
+        expect(it->at("unit").get<std::string>() == "ns", where + ": launch " + name + " in ns");
+        expect(v.has_value() && *v == it->at("value").get<double>(),
+               where + ": launch " + name + " equals the file");
     }
 }
 
@@ -124,6 +167,7 @@ void rows_equal_the_file(const Json& file) {
         expect(j.contains("sass_per_mma") ? row->sass_per_mma == j.at("sass_per_mma").get<int>()
                                           : !row->sass_per_mma.has_value(),
                where + ": sass_per_mma, unknown when the row has none");
+        launch_equals(row->launch, j, where);
         const Json& jf = j.at("facts");
         for (const Expected& e : facts) {
             const std::optional<double>& got = e.member(*row);
@@ -272,6 +316,60 @@ void parse_rules(const Json& file) {
         row.erase("card");
         refused(table_of(row), "a row without its card");
     }
+
+    // A launch entry (launch_probe): read where there is one, its facts unknown where it lacks
+    // them, refused where malformed.
+    Json launch  = {{"provenance", "Measured"},
+                    {"source", "launch_probe_86.txt"},
+                    {"card", "NVIDIA GeForce RTX 3090"},
+                    {"cc", 86},
+                    {"sms", 82},
+                    {"tool", {{"probe", "launch_probe 1"}}},
+                    {"notes", Json::array()},
+                    {"facts", Json::object()}};
+    double value = 900.0;
+    for (const auto& [name, member] : expected_launch_facts()) {
+        launch["facts"][name] = {{"value", value}, {"unit", "ns"}};
+        value += 10.0;
+    }
+    {
+        Json row        = base;
+        row["launch"]   = launch;
+        const auto rows = parse_isa_facts(text_of(table_of(row)));
+        expect(rows.size() == 1 && rows[0].launch.has_value(), "a launch entry is read");
+        if (rows.size() == 1) launch_equals(rows[0].launch, row, "a crafted launch entry");
+    }
+    {
+        Json row = base;
+        row.erase("launch");
+        const auto rows = parse_isa_facts(text_of(table_of(row)));
+        expect(rows.size() == 1 && !rows[0].launch.has_value(), "no entry, the launch is unknown");
+    }
+    {
+        Json row      = base;
+        row["launch"] = launch;
+        row["launch"]["facts"].erase("node_pdl_ns");
+        const auto rows = parse_isa_facts(text_of(table_of(row)));
+        expect(rows.size() == 1 && rows[0].launch && !rows[0].launch->node_pdl_ns &&
+                   rows[0].launch->node_ns == 900.0,
+               "a launch fact the entry lacks is unknown, the others are read");
+    }
+    const auto launch_refused = [&](const std::function<void(Json&)>& edit,
+                                    const std::string& what) {
+        Json row      = base;
+        row["launch"] = launch;
+        edit(row["launch"]);
+        refused(table_of(row), what);
+    };
+    launch_refused([](Json& l) { l["facts"]["node_ns"]["unit"] = "us"; },
+                   "a launch fact in another unit than ns");
+    launch_refused([](Json& l) { l["facts"]["stream_ns"]["value"] = 0; },
+                   "a launch fact that is not positive");
+    launch_refused([](Json& l) { l["facts"]["floor_ns_1"]["value"] = "1"; },
+                   "a launch fact that is not a number");
+    launch_refused([](Json& l) { l["cc"] = 89; }, "a launch entry of another cc than its row's");
+    launch_refused([](Json& l) { l.erase("card"); }, "a launch entry without its card");
+    launch_refused([](Json& l) { l["sms"] = 0; }, "a launch entry whose sms is not positive");
 }
 
 } // namespace

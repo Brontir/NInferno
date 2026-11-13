@@ -15,6 +15,7 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/moe/moe_internal.h"
+#include "ops/moe/moe_regime_rules.h"
 #include "ops/common/arch_limits.h"
 
 #include <algorithm>
@@ -771,57 +772,22 @@ bool plan_compiled(const MoeWeights& w, const MoePlan& plan) {
 
 
 std::int32_t r8_token_limit() {
-    // The measured families by name, not a compute-capability inequality (core/device_class.h):
-    // Ada (sm_89) and consumer Blackwell (sm_120, sm_121). Hopper and datacenter Blackwell are not
-    // measured and keep four.
+    // The generation's rule (moe_regime_rules.h): eight on Ada and consumer Blackwell, measured on
+    // two cards each; four elsewhere, and on a generation the table does not know.
     const auto& d = device_class();
-    return (d.major == 8 && d.minor == 9) || d.major == 12 ? kR8Tokens : kR8NarrowTokens;
+    return regime::generation_rule(d.major, d.minor).limit;
 }
 
-namespace {
-
-// The FP4-element formats (MXFP4, NVFP4) keep four tokens: above four the register MMA beats R8
-// on MXFP4 on both Blackwell boards in gpt-oss's shape (moe_bench, H 2880, F 2880, E 32, k 4, auto
-// plans, R8 against the register MMA at T = 5 / 6 / 8: RTX 5070 Ti +11.5 / +12.3 / +13.9 %, RTX
-// 5090 +4.9 / +5.6 / +11.2 %; end to end gpt-oss-20b MXFP4 C8 on the RTX 5070 Ti 109.4 -> 97.1
-// tok/s, RTX 4060 Ti 39.5 -> 38.7), and NVFP4 decodes the same elements. The other 4-bit formats of
-// one scale per block take eight: R8 ahead on three of the four board and shape pairs (Q4_0,
-// IQ4_NL: RTX 5090 -2..-8 % in both shapes, RTX 5070 Ti -1..-5 % in gpt-oss's, +2..+10 % in
-// Qwen3.6-35B's: H 2048, F 512, E 256, k 8), every K-quant, Q4_1, Q5_0, Q5_1 and IQ3_XXS ahead on
-// both boards (-1..-19 %).
-bool r8_fp4_elements(QType q) { return q == QType::MXFP4 || q == QType::NVFP4; }
-
-// A ggml_frag_v1 bank is laid out for the register MMA's fragments, whose decode then costs that
-// kernel little. Above four tokens R8 keeps its edge there where the board has the SM cycles to
-// spare per DRAM byte, below kRmmaLatencySwiGluBytes (generic_gemm_internal.h: from there the
-// register MMA's SwiGLU tiles take their latency variant and hold the DRAM bus themselves).
-// moe_bench, Qwen3.6-35B's shape (H 2048, F 512, E 256, k 8), frag, R8 against the register MMA
-// at T = 5..8, and the board's DRAM bytes per SM cycle (dram_bytes_per_sm_cycle):
-//   RTX 4090 (3.1):    IQ3_XXS -9..-10 %, IQ2_S -6..-8 %, Q4_K -5..-7 %, Q4_0 -2 %
-//   RTX 4060 Ti (3.3): IQ3_XXS -3..-6 %, IQ2_S -2..-4 %, Q4_K -1..-3 %, Q4_0 0
-//   RTX 5090 (4.4):    IQ3_XXS -4..-8 %, IQ2_S -4..-8 %, Q4_K -10..-13 %, Q4_0 +2..+6 %
-//   RTX 5070 Ti (5.2): IQ3_XXS -1..-4 %, IQ2_S -1..-6 %, Q4_K -11..-13 %, Q4_0 +11..+12 %
-// The random routing of moe_bench spreads the slots over more experts than a model's (R8's cost
-// follows the slots, the register MMA's the jobs), so the thin edges turn end to end, C8, frag
-// gate/up eight tokens against four: Qwen3.6-35B UD-Q3_K_S (frag IQ3_XXS) RTX 4090 129.1 -> 134.0
-// tok/s, 4060 Ti 45.2 -> 45.6, RTX 5070 Ti 104.9 -> 102.8 (R8 gate/up 85.9 us a call against the
-// register MMA's 83.9, nsys); UD-IQ3_XXS RTX 4090 133.8 -> 136.4, 4060 Ti 50.2 -> 50.5. Q4_K's
-// super-block takes R8 on every board; Q4_0 loses on both Blackwell boards and only ties on Ada,
-// so it keeps four everywhere. An unknown board (no roofline) keeps four.
-bool r8_frag_narrow(const Weight& bank) {
-    if (bank.layout != QuantLayout::GgmlFrag || bank.qtype == QType::GGML_Q4_K) return false;
-    if (bank.qtype == QType::GGML_Q4_0) return true;
-    const double bytes = generic::dram_bytes_per_sm_cycle();
-    return bytes <= 0 || bytes >= generic::kRmmaLatencySwiGluBytes;
+regime::R8LimitAnswer regime::r8_limit_answer(const Weight& bank) {
+    // Only a ggml_frag_v1 bank's rules read the board's DRAM bytes per SM cycle.
+    const BankFacts facts{bank.qtype, bank.layout,
+                          bank.layout == QuantLayout::GgmlFrag ? generic::dram_bytes_per_sm_cycle()
+                                                               : 0.0};
+    const auto& d = device_class();
+    return r8_limit_answer(d.major, d.minor, facts);
 }
 
-} // namespace
-
-std::int32_t r8_token_limit(const Weight& bank) {
-    const std::int32_t limit = r8_token_limit();
-    return r8_fp4_elements(bank.qtype) || r8_frag_narrow(bank) ? std::min(limit, kR8NarrowTokens)
-                                                                : limit;
-}
+std::int32_t r8_token_limit(const Weight& bank) { return regime::r8_limit_answer(bank).limit; }
 
 bool moe_format_has_min(QType q) {
     return q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 || q == QType::GGML_Q4_K ||

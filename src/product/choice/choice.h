@@ -336,8 +336,9 @@ struct QuantOption {
 // kTransferGeneration's rows onto the board's generation where one is stated
 // (kTransferredDecodeError, by target), else (a generation with its own error whose estimate
 // rests on a class or row not measured on two of its cards) the unmeasured carry. Unmeasured: the
-// estimates are lent (a compute capability with no generation row), or a known generation has
-// neither row (ga100, hopper, gb100, thor): an assumed worst case, the largest measured carry (all
+// estimates are lent (a compute capability with no generation row of its own: Hopper and GB100
+// among them), or a known generation has neither row (ga100, thor): an assumed worst case, the
+// largest measured carry (all
 // of them Ada onto older generations; no measured row bounds a carry onto a newer architecture or
 // below Volta (Pascal)): a label, not a bound (kUnmeasuredCarryDecodeError).
 enum class ResolutionBasis : std::uint8_t { None, Own, Transferred, Unmeasured };
@@ -471,7 +472,9 @@ struct Speed {
     SpeedBasis basis         = SpeedBasis::Own;
     // A reason the decode estimate is Transferred, where a rule names one: "MoE route not queried"
     // (no route query, ModelFacts::moe_route_unqueried), "MoE route not answered" (the query gave
-    // no kernels for a layer kind). Other rules may widen the basis too and are not named; empty
+    // no kernels for a layer kind), "MoE banks assumed" (QuantOption::expert_banks_assumed: the
+    // routed banks' kept format, so their bytes and pair, is not the file's to tell; #784). Other
+    // rules may widen the basis too and are not named; empty
     // where the basis is Own or lent_generation (the lent row is the reason there).
     std::string_view why;
 };

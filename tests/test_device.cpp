@@ -207,13 +207,17 @@ int check_feature_table() {
                            !ninferno::fitted_route_scales(13, 0) &&
                            ninferno::generation_row(13, 0).s8 == ninferno::generation_row(12, 0).s8,
                        "a lent row's kind and fitted scales are not carried, its rates are");
-    // Hopper and GB100 have rows of their own but no board in the route fit (#618 step 12): the
-    // A100's scales are another generation's, so they carry none, their kind and rates they keep.
-    failures +=
-        expect(!ninferno::fitted_route_scales(9, 0) && !ninferno::fitted_route_scales(10, 0) &&
-                   ninferno::fp32acc_full_rate_of(9, 0) == true &&
-                   ninferno::fitted_route_scales(8, 0)->a16_cost == 1.64,
-               "Hopper and GB100 carry no fitted route scales of the A100's");
+    // Hopper and GB100 are lent rows (#618 step 12, #619 step 14): no board of their own, so the
+    // A100's rates stand in and nothing measured is carried: no fitted scales, no kind, not known.
+    failures += expect(
+        !ninferno::generation_known(9, 0) && !ninferno::generation_known(10, 3) &&
+            !ninferno::fitted_route_scales(9, 0) && !ninferno::fitted_route_scales(10, 0) &&
+            !ninferno::fp32acc_full_rate_of(9, 0) && !ninferno::fp32acc_full_rate_of(10, 0) &&
+            ninferno::generation_row(9, 0).s8 == ninferno::generation_row(8, 0).s8 &&
+            ninferno::generation_row(10, 0).bf16 == ninferno::generation_row(8, 0).bf16 &&
+            ninferno::generation_known(8, 0) &&
+            ninferno::fitted_route_scales(8, 0)->a16_cost == 1.64,
+        "Hopper and GB100 are lent rows: the A100's rates, none of its evidence");
     // The MMQ prefill gate's answer with what it rests on (#373): the donor, the distance, the
     // quantities it could not compare, and the evidence's disposition; the answer unchanged.
     {

@@ -217,17 +217,19 @@ struct R8ScheduleInfo {
 // at most T slots (a token selects an expert once), whose quantized activation must fit it
 // unless the router quantized it (r8_admits). Wider calls compute A16.
 inline constexpr std::int32_t kR8Tokens = 8;
-// The widest R8 call on this GPU (r8_admits): kR8Tokens on Ada (sm_89) and consumer Blackwell
-// (sm_12x), four elsewhere (Hopper and datacenter Blackwell unmeasured). moe_bench
-// (H 2048, F 512, E 128, k 8, published layout), R8 against the register MMA at T = 5..8: RTX 5090
-// / 5070 Ti -5..-15 % on every K-quant and IQ3_XXS, RTX 4090 -3..-7 % (Q6_K level), RTX 4060 Ti
-// -0.4..-6 %; RTX 2080 Ti Q6_K +38..+45 %, Q3_K +15..+19 % (Q4_K, Q5_K, IQ3_XXS ahead). Ampere
-// is not measured and keeps four; Volta splits a wider call into calls of four (moe()).
+// The widest R8 call on this GPU (r8_admits) where its generation's rule does not take kR8Tokens,
+// and the conservative limit of an unmeasured generation: the rules, with the cards and margins
+// they rest on, are moe_regime_rules.h (kR8Tokens on Ada and consumer Blackwell, measured on two
+// cards each; Ampere four, measured on two cards that disagree above four tokens; Turing four,
+// measured on one card; Volta, the A100, Hopper and datacenter Blackwell unmeasured). Volta
+// splits a wider call into calls of four (moe()).
 inline constexpr std::int32_t kR8NarrowTokens = 4;
+// The generation's widest R8 call (moe_regime_rules.h generation_rule).
 [[nodiscard]] std::int32_t r8_token_limit();
-// The widest R8 call over `bank`: r8_token_limit(), but four for the FP4-element formats (MXFP4,
-// NVFP4), a ggml_frag_v1 Q4_0 bank, and another frag bank but Q4_K on a board of many DRAM bytes
-// per SM cycle, where the register MMA wins above four tokens (moe.cpp).
+// The widest R8 call over `bank`: r8_token_limit(), narrowed by the first bank rule of
+// moe_regime_rules.h that holds (four for the FP4-element formats MXFP4 and NVFP4, a
+// ggml_frag_v1 Q4_0 bank, and another frag bank but Q4_K on a board of many DRAM bytes per SM
+// cycle or none known).
 [[nodiscard]] std::int32_t r8_token_limit(const Weight& bank);
 // The formats the R8 kernel reads: the codebook ones (IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S),
 // the K-quants (Q3_K, Q4_K, Q5_K, Q6_K) and the 32-value ggml blocks (Q4_0, Q4_1, Q5_0, Q5_1,

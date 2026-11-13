@@ -126,9 +126,13 @@ __global__ __launch_bounds__(kRouterSimtWarps *
         }
     }
     if constexpr (Route) {
-        // Every CTA's logits out before its ticket; the last one reads them all. x's staging is
-        // done (the barrier below), so its shared memory holds the ids and the job offsets.
+        // Every CTA's logits out before its ticket; the last one reads them all. Each warp's lane
+        // 0 stores its rows: every thread's fence, then the barrier, before thread 0 counts the
+        // CTA in (without it a CTA counted itself in while its other warps were still summing,
+        // and the last CTA routed on the logits buffer's previous bytes). x's staging is done
+        // (the barrier), so its shared memory holds the ids and the job offsets.
         __threadfence();
+        __syncthreads();
         bool last = false;
         if (threadIdx.x == 0) {
             last = atomicAdd(ticket, 1) == static_cast<int>(gridDim.x) - 1;

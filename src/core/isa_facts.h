@@ -4,8 +4,8 @@
 // it (tools/bench/isa_probe/, its rows in core/data/isa_facts.json, compiled in). The tensor pipe's
 // rate and cycles per MMA, the dependent MMA latency, the INT32 / FP32 cycles per warp instruction,
 // and the dependent L1 / L2 / shared / DRAM load latencies alone and under 2, 4, 8 chasing warps
-// per SM. A cost law reads these instead of a constant; nothing in the engine reads them yet
-// (#613).
+// per SM; and, in a row's launch entry, the launch facts of the launch probe (IsaLaunch below). A
+// cost law reads these instead of a constant; nothing in the engine reads them yet (#613).
 //
 // A fact the row does not carry is unknown (an empty optional), never a default number: a row of
 // an older probe lacks the facts a later probe added, and the law that needs one stands aside.
@@ -30,6 +30,29 @@ namespace ninferno {
 // "<name>_w8").
 struct IsaByWarps {
     std::optional<double> w1, w2, w4, w8;
+};
+
+// The launch facts of an architecture (#613 PR-8b), measured by the launch probe
+// (tools/bench/isa_probe/launch_probe.cu, a probe of its own) on one card of it: the cost in wall
+// ns of one more launch in a long back-to-back series of empty kernels (the series' fixed parts
+// cancel), the row's "launch" entry. Each fact is unknown where the entry lacks it, and the whole
+// entry is absent where the architecture has no launch run.
+struct IsaLaunch {
+    std::string card;  // the card the launch probe ran on
+    std::string probe; // "launch_probe 1"
+    int sms = 0;       // that card's SMs (the floor_ns_sms and floor_ns_4sms grids)
+    // An empty one-warp CTA as a node of a captured graph's linear chain (graph replay).
+    std::optional<double> node_ns;
+    // The same node with the programmatic stream serialization attribute, waiting on the grid
+    // before it at its start and releasing the next at its end (griddepcontrol, sm_90+); below
+    // sm_90 the attribute alone (the engine does not set it there), unknown where the driver
+    // refused it.
+    std::optional<double> node_pdl_ns;
+    // The one-warp kernel launched on a stream, from a backlog: the GPU's cost per stream launch.
+    std::optional<double> stream_ns;
+    // An empty grid of 1, SMs, 4 x SMs and 1024 CTAs of 128 threads as a graph-chain node: the
+    // call of an empty grid of that size, so floor_ns_C - floor_ns_1 is the CTA dispatch ramp.
+    std::optional<double> floor_ns_1, floor_ns_sms, floor_ns_4sms, floor_ns_1024;
 };
 
 // One architecture's row of the ISA facts table.
@@ -66,6 +89,10 @@ struct IsaRow {
     IsaByWarps dram_latency;            // links anywhere in a 2 GiB buffer
     IsaByWarps dram_tlbwarm_latency;    // each warp in a 512 KB range whose pages are walked
     IsaByWarps dram_tlbwarm_latency_ns; // the same in wall nanoseconds
+
+    // The launch facts, nullopt where the architecture has no launch run (core/launch_facts.h
+    // reads them as seconds).
+    std::optional<IsaLaunch> launch;
 };
 
 // The table, parsed once from the embedded JSON. Throws std::runtime_error when the embedded text
@@ -82,5 +109,9 @@ struct IsaRow {
 
 // The names of the facts the reader takes from a row, in the table's spelling ("l1_latency_w4").
 [[nodiscard]] std::span<const std::string> isa_fact_names();
+
+// The names of the launch facts the reader takes from a row's "launch" entry ("node_ns"), all in
+// ns.
+[[nodiscard]] std::span<const std::string> isa_launch_fact_names();
 
 } // namespace ninferno

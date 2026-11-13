@@ -2602,3 +2602,57 @@ withdrawn too (`chunk_decides`), which changes nothing today: only Ada's chunk c
 GB10 has no row in gpu_facts.json's boards, so no plan golden moves, and no lab board moves: every
 lab card's minor is its reference card's. A reference row of the GB10's own (12.1) would need the
 lookup keyed by the minor, not only the generation (`reference_of`, `kv_decides`).
+
+## 84. The MoE R8 token limits are declared rules with their cards; Ampere measured, keeps four (#616 step 5, 13.11, measured)
+
+**Decision.** The widest R8 call of a MoE expert bank (`r8_token_limit`) is read from records in
+`src/ops/moe/moe_regime_rules.h` instead of a compute-capability literal and two predicates whose
+evidence lived in comments. Each record names what it decides, its predicate (a generation of
+`core/generation.h`, or a bank's format and layout and the board's DRAM bytes per SM cycle), the
+cards it was measured on, the margin and the source, and a label: measured (two or more cards),
+single_card or unmeasured. One rule per generation: Ada and consumer Blackwell eight tokens
+(RTX 4090 and 4060 Ti; RTX 5090 and 5070 Ti), Ampere four (RTX 3090 and 3060, below), Turing four
+(RTX 2080 Ti only), Volta, the A100, Hopper, datacenter Blackwell and Thor four, unmeasured. A
+generation the table does not know takes the unknown rule: four, labelled unmeasured. The bank
+rules (FP4 elements; frag Q4_K, Q4_0, no roofline, many DRAM bytes per SM cycle) keep their order
+and limits. The RTX 2080 Ti's Q6_K at four tokens (R8 +25 % in two runs) is recorded, not
+applied: the lab has one Turing card. `test_moe_regime_rules` holds the labels against the cards,
+that only a measured rule widens the limit past four, and the limits of substituted boards. No
+limit moves: the MoE plan goldens are byte-equal.
+
+**Prediction, written before the Ampere runs.** The law put to the sweep: R8 decodes on the SM's
+INT32 lanes (dp4a), the register MMA on its tensor cores, so R8's margin above four tokens follows
+x = INT32 lanes per SM / DRAM bytes per SM cycle (bandwidth over SMs times the boost clock). It
+orders the five boards swept on 2026-11-03: RTX 2080 Ti x 10.9 (T = 5..8: Q6_K +38..+45 %, Q3_K
++15..+19 %), RTX 4060 Ti 19.2 and 4090 20.5 (-0.4..-7 %), RTX 5070 Ti 24.5 and 5090 29.2
+(-5..-15 %, 128 INT32 lanes a SM). The RTX 3090 (9.5) and 3060 (8.8) sit below the 2080 Ti.
+
+**Measured.** `moe_bench`, H 2048, F 512, E 128, k 8, published layout, the gate/up stage on R8
+w4r1 against the A16 register MMA (auto plan), T = 1..8, two passes on each card (within 2 %); on
+the RTX 3090 the medians of Q4_K and Q6_K at T = 4 and 8 are within 3 us of their nsys kernel sums.
+R8 against the register MMA:
+
+| | predicted T = 5..8 | RTX 3090 T = 5..8 | RTX 3060 T = 5..8 | RTX 3090 T = 1..4 | RTX 3060 T = 1..4 |
+|---|---|---|---|---|---|
+| Q6_K | +40..+60 % | +3..+6 % | +8..+11 % | +4..+7 / +4..+7 / +1..+3 / -1..-2 % | -2..0 / -2..-1 / +1 / +1 % |
+| Q3_K | +15..+30 % | -5..-8 % | -3..-7 % | -11..-15 % | -17..-19 % |
+| Q4_K | 0..+15 % | -3..-5 % | +1..+8 % | -14..-17 % | -13..-19 % |
+| Q5_K | -10..+5 % | -5..-9 % | -1..+6 % | -16..-20 % | -12..-20 % |
+| IQ3_XXS | -5..+10 % | -8..-10 % | -6..-10 % | -20..-25 % | -21..-28 % |
+
+At T = 1..4 the prediction (R8 ahead by 10..25 % on Q4_K, Q5_K and IQ3_XXS) held; it missed Q6_K at
+four tokens (predicted +15..+35 %, measured -1 / +1 %) and Q3_K at three and four (predicted within
+10 %, measured -11..-18 %). Above four tokens the law is refuted: both Ampere cards, below the
+2080 Ti in x, are near Ada, a quarter of Turing's Q6_K loss and R8 ahead on Q3_K. Within Ampere the
+order holds (the RTX 3060, lower x, loses more on Q6_K, Q4_K and Q5_K and wins less on Q3_K). The
+2080 Ti's T = 5..8 cells were timed on the eight-token experiment branch (be7fa880), not on the
+kernels the 3090 and 3060 ran; whether the cross-generation miss is Turing's (no cp.async, a
+register MMA on f16) or that tree's is open. No rule reads the law.
+
+**Why Ampere keeps four.** Above four tokens the two cards disagree on Q4_K and Q5_K and both lose
+Q6_K (up to +11 %); a limit wider than the narrow one needs both cards of the generation. Q3_K and
+IQ3_XXS win on both (-3..-10 %): a per-format widening is a rule kind the table does not have yet,
+and would want an end-to-end check at C = 5..8 first.
+
+**Open.** Re-time the RTX 2080 Ti's T = 5..8 cells on current kernels; the per-format widening for
+Q3_K and IQ3_XXS on Ampere; the A100, Hopper and datacenter Blackwell stay unmeasured.

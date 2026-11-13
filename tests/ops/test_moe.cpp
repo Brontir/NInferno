@@ -460,6 +460,22 @@ bool reference_token(const Case& c, const Layer& l, const std::vector<double>& x
     return true;
 }
 
+// NINFERNO_MOE_TEST_CASE=<text> runs only the cases whose label holds the text (the checks
+// without a case are skipped), so one case can loop alone.
+const std::string& case_filter() {
+    static const std::string filter = [] {
+        const char* v = std::getenv("NINFERNO_MOE_TEST_CASE");
+        return std::string(v != nullptr ? v : "");
+    }();
+    return filter;
+}
+
+bool filtering() { return !case_filter().empty(); }
+
+bool filtered_out(const std::string& label) {
+    return filtering() && label.find(case_filter()) == std::string::npos;
+}
+
 struct Run {
     std::vector<std::uint16_t> out;
     std::size_t peak = 0, capacity = 0;
@@ -555,6 +571,7 @@ int compare_run(const Case& c, const Layer& l, const std::vector<std::uint16_t>&
 }
 
 int check_case(const Case& c, std::uint32_t seed, const std::vector<std::int32_t>& widths) {
+    if (filtered_out(c.label)) return 0;
     const Layer l = make_layer(c, seed);
     const std::int32_t t_max = *std::max_element(widths.begin(), widths.end());
     const auto x        = random_bf16(static_cast<std::size_t>(t_max) * c.hidden, seed + 21, -1.0, 1.0);
@@ -573,6 +590,7 @@ int check_case(const Case& c, std::uint32_t seed, const std::vector<std::int32_t
 
 // Under the prefill profile every call of 17 tokens or more gives a token the same bytes.
 int check_invariance(const Case& c, std::uint32_t seed) {
+    if (filtered_out(c.label)) return 0;
     const Layer l = make_layer(c, seed);
     const std::int32_t wide = 300;
     const auto x        = random_bf16(static_cast<std::size_t>(wide) * c.hidden, seed + 31, -1.0, 1.0);
@@ -597,6 +615,7 @@ int check_invariance(const Case& c, std::uint32_t seed) {
 // Under the invariant profile (--activations exact) every call, a single token included, gives a
 // token the same bytes as the wide call.
 int check_invariant_profile(const Case& c, std::uint32_t seed) {
+    if (filtered_out(c.label)) return 0;
     const Layer l = make_layer(c, seed);
     const std::int32_t wide = 300;
     const auto x        = random_bf16(static_cast<std::size_t>(wide) * c.hidden, seed + 31, -1.0, 1.0);
@@ -640,6 +659,7 @@ int check_invariant_profile(const Case& c, std::uint32_t seed) {
 // at T = 5..8). Any R8 plan under A16Only is refused, and the default route there stays on the
 // register MMA.
 int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_t>& widths) {
+    if (filtered_out(base.label)) return 0;
     namespace moe = ops::detail::moe;
     Case c         = base;
     c.expert_policy = ops::LinearPolicy::AllowA8;
@@ -855,6 +875,7 @@ const char* qname(QType q);
 // those of the widest call at any T and position (no K split; a slot's sums do not depend on its
 // job). The widths cross a job (64 slots) and leave partial W4A8 tiles.
 int check_w4a8(const Case& base, std::uint32_t seed, const std::vector<std::int32_t>& widths) {
+    if (filtered_out(base.label)) return 0;
     namespace moe           = ops::detail::moe;
     Case c                  = base;
     c.expert_policy         = ops::LinearPolicy::AllowA8;
@@ -931,6 +952,7 @@ int check_w4a8(const Case& base, std::uint32_t seed, const std::vector<std::int3
 // kMoeW4a8SpeedMinTokens on, on admitted banks and by default; narrower calls keep the A16 / R8
 // plans. The selected wide plan matches the oracle with both stages' activations quantized.
 int check_speed_w4a8(const Case& base, std::uint32_t seed) {
+    if (filtered_out(base.label)) return 0;
     namespace moe   = ops::detail::moe;
     Case c          = base;
     c.expert_policy = ops::LinearPolicy::AllowA8;
@@ -974,6 +996,7 @@ int check_speed_w4a8(const Case& base, std::uint32_t seed) {
 // 4090, 4060 Ti, 5090) and four at or above it (RTX 5070 Ti) or without a roofline, frag Q4_K at
 // eight; Turing four throughout.
 int check_r8_bank_limits() {
+    if (filtering()) return 0;
     namespace moe = ops::detail::moe;
     struct Board {
         const char* name;
@@ -1029,6 +1052,7 @@ int check_r8_bank_limits() {
 }
 
 int check_a8_route_rule() {
+    if (filtering()) return 0;
     namespace moe = ops::detail::moe;
     const auto route = moe::a8_default_route();
     if (!route) {
@@ -1071,6 +1095,7 @@ int check_a8_route_rule() {
 }
 
 int check_r8_table() {
+    if (filtering()) return 0;
     namespace moe = ops::detail::moe;
     const auto route = moe::a8_default_route();
     const std::string tuned_down = "rmma.m1.n1.w1x4";
@@ -1154,6 +1179,7 @@ int check_r8_table() {
 // limit; T = 2, 3 and the limit match the oracle, and a token's bytes are the same at T = 1 and at
 // the limit.
 int check_r8_k_limit() {
+    if (filtering()) return 0;
     namespace moe = ops::detail::moe;
     const auto route = moe::a8_default_route();
     Case c;
@@ -1206,6 +1232,7 @@ int check_r8_k_limit() {
 // width); every Use AllowA8 gives AllowA8 and the class's default route. IQ2_S experts, E 4, H 256,
 // F 256, a BF16 router and shared expert.
 int check_expert_policy() {
+    if (filtering()) return 0;
     namespace moe = ops::detail::moe;
     constexpr std::uint64_t E = 4, H = 256, F = 256;
     struct Parent {
@@ -1365,6 +1392,7 @@ Case qwen36_a3b_u4(QType format, QType shared) {
 }
 
 int check_table_plans() {
+    if (filtering()) return 0;
     const TempDir scratch("ninferno_test_moe_routes");
     const auto file        = scratch.path() / "routes.json";
     const std::string path = utf8_path(file); // the route-table API takes UTF-8
@@ -1483,6 +1511,7 @@ const char* qname(QType q) {
 // (moe()'s bytes are its selected plan's), the cache gives the same plans back to a process that
 // forgot them without timing again, and TuneMode::Off, the default, tunes nothing.
 int check_tuner() {
+    if (filtering()) return 0;
     namespace mo = ops::detail::moe;
     int failures   = 0;
     const TempDir scratch("ninferno_test_moe_tune");
@@ -1542,6 +1571,7 @@ int check_tuner() {
 // the separate selection and the CTA plan: the same ids, weights, slots and job list, bit for bit.
 // Ties included (logits from a few levels), narrow jobs included (an expert's run cut in several).
 int check_warp_plan() {
+    if (filtering()) return 0;
     namespace mo = ops::detail::moe;
     int failures = 0;
     std::mt19937 rng(20261001U);
@@ -1644,6 +1674,7 @@ int check_warp_plan() {
 // Each bank's refusal per stage (#311), from facts of the format alone: no weights are read, so
 // the banks are descriptions at an aligned stand-in address.
 int check_bank_refusals() {
+    if (filtering()) return 0;
     namespace moe = ops::detail::moe;
     using R       = moe::BankRefusal;
     alignas(16) static const std::uint8_t stand_in[32] = {};
@@ -2429,7 +2460,7 @@ int main(int argc, char** argv) {
                 if (ops::detail::generic::w4a8_supports(QType::NVFP4)) {
                     failures += check_w4a8(qwen3_like(), 116U, {17, 96});
                 }
-                if (ops::detail::generic::w4a4_schedule_count() > 0) {
+                if (!filtering() && ops::detail::generic::w4a4_schedule_count() > 0) {
                     namespace moe   = ops::detail::moe;
                     Case c          = qwen3_like();
                     c.expert_policy = ops::LinearPolicy::AllowA4;
@@ -2509,7 +2540,7 @@ int main(int argc, char** argv) {
             failures += check_table_plans();
             failures += check_tuner();
             // 4. Refusals.
-            {
+            if (!filtering()) {
                 Case c;
                 c.label        = "refusal";
                 c.experts      = 8;
