@@ -219,9 +219,10 @@ struct CardRates {
 };
 
 // From a compute capability (89: Ada), SMs, reference SM clock and nominal DRAM rate; not known()
-// when any is 0 or the generation has no kSmallTEta row.
+// when any is 0 or the generation has no kSmallTEta row. `mma_slow`: a board whose mma.sync has no
+// tensor cores (no mma_tiles).
 [[nodiscard]] CardRates card_rates(int compute_capability, int sms, int sm_clock_khz,
-                                   double dram_gbps);
+                                   double dram_gbps, bool mma_slow = false);
 // The rates a GpuKey carries (product::choice_card_of's facts).
 [[nodiscard]] CardRates card_rates(const GpuKey& gpu);
 // A board by its PCI product id (a pair's lab_board): the PCI-ID table's row

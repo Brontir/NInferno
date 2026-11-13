@@ -183,13 +183,15 @@ double moe_read_fraction(const PassFacts& pass, std::int32_t rows, std::int32_t 
     return streams <= 1 ? one : 1.0 - std::pow(1.0 - one, double(streams));
 }
 
-CardRates card_rates(int compute_capability, int sms, int sm_clock_khz, double dram_gbps) {
+CardRates card_rates(int compute_capability, int sms, int sm_clock_khz, double dram_gbps,
+                     bool mma_slow) {
     return rates(compute_capability / 10, compute_capability % 10, sms, sm_clock_khz * 1e3,
-                 dram_gbps * 1e9);
+                 dram_gbps * 1e9, mma_slow);
 }
 
 CardRates card_rates(const GpuKey& gpu) {
-    return card_rates(gpu.compute_capability, gpu.sms, gpu.sm_clock_khz, gpu.dram_gbps);
+    return card_rates(gpu.compute_capability, gpu.sms, gpu.sm_clock_khz, gpu.dram_gbps,
+                      gpu.mma_slow);
 }
 
 CardRates card_rates_of_board(std::uint32_t pci_device_id) {

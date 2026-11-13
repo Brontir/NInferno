@@ -2340,7 +2340,9 @@ operations (53), with its dense operations at the rows its tiles compute
   tensor cores). Volta's verify of 17 tokens or more takes the tiled route's 128-token blocks
   (`volta_tiled_route`; tiled.128x128 in the V100 golden), and Pascal has no MMA. There a joint
   verify past 8 rows stays unpriced. `load_gain` and `joint_round_cost` take the flag, false by
-  default. Today Volta also has no small-T eta, so its pairs are not priced at any count. The four
+  default. The asked card's flag comes from its `GpuKey`, which carries the board's `mma_slow` from
+  the facts table (`product::gpu_key_of`, `gpu_identity`), so a GTX 16 board has none. Today
+  Volta and Turing also have no small-T eta, so their pairs are not priced at any count. The four
   GV100 registry pairs are checked to stay within 8 rows.
 - A routed expert bank's operations stay counted by rows: the expert kernels' tiles are not the
   verify's.

@@ -312,8 +312,16 @@ int main() {
                    "mma.sync tiles: not the GV100; the RTX 2080 Ti, 4090 and 5070 Ti");
             expect(!sp::card_rates(61, 28, 1582000, 484).mma_tiles &&
                        !sp::card_rates(70, 80, 1627000, 870).mma_tiles &&
-                       sp::card_rates(75, 68, 1545000, 616).mma_tiles,
-                   "mma.sync tiles from sm_75: not Pascal, not Volta");
+                       sp::card_rates(75, 68, 1545000, 616).mma_tiles &&
+                       !sp::card_rates(75, 24, 1770000, 288, true).mma_tiles,
+                   "mma.sync tiles from sm_75: not Pascal, not Volta, not a GTX 16 board");
+            // A GTX 16 board (TU116: mma.sync without tensor cores) by its PCI row and by its key.
+            sp::GpuKey gtx        = card("tu116:24sm", "tu116", "sm75", 75, 24, 1770, 288);
+            const bool tensor_key = sp::card_rates(gtx).mma_tiles;
+            gtx.mma_slow          = true;
+            expect(!sp::card_rates_of_board(0x2182).mma_tiles && tensor_key &&
+                       !sp::card_rates(gtx).mma_tiles,
+                   "the GTX 1660 Ti has no mma.sync tiles, by its row and by its key");
             int volta = 0;
             for (const auto& p : sp::Registry::builtin().pairs()) {
                 if (p.lab_board != 0x1DBA || !p.round_facts) { continue; }

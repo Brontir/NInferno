@@ -336,6 +336,9 @@ struct GpuKey {
     int sm_clock_khz       = 0;   // reference SM clock (DeviceClass::facts, not the driver's)
     double dram_gbps       = 0;   // nominal memory bandwidth (DeviceClass::facts)
     double l2_bytes        = 0;   // the L2 cache (MachineFacts: the board table's; 0: unknown)
+    // mma.sync without tensor cores (DeviceFeatures::mma_slow, board_mma_slow: the GTX 16 boards
+    // of TU116, TU117 and TU106): the board's, from the facts table, never the host's.
+    bool mma_slow = false;
 };
 
 // Whether the published profile's class is one of the device's own keys, and if not, the note
