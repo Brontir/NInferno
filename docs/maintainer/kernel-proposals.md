@@ -261,8 +261,73 @@ have frozen predictions so far.
     attention tests pass with the criterion unchanged;
   - byte rule: the criterion, plus a KLD run of Qwen3.5-9B with NVFP4 KV against master on one
     card, which must be noise.
-- A/B: not run.
-- Decision: open.
+- A/B (13.11, PR #868 at 0ad1c881): `kv_decode_attention_bench`, Qwen3.5-9B geometry, 8 layers,
+  slope over 7843 and 21961 keys, ABBA master against the branch. The controls (INT8, K8V4) did
+  not move.
+
+  | card | master | branch | predicted | verdict |
+  |---|---|---|---|---|
+  | RTX 3060 | 31.4 %, 36.2 % | 94.7 %, 94.4 % (x 2.8) | 78-88 % | above the upper edge |
+  | RTX 4090 | 75.1 %, 75.0 % | 80.8 %, 81.1 % (x 1.08) | 88-93 % | below the range |
+
+  - The RTX 4090 passes the frozen acceptance (at least 74.8 %, 85 % of 88 %). It gains +6
+    points against a predicted +13 or more: under half the predicted gain, so it is a finding.
+  - ncu on the RTX 4090 (21961 keys, SM clock 2.75 GHz):
+    - one wave of 128 CTAs, one per SM, 2 warps per scheduler;
+    - issue slots busy 13.9 %, eligible warps 0.20 per scheduler;
+    - DRAM 70.6 % of the call;
+    - 11.7 cycles per issued instruction, 7.6 of them short-scoreboard waits;
+    - SM active 82 % of elapsed, so the SMs sit idle 18 % of the call;
+    - no local memory.
+
+    The slope rate is 2.3 B/SM-clk on the RTX 4090 against 6.8 on the RTX 3060.
+  - Missing term 1, the shared-memory dependency chain with 2 warps per scheduler. Counted, and
+    refuted as the binding term:
+    - Method: one warp's in-order issue of one slab, from the loop's SASS control codes (stall
+      counts, scoreboard waits), with `isa_facts` latencies for the variable-latency ops: LDS and
+      LDSM at `shared_latency` (24.1 clk sm_89, 23.1 sm_86), MOVM the same (no fact), SHFL 27,
+      HMMA 32.9, F2FP 17. The cp.async wait is taken as satisfied.
+    - Result: 2493 clk a slab on sm_89 (1101 issued), 2574 on sm_86 (1168) and 2298 on sm_120a
+      (857). About 730 of those are scoreboard waits, mostly the decode's first IMAD after the
+      ldmatrix and the row-max shuffles. With MOVM at 64 clk instead, sm_89 takes 2639.
+    - A partition's round of 128 keys (two warps' slabs) therefore takes max(chain,
+      2 x issue) = 2.5-2.6 k clk. That is 14-15 B/SM-clk.
+    - RTX 4090 at 2.75 GHz: its DRAM line is 2.86 B/SM-clk, a round of 12.9 k clk, so two warps
+      cover the chain five times over.
+    - RTX 3060: its line is 7.2 B/SM-clk, a round of 5.1 k clk, a margin of only 2x. The chain
+      would bind the RTX 3060 first, yet the RTX 3060 reads at 94.5 %.
+    - The chain predicts DRAM-bound on the RTX 4090 (88-93 %), not 81 %. The 7.6 short-scoreboard
+      cycles per instruction are mostly warps waiting for data, not the chain itself. ncu's
+      source view is needed to split them between the cp.async wait (`DEPBAR`) and the
+      LDSM/LDS/MOVM results.
+  - Missing term 2, the one-wave tail:
+    - The plan runs one CTA per SM in a single wave (32 splits over 4 KV heads on 128 SMs), and
+      a CTA that finishes early leaves its SM idle until the slowest one ends.
+    - What the RTX 4090 shows: ncu's 18 % idle SM time with DRAM at 70.6 / 0.82 = 86 % while
+      SMs are active. The 81 % census share is 0.82 x 0.96-0.99.
+    - Splits differ by one slab (42-43). Rounding to whole 128-key rounds is about constant per
+      CTA, and the slope drops it. So the spread is not the work: it is the time to stream a
+      CTA's bytes, which varies between SMs under a saturated DRAM. It grows with the call and
+      stays in the slope.
+    - The RTX 3060 runs 7 splits per KV head on 28 SMs and loses about 1 %. The law has no fact
+      for the spread on a 128-SM part. It is recorded as a term to count, not as a fitted
+      constant.
+  - Next candidate, G2: two waves of smaller splits at the same kernel. Not built in #868.
+    - Variant: `causal_wave_partition` budgets 2 x SMs CTAs for the slab instances: two waves at
+      one CTA per SM, each split half today's keys. A CTA that finishes early takes a second-wave
+      split, so an SM idles only for the spread of half a CTA's bytes.
+    - Cost: the per-CTA fixed part (Q prologue, first load, merge) doubles in count. It stays in
+      the census intercept, not the slope, and the merge reads twice the partials.
+    - Prediction (frozen 13.11.2026):
+      - the RTX 4090 census share goes from 81 % to 86-90 % (idle 18 % -> 8-10 %);
+      - the RTX 3060 stays at 93-95 %;
+      - the RTX 5090 and 5070 Ti, at 170 and 70 SMs, get the same share of the gain as their
+        idle fraction in a first ncu of #868 shows;
+      - the call's fixed part rises by under 2 us per 8 layers.
+    - Acceptance: RTX 4090 at 85 % or more with ncu idle under 10 %.
+    - Refutation: idle unchanged (the spread is not the cause), or the RTX 3060 under 92 %.
+- Decision: open. The A/B of the RTX 5090, 5070 Ti, 3090 and 4070 Ti is pending, and so is the
+  ncu source view of the RTX 4090's short-scoreboard waits.
 
 ### M. MMQ column widths per arch and format (#619 step 13, DECISIONS 74)
 - Regime: MMQ on short prompts. Ada and Turing are done (#597, #717). Q2_K and the IQ formats still
