@@ -1030,6 +1030,7 @@ REVERSE_HEADERS = {
     "src/ops/generic/selector_facts.h", "src/ops/generic/route_query.h", "src/ops/generic/route_table.h",
     "include/ninferno/ops/route_table.h", "src/ops/generic/route_cost_constants.h",
     "src/ops/generic/generic_select_internal.h", "src/ops/generic/format_traits.h",
+    "src/ops/generic/format_rules.h",
     "src/ops/generic/generic_gemm.h", "src/ops/route_pins.h", "src/core/mmq_columns.h",
     "src/core/board_registry.h", "src/core/cost_constants.h", "src/core/machine_facts.h",
     "src/ops/generic/generic_gemm_internal.h", "src/ops/generic/ggml_mmq/ggml_mmq.h",
