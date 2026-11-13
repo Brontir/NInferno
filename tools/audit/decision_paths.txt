@@ -39,6 +39,11 @@ src/core/data/gpu_facts.json
 # the SM DRAM rate facts the DRAM law of #690 reads (kernel_roofline.h dram_time)
 src/core/data/sm_rate_facts.json
 src/core/sm_rate_facts.*
+# the ISA facts the price reads (#613 PR-8a: the launch node and ramp, the L2 latencies of
+# kernel_roofline.h chip_facts_of; core/launch_facts.h reads the launch entries)
+src/core/data/isa_facts.json
+src/core/isa_facts.*
+src/core/launch_facts.h
 src/core/device_class.*
 src/core/device_class_host.*
 src/core/arch_registry.h
@@ -104,6 +109,7 @@ cmake/EmbedText.cmake
 src/core/CMakeLists.txt
 src/core/embedded_gpu_facts.h.in
 src/core/embedded_sm_rate_facts.h.in
+src/core/embedded_isa_facts.h.in
 # which kernel-facts snapshots are embedded (host_sources.cmake lists the sm_*.txt, the .in turns
 # them into ops/generic/embedded_kernel_facts.h) and which sources and kernels the selector's library
 # is built from (host_sources.cmake: the selector's host objects and every definition and option on

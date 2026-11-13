@@ -709,6 +709,13 @@ struct KernelResources {
 [[nodiscard]] bool rmma_counted_law() noexcept;
 void rmma_counted_law_for_test(std::optional<bool> law) noexcept;
 
+// Whether price_routes offers the completeness terms (#613 PR-8a, kernel_roofline.h Completeness:
+// the output write, the residual read, the A8 quantizer by its counted bytes and launch, the
+// kernel's launch): route_cost::kCompletenessTerms, the binary's switch, unless a test set an
+// override for its process (nullopt clears it). Off, the price is golden-equal to the one before.
+[[nodiscard]] bool completeness_terms() noexcept;
+void completeness_terms_for_test(std::optional<bool> on) noexcept;
+
 // The compiled facts the cost model read for one register-MMA schedule of one format (#556): what
 // price_routes took from rmma_resources. A test installs a sink to digest exactly these reads (the
 // selector golden keys a facts-priced board's file by them); nothing is recorded otherwise.

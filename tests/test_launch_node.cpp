@@ -93,7 +93,42 @@ int main() {
                    same(row->floor_s[3], isa.launch->floor_ns_1024) &&
                    same(row->floor_s[4], isa.launch->floor_ns_4096),
                where + ": the floors are the entry's");
+        // The ramp (#613 PR-8a): piecewise linear between the four measured grids, each point
+        // reproduced exactly (floor_s[i] - floor_s[0]), none at one CTA or fewer, between two
+        // points between their ramps, and past 1024 CTAs the last segment's slope, marked
+        // extrapolated. Not one figure a CTA (#870: the slopes differ by segment).
+        bool all_floors = true;
+        for (const auto& s : row->floor_s) all_floors = all_floors && s.has_value();
+        const auto at = [&](double ctas) {
+            return ninferno::ramp_seconds(isa.major, isa.minor, ctas);
+        };
+        if (!all_floors) continue;
+        for (int i = 0; i < 4; ++i) {
+            const auto r = at(row->floor_ctas[i]);
+            expect(r && !r->extrapolated && r->seconds == *row->floor_s[i] - *row->floor_s[0],
+                   where + ": the ramp reproduces the point of " +
+                       std::to_string(row->floor_ctas[i]) + " CTAs");
+        }
+        expect(at(0.5) && at(0.5)->seconds == 0.0 && at(1) && at(1)->seconds == 0.0,
+               where + ": one CTA has no ramp");
+        for (int i = 0; i < 3; ++i) {
+            const double lo = *row->floor_s[i] - *row->floor_s[0];
+            const double hi = *row->floor_s[i + 1] - *row->floor_s[0];
+            const auto mid  = at(0.5 * (row->floor_ctas[i] + row->floor_ctas[i + 1]));
+            expect(mid && !mid->extrapolated &&
+                       std::fabs(mid->seconds - 0.5 * (lo + hi)) <= 1e-9 * std::fabs(hi) + 1e-18,
+                   where + ": linear between two points");
+        }
+        const double slope =
+            (*row->floor_s[3] - *row->floor_s[2]) / (row->floor_ctas[3] - row->floor_ctas[2]);
+        const auto past = at(2048);
+        expect(past && past->extrapolated &&
+                   std::fabs(past->seconds - (*row->floor_s[3] - *row->floor_s[0] +
+                                              1024 * slope)) <= 1e-9 * past->seconds,
+               where + ": past 1024 CTAs the last slope, marked extrapolated");
     }
+    expect(ninferno::launch_row(8, 0) || !ninferno::ramp_seconds(8, 0, 1024),
+           "no launch row, no ramp");
     for (const auto& [major, minor] : {std::pair{8, 0}, std::pair{9, 0}, std::pair{10, 0}}) {
         if (ninferno::isa_row(major, minor)) continue;
         expect(!ninferno::launch_seconds(major, minor, LaunchKind::GraphNode),

@@ -7,6 +7,7 @@
 #include "ggml_mmq_internal.cuh"
 
 #include "core/device_class.h"
+#include "ops/generic/route_cost_constants.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -84,6 +85,15 @@ constexpr int kQuantizeThreads = 128;
 // The sizes ggml_mmq_host.cpp computes with no ggml header (ggml_mmq.h), held equal to ggml's own.
 static_assert(kQ8MmqValues == QK8_1_MMQ);
 static_assert(kQ8MmqBlockBytes == sizeof(block_q8_1_mmq));
+
+// The quantizer's DRAM bytes and grid, counted from quantize_kernel below for the cost model
+// (route_cost::kQuantMmqBytesPerValue and kQuantMmqValuesPerCta, #613 PR-8a): each value is read
+// once as BF16, and each QK8_1_MMQ values are written as one block_q8_1_mmq; a CTA of
+// kQuantizeThreads threads quantizes four values a thread.
+namespace route_cost = ::ninferno::ops::detail::generic::route_cost;
+static_assert(route_cost::kQuantMmqBytesPerValue.value() ==
+              sizeof(__nv_bfloat16) + static_cast<double>(sizeof(block_q8_1_mmq)) / QK8_1_MMQ);
+static_assert(route_cost::kQuantMmqValuesPerCta.value() == 4 * kQuantizeThreads);
 
 // Token c of x (BF16, at x + c * ldx) -> ggml's q8_1 tiles in the scale/sum layout of the format.
 // A block's sum is its codes' (d * sum q), not the raw values' as in ggml's quantizer: the formats
