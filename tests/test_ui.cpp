@@ -1115,6 +1115,12 @@ void test_artifact_plan_via_serve() {
     std::tie(status, body) = plan(root / "no-such-serve", "");
     check(status == 502 && body.find("no GPU 0") != std::string::npos,
           "without serve the plan here answers: " + body);
+    // A serve that cannot be executed (no execute bit: the child's execve fails) is no serve.
+    std::ofstream(root / "serve-noexec") << "#!/bin/sh\nexit 0\n";
+    fs::permissions(root / "serve-noexec", fs::perms::owner_read | fs::perms::owner_write);
+    std::tie(status, body) = plan(root / "serve-noexec", "");
+    check(status == 502 && body.find("no GPU 0") != std::string::npos,
+          "a serve that cannot run: the plan here answers: " + body);
     // A negative GPU is refused before any child runs.
     std::tie(status, body) = plan(root / "serve-plan", "", "-1");
     check(status == 400 && body.find("no GPU -1") != std::string::npos,

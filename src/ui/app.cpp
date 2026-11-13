@@ -1080,6 +1080,11 @@ std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
     if (timed_out || !ended) {
         throw std::runtime_error("ninferno-serve --plan did not answer within 45 s");
     }
+    // The binary never ran (a fork's execve failed: ProcessPool's child says so and exits 127,
+    // where Windows' CreateProcess throws in start()): no serve answered, as without one.
+    if (info.exit_code == 127 && info.last_line == "ninferno-ui: exec failed") {
+        return std::nullopt;
+    }
     // Exit 0: the plan fits, 2: it does not; both print the document (apps/serve/main.cpp).
     if (info.exit_code != 0 && info.exit_code != 2) {
         throw std::runtime_error("ninferno-serve --plan refused (exit " +
