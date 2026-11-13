@@ -2566,8 +2566,8 @@ the KV law is max(bytes / DRAM, bytes / (SMs x clock x r)), and a codec flips fr
 SM-bound where the board's DRAM bytes a SM-clock, b, cross r / kDramEta. Per gpu_facts.json (boost
 clock):
 - Ada's lab cards read b = 3.13 (RTX 4090) and 3.22 (RTX 4070 Ti), the reference 3.17. Qwen 3.5's
-  NVFP4 rate 2.56 crosses at b = 2.71: the L4 (2.54) and the L40S (2.41) read it DRAM-bound, the
-  reference SM-bound. The RTX 4080 (3.77), 4070 (4.43) and 4060 (4.61) lie above the span the
+  NVFP4 rate 2.56 crosses at b = 2.56 / 0.946 = 2.71: the L40S (2.41), L40 (2.44) and L4 (2.54) read
+  it DRAM-bound, the reference SM-bound; the RTX 6000 Ada (2.70) sits at the crossover. The RTX 4080 (3.77), 4070 (4.43) and 4060 (4.61) lie above the span the
   factor rows were read over.
 - gb20x's lab cards read 4.38 (RTX 5090) and 5.22 (RTX 5070 Ti); the RTX 5070 (5.57) and 5060 (5.98)
   lie above. The GB10 (12.1: 48 SMs, 273 GB/s, about 2.3) lies far below, and is another chip with
@@ -2591,8 +2591,13 @@ keeps that capability exactly).
 **What stays.** Within one capability every board decides as its reference card. Where a board's b
 puts a codec in another bound form, the decision may not be that board's fastest; the estimate,
 priced on the board, shows its own time, and the choice says the decision was made on the reference
-card. The L4 / L40S NVFP4 case and the boards above the span are named here, not gated.
+card. The L4 / L40 / L40S NVFP4 case and the boards above the span are named here, not gated.
 
-**What moves.** The GB10's plan: the family's defaults (the automatic KV codec, `--activations
-fast`) where gb20x's reference card decided before. No lab board moves: every lab card's minor is
-its reference card's.
+**What moves.** The GB10's plan, where gb20x's reference card decided before: the KV codec keeps the
+engine's automatic one; the quantization goes by the quant rule (the largest that fits, gate
+`quant_switches_closed`) instead of by worth; the drafter is the speculation profile's. Its
+activations stay `fast`, as on gb20x already (no exact-route factor there). The MoE prefill chunk is
+withdrawn too (`chunk_decides`), which changes nothing today: only Ada's chunk curve is its own. The
+GB10 has no row in gpu_facts.json's boards, so no plan golden moves, and no lab board moves: every
+lab card's minor is its reference card's. A reference row of the GB10's own (12.1) would need the
+lookup keyed by the minor, not only the generation (`reference_of`, `kv_decides`).

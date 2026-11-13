@@ -2632,6 +2632,13 @@ void lent_generation_does_not_decide(const json& fixture) {
               ch::speed_of(gb10.model, gb10.card, gb10.quants[0], c, 1, 4096).basis !=
                   ch::SpeedBasis::LentGeneration,
           "compute capability 12.1: the family's defaults, its estimate on gb20x's own rows");
+    check(
+        !ch::weighs_quantizations(gb10.model, gb10.card, open) &&
+            spark.gate_code == "reference_other_capability" && !spark.drafter_by_worth &&
+            spark.chosen && chosen(spark).candidate.kv == allowed.automatic_kv &&
+            std::any_of(gg.begin(), gg.end(),
+                        [](const ch::ClosedGate& g) { return g.code == "quant_switches_closed"; }),
+        "compute capability 12.1: the automatic KV codec, the quant rule, the profile's drafter");
     const auto fr = ch::reference_of(known.card, open);
     check(fr && fr->decides && !fr->other_capability,
           "the RTX 5090 (12.0): gb20x's reference decides");
