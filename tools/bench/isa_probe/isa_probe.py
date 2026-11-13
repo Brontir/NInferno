@@ -1068,6 +1068,17 @@ def cmd_merge(a):
     else:
         name = f"{LAUNCH_PREFIX}{key}.txt"
     dest = os.path.join(a.inputs, name)
+    # A row's card changes only on purpose: a run of another card does not replace the row's
+    # run under its architecture's name unless --other-card says so (a check is named after its
+    # card, so it never replaces another card's).
+    if os.path.exists(dest) and not getattr(a, "other_card", False):
+        with open(dest) as f:
+            m = re.search(r"^card (.+)$", f.read(), re.M)
+        if m and m.group(1).strip() != head["card"]:
+            print(f"isa_probe: {dest} is a run of {m.group(1).strip()}, {a.input} of "
+                  f"{head['card']}: the row's card changes only with --other-card; nothing merged",
+                  file=sys.stderr)
+            return 1
     # The table the merge makes is built first, with the run read in place of the destination:
     # a table that cannot be built writes nothing.
     try:
@@ -1148,6 +1159,8 @@ def main():
     m.add_argument("--input", required=True)
     m.add_argument("--check", action="store_true",
                    help="a launch run of another card of the architecture: a transfer check")
+    m.add_argument("--other-card", action="store_true",
+                   help="let a run of another card replace the row's run of its architecture")
     m.add_argument("--inputs", default=DEFAULT_INPUTS)
     m.add_argument("--table", default=DEFAULT_TABLE)
     m.set_defaults(fn=cmd_merge)

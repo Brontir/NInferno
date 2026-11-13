@@ -1001,11 +1001,12 @@ class LaunchFacts(unittest.TestCase):
             os.mkdir(inputs)
             table = os.path.join(d, "t.json")
 
-            def merge(text, check_flag=False):
+            def merge(text, check_flag=False, other_card=False):
                 run = os.path.join(d, "run.txt")
                 with open(run, "w", newline="\n") as f:
                     f.write(text)
-                args = argparse.Namespace(input=run, inputs=inputs, table=table, check=check_flag)
+                args = argparse.Namespace(input=run, inputs=inputs, table=table, check=check_flag,
+                                          other_card=other_card)
                 with contextlib.redirect_stderr(io.StringIO()), \
                         contextlib.redirect_stdout(io.StringIO()):
                     return ip.cmd_merge(args)
@@ -1025,6 +1026,22 @@ class LaunchFacts(unittest.TestCase):
             self.assertEqual(row["launch"]["card"], "NVIDIA GeForce RTX 4090")
             self.assertEqual([c["card"] for c in row["launch"]["checks"]],
                              ["NVIDIA GeForce RTX 4070 Ti"])
+            # Another card's run does not replace the row's run of the architecture (launch or
+            # ISA) unless --other-card says so; the same card's does.
+            dest = os.path.join(inputs, "launch_probe_89.txt")
+            with open(dest) as f:
+                before = f.read()
+            self.assertEqual(merge(check), 1)
+            with open(dest) as f:
+                self.assertEqual(f.read(), before)
+            other_isa = SAMPLE.replace("card NVIDIA GeForce RTX 4090",
+                                       "card NVIDIA GeForce RTX 4070 Ti")
+            self.assertEqual(merge(other_isa), 1)
+            self.assertEqual(merge(LAUNCH_SAMPLE), 0)
+            self.assertEqual(merge(check, other_card=True), 0)
+            with open(table) as f:
+                self.assertEqual(json.load(f)["arches"]["89"]["launch"]["card"],
+                                 "NVIDIA GeForce RTX 4070 Ti")
 
     def test_run(self):
         # `run --section launch` builds launch_probe.cu (no SASS read) and writes the row's file,

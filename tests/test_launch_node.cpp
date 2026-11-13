@@ -77,6 +77,11 @@ int main() {
             const auto& ns = k == LaunchKind::GraphNode      ? isa.launch->node_ns
                              : k == LaunchKind::GraphNodePdl ? isa.launch->node_pdl_ns
                                                              : isa.launch->stream_ns;
+            if (k == LaunchKind::GraphNodePdl && isa.major < 9) {
+                expect(!s.has_value(), where + ": no PDL node below sm_90, whatever the row holds");
+                expect(same(row->node_pdl_s, ns), where + ": the row keeps the reading");
+                continue;
+            }
             expect(same(s, ns), where + ": a kind is its entry's fact in seconds");
         }
         if (!row) continue;
