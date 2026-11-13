@@ -292,14 +292,17 @@ double offered(const Terms& t, double a16, bool complete) {
 // The completeness terms of a tile (kernel_roofline.h Completeness, #613 PR-8a).
 template <class Terms>
 void print_completeness(const Terms& t, bool complete) {
-    std::printf("  completeness terms (%s): output %.2f + residual %.2f + quant %.2f + launch "
-                "%.2f%s us; complete %.2f us\n",
-                complete ? "on, offered" : "off, computed only", us(t.output), us(t.residual),
-                us(t.quant), us(t.launch),
-                !t.launch_known         ? " (no launch facts)"
-                : t.launch_extrapolated ? " (ramp extrapolated past 1024 CTAs)"
-                                        : "",
-                us(t.complete));
+    std::printf(
+        "  completeness terms (%s): output %.2f + residual %.2f + quant %.2f + launch "
+        "%.2f%s us; complete %.2f us\n",
+        complete ? "on, offered" : "off, computed only", us(t.output), us(t.residual), us(t.quant),
+        us(t.launch),
+        t.launch_bound && t.launch_extrapolated
+            ? " (no launch facts: the slowest measured architecture's, its ramp extrapolated)"
+        : t.launch_bound        ? " (no launch facts: the slowest measured architecture's)"
+        : t.launch_extrapolated ? " (ramp extrapolated past the largest measured grid)"
+                                : "",
+        us(t.complete));
 }
 
 void print_register_mma(const kr::RegisterMmaTerms& t, bool heavy, double a16, double l2_fitted,
@@ -431,14 +434,15 @@ int run(const Options& o) {
         std::printf("launch facts (core/launch_facts.h): graph node %.3f us, dispatch ramp",
                     *chip.launch_node_s * 1e6);
         const RampPoints& p = *chip.launch_ramp;
-        for (int i = 1; i < 4; ++i) {
+        for (int i = 1; i < 5; ++i) {
             if (p.seconds[0] && p.seconds[i]) {
                 std::printf(" %.0f CTAs %.3f us", p.ctas[i], (*p.seconds[i] - *p.seconds[0]) * 1e6);
             }
         }
         std::printf(" (piecewise linear between them); ");
     } else {
-        std::printf("launch facts: none for sm_%d%d (the launch term is unknown, priced 0); ",
+        std::printf("launch facts: none for sm_%d%d (the launch term is unknown, priced at the "
+                    "slowest measured architecture's); ",
                     d.major, d.minor);
     }
     std::printf(
@@ -484,16 +488,16 @@ int run(const Options& o) {
                     "reduce", "chain", "total", in_domain ? "selector" : "formula", "", "launch",
                     "if on");
     }
-    // The completeness columns of a table row: the tile's launch ("?" without launch facts, "*"
-    // after it where its grid's ramp is extrapolated past 1024 CTAs) and the price the selector
-    // offers with the completeness terms on (total x a16 + the terms).
+    // The completeness columns of a table row: the tile's launch ("*" after it where its grid's
+    // ramp is extrapolated past the largest measured grid, "?" where the architecture has no
+    // launch facts and the slowest measured one's stands in) and the price the selector offers
+    // with the completeness terms on (total x a16 + the terms).
     const auto completeness_columns = [&](const auto& t) {
-        if (t.launch_known) {
-            std::printf(" | %8.2f%s %9.2f\n", us(t.launch), t.launch_extrapolated ? "*" : " ",
-                        us(offered(t, a16, true)));
-        } else {
-            std::printf(" | %9s %9.2f\n", "?", us(offered(t, a16, true)));
-        }
+        std::printf(" | %8.2f%s %9.2f\n", us(t.launch),
+                    t.launch_bound          ? "?"
+                    : t.launch_extrapolated ? "*"
+                                            : " ",
+                    us(offered(t, a16, true)));
     };
     const auto wants = [&](Route r) { return !one || *o.only == r; };
     // The selector's two rules, read from the selector: a route it does not admit for this call
