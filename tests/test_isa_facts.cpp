@@ -84,7 +84,8 @@ std::vector<std::pair<std::string, std::optional<double> IsaLaunch::*>> expected
             {"floor_ns_1", &IsaLaunch::floor_ns_1},
             {"floor_ns_sms", &IsaLaunch::floor_ns_sms},
             {"floor_ns_4sms", &IsaLaunch::floor_ns_4sms},
-            {"floor_ns_1024", &IsaLaunch::floor_ns_1024}};
+            {"floor_ns_1024", &IsaLaunch::floor_ns_1024},
+            {"floor_ns_4096", &IsaLaunch::floor_ns_4096}};
 }
 
 Json table_file() {

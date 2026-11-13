@@ -80,6 +80,7 @@ const std::vector<LaunchField>& launch_fields() {
         {"floor_ns_sms", &IsaLaunch::floor_ns_sms},
         {"floor_ns_4sms", &IsaLaunch::floor_ns_4sms},
         {"floor_ns_1024", &IsaLaunch::floor_ns_1024},
+        {"floor_ns_4096", &IsaLaunch::floor_ns_4096},
     };
     return all;
 }

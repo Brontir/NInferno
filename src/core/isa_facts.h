@@ -50,9 +50,10 @@ struct IsaLaunch {
     std::optional<double> node_pdl_ns;
     // The one-warp kernel launched on a stream, from a backlog: the GPU's cost per stream launch.
     std::optional<double> stream_ns;
-    // An empty grid of 1, SMs, 4 x SMs and 1024 CTAs of 128 threads as a graph-chain node: the
-    // call of an empty grid of that size, so floor_ns_C - floor_ns_1 is the CTA dispatch ramp.
-    std::optional<double> floor_ns_1, floor_ns_sms, floor_ns_4sms, floor_ns_1024;
+    // An empty grid of 1, SMs, 4 x SMs, 1024 and 4096 CTAs of 128 threads as a graph-chain node:
+    // the call of an empty grid of that size, so floor_ns_C - floor_ns_1 is the CTA dispatch
+    // ramp. floor_ns_4096 from launch_probe 2 on (#886): unknown on a row an older probe measured.
+    std::optional<double> floor_ns_1, floor_ns_sms, floor_ns_4sms, floor_ns_1024, floor_ns_4096;
 };
 
 // One architecture's row of the ISA facts table.
