@@ -260,13 +260,19 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         // kernel's launch and its stream-k fixup stay inside the fitted slice (kMmqSliceSeconds)
         // until the shared MMQ term prices them (#613 PR-5), as does the FP32 plane its tiles
         // write and its epilogue reads.
-        const double quant_mmq =
-            complete ? quant_counted(tt * k * route_cost::kQuantMmqBytesPerValue.value(),
-                                     tt * cdiv(k, route_cost::kQuantMmqValuesPerCta.value()))
-                     : quant(tt);
+        // Counted, each slice's quantizer at its own width: the runtime loop (generic_gemm.cpp)
+        // gives the last slice the remaining tokens, so 513 tokens quantize 512 and then 1.
+        const auto quant_mmq_counted = [&](double width) {
+            return quant_counted(width * k * route_cost::kQuantMmqBytesPerValue.value(),
+                                 width * cdiv(k, route_cost::kQuantMmqValuesPerCta.value()));
+        };
+        const double slice_body =
+            std::max(mem, mma / (route_cost::kMmqEfficiency.value() * scale)) + chain;
         const double price =
-            slices * (std::max(mem, mma / (route_cost::kMmqEfficiency.value() * scale)) + chain +
-                      quant_mmq + route_cost::kMmqSliceSeconds.value());
+            complete ? slices * (slice_body + route_cost::kMmqSliceSeconds.value()) +
+                           (slices - 1) * quant_mmq_counted(tt) +
+                           quant_mmq_counted(t - (slices - 1) * tt)
+                     : slices * (slice_body + quant(tt) + route_cost::kMmqSliceSeconds.value());
         if (complete) {
             const kr::Completeness c = kr::completeness(chip, call, 1.0);
             offer(Route{Family::GgmlMmq, 0}, price + c.output + c.residual);

@@ -1141,6 +1141,32 @@ void check_completeness() {
             }
         }
     }
+    // Under the switch the MMQ quantizer is counted per slice at that slice's width (the runtime
+    // gives the last slice the remaining tokens): 513 tokens price 512 + 1, under 1024's 512 + 512,
+    // while both take two slices of the same body (codex on #885).
+    long mmq_slices = 0;
+    for (const auto& board : g::kFactsBoards) {
+        const DeviceClass d = g::board_device_class(board);
+        if (!priceable(d)) continue;
+        const auto mmq_at = [&](std::int32_t tokens) -> std::optional<double> {
+            g::completeness_terms_for_test(true);
+            const auto p = g::priced_routes_query(d, QType::GGML_Q4_K, LinearPolicy::AllowA8,
+                                                  g::Epilogue::Store, 4096, 4096, tokens);
+            g::completeness_terms_for_test(std::nullopt);
+            for (const auto& r : p) {
+                if (r.route.family == g::Family::GgmlMmq) return r.seconds;
+            }
+            return std::nullopt;
+        };
+        const auto at513 = mmq_at(513), at1024 = mmq_at(1024);
+        if (!at513 || !at1024) continue;
+        ++mmq_slices;
+        if (!(*at513 < *at1024)) {
+            fail(std::string(board.name) +
+                 ": under the switch, MMQ at 513 tokens prices its last slice's quantizer at 512");
+        }
+    }
+    if (mmq_slices == 0) fail("no board offered MMQ at 513 and 1024 tokens under the switch");
     // The residual read, and the A8 candidates under the switch.
     long residual = 0, a8 = 0, a8_residual = 0;
     for (const auto& board : g::kFactsBoards) {
