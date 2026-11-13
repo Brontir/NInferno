@@ -287,10 +287,7 @@ std::function<const SpeculationSubject*(const QuantListing&)> PlannedSubjects::l
 }
 
 spec::GpuKey gpu_key_of(const runtime::PlanDeviceFacts& device) {
-    DeviceClass d =
-        synthetic_device_class(device.pci_device_id, device.compute_capability / 10,
-                               device.compute_capability % 10, device.sms, 0, device.total_bytes);
-    d.facts = machine_facts_of(d);
+    const DeviceClass d = runtime::plan_device_class(device);
     // The rates the configuration choice prices (choice::card_facts_of, which a host test of every
     // gpu_facts.json board calls on the same class; choice_card_of reads them back from the key).
     const choice::CardFacts card = choice::card_facts_of(d);
@@ -302,7 +299,8 @@ spec::GpuKey gpu_key_of(const runtime::PlanDeviceFacts& device) {
                         d.compute_capability(),
                         d.facts.reference_clock_khz,
                         card.dram_bytes_per_s / 1e9,
-                        card.l2_bytes};
+                        card.l2_bytes,
+                        d.features.mma_slow};
 }
 
 bool per_request_of(const SpeculationAsk& ask, const SpeculationSubject* subject) {

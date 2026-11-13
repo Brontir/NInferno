@@ -1,0 +1,279 @@
+{
+  "bands": {
+    "batch129": {
+      "best_ms": 34.687946000000004,
+      "cases": 30,
+      "cases_over_5pct": 2,
+      "geomean_regret": 0.009058039107504134,
+      "selected_ms": 34.725674,
+      "skipped": 0,
+      "tokens": 9600,
+      "weighted_regret": 0.0010876400695503108,
+      "worst_regret": 0.1428571428571428
+    },
+    "decode": {
+      "best_ms": 10.51151614,
+      "cases": 80,
+      "cases_over_5pct": 26,
+      "geomean_regret": 0.047600376355240615,
+      "selected_ms": 10.818672959999999,
+      "skipped": 0,
+      "tokens": 360,
+      "weighted_regret": 0.029220981627108955,
+      "worst_regret": 0.5611690040134363
+    },
+    "narrow": {
+      "best_ms": 3.984382,
+      "cases": 20,
+      "cases_over_5pct": 3,
+      "geomean_regret": 0.04771513555251694,
+      "selected_ms": 4.015102,
+      "skipped": 0,
+      "tokens": 560,
+      "weighted_regret": 0.007710104101463999,
+      "worst_regret": 0.4285714285714286
+    },
+    "verify": {
+      "best_ms": 3.1635187200000003,
+      "cases": 20,
+      "cases_over_5pct": 10,
+      "geomean_regret": 0.09764540475037164,
+      "selected_ms": 3.2424473000000003,
+      "skipped": 0,
+      "tokens": 280,
+      "weighted_regret": 0.02494961686207442,
+      "worst_regret": 0.2857142857142856
+    },
+    "wide": {
+      "best_ms": 14.654012,
+      "cases": 40,
+      "cases_over_5pct": 13,
+      "geomean_regret": 0.04363836857115566,
+      "selected_ms": 14.864602,
+      "skipped": 0,
+      "tokens": 3360,
+      "weighted_regret": 0.014370808485758113,
+      "worst_regret": 0.34999999999999987
+    }
+  },
+  "board": "rtx3090",
+  "build_id": "regret-0d55045a3116-rtx3090",
+  "by_board_regime_authority": [
+    {
+      "authority": "r8-rules",
+      "board": "rtx3090",
+      "cases": 10,
+      "evidence": {
+        "ranker": 10
+      },
+      "geomean_slowdown": 1.0176496451727253,
+      "max_regret": 0.08878504672897214,
+      "median_regret": 0.0,
+      "p95_regret": 0.08878504672897214,
+      "regime": "decode T<=4",
+      "ridge_t": 85.5323076923077,
+      "scored_cases": 10,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 10
+      }
+    },
+    {
+      "authority": "vec-rule",
+      "board": "rtx3090",
+      "cases": 30,
+      "evidence": {
+        "ranker": 30
+      },
+      "geomean_slowdown": 1.0816241195172434,
+      "max_regret": 0.5611690040134363,
+      "median_regret": 0.03141953329915137,
+      "p95_regret": 0.33510874389702594,
+      "regime": "decode T<=4",
+      "ridge_t": 85.5323076923077,
+      "scored_cases": 30,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 30
+      }
+    },
+    {
+      "authority": "rmma-rule",
+      "board": "rtx3090",
+      "cases": 36,
+      "evidence": {
+        "ranker": 36
+      },
+      "geomean_slowdown": 1.075008387708195,
+      "max_regret": 0.2857142857142856,
+      "median_regret": 0.060016960271364383,
+      "p95_regret": 0.2838874680306904,
+      "regime": "verify T5-16",
+      "ridge_t": 85.5323076923077,
+      "scored_cases": 36,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 36
+      }
+    },
+    {
+      "authority": "route-table",
+      "board": "rtx3090",
+      "cases": 24,
+      "evidence": {
+        "borrowed": 12,
+        "measured": 12
+      },
+      "geomean_slowdown": 1.0189620746424939,
+      "max_regret": 0.20799999999999996,
+      "median_regret": 0.0,
+      "p95_regret": 0.1957075814401006,
+      "regime": "verify T5-16",
+      "ridge_t": 85.5323076923077,
+      "scored_cases": 24,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 24
+      }
+    },
+    {
+      "authority": "cost-model",
+      "board": "rtx3090",
+      "cases": 40,
+      "evidence": {
+        "ranker": 40
+      },
+      "geomean_slowdown": 1.0503009936472931,
+      "max_regret": 0.4285714285714286,
+      "median_regret": 0.0,
+      "p95_regret": 0.32258064516129026,
+      "regime": "T>=17 below ridge",
+      "ridge_t": 85.5323076923077,
+      "scored_cases": 40,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 40
+      }
+    },
+    {
+      "authority": "cost-model",
+      "board": "rtx3090",
+      "cases": 50,
+      "evidence": {
+        "ranker": 50
+      },
+      "geomean_slowdown": 1.0191450135300146,
+      "max_regret": 0.2195121951219512,
+      "median_regret": 0.0,
+      "p95_regret": 0.1428571428571428,
+      "regime": "T>=17 above ridge",
+      "ridge_t": 85.5323076923077,
+      "scored_cases": 50,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 50
+      }
+    }
+  ],
+  "card": "RTX 3090",
+  "date": "2026-11-12T19:08:00Z",
+  "delta": {
+    "gone_groups": [],
+    "improvements": [],
+    "new_caught_up": null,
+    "new_groups": [],
+    "new_holds": null,
+    "previous": {
+      "path": "tools/bench/data/route_regret/rtx3090.json",
+      "revision": "f24d0079613133f8e19f9bcc40b9357c761292b9"
+    },
+    "regressions": [],
+    "sweep_matches": "unknown",
+    "table_exit": null,
+    "threshold": 0.05
+  },
+  "device": "ga102:82sm",
+  "driver": "615.71.09",
+  "gpu": {
+    "applications_graphics_mhz": "[Requested functionality has been deprecated]",
+    "max_sm_mhz": 2130,
+    "name": "NVIDIA GeForce RTX 3090",
+    "persistence_mode": "Enabled",
+    "power_limit_w": 390,
+    "sm_mhz_during_sweep": {
+      "max": 1995,
+      "min": 1335,
+      "samples": 651
+    }
+  },
+  "holdout": "board",
+  "nvcc": "13.5.37",
+  "nvcc_source": "CMAKE_CUDA_COMPILER",
+  "overrides": {
+    "caught_up": [
+      "q4k.a8.swiglu.n12288.k4096.T5",
+      "q4k.a8.swiglu.n12288.k4096.T6",
+      "q4k.a8.swiglu.n12288.k4096.T7",
+      "q4k.a8.swiglu.n12288.k4096.T8",
+      "q6k.a8.store.n248320.k4096.T12",
+      "q6k.a8.store.n248320.k4096.T16",
+      "q6k.a8.store.n248320.k4096.T5",
+      "q6k.a8.store.n248320.k4096.T6",
+      "q6k.a8.store.n248320.k4096.T7",
+      "q6k.a8.store.n248320.k4096.T8"
+    ],
+    "holds": [
+      "q4k.a8.swiglu.n12288.k4096.T12",
+      "q4k.a8.swiglu.n12288.k4096.T16"
+    ],
+    "resolution": 0.05,
+    "unscored": []
+  },
+  "passed": true,
+  "pci_device_id": "0x2204",
+  "qualification": "ninferno_linear_generic_test (NINFERNO_TEST_FORMATS=q4k,q6k) and ninferno_route_classes_test passed on this build and board, 2026-11-12T19:08:00Z",
+  "revision": "0d55045a31160a363b12b9373b04e5a418eda4ab",
+  "schema": "ninferno-regret-run/1",
+  "selection_report_sha256": "a04bc5abd1de631bd748f733d82c08cf136385d1c3c42ccd71a654ba36f0a061",
+  "selector_revision": "0d55045a31160a363b12b9373b04e5a418eda4ab",
+  "summary": {
+    "cases": 190,
+    "geomean_slowdown": 1.0457239853821436,
+    "max_regret": 0.5611690040134363,
+    "median_regret": 0.0,
+    "p95_regret": 0.2505195941315117,
+    "scored_cases": 190,
+    "single_pass_cases": 0,
+    "statuses": {
+      "complete": 190
+    }
+  },
+  "sweep": {
+    "passes": 3,
+    "route_policy": "the build's default",
+    "samples": 7,
+    "shapes": "tools/bench/data/route_regret/shapes.txt",
+    "shapes_sha256": "4e065f66903b787db66d5ca1f7a68006803019fae5574b64e35a64ac2a8618de"
+  },
+  "table_exit": {
+    "answered_by": {
+      "carried": 12,
+      "priced": 90,
+      "rules": 76,
+      "table": 12
+    },
+    "cases": 190,
+    "caught_up": 10,
+    "exit_share": 0.8333333333333334,
+    "holds": 2,
+    "overrides": 12,
+    "resolution": 0.05,
+    "share": {
+      "carried": 0.06315789473684211,
+      "priced": 0.47368421052631576,
+      "rules": 0.4,
+      "table": 0.06315789473684211
+    },
+    "unscored": 0
+  }
+}

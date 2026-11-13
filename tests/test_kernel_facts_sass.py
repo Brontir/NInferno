@@ -388,9 +388,23 @@ class StaticSchedule(unittest.TestCase):
         self.assertEqual(c.outside_total, 8 + 31 + 4)
         self.assertEqual(c.schedule_problems(), [])
         # An MMQ kernel without a K loop fails the family audit, but at the widths ggml compiles
-        # empty (80 and 96 columns).
+        # empty (80 and 96 columns), while the kernel is empty: no barrier, a few dozen
+        # instructions (#827; this body's 43, its barriers taken out).
+        barriers, c.outside_bar = c.outside_bar, 0
         rows = {(2, J, 0, 0): (0, 0, 0, 0, c) for J in (64, 80, 96)}
         self.assertEqual(kernel_facts.family_audit("mmq", rows), ["mmq 2 64 0 0: no K loop"])
+        c.outside_bar = 4
+        self.assertEqual(kernel_facts.family_audit("mmq", {(2, 80, 0, 0): (0, 0, 0, 0, c)}),
+                         [f"mmq 2 80 0 0: no K loop, and not empty ({c.outside_total} "
+                          "instructions, 4 barriers)"])
+        self.assertGreater(barriers, 0)  # the body's own barriers: not an empty kernel either
+        c.outside_bar, c.outside_total = 0, kernel_facts.MMQ_EMPTY_INSTRUCTIONS + 1
+        self.assertEqual(len(kernel_facts.family_audit("mmq", {(2, 96, 0, 0): (0, 0, 0, 0, c)})), 1)
+        # An unknown flow counts nothing, the schedule's parts too: not taken for an empty kernel.
+        unknown = sc.loop_counts(body_of([(0x000, "BRX R2 -0x10 ;")], {0x000: high_word(1)}))
+        self.assertTrue(unknown.scheduled)
+        self.assertEqual((unknown.loops, unknown.outside_total), (0, 0))
+        self.assertEqual(len(kernel_facts.family_audit("mmq", {(2, 80, 0, 0): (0, 0, 0, 0, unknown)})), 1)
 
     def test_problems(self):
         c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=2)

@@ -546,7 +546,10 @@ def main(argv=None):
             loaded = json.loads(doc.read_bytes(), object_pairs_hook=regret.unique_object)
             r, s = rows_from_document(loaded)
             named.append((doc.name, provenance_of(loaded)))
-            devices.append((doc.name, loaded.get("device"), {x["board"] for x in r + s}))
+            # The class id only: a document collected before regret_collect dropped the card's
+            # UUID still carries it after the class.
+            device = (loaded.get("device") or "").split()
+            devices.append((doc.name, device[0] if device else None, {x["board"] for x in r + s}))
             inputs.append((str(doc), r + s))
             rows += r
             skipped += s

@@ -377,6 +377,24 @@ double exact_eta(std::string_view generation, bool& transferred) noexcept {
     return row != nullptr ? row->eta : kExactComputeEta[0].eta;
 }
 
+// The kKvSmRate row of `model`'s family, full-layer geometry and `kv` on `generation` (nullptr:
+// none, the codec's factor stands).
+const KvSmRate* kv_sm_rate(const ModelFacts& model, std::string_view generation,
+                           KvCacheStorage kv) noexcept {
+    const double full_heads =
+        model.full_layers > 0 && model.full_head_dim > 0
+            ? std::round(model.full_attention_width / (model.full_layers * 2 * model.full_head_dim))
+            : 0;
+    for (const KvSmRate& r : kKvSmRate) {
+        if (r.generation == generation && r.family == model.family && r.kv == kv &&
+            r.head_dim == model.full_head_dim && r.heads == full_heads &&
+            r.kv_heads == model.full_kv_heads) {
+            return &r;
+        }
+    }
+    return nullptr;
+}
+
 double kv_read_factor(std::string_view generation, KvCacheStorage kv, bool& transferred) noexcept {
     if (kv == KvCacheStorage::Int8Group64) { return 1.0; } // the reference codec
     for (const std::string_view gen : {generation, kTransferGeneration}) {
@@ -562,6 +580,7 @@ Scored score(const ModelFacts& model, const CardFacts& card, const std::optional
     s.speed       = speed_of(model, card, quant, c, task.concurrency, task.prompt + task.answer / 2.0,
                              task.prompt);
     s.accuracy    = accuracy_of(model, quant, c, card);
+    s.prefill_band = prefill_band_of(model, card, quant, c, s.speed.basis, task.prompt);
     s.seconds     = request_seconds(model, card, quant, c, task);
     if (ref) {
         s.decision_seconds = request_seconds(model, ref->card, quant, c, task, &s.decision_basis);
@@ -1331,27 +1350,23 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const double params        = model.active_params > 0 ? model.active_params : model.params;
 
     bool transferred = false;
-    const double kv  = model.kv_bytes_per_token ? model.kv_bytes_per_token(candidate.kv) : 0;
-    const double kkv = kv_read_factor(gen, candidate.kv, transferred);
+    const double kv    = model.kv_bytes_per_token ? model.kv_bytes_per_token(candidate.kv) : 0;
     const double state = model.state_bytes ? model.state_bytes(candidate.state) : 0;
     const double ring  = model.ring_bytes_per_token ? model.ring_bytes_per_token(candidate.ring) : 0;
     const double window_rows = model.window > 0 ? std::min<double>(context, model.window) : 0;
     // A row's own reads: its KV over the context, its recurrent state (read and written), its ring.
-    // A kernel the SMs bound (kKvSmRate: the family's own kernel, in place of the codec's factor read
-    // on another family's) reads its KV no faster than SMs x clock x its rate, nor than the DRAM: the
-    // KV counts as the bytes the DRAM reads in that time.
-    double kv_factor = kkv;
-    const double full_heads = model.full_layers > 0 && model.full_head_dim > 0
-                                  ? std::round(model.full_attention_width / (model.full_layers * 2 * model.full_head_dim))
-                                  : 0;
-    for (const KvSmRate& r : kKvSmRate) {
-        if (r.generation == gen && r.family == model.family && r.kv == candidate.kv && r.head_dim == model.full_head_dim &&
-            r.heads == full_heads && r.kv_heads == model.full_kv_heads && card.sms > 0 && card.clock_hz > 0) {
-            kv_factor = std::max(1.0, dram_eta(gen) * card.dram_bytes_per_s /
-                                           (card.sms * card.clock_hz * r.bytes_per_sm_clock));
-            if (r.cards < 2) { transferred = true; }
-            break;
-        }
+    // A kernel the SMs bound (kKvSmRate: the family's own kernel, in place of the codec's factor
+    // read on another family's) reads its KV no faster than SMs x clock x its rate, nor than the
+    // DRAM: the KV counts as the bytes the DRAM reads in that time. Else the codec's factor
+    // (kKvReadFactor: the generation's own row, else the transfer generation's, transferred).
+    double kv_factor        = 0;
+    const KvSmRate* sm_rate = kv_sm_rate(model, gen, candidate.kv);
+    if (sm_rate != nullptr && card.sms > 0 && card.clock_hz > 0) {
+        kv_factor = std::max(1.0, dram_eta(gen) * card.dram_bytes_per_s /
+                                      (card.sms * card.clock_hz * sm_rate->bytes_per_sm_clock));
+        if (sm_rate->cards < 2) { transferred = true; }
+    } else {
+        kv_factor = kv_read_factor(gen, candidate.kv, transferred);
     }
     const double row_bytes = context * kv * kv_factor + 2 * state + window_rows * ring;
     // The exact route's compute beyond the fast route's (choice_constants.h kExactComputeEta).
@@ -1738,6 +1753,8 @@ std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates)
         out.why  = "compute capability " + std::to_string(card.major) + "." + std::to_string(card.minor) +
                   " has no generation row of its own: " + std::string(gen) +
                   "'s rates stand in for the estimate, not for a decision";
+        out.generation = gen;
+        out.lent       = true;
         return out;
     }
     for (const ReferenceCard& r : kReferenceCards) {
@@ -1745,12 +1762,150 @@ std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates)
         Reference out;
         out.card          = {.major = card.major, .minor = card.minor, .sms = r.sms, .clock_hz = r.clock_hz,
                              .dram_bytes_per_s = r.dram_bytes_per_s, .fp4 = card.fp4};
-        out.decides       = r.kv_two_cards && r.exact_two_cards;
-        out.chunk_decides = gates.moe_chunk;
-        if (!out.decides) { out.why = std::string(gen) + "'s KV and exact-route factors rest on one lab card"; }
+        out.decides       = r.kv_two_cards;
+        out.activations_decide = r.kv_two_cards && r.exact_two_cards;
+        out.chunk_decides      = gates.moe_chunk;
+        out.generation         = r.generation;
+        out.cards              = r.cards;
+        if (card.minor != r.minor) {
+            // A capability no lab card of the generation has (#863: the GB10, 12.1, under gb20x's
+            // 12.0 cards): the rows price its estimate, never a decision.
+            out.decides = out.activations_decide = out.chunk_decides = false;
+            out.other_capability                                     = true;
+            out.why = "compute capability " + std::to_string(card.major) + "." +
+                      std::to_string(card.minor) + " is not its " + std::string(gen) +
+                      " lab cards' (" + std::to_string(card.major) + "." + std::to_string(r.minor) +
+                      "): their rates stand in for the estimate, not for a decision";
+            return out;
+        }
+        if (!out.decides) { out.why = std::string(gen) + "'s KV factors rest on one lab card"; }
         return out;
     }
     return std::nullopt;
+}
+
+std::vector<ClosedGate> closed_gates(const ModelFacts& model, const CardFacts& card,
+                                     const Gates& gates) {
+    std::vector<ClosedGate> out;
+    const std::string gen(generation_of(card));
+    // The switches' speed factors (reference_of): the order choose() reads them in.
+    const std::optional<Reference> ref = reference_of(card, gates);
+    if (!ref) {
+        out.push_back({"switches", "no_reference_card", "reference_factors", gen, "", 0});
+    } else if (ref->lent) {
+        out.push_back({"switches", "lent_generation", "generation_row", gen, "", 0});
+    } else if (ref->other_capability) {
+        out.push_back(
+            {"switches", "reference_other_capability", "capability_lab_cards", gen, "", 0});
+    } else if (!ref->decides) {
+        out.push_back({"switches", "reference_one_card", "reference_factors", gen, "", 1});
+    }
+    // The switches' accuracy terms (accuracy_decides' order); a gate the caller opens or closes
+    // (Gates::accuracy) stands for their cards, never for a family without terms
+    // (decides_switches).
+    const std::string& family = model.family;
+    if (!family_measured(family)) {
+        out.push_back({"switches", "family_unmeasured", "family_kld_terms", "", family, 0});
+    } else if (!gates.accuracy.value_or(false)) {
+        const std::size_t before = out.size();
+        int kv_cards             = 2;
+        for (const KldTerm& term : kKldTerms) {
+            if (term.family == family && term.axis == Axis::Kv) {
+                kv_cards = std::min(kv_cards, term.cards);
+            }
+        }
+        if (kv_cards < 2) {
+            out.push_back(
+                {"switches", "kv_terms_one_card", "kv_kld_second_card", "", family, kv_cards});
+        }
+        const KldTerm* act = measured_term(Axis::Activations, "int8", gen, family);
+        if (act == nullptr) {
+            out.push_back({"switches", "int8_unmeasured", "int8_kld", gen, family, 0});
+        } else if (act->cards < 2) {
+            out.push_back({"switches", "int8_one_card", "int8_kld", gen, family, act->cards});
+        }
+        // The terms rest on two cards: only a closed Gates::accuracy keeps them out.
+        if (gates.accuracy.has_value() && out.size() == before) {
+            out.push_back({"switches", "accuracy_gate_closed", "", "", "", 0});
+        }
+    }
+    // The quantizations' trade (weighs_quantizations): the curve of the family on two cards (a
+    // gate the caller sets stands for the cards).
+    if (family != kQuantKldFamily) {
+        out.push_back({"quant", "quant_curve_unmeasured", "quant_curve", "", family, 0});
+    } else if (!gates.accuracy.has_value() && kQuantKldCards < 2) {
+        out.push_back({"quant", "quant_curve_one_card", "quant_curve", "", family, kQuantKldCards});
+    } else if (!decides_switches(model, card, gates)) {
+        // The curve rests on two cards, but the trade waits on the switches' closed gate.
+        out.push_back({"quant", "quant_switches_closed", "", gen, family, 0});
+    }
+    return out;
+}
+
+PrefillBand prefill_band_of(const ModelFacts& model, const CardFacts& card,
+                            const QuantOption& quant, const Candidate& candidate, SpeedBasis basis,
+                            std::uint32_t prompt) noexcept {
+    PrefillBand out;
+    out.moe                           = model.moe();
+    out.prompt                        = prompt;
+    const std::string_view gen        = generation_of(card);
+    const PrefillPredictionError* row = nullptr;
+    if (generation_known(card.major, card.minor)) {
+        for (const PrefillPredictionError& e : kPrefillPredictionError) {
+            if (e.generation == gen) { row = &e; }
+        }
+    }
+    if (row != nullptr) {
+        out.stated_rms   = row->rms;
+        out.stated_worst = row->worst;
+        out.cards        = row->cards;
+    }
+    if (out.moe) {
+        out.why_code = "moe_unchecked";
+    } else if (row == nullptr || row->cards < 2) {
+        out.why_code = "generation_unchecked";
+    } else if (route_of(quant, candidate.activations, card) != Route::Int8) {
+        out.why_code = "not_fast_route";
+    } else if (basis != SpeedBasis::Own) {
+        out.why_code = "transferred";
+    } else if (prompt < kPrefillErrorFromPrompt) {
+        out.why_code = "short_prompt";
+    } else if (prompt > kPrefillErrorToPrompt) {
+        out.why_code = "long_prompt";
+    } else {
+        out.holds = true;
+    }
+    return out;
+}
+
+const AnswerScale* answer_scale_of(std::string_view family) noexcept {
+    for (const AnswerScale& s : kAnswerScales) {
+        if (s.family == family) { return &s; }
+    }
+    return nullptr;
+}
+
+std::optional<double> answer_points(const Accuracy& accuracy, const AnswerScale* scale,
+                                    std::string_view* why_code) noexcept {
+    const auto say = [&](std::string_view code) -> std::optional<double> {
+        if (why_code != nullptr) { *why_code = code; }
+        return std::nullopt;
+    };
+    if (scale == nullptr) { return say("family_not_calibrated"); }
+    for (const Term& t : accuracy.terms) {
+        if (t.axis != Axis::Quant) { continue; }
+        // The calibrated model's own measured files (the curve's points are its), never another
+        // model's estimate on the same family key. Q8_0 being the curve's zero
+        // (Evidence::Reference) says nothing of the model: a 27B's Q8_0 is 0 against its own Q8_0,
+        // not on the 9B's file. Only the measured file's identity (Evidence::Measured, the
+        // reference's file included) makes the term the calibrated model's.
+        if (t.transferred || t.evidence != Evidence::Measured) {
+            return say("model_not_calibrated");
+        }
+        if (why_code != nullptr) { *why_code = {}; }
+        return scale->points_per_kld * t.kld;
+    }
+    return say("model_not_calibrated");
 }
 
 ChunkBasis chunk_basis_of(const ModelFacts& model, const CardFacts& card, const Gates& gates) {
@@ -1769,6 +1924,15 @@ ChunkBasis chunk_basis_of(const ModelFacts& model, const CardFacts& card, const 
         if (row.moe && row.generation == gen && row.cards >= 2) { return ChunkBasis::CarriedCurve; }
     }
     return ChunkBasis::Transferred;
+}
+
+bool kv_decides(const ModelFacts& model, std::string_view generation, KvCacheStorage kv) noexcept {
+    if (kv == KvCacheStorage::Int8Group64) { return true; } // the reference codec
+    if (const KvSmRate* r = kv_sm_rate(model, generation, kv)) { return r->cards >= 2; }
+    for (const KvReadFactor& row : kKvReadFactor) {
+        if (row.generation == generation && row.kv == kv) { return row.cards >= 2; }
+    }
+    return false;
 }
 
 bool decides_switches(const ModelFacts& model, const CardFacts& card, const Gates& gates) {
@@ -1915,13 +2079,27 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
               const Allowed& allowed, const Pins& pins, const Task& task,
               const OwnContextFn& own_context, const Gates& gates) {
     Choice out;
+    // What a caller shows beside the choice (#618 step 11): the gates, the reference card, the
+    // bands the board's estimates carry. None of it decides anything.
+    const std::optional<Reference> ref = reference_of(card, gates);
+    out.reference                      = ref;
+    out.gates_closed                   = closed_gates(model, card, gates);
+    out.board_resolutions              = {resolution_of(card, SpeedBasis::Own),
+                                          resolution_of(card, SpeedBasis::Transferred),
+                                          resolution_of(card, SpeedBasis::LentGeneration)};
     if (pins.activations == ActivationMode::Exact && model.recurrent && pins.state &&
         *pins.state != RecurrentStateStorage::FP32) {
-        out.why = "--activations exact refuses the rounded recurrent state pinned";
+        out.why      = "--activations exact refuses the rounded recurrent state pinned";
+        out.why_code = "pin_refused";
         return out;
     }
-    const std::optional<Reference> ref = reference_of(card, gates);
     out.by_worth       = decides_switches(model, card, gates);
+    out.gate_code      = "open";
+    if (!out.by_worth) {
+        const auto first = std::find_if(out.gates_closed.begin(), out.gates_closed.end(),
+                                        [](const ClosedGate& g) { return g.axis == "switches"; });
+        out.gate_code    = first != out.gates_closed.end() ? std::string(first->code) : "closed";
+    }
     // The resolution of a comparison the resolution rule weighs (#618): typed by the wider basis of
     // its two estimates (resolution_of); with the gate closed, the reference card's generation's
     // one number (worth_band), Own on a known generation, a number carried onto the board where
@@ -2001,12 +2179,25 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     out.drafter_by_worth = out.by_worth && !pins.drafter &&
                            std::all_of(model.drafters.begin(), model.drafters.end(),
                                        [&](const DrafterOption& d) { return d.measured_at(streams); });
+    // Under the worth, the activations only where the exact-route factor decides too and the user
+    // pinned no mode (a pinned one is theirs, as a pinned chunk or drafter is), and each KV codec
+    // only where its own read cost on the generation rests on two lab cards (kv_decides).
+    out.activations_by_worth = out.by_worth && ref && ref->activations_decide && !pins.activations;
+    if (out.by_worth) {
+        for (const KvCacheStorage kv : kvs) {
+            if (!kv_decides(model, generation_of(card), kv)) { out.kv_not_decided.push_back(kv); }
+        }
+    }
+    const auto kv_by_worth = [&](KvCacheStorage kv) {
+        return out.by_worth && std::find(out.kv_not_decided.begin(), out.kv_not_decided.end(),
+                                         kv) == out.kv_not_decided.end();
+    };
     const auto eligible = [&](const Scored& s) {
         const bool chunk_ok   = out.chunk_by_speed || s.candidate.chunk == default_chunk;
         const bool drafter_ok = out.drafter_by_worth || s.candidate.drafter == default_drafter;
         return chunk_ok && drafter_ok &&
-               (out.by_worth || (s.candidate.kv == default_kv &&
-                                 s.candidate.activations == default_activations));
+               (kv_by_worth(s.candidate.kv) || s.candidate.kv == default_kv) &&
+               (out.activations_by_worth || s.candidate.activations == default_activations);
     };
     // Each stream's own context in turn (a pinned one, or Auto's steps): the first that holds an
     // eligible candidate takes its best.
@@ -2061,8 +2252,10 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     if (!chosen) {
         out.why = "no candidate holds " + std::to_string(task.contexts.empty() ? 0 : task.contexts.back()) +
                   " tokens for each of " + std::to_string(task.concurrency) + " streams";
+        out.why_code = "no_fit";
         return out;
     }
+    out.why_code = out.by_worth ? "by_worth" : "defaults";
     // Why the family's defaults stand, where they do.
     std::string defaults_why;
     if (!ref) {
@@ -2125,6 +2318,10 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
                               "at its own floor, " +
                               fixed(100 * out.resolution_floor, 1) + " %")
              : ": the family's defaults (" + defaults_why + ")") +
+        (out.by_worth && !out.activations_by_worth && !pins.activations
+             ? "; activations: the family's default (" + std::string(generation_of(card)) +
+                   "'s exact-route factor does not rest on two lab cards)"
+             : std::string()) +
         (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
                                   ": the fastest prefill on the reference card"
                             : "") +
@@ -2306,6 +2503,17 @@ std::vector<Alternative> explain(const Choice& choice) {
                 alt.why_not  = choice.by_worth
                                    ? "the speculation profile's choice stands (its gain is not measured on this card)"
                                    : "the speculation profile's choice stands (no decision constants for this generation)";
+            } else if (choice.by_worth && axis == Axis::Activations &&
+                       !choice.activations_by_worth) {
+                alt.why_code = "default";
+                alt.why_not  = "the family's default stands (the exact route's factor on this "
+                               "generation does not rest on two lab cards)";
+            } else if (choice.by_worth && axis == Axis::Kv &&
+                       std::find(choice.kv_not_decided.begin(), choice.kv_not_decided.end(),
+                                 s.candidate.kv) != choice.kv_not_decided.end()) {
+                alt.why_code = "default";
+                alt.why_not  = "the family's default stands (this codec's read cost on this "
+                               "generation does not rest on two lab cards)";
             } else if (axis == Axis::Chunk ? !choice.chunk_by_speed : !choice.by_worth) {
                 alt.why_code = "default";
                 alt.why_not  = axis == Axis::Chunk

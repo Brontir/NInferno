@@ -27,18 +27,30 @@
 // either the free memory now less the weights or an idle card's (the VRAM less a declared driver
 // and desktop share). Facts that do not name the state (estimate_basis "approximate", and why)
 // take plan_rung_estimate's bytes. The started plan is the authority; the dry run says "estimate".
-// Pure: no CUDA, no files, no clock.
+// Pure: no files, no clock, and no CUDA but the class of a CUDA device the facts name that is not
+// this thread's current one (dry_run_plan).
 
 #include "models/qwen3_5/program/planning/state_shape.h"
 #include "ninferno/types.h"
 #include "runtime/engine/plan_ladder.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace ninferno {
+struct DeviceClass;
+} // namespace ninferno
+
+namespace ninferno::artifact {
+struct Directory;
+class Reader;
+} // namespace ninferno::artifact
 
 namespace ninferno::models::qwen3_5::detail {
 struct SequencePlanImpl;
@@ -370,6 +382,15 @@ struct PlanModelFacts {
     bool offline_bytes = false;
     std::string offline_reason;
     models::StateShape state;
+    // The parsed directory of the artifact the facts are read from (plan_facts_of_directory, a
+    // Qwen 3.5 artifact's), null for any other source: what the family's workspace query binds
+    // the model over, as a start binds it (#615; its payload is never read). Shared: facts copy.
+    std::shared_ptr<const artifact::Directory> artifact_directory;
+    // The ids the artifact's tokenizer makes public (a start's public_token_count: the sampler's
+    // domain, the bound of an indexed proposal head), read from its resources when the facts come
+    // from the artifact's file (plan_tokenizer_tokens); 0: not read (a directory alone). The
+    // embedding rows (vocab) may be more.
+    std::uint32_t tokenizer_tokens = 0;
 
     // Whether the shape is enough to plan: a context and some attention.
     [[nodiscard]] bool known() const noexcept {
@@ -390,7 +411,19 @@ struct PlanDeviceFacts {
     // The free Device memory now, before any weights (a live device); nullopt: an idle card,
     // plan_idle_free_bytes.
     std::optional<std::uint64_t> free_bytes;
+    // The CUDA ordinal the facts were read from (product::plan_device_of_cuda); -1: none, a board
+    // known by its facts alone (a named board, NVML's stats).
+    int cuda_device = -1;
 };
+
+// The device class the plan reads for a board known by its facts (#829): core's board_class with
+// an empty driver view, so the chip from the PCI id or the SM count, the architecture's limits,
+// the board table's facts, no L2 size or driver clocks, the architecture's features not
+// intersected with this build's. What a named board's
+// rung sizing (dry_run_plan), its speculation key (product::gpu_key_of) and its MoE routes
+// (register_plan_moe_route_query) read; a rule that reads what the class leaves out can answer
+// otherwise than on the real card.
+[[nodiscard]] DeviceClass plan_device_class(const PlanDeviceFacts& device);
 
 // What a CUDA context and the driver take of an idle card before any weights (declared, not
 // measured: 448-600 MiB with lazy loading on the lab's cards), and what a desktop the card drives
@@ -474,6 +507,15 @@ using PlanWorkspaceQuery = std::function<PlanWorkspaceAnswer(
     const PlanModelFacts& model, const PlanRung& rung, const EngineOptions& options,
     std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan)>;
 void set_plan_workspace_query(PlanWorkspaceQuery query);
+
+// The public ids of an artifact's tokenizer (PlanModelFacts::tokenizer_tokens), read from the
+// resources of the artifact `reader` has open, as a start reads them; nullopt where they cannot be
+// read. The engine registers it beside the workspace queries (it links the families' frontends);
+// unset, nullopt. The caller keeps the count (a start reads the facts several times).
+using PlanTokenizerQuery =
+    std::function<std::optional<std::uint32_t>(const artifact::Reader& reader)>;
+void set_plan_tokenizer_query(PlanTokenizerQuery query);
+[[nodiscard]] std::optional<std::uint32_t> plan_tokenizer_tokens(const artifact::Reader& reader);
 
 // The kernel a routed layer's grouped stage runs (#616 step 7), as the MoE op's route query answers
 // (ops/moe moe_route_query, the op's own cascade on the device's class): R8 (int8 activations, one
@@ -563,6 +605,11 @@ struct DryRunPlan {
 // as GenerationService sets them; normalized here as normalize_engine_options would for the
 // family). Never throws for a plan that does not fit; throws std::invalid_argument for options the
 // Engine refuses (validate_engine_options' checks the dry run can make).
+// The registered queries it sizes rungs with read the device class (device_class()): it answers
+// `device`'s for the call (ScopedDeviceClass, #829). A board known by its facts (cuda_device -1,
+// with its compute capability and SMs) answers plan_device_class; a CUDA device other than this
+// thread's current one (plan_device_of_cuda reads one without making it current) answers its own
+// class; the current device's is read as it is.
 [[nodiscard]] DryRunPlan dry_run_plan(const PlanModelFacts& model, const PlanDeviceFacts& device,
                                       EngineOptions options);
 

@@ -102,6 +102,12 @@ ninferno_add_test(ninferno_fitted_holdouts_test LABELS host NEEDS_SOURCE_DIR
 ninferno_add_test(ninferno_route_rules_test LABELS host NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_rules.cpp")
 
+# The measured per-format rules (ops/generic/format_rules.h, #615 F6): each rule's rows name two
+# cards or are tagged single_card / carried, the thresholds equal the constants and their
+# route_rules.h descriptors; `--list` prints the table. No GPU.
+ninferno_add_test(ninferno_format_rules_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_format_rules.cpp")
+
 # The register-MMA kernel's static shared memory as constexpr geometry (ops/generic/rmma_geometry.h,
 # static_asserted by the kernel, with the decoder rows pinned to their decoders) equals every row of
 # every kernel-facts snapshot (#612 step 5); a plain host test: header only, no GPU, no library.

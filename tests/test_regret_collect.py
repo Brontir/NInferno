@@ -138,6 +138,13 @@ class Collect(unittest.TestCase):
         self.assertIn("one call after an L2 flush", work["q8.a16.store.n64.k64.T24"])
         self.assertEqual(doc["device"], "ga106:28sm")
 
+    def test_report_names_the_device_class_without_the_card_uuid(self):
+        rows = [(4, "rmma.a", 5, "copies", 64), (4, "rmma.b", 6, "copies", 64)]
+        uuid = "ga106:28sm GPU-00000000-1111-2222-3333-444444444444"
+        doc = self.collect_new([self.new_pass(1, "x-1", rows, device=uuid),
+                                self.new_pass(2, "x-2", rows, device=uuid)])
+        self.assertEqual(doc["device"], "ga106:28sm")
+
     def test_passes_with_different_protocols_refused(self):
         rotated = [(4, "rmma.a", 5, "copies", 64)]
         flushed = [(4, "rmma.a", 7, "flushed", 1)]

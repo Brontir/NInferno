@@ -16,11 +16,16 @@
 //   the greedy acceptance, the assistant's BF16 projections and head. Each must answer; only
 //   ops::gemma4_attention_workspace_bytes may throw, and it must, with cudaErrorNoDevice (the
 //   known escape below);
-// - the registered workspace query itself (plan_workspace_estimate), plan_rung_bytes and
-//   dry_run_plan over the board's own PlanDeviceFacts, for the three Gemma 4 subjects and for
+// - the registered workspace query itself (plan_workspace_estimate) and plan_rung_bytes, for the
+//   three Gemma 4 subjects and for
 //   Qwen3.6-27B and Qwen3.6-35B-A3B (the family planner's KV, states, rings, graphs and context
-//   capacity; Qwen 3.5 has no query yet, its workspace is the formula): planned by the family
-//   planner, a ladder sized; the Gemma 4 query refused by the hidden device (the escape);
+//   capacity; Qwen 3.5's query (#615 W2) declines facts without an artifact's directory, so its
+//   workspace is the formula, with that reason); the Gemma 4 query refused by the hidden device
+//   (the escape);
+// - dry_run_plan over the board's own PlanDeviceFacts with no class substituted by the test: the
+//   dry run substitutes the named board's itself (#829), so it plans as above, by the family
+//   planner, a ladder sized; a probe query in place of the workspace query sees it run under the
+//   board's class (runtime::plan_device_class);
 // - the registered MoE route query (register_plan_moe_route_query) for the 26B-A4B's and the
 //   35B-A3B's routed layers at 1, 4 and 512 tokens under fast and exact activations: answered.
 // Every answer is the same with the boards taken in the reverse order (no cache keeps the first
@@ -28,15 +33,10 @@
 // between boards (the substitute is read). The Qwen 3.5 workspace planner (build_workspace_plan) is
 // checked the same way in tests/models/qwen3_5/test_workspace_inputs.cpp. CPU, no files.
 //
-// Known escapes (each kept by name and checked as it is, so the list only shrinks):
+// Known escape (kept by name and checked as it is, so the list only shrinks):
 // - #830: Gemma 4's attention decode plan reads the host GPU (kDecodePlanEscape, below). While it
 //   escapes, the registered Gemma 4 query never answers "start" under a substitute: the pieces
 //   above are what is checked of it.
-// - The product path installs no substitute: product::plan_artifact and runtime::dry_run_plan take
-//   the named board's PlanDeviceFacts, but the registered workspace query reads device_class() as
-//   it finds it, so `--plan-device` sizes Gemma 4's workspace for this machine's GPU (with none,
-//   the query is refused and the formula stands). A probe query shows the dry run of a named board
-//   asks it with no substituted class.
 //
 // The escaped calls print their CUDA_CHECK line to stderr; the test silences stderr around them
 // (QuietStderr) and writes its own failures to stdout.
@@ -595,8 +595,13 @@ std::string text_of(const std::optional<rt::PlanExpertRoute>& r) {
 }
 
 // The workspace the registered query answers under the board's class: the formula for Qwen 3.5
-// (no query yet); for Gemma 4 the query refused by the hidden device (#830, whose reach
-// gemma_pieces pins to the attention's capacity).
+// (its query declines facts without the artifact's directory, #615 W2); for Gemma 4 the query
+// refused by the hidden device (#830, whose reach gemma_pieces pins to the attention's capacity).
+// Qwen 3.5's query declines facts that carry no converted artifact's directory
+// (plan_workspace.cpp).
+constexpr std::string_view kQwenWithoutDirectory =
+    "formula: the start's forms are a converted artifact's bindings, not in these facts";
+
 void check_workspace(const NamedBoard& b, const Subject& s, const std::string& basis,
                      const std::string& where) {
     const std::string what = b.name + ", " + s.name + ", " + where;
@@ -606,7 +611,8 @@ void check_workspace(const NamedBoard& b, const Subject& s, const std::string& b
               what + ": the Gemma 4 query is refused by the known escape " +
                   std::string(kDecodePlanEscape) + ", not '" + basis + "'");
     } else {
-        check(basis == "formula", what + ": the formula, not '" + basis + "'");
+        check(basis == kQwenWithoutDirectory,
+              what + ": the formula without the artifact's directory, not '" + basis + "'");
     }
 }
 
@@ -649,6 +655,14 @@ std::map<std::string, std::string> run_board(const NamedBoard& b, const std::vec
                 check(bytes.kv > 0, b.name + ", " + s.name + ": the rung holds KV pages");
                 return text_of(bytes);
             });
+        }
+    }
+    // The dry run substitutes the named board's class itself (#829): run with none in place, as
+    // product::plan_artifact runs it.
+    for (const Subject& s : all) {
+        std::optional<QuietStderr> quiet;
+        if (s.gemma) { quiet.emplace(); }
+        {
             guarded(s.name + " dry run", [&] {
                 const rt::DryRunPlan plan = rt::dry_run_plan(s.facts, b.device, s.options);
                 check(plan.planned && plan.estimate_basis == "family_planner",
@@ -701,28 +715,28 @@ int main() {
     const std::vector<NamedBoard> every = boards();
     check(every.size() >= 50, "the registry has its target boards");
 
-    // Known escape: the product path installs no substitute (see the header). A probe in place of
-    // the workspace query sees what class the dry run of a named board sizes the workspace under:
-    // none. When the plan substitutes the board's class, this fails: drop the check and the
-    // ScopedDeviceClass of run_board's dry runs.
-    if (!every.empty()) {
-        std::optional<std::string> seen; // the substitute's key the query ran under ("" none)
+    // #829: the dry run of a named board sizes its rungs under the board's class. A probe in place
+    // of the workspace query sees the class every call of it runs under: the board's
+    // plan_device_class, on every board; and none is left in place after the dry run.
+    {
+        std::vector<std::string> seen; // the substitute's key of each call ("" none)
         rt::set_plan_workspace_query(
             [&](const rt::PlanModelFacts&, const rt::PlanRung&, const EngineOptions&, std::uint32_t,
                 const ninferno::models::qwen3_5::detail::SequencePlanImpl*) {
                 const std::string* key = substituted_device_class_key();
-                seen                   = key != nullptr ? *key : std::string();
+                seen.push_back(key != nullptr ? *key : std::string());
                 return rt::PlanWorkspaceAnswer{};
             });
-        (void)rt::dry_run_plan(all[0].facts, every[0].device, all[0].options);
-        check(seen.has_value(), "known escape: the dry run asks the workspace query");
-        check(seen.has_value() && seen->empty(),
-              "known escape: the dry run of a named board now sizes its workspace under a "
-              "substituted class (remove the known escape)");
-        std::cout << "known escape: the dry run of " << every[0].name
-                  << " asks the workspace query with "
-                  << (seen && seen->empty() ? "no substituted class" : "a substituted class")
-                  << '\n';
+        for (const NamedBoard& b : every) {
+            seen.clear();
+            (void)rt::dry_run_plan(all[0].facts, b.device, all[0].options);
+            const std::string want = device_class_key(rt::plan_device_class(b.device));
+            check(!seen.empty() && std::all_of(seen.begin(), seen.end(),
+                                               [&](const std::string& k) { return k == want; }),
+                  b.name + ": the dry run sizes its rungs under the named board's class (#829)");
+            check(substituted_device_class_key() == nullptr,
+                  b.name + ": no class is left substituted after the dry run");
+        }
         rt::register_plan_workspace_queries();
     }
 
