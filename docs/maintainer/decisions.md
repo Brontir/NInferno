@@ -2258,7 +2258,8 @@ head beyond `spec::kPricedVerifyRows` verify rows: MTP 3 verifies 4 rows a strea
 its joint verify passes the 8 rows the facts price and its load table (2:3,3:0) runs plain decode
 there; the head's measured gain at 3-8 streams is not priced. Where the head and plain decode serve
 the same streams that only ties the price (the head kept), but where plain decode serves more it can
-refuse a head the lab would measure faster.
+refuse a head the lab would measure faster. (DECISIONS 81 prices those rows: the chats part is now
+x2.017 at C = 4 and x1.681 at C = 8, 1.11 and 1.12 of the measured.)
 
 **Moves** (the shipped registry, the same 27B with its DFlash2 server and the sibling's MTP pair, on
 the twelve lab boards the plan knows). Of (C, drafter, plain, head) whole contexts, from the four
@@ -2300,11 +2301,88 @@ claimed; a head faster at every depth is never refused where the slower one is k
 **Open.**
 - The four fifths stay for unpriced boards until the facts exist: round-cost rows for Ampere,
   Turing and Volta, and step prices for a lab card's own measured record (the RTX 5070 Ti).
-- The joint verify past `kPricedVerifyRows` rows is not priced, so the priced branch underprices
-  the head at 3-8 streams (the RTX 4090: 0.55-0.67 of the measured gain).
+- The joint verify past `kPricedVerifyRows` rows was not priced, so the priced branch underpriced
+  the head at 3-8 streams (the RTX 4090: 0.55-0.67 of the measured gain). Priced since DECISIONS 81
+  (1.11-1.12 of the measured).
 - The step price leaves out the KV and attention bytes that grow with s, as R_s does, so it errs
   low at more streams, towards plain decode where the pools differ in streams.
 - The plan sizes the pool from its rung, kv_pages x 64 tokens unclamped (`pool_size_of`); the
   server from the pages it allocated, clamped to the pool (`pool_size` in generation_service). The
   two can differ in tokens and so in short requests held, where the server's pool is clamped.
 - Not run on the stands.
+
+## 81. The joint verify past 8 rows is priced at its tiles' rows (#795, 13.11, rule)
+
+`spec::load_gain` refused a joint verify of more than `kPricedVerifyRows` = 8 rows (C streams x
+(k + 1)). So the facts priced the MTP head only at 2 streams for depth 3, ran it plain from 3, and
+the pool rule (DECISIONS 80) underpriced it at 3-8 streams: on the RTX 4090 (Qwen3.8 27B, 32K) 0.55
+of the measured gain a request at C = 4 and 0.67 at C = 8.
+
+**Rule.** A joint verify of R rows is priced as the round cost prices a pass, bytes + kappa x
+operations (53), with its dense operations at the rows its tiles compute
+(`spec::verify_tile_rows`):
+- Within 8 rows, the rows themselves: the measured range, where `kSmallTEta` counts them. Every
+  round of up to 8 verify rows is `round_cost`'s to the bit (`test_spec_round_cost` checks every
+  registry pair and depth), so no price, table or golden moves there.
+- Past them, the selector's verify tiles (`heuristic_rmma`, `heuristic_w4a8`): one token column of
+  8-token MMA tiles (`kVerifyTokenTile`, mma.sync's n), a power of two of them. 9-16 rows run the
+  register MMA's two tiles (the DFlash drafter's 16-row block runs that tile inside the fit),
+  17-32 a 32-token column (W4A8 32x128, the register MMA's four tiles, Q4_K's 128x32), 33-64 a
+  64-token one. So 16, 32 or 64 rows of operations, and the weights read once.
+- Past `kVerifyColumnRows` = 64 (the register MMA's widest column, eight tiles) a call's columns
+  read the weights again, which the bytes term does not hold: not priced.
+- A routed expert bank's operations stay counted by rows: the expert kernels' tiles are not the
+  verify's.
+
+R_1 and R_C both come from `spec::joint_round_cost`, so their ratio is over one pricing.
+`price_joint`, `facts_load` and the plan's joint scales (`plan_choice`, now up to 8 streams, not
+4) read it. The counts stay C = 2..8 streams (a plain step of up to 8 rows), so a facts table still
+ends at plain decode by 9 streams.
+
+**DFlash's block stays unpriced at 2 streams and more.** Its tiles are those the verify is now
+priced at (32 rows at C = 2: a 32-token column). But its one-stream cost is an excess over
+kappa F that does not depend on k (54: a compute-bound q8 block on its own MMA route). Its
+operations at 32 rows would scale a term the round cost does not model.
+
+**No fitted constant.** `kVerifyTokenTile` (8) is the instruction's shape; `kVerifyColumnRows` (64)
+is counted from the schedule table (`generic_schedules.h`, n_tiles 1, 2, 4, 8).
+
+**Predicted, then measured.** RTX 4090 rates, the 27B's facts (the sibling UD-Q4_K_S pair, RTX
+5070 Ti). R_1 / R_C of mtp:3 was written down from the facts before the consumers changed, and the
+product computes the same:
+
+| C | verify rows | of tiles | R_1 / R_C (mtp:3) |
+|---|---|---|---|
+| 2 | 8 | 8 | 0.9395 |
+| 3 | 12 | 16 | 0.8240 |
+| 4 | 16 | 16 | 0.8463 |
+| 5 | 20 | 32 | 0.6730 |
+| 8 | 32 | 32 | 0.7253 |
+
+The head's facts table becomes 2:3,5:2,9:0, against 2:3,3:0 before. At 5 streams depth 3's 20 rows
+compute 32, and depth 2's 15 rows (16 of tiles) gain more. The pool rule's chats part
+(`test_plan_drafter_kinds`, the head's one-request gain x2.383 as the product prices it on the
+4090):
+
+| C | predicted (depth) | measured (MTP 3) | predicted / measured | before (#791) |
+|---|---|---|---|---|
+| 4 | x2.017 (3) | x1.816 | 1.11 | 0.55 |
+| 8 | x1.681 (2); depth 3 would be x1.728 | x1.502 | 1.12 (1.15) | 0.67 |
+
+The verdicts are unchanged (the head, every count). The price now errs high by 11-15 %, which is
+reported, not fitted. Candidates, none measured:
+- the requests' turnover between steps (each new chat's 2048-token prefill), which a load cell's
+  tok/s holds and R_C leaves out (53): it dilutes both arms alike and pulls the measured ratio
+  towards 1;
+- the one-request gain itself, transferred from the RTX 5070 Ti's acceptance and priced on the
+  4090's rates (no one-request 4090 run of this pair).
+
+Both C = 4 and C = 8 verify whole tiles (16 and 32 rows), so these runs check the bytes + kappa F
+extension past 8 rows, not the padding. The padded counts (3, 5-7 streams) are not measured.
+
+**Goldens.** The selector, MoE plan and choice goldens on the host are unchanged. Two tests pinned
+the old head table and now pin 2:3,5:2,9:0 (`test_spec_round_cost`'s Gemma 4 12B facts table,
+`test_plan_drafter_kinds`'s head fallback on the RTX 4090).
+
+**Open.** A measurement at a padded count (C = 3, 5-7) on an Ada or Blackwell card would check the
+tiles. DFlash's block at C >= 2 waits for 54's drafter-pass facts.

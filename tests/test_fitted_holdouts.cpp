@@ -301,7 +301,11 @@ const std::vector<Spec>& specs() {
          Mode::Definitions,
          {"kDp4aOpsPerSmClock",    // a chip fact
           "launch_node_seconds"}}, // a lookup of kLaunchNode (recorded)
-        {fit::kRoundCost, Mode::Definitions, {"kPricedVerifyRows"}}, // a bound, not a fit
+        {fit::kRoundCost,
+         Mode::Definitions,
+         {"kPricedVerifyRows",   // a bound, not a fit
+          "kVerifyTokenTile",    // a chip fact: mma.sync's n of 8 tokens
+          "kVerifyColumnRows"}}, // counted: the register MMA's widest token column, 8 tiles
         {fit::kMoeShare, Mode::Definitions, {}},
         {fit::kWave,
          Mode::Definitions,

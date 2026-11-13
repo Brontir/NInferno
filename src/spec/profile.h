@@ -220,9 +220,10 @@ struct Profile {
     // number of streams: R_1(k) / R_C(k), the one-stream round's price over the joint verify's
     // (spec::load_gain at a gain of 1), for the depths 1..k of each choice, served, portable and
     // fit-fallback choice and of every measured configuration (a reselection picks among those),
-    // where the round cost prices them (within spec::kPricedVerifyRows). Filled where the pair's
-    // facts and the lab board's rates are known (profile_for_target at home); not written to a
-    // profile file, so an empty table says only that nobody priced it: the one-request gain then
+    // where the round cost prices them (C = 2..spec::kPricedVerifyRows streams, a verify of up to
+    // spec::kVerifyColumnRows rows at its tiles' rows: spec::joint_round_cost). Filled where the
+    // pair's facts and the lab board's rates are known (profile_for_target at home); not written to
+    // a profile file, so an empty table says only that nobody priced it: the one-request gain then
     // stands as a ceiling.
     std::map<std::string, std::map<std::int32_t, double>> joint_scale;
     // What the requests decoded together do to a plain decode step's price (#777), by number of

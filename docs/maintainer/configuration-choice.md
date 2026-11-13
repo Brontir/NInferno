@@ -186,9 +186,12 @@ streams, each the lab's sections averaged as the estimate averages a round; `Dra
 held to the least gain priced at a smaller count (the gain never climbs back as the load grows), and
 an entry whose bound or whose option is unmeasured supplies nothing (the estimate does not count the
 drafter there, and the plan says the same). The plan's `chosen.drafter_gain` names the supplying
-count and its scale, or says the gain is a ceiling. Reach, stated plainly: a count is priced only
-where `streams x (depth + 1) <= spec::kPricedVerifyRows` (8), so depth 3 or less at 2 streams, depth
-1 at 3 or 4 streams, nothing from 5 streams; and none of the registry's measured pairs carries a
+count and its scale, or says the gain is a ceiling. Reach, stated plainly: a count is priced at
+C = 2..`spec::kPricedVerifyRows` (8) streams where `streams x (depth + 1) <= spec::kVerifyColumnRows`
+(64), so any depth up to 7 at 8 streams. Within 8 verify rows (the measured range) a pass's
+operations are counted by its rows; past them at the rows its tiles compute
+(`spec::verify_tile_rows`: 16, 32 or 64, a column of 8-token MMA tiles; DECISIONS 81). A DFlash
+drafter's block (16 rows a stream) stays unpriced from 2 streams. None of the registry's measured pairs carries a
 load table, so a registry target's profile speculates for one request only and no `/api/plan` number
 changes for it today (`tests/test_spec_round_cost.cpp` pins this: the day a pair gets a load table
 the scan fails and the plans it prices are looked at). The price is taken at the asking card's own

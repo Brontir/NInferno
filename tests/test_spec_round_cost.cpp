@@ -248,8 +248,9 @@ int main() {
         expect(!sp::round_cost(*pair_of(kQ9, "ad104:60sm").round_facts, sp::SpecConfig{}, k4070),
                "plain decode has no round");
         // A joint verify of C streams (#303): one stream is the round above; beyond
-        // kPricedVerifyRows rows a round is not priced. A dense target's gain falls with C: its
-        // weights are read once a pass whatever the rows, so the verify's C x (k + 1) rows add
+        // kVerifyColumnRows rows, or a drafter's joint pass past kPricedVerifyRows rows and its own
+        // (a DFlash block at C >= 2), a round is not priced. A dense target's gain falls with C:
+        // its weights are read once a pass whatever the rows, so the verify's C x (k + 1) rows add
         // only operations, and the plain step of C rows gains as much from sharing that read.
         // An MoE's may rise: its plain step of C rows already reads more experts, and the
         // verify's read saturates (moe_read_fraction). Two requests read their experts apart.
@@ -264,8 +265,9 @@ int main() {
                 const auto gain = sp::load_gain(*p.round_facts, config, k4070, 2.0, streams);
                 const std::int32_t draft_rows =
                     p.round_facts->drafters.at(std::string(sp::mode_name(config.mode))).rows;
-                const bool priced = streams * (config.k + 1) <= sp::kPricedVerifyRows &&
-                                    streams * draft_rows <= std::max(sp::kPricedVerifyRows, draft_rows);
+                const bool priced =
+                    streams * (config.k + 1) <= sp::kVerifyColumnRows &&
+                    streams * draft_rows <= std::max(sp::kPricedVerifyRows, draft_rows);
                 expect(gain.has_value() == priced && (!gain || (*gain > 0 && (!dense || *gain < 2.0))),
                        std::string("the load gain at ") + std::to_string(streams) +
                            " streams is priced within the measured rows (a dense target's falls), " +
@@ -276,16 +278,93 @@ int main() {
                 }
             }
         }
-        // The priced rows, said outright: mtp:3 verifies 4 rows a stream (two streams 8, three 12),
-        // a DFlash drafter drafts a block of 16 rows a stream (two streams 32).
+        // The priced rows, said outright: mtp:3 verifies 4 rows a stream (two streams 8, three 12,
+        // sixteen streams 64, seventeen 68), a DFlash drafter drafts a block of 16 rows a stream
+        // (two streams 32).
         {
             const auto& facts = *pair_of(kQ9, "ad104:60sm").round_facts;
             const auto mtp    = sp::SpecConfig::parse("mtp:3");
             expect(sp::load_gain(facts, mtp, k4070, 2.0, 2).has_value() &&
-                       !sp::load_gain(facts, mtp, k4070, 2.0, 3),
-                   "mtp:3 priced at two streams, not at three");
+                       sp::load_gain(facts, mtp, k4070, 2.0, 3).has_value() &&
+                       sp::load_gain(facts, sp::SpecConfig::parse("mtp:7"), k4070, 2.0, 8) &&
+                       !sp::load_gain(facts, sp::SpecConfig::parse("mtp:8"), k4070, 2.0, 8),
+                   "mtp:3 priced at two and three streams; a verify of 64 rows priced, of 72 not");
             expect(!sp::load_gain(facts, sp::SpecConfig::parse("dflash:3"), k4070, 2.0, 2),
                    "dflash:3 not priced at two streams (its block of 16 rows each)");
+        }
+        // The joint verify past kPricedVerifyRows (#795): its operations at its tiles' rows (one
+        // column of 8-token MMA tiles, a power of two of them), its bytes once; within the measured
+        // rows the round is round_cost's to the bit.
+        {
+            for (const auto& [rows, tiles] :
+                 std::vector<std::pair<std::int32_t, std::int32_t>>{{1, 1},
+                                                                    {5, 5},
+                                                                    {8, 8},
+                                                                    {9, 16},
+                                                                    {12, 16},
+                                                                    {16, 16},
+                                                                    {17, 32},
+                                                                    {24, 32},
+                                                                    {32, 32},
+                                                                    {33, 64},
+                                                                    {64, 64},
+                                                                    {65, 0}}) {
+                expect(sp::verify_tile_rows(rows) == tiles,
+                       "a verify of " + std::to_string(rows) + " rows computes " +
+                           std::to_string(tiles) + " rows of tiles");
+            }
+            for (const auto& p : sp::Registry::builtin().pairs()) {
+                if (!p.round_facts) { continue; }
+                for (const auto& [mode, d] : p.round_facts->drafters) {
+                    for (std::int32_t k = 1; k <= 7; ++k) {
+                        auto config = sp::SpecConfig::parse(mode + ":" + std::to_string(k));
+                        for (std::int32_t streams = 1; streams * (k + 1) <= sp::kPricedVerifyRows;
+                             ++streams) {
+                            const auto a =
+                                sp::round_cost(*p.round_facts, config, k4070, {}, 0, {}, streams);
+                            const auto b = sp::joint_round_cost(*p.round_facts, config, k4070, {},
+                                                                0, {}, streams);
+                            expect(a && b && *a == *b,
+                                   "within the measured rows the joint round is round_cost's: " +
+                                       p.target_repo + " " + config.label());
+                        }
+                    }
+                }
+            }
+            // Past them, by hand: the 27B's mtp:3 at three streams verifies 12 rows, priced as 16
+            // rows of operations over its bytes once; the drafter's passes and the plain step as
+            // round_cost's (3 rows each).
+            const auto& facts  = *pair_of("unsloth/Qwen3.8-27B-GGUF", "gb203:70sm").round_facts;
+            const double k4090 = sp::card_rates_of_board(0x2684).kappa();
+            const auto pass    = [&](const sp::PassFacts& f, double rows) {
+                return f.bytes + k4090 * 2.0 * rows * f.params;
+            };
+            const auto& mtp      = facts.drafters.at("mtp");
+            const double draft   = pass(mtp.pass, 3) + pass(*mtp.head, 3);
+            const double by_hand = (pass(facts.target, 16) + 3 * draft) / pass(facts.target, 3);
+            const auto config    = sp::SpecConfig::parse("mtp:3");
+            const auto joint     = sp::joint_round_cost(facts, config, k4090, {}, 0, {}, 3);
+            expect(joint && near(*joint, by_hand, 1e-12),
+                   "mtp:3 at three streams: 12 verify rows priced at 16");
+            const auto counted = sp::round_cost(facts, config, k4090, {}, 0, {}, 3);
+            expect(counted && *joint > *counted, "the tiles' rows price the round dearer");
+            expect(
+                !sp::joint_round_cost(facts, sp::SpecConfig::parse("mtp:7"), k4090, {}, 0, {}, 9),
+                "a joint verify past kVerifyColumnRows rows (72) is not priced");
+            // The RTX 4090's R_1 / R_C of the 27B's mtp:3 (Qwen3.8 27B, #795): at 4 streams 16 rows
+            // and at 8 streams 32, whole tiles both. Printed for the comparison with the lab's
+            // measured gains a request (x1.816 at C = 4, x1.502 at C = 8; the one-request gain the
+            // product prices them from is test_plan_drafter_kinds's).
+            for (std::int32_t streams = 2; streams <= 8; ++streams) {
+                const auto scale = sp::load_gain(facts, config, k4090, 1.0, streams);
+                expect(scale && *scale > 0 && *scale < 1,
+                       "the 27B's mtp:3 priced on the RTX 4090 at " + std::to_string(streams) +
+                           " streams");
+                std::printf("Qwen3.8 27B mtp:3 RTX 4090 C=%d (%d verify rows, %d of tiles): "
+                            "R_1 / R_C %.4f\n",
+                            streams, streams * 4, sp::verify_tile_rows(streams * 4),
+                            scale ? *scale : 0.0);
+            }
         }
         // Against measurements on the RTX 4090, Qwen3.6-35B-A3B UD-Q4_K_M (2026-11-04). The plain
         // step (held within 3 %): graph durations of one server, one request then two at once,
@@ -843,12 +922,13 @@ int main() {
     // each choice's) that gains most over plain decode, its one-request gain times R_1 / R_C, plain
     // where none gains, the shallowest of the choices' (one table serves them all), recorded where
     // the depth falls (a table is clipped to its running minimum). From theory, not read back from
-    // the product's tables: C x (k + 1) verify rows are priced up to kPricedVerifyRows (8), so a
-    // depth-3 round is priced at 2 streams only; a DFlash choice's block (16 rows) is not priced at
-    // 2 streams at all, which holds a profile with one at plain from 2. Gemma's 2:3,3:0 is that
-    // computed result: at 3 streams a depth-3 round is 12 rows (not priced, so plain), and no
-    // other depth the lab measured is both priced there (C x (k + 1) <= 8) and gains over plain
-    // decode; it is a computed result, not a measurement.
+    // the product's tables: C x (k + 1) verify rows are priced at C = 2..kPricedVerifyRows (8)
+    // streams up to kVerifyColumnRows (64), past 8 rows at their tiles' rows (#795); a DFlash
+    // choice's block (16 rows) is not priced at 2 streams at all, which holds a profile with one at
+    // plain from 2. Gemma's 2:3,5:2,9:0 is that computed result: a depth-3 round verifies 8, 12 and
+    // 16 rows at 2 to 4 streams (8, 16 and 16 of tiles) and gains there; at 5 streams its 20 rows
+    // are 32 of tiles, and depth 2's 15 rows (16 of tiles) gain more; 9 streams are past the
+    // priced counts (plain). It is a computed result, not a measurement.
     {
         const auto no_counts = [](sp::MeasuredPair pair) {
             for (auto& m : pair.tune.measurements) { m.graph_kernels = m.graph_rounds = 0; }
@@ -860,7 +940,7 @@ int main() {
         const sp::GpuKey large = card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008);
         for (const auto& [target, expected] :
              {std::pair<std::string, const char*>{std::string(kQ9), "2:0"},
-              std::pair<std::string, const char*>{gemma, "2:3,3:0"}}) {
+              std::pair<std::string, const char*>{gemma, "2:3,5:2,9:0"}}) {
             // With the registry's kernel counts (the launch term in both rounds) the tables are the
             // same; without them the scale below is the round cost's own ratio.
             const auto counted = pair_of(target, "ad104:60sm");

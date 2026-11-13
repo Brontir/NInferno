@@ -2449,9 +2449,10 @@ whole contexts than `--max-concurrency` and plain decode holds more, the rule ha
   is DECISIONS 73's: 20 short requests (2048 + 512 tokens) from `--max-concurrency` clients, a pool
   serving as many of them at once as its KV tokens hold (at least its whole contexts), and 6 long
   requests at the asked context (DECISIONS 73's long prompt, at most 24,576 tokens, and the
-  answer: 25,088 tokens at 32K), held by KV tokens alike; the two are weighted 20 : 6. The price
-  errs low for the head where it would verify more than 8 rows at once (`kPricedVerifyRows`: there
-  the facts run it plain); on the RTX 4090 it prices the head at 0.55-0.67 of the measured speed.
+  answer: 25,088 tokens at 32K), held by KV tokens alike; the two are weighted 20 : 6. A joint
+  verify of more than 8 rows is priced at the rows its tiles compute (16, 32 or 64; DECISIONS 81),
+  up to 64 rows; on the RTX 4090 the price of the head is 1.11-1.12 of its measured speed at 4 and 8
+  streams (0.55-0.67 before).
 - **Unpriced**: where any part is not priced, the rule before #777 stays, a literal with no
   derivation: the MTP head runs if it keeps four fifths of plain decode's contexts; otherwise plain
   decode runs. Today that is Ampere, Turing and Volta cards, which have no round-cost row (their

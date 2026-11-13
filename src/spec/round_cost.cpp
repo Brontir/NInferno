@@ -68,12 +68,21 @@ PassFacts parse_pass(const Json& doc) {
     return p;
 }
 
-// A pass over `rows` rows of each of `streams` requests decoded together.
-double pass_cost(const PassFacts& p, std::int32_t rows, double kappa, std::int32_t streams = 1) {
+// A pass over `rows` rows of each of `streams` requests decoded together. With `tiles`, a pass of
+// more than kPricedVerifyRows rows computes its dense operations at verify_tile_rows (a joint
+// verify); its routed experts' by their rows.
+double pass_cost(const PassFacts& p, std::int32_t rows, double kappa, std::int32_t streams = 1,
+                 bool tiles = false) {
     const double active = p.experts > 0 ? double(p.experts_used) / double(p.experts) : 1.0;
     const double bytes  = p.bytes + p.expert_bytes * moe_read_fraction(p, rows, streams);
-    const double ops    = 2.0 * double(rows) * double(streams) * (p.params + p.expert_params * active);
-    return bytes + kappa * ops;
+    if (!tiles || rows * streams <= kPricedVerifyRows) {
+        const double ops =
+            2.0 * double(rows) * double(streams) * (p.params + p.expert_params * active);
+        return bytes + kappa * ops;
+    }
+    const double dense   = 2.0 * double(verify_tile_rows(rows * streams)) * p.params;
+    const double experts = 2.0 * double(rows) * double(streams) * p.expert_params * active;
+    return bytes + kappa * (dense + experts);
 }
 
 // A head's facts over `rows` of its rows (0: all), as the converter stores a proposal head
@@ -188,16 +197,18 @@ CardRates card_rates_of_board(std::uint32_t pci_device_id) {
                  row->bus_bits / 8.0 * row->gbps * 1e9);
 }
 
-std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config, double kappa,
-                                 const ProposalRows& head_rows, double launch_bytes,
-                                 const RoundLaunches& launches, std::int32_t streams) {
+namespace {
+
+std::optional<double> round_price(const RoundFacts& facts, const SpecConfig& config, double kappa,
+                                  const ProposalRows& head_rows, double launch_bytes,
+                                  const RoundLaunches& launches, std::int32_t streams, bool tiles) {
     if (!config.enabled() || config.k < 1 || streams < 1) { return std::nullopt; }
     const std::string mode = mode_name(config.mode);
     const auto d           = facts.drafters.find(mode);
     if (d == facts.drafters.end()) { return std::nullopt; }
     const DraftFacts& draft_facts = d->second;
     const double plain            = pass_cost(facts.target, 1, kappa, streams);
-    const double verify           = pass_cost(facts.target, config.k + 1, kappa, streams);
+    const double verify           = pass_cost(facts.target, config.k + 1, kappa, streams, tiles);
     const double passes           = draft_facts.per_draft ? double(config.k) : 1.0;
     double head                   = 0;
     if (draft_facts.head) {
@@ -213,6 +224,34 @@ std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& conf
     return (verify + draft) / plain;
 }
 
+} // namespace
+
+std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config, double kappa,
+                                 const ProposalRows& head_rows, double launch_bytes,
+                                 const RoundLaunches& launches, std::int32_t streams) {
+    return round_price(facts, config, kappa, head_rows, launch_bytes, launches, streams, false);
+}
+
+std::int32_t verify_tile_rows(std::int32_t rows) noexcept {
+    if (rows <= kPricedVerifyRows) { return std::max<std::int32_t>(rows, 0); }
+    if (rows > kVerifyColumnRows) { return 0; }
+    std::int32_t tiles = (rows + kVerifyTokenTile - 1) / kVerifyTokenTile;
+    std::int32_t power = 1;
+    while (power < tiles) { power *= 2; }
+    return kVerifyTokenTile * power;
+}
+
+std::optional<double> joint_round_cost(const RoundFacts& facts, const SpecConfig& config,
+                                       double kappa, const ProposalRows& head_rows,
+                                       double launch_bytes, const RoundLaunches& launches,
+                                       std::int32_t streams) {
+    if (!config.enabled() || streams < 1 ||
+        std::int64_t(streams) * (std::int64_t(config.k) + 1) > kVerifyColumnRows) {
+        return std::nullopt;
+    }
+    return round_price(facts, config, kappa, head_rows, launch_bytes, launches, streams, true);
+}
+
 double plain_step_cost(const RoundFacts& facts, double kappa, std::int32_t streams) {
     return pass_cost(facts.target, 1, kappa, streams);
 }
@@ -222,14 +261,14 @@ std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& confi
                                 double launch_bytes, const RoundLaunches& launches) {
     if (streams < 1 || speedup <= 0) { return std::nullopt; }
     if (streams == 1) { return speedup; }
-    if (streams * (config.k + 1) > kPricedVerifyRows) { return std::nullopt; }
     const auto d = facts.drafters.find(mode_name(config.mode));
     if (d != facts.drafters.end() &&
         streams * d->second.rows > std::max(kPricedVerifyRows, d->second.rows)) {
         return std::nullopt;
     }
-    const auto one   = round_cost(facts, config, kappa, head_rows, launch_bytes, launches, 1);
-    const auto joint = round_cost(facts, config, kappa, head_rows, launch_bytes, launches, streams);
+    const auto one = joint_round_cost(facts, config, kappa, head_rows, launch_bytes, launches, 1);
+    const auto joint =
+        joint_round_cost(facts, config, kappa, head_rows, launch_bytes, launches, streams);
     if (!one || !joint || *one <= 0 || *joint <= 0) { return std::nullopt; }
     return speedup * *one / *joint;
 }

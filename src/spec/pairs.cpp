@@ -252,7 +252,9 @@ std::map<std::string, std::vector<RoundLaunches>> round_launches(const Profile& 
 
 // The price of the requests' joint verify (#303), on `lab` rates for a profile at home: for every
 // configuration a choice can name and every depth up to it, R_1 / R_C at C = 2..kPricedVerifyRows
-// streams where the round cost prices it (load_gain at a gain of 1), on the lab board's rates and
+// streams (a plain step of C rows within the measured rows) where the round cost prices it
+// (load_gain at a gain of 1: a verify of up to kVerifyColumnRows rows at its tiles' rows,
+// joint_round_cost), on the lab board's rates and
 // the lab artifact's draft head (the one the load table was measured on). Nothing without the
 // pair's facts or the board's rates. The configurations are the three choices, the served and
 // portable ones, the fit fallback and every measured one: a later reselection (the plan's per-mode
@@ -347,10 +349,10 @@ void price_joint(Profile& p, const MeasuredPair& pair, const CardRates& lab,
                         priced = false;
                         break;
                     }
-                    one += *round_cost(*pair.round_facts, config, lab.kappa(), rows,
-                                       lab.launch_bytes(), section, 1);
-                    joint += *round_cost(*pair.round_facts, config, lab.kappa(), rows,
-                                         lab.launch_bytes(), section, streams);
+                    one += *joint_round_cost(*pair.round_facts, config, lab.kappa(), rows,
+                                             lab.launch_bytes(), section, 1);
+                    joint += *joint_round_cost(*pair.round_facts, config, lab.kappa(), rows,
+                                               lab.launch_bytes(), section, streams);
                 }
                 if (priced) { by_streams[streams] = one / joint; }
             }
@@ -906,8 +908,9 @@ std::vector<LoadBound> clipped_load(const std::vector<std::int32_t>& depths) {
 // clipped_load), so a depth is run only at counts where it was shown to serve every choice. The
 // cost of that greedy order: a deeper depth that would gain at a higher count is never run there
 // once a shallower one was best at the count before.
-// Past kPricedVerifyRows (a joint verify of more rows than the rounds were measured at) or
-// where a depth is not priced it is not run; plain decode from the first stream count nothing is
+// Past kPricedVerifyRows streams (a plain step of more rows than the rounds were measured at), or
+// where a depth is not priced (a joint verify past kVerifyColumnRows rows, a DFlash block at two
+// streams or more: load_gain), it is not run; plain decode from the first stream count nothing is
 // priced for. Replaces stand_in_load's ceil(SMs / 10): the compute term of a joint verify
 // overtakes the weight bytes at a row count that grows with SMs x clock x int8 rate over DRAM
 // rate, which is what the price carries. A choice's gain at a shallower depth is over its own
