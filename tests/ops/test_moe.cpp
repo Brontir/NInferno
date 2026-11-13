@@ -1944,12 +1944,15 @@ int check_concurrent_streams() {
         check(cudaStreamSynchronize(side.stream), "streams sync");
         for (int i = 0; i < kCalls; ++i) {
             std::vector<std::uint16_t> got(static_cast<std::size_t>(side.t) * side.c.hidden);
-            check(cudaMemcpy(got.data(), side.out[static_cast<std::size_t>(i)].p, got.size() * 2,
-                             cudaMemcpyDeviceToHost),
+            // On the side's own stream: the legacy stream does not order with a non-blocking one.
+            check(cudaMemcpyAsync(got.data(), side.out[static_cast<std::size_t>(i)].p,
+                                  got.size() * 2, cudaMemcpyDeviceToHost, side.stream),
                   "streams download");
-            if (got != side.want[static_cast<std::size_t>(i % kInputs)]) ++side.wrong;
-            check(cudaMemset(side.out[static_cast<std::size_t>(i)].p, 0xff, got.size() * 2),
+            check(cudaMemsetAsync(side.out[static_cast<std::size_t>(i)].p, 0xff, got.size() * 2,
+                                  side.stream),
                   "streams poison");
+            check(cudaStreamSynchronize(side.stream), "streams download sync");
+            if (got != side.want[static_cast<std::size_t>(i % kInputs)]) ++side.wrong;
         }
     };
     // Eager: the two streams' calls enqueued in turn, so their grids overlap.
