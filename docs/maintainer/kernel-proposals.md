@@ -385,27 +385,32 @@ prediction so far.
   - With `--activations exact` the aligned partition runs ceil(keys / 512) splits (16 at 7843
     keys, 43 at 21961). There the old loop's cost grows with depth and part of the gain moves
     into the slope; that cell is not predicted.
-- Prediction 2, measured (13.11, kv_decode_attention_bench ABBA, master against the change merged
-  with master; the drop of the two-context intercept a call x 8 layers, µs a step):
+- Prediction 2, measured so far (13.11, kv_decode_attention_bench ABBA, master against the
+  change merged with master). The drop of the two-context intercept a call x 8 layers, in µs a
+  step, positive a gain (A/B 1's sign); the frozen rule below reads each cell:
 
-  | Board | BF16 | FP8 | INT8 | NVFP4 | K8V4 |
-  |---|---|---|---|---|---|
-  | RTX 5090 | -27.4 holds | -26.6 holds | -24.6 holds | -14.2 holds | -15.8 holds |
-  | RTX 4090 | holds | holds | holds | holds | holds |
-  | RTX 5070 Ti | -11.4 holds | -13.1 holds | -13.0 holds | **-6.5 under** (8-15) | -8.5 holds (low edge) |
-  | RTX 3090 | **-25 over** (9-18) | holds | holds | **-5.8 under** (6-12) | **-1.3 refuted** (one noisy run) |
-  | RTX 2080 Ti | rerun (the first run's DRAM share moved 55 -> 84 % between rounds of one arm) | | | | |
+  | Board | BF16 | FP8 | INT8 | NVFP4 | K8V4 | |
+  |---|---|---|---|---|---|---|
+  | RTX 5090 | 27.4 | 26.6 | 24.6 | 14.2 | 15.8 | all in range (A/B 1's cells, which law 2 keeps) |
+  | RTX 4090 | 22.7 | 24.2 | 19.7 | 11.4 | 10.6 | A/B 1: BF16 and FP8 over the upper edge (20), under 1.5x of it |
+  | RTX 5070 Ti | 11.4 | 13.1 | 13.0 | 6.5 | 8.5 | NVFP4 under its band (8-15), above half its lower edge |
+  | RTX 3090 | 25.0 | 16.4 | 15.6 | 5.8 | **1.3** | K8V4 a finding (under half its lower edge, 3); NVFP4 under its band (6-12), above 3; BF16 over its band (18), under 1.5x (27) |
+  | RTX 2080 Ti | | | | | | rerun: the first run's DRAM share moved 55 -> 84 % between rounds of one arm |
 
-  The RTX 5090 and 4090 rows were measured against prediction 1, whose cells law 2 keeps for them
-  (they narrow); the 5070 Ti and 3090 rows are law 2's first test.
-  The read rates do not move. The 64-column codecs hold law 2, except the RTX 3090's BF16, which
-  gains more than predicted. The rotated merges (NVFP4, K8V4) keep 256 columns and get the
-  staged loop only. They gain less than the law gives them on the RTX 3090 and 5070 Ti (S 41 and
-  35), and as predicted on the 5090 and 4090. So the law's term for the staged loop without the
-  narrower chunk is wrong there, not the boards: refuted for NVFP4 on two boards, recorded, not
-  fitted. The change is no slower on any codec on any board measured, so it ships. The next
-  prediction for the rotated merges has to count the staged loop's own fill against the old
-  loop's round trips at that S.
+  - The read rates do not move.
+  - The one finding is K8V4 on the RTX 3090 (1.3 against a half lower edge of 3): ncu of that
+    merge names the wrong term, as the rule says.
+  - The rotated merges (NVFP4, K8V4) keep 256 columns and get the staged loop only. They gain less
+    than the law gives them on the RTX 3090 and 5070 Ti (S 41 and 35), and as predicted on the
+    5090 and 4090: the law prices the staged loop without the narrower chunk too high at that S.
+    Recorded, not fitted; the next prediction for the rotated merges counts the staged loop's own
+    fill against the old loop's round trips there.
+  - What these rows do not test: on the RTX 3090 and 5070 Ti law 2 takes the 64 columns the
+    bytes-only rule took too, so they retest prediction 1's cells. The boards where law 2 changes
+    the decision (256 columns on the 3060, 4070 Ti and 4060 Ti) are not measured yet.
+  - Acceptance is not met yet: four of the seven stand boards are measured (five needed), the
+    3060's BF16 rerun with at least four passes, its ncu and the 2080 Ti's rerun are open. The
+    Decision below stands as written until they are in.
 - Other widths: the same law holds at every W.
   - The staged loop runs at every width, and the bits are unchanged.
   - At the wave partition's S = SMs / 2 (INT8, and BF16's targets), law 2 narrows up to:
