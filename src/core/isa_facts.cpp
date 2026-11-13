@@ -65,6 +65,40 @@ const std::vector<Field>& fields() {
     return all;
 }
 
+// A launch fact: its name in the entry (all in ns) and the member it fills.
+struct LaunchField {
+    std::string name;
+    std::optional<double> IsaLaunch::* member;
+};
+
+const std::vector<LaunchField>& launch_fields() {
+    static const std::vector<LaunchField> all = {
+        {"node_ns", &IsaLaunch::node_ns},
+        {"node_pdl_ns", &IsaLaunch::node_pdl_ns},
+        {"stream_ns", &IsaLaunch::stream_ns},
+        {"floor_ns_1", &IsaLaunch::floor_ns_1},
+        {"floor_ns_sms", &IsaLaunch::floor_ns_sms},
+        {"floor_ns_4sms", &IsaLaunch::floor_ns_4sms},
+        {"floor_ns_1024", &IsaLaunch::floor_ns_1024},
+    };
+    return all;
+}
+
+// One fact's value from a facts object: in `unit`, a positive finite number.
+std::optional<double> fact_of(const Json& facts, const std::string& name, std::string_view unit) {
+    const auto it = facts.find(name);
+    if (it == facts.end()) return std::nullopt; // unknown on this row
+    const std::string where = "fact " + name;
+    const std::string got   = it->at("unit").get<std::string>();
+    if (got != unit)
+        throw std::runtime_error(where + " is in " + got + ", not " + std::string(unit));
+    const Json& v = it->at("value");
+    if (!v.is_number()) throw std::runtime_error(where + " is not a number");
+    const double x = v.get<double>();
+    if (!std::isfinite(x) || x <= 0) throw std::runtime_error(where + " is not positive");
+    return x;
+}
+
 // An integer field: a JSON integer in int range, never a fraction or a string that get<int>()
 // would truncate or convert.
 int integer_of(const Json& j, const char* what) {
@@ -110,19 +144,27 @@ IsaRow parse_row(const std::string& key, const Json& j) {
     if (j.contains("sass_per_mma")) r.sass_per_mma = positive_int(j, "sass_per_mma");
 
     const Json& facts = j.at("facts");
-    for (const Field& f : fields()) {
-        const auto it = facts.find(f.name);
-        if (it == facts.end()) continue; // unknown on this row
-        const std::string where = "fact " + f.name;
-        const std::string unit  = it->at("unit").get<std::string>();
-        if (unit != f.unit) {
-            throw std::runtime_error(where + " is in " + unit + ", not " + std::string(f.unit));
+    for (const Field& f : fields()) f.slot(r) = fact_of(facts, f.name, f.unit);
+
+    // The launch entry (launch_probe), where the architecture has one: of the same architecture,
+    // its card and probe named, its facts in ns.
+    if (const auto it = j.find("launch"); it != j.end()) {
+        const Json& l = *it;
+        if (positive_int(l, "cc") != cc)
+            throw std::runtime_error("launch: not a run of cc " + digits);
+        IsaLaunch launch;
+        launch.card    = text(l, "card");
+        launch.probe   = text(l.at("tool"), "probe");
+        launch.sms     = positive_int(l, "sms");
+        const Json& lf = l.at("facts");
+        for (const LaunchField& f : launch_fields()) {
+            try {
+                launch.*f.member = fact_of(lf, f.name, "ns");
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("launch: ") + e.what());
+            }
         }
-        const Json& v = it->at("value");
-        if (!v.is_number()) throw std::runtime_error(where + " is not a number");
-        const double x = v.get<double>();
-        if (!std::isfinite(x) || x <= 0) throw std::runtime_error(where + " is not positive");
-        f.slot(r) = x;
+        r.launch = std::move(launch);
     }
     return r;
 }
@@ -163,6 +205,15 @@ std::span<const std::string> isa_fact_names() {
     static const std::vector<std::string> names = [] {
         std::vector<std::string> v;
         for (const Field& f : fields()) v.push_back(f.name);
+        return v;
+    }();
+    return names;
+}
+
+std::span<const std::string> isa_launch_fact_names() {
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> v;
+        for (const LaunchField& f : launch_fields()) v.push_back(f.name);
         return v;
     }();
     return names;
