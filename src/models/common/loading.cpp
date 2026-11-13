@@ -59,6 +59,44 @@ std::unique_ptr<ArtifactBacking> Demands::materialize(DeviceContext& device) {
     return backing;
 }
 
+std::unique_ptr<ArtifactBacking> Demands::describe() {
+    // Every binding of a component this model loads must be bound, as materialize refuses.
+    (void)std::move(binder_).finish(artifact::UnusedBindings::RefuseInLoadedComponents);
+    auto backing = std::make_unique<ArtifactBacking>();
+    std::vector<const WeightParent*> parents(reader_.directory().objects.size(), nullptr);
+    for (const auto& item : items_) {
+        if (item.reference.residency == artifact::Residency::Values) {
+            throw artifact::ArtifactError(item.reference.name +
+                                          ": owning values do not have parent backing");
+        }
+        WeightView view;
+        view.shape            = item.reference.shape;
+        std::uint64_t covered = 0;
+        for (const auto& part : item.reference.binding.parts) {
+            const std::size_t i = part.object.index;
+            if (parents.at(i) == nullptr) {
+                const auto& geometry = reader_.geometry(part.object);
+                parents[i]           = &backing->described.emplace_back(WeightParent{
+                    geometry, reinterpret_cast<const std::byte*>((std::uintptr_t{i} + 1) << 32),
+                    geometry.format == QType::NVFP4 ? 1.0F : 0.0F});
+            }
+            // bind_view's checks (artifact/views.cpp): the plan refuses where the start refuses.
+            if (part.begin >= part.end || part.end > parents[i]->geometry.elements) {
+                throw artifact::ArtifactError(item.reference.name +
+                                              ": invalid materialized region");
+            }
+            covered = artifact::checked_add(covered, part.end - part.begin, item.reference.name);
+            view.parts.push_back({parents[i], part.begin, part.end});
+        }
+        if (covered != weight_element_count(view.shape)) {
+            throw artifact::ArtifactError(item.reference.name +
+                                          ": materialized coverage differs from logical shape");
+        }
+        backing->views.push_back(std::move(view));
+    }
+    return backing;
+}
+
 ops::WeightInput Prepare::input(Id id) const {
     const auto& use = items_.at(id).use;
     if (!use) {
