@@ -996,6 +996,17 @@ std::optional<std::uint64_t> free_now_of(const std::vector<GpuStat>& stats, int 
 
 } // namespace
 
+namespace {
+
+// A path as the UTF-8 the process pool's argv is (ProcessPool converts each argument from UTF-8;
+// path::string() is the ANSI code page on Windows).
+std::string utf8_of(const fs::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string(text.begin(), text.end());
+}
+
+} // namespace
+
 std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
                                          const product::LaunchAsk& launch) {
     std::error_code ec;
@@ -1004,10 +1015,10 @@ std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
     }
     LaunchSpec spec;
     spec.kind  = "plan";
-    spec.model = artifact.string();
+    spec.model = utf8_of(artifact);
     spec.gpu   = gpu;
-    spec.argv  = {options_.serve_binary.string(),
-                  artifact.string(),
+    spec.argv  = {utf8_of(options_.serve_binary),
+                  utf8_of(artifact),
                   "--plan",
                   "--no-load",
                   "--plan-idle",
@@ -1037,15 +1048,16 @@ std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
     for (const auto& s : stats) {
         if (s.index == gpu) { stat = &s; }
     }
-    if (gpu >= 0) { bind_gpu(spec, gpu, stat); }
-    if (!options_.hub_cache.empty()) { spec.env["HF_HUB_CACHE"] = options_.hub_cache.string(); }
+    bind_gpu(spec, gpu, stat);
+    if (!options_.hub_cache.empty()) { spec.env["HF_HUB_CACHE"] = utf8_of(options_.hub_cache); }
 
     std::uint64_t id = 0;
     try {
         id = planner_.start(std::move(spec));
     } catch (const std::exception&) { return std::nullopt; }
-    // A plan reads the artifact's header and tokenizer and the device: seconds, not minutes.
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+    // A plan reads the artifact's header and tokenizer and the device: seconds. A child still
+    // running after this has hung (a wedged CUDA initialisation, say): the page is waiting.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(45);
     ProcessInfo info;
     bool timed_out = false;
     while (planner_.find(id, info) && info.state != "exited" && info.state != "failed") {
@@ -1062,27 +1074,37 @@ std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
     const std::vector<std::string> lines = planner_.log(id);
     // Another request's run still being read is younger than this.
     planner_.forget_ended(std::chrono::seconds(60));
+    // serve ran: its answer or its refusal is the plan's, never the formula's (#843): a start of
+    // it would refuse as it does.
+    const std::string said = info.last_line.empty() ? std::string() : ": " + info.last_line;
+    if (timed_out || !ended) {
+        throw std::runtime_error("ninferno-serve --plan did not answer within 45 s");
+    }
     // Exit 0: the plan fits, 2: it does not; both print the document (apps/serve/main.cpp).
-    if (timed_out || !ended || (info.exit_code != 0 && info.exit_code != 2)) {
-        return std::nullopt;
+    if (info.exit_code != 0 && info.exit_code != 2) {
+        throw std::runtime_error("ninferno-serve --plan refused (exit " +
+                                 std::to_string(info.exit_code) + ")" + said);
     }
     // stdout and stderr share the pipe: the document is the lines from its "{" to its "}".
     const auto first = std::find(lines.begin(), lines.end(), "{");
     const auto last  = std::find(lines.rbegin(), lines.rend(), "}");
-    if (first == lines.end() || last == lines.rend() || last.base() <= first) {
-        return std::nullopt;
+    Json doc;
+    if (first != lines.end() && last != lines.rend() && first < last.base()) {
+        std::string text;
+        for (auto it = first; it != last.base(); ++it) { text += *it + '\n'; }
+        doc = Json::parse(text, nullptr, false);
     }
-    std::string text;
-    for (auto it = first; it != last.base(); ++it) { text += *it + '\n'; }
-    Json doc = Json::parse(text, nullptr, false);
     if (!doc.is_object() || doc.value("schema", std::string()) != "ninferno-dry-plan/1") {
-        return std::nullopt;
+        throw std::runtime_error("ninferno-serve --plan printed no ninferno-dry-plan/1 document" +
+                                 said);
     }
     return doc;
 }
 
 Json App::artifact_plan_json(const fs::path& artifact, int gpu, const product::LaunchAsk& launch) {
-    // The start's own plan when its binary answers (#843): its workspace is the start's planner's.
+    if (gpu < 0) { throw std::invalid_argument("no GPU " + std::to_string(gpu) + " to plan for"); }
+    // The start's own plan when its binary is beside the UI (#843): its workspace is the start's
+    // planner's. Only without one does the plan here answer, and it says so ("planner").
     if (auto doc = serve_plan_json(artifact, gpu, launch)) { return std::move(*doc); }
     const auto stats  = gpus_->snapshot();
     const auto device = plan_device(stats, gpu);
@@ -1109,6 +1131,8 @@ Json App::artifact_plan_json(const fs::path& artifact, int gpu, const product::L
                               plan.inputs.pins, *free_now),
             *free_now);
     }
+    // The workspace by the formula, not the start's planner (this binary links no Ops, #843).
+    doc["planner"] = "ninferno-ui: no ninferno-serve beside it, the workspace is an estimate";
     return doc;
 }
 

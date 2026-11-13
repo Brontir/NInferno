@@ -1023,8 +1023,8 @@ void test_catalog() {
 
 #ifndef _WIN32
 // #843: the plan of a local artifact is ninferno-serve's own (--plan --no-load --plan-idle, its
-// workspace the start's planner's), with the ask's flags and the GPU bound; the in-process plan
-// only when serve gives no document.
+// workspace the start's planner's), with the ask's flags and the GPU bound; a serve that ran and
+// gave no document is no plan; the in-process plan only when no serve is beside the UI.
 void test_artifact_plan_via_serve() {
     namespace fs = std::filesystem;
     const auto root =
@@ -1047,6 +1047,7 @@ void test_artifact_plan_via_serve() {
            "printf '{\\n \"schema\": \"ninferno-dry-plan/1\",\\n \"source\": \"serve\",\\n"
            " \"now\": {\\n  \"fits\": false\\n }\\n}\\n'\nexit 2\n");
     script(root / "serve-refuses", "echo 'error: no' >&2\nexit 1\n");
+    script(root / "serve-garbled", "echo 'not a plan'\nexit 0\n");
 
     struct NoGpu final : GpuSource {
         std::vector<GpuStat> snapshot() override { return {}; }
@@ -1054,7 +1055,8 @@ void test_artifact_plan_via_serve() {
         std::string error() const override { return {}; }
     };
 
-    const auto plan = [&](const fs::path& serve, const std::string& extra) {
+    const auto plan = [&](const fs::path& serve, const std::string& extra,
+                          const std::string& gpu = "0") {
         UiOptions options;
         options.offline      = true;
         options.serve_binary = serve;
@@ -1066,7 +1068,7 @@ void test_artifact_plan_via_serve() {
         std::thread thread([&] { server.listen_after_bind(); });
         server.wait_until_ready();
         httplib::Client client("127.0.0.1", port);
-        auto res = client.Get("/api/plan?gpu=0&par=2&ctx=8192" + extra +
+        auto res = client.Get("/api/plan?gpu=" + gpu + "&par=2&ctx=8192" + extra +
                               "&artifact=" + httplib::encode_query_component(artifact.string()));
         std::pair<int, std::string> out{res ? res->status : 0, res ? res->body : std::string()};
         server.stop();
@@ -1101,10 +1103,22 @@ void test_artifact_plan_via_serve() {
                                            "gpu=0"};
     check(argv == want, "serve plans the ask a start passes, on the GPU asked for");
 
-    // serve refuses: the in-process plan answers (here: no GPU 0 to plan for).
+    // serve refuses: its refusal is the answer, with its last line, never the formula's plan.
     std::tie(status, body) = plan(root / "serve-refuses", "");
+    check(status == 502 && body.find("refused (exit 1): error: no") != std::string::npos,
+          "serve's refusal is the plan's: " + body);
+    // serve exits 0 without a document: no plan, said so.
+    std::tie(status, body) = plan(root / "serve-garbled", "");
+    check(status == 502 && body.find("no ninferno-dry-plan/1 document") != std::string::npos,
+          "a serve without a document gives no plan: " + body);
+    // No serve beside the UI: the plan here answers (here: no GPU 0 to plan for).
+    std::tie(status, body) = plan(root / "no-such-serve", "");
     check(status == 502 && body.find("no GPU 0") != std::string::npos,
-          "no document from serve: the plan here answers: " + body);
+          "without serve the plan here answers: " + body);
+    // A negative GPU is refused before any child runs.
+    std::tie(status, body) = plan(root / "serve-plan", "", "-1");
+    check(status == 400 && body.find("no GPU -1") != std::string::npos,
+          "gpu -1 is refused: " + body);
     fs::remove_all(root);
 }
 #endif

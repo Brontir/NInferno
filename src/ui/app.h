@@ -235,11 +235,13 @@ private:
     // The plan of a model converted here (My models), as its start plans it: ninferno-serve
     // <artifact> --plan --no-load --plan-idle --json on that GPU, whose workspace is the start's
     // own planner's (the Ops' queries this binary does not link, #843); product::plan_artifact
-    // here when that binary does not answer.
+    // here only when no such binary is beside the UI, marked so ("planner").
     nlohmann::json artifact_plan_json(const std::filesystem::path& artifact, int gpu,
                                       const product::LaunchAsk& launch);
-    // ninferno-serve's plan of `artifact` on GPU `gpu`, nullopt when it gives none (no binary, a
-    // refusal, no "ninferno-dry-plan/1" document on its output).
+    // ninferno-serve's plan of `artifact` on GPU `gpu`; nullopt only when there is no binary or it
+    // cannot be started. A serve that ran without a "ninferno-dry-plan/1" document (a refusal, a
+    // hang past 45 s, garbled output) throws std::runtime_error with its last line: its refusal
+    // is the start's, never answered by the formula.
     std::optional<nlohmann::json> serve_plan_json(const std::filesystem::path& artifact, int gpu,
                                                   const product::LaunchAsk& launch);
     // The plan without the weights of a repository's quantization (all of them when `quant` is
