@@ -126,8 +126,47 @@ inline constexpr Scalar kMinWarpFill{{0.05}, Provenance::Fitted, "min_warp_fill"
 // for its provenance.
 inline constexpr Scalar kLaunchNodeAda{
     {launch_node_seconds("ada")}, Provenance::Fitted, "launch_node_seconds_ada"};
+// Both stay the price while the completeness terms are off (kCompletenessTerms below): they were
+// fitted (h_a8_refit) on route_tune timings that hold the quantizer, the output write and the
+// launches together, so the fit absorbed those.
 inline constexpr Scalar kQuantLaunchSeconds{{1.7e-6}, Provenance::Fitted, "quant_launch_seconds"};
 inline constexpr Scalar kQuantBytesPerValue{{4.3}, Provenance::Fitted, "quant_bytes_per_value"};
+// The completeness terms (#613 PR-8a, kernel_roofline.h Completeness): the output write, the
+// residual read of AddResidual, the A8 quantizer by the counts below with its launch, and the
+// kernel's own launch from the architecture's launch facts (core/launch_facts.h). false: computed
+// (price_tool prints them), never offered, and the price is golden-equal to the one before; true:
+// the selector adds them. One switch a binary, as kRmmaCountedLaw; a test flips it for its process
+// (completeness_terms_for_test, generic_gemm.h). It ships false: the A8 efficiencies and the A16
+// scale were fitted with these costs inside the timings, so switching it on alone would count
+// them twice. It flips per family with that family's counted law (PR-5c, PR-6, PR-7b; #613 PR-8d).
+inline constexpr bool kCompletenessTerms = false;
+// The activation quantizers' DRAM bytes per value, counted from their kernels and static_asserted
+// there against the block each thread writes:
+//   W4A8 (generic_w4a8.cu w4a8_quantize_kernel): a thread a 32-value block reads 64 B of BF16 and
+//     writes 32 B of codes, a 4 B scale and a 4 B sum: 104 B / 32 = 3.25 B a value of K; a block
+//     of the row's padding past K (the row is w4a8_ld(K) values, whole 128s) reads nothing and
+//     writes its zeros: 40 B / 32 = 1.25 B a value;
+//   I8 (generic_i8.cu i8_quantize_kernel): a thread a 64-value group reads 128 B and writes 64 B of
+//     codes, a 4 B scale and a 4 B sum: 200 B / 64 = 3.125 B a value of a real token; a padding
+//     token (tokens padded to 256, i8_padded_tokens) writes its zeros: 72 B / 64 = 1.125 B;
+//   ggml MMQ (ggml_mmq.cu quantize_kernel): 2 B of BF16 read a value, one block_q8_1_mmq of 144 B
+//     written a 128 values: 2 + 1.125 = 3.125 B a value, per weight type's grid.
+inline constexpr Scalar kQuantW4a8BytesPerValue{
+    {3.25}, Provenance::Counted, "quant_w4a8_bytes_per_value"};
+inline constexpr Scalar kQuantW4a8PadBytesPerValue{
+    {1.25}, Provenance::Counted, "quant_w4a8_pad_bytes_per_value"};
+inline constexpr Scalar kQuantI8BytesPerValue{
+    {3.125}, Provenance::Counted, "quant_i8_bytes_per_value"};
+inline constexpr Scalar kQuantI8PadBytesPerValue{
+    {1.125}, Provenance::Counted, "quant_i8_pad_bytes_per_value"};
+inline constexpr Scalar kQuantMmqBytesPerValue{
+    {3.125}, Provenance::Counted, "quant_mmq_bytes_per_value"};
+// The quantizers' CTAs: W4A8 and I8 a thread a block or group in CTAs of 256 threads; MMQ a CTA of
+// 128 threads a column and 512 values of K (ggml_mmq.cu quantize_activation). Their dispatch ramp
+// reads these grids (launch_facts.h ramp_seconds).
+inline constexpr Scalar kQuantThreadsPerCta{{256.0}, Provenance::Counted, "quant_threads_per_cta"};
+inline constexpr Scalar kQuantMmqValuesPerCta{
+    {512.0}, Provenance::Counted, "quant_mmq_values_per_cta"};
 // W4A8 tiles: fraction of the int8 peak by kW4a8Schedules index (32x128, 64x128, 128x128,
 // 128x64, 64x64, 128x64 with producer warps).
 inline constexpr Constant<6> kW4a8Efficiency{
@@ -200,6 +239,13 @@ inline constexpr Listed kRouteCostConstants[] = {
     listed(kLaunchNodeAda, Kind::Seconds),
     listed(kQuantLaunchSeconds, Kind::Seconds),
     listed(kQuantBytesPerValue, Kind::Bytes),
+    listed(kQuantW4a8BytesPerValue, Kind::Bytes),
+    listed(kQuantW4a8PadBytesPerValue, Kind::Bytes),
+    listed(kQuantI8BytesPerValue, Kind::Bytes),
+    listed(kQuantI8PadBytesPerValue, Kind::Bytes),
+    listed(kQuantMmqBytesPerValue, Kind::Bytes),
+    listed(kQuantThreadsPerCta, Kind::Count),
+    listed(kQuantMmqValuesPerCta, Kind::Count),
     listed(kW4a8Efficiency, Kind::Fraction),
     listed(kW4a8StageBytesPerRow, Kind::Bytes),
     listed(kW4a8StepK, Kind::Count),

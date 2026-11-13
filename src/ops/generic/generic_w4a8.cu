@@ -2,7 +2,9 @@
 #include "ops/generic/generic_w4a8.cuh"
 
 #include "ops/generic/generic_gemm_internal.h"
+#include "ops/generic/route_cost_constants.h"
 
+#include <cstdint>
 #include <stdexcept>
 
 namespace ninferno::ops::detail::generic {
@@ -39,6 +41,19 @@ __global__ __launch_bounds__(256) void w4a8_quantize_kernel(const __nv_bfloat16*
     scales[task] = scale;
     sums[task]   = scale * static_cast<float>(qsum);
 }
+
+// The quantizer's DRAM bytes, counted from the kernel above for the cost model
+// (route_cost::kQuantW4a8BytesPerValue / kQuantW4a8PadBytesPerValue, #613 PR-8a): a thread's
+// 32-value block reads 32 BF16 values (a block of K) and writes its 32 codes (two uint4), a scale
+// and a sum; a padding block past K writes the same and reads nothing. (Spelled out in the asserts,
+// not named: the route rules test reads a named constant here as a bound of the selection.)
+static_assert(2 * sizeof(uint4) == 32 * sizeof(std::int8_t)); // the block's codes
+static_assert(route_cost::kQuantW4a8BytesPerValue.value() ==
+              (32.0 * sizeof(__nv_bfloat16) + 2 * sizeof(uint4) + sizeof(float) + sizeof(float)) /
+                  32.0);
+static_assert(route_cost::kQuantW4a8PadBytesPerValue.value() ==
+              (2.0 * sizeof(uint4) + sizeof(float) + sizeof(float)) / 32.0);
+static_assert(route_cost::kQuantThreadsPerCta.value() == 256); // launch_w4a8_quantize's CTA
 
 } // namespace
 

@@ -164,6 +164,20 @@ __global__ __launch_bounds__(256) void i8_quantize_kernel(const __nv_bfloat16* _
     sums[task]   = qsum;
 }
 
+// The quantizer's DRAM bytes, counted from the kernel above for the cost model
+// (route_cost::kQuantI8BytesPerValue / kQuantI8PadBytesPerValue, #613 PR-8a): a thread's 64-value
+// group of a real token reads 64 BF16 values (eight uint4) and writes its 64 codes (four uint4),
+// an FP32 scale and an int32 sum; a padding token's group writes the same and reads nothing.
+// (Spelled out in the asserts, not named: the route rules test reads a named constant here as a
+// bound of the selection.)
+static_assert(8 * sizeof(uint4) == 64 * sizeof(__nv_bfloat16)); // the group's values read
+static_assert(4 * sizeof(uint4) == 64 * sizeof(std::int8_t));   // the group's codes
+static_assert(route_cost::kQuantI8BytesPerValue.value() ==
+              (8.0 * sizeof(uint4) + 4 * sizeof(uint4) + sizeof(float) + sizeof(int)) / 64.0);
+static_assert(route_cost::kQuantI8PadBytesPerValue.value() ==
+              (4.0 * sizeof(uint4) + sizeof(float) + sizeof(int)) / 64.0);
+static_assert(route_cost::kQuantThreadsPerCta.value() == 256); // launch_i8's quantizer CTA
+
 template <int WT, int WN, int Stages, int Bits, Epilogue E>
 __global__ void __launch_bounds__(32 * WT * WN, 1)
     i8_kernel(GemmArgs a, const std::int8_t* __restrict__ xq, const float* __restrict__ sx_plane,

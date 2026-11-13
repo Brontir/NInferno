@@ -9,9 +9,10 @@
 // A fact the row does not carry is unknown (nullopt), never a default number: an architecture
 // without a launch run, and a kind its run did not measure (node_pdl below sm_90 where the driver
 // refused the attribute or kept the host until earlier work had ended), stand aside. Nothing in the
-// engine reads this table yet: the speed models keep core/cost_constants.h's kLaunchNode (the Ada
-// census record) until a DECISIONS entry moves them (PR-8e), and tests/test_launch_node.cpp checks
-// the Ada row against that census.
+// engine decides by this table yet: the speed models keep core/cost_constants.h's kLaunchNode (the
+// Ada census record) until a DECISIONS entry moves them (PR-8e), tests/test_launch_node.cpp checks
+// the Ada row against that census, and the selector's completeness terms (kernel_roofline.h, #613
+// PR-8a) read the node and the ramp below with their switch off.
 //
 // What each kind is (launch_probe.cu's head): the cost of one more launch in a long back-to-back
 // series of empty kernels, so the series' fixed parts cancel and the CUDA event's 1.024 us tick is
@@ -99,6 +100,33 @@ inline std::optional<double> seconds(const std::optional<double>& ns) {
         return r->stream_s;
     }
     return std::nullopt;
+}
+
+// The CTA dispatch rate of compute capability major.minor, in seconds a CTA: the 1024-CTA floor's
+// slope over the one-CTA floor, (floor_s[1024] - floor_s[1]) / 1023, on the row's probe card. The
+// six measured cards give one figure a generation (Volta 1.5, Turing 0.52, Ampere 0.64, Ada 0.67,
+// Blackwell 0.37 ns a CTA) whatever their SM count (the RTX 5070 Ti's within 3 % of the RTX
+// 5090's, #870): the front end hands out CTAs at a fixed rate, it does not run them in rounds of
+// resident CTAs. nullopt where the row or either floor is absent. The first form reads a launch
+// entry itself (kernel_roofline.h's chip facts, which walk the table without copying a row).
+[[nodiscard]] inline std::optional<double> cta_dispatch_seconds(const IsaLaunch& l) {
+    if (!l.floor_ns_1 || !l.floor_ns_1024) return std::nullopt;
+    return (*l.floor_ns_1024 - *l.floor_ns_1) * 1e-9 / (1024 - 1);
+}
+
+[[nodiscard]] inline std::optional<double> cta_dispatch_seconds(int major, int minor) {
+    const std::optional<IsaRow> isa = isa_row(major, minor);
+    if (!isa || !isa->launch) return std::nullopt;
+    return cta_dispatch_seconds(*isa->launch);
+}
+
+// The dispatch ramp of a grid of `ctas` CTAs on compute capability major.minor: (ctas - 1) x t_cta,
+// t_cta of cta_dispatch_seconds (a grid of one CTA has none; the graph node prices its launch).
+// nullopt where the rate is unknown.
+[[nodiscard]] inline std::optional<double> ramp_seconds(int major, int minor, double ctas) {
+    const std::optional<double> t_cta = cta_dispatch_seconds(major, minor);
+    if (!t_cta) return std::nullopt;
+    return (ctas > 1.0 ? ctas - 1.0 : 0.0) * *t_cta;
 }
 
 } // namespace ninferno

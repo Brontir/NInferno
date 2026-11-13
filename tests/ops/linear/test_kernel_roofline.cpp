@@ -13,6 +13,7 @@
 #include "core/device_class.h"
 #include "core/format_facts.h"
 #include "core/generation.h"
+#include "core/launch_facts.h"
 #include "core/weight.h"
 #include "ninferno/ops/linear.h"
 #include "ops/generic/generic_gemm.h"
@@ -30,6 +31,7 @@
 #include <cstring>
 #include <iterator>
 #include <exception>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -70,11 +72,33 @@ bool priceable(const DeviceClass& d) {
 // described weight's bytes, and the compiled facts the selector read for the route (`reads`, the
 // last read wins as the price's own lookup did; none where it read none). nullopt for an A8
 // route (a8_candidates prices those, not the roofline's tiles) or a shape the format's layout
-// does not take.
-std::optional<double> roofline_price(const DeviceClass& d, const kr::ChipFacts& chip, QType q,
-                                     g::Epilogue e, std::int32_t n_rows, std::int32_t k_cols,
-                                     std::int32_t t, g::Route r,
-                                     const std::vector<g::RmmaFactRead>& reads) {
+// does not take. roofline_terms gives the terms that price is made of: the total, the completeness
+// terms (#613 PR-8a) and the A16 scale.
+struct RooflineTerms {
+    double total = 0, a16 = 1, ctas = 0;
+    double output = 0, residual = 0, quant = 0, launch = 0, complete = 0;
+    bool launch_known = false;
+};
+
+template <class Terms>
+RooflineTerms roofline_terms_of(const Terms& t, double a16) {
+    RooflineTerms r;
+    r.total        = t.total;
+    r.a16          = a16;
+    r.ctas         = t.grid.ctas;
+    r.output       = t.output;
+    r.residual     = t.residual;
+    r.quant        = t.quant;
+    r.launch       = t.launch;
+    r.complete     = t.complete;
+    r.launch_known = t.launch_known;
+    return r;
+}
+
+std::optional<RooflineTerms> roofline_terms(const DeviceClass& d, const kr::ChipFacts& chip,
+                                            QType q, g::Epilogue e, std::int32_t n_rows,
+                                            std::int32_t k_cols, std::int32_t t, g::Route r,
+                                            const std::vector<g::RmmaFactRead>& reads) {
     const kr::Calibration cal = kr::calibration_of(d.major, d.minor);
     const double a16          = ninferno::fitted_route_scales(d.major, d.minor)
                            .value_or(ninferno::FittedRouteScales{})
@@ -86,8 +110,12 @@ std::optional<double> roofline_price(const DeviceClass& d, const kr::ChipFacts& 
         payload = g::described_weight_bytes(q, e, n_rows, k_cols);
     } catch (const std::exception&) { return std::nullopt; }
     const double n = n_rows, k = k_cols;
-    const kr::Call call{n, k, static_cast<double>(t), e == g::Epilogue::SwiGlu ? 2.0 : 1.0,
-                        static_cast<double>(payload) / (n * k)};
+    const kr::Call call{n,
+                        k,
+                        static_cast<double>(t),
+                        e == g::Epilogue::SwiGlu ? 2.0 : 1.0,
+                        static_cast<double>(payload) / (n * k),
+                        e == g::Epilogue::AddResidual};
     const auto tile = g::route_tile(r, e, t);
     if (r.family == g::Family::RegisterMma) {
         const auto s = g::rmma_schedule_info(r.schedule);
@@ -110,7 +138,7 @@ std::optional<double> roofline_price(const DeviceClass& d, const kr::ChipFacts& 
                 kernel.shared_bytes = static_cast<double>(read.facts.static_smem);
             }
         }
-        return kr::price_register_mma(chip, cal, call, kernel).total * a16;
+        return roofline_terms_of(kr::price_register_mma(chip, cal, call, kernel), a16);
     }
     if (r.family == g::Family::TiledMma) {
         const auto s = g::tiled_schedule_info(r.schedule);
@@ -122,7 +150,7 @@ std::optional<double> roofline_price(const DeviceClass& d, const kr::ChipFacts& 
         kernel.stage_rows      = s.block_n;
         kernel.stage_cols      = s.block_m;
         kernel.tensor_fraction = g::route_cost::kTiledTensorFraction.value();
-        return kr::price_pipelined(chip, cal, call, kernel).total * a16;
+        return roofline_terms_of(kr::price_pipelined(chip, cal, call, kernel), a16);
     }
     if (r.family == g::Family::StagedMma) {
         const auto s = g::staged_schedule_info(r.schedule);
@@ -134,9 +162,18 @@ std::optional<double> roofline_price(const DeviceClass& d, const kr::ChipFacts& 
         kernel.stage_rows      = s.rows;
         kernel.stage_cols      = s.tokens;
         kernel.tensor_fraction = g::route_cost::kStagedTensorFraction.value();
-        return kr::price_pipelined(chip, cal, call, kernel).total * a16;
+        return roofline_terms_of(kr::price_pipelined(chip, cal, call, kernel), a16);
     }
     return std::nullopt;
+}
+
+std::optional<double> roofline_price(const DeviceClass& d, const kr::ChipFacts& chip, QType q,
+                                     g::Epilogue e, std::int32_t n_rows, std::int32_t k_cols,
+                                     std::int32_t t, g::Route r,
+                                     const std::vector<g::RmmaFactRead>& reads) {
+    const auto terms = roofline_terms(d, chip, q, e, n_rows, k_cols, t, r, reads);
+    if (!terms) return std::nullopt;
+    return terms->total * terms->a16;
 }
 
 // ---- Check 1: golden prices from the formula before #613 PR-4 ----
@@ -1006,9 +1043,153 @@ void check_rmma_count() {
     if (bad > 0) ++failures;
 }
 
+// ---- Check 9: the completeness terms (#613 PR-8a) ----
+// On every golden call and every A16 route the selector offers for it (the switch off, as the
+// binary ships), on the board's own chip facts:
+//  (a) complete - total is the sum of the new terms (output + residual + quant + launch), and an
+//      A16 tile has no quantizer;
+//  (b) the output term is route_query's output bytes (describe_route's traffic, route_traffic)
+//      over the board's DRAM bandwidth, and the residual term is 0 for Store and SwiGLU;
+//  (c) the launch is the architecture's graph node plus the dispatch ramp of the route's grid
+//      (core/launch_facts.h launch_seconds GraphNode + ramp_seconds), known exactly where the
+//      architecture has a launch row;
+//  (d) with the switch off the selector offers total x a16 (golden-equal); with it on
+//      (completeness_terms_for_test) it offers total x a16 + the terms, bit for bit.
+// And on one AddResidual call of every board, the residual read is the output's bytes again; with
+// the switch on every A8 candidate of a board that prices them moves and stays finite.
+void check_completeness() {
+    long routes = 0, known = 0, bad = 0;
+    const auto fail = [&](const std::string& what) {
+        if (++bad <= 10) std::fprintf(stderr, "FAIL completeness: %s\n", what.c_str());
+    };
+    // complete - total against the terms' sum: equal up to the rounding of complete's own sum (a
+    // few units in the last place of `complete`, the larger number).
+    const auto same = [](double diff, double sum, double complete) {
+        return std::fabs(diff - sum) <= 4 * std::numeric_limits<double>::epsilon() * complete;
+    };
+    for (const GoldenCall& c : kGoldenCalls) {
+        const DeviceClass d = g::board_device_class(g::kFactsBoards[c.board]);
+        if (!priceable(d)) continue;
+        const QType q            = kGoldenFormats[c.format];
+        const kr::ChipFacts chip = kr::chip_facts_of(d);
+        std::vector<g::RmmaFactRead> reads;
+        std::vector<g::PricedRouteQuery> off, on;
+        {
+            const g::ScopedRmmaFactsSink sink(reads);
+            off =
+                g::priced_routes_query(d, q, LinearPolicy::A16Only, c.epilogue, c.n, c.k, c.tokens);
+        }
+        g::completeness_terms_for_test(true);
+        on = g::priced_routes_query(d, q, LinearPolicy::A16Only, c.epilogue, c.n, c.k, c.tokens);
+        g::completeness_terms_for_test(std::nullopt);
+        const std::string where = std::string(g::kFactsBoards[c.board].name) + " " +
+                                  g::qtype_name(q) + " " + std::to_string(c.n) + "x" +
+                                  std::to_string(c.k) + " T=" + std::to_string(c.tokens) + " " +
+                                  g::epilogue_name(c.epilogue);
+        if (off.size() != on.size()) fail(where + ": the switch changed the routes offered");
+        const auto launch_row = ninferno::launch_row(d.major, d.minor);
+        for (std::size_t i = 0; i < off.size(); ++i) {
+            const g::Route r = off[i].route;
+            if (!is_golden_family(r.family)) continue;
+            const auto t = roofline_terms(d, chip, q, c.epilogue, c.n, c.k, c.tokens, r, reads);
+            if (!t) continue;
+            ++routes;
+            const std::string at = where + " " + g::route_name(r);
+            // (a)
+            const double sum = t->output + t->residual + t->quant + t->launch;
+            if (!same(t->complete - t->total, sum, t->complete) || t->complete < t->total) {
+                fail(at + ": complete - total is not the terms' sum");
+            }
+            if (t->quant != 0) fail(at + ": an A16 tile has a quantizer");
+            // (b)
+            const auto described = g::describe_route(d, r, q, LinearPolicy::A16Only, c.epilogue,
+                                                     c.n, c.k, c.tokens, std::nullopt);
+            if (!described || !described->traffic) {
+                fail(at + ": route_query describes no traffic");
+            } else if (t->output != described->traffic->output_bytes / chip.dram_bytes_per_s) {
+                fail(at + ": the output term is not route_query's output bytes over the bus");
+            }
+            if (t->residual != 0) fail(at + ": a residual read without AddResidual");
+            // (c)
+            const auto node =
+                ninferno::launch_seconds(d.major, d.minor, ninferno::LaunchKind::GraphNode);
+            const auto ramp = ninferno::ramp_seconds(d.major, d.minor, t->ctas);
+            if (t->launch_known != (node && ramp)) {
+                fail(at + ": the launch is known iff the architecture's launch facts are");
+            } else if (t->launch_known) {
+                ++known;
+                if (t->launch != *node + *ramp) fail(at + ": the launch is not node + ramp");
+            } else if (t->launch != 0) {
+                fail(at + ": an unknown launch is priced");
+            }
+            if (t->launch_known != (launch_row.has_value() && launch_row->node_s.has_value())) {
+                fail(at + ": a launch row and a known launch disagree");
+            }
+            // (d)
+            if (off[i].seconds != t->total * t->a16)
+                fail(at + ": the switch off is not total x a16");
+            if (i < on.size() &&
+                (!(on[i].route == r) || on[i].seconds != t->total * t->a16 + sum)) {
+                fail(at + ": the switch on is not total x a16 + the terms");
+            }
+        }
+    }
+    // The residual read, and the A8 candidates under the switch.
+    long residual = 0, a8 = 0;
+    for (const auto& board : g::kFactsBoards) {
+        const DeviceClass d = g::board_device_class(board);
+        if (!priceable(d)) continue;
+        const kr::ChipFacts chip = kr::chip_facts_of(d);
+        std::vector<g::RmmaFactRead> reads;
+        std::vector<g::PricedRouteQuery> priced;
+        {
+            const g::ScopedRmmaFactsSink sink(reads);
+            priced = g::priced_routes_query(d, QType::GGML_Q4_K, LinearPolicy::A16Only,
+                                            g::Epilogue::AddResidual, 4096, 4096, 64);
+        }
+        for (const auto& p : priced) {
+            const auto t = roofline_terms(d, chip, QType::GGML_Q4_K, g::Epilogue::AddResidual, 4096,
+                                          4096, 64, p.route, reads);
+            if (!t) continue;
+            ++residual;
+            if (t->residual != t->output || t->output != 4096.0 * 64 * 2 / chip.dram_bytes_per_s) {
+                fail(std::string(board.name) + " " + g::route_name(p.route) +
+                     ": AddResidual reads the output's bytes once");
+            }
+        }
+        const auto a8_off = g::priced_routes_query(d, QType::GGML_Q4_K, LinearPolicy::AllowA8,
+                                                   g::Epilogue::Store, 4096, 4096, 64);
+        g::completeness_terms_for_test(true);
+        const auto a8_on = g::priced_routes_query(d, QType::GGML_Q4_K, LinearPolicy::AllowA8,
+                                                  g::Epilogue::Store, 4096, 4096, 64);
+        g::completeness_terms_for_test(std::nullopt);
+        if (a8_off.size() != a8_on.size()) {
+            fail(std::string(board.name) + ": the switch changed the A8 routes offered");
+            continue;
+        }
+        for (std::size_t i = 0; i < a8_off.size(); ++i) {
+            if (is_golden_family(a8_off[i].route.family)) continue;
+            ++a8;
+            if (!(a8_on[i].route == a8_off[i].route) || !std::isfinite(a8_on[i].seconds) ||
+                !(a8_on[i].seconds > 0) || a8_on[i].seconds == a8_off[i].seconds) {
+                fail(std::string(board.name) + " " + g::route_name(a8_off[i].route) +
+                     ": an A8 candidate does not move under the switch");
+            }
+        }
+    }
+    std::printf(
+        "completeness: %ld golden routes (%ld with a known launch), %ld AddResidual routes, "
+        "%ld A8 candidates under the switch, %ld wrong\n",
+        routes, known, residual, a8, bad);
+    if (bad > 0 || routes == 0 || known == 0 || known == routes || residual == 0 || a8 == 0) {
+        ++failures;
+    }
+}
+
 int main() {
     check_golden();
     check_wiring();
+    check_completeness();
     check_dram_time();
     check_law_against_probe();
     check_rmma_count();

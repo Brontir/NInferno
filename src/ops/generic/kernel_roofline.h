@@ -34,6 +34,8 @@
 
 #include "core/device_class.h"
 #include "core/generation.h"
+#include "core/isa_facts.h"
+#include "core/launch_facts.h"
 #include "core/sm_rate_facts.h"
 #include "ops/generic/kernel_facts.h"
 #include "ops/generic/rmma_counted_terms.h"
@@ -72,6 +74,15 @@ struct ChipFacts {
     double registers_per_sm   = 0;
     double smem_per_sm        = 0;
     int major                 = 0; // the architecture: its pipes' ISA facts (rmma_counted_terms.h)
+    // The architecture's launch facts (core/launch_facts.h, #613 PR-8b), absent where its ISA row
+    // has no launch entry or the entry lacks the fact: the graph node (one launch as a node of a
+    // captured graph) and t_cta, the front end's dispatch time a CTA (cta_dispatch_seconds).
+    std::optional<double> launch_node_s;
+    std::optional<double> launch_cta_s;
+    // The architecture's dependent L2 load latency in SM clocks alone and under 2, 4 and 8 chasing
+    // warps an SM (core/isa_facts.h l2_latency), absent without an ISA row: what Little's law reads
+    // for the L2 rate a warp count reaches (l2_little_bytes_per_clock). Printed, not priced.
+    IsaByWarps l2_latency_clk;
 };
 
 // The constants the price does not derive yet, with their tags in route_cost_constants.h. The
@@ -106,18 +117,94 @@ struct Calibration {
     double max_tile_shared_bytes         = route_cost::kMaxTileSharedBytes.value();
     // Every tile.
     double min_warp_fill = route_cost::kMinWarpFill.value();
+    // The completeness terms (#613 PR-8a, Completeness below): false, the price offers `total`
+    // (what every golden holds) and the terms are only computed (`complete`, price_tool); true, it
+    // offers total x the A16 scale + the terms. The binary's switch is
+    // route_cost::kCompletenessTerms; price_routes takes completeness_terms() (a test's override).
+    bool completeness_terms = route_cost::kCompletenessTerms;
 };
 
 // The call: an n x k projection of `tokens` tokens; `sets` 2 under SwiGLU (the weight has 2 n
 // rows, every output row multiplies both); `bpw` the weight's payload bytes over n x k (under
-// SwiGLU the gate and up bytes of an output row together).
+// SwiGLU the gate and up bytes of an output row together); `residual` under AddResidual (the
+// epilogue reads the output's old value before it writes the sum).
 struct Call {
     double n      = 0;
     double k      = 0;
     double tokens = 0;
     double sets   = 1;
     double bpw    = 0;
+    bool residual = false;
 };
+
+// ---- Completeness terms (#613 PR-8a) ----
+
+// What every family's kernel costs beyond its tiles' bytes and MMA work, each counted or read from
+// a fact, never fitted:
+//  - output: the BF16 output written once, n x T x 2 bytes (route_traffic's output_bytes; SwiGLU
+//    writes one row a gate and up pair, a cluster's K split reduces in distributed shared memory)
+//    over the chip's DRAM bus, as projection_chain's projection_step_seconds prices it (#603);
+//  - residual: AddResidual reads the old output first, the same bytes again;
+//  - quant: the A8 activation quantizer (a8_candidates: its counted bytes over the bus and its own
+//    launch); 0 for an A16 tile, which reads BF16 as it is;
+//  - launch: the kernel's launch as a graph node plus the dispatch ramp of its grid,
+//    node + (ctas - 1) x t_cta (core/launch_facts.h launch_seconds GraphNode + ramp_seconds), where
+//    the architecture's launch facts are known; unknown (`launch_known` false), it is 0 and says
+//    so: an unknown fact is not given a number.
+// The output and residual are additive, not under the warp fill: the epilogue is the CTA's tail,
+// after its last MMA, and its bytes add to the bus. A term common to every route of a call moves no
+// argmin among them; the quantizer and the second launch separate A8 from A16, and the ramp the
+// grids. Computed always; offered only under Calibration::completeness_terms.
+struct Completeness {
+    double output_bytes = 0; // n x T x 2
+    double output       = 0;
+    double residual     = 0;
+    double quant        = 0;
+    double launch       = 0;
+    bool launch_known   = false;
+
+    [[nodiscard]] double sum() const { return output + residual + quant + launch; }
+};
+
+// One launch of a grid of `ctas` CTAs as a graph node: node + (ctas - 1) x t_cta; nullopt where
+// either fact is unknown.
+[[nodiscard]] inline std::optional<double> launch_seconds_of(const ChipFacts& chip, double ctas) {
+    if (!chip.launch_node_s || !chip.launch_cta_s) return std::nullopt;
+    return *chip.launch_node_s + (ctas > 1.0 ? ctas - 1.0 : 0.0) * *chip.launch_cta_s;
+}
+
+// The completeness terms of a call whose kernel launches `ctas` CTAs, with `quant` the quantizer's
+// seconds (0 for an A16 tile).
+[[nodiscard]] inline Completeness completeness(const ChipFacts& chip, const Call& call, double ctas,
+                                               double quant = 0) {
+    Completeness c;
+    c.output_bytes                     = call.n * call.tokens * 2.0;
+    c.output                           = c.output_bytes / chip.dram_bytes_per_s;
+    c.residual                         = call.residual ? c.output : 0.0;
+    c.quant                            = quant;
+    const std::optional<double> launch = launch_seconds_of(chip, ctas);
+    c.launch_known                     = launch.has_value();
+    c.launch                           = launch.value_or(0.0);
+    return c;
+}
+
+// The L2 rate W resident warps reach by Little's law, W x b_w / l2_latency(W) bytes an SM clock,
+// b_w the bytes a warp keeps in flight (the count the DRAM law reads), l2_latency(W) the ISA row's
+// dependent L2 latency under the largest measured chase count at most W (1, 2, 4, 8 warps; past 8
+// the 8-warp figure). Uncapped: no per-SM L2 port rate is a cited fact in this tree. nullopt
+// without the latency or a warp. Printed beside the fitted kL2BytesPerSmClock (price_tool), not
+// priced: the counted L2 form is PR-7b's, one law for the chain and the L2.
+[[nodiscard]] inline std::optional<double>
+l2_little_bytes_per_clock(const ChipFacts& chip, double warps, double warp_bytes) {
+    if (!(warps >= 1.0) || !(warp_bytes > 0)) return std::nullopt;
+    const IsaByWarps& l             = chip.l2_latency_clk;
+    const std::optional<double> lat = warps >= 8 && l.w8   ? l.w8
+                                      : warps >= 4 && l.w4 ? l.w4
+                                      : warps >= 2 && l.w2 ? l.w2
+                                                           : l.w1;
+    if (!lat || !(*lat > 0)) return std::nullopt;
+    return warps * warp_bytes / *lat;
+}
 
 // How a grid of CTAs sits on the chip: what every form of the price computes first.
 struct Grid {
@@ -286,7 +373,27 @@ struct RegisterMmaTerms {
     // per-round latency, like the chain, and the DRAM rate already reads the resident warps
     // (dram_time). Legacy: (bytes + mma + reduce) / fill + chain.
     double total = 0;
+    // The completeness terms of the tile's grid (Completeness; quant 0: an A16 tile), the launch
+    // unknown and 0 where the architecture has no launch facts, and `complete` = total + output +
+    // residual + quant + launch. Computed whatever Calibration::completeness_terms says.
+    double output = 0, residual = 0, quant = 0, launch = 0;
+    bool launch_known = false;
+    double complete   = 0;
+    // Little's-law L2 rate of the busiest SM's resident warps (l2_little_bytes_per_clock) at the
+    // counted bytes a warp keeps in flight, beside cal.l2_bytes_per_sm_clock: printed, not priced.
+    std::optional<double> l2_little_bytes_per_clock;
 };
+
+// Writes the completeness terms `c` into a family's terms `t` and their sum with t.total.
+template <class Terms>
+void set_completeness(Terms& t, const Completeness& c) {
+    t.output       = c.output;
+    t.residual     = c.residual;
+    t.quant        = c.quant;
+    t.launch       = c.launch;
+    t.launch_known = c.launch_known;
+    t.complete     = t.total + c.sum();
+}
 
 // The CTAs of `threads` threads one SM holds: its thread and CTA limits and, where the kernel's
 // registers are known, the register file (allocated per warp in units of reg_alloc_per_warp). A
@@ -399,6 +506,11 @@ struct RegisterMmaTerms {
     } else {
         t.total = t.mem + t.mma / g.fill + t.reduce + t.chain;
     }
+    set_completeness(t, completeness(chip, call, g.ctas));
+    if (k.k_step > 0) {
+        t.l2_little_bytes_per_clock =
+            l2_little_bytes_per_clock(chip, g.warps, 2.0 * k.m_tiles * 16.0 * k.k_step * call.bpw);
+    }
     return t;
 }
 
@@ -425,6 +537,10 @@ struct PipelinedTerms {
     double mma   = 0;   // the MMA work over the fraction of the tensor rate
     double chain = 0;   // one stage's barrier and cp.async wait per stage and residency round
     double total = 0;   // max(mem, mma / fill) + chain; legacy: max(mem, mma) / fill + chain
+    // The completeness terms (RegisterMmaTerms' fields of the same names).
+    double output = 0, residual = 0, quant = 0, launch = 0;
+    bool launch_known = false;
+    double complete   = 0;
 };
 
 // The CTAs one SM holds of a pipelined tile: its thread and CTA limits and the shared memory of
@@ -472,6 +588,7 @@ struct PipelinedTerms {
     g.fill  = std::clamp(g.warps / cal.pipelined_saturating_warps, cal.min_warp_fill, 1.0);
     t.total = t.legacy ? std::max(t.mem, t.mma) / g.fill + t.chain
                        : std::max(t.mem, t.mma / g.fill) + t.chain;
+    set_completeness(t, completeness(chip, call, g.ctas));
     return t;
 }
 
@@ -497,9 +614,27 @@ inline void fill_sm_rate_facts(ChipFacts& c, int major, int minor) {
     }
 }
 
+// The launch facts and the L2 latencies of compute capability major.minor from its ISA row (its
+// launch entry: the graph node and the CTA dispatch rate, core/launch_facts.h), each left absent
+// where the row or the fact is absent (the same figures as launch_seconds(GraphNode) and
+// cta_dispatch_seconds; the table is walked in place, since the price runs at every launch the
+// selector prices).
+inline void fill_isa_facts(ChipFacts& c, int major, int minor) {
+    for (const IsaRow& row : isa_facts_table()) {
+        if (row.major != major || row.minor != minor) continue;
+        c.l2_latency_clk = row.l2_latency;
+        if (row.launch) {
+            if (row.launch->node_ns) c.launch_node_s = *row.launch->node_ns * 1e-9;
+            c.launch_cta_s = cta_dispatch_seconds(*row.launch);
+        }
+        return;
+    }
+}
+
 // The chip facts of a class: its facts' reference clock and bandwidth (never the driver's
 // clocks), its generation row's BF16 rate, its residency limits (a limit the query left at 0
-// reads as 1, as the price always did), its architecture's SM DRAM rate facts.
+// reads as 1, as the price always did), its architecture's SM DRAM rate facts, launch facts and
+// L2 latencies.
 [[nodiscard]] inline ChipFacts chip_facts_of(const DeviceClass& d) {
     ChipFacts c;
     c.sms                = d.sms;
@@ -512,6 +647,7 @@ inline void fill_sm_rate_facts(ChipFacts& c, int major, int minor) {
     c.smem_per_sm        = static_cast<double>(d.smem_per_sm);
     c.major              = d.major;
     fill_sm_rate_facts(c, d.major, d.minor);
+    fill_isa_facts(c, d.major, d.minor);
     return c;
 }
 
