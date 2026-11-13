@@ -41,6 +41,7 @@ import perf_matrix  # noqa: E402  (the long-context prompt set: its text and que
 # The frozen workload (kernel proposal P): the default CHARS (95940) makes a 22,184-token prompt.
 # A prompt outside ±3 % of it is another context and cache regime, and the A/B refuses it.
 FROZEN_PROMPT_TOKENS = 22184
+FROZEN_ROUNDS = 6  # repeats a build, kernel proposal P (#850)
 PROMPT_TOKEN_SLACK   = 0.03
 
 
@@ -160,6 +161,11 @@ def summarize(args):
                      f"{clock_text} | {temp_text} |")
     if not arms["A"] or not arms["B"]:
         sys.exit(f"{out}: rounds of both arms are needed")
+    # Proposal P's acceptance reads six repeats a build (kernel-proposals.md, frozen): no verdict
+    # from fewer or more.
+    if len(arms["A"]) != FROZEN_ROUNDS or len(arms["B"]) != FROZEN_ROUNDS:
+        sys.exit(f"{out}: {len(arms['A'])} A and {len(arms['B'])} B rounds, "
+                 f"{FROZEN_ROUNDS} each needed (frozen)")
     expected = getattr(args, "rounds", None)
     if expected and (len(arms["A"]) != expected or len(arms["B"]) != expected):
         sys.exit(f"{out}: {len(arms['A'])} A and {len(arms['B'])} B rounds, {expected} each needed")

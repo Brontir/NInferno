@@ -36,9 +36,10 @@
 #   run; a failed run keeps them, and a rerun with the same BUILD_ROOT reuses them.
 #
 # Environment (defaults): MODEL (unsloth/Qwen3.5-9B-GGUF), QUANT (Q4_K_M; its down projections are
-# Q6_K and Q4_K; QUANT=Q5_K_M runs the Q5_K down entries), ROUNDS (6 a build, even), REQUESTS (2 a
-# round), OUT_TOKENS (512), CHARS (95940: step_ab.py refuses a prompt outside 22,184 tokens ±3 %,
-# the frozen workload), MAX_CONTEXT (32768), PORT (18850), BASE (origin/master),
+# Q6_K and Q4_K; QUANT=Q5_K_M runs the Q5_K down entries), ROUNDS (6 a build: proposal P's frozen
+# six repeats, refused otherwise), REQUESTS (2 a round), OUT_TOKENS (512), CHARS (95940: step_ab.py
+# refuses a prompt outside 22,184 tokens ±3 %, the frozen workload), MAX_CONTEXT (32768), PORT
+# (18850), BASE (origin/master: A is its merge base with HEAD, the master the branch was built on),
 # NO_FETCH (0), JOBS (16), ARCH (the card's), BUILD_ROOT (OUT/trees), MIN_FREE_GB (20),
 # STARTUP_TIMEOUT (900 s a server start), KEEP_BUILDS (0), ALLOW_BUSY (0), NO_CCACHE (0), PYTHON.
 #
@@ -87,7 +88,7 @@ fi
 for v in ROUNDS REQUESTS OUT_TOKENS CHARS MAX_CONTEXT PORT JOBS MIN_FREE_GB STARTUP_TIMEOUT; do
     case ${!v} in '' | *[!0-9]* | 0) echo "$v must be a positive integer" >&2; exit 2 ;; esac
 done
-((ROUNDS % 2 == 0)) || { echo "ROUNDS must be even (whole ABBA blocks)" >&2; exit 2; }
+((ROUNDS == 6)) || { echo "ROUNDS is frozen at 6 a build (kernel proposal P, six repeats)" >&2; exit 2; }
 command -v nvidia-smi >/dev/null || die "no nvidia-smi"
 command -v curl >/dev/null || die "no curl"
 command -v setsid >/dev/null || die "no setsid"
@@ -125,8 +126,11 @@ fi
 [[ -z $(git -C "$root" status --porcelain --untracked-files=no) ]] ||
     die "the checkout has uncommitted changes: B is its HEAD, commit them first"
 [[ ${NO_FETCH:-0} == 1 ]] || git -C "$root" fetch -q origin master || die "git fetch origin master failed"
-SHA_A=$(git -C "$root" rev-parse --verify "$BASE^{commit}") || die "no commit $BASE"
+git -C "$root" rev-parse -q --verify "$BASE^{commit}" >/dev/null || die "no commit $BASE"
 SHA_B=$(git -C "$root" rev-parse HEAD)
+# A is the master B was built on (their merge base), not today's master: a master that moved on
+# since would put its own changes into B/A.
+SHA_A=$(git -C "$root" merge-base "$BASE" "$SHA_B") || die "HEAD shares no history with $BASE"
 BRANCH_B=$(git -C "$root" rev-parse --abbrev-ref HEAD)
 [[ $SHA_A != "$SHA_B" ]] || die "HEAD is $BASE ($SHA_A): nothing to compare"
 

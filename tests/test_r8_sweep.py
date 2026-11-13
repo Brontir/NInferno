@@ -156,11 +156,10 @@ class SweepKit(unittest.TestCase):
 class StepAB(unittest.TestCase):
     """tools/bench/step_ab.py summarize on rounds as run_850_step_ab.sh writes them."""
 
-    def run_summary(self, a, b, same=True):
+    def run_summary(self, a, b, same=True, order="ABBAABBAABBA"):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         out = Path(tmp.name)
-        order = "ABBAABBAABBA"
         values = {"A": list(a), "B": list(b)}
         lines = []
         for i, arm in enumerate(order, start=1):
@@ -174,7 +173,7 @@ class StepAB(unittest.TestCase):
         (out / "rounds.jsonl").write_text("\n".join(lines) + "\n")
         (out / "meta.txt").write_text("gpu NVIDIA GeForce RTX 4090\nrounds per build 6\n")
         argv = sys.argv
-        sys.argv = ["step_ab.py", "summarize", str(out), "--rounds", "6"]
+        sys.argv = ["step_ab.py", "summarize", str(out)]
         try:
             with contextlib.redirect_stdout(io.StringIO()):
                 step_ab.main()
@@ -195,6 +194,14 @@ class StepAB(unittest.TestCase):
                                 [97.0, 97.1, 96.9, 97.0, 97.2, 97.0], same=False)
         self.assertIn("Verdict: SLOWER", text)
         self.assertIn("NOT identical", text)
+
+    def test_fewer_than_six_rounds_refused(self):
+        # Proposal P's six repeats are frozen: four rounds a build give no verdict, even without
+        # --rounds.
+        with self.assertRaises(SystemExit) as raised:
+            self.run_summary([100.0, 100.1, 99.9, 100.0], [100.2, 100.0, 100.1, 99.8],
+                             order="ABBAABBA")
+        self.assertIn("6 each needed (frozen)", str(raised.exception))
 
 
 if __name__ == "__main__":
