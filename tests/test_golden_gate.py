@@ -166,6 +166,9 @@ NOT_DECIDING = {
     "src/core/tune_timer.cu", "src/core/tune_timer.h", "src/core/units.h",
     "src/core/weight_view.cpp", "src/core/weight_view.h",
     "src/core/cuda_stream.h",  # the cudaStream_t handle type for host-only builds (#675)
+    # the plan's prefill route query (#613 PR-9): it asks route_query for the configuration
+    # choice's prefill estimate, product side; the selector goldens do not link it
+    "src/runtime/engine/plan_prefill_routes.cpp",
     # rmsnorm_rope's fused-width bound (#661): it reads route_cost_constants.h for its pending fit and
     # decides the rope fusion of Qwen's text attention, not a linear route; the golden test does not
     # call it
