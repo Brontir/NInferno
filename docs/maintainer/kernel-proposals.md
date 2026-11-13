@@ -188,7 +188,7 @@ have frozen predictions so far.
   | RTX 4090 | 48.7 measured (`w8r2`) | `w8r1` | -2.0 .. -4.0 | -1.7 .. -3.5 |
   | RTX 5090 | 29.3 measured (`w8r2`) | `w8r1` | -0.8 .. -2.2 | -1.0 .. -2.3 |
   | RTX 3090 | 56.4 law (`w8r2`) | `w8r1` | -3 .. -7 | -3.0 .. -4.9 |
-  | RTX 3060 | 128.7 law (`w8r2`) | `w8r1` | -1 .. -4 | -1.1 .. -3.5 |
+  | RTX 3060 | 128.7 law (`w8r2`) | `w8r1` | -1 .. -4 | -2.3 .. -3.5 |
   | RTX 2080 Ti | 78.2 law (`w4r2`) | `w4r1` | -1 .. -4 | -1.4 .. -2.8 |
   | RTX 4070 Ti | not priced by the plan (`w8r2`) | `w8r1` | -0.5 .. -2.0 | (this entry's) |
   | RTX 5070 Ti | not priced by the plan (`w8r2`) | `w8r1` | -0.5 .. -2.0 | (this entry's) |
@@ -196,14 +196,14 @@ have frozen predictions so far.
   Where this entry differs from the plan:
   - A `w8r1` CTA has half a `w8r2` CTA's bytes at half the SM's share, so it lasts as long. What
     halves is the work an SM can be left with at the end, so t_imb halves; it need not vanish. The
-    central estimate is therefore the band's lower edge: 4090 -1.8 (half of 3.6, less 0.08 us of
-    ramp for the 512 CTAs), 5090 -1.2.
+    central estimate is therefore the band's lower edge: 4090 -1.7 (half of 3.6, less 0.08 us of
+    ramp for the 512 CTAs), 5090 -1.0 (half of 2.5, less 0.2 us of ramp).
   - The plan's 3090 and 3060 laws count the last partial round in full, although its bytes are
     already in B / BW_eff. Only the round's time beyond its bytes' share is extra. 3090: 10 CTAs of
     161 KB at 10 x 54 GB/s take 3.0 us, of which 1.8 are in the stream, so +1.2. 3060: 4 CTAs, 3.0
     against 1.9, so +1.1. At `w8r1` the last round's CTAs pull more than the DRAM gives (3090: 20 x
     54 GB/s = 1.08 TB/s > 896 GB/s; 3060: 8 x 54 > 344), so its extra is 0, not the plan's 1.5
-    and 1.4. With t_imb half to all: 3090 -3.0 .. -4.9, 3060 -1.1 .. -3.5. A 3090 beyond -5 would
+    and 1.4. With t_imb half to all: 3090 -3.0 .. -4.9, 3060 -2.3 .. -3.5. A 3090 beyond -5 would
     say t_imb is larger than the 4090's share carried over.
   - RTX 2080 Ti: the last round of `w4r2` (104 CTAs on 136 slots) already pulls more than the DRAM,
     so there is no partial term. Only t_imb moves: 2.8 to 1.4, so -1.4 .. -2.8.
