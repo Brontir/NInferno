@@ -4,7 +4,7 @@
 # R8 decode table's merge. Nothing here chooses a route; the bench times the schedules it compiles.
 #
 #   tools/bench/run_850_r8_sweep.sh BENCH [OUT]
-#   tools/bench/run_850_r8_sweep.sh --summarize OUT          (no GPU: the table again)
+#   tools/bench/run_850_r8_sweep.sh --summarize OUT          (no GPU: all six files of OUT again)
 #
 # BENCH is ninferno_r8_schedule_bench of a build of this card's architecture (configure with
 # -DNINFERNO_BUILD_BENCHMARKS=ON; it lands in <build>/bench/). Master's binary and this branch's
@@ -18,7 +18,10 @@
 # within each sample, the median of 15 replays divided by 60; every schedule's output bytes are
 # compared (same=1). Three sweeps, each two bench runs:
 #   down_<i>.txt     the down projections, the merge's input: Q6_K 4096x12288 store and add (the
-#                    candidate), Q4_K and Q5_K 4096x12288 (the same call in the other mixes);
+#                    candidate), Q4_K and Q5_K 4096x12288 store and add (the same call in the other
+#                    mixes). The 9B step runs every down projection as an add call (ops::linear_add),
+#                    which takes the store entry: an entry stays only where its schedule also wins
+#                    on the add call (the summary's add check);
 #   context_<i>.txt  the rest of the 9B step (attn_qkv, attn_gate, ssm_out, gate+up, q, k/v) and the
 #                    K >= 8192 shapes the rule check reads (Qwen3.5-4B's 2560x9216, Qwen3.8's
 #                    5120x17408, the goldens' 28672x8192): reported, never merged.
@@ -37,15 +40,25 @@ here=$(cd "$(dirname "$0")" && pwd)
 summary="$here/r8_sweep_summary.py"
 py=${PYTHON:-python3}
 
+# The protocol is all six files: a summary of fewer (an interrupted campaign) would give the frozen
+# verdicts and the merge argument from fewer sweeps than entry P fixes, so it is refused.
 summarize() {
     local out=$1
-    local files=()
+    local files=() missing=()
     for i in 1 2 3; do
         for part in down context; do
-            [[ -f "$out/${part}_$i.txt" ]] && files+=("$out/${part}_$i.txt")
+            if [[ -f "$out/${part}_$i.txt" ]]; then
+                files+=("$out/${part}_$i.txt")
+            else
+                missing+=("${part}_$i.txt")
+            fi
         done
     done
-    [[ ${#files[@]} -gt 0 ]] || { echo "no sweep files in $out" >&2; exit 2; }
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "$out: missing ${missing[*]}: the protocol is all six of down_1..3.txt and" \
+            "context_1..3.txt (rerun the sweeps on the card)" >&2
+        exit 2
+    fi
     "$py" "$summary" "${files[@]}" | tee "$out/summary.md"
     local class
     class=$(sed -n 's/^device .* class \([^,]*\),.*/\1/p' "$out/down_1.txt" | head -1)
@@ -75,7 +88,7 @@ fi
 down=(
     --problem q6k,store,4096,12288 --problem q6k,add,4096,12288
     --problem q4k,store,4096,12288 --problem q4k,add,4096,12288
-    --problem q5k,store,4096,12288
+    --problem q5k,store,4096,12288 --problem q5k,add,4096,12288
 )
 context=(
     --problem q6k,store,8192,4096 --problem q4k,store,8192,4096

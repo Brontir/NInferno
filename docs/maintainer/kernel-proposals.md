@@ -394,7 +394,9 @@ plan. A, N and P have frozen predictions so far.
   - The RTX 4070 Ti, the one card with the predicted gain inside its band (-1.5), and the 3090
     (-5.3) fit the sign of the law; neither tells t_imb apart from the per-warp term above.
   Acceptance item 4's 9B step ABBA was not run; it waits (the entries change only the 32 down
-  calls of a step).
+  calls of a step). Its kit is `tools/bench/run_850_step_ab.sh`, run on every card with an entry
+  (RTX 4090, 3090, 3060, 4070 Ti, 5070 Ti); a card whose step is slower than master beyond the
+  noise loses its entries.
 - Decision (13.11): narrowed to table entries, the K rule unchanged. `r8_decode_table.py --merge`
   of the down sweeps wrote, at 4096x12288 store (an add call takes it):
   - `ad102:128sm` (RTX 4090): Q4_K `w8r1` (31.90 -> 31.23), Q5_K `w8r1` (39.48 -> 39.13), Q6_K
@@ -408,8 +410,11 @@ plan. A, N and P have frozen predictions so far.
   - `gb202:170sm` (RTX 5090) and `tu102:68sm` (RTX 2080 Ti): none; the rules' `w8r2` / `w4r2`
     were the fastest.
   Every entry is faster than the rules' schedule in every sweep, and where the add call was swept
-  (Q4_K and Q6_K) it is faster in the median with the entry's schedule too. The law is not
-  refitted: its t_imb term stays a hypothesis this A/B did not confirm, and the three terms above
+  (Q4_K and Q6_K) it is faster in the median with the entry's schedule too. The Q5_K entries rest
+  on store alone: a 9B mix with a Q5_K down projection runs it through `ops::linear_add`, which
+  takes the store entry, so the sweep kit now also times Q5_K 4096x12288 add, and a Q5_K entry
+  stays only where its schedule also wins on the add call (the summary's add check). The law is
+  not refitted: its t_imb term stays a hypothesis this A/B did not confirm, and the three terms above
   wait for their ncu facts before any kernel (c1 for the Q6_K ring, the prologue's price on
   sm_120 and sm_75).
 - Carried to unmeasured boards (kR8CarryDistance 0.5, same feature set): the RTX 3060 non-LHR

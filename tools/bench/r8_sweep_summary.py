@@ -88,6 +88,42 @@ def name(schedule):
     return f"w{schedule[0]}r{schedule[1]}"
 
 
+def add_check(problems, entries, median):
+    """The add call against each store entry. A model step runs its down projection as an add call
+    (ops::linear_add), which looks the store entry up, so an entry stays only where its schedule
+    also beats the add call's rules schedule in the median; one whose add call was not swept rests
+    on store alone."""
+    if not entries:
+        return
+    print("**Add check (an add call takes the store entry; it stays only where its schedule also "
+          "wins on the add call):**")
+    print()
+    for (fmt, n, k), best in sorted(entries.items()):
+        key = (fmt, "add", n, k)
+        if key not in problems:
+            print(f"- {fmt} {n}x{k}: store entry {name(best)}; the add call was not swept: the "
+                  "entry rests on store alone")
+            continue
+        rule = problems[key]["rules"]
+        t_rule, t_best = (median(key, rule) if rule else None), median(key, best)
+        if t_rule is None or t_best is None:
+            print(f"- {fmt} {n}x{k}: store entry {name(best)}; the add call's rules or entry "
+                  "schedule was not timed")
+            continue
+        d = t_best - t_rule
+        every = all(r[best] < r[rule] for r in problems[key]["runs"] if best in r and rule in r)
+        if best == rule:
+            verdict = "keep (the add call's rules already pick it)"
+        elif d < 0:
+            verdict = "keep"
+        else:
+            verdict = "DROP (slower on the add call)"
+        print(f"- {fmt} {n}x{k}: store entry {name(best)}; add {name(rule)} {t_rule:.2f} -> "
+              f"{name(best)} {t_best:.2f} us ({d:+.2f}, faster in every sweep: "
+              f"{'yes' if every else 'no'}): {verdict}")
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--min-gain", type=float, default=0.005)
@@ -124,6 +160,7 @@ def main():
     head = " | ".join(name(s) for s in schedules)
     print(f"| problem | sweeps | rules | {head} | best | best - rules | entry if merged |")
     print("|" + "---|" * (len(schedules) + 6))
+    entries = {}  # (fmt, n, k) -> the schedule a store row would write
     for key in keys:
         fmt, epi, n, k = key
         p = problems[key]
@@ -140,6 +177,8 @@ def main():
             every = all(r[best] < r[rule] for r in p["runs"] if best in r and rule in r)
             gain = best != rule and timed[best] <= timed[rule] * (1 - args.min_gain) and every
             entry = "yes" if gain else "no"
+            if gain and epi == "store":
+                entries[(fmt, n, k)] = best
             if gain and epi == "add" and (fmt, n, k) in stores:
                 entry = "no (looked up as store)"
         rules_name = name(rule) if rule else "-"
@@ -149,6 +188,7 @@ def main():
     print("Only the down files are merged (run_850_r8_sweep.sh prints their argument); a \"yes\" on "
           "another row is a finding for another entry, not merged by #850 (a).")
     print()
+    add_check(problems, entries, median)
 
     frozen = FROZEN.get(gpu)
     print("**Frozen prediction (kernel-proposals P), Q6_K 4096x12288:**", end=" ")
