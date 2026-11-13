@@ -2101,8 +2101,9 @@ function gateTexts(doc, tr) {
     let text = tr("gate_" + g.code, vars);
     const joint = many && switchesGate(g);
     if (joint) {
-      if (ledBy && text.startsWith(lead)) text = text.slice(lead.length);
-      ledBy = true;
+      // Only a line that said the lead counts as having said it.
+      if (ledBy) text = text.startsWith(lead) ? text.slice(lead.length) : text;
+      else ledBy = text.startsWith(lead);
     }
     const opens = GATE_OPENS.includes(g.opens_with) ? tr(joint ? "gateNeeds" : "gateOpens", {what: tr("gateOpens_" + g.opens_with, vars)}) : "";
     out.push(opens ? text + ". " + opens : text);

@@ -562,8 +562,11 @@ for (const lang of ["en", "ru", "uk"]) for (const k of ["replayContext", "replay
                    {axis: "switches", code: "kv_terms_one_card", opens_with: "kv_kld_second_card", generation: "turing", family: "gemma4_text", cards: 1},
                    {axis: "switches", code: "int8_unmeasured", opens_with: "int8_kld", generation: "turing", family: "gemma4_text", cards: 0},
                    {axis: "quant", code: "quant_curve_unmeasured", opens_with: "quant_curve", generation: "turing", family: "gemma4_text", cards: 0}]}};
-  for (const [lang, T] of [["en", EN], ["ru", RU]]) {
+  for (const [lang, T] of [["en", EN], ["ru", RU], ["uk", words("uk")]]) {
     const lines = H.gateTexts(turing, T), lead = T("gateDefaultsPrefix");
+    // Every switches gate's text starts with the language's lead, no quantization gate's does.
+    for (const code of H.GATE_CODES)
+      ok(T("gate_" + code, {gen: "g", family: "f"}).startsWith(lead) === !code.startsWith("quant_"), `${lang}: ${code} and the lead`);
     eq(lines.length, 4, `${lang}: every closed gate, one line each`);
     eq(lines.filter(l => l.startsWith(lead)).length, 1, `${lang}: the family's defaults said once`);
     ok(lines.slice(0, 3).every(l => l.includes(T("gateNeeds", {what: ""}).trim())), `${lang}: the switches gates say what they need`);
