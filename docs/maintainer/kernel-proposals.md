@@ -338,9 +338,19 @@ have frozen predictions so far.
 - Decision (13.11): every card is at or above 85 % of its predicted lower edge and none is under 75 %
   of the DRAM line, so the frozen acceptance holds on all six boards. The band itself is refuted on
   four of them: under it on the RTX 4090, over it on the RTX 3060, 4070 Ti and 5070 Ti (the band
-  assumed a DRAM efficiency below the 94-96 % INT8 and K8V4 reach on those cards). The byte rule's
-  KLD run (Qwen3.5-9B, NVFP4 KV, --step-tokens 1, master against the branch on the RTX 5090) is
-  pending; the ncu source view of the RTX 4090's short-scoreboard waits stays open.
+  assumed a DRAM efficiency below the 94-96 % INT8 and K8V4 reach on those cards). The ncu source
+  view of the RTX 4090's short-scoreboard waits stays open.
+- Byte rule, KLD (13.11, RTX 5090, Qwen3.5-9B, NVFP4 KV, ninferno-ppl-1m-v1 quick, context 4096,
+  stride 2048, 261,167 tokens):
+  - The branch against master: mean KLD 0.0043, top-1 97.67 %, PPL ratio 0.9999. Master against a
+    second master run gives 0 (the decode is deterministic), so these are the slab's other FP32
+    order, not run noise.
+  - Each against the exact BF16-KV reference: master 0.010934 (top-1 96.92 %, PPL 1.0038), the
+    branch 0.010923 (96.92 %, 1.0037). The branch is -0.1 % of master's, inside ±15 %. Both are
+    within KLD_TOLERANCE (0.15) of the recorded NVFP4 KV term, 0.00982 (choice_constants.h).
+  - The NVFP4 KV error is unchanged, so the byte rule holds.
+- Decision (13.11): kept for width-1 NVFP4 KV decode on sm_80+ (RowTiles 1, not `exact`); every
+  frozen acceptance item holds.
 
 ### M. MMQ column widths per arch and format (#619 step 13, DECISIONS 74)
 - Regime: MMQ on short prompts. Ada and Turing are done (#597, #717). Q2_K and the IQ formats still
