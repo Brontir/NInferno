@@ -333,6 +333,13 @@ ninferno_add_test(ninferno_causal_position_partition_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/test_causal_position_partition.cpp"
   LIBRARIES ninferno::cudart)
 
+# The MoE R8 regime rules (ops/moe/moe_regime_rules.h, #616 step 5): each rule labelled by the
+# cards it was measured on (two or more, one, or none and conservative), one per generation, and
+# the limits the substituted boards take. Host only.
+ninferno_add_op_test(ninferno_moe_regime_rules_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_moe_regime_rules.cpp"
+  LIBRARIES ninferno_ops)
+
 # What the measured value tables' answers rest on (#616 step 3): the MoE class A8 route and the
 # sparse MoE Q4 groupwise frontier per SKU of the reference table, as Measured, Carried, Incomplete
 # or None (host only), against table_dispositions/dispositions.txt; --update rewrites it.
