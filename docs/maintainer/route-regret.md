@@ -376,11 +376,12 @@ the threshold is not read as a change.
 
   ```
   # m h dom mon dow: Sundays 03:00, a Release build of origin/master (the job's three targets) in build-regret
-  0 3 * * 0  cd "$HOME/ninferno" && mkdir -p profiles/bench/regret && { git fetch -q origin && git checkout -q --detach origin/master && cmake -S . -B build-regret -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON && cmake --build build-regret -j8 --target ninferno-serve ninferno_linear_generic_test ninferno_route_classes_test && tools/bench/regret_job.sh build-regret; } >> profiles/bench/regret/cron.log 2>&1
+  0 3 * * 0  cd "$HOME/ninferno" && mkdir -p profiles/bench/regret && { git fetch -q origin && git checkout -q --detach origin/master && cmake -S . -B build-regret -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_CUDA_ARCHITECTURES=ARCH && cmake --build build-regret -j8 --target ninferno-serve ninferno_linear_generic_test ninferno_route_classes_test && tools/bench/regret_job.sh build-regret; } >> profiles/bench/regret/cron.log 2>&1
   ```
 
-  The job reads the previous report at HEAD, so after a run is committed, the next one compares
-  against it.
+  `ARCH` is the stand's own build set: 70, 75, 86, 89 or 120a (the card's compute capability; the
+  job refuses a build of another, whose selector would read that build's features). The job reads
+  the previous report at HEAD, so after a run is committed, the next one compares against it.
 
   On a stand whose GPU work goes through a queue, put the same command into the queue at that
   hour instead.

@@ -90,6 +90,16 @@ cache() { sed -n "s/^$1:[A-Z]*=//p" "$BUILD/CMakeCache.txt"; }
 SOURCE=$(cache CMAKE_HOME_DIRECTORY)
 [ -n "$SOURCE" ] && [ "$(cd "$SOURCE" 2>/dev/null && pwd -P)" = "$(cd "$ROOT" && pwd -P)" ] ||
   die "$BUILD was configured from '${SOURCE:-?}', not from this checkout ($ROOT)"
+# The build's architecture must be the card's own build set: an older minor's SASS runs forward
+# (an sm_86 build on an Ada card), but the selector then reads the build's features, not the
+# card's, and the report would file that selector under this board.
+WANT_ARCH=$("$PY" -c 'import json, sys
+cc = next(int(r["cc"]) for r in json.load(open(sys.argv[1]))["gpus"] if int(r["id"], 16) == int(sys.argv[2], 16))
+print(f"{cc}a" if cc >= 90 else cc)' "$ROOT/src/core/data/gpu_facts.json" "$PCI") ||
+  die "no compute capability for $PCI in gpu_facts.json"
+BUILD_ARCH=$(cache CMAKE_CUDA_ARCHITECTURES | sed -E 's/-(real|virtual)//g')
+[ "$BUILD_ARCH" = "$WANT_ARCH" ] ||
+  die "$BUILD is built for CUDA architectures '${BUILD_ARCH:-?}', not this card's $WANT_ARCH: configure it with -DCMAKE_CUDA_ARCHITECTURES=$WANT_ARCH"
 TARGETS=(ninferno-serve ninferno_linear_generic_test ninferno_route_classes_test)
 [ -f "$BUILD/build.ninja" ] || die "$BUILD is not a Ninja build: its freshness cannot be checked"
 NINJA=$(cache CMAKE_MAKE_PROGRAM)   # the ninja the build was configured with, not PATH's
