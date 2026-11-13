@@ -491,7 +491,9 @@ int run(const Options& o) {
     // with the completeness terms on (total x a16 + the terms).
     const auto completeness_columns = [&](const auto& t) {
         std::printf(" | %8.2f%s %9.2f\n", us(t.launch),
-                    t.launch_bound ? "?" : t.launch_extrapolated ? "*" : " ",
+                    t.launch_bound          ? "?"
+                    : t.launch_extrapolated ? "*"
+                                            : " ",
                     us(offered(t, a16, true)));
     };
     const auto wants = [&](Route r) { return !one || *o.only == r; };

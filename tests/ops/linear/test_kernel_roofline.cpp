@@ -1312,26 +1312,27 @@ void check_launch_rule() {
             if (!row.launch || !row.launch->node_ns) continue;
             const auto ramp = ramp_seconds(row.major, row.minor, ctas);
             if (ramp && *row.launch->node_ns * 1e-9 + ramp->seconds > slowest->seconds) {
-                fail(row.arch + ": a measured launch above the slowest at " +
-                     std::to_string(ctas) + " CTAs");
+                fail(row.arch + ": a measured launch above the slowest at " + std::to_string(ctas) +
+                     " CTAs");
             }
         }
         for (const auto& board : g::kFactsBoards) {
             const DeviceClass d      = g::board_device_class(board);
             const kr::ChipFacts chip = kr::chip_facts_of(d);
             const std::string at     = std::string(board.name) + " " + std::to_string(ctas);
-            const auto plain = kr::launch_term(chip, ctas, LaunchKind::GraphNode);
-            const auto dep   = kr::launch_term(chip, ctas, LaunchKind::GraphNodePdl);
-            const auto node  = launch_seconds(d.major, d.minor, LaunchKind::GraphNode);
-            const auto pnode = launch_seconds(d.major, d.minor, LaunchKind::GraphNodePdl);
-            const auto ramp  = ramp_seconds(d.major, d.minor, ctas);
+            const auto plain         = kr::launch_term(chip, ctas, LaunchKind::GraphNode);
+            const auto dep           = kr::launch_term(chip, ctas, LaunchKind::GraphNodePdl);
+            const auto node          = launch_seconds(d.major, d.minor, LaunchKind::GraphNode);
+            const auto pnode         = launch_seconds(d.major, d.minor, LaunchKind::GraphNodePdl);
+            const auto ramp          = ramp_seconds(d.major, d.minor, ctas);
             ++checked;
             if (node && ramp) {
                 if (!plain.known || plain.bound || plain.seconds != *node + ramp->seconds) {
                     fail(at + ": a known plain launch is not node + ramp");
                 }
                 const double want = (pnode ? *pnode : *node) + ramp->seconds;
-                if (!dep.known || dep.seconds != want) fail(at + ": the PDL launch is not its node");
+                if (!dep.known || dep.seconds != want)
+                    fail(at + ": the PDL launch is not its node");
                 if (pnode) {
                     ++pdl;
                     if (!(dep.seconds < plain.seconds)) fail(at + ": a PDL node not below plain");

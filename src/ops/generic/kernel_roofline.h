@@ -180,8 +180,8 @@ struct Completeness {
 // saying so); nullopt where either fact is unknown. GraphNodePdl reads the PDL node where the
 // architecture has one (sm_90 on, and measured); else the plain node, which the probe measures
 // slower (120a: 294 ns against 392) and which the engine launches below sm_90.
-[[nodiscard]] inline std::optional<Ramp> launch_seconds_of(const ChipFacts& chip, double ctas,
-                                                           LaunchKind kind = LaunchKind::GraphNode) {
+[[nodiscard]] inline std::optional<Ramp>
+launch_seconds_of(const ChipFacts& chip, double ctas, LaunchKind kind = LaunchKind::GraphNode) {
     if (!chip.launch_node_s || !chip.launch_ramp) return std::nullopt;
     const std::optional<Ramp> ramp = ramp_from(*chip.launch_ramp, ctas);
     if (!ramp) return std::nullopt;
@@ -229,8 +229,8 @@ struct LaunchTerm {
 // The completeness terms of a call whose kernel launches `ctas` CTAs as `kind`, with `quant` the
 // quantizer's seconds (0 for an A16 tile).
 [[nodiscard]] inline Completeness completeness(const ChipFacts& chip, const Call& call, double ctas,
-                                               double quant      = 0,
-                                               LaunchKind kind   = LaunchKind::GraphNode) {
+                                               double quant    = 0,
+                                               LaunchKind kind = LaunchKind::GraphNode) {
     Completeness c;
     c.output_bytes          = call.n * call.tokens * 2.0;
     c.output                = c.output_bytes / chip.dram_bytes_per_s;
