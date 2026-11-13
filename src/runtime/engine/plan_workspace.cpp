@@ -1,9 +1,15 @@
 #include "runtime/engine/plan_workspace.h"
 
 #include "artifact/formats.h"
+#include "artifact/reader.h"
+#include "artifact/schema.h"
+#include "core/device_class.h"
 #include "core/weight_view.h"
 #include "models/gemma4/config.h"
 #include "models/gemma4/workspace.h"
+#include "models/load_options.h"
+#include "models/qwen3_5/load.h"
+#include "models/qwen3_5/program/planning/described_start.h"
 #include "models/qwen3_5/program/planning/sequence_bytes.h"
 #include "models/qwen3_5/program/planning/sequence_plan.h"
 #include "ninferno/ops/gemma4_attention.h"
@@ -13,12 +19,14 @@
 #include "ninferno/ops/prefill_routes.h"
 #include "ninferno/ops/sampling.h"
 #include "ninferno/ops/speculative_round.h"
+#include "ops/route_pins.h"
 #include "runtime/engine/plan_dry_run.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -318,6 +326,100 @@ PlanWorkspaceAnswer gemma4_workspace(const PlanModelFacts& m, const PlanRung& ru
     return {general, sized};
 }
 
+// A Qwen 3.5 artifact's start described once for a directory and the load options (a plan asks
+// at every rung of every ladder; the forms of a 35B-A3B bind some 30,000 matrices): its forms, or
+// why they cannot be prepared without the payload.
+// Keyed by everything the forms read beside the directory: the load options, the tokenizer's
+// public ids and the process's --moe-path pin (Prepare's MoE choice, ops::moe_takes_fused).
+struct DescribedEntry {
+    std::weak_ptr<const artifact::Directory> directory; // expired: the key's address may be reused
+    const artifact::Directory* key = nullptr;
+    models::LoadOptions options;
+    std::uint32_t public_tokens = 0;
+    MoePath moe                 = MoePath::Auto;
+    std::shared_ptr<const detail::DescribedStart> start;
+    std::string why;
+};
+
+std::shared_ptr<const detail::DescribedStart>
+described_start(const std::shared_ptr<const artifact::Directory>& directory,
+                const models::LoadOptions& options, std::uint32_t public_tokens, std::string& why) {
+    static std::mutex mutex;
+    static std::vector<DescribedEntry> cache;
+    const std::lock_guard lock(mutex);
+    const MoePath moe = ops::route_pins().moe;
+    std::erase_if(cache, [](const DescribedEntry& e) { return e.directory.expired(); });
+    for (const DescribedEntry& e : cache) {
+        if (e.key == directory.get() && e.options == options && e.public_tokens == public_tokens &&
+            e.moe == moe) {
+            why = e.why;
+            return e.start;
+        }
+    }
+    DescribedEntry entry{directory, directory.get(), options, public_tokens, moe, nullptr, {}};
+    try {
+        entry.start = detail::describe_start(*directory, options, public_tokens);
+    } catch (const std::exception& error) {
+        entry.why =
+            std::string("the start's forms need what the directory does not hold: ") + error.what();
+    }
+    if (cache.size() >= 4) { cache.erase(cache.begin()); }
+    cache.push_back(entry);
+    why = entry.why;
+    return entry.start;
+}
+
+// Qwen 3.5's arena (models/qwen3_5/program/planning/startup.cpp qwen3_5_workspace_plan) by the
+// start's own three steps over the artifact's directory (described_start.h): the weights bound as
+// plan_load binds them, the forms prepare_parameters gives them, the planner the start runs over
+// them, for the rung's sequence plan and the tokenizer's public ids (the sampler's and the accept
+// step's domain, and the bound an indexed proposal head is checked against: a start reads them
+// from its resources, which may name fewer ids than the embedding has rows). Equal to the start's
+// for the same device class (the capacity queries read device_class(): a --plan-device what-if
+// sizes the routes of the board this thread runs under, ScopedDeviceClass).
+// Declines, and the formula stands, where the facts are not an artifact's (a config.json, a GGUF
+// header, a hub listing: which form the converter gives each matrix, its packing and its formats,
+// is not in them), where the tokenizer was not read (a directory without its file), on the
+// approximate path (no sequence plan is laid out), under a --moe-path pin (the plan sizes the
+// automatic path; a pinned start may take the other MoE), where the start would refuse the
+// weights or a binding needs the payload (a Use's activation divisor: NVFP4 A4 routes), and
+// where no device class is known.
+PlanWorkspaceAnswer qwen3_5_workspace(const PlanModelFacts& m, const EngineOptions& options,
+                                      const detail::SequencePlanImpl* plan) {
+    if (m.model_type != "qwen3_5_text" && m.model_type != "qwen3_5_moe_text") { return {}; }
+    if (!m.artifact_directory) {
+        return {std::nullopt,
+                "the start's forms are a converted artifact's bindings, not in these facts"};
+    }
+    if (m.tokenizer_tokens == 0) {
+        return {std::nullopt, "the tokenizer's public tokens were not read (the artifact's "
+                              "resources)"};
+    }
+    if (plan == nullptr) { return {std::nullopt, "no sequence plan laid out for the rung"}; }
+    if (ops::route_pins().moe != MoePath::Auto) {
+        return {std::nullopt, "--moe-path is pinned: the plan sizes the automatic MoE path"};
+    }
+    std::string why;
+    const auto start = described_start(m.artifact_directory, models::load_options(options),
+                                       m.tokenizer_tokens, why);
+    if (!start) { return {std::nullopt, why}; }
+    // The start plans with its device's multiprocessors (make_sequence_planner_impl); the dry
+    // run's plan carries none.
+    detail::SequencePlanImpl planned = *plan;
+    if (planned.multiprocessor_count <= 0) {
+        try {
+            planned.multiprocessor_count = device_class().sms;
+        } catch (const std::exception&) {}
+        if (planned.multiprocessor_count <= 0) {
+            return {std::nullopt, "no device class to size the attention splits for"};
+        }
+    }
+    // --activations exact: the invariant route profile, as Qwen35Execution::workspace_plan sizes.
+    const ops::ScopedInvariantRoutes routes(options.activations == ActivationMode::Exact);
+    const detail::WorkspacePlan arenas = start->workspace_plan(planned);
+    return {arenas.capacity, "the start's planner over the artifact's bindings"};
+}
+
 } // namespace
 
 void register_plan_workspace_queries() {
@@ -325,12 +427,22 @@ void register_plan_workspace_queries() {
                                 const EngineOptions& options, std::uint32_t concurrency,
                                 const detail::SequencePlanImpl* plan) -> PlanWorkspaceAnswer {
         try {
-            return gemma4_workspace(model, rung, options, concurrency, plan);
+            if (model.model_type == "gemma4_text") {
+                return gemma4_workspace(model, rung, options, concurrency, plan);
+            }
+            return qwen3_5_workspace(model, options, plan);
         } catch (const std::exception& error) {
             // A geometry an Op's query refuses: the formula stands, as for a family without one,
             // and the plan says why.
             return {std::nullopt, std::string("an Op's capacity query refused the facts: ") + error.what()};
         }
+    });
+    // A Qwen 3.5 artifact's public tokens, from its tokenizer resources (load.h): what its start
+    // samples over and checks an indexed proposal head against.
+    set_plan_tokenizer_query([](const artifact::Reader& reader) -> std::optional<std::uint32_t> {
+        try {
+            return models::qwen3_5::public_token_count(reader);
+        } catch (const std::exception&) { return std::nullopt; }
     });
 }
 
