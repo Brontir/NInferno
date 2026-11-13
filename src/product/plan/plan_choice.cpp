@@ -204,10 +204,10 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
         // costs more than one request's, R_1 / R_C of it, where the round cost prices it. A
         // DFlash bound's draft width (LoadBound::width) is not read: the facts price the drafter's
         // whole block (load_gain refuses it past the priced rows), the widest it can run.
-        // The joint verify is priced at C = 2..kPricedVerifyRows streams (Profile::joint_scale:
+        // The joint verify is priced at C = 2..kPricedStreams streams (Profile::joint_scale:
         // a round of C x (k + 1) rows up to kVerifyColumnRows, at its tiles' rows). A gain
         // nobody measured (option.measured false) is not priced: the estimate does not count it.
-        for (std::int32_t streams = 2; option.measured && streams <= spec::kPricedVerifyRows;
+        for (std::int32_t streams = 2; option.measured && streams <= spec::kPricedStreams;
              ++streams) {
             if (option.plain_from_streams != 0 &&
                 static_cast<std::uint32_t>(streams) >= option.plain_from_streams) {

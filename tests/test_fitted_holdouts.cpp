@@ -304,6 +304,7 @@ const std::vector<Spec>& specs() {
         {fit::kRoundCost,
          Mode::Definitions,
          {"kPricedVerifyRows",   // a bound, not a fit
+          "kPricedStreams",      // the same bound, as stream counts
           "kVerifyTokenTile",    // a chip fact: mma.sync's n of 8 tokens
           "kVerifyColumnRows"}}, // counted: the register MMA's widest token column, 8 tiles
         {fit::kMoeShare, Mode::Definitions, {}},

@@ -5,6 +5,7 @@
 // these cards' rounds); the hold-out evidence is fit_eta.py's cross-fit (DECISIONS 53). No GPU.
 
 #include "artifact/schema.h"
+#include "core/machine_facts.h"
 #include "spec/manifest.h"
 #include "spec/pairs.h"
 #include "spec/registry.h"
@@ -257,12 +258,13 @@ int main() {
         for (const auto& g : golden) {
             const auto& p     = full_head_pair(g.repo, g.gpu);
             const auto config = sp::SpecConfig::parse(g.config);
-            const auto one    = sp::load_gain(*p.round_facts, config, k4070, 2.0, 1);
+            const auto one = sp::load_gain(*p.round_facts, config, k4070, 2.0, 1, {}, 0, {}, true);
             expect(one && near(*one, 2.0, 1e-12),
                    std::string("one stream's load gain is its own, ") + g.repo + " " + g.config);
             const bool dense = p.round_facts->target.experts == 0;
             for (std::int32_t streams = 2; streams <= 8; ++streams) {
-                const auto gain = sp::load_gain(*p.round_facts, config, k4070, 2.0, streams);
+                const auto gain =
+                    sp::load_gain(*p.round_facts, config, k4070, 2.0, streams, {}, 0, {}, true);
                 const std::int32_t draft_rows =
                     p.round_facts->drafters.at(std::string(sp::mode_name(config.mode))).rows;
                 const bool priced =
@@ -284,13 +286,55 @@ int main() {
         {
             const auto& facts = *pair_of(kQ9, "ad104:60sm").round_facts;
             const auto mtp    = sp::SpecConfig::parse("mtp:3");
-            expect(sp::load_gain(facts, mtp, k4070, 2.0, 2).has_value() &&
-                       sp::load_gain(facts, mtp, k4070, 2.0, 3).has_value() &&
-                       sp::load_gain(facts, sp::SpecConfig::parse("mtp:7"), k4070, 2.0, 8) &&
-                       !sp::load_gain(facts, sp::SpecConfig::parse("mtp:8"), k4070, 2.0, 8),
+            const auto gain   = [&](const char* label, std::int32_t streams, bool tiles) {
+                return sp::load_gain(facts, sp::SpecConfig::parse(label), k4070, 2.0, streams, {},
+                                       0, {}, tiles);
+            };
+            expect(gain("mtp:3", 2, true) && gain("mtp:3", 3, true) && gain("mtp:7", 8, true) &&
+                       !gain("mtp:8", 8, true),
                    "mtp:3 priced at two and three streams; a verify of 64 rows priced, of 72 not");
-            expect(!sp::load_gain(facts, sp::SpecConfig::parse("dflash:3"), k4070, 2.0, 2),
+            expect(!gain("dflash:3", 2, true),
                    "dflash:3 not priced at two streams (its block of 16 rows each)");
+            // Without mma.sync tiles (Volta's tiled route, Pascal's none) nothing past 8 rows.
+            expect(gain("mtp:3", 2, false) && !gain("mtp:3", 3, false) && !gain("mtp:7", 8, false),
+                   "without mma.sync tiles a joint verify past 8 rows is not priced");
+        }
+        // Which cards' verify GEMMs run mma.sync's tiles (#795): sm_75 on. The Quadro GV100
+        // (Volta: its verify of 17 tokens or more takes the tiled route's 128-token blocks) does
+        // not, so a pair it measured is never priced past 8 rows (Volta has no small-T eta either:
+        // no joint price at all); a Pascal board would not (no MMA): the rule's cut, by compute
+        // capability (no Pascal board is in the facts table).
+        {
+            expect(!sp::card_rates_of_board(0x1DBA).mma_tiles &&
+                       sp::card_rates_of_board(0x1E07).mma_tiles &&
+                       sp::card_rates_of_board(0x2684).mma_tiles &&
+                       sp::card_rates_of_board(0x2C05).mma_tiles,
+                   "mma.sync tiles: not the GV100; the RTX 2080 Ti, 4090 and 5070 Ti");
+            expect(!sp::card_rates(61, 28, 1582000, 484).mma_tiles &&
+                       !sp::card_rates(70, 80, 1627000, 870).mma_tiles &&
+                       sp::card_rates(75, 68, 1545000, 616).mma_tiles,
+                   "mma.sync tiles from sm_75: not Pascal, not Volta");
+            int volta = 0;
+            for (const auto& p : sp::Registry::builtin().pairs()) {
+                if (p.lab_board != 0x1DBA || !p.round_facts) { continue; }
+                ++volta;
+                const sp::Profile home = sp::profile_for_target({&p}, "sm70");
+                for (const auto& [label, by_streams] : home.joint_scale) {
+                    const auto at = sp::SpecConfig::parse(label);
+                    for (const auto& [streams, scale] : by_streams) {
+                        expect(streams * (at.k + 1) <= sp::kPricedVerifyRows,
+                               "a GV100 pair's joint verify priced within 8 rows only: " + label);
+                    }
+                }
+                for (const auto& [mode, d] : p.round_facts->drafters) {
+                    const auto config = sp::SpecConfig::parse(mode + ":3");
+                    expect(!sp::load_gain(*p.round_facts, config,
+                                          sp::card_rates_of_board(0x2684).kappa(), 2.0, 3, {}, 0,
+                                          {}, sp::card_rates_of_board(0x1DBA).mma_tiles),
+                           "a GV100 pair at the GV100's tiles: 12 rows not priced");
+                }
+            }
+            expect(volta > 0, "the registry has GV100 pairs");
         }
         // The joint verify past kPricedVerifyRows (#795): its operations at its tiles' rows (one
         // column of 8-token MMA tiles, a power of two of them), its bytes once; within the measured
@@ -324,7 +368,9 @@ int main() {
                                 sp::round_cost(*p.round_facts, config, k4070, {}, 0, {}, streams);
                             const auto b = sp::joint_round_cost(*p.round_facts, config, k4070, {},
                                                                 0, {}, streams);
-                            expect(a && b && *a == *b,
+                            const auto c = sp::joint_round_cost(*p.round_facts, config, k4070, {},
+                                                                0, {}, streams, true);
+                            expect(a && b && c && *a == *b && *a == *c,
                                    "within the measured rows the joint round is round_cost's: " +
                                        p.target_repo + " " + config.label());
                         }
@@ -343,23 +389,34 @@ int main() {
             const double draft   = pass(mtp.pass, 3) + pass(*mtp.head, 3);
             const double by_hand = (pass(facts.target, 16) + 3 * draft) / pass(facts.target, 3);
             const auto config    = sp::SpecConfig::parse("mtp:3");
-            const auto joint     = sp::joint_round_cost(facts, config, k4090, {}, 0, {}, 3);
+            const auto joint     = sp::joint_round_cost(facts, config, k4090, {}, 0, {}, 3, true);
             expect(joint && near(*joint, by_hand, 1e-12),
                    "mtp:3 at three streams: 12 verify rows priced at 16");
             const auto counted = sp::round_cost(facts, config, k4090, {}, 0, {}, 3);
             expect(counted && *joint > *counted, "the tiles' rows price the round dearer");
-            expect(
-                !sp::joint_round_cost(facts, sp::SpecConfig::parse("mtp:7"), k4090, {}, 0, {}, 9),
-                "a joint verify past kVerifyColumnRows rows (72) is not priced");
+            expect(!sp::joint_round_cost(facts, config, k4090, {}, 0, {}, 3),
+                   "without mma.sync tiles (the default) 12 rows are not priced");
+            expect(!sp::joint_round_cost(facts, sp::SpecConfig::parse("mtp:7"), k4090, {}, 0, {}, 9,
+                                         true),
+                   "a joint verify past kVerifyColumnRows rows (72) is not priced");
             // The RTX 4090's R_1 / R_C of the 27B's mtp:3 (Qwen3.8 27B, #795): at 4 streams 16 rows
             // and at 8 streams 32, whole tiles both. Printed for the comparison with the lab's
             // measured gains a request (x1.816 at C = 4, x1.502 at C = 8; the one-request gain the
             // product prices them from is test_plan_drafter_kinds's).
+            // Pinned: the values written down from the facts before the consumers read them.
+            const std::map<std::int32_t, double> written{
+                {2, 0.9395}, {3, 0.8240}, {4, 0.8463}, {5, 0.6730}, {8, 0.7253}};
             for (std::int32_t streams = 2; streams <= 8; ++streams) {
-                const auto scale = sp::load_gain(facts, config, k4090, 1.0, streams);
+                const auto scale =
+                    sp::load_gain(facts, config, k4090, 1.0, streams, {}, 0, {}, true);
                 expect(scale && *scale > 0 && *scale < 1,
                        "the 27B's mtp:3 priced on the RTX 4090 at " + std::to_string(streams) +
                            " streams");
+                if (const auto w = written.find(streams); w != written.end()) {
+                    expect(scale && std::abs(*scale - w->second) < 5e-5,
+                           "the 27B's mtp:3 R_1 / R_C on the RTX 4090 at " +
+                               std::to_string(streams) + " streams as written down");
+                }
                 std::printf("Qwen3.8 27B mtp:3 RTX 4090 C=%d (%d verify rows, %d of tiles): "
                             "R_1 / R_C %.4f\n",
                             streams, streams * 4, sp::verify_tile_rows(streams * 4),
@@ -439,7 +496,8 @@ int main() {
         expect(!home.joint_scale.empty(), "a home profile prices its joint verify");
         const auto direct_at = [&](const sp::SpecConfig& at, std::int32_t streams) {
             return sp::load_gain(*lab.round_facts, at, kappa, 1.0, streams,
-                                 at.proposal_head ? lab.tune.proposal_rows : sp::ProposalRows{});
+                                 at.proposal_head ? lab.tune.proposal_rows : sp::ProposalRows{}, 0,
+                                 {}, true);
         };
         // Every priced entry is load_gain's.
         int compared = 0;
@@ -462,7 +520,7 @@ int main() {
             sp::SpecConfig at = chosen;
             at.k              = k;
             const auto found  = home.joint_scale.find(at.label());
-            for (std::int32_t streams = 2; streams <= sp::kPricedVerifyRows; ++streams) {
+            for (std::int32_t streams = 2; streams <= sp::kPricedStreams; ++streams) {
                 const bool listed =
                     found != home.joint_scale.end() && found->second.contains(streams);
                 expect(listed == direct_at(at, streams).has_value(),
@@ -471,11 +529,11 @@ int main() {
             }
         }
         expect(compared > 0, "the joint scale was compared with load_gain");
-        // The plain step's price at 2..kPricedVerifyRows streams (#777) on the same rates: the
+        // The plain step's price at 2..kPricedStreams streams (#777) on the same rates: the
         // weights read once, so above one stream's and below C of them, never falling with C;
         // without a launch time on the board, plain_step_cost's ratio itself.
         const sp::CardRates lab_rates = sp::card_rates_of_board(lab.lab_board);
-        expect(home.plain_step_scale.size() == std::size_t(sp::kPricedVerifyRows - 1),
+        expect(home.plain_step_scale.size() == std::size_t(sp::kPricedStreams - 1),
                "the plain step priced at every count the joint verify may be");
         double previous = 1.0;
         for (const auto& [streams, scale] : home.plain_step_scale) {
@@ -561,7 +619,8 @@ int main() {
                "the median keeps the cards' choice and prices its joint verify");
         const auto at_kappa = [&](const sp::SpecConfig& at, std::int32_t streams, double kappa) {
             return sp::load_gain(*own.round_facts, at, kappa, 1.0, streams,
-                                 at.proposal_head ? own.tune.proposal_rows : sp::ProposalRows{});
+                                 at.proposal_head ? own.tune.proposal_rows : sp::ProposalRows{}, 0,
+                                 {}, true);
         };
         int compared = 0, apart = 0;
         for (const auto& [label, by_streams] : asked.joint_scale) {
@@ -756,10 +815,10 @@ int main() {
                 const sp::ProposalRows rows =
                     chosen.proposal_head ? lab.tune.proposal_rows : sp::ProposalRows{};
                 const sp::RoundLaunches counted{.round = 500, .step = 311};
-                const auto with = sp::load_gain(*lab.round_facts, chosen, rates.kappa(), 1.0, 2,
-                                                rows, rates.launch_bytes(), counted);
-                const auto without =
-                    sp::load_gain(*lab.round_facts, chosen, rates.kappa(), 1.0, 2, rows);
+                const auto with    = sp::load_gain(*lab.round_facts, chosen, rates.kappa(), 1.0, 2,
+                                                   rows, rates.launch_bytes(), counted, true);
+                const auto without = sp::load_gain(*lab.round_facts, chosen, rates.kappa(), 1.0, 2,
+                                                   rows, 0, {}, true);
                 const double scale = found->second.at(2);
                 expect(with && without && near(scale, *with, 1e-12),
                        "the joint scale carries the lab's kernel launches");
@@ -922,7 +981,7 @@ int main() {
     // each choice's) that gains most over plain decode, its one-request gain times R_1 / R_C, plain
     // where none gains, the shallowest of the choices' (one table serves them all), recorded where
     // the depth falls (a table is clipped to its running minimum). From theory, not read back from
-    // the product's tables: C x (k + 1) verify rows are priced at C = 2..kPricedVerifyRows (8)
+    // the product's tables: C x (k + 1) verify rows are priced at C = 2..kPricedStreams (8)
     // streams up to kVerifyColumnRows (64), past 8 rows at their tiles' rows (#795); a DFlash
     // choice's block (16 rows) is not priced at 2 streams at all, which holds a profile with one at
     // plain from 2. Gemma's 2:3,5:2,9:0 is that computed result: a depth-3 round verifies 8, 12 and
@@ -969,8 +1028,9 @@ int main() {
                 double previous = 0;
                 for (std::size_t i = 0; i < 2; ++i) {
                     const sp::GpuKey& rtx = i == 0 ? small : large;
-                    const auto ratio      = sp::load_gain(*lab.round_facts, config,
-                                                          sp::card_rates(rtx).kappa(), 1.0, 2, rows);
+                    const auto ratio =
+                        sp::load_gain(*lab.round_facts, config, sp::card_rates(rtx).kappa(), 1.0, 2,
+                                      rows, 0, {}, true);
                     const auto found      = by_card[i].joint_scale.find(config.label());
                     // The plumbing (this card's rates, the head rows, the depth's table), not
                     // load_gain's math, which the checks above pin.
@@ -1001,7 +1061,7 @@ int main() {
             if (config.mode != sp::Mode::Mtp || !by_streams.contains(2)) { continue; }
             const auto at_head =
                 sp::load_gain(*qwen.round_facts, config, sp::card_rates(small).kappa(), 1.0, 2,
-                              *with_head.proposal_rows);
+                              *with_head.proposal_rows, 0, {}, true);
             expect(at_head && std::abs(by_streams.at(2) - *at_head) < 1e-9,
                    "R_1 / R_2 of " + label + " with the asking card's head rows");
             const auto other = unheaded.joint_scale.find(label);
@@ -1524,6 +1584,47 @@ int main() {
             }
         }
         expect(scanned > 0, "the registry scan covered its targets");
+    }
+    // What #795 moves (printed, not held): every registry target priced for every card of the
+    // facts table whose rates the round cost knows, its facts load table now against the table of
+    // the joint prices within kPricedVerifyRows rows only (master's: those are equal to the bit,
+    // and master priced no others). Only the tables that move are printed, then the counts.
+    {
+        const auto& registry = sp::Registry::builtin();
+        std::set<std::string> targets;
+        for (const auto& p : registry.pairs()) { targets.insert(p.target); }
+        int priced = 0, moved = 0;
+        for (const auto& row : ninferno::gpu_facts_table()) {
+            if (!row.target || !sp::card_rates_of_board(row.pci_device_id).known()) { continue; }
+            const std::string id         = row.chip + ":" + std::to_string(row.sms) + "sm";
+            const int cc                 = row.major * 10 + row.minor;
+            const std::string generation = "sm" + std::to_string(cc);
+            const sp::GpuKey gpu = card(id.c_str(), row.chip.c_str(), generation.c_str(), cc,
+                                        row.sms, row.boost_mhz, row.bus_bits / 8.0 * row.gbps);
+            for (const std::string& target : targets) {
+                const auto group = registry.measured(target);
+                if (group.empty()) { continue; }
+                const sp::Profile p = sp::profile_for_target(group, generation, {}, &gpu);
+                if (p.load_basis != "facts") { continue; }
+                ++priced;
+                sp::Profile before = p;
+                for (auto& [label, by_streams] : before.joint_scale) {
+                    const auto at = sp::SpecConfig::parse(label);
+                    std::erase_if(by_streams, [&](const auto& entry) {
+                        return entry.first * (at.k + 1) > sp::kPricedVerifyRows;
+                    });
+                }
+                const std::string now = sp::load_label(sp::facts_load(p));
+                const std::string was = sp::load_label(sp::facts_load(before));
+                if (now != was) {
+                    ++moved;
+                    std::printf("load table moved: %s on %s (%s): %s -> %s\n",
+                                group.front()->target_repo.c_str(), row.name.c_str(), id.c_str(),
+                                was.c_str(), now.c_str());
+                }
+            }
+        }
+        std::printf("load tables: %d facts-priced (target, card), %d moved\n", priced, moved);
     }
     if (failures == 0) { std::cout << "round cost: all passed\n"; }
     return failures == 0 ? 0 : 1;

@@ -251,7 +251,7 @@ void price_by_facts(Profile& p, const RoundCostEstimate& estimate) {
 std::map<std::string, std::vector<RoundLaunches>> round_launches(const Profile& tune);
 
 // The price of the requests' joint verify (#303), on `lab` rates for a profile at home: for every
-// configuration a choice can name and every depth up to it, R_1 / R_C at C = 2..kPricedVerifyRows
+// configuration a choice can name and every depth up to it, R_1 / R_C at C = 2..kPricedStreams
 // streams (a plain step of C rows within the measured rows) where the round cost prices it
 // (load_gain at a gain of 1: a verify of up to kVerifyColumnRows rows at its tiles' rows,
 // joint_round_cost), on the lab board's rates and
@@ -293,7 +293,7 @@ void price_joint(Profile& p, const MeasuredPair& pair, const CardRates& lab,
     const double step_launch =
         steps > 0 && lab.launch_bytes() > 0 ? lab.launch_bytes() * step_kernels / steps : 0.0;
     const double one_step = plain_step_cost(*pair.round_facts, lab.kappa(), 1) + step_launch;
-    for (std::int32_t streams = 2; one_step > 0 && streams <= kPricedVerifyRows; ++streams) {
+    for (std::int32_t streams = 2; one_step > 0 && streams <= kPricedStreams; ++streams) {
         p.plain_step_scale[streams] =
             (plain_step_cost(*pair.round_facts, lab.kappa(), streams) + step_launch) / one_step;
     }
@@ -337,7 +337,7 @@ void price_joint(Profile& p, const MeasuredPair& pair, const CardRates& lab,
                     ? counted->second
                     : std::vector<RoundLaunches>{RoundLaunches{}};
             auto& by_streams = p.joint_scale[config.label()];
-            for (std::int32_t streams = 2; streams <= kPricedVerifyRows; ++streams) {
+            for (std::int32_t streams = 2; streams <= kPricedStreams; ++streams) {
                 double one   = 0;
                 double joint = 0;
                 bool priced  = true;
@@ -345,14 +345,14 @@ void price_joint(Profile& p, const MeasuredPair& pair, const CardRates& lab,
                     // load_gain holds the bounds of a priced joint round (the verify's rows, the
                     // drafter's pass); where it prices one, both rounds below are priced.
                     if (!load_gain(*pair.round_facts, config, lab.kappa(), 1.0, streams, rows,
-                                   lab.launch_bytes(), section)) {
+                                   lab.launch_bytes(), section, lab.mma_tiles)) {
                         priced = false;
                         break;
                     }
                     one += *joint_round_cost(*pair.round_facts, config, lab.kappa(), rows,
-                                             lab.launch_bytes(), section, 1);
+                                             lab.launch_bytes(), section, 1, lab.mma_tiles);
                     joint += *joint_round_cost(*pair.round_facts, config, lab.kappa(), rows,
-                                               lab.launch_bytes(), section, streams);
+                                               lab.launch_bytes(), section, streams, lab.mma_tiles);
                 }
                 if (priced) { by_streams[streams] = one / joint; }
             }
@@ -908,7 +908,7 @@ std::vector<LoadBound> clipped_load(const std::vector<std::int32_t>& depths) {
 // clipped_load), so a depth is run only at counts where it was shown to serve every choice. The
 // cost of that greedy order: a deeper depth that would gain at a higher count is never run there
 // once a shallower one was best at the count before.
-// Past kPricedVerifyRows streams (a plain step of more rows than the rounds were measured at), or
+// Past kPricedStreams streams (a plain step of more rows than the rounds were measured at), or
 // where a depth is not priced (a joint verify past kVerifyColumnRows rows, a DFlash block at two
 // streams or more: load_gain), it is not run; plain decode from the first stream count nothing is
 // priced for. Replaces stand_in_load's ceil(SMs / 10): the compute term of a joint verify
@@ -952,7 +952,7 @@ std::vector<LoadBound> facts_load(const Profile& p) {
     for (const auto& [c, thinking] : choices) { deepest = std::max(deepest, c->config.k); }
     std::vector<std::int32_t> depths; // from 2 streams on, up to the first plain
     std::int32_t previous = deepest;
-    for (std::int32_t streams = 2; streams <= kPricedVerifyRows + 1 && previous > 0; ++streams) {
+    for (std::int32_t streams = 2; streams <= kPricedStreams + 1 && previous > 0; ++streams) {
         std::int32_t depth = 0;
         std::vector<double> served; // the choices' gains at `depth`, ascending (empty: plain)
         for (std::int32_t d = 1; d <= previous; ++d) {

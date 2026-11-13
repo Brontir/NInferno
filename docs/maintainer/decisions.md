@@ -2324,20 +2324,41 @@ operations (53), with its dense operations at the rows its tiles compute
 - Within 8 rows, the rows themselves: the measured range, where `kSmallTEta` counts them. Every
   round of up to 8 verify rows is `round_cost`'s to the bit (`test_spec_round_cost` checks every
   registry pair and depth), so no price, table or golden moves there.
-- Past them, the selector's verify tiles (`heuristic_rmma`, `heuristic_w4a8`): one token column of
-  8-token MMA tiles (`kVerifyTokenTile`, mma.sync's n), a power of two of them. 9-16 rows run the
-  register MMA's two tiles (the DFlash drafter's 16-row block runs that tile inside the fit),
-  17-32 a 32-token column (W4A8 32x128, the register MMA's four tiles, Q4_K's 128x32), 33-64 a
-  64-token one. So 16, 32 or 64 rows of operations, and the weights read once.
-- Past `kVerifyColumnRows` = 64 (the register MMA's widest column, eight tiles) a call's columns
-  read the weights again, which the bytes term does not hold: not priced.
+- Past them, on a card whose verify GEMMs run mma.sync's tiles, every route computes whole 8-token
+  tiles (`kVerifyTokenTile`, mma.sync's n):
+  - At 9-16 tokens the route tables or the register MMA's rules (`heuristic_rmma`: two 8-token
+    tiles in one column, the tile the DFlash drafter's 16-row block runs inside the fit;
+    `mmq_verify_rule` for the codebook formats).
+  - From 17 tokens the route tables and the cost model (`cost_route`). Their picks in the selector
+    goldens are the register MMA's columns of 8 to 32 tokens and ggml's MMQ (a column of a multiple
+    of 8 tokens). Q4_K's 128x32 tile applies only from `kRmmaMidMinTokens` (33).
+  - The price takes 8 x the power of two of tiles that covers the rows: 16, 32 or 64 rows of
+    operations, one column of the register MMA's widest fitting tile, at least what a narrower
+    column or MMQ computes. The weights are priced as read once.
+- Past `kVerifyColumnRows` = 64 (the register MMA's widest column, eight tiles): not priced.
+- **Only on mma.sync cards** (`CardRates::mma_tiles`: sm_75 on, not a board whose mma.sync has no
+  tensor cores). Volta's verify of 17 tokens or more takes the tiled route's 128-token blocks
+  (`volta_tiled_route`; tiled.128x128 in the V100 golden), and Pascal has no MMA. There a joint
+  verify past 8 rows stays unpriced. `load_gain` and `joint_round_cost` take the flag, false by
+  default. Today Volta also has no small-T eta, so its pairs are not priced at any count. The four
+  GV100 registry pairs are checked to stay within 8 rows.
 - A routed expert bank's operations stay counted by rows: the expert kernels' tiles are not the
   verify's.
 
+**Where the law errs** (the selector goldens, RTX 4090, Q4_K 6144x5120). The price reads each
+weight once, but a call of several token columns reads it once a column:
+- small linears (n up to about 2048 rows: K/V, gates) take the register MMA's one 8-token tile at
+  17-96 tokens, ceil(T / 8) columns;
+- under A16 the large linears take 16-token columns from 24 tokens (rmma.m1.n2: two columns at
+  T = 32, three at 48).
+There the operations are priced high (the power of two over the columns' rows) and the bytes low.
+So from 17 rows (C x (k + 1) >= 17: mtp:3 from 5 streams, mtp:4 from 4) the price errs both ways,
+and the bytes' side is not counted.
+
 R_1 and R_C both come from `spec::joint_round_cost`, so their ratio is over one pricing.
 `price_joint`, `facts_load` and the plan's joint scales (`plan_choice`, now up to 8 streams, not
-4) read it. The counts stay C = 2..8 streams (a plain step of up to 8 rows), so a facts table still
-ends at plain decode by 9 streams.
+4) read it. The counts stay C = 2..`kPricedStreams` (8, a plain step of up to 8 rows, the same
+value as `kPricedVerifyRows`), so a facts table still ends at plain decode by 9 streams.
 
 **DFlash's block stays unpriced at 2 streams and more.** Its tiles are those the verify is now
 priced at (32 rows at C = 2: a 32-token column). But its one-stream cost is an excess over
@@ -2345,7 +2366,8 @@ kappa F that does not depend on k (54: a compute-bound q8 block on its own MMA r
 operations at 32 rows would scale a term the round cost does not model.
 
 **No fitted constant.** `kVerifyTokenTile` (8) is the instruction's shape; `kVerifyColumnRows` (64)
-is counted from the schedule table (`generic_schedules.h`, n_tiles 1, 2, 4, 8).
+is counted from the schedule table (`generic_schedules.h`, n_tiles 1, 2, 4, 8); `kPricedStreams`
+names `kPricedVerifyRows` as stream counts.
 
 **Predicted, then measured.** RTX 4090 rates, the 27B's facts (the sibling UD-Q4_K_S pair, RTX
 5070 Ti). R_1 / R_C of mtp:3 was written down from the facts before the consumers changed, and the
@@ -2379,6 +2401,29 @@ reported, not fitted. Candidates, none measured:
 
 Both C = 4 and C = 8 verify whole tiles (16 and 32 rows), so these runs check the bytes + kappa F
 extension past 8 rows, not the padding. The padded counts (3, 5-7 streams) are not measured.
+
+**What moves for users.** Every load table the facts derive for a card other than the lab's can
+now speculate past 2 streams, and at 2 streams up to the deepest depth of 8 rows a stream count
+allows (a depth of 5 at 2 streams verifies 12 rows). Before, every depth ran plain from 3 streams.
+That moves the Engine's depths at 3-8 streams and the plan's gains at those counts (its
+at_concurrency and joint scales). `test_spec_round_cost` prints every move. Over the registry's
+targets and every card of the facts table with round-cost rates (Ada and Blackwell, laptops
+included), 767 of 1991 facts-priced (target, card) tables move, on 19 targets (the MTP ones;
+DFlash keeps plain from 2 streams):
+
+| before | after | (target, card) |
+|---|---|---|
+| 2:3,3:0 | 2:3,5:2,9:0 | 502 |
+| 2:2,3:0 | 2:2,9:0 | 80 |
+| 2:3,3:0 | 2:3,5:2,6:0 | 60 |
+| 2:3,3:0 | 2:5,3:4,4:3,5:2,9:0 | 39 |
+| 2:2,3:0 | 2:2,6:0 | 38 |
+| 2:3,3:0 | 2:3,9:0 | 27 |
+| 2:3,3:0 | 2:5,3:4,5:2,9:0 | 21 |
+
+The two rows that start 2:5 (Gemma 4 26B A4B NVFP4, NVIDIA's on every card and RedHat's on 13,
+and the Gemma 4 12B Q4_K_M, unsloth's on 2 cards and HauhauCS's QAT on 4) speculate deeper at 2
+streams too: a depth of 5 is 12 rows there.
 
 **Goldens.** The selector, MoE plan and choice goldens on the host are unchanged. Two tests pinned
 the old head table and now pin 2:3,5:2,9:0 (`test_spec_round_cost`'s Gemma 4 12B facts table,

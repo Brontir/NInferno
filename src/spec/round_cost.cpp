@@ -112,9 +112,11 @@ PassFacts head_over_rows(const PassFacts& head, std::uint64_t rows) {
     return out;
 }
 
-CardRates rates(int major, int minor, int sms, double clock_hz, double dram_bytes_per_s) {
+CardRates rates(int major, int minor, int sms, double clock_hz, double dram_bytes_per_s,
+                bool mma_slow = false) {
     CardRates out;
     if (major <= 0 || sms <= 0 || clock_hz <= 0 || dram_bytes_per_s <= 0) { return out; }
+    out.mma_tiles             = (major > 7 || (major == 7 && minor >= 5)) && !mma_slow;
     const GenerationRow& row = generation_row(major, minor);
     const double per_sm_clock = row.s8 > 0 ? row.s8 : kDp4aOpsPerSmClock;
     out.dram_bytes_per_s      = dram_bytes_per_s;
@@ -194,7 +196,7 @@ CardRates card_rates_of_board(std::uint32_t pci_device_id) {
     const GpuFactsRow* row = pci_device_id != 0 ? find_gpu_facts(pci_device_id) : nullptr;
     if (row == nullptr) { return {}; }
     return rates(row->major, row->minor, row->sms, row->boost_mhz * 1e6,
-                 row->bus_bits / 8.0 * row->gbps * 1e9);
+                 row->bus_bits / 8.0 * row->gbps * 1e9, row->mma_slow);
 }
 
 namespace {
@@ -244,9 +246,10 @@ std::int32_t verify_tile_rows(std::int32_t rows) noexcept {
 std::optional<double> joint_round_cost(const RoundFacts& facts, const SpecConfig& config,
                                        double kappa, const ProposalRows& head_rows,
                                        double launch_bytes, const RoundLaunches& launches,
-                                       std::int32_t streams) {
-    if (!config.enabled() || streams < 1 ||
-        std::int64_t(streams) * (std::int64_t(config.k) + 1) > kVerifyColumnRows) {
+                                       std::int32_t streams, bool mma_tiles) {
+    const std::int64_t rows = std::int64_t(streams) * (std::int64_t(config.k) + 1);
+    if (!config.enabled() || streams < 1 || rows > kVerifyColumnRows ||
+        (!mma_tiles && rows > kPricedVerifyRows)) {
         return std::nullopt;
     }
     return round_price(facts, config, kappa, head_rows, launch_bytes, launches, streams, true);
@@ -258,7 +261,8 @@ double plain_step_cost(const RoundFacts& facts, double kappa, std::int32_t strea
 
 std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& config, double kappa,
                                 double speedup, std::int32_t streams, const ProposalRows& head_rows,
-                                double launch_bytes, const RoundLaunches& launches) {
+                                double launch_bytes, const RoundLaunches& launches,
+                                bool mma_tiles) {
     if (streams < 1 || speedup <= 0) { return std::nullopt; }
     if (streams == 1) { return speedup; }
     const auto d = facts.drafters.find(mode_name(config.mode));
@@ -266,9 +270,10 @@ std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& confi
         streams * d->second.rows > std::max(kPricedVerifyRows, d->second.rows)) {
         return std::nullopt;
     }
-    const auto one = joint_round_cost(facts, config, kappa, head_rows, launch_bytes, launches, 1);
-    const auto joint =
-        joint_round_cost(facts, config, kappa, head_rows, launch_bytes, launches, streams);
+    const auto one =
+        joint_round_cost(facts, config, kappa, head_rows, launch_bytes, launches, 1, mma_tiles);
+    const auto joint = joint_round_cost(facts, config, kappa, head_rows, launch_bytes, launches,
+                                        streams, mma_tiles);
     if (!one || !joint || *one <= 0 || *joint <= 0) { return std::nullopt; }
     return speedup * *one / *joint;
 }
