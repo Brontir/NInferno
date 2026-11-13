@@ -1067,8 +1067,8 @@ void test_artifact_plan_via_serve() {
         server.wait_until_ready();
         httplib::Client client("127.0.0.1", port);
         auto res = client.Get("/api/plan?gpu=0&par=2&ctx=8192" + extra +
-                              "&artifact=" + httplib::encode_query_param(artifact.string()));
-        std::pair<int, std::string> out{res ? res->status : 0, res ? res->body : ""};
+                              "&artifact=" + httplib::encode_query_component(artifact.string()));
+        std::pair<int, std::string> out{res ? res->status : 0, res ? res->body : std::string()};
         server.stop();
         thread.join();
         return out;
