@@ -494,11 +494,11 @@ described_model(const std::shared_ptr<const artifact::Directory>& directory, Pro
 // class (the capacity queries read device_class()).
 // Declines, and the formula stands, where the facts are not an artifact's, the tokenizer was not
 // read, no sequence plan is laid out, under a --moe-path pin on a model that routes experts, under
-// speculation (the DFlash
-// drafter and the NemotronH MTP head are artifacts of their own, not in these facts), under
-// --activations int8 (the start refuses it), where the tokenizer names more ids than the
-// embedding has rows (the start refuses), where load would refuse the weights or a binding needs
-// the payload, and where no device class is known.
+// speculation (the DFlash drafter and the NemotronH MTP head are artifacts of their own, not in
+// these facts), under an option the start refuses for these families
+// (refuse_qwen_only_options), where the tokenizer names more ids than the embedding has rows (the
+// start refuses), where load would refuse the weights or a binding needs the payload, and where no
+// device class is known.
 PlanWorkspaceAnswer decoder_workspace(const PlanModelFacts& m, const EngineOptions& options,
                                       const detail::SequencePlanImpl* plan) {
     if (!hf_decoder_family(m.model_type)) { return {}; }
@@ -521,8 +521,12 @@ PlanWorkspaceAnswer decoder_workspace(const PlanModelFacts& m, const EngineOptio
         return {std::nullopt, "speculation: the drafter is an artifact of its own, not in these "
                               "facts"};
     }
-    if (options.activations == ActivationMode::Int8) {
-        return {std::nullopt, "--activations int8: the start refuses it for this family"};
+    // The start's own refusals of the Qwen-only options (--rope-yarn-factor, --activations int8,
+    // --state-dtype bf16|f16), with its words (#892).
+    try {
+        refuse_qwen_only_options(options, dense ? "the dense decoder" : "Nemotron-H");
+    } catch (const std::invalid_argument& error) {
+        return {std::nullopt, std::string("the start refuses it: ") + error.what()};
     }
     try {
         if (device_class().sms <= 0) { throw std::runtime_error("no multiprocessors"); }
