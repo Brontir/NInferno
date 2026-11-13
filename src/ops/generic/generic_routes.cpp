@@ -97,12 +97,13 @@ W4a8ScheduleInfo w4a8_schedule_info(int index) {
 
 bool w4a8_fits(int schedule, QType qtype) {
     const auto s = w4a8_schedule_info(schedule);
-    // Two buffers of int8 codes and two floats per 32-value block for block_m + block_n rows, and
-    // a half-min codec's (Q2_K, codec_traits.h) two mins per block and weight row
-    // (W4a8BufferOf::kSmem); the producer ring is sized for 99 KiB.
+    // Two buffers of int8 codes and two floats per 32-value block for block_m + block_n rows
+    // (family_facts.h), and a half-min codec's (Q2_K, codec_traits.h) two mins per block and
+    // weight row (W4a8BufferOf::kSmem); the producer ring is sized for 99 KiB.
     if (s.producers > 0) return kMaxSharedBytesPerBlock >= 99 * 1024;
     const int half_min = codec_traits(qtype).half_min ? s.block_n * 32 : 0;
-    return 2 * ((s.block_m + s.block_n) * (128 + 32) + half_min) <=
+    return kW4a8MmaFacts.stages *
+               ((s.block_m + s.block_n) * kW4a8MmaFacts.stage_row_bytes + half_min) <=
            static_cast<int>(kMaxSharedBytesPerBlock);
 }
 

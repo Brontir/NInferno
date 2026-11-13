@@ -54,10 +54,10 @@ struct W4a8Schedule {
     // One buffer: int8 codes (128 per row) and per 32-value block two floats (scale and min / sum).
     static constexpr int kBufferBytes = (BlockM + BlockN) * (128 + 32);
     static constexpr int kSmemBytes   = 2 * kBufferBytes;
-    // The family's record (family_facts.h), which the price reads.
+    // The family's record (family_facts.h), which the price reads (the buffers the launch takes:
+    // W4a8Buffer::kSmem).
     static_assert(kBlocks * 32 == kW4a8MmaFacts.step_k && kW4a8MmaFacts.stage_k == kBlocks * 32 &&
-                  kBufferBytes == (BlockM + BlockN) * kW4a8MmaFacts.stage_row_bytes &&
-                  kSmemBytes == kW4a8MmaFacts.stages * kBufferBytes);
+                  kBufferBytes == (BlockM + BlockN) * kW4a8MmaFacts.stage_row_bytes);
 };
 
 // The activation quantization of one 32-value block, shared by the W4A8 quantizer and the register
@@ -1323,6 +1323,8 @@ template <class S, bool HalfMin = false>
 struct W4a8Buffer {
     static constexpr int kBytes = S::kBufferBytes + (HalfMin ? S::kBlockN * 32 : 0);
     static constexpr int kSmem  = 2 * kBytes;
+    // The launch's buffers are the family's stages (family_facts.h), which the price reads.
+    static_assert(kSmem == kW4a8MmaFacts.stages * kBytes);
     std::uint8_t* a_codes; // [BlockM][128]
     std::uint8_t* b_codes; // [BlockN][128]
     float* a_scale;        // [BlockM][4]

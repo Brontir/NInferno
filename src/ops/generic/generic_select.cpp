@@ -1112,7 +1112,9 @@ bool r8_verify_takes(QType qtype) {
 // (forward-compatible SASS) must still turn the 144-160 KiB tiles away, so the device decides too.
 bool staged_device_fits(int schedule) {
     const auto s      = kStagedSchedules.at(static_cast<std::size_t>(schedule));
-    const auto bytes  = static_cast<std::size_t>(s.rows + s.tokens) * 64 * 2 * s.stages;
+    // A stage of every row and token (family_facts.h: one byte count for both).
+    const auto bytes =
+        static_cast<std::size_t>(s.rows + s.tokens) * kStagedMmaFacts.stage_row_bytes * s.stages;
     std::size_t limit = 0;
     try {
         limit = device_class().smem_per_block_optin;

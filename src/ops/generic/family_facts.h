@@ -33,7 +33,8 @@ struct FamilyFacts {
 // RegisterMma (generic_gemm.cuh rmma_kernel): a K step is four lanes' runs of kRun values, J =
 // kRun / 4 MMAs of m16n8k16 (Turing composes the k16 from two k8). step_k is the step of the
 // 32-value-run decoders (every ggml block, the K-quants, the codebooks, U4Zp, MXFP4); a decoder
-// of a shorter run steps four times its run (rmma_step_values).
+// of a shorter run steps four times its run (rmma_step_values). The kernel's assert pins mma_k
+// through its own J formula (KStep = J x mma_k) only: nothing ties it to the mma.sync shape.
 inline constexpr FamilyFacts kRegisterMmaFacts{.mma_k = 16, .step_k = 4 * 32};
 
 // TiledMma (generic_tiled.cuh): a stage is a K tile of 64 values; the activation is staged as
@@ -63,7 +64,9 @@ inline constexpr FamilyFacts kI8MmaFacts{
     .stage_k = 64, .stage_row_bytes = 64 / 2, .stage_token_bytes = 64 + 4 + 4};
 
 // GgmlMmq (third_party ggml mul_mat_q): a step is MMQ_ITER_K values; every tile is I = 128 weight
-// rows (each NVIDIA config table of ggml's) by J token columns, J a multiple of 8.
+// rows by J token columns, J a multiple of 8, in the config table the served architectures read
+// (sm_75 and up: ggml's Ampere table, which Blackwell falls back to outside the native FP4 types;
+// the Pascal tables, which use 64, are not served).
 inline constexpr FamilyFacts kGgmlMmqFacts{.step_k = 256, .tile_rows = 128, .column_step = 8};
 
 // The other families (R8, the FP4 tiles, ggml's vector kernel, scalar) export nothing yet: no

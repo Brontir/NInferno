@@ -125,7 +125,7 @@ static_assert(kStagedMmaFacts.stage_token_bytes == kStagedMmaFacts.stage_row_byt
 // Shared memory one CTA may take: the opt-in cap of sm_86 / sm_89 / sm_12x (99 KiB), which the
 // model takes on every part (sm_80 allows 163 KiB, sm_90 227 KiB, sm_75 64 KiB): a modelling
 // choice read off those parts, not a fact of every chip. test_route_cost_constants holds it equal
-// to their build columns of the archs table (shared_bytes_per_block_for_arch).
+// to those parts' chip column of the archs table (core/arch_registry.h smem_per_block_optin).
 inline constexpr Scalar kMaxTileSharedBytes{
     {99.0 * 1024.0}, Provenance::Counted, "max_tile_shared_bytes"};
 // Every tile: the floor of the warp slowdown factor (a lone warp runs at most 20x slow).
