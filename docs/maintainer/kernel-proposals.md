@@ -621,3 +621,59 @@ P from #850's plan. A, G, N and P have frozen predictions so far.
   and 1.9 % (Q4_K); the sweeps show the schedule order flipping between 70 and 170 SMs on sm_120.
   The schedules are bit-identical, so a wrong carry costs speed, never bits; a laptop sweep
   settles it. The RTX 5080 (0.57) takes nothing.
+
+### Q. Volta BF16 KV width-1 decode on a key-major kernel (#877, #893)
+- Regime: the BF16 KV width-1 decode (GroupedDecode, D = 256, every listed head geometry) on
+  sm_70 builds: Quadro GV100. At #866 it read the cache at about 175 GB/s (20 % of the 871 GB/s
+  DRAM line; 228 / 558 µs a call at 7843 / 21961 keys, Qwen3.5-9B geometry, 8 layers), against
+  672 GB/s (77 %) for the INT8 key-major kernel on the same card and run (#877).
+- Weight: GV100's whole BF16-KV decode attention term. At 21961 keys that is about 4.5 ms of an
+  8-layer step at today's rate.
+- Law: issue on the MMA emulation. sm_70 has no BF16 MMA and none of the m16n8k16 shapes the grouped
+  kernel issues; each product is `mma_bf16_fma_call` / `mma_f16_fma_call` (`__noinline__`), 552
+  SASS instructions and 32 shuffle-helper calls for 16 query rows, of which a decode fills G
+  (4 here) (CUDA 12.8 SASS of `CausalGeometry<256,16,4>`; the kernel 13,536 instructions, 484
+  CALLs). 175 GB/s at GV100's ~464 G warp instructions a second is ~86 k instructions per 32 KB of
+  K/V; a 32-key tile per D warp takes 64-96 emulated products, 40-86 k at 600-900 each.
+- Variant: S on CUDA cores with one key a lane: the key's BF16 row widened to FP32 by a shift, G
+  FMAs a dimension against Q in shared memory (FP32), no cross-lane product. O^T += V^T P^T on
+  Volta's native `mma.m8n8k4` (f16 operands, FP32 accumulation; V is stored FP16 and P rounded
+  to FP16 as before), with `int8_kv_key_major_kt_kernel`'s PV fragments. Four warps own every
+  fourth 32-key step of the split and merge their softmax states in the CTA. The grouped
+  kernel's partition, partials and merge are kept. Counted: about 10 B a warp instruction, so
+  ~4.6 TB/s of issue against the 871 GB/s line: DRAM-bound.
+- Prediction (frozen 13.11 on #877, before any code): the BF16 slope read rate on GV100 at
+  0.85-1.05x of INT8's measured 672 GB/s (570-705 GB/s, 65-81 % of DRAM), and the fixed part a
+  call within ±10 µs of INT8's (about 30 µs today).
+- Prototype: `CODECS="bf16 int8" kvab2.sh gv100 perf/877-bf16-kv-volta-key-major k877k`
+  (`ninferno_kv_decode_attention_bench --codec bf16 --context 7843,21961 --layers 8`).
+- Cost: not a linear route, so no selector goldens or route classes. It is built for sm_70 only
+  and dispatched in `causal_cache/bf16/launch.cu`. ptxas 0.15 s an instance, 190-206 registers,
+  no spills (the forceinline experiment on the emulation did not finish in 1 h 27 min, #877).
+- Acceptance / refutation (frozen): kept at a slope rate of at least 0.75x INT8's; refuted below
+  that. No other arch builds it. Bytes: not `exact` (other FP32 order).
+  `ninferno_bf16_decode_identity_test` holds it to the shipped schedule:
+  - the appended cache and the set of written partials byte for byte;
+  - numerators within 2^-9 of their row's largest, the log2 maximum within 1e-5, the sum within
+    2^-10, the output within one BF16 step;
+  - its own bits with `--self`.
+
+  The FP64 oracle of `ninferno_softmax_attention_test --kv-dtype bf16` also applies.
+- A/B (13.11, Quadro GV100, `kv_decode_attention_bench` ABBA, master b2a836ef2 against the
+  branch merged with it, Qwen3.5-9B geometry, 8 layers, INT8 the control):
+
+  | arm | 7843 keys, µs a call | 21961 keys, µs a call | slope read rate | fixed part |
+  |---|---|---|---|---|
+  | BF16 master, round 1 | 280.2 | 632.6 | 164 GB/s | 84 µs |
+  | BF16 master, round 2 | 228.5 | 557.8 | 176 GB/s | 46 µs |
+  | BF16 key-major, both rounds | 70.7 | 166.3 | 605 GB/s | 17.6 µs |
+  | INT8, all four | 54.6 | 99.0 | 672 GB/s | 30 µs |
+
+  - Slope: 605 GB/s is 0.90x INT8's, inside the frozen 0.85-1.05x (69 % of DRAM). Held.
+  - A call at 21961 keys takes 166 µs against 558-633: x3.35-3.8, about 3.1 ms less a step over 8
+    layers.
+  - Fixed part: 17.6 µs, under the frozen INT8 ± 10 µs (20-40). A finding on the favourable side.
+    The term that was wrong: the prediction took INT8's fixed part as the floor, but INT8's carries
+    its Q codec (the Hadamard and per-group quantization of every row) and its scale staging. The
+    BF16 kernel has neither: it widens Q to FP32 once and starts its keys. Recorded, not fitted.
+- Decision: kept on sm_70 (the slope acceptance, at least 0.75x INT8's, is met).

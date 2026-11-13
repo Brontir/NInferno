@@ -13,9 +13,21 @@ void grouped(const CausalAttentionOperands& p, Bf16KvCacheView<Writable> cache, 
     using S           = typename Bf16KvInstanceTraits<Instance>::Schedule;
     // The invariant route profile runs Grouped32 only (make_bf16_kv_causal_plan).
     constexpr bool aligned_capable = Instance == Bf16KvInstance::Grouped32;
+    // Volta has no BF16 MMA: its width-1 decode takes the key-major kernel (#877), with the same
+    // partials and merge.
+#if defined(NINFERNO_BUILD_ARCH) && NINFERNO_BUILD_ARCH < 75
+    constexpr bool volta = Instance == Bf16KvInstance::GroupedDecode && kBf16KvVoltaKeyMajor<G>;
+#else
+    constexpr bool volta = false;
+#endif
     const auto invoke = [&]<bool MultiBatch, bool Masked>() {
-        launch_bf16_kv_grouped_mma<G, S, MultiBatch, Masked, Writable, Input, aligned_capable>(
-            p, cache, input, plan.partition, partial, stream);
+        if constexpr (volta) {
+            launch_bf16_kv_key_major_volta<G, MultiBatch, Masked, Writable, Input>(
+                p, cache, input, plan.partition, partial, stream);
+        } else {
+            launch_bf16_kv_grouped_mma<G, S, MultiBatch, Masked, Writable, Input, aligned_capable>(
+                p, cache, input, plan.partition, partial, stream);
+        }
         launch_bf16_kv_merge<G, Bf16KvMergeSchedule<256>, MultiBatch, Masked, Writable,
                              aligned_capable>(p, cache, plan.partition, partial, stream);
     };
