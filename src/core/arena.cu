@@ -165,7 +165,11 @@ DeviceArena::DeviceArena(std::size_t capacity_bytes) {
         throw std::runtime_error(
             cuda_error_message("cudaMalloc of the ticket page failed", page_err));
     }
-    const cudaError_t zero_err = cudaMemset(page, 0, kArenaTicketInts * sizeof(int));
+    // The memset runs on the legacy stream and may return before it lands; the compute streams are
+    // non-blocking, so settle it here (as DeviceBuffer::fill does): the first router or D1 grid
+    // must count from zero, and nothing re-zeroes a ticket afterwards.
+    cudaError_t zero_err = cudaMemset(page, 0, kArenaTicketInts * sizeof(int));
+    if (zero_err == cudaSuccess) zero_err = cudaStreamSynchronize(nullptr);
     if (zero_err != cudaSuccess) {
         free_device(page);
         free_device(base_);

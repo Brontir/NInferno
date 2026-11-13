@@ -21,7 +21,7 @@ ROOT=${1:-.}
 cd "$ROOT" || exit 2
 # file|expected count|why the calls cannot race
 ALLOW=$(cat <<'EOF'
-src/core/arena.cu|4|DeviceBuffer::fill/copy_from_host/copy_to_host: startup and test utilities; fill and copy_from_host settle the default stream before returning, the Engine runtime paths pass streams; the owning arena's ticket page is zeroed once at construction, before any stream uses it (#889)
+src/core/arena.cu|4|DeviceBuffer::fill/copy_from_host/copy_to_host: startup and test utilities; fill and copy_from_host settle the default stream before returning, the Engine runtime paths pass streams; the owning arena's ticket page is zeroed once at construction and the default stream settled before any stream uses it (#889)
 src/artifact/materializer.cpp|1|--debug-poison fill of the weight arena, followed by cudaDeviceSynchronize before the first upload
 src/core/paged_kv_cache.cpp|1|--debug-poison fill at pool construction, followed by cudaDeviceSynchronize
 src/models/common/layer_dump.h|1|the debug layer dump (dense, Gemma 4, Qwen): D2H after cudaDeviceSynchronize
