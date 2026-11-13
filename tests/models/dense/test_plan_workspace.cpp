@@ -10,7 +10,8 @@
 //   ninferno-serve registers it) carries the start planner's capacity to the byte for the start's
 //   sequence plan and the tokenizer's public ids, with "start" as its basis, under the fast and
 //   the exact profile (A16 activations, the invariant routes);
-// - the facts without the directory, without the tokenizer's ids, under a --moe-path pin, under
+// - the facts without the directory, without the tokenizer's ids, under a --moe-path pin (a model
+//   that routes experts; a dense one answers as unpinned, #892), under
 //   speculation (the drafter is an artifact of its own), under --activations int8, with more
 //   tokenizer ids than embedding rows, and with a Use that reads the payload (an activation
 //   divisor) keep the formula and say why.
@@ -602,7 +603,13 @@ void declines(const std::string& name, const rt::PlanModelFacts& facts,
         // engine is not these options' (#842 review).
         EngineOptions pinned       = options;
         pinned.maintainer.moe_path = MoePath::Generic;
-        refuses(basis_of(facts, pinned, device), "--moe-path", "a pinned MoE path");
+        if (facts.model_type == "dense_decoder" && facts.experts <= 1) {
+            // No MoE layer for the pin to move: the answer is the unpinned one (#892).
+            check(basis_of(facts, pinned, device) == answered,
+                  name + ": a --moe-path pin leaves a model without experts as it is");
+        } else {
+            refuses(basis_of(facts, pinned, device), "--moe-path", "a pinned MoE path");
+        }
         EngineOptions routed           = options;
         routed.maintainer.decode_route = DecodeRoute::A16;
         refuses(basis_of(facts, routed, device), "route is pinned", "a pinned decode route");

@@ -43,10 +43,11 @@ namespace {
 
 // A maintainer's route override the plan does not model, from the options planned (a dry run
 // constructs no Engine, so the process-wide pins are not these options'): the formula stands, and
-// the answer names the override. nullptr: none.
-const char* route_override(const EngineOptions& options) {
+// the answer names the override. nullptr: none. A --moe-path pin counts only for a model that
+// routes experts (routes_experts): a dense model has no MoE layer for it to move (#892).
+const char* route_override(const EngineOptions& options, bool routes_experts) {
     const MaintainerOptions& m = options.maintainer;
-    if (m.moe_path != MoePath::Auto) {
+    if (routes_experts && m.moe_path != MoePath::Auto) {
         return "--moe-path is pinned: the plan sizes the automatic MoE path";
     }
     if (m.prefill_route != PrefillRoute::Auto || m.decode_route != DecodeRoute::Auto) {
@@ -424,7 +425,8 @@ PlanWorkspaceAnswer qwen3_5_workspace(const PlanModelFacts& m, const EngineOptio
                               "resources)"};
     }
     if (plan == nullptr) { return {std::nullopt, "no sequence plan laid out for the rung"}; }
-    if (const char* pinned = route_override(options)) { return {std::nullopt, pinned}; }
+    // W2 keeps its decline on every Qwen 3.5 start: the pin reaches its Prepare.
+    if (const char* pinned = route_override(options, true)) { return {std::nullopt, pinned}; }
     std::string why;
     const auto start = described_start(m.artifact_directory, models::load_options(options),
                                        m.tokenizer_tokens, why);
@@ -491,15 +493,16 @@ described_model(const std::shared_ptr<const artifact::Directory>& directory, Pro
 // rung's sequence plan and the tokenizer's public ids. Equal to the start's for the same device
 // class (the capacity queries read device_class()).
 // Declines, and the formula stands, where the facts are not an artifact's, the tokenizer was not
-// read, no sequence plan is laid out, under a --moe-path pin, under speculation (the DFlash
+// read, no sequence plan is laid out, under a --moe-path pin on a model that routes experts, under
+// speculation (the DFlash
 // drafter and the NemotronH MTP head are artifacts of their own, not in these facts), under
 // --activations int8 (the start refuses it), where the tokenizer names more ids than the
 // embedding has rows (the start refuses), where load would refuse the weights or a binding needs
 // the payload, and where no device class is known.
 PlanWorkspaceAnswer decoder_workspace(const PlanModelFacts& m, const EngineOptions& options,
                                       const detail::SequencePlanImpl* plan) {
-    const bool dense = m.model_type == "dense_decoder" || m.model_type == "moe_decoder";
-    if (!dense && m.model_type != "nemotron_h") { return {}; }
+    if (!hf_decoder_family(m.model_type)) { return {}; }
+    const bool dense = m.model_type != "nemotron_h";
     if (!m.artifact_directory) {
         return {std::nullopt,
                 "the start's weights are a converted artifact's bindings, not in these facts"};
@@ -509,7 +512,11 @@ PlanWorkspaceAnswer decoder_workspace(const PlanModelFacts& m, const EngineOptio
                               "resources)"};
     }
     if (plan == nullptr) { return {std::nullopt, "no sequence plan laid out for the rung"}; }
-    if (const char* pinned = route_override(options)) { return {std::nullopt, pinned}; }
+    // A dense_decoder without routed experts (Llama, Qwen3-8B) has no MoE layer a pin could move.
+    const bool routes_experts = m.model_type != "dense_decoder" || m.experts > 1;
+    if (const char* pinned = route_override(options, routes_experts)) {
+        return {std::nullopt, pinned};
+    }
     if (options.speculative.backend != SpeculativeBackend::None) {
         return {std::nullopt, "speculation: the drafter is an artifact of its own, not in these "
                               "facts"};
@@ -565,8 +572,7 @@ void register_plan_workspace_queries() {
             if (model.model_type == "gemma4_text") {
                 return gemma4_workspace(model, rung, options, concurrency, plan);
             }
-            if (model.model_type == "dense_decoder" || model.model_type == "moe_decoder" ||
-                model.model_type == "nemotron_h") {
+            if (hf_decoder_family(model.model_type)) {
                 return decoder_workspace(model, options, plan);
             }
             return qwen3_5_workspace(model, options, plan);
@@ -585,9 +591,7 @@ void register_plan_workspace_queries() {
             const auto text       = directory.components.find("text");
             if (text == directory.components.end()) { return std::nullopt; }
             const std::string type = text->second.config.value("model_type", std::string());
-            if (type == "dense_decoder" || type == "moe_decoder" || type == "nemotron_h") {
-                return hf_public_token_count(reader);
-            }
+            if (hf_decoder_family(type)) { return hf_public_token_count(reader); }
             return models::qwen3_5::public_token_count(reader);
         } catch (const std::exception&) { return std::nullopt; }
     });
