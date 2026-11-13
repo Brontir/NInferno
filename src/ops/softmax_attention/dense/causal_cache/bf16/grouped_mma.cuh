@@ -365,6 +365,8 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
         // Batched and read-only wide tiles benefit from paired V loads. Single-row
         // fused append uses scalar fragments to leave room for its input state.
         if constexpr (S::kWarpsQ >= 4 && (MultiBatch || !Input::writes_cache)) {
+            // Rows gid + 8 are read here: a low-rows instance cannot take this path.
+            static_assert(!kLowRowsOnly);
             unsigned vf[2][4];
             const auto load_v = [&](int i, int slot) {
                 const int k = i / (PVNt / 2), n = i % (PVNt / 2) * 2;

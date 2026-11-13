@@ -37,6 +37,16 @@ NINFERNO_BF16_KV_INSTANCE(Tiled128, false,
 // reloaded every key tile (#856). The K/V tiles and the CTAs an SM holds are the same.
 NINFERNO_BF16_KV_INSTANCE(GroupedDecode, true, Bf16KvGroupedMmaSchedule<16, 32, 2, 2, 1, 2>);
 #undef NINFERNO_BF16_KV_INSTANCE
+// Every listed geometry runs GroupedDecode in its low-rows form. A geometry with a group over 8
+// fills the second MMA row: it needs its own decision (a schedule that keeps both rows), not this
+// instance's spilling twin.
+#define NINFERNO_BF16_KV_LOW_ROWS(Q, KV)                                                           \
+    static_assert(                                                                                 \
+        kBf16KvLowRowsOnly<CausalGeometry<kCausalHeadDim, (Q), (KV)>,                              \
+                           Bf16KvInstanceTraits<Bf16KvInstance::GroupedDecode>::Schedule>,         \
+        "GroupedDecode needs one token's query heads in 8 MMA rows");
+NINFERNO_CAUSAL_GEOMETRIES(NINFERNO_BF16_KV_LOW_ROWS)
+#undef NINFERNO_BF16_KV_LOW_ROWS
 
 constexpr Bf16KvInstanceDescription bf16_kv_instance_description(Bf16KvInstance id) {
     switch (id) {

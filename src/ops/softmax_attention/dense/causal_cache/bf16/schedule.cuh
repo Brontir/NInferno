@@ -61,10 +61,13 @@ struct Bf16KvMergeSchedule {
 
 // Width-1 decode (the GroupedDecode instance) packs one token's G::GroupSize query heads into a
 // single query warp's 16 MMA rows. With at most 8 (every listed geometry), the rows 8-15, a lane's
-// second MMA row, never hold a query (#856).
+// second MMA row, never hold a query (#856). The kernel then keeps Q in shared memory and drops
+// those rows; it does so with D warps (S::kWarpsD > 1), the form GroupedDecode ships. One D warp at
+// width 1 compiles the instance #856 replaced, which ninferno_bf16_decode_identity_test runs as
+// the reference.
 template <class G, class S>
 inline constexpr bool kBf16KvLowRowsOnly =
-    S::kFixedWidth == 1 && S::kWarpsQ == 1 && G::GroupSize <= 8;
+    S::kFixedWidth == 1 && S::kWarpsQ == 1 && S::kWarpsD > 1 && G::GroupSize <= 8;
 
 template <class G, class S>
 struct alignas(16) Bf16KvGroupedStorage {
