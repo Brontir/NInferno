@@ -1011,7 +1011,7 @@ void chooses(const json& fixture) {
                                         pins, task, oracle(b, 9.6e9));
         check(c.chosen && chosen(c).candidate.activations == ActivationMode::Exact &&
                   chosen(c).candidate.kv == KvCacheStorage::BFloat16 &&
-                  chosen(c).candidate.state == RecurrentStateStorage::FP32 &&
+                  chosen(c).candidate.state == RecurrentStateStorage::FP32 && c.by_worth &&
                   !c.activations_by_worth,
               "pins kept; exact couples the FP32 state; pinned activations are not weighed");
     }

@@ -2400,7 +2400,7 @@ const DEPTH = 0.25, SHORT = 512;
 // The panel stays open across the page's re-renders (the GPU's numbers redraw it every few seconds).
 let choiceOpen = false;
 document.addEventListener("toggle", e => { if (e.target && e.target.classList && e.target.classList.contains("choice")) choiceOpen = e.target.open; }, true);
-function choicePanel(doc) {
+function choicePanel(doc, actPinned = false) {
   const c = doc && doc.choice, b = c && c.chosen, rows = choiceRows(doc);
   if (!b) return "";
   const pct = v => v == null ? "—" : (Math.abs(v) < 0.005 ? "±0 %" : (v > 0 ? "+" : "−") + Math.abs(v * 100).toFixed(0) + " %");
@@ -2430,7 +2430,7 @@ function choicePanel(doc) {
   // own (the switches, the quantization and the chunk are separate axes: a gate on one leaves
   // another decided there); the estimate's error bands, the KLD in answers and the quantization's
   // authority (#618).
-  const gates = gateTexts(doc, planTr), decided = decidedText(doc, planTr, actMode !== "auto");
+  const gates = gateTexts(doc, planTr), decided = decidedText(doc, planTr, actPinned);
   const bands = bandText(b, planTr), answers = answerText(doc, b, planTr), quality = qualityText(b, planTr);
   const basis = [...gates, decided, bands ? t("bandHead") + ": " + bands : ""].filter(Boolean)
     .map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(" · ");
@@ -2769,7 +2769,7 @@ function renderBody() {
         <div class="pickacts">
         ${here ? `<span class="pill ok">✓ ${t("here")}</span>` : `<span ${unsupported ? `data-tip="${esc(t("unsupportedRun"))}"` : ""}><button data-get ${unsupported ? "disabled" : ""}>${t("download")}</button></span>`}
         <span ${runTip ? `data-tip="${esc(runTip)}"` : ""}><button class="primary" data-go ${gate.disabled ? "disabled" : ""}>${t("run")}${warned ? " ⚠" : ""}</button></span></div></div>`;
-      html += choicePanel(cdoc);
+      html += choicePanel(cdoc, actAsk(sel) !== "auto");
     } else if (sel.plan && !stale) {
       html += `<div class="pick none"><ul class="why"><li>${esc(ruleText(sel.plan, {ctx: ctxValue, par: parallel, native: nativeCtx()}, planTr) || fill(t("recNone"), asked))}</li></ul></div>`;
     }
