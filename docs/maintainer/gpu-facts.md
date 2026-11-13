@@ -106,7 +106,9 @@ its range's bottom fingerprint alike whatever their driver reports.
 [580.196.07](https://download.nvidia.com/XFree86/Linux-x86_64/580.196.07/README/supportedchips.html)).
 Use current and legacy driver lists: one current driver branch is not an inventory of every
 older board. Save the retrieval date and URLs beside the inputs; the report records their SHA-256
-hashes. It runs offline, without CUDA, a GPU or a driver:
+hashes. Each driver identity refers to a source id made from the filename and its full hash, so two
+different driver versions saved as `supportedchips.html` cannot lose their separate provenance.
+It runs offline, without CUDA, a GPU or a driver:
 
 ```bash
 python3 tools/audit/gpu_catalog.py --pci-ids /path/to/pci.ids \

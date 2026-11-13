@@ -92,6 +92,31 @@ class CatalogTest(unittest.TestCase):
             self.assertEqual(len(json.loads(first)["inputs"]), 3)
             self.assertTrue(all(len(i["sha256"]) == 64 for i in json.loads(first)["inputs"]))
 
+    def test_cli_distinguishes_driver_lists_with_the_same_filename(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "pci.ids").write_text(PCI, encoding="utf-8")
+            (root / "registry.json").write_text(json.dumps(REGISTRY), encoding="utf-8")
+            cmd = [sys.executable, str(ROOT / "tools/audit/gpu_catalog.py"),
+                   "--pci-ids", str(root / "pci.ids"),
+                   "--registry", str(root / "registry.json"),
+                   "--output", str(root / "audit.json")]
+            for version, identity, name in [("old", "2BB3 10DE 204D", "PRO 5000 48GB"),
+                                            ("new", "2BB3 10DE 227A", "PRO 5000 72GB")]:
+                directory = root / version
+                directory.mkdir()
+                page = directory / "supportedchips.html"
+                page.write_text(f"<table><tr><td>{name}</td><td>{identity}</td></tr></table>",
+                                encoding="utf-8")
+                cmd += ["--supported-chips", str(page)]
+            subprocess.run(cmd, check=True, capture_output=True)
+            result = json.loads((root / "audit.json").read_text(encoding="utf-8"))
+            inputs = [i for i in result["inputs"] if i["file"] == "supportedchips.html"]
+            self.assertEqual(len({i["source_id"] for i in inputs}), 2)
+            pro = next(r for r in result["rows"] if r["id"] == "0x2BB3")
+            self.assertEqual(pro["nvidia"]["2BB3 10DE 204D"]["sources"], [inputs[0]["source_id"]])
+            self.assertEqual(pro["nvidia"]["2BB3 10DE 227A"]["sources"], [inputs[1]["source_id"]])
+
 
 if __name__ == "__main__":
     unittest.main()

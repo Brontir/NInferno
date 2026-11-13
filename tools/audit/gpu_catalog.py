@@ -161,13 +161,15 @@ def main():
     try:
         inputs = [args.pci_ids, *args.supported_chips, args.registry]
         content = {p: p.read_bytes() for p in inputs}
+        hashes = {p: hashlib.sha256(content[p]).hexdigest() for p in inputs}
+        labels = {p: f"{p.name}@{hashes[p]}" for p in inputs}
         pci = pci_devices(content[args.pci_ids].decode("utf-8"))
         if not pci:
             raise ValueError("pci.ids: no NVIDIA devices (wrong file or changed format)")
-        drivers = driver_identities([(p.name, content[p].decode("utf-8"))
+        drivers = driver_identities([(labels[p], content[p].decode("utf-8"))
                                      for p in args.supported_chips])
         result = catalog(pci, drivers, json.loads(content[args.registry]))
-        result["inputs"] = [{"file": p.name, "sha256": hashlib.sha256(content[p]).hexdigest()}
+        result["inputs"] = [{"file": p.name, "sha256": hashes[p], "source_id": labels[p]}
                             for p in inputs]
         args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     except (OSError, ValueError) as exc:
