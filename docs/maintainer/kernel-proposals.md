@@ -230,7 +230,7 @@ prediction so far.
 - A/B: not run.
 - Decision: open.
 
-### P. Volta BF16 KV width-1 decode on a key-major kernel (#877, #893)
+### Q. Volta BF16 KV width-1 decode on a key-major kernel (#877, #893)
 - Regime: the BF16 KV width-1 decode (GroupedDecode, D = 256, every listed head geometry) on
   sm_70 builds: Quadro GV100. At #866 it read the cache at about 175 GB/s (20 % of the 871 GB/s
   DRAM line; 228 / 558 µs a call at 7843 / 21961 keys, Qwen3.5-9B geometry, 8 layers), against
