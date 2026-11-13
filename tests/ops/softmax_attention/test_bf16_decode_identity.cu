@@ -312,7 +312,10 @@ int near_outputs(const std::string& label, const Outputs& a, const Outputs& b) {
             out_scale[i / D] = std::max(out_scale[i / D], double(std::fabs(bf16_value(a.out[i]))));
     return near(label, "output", a.out, b.out, bf16_value,
                 [&](std::size_t i, double x, double y) {
-                    return std::ldexp(std::max(std::fabs(x), std::fabs(y)), -8) +
+                    // One BF16 step of the larger value (8 significant bits: 2^-7 of it at the
+                    // bottom of its binade), as the header promises; 2^-8 was half a step, and a
+                    // one-split call that rounds its own sum straight to BF16 lands a step off.
+                    return std::ldexp(std::max(std::fabs(x), std::fabs(y)), -7) +
                            std::ldexp(out_scale[i / D], -9);
                 }) +
            near(label, "partial O", a.acc, b.acc, same,
