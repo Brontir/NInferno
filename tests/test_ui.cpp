@@ -1134,6 +1134,7 @@ void test_artifact_plan_via_serve() {
             std::vector<GpuStat> snapshot() override {
                 GpuStat g;
                 g.index        = 0;
+                g.uuid         = "GPU-test-uuid";
                 g.name         = "NVIDIA GeForce RTX 4090";
                 g.memory_total = 24ULL << 30;
                 g.memory_free  = 3ULL << 30;
@@ -1167,6 +1168,9 @@ void test_artifact_plan_via_serve() {
         const auto at = std::find(seen.begin(), seen.end(), "--plan-free-now");
         check(at != seen.end() && at + 1 != seen.end() && *(at + 1) == "3221225472",
               "serve is given NVML's free memory (--plan-free-now 3221225472)");
+        check(!seen.empty() && seen.back() == "gpu=GPU-test-uuid",
+              "the planner is bound to the card by NVML's UUID, not '" +
+                  (seen.empty() ? std::string() : seen.back()) + "'");
     }
     fs::remove_all(root);
 }

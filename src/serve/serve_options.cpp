@@ -35,7 +35,8 @@ std::string serve_usage_text(const char* argv0) {
            " --build-manifest\n       " + argv0 +
            " <model.ninferno | checkpoint-dir | model.gguf | org/name[@revision]> "
            "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json] [--no-load "
-           "[--plan-device NAME] [--plan-idle]]] [--with-drafters] [--accept-converted | --refetch "
+           "[--plan-device NAME] [--plan-idle [--plan-free-now BYTES]]]] [--with-drafters] "
+           "[--accept-converted | --refetch "
            "[--keep-replaced]] [--round-tiny-scales] "
            "[--host H] [--port N] [--api-key KEY | --api-key-file PATH] "
            "[--model-id ID] [--max-context N] [--max-context-cap N] [--kv-capacity N|auto] "

@@ -18,6 +18,7 @@
 #include "spec/gpu_identity.h"
 
 #include <algorithm>
+#include <string_view>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -522,9 +523,20 @@ OfflinePlan plan_without_load(const ServeOptions& options, std::optional<std::ui
                                          "): name a board with --plan-device");
             }
             // The caller's reading of the free memory (--plan-free-now: ninferno-ui's NVML), so
-            // `now` still says whether a start right now would fit (#891).
+            // `now` still says whether a start right now would fit (#891). Only where the card
+            // refused for want of memory (cudaGetErrorString of cudaErrorMemoryAllocation): a card
+            // that refused otherwise (another process holds it in an exclusive compute mode) would
+            // not start now whatever NVML says is free, so `now` is planned at nothing. Never more
+            // than the card has (under MIG NVML reads the whole board, CUDA the slice).
             if (options.plan_free_now) {
-                device.free_bytes = product::plan_free_now_of_nvml(*options.plan_free_now);
+                const bool out_of_memory =
+                    std::string_view(measured.what()).find("out of memory") !=
+                    std::string_view::npos;
+                device.free_bytes =
+                    out_of_memory ? std::min<std::uint64_t>(
+                                        product::plan_free_now_of_nvml(*options.plan_free_now),
+                                        device.total_bytes)
+                                  : 0;
             }
         }
         gpu = spec::gpu_identity(options.device).key;
