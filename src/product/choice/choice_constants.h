@@ -379,8 +379,9 @@ constexpr double largest_transferred_decode_error() noexcept {
 
 // An assumed worst case: the largest measured carry (all of them Ada onto older generations). No
 // measured row bounds a carry onto a newer architecture or below Volta (Pascal); it is a label, not
-// a bound. A board whose compute capability has no generation row (rows lent forward) takes it, and
-// so do the known generations with no row of their own (ga100, hopper, gb100, thor), and a
+// a bound. A board whose compute capability has no generation row (rows lent forward, and the lent
+// rows of Hopper and GB100) takes it, and so do the known generations with no row of their own
+// (ga100, thor), and a
 // generation with its own error whose compared estimates are Transferred (a weight class or a row
 // measured on fewer than two of its cards: no carry onto those was measured). Basis: an assumption
 // over one-card rows; it never decides (resolution_of).

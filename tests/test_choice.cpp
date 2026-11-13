@@ -1587,6 +1587,19 @@ void moe_step_reads_the_route(const json& fixture) {
                   "MoE step: an unmeasured pair past one row is transferred (" + at + ")");
             check(rows > 1 || (r.basis == a.basis && x.basis == a.basis),
                   "MoE step: one row reads at kDramEta on every pair (" + at + ")");
+            // Banks whose kept format the file does not tell (Gemma 4's GGUF MXFP4 experts,
+            // #784): the same price, Transferred at every row and named, whether a route was
+            // answered or none was asked (a row known by its label: no layers to ask about).
+            ch::QuantOption assumed_q      = q;
+            assumed_q.expert_banks_assumed = true;
+            const ch::Speed s  = ch::speed_of(measured, card, assumed_q, c, rows, 1536, 0);
+            const ch::Speed sp = ch::speed_of(plain, card, assumed_q, c, rows, 1536, 0);
+            check(s.decode_per_stream == b.decode_per_stream &&
+                      sp.decode_per_stream == a.decode_per_stream,
+                  "MoE step: assumed banks keep the price (" + at + ")");
+            check(s.basis == ch::SpeedBasis::Transferred && s.why == "MoE banks assumed" &&
+                      sp.basis == ch::SpeedBasis::Transferred && sp.why == "MoE banks assumed",
+                  "MoE step: assumed banks are transferred and named (" + at + ")");
         }
     }
     check(lifts >= 3, "MoE step: the Own steps of several rows are the measured pair's alone");
@@ -2607,6 +2620,27 @@ void lent_generation_does_not_decide(const json& fixture) {
     check(!theirs.by_worth && theirs.chosen && theirs.why.find("no generation row of its own") != std::string::npos,
           "compute capability 13.0: the family's defaults, and why");
     check(!ch::weighs_quantizations(lent.model, lent.card, open), "compute capability 13.0: the quantizations by the rule");
+    // Hopper and GB100 (#878): rows of their own that are lent (the A100's rates under their
+    // names), so a reference that decides nothing, the lent gate, and the family's defaults.
+    for (const auto& [major, minor] : {std::pair{9, 0}, std::pair{10, 0}, std::pair{10, 3}}) {
+        Bench dc             = known;
+        dc.card.major        = major;
+        dc.card.minor        = minor;
+        const std::string at = std::to_string(major) + "." + std::to_string(minor);
+        const ch::Speed s    = ch::speed_of(dc.model, dc.card, dc.quants[0], c, 1, 4096);
+        const auto r         = ch::reference_of(dc.card, open);
+        const auto g         = ch::closed_gates(dc.model, dc.card, open);
+        check(s.basis == ch::SpeedBasis::LentGeneration && s.transferred,
+              "compute capability " + at + ": its estimate marked lent");
+        check(r && r->lent && !r->decides && !r->chunk_decides && !g.empty() &&
+                  g[0].code == "lent_generation" && g[0].opens_with == "generation_row",
+              "compute capability " + at + ": a lent reference that never decides, its gate");
+        const ch::Choice ch_dc =
+            ch::choose(dc.model, dc.card, dc.quants[0], allowed, {}, task, oracle(dc, 20e9), open);
+        check(!ch_dc.by_worth && ch_dc.chosen && !ch::weighs_quantizations(dc.model, dc.card, open),
+              "compute capability " + at +
+                  ": the family's defaults, the quantizations by the rule");
+    }
     // A known generation with a reference card still decides (the RTX 4090: Ada).
     const Bench ada = nine_b(fixture, "RTX 4090");
     check(ch::choose(ada.model, ada.card, ada.quants[0], allowed, {}, task, oracle(ada, 20e9), open).by_worth,
