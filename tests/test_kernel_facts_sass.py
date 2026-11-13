@@ -876,6 +876,46 @@ class Sections(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 kernel_facts.parse_sections(bad)
 
+    GEMMA4 = "_ZN8ninferno3ops23gemma4_attention_kernelINS0_14Gemma4GeometryILi256ELi8ELi256EEELi2ELi64ELb1ELb0ELb0EEEvNS0_19Gemma4AttentionArgsE"
+    GEMMA4_NAME = ("void ninferno::ops::gemma4_attention_kernel<ninferno::ops::Gemma4Geometry<(int)256, "
+                   "(int)8, (int)256>, (int)2, (int)64, (bool)1, (bool)0, (bool)0>"
+                   "(ninferno::ops::Gemma4AttentionArgs)")
+    GEMMA4_KEY = ("attention", 256, 8, 256, 2, 64, 1, 0, 0)
+
+    def test_gemma4_keys(self):
+        self.assertEqual(kernel_facts.gemma4_key(self.GEMMA4_NAME), self.GEMMA4_KEY)
+        volta = ("void ninferno::ops::detail::(anonymous namespace)::gemma4_volta_decode_tiled_kernel"
+                 "<(int)128, (int)16>(ninferno::ops::Gemma4AttentionArgs, int)")
+        self.assertEqual(kernel_facts.gemma4_key(volta), ("volta_tiled", 128, 0, 0, 16, 0, 0, 0, 0))
+        self.assertEqual(kernel_facts.gemma4_key(volta.replace("_tiled", "")),
+                         ("volta", 128, 0, 0, 16, 0, 0, 0, 0))
+        self.assertIsNone(kernel_facts.gemma4_key(
+            "void ninferno::ops::gemma4_attention_combine_kernel<ninferno::ops::Gemma4Geometry<"
+            "(int)256, (int)8, (int)256>, (int)64>(ninferno::ops::Gemma4CombineArgs)"))
+
+    def test_gemma4_section_is_resources_only(self):
+        # The gemma4 family (#830) is read for its resources alone: no SASS pass, schema 1's
+        # columns in its section, and check compares those.
+        dump = Check.DUMP + "\n".join((" Function " + self.MMQ + ":",
+                                        "  REG:195 STACK:0 SHARED:0 LOCAL:0",
+                                        " Function " + self.GEMMA4 + ":",
+                                        "  REG:168 STACK:0 SHARED:16 LOCAL:0", ""))
+        (self.root / "usage.txt").write_text(dump)
+        names = {self.RMMA: self.RMMA, self.MMQ: self.MMQ_NAME, self.GEMMA4: self.GEMMA4_NAME}
+        kernel_facts.demangle = lambda wanted, cuda_bin: {n: names[n] for n in wanted}
+        out = self.extract("--families", "rmma")
+        self.extract("--families", "gemma4", "--update", str(out))
+        text = out.read_text()
+        self.assertIn("family gemma4", text)
+        self.assertIn("family_columns family kernel D G slice rows Bc partial fp8 chain "
+                      "registers stack local shared\n", text)
+        self.assertIn("gemma4 attention 256 8 256 2 64 1 0 0 168 0 0 16\n", text)
+        _, sections = kernel_facts.parse_sections(text)
+        self.assertEqual(sections["gemma4"]["rows"][self.GEMMA4_KEY], (168, 0, 0, 16, None))
+        self.assertEqual(self.check(out), 0)
+        (self.root / "moved.txt").write_text(text.replace(" 168 0 0 16\n", " 167 0 0 16\n"))
+        self.assertEqual(self.check(self.root / "moved.txt"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
