@@ -349,7 +349,7 @@ have frozen predictions so far.
     branch 0.010923 (96.92 %, 1.0037). The branch is -0.1 % of master's, inside ±15 %. Both are
     within KLD_TOLERANCE (0.15) of the recorded NVFP4 KV term, 0.00982 (choice_constants.h).
   - The NVFP4 KV error is unchanged, so the byte rule holds.
-- Decision (13.11): kept for width-1 NVFP4 KV decode on sm_80+ (RowTiles 1, not `exact`); every
+- Decision (13.11): kept where it is dispatched (NVFP4 KV, RowTiles 1, sm_80+, not `exact`); every
   frozen acceptance item holds.
 
 ### M. MMQ column widths per arch and format (#619 step 13, DECISIONS 74)
