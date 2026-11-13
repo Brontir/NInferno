@@ -61,6 +61,12 @@ struct GgufTensorTable {
     std::vector<std::string> weight_formats;
     std::vector<std::string> layer_formats;
     std::vector<std::string> rest_layer_formats;
+    // Its routed banks' and output head's formats (PlanModelFacts::expert_up_formats,
+    // expert_down_formats, head_format; #834): the workspace plan sizes the MoE layer and the head
+    // by them. Likewise its own only, whatever its bytes (empty: none read, the formula stands).
+    std::vector<std::string> expert_up_formats;
+    std::vector<std::string> expert_down_formats;
+    std::string head_format;
 };
 
 // The table from the facts of a head read (nullopt: no tensor table). A split part's: no tensor
@@ -261,6 +267,9 @@ struct QuantRow {
     // The plan counts a default proposal head whose size its own header did not give (the
     // parsed header's head taken as this row's).
     bool proposal_head_assumed = false;
+    // Whether the row's accuracy term may decide between quantizations (choice::quant_authority:
+    // direct, transfer, estimate, unknown); the trade weighs only direct rows.
+    choice::QualityAuthority quality_authority = choice::QualityAuthority::Unknown;
 };
 
 struct QuantPlan {

@@ -412,17 +412,21 @@ inline constexpr FittedHoldout kChoiceHoldouts[] = {
          "two Ada cards averaged, Turing one: none left out", "choice_constants.h at RouteEta")},
     {kChoice, "kKvReadFactor",
      Holdout::none(
-         "run_sw.sh, 9B at a 22K prompt, against INT8 on the same card: Turing's one card; Ada the "
-         "mean of the RTX 4070 Ti and 4090 (BF16 1.03 / 1.09, FP8 1.03 / 1.08, K8V4 1.01 / 1.04, "
-         "NVFP4 1.25 / 1.22: within 6 %)",
+         "Ada and Blackwell BF16 and FP8, Blackwell K8V4: the nsys census of the decode attention "
+         "kernel (#618 step 1, Qwen3.5-9B at 7.8K and 21.9K tokens, against INT8 on the same "
+         "card), the mean of two cards each (RTX 4070 Ti / 4090, RTX 5070 Ti / 5090: within 2.3 "
+         "%); Ada's K8V4 and NVFP4 "
+         "run_sw.sh at a 22K prompt (1.01 / 1.04, 1.25 / 1.22); Turing run_sw.sh on one card",
          "none left out", "choice_constants.h at KvReadFactor")},
     {kChoice, "kKvSmRate",
      Holdout::none(
          "Turing: Qwen3.5 9B's int8 kernel and Gemma 4 12B's BF16 one on the RTX 2080 Ti; Volta: "
-         "the "
-         "Quadro GV100's census at 7K and 82K (Gemma 4 12B's BF16 full layer 707 us a call for 153 "
-         "MB)",
-         "one card a row: nothing left out", "choice_constants.h at KvSmRate")},
+         "the Quadro GV100's census at 7K and 82K (Gemma 4 12B's BF16 full layer 707 us a call for "
+         "153 MB); Ampere, Ada and Blackwell: the census of #618 step 1 (Qwen3.5-9B, the RTX 3090 "
+         "and 3060, 4070 Ti and 4090, 5070 Ti and 5090: the mean of two cards, within 2.7 %; "
+         "Blackwell's NVFP4 6.4 % apart, so a row of one card's standing)",
+         "one card a Turing, Volta or Blackwell row, two an Ampere or Ada one: nothing left out",
+         "choice_constants.h at KvSmRate")},
     {kChoice, "kMoeChunkShare",
      Holdout::none(
          "run_chunk.sh at a 22K prompt, 2026-10-23/24: Gemma 4 26B on the RTX 4070 Ti and 4090, "
@@ -441,17 +445,18 @@ inline constexpr FittedHoldout kGenerationHoldouts[] = {
     {kGeneration, "w4a8_eff_scale",
      Holdout::none(
          "ninferno_route_tune timings of the RTX 4090, 5090, 4060 Ti, L4, A10 and A100 (18.10): "
-         "the "
-         "full-rate rows (ga100, hopper, gb100) take the A100's 0.46, the one board of them",
-         "one board for the rows that differ from 1.0: nothing left out, and not carried to a lent "
-         "row (fitted_route_scales: nullopt); Turing's 1.0 is the consumer rows' value with no "
+         "the ga100 row takes the A100's 0.46; the hopper and gb100 rows, with no board of their "
+         "own in the fit, hold none (#618 step 12)",
+         "one board for the row that differs from 1.0: nothing left out, and not carried to a lent "
+         "row or to Hopper / GB100 (fitted_route_scales: nullopt); Turing's 1.0 is the consumer "
+         "rows' value with no "
          "Turing board in the fit (#781: W4A8 at 0.70..0.74 of the RTX 2080 Ti's measured time)",
          "core/generation.h comment (fitted constants)")},
     {kGeneration, "a16_cost_scale",
      Holdout::none(
-         "the same route_tune timings: 1.11 on the consumer rows, 1.64 on the A100's (with the "
-         "busy-SM fill it moved 0.89 -> 1.11, which also prices the K-quant and codebook dequant: "
-         "5070 Ti ISTA T 17..32 1.20 -> 1.04)",
+         "the same route_tune timings: 1.11 on the consumer rows, 1.64 on the A100's, none on the "
+         "hopper and gb100 rows (#618 step 12) (with the busy-SM fill it moved 0.89 -> 1.11, "
+         "which also prices the K-quant and codebook dequant: 5070 Ti ISTA T 17..32 1.20 -> 1.04)",
          "the A100 is one board; the consumer value is checked on the same cards (and a 5070 Ti "
          "before / after case)",
          "core/generation.h; generic_cost.cpp price_routes comment")},

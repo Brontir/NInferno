@@ -201,3 +201,13 @@ ninferno_add_test(ninferno_plan_device_class_test LABELS host
 target_include_directories(ninferno_plan_device_class_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 set_tests_properties(ninferno_plan_device_class_test PROPERTIES
   ENVIRONMENT CUDA_VISIBLE_DEVICES=-1)
+
+# The one class builder for a named board (core board_class, #612 step 10): for every registry
+# board, the plan's, the selector golden boards' and the price tool's class are the ones their own
+# builders gave before it. CPU.
+ninferno_add_test(ninferno_board_class_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_board_class.cpp"
+  LIBRARIES ninferno_engine ninferno_ops ninferno_core)
+target_include_directories(ninferno_board_class_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+set_tests_properties(ninferno_board_class_test PROPERTIES
+  ENVIRONMENT CUDA_VISIBLE_DEVICES=-1)

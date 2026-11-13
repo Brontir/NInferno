@@ -894,11 +894,14 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
     // Only a measurement of a row's own files decides on its accuracy (#368,
     // choice::quant_authority): the trade weighs the rows that have one, against the rule's pick
     // only where it has one too; an estimate is shown, never decisive.
+    // Each row's authority is kept for the plan JSON (`quality_authority`, #618 step 11).
     const choice::ModelFacts quality_model = choice_model_of(shape);
-    const auto authorized = [&](const QuantRow& row) {
-        return choice::quant_authority(quality_model,
-                                       quant_option_of(row_facts(shape, row), row.listing.quant)) ==
-               choice::QualityAuthority::Direct;
+    for (QuantRow& row : out.rows) {
+        row.quality_authority = choice::quant_authority(
+            quality_model, quant_option_of(row_facts(shape, row), row.listing.quant));
+    }
+    const auto authorized = [](const QuantRow& row) {
+        return row.quality_authority == choice::QualityAuthority::Direct;
     };
     const bool weighs = out.pick && bits_known &&
                         choice::weighs_quantizations(quality_model, choice_card_of(inputs.gpu)) &&
@@ -1352,6 +1355,8 @@ Json quant_plan_json(const QuantPlan& plan) {
                         {"fits", row.fit.state == runtime::QuantFitState::Own},
                         {"fits_shared", row.fit.state == runtime::QuantFitState::Shared},
                         {"largest", row.largest}};
+        item["quality_authority"] =
+            std::string(choice::quality_authority_name(row.quality_authority));
         item["plan"] = row.planned.plan.planned ? planned_json(row.planned, false) : Json(nullptr);
         if (row.estimate) {
             item["estimate"] = {
@@ -1561,6 +1566,9 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
     // may add a format (a mixed recipe's other layers), never another file's: closer than the
     // label, which may name none of them (a gpt-oss file's MXFP4 banks under an F16 or Q4_K
     // label). The parsed part read them before too (with_weights kept the shape's at equal bytes).
+    // Not its banks' and head's formats (#834): the workspace takes the widest over every pair
+    // of bank formats, and a sample that misses a later part's would size it short; none, and
+    // the formula stands.
     const auto& shape = facts.shape;
     if (facts.model.weight_basis == runtime::WeightBasis::FileSize &&
         facts.model.gguf_data_offset != 0 && (route || !shape.weight_formats.empty())) {
@@ -1591,11 +1599,20 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
     table.weight_formats         = shape.weight_formats;
     table.layer_formats          = shape.layer_formats;
     table.rest_layer_formats     = shape.rest_layer_formats;
+    table.expert_up_formats      = facts.model.expert_up_formats;
+    table.expert_down_formats    = facts.model.expert_down_formats;
+    table.head_format            = facts.model.head_format;
     return table;
 }
 
 PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
     PlanSourceFacts out = with_weights(shape, row.weight_bytes, row.basis);
+    // The source artifact's directory (the start's forms) only for the row that is that file:
+    // equal bytes do not make another packing's or quantization's bindings this file's (codex on
+    // #832). Identity is the files' digests; unknown on either side, the row has no directory.
+    if (row.listing.weights.empty() || row.listing.weights != shape.shape.weights) {
+        out.model.artifact_directory.reset();
+    }
     // Its own files (the shape's are another row's): their measurement, if any, is its own.
     out.shape.weights = row.listing.weights;
     // Its linears' formats from its own table; the shape's are another file's (the label stands).
@@ -1641,6 +1658,12 @@ PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
     out.shape.weight_formats     = own.weight_formats;
     out.shape.layer_formats      = own.layer_formats;
     out.shape.rest_layer_formats = own.rest_layer_formats;
+    // Its banks' and head's formats likewise (#834): the workspace plan sizes the MoE layer and
+    // the head by them, and the shape's are another file's even at equal bytes; without its
+    // table, none (plan_workspace: the formula stands).
+    out.model.expert_up_formats   = own.expert_up_formats;
+    out.model.expert_down_formats = own.expert_down_formats;
+    out.model.head_format         = own.head_format;
     // Its stored routed banks and token table where its table counted them (a GGUF's).
     if (const auto& table = row.listing.table) {
         if (table->routed_expert_bytes) {

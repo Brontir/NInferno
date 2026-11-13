@@ -345,8 +345,7 @@ q5 p1 swiglu 3072x5120 speed T=64..128 rmma.m1.n4.w1x4 ws=0
 q5 p1 swiglu 3072x5120 speed T=192 tiled.64x128 ws=0
 q5 p1 swiglu 3072x5120 speed T=256 rmma.m1.n4.w1x4 ws=0
 q5 p1 swiglu 3072x5120 speed T=512 tiled.64x128 ws=0
-q5 p1 swiglu 3072x5120 speed T=1024 i8.128x128 ws=5898240
-q5 p1 swiglu 3072x5120 speed T=2048 rmma.m1.n8.w4x1 ws=0
+q5 p1 swiglu 3072x5120 speed T=1024..2048 rmma.m1.n8.w4x1 ws=0
 q5 p1 swiglu 3072x5120 prefill T=17..128 i8.128x64 ws=1474560
 q5 p1 swiglu 3072x5120 prefill T=192..256 i8.128x128 ws=1474560
 q5 p1 swiglu 3072x5120 prefill T=512 i8.128x64 ws=2949120

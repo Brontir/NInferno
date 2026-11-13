@@ -9,6 +9,7 @@
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_quants.h"
 #include "product/plan/plan_speculation.h"
+#include "spec/round_cost.h"
 
 #include "convert/ggml_quants.h"
 #include "convert/gguf.h"
@@ -1075,6 +1076,40 @@ int boards() {
                       "4090,headless,linux");
     const auto w = pr::plan_device_of_board("nvidia geforce rtx 4090, wddm", &error);
     failures += check(w && w->paravirtual && w->drives_display, "4090 wddm: a display assumed");
+    // A registry name with a comma (#831): whole, with facts after it, and without the vendor.
+    const auto tu116 = pr::plan_device_of_board("GeForce GTX 1650 (TU116, GDDR6)", &error);
+    failures += check(tu116 && tu116->name == "GeForce GTX 1650 (TU116, GDDR6)",
+                      "a comma in the board's name: " + error);
+    const auto tu116h =
+        pr::plan_device_of_board("gtx 1650 (tu116, gddr6), headless, linux", &error);
+    failures += check(tu116h && tu116h->name == "GeForce GTX 1650 (TU116, GDDR6)" &&
+                          !tu116h->paravirtual && !tu116h->drives_display,
+                      "a comma name with facts after it: " + error);
+    // The speculation key carries the board's mma_slow from the facts table (#858): a GTX 16
+    // board has no mma.sync tiles, a Turing RTX board has them.
+    if (tu116) {
+        const auto key = pr::gpu_key_of(*tu116);
+        failures += check(key.mma_slow && !ninferno::spec::card_rates(key).mma_tiles,
+                          "a GTX 16 board's key: mma_slow, no mma.sync tiles");
+    }
+    if (const auto gtx = pr::plan_device_of_board("0x2182", &error)) {
+        const auto key = pr::gpu_key_of(*gtx);
+        failures += check(key.mma_slow && !ninferno::spec::card_rates(key).mma_tiles,
+                          "the GTX 1660 Ti's key: mma_slow, no mma.sync tiles");
+    } else {
+        failures += check(false, "the GTX 1660 Ti by its PCI id: " + error);
+    }
+    if (const auto rtx = pr::plan_device_of_board("2080 ti", &error)) {
+        const auto key = pr::gpu_key_of(*rtx);
+        failures += check(!key.mma_slow && ninferno::spec::card_rates(key).mma_tiles,
+                          "the RTX 2080 Ti's key: mma.sync tiles");
+    } else {
+        failures += check(false, "the RTX 2080 Ti by name: " + error);
+    }
+    error.clear();
+    failures += check(!pr::plan_device_of_board("GTX 1650 (TU116, GDDR6), turbo", &error) &&
+                          error.find("turbo") != std::string::npos,
+                      "an unknown fact after a comma name: " + error);
     const auto laptop = pr::plan_device_of_board("4090 laptop", &error);
     failures += check(laptop && laptop->name == "GeForce RTX 4090 Laptop GPU", "4090 laptop");
     const auto pci = pr::plan_device_of_board("0x2B85", &error);

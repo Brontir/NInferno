@@ -169,6 +169,9 @@ NOT_DECIDING = {
     # the plan's prefill route query (#613 PR-9): it asks route_query for the configuration
     # choice's prefill estimate, product side; the selector goldens do not link it
     "src/runtime/engine/plan_prefill_routes.cpp",
+    # the dry run's workspace query (#615 W2): it reads the route pins to size the MoE path a
+    # start takes (#844), it decides no route; the selector goldens do not call it
+    "src/runtime/engine/plan_workspace.cpp",
     # rmsnorm_rope's fused-width bound (#661): it reads route_cost_constants.h for its pending fit and
     # decides the rope fusion of Qwen's text attention, not a linear route; the golden test does not
     # call it
@@ -1033,6 +1036,7 @@ REVERSE_HEADERS = {
     "src/ops/generic/selector_facts.h", "src/ops/generic/route_query.h", "src/ops/generic/route_table.h",
     "include/ninferno/ops/route_table.h", "src/ops/generic/route_cost_constants.h",
     "src/ops/generic/generic_select_internal.h", "src/ops/generic/format_traits.h",
+    "src/ops/generic/format_rules.h",
     "src/ops/generic/generic_gemm.h", "src/ops/route_pins.h", "src/core/mmq_columns.h",
     "src/core/board_registry.h", "src/core/cost_constants.h", "src/core/machine_facts.h",
     "src/ops/generic/generic_gemm_internal.h", "src/ops/generic/ggml_mmq/ggml_mmq.h",

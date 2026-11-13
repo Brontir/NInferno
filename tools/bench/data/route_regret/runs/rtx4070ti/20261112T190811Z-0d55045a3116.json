@@ -1,0 +1,294 @@
+{
+  "bands": {
+    "batch129": {
+      "best_ms": 32.366474,
+      "cases": 30,
+      "cases_over_5pct": 2,
+      "geomean_regret": 0.007614167798687843,
+      "selected_ms": 32.56926,
+      "skipped": 0,
+      "tokens": 9600,
+      "weighted_regret": 0.0062653102095706625,
+      "worst_regret": 0.10247145334380314
+    },
+    "decode": {
+      "best_ms": 18.79580927,
+      "cases": 80,
+      "cases_over_5pct": 11,
+      "geomean_regret": 0.02791500732952179,
+      "selected_ms": 19.08365012,
+      "skipped": 0,
+      "tokens": 360,
+      "weighted_regret": 0.015314097193964704,
+      "worst_regret": 0.268396529562982
+    },
+    "narrow": {
+      "best_ms": 5.323324,
+      "cases": 20,
+      "cases_over_5pct": 14,
+      "geomean_regret": 0.21905682528720205,
+      "selected_ms": 5.749826,
+      "skipped": 0,
+      "tokens": 560,
+      "weighted_regret": 0.08011948925145251,
+      "worst_regret": 0.6037735849056605
+    },
+    "verify": {
+      "best_ms": 5.1158322,
+      "cases": 20,
+      "cases_over_5pct": 4,
+      "geomean_regret": 0.04150577481084605,
+      "selected_ms": 5.1727342,
+      "skipped": 0,
+      "tokens": 280,
+      "weighted_regret": 0.011122726034681119,
+      "worst_regret": 0.2789636390401886
+    },
+    "wide": {
+      "best_ms": 14.22726,
+      "cases": 40,
+      "cases_over_5pct": 3,
+      "geomean_regret": 0.01803467305981954,
+      "selected_ms": 14.254396,
+      "skipped": 0,
+      "tokens": 3360,
+      "weighted_regret": 0.0019073243899387915,
+      "worst_regret": 0.44999999999999996
+    }
+  },
+  "board": "rtx4070ti",
+  "build_id": "regret-0d55045a3116-rtx4070ti",
+  "by_board_regime_authority": [
+    {
+      "authority": "r8-rules",
+      "board": "rtx4070ti",
+      "cases": 10,
+      "evidence": {
+        "ranker": 10
+      },
+      "geomean_slowdown": 1.0032189171843864,
+      "max_regret": 0.016949152542372836,
+      "median_regret": 0.0007305471715167711,
+      "p95_regret": 0.016949152542372836,
+      "regime": "decode T<=4",
+      "ridge_t": 178.97142857142856,
+      "scored_cases": 10,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 10
+      }
+    },
+    {
+      "authority": "vec-rule",
+      "board": "rtx4070ti",
+      "cases": 30,
+      "evidence": {
+        "ranker": 30
+      },
+      "geomean_slowdown": 1.0213902677624502,
+      "max_regret": 0.14244056318068332,
+      "median_regret": 0.006091215924775684,
+      "p95_regret": 0.11641451492244137,
+      "regime": "decode T<=4",
+      "ridge_t": 178.97142857142856,
+      "scored_cases": 30,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 30
+      }
+    },
+    {
+      "authority": "rmma-rule",
+      "board": "rtx4070ti",
+      "cases": 30,
+      "evidence": {
+        "ranker": 30
+      },
+      "geomean_slowdown": 1.08139850959982,
+      "max_regret": 0.2789636390401886,
+      "median_regret": 0.046075481078992286,
+      "p95_regret": 0.268396529562982,
+      "regime": "verify T5-16",
+      "ridge_t": 178.97142857142856,
+      "scored_cases": 30,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 30
+      }
+    },
+    {
+      "authority": "route-table",
+      "board": "rtx4070ti",
+      "cases": 30,
+      "evidence": {
+        "measured": 30
+      },
+      "geomean_slowdown": 1.0000405717559289,
+      "max_regret": 0.0012178689883912686,
+      "median_regret": 0.0,
+      "p95_regret": 0.0,
+      "regime": "verify T5-16",
+      "ridge_t": 178.97142857142856,
+      "scored_cases": 30,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 30
+      }
+    },
+    {
+      "authority": "cost-model",
+      "board": "rtx4070ti",
+      "cases": 60,
+      "evidence": {
+        "ranker": 60
+      },
+      "geomean_slowdown": 1.0810597466518859,
+      "max_regret": 0.6037735849056605,
+      "median_regret": 0.0,
+      "p95_regret": 0.4684036554540152,
+      "regime": "T>=17 below ridge",
+      "ridge_t": 178.97142857142856,
+      "scored_cases": 60,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 60
+      }
+    },
+    {
+      "authority": "cost-model",
+      "board": "rtx4070ti",
+      "cases": 30,
+      "evidence": {
+        "ranker": 30
+      },
+      "geomean_slowdown": 1.0076141677986878,
+      "max_regret": 0.10247145334380314,
+      "median_regret": 0.0,
+      "p95_regret": 0.0577653601741599,
+      "regime": "T>=17 above ridge",
+      "ridge_t": 178.97142857142856,
+      "scored_cases": 30,
+      "single_pass_cases": 0,
+      "statuses": {
+        "complete": 30
+      }
+    }
+  ],
+  "card": "RTX 4070 Ti",
+  "date": "2026-11-12T19:08:11Z",
+  "delta": {
+    "gone_groups": [],
+    "improvements": [],
+    "new_caught_up": null,
+    "new_groups": [],
+    "new_holds": null,
+    "previous": {
+      "path": "tools/bench/data/route_regret/rtx4070ti.json",
+      "revision": "f24d0079613133f8e19f9bcc40b9357c761292b9"
+    },
+    "regressions": [],
+    "sweep_matches": "unknown",
+    "table_exit": null,
+    "threshold": 0.05
+  },
+  "device": "ad104:60sm",
+  "driver": "615.71.09",
+  "gpu": {
+    "applications_graphics_mhz": "[Requested functionality has been deprecated]",
+    "max_sm_mhz": 3105,
+    "name": "NVIDIA GeForce RTX 4070 Ti",
+    "persistence_mode": "Enabled",
+    "power_limit_w": 285,
+    "sm_mhz_during_sweep": {
+      "max": 2790,
+      "min": 645,
+      "samples": 892
+    }
+  },
+  "holdout": "board",
+  "nvcc": "13.4.92",
+  "nvcc_source": "CMAKE_CUDA_COMPILER",
+  "overrides": {
+    "caught_up": [
+      "q4k.a8.store.n4096.k4096.T12",
+      "q4k.a8.store.n4096.k4096.T16",
+      "q4k.a8.swiglu.n12288.k4096.T5",
+      "q4k.a8.swiglu.n12288.k4096.T6",
+      "q4k.a8.swiglu.n12288.k4096.T7",
+      "q4k.a8.swiglu.n12288.k4096.T8",
+      "q4k.a8.swiglu.n15360.k3840.T12",
+      "q4k.a8.swiglu.n15360.k3840.T16",
+      "q4k.a8.swiglu.n15360.k3840.T5",
+      "q4k.a8.swiglu.n15360.k3840.T6",
+      "q4k.a8.swiglu.n15360.k3840.T7",
+      "q4k.a8.swiglu.n15360.k3840.T8",
+      "q6k.a8.store.n248320.k4096.T12",
+      "q6k.a8.store.n248320.k4096.T16",
+      "q6k.a8.store.n248320.k4096.T5",
+      "q6k.a8.store.n248320.k4096.T6",
+      "q6k.a8.store.n248320.k4096.T7",
+      "q6k.a8.store.n248320.k4096.T8"
+    ],
+    "holds": [
+      "q4k.a8.store.n3840.k15360.T12",
+      "q4k.a8.store.n3840.k15360.T16",
+      "q4k.a8.store.n3840.k15360.T5",
+      "q4k.a8.store.n3840.k15360.T6",
+      "q4k.a8.store.n3840.k15360.T7",
+      "q4k.a8.store.n3840.k15360.T8",
+      "q4k.a8.store.n4096.k4096.T5",
+      "q4k.a8.store.n4096.k4096.T6",
+      "q4k.a8.store.n4096.k4096.T7",
+      "q4k.a8.store.n4096.k4096.T8",
+      "q4k.a8.swiglu.n12288.k4096.T12",
+      "q4k.a8.swiglu.n12288.k4096.T16"
+    ],
+    "resolution": 0.05,
+    "unscored": []
+  },
+  "passed": true,
+  "pci_device_id": "0x2782",
+  "qualification": "ninferno_linear_generic_test (NINFERNO_TEST_FORMATS=q4k,q6k) and ninferno_route_classes_test passed on this build and board, 2026-11-12T19:08:11Z",
+  "revision": "0d55045a31160a363b12b9373b04e5a418eda4ab",
+  "schema": "ninferno-regret-run/1",
+  "selection_report_sha256": "a3192f2bdbe7ef3b64f58777f96ed2b9c49abdd3e1b87ec542e3dcb378e66f47",
+  "selector_revision": "0d55045a31160a363b12b9373b04e5a418eda4ab",
+  "summary": {
+    "cases": 190,
+    "geomean_slowdown": 1.0425652922623552,
+    "max_regret": 0.6037735849056605,
+    "median_regret": 0.0,
+    "p95_regret": 0.268396529562982,
+    "scored_cases": 190,
+    "single_pass_cases": 0,
+    "statuses": {
+      "complete": 190
+    }
+  },
+  "sweep": {
+    "passes": 3,
+    "route_policy": "the build's default",
+    "samples": 7,
+    "shapes": "tools/bench/data/route_regret/shapes.txt",
+    "shapes_sha256": "4e065f66903b787db66d5ca1f7a68006803019fae5574b64e35a64ac2a8618de"
+  },
+  "table_exit": {
+    "answered_by": {
+      "priced": 90,
+      "rules": 70,
+      "table": 30
+    },
+    "cases": 190,
+    "caught_up": 18,
+    "exit_share": 0.6,
+    "holds": 12,
+    "overrides": 30,
+    "resolution": 0.05,
+    "share": {
+      "priced": 0.47368421052631576,
+      "rules": 0.3684210526315789,
+      "table": 0.15789473684210525
+    },
+    "unscored": 0
+  }
+}

@@ -92,6 +92,10 @@ struct ServedChoice {
     std::vector<ActivationMode> allowed_activations;
     // Every KV codec a start of this model takes or refuses, and why (kv_options on this card).
     std::vector<KvOption> kv_options;
+    // The model's family (choice::ModelFacts::family: the answer scale's key) and whether the
+    // quantization's accuracy term may decide between quantizations (choice::quant_authority).
+    std::string family;
+    choice::QualityAuthority quant_authority = choice::QualityAuthority::Unknown;
 };
 
 // How a choice plans each candidate's memory: its exact own context per stream (the longest it

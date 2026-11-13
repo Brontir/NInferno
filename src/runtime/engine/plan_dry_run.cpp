@@ -1,6 +1,7 @@
 #include "runtime/engine/plan_dry_run.h"
 
 #include "core/device_class.h"
+#include "core/per_device.h"
 #include "models/qwen3_5/program/planning/sequence_bytes.h"
 #include "runtime/engine/kv_capacity.h"
 
@@ -8,9 +9,11 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace ninferno::runtime {
 
@@ -289,6 +292,17 @@ std::uint64_t plan_idle_free_bytes(const PlanDeviceFacts& device) noexcept {
     return device.total_bytes > taken ? device.total_bytes - taken : 0;
 }
 
+DeviceClass plan_device_class(const PlanDeviceFacts& device) {
+    // An explicit empty driver view: no L2 and no driver clocks, as the plan's class had before
+    // the one builder (#612 step 10; the row's L2 for the plan is a later, decision-moving PR).
+    return board_class({.pci_device_id = device.pci_device_id,
+                        .major         = device.compute_capability / 10,
+                        .minor         = device.compute_capability % 10,
+                        .sms           = device.sms,
+                        .global_bytes  = static_cast<std::size_t>(device.total_bytes),
+                        .driver        = BoardDriverView{}});
+}
+
 std::uint64_t plan_board_total_bytes(double vram_gib) noexcept {
     if (!(vram_gib > 0)) { return 0; }
     const long double bytes = static_cast<long double>(vram_gib) * 0.975L * kGiB;
@@ -357,6 +371,21 @@ PlanWorkspaceQuery& workspace_query() {
 } // namespace
 
 void set_plan_workspace_query(PlanWorkspaceQuery query) { workspace_query() = std::move(query); }
+
+namespace {
+PlanTokenizerQuery& tokenizer_query() {
+    static PlanTokenizerQuery query;
+    return query;
+}
+} // namespace
+
+void set_plan_tokenizer_query(PlanTokenizerQuery query) { tokenizer_query() = std::move(query); }
+
+std::optional<std::uint32_t> plan_tokenizer_tokens(const artifact::Reader& reader) {
+    const PlanTokenizerQuery& query = tokenizer_query();
+    if (!query) { return std::nullopt; }
+    return query(reader);
+}
 
 namespace {
 PlanMoeRouteQuery& moe_route_query() {
@@ -523,10 +552,32 @@ EngineOptions normalized_for_plan(EngineOptions options, const PlanModelFacts& m
     return options;
 }
 
+// The class dry_run_plan sizes `device`'s rungs under (#829): a board known by its facts alone, its
+// plan_device_class; a CUDA device other than this thread's current one, its own
+// (plan_device_of_cuda reads a busy card without making it current, and the queries read the
+// current device's class); nullopt: the current device's, read as it is.
+std::optional<DeviceClass> sizing_class(const PlanDeviceFacts& device) {
+    if (device.cuda_device < 0) {
+        if (device.compute_capability == 0 || device.sms == 0) { return std::nullopt; }
+        return plan_device_class(device);
+    }
+    if (current_device_ordinal_or_none() == device.cuda_device) { return std::nullopt; }
+    try {
+        return device_class(device.cuda_device);
+    } catch (const std::exception&) {
+        return std::nullopt; // a device that cannot be read now: the queries read as they find it
+    }
+}
+
 } // namespace
 
 DryRunPlan dry_run_plan(const PlanModelFacts& model, const PlanDeviceFacts& device,
                         EngineOptions options) {
+    // The registered queries sizing the rungs read the device class: `device`'s (#829).
+    std::optional<ScopedDeviceClass> board;
+    if (std::optional<DeviceClass> sizing = sizing_class(device)) {
+        board.emplace(std::move(*sizing));
+    }
     DryRunPlan out;
     out.total_bytes   = device.total_bytes;
     out.free_measured = device.free_bytes.has_value();

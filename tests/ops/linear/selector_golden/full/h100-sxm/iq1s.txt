@@ -274,9 +274,8 @@ iq1s p1 swiglu 1024x1024 speed T=4 ggml_vec ws=4608
 iq1s p1 swiglu 1024x1024 speed T=5..8 rmma.m1.n1.w1x8.c2 ws=0
 iq1s p1 swiglu 1024x1024 speed T=9..16 ggml_mmq ws=0
 iq1s p1 swiglu 1024x1024 speed T=17..128 rmma.m1.n1.w1x4 ws=0
-iq1s p1 swiglu 1024x1024 speed T=192..256 rmma.m1.n2.w1x4 ws=0
-iq1s p1 swiglu 1024x1024 speed T=512 w4a8.128x64 ws=655360
-iq1s p1 swiglu 1024x1024 speed T=1024 w4a8.128x64 ws=1310720
+iq1s p1 swiglu 1024x1024 speed T=192..512 rmma.m1.n2.w1x4 ws=0
+iq1s p1 swiglu 1024x1024 speed T=1024 rmma.m1.n4.w4x1 ws=0
 iq1s p1 swiglu 1024x1024 speed T=2048 rmma.m1.n8.w4x1 ws=0
 iq1s p1 swiglu 1024x1024 prefill T=17 w4a8.32x128 ws=21888
 iq1s p1 swiglu 1024x1024 prefill T=24 w4a8.32x128 ws=30720
