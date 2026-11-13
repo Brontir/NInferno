@@ -40,6 +40,9 @@ struct SparseMoeSmallTWorkspace {
     Tensor token_alpha;
     Tensor shared_scale;
     Tensor scratch;
+    // S1's last-block ticket where its last block selects (#882): the call's own, never a device
+    // global another engine's grid in flight on the GPU counts on too.
+    Tensor ticket;
 };
 
 template <class Arena>
@@ -52,6 +55,8 @@ SparseMoeSmallTWorkspace allocate_sparse_moe_small_t_workspace(Arena& arena, std
     // S1 uses [T,257,4] partial router scores. After S2, each token reuses
     // its [9,512] region for eight routed and one shared SwiGLU activations.
     out.scratch = arena.alloc(DType::FP32, {512, 9 * tokens}, 256);
+    // Last, so the buffers above keep their offsets.
+    out.ticket = arena.alloc(DType::I32, {1}, 16);
     return out;
 }
 

@@ -75,7 +75,18 @@ struct LayerIds {
 
 std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceContext& device,
                                    ActivationProfile profile) {
-    artifact::Reader reader(path);
+    const artifact::Reader reader(path);
+    return build(reader, &device, profile);
+}
+
+std::unique_ptr<Model> Model::describe(const artifact::Directory& directory,
+                                       ActivationProfile profile) {
+    const auto reader = artifact::Reader::detached(directory);
+    return build(reader, nullptr, profile);
+}
+
+std::unique_ptr<Model> Model::build(const artifact::Reader& reader, DeviceContext* device,
+                                    ActivationProfile profile) {
     auto model     = std::unique_ptr<Model>(new Model());
     model->config_ = parse_config(loading::open_text_component(reader, "nemotron_h decoder"));
     const auto& c  = model->config_;
@@ -134,7 +145,7 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
         }
     }
 
-    model->backing_ = demands.materialize(device);
+    model->backing_ = device != nullptr ? demands.materialize(*device) : demands.describe();
     auto& backing   = *model->backing_;
     const loading::Prepare prepare(demands, backing, profile == ActivationProfile::Artifact);
     auto& w           = model->weights_;

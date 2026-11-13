@@ -236,6 +236,23 @@ int main() {
             check(refused({"ninferno-serve", "model.ninferno", "--json"}) &&
                       refused({"ninferno-serve", "model.ninferno", "--plan", "--prepare-only"}),
                   "--json without --plan or --plan with --prepare-only is accepted");
+        // --plan-idle needs --plan --no-load; --plan-free-now needs --plan-idle and a real card
+        // (#891).
+        const ServeOptions idle = parse({"ninferno-serve", "model.ninferno", "--plan", "--no-load",
+                                         "--plan-idle", "--plan-free-now", "3221225472"});
+        failures += check(idle.plan_idle && idle.plan_free_now == 3221225472ULL &&
+                              !parse({"ninferno-serve", "model.ninferno"}).plan_free_now,
+                          "--plan-idle --plan-free-now is not parsed");
+        failures += check(
+            refused({"ninferno-serve", "model.ninferno", "--plan", "--plan-idle"}) &&
+                refused({"ninferno-serve", "model.ninferno", "--plan", "--no-load",
+                         "--plan-free-now", "1024"}) &&
+                refused({"ninferno-serve", "model.ninferno", "--plan", "--no-load", "--plan-idle",
+                         "--plan-device", "RTX 4090", "--plan-free-now", "1024"}) &&
+                refused({"ninferno-serve", "model.ninferno", "--plan", "--no-load", "--plan-idle",
+                         "--plan-free-now", "lots"}),
+            "--plan-idle without --no-load, or --plan-free-now without --plan-idle, on a named "
+            "board or not a number, is accepted");
     }
 
     // --device: N counts GPUs in PCI bus order; a PCI address or a UUID names one board.

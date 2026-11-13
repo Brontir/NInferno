@@ -161,21 +161,13 @@ public:
 
     [[nodiscard]] WorkspacePlan workspace_plan(const SequencePlanImpl& plan) const override {
         const auto chunk   = static_cast<std::int32_t>(std::min(plan.prefill_chunk, plan.capacity));
-        const auto batch   = static_cast<std::int32_t>(plan.max_concurrency);
         const auto context = static_cast<std::int32_t>(plan.capacity);
         // Every capacity query under the route profiles its calls run under
         // (ninferno/ops/prefill_routes.h): the invariant one under --activations exact, and the
         // prefill one for a prefill chunk (its MTP alignment and chain included).
         const ops::ScopedInvariantRoutes routes(invariant_);
-        WorkspacePlan out;
-        {
-            const ops::ScopedPrefillRoutes prefill(true);
-            out.text_prefill = Pass::workspace_bytes(model_, context, chunk, 1) +
-                               ops::sampling_workspace_capacity_bytes(traits_.public_tokens, 1, 1);
-        }
-        out.ordinary_round =
-            Pass::workspace_bytes(model_, context, batch, batch) +
-            ops::sampling_workspace_capacity_bytes(traits_.public_tokens, 1, batch);
+        // The target's own calls (the plan without the weights sizes these the same way).
+        WorkspacePlan out = target_workspace_plan(model_, traits_.public_tokens, plan);
         if (mtp_ != nullptr) {
             const auto width = static_cast<std::int32_t>(plan.draft_window) + 1;
             // A speculative round runs at most the widest speculative launch's rows.
@@ -198,11 +190,6 @@ public:
                 ops::speculative_accept_greedy_drafts_workspace_capacity_bytes(
                     traits_.public_tokens, 1, width - 1, 1, rows) +
                 MtpPass::workspace_bytes(model_, *mtp_, context, columns) + 4096;
-        }
-        // Causal scoring (ninferno-perplexity): the Program's scoring tiles over the output head.
-        if (plan.causal_scoring) {
-            out.causal_score = qwen3_5::detail::causal_score_workspace_bytes(
-                traits_.output_rows, model_.weights().output_head);
         }
         out.general_capacity = std::max({out.text_prefill, out.ordinary_round, out.mtp_prefill,
                                          out.mtp_round, out.causal_score});
@@ -628,6 +615,29 @@ StateShape state_shape(const Config& config, std::int32_t public_tokens) {
         .output_rows      = config.vocab_size,
         .public_tokens    = public_tokens,
     };
+}
+
+WorkspacePlan target_workspace_plan(const Model& model, std::int32_t public_tokens,
+                                    const SequencePlanImpl& plan) {
+    const auto chunk   = static_cast<std::int32_t>(std::min(plan.prefill_chunk, plan.capacity));
+    const auto batch   = static_cast<std::int32_t>(plan.max_concurrency);
+    const auto context = static_cast<std::int32_t>(plan.capacity);
+    WorkspacePlan out;
+    {
+        const ops::ScopedPrefillRoutes prefill(true);
+        out.text_prefill = Pass::workspace_bytes(model, context, chunk, 1) +
+                           ops::sampling_workspace_capacity_bytes(public_tokens, 1, 1);
+    }
+    out.ordinary_round = Pass::workspace_bytes(model, context, batch, batch) +
+                         ops::sampling_workspace_capacity_bytes(public_tokens, 1, batch);
+    // Causal scoring (ninferno-perplexity): the Program's scoring tiles over the output head.
+    if (plan.causal_scoring) {
+        out.causal_score = qwen3_5::detail::causal_score_workspace_bytes(
+            model.config().vocab_size, model.weights().output_head);
+    }
+    out.general_capacity = std::max({out.text_prefill, out.ordinary_round, out.causal_score});
+    out.capacity         = out.general_capacity;
+    return out;
 }
 
 std::unique_ptr<const ModelExecution>

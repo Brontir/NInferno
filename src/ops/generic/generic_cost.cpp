@@ -38,9 +38,12 @@ double bytes_per_weight(const Weight& weight, const Problem& problem) {
 namespace {
 
 // FUSION-SITE: activation_quantizer_launch
+// `complete`: the completeness terms are offered (Calibration::completeness_terms): the quantizer
+// by its counted bytes and its own grid's launch in place of the fitted pair, and each route's
+// output write, residual read and launch added (kernel_roofline.h Completeness).
 template <class Offer>
 void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t tokens,
-                   const DeviceClass& d, const Offer& offer) {
+                   const DeviceClass& d, bool complete, const Offer& offer) {
     // The A8 tiles multiply on the int8 MMA: tensor mma.sync (sm_75 on: Turing's build composes
     // the s8 m16n8k32 from its m8n8k16, ops/common/mma.cuh), not on a chip that runs mma.sync on
     // its FP16 units (mma_slow: TU116 / TU117), and an int8 rate in the generation row (Volta has
@@ -90,10 +93,38 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         return route_cost::kQuantLaunchSeconds.value() +
                cols * k * route_cost::kQuantBytesPerValue.value() / bw;
     };
+    // The completeness terms (#613 PR-8a). The quantizer by its kernel's counts
+    // (route_cost_constants.h kQuant*BytesPerValue): its bytes over the bus, and its grid's launch
+    // by the one launch rule (kernel_roofline.h launch_term: its node and dispatch ramp, the
+    // slowest measured architecture's where this one has no launch facts, #886) as the kind the
+    // engine launches it: the W4A8 and I8 quantizers as plain nodes (<<<>>>), MMQ's dependent
+    // (pdl::launch_dependent, a PDL node from sm_90 on). W4A8: T rows of w4a8_ld(K) values, the
+    // padding past K written as zeros; I8: K over the tokens padded to 256, the padding tokens
+    // written as zeros; MMQ: a slice's columns over K. Then every route's output write, residual
+    // read and its own kernel's launch (`beyond`), a plain node: the W4A8 and I8 tiles launch with
+    // <<<>>>.
+    const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
+    const kr::Call call{n, k, t, sets, bpw, problem.epilogue == Epilogue::AddResidual};
+    const auto quant_counted = [&](double bytes, double ctas,
+                                   LaunchKind kind = LaunchKind::GraphNode) {
+        return kr::launch_term(chip, ctas, kind).seconds + bytes / bw;
+    };
+    const auto beyond = [&](double ctas) {
+        const kr::Completeness c = kr::completeness(chip, call, ctas);
+        return c.output + c.residual + c.launch;
+    };
+    const double quant_threads = route_cost::kQuantThreadsPerCta.value();
     // Fraction of the int8 peak by kW4a8Schedules index: 32x128, 64x128, 128x128, 128x64, 64x64,
     // 128x64 with producer warps.
     constexpr auto kW4a8Eff = route_cost::kW4a8Efficiency;
     if (allows_w4a8(weight, problem.policy)) {
+        const double ld = static_cast<double>(w4a8_ld(problem.k));
+        const double quant_w4a8 =
+            complete
+                ? quant_counted(t * (k * route_cost::kQuantW4a8BytesPerValue.value() +
+                                     (ld - k) * route_cost::kQuantW4a8PadBytesPerValue.value()),
+                                cdiv(t * ld / 32.0, quant_threads))
+                : quant(t);
         for (int i = 0; i < w4a8_schedule_count(); ++i) {
             const auto s         = w4a8_schedule_info(i);
             const Route r{Family::W4a8Mma, static_cast<std::uint8_t>(i)};
@@ -102,8 +133,9 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double rows_o  = tile.out_rows;
             const double threads =
                 s.producers > 0 ? 384.0 : rows_w == 64.0 && cols == 64.0 ? 128.0 : 256.0;
-            // Two stages, three with producer warps (generic_w4a8.cuh kStages).
-            const double stages = s.producers > 0 ? 3.0 : 2.0;
+            // Two stages, three with producer warps (family_facts.h, generic_w4a8.cuh).
+            const double stages =
+                s.producers > 0 ? kW4a8MmaFacts.producer_stages : kW4a8MmaFacts.stages;
             const double smem =
                 stages * (rows_w + cols) * route_cost::kW4a8StageBytesPerRow.value();
             const double occ     = std::max(
@@ -119,10 +151,11 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             if (legacy) {
                 const double warps = std::min(1.0, ctas / sms) * std::min(q, occ) * threads / 32;
                 const double mem   = std::max(q * rows_o * k * bpw / bw_sm, n * k * bpw / bw);
-                offer(r, quant(t) +
-                             std::max(mem, mma / eff) /
-                                 std::clamp(warps, route_cost::kMinWarpFill.value(), 1.0) +
-                             chain);
+                const double price = quant_w4a8 +
+                                     std::max(mem, mma / eff) /
+                                         std::clamp(warps, route_cost::kMinWarpFill.value(), 1.0) +
+                                     chain;
+                offer(r, complete ? price + beyond(ctas) : price);
                 continue;
             }
             // The fill reads the busy SM's own warps (no fleet-wide factor) and slows the MMA only.
@@ -137,7 +170,8 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double in_flight  = rows_o * route_cost::kW4a8StepK.value() * bpw / load_warps;
             const double mem =
                 kr::dram_time(chip, ctas, occ, load_warps, rows_o * k * bpw, in_flight, true);
-            offer(r, quant(t) + std::max(mem, mma / eff / fill) + chain);
+            const double price = quant_w4a8 + std::max(mem, mma / eff / fill) + chain;
+            offer(r, complete ? price + beyond(ctas) : price);
         }
     }
     // The I8 tiles (generic_i8.cu): one activation scale per 64 values and the code as the MMA's
@@ -146,6 +180,11 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     // padded to 256 in the quantizer.
     if (allows_i8(weight, problem.policy)) {
         const double tp = i8_padded_tokens(tokens);
+        const double quant_i8 =
+            complete ? quant_counted(k * (t * route_cost::kQuantI8BytesPerValue.value() +
+                                          (tp - t) * route_cost::kQuantI8PadBytesPerValue.value()),
+                                     cdiv(tp * std::floor(k / 64.0), quant_threads))
+                     : quant(tp);
         for (int i = 0; i < i8_schedule_count(); ++i) {
             const auto s         = i8_schedule_info(i);
             const Route r{Family::I8Mma, static_cast<std::uint8_t>(i)};
@@ -173,11 +212,12 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             if (legacy) {
                 const double warps = std::min(1.0, ctas / sms) * std::min(q, occ) * s.threads / 32;
                 const double mem   = std::max(q * rows_o * k * bpw / bw_sm, n * k * bpw / bw);
-                offer(r, quant(tp) +
-                             std::max(mem, mma / eff) /
-                                 std::clamp(warps / route_cost::kI8SaturatingWarps.value(),
-                                            route_cost::kMinWarpFill.value(), 1.0) +
-                             chain);
+                const double price = quant_i8 +
+                                     std::max(mem, mma / eff) /
+                                         std::clamp(warps / route_cost::kI8SaturatingWarps.value(),
+                                                    route_cost::kMinWarpFill.value(), 1.0) +
+                                     chain;
+                offer(r, complete ? price + beyond(ctas) : price);
                 continue;
             }
             const double fill      = std::clamp(std::min(q, occ) * s.threads / 32 /
@@ -187,14 +227,14 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
                 (stages - 1.0) * rows_o * route_cost::kI8StageK.value() * bpw / (s.threads / 32.0);
             const double mem =
                 kr::dram_time(chip, ctas, occ, s.threads / 32.0, rows_o * k * bpw, in_flight, true);
-            offer(r, quant(tp) + std::max(mem, mma / eff / fill) + chain);
+            const double price = quant_i8 + std::max(mem, mma / eff / fill) + chain;
+            offer(r, complete ? price + beyond(ctas) : price);
         }
     }
     if (mmq_candidate_measured(d.major, d.minor) && ggml_mmq_format(problem.qtype) &&
         problem.n % ggml_mmq::kRowMultiple == 0 && problem.k % ggml_mmq::kKMultiple == 0) {
         const double slices = std::ceil(t / kMmqPrefillSlice);
         const double tt     = std::min<double>(t, kMmqPrefillSlice);
-        const double sets   = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
         const double rows_t = route_cost::kMmqTileRows.value();
         const double step   = route_cost::kMmqColumnStep.value();
         // The column tile: the kernel's own table where the generation and the format take the
@@ -219,9 +259,31 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         const double chain =
             std::max(1.0, tiles * std::ceil(k / route_cost::kMmqChainK.value()) / sms) *
             route_cost::kMmqChainCycles.value() / clk;
-        offer(Route{Family::GgmlMmq, 0},
-              slices * (std::max(mem, mma / (route_cost::kMmqEfficiency.value() * scale)) + chain +
-                        quant(tt) + route_cost::kMmqSliceSeconds.value()));
+        // Under the completeness terms the quantizer is counted (a CTA a column and 512 values of
+        // K), and the output write and residual read are added once for the call; the tile
+        // kernel's launch and its stream-k fixup stay inside the fitted slice (kMmqSliceSeconds)
+        // until the shared MMQ term prices them (#613 PR-5), as does the FP32 plane its tiles
+        // write and its epilogue reads.
+        // Counted, each slice's quantizer at its own width: the runtime loop (generic_gemm.cpp)
+        // gives the last slice the remaining tokens, so 513 tokens quantize 512 and then 1.
+        const auto quant_mmq_counted = [&](double width) {
+            return quant_counted(width * k * route_cost::kQuantMmqBytesPerValue.value(),
+                                 width * cdiv(k, route_cost::kQuantMmqValuesPerCta.value()),
+                                 LaunchKind::GraphNodePdl);
+        };
+        const double slice_body =
+            std::max(mem, mma / (route_cost::kMmqEfficiency.value() * scale)) + chain;
+        const double price =
+            complete ? slices * (slice_body + route_cost::kMmqSliceSeconds.value()) +
+                           (slices - 1) * quant_mmq_counted(tt) +
+                           quant_mmq_counted(t - (slices - 1) * tt)
+                     : slices * (slice_body + quant(tt) + route_cost::kMmqSliceSeconds.value());
+        if (complete) {
+            const kr::Completeness c = kr::completeness(chip, call, 1.0);
+            offer(Route{Family::GgmlMmq, 0}, price + c.output + c.residual);
+        } else {
+            offer(Route{Family::GgmlMmq, 0}, price);
+        }
     }
 }
 
@@ -271,6 +333,12 @@ std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue e
 // (Calibration::rmma_counted_law) with the kernel's loop (RegisterMmaKernel::loop).
 std::optional<bool> g_rmma_counted_law_override;
 
+// The completeness terms (kernel_roofline.h Completeness, #613 PR-8a): route_cost::
+// kCompletenessTerms says whether this binary offers them (false: golden-equal), a test overrides
+// it for its process. price_routes hands it to the roofline (Calibration::completeness_terms) and
+// to a8_candidates.
+std::optional<bool> g_completeness_terms_override;
+
 } // namespace
 
 bool rmma_counted_law() noexcept {
@@ -279,6 +347,14 @@ bool rmma_counted_law() noexcept {
 
 void rmma_counted_law_for_test(std::optional<bool> law) noexcept {
     g_rmma_counted_law_override = law;
+}
+
+bool completeness_terms() noexcept {
+    return g_completeness_terms_override.value_or(route_cost::kCompletenessTerms);
+}
+
+void completeness_terms_for_test(std::optional<bool> on) noexcept {
+    g_completeness_terms_override = on;
 }
 
 bool a16_route_priced(Route route, bool bf16_mma_native) {
@@ -331,16 +407,20 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     const kr::ChipFacts chip  = kr::chip_facts_of(d);
     // The binary's register-MMA law, or a test's override of it (rmma_counted_law).
     const kr::Calibration cal = [&] {
-        kr::Calibration c  = kr::calibration_of(d.major, d.minor);
-        c.rmma_counted_law = rmma_counted_law();
+        kr::Calibration c    = kr::calibration_of(d.major, d.minor);
+        c.rmma_counted_law   = rmma_counted_law();
+        c.completeness_terms = completeness_terms();
         return c;
     }();
     const double n = problem.n, k = problem.k;
     // SwiGLU: every output row multiplies its gate and its up row; `bpw` (bytes_per_weight) holds
     // both rows' bytes, so the bytes of a CTA stay rows x K x bpw.
-    const kr::Call call{n, k, static_cast<double>(tokens),
+    const kr::Call call{n,
+                        k,
+                        static_cast<double>(tokens),
                         problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0,
-                        bytes_per_weight(weight, problem)};
+                        bytes_per_weight(weight, problem),
+                        problem.epilogue == Epilogue::AddResidual};
     // The register-MMA heavy-decoder terms (the L2 bytes, the real occupancy from the kernel's
     // registers, the spill bytes, the 8-warp fill) are verified for the decoders with
     // per-sub-block scales (the K-quants and the codebook i-quants, has_subblock_scales) on the
@@ -358,13 +438,19 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     // candidate is offered (a8_candidates).
     const double kA16Scale =
         fitted_route_scales(d.major, d.minor).value_or(FittedRouteScales{}).a16_cost;
-    const auto offer = [&](Route r, double time) {
+    // `extra`: an A16 tile's completeness terms (output + residual + quant + launch), offered
+    // beside its scaled roofline only under the switch: the A16 scale corrects the roofline the
+    // fit measured, not the counted terms. The A8 candidates add theirs to `time` themselves.
+    const auto offer = [&](Route r, double time, double extra = 0.0) {
         if (!route_admits(r, weight, problem.policy)) return;
         if (r.family == Family::RegisterMma || r.family == Family::TiledMma ||
             r.family == Family::StagedMma) {
             time *= kA16Scale;
         }
-        take(r, time);
+        take(r, cal.completeness_terms ? time + extra : time);
+    };
+    const auto extra = [](const auto& terms) {
+        return terms.output + terms.residual + terms.quant + terms.launch;
     };
     for (int i = 0; i < rmma_schedule_count(); ++i) {
         const auto s = rmma_schedule_info(i);
@@ -395,9 +481,11 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
             kernel.shared_bytes = kept->static_smem;
             kernel.loop         = std::move(kept->loop); // kept under the counted law only
         }
-        offer(r, kr::price_register_mma(chip, cal, call, kernel).total);
+        const kr::RegisterMmaTerms t = kr::price_register_mma(chip, cal, call, kernel);
+        offer(r, t.total, extra(t));
     }
-    a8_candidates(problem, weight, tokens, d, offer);
+    a8_candidates(problem, weight, tokens, d, cal.completeness_terms,
+                  [&](Route r, double time) { offer(r, time); });
     for (int i = 0; i < tiled_schedule_count(); ++i) {
         const auto s = tiled_schedule_info(i);
         const Route r{Family::TiledMma, static_cast<std::uint8_t>(i)};
@@ -411,7 +499,8 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         kernel.stage_rows      = s.block_n;
         kernel.stage_cols      = s.block_m;
         kernel.tensor_fraction = route_cost::kTiledTensorFraction.value();
-        offer(r, kr::price_pipelined(chip, cal, call, kernel).total);
+        const kr::PipelinedTerms t = kr::price_pipelined(chip, cal, call, kernel);
+        offer(r, t.total, extra(t));
     }
     for (int i = 0; i < staged_schedule_count(); ++i) {
         const auto s = staged_schedule_info(i);
@@ -426,7 +515,8 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         kernel.stage_rows      = s.rows;
         kernel.stage_cols      = s.tokens;
         kernel.tensor_fraction = route_cost::kStagedTensorFraction.value();
-        offer(r, kr::price_pipelined(chip, cal, call, kernel).total);
+        const kr::PipelinedTerms t = kr::price_pipelined(chip, cal, call, kernel);
+        offer(r, t.total, extra(t));
     }
     return true;
 }
