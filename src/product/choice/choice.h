@@ -792,6 +792,9 @@ struct Choice {
     // The worth decided the drafter (else the profile's choice stood: no decision constants, or a
     // drafter whose gain no measurement gives).
     bool drafter_by_worth = false;
+    // The drafter priced on the board's own rates took another drafter than the reference card's
+    // worth did (#618 step 6: the drafter is B2; the storages stay the reference card's).
+    bool drafter_on_board = false;
     // The speed estimate's resolution wherever a reference exists (#301; the chunk axis needs it
     // where the worth does not decide): the error of the best worth's estimate (resolution_of;
     // with typed_resolution closed, the reference card's generation's measured decode error,
