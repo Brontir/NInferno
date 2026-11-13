@@ -153,9 +153,12 @@ template <int Tokens, bool Select>
 void launch_s1(const __nv_bfloat16* x, const __nv_bfloat16* router, float* partial_scores,
                const SparseMoeSmallTWorkspace& workspace, cudaStream_t stream) {
     if constexpr (Select) {
-        // The ticket is zero in stream order when S1 starts: the workspace's bytes are another
-        // op's in between (#882).
-        CUDA_CHECK(cudaMemsetAsync(workspace.ticket.data, 0, workspace.ticket.bytes(), stream));
+        // The ticket is zero in stream order when S1 starts: on the arena's ticket page it has
+        // been since the page was made (#889); in the workspace the bytes are another op's in
+        // between (#882), so it is zeroed here.
+        if (!workspace.ticket_zeroed) {
+            CUDA_CHECK(cudaMemsetAsync(workspace.ticket.data, 0, workspace.ticket.bytes(), stream));
+        }
     }
     sparse_moe_small_t_s1_kernel<Tokens, Select>
         <<<kRouterRows * kRouterPartitions, kRouterWarps * 32, 0, stream>>>(

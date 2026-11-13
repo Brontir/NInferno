@@ -607,9 +607,12 @@ unsigned long long shared_down_code_bytes(QType qtype) {
 
 void launch_d1(const Tensor& x, const SparseMoeWeights& weights,
                const SparseMoeDecodeWorkspace& workspace, cudaStream_t stream) {
-    // The ticket is zero in stream order when D1 starts: the workspace's bytes are another op's in
-    // between (#882).
-    CUDA_CHECK(cudaMemsetAsync(workspace.ticket.data, 0, workspace.ticket.bytes(), stream));
+    // The ticket is zero in stream order when D1 starts: on the arena's ticket page it has been
+    // since the page was made (#889); in the workspace the bytes are another op's in between
+    // (#882), so it is zeroed here.
+    if (!workspace.ticket_zeroed) {
+        CUDA_CHECK(cudaMemsetAsync(workspace.ticket.data, 0, workspace.ticket.bytes(), stream));
+    }
     sparse_moe_d1_kernel<<<kRouterRows, kD1Warps * 32, 0, stream>>>(
         static_cast<const __nv_bfloat16*>(x.data),
         static_cast<const __nv_bfloat16*>(weights.router_shared_gate.qdata),

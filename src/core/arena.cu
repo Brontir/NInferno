@@ -156,10 +156,29 @@ DeviceArena::DeviceArena(std::size_t capacity_bytes) {
     base_ = ptr;
     cap_  = capacity_bytes;
     off_  = 0;
+
+    void* page                 = nullptr;
+    const cudaError_t page_err = cudaMalloc(&page, kArenaTicketInts * sizeof(int));
+    if (page_err != cudaSuccess) {
+        free_device(base_);
+        base_ = nullptr;
+        throw std::runtime_error(
+            cuda_error_message("cudaMalloc of the ticket page failed", page_err));
+    }
+    const cudaError_t zero_err = cudaMemset(page, 0, kArenaTicketInts * sizeof(int));
+    if (zero_err != cudaSuccess) {
+        free_device(page);
+        free_device(base_);
+        base_ = nullptr;
+        throw std::runtime_error(cuda_error_message("zeroing the ticket page failed", zero_err));
+    }
+    tickets_      = static_cast<int*>(page);
+    owns_tickets_ = true;
 }
 
 DeviceArena::DeviceArena(DeviceSpan storage)
-    : base_(storage.data), cap_(storage.bytes), owns_(false) {
+    : base_(storage.data), cap_(storage.bytes), owns_(false), tickets_(storage.ticket_page),
+      owns_tickets_(false) {
     if (base_ == nullptr || cap_ == 0) {
         throw std::invalid_argument("borrowed DeviceArena storage must be non-empty");
     }
@@ -167,34 +186,49 @@ DeviceArena::DeviceArena(DeviceSpan storage)
 
 DeviceArena::~DeviceArena() {
     if (owns_) { free_device(base_); }
+    if (owns_tickets_) {
+        void* page = tickets_;
+        free_device(page);
+    }
 }
 
 DeviceArena::DeviceArena(DeviceArena&& other) noexcept
     : base_(other.base_), cap_(other.cap_), off_(other.off_), peak_(other.peak_),
-      generation_(other.generation_), owns_(other.owns_) {
-    other.base_ = nullptr;
-    other.cap_  = 0;
-    other.off_  = 0;
-    other.peak_ = 0;
-    other.owns_ = true;
+      generation_(other.generation_), owns_(other.owns_), tickets_(other.tickets_),
+      owns_tickets_(other.owns_tickets_) {
+    other.base_         = nullptr;
+    other.cap_          = 0;
+    other.off_          = 0;
+    other.peak_         = 0;
+    other.owns_         = true;
+    other.tickets_      = nullptr;
+    other.owns_tickets_ = false;
 }
 
 DeviceArena& DeviceArena::operator=(DeviceArena&& other) noexcept {
     if (this == &other) { return *this; }
 
     if (owns_) { free_device(base_); }
-    base_ = other.base_;
-    cap_  = other.cap_;
-    off_  = other.off_;
-    peak_ = other.peak_;
-    generation_ = other.generation_;
-    owns_ = other.owns_;
+    if (owns_tickets_) {
+        void* page = tickets_;
+        free_device(page);
+    }
+    base_         = other.base_;
+    cap_          = other.cap_;
+    off_          = other.off_;
+    peak_         = other.peak_;
+    generation_   = other.generation_;
+    owns_         = other.owns_;
+    tickets_      = other.tickets_;
+    owns_tickets_ = other.owns_tickets_;
 
-    other.base_ = nullptr;
-    other.cap_  = 0;
-    other.off_  = 0;
-    other.peak_ = 0;
-    other.owns_ = true;
+    other.base_         = nullptr;
+    other.cap_          = 0;
+    other.off_          = 0;
+    other.peak_         = 0;
+    other.owns_         = true;
+    other.tickets_      = nullptr;
+    other.owns_tickets_ = false;
     return *this;
 }
 
@@ -222,7 +256,7 @@ DeviceSpan DeviceArena::alloc_bytes(std::size_t bytes, std::size_t align) {
     auto* ptr = static_cast<unsigned char*>(base_) + aligned_offset;
     off_      = end;
     if (off_ > peak_) { peak_ = off_; }
-    return DeviceSpan{ptr, bytes};
+    return DeviceSpan{ptr, bytes, tickets_};
 }
 
 Tensor DeviceArena::alloc(DType dtype, std::initializer_list<std::int32_t> shape,
