@@ -52,6 +52,11 @@
 namespace g  = ninferno::ops::detail::generic;
 namespace kr = g::kernel_roofline;
 using ninferno::DeviceClass;
+using ninferno::isa_facts_table;
+using ninferno::IsaRow;
+using ninferno::launch_seconds;
+using ninferno::LaunchKind;
+using ninferno::ramp_seconds;
 using ninferno::QType;
 using ninferno::ops::LinearPolicy;
 
@@ -77,7 +82,7 @@ bool priceable(const DeviceClass& d) {
 struct RooflineTerms {
     double total = 0, a16 = 1, ctas = 0;
     double output = 0, residual = 0, quant = 0, launch = 0, complete = 0;
-    bool launch_known = false, launch_extrapolated = false;
+    bool launch_known = false, launch_extrapolated = false, launch_bound = false;
 };
 
 template <class Terms>
@@ -93,6 +98,7 @@ RooflineTerms roofline_terms_of(const Terms& t, double a16) {
     r.complete            = t.complete;
     r.launch_known        = t.launch_known;
     r.launch_extrapolated = t.launch_extrapolated;
+    r.launch_bound        = t.launch_bound;
     return r;
 }
 
@@ -1053,7 +1059,8 @@ void check_rmma_count() {
 //      over the board's DRAM bandwidth, and the residual term is 0 for Store and SwiGLU;
 //  (c) the launch is the architecture's graph node plus the dispatch ramp of the route's grid
 //      (core/launch_facts.h launch_seconds GraphNode + ramp_seconds), known exactly where the
-//      architecture has a launch row;
+//      architecture has a launch row; elsewhere the slowest measured architecture's launch of
+//      that grid, labelled (launch_bound, #886);
 //  (d) with the switch off the selector offers total x a16 (golden-equal); with it on
 //      (completeness_terms_for_test) it offers total x a16 + the terms, bit for bit.
 // And on one AddResidual call of every board, the residual read is the output's bytes again and the
@@ -1126,9 +1133,13 @@ void check_completeness() {
                     t->launch_extrapolated != ramp->extrapolated) {
                     fail(at + ": the launch is not node + ramp");
                 }
-            } else if (t->launch != 0) {
-                fail(at + ": an unknown launch is priced");
+            } else {
+                const auto slowest = kr::slowest_launch_seconds(t->ctas);
+                if (!t->launch_bound || !slowest || t->launch != slowest->seconds) {
+                    fail(at + ": an unknown launch is not the slowest measured one, labelled");
+                }
             }
+            if (t->launch_known && t->launch_bound) fail(at + ": a known launch is labelled bound");
             if (t->launch_known != (launch_row.has_value() && launch_row->node_s.has_value())) {
                 fail(at + ": a launch row and a known launch disagree");
             }
@@ -1256,8 +1267,8 @@ void check_completeness() {
             }
         }
     }
-    std::printf("completeness: %ld golden routes (%ld with a known launch, %ld of them past 1024 "
-                "CTAs), %ld "
+    std::printf("completeness: %ld golden routes (%ld with a known launch, %ld of them past the "
+                "largest measured grid), %ld "
                 "AddResidual routes, %ld A8 candidates under the switch (%ld also on AddResidual), "
                 "%ld wrong\n",
                 routes, known, extrapolated, residual, a8, a8_residual, bad);
@@ -1267,10 +1278,106 @@ void check_completeness() {
     }
 }
 
+// ---- Check 10: one launch rule (#886 items 1, 2) ----
+// launch_term on every board's chip facts and on the architectures without launch facts:
+//  - known: the architecture's node + its ramp (GraphNode); GraphNodePdl reads the PDL node where
+//    the row has one from sm_90 on (120a: below the plain node, as measured), the plain node below
+//    sm_90 (the engine launches no PDL node there);
+//  - unknown (sm_80, sm_90, sm_100, sm_121, sm_61): the largest node + ramp of that grid over the
+//    rows with launch facts, at or above every one of them, labelled bound, never known;
+//  - a chip without launch facts (an architecture with no launch row) gets the same, both kinds;
+//  - under the completeness switch every A8 candidate of a board without launch facts is priced,
+//    finite and positive, by that rule (no fitted quantizer launch in the switch's path).
+void check_launch_rule() {
+    long checked = 0, pdl = 0, bound = 0, bad = 0;
+    const auto fail = [&](const std::string& what) {
+        if (++bad <= 10) std::fprintf(stderr, "FAIL launch rule: %s\n", what.c_str());
+    };
+    for (const double ctas : {1.0, 64.0, 300.0, 1024.0, 2048.0, 4096.0, 10000.0}) {
+        const auto slowest = kr::slowest_launch_seconds(ctas);
+        if (!slowest) {
+            fail("no architecture has launch facts");
+            continue;
+        }
+        const kr::ChipFacts none{};
+        for (const LaunchKind kind : {LaunchKind::GraphNode, LaunchKind::GraphNodePdl}) {
+            const auto t = kr::launch_term(none, ctas, kind);
+            ++bound;
+            if (t.known || !t.bound || t.seconds != slowest->seconds ||
+                t.extrapolated != slowest->extrapolated) {
+                fail("a chip without launch facts is not priced at the slowest measured launch");
+            }
+        }
+        for (const IsaRow& row : isa_facts_table()) {
+            if (!row.launch || !row.launch->node_ns) continue;
+            const auto ramp = ramp_seconds(row.major, row.minor, ctas);
+            if (ramp && *row.launch->node_ns * 1e-9 + ramp->seconds > slowest->seconds) {
+                fail(row.arch + ": a measured launch above the slowest at " +
+                     std::to_string(ctas) + " CTAs");
+            }
+        }
+        for (const auto& board : g::kFactsBoards) {
+            const DeviceClass d      = g::board_device_class(board);
+            const kr::ChipFacts chip = kr::chip_facts_of(d);
+            const std::string at     = std::string(board.name) + " " + std::to_string(ctas);
+            const auto plain = kr::launch_term(chip, ctas, LaunchKind::GraphNode);
+            const auto dep   = kr::launch_term(chip, ctas, LaunchKind::GraphNodePdl);
+            const auto node  = launch_seconds(d.major, d.minor, LaunchKind::GraphNode);
+            const auto pnode = launch_seconds(d.major, d.minor, LaunchKind::GraphNodePdl);
+            const auto ramp  = ramp_seconds(d.major, d.minor, ctas);
+            ++checked;
+            if (node && ramp) {
+                if (!plain.known || plain.bound || plain.seconds != *node + ramp->seconds) {
+                    fail(at + ": a known plain launch is not node + ramp");
+                }
+                const double want = (pnode ? *pnode : *node) + ramp->seconds;
+                if (!dep.known || dep.seconds != want) fail(at + ": the PDL launch is not its node");
+                if (pnode) {
+                    ++pdl;
+                    if (!(dep.seconds < plain.seconds)) fail(at + ": a PDL node not below plain");
+                } else if (dep.seconds != plain.seconds) {
+                    fail(at + ": without a PDL node the PDL kind is not the plain node");
+                }
+            } else {
+                ++bound;
+                if (plain.known || !plain.bound || plain.seconds != slowest->seconds ||
+                    dep.seconds != slowest->seconds) {
+                    fail(at + ": an unknown launch is not the slowest measured one, labelled");
+                }
+            }
+        }
+    }
+    // The A8 candidates of a board without launch facts under the switch: finite and positive.
+    long a8_unknown = 0;
+    for (const auto& board : g::kFactsBoards) {
+        const DeviceClass d = g::board_device_class(board);
+        if (!priceable(d) || launch_seconds(d.major, d.minor, LaunchKind::GraphNode)) continue;
+        g::completeness_terms_for_test(true);
+        const auto on = g::priced_routes_query(d, QType::GGML_Q4_K, LinearPolicy::AllowA8,
+                                               g::Epilogue::Store, 4096, 4096, 64);
+        g::completeness_terms_for_test(std::nullopt);
+        for (const auto& r : on) {
+            if (r.route.family == g::Family::W4a8Mma || r.route.family == g::Family::I8Mma ||
+                r.route.family == g::Family::GgmlMmq) {
+                ++a8_unknown;
+                if (!std::isfinite(r.seconds) || !(r.seconds > 0)) {
+                    fail(std::string(board.name) + " " + g::route_name(r.route) +
+                         ": an A8 price without launch facts is not finite");
+                }
+            }
+        }
+    }
+    std::printf("launch rule: %ld board x grid launches (%ld with a PDL node, %ld bound), %ld A8 "
+                "candidates without launch facts, %ld wrong\n",
+                checked, pdl, bound, a8_unknown, bad);
+    if (bad > 0 || checked == 0 || pdl == 0 || bound == 0) ++failures;
+}
+
 int main() {
     check_golden();
     check_wiring();
     check_completeness();
+    check_launch_rule();
     check_dram_time();
     check_law_against_probe();
     check_rmma_count();
