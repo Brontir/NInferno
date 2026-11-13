@@ -2548,8 +2548,9 @@ void resolution_labels(const json& fixture) {
 // #304: a choice made on the generation's reference card reads none of the board's continuous
 // facts for its storages: another clock, memory bandwidth, SM count or L2 of the same generation
 // moves the speeds shown, never the KV codec, the mode or the chunk. The drafter (B2, #618 step 6)
-// may follow the board's rates where the worth decides it, the same facts the same drafter. Every fixture card, a short and a long context, the dense 9B and
-// the MoE 35B with two measured drafters (its chunk by speed and the drafter by worth open).
+// may follow the board's rates where the worth decides it, the same facts the same drafter. Every
+// fixture card, a short and a long context, the dense 9B and the MoE 35B with two measured drafters
+// (its chunk by speed and the drafter by worth open).
 void board_facts_do_not_decide(const json& fixture) {
     std::vector<std::pair<std::string, Bench>> benches;
     for (const auto& [name, unused] : fixture.at("cards").items()) {
@@ -2567,6 +2568,7 @@ void board_facts_do_not_decide(const json& fixture) {
         for (const std::uint32_t context : {4096U, 131072U}) {
             ch::Task task;
             task.contexts = {context};
+
             // The storages, the mode and the chunk (B1); the drafter apart (B2, #618 step 6).
             struct Decided {
                 std::string storages;
