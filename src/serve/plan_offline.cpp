@@ -532,11 +532,11 @@ OfflinePlan plan_without_load(const ServeOptions& options, std::optional<std::ui
                 const bool out_of_memory =
                     std::string_view(measured.what()).find("out of memory") !=
                     std::string_view::npos;
-                device.free_bytes =
-                    out_of_memory ? std::min<std::uint64_t>(
-                                        product::plan_free_now_of_nvml(*options.plan_free_now),
-                                        device.total_bytes)
-                                  : 0;
+                // The cap first, then the context's reserve, as on a card that reads its own.
+                device.free_bytes = out_of_memory
+                                        ? product::plan_free_now_of_nvml(std::min<std::uint64_t>(
+                                              *options.plan_free_now, device.total_bytes))
+                                        : 0;
             }
         }
         gpu = spec::gpu_identity(options.device).key;
