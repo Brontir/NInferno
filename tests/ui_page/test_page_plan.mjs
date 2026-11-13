@@ -556,6 +556,23 @@ for (const lang of ["en", "ru", "uk"]) for (const k of ["replayContext", "replay
   eq(H.gateTexts({choice: {gate_code: "family_unmeasured", gates_closed: [{code: "family_unmeasured", opens_with: "family_kld_terms", generation: "", family: "gemma4_text"}]}}, tr),
      ['gate_family_unmeasured{"gen":"genOther","family":"thisModel"}. gateOpens{"what":"gateOpens_family_kld_terms{\\"gen\\":\\"genOther\\",\\"family\\":\\"thisModel\\"}"}'],
      "no model name: this model");
+  // Several closed switches gates (Turing Gemma, #836): the family's defaults once, "needs" for each.
+  const turing = {model: {source: "google/gemma-4-12b-it-GGUF"}, choice: {by_worth: false, gate_code: "reference_one_card", why: "x", decided_on: null,
+    gates_closed: [{axis: "switches", code: "reference_one_card", opens_with: "reference_factors", generation: "turing", family: "", cards: 1},
+                   {axis: "switches", code: "kv_terms_one_card", opens_with: "kv_kld_second_card", generation: "turing", family: "gemma4_text", cards: 1},
+                   {axis: "switches", code: "int8_unmeasured", opens_with: "int8_kld", generation: "turing", family: "gemma4_text", cards: 0},
+                   {axis: "quant", code: "quant_curve_unmeasured", opens_with: "quant_curve", generation: "turing", family: "gemma4_text", cards: 0}]}};
+  for (const [lang, T] of [["en", EN], ["ru", RU], ["uk", words("uk")]]) {
+    const lines = H.gateTexts(turing, T), lead = T("gateDefaultsPrefix");
+    // Every switches gate's text starts with the language's lead, no quantization gate's does.
+    for (const code of H.GATE_CODES)
+      ok(T("gate_" + code, {gen: "g", family: "f"}).startsWith(lead) === !code.startsWith("quant_"), `${lang}: ${code} and the lead`);
+    eq(lines.length, 4, `${lang}: every closed gate, one line each`);
+    eq(lines.filter(l => l.startsWith(lead)).length, 1, `${lang}: the family's defaults said once`);
+    ok(lines.slice(0, 3).every(l => l.includes(T("gateNeeds", {what: ""}).trim())), `${lang}: the switches gates say what they need`);
+    ok(!lines.slice(0, 3).some(l => l.includes(T("gateOpens", {what: ""}).trim())), `${lang}: not that one measurement opens them`);
+    ok(lines[3].includes(T("gateOpens", {what: ""}).trim()), `${lang}: the quantization's gate keeps its own words`);
+  }
   eq(H.gateTexts({choice: {gate_code: "new_gate", why: "an English why", gates_closed: []}}, tr), ["an English why"], "an unknown gate: the server's words");
   eq(H.gateTexts({choice: {gate_code: "family_unmeasured", gates_closed: []}}, tr), ['gate_family_unmeasured{"gen":"genOther","family":"thisModel"}'],
      "the switches' gate missing from the list: said all the same");
