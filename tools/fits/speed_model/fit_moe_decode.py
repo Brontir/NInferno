@@ -35,7 +35,7 @@ LAUNCHES = {"qwen3_5_moe_text": (311, 267), "moe_decoder": (97, 199), "gemma4_te
 # the rows (0.81 at one row to 0.94 at eight, the others' falls), not yet explained (DECISIONS 65).
 CHECK_ONLY = {"gemma4_text"}
 # kKvReadFactor as the MoE family reads it (no kKvSmRate row of its geometry): each generation's own
-# rows (#618 step 1, DECISIONS 81), Blackwell's NVFP4 Ada's (the transfer generation). kMoeRoutedEta
+# rows (#618 step 1, DECISIONS 82), Blackwell's NVFP4 Ada's (the transfer generation). kMoeRoutedEta
 # was fitted with the rows before, BF16 1.06, FP8 1.055, K8V4 1.025, NVFP4 1.235 on both: a refit
 # with these would move it (not run).
 KV_READ = {"ada": {"bf16": 1.0145, "fp8": 0.9985, "k8v4": 1.025, "nvfp4": 1.235},

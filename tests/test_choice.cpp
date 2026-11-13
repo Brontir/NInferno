@@ -2337,8 +2337,8 @@ void joint_price_scales_the_gain(const json& fixture) {
 }
 
 // The gain is monotone in the streams once the joint verify is priced (#303): mtp:3 priced at two
-// streams (4 rows each, 8 verify rows) below 1, three streams (12 rows) not priced: its gain is
-// no more than two streams', never the one-request 2.0 again.
+// streams below 1, three streams not priced in this option: its gain is no more than two
+// streams', never the one-request 2.0 again.
 void joint_price_keeps_the_gain_monotone() {
     ch::DrafterOption d{"mtp:3", "mtp", 2.0, 0, "measured"};
     d.joint = {{.streams = 2, .scale = 0.45}};
