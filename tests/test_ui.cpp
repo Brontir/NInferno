@@ -1053,6 +1053,7 @@ void test_artifact_plan_via_serve() {
 
         std::string error() const override { return {}; }
     };
+
     const auto plan = [&](const fs::path& serve, const std::string& extra) {
         UiOptions options;
         options.offline      = true;
@@ -1065,8 +1066,8 @@ void test_artifact_plan_via_serve() {
         std::thread thread([&] { server.listen_after_bind(); });
         server.wait_until_ready();
         httplib::Client client("127.0.0.1", port);
-        auto res = client.Get("/api/plan?gpu=0&par=2&ctx=8192" + extra + "&artifact=" +
-                              httplib::encode_query_param(artifact.string()));
+        auto res = client.Get("/api/plan?gpu=0&par=2&ctx=8192" + extra +
+                              "&artifact=" + httplib::encode_query_param(artifact.string()));
         std::pair<int, std::string> out{res ? res->status : 0, res ? res->body : ""};
         server.stop();
         thread.join();
@@ -1080,11 +1081,24 @@ void test_artifact_plan_via_serve() {
     std::ifstream in(args);
     std::vector<std::string> argv;
     for (std::string line; std::getline(in, line);) { argv.push_back(line); }
-    const std::vector<std::string> want = {
-        artifact.string(), "--plan",  "--no-load",     "--plan-idle", "--json",
-        "--log-level",     "off",     "--max-concurrency", "2",       "--max-context",
-        "8192",            "--kv-dtype", "bf16",       "--activations", "exact",
-        "--spec",          "auto",    "gpu=0"};
+    const std::vector<std::string> want = {artifact.string(),
+                                           "--plan",
+                                           "--no-load",
+                                           "--plan-idle",
+                                           "--json",
+                                           "--log-level",
+                                           "off",
+                                           "--max-concurrency",
+                                           "2",
+                                           "--max-context",
+                                           "8192",
+                                           "--kv-dtype",
+                                           "bf16",
+                                           "--activations",
+                                           "exact",
+                                           "--spec",
+                                           "auto",
+                                           "gpu=0"};
     check(argv == want, "serve plans the ask a start passes, on the GPU asked for");
 
     // serve refuses: the in-process plan answers (here: no GPU 0 to plan for).

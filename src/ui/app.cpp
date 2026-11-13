@@ -1057,12 +1057,15 @@ std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     // The pool marks a child ended only after its output is read to the end (read_loop).
-    const bool ended = planner_.find(id, info) && (info.state == "exited" || info.state == "failed");
+    const bool ended =
+        planner_.find(id, info) && (info.state == "exited" || info.state == "failed");
     const std::vector<std::string> lines = planner_.log(id);
     // Another request's run still being read is younger than this.
     planner_.forget_ended(std::chrono::seconds(60));
     // Exit 0: the plan fits, 2: it does not; both print the document (apps/serve/main.cpp).
-    if (timed_out || !ended || (info.exit_code != 0 && info.exit_code != 2)) { return std::nullopt; }
+    if (timed_out || !ended || (info.exit_code != 0 && info.exit_code != 2)) {
+        return std::nullopt;
+    }
     // stdout and stderr share the pipe: the document is the lines from its "{" to its "}".
     const auto first = std::find(lines.begin(), lines.end(), "{");
     const auto last  = std::find(lines.rbegin(), lines.rend(), "}");
