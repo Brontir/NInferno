@@ -1819,6 +1819,7 @@ int check_concurrent_streams() {
         std::int32_t t = 0;
         std::vector<DeviceBuffer> x, out;
         std::vector<std::vector<std::uint16_t>> want; // per input, the call alone
+        ops::detail::moe::MoePlan plan;
         cudaStream_t stream = nullptr;
         std::unique_ptr<DeviceArena> workspace;
         cudaGraphExec_t graph = nullptr;
@@ -1827,7 +1828,7 @@ int check_concurrent_streams() {
 
     const auto make_case = [](std::int32_t experts) {
         Case c;
-        c.label          = "streams q4 E" + std::to_string(experts) + " k8 H1024 F64";
+        c.label          = "streams q4 a8 E" + std::to_string(experts) + " k8 H1024 F64";
         c.experts        = experts;
         c.top_k          = 8;
         c.hidden         = 1024;
@@ -1835,6 +1836,9 @@ int check_concurrent_streams() {
         c.shared_inter   = 0;
         c.gate_up        = QType::Q4_G64_FP16;
         c.down           = QType::Q4_G64_FP16;
+        // A8: both stages on R8 where the banks take it (below), whose down stage combines in
+        // its epilogue (no shared expert).
+        c.expert_policy  = ops::LinearPolicy::AllowA8;
         c.config.top_k   = 8;
         c.router_bias    = false;
         c.selection_bias = false;
@@ -1854,6 +1858,15 @@ int check_concurrent_streams() {
         side.l                  = make_layer(side.c, 4100U + static_cast<std::uint32_t>(s));
         side.t                  = widths[s];
         const std::size_t bytes = static_cast<std::size_t>(side.t) * side.c.hidden * 2;
+        // The default plan with both stages on R8 (as check_r8 forces them), where both banks
+        // take R8 at T: the fused combine's run tickets too.
+        side.plan = mo::select_plan(side.l.weights, side.c.config, side.t, false);
+        if (side.t <= std::min(mo::r8_token_limit(side.l.weights.gate_up),
+                               mo::r8_token_limit(side.l.weights.down))) {
+            side.plan.gate_up_r8 = 0;
+            side.plan.down_r8    = 0;
+            side.plan.volta_hmma = false;
+        }
         check(cudaStreamCreateWithFlags(&side.stream, cudaStreamNonBlocking), "stream");
         side.workspace = std::make_unique<DeviceArena>(std::max<std::size_t>(
             ops::moe_workspace_bytes(side.l.weights, side.c.config, side.t, side.t), 256));
@@ -1863,9 +1876,8 @@ int check_concurrent_streams() {
             side.x.emplace_back(bytes);
             side.x.back().copy_from_host(x.data(), bytes);
             // The call alone (one stream, nothing beside it), against the oracle.
-            const Run run   = run_op(side.c, side.l, x, 0, side.t, {});
-            const auto plan = mo::select_plan(side.l.weights, side.c.config, side.t,
-                                              ops::prefill_routes_active());
+            const Run run    = run_op(side.c, side.l, x, 0, side.t, {}, &side.plan);
+            const auto& plan = side.plan;
             const std::string label =
                 side.c.label + " T=" + std::to_string(side.t) + " input " + std::to_string(i);
             failures +=
@@ -1894,8 +1906,8 @@ int check_concurrent_streams() {
                   {side.c.hidden, side.t});
         Tensor tout(side.out[static_cast<std::size_t>(call)].p, DType::BF16,
                     {side.c.hidden, side.t});
-        ops::moe(tx, side.l.weights, side.c.config, side.c.epilogue, tout, *side.workspace,
-                 side.stream);
+        mo::moe_with_plan(tx, side.l.weights, side.c.config, side.c.epilogue, tout, *side.workspace,
+                          side.stream, side.plan);
     };
     const auto collect = [&](Side& side) {
         check(cudaStreamSynchronize(side.stream), "streams sync");
