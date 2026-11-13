@@ -1011,8 +1011,9 @@ void chooses(const json& fixture) {
                                         pins, task, oracle(b, 9.6e9));
         check(c.chosen && chosen(c).candidate.activations == ActivationMode::Exact &&
                   chosen(c).candidate.kv == KvCacheStorage::BFloat16 &&
-                  chosen(c).candidate.state == RecurrentStateStorage::FP32,
-              "pins kept; exact couples the FP32 state");
+                  chosen(c).candidate.state == RecurrentStateStorage::FP32 && c.by_worth &&
+                  !c.activations_by_worth,
+              "pins kept; exact couples the FP32 state; pinned activations are not weighed");
     }
     {
         // The state one step finer than the KV cache: BF16 KV under fast takes the FP32 state; a
@@ -1066,6 +1067,69 @@ void decides_by_generation(const json& fixture) {
                   ch::decides_switches(a.model, a.card, {true, true}) &&
                   !ch::decides_switches(a.model, a.card, {false, true}),
               "Ada decides once the accuracy terms rest on two cards");
+    }
+    // Blackwell gb20x (#618 step 1): its KV factors rest on two cards (the RTX 5070 Ti and 5090),
+    // its exact-route factor on none: the worth decides the KV codec, the activations keep fast.
+    // Qwen3.5-9B's BF16, FP8 and K8V4 have two-card rows of their own there; its NVFP4 SM rate is
+    // one card's (the two 6.4 % apart per reference SM-clock), and the MoE family's NVFP4, of
+    // another geometry, carries Ada's factor: the worth takes neither (kv_decides), while on Ada
+    // every codec decides.
+    const Bench g = nine_b(fixture, "RTX 5070 Ti");
+    const Bench h = nine_b(fixture, "RTX 5090");
+    const auto rg = ch::reference_of(g.card), rh = ch::reference_of(h.card);
+    check(rg && rh && rg->decides && !rg->activations_decide && ra && ra->activations_decide,
+          "gb20x decides the KV codec, not the activations; Ada both");
+    if (rg && rh) {
+        ch::Task task;
+        ch::Candidate c;
+        c.kv            = KvCacheStorage::Int8Group64;
+        c.state         = RecurrentStateStorage::FP16;
+        const double sg = ch::request_seconds(g.model, rg->card, g.quants[0], c, task);
+        const double sh = ch::request_seconds(h.model, rh->card, h.quants[0], c, task);
+        check(sg == sh && sg > 0, "the 5070 Ti and the 5090 price a decision alike");
+        check(ch::decides_switches(g.model, g.card, {true, true}), "gb20x's worth decides");
+    }
+    for (const KvCacheStorage kv :
+         {KvCacheStorage::Int8Group64, KvCacheStorage::BFloat16, KvCacheStorage::Fp8E4M3Row256,
+          KvCacheStorage::Fp8KeyNvfp4Value, KvCacheStorage::Nvfp4Group16}) {
+        check(ch::kv_decides(g.model, "gb20x", kv) == (kv != KvCacheStorage::Nvfp4Group16) &&
+                  ch::kv_decides(a.model, "ada", kv),
+              std::string("kv_decides ") + std::string(ninferno::kv_cache_storage_name(kv)));
+    }
+    {
+        const ch::ModelFacts moe = model_of(fixture.at("models").at("Qwen3.6-35B-A3B"));
+        check(!ch::kv_decides(moe, "gb20x", KvCacheStorage::Nvfp4Group16) &&
+                  ch::kv_decides(moe, "gb20x", KvCacheStorage::Fp8KeyNvfp4Value) &&
+                  ch::kv_decides(moe, "ada", KvCacheStorage::Nvfp4Group16),
+              "the MoE family's NVFP4 does not decide on gb20x (Ada's factor carried)");
+    }
+    {
+        ch::Task task;
+        task.contexts           = {32768};
+        const ch::Choice choice = ch::choose(g.model, g.card, g.quants[0],
+                                             ch::allowed_axes(g.model, KvCacheStorage::Int8Group64),
+                                             {}, task, oracle(g, 15e9));
+        check(choice.by_worth && !choice.activations_by_worth && choice.chosen &&
+                  chosen(choice).candidate.activations == ActivationMode::Fast &&
+                  ch::kv_decides(g.model, "gb20x", chosen(choice).candidate.kv),
+              "gb20x: the KV codec by worth among its own rows, the activations fast");
+        bool activations_default = false;
+        for (const ch::Alternative& alt : ch::explain(choice)) {
+            if (alt.axis == ch::Axis::Activations && alt.value == "exact") {
+                activations_default = alt.why_code == "default";
+            }
+        }
+        bool nvfp4_default = false;
+        for (const ch::Alternative& alt : ch::explain(choice)) {
+            if (alt.axis == ch::Axis::Kv && alt.value == "nvfp4") {
+                nvfp4_default = alt.why_code == "default";
+            }
+        }
+        check(activations_default && nvfp4_default &&
+                  choice.kv_not_decided ==
+                      std::vector<KvCacheStorage>{KvCacheStorage::Nvfp4Group16},
+              "gb20x: exact and NVFP4 are the family's default's alternatives, not weighed");
+        if (choice.chosen) { std::cout << choice.why << '\n'; }
     }
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
     check(!ch::reference_of(t.card), "Turing has no reference card");

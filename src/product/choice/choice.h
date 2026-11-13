@@ -525,11 +525,15 @@ struct Gates {
                                     std::string* why = nullptr);
 
 // The reference card a decision prices on for a board's generation (choice_constants.h), whether
-// the generation's speed factors decide (both factor sets on two lab cards), and whether an MoE's
-// chunk does (its shares on two). nullopt: no reference card.
+// the generation's speed factors decide (the KV factors on two lab cards; the activations also the
+// exact-route factor), and whether an MoE's chunk does (its shares on two). nullopt: no reference
+// card.
 struct Reference {
     CardFacts card;
+    // The KV factors decide (the KV codec by worth, kv_decides per codec); the exact-route factor
+    // too (the activations by worth).
     bool decides = false;
+    bool activations_decide = false;
     bool chunk_decides = false;
     std::string why; // "" when the factors decide, else why the family's defaults stand
     // Whose rows it is (#618 step 11, what a caller shows as "decided on"): the generation, and
@@ -543,16 +547,17 @@ struct Reference {
 
 // A gate that keeps a decision on the family's defaults (#618 step 11), as a code a caller words,
 // with the measurement that would open it. Codes: lent_generation, no_reference_card,
-// reference_one_card (the KV codec and the activations: their speed factors); family_unmeasured,
+// reference_one_card (the KV codec: its speed factors); family_unmeasured,
 // kv_terms_one_card, int8_unmeasured, int8_one_card (their accuracy terms); accuracy_gate_closed
 // (a test's Gates::accuracy, nothing to measure); quant_curve_unmeasured, quant_curve_one_card (the
 // quantizations' trade, plan_quants), quant_switches_closed (the curve rests on two cards but the
 // trade waits on a closed gate of the switches: what opens that opens it). The measurements
 // (`opens_with`): generation_row (the compute capability's generation row, core/generation.h, then
-// its reference card), reference_factors (the KV read factors and the exact-route factor on two lab
-// cards of the generation), family_kld_terms (the KV codecs' and the int8 activations' KLD terms on
-// the family, two lab cards), kv_kld_second_card, int8_kld (on the generation, two lab cards),
-// quant_curve (the quantization curve on the family, two lab cards); "" for none.
+// its reference card), reference_factors (the KV read factors on two lab cards of the generation;
+// the activations also need the exact-route factor, Reference::activations_decide),
+// family_kld_terms (the KV codecs' and the int8 activations' KLD terms on the family, two lab
+// cards), kv_kld_second_card, int8_kld (on the generation, two lab cards), quant_curve (the
+// quantization curve on the family, two lab cards); "" for none.
 struct ClosedGate {
     std::string_view axis; // "switches" (the KV codec and the activations) or "quant"
     std::string_view code;
@@ -651,9 +656,17 @@ enum class ChunkBasis : std::uint8_t { None, Own, CarriedCurve, Transferred };
 
 [[nodiscard]] ChunkBasis chunk_basis_of(const ModelFacts& model, const CardFacts& card,
                                         const Gates& gates = {});
+// Whether `kv`'s read cost on `generation` for `model` rests on two lab cards (INT8: the reference
+// codec, priced at kDramEta): its kKvSmRate row for the model's family and geometry, else its own
+// kKvReadFactor row. The worth takes a codec only where it does (principle 4); one carried from
+// another generation, or of one card, prices the estimate but stays the default or a pin.
+[[nodiscard]] bool kv_decides(const ModelFacts& model, std::string_view generation,
+                              KvCacheStorage kv) noexcept;
 // Whether the worth decides the KV codec and the activations for `model` on this card: its
-// generation's factors decide and its family's switch terms rest on two cards (accuracy_decides);
-// else the family's defaults stand.
+// generation's KV factors decide and its family's switch terms rest on two cards
+// (accuracy_decides); else the family's defaults stand. The activations need the exact-route
+// factor too (Reference::activations_decide, Choice::activations_by_worth), each KV codec its own
+// read cost (kv_decides).
 [[nodiscard]] bool decides_switches(const ModelFacts& model, const CardFacts& card,
                                     const Gates& gates = {});
 // Whether the worth also weighs a listing's quantizations (plan_quants, each row at its own
@@ -757,6 +770,12 @@ struct Choice {
     std::optional<std::size_t> chosen; // into scored; nullopt: nothing fits
     std::uint32_t context = 0;         // the own context per stream the choice settled on
     bool by_worth = false;             // the worth decided the KV codec and activations (else the defaults)
+    // The worth decided the activations too (by_worth and the reference card's exact-route factor
+    // on two lab cards, Reference::activations_decide); else the default (or the pin) stood.
+    bool activations_by_worth = false;
+    // Under by_worth, the KV codecs the worth does not take (kv_decides false: their read cost on
+    // the generation rests on fewer than two lab cards); each stays only as the default or a pin.
+    std::vector<KvCacheStorage> kv_not_decided;
     bool chunk_by_speed = false;       // an MoE's chunk was the fastest (else the default stood)
     ChunkBasis chunk_basis = ChunkBasis::None; // what the chunk decision rests on
     // CarriedCurve: the chunk the carried curve predicts fastest on this board (an estimate for an

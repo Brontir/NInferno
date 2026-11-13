@@ -2433,3 +2433,127 @@ the old head table and now pin 2:3,5:2,9:0 (`test_spec_round_cost`'s Gemma 4 12B
 
 **Open.** A measurement at a padded count (C = 3, 5-7) on an Ada or Blackwell card would check the
 tiles. DFlash's block at C >= 2 waits for 54's drafter-pass facts.
+
+## 82. The decode KV read from the attention kernel's census: Blackwell's reference card decides the KV codec (#618 step 1, 13.11, measured)
+
+**Decision.** A KV codec's decode read cost is the law
+
+    KV time = max(bytes / (kDramEta x DRAM rate), bytes / (SMs x reference clock x r_codec))
+
+read per generation from the nsys census of its decode attention kernel, never fitted: a codec the
+DRAM bounds has a read factor against INT8 (kKvReadFactor), one the SMs bound a rate in bytes a
+reference SM-clock for the family's kernel and geometry (kKvSmRate, DECISIONS 71's form). A row is
+written as two cards' only where two lab cards of the generation agree within 6 %, in the row's own
+form (factor, or bytes a reference SM-clock: the clock it prices at), and its comment names the
+census; a pair further apart is a row of one card (`cards` 1: it prices the estimate, never a
+decision). With those rows Blackwell gb20x
+gets a reference card (kReferenceCards: the mean of the RTX 5070 Ti and 5090, 120 SMs, 2429.5 MHz,
+4.80 DRAM bytes a SM-clock), whose KV factors rest on two cards (`kv_two_cards`) and whose
+exact-route factor does not (`exact_two_cards` false): there the worth decides the KV codec, and the
+activations keep the family's default (`--activations fast`). Two gates follow:
+- `Reference::decides` is the KV factors alone; `Reference::activations_decide` (and
+  `Choice::activations_by_worth`) needs the exact-route factor too. Ada has both; gb20x the first.
+- Under the worth a KV codec is taken only where its own read cost on the generation rests on two
+  cards (`kv_decides`: its kKvSmRate row for the model's family and geometry, else its own
+  kKvReadFactor row; INT8 is the reference codec). A codec priced on a row carried from Ada stays
+  the default or a pin (`Choice::kv_not_decided`), and so does one priced on a row of one card: on
+  gb20x NVFP4, whose Qwen3.5 SM rate is one card's (below) and whose other geometries carry Ada's
+  factor. Every codec of Ada decides; on gb20x every codec but NVFP4.
+
+**The census** (mcb.sh on each card: Qwen3.5-9B Q4_K_M, one stream, 128 decode steps at 7.8K and
+21.9K tokens of context; per step the attention kernel's time between the sampling kernels, 8 full
+layers; INT8, NVFP4 and K8V4 from the slope between the depths, BF16 and FP8 at 21.9K after INT8's
+fixed part; the SM clock sampled during the decode; bytes from plan_kv_bytes_per_token). B/rclk is
+bytes a reference SM-clock (the rate over SMs x the board's boost clock):
+
+| Card | INT8 of DRAM | BF16 | FP8 | K8V4 | NVFP4 |
+|---|---|---|---|---|---|
+| RTX 3090 | 90.7 % | 3.58 B/rclk (53 %) | 4.45 B/rclk | 3.46 B/rclk | 2.50 B/rclk |
+| RTX 3060 | 91.7 % | 3.59 B/rclk (50 %) | 4.57 B/rclk | 3.44 B/rclk | 2.45 B/rclk |
+| RTX 4070 Ti | 94.5 % | factor 1.011 | 1.010 | 0.988 | 2.58 B/rclk (80 %) |
+| RTX 4090 | 92.5 % | factor 1.018 | 0.987 | - | 2.54 B/rclk (81 %) |
+| RTX 5070 Ti | 92.8 % | factor 0.990 | 0.965 | 1.053 (88 %) | 3.00 B/rclk (57 %) |
+| RTX 5090 | 90.0 % | factor 0.976 | 0.956 | 1.041 (87 %) | 2.82 B/rclk (64 %) |
+
+Each prediction was written before its card's data (#618): the RTX 4070 Ti's NVFP4 0.40 TB/s at
+about 2.5 B a held SM-clock (measured 0.404), Ampere's FP8 and NVFP4 SM-bound (both held), Ampere's
+BF16 DRAM-bound (wrong: 53 %, the kernel's finding #856).
+
+**The rows** (the mean of the two cards):
+
+| Generation | Codec | Row | Was | Spread |
+|---|---|---|---|---|
+| Ada | BF16 | factor 1.0145 | 1.06 (end-to-end, the old 0.90 DRAM share) | 0.7 % |
+| Ada | FP8 | factor 0.9985 | 1.055 | 2.3 % |
+| Ada | NVFP4, Qwen3.5 256/16/4 | 2.56 B/rclk (1.171 on the reference card) | factor 1.235 | 1.6 % |
+| gb20x | BF16 | factor 0.983 | Ada's 1.06, carried | 1.4 % |
+| gb20x | FP8 | factor 0.9605 | Ada's 1.055 | 0.9 % |
+| gb20x | K8V4 | factor 1.047 | Ada's 1.025 | 1.2 % |
+| gb20x | NVFP4, Qwen3.5 256/16/4 | 2.91 B/rclk (1.560 on the reference card), one card's: does not decide | Ada's 1.235 | 6.4 % |
+| ga10x | BF16, FP8, K8V4, NVFP4, Qwen3.5 | 3.585, 4.51, 3.45, 2.48 B/rclk | Ada's factors, carried | 0.4, 2.7, 0.7, 1.9 % |
+
+Kept: Ada's K8V4 1.025 (the census has K8V4 on the 4070 Ti only) and Ada's NVFP4 factor 1.235 for
+the geometries the SM rate was not read on (the Qwen 3.5 MoE family; the other families run BF16
+and FP8 KV only). Turing's and Volta's rows are unchanged. Ampere has no reference card: its rows move
+its estimates only (an RTX 3090's Qwen3.5 BF16 KV at 1.78 of its DRAM time, the 3060's at 1.91,
+where Ada's 1.06 stood). Ampere's BF16 row is today's kernel: #856 is open, and the row is measured
+again when that kernel changes.
+
+**The gb20x NVFP4 spread.** Per held SM-clock the two cards read 2.60 (5090, 2610 MHz) and 2.74
+(5070 Ti, 2685 MHz), 5.4 % apart; per reference SM-clock, the table's form, 2.82 and 3.00, 6.4 %
+apart (the 5090 holds 1.08 of its 2407 MHz, the 5070 Ti 1.10 of its 2452). The row prices at the
+reference clock, so 6.4 % is the carry error between the two cards: past the tolerance, the row is
+written as one card's (`cards` 1). It prices gb20x's NVFP4 estimate (Own no longer: transferred) and
+does not decide (`kv_decides` false) until a re-census or a third card brings the two within 6 %.
+
+**The exact route on gb20x.** Its extra is about 1.3 ms a step on both cards while their int8
+tensor peaks differ 2.4x: not the flops law kExactComputeEta prices (#851). No row; the
+activations do not decide on gb20x.
+
+**Check.** ninferno_choice_test's fits: decode from facts 100 points rms 2.430 -> 2.431 %, Ada's
+own error 0.02261 -> 0.02262 and gb20x's 0.01704 -> 0.01706 (stated 0.0226, 0.0170), the carries
+onto ga10x, Turing and Volta unchanged in their stated digits; the long-context decode rows 2.96 ->
+3.04 % (Gemma 4 12B's long rows on the 4090, 5070 Ti and 5090, which read BF16 and FP8 KV through
+Gemma's own kernel at the codec's factor, 0.1-0.7 % faster: the census's factors are Qwen's
+kernels'), the long-context steps 2.97 -> 3.02 %.
+
+**Moved picks** (the offline study grid: tests/fixtures/plan/bench_models.json's 17 recipes x the
+RTX 4060 Ti 16GB, 4070 Ti, 4090, 5070 Ti, 5090, 3090, 3060 and 2080 Ti x contexts 8K, 32K, 131K x
+1 and 4 streams, `choose_at_weights` as `--plan --no-load --plan-device` plans it, before and after;
+816 cases, 44 moved; every pick keeps `--activations fast`; none takes NVFP4 or exact):
+- Ada (the same on the 4060 Ti, 4070 Ti and 4090: one reference card): Qwen3.5-9B Q4_K_M, one
+  stream, at 32K and 131K: KV int8 / state f16 -> BF16 / state f32 (BF16's factor 1.06 -> 1.0145:
+  its 0.0009 lower KLD is now worth its bytes). 6 cases.
+- Blackwell gb20x (from the family's defaults to the worth; 27 cases on the 5090, 11 on the 5070 Ti):
+  - dense decoders (Qwen3-8B Q4_K_M, Muse-Glimmer-30B UD-IQ3_XXS and UD-Q4_K_XL): KV fp8 -> BF16,
+    one stream at every context (Qwen3-8B on the 5070 Ti to 32K), and Muse-Glimmer at four streams
+    where BF16 holds the context;
+  - Qwen 3.5 dense and MoE (Qwen3.5-9B Q4_K_M, Qwen3.6-35B-A3B UD-IQ3_XXS and UD-Q4_K_M, Qwen3.8-27B
+    UD-IQ3_XXS and UD-Q4_K_XL), one stream: KV int8 / state f16 -> BF16 / state f32 where BF16
+    holds the context (the 9B and the 35B UD-IQ3_XXS at 8K; on the 5090 the 35B UD-Q4_K_M and the
+    27B at every context);
+  - Qwen3.8-27B at four streams, where the family's int8 held nothing: UD-IQ3_XXS at 32K on the
+    5070 Ti and UD-Q4_K_XL at 131K on the 5090 now hold the context with K8V4 (no fit -> K8V4 /
+    state f16).
+- Ampere, Turing: no move (no reference card: the rows move their estimates only). Gemma 4,
+  gpt-oss and Nemotron: no move on any board (their families' terms or defaults).
+
+The quantization trade (plan_quants, Qwen3.5-9B's curve) opens on gb20x with the switches
+(`weighs_quantizations`); the study's recipes carry one quantization each, so it moves nothing
+there. The drafter axis decides on gb20x where every drafter's gain is measured at the asked
+streams (`drafter_by_worth`), as on Ada.
+
+**Open.**
+- gb20x's NVFP4 row: 6.4 % apart per reference SM-clock (5.4 % per held SM-clock), one card's
+  until a re-census or a third Blackwell card brings it within 6 %.
+- kMoeRoutedEta was fitted (tools/fits/speed_model/fit_moe_decode.py) with the KV factors before
+  this entry (BF16 1.06, FP8 1.055, K8V4 1.025, NVFP4 1.235 on Ada and Blackwell); the script now
+  mirrors the new rows, and a refit would move it (not run).
+- Ada's K8V4 row is the end-to-end one: the RTX 4090's K8V4 census is not run.
+- The exact route on gb20x: #851 (a kernel-rate law for the exact trunk's A16 linears).
+- Ampere's BF16 row is the current kernel's (#856).
+- The census factors are Qwen's kernels'; Gemma 4's own BF16 / FP8 kernel takes them as a codec
+  factor (its long rows 0.1-0.7 % faster than before, already the estimate's direction).
+- No gate code says that gb20x's activations, or a carried codec, stayed the default: the
+  alternatives say it (`why_code` default) and `activations_by_worth` is in the plan's JSON; the
+  UI shows the decision as made on the Blackwell reference card.
