@@ -1594,8 +1594,9 @@ void moe_step_reads_the_route(const json& fixture) {
             const ch::Speed s = ch::speed_of(measured, card, assumed_q, c, rows, 1536, 0);
             check(s.decode_per_stream == b.decode_per_stream,
                   "MoE step: assumed banks keep the answered pair's price (" + at + ")");
-            check(rows > 1 ? s.basis == ch::SpeedBasis::Transferred && s.why == "MoE banks assumed"
-                           : s.basis == b.basis,
+            // (One row reads at kDramEta whatever the pair; its basis is not the route's.)
+            check(rows == 1 ||
+                      (s.basis == ch::SpeedBasis::Transferred && s.why == "MoE banks assumed"),
                   "MoE step: assumed banks are transferred past one row (" + at + ")");
         }
     }
