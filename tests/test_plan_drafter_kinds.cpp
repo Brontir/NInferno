@@ -356,7 +356,8 @@ void test_head_resolution() {
 
         // The head fallback's load table (fit_fallbacks' Head step, and the pool rule's head)
         // follows the profile that prices it (#777): on the RTX 4090 the facts derive it from
-        // the model's own MTP measurement (2:3,3:0); without that measurement, and on the RTX 3090
+        // the model's own MTP measurement (2:3,5:2,9:0: depth 3's joint verify priced through 4
+        // streams, depth 2's from 5, #795); without that measurement, and on the RTX 3090
         // whose rounds the facts do not price, it stays the built-in literal.
         const auto table = [](const pr::ServedSpeculation& head) {
             std::string out;
@@ -370,12 +371,13 @@ void test_head_resolution() {
         bare.resolved->other_kinds.clear();
         const auto head      = pr::served_head_fallback(dflash2, false);
         const auto bare_head = pr::served_head_fallback(bare, false);
-        check(
-            head && bare_head && bare_head->load_basis == "literal" &&
-                (priced_here ? table(*head) == "2:3,3:0/facts" : table(*head) == table(*bare_head)),
-            std::string(board) + ": the head fallback's table from the model's MTP measurement (" +
-                (head ? table(*head) : std::string("none")) + " against " +
-                (bare_head ? table(*bare_head) : std::string("none")) + ")");
+        check(head && bare_head && bare_head->load_basis == "literal" &&
+                  (priced_here ? table(*head) == "2:3,5:2,9:0/facts"
+                               : table(*head) == table(*bare_head)),
+              std::string(board) +
+                  ": the head fallback's table from the model's MTP measurement (" +
+                  (head ? table(*head) : std::string("none")) + " against " +
+                  (bare_head ? table(*bare_head) : std::string("none")) + ")");
 
         // A kind resolved only to price the head beside a published profile (pricing_only, as
         // spec::resolve_other_kinds marks the same-model pair it finds there) offers no drafter

@@ -2258,7 +2258,8 @@ head beyond `spec::kPricedVerifyRows` verify rows: MTP 3 verifies 4 rows a strea
 its joint verify passes the 8 rows the facts price and its load table (2:3,3:0) runs plain decode
 there; the head's measured gain at 3-8 streams is not priced. Where the head and plain decode serve
 the same streams that only ties the price (the head kept), but where plain decode serves more it can
-refuse a head the lab would measure faster.
+refuse a head the lab would measure faster. (DECISIONS 81 prices those rows: the chats part is now
+x2.017 at C = 4 and x1.681 at C = 8, 1.11 and 1.12 of the measured.)
 
 **Moves** (the shipped registry, the same 27B with its DFlash2 server and the sibling's MTP pair, on
 the twelve lab boards the plan knows). Of (C, drafter, plain, head) whole contexts, from the four
@@ -2300,11 +2301,303 @@ claimed; a head faster at every depth is never refused where the slower one is k
 **Open.**
 - The four fifths stay for unpriced boards until the facts exist: round-cost rows for Ampere,
   Turing and Volta, and step prices for a lab card's own measured record (the RTX 5070 Ti).
-- The joint verify past `kPricedVerifyRows` rows is not priced, so the priced branch underprices
-  the head at 3-8 streams (the RTX 4090: 0.55-0.67 of the measured gain).
+- The joint verify past `kPricedVerifyRows` rows was not priced, so the priced branch underpriced
+  the head at 3-8 streams (the RTX 4090: 0.55-0.67 of the measured gain). Priced since DECISIONS 81
+  (1.11-1.12 of the measured).
 - The step price leaves out the KV and attention bytes that grow with s, as R_s does, so it errs
   low at more streams, towards plain decode where the pools differ in streams.
 - The plan sizes the pool from its rung, kv_pages x 64 tokens unclamped (`pool_size_of`); the
   server from the pages it allocated, clamped to the pool (`pool_size` in generation_service). The
   two can differ in tokens and so in short requests held, where the server's pool is clamped.
 - Not run on the stands.
+
+## 81. The joint verify past 8 rows is priced at its tiles' rows (#795, 13.11, rule)
+
+`spec::load_gain` refused a joint verify of more than `kPricedVerifyRows` = 8 rows (C streams x
+(k + 1)). So the facts priced the MTP head only at 2 streams for depth 3, ran it plain from 3, and
+the pool rule (DECISIONS 80) underpriced it at 3-8 streams: on the RTX 4090 (Qwen3.8 27B, 32K) 0.55
+of the measured gain a request at C = 4 and 0.67 at C = 8.
+
+**Rule.** A joint verify of R rows is priced as the round cost prices a pass, bytes + kappa x
+operations (53), with its dense operations at the rows its tiles compute
+(`spec::verify_tile_rows`):
+- Within 8 rows, the rows themselves: the measured range, where `kSmallTEta` counts them. Every
+  round of up to 8 verify rows is `round_cost`'s to the bit (`test_spec_round_cost` checks every
+  registry pair and depth), so no price, table or golden moves there.
+- Past them, on a card whose verify GEMMs run mma.sync's tiles, every route computes whole 8-token
+  tiles (`kVerifyTokenTile`, mma.sync's n):
+  - At 9-16 tokens the route tables or the register MMA's rules (`heuristic_rmma`: two 8-token
+    tiles in one column, the tile the DFlash drafter's 16-row block runs inside the fit;
+    `mmq_verify_rule` for the codebook formats).
+  - From 17 tokens the route tables and the cost model (`cost_route`). Their picks in the selector
+    goldens are the register MMA's columns of 8 to 32 tokens and ggml's MMQ (a column of a multiple
+    of 8 tokens). Q4_K's 128x32 tile applies only from `kRmmaMidMinTokens` (33).
+  - The price takes 8 x the power of two of tiles that covers the rows: 16, 32 or 64 rows of
+    operations, one column of the register MMA's widest fitting tile, at least what a narrower
+    column or MMQ computes. The weights are priced as read once.
+- Past `kVerifyColumnRows` = 64 (the register MMA's widest column, eight tiles): not priced.
+- **Only on mma.sync cards** (`CardRates::mma_tiles`: sm_75 on, not a board whose mma.sync has no
+  tensor cores). Volta's verify of 17 tokens or more takes the tiled route's 128-token blocks
+  (`volta_tiled_route`; tiled.128x128 in the V100 golden), and Pascal has no MMA. There a joint
+  verify past 8 rows stays unpriced. `load_gain` and `joint_round_cost` take the flag, false by
+  default. The asked card's flag comes from its `GpuKey`, which carries the board's `mma_slow` from
+  the facts table (`product::gpu_key_of`, `gpu_identity`), so a GTX 16 board has none. Today
+  Volta and Turing also have no small-T eta, so their pairs are not priced at any count. The four
+  GV100 registry pairs are checked to stay within 8 rows.
+- A routed expert bank's operations stay counted by rows: the expert kernels' tiles are not the
+  verify's.
+
+**Where the law errs** (the selector goldens, RTX 4090, Q4_K 6144x5120). The price reads each
+weight once, but a call of several token columns reads it once a column:
+- small linears (n up to about 2048 rows: K/V, gates) take the register MMA's one 8-token tile at
+  17-96 tokens, ceil(T / 8) columns;
+- under A16 the large linears take 16-token columns from 24 tokens (rmma.m1.n2: two columns at
+  T = 32, three at 48).
+There the operations are priced high (the power of two over the columns' rows) and the bytes low.
+So from 17 rows (C x (k + 1) >= 17: mtp:3 from 5 streams, mtp:4 from 4) the price errs both ways,
+and the bytes' side is not counted.
+
+R_1 and R_C both come from `spec::joint_round_cost`, so their ratio is over one pricing.
+`price_joint`, `facts_load` and the plan's joint scales (`plan_choice`, now up to 8 streams, not
+4) read it. The counts stay C = 2..`kPricedStreams` (8, a plain step of up to 8 rows, the same
+value as `kPricedVerifyRows`), so a facts table still ends at plain decode by 9 streams.
+
+**DFlash's block stays unpriced at 2 streams and more.** Its tiles are those the verify is now
+priced at (32 rows at C = 2: a 32-token column). But its one-stream cost is an excess over
+kappa F that does not depend on k (54: a compute-bound q8 block on its own MMA route). Its
+operations at 32 rows would scale a term the round cost does not model.
+
+**No fitted constant.** `kVerifyTokenTile` (8) is the instruction's shape; `kVerifyColumnRows` (64)
+is counted from the schedule table (`generic_schedules.h`, n_tiles 1, 2, 4, 8); `kPricedStreams`
+names `kPricedVerifyRows` as stream counts.
+
+**Predicted, then measured.** RTX 4090 rates, the 27B's facts (the sibling UD-Q4_K_S pair, RTX
+5070 Ti). R_1 / R_C of mtp:3 was written down from the facts before the consumers changed, and the
+product computes the same:
+
+| C | verify rows | of tiles | R_1 / R_C (mtp:3) |
+|---|---|---|---|
+| 2 | 8 | 8 | 0.9395 |
+| 3 | 12 | 16 | 0.8240 |
+| 4 | 16 | 16 | 0.8463 |
+| 5 | 20 | 32 | 0.6730 |
+| 8 | 32 | 32 | 0.7253 |
+
+The head's facts table becomes 2:3,5:2,9:0, against 2:3,3:0 before. At 5 streams depth 3's 20 rows
+compute 32, and depth 2's 15 rows (16 of tiles) gain more. The pool rule's chats part
+(`test_plan_drafter_kinds`, the head's one-request gain x2.383 as the product prices it on the
+4090):
+
+| C | predicted (depth) | measured (MTP 3) | predicted / measured | before (#791) |
+|---|---|---|---|---|
+| 4 | x2.017 (3) | x1.816 | 1.11 | 0.55 |
+| 8 | x1.681 (2); depth 3 would be x1.728 | x1.502 | 1.12 (1.15) | 0.67 |
+
+The verdicts are unchanged (the head, every count). The price now errs high by 11-15 %, which is
+reported, not fitted. Candidates, none measured:
+- the requests' turnover between steps (each new chat's 2048-token prefill), which a load cell's
+  tok/s holds and R_C leaves out (53): it dilutes both arms alike and pulls the measured ratio
+  towards 1;
+- the one-request gain itself, transferred from the RTX 5070 Ti's acceptance and priced on the
+  4090's rates (no one-request 4090 run of this pair).
+
+Both C = 4 and C = 8 verify whole tiles (16 and 32 rows), so these runs check the bytes + kappa F
+extension past 8 rows, not the padding. The padded counts (3, 5-7 streams) are not measured.
+
+**What moves for users.** Every load table the facts derive for a card other than the lab's can
+now speculate past 2 streams, and at 2 streams up to the deepest depth of 8 rows a stream count
+allows (a depth of 5 at 2 streams verifies 12 rows). Before, every depth ran plain from 3 streams.
+That moves the Engine's depths at 3-8 streams and the plan's gains at those counts (its
+at_concurrency and joint scales). `test_spec_round_cost` prints every move. Over the registry's
+targets and every card of the facts table with round-cost rates (Ada and Blackwell, laptops
+included), 767 of 1991 facts-priced (target, card) tables move, on 19 targets (the MTP ones;
+DFlash keeps plain from 2 streams):
+
+| before | after | (target, card) |
+|---|---|---|
+| 2:3,3:0 | 2:3,5:2,9:0 | 502 |
+| 2:2,3:0 | 2:2,9:0 | 80 |
+| 2:3,3:0 | 2:3,5:2,6:0 | 60 |
+| 2:3,3:0 | 2:5,3:4,4:3,5:2,9:0 | 39 |
+| 2:2,3:0 | 2:2,6:0 | 38 |
+| 2:3,3:0 | 2:3,9:0 | 27 |
+| 2:3,3:0 | 2:5,3:4,5:2,9:0 | 21 |
+
+The two rows that start 2:5 (Gemma 4 26B A4B NVFP4, NVIDIA's on every card and RedHat's on 13,
+and the Gemma 4 12B Q4_K_M, unsloth's on 2 cards and HauhauCS's QAT on 4) speculate deeper at 2
+streams too: a depth of 5 is 12 rows there.
+
+**Goldens.** The selector, MoE plan and choice goldens on the host are unchanged. Two tests pinned
+the old head table and now pin 2:3,5:2,9:0 (`test_spec_round_cost`'s Gemma 4 12B facts table,
+`test_plan_drafter_kinds`'s head fallback on the RTX 4090).
+
+**Open.** A measurement at a padded count (C = 3, 5-7) on an Ada or Blackwell card would check the
+tiles. DFlash's block at C >= 2 waits for 54's drafter-pass facts.
+
+## 82. The decode KV read from the attention kernel's census: Blackwell's reference card decides the KV codec (#618 step 1, 13.11, measured)
+
+**Decision.** A KV codec's decode read cost is the law
+
+    KV time = max(bytes / (kDramEta x DRAM rate), bytes / (SMs x reference clock x r_codec))
+
+read per generation from the nsys census of its decode attention kernel, never fitted: a codec the
+DRAM bounds has a read factor against INT8 (kKvReadFactor), one the SMs bound a rate in bytes a
+reference SM-clock for the family's kernel and geometry (kKvSmRate, DECISIONS 71's form). A row is
+written as two cards' only where two lab cards of the generation agree within 6 %, in the row's own
+form (factor, or bytes a reference SM-clock: the clock it prices at), and its comment names the
+census; a pair further apart is a row of one card (`cards` 1: it prices the estimate, never a
+decision). With those rows Blackwell gb20x
+gets a reference card (kReferenceCards: the mean of the RTX 5070 Ti and 5090, 120 SMs, 2429.5 MHz,
+4.80 DRAM bytes a SM-clock), whose KV factors rest on two cards (`kv_two_cards`) and whose
+exact-route factor does not (`exact_two_cards` false): there the worth decides the KV codec, and the
+activations keep the family's default (`--activations fast`). Two gates follow:
+- `Reference::decides` is the KV factors alone; `Reference::activations_decide` (and
+  `Choice::activations_by_worth`) needs the exact-route factor too. Ada has both; gb20x the first.
+- Under the worth a KV codec is taken only where its own read cost on the generation rests on two
+  cards (`kv_decides`: its kKvSmRate row for the model's family and geometry, else its own
+  kKvReadFactor row; INT8 is the reference codec). A codec priced on a row carried from Ada stays
+  the default or a pin (`Choice::kv_not_decided`), and so does one priced on a row of one card: on
+  gb20x NVFP4, whose Qwen3.5 SM rate is one card's (below) and whose other geometries carry Ada's
+  factor. Every codec of Ada decides; on gb20x every codec but NVFP4.
+
+**The census** (mcb.sh on each card: Qwen3.5-9B Q4_K_M, one stream, 128 decode steps at 7.8K and
+21.9K tokens of context; per step the attention kernel's time between the sampling kernels, 8 full
+layers; INT8, NVFP4 and K8V4 from the slope between the depths, BF16 and FP8 at 21.9K after INT8's
+fixed part; the SM clock sampled during the decode; bytes from plan_kv_bytes_per_token). B/rclk is
+bytes a reference SM-clock (the rate over SMs x the board's boost clock):
+
+| Card | INT8 of DRAM | BF16 | FP8 | K8V4 | NVFP4 |
+|---|---|---|---|---|---|
+| RTX 3090 | 90.7 % | 3.58 B/rclk (53 %) | 4.45 B/rclk | 3.46 B/rclk | 2.50 B/rclk |
+| RTX 3060 | 91.7 % | 3.59 B/rclk (50 %) | 4.57 B/rclk | 3.44 B/rclk | 2.45 B/rclk |
+| RTX 4070 Ti | 94.5 % | factor 1.011 | 1.010 | 0.988 | 2.58 B/rclk (80 %) |
+| RTX 4090 | 92.5 % | factor 1.018 | 0.987 | - | 2.54 B/rclk (81 %) |
+| RTX 5070 Ti | 92.8 % | factor 0.990 | 0.965 | 1.053 (88 %) | 3.00 B/rclk (57 %) |
+| RTX 5090 | 90.0 % | factor 0.976 | 0.956 | 1.041 (87 %) | 2.82 B/rclk (64 %) |
+
+Each prediction was written before its card's data (#618): the RTX 4070 Ti's NVFP4 0.40 TB/s at
+about 2.5 B a held SM-clock (measured 0.404), Ampere's FP8 and NVFP4 SM-bound (both held), Ampere's
+BF16 DRAM-bound (wrong: 53 %, the kernel's finding #856).
+
+**The rows** (the mean of the two cards):
+
+| Generation | Codec | Row | Was | Spread |
+|---|---|---|---|---|
+| Ada | BF16 | factor 1.0145 | 1.06 (end-to-end, the old 0.90 DRAM share) | 0.7 % |
+| Ada | FP8 | factor 0.9985 | 1.055 | 2.3 % |
+| Ada | NVFP4, Qwen3.5 256/16/4 | 2.56 B/rclk (1.171 on the reference card) | factor 1.235 | 1.6 % |
+| gb20x | BF16 | factor 0.983 | Ada's 1.06, carried | 1.4 % |
+| gb20x | FP8 | factor 0.9605 | Ada's 1.055 | 0.9 % |
+| gb20x | K8V4 | factor 1.047 | Ada's 1.025 | 1.2 % |
+| gb20x | NVFP4, Qwen3.5 256/16/4 | 2.91 B/rclk (1.560 on the reference card), one card's: does not decide | Ada's 1.235 | 6.4 % |
+| ga10x | BF16, FP8, K8V4, NVFP4, Qwen3.5 | 3.585, 4.51, 3.45, 2.48 B/rclk | Ada's factors, carried | 0.4, 2.7, 0.7, 1.9 % |
+
+Kept: Ada's K8V4 1.025 (the census has K8V4 on the 4070 Ti only) and Ada's NVFP4 factor 1.235 for
+the geometries the SM rate was not read on (the Qwen 3.5 MoE family; the other families run BF16
+and FP8 KV only). Turing's and Volta's rows are unchanged. Ampere has no reference card: its rows move
+its estimates only (an RTX 3090's Qwen3.5 BF16 KV at 1.78 of its DRAM time, the 3060's at 1.91,
+where Ada's 1.06 stood). Ampere's BF16 row is today's kernel: #856 is open, and the row is measured
+again when that kernel changes.
+
+**The gb20x NVFP4 spread.** Per held SM-clock the two cards read 2.60 (5090, 2610 MHz) and 2.74
+(5070 Ti, 2685 MHz), 5.4 % apart; per reference SM-clock, the table's form, 2.82 and 3.00, 6.4 %
+apart (the 5090 holds 1.08 of its 2407 MHz, the 5070 Ti 1.10 of its 2452). The row prices at the
+reference clock, so 6.4 % is the carry error between the two cards: past the tolerance, the row is
+written as one card's (`cards` 1). It prices gb20x's NVFP4 estimate (Own no longer: transferred) and
+does not decide (`kv_decides` false) until a re-census or a third card brings the two within 6 %.
+
+**The exact route on gb20x.** Its extra is about 1.3 ms a step on both cards while their int8
+tensor peaks differ 2.4x: not the flops law kExactComputeEta prices (#851). No row; the
+activations do not decide on gb20x.
+
+**Check.** ninferno_choice_test's fits: decode from facts 100 points rms 2.430 -> 2.431 %, Ada's
+own error 0.02261 -> 0.02262 and gb20x's 0.01704 -> 0.01706 (stated 0.0226, 0.0170), the carries
+onto ga10x, Turing and Volta unchanged in their stated digits; the long-context decode rows 2.96 ->
+3.04 % (Gemma 4 12B's long rows on the 4090, 5070 Ti and 5090, which read BF16 and FP8 KV through
+Gemma's own kernel at the codec's factor, 0.1-0.7 % faster: the census's factors are Qwen's
+kernels'), the long-context steps 2.97 -> 3.02 %.
+
+**Moved picks** (the offline study grid: tests/fixtures/plan/bench_models.json's 17 recipes x the
+RTX 4060 Ti 16GB, 4070 Ti, 4090, 5070 Ti, 5090, 3090, 3060 and 2080 Ti x contexts 8K, 32K, 131K x
+1 and 4 streams, `choose_at_weights` as `--plan --no-load --plan-device` plans it, before and after;
+816 cases, 44 moved; every pick keeps `--activations fast`; none takes NVFP4 or exact):
+- Ada (the same on the 4060 Ti, 4070 Ti and 4090: one reference card): Qwen3.5-9B Q4_K_M, one
+  stream, at 32K and 131K: KV int8 / state f16 -> BF16 / state f32 (BF16's factor 1.06 -> 1.0145:
+  its 0.0009 lower KLD is now worth its bytes). 6 cases.
+- Blackwell gb20x (from the family's defaults to the worth; 27 cases on the 5090, 11 on the 5070 Ti):
+  - dense decoders (Qwen3-8B Q4_K_M, Muse-Glimmer-30B UD-IQ3_XXS and UD-Q4_K_XL): KV fp8 -> BF16,
+    one stream at every context (Qwen3-8B on the 5070 Ti to 32K), and Muse-Glimmer at four streams
+    where BF16 holds the context;
+  - Qwen 3.5 dense and MoE (Qwen3.5-9B Q4_K_M, Qwen3.6-35B-A3B UD-IQ3_XXS and UD-Q4_K_M, Qwen3.8-27B
+    UD-IQ3_XXS and UD-Q4_K_XL), one stream: KV int8 / state f16 -> BF16 / state f32 where BF16
+    holds the context (the 9B and the 35B UD-IQ3_XXS at 8K; on the 5090 the 35B UD-Q4_K_M and the
+    27B at every context);
+  - Qwen3.8-27B at four streams, where the family's int8 held nothing: UD-IQ3_XXS at 32K on the
+    5070 Ti and UD-Q4_K_XL at 131K on the 5090 now hold the context with K8V4 (no fit -> K8V4 /
+    state f16).
+- Ampere, Turing: no move (no reference card: the rows move their estimates only). Gemma 4,
+  gpt-oss and Nemotron: no move on any board (their families' terms or defaults).
+
+The quantization trade (plan_quants, Qwen3.5-9B's curve) opens on gb20x with the switches
+(`weighs_quantizations`); the study's recipes carry one quantization each, so it moves nothing
+there. The drafter axis decides on gb20x where every drafter's gain is measured at the asked
+streams (`drafter_by_worth`), as on Ada.
+
+**Open.**
+- gb20x's NVFP4 row: 6.4 % apart per reference SM-clock (5.4 % per held SM-clock), one card's
+  until a re-census or a third Blackwell card brings it within 6 %.
+- kMoeRoutedEta was fitted (tools/fits/speed_model/fit_moe_decode.py) with the KV factors before
+  this entry (BF16 1.06, FP8 1.055, K8V4 1.025, NVFP4 1.235 on Ada and Blackwell); the script now
+  mirrors the new rows, and a refit would move it (not run).
+- Ada's K8V4 row is the end-to-end one: the RTX 4090's K8V4 census is not run.
+- The exact route on gb20x: #851 (a kernel-rate law for the exact trunk's A16 linears).
+- Ampere's BF16 row is the current kernel's (#856).
+- The census factors are Qwen's kernels'; Gemma 4's own BF16 / FP8 kernel takes them as a codec
+  factor (its long rows 0.1-0.7 % faster than before, already the estimate's direction).
+- No gate code says that gb20x's activations, or a carried codec, stayed the default: the
+  alternatives say it (`why_code` default) and `activations_by_worth` is in the plan's JSON; the
+  UI shows the decision as made on the Blackwell reference card.
+
+## 83. A reference card decides for its lab cards' compute capability only; a board's bound form stays an estimate (#863, 13.11, rule)
+
+**The question** (the review of #861). A generation's reference card decides the KV codec for every
+board of the generation. Some boards read a codec in another bound form than the reference card:
+the KV law is max(bytes / DRAM, bytes / (SMs x clock x r)), and a codec flips from DRAM-bound to
+SM-bound where the board's DRAM bytes a SM-clock, b, cross r / kDramEta. Per gpu_facts.json (boost
+clock):
+- Ada's lab cards read b = 3.13 (RTX 4090) and 3.22 (RTX 4070 Ti), the reference 3.17. Qwen 3.5's
+  NVFP4 rate 2.56 crosses at b = 2.56 / 0.946 = 2.71: the L40S (2.41), L40 (2.44) and L4 (2.54) read
+  it DRAM-bound, the reference SM-bound; the RTX 6000 Ada (2.70) sits at the crossover. The RTX 4080 (3.77), 4070 (4.43) and 4060 (4.61) lie above the span the
+  factor rows were read over.
+- gb20x's lab cards read 4.38 (RTX 5090) and 5.22 (RTX 5070 Ti); the RTX 5070 (5.57) and 5060 (5.98)
+  lie above. The GB10 (12.1: 48 SMs, 273 GB/s, about 2.3) lies far below, and is another chip with
+  memory shared with the host.
+
+**A rule on b was written and not taken.** Gating each codec on the board's bound form (an SM-rate
+row where b lies on the reference's side of r, within 6 %; a factor row up to the higher lab card's
+b, within 6 %) held every prediction written before it ran (14 boards, test_choice). It reads the
+board's clock and DRAM rate, continuous facts, into the KV codec: the byte class (B1,
+deterministic-decisions.md) reads only discrete device facts, so that a generation's boards write the
+same bytes. It is not merged.
+
+**Rule.** A reference card decides only for the compute capability its lab cards share
+(`ReferenceCard::minor`, a discrete fact): Ada's 8.9, gb20x's 12.0. A board of the generation with
+another minor (the GB10, 12.1) runs and estimates on the generation's rows, and its reference
+decides nothing (`Reference::other_capability`; gate `reference_other_capability`, opened by the KV
+read factors on two lab cards of its own capability, `capability_lab_cards`). This is the rule the
+selector's measured rules already keep (generation.h: a rule measured on one capability's boards
+keeps that capability exactly).
+
+**What stays.** Within one capability every board decides as its reference card. Where a board's b
+puts a codec in another bound form, the decision may not be that board's fastest; the estimate,
+priced on the board, shows its own time, and the choice says the decision was made on the reference
+card. The L4 / L40 / L40S NVFP4 case and the boards above the span are named here, not gated.
+
+**What moves.** The GB10's plan, where gb20x's reference card decided before: the KV codec keeps the
+engine's automatic one; the quantization goes by the quant rule (the largest that fits, gate
+`quant_switches_closed`) instead of by worth; the drafter is the speculation profile's. Its
+activations stay `fast`, as on gb20x already (no exact-route factor there). The MoE prefill chunk is
+withdrawn too (`chunk_decides`), which changes nothing today: only Ada's chunk curve is its own. The
+GB10 has no row in gpu_facts.json's boards, so no plan golden moves, and no lab board moves: every
+lab card's minor is its reference card's. A reference row of the GB10's own (12.1) would need the
+lookup keyed by the minor, not only the generation (`reference_of`, `kv_decides`).

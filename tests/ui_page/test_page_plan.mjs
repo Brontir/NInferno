@@ -593,6 +593,28 @@ for (const lang of ["en", "ru", "uk"]) for (const k of ["replayContext", "replay
      "a reference card that decides nothing: not said");
   eq(H.decidedOnText({choice: {decided_on: {generation: "ada", cards: "RTX 4090", lent: false}}}, tr), 'decidedOn{"gen":"Ada (RTX 40)","cards":"RTX 4090"}',
      "an older document without decides: said");
+  // Blackwell (#618 step 1): the KV codec decided there, the activations not weighed: said so.
+  eq(H.decidedOnText({choice: {decided_on: {generation: "gb20x", cards: "RTX 5070 Ti, RTX 5090", lent: false, decides: true, activations_decide: false}}}, tr, true).startsWith("decidedOnKvPinned"), true,
+     "activations the user pinned: the KV line says they are the user's, not the family's default");
+  eq(H.decidedOnText({choice: {decided_on: {generation: "gb20x", cards: "RTX 5070 Ti, RTX 5090", lent: false, decides: true, activations_decide: false}}}, tr),
+     'decidedOnKv{"gen":"Blackwell (RTX 50)","cards":"RTX 5070 Ti, RTX 5090"}', "the KV codec alone decided on the reference card");
+  eq(H.decidedOnText({choice: {decided_on: {generation: "ada", cards: "RTX 4090", lent: false, decides: true, activations_decide: true}}}, tr),
+     'decidedOn{"gen":"Ada (RTX 40)","cards":"RTX 4090"}', "both decided: the plain line");
+  // A value the user pinned is never the reference card's (codex on #861).
+  const gbOn = {choice: {decided_on: {generation: "gb20x", cards: "RTX 5070 Ti, RTX 5090", lent: false, decides: true, activations_decide: false}}};
+  const adaOn = {choice: {decided_on: {generation: "ada", cards: "RTX 4090", lent: false, decides: true, activations_decide: true}}};
+  eq(H.decidedOnText(gbOn, tr, false, true), "", "gb20x, the KV codec pinned: nothing was decided on the reference card");
+  eq(H.decidedOnText(gbOn, tr, true, true), "", "gb20x, both pinned: nothing");
+  eq(H.decidedOnText(adaOn, tr, false, true).startsWith("decidedOnActKvPinned"), true, "Ada, the KV codec pinned: the activations decided there, the codec the user's");
+  eq(H.decidedOnText(adaOn, tr, true, false).startsWith("decidedOnKvPinned"), true, "Ada, the activations pinned: the KV codec decided there, the activations the user's");
+  eq(H.decidedOnText(adaOn, tr, true, true), "", "Ada, both pinned: nothing");
+  eq(H.decidedText({choice: {...adaOn.choice, by_worth: true}}, tr, false, true).startsWith("decidedOnActKvPinned"), true, "decidedText passes the KV pin");
+  whole(EN("decidedOnActKvPinned", {gen: "Ada (RTX 40)", cards: "RTX 4090"}), "act-only en");
+  whole(RU("decidedOnActKvPinned", {gen: "Ada (RTX 40)", cards: "RTX 4090"}), "act-only ru");
+  whole(EN("decidedOnKv", {gen: "Blackwell (RTX 50)", cards: "RTX 5070 Ti, RTX 5090"}), "kv-only en");
+  whole(RU("decidedOnKv", {gen: "Blackwell (RTX 50)", cards: "RTX 5070 Ti, RTX 5090"}), "kv-only ru");
+  ok(!/exact-route/.test(EN("gate_reference_one_card", {gen: "Turing (RTX 20)"})) &&
+     !/exact-route/.test(EN("gateOpens_reference_factors", {gen: "Turing (RTX 20)"})), "the reference gate is the KV factors' alone");
   // The switches closed (Ada, Gemma MoE) while the chunk is decided on the reference card: the gate
   // and the chunk's line, independently.
   const gemma = {model: {source: "google/gemma-4-26B-A4B-it-GGUF"}, choice: {by_worth: false, chunk_by_speed: true, gate_code: "kv_terms_one_card", why: "x",
@@ -634,12 +656,12 @@ for (const lang of ["en", "ru", "uk"]) {
   for (const m of H.GATE_OPENS) ok(typeof T[lang]["gateOpens_" + m] === "string" && T[lang]["gateOpens_" + m].length > 0, `${lang}: gateOpens_${m}`);
   for (const a of H.QUALITY_AUTHORITIES) ok(typeof T[lang]["quality_" + a] === "string", `${lang}: quality_${a}`);
   for (const w of H.PREFILL_WHY) ok(typeof T[lang]["bandPrefillNo_" + w] === "string", `${lang}: bandPrefillNo_${w}`);
-  for (const k of ["gateOpens", "decidedOn", "decidedOnChunk", "genOther", "thisModel", "bandDecode", "bandDecodeRough", "bandPrefill", "bandPrefillNone", "bandHead", "answersPoints", "answersNot"])
+  for (const k of ["gateOpens", "decidedOn", "decidedOnKv", "decidedOnChunk", "genOther", "thisModel", "bandDecode", "bandDecodeRough", "bandPrefill", "bandPrefillNone", "bandHead", "answersPoints", "answersNot"])
     ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
   ok(T[lang].decidedLent === undefined, `${lang}: no dead decidedLent`);
 }
 // Every gate code the server sends (choice.h ClosedGate) has words here.
 eq([...H.GATE_CODES].sort(), ["accuracy_gate_closed", "family_unmeasured", "int8_one_card", "int8_unmeasured", "kv_terms_one_card",
-   "lent_generation", "no_reference_card", "quant_curve_one_card", "quant_curve_unmeasured", "quant_switches_closed", "reference_one_card"], "the gate codes");
+   "lent_generation", "no_reference_card", "quant_curve_one_card", "quant_curve_unmeasured", "quant_switches_closed", "reference_one_card", "reference_other_capability"], "the gate codes");
 
 console.log(`test_page_plan: ${checks} checks passed`);

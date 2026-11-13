@@ -162,6 +162,12 @@ ninferno_label_tests(ninferno_softmax_attention_unwritten_test LABELS gpu slow)
 list(APPEND ninferno_softmax_attention_runs ninferno_softmax_attention_unwritten_test)
 set_tests_properties(${ninferno_softmax_attention_runs} PROPERTIES SKIP_RETURN_CODE 77)
 
+# The BF16 KV width-1 decode (GroupedDecode, #856) bit for bit against the instance it replaced,
+# both compiled here: output, split partials and the appended cache, every listed geometry.
+ninferno_add_op_test(ninferno_bf16_decode_identity_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/test_bf16_decode_identity.cu"
+  LIBRARIES ninferno_ops)
+
 ninferno_add_op_test(ninferno_sliding_window_attention_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_sliding_window_attention.cpp"
   LIBRARIES ninferno_ops)

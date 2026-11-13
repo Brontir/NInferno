@@ -198,6 +198,12 @@ struct CardRates {
     std::int32_t eta_cards = 0;
     double launch_seconds  = 0; // launch_node_seconds's, 0 when the generation has none
     double eta_dram        = 0;
+    // Whether its verify GEMMs run the tensor cores' mma.sync tiles (sm_75 on, not a board whose
+    // mma.sync has no tensor cores: core/device_class.h mma_tensor), the tiles verify_tile_rows
+    // counts. Volta's verify of 17 tokens or more takes the tiled route's 128-token blocks
+    // (volta_tiled_route), Pascal has no MMA: there a joint verify past kPricedVerifyRows is not
+    // priced.
+    bool mma_tiles = false;
 
     // A kernel launch's time as the bytes it would read in it (round cost's unit); 0 when unknown.
     [[nodiscard]] double launch_bytes() const noexcept {
@@ -213,9 +219,10 @@ struct CardRates {
 };
 
 // From a compute capability (89: Ada), SMs, reference SM clock and nominal DRAM rate; not known()
-// when any is 0 or the generation has no kSmallTEta row.
+// when any is 0 or the generation has no kSmallTEta row. `mma_slow`: a board whose mma.sync has no
+// tensor cores (no mma_tiles).
 [[nodiscard]] CardRates card_rates(int compute_capability, int sms, int sm_clock_khz,
-                                   double dram_gbps);
+                                   double dram_gbps, bool mma_slow = false);
 // The rates a GpuKey carries (product::choice_card_of's facts).
 [[nodiscard]] CardRates card_rates(const GpuKey& gpu);
 // A board by its PCI product id (a pair's lab_board): the PCI-ID table's row
@@ -242,24 +249,77 @@ struct CardRates {
 [[nodiscard]] double plain_step_cost(const RoundFacts& facts, double kappa, std::int32_t streams);
 
 // The verify rows within which the round cost was measured against the cards (DECISIONS 53, and
-// kSmallTEta's fit): from 12 rows verify kernels change tiles. A joint verify of more rows is not
-// priced.
+// kSmallTEta's fit): one MMA token tile (kVerifyTokenTile). Within them a pass's operations are
+// counted by its rows; a joint verify of more rows is priced at its tiles' rows
+// (verify_tile_rows, joint_round_cost).
 inline constexpr std::int32_t kPricedVerifyRows = 8;
+
+// The stream counts a joint verify is priced at, C = 2..kPricedStreams (Profile::joint_scale,
+// plain_step_scale, facts_load): those whose plain step (one row a stream) lies within the
+// measured rows, kPricedVerifyRows itself.
+inline constexpr std::int32_t kPricedStreams = kPricedVerifyRows;
+
+// The token width of one tensor-core tile of the verify kernels: mma.sync's n of 8 (m16n8k16 for
+// the register MMA's BF16, m16n8k32 for the int8 tiles; ops/common/mma.cuh). A call's token tiles
+// compute all their columns, a padded token's included.
+inline constexpr std::int32_t kVerifyTokenTile = 8;
+
+// The widest token column of the verify kernels' tiles that the price counts: the register MMA's
+// eight 8-token tiles (generic_schedules.h, n_tiles 1, 2, 4, 8). A joint verify of more rows is
+// not priced.
+inline constexpr std::int32_t kVerifyColumnRows = 64;
+
+// The rows a joint verify of `rows` rows computes, by its tiles (DECISIONS 81), on a card whose
+// verify GEMMs run mma.sync's tiles (CardRates::mma_tiles). Within kPricedVerifyRows the rows
+// themselves (the measured range, where kSmallTEta counts them). Past them every route the
+// selector takes computes whole 8-token tiles (kVerifyTokenTile): at 9..16 tokens the route tables
+// or the register MMA's rules (heuristic_rmma: two 8-token tiles in one column, the DFlash
+// drafter's 16-row block's tile, inside the fit; mmq_verify_rule for the codebook formats); from
+// 17 tokens the route tables and the cost model (cost_route), whose picks in the selector goldens
+// are the register MMA's columns of 8 to 32 tokens and ggml's MMQ (a column of a multiple of 8
+// tokens); Q4_K's 128x32 tile only from kRmmaMidMinTokens (33). The price takes kVerifyTokenTile x
+// the power of two of tiles that covers the rows (16, 32, 64): the rows one column of the register
+// MMA's widest fitting tile computes, at least those of a narrower column's or MMQ's. Past
+// kVerifyColumnRows: 0 (not priced).
+// Its limits, from the goldens (RTX 4090, Q4_K 6144x5120): the price reads each weight once, but a
+// call of several token columns reads it once a column. Small linears (n up to about 2048 rows:
+// K/V, gates) take the register MMA's one 8-token tile at 17..96 tokens, ceil(T / 8) columns;
+// under A16 the large linears take 16-token columns from 24 tokens (rmma.m1.n2: two columns at
+// T = 32, three at 48). There the operations are priced high (the power of two over the columns'
+// rows) and the bytes low (one read for several): from 17 rows (C x (k + 1) >= 17: mtp:3 from 5
+// streams, mtp:4 from 4) the price errs both ways, and the bytes' side is not counted.
+[[nodiscard]] std::int32_t verify_tile_rows(std::int32_t rows) noexcept;
+
+// round_cost with the target's verify pass of streams x (k + 1) rows priced at verify_tile_rows
+// (its operations at the tiles' rows, its bytes once); the drafter's passes and the plain step as
+// round_cost prices them. Equal to round_cost where the verify is within kPricedVerifyRows rows;
+// nullopt past them on a card without mma.sync tiles (`mma_tiles` false: CardRates::mma_tiles), or
+// past kVerifyColumnRows. load_gain and the joint verify's price (Profile::joint_scale) take both
+// R_1 and R_C from it, so their ratio is over one pricing.
+[[nodiscard]] std::optional<double>
+joint_round_cost(const RoundFacts& facts, const SpecConfig& config, double kappa,
+                 const ProposalRows& head_rows = {}, double launch_bytes = 0,
+                 const RoundLaunches& launches = {}, std::int32_t streams = 1,
+                 bool mma_tiles = false);
 
 // A drafter's gain over plain decode at `streams` streams, from its one-request gain (#303): the
 // tokens a round yields are the pair's at any load, so the gain scales by the one-stream round's
-// price over the joint one's, speedup x R_1(k) / R_C(k); one stream's is `speedup` itself. At
-// two or more streams, nullopt where a joint verify exceeds
-// kPricedVerifyRows, where the drafter's joint pass is wider than both that and its own one-stream
-// pass (DFlash's block of 16 rows at C >= 2: tiles change past ~12 rows), or either round is not
-// priced. An MoE's experts are read as different streams route them, apart (moe_read_fraction).
-// The KV and attention bytes and each stream's recurrent state, which grow with C in both, are
-// left out as in R_1 (the GDN state is ~3 % of an MoE step; at long context the gain is priced
-// low); so are the requests' turnover between steps, which a load cell's tok/s holds.
-[[nodiscard]] std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& config,
-                                              double kappa, double speedup, std::int32_t streams,
-                                              const ProposalRows& head_rows = {},
-                                              double launch_bytes           = 0,
-                                              const RoundLaunches& launches = {});
+// price over the joint one's, speedup x R_1(k) / R_C(k) (joint_round_cost); one stream's is
+// `speedup` itself. At two or more streams, nullopt where a joint verify exceeds kPricedVerifyRows
+// on a card without mma.sync tiles (`mma_tiles` false) or kVerifyColumnRows on one with them, where
+// the drafter's joint pass is wider than both kPricedVerifyRows and its own one-stream pass
+// (DFlash's block of 16 rows at C >= 2), or either round is not priced. The drafter's block stays
+// unpriced at C >= 2 although its tiles are those the verify is priced at: its one-stream cost is a
+// k-independent excess over kappa F that the facts do not hold (DECISIONS 54: a compute-bound q8
+// block on its own MMA route), so its operations at 32 rows would scale a term the round cost does
+// not model. An MoE's experts are read as different streams route them, apart (moe_read_fraction),
+// and their operations counted by rows (the expert kernels' tiles are not the verify's). The KV
+// and attention bytes and each stream's recurrent state, which grow with C in both, are left out
+// as in R_1 (the GDN state is ~3 % of an MoE step; at long context the gain is priced low); so are
+// the requests' turnover between steps, which a load cell's tok/s holds.
+[[nodiscard]] std::optional<double>
+load_gain(const RoundFacts& facts, const SpecConfig& config, double kappa, double speedup,
+          std::int32_t streams, const ProposalRows& head_rows = {}, double launch_bytes = 0,
+          const RoundLaunches& launches = {}, bool mma_tiles = false);
 
 } // namespace ninferno::spec
