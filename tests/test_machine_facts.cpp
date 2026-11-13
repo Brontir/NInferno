@@ -39,7 +39,7 @@ bool same(const MachineFacts& a, const MachineFacts& b) {
            a.reference_clock_khz == b.reference_clock_khz &&
            a.memory_bus_bits == b.memory_bus_bits && a.memory_clock_khz == b.memory_clock_khz &&
            a.tdp_w == b.tdp_w && a.vram_gib == b.vram_gib && a.pcie_gen == b.pcie_gen &&
-           a.mma_slow == b.mma_slow && a.share == b.share;
+           a.mma_slow == b.mma_slow && a.share == b.share && a.l2_mib == b.l2_mib;
 }
 
 void table_well_formed() {
@@ -54,6 +54,10 @@ void table_well_formed() {
         for (const auto& s : r.sources) pci_ids |= s.rfind("https://pci-ids.ucw.cz/", 0) == 0;
         expect(r.sources.size() >= 2 && pci_ids,
                where + ": a spec source and the pci-ids entry of its id");
+        // The one unresolved target is the TU106 1660 SUPER: the published 1660 SUPER
+        // cache belongs to TU116. Do not borrow it just to make coverage complete.
+        expect(!r.target || r.l2_mib > 0 || r.pci_device_id == 0x1F09,
+               where + ": a target needs a sourced L2 capacity (see gpu-facts.md)");
         expect(find_gpu_facts(r.pci_device_id) == &r, where + ": found by its id");
         // The chip names the same chip gpu_chip finds by the id's block, where it knows the chip.
         const std::string chip = gpu_chip(r.pci_device_id, r.major, r.minor, r.sms);
@@ -354,8 +358,14 @@ void device_class_wiring() {
     expect(board_of(d).dram_gbps == d.dram_gbps(), "the board distance reads the facts");
     expect(d.facts.l2_mib == 96, "machine_facts_of: the 5090's L2 from its row");
     expect(machine_facts(DriverReport{0x2684, 8, 9, 128, 2520000, 10501000, 384}).l2_mib == 72 &&
-               machine_facts(DriverReport{0x26B9, 8, 9, 142, 2520000, 9001000, 384}).l2_mib == 0,
-           "the L2 where the row gives it (RTX 4090), 0 where it does not (the L40S's)");
+               machine_facts(DriverReport{0x26B9, 8, 9, 142, 2520000, 9001000, 384}).l2_mib == 96,
+           "L2 is SKU-specific: RTX 4090 and L40S share AD102 but have 72 and 96 MiB");
+    expect(machine_facts(DriverReport{0x1F09, 7, 5, 22, 0, 0, 0}).l2_mib == 0,
+           "the TU106 1660 SUPER keeps unknown L2, not TU116's capacity");
+    // Sub-MiB and fractional-MiB caches must reach the byte-valued planning view intact.
+    expect(registry_driver_view(*find_gpu_facts(0x1FF2)).l2_bytes == 524288 &&
+               registry_driver_view(*find_gpu_facts(0x2584)).l2_bytes == 1572864,
+           "T400 4GB and RTX 3050 6GB: 512 KiB and 1536 KiB, without integer truncation");
     // A GTX 1660 SUPER on TU106: no tensor cores by the table's fact though its chip has them. The
     // synthetic class takes the fact as the query does, and borrows only from chips without
     // tensor cores (TU116, TU117), never from TU102/TU104.
