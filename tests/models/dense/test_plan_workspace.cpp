@@ -598,12 +598,24 @@ void declines(const std::string& name, const rt::PlanModelFacts& facts,
     refuses(basis_of(wide, options, device), "embedding has rows",
             "a tokenizer wider than the embedding");
     {
-        ops::RoutePins pins;
-        pins.moe = MoePath::Generic;
-        ops::set_route_pins(pins);
-        const std::string pinned = basis_of(facts, options, device);
+        // The overrides of the options planned decline; a pin left in the process by an earlier
+        // engine is not these options' (#842 review).
+        EngineOptions pinned = options;
+        pinned.maintainer.moe_path = MoePath::Generic;
+        refuses(basis_of(facts, pinned, device), "--moe-path", "a pinned MoE path");
+        EngineOptions routed            = options;
+        routed.maintainer.decode_route  = DecodeRoute::A16;
+        refuses(basis_of(facts, routed, device), "route is pinned", "a pinned decode route");
+        EngineOptions evidence           = options;
+        evidence.maintainer.route_policy = RoutePolicy::Evidence;
+        refuses(basis_of(facts, evidence, device), "--route-policy", "the evidence policy");
+        ops::RoutePins stale;
+        stale.moe = MoePath::Generic;
+        ops::set_route_pins(stale);
+        const std::string unpinned = basis_of(facts, options, device);
         ops::set_route_pins({});
-        refuses(pinned, "--moe-path", "a pinned MoE path");
+        check(unpinned.find("--moe-path") == std::string::npos,
+              name + ": a stale process pin does not decline the plan (" + unpinned + ")");
     }
     EngineOptions speculative            = options;
     speculative.speculative.backend      = backend;

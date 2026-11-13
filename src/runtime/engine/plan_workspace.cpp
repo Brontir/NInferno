@@ -41,6 +41,27 @@
 namespace ninferno::runtime {
 namespace {
 
+// A maintainer's route override the plan does not model, from the options planned (a dry run
+// constructs no Engine, so the process-wide pins are not these options'): the formula stands, and
+// the answer names the override. nullptr: none.
+const char* route_override(const EngineOptions& options) {
+    const MaintainerOptions& m = options.maintainer;
+    if (m.moe_path != MoePath::Auto) {
+        return "--moe-path is pinned: the plan sizes the automatic MoE path";
+    }
+    if (m.prefill_route != PrefillRoute::Auto || m.decode_route != DecodeRoute::Auto) {
+        return "a route is pinned (--prefill-route, --decode-route): the plan sizes the release's "
+               "selection";
+    }
+    if (m.route_policy != RoutePolicy::Legacy) {
+        return "--route-policy evidence: the plan sizes the release's selection";
+    }
+    if (!m.route_table.empty() || !m.route_dir.empty()) {
+        return "a route table is named (--route-table, --route-dir): the plan sizes the release's";
+    }
+    return nullptr;
+}
+
 namespace gemma4 = models::gemma4;
 namespace detail = models::qwen3_5::detail;
 
@@ -403,9 +424,7 @@ PlanWorkspaceAnswer qwen3_5_workspace(const PlanModelFacts& m, const EngineOptio
                               "resources)"};
     }
     if (plan == nullptr) { return {std::nullopt, "no sequence plan laid out for the rung"}; }
-    if (ops::route_pins().moe != MoePath::Auto) {
-        return {std::nullopt, "--moe-path is pinned: the plan sizes the automatic MoE path"};
-    }
+    if (const char* pinned = route_override(options)) { return {std::nullopt, pinned}; }
     std::string why;
     const auto start = described_start(m.artifact_directory, models::load_options(options),
                                        m.tokenizer_tokens, why);
@@ -490,9 +509,7 @@ PlanWorkspaceAnswer decoder_workspace(const PlanModelFacts& m, const EngineOptio
                               "resources)"};
     }
     if (plan == nullptr) { return {std::nullopt, "no sequence plan laid out for the rung"}; }
-    if (ops::route_pins().moe != MoePath::Auto) {
-        return {std::nullopt, "--moe-path is pinned: the plan sizes the automatic MoE path"};
-    }
+    if (const char* pinned = route_override(options)) { return {std::nullopt, pinned}; }
     if (options.speculative.backend != SpeculativeBackend::None) {
         return {std::nullopt, "speculation: the drafter is an artifact of its own, not in these "
                               "facts"};
