@@ -327,8 +327,8 @@ int attention_resident_per_sm() {
     return gemma4_resident_ctas_per_sm(
         attention_key<Geo, WR, Bc, Partial, Fp8, Chain>(), Tile::Threads, Tile::SmemBytes, [] {
             const auto kernel = prepared_kernel<Geo, WR, Bc, Partial, Fp8, Chain>();
-            return kernel_resident_ctas_per_sm(reinterpret_cast<const void*>(kernel),
-                                               Tile::Threads, Tile::SmemBytes);
+            return kernel_resident_ctas_per_sm(reinterpret_cast<const void*>(kernel), Tile::Threads,
+                                               Tile::SmemBytes);
         });
 }
 
@@ -744,10 +744,9 @@ void gemma4_kv_append_launch(const Tensor& k, const Tensor& v, const Tensor& pos
 int gemma4_resident_ctas_per_sm(const generic::kernel_facts::Gemma4KernelKey& key, int threads,
                                 std::size_t dynamic_shared_bytes,
                                 const std::function<int()>& live) {
-    namespace kf                         = generic::kernel_facts;
-    const std::optional<std::string> arch = kf::sass_arch();
-    const std::optional<kf::KernelFacts> facts =
-        arch ? kf::gemma4_facts(*arch, key) : std::nullopt;
+    namespace kf                               = generic::kernel_facts;
+    const std::optional<std::string> arch      = kf::sass_arch();
+    const std::optional<kf::KernelFacts> facts = arch ? kf::gemma4_facts(*arch, key) : std::nullopt;
     if (facts) {
         const int per_sm = resident_ctas_per_sm(
             device_class(), KernelShape{facts->registers, facts->static_shared_bytes, threads,

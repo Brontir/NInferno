@@ -172,8 +172,8 @@ struct W4a8KernelKey {
 struct Gemma4KernelKey {
     std::string kernel; // "attention", "volta", "volta_tiled"
     int D = 0, G = 0, slice = 0;
-    int rows = 0; // the attention tile's warp rows; the Volta instance's MaxRows
-    int Bc   = 0;
+    int rows     = 0; // the attention tile's warp rows; the Volta instance's MaxRows
+    int Bc       = 0;
     bool partial = false, fp8 = false, chain = false;
 };
 

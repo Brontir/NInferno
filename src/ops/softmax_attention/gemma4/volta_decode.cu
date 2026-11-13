@@ -559,10 +559,18 @@ int max_rows_for(std::int32_t rows) {
 generic::kernel_facts::Gemma4KernelKey volta_key(std::int32_t head_dim, std::int32_t rows) {
     int max = 0;
     switch (head_dim) {
-    case 64: max = max_rows_for<64>(rows); break;
-    case 128: max = max_rows_for<128>(rows); break;
-    case 256: max = max_rows_for<256>(rows); break;
-    case 512: max = max_rows_for<512>(rows); break;
+    case 64:
+        max = max_rows_for<64>(rows);
+        break;
+    case 128:
+        max = max_rows_for<128>(rows);
+        break;
+    case 256:
+        max = max_rows_for<256>(rows);
+        break;
+    case 512:
+        max = max_rows_for<512>(rows);
+        break;
     default:
         throw std::invalid_argument("gemma4_attention: the Volta decode route takes D = 64..512");
     }
