@@ -35,9 +35,12 @@ import statistics
 import sys
 from pathlib import Path
 
+# One schedule's line. The bench prints the call's width (t=) and the decode parity (decode=)
+# since #155, and the A16 pick's mark and the output's hash after the marks; a sweep written
+# before #155 has none of them. Only T = 1 rows are decode rows (--tokens adds verify widths).
 ROW = re.compile(
-    r"^r8 (\S+) (\S+) n=(\d+) k=(\d+) r8\.w(\d+)r(\d+) ([\d.]+) us [\d.]+ GB/s same=(\d)"
-    r"( picked)?( rules)?\s*$"
+    r"^r8 (\S+) (\S+) n=(\d+) k=(\d+)(?: t=(\d+))? r8\.w(\d+)r(\d+) ([\d.]+) us [\d.]+ GB/s"
+    r" same=(\d)(?: decode=\d)?( picked)?( rules)?(?: a16pick)?(?: h=[0-9a-f]+)?\s*$"
 )
 DEVICE = re.compile(r"^device .* class (\S+), ")
 QTYPES = {
@@ -114,7 +117,9 @@ def read_run(path, gpu):
         m = ROW.match(line)
         if not m:
             continue
-        fmt, epi, n, k, warps, rows, us, same, pick, rule = m.groups()
+        fmt, epi, n, k, tokens, warps, rows, us, same, pick, rule = m.groups()
+        if tokens not in (None, "1"):
+            continue
         if same != "1":
             sys.exit(f"{path}: schedules differ in bytes: {line.strip()}")
         key = (fmt, epi, int(n), int(k))
@@ -128,6 +133,10 @@ def read_run(path, gpu):
         sys.exit(f"{path}: device class {device}, expected {gpu}")
     if not done:
         sys.exit(f"{path}: no 'done' line (an incomplete sweep)")
+    # A sweep whose lines this reader does not know (another bench output format) would give no
+    # entries and, under --merge, keep every old one: refuse it instead.
+    if not times:
+        sys.exit(f"{path}: no T = 1 R8 schedule line (a sweep of another output format?)")
     base = rules if rules else picked
     # An add row stands for its store problem where the sweep has no store row of it.
     run, run_base = {}, {}

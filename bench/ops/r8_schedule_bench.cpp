@@ -18,13 +18,16 @@
 // calls cycling through them per schedule, the schedules interleaved within each sample (the first
 // one rotating), the median of --samples graph replays divided by --launches.
 //
-// Output, per problem: one line per schedule,
-//   r8 <format> <epilogue> n=<n> k=<k> <route> <us> us <GB/s> GB/s same=<0|1> [picked] [rules]
-// where same=1 means the output bytes equal the first schedule's, "picked" marks the dispatcher's
-// choice (select_route at T = 1, AllowA8: with this GPU's r8_decode_table.h entries) and "rules"
-// the shape-class rules' choice without them (r8_rules_route, what tools/bench/r8_decode_table.py
-// measures entries against); then
-//   pick <format> <epilogue> n=<n> k=<k> picked=<route> <us> rules=<route> <us> best=<route> <us>
+// Output, per problem and width: one line per candidate route,
+//   r8 <format> <epilogue> n=<n> k=<k> t=<T> <route> <us> us <GB/s> GB/s same=<0|1>
+//      decode=<0|1> [picked] [rules] [a16pick] h=<hash>
+// where same=1 means the output bytes equal the first schedule's, decode=1 that the first token's
+// bytes equal the decode route's, "picked" marks the dispatcher's choice (select_route at T,
+// AllowA8: with this GPU's r8_decode_table.h entries), "rules" the shape-class rules' choice
+// without them (r8_rules_route at T = 1, what tools/bench/r8_decode_table.py measures entries
+// against), "a16pick" the dispatcher's A16Only choice and h the FNV-1a hash of the whole output;
+// then
+//   pick <format> <epilogue> n=<n> k=<k> t=<T> picked=<route> <us> best=<route> <us>
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/device_class.h"
