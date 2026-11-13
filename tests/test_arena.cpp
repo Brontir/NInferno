@@ -240,8 +240,7 @@ int main() {
         int* page = owner.ticket_page();
         if (page == nullptr) {
             ++failures;
-            std::cerr << "an owning arena has no ticket page
-                         ";
+            std::cerr << "an owning arena has no ticket page\n";
         } else {
             std::array<int, ninferno::kArenaTicketInts> host{};
             host.fill(-1);
@@ -249,9 +248,8 @@ int main() {
             for (int v : host) {
                 if (v != 0) {
                     ++failures;
-                    std::cerr << "the ticket page is not zero at construction
-                                 ";
-                        break;
+                    std::cerr << "the ticket page is not zero at construction\n";
+                    break;
                 }
             }
             failures += expect_size(owner.capacity(), 4096, "the page is outside the capacity");

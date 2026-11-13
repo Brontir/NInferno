@@ -29,9 +29,10 @@ namespace {
 // up to 3072 values.
 constexpr int kSimtSteps = 12;
 
-// The route ticket (`ticket`, Route only) is one int of the call's workspace, zero when the grid
-// starts (the call's memset in stream order); the last CTA sets it back. Not a device global
-// (#882): two engines' routers in flight on one GPU each count on their own.
+// The route ticket (`ticket`, Route only) is one int of the arena's ticket page (zero since the
+// page was made, #889) or of the call's workspace (zeroed by the call in stream order), zero when
+// the grid starts; the last CTA sets it back. Not a device global (#882): two engines' routers in
+// flight on one GPU each count on their own.
 template <int T, bool Route, bool Staged>
 __global__ __launch_bounds__(kRouterSimtWarps *
                              32) void router_simt_kernel(GemmArgs a, SelectArgs s, PlanArgs p,

@@ -38,8 +38,9 @@ __device__ __forceinline__ float token_router_score(const float* partial_scores,
     return sum;
 }
 
-// `ticket` (Select only) counts the S1 blocks in, as D1's: the call's own (workspace, zeroed by the
-// launch in stream order), not a device global another engine's grid in flight counts on too
+// `ticket` (Select only) counts the S1 blocks in, as D1's: the arena's ticket page's (#889) or the
+// call's workspace's (zeroed by the launch in stream order), not a device global another engine's
+// grid in flight counts on too
 // (#882). atomicInc wraps at gridDim.x-1, so the last block leaves it at zero.
 template <int Tokens, bool Select>
 __global__ void

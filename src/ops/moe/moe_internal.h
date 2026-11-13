@@ -699,8 +699,9 @@ static_assert(arena_tickets::kMoeCombine + kCombineTickets <= kArenaTicketInts,
 // The BF16 router at 1..kRouterSimtMaxTokens tokens, one warp per expert (GemmArgs of the
 // register-MMA router: weights, x, bias, logits and xq). With select and plan (at most 32
 // assignments) its last CTA also selects and plans: launch_select_plan's results. The CTAs then
-// count themselves in on route_ticket, one int of the call's own workspace that is zero in stream
-// order when the router starts (#882); the last CTA sets it back to zero.
+// count themselves in on route_ticket, one int of the arena's ticket page (#889) or of the call's
+// workspace, zero in stream order when the router starts (#882); the last CTA sets it back to
+// zero.
 void launch_router_simt(const GemmArgs& args, cudaStream_t stream,
                         const SelectArgs* select = nullptr, const PlanArgs* plan = nullptr,
                         int* route_ticket = nullptr);

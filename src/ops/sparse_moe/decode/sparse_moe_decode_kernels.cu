@@ -72,10 +72,10 @@ __device__ __forceinline__ float router_row_dot(const __nv_bfloat16* x, const __
     return warp_reduce_sum(sum);
 }
 
-// `ticket` counts the D1 blocks in; the last to arrive selects. It is the call's own (workspace,
-// zeroed by the launch in stream order), not a device global: two engines' D1 grids in flight on
-// one GPU each count on their own (#882). atomicInc wraps at gridDim.x-1, so the last block
-// leaves it at zero.
+// `ticket` counts the D1 blocks in; the last to arrive selects. It is the arena's ticket page's
+// (#889) or the call's workspace's (zeroed by the launch in stream order), not a device global: two
+// engines' D1 grids in flight on one GPU each count on their own (#882). atomicInc wraps at
+// gridDim.x-1, so the last block leaves it at zero.
 __global__ void sparse_moe_d1_kernel(const __nv_bfloat16* __restrict__ x,
                                      const __nv_bfloat16* __restrict__ router,
                                      float* __restrict__ scores,
