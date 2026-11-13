@@ -1691,12 +1691,38 @@ std::optional<runtime::PlanDeviceFacts> plan_device_of_board(std::string_view sp
         return std::nullopt;
     };
     std::vector<std::string> parts;
+    std::vector<std::size_t> commas;
     for (std::size_t begin = 0;;) {
         const auto comma = spec.find(',', begin);
         parts.push_back(trim(spec.substr(
             begin, comma == std::string_view::npos ? std::string_view::npos : comma - begin)));
         if (comma == std::string_view::npos) { break; }
+        commas.push_back(comma);
         begin = comma + 1;
+    }
+    const auto table = gpu_facts_table();
+    // A registry name may hold commas ("GeForce GTX 1650 (TU116, GDDR6)"): the longest leading run
+    // of parts that is a row's exact name is the board, the parts after it its facts (#831).
+    const auto names_a_row = [&](std::string_view text) {
+        const auto wanted = normalized_board(text);
+        return std::any_of(table.begin(), table.end(), [&](const GpuFactsRow& r) {
+            return normalized_board(r.name) == wanted;
+        });
+    };
+    if (!commas.empty()) {
+        std::size_t taken = 0; // the commas inside the board's name
+        if (names_a_row(spec)) {
+            taken = commas.size();
+        } else {
+            for (std::size_t k = commas.size() - 1; k > 0 && taken == 0; --k) {
+                if (names_a_row(spec.substr(0, commas[k]))) { taken = k; }
+            }
+        }
+        if (taken > 0) {
+            const auto end = taken == commas.size() ? std::string_view::npos : commas[taken];
+            parts.erase(parts.begin() + 1, parts.begin() + 1 + static_cast<std::ptrdiff_t>(taken));
+            parts.front() = trim(spec.substr(0, end));
+        }
     }
     const std::string query = parts.front();
     if (query.empty()) { return fail("no board named: give a GPU name or a PCI id (0x2684)"); }
@@ -1717,7 +1743,6 @@ std::optional<runtime::PlanDeviceFacts> plan_device_of_board(std::string_view sp
         }
     }
 
-    const auto table       = gpu_facts_table();
     const GpuFactsRow* row = nullptr;
     if (const auto q = lower(query); starts_with(q, "0x") && q.size() > 2) {
         char* end     = nullptr;
