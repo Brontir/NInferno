@@ -267,5 +267,21 @@ prediction so far.
   - its own bits with `--self`.
 
   The FP64 oracle of `ninferno_softmax_attention_test --kv-dtype bf16` also applies.
-- A/B: running on GV100 (ABBA, INT8 the control).
-- Decision: open.
+- A/B (13.11, Quadro GV100, `kv_decode_attention_bench` ABBA, master b2a836ef2 against the
+  branch merged with it, Qwen3.5-9B geometry, 8 layers, INT8 the control):
+
+  | arm | 7843 keys, µs a call | 21961 keys, µs a call | slope read rate | fixed part |
+  |---|---|---|---|---|
+  | BF16 master, round 1 | 280.2 | 632.6 | 164 GB/s | 84 µs |
+  | BF16 master, round 2 | 228.5 | 557.8 | 176 GB/s | 46 µs |
+  | BF16 key-major, both rounds | 70.7 | 166.3 | 605 GB/s | 17.6 µs |
+  | INT8, all four | 54.6 | 99.0 | 672 GB/s | 30 µs |
+
+  - Slope: 605 GB/s is 0.90x INT8's, inside the frozen 0.85-1.05x (69 % of DRAM). Held.
+  - A call at 21961 keys takes 166 µs against 558-633: x3.35-3.8, about 3.1 ms less a step over 8
+    layers.
+  - Fixed part: 17.6 µs, under the frozen INT8 ± 10 µs (20-40). A finding on the favourable side.
+    The term that was wrong: the prediction took INT8's fixed part as the floor, but INT8's carries
+    its Q codec (the Hadamard and per-group quantization of every row) and its scale staging. The
+    BF16 kernel has neither: it widens Q to FP32 once and starts its keys. Recorded, not fitted.
+- Decision: kept on sm_70 (the slope acceptance, at least 0.75x INT8's, is met).
