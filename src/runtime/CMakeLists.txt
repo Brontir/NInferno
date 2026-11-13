@@ -50,6 +50,7 @@ add_library(ninferno_engine STATIC
   engine/prompt_tail.cpp
   engine/plan_workspace.cpp
   engine/plan_moe_routes.cpp
+  engine/plan_prefill_routes.cpp
   engine/model_instance.cpp
   engine/warmup_cache.cpp
   engine/warmup_widths.cpp

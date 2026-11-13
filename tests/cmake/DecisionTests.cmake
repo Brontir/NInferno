@@ -81,9 +81,13 @@ target_sources(ninferno_gate_atlas_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/d
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_gate_atlas_test)
 
 # The route cost model's constants, each tagged fact / counted / fitted
-# (ops/generic/route_cost_constants.h); `--list` prints them. No GPU.
+# (ops/generic/route_cost_constants.h); `--list` prints them. The Counted ones are held to the
+# kernel families' records and the architecture table (core/arch_registry.h: the generated rows
+# of ninferno_core_host's include directory). No GPU.
 ninferno_add_test(ninferno_route_cost_constants_test LABELS host NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_cost_constants.cpp")
+target_include_directories(ninferno_route_cost_constants_test PRIVATE
+  $<TARGET_PROPERTY:ninferno_core_host,INTERFACE_INCLUDE_DIRECTORIES>)
 set_tests_properties(ninferno_route_cost_constants_test PROPERTIES LABELS host)
 
 # The holdout records of the fitted constants it covers (core/fitted_holdouts.h, the one mechanism;
@@ -123,3 +127,17 @@ ninferno_add_test(ninferno_device_identity_test LABELS host
 # replaced, for every QType value. No GPU.
 ninferno_add_test(ninferno_format_facts_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_format_facts.cpp")
+
+# The format predicates' arch requirements (core/arch_requires.h, ops/generic/format_requires.h;
+# #615 F5): each resolves from the board registry row of every board of gpu_facts.json and answers
+# as the code it replaced, under every build; the selector reads them under each board as the
+# substituted device. Host only, with the golden twin's link. No GPU.
+ninferno_add_test(ninferno_arch_requires_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_arch_requires.cpp"
+  LIBRARIES ninferno_ops_host)
+target_sources(ninferno_arch_requires_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
+target_compile_definitions(ninferno_arch_requires_test PRIVATE NINFERNO_HOST_ONLY)
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_arch_requires_test)

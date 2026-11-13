@@ -150,6 +150,14 @@ ninferno_add_test(ninferno_plan_dry_run_test LABELS host slow NEEDS_SOURCE_DIR
   LIBRARIES ninferno_product_plan ninferno_serve ninferno_engine ninferno_core ninferno::json)
 target_include_directories(ninferno_plan_dry_run_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
+# The choice's prefill against the generic selector's routes (#613 PR-9): the measured prefill
+# points and every registry board priced with and without the registered route query; the moves
+# are listed (tests/fixtures/choice/prefill_measured.json). CPU, no GPU.
+ninferno_add_test(ninferno_choice_prefill_routes_test LABELS host golden NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_choice_prefill_routes.cpp"
+  LIBRARIES ninferno_product_plan ninferno_engine ninferno_core ninferno::json)
+target_include_directories(ninferno_choice_prefill_routes_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 # The cross-row quantization ranking is a pure function: pinned cases, and equal to the loop
 # plan_quants ran inline before it was lifted out.
 ninferno_add_test(ninferno_rank_rows_test LABELS host

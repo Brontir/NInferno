@@ -34,7 +34,7 @@ struct R8DecodeTable {
     std::span<const R8DecodeEntry> entries;
 };
 
-// ad102:128sm: 106 entries (median us: rules -> entry).
+// ad102:128sm: 109 entries (median us: rules -> entry).
 inline constexpr R8DecodeEntry kR8DecodeAd102_128sm[] = {
     {QType::GGML_IQ2_S, Epilogue::Store, 4096, 2048, 4, 1},     // w4r2 5.89 -> 5.73
     {QType::GGML_IQ2_S, Epilogue::Store, 8192, 2048, 4, 1},     // w4r2 9.76 -> 9.44
@@ -131,13 +131,16 @@ inline constexpr R8DecodeEntry kR8DecodeAd102_128sm[] = {
     {QType::GGML_Q4_0, Epilogue::Store, 1024, 16384, 8, 1},     // w8r2 13.16 -> 12.40
     {QType::GGML_Q4_K, Epilogue::Store, 256, 6656, 8, 1},       // w4r1 3.07 -> 2.88
     {QType::GGML_Q4_K, Epilogue::Store, 1024, 6656, 8, 1},      // w4r1 5.87 -> 5.73
+    {QType::GGML_Q4_K, Epilogue::Store, 4096, 12288, 8, 1},     // w8r2 31.90 -> 31.23
     {QType::GGML_Q4_K, Epilogue::Store, 5120, 17408, 8, 1},     // w8r2 56.79 -> 56.37
     {QType::GGML_Q4_K, Epilogue::Store, 6656, 19968, 8, 1},     // w8r2 82.36 -> 81.72
     {QType::GGML_Q5_K, Epilogue::Store, 5120, 6144, 8, 1},      // w4r1 24.83 -> 24.59
     {QType::GGML_Q5_K, Epilogue::Store, 256, 6656, 8, 1},       // w4r1 4.10 -> 4.04
+    {QType::GGML_Q5_K, Epilogue::Store, 4096, 12288, 8, 1},     // w8r2 39.48 -> 39.13
     {QType::GGML_Q5_K, Epilogue::Store, 5120, 17408, 8, 1},     // w8r2 68.78 -> 67.79
     {QType::GGML_Q6_K, Epilogue::Store, 1024, 5120, 8, 1},      // w4r1 6.91 -> 6.86
     {QType::GGML_Q6_K, Epilogue::Store, 1024, 6656, 8, 1},      // w4r1 8.19 -> 7.95
+    {QType::GGML_Q6_K, Epilogue::Store, 4096, 12288, 8, 1},     // w8r2 47.04 -> 46.79
     {QType::GGML_Q6_K, Epilogue::Store, 5120, 17408, 8, 1},     // w8r2 82.11 -> 80.95
     {QType::Q8_G32_FP16, Epilogue::Store, 3712, 2688, 8, 1},    // w4r1 12.63 -> 12.31
     {QType::Q8_G32_FP16, Epilogue::Store, 48, 5120, 8, 1},      // w4r1 2.49 -> 2.37
@@ -198,6 +201,13 @@ inline constexpr R8DecodeEntry kR8DecodeAd103_80sm[] = {
     {QType::GGML_IQ2_XXS, Epilogue::SwiGlu, 17408, 5120, 4, 1}, // w8r2 73.02 -> 70.50
     {QType::GGML_IQ2_XXS, Epilogue::SwiGlu, 19968, 6656, 4, 1}, // w8r2 111.84 -> 107.43
     {QType::GGML_IQ3_S, Epilogue::Store, 5376, 8192, 4, 2}, // w8r2 35.75 -> 32.22
+};
+
+// ad104:60sm: 3 entries (median us: rules -> entry).
+inline constexpr R8DecodeEntry kR8DecodeAd104_60sm[] = {
+    {QType::GGML_Q4_K, Epilogue::Store, 4096, 12288, 8, 1}, // w8r2 63.15 -> 60.77
+    {QType::GGML_Q5_K, Epilogue::Store, 4096, 12288, 4, 1}, // w8r2 76.03 -> 74.85
+    {QType::GGML_Q6_K, Epilogue::Store, 4096, 12288, 8, 1}, // w8r2 91.13 -> 89.65
 };
 
 // ad106:34sm: 26 entries (median us: rules -> entry).
@@ -312,7 +322,7 @@ inline constexpr R8DecodeEntry kR8DecodeGa102_72sm[] = {
     {QType::Q8_G32_FP16, Epilogue::Store, 5120, 6144, 8, 2}, // w4r1 70.40 -> 68.64
 };
 
-// ga102:82sm: 34 entries (median us: rules -> entry).
+// ga102:82sm: 36 entries (median us: rules -> entry).
 inline constexpr R8DecodeEntry kR8DecodeGa102_82sm[] = {
     {QType::GGML_IQ4_NL, Epilogue::Store, 4096, 5120, 8, 1},  // w4r1 16.71 -> 15.94
     {QType::GGML_IQ4_NL, Epilogue::Store, 6144, 5120, 8, 1},  // w4r1 23.64 -> 23.01
@@ -328,6 +338,7 @@ inline constexpr R8DecodeEntry kR8DecodeGa102_82sm[] = {
     {QType::GGML_Q4_K, Epilogue::Store, 5120, 6144, 8, 1},    // w4r1 23.45 -> 23.26
     {QType::GGML_Q4_K, Epilogue::Store, 256, 6656, 8, 1},     // w4r1 4.81 -> 4.47
     {QType::GGML_Q4_K, Epilogue::Store, 1024, 6656, 8, 1},    // w4r1 7.97 -> 7.85
+    {QType::GGML_Q4_K, Epilogue::Store, 4096, 12288, 4, 1},   // w8r2 38.08 -> 37.73
     {QType::GGML_Q4_K, Epilogue::Store, 5120, 17408, 8, 1},   // w8r2 65.66 -> 64.96
     {QType::GGML_Q4_K, Epilogue::Store, 6656, 19968, 8, 1},   // w8r2 94.62 -> 92.33
     {QType::GGML_Q5_K, Epilogue::Store, 1024, 5120, 8, 1},    // w4r1 7.66 -> 7.37
@@ -341,6 +352,7 @@ inline constexpr R8DecodeEntry kR8DecodeGa102_82sm[] = {
     {QType::GGML_Q6_K, Epilogue::Store, 5120, 6144, 8, 1},    // w4r1 35.14 -> 34.54
     {QType::GGML_Q6_K, Epilogue::Store, 1024, 6656, 8, 1},    // w4r1 11.04 -> 10.02
     {QType::GGML_Q6_K, Epilogue::Store, 4096, 6656, 8, 1},    // w4r1 31.03 -> 30.02
+    {QType::GGML_Q6_K, Epilogue::Store, 4096, 12288, 8, 1},   // w8r2 59.12 -> 53.82
     {QType::GGML_Q6_K, Epilogue::Store, 5120, 17408, 8, 1},   // w8r2 100.04 -> 91.94
     {QType::GGML_Q6_K, Epilogue::Store, 6656, 19968, 8, 1},   // w8r2 149.71 -> 135.20
     {QType::Q8_G32_FP16, Epilogue::Store, 2048, 512, 8, 1},   // w4r1 3.38 -> 3.36
@@ -348,6 +360,11 @@ inline constexpr R8DecodeEntry kR8DecodeGa102_82sm[] = {
     {QType::Q8_G32_FP16, Epilogue::Store, 48, 5120, 8, 1},    // w4r1 3.93 -> 3.75
     {QType::Q8_G32_FP16, Epilogue::Store, 1024, 5120, 8, 1},  // w4r1 9.42 -> 9.13
     {QType::Q8_G32_FP16, Epilogue::Store, 5120, 6144, 8, 1},  // w4r1 42.34 -> 40.82
+};
+
+// ga106:28sm: 1 entries (median us: rules -> entry).
+inline constexpr R8DecodeEntry kR8DecodeGa106_28sm[] = {
+    {QType::GGML_Q6_K, Epilogue::Store, 4096, 12288, 8, 1}, // w8r2 140.07 -> 128.07
 };
 
 // gb202:170sm: 116 entries (median us: rules -> entry).
@@ -470,6 +487,12 @@ inline constexpr R8DecodeEntry kR8DecodeGb202_170sm[] = {
     {QType::Q8_G32_FP16, Epilogue::Store, 5120, 6144, 8, 2},    // w4r1 23.03 -> 22.18
 };
 
+// gb203:70sm: 2 entries (median us: rules -> entry).
+inline constexpr R8DecodeEntry kR8DecodeGb203_70sm[] = {
+    {QType::GGML_Q4_K, Epilogue::Store, 4096, 12288, 8, 1}, // w8r2 36.71 -> 36.03
+    {QType::GGML_Q6_K, Epilogue::Store, 4096, 12288, 4, 1}, // w8r2 53.53 -> 53.07
+};
+
 // gb206:36sm: 28 entries (median us: rules -> entry).
 inline constexpr R8DecodeEntry kR8DecodeGb206_36sm[] = {
     {QType::GGML_IQ2_S, Epilogue::Store, 6144, 5120, 8, 1},   // w8r2 34.98 -> 34.58
@@ -518,14 +541,17 @@ inline constexpr R8DecodeEntry kR8DecodeTu102_68sm[] = {
     {QType::GGML_Q6_K, Epilogue::Store, 2560, 9216, 4, 1}, // w4r2 47.41 -> 45.42
 };
 
-inline constexpr std::array<R8DecodeTable, 9> kR8DecodeTables{{
+inline constexpr std::array<R8DecodeTable, 12> kR8DecodeTables{{
     {"ad102:128sm", measured::board_of_pci(0x2684), kR8DecodeAd102_128sm},
     {"ad103:80sm", measured::board_of_pci(0x2702), kR8DecodeAd103_80sm},
+    {"ad104:60sm", measured::board_of_pci(0x2782), kR8DecodeAd104_60sm},
     {"ad106:34sm", measured::board_of_pci(0x2805), kR8DecodeAd106_34sm},
     {"ga100:108sm", measured::board_of_pci(0x20B0), kR8DecodeGa100_108sm},
     {"ga102:72sm", measured::board_of_pci(0x2236), kR8DecodeGa102_72sm},
     {"ga102:82sm", measured::board_of_pci(0x2204), kR8DecodeGa102_82sm},
+    {"ga106:28sm", measured::board_of_pci(0x2504), kR8DecodeGa106_28sm},
     {"gb202:170sm", measured::board_of_pci(0x2B85), kR8DecodeGb202_170sm},
+    {"gb203:70sm", measured::board_of_pci(0x2C05), kR8DecodeGb203_70sm},
     {"gb206:36sm", measured::board_of_pci(0x2D04), kR8DecodeGb206_36sm},
     {"tu102:68sm", measured::board_of_pci(0x1E07), kR8DecodeTu102_68sm},
 }};

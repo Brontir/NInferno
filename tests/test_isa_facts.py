@@ -860,6 +860,7 @@ fact floor_ns_1 885.000 ns
 fact floor_ns_sms 1100.000 ns
 fact floor_ns_4sms 1300.000 ns
 fact floor_ns_1024 1450.000 ns
+fact floor_ns_4096 2800.000 ns
 selfcheck ok
 end
 """ + IDLE_NOTES
@@ -895,6 +896,18 @@ class FakeProc:
 
 
 class LaunchFacts(unittest.TestCase):
+    def test_older_probe_has_no_4096_floor(self):
+        # launch_probe 1 printed no floor_ns_4096 (#886): its runs stay rows, the fact unknown;
+        # a run of the checked-in version without it is incomplete.
+        line = "fact floor_ns_4096 2800.000 ns\n"
+        older = (LAUNCH_SAMPLE.replace(line, "")
+                 .replace("probe " + ip.checked_in_launch_probe(), "probe launch_probe 1"))
+        old_head, old_facts = ip.parse_launch_run(older)
+        self.assertNotIn("floor_ns_4096", old_facts)
+        with self.assertRaises(ValueError) as e:
+            ip.parse_launch_run(LAUNCH_SAMPLE.replace(line, ""))
+        self.assertIn("missing floor_ns_4096", str(e.exception))
+
     def test_parse_and_entry(self):
         head, facts = ip.parse_launch_run(LAUNCH_SAMPLE)
         self.assertEqual(set(facts), set(ip.LAUNCH_FACTS))

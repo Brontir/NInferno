@@ -8,6 +8,10 @@
 #include <string>
 #include <string_view>
 
+namespace ninferno::artifact {
+class Reader;
+} // namespace ninferno::artifact
+
 namespace ninferno::runtime {
 
 // The tokenizer, chat-template and generation-config files an artifact carries as text
@@ -20,6 +24,12 @@ struct HfTextFiles {
 };
 
 [[nodiscard]] HfTextFiles read_hf_text_files(const std::filesystem::path& artifact);
+[[nodiscard]] HfTextFiles read_hf_text_files(const artifact::Reader& reader);
+
+// The public ids attach_hf_text_frontend returns for the artifact `reader` reads (its tokenizer
+// resources, the only objects read; the embedding rows are not checked): what the plan without
+// the weights sizes the sampler over (#615). Throws where the frontend would refuse the tokenizer.
+[[nodiscard]] std::uint32_t hf_public_token_count(const artifact::Reader& reader);
 
 // Refuses the options only the Qwen 3.5 family implements, before the weights load, so a family
 // that would ignore one says so instead: --rope-yarn-factor (the checkpoint's own RoPE stays),

@@ -19,6 +19,11 @@ namespace ninferno::models {
 struct ArtifactBacking; // models/common/loading.h
 } // namespace ninferno::models
 
+namespace ninferno::artifact {
+class Reader;
+struct Directory;
+} // namespace ninferno::artifact
+
 namespace ninferno::models::nemotron_h {
 
 using Projection = ops::SingleProjectionWeight;
@@ -78,6 +83,13 @@ class Model {
 public:
     static std::unique_ptr<Model> load(const std::filesystem::path& path, DeviceContext& device,
                                        ActivationProfile profile);
+    // The model an artifact's directory describes, without its payload or a device (the plan
+    // without the weights, #615): the parameters load binds and prepares, each a view of its
+    // object at an address that is never read (loading::Demands::describe), so what the start's
+    // workspace planner reads (target_workspace_plan) is the start's. Throws where load would
+    // refuse the bindings, or where one reads the payload (a Use's activation divisor).
+    static std::unique_ptr<Model> describe(const artifact::Directory& directory,
+                                           ActivationProfile profile);
     ~Model();
 
     [[nodiscard]] const Config& config() const noexcept { return config_; }
@@ -88,6 +100,9 @@ public:
 
 private:
     Model() = default;
+    // load and describe: `device` null binds without the payload.
+    static std::unique_ptr<Model> build(const artifact::Reader& reader, DeviceContext* device,
+                                        ActivationProfile profile);
     std::unique_ptr<ArtifactBacking> backing_;
     Config config_;
     Weights weights_;
