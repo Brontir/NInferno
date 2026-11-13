@@ -292,11 +292,13 @@ const std::vector<Spec>& specs() {
              "axis_name",
          }},
         // The row's identity; the rates are whitepaper facts except the emulated BF16 aggregate
-        // (recorded); the tensor core's kind (full-rate FP32-accumulate HMMA) is a chip fact.
+        // (recorded); the tensor core's kind (full-rate FP32-accumulate HMMA) is a chip fact; a
+        // lent row (Hopper, GB100) lends another generation's rates and carries no evidence.
         {fit::kGeneration,
          Mode::RowFields,
          {"major", "minor_lo", "minor_hi", "name", "s8", "fp32acc_full_rate",
-          "fp32_fma"}}, // the FP32 FMA issue rate: the Programming Guide's throughput table
+          "fp32_fma", // the FP32 FMA issue rate: the Programming Guide's throughput table
+          "lent"}},   // no board of the generation in the lab: a flag, no number
         {fit::kCostConstants,
          Mode::Definitions,
          {"kDp4aOpsPerSmClock",    // a chip fact

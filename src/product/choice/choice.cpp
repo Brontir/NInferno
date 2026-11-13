@@ -1670,7 +1670,7 @@ Resolution resolution_of(const CardFacts& board, SpeedBasis estimates) noexcept 
                     decided_floor};
         }
     }
-    return assumed; // ga100, hopper, gb100, thor: no row of either kind
+    return assumed; // ga100, thor: no row of either kind (hopper, gb100: lent rows, above)
 }
 
 double single_request_seconds(const ModelFacts& model, const CardFacts& card,
