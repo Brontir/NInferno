@@ -15,6 +15,11 @@
 //   tokenizer ids than embedding rows, and with a Use that reads the payload (an activation
 //   divisor) keep the formula and say why.
 // The capacity queries answer for a substituted board. No GPU, no files.
+// Known escape #830 (kDecodePlanEscape, below): the attention decode plan reads the host GPU. With
+// every CUDA device hidden (as ctest runs it) the start's planner throws cudaErrorNoDevice and
+// the query is refused, the formula standing: that is what is checked then, and the declines;
+// with a device visible the bytes are compared (the GPU test
+// ninferno_decoder_plan_workspace_real_test compares them against a real start).
 //
 // With NINFERNO_PLAN_WORKSPACE_ARTIFACTS (paths joined by ':'), each artifact file of these
 // families is read as --plan reads it (product::plan_facts_of_artifact: its directory and its
@@ -22,6 +27,7 @@
 
 #include "artifact/formats.h"
 #include "artifact/schema.h"
+#include "core/cuda_error.h"
 #include "core/device_class.h"
 #include "core/weight_view.h"
 #include "models/dense/model.h"
@@ -38,6 +44,8 @@
 #include "runtime/engine/plan_dry_run.h"
 #include "runtime/engine/plan_workspace.h"
 
+#include <cuda_runtime.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -50,6 +58,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -476,6 +485,21 @@ std::string with_commas(std::uint64_t n) {
     return s;
 }
 
+// No CUDA device is visible (ctest runs this with CUDA_VISIBLE_DEVICES=-1).
+bool device_hidden = false;
+
+// Known escape (kept by name and checked as it is, so the list only shrinks): #830, the attention
+// decode plan (gemma4_attention_decode_plan, which DensePass and NemotronH's Pass size their
+// attention with) reads the host GPU's occupancy; under a substituted board with a GPU the arenas
+// follow the host GPU's, with none it throws, the query is refused and the formula stands
+// (tests/test_plan_device_class.cpp checks the same for Gemma 4).
+constexpr std::string_view kDecodePlanEscape = "#830 (gemma4_attention_decode_plan)";
+
+bool is_escape(const std::string& basis) {
+    return basis.rfind("formula: an Op's capacity query refused the facts", 0) == 0 &&
+           basis.find("cudaErrorNoDevice") != std::string::npos;
+}
+
 // The rung's dry run against the start planner's capacity; prints the formula's beside it.
 void compare(const std::string& name, const rt::PlanModelFacts& facts,
              const art::Directory& directory, const EngineOptions& options,
@@ -484,8 +508,6 @@ void compare(const std::string& name, const rt::PlanModelFacts& facts,
     const auto family = facts.model_type == "nemotron_h" ? models::StateFamily::NemotronH
                                                          : models::StateFamily::DenseDecoder;
     const auto plan   = plan_of(options, family, facts.native_context, device.sms);
-    const auto start =
-        start_plan(directory, options, static_cast<std::int32_t>(facts.tokenizer_tokens), plan);
     rt::PlanRung rung;
     rung.max_context   = options.max_context;
     rung.prefill_chunk = options.prefill_chunk;
@@ -493,6 +515,27 @@ void compare(const std::string& name, const rt::PlanModelFacts& facts,
     rt::PlanModelFacts bare = facts;
     bare.artifact_directory.reset();
     const auto formula = rt::plan_rung_bytes(bare, rung, options, options.max_concurrency, false);
+    if (device_hidden) {
+        // The known escape #830: the start's planner reads the hidden device (the attention
+        // decode plan), so the query is refused and the formula stands; the start's own planner
+        // throws the same.
+        bool escaped = false;
+        try {
+            (void)start_plan(directory, options, static_cast<std::int32_t>(facts.tokenizer_tokens),
+                             plan);
+        } catch (const CudaError& error) { escaped = error.code() == cudaErrorNoDevice; }
+        std::cout << name << ": the device hidden, --plan workspace " << dry.workspace << " ("
+                  << dry.workspace_basis << ")\n";
+        check(escaped && is_escape(dry.workspace_basis),
+              name + ": the known escape " + std::string(kDecodePlanEscape) +
+                  " reads the hidden device (if it no longer does, the escape is gone: compare "
+                  "the bytes here), not '" +
+                  dry.workspace_basis + "'");
+        check(dry.workspace == formula.workspace, name + ": the formula stands");
+        return;
+    }
+    const auto start =
+        start_plan(directory, options, static_cast<std::int32_t>(facts.tokenizer_tokens), plan);
     std::cout << name << ": start " << bytes(start) << "\n  --plan workspace " << dry.workspace
               << " (" << dry.workspace_basis << "), the formula's " << formula.workspace << "\n";
     std::cout << "  | " << name << " | " << with_commas(formula.workspace) << " | "
@@ -540,8 +583,9 @@ void declines(const std::string& name, const rt::PlanModelFacts& facts,
         check(basis.rfind("formula: ", 0) == 0 && basis.find(why) != std::string::npos,
                        name + ": " + what + " keeps the formula (" + basis + ")");
     };
-    check(basis_of(facts, options, device).rfind("start", 0) == 0,
-          name + ": the query answers at the decline cases' options");
+    const std::string answered = basis_of(facts, options, device);
+    check(device_hidden ? is_escape(answered) : answered.rfind("start", 0) == 0,
+          name + ": the query answers at the decline cases' options (" + answered + ")");
     rt::PlanModelFacts unread = facts;
     unread.tokenizer_tokens   = 0;
     refuses(basis_of(unread, options, device), "tokenizer", "without the tokenizer's ids, it");
@@ -675,6 +719,12 @@ int main() {
     try {
         // The plan's workspace query (and the tokenizer's), as ninferno-serve registers them.
         rt::register_plan_workspace_queries();
+        int devices   = 0;
+        device_hidden = cudaGetDeviceCount(&devices) != cudaSuccess || devices == 0;
+        if (device_hidden) {
+            std::cout << "every CUDA device hidden: the known escape " << kDecodePlanEscape
+                      << " is checked in place of the bytes\n";
+        }
         const DeviceClass rtx5090   = board(0x2B85, 12, 0, 170, 96);
         const DeviceClass rtx4070ti = board(0x2782, 8, 9, 60, 48);
         const DeviceClass rtx4060ti = board(0x2805, 8, 9, 34, 32);

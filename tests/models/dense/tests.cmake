@@ -15,7 +15,9 @@ ninferno_add_test(ninferno_decoder_plan_workspace_test LABELS host
 target_include_directories(ninferno_decoder_plan_workspace_test PRIVATE
   ${PROJECT_SOURCE_DIR}/src)
 # With every CUDA device hidden, as the W4 plan tests run: a device read the substitute does not
-# answer throws.
+# answer throws. The start's planner still reads the host GPU through the attention decode plan
+# (the known escape #830): hidden, the test checks that escape and the declines; the bytes are
+# compared with a device visible and by ninferno_decoder_plan_workspace_real_test.
 set_tests_properties(ninferno_decoder_plan_workspace_test PROPERTIES
   ENVIRONMENT CUDA_VISIBLE_DEVICES=-1)
 
