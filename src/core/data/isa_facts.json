@@ -494,6 +494,75 @@
           "value": 1446.737,
           "unit": "mhz"
         }
+      },
+      "launch": {
+        "provenance": "Measured",
+        "source": "launch_probe_70.txt",
+        "card": "Quadro GV100",
+        "cc": 70,
+        "sms": 80,
+        "tool": {
+          "probe": "launch_probe 1",
+          "nvcc": "12.8.93",
+          "driver": "13000",
+          "runtime": "12080",
+          "arch": "sm_70",
+          "source_sha256": "20e77dc56ffc4c42fe092218bcb09a55fdb69ee81592a65a661150f5301ddf5b"
+        },
+        "notes": [
+          "device 0 is the GPU at PCI 0000:01:00.0",
+          "timer: CUDA events (a 1.024 us tick on the consumer boards and the GV100); a fact is the median over 15 repeats of the slope between series of 1 and 1024 graph nodes, or 1 and 256 stream launches, each series queued behind a 20 ms hold of FFMAs on every SM, a 200 ms hold before the first kind",
+          "node_ns: cudaGraphLaunch of the 1024-node graph kept the host 98.2 us on an idle stream, 87.7 us behind a 20 ms hold",
+          "node_ns: medians over 15 timings 3.072 us (N = 1; 3.072000..4.128000), 243.712 us (N = 256), 970.752 us (N = 1024; 960.511982..1126.368046); median slope 943.7 ns over N = 256, 945.9 over 1024 (935.913961..1097.040123); the host queued the series in at most 3.3, 36.2, 98.0 us",
+          "node_pdl_ns: the 1024-node graph has 1023 edges, 1023 programmatic",
+          "node_pdl_ns: cudaGraphLaunch of the 1024-node graph kept the host 418.9 us on an idle stream, 20016.6 us behind a 20 ms hold",
+          "node_pdl_ns: medians over 15 timings 3.072 us (N = 1; 3.072000..3.072000), 354.304 us (N = 256), 1413.120 us (N = 1024; 1411.072016..1428.480029); median slope 1377.4 ns over N = 256, 1378.3 over 1024 (1376.344101..1393.360732); the host queued the series in at most 1.9, 102.0, 20010.8 us",
+          "node_pdl_ns not measured: the host had not queued a series when its hold ended (at most 20010.850000 us for the longest, the hold 20000 us)",
+          "stream_ns: medians over 15 timings 3.072 us (N = 1; 3.072000..3.072000), 90.112 us (N = 64), 356.352 us (N = 256; 355.327994..370.687991); median slope 1381.6 ns over N = 64, 1385.4 over 256 (1381.396053..1441.631338); the host queued the series in at most 0.8, 45.4, 185.1 us",
+          "stream_ns: the host queued 256 launches in 185.1 us (the machine's CPU, not a fact of the card)",
+          "floor_ns_1: cudaGraphLaunch of the 1024-node graph kept the host 86.7 us on an idle stream, 76.8 us behind a 20 ms hold",
+          "floor_ns_1: medians over 15 timings 3.072 us (N = 1; 3.072000..4.096000), 238.592 us (N = 256), 953.344 us (N = 1024; 944.127977..955.392003); median slope 923.6 ns over N = 256, 928.9 over 1024 (918.897338..930.909094); the host queued the series in at most 1.9, 22.9, 86.6 us",
+          "floor_ns_1: 1 CTAs of 128 threads",
+          "floor_ns_sms: cudaGraphLaunch of the 1024-node graph kept the host 85.3 us on an idle stream, 75.3 us behind a 20 ms hold",
+          "floor_ns_sms: medians over 15 timings 4.096 us (N = 1; 3.072000..4.096000), 270.336 us (N = 256), 1077.280 us (N = 1024; 1064.960003..1079.295993); median slope 1048.1 ns over N = 256, 1049.1 over 1024 (1037.012711..1051.026386); the host queued the series in at most 2.8, 49.9, 175.6 us",
+          "floor_ns_sms: 80 CTAs of 128 threads",
+          "floor_ns_4sms: cudaGraphLaunch of the 1024-node graph kept the host 86.0 us on an idle stream, 76.2 us behind a 20 ms hold",
+          "floor_ns_4sms: medians over 15 timings 4.096 us (N = 1; 3.072000..4.096000), 361.472 us (N = 256), 1439.744 us (N = 1024; 1438.719988..1440.768003); median slope 1401.5 ns over N = 256, 1403.4 over 1024 (1402.369490..1405.372437); the host queued the series in at most 1.9, 25.7, 97.5 us",
+          "floor_ns_4sms: 320 CTAs of 128 threads",
+          "floor_ns_1024: cudaGraphLaunch of the 1024-node graph kept the host 86.1 us on an idle stream, 75.6 us behind a 20 ms hold",
+          "floor_ns_1024: medians over 15 timings 5.120 us (N = 1; 4.096000..5.120000), 629.760 us (N = 256), 2513.920 us (N = 1024; 2511.872053..2514.944077); median slope 2449.6 ns over N = 256, 2452.4 over 1024 (2450.393014..2453.395969); the host queued the series in at most 2.9, 23.0, 87.1 us",
+          "floor_ns_1024: 1024 CTAs of 128 threads",
+          "compute processes on the probe's GPU before the run: 0",
+          "compute processes on the probe's GPU after the run: 0",
+          "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
+          "nvidia-smi over the run (35 samples): memory clock 850..850 MHz, SM clock 135..1447 MHz, P-state P2"
+        ],
+        "facts": {
+          "node_ns": {
+            "value": 945.924,
+            "unit": "ns"
+          },
+          "stream_ns": {
+            "value": 1385.412,
+            "unit": "ns"
+          },
+          "floor_ns_1": {
+            "value": 928.907,
+            "unit": "ns"
+          },
+          "floor_ns_sms": {
+            "value": 1049.056,
+            "unit": "ns"
+          },
+          "floor_ns_4sms": {
+            "value": 1403.37,
+            "unit": "ns"
+          },
+          "floor_ns_1024": {
+            "value": 2452.395,
+            "unit": "ns"
+          }
+        }
       }
     },
     "75": {
