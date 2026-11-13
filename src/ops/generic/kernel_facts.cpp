@@ -62,6 +62,8 @@ constexpr SectionFamily kSections[] = {
      "family codec block_m block_n warps_m warps_n epilogue flavor stages producers registers "
      "stack local shared",
      1, 8},
+    {"gemma4", "family kernel D G slice rows Bc partial fp8 chain registers stack local shared", 1,
+     8},
 };
 static_assert(std::size(kSections) == std::size(kSectionFamilies));
 
@@ -360,6 +362,16 @@ std::optional<KernelFacts> w4a8_facts(std::string_view arch, const W4a8KernelKey
         k += std::to_string(v);
     }
     return section_facts(arch, "w4a8", k);
+}
+
+std::optional<KernelFacts> gemma4_facts(std::string_view arch, const Gemma4KernelKey& key) {
+    std::string k = key.kernel;
+    for (const int v : {key.D, key.G, key.slice, key.rows, key.Bc, key.partial ? 1 : 0,
+                        key.fp8 ? 1 : 0, key.chain ? 1 : 0}) {
+        k += ' ';
+        k += std::to_string(v);
+    }
+    return section_facts(arch, "gemma4", k);
 }
 
 std::optional<KernelFacts> rmma_facts(std::string_view arch, const RmmaKernelKey& key) {

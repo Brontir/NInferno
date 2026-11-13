@@ -296,13 +296,47 @@ def w4a8_key(demangled):
     return None
 
 
+GEMMA4_NAMESPACE = "ninferno::ops::"
+GEMMA4_GEOMETRY = re.compile(r"(?:ninferno::ops::)?Gemma4Geometry<(\d+),(-?\d+),(\d+)>")
+
+
+def gemma4_key(demangled):
+    """The key of a Gemma 4 attention kernel (src/ops/softmax_attention/gemma4, #830): the
+    kernel ("attention", "volta", "volta_tiled"), the head width D, the geometry's group G (0: a
+    runtime group) and slice width, the rows (the tile's warp rows WR; the Volta decode instance's
+    MaxRows), the key tile Bc, and the attention kernel's Partial, Fp8 and Chain flags (0 for the
+    Volta kernels). None for other symbols (the combine and copy kernels)."""
+    args = template_args(demangled, "void " + GEMMA4_NAMESPACE + "gemma4_attention_kernel<")
+    if args is not None:
+        m = GEMMA4_GEOMETRY.fullmatch(args[0]) if len(args) == 6 else None
+        if not m or not all(re.fullmatch(r"\d+|true|false", a) for a in args[1:]):
+            fail(f"unexpected gemma4_attention_kernel arguments in {demangled}")
+        wr, bc = int(args[1]), int(args[2])
+        return ("attention", *(int(v) for v in m.groups()), wr, bc,
+                *(as_bool(a) for a in args[3:]))
+    for name, kind in (("gemma4_volta_decode_tiled_kernel", "volta_tiled"),
+                       ("gemma4_volta_decode_kernel", "volta")):
+        head = "void " + GEMMA4_NAMESPACE + "detail::(anonymousnamespace)::" + name + "<"
+        args = template_args(demangled.replace("(anonymous namespace)", "(anonymousnamespace)"),
+                             head)
+        if args is None:
+            continue
+        if len(args) != 2 or not all(re.fullmatch(r"\d+", a) for a in args):
+            fail(f"unexpected {name} arguments in {demangled}")
+        return (kind, int(args[0]), 0, 0, int(args[1]), 0, 0, 0, 0)
+    return None
+
+
 class Family:
     """One kernel family of the snapshot: how its symbols are told apart and keyed, the columns
     of its key (the first spelled as text where `text_key`, the others integers), the m16n8 tiles
     k_iter divides a warp's MMA work by, and whether its rows carry the pipe counts."""
 
-    def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key):
+    def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True):
         self.name = name
+        # Whether the SASS pass counts its loop: a family whose price reads its resources alone
+        # (the CTAs an SM holds) is a resources-only section, schema 1's columns.
+        self.loop = loop
         self.key_columns = key_columns
         self.key_of = key_of
         self.needle = needle
@@ -335,6 +369,9 @@ FAMILIES = {
     "w4a8": Family("w4a8", ("codec", "block_m", "block_n", "warps_m", "warps_n", "epilogue",
                             "flavor", "stages", "producers"), lambda d: w4a8_key(d), "w4a8_",
                    lambda key: 1, True, True),
+    "gemma4": Family("gemma4", ("kernel", "D", "G", "slice", "rows", "Bc", "partial", "fp8",
+                                "chain"), lambda d: gemma4_key(d), "gemma4_", lambda key: 1,
+                     False, True, loop=False),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -656,6 +693,14 @@ SECTION_NOTES = {
         "# schedule, epilogue, stages, producers> (flavor 0; its MMA warps' loop is counted, the",
         "# producers' decode loop is not). One iteration is one 128-value K tile.",
     ),
+    "gemma4": (
+        "# The Gemma 4 attention kernels (src/ops/softmax_attention/gemma4, #830):",
+        "# gemma4_attention_kernel<Gemma4Geometry<D, G, slice>, WR, Bc, Partial, Fp8, Chain> (kernel",
+        "# `attention`, rows = WR) and the Volta decode kernels gemma4_volta_decode_kernel<D, MaxRows>",
+        "# and gemma4_volta_decode_tiled_kernel<D, MaxRows> (`volta`, `volta_tiled`, rows = MaxRows,",
+        "# the other columns 0). Resources alone: the decode plan reads the CTAs an SM holds",
+        "# (core/kernel_occupancy.h), never the host's kernels.",
+    ),
 }
 
 
@@ -670,12 +715,15 @@ def render_section(family, rows, nvcc):
     if loops and not all(c.scheduled for c in loops):
         fail(f"a {family} row has no control codes: only the loop and its schedule are written")
     columns = f.schema_columns()[4 if loops else 1][0]
-    lines = [
-        f"family {family}",
-        *SECTION_NOTES[family],
+    loop_notes = (
         "# The columns: the key, the resources, the loop's counts and schedule as above, then the",
         "# pipe counts of the same iteration: I2F, I2FP, FFMA, FMUL, FADD, IMAD, BAR (sass_counts.py).",
         "# k_iter is the warp's MMA work per iteration over one m16n8 tile (m x n x k / 128).",
+    ) if f.loop else ("# The columns: the key, then the resources as above.",)
+    lines = [
+        f"family {family}",
+        *SECTION_NOTES[family],
+        *loop_notes,
         f"family_nvcc {nvcc}",
         f"family_kernels {len(rows)}",
         f"family_columns {' '.join(columns)}",
@@ -809,8 +857,9 @@ def family_list(text):
 
 def cmd_extract(args):
     families = family_list(args.families)
+    sass = () if args.no_sass else tuple(f for f in families if FAMILIES[f].loop)
     extracted = extract_families(args.binary, args.cuda_bin, args.arch, args.dump, args.sass_dump,
-                                 families, () if args.no_sass else families, args.sass_batch)
+                                 families, sass, args.sass_batch)
     if FAMILY in families and not extracted[FAMILY]:
         fail("no rmma_kernel in the binary")
     for f in families:
