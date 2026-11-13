@@ -25,6 +25,7 @@
 #include "ops/common/memory.cuh"
 #include "ops/common/mma.cuh"
 #include "ops/generic/codec_traits.h"
+#include "ops/generic/compiled_codecs.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_gemm.cuh"
 #include "ops/generic/generic_schedules.h"
@@ -1932,16 +1933,13 @@ __global__ __launch_bounds__(S::kThreads + 32 * Producers) void w4a8_ws_kernel(G
 
 inline constexpr int kW4a8MaxDynamicSmem = 99 * 1024;
 
-// The codecs w4a8_ws_kernel is compiled for: IQ3_XXS, IQ2_S, Q4_K, Q6_K, Q4_0, IQ4_XS, IQ2_XS
-// and IQ2_XXS (keep in step
-// with w4a8_ws_supports, generic_select.cpp).
+// The codecs w4a8_ws_kernel is compiled for: NINFERNO_W4A8_WS_CODECS (compiled_codecs.h), the list
+// w4a8_ws_supports reads (generic_codec_traits.cu holds every W4A8 entry to it).
 template <class C>
 constexpr bool w4a8_ws_compiled() {
-    return std::is_same_v<C, W4a8Iq3Xxs> || std::is_same_v<C, W4a8Iq2S> ||
-           std::is_same_v<C, W4a8Q45K<4>> || std::is_same_v<C, W4a8Q6K> ||
-           std::is_same_v<C, W4a8Ggml32<Ggml32::Q4_0>> || std::is_same_v<C, W4a8Iq4Xs> ||
-           std::is_same_v<C, W4a8Iq2Xs> || std::is_same_v<C, W4a8Iq2Xxs> ||
-           std::is_same_v<C, W4a8Iq3S>;
+#define NINFERNO_W4A8_WS_IS(CODEC, TYPE) || std::is_same_v<C, TYPE>
+    return false NINFERNO_W4A8_WS_CODECS(NINFERNO_W4A8_WS_IS);
+#undef NINFERNO_W4A8_WS_IS
 }
 
 template <class C, class S, Epilogue E, int Flavor = w4a8_classic_flavor<S>()>
@@ -2031,6 +2029,12 @@ void w4a8_launch_codec(int schedule, Epilogue epilogue, const GemmArgs& args, W4
     }
     throw std::invalid_argument("generic W4A8: unknown epilogue");
 }
+
+// One case of a launch file's W4A8 switch, from its compiled_codecs.h list (X(CODEC, TYPE)).
+#define NINFERNO_W4A8_LAUNCH_CASE(CODEC, TYPE)                                                     \
+    case WeightCodec::CODEC:                                                                       \
+        w4a8_launch_codec<TYPE>(schedule, epilogue, args, act, stream);                            \
+        return true;
 
 // One translation unit per codec group (compile time); each returns false for a codec it lacks.
 bool launch_w4a8_ggml32(int schedule, WeightCodec codec, Epilogue epilogue, const GemmArgs& args,

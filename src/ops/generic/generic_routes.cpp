@@ -11,6 +11,7 @@
 #include "ops/common/arch_limits.h"
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/codec_traits.h"
+#include "ops/generic/compiled_codecs.h"
 #include "ops/generic/format_traits.h"
 #include "ops/generic/generic_i8_schedules.h"
 #include "ops/generic/generic_schedule_tables.h"
@@ -111,7 +112,7 @@ R8ScheduleInfo r8_schedule_info(int index) {
     return kR8Schedules.at(static_cast<std::size_t>(index));
 }
 
-bool r8_supports(QType qtype) { return admits(format_traits(qtype).r8, kNativeNvfp4); }
+bool r8_supports(QType qtype) { return compiled(Variant::R8, qtype); }
 
 std::int32_t r8_k_values(QType qtype) { return format_traits(qtype).r8_k_values; }
 
@@ -121,9 +122,7 @@ std::int32_t r8_verify_widest(QType qtype) {
     return qtype == QType::Q8_G32_FP16 ? kR8VerifyTokens : 4;
 }
 
-bool r8_verify_compiled(QType qtype) {
-    return r8_supports(qtype) && format_traits(qtype).r8_prequant;
-}
+bool r8_verify_compiled(QType qtype) { return compiled(Variant::R8Prequant, qtype); }
 
 // K for the W4A8 tiles: whole 128-value tiles, or for a format of 32-value blocks any whole number
 // of blocks, the last tile's blocks past K zero (weights not loaded, activation quantized as
@@ -136,7 +135,7 @@ bool w4a8_k_admits(QType qtype, std::int32_t k) {
     return tail != 0 && k % tail == 0;
 }
 
-bool w4a8_supports(QType qtype) { return admits(format_traits(qtype).w4a8, kNativeNvfp4); }
+bool w4a8_supports(QType qtype) { return compiled(Variant::W4a8, qtype); }
 
 int nvfp4_tiled_schedule_count() { return static_cast<int>(kNvfp4TiledSchedules.size()); }
 
@@ -294,28 +293,9 @@ I8ScheduleInfo i8_schedule_info(int index) {
     return kI8Schedules[index];
 }
 
-bool tiled_supports(WeightCodec codec) {
-    switch (codec) {
-    case WeightCodec::U4Zp:
-    case WeightCodec::U4ZpG32:
-    case WeightCodec::U4ZpG64:
-    case WeightCodec::GgmlQ4K:
-    case WeightCodec::GgmlQ5K:
-    case WeightCodec::Q4:
-    case WeightCodec::Q5:
-    case WeightCodec::Q6:
-    case WeightCodec::Q3G128:
-    case WeightCodec::Q3G64:
-        return true;
-    default:
-        return false;
-    }
-}
+bool tiled_supports(WeightCodec codec) { return compiled(Variant::Tiled, codec); }
 
-bool volta_hmma_codec(WeightCodec codec) {
-    return codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
-           codec == WeightCodec::GgmlQ6K || codec == WeightCodec::Q8;
-}
+bool volta_hmma_codec(WeightCodec codec) { return compiled(Variant::VoltaHmma, codec); }
 
 int volta_hmma_k_multiple(WeightCodec codec) { return codec == WeightCodec::Q8 ? 64 : 256; }
 
@@ -339,9 +319,9 @@ bool volta_gemv_takes(WeightCodec codec, const GemmArgs& args) {
     }
     // The kernel reads each token's x in 16-byte words.
     if ((args.ldx % 8) != 0 || (reinterpret_cast<std::uintptr_t>(args.x) % 16) != 0) return false;
-    if (codec == WeightCodec::Bf16) return (args.k % 8) == 0;
-    return (args.k % 256) == 0 && (codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
-                                   codec == WeightCodec::GgmlQ6K || codec == WeightCodec::Q8);
+    if (!compiled(Variant::VoltaGemv, codec)) return false;
+    // BF16 rows in 16-byte words; the quantized formats in whole 256-value superblocks.
+    return codec == WeightCodec::Bf16 ? (args.k % 8) == 0 : (args.k % 256) == 0;
 }
 
 bool volta_hmma_takes(WeightCodec codec, const GemmArgs& args) {

@@ -1,9 +1,11 @@
 // Generic tiled A16 schedules (generic_tiled.cuh): u4_g{32,64,128}_zp_fp16, ggml_q4_k, ggml_q5_k,
-// q4/q5/q6_g64 and q3_g128/q3_g64; q8_g32 on Volta.
+// q4/q5/q6_g64 and q3_g128/q3_g64; q8_g32 on Volta (NINFERNO_TILED_CODECS and
+// NINFERNO_TILED_VOLTA_CODECS, compiled_codecs.h).
 #include "ops/generic/generic_tiled.cuh"
 
 #include "core/per_device.h"
 #include "core/device.h"
+#include "ops/generic/compiled_codecs.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/common/arch_limits.h"
 #include "ops/generic/generic_schedules.h"
@@ -57,17 +59,12 @@ constexpr bool tiled_table_holds(int codec_index) {
     return holds;
 }
 
-static_assert(tiled_table_holds<U4ZpTile>(tiled_codec_index(WeightCodec::U4Zp)));
-static_assert(tiled_table_holds<U4ZpG32Tile>(tiled_codec_index(WeightCodec::U4ZpG32)));
-static_assert(tiled_table_holds<U4ZpG64Tile>(tiled_codec_index(WeightCodec::U4ZpG64)));
-static_assert(tiled_table_holds<GgmlQ45KTile<4>>(tiled_codec_index(WeightCodec::GgmlQ4K)));
-static_assert(tiled_table_holds<GgmlQ45KTile<5>>(tiled_codec_index(WeightCodec::GgmlQ5K)));
-static_assert(tiled_table_holds<GroupwiseG64Tile<4>>(tiled_codec_index(WeightCodec::Q4)));
-static_assert(tiled_table_holds<GroupwiseG64Tile<5>>(tiled_codec_index(WeightCodec::Q5)));
-static_assert(tiled_table_holds<GroupwiseG64Tile<6>>(tiled_codec_index(WeightCodec::Q6)));
-static_assert(tiled_table_holds<GroupwiseQ3Tile<128>>(tiled_codec_index(WeightCodec::Q3G128)));
-static_assert(tiled_table_holds<GroupwiseQ3Tile<64>>(tiled_codec_index(WeightCodec::Q3G64)));
-static_assert(tiled_table_holds<Q8Tile>(tiled_codec_index(WeightCodec::Q8)));
+// Every codec of the tiled lists (compiled_codecs.h).
+#define NINFERNO_TILED_TABLE_HOLDS(CODEC, TYPE)                                                    \
+    static_assert(tiled_table_holds<TYPE>(tiled_codec_index(WeightCodec::CODEC)));
+NINFERNO_TILED_CODECS(NINFERNO_TILED_TABLE_HOLDS)
+NINFERNO_TILED_VOLTA_CODECS(NINFERNO_TILED_TABLE_HOLDS)
+#undef NINFERNO_TILED_TABLE_HOLDS
 
 template <class C, Epilogue E>
 void launch_epilogue(int schedule, const GemmArgs& args, cudaStream_t stream) {
@@ -105,39 +102,13 @@ void launch_codec(int schedule, Epilogue epilogue, const GemmArgs& args, cudaStr
 void launch_tiled(int schedule, WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                   cudaStream_t stream) {
     switch (codec) {
-    case WeightCodec::U4Zp:
-        launch_codec<U4ZpTile>(schedule, epilogue, args, stream);
+#define NINFERNO_TILED_LAUNCH_CASE(CODEC, TYPE)                                                    \
+    case WeightCodec::CODEC:                                                                       \
+        launch_codec<TYPE>(schedule, epilogue, args, stream);                                      \
         return;
-    case WeightCodec::U4ZpG32:
-        launch_codec<U4ZpG32Tile>(schedule, epilogue, args, stream);
-        return;
-    case WeightCodec::U4ZpG64:
-        launch_codec<U4ZpG64Tile>(schedule, epilogue, args, stream);
-        return;
-    case WeightCodec::GgmlQ4K:
-        launch_codec<GgmlQ45KTile<4>>(schedule, epilogue, args, stream);
-        return;
-    case WeightCodec::GgmlQ5K:
-        launch_codec<GgmlQ45KTile<5>>(schedule, epilogue, args, stream);
-        return;
-    case WeightCodec::Q4:
-        launch_codec<GroupwiseG64Tile<4>>(schedule, epilogue, args, stream);
-        return;
-    case WeightCodec::Q5:
-        launch_codec<GroupwiseG64Tile<5>>(schedule, epilogue, args, stream);
-        return;
-    case WeightCodec::Q6:
-        launch_codec<GroupwiseG64Tile<6>>(schedule, epilogue, args, stream);
-        return;
-    case WeightCodec::Q3G128:
-        launch_codec<GroupwiseQ3Tile<128>>(schedule, epilogue, args, stream);
-        return;
-    case WeightCodec::Q3G64:
-        launch_codec<GroupwiseQ3Tile<64>>(schedule, epilogue, args, stream);
-        return;
-    case WeightCodec::Q8: // Volta only (volta_tiled_route)
-        launch_codec<Q8Tile>(schedule, epilogue, args, stream);
-        return;
+        NINFERNO_TILED_CODECS(NINFERNO_TILED_LAUNCH_CASE)
+        NINFERNO_TILED_VOLTA_CODECS(NINFERNO_TILED_LAUNCH_CASE) // Volta only (volta_tiled_route)
+#undef NINFERNO_TILED_LAUNCH_CASE
     default:
         throw std::invalid_argument("generic tiled: weight format has no tiled codec");
     }

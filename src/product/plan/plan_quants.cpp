@@ -1555,12 +1555,20 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
     // route its banks prefill on is still its own file's, the row's own (#775: row_facts takes
     // it from the row's table only). The route is read off the first part's banks alone and a
     // later part may hold banks of another format, so it is an assumed one: an estimate on it is
-    // Transferred (QuantOption::expert_banks_assumed), not the file's own.
+    // Transferred (QuantOption::expert_banks_assumed), not the file's own. Its weight formats
+    // likewise (#811): those of the tensors the part lists, a sample of its file's. A later part
+    // may add a format (a mixed recipe's other layers), never another file's: closer than the
+    // label, which may name none of them (a gpt-oss file's MXFP4 banks under an F16 or Q4_K
+    // label). The parsed part read them before too (with_weights kept the shape's at equal bytes).
+    const auto& shape = facts.shape;
     if (facts.model.weight_basis == runtime::WeightBasis::FileSize &&
-        facts.model.gguf_data_offset != 0 && route) {
+        facts.model.gguf_data_offset != 0 && (route || !shape.weight_formats.empty())) {
         return GgufTensorTable{.expert_prefill         = facts.model.expert_prefill,
                                .expert_prefill_int8    = facts.model.expert_prefill_int8,
-                               .expert_prefill_assumed = true};
+                               .expert_prefill_assumed = route,
+                               .weight_formats         = shape.weight_formats,
+                               .layer_formats          = shape.layer_formats,
+                               .rest_layer_formats     = shape.rest_layer_formats};
     }
     if (facts.model.weight_basis != runtime::WeightBasis::GgufTensors ||
         facts.model.weight_bytes == 0) {
@@ -1579,11 +1587,20 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
     table.expert_prefill         = facts.model.expert_prefill;
     table.expert_prefill_int8    = facts.model.expert_prefill_int8;
     table.expert_prefill_assumed = facts.model.expert_prefill_assumed;
+    table.weight_formats         = shape.weight_formats;
+    table.layer_formats          = shape.layer_formats;
+    table.rest_layer_formats     = shape.rest_layer_formats;
     return table;
 }
 
 PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
     PlanSourceFacts out = with_weights(shape, row.weight_bytes, row.basis);
+    // The source artifact's directory (the start's forms) only for the row that is that file:
+    // equal bytes do not make another packing's or quantization's bindings this file's (codex on
+    // #832). Identity is the files' digests; unknown on either side, the row has no directory.
+    if (row.listing.weights.empty() || row.listing.weights != shape.shape.weights) {
+        out.model.artifact_directory.reset();
+    }
     // Its own files (the shape's are another row's): their measurement, if any, is its own.
     out.shape.weights = row.listing.weights;
     // Its linears' formats from its own table; the shape's are another file's (the label stands).
@@ -1607,10 +1624,28 @@ PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
     // even at equal bytes; without its table, Unknown (choice prefill_linears_seconds: the MoE
     // rows price the whole prefill).
     const GgufTensorTable unread_table;
-    const GgufTensorTable& prefill_table = row.listing.table ? *row.listing.table : unread_table;
-    out.model.expert_prefill             = prefill_table.expert_prefill;
-    out.model.expert_prefill_int8        = prefill_table.expert_prefill_int8;
-    out.model.expert_prefill_assumed     = prefill_table.expert_prefill_assumed;
+    const GgufTensorTable& own       = row.listing.table ? *row.listing.table : unread_table;
+    out.model.expert_prefill         = own.expert_prefill;
+    out.model.expert_prefill_int8    = own.expert_prefill_int8;
+    out.model.expert_prefill_assumed = own.expert_prefill_assumed;
+    // A Gemma 4 row whose label names MXFP4 banks, its header not read (a plan that reads none:
+    // the catalog, /api/quants): the kept site its header would not tell either (NVFP4, BF16 or
+    // Q8 by the loader's probe), so an estimate on it is Transferred as a read one's is.
+    // A table that read neither a route nor a format (the UI's past-128-MiB or failed read caches
+    // an engaged empty one) is no header either (codex on #833).
+    const bool header_read = own.expert_prefill != runtime::ExpertPrefill::Unknown ||
+                             own.expert_prefill_int8 != runtime::ExpertPrefill::Unknown ||
+                             !own.weight_formats.empty();
+    if (!header_read && out.model.model_type == "gemma4_text") {
+        const std::optional<std::set<QType>> named = choice::label_formats(row.listing.quant);
+        out.model.expert_prefill_assumed           = named && named->count(QType::MXFP4) > 0;
+    }
+    // Its weight formats likewise (#811): the routes, the weight class and whether the tiles
+    // price its prefill (product::quant_option_of). The shape's are another file's even at equal
+    // bytes; without its table, none (the label names them, as for a hub row).
+    out.shape.weight_formats     = own.weight_formats;
+    out.shape.layer_formats      = own.layer_formats;
+    out.shape.rest_layer_formats = own.rest_layer_formats;
     // Its stored routed banks and token table where its table counted them (a GGUF's).
     if (const auto& table = row.listing.table) {
         if (table->routed_expert_bytes) {

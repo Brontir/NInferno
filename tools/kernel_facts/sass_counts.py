@@ -45,7 +45,9 @@ per warp, follows from the weight MMAs (the min-term ones advance no K): the sum
 them, divided by the 16x8 tile and the tiles the warp holds (m_tiles * n_tiles * row sets). It
 is 0 where there is no tensor MMA, a weight MMA's shape is unknown, or the sum is not a whole
 number of K; it equals 2 * 4 * kRun of the decoder where the loop was found right, which
-`kernel_facts.py extract` checks across every row of a decoder.
+`kernel_facts.py extract` checks across every row of a decoder. The pipe counts (PIPE_FIELDS:
+I2F, I2FP, FFMA, FMUL, FADD, IMAD, BAR of the same iteration) split the classes by the pipe an
+instruction issues to; the kernel families after the register-MMA one carry them (#785).
 
 The static schedule (schema 4, #613 PR-C; `Control`, `schedule_counts`). From sm_70 on every
 instruction is 128 bits, and cuobjdump prints them as two 64-bit words, the low one on the
@@ -128,6 +130,24 @@ SCHEDULE_FIELDS = ("stall_sum", "sb_waits", "sb_waits_local", "outside_total", "
 # schedule (schema 4).
 LOOP_COLUMNS = ("loops", "k_iter", "mma", "mma_ones", "mma_shape") + COUNT_FIELDS[2:]
 COLUMNS = LOOP_COLUMNS + SCHEDULE_FIELDS
+# The pipe counts (#785): the instructions of the counted iteration that the coarse classes above
+# lump together but that issue to different pipes, by base opcode. I2F the conversion on the
+# multi-function path (I2F.F32.S32 ...; Turing's int-to-float), I2FP the one on the ALU (sm_86 on),
+# FFMA / FMUL / FADD the FP32 pipe's (their 32I forms too), IMAD the integer multiply-add (every
+# IMAD form, IMAD.MOV and IMAD.WIDE included), BAR the CTA barriers (BAR.SYNC, BAR.ARV, BAR.RED).
+# Written only for the kernel families whose snapshot columns name them (kernel_facts.py
+# FAMILIES), never for the register-MMA rows, whose columns stay those of schema 4.
+PIPE_OPCODES = {
+    "i2f": ("I2F",),
+    "i2fp": ("I2FP",),
+    "ffma": ("FFMA", "FFMA32I"),
+    "fmul": ("FMUL", "FMUL32I"),
+    "fadd": ("FADD", "FADD32I"),
+    "imad": ("IMAD",),
+    "bar": ("BAR",),
+}
+PIPE_FIELDS = tuple(PIPE_OPCODES)
+PIPE_OF = {opcode: field for field, opcodes in PIPE_OPCODES.items() for opcode in opcodes}
 NO_BARRIER = 7
 
 
@@ -555,21 +575,26 @@ class LoopCounts:
     candidate loops (0: none found, the counts are then 0); `mma_shape` the MMA opcode, `-`
     without one, `a:n+b:m` where shapes mix. `scheduled`: the static-schedule fields
     (SCHEDULE_FIELDS) are known, from the control codes of every instruction; a schema 2 row and
-    a text without control codes leave them out."""
+    a text without control codes leave them out. `pipes`: the row carries the pipe counts
+    (PIPE_FIELDS) after the schedule; they are counted either way, written only where set."""
 
     def __init__(self):
         self.loops = 0
         self.k_iter = 0
         self.mma_shape = "-"
-        for f in COUNT_FIELDS + SCHEDULE_FIELDS:
+        for f in COUNT_FIELDS + SCHEDULE_FIELDS + PIPE_FIELDS:
             setattr(self, f, 0)
         self.scheduled = False
+        self.pipes = False
 
     def columns(self):
-        return COLUMNS if self.scheduled else LOOP_COLUMNS
+        if not self.scheduled:
+            return LOOP_COLUMNS
+        return COLUMNS + PIPE_FIELDS if self.pipes else COLUMNS
 
     def row(self):
-        """The snapshot's columns (COLUMNS, LOOP_COLUMNS without the schedule), as strings."""
+        """The snapshot's columns (COLUMNS, LOOP_COLUMNS without the schedule, COLUMNS and
+        PIPE_FIELDS with the pipes), as strings."""
         return [str(getattr(self, c)) for c in self.columns()]
 
     def without_schedule(self):
@@ -579,16 +604,23 @@ class LoopCounts:
             setattr(c, name, getattr(self, name))
         return c
 
+    def with_pipes(self, pipes=True):
+        """This row's columns with (or without) the pipe counts, the counts unchanged."""
+        self.pipes = pipes
+        return self
+
     @classmethod
     def from_row(cls, fields):
-        """The counts of a snapshot row's loop columns, with the schedule (COLUMNS) or without it
-        (LOOP_COLUMNS); ValueError on a field that is no count."""
-        if len(fields) not in (len(COLUMNS), len(LOOP_COLUMNS)):
-            raise ValueError(f"{len(fields)} loop fields, {len(COLUMNS)} or {len(LOOP_COLUMNS)} "
-                             "columns")
+        """The counts of a snapshot row's loop columns, with the schedule (COLUMNS), without it
+        (LOOP_COLUMNS) or with the schedule and the pipes (COLUMNS + PIPE_FIELDS); ValueError on
+        a field that is no count."""
+        widths = (len(COLUMNS), len(LOOP_COLUMNS), len(COLUMNS) + len(PIPE_FIELDS))
+        if len(fields) not in widths:
+            raise ValueError(f"{len(fields)} loop fields, {' or '.join(map(str, widths))} columns")
         c = cls()
-        c.scheduled = len(fields) == len(COLUMNS)
-        for name, value in zip(COLUMNS, fields):
+        c.scheduled = len(fields) != len(LOOP_COLUMNS)
+        c.pipes = len(fields) == len(COLUMNS) + len(PIPE_FIELDS)
+        for name, value in zip(COLUMNS + PIPE_FIELDS, fields):
             setattr(c, name, value if name == "mma_shape" else int(value))
         return c
 
@@ -719,6 +751,9 @@ def loop_counts(body, tiles=1):
         opcode = body[i][2]
         kind = classify(opcode)
         out.total += 1
+        pipe = PIPE_OF.get(base_opcode(opcode))
+        if pipe:
+            setattr(out, pipe, getattr(out, pipe) + 1)
         if kind == "mma":
             out.mma += 1
             shapes[opcode] += 1

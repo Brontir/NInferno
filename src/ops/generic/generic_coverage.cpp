@@ -6,6 +6,7 @@
 #include "core/tensor.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/common/native_nvfp4.h"
+#include "ops/generic/compiled_codecs.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_ggml_internal.h"
@@ -172,7 +173,8 @@ BuildManifest build_manifest() {
     // A tile past this build's shared-memory ceiling (kMaxSharedBytesPerBlock) compiles to a stub
     // (generic_tiled.cu, generic_w4a8.cuh, generic_staged.cu, generic_i8.cu): the fits checks the
     // refusals answer Resource by. Staged's device check (staged_device_fits) is the board's.
-    // The tiles are compiled for tiled_supports' codecs and Q8 (the Volta tiles, volta_tiled_route).
+    // The tiles are compiled for the tiled lists' codecs (compiled_codecs.h: Q8 for the Volta
+    // tiles, volta_tiled_route).
     // On a build without tensor mma.sync, schedule 0 alone names the CUTLASS copy of every other
     // format (volta_cutlass_only; tiled_refusal: CodecTile past it): those formats are omitted from
     // the later schedules, and from schedule 0 too when the build has no CUTLASS.
@@ -180,7 +182,8 @@ BuildManifest build_manifest() {
     const bool cutlass_tier = !build_features().mma_tensor;
     add(Family::TiledMma, tiled_schedule_count(), [&](int i, ManifestSchedule& s) {
         for (const auto& [qtype, codec] : formats) {
-            const bool tile = tiled_supports(codec) || codec == WeightCodec::Q8;
+            const bool tile =
+                compiled(Variant::Tiled, codec) || compiled(Variant::TiledVolta, codec);
             if ((tile && !tiled_fits(i, codec)) ||
                 (!tile && cutlass_tier && (i != 0 || !m.volta_cutlass))) {
                 s.omitted_formats.push_back({qtype, 0});
@@ -190,11 +193,11 @@ BuildManifest build_manifest() {
     add(Family::W4a8Mma, w4a8_schedule_count(), [&](int i, ManifestSchedule& s) {
         const bool producer = w4a8_schedule_info(i).producers > 0;
         int read            = 0;
-        for (const auto& f : formats) {
-            if (!w4a8_supports(f.first)) continue;
+        for (const auto& [qtype, codec] : formats) {
+            if (!compiled(Variant::W4a8, codec)) continue;
             ++read;
-            if (producer && w4a8_ws_supports(f.first)) s.only_formats.push_back(f.first);
-            if (!w4a8_fits(i, f.first)) s.omitted_formats.push_back({f.first, 0});
+            if (producer && compiled(Variant::W4a8Ws, codec)) s.only_formats.push_back(qtype);
+            if (!w4a8_fits(i, qtype)) s.omitted_formats.push_back({qtype, 0});
         }
         // Omitted for every format it reads (the producer tiles below 99 KiB): no kernel at all.
         s.compiled = static_cast<int>(s.omitted_formats.size()) < read;
@@ -224,10 +227,8 @@ BuildManifest build_manifest() {
             if (!i8_fits(i, q)) s.omitted_formats.push_back({q, 0});
         }
     });
-    for (const auto& f : formats) {
-        if (r8_supports(f.first) && r8_verify_compiled(f.first)) {
-            m.r8_verify_formats.push_back(f.first);
-        }
+    for (const auto& [qtype, codec] : formats) {
+        if (compiled(Variant::R8Prequant, codec)) m.r8_verify_formats.push_back(qtype);
     }
     return m;
 }

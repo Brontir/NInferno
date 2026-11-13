@@ -55,10 +55,17 @@ struct GgufTensorTable {
     runtime::ExpertPrefill expert_prefill      = runtime::ExpertPrefill::Unknown;
     runtime::ExpertPrefill expert_prefill_int8 = runtime::ExpertPrefill::Unknown;
     bool expert_prefill_assumed                = false;
+    // Its weight formats (PlanTargetShape::weight_formats, layer_formats, rest_layer_formats;
+    // #811): its routes, its weight class and whether the tiles price its prefill. Likewise its
+    // own only, whatever its bytes (empty: none read, the label names them).
+    std::vector<std::string> weight_formats;
+    std::vector<std::string> layer_formats;
+    std::vector<std::string> rest_layer_formats;
 };
 
 // The table from the facts of a head read (nullopt: no tensor table). A split part's: no tensor
-// bytes (its file size stands), only the prefill route of the banks it lists; nullopt without one.
+// bytes (its file size stands), only the prefill route and the formats of the tensors it lists (a
+// sample of the file's); nullopt without either.
 [[nodiscard]] std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts);
 
 // One file group of a repository listing (convert::RepoQuant's fields the plan reads).
