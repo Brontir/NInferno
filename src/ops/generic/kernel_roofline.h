@@ -151,10 +151,12 @@ struct Call {
 //  - quant: the A8 activation quantizer (a8_candidates: its counted bytes over the bus and its own
 //    launch); 0 for an A16 tile, which reads BF16 as it is;
 //  - launch: the kernel's launch as a graph node of its kind (launch_term: GraphNodePdl for a
-//    kernel the engine always launches dependent from sm_90 on, GraphNode otherwise) plus the
-//    dispatch ramp of its grid, read piecewise linear between the probe's measured grids
-//    (core/launch_facts.h; past the last one the last segment's slope, `launch_extrapolated`),
-//    where the architecture's launch facts are known. Unknown (`launch_known` false), it is the
+//    kernel the engine always launches dependent from sm_90 on, GraphNode otherwise; a register
+//    MMA tile launches dependent only when joined to the call before it (join_previous,
+//    pdl_prefetch), which one call's price does not see, so it keeps the plain node, the slower
+//    one, #886) plus the dispatch ramp of its grid, read piecewise linear between the probe's
+//    measured grids (core/launch_facts.h; past the last one the last segment's slope,
+//    `launch_extrapolated`), where the architecture's launch facts are known. Unknown (`launch_known` false), it is the
 //    slowest launch of that grid any measured architecture has (`launch_bound`): an unknown fact
 //    is conservative and labelled (deterministic-decisions principle 7), one rule for every
 //    launch the price counts (#886 item 1).

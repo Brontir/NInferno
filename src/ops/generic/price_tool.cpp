@@ -292,14 +292,17 @@ double offered(const Terms& t, double a16, bool complete) {
 // The completeness terms of a tile (kernel_roofline.h Completeness, #613 PR-8a).
 template <class Terms>
 void print_completeness(const Terms& t, bool complete) {
-    std::printf("  completeness terms (%s): output %.2f + residual %.2f + quant %.2f + launch "
-                "%.2f%s us; complete %.2f us\n",
-                complete ? "on, offered" : "off, computed only", us(t.output), us(t.residual),
-                us(t.quant), us(t.launch),
-                t.launch_bound          ? " (no launch facts: the slowest measured architecture's)"
-                : t.launch_extrapolated ? " (ramp extrapolated past the largest measured grid)"
-                                        : "",
-                us(t.complete));
+    std::printf(
+        "  completeness terms (%s): output %.2f + residual %.2f + quant %.2f + launch "
+        "%.2f%s us; complete %.2f us\n",
+        complete ? "on, offered" : "off, computed only", us(t.output), us(t.residual), us(t.quant),
+        us(t.launch),
+        t.launch_bound && t.launch_extrapolated
+            ? " (no launch facts: the slowest measured architecture's, its ramp extrapolated)"
+        : t.launch_bound        ? " (no launch facts: the slowest measured architecture's)"
+        : t.launch_extrapolated ? " (ramp extrapolated past the largest measured grid)"
+                                : "",
+        us(t.complete));
 }
 
 void print_register_mma(const kr::RegisterMmaTerms& t, bool heavy, double a16, double l2_fitted,

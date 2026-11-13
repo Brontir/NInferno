@@ -1287,9 +1287,11 @@ void check_completeness() {
 //    rows with launch facts, at or above every one of them, labelled bound, never known;
 //  - a chip without launch facts (an architecture with no launch row) gets the same, both kinds;
 //  - under the completeness switch every A8 candidate of a board without launch facts is priced,
-//    finite and positive, by that rule (no fitted quantizer launch in the switch's path).
+//    finite and positive. (That the quantizer's launch is the rule's, not the fitted
+//    kQuantLaunchSeconds, is read from generic_cost.cpp's quant_counted: no hook here moves one
+//    without the other.)
 void check_launch_rule() {
-    long checked = 0, pdl = 0, bound = 0, bad = 0;
+    long checked = 0, pdl = 0, bound = 0, board_bound = 0, bad = 0;
     const auto fail = [&](const std::string& what) {
         if (++bad <= 10) std::fprintf(stderr, "FAIL launch rule: %s\n", what.c_str());
     };
@@ -1308,13 +1310,17 @@ void check_launch_rule() {
                 fail("a chip without launch facts is not priced at the slowest measured launch");
             }
         }
+        // The bound read through the public launch API (launch_seconds + ramp_seconds, as a
+        // board's own launch is) is the same figure: the largest of the rows', attained by one.
+        double largest = -1;
         for (const IsaRow& row : isa_facts_table()) {
-            if (!row.launch || !row.launch->node_ns) continue;
+            const auto node = launch_seconds(row.major, row.minor, LaunchKind::GraphNode);
             const auto ramp = ramp_seconds(row.major, row.minor, ctas);
-            if (ramp && *row.launch->node_ns * 1e-9 + ramp->seconds > slowest->seconds) {
-                fail(row.arch + ": a measured launch above the slowest at " + std::to_string(ctas) +
-                     " CTAs");
-            }
+            if (node && ramp) largest = std::max(largest, *node + ramp->seconds);
+        }
+        if (largest != slowest->seconds) {
+            fail("the slowest launch at " + std::to_string(ctas) +
+                 " CTAs is not the largest row's node + ramp");
         }
         for (const auto& board : g::kFactsBoards) {
             const DeviceClass d      = g::board_device_class(board);
@@ -1340,7 +1346,7 @@ void check_launch_rule() {
                     fail(at + ": without a PDL node the PDL kind is not the plain node");
                 }
             } else {
-                ++bound;
+                ++board_bound;
                 if (plain.known || !plain.bound || plain.seconds != slowest->seconds ||
                     dep.seconds != slowest->seconds) {
                     fail(at + ": an unknown launch is not the slowest measured one, labelled");
@@ -1368,10 +1374,10 @@ void check_launch_rule() {
             }
         }
     }
-    std::printf("launch rule: %ld board x grid launches (%ld with a PDL node, %ld bound), %ld A8 "
-                "candidates without launch facts, %ld wrong\n",
-                checked, pdl, bound, a8_unknown, bad);
-    if (bad > 0 || checked == 0 || pdl == 0 || bound == 0) ++failures;
+    std::printf("launch rule: %ld board x grid launches (%ld with a PDL node, %ld bound), %ld "
+                "factless chip launches, %ld A8 candidates without launch facts, %ld wrong\n",
+                checked, pdl, board_bound, bound, a8_unknown, bad);
+    if (bad > 0 || checked == 0 || pdl == 0 || bound == 0 || board_bound == 0) ++failures;
 }
 
 int main() {
