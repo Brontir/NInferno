@@ -21,7 +21,7 @@ ROOT=${1:-.}
 cd "$ROOT" || exit 2
 # file|expected count|why the calls cannot race
 ALLOW=$(cat <<'EOF'
-src/core/arena.cu|3|DeviceBuffer::fill/copy_from_host/copy_to_host: startup and test utilities; fill and copy_from_host settle the default stream before returning, the Engine runtime paths pass streams
+src/core/arena.cu|4|DeviceBuffer::fill/copy_from_host/copy_to_host: startup and test utilities; fill and copy_from_host settle the default stream before returning, the Engine runtime paths pass streams; the owning arena's ticket page is zeroed once at construction, before any stream uses it (#889)
 src/artifact/materializer.cpp|1|--debug-poison fill of the weight arena, followed by cudaDeviceSynchronize before the first upload
 src/core/paged_kv_cache.cpp|1|--debug-poison fill at pool construction, followed by cudaDeviceSynchronize
 src/models/common/layer_dump.h|1|the debug layer dump (dense, Gemma 4, Qwen): D2H after cudaDeviceSynchronize
@@ -63,7 +63,7 @@ tests/ops/test_moe_frag.cpp|2|poison fill and launches on the legacy stream (str
 tests/ops/test_rmsnorm.cpp|2|uploads fenced by the output fill's settle and cuda_synchronize before launch
 tests/ops/test_sparse_moe.cpp|2|legacy-stream eager path, cuda_synchronize before the graph
 tests/test_bench_fixtures.cu|4|D2H of fixtures whose uploads settle the default stream; the timing checks follow measure_*_prepared, which synchronizes its stream
-tests/test_arena.cpp|1|fill of a buffer no stream work touches, before cudaFree
+tests/test_arena.cpp|2|fill of a buffer no stream work touches, before cudaFree; the ticket page read back right after construction (#889)
 tests/test_decode_graph.cpp|1|D2H after device.synchronize
 tests/test_device_buffer_fill_order.cpp|2|the deliberately unfenced control arm of the fill-order test, read after cudaDeviceSynchronize
 tests/test_kv_cache.cpp|2|D2H after context.synchronize
