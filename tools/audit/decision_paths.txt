@@ -52,6 +52,8 @@ src/core/mmq_columns.h
 src/core/measured_boards.h
 src/core/measured_disposition.h
 src/core/board_registry.h
+# the format predicates' arch requirements over the board facts (#615 F5)
+src/core/arch_requires.h
 src/core/device_identity.h
 src/core/machine_facts.h
 src/ops/common/arch_limits.h
