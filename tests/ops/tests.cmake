@@ -83,6 +83,12 @@ ninferno_add_op_test(ninferno_e2m1_decode_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_e2m1_decode.cu"
   LIBRARIES ninferno_ops)
 
+# The natural merges' staged split loop and narrowed column chunk against the per-thread loop they
+# replaced, bit for bit, at split counts 1-256 (#865).
+ninferno_add_op_test(ninferno_causal_merge_order_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_causal_merge_order.cu"
+  LIBRARIES ninferno_ops)
+
 # E4M3 pair widening (the bit form below sm_89, the hardware's from it) for every finite pair.
 ninferno_add_op_test(ninferno_fp8_e4m3_widen_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_fp8_e4m3.cu"
