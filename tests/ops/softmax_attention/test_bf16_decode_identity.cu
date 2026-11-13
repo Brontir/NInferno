@@ -8,7 +8,7 @@
 // match byte for byte. --self compares each schedule with a second run of itself instead (the
 // kernels' determinism).
 //
-// On an sm_70 build and card, Volta's key-major kernel (#877) runs too. It is not the MMA
+// On an sm_70 build and any 7.x card, Volta's key-major kernel (#877) runs too. It is not the MMA
 // emulation, so against the shipped schedule it is held to sums, not bits: the appended cache and
 // the set of written partials byte for byte, the output within one BF16 step and the partials
 // within the FP16 rounding of P (near_outputs). --self holds it to its own bits.
@@ -55,7 +55,7 @@ constexpr int D = kCausalHeadDim;
 // sentinel fill.
 cudaStream_t g_stream = nullptr;
 bool g_self           = false;
-bool g_volta          = false; // an sm_70 build on an sm_70 card
+bool g_volta          = false; // an sm_70 build on a 7.x card
 
 void check(cudaError_t status, const char* what) {
     if (status == cudaSuccess) return;
@@ -140,6 +140,7 @@ std::vector<std::uint16_t> f16_values(std::size_t n, std::uint64_t seed) {
 // One decode call: a context (keys seen, the new token's included) per batch row.
 struct Case {
     std::vector<int> contexts;
+    float q_amplitude = 1.0f; // 16: peaked scores (about 5 nats), rescales and FP16-subnormal P
 };
 
 // The device inputs of one geometry's calls: a page pool both runs read (and, for append, the
@@ -163,7 +164,7 @@ struct Inputs {
           positions(batch), valid(batch) {
         k_host = bf16_values(k.size, seed, 1.0f);
         v_host = f16_values(v.size, seed + 1);
-        q.upload(bf16_values(q.size, seed + 2, 1.0f));
+        q.upload(bf16_values(q.size, seed + 2, c.q_amplitude));
         new_k.upload(bf16_values(new_k.size, seed + 3, 1.0f));
         new_v.upload(bf16_values(new_v.size, seed + 4, 1.0f));
         // Every row's pages scattered over the pool (a reversed interleave), the rest of its table
@@ -429,7 +430,8 @@ int main(int argc, char** argv) {
     int major = 0, minor = 0;
     check(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, 0), "major");
     check(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, 0), "minor");
-    g_volta = NINFERNO_BUILD_ARCH == 70 && major == 7 && minor == 0;
+    // A 70 build runs on any 7.x card (apps/serve), and launch.cu takes the kernel there too.
+    g_volta = NINFERNO_BUILD_ARCH == 70 && major == 7;
     check(cudaStreamCreateWithFlags(&g_stream, cudaStreamNonBlocking), "stream");
     // One row: page (64) and key-tile (32) edges, the split rounding near the targets, the long
     // target from 32768 keys. Eight rows: ragged contexts in one envelope, and equal ones.
@@ -450,6 +452,8 @@ int main(int argc, char** argv) {
         {{40001}},
         {{1, 63, 64, 65, 2049, 4096, 8191, 12000}},
         {{7843, 7843, 7843, 7843, 7843, 7843, 7843, 7843}},
+        {{2049}, 16.0f},
+        {{1, 63, 64, 65, 2049, 4096, 8191, 12000}, 16.0f},
     };
     int failures = 0, pairs = 0;
     std::uint64_t seed = 856;

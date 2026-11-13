@@ -15,7 +15,7 @@ void grouped(const CausalAttentionOperands& p, Bf16KvCacheView<Writable> cache, 
     constexpr bool aligned_capable = Instance == Bf16KvInstance::Grouped32;
     // Volta has no BF16 MMA: its width-1 decode takes the key-major kernel (#877), with the same
     // partials and merge.
-#if NINFERNO_BUILD_ARCH < 75
+#if defined(NINFERNO_BUILD_ARCH) && NINFERNO_BUILD_ARCH < 75
     constexpr bool volta = Instance == Bf16KvInstance::GroupedDecode && kBf16KvVoltaKeyMajor<G>;
 #else
     constexpr bool volta = false;
