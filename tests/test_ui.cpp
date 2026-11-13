@@ -1144,6 +1144,7 @@ void test_artifact_plan_via_serve() {
 
             std::string error() const override { return {}; }
         };
+
         UiOptions options;
         options.offline      = true;
         options.serve_binary = root / "serve-plan";

@@ -238,9 +238,8 @@ int main() {
                   "--json without --plan or --plan with --prepare-only is accepted");
         // --plan-idle needs --plan --no-load; --plan-free-now needs --plan-idle and a real card
         // (#891).
-        const ServeOptions idle =
-            parse({"ninferno-serve", "model.ninferno", "--plan", "--no-load", "--plan-idle",
-                   "--plan-free-now", "3221225472"});
+        const ServeOptions idle = parse({"ninferno-serve", "model.ninferno", "--plan", "--no-load",
+                                         "--plan-idle", "--plan-free-now", "3221225472"});
         failures += check(idle.plan_idle && idle.plan_free_now == 3221225472ULL &&
                               !parse({"ninferno-serve", "model.ninferno"}).plan_free_now,
                           "--plan-idle --plan-free-now is not parsed");
