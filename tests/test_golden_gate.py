@@ -222,6 +222,7 @@ GENERATED = {
     "core/board_registry_rows.inc": "cmake/BoardRegistry.cmake",
     "core/embedded_gpu_facts.h": "src/core/embedded_gpu_facts.h.in",
     "core/embedded_sm_rate_facts.h": "src/core/embedded_sm_rate_facts.h.in",
+    "core/embedded_isa_facts.h": "src/core/embedded_isa_facts.h.in",
     "core/arch_registry_rows.inc": "cmake/BoardRegistry.cmake",  # rows of the "archs" array of gpu_facts.json
     # which sm_*.txt snapshots are embedded is decided by sources.cmake (listed too)
     "ops/generic/embedded_kernel_facts.h": "src/ops/generic/embedded_kernel_facts.h.in",
@@ -319,11 +320,6 @@ EXCLUDED = [
     ("src/core/host_memory.cpp", "host memory"), ("src/core/host_worker_pool.cpp", "host threads"),
     ("src/core/decode_graph.cpp", "CUDA graph capture"), ("src/core/debug_poison.cpp", "debug"),
     ("src/core/gdn_replay_records.cpp", "state records"),
-    # the ISA facts (#668): today only tests/test_isa_facts.cpp reads them; the price that reads them
-    # moves these lines to decision_paths.txt
-    ("src/core/isa_facts.cpp", "ISA facts reader, no selector caller yet"),
-    ("src/core/embedded_isa_facts.h.in", "ISA facts embedding, no selector caller yet"),
-    ("src/core/data/isa_facts.json", "ISA facts rows, no selector caller yet"),
     ("src/core/data/isa_probe/*", "raw ISA probe output the rows were read from"),
     ("src/core/data/warp_inflight/*", "raw bytes-in-flight probe output the SM rate facts rows "
                                        "were read from (sm_rate_facts.json is listed)"),

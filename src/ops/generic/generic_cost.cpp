@@ -103,8 +103,8 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
     const kr::Call call{n, k, t, sets, bpw, problem.epilogue == Epilogue::AddResidual};
     const auto quant_counted = [&](double bytes, double ctas) {
-        return kr::launch_seconds_of(chip, ctas).value_or(route_cost::kQuantLaunchSeconds.value()) +
-               bytes / bw;
+        const std::optional<Ramp> launch = kr::launch_seconds_of(chip, ctas);
+        return (launch ? launch->seconds : route_cost::kQuantLaunchSeconds.value()) + bytes / bw;
     };
     const auto beyond = [&](double ctas) {
         const kr::Completeness c = kr::completeness(chip, call, ctas);

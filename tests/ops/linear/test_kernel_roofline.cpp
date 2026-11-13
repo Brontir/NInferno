@@ -77,21 +77,22 @@ bool priceable(const DeviceClass& d) {
 struct RooflineTerms {
     double total = 0, a16 = 1, ctas = 0;
     double output = 0, residual = 0, quant = 0, launch = 0, complete = 0;
-    bool launch_known = false;
+    bool launch_known = false, launch_extrapolated = false;
 };
 
 template <class Terms>
 RooflineTerms roofline_terms_of(const Terms& t, double a16) {
     RooflineTerms r;
-    r.total        = t.total;
-    r.a16          = a16;
-    r.ctas         = t.grid.ctas;
-    r.output       = t.output;
-    r.residual     = t.residual;
-    r.quant        = t.quant;
-    r.launch       = t.launch;
-    r.complete     = t.complete;
-    r.launch_known = t.launch_known;
+    r.total               = t.total;
+    r.a16                 = a16;
+    r.ctas                = t.grid.ctas;
+    r.output              = t.output;
+    r.residual            = t.residual;
+    r.quant               = t.quant;
+    r.launch              = t.launch;
+    r.complete            = t.complete;
+    r.launch_known        = t.launch_known;
+    r.launch_extrapolated = t.launch_extrapolated;
     return r;
 }
 
@@ -1058,7 +1059,7 @@ void check_rmma_count() {
 // And on one AddResidual call of every board, the residual read is the output's bytes again; with
 // the switch on every A8 candidate of a board that prices them moves and stays finite.
 void check_completeness() {
-    long routes = 0, known = 0, bad = 0;
+    long routes = 0, known = 0, extrapolated = 0, bad = 0;
     const auto fail = [&](const std::string& what) {
         if (++bad <= 10) std::fprintf(stderr, "FAIL completeness: %s\n", what.c_str());
     };
@@ -1118,7 +1119,11 @@ void check_completeness() {
                 fail(at + ": the launch is known iff the architecture's launch facts are");
             } else if (t->launch_known) {
                 ++known;
-                if (t->launch != *node + *ramp) fail(at + ": the launch is not node + ramp");
+                extrapolated += ramp->extrapolated;
+                if (t->launch != *node + ramp->seconds ||
+                    t->launch_extrapolated != ramp->extrapolated) {
+                    fail(at + ": the launch is not node + ramp");
+                }
             } else if (t->launch != 0) {
                 fail(at + ": an unknown launch is priced");
             }
@@ -1177,10 +1182,10 @@ void check_completeness() {
             }
         }
     }
-    std::printf(
-        "completeness: %ld golden routes (%ld with a known launch), %ld AddResidual routes, "
-        "%ld A8 candidates under the switch, %ld wrong\n",
-        routes, known, residual, a8, bad);
+    std::printf("completeness: %ld golden routes (%ld with a known launch, %ld of them past 1024 "
+                "CTAs), %ld "
+                "AddResidual routes, %ld A8 candidates under the switch, %ld wrong\n",
+                routes, known, extrapolated, residual, a8, bad);
     if (bad > 0 || routes == 0 || known == 0 || known == routes || residual == 0 || a8 == 0) {
         ++failures;
     }

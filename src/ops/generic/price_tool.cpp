@@ -308,7 +308,10 @@ void print_completeness(const Terms& t, bool complete) {
     std::printf("  completeness terms (%s): output %.2f + residual %.2f + quant %.2f + launch "
                 "%.2f%s us; complete %.2f us\n",
                 complete ? "on, offered" : "off, computed only", us(t.output), us(t.residual),
-                us(t.quant), us(t.launch), t.launch_known ? "" : " (no launch facts)",
+                us(t.quant), us(t.launch),
+                !t.launch_known         ? " (no launch facts)"
+                : t.launch_extrapolated ? " (ramp extrapolated past 1024 CTAs)"
+                                        : "",
                 us(t.complete));
 }
 
@@ -437,10 +440,16 @@ int run(const Options& o) {
                 cal.pipelined_saturating_warps, cal.min_warp_fill);
     // The completeness terms (#613 PR-8a): their facts and counts, and whether the selector
     // offers them.
-    if (chip.launch_node_s && chip.launch_cta_s) {
-        std::printf(
-            "launch facts (core/launch_facts.h): graph node %.3f us, dispatch %.3f ns a CTA; ",
-            *chip.launch_node_s * 1e6, *chip.launch_cta_s * 1e9);
+    if (chip.launch_node_s && chip.launch_ramp) {
+        std::printf("launch facts (core/launch_facts.h): graph node %.3f us, dispatch ramp",
+                    *chip.launch_node_s * 1e6);
+        const RampPoints& p = *chip.launch_ramp;
+        for (int i = 1; i < 4; ++i) {
+            if (p.seconds[0] && p.seconds[i]) {
+                std::printf(" %.0f CTAs %.3f us", p.ctas[i], (*p.seconds[i] - *p.seconds[0]) * 1e6);
+            }
+        }
+        std::printf(" (piecewise linear between them); ");
     } else {
         std::printf("launch facts: none for sm_%d%d (the launch term is unknown, priced 0); ",
                     d.major, d.minor);
@@ -488,11 +497,13 @@ int run(const Options& o) {
                     "reduce", "chain", "total", in_domain ? "selector" : "formula", "", "launch",
                     "if on");
     }
-    // The completeness columns of a table row: the tile's launch ("?" without launch facts) and
-    // the price the selector offers with the completeness terms on (total x a16 + the terms).
+    // The completeness columns of a table row: the tile's launch ("?" without launch facts, "*"
+    // after it where its grid's ramp is extrapolated past 1024 CTAs) and the price the selector
+    // offers with the completeness terms on (total x a16 + the terms).
     const auto completeness_columns = [&](const auto& t) {
         if (t.launch_known) {
-            std::printf(" | %9.2f %9.2f\n", us(t.launch), us(offered(t, a16, true)));
+            std::printf(" | %8.2f%s %9.2f\n", us(t.launch), t.launch_extrapolated ? "*" : " ",
+                        us(offered(t, a16, true)));
         } else {
             std::printf(" | %9s %9.2f\n", "?", us(offered(t, a16, true)));
         }

@@ -102,31 +102,64 @@ inline std::optional<double> seconds(const std::optional<double>& ns) {
     return std::nullopt;
 }
 
-// The CTA dispatch rate of compute capability major.minor, in seconds a CTA: the 1024-CTA floor's
-// slope over the one-CTA floor, (floor_s[1024] - floor_s[1]) / 1023, on the row's probe card. The
-// six measured cards give one figure a generation (Volta 1.5, Turing 0.52, Ampere 0.64, Ada 0.67,
-// Blackwell 0.37 ns a CTA) whatever their SM count (the RTX 5070 Ti's within 3 % of the RTX
-// 5090's, #870): the front end hands out CTAs at a fixed rate, it does not run them in rounds of
-// resident CTAs. nullopt where the row or either floor is absent. The first form reads a launch
-// entry itself (kernel_roofline.h's chip facts, which walk the table without copying a row).
-[[nodiscard]] inline std::optional<double> cta_dispatch_seconds(const IsaLaunch& l) {
-    if (!l.floor_ns_1 || !l.floor_ns_1024) return std::nullopt;
-    return (*l.floor_ns_1024 - *l.floor_ns_1) * 1e-9 / (1024 - 1);
+// The CTA dispatch ramp's measured points (#613 PR-8a): the floors' CTA counts (1, the probe
+// card's SMs, 4 x its SMs, 1024) and their durations in seconds, as the launch entry holds them.
+struct RampPoints {
+    std::array<double, 4> ctas{};
+    std::array<std::optional<double>, 4> seconds{};
+};
+
+[[nodiscard]] inline RampPoints ramp_points(const IsaLaunch& l) {
+    using launch_facts_detail::seconds;
+    RampPoints p;
+    p.ctas    = {1.0, static_cast<double>(l.sms), 4.0 * l.sms, 1024.0};
+    p.seconds = {seconds(l.floor_ns_1), seconds(l.floor_ns_sms), seconds(l.floor_ns_4sms),
+                 seconds(l.floor_ns_1024)};
+    return p;
 }
 
-[[nodiscard]] inline std::optional<double> cta_dispatch_seconds(int major, int minor) {
+// The dispatch ramp of a grid: its seconds beyond a one-CTA grid's, and whether they were
+// extrapolated past the last measured point.
+struct Ramp {
+    double seconds    = 0;
+    bool extrapolated = false;
+};
+
+// The ramp of a grid of `ctas` CTAs from the measured points: piecewise linear between them (each
+// point reproduced exactly: floor_s[i] - floor_s[0]), 0 at one CTA and below; past the last point
+// (1024 CTAs) the last segment's slope carries on and the answer says it is extrapolated. The
+// slopes are not one figure a generation (#870: the RTX 4090's fall 1.13, 0.81, 0.44 ns a CTA,
+// gb20x's rise 0.23, 0.40, 0.43), so no single rate stands in for the points. A point the entry
+// lacks is left out; nullopt without the one-CTA floor and at least one more point.
+[[nodiscard]] inline std::optional<Ramp> ramp_from(const RampPoints& p, double ctas) {
+    std::array<double, 4> x{}, y{};
+    int m = 0;
+    for (int i = 0; i < 4; ++i) {
+        // The one-CTA floor first; then the points in increasing CTA count (a probe card with 256
+        // SMs or more would put 4 x SMs at or past 1024: such a point is left out).
+        if (!p.seconds[i] || (m > 0 && !(p.ctas[i] > x[m - 1]))) continue;
+        if (m == 0 && i != 0) return std::nullopt;
+        x[m] = p.ctas[i];
+        y[m] = *p.seconds[i];
+        ++m;
+    }
+    if (m < 2) return std::nullopt;
+    if (ctas <= x[0]) return Ramp{};
+    for (int i = 0; i + 1 < m; ++i) {
+        if (ctas > x[i + 1]) continue;
+        if (ctas == x[i + 1]) return Ramp{y[i + 1] - y[0], false};
+        return Ramp{y[i] + (ctas - x[i]) * ((y[i + 1] - y[i]) / (x[i + 1] - x[i])) - y[0], false};
+    }
+    const int l = m - 1;
+    return Ramp{y[l] + (ctas - x[l]) * ((y[l] - y[l - 1]) / (x[l] - x[l - 1])) - y[0], true};
+}
+
+// The dispatch ramp of a grid of `ctas` CTAs on compute capability major.minor (ramp_from on its
+// launch entry's points); nullopt where the architecture has no launch entry or too few floors.
+[[nodiscard]] inline std::optional<Ramp> ramp_seconds(int major, int minor, double ctas) {
     const std::optional<IsaRow> isa = isa_row(major, minor);
     if (!isa || !isa->launch) return std::nullopt;
-    return cta_dispatch_seconds(*isa->launch);
-}
-
-// The dispatch ramp of a grid of `ctas` CTAs on compute capability major.minor: (ctas - 1) x t_cta,
-// t_cta of cta_dispatch_seconds (a grid of one CTA has none; the graph node prices its launch).
-// nullopt where the rate is unknown.
-[[nodiscard]] inline std::optional<double> ramp_seconds(int major, int minor, double ctas) {
-    const std::optional<double> t_cta = cta_dispatch_seconds(major, minor);
-    if (!t_cta) return std::nullopt;
-    return (ctas > 1.0 ? ctas - 1.0 : 0.0) * *t_cta;
+    return ramp_from(ramp_points(*isa->launch), ctas);
 }
 
 } // namespace ninferno

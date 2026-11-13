@@ -76,9 +76,10 @@ struct ChipFacts {
     int major                 = 0; // the architecture: its pipes' ISA facts (rmma_counted_terms.h)
     // The architecture's launch facts (core/launch_facts.h, #613 PR-8b), absent where its ISA row
     // has no launch entry or the entry lacks the fact: the graph node (one launch as a node of a
-    // captured graph) and t_cta, the front end's dispatch time a CTA (cta_dispatch_seconds).
+    // captured graph) and the CTA dispatch ramp's four measured points (ramp_points; ramp_from
+    // reads them piecewise linear).
     std::optional<double> launch_node_s;
-    std::optional<double> launch_cta_s;
+    std::optional<RampPoints> launch_ramp;
     // The architecture's dependent L2 load latency in SM clocks alone and under 2, 4 and 8 chasing
     // warps an SM (core/isa_facts.h l2_latency), absent without an ISA row: what Little's law reads
     // for the L2 rate a warp count reaches (l2_little_bytes_per_clock). Printed, not priced.
@@ -147,10 +148,11 @@ struct Call {
 //  - residual: AddResidual reads the old output first, the same bytes again;
 //  - quant: the A8 activation quantizer (a8_candidates: its counted bytes over the bus and its own
 //    launch); 0 for an A16 tile, which reads BF16 as it is;
-//  - launch: the kernel's launch as a graph node plus the dispatch ramp of its grid,
-//    node + (ctas - 1) x t_cta (core/launch_facts.h launch_seconds GraphNode + ramp_seconds), where
-//    the architecture's launch facts are known; unknown (`launch_known` false), it is 0 and says
-//    so: an unknown fact is not given a number.
+//  - launch: the kernel's launch as a graph node plus the dispatch ramp of its grid, read piecewise
+//    linear between the probe's four measured grids (core/launch_facts.h launch_seconds GraphNode
+//    + ramp_seconds; past 1024 CTAs the last segment's slope, `launch_extrapolated`), where the
+//    architecture's launch facts are known; unknown (`launch_known` false), it is 0 and says so: an
+//    unknown fact is not given a number.
 // The output and residual are additive, not under the warp fill: the epilogue is the CTA's tail,
 // after its last MMA, and its bytes add to the bus. A term common to every route of a call moves no
 // argmin among them; the quantizer and the second launch separate A8 from A16, and the ramp the
@@ -161,16 +163,20 @@ struct Completeness {
     double residual     = 0;
     double quant        = 0;
     double launch       = 0;
-    bool launch_known   = false;
+    bool launch_known        = false;
+    bool launch_extrapolated = false; // the grid is past the probe's largest (1024 CTAs)
 
     [[nodiscard]] double sum() const { return output + residual + quant + launch; }
 };
 
-// One launch of a grid of `ctas` CTAs as a graph node: node + (ctas - 1) x t_cta; nullopt where
-// either fact is unknown.
-[[nodiscard]] inline std::optional<double> launch_seconds_of(const ChipFacts& chip, double ctas) {
-    if (!chip.launch_node_s || !chip.launch_cta_s) return std::nullopt;
-    return *chip.launch_node_s + (ctas > 1.0 ? ctas - 1.0 : 0.0) * *chip.launch_cta_s;
+// One launch of a grid of `ctas` CTAs as a graph node: node + the dispatch ramp of the grid
+// (ramp_from: piecewise linear between the measured points, extrapolated past the last and saying
+// so); nullopt where either fact is unknown.
+[[nodiscard]] inline std::optional<Ramp> launch_seconds_of(const ChipFacts& chip, double ctas) {
+    if (!chip.launch_node_s || !chip.launch_ramp) return std::nullopt;
+    const std::optional<Ramp> ramp = ramp_from(*chip.launch_ramp, ctas);
+    if (!ramp) return std::nullopt;
+    return Ramp{*chip.launch_node_s + ramp->seconds, ramp->extrapolated};
 }
 
 // The completeness terms of a call whose kernel launches `ctas` CTAs, with `quant` the quantizer's
@@ -182,9 +188,10 @@ struct Completeness {
     c.output                           = c.output_bytes / chip.dram_bytes_per_s;
     c.residual                         = call.residual ? c.output : 0.0;
     c.quant                            = quant;
-    const std::optional<double> launch = launch_seconds_of(chip, ctas);
+    const std::optional<Ramp> launch   = launch_seconds_of(chip, ctas);
     c.launch_known                     = launch.has_value();
-    c.launch                           = launch.value_or(0.0);
+    c.launch                           = launch ? launch->seconds : 0.0;
+    c.launch_extrapolated              = launch && launch->extrapolated;
     return c;
 }
 
@@ -377,8 +384,9 @@ struct RegisterMmaTerms {
     // unknown and 0 where the architecture has no launch facts, and `complete` = total + output +
     // residual + quant + launch. Computed whatever Calibration::completeness_terms says.
     double output = 0, residual = 0, quant = 0, launch = 0;
-    bool launch_known = false;
-    double complete   = 0;
+    bool launch_known        = false;
+    bool launch_extrapolated = false; // the grid's ramp past the probe's 1024 CTAs
+    double complete          = 0;
     // Little's-law L2 rate of the busiest SM's resident warps (l2_little_bytes_per_clock) at the
     // counted bytes a warp keeps in flight, beside cal.l2_bytes_per_sm_clock: printed, not priced.
     std::optional<double> l2_little_bytes_per_clock;
@@ -390,7 +398,8 @@ void set_completeness(Terms& t, const Completeness& c) {
     t.output       = c.output;
     t.residual     = c.residual;
     t.quant        = c.quant;
-    t.launch       = c.launch;
+    t.launch              = c.launch;
+    t.launch_extrapolated = c.launch_extrapolated;
     t.launch_known = c.launch_known;
     t.complete     = t.total + c.sum();
 }
@@ -539,7 +548,8 @@ struct PipelinedTerms {
     double total = 0;   // max(mem, mma / fill) + chain; legacy: max(mem, mma) / fill + chain
     // The completeness terms (RegisterMmaTerms' fields of the same names).
     double output = 0, residual = 0, quant = 0, launch = 0;
-    bool launch_known = false;
+    bool launch_known        = false;
+    bool launch_extrapolated = false;
     double complete   = 0;
 };
 
@@ -615,9 +625,9 @@ inline void fill_sm_rate_facts(ChipFacts& c, int major, int minor) {
 }
 
 // The launch facts and the L2 latencies of compute capability major.minor from its ISA row (its
-// launch entry: the graph node and the CTA dispatch rate, core/launch_facts.h), each left absent
-// where the row or the fact is absent (the same figures as launch_seconds(GraphNode) and
-// cta_dispatch_seconds; the table is walked in place, since the price runs at every launch the
+// launch entry: the graph node and the dispatch ramp's measured points, core/launch_facts.h), each
+// left absent where the row or the fact is absent (the same figures as launch_seconds(GraphNode)
+// and ramp_seconds read; the table is walked in place, since the price runs at every launch the
 // selector prices).
 inline void fill_isa_facts(ChipFacts& c, int major, int minor) {
     for (const IsaRow& row : isa_facts_table()) {
@@ -625,7 +635,7 @@ inline void fill_isa_facts(ChipFacts& c, int major, int minor) {
         c.l2_latency_clk = row.l2_latency;
         if (row.launch) {
             if (row.launch->node_ns) c.launch_node_s = *row.launch->node_ns * 1e-9;
-            c.launch_cta_s = cta_dispatch_seconds(*row.launch);
+            c.launch_ramp = ramp_points(*row.launch);
         }
         return;
     }
