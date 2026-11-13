@@ -414,10 +414,10 @@ inline constexpr std::int32_t kMmqMinTokens = 5;
 // linear 825 against 290. They take the int8 tiers on the cards where int8 activations pay
 // (half-rate fp32-accumulate HMMA: GeForce, Ada/Ampere inference parts), not on sm80/90/100.
 inline constexpr std::int32_t kQ8PrefillA8Tokens = kPrefillBandMinTokens;
-// Non-throwing on purpose (#884): its one device read (qx_prefill_a8_pays, the unpinned Q4/Q5/Q6
-// G64 branch) answers false where the device cannot be read, so a plan path that sizes
-// prefill_a8_workspace_bytes outside a ScopedDeviceClass on a host with no GPU drops those A8
-// planes rather than throwing; Q8 and the route pins read no device.
+// Non-throwing on purpose (#884): every call makes its device read (qx_prefill_a8_pays), which
+// answers false where the device cannot be read, and only the Q4/Q5/Q6 G64 answer depends on it
+// (Q8's is the route pin's). A plan path that sizes prefill_a8_workspace_bytes outside a
+// ScopedDeviceClass on a host with no GPU drops those A8 planes rather than throwing;
 // tests/test_plan_device_class.cpp lists it as such.
 [[nodiscard]] bool prefill_a8_format(QType qtype);
 // The policy a prefill-width call of this format runs under: the artifact's own, except that
