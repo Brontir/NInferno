@@ -2429,7 +2429,7 @@ void test_choice_json_gates() {
         q8.family = "qwen3_5_text";
         ch::Scored s;
         s.accuracy.terms = {{ch::Axis::Quant, "Q8_0", 0, own, false, "",
-                             own ? ch::Evidence::Measured : ch::Evidence::Reference}};
+                             own ? ch::Evidence::Measured : ch::Evidence::Reference, "Qwen3.5-9B"}};
         q8.choice.scored.push_back(s);
         q8.choice.chosen       = 0;
         const nlohmann::json q = pr::choice_json(q8);

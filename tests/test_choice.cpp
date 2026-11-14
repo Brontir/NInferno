@@ -1146,6 +1146,112 @@ void weighs_the_quantizations(const json& fixture) {
         other.family         = "gemma4_text";
         check(ch::quant_authority(other, a) == A::Estimate, "another family's curve: an estimate");
     }
+    // #618 step 9: a model's own curve (kQuantKldModels, keyed by ModelFacts::params). Qwen3.5-4B's
+    // measured Q4_K_M file is direct at its own KLD, not the 9B curve's at those bits; without the
+    // file, the label's point of its own curve stands as a proxy; between its points the curve is
+    // its own; a model of the family with no curve of its own reads the 9B's.
+    {
+        using A             = ch::QualityAuthority;
+        const double four_b = 4118937600.0;
+        const auto point_of = [&](std::string_view label) -> const ch::QuantKldPoint* {
+            for (const ch::QuantKldPoint& p : ch::kQuantKld) {
+                if (p.params == four_b && p.label == label) { return &p; }
+            }
+            return nullptr;
+        };
+        const ch::QuantKldPoint* q4   = point_of("Q4_K_M");
+        const ch::QuantKldPoint* q5   = point_of("Q5_K_S");
+        const ch::QuantKldPoint* q4xl = point_of("UD-Q4_K_XL");
+        check(q4 != nullptr && q5 != nullptr && q4xl != nullptr, "the 4B's curve holds its points");
+        if (q4 != nullptr && q5 != nullptr && q4xl != nullptr) {
+            ch::ModelFacts four = b.model;
+            four.params         = four_b;
+            const auto term_of  = [&](const ch::ModelFacts& m, const ch::QuantOption& o) {
+                for (const ch::Term& t : ch::accuracy_of(m, o, c, b.card).terms) {
+                    if (t.axis == ch::Axis::Quant) { return t; }
+                }
+                return ch::Term{};
+            };
+            ch::QuantOption o  = b.quants[0];
+            o.label            = "Q4_K_M";
+            o.files            = std::string(q4->file);
+            o.bits_per_weight  = q4->bits_per_weight;
+            const ch::Term own = term_of(four, o);
+            check(ch::quant_authority(four, o) == A::Direct && own.measured &&
+                      std::abs(own.kld - q4->kld) < 1e-12 &&
+                      own.source.find("Qwen3.5-4B-GGUF") != std::string::npos,
+                  "the 4B's own Q4_K_M file: direct, its own curve's KLD and source");
+            {
+                std::string_view why = "x";
+                check(own.curve_model == "Qwen3.5-4B" &&
+                          !ch::answer_points(ch::accuracy_of(four, o, c, b.card),
+                                             ch::answer_scale_of(four.family), &why) &&
+                          why == "model_not_calibrated",
+                      "answers: the 4B's own measured file is not on the 9B's scale");
+            }
+            o.files.clear();
+            const ch::Term proxy = term_of(four, o);
+            check(ch::quant_authority(four, o) == A::Estimate &&
+                      proxy.evidence == ch::Evidence::Proxy &&
+                      std::abs(proxy.kld - q4->kld) < 1e-12,
+                  "the 4B's Q4_K_M, files unknown: its own label's point, a proxy");
+            o.label           = "";
+            o.bits_per_weight = 0.5 * (q4xl->bits_per_weight + q5->bits_per_weight);
+            const double t    = (o.bits_per_weight - q4xl->bits_per_weight) /
+                             (q5->bits_per_weight - q4xl->bits_per_weight);
+            const double between =
+                std::exp(std::log(q4xl->kld) + t * (std::log(q5->kld) - std::log(q4xl->kld)));
+            check(std::abs(term_of(four, o).kld - between) < 1e-12,
+                  "between the 4B's UD-Q4_K_XL and Q5_K_S: its own curve, in log KLD");
+            ch::ModelFacts none = four;
+            none.params         = 5.0e9; // a model of the family no curve is measured on
+            o.label             = "Q4_K_M";
+            o.files             = std::string(measured_q4);
+            o.bits_per_weight   = b.quants[0].bits_per_weight;
+            check(std::abs(term_of(none, o).kld - 0.01925) < 1e-12,
+                  "a model with no curve of its own reads the 9B's");
+            // Another family at the 4B's weights reads the 9B's curve, not the 4B's: the 4B's
+            // Q4_K_M file there is the 9B curve's interpolation at its bits.
+            ch::ModelFacts other = four;
+            other.family         = "gemma4_text";
+            o.files              = std::string(q4->file);
+            o.bits_per_weight    = q4->bits_per_weight;
+            const ch::Term moved = term_of(other, o);
+            check(ch::quant_authority(other, o) == A::Estimate && !moved.measured &&
+                      std::abs(moved.kld - q4->kld) > 1e-4,
+                  "another family at the 4B's weights: the 9B's curve, an estimate");
+        }
+    }
+    // Every point decides on two cards, or on one where its model records the reference's
+    // checksum; every model's curve starts at its Q8_0 (0) and its KLD rises as the bits fall.
+    for (const ch::QuantKldModel& m : ch::kQuantKldModels) {
+        std::vector<const ch::QuantKldPoint*> curve;
+        for (const ch::QuantKldPoint& p : ch::kQuantKld) {
+            if (p.params == m.params) { curve.push_back(&p); }
+        }
+        bool reference = false;
+        bool rising    = true;
+        bool counted   = true;
+        for (const ch::QuantKldPoint* p : curve) {
+            reference = reference || (p->label == "Q8_0" && p->kld == 0);
+            counted   = counted && (p->cards >= ch::kQuantKldCards || m.reference_nll > 0);
+            for (const ch::QuantKldPoint* r : curve) {
+                if (r->bits_per_weight < p->bits_per_weight - 0.3 && r->kld < p->kld) {
+                    rising = false;
+                }
+            }
+        }
+        check(curve.size() >= 10 && reference && counted && rising && !m.source.empty(),
+              std::string(m.name) +
+                  ": its curve starts at its Q8_0, counts and rises as the bits fall");
+    }
+    for (const ch::QuantKldPoint& p : ch::kQuantKld) {
+        bool known = false;
+        for (const ch::QuantKldModel& m : ch::kQuantKldModels) {
+            known = known || m.params == p.params;
+        }
+        check(known, std::string(p.label) + ": its model is in kQuantKldModels");
+    }
     q.bits_per_weight = 5.2; // the same files counted at other bits: the curve at those bits, as before
     check(!quant_term(q).measured && quant_term(q).evidence == ch::Evidence::Interpolated &&
               quant_term(q).kld < 0.01925 && quant_term(q).kld > 0.01828,
@@ -3978,8 +4084,9 @@ void reports_gates_and_bands(const json& fixture) {
     // Only the quantization's own term against Q8_0, on the calibrated model's measured files.
     ch::Accuracy measured;
     measured.kld   = 0.03;
-    measured.terms = {{ch::Axis::Quant, "Q4_K_M", 0.02, true, false, "", ch::Evidence::Measured},
-                      {ch::Axis::Kv, "int8", 0.01, true, false, "", ch::Evidence::Measured}};
+    measured.terms = {
+        {ch::Axis::Quant, "Q4_K_M", 0.02, true, false, "", ch::Evidence::Measured, "Qwen3.5-9B"},
+        {ch::Axis::Kv, "int8", 0.01, true, false, "", ch::Evidence::Measured}};
     std::string_view why = "x";
     const auto pts       = ch::answer_points(measured, scale, &why);
     check(pts && std::abs(*pts - 0.8) < 1e-12 && why.empty(),
