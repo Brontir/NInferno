@@ -2753,7 +2753,10 @@ not small: at the worth's lambda of 25 it weighs as 12.5 % of a request's time, 
 own Q6_K to Q5_K_S gap (0.0047). A transfer is a value the answers cannot tell from the truth, not
 one the worth cannot tell; a tighter rule waits for a worth-side resolution (#915).
 
-**What moves.** The labels that pass: Q6_K, UD-Q5_K_XL and Q5_K_S (the largest gap, the 2B's
+**What moves.** The labels that pass, where the file's bits match the 9B label's within 0.05 (a
+label's bits shift with the model's size: Q6_K at every measured size, 6.649 to 6.686; UD-Q5_K_XL
+only near 9B to 27B, 6.016 to 5.997 against the 0.8B's 6.333; Q5_K_S near 5B to 25B; elsewhere the
+label stays an estimate): Q6_K, UD-Q5_K_XL and Q5_K_S (the largest gap, the 2B's
 Q5_K_S, 0.00443; the 2B's points are one card's, so their margin is inside that card's spread).
 Q5_K_M just fails (the 2B's lies 0.00503 below the 9B's), and every 4-bit and lower label fails (the
 2B's UD-Q4_K_XL 0.006 below, the 0.8B's Q4_K_M 0.007 above). A model outside the sizes that measured
