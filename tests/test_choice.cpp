@@ -2566,9 +2566,11 @@ void resolution_labels(const json& fixture) {
 }
 
 // #304: a choice made on the generation's reference card reads none of the board's continuous
-// facts: another clock, memory bandwidth, SM count or L2 of the same generation moves the speeds
-// shown, never what is chosen. Every fixture card, a short and a long context, the dense 9B and
-// the MoE 35B with two measured drafters (its chunk by speed and the drafter by worth open).
+// facts for its storages: another clock, memory bandwidth, SM count or L2 of the same generation
+// moves the speeds shown, never the KV codec, the mode or the chunk. The drafter (B2, #618 step 6)
+// may follow the board's rates where the worth decides it, the same facts the same drafter. Every
+// fixture card, a short and a long context, the dense 9B and the MoE 35B with two measured drafters
+// (its chunk by speed and the drafter by worth open).
 void board_facts_do_not_decide(const json& fixture) {
     std::vector<std::pair<std::string, Bench>> benches;
     for (const auto& [name, unused] : fixture.at("cards").items()) {
@@ -2586,27 +2588,50 @@ void board_facts_do_not_decide(const json& fixture) {
         for (const std::uint32_t context : {4096U, 131072U}) {
             ch::Task task;
             task.contexts = {context};
+
+            // The storages, the mode and the chunk (B1); the drafter apart (B2, #618 step 6).
+            struct Decided {
+                std::string storages;
+                std::size_t drafter = 0;
+                bool on_board       = false;
+            };
             const auto decided = [&](const ch::CardFacts& card) {
                 const ch::Choice c = ch::choose(b.model, card, b.quants[0], allowed, {}, task,
                                                 oracle(b, 40e9), ch::Gates{true, true});
-                if (!c.chosen) { return std::string("none"); }
+                if (!c.chosen) { return Decided{"none"}; }
                 const ch::Candidate& k = chosen(c).candidate;
-                return std::string(kv_cache_storage_name(k.kv)) + "/" +
-                       std::to_string(static_cast<int>(k.activations)) + "/" + std::to_string(k.chunk) +
-                       "/" + std::to_string(k.drafter) + (c.by_worth ? "/worth" : "/defaults") +
-                       (c.chunk_by_speed ? "/chunk" : "") + (c.drafter_by_worth ? "/drafter" : "");
+                return Decided{std::string(kv_cache_storage_name(k.kv)) + "/" +
+                                   std::to_string(static_cast<int>(k.activations)) + "/" +
+                                   std::to_string(k.chunk) + (c.by_worth ? "/worth" : "/defaults") +
+                                   (c.chunk_by_speed ? "/chunk" : "") +
+                                   (c.drafter_by_worth ? "/drafter" : ""),
+                               k.drafter, c.drafter_on_board};
             };
-            const std::string base = decided(b.card);
-            bool same = true;
+            const Decided base = decided(b.card);
+            bool same = true, drafter_follows = true;
             for (const double f : {0.7, 1.3}) {
                 ch::CardFacts clock = b.card, dram = b.card, sms = b.card, l2 = b.card;
                 clock.clock_hz *= f;
                 dram.dram_bytes_per_s *= f;
                 sms.sms = static_cast<int>(sms.sms * f);
                 l2.l2_bytes = (l2.l2_bytes > 0 ? l2.l2_bytes : 32e6) * f;
-                for (const ch::CardFacts& other : {clock, dram, sms, l2}) { same = same && decided(other) == base; }
+                for (const ch::CardFacts& other : {clock, dram, sms, l2}) {
+                    const Decided d = decided(other);
+                    same            = same && d.storages == base.storages;
+                    // The drafter may follow the board's rates, only where the worth decides it,
+                    // and the same facts give the same drafter (same chip type, same drafter).
+                    const Decided again = decided(other);
+                    drafter_follows =
+                        drafter_follows && again.drafter == d.drafter &&
+                        (d.drafter == base.drafter || d.on_board || base.on_board) &&
+                        (!d.on_board || base.storages.find("/drafter") != std::string::npos);
+                }
             }
-            check(same, label + ", " + std::to_string(context) + " tokens: the board's own rates do not decide (" + base + ")");
+            check(same, label + ", " + std::to_string(context) +
+                            " tokens: the board's own rates do not decide the storages (" +
+                            base.storages + ")");
+            check(drafter_follows, label + ", " + std::to_string(context) +
+                                       " tokens: the drafter follows the board only as B2");
         }
     }
 }

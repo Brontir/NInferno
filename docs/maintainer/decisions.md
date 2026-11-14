@@ -2729,3 +2729,30 @@ estimate moves to the BF16 share (#822; `prefill_prices_the_selectors_route` in
 - Volta's prefill is not asked (its CUTLASS gates mirror the selector's `volta_cutlass_takes`, a
   second copy); ninferno-ui registers no query (#766).
 - Not run on the stands.
+
+## 86. The drafter is priced on the board where the worth decides it; the storages stay the reference card's (#618 step 6, 13.11, rule)
+
+**The question.** A generation's reference card decides the storages (KV codec, activations, state
+dtype, chunk), so that a generation's boards write the same bytes (B1, deterministic-decisions.md).
+The drafter writes no other bytes for a given chip type and request schedule, and carries no
+accuracy term: it is B2, which may read the board's canonical facts. Pricing it on the reference
+card too picks, for another board of the generation, the drafter that pays on a card of other rates.
+
+**Rule.** Where the worth decides the drafter (`drafter_by_worth`) and the board is not its
+generation's reference card (`same_rates`: its capability, SMs, reference clock and memory rate),
+`choose()` prices the candidates of the chosen storages and chunk that hold the settled context on
+the board's own rates, and takes the fewest seconds there by more than the tie (`kWorthTie`). The
+storages stay the reference card's. Under `--activations exact` the drafter stays the reference
+card's: exact reads no board fact. The plan says so (`drafter_on_board`).
+
+**Property.** test_choice `board_facts_do_not_decide`: the board's clock, DRAM rate, SMs and L2
+moved by 0.7x and 1.3x never move the storages; the drafter moves only where the worth decides it,
+and the same facts always give the same drafter (same chip type, same drafter).
+
+**What moves.** Nothing on the lab boards. The study grid (17 recipes x 8 lab boards x 3 contexts x
+2 stream counts, 816 pairs) planned every recipe on every lab board at 8K, 32K and 128K tokens and 1
+and 4 streams, on master and on the branch: no pair moves. Run eight planners at a time on one host
+GPU, 30 pairs differed; rerun one at a time, none does: the host's load moved them, not the rule
+(#909). The worth decides the drafter only on Ada and Blackwell (Ampere and Turing have no decision
+constants); on their non-reference cards (RTX 4060 Ti 16GB, RTX 4070 Ti, RTX 5070 Ti) the board's
+rates take the reference card's drafter in every case. No plan golden moves.

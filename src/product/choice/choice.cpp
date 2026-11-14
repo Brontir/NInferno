@@ -36,6 +36,12 @@ CardFacts card_facts_of(const DeviceClass& device) {
 
 namespace {
 
+// Whether two cards price alike: the same capability, SMs, reference clock and memory rate.
+bool same_rates(const CardFacts& a, const CardFacts& b) noexcept {
+    return a.major == b.major && a.minor == b.minor && a.sms == b.sms && a.clock_hz == b.clock_hz &&
+           a.dram_bytes_per_s == b.dram_bytes_per_s;
+}
+
 // The generation row's tensor rate per SM and clock for a route (Fp4: twice the int8 rate). A
 // generation without an int8 MMA (Volta) takes its BF16 rate for the int8 route's compute.
 double peak(const CardFacts& card, Route route) noexcept {
@@ -2417,6 +2423,31 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
                   " tokens for each of " + std::to_string(task.concurrency) + " streams";
         out.why_code = "no_fit";
         return out;
+    }
+    // The drafter is B2 (deterministic-decisions.md: routes and depth under fast may read the
+    // board's canonical facts), and it carries no accuracy term: where the worth decides it and
+    // the board is not its generation's reference card, it is priced on the board's own rates
+    // (#618 step 6). Among the candidates of the chosen storages and chunk that hold the settled
+    // context, the fewest seconds on the board wins by more than the tie. The storages stay the
+    // reference card's (B1). Same chip, same facts, same drafter; where the board is the reference
+    // card nothing moves. Under --activations exact the drafter is B1 too (its bytes are the same
+    // across a generation): it stays the reference card's.
+    if (out.drafter_by_worth && ref && !same_rates(card, ref->card) &&
+        out.scored[*chosen].candidate.activations != ActivationMode::Exact) {
+        const Candidate kept = out.scored[*chosen].candidate;
+        std::size_t pick     = *chosen;
+        for (std::size_t i = 0; i < out.scored.size(); ++i) {
+            const Scored& s    = out.scored[i];
+            const Candidate& o = s.candidate;
+            if (i == pick || !eligible(s) || s.own_context < settled) { continue; }
+            if (o.kv != kept.kv || o.ring != kept.ring || o.state != kept.state ||
+                o.activations != kept.activations || o.chunk != kept.chunk) {
+                continue;
+            }
+            if (std::log(out.scored[pick].seconds) - std::log(s.seconds) > kWorthTie) { pick = i; }
+        }
+        out.drafter_on_board = out.scored[pick].candidate.drafter != kept.drafter;
+        chosen               = pick;
     }
     out.why_code = out.by_worth ? "by_worth" : "defaults";
     // Why the family's defaults stand, where they do.

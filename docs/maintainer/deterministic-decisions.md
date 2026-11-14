@@ -514,6 +514,13 @@ from `src/product/choice` ([Configuration choice](configuration-choice.md)). The
 prices its candidates on the generation's reference card, a declared constant per generation,
 never on the board: the board's clock and bandwidth enter only the estimates shown. It decides only
 where its constants rest on two lab cards of the generation; elsewhere the family's defaults stand.
+The drafter is B2 (depth under `fast`: its bytes are the same for the same chip type and request
+schedule) and carries no accuracy term, so where the worth decides it, it is priced on the board's
+own canonical facts
+(#618 step 6): among the candidates of the storages the reference card chose, the fewest seconds on
+the board. The same chip type gets the same drafter; the storages stay the reference card's.
+Under `--activations exact` the drafter stays the reference card's, so that exact reads no board
+fact.
 The quantization stays the rule above until a measured KLD curve over the quantizations exists.
 
 ### The fingerprint
