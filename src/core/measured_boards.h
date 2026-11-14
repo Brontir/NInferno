@@ -67,7 +67,7 @@ constexpr bool same_board_facts(const Board& a, const Board& b) {
 // (the A100 PCIe 80GB, the H100 NVL, the A30, the A800 PCIe 80GB), so it and the L2 are compared to
 // a part in 10^4; a twin on other memory differs by percents (the RTX 4070 with GDDR6: 20 against
 // 21 Gbps). A row that gives no L2 (0) agrees only with a device that reports none, so a real card
-// of such a row (the H100 NVL, the A30) is written by its facts until its row gives the L2.
+// of such a row (the H100 NVL) is written by its facts until its row gives the L2.
 constexpr bool row_board_facts(const Board& a, const Board& b) {
     const auto close = [](double x, double y) {
         return (x > y ? x - y : y - x) <= 1e-4 * (x > y ? x : y);

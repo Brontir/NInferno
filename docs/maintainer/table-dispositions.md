@@ -4,8 +4,9 @@ Two answers of the MoE ops rest on a table of boards where something was measure
 boards by `board_distance`. The rule of this project is that a decision comes from the card's
 published facts and the kernels' counted facts, and a measurement only verifies it. So each table
 gets a disposition: **derived** from facts, or **declared** (a literal with its provenance, labelled
-as such in every answer). This note records the disposition of each and why. No choice changes: a
-derivation that would change one stays a proposal until it is predicted and then verified.
+as such in every answer). This note records the disposition of each and why. Sourcing a missing
+board fact can change its answer under the existing rule; those changes are recorded below.
+A new derivation stays a proposal until it is predicted and then verified.
 
 ## The mechanism (code)
 
@@ -50,16 +51,16 @@ the answer is `Incomplete` or `None`. Only a table with an incomplete row could 
   under test, so that file pins behaviour, it is not an independent expectation).
 
 **What the counts below are over.** They are over the published-facts table: each SKU's board is
-built from its `gpu_facts.json` row (`measured::table_board`), whose L2 is the row's `l2_mib`. Six
-rows of the table (five SKUs) are `Incomplete` in one table or both, because the row has no
-`l2_mib` and a measured row is near: A10G and GeForce RTX 3080 12GB (frontier), L40S and RTX PRO 6000
-Blackwell Server Edition (both tables), and the two RTX 5080 Laptop GPU rows (A8 route). No `l2_mib`
-is invented for them. A device reports its L2 through the driver, so on hardware those SKUs would be
-`Carried` (or `None`) by their real distance, not `Incomplete`. The table is not a statement about
-what a device of that SKU gets.
+built from its `gpu_facts.json` row (`measured::table_board`), whose L2 is the row's `l2_mib`.
+The 2026-11-13 L2 audit completes six formerly incomplete PCI rows (five SKUs): A10G and
+GeForce RTX 3080 12GB (frontier), L40S and RTX PRO 6000 Blackwell Server Edition (both tables),
+and the two RTX 5080 Laptop GPU rows (A8 route). They now answer `Carried` at distances
+0.677 / 0.266 / 0.580 / 0.353 / 0.792 from their respective donors, under the unchanged
+distance rule. This is transfer evidence, not a measurement on those cards. The remaining
+target with unknown L2, GTX 1660 SUPER on TU106, has no donor in either table and answers `None`.
 
 Counts over the 105 target SKUs (measured / carried / incomplete / none):
-A8 route 4 / 8 / 4 / 89; Q4 frontier 4 / 13 / 4 / 84.
+A8 route 4 / 12 / 0 / 89; Q4 frontier 4 / 17 / 0 / 84.
 
 ## `a8_default_route`
 
@@ -91,12 +92,12 @@ have a row and every other format takes w4r1. It is already fact-based, and it s
   w4r1, where the register MMA lost by x1.15..1.36 (V100 x3.5..4). On the one card where the schedule
   was measured against it (RTX 4060 Ti) every schedule is within 1..3 % of w4r1: the literal's cost,
   where measured, is at most that.
-- The literal answers 93 of 105 rows (`None` 89, `Incomplete` 4): every Ampere, Turing and Volta card
+- The literal answers 89 of 105 rows (`None` 89, `Incomplete` 0): every Ampere, Turing and Volta card
   (no row of those instruction sets), every Ada card outside distance 1.0 of the 4090 (RTX 4080 and
-  SUPER, the 4070 and 4060 families, L4, RTX 2000..4500 Ada, the Ada laptop parts; the L40S is
-  `Incomplete`), and the consumer Blackwell cards outside reach of the 5090 and 5080: the RTX 5070,
-  5060 Ti and 5060 (`None`), the RTX PRO 6000 Blackwell Server Edition and the two 5080 Laptop rows
-  (`Incomplete`: no L2 in the facts table). Hopper and datacenter Blackwell (H100, H200, H800, B200)
+  SUPER, the 4070 and 4060 families, L4, RTX 2000..4500 Ada, the Ada laptop parts), and the consumer
+  Blackwell cards outside reach of the 5090 and 5080: the RTX 5070, 5060 Ti and 5060 (`None`).
+  L40S, RTX PRO 6000 Blackwell Server Edition and both 5080 Laptop rows now carry their donors'
+  routes after the L2 audit. Hopper and datacenter Blackwell (H100, H200, H800, B200)
   are not among the 105 target SKUs. That is the table's real coverage; it is labelled, not hidden.
 
 **What would move it.** A priced grouped stage in the cost model (a replica against the sweeps on
@@ -125,15 +126,16 @@ parameters fits them exactly, which is a fit, not a derivation.
 **Disposition: declared.** Rows RTX 5090, 4090 (`kSparseMoePrefillQ4Q5Min` = 47) and RTX 3090 (17),
 measured ABBA as above; `Carried` within 1.0 (RTX PRO 6000 0.35, 4090 D 0.17, 6000 Ada 0.43, L40
 0.58; 3090 Ti 0.14, 3080 0.70, 3080 Ti 0.07, A6000 0.32, A5000 0.64, A40 0.46, A10 0.83).
-Fallback literal: 47, the Blackwell/Ada edge. The literal answers 88 of 105 rows (`None` 84,
-`Incomplete` 4: A10G, RTX 3080 12GB, L40S, RTX PRO 6000 Server).
+The L2 audit adds A10G (0.677) and RTX 3080 12GB (0.266), which carry the 3090's frontier of
+17 instead of the fallback 47; L40S (0.580) and RTX PRO 6000 Server (0.353) carry 47.
+Fallback literal: 47, the Blackwell/Ada edge. The literal answers 84 of 105 rows (`None` 84,
+`Incomplete` 0).
 
 **Open risk.** Ampere cards outside the 3090's reach take the 47 literal: the RTX 3060, 3060 Ti,
 3070, 3070 Ti, A4000, 3050, A2 and the two RTX 3060 Laptop GPU rows (14 rows, with their LHR and 8GB
 / 6GB rows). So do the cards of the generations with no row at all: the 8 GA100 rows (A100, A30,
-A800), the 23 Turing rows and the 7 Volta rows. (The A10G and the RTX 3080 12GB are `Incomplete` in
-the facts table only because it has no L2 for them; a device reports its own L2, so they may well be
-`Carried` from the 3090 at their real distance.) The only Ampere measurement (3090) lost 28 % at C4
+A800), the 23 Turing rows and the 7 Volta rows. The A10G and RTX 3080 12GB now carry 17 from
+the 3090 using their published L2 capacities. The only Ampere measurement (3090) lost 28 % at C4
 with 47 against 17, so the step may carry to the whole generation. A C4 sweep at frontier 47 / 25 /
 17 on an RTX 3060 would show whether it does; if it does, a generation-keyed rule (a frontier of 17
 for a board without Ada's tensor-core rate) would turn those SKUs into a measured-and-labelled

@@ -20,6 +20,7 @@ Each row is one SKU, keyed by its PCI product id:
 | `sms` | multiprocessors of the board |
 | `boost_mhz` | the **reference clock** (below); on a laptop the top of the published range, which it is not priced at |
 | `boost_min_mhz` | laptops only, and on every laptop: the bottom of the published boost range |
+| `l2_mib` | the whole SKU's L2 capacity in MiB (2^20 bytes), including fractional values; absent means unknown, not zero capacity |
 | `bus_bits`, `gbps` | memory bus width and data rate per pin; bandwidth = `gbps` x `bus_bits` / 8 |
 | `tdp_w` | total board power; on a laptop, the top TGP without Dynamic Boost |
 | `vram_gib` | the marketed memory size |
@@ -82,6 +83,35 @@ another memory than its row's), and are observed
 its range's bottom fingerprint alike whatever their driver reports.
 
 ## Adding a SKU
+
+### L2 evidence
+
+Use the exact board variant's capacity, not the full chip's capacity or an SM-count ratio.
+For example, AD102 has 72 MiB on RTX 4090 and 96 MiB on L40S. TechPowerUp's cache fields
+use MB/KB for binary cache units: 1536 KB is 1.5 MiB (RTX 3050 6GB), and 512 KB is 0.5 MiB
+(T400 4GB). Keep that precision when converting to bytes. L2 capacity is not L2 bandwidth.
+
+Each capacity added in the 2026-11-13 audit names its exact-SKU source in `sources` and
+its provenance in `note`. The L40S and Tesla T4 values are also backed by published
+hardware-owner reports in bytes. These are published facts; no local timing or tuning
+is needed. Identification-only rows remain `target: false` even after their L2 is sourced.
+
+Two rows remain unknown after that audit:
+
+- `0x1F09`, GTX 1660 SUPER on **TU106** (target): the available
+  [1660 SUPER specification](https://www.techpowerup.com/gpu-specs/geforce-gtx-1660-super.c3458)
+  describes TU116. Its 1.5 MiB must not be copied to TU106 without exact-SKU evidence.
+- `0x2321`, H100 NVL (identification only): the
+  [TechPowerUp NVL page](https://www.techpowerup.com/gpu-specs/h100-nvl-94-gb.c4327) gives 60 MB,
+  while a [published H100 NVL research hardware table](https://repository.lib.ncsu.edu/server/api/core/bitstreams/a94ab66d-6435-46d5-acc1-28fe54766bfb/content)
+  gives 50 MB. Resolve this with an unambiguous NVIDIA SKU specification or a whole-device
+  `deviceQuery` report in bytes, not the GH100 full-chip figure or a two-GPU aggregate.
+
+`ninferno_machine_facts_test` rejects another target row without L2. Its one explicit
+exception is `0x1F09`; remove that exception when its capacity is sourced. Unknown values
+stay absent, preserving the conservative missing-fact behavior.
+
+### Procedure
 
 1. Take the id from pci-ids and the figures from NVIDIA's datasheet or product page. Use a
    database page (TechPowerUp) only for a figure NVIDIA does not publish, and say so in `note`.

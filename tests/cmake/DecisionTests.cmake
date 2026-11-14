@@ -5,6 +5,18 @@
 # whole suite: `ctest -L host` there runs exactly these. The decisions workflow
 # (.github/workflows/decisions.yml) builds them in that tree, one per golden build set.
 
+# Board facts feed every decision. Check the parsed and constexpr registries in decisions-only
+# CI too, including sourced L2 coverage; these tests need neither nvcc nor a CUDA runtime.
+foreach(facts_test IN ITEMS machine_facts board_registry)
+  ninferno_add_test(ninferno_${facts_test}_test LABELS host NEEDS_SOURCE_DIR STATIC_LINK
+    SOURCES "${PROJECT_SOURCE_DIR}/tests/test_${facts_test}.cpp"
+            "${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp"
+            "${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp"
+    LIBRARIES ninferno_core_host)
+endforeach()
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_machine_facts_test)
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_board_registry_test)
+
 # The selector golden's host twin: the same dump code as ninferno_selector_golden_test
 # (tests/ops/linear/tests.cmake), built and linked with no CUDA runtime (ninferno_ops_host): the
 # committed goldens must read the same from a host-only selector (#620). The stubs are the device
