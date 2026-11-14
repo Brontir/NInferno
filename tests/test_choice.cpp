@@ -1151,16 +1151,16 @@ void weighs_the_quantizations(const json& fixture) {
     // file, the label's point of its own curve stands as a proxy; between its points the curve is
     // its own; a model of the family with no curve of its own reads the 9B's.
     {
-        using A                = ch::QualityAuthority;
-        const double four_b    = 4118937600.0;
-        const auto point_of    = [&](std::string_view label) -> const ch::QuantKldPoint* {
+        using A             = ch::QualityAuthority;
+        const double four_b = 4118937600.0;
+        const auto point_of = [&](std::string_view label) -> const ch::QuantKldPoint* {
             for (const ch::QuantKldPoint& p : ch::kQuantKld) {
                 if (p.params == four_b && p.label == label) { return &p; }
             }
             return nullptr;
         };
-        const ch::QuantKldPoint* q4 = point_of("Q4_K_M");
-        const ch::QuantKldPoint* q5 = point_of("Q5_K_S");
+        const ch::QuantKldPoint* q4   = point_of("Q4_K_M");
+        const ch::QuantKldPoint* q5   = point_of("Q5_K_S");
         const ch::QuantKldPoint* q4xl = point_of("UD-Q4_K_XL");
         check(q4 != nullptr && q5 != nullptr && q4xl != nullptr, "the 4B's curve holds its points");
         if (q4 != nullptr && q5 != nullptr && q4xl != nullptr) {
@@ -1172,11 +1172,11 @@ void weighs_the_quantizations(const json& fixture) {
                 }
                 return ch::Term{};
             };
-            ch::QuantOption o   = b.quants[0];
-            o.label             = "Q4_K_M";
-            o.files             = std::string(q4->file);
-            o.bits_per_weight   = q4->bits_per_weight;
-            const ch::Term own  = term_of(four, o);
+            ch::QuantOption o  = b.quants[0];
+            o.label            = "Q4_K_M";
+            o.files            = std::string(q4->file);
+            o.bits_per_weight  = q4->bits_per_weight;
+            const ch::Term own = term_of(four, o);
             check(ch::quant_authority(four, o) == A::Direct && own.measured &&
                       std::abs(own.kld - q4->kld) < 1e-12 &&
                       own.source.find("Qwen3.5-4B-GGUF") != std::string::npos,
@@ -1184,7 +1184,8 @@ void weighs_the_quantizations(const json& fixture) {
             o.files.clear();
             const ch::Term proxy = term_of(four, o);
             check(ch::quant_authority(four, o) == A::Estimate &&
-                      proxy.evidence == ch::Evidence::Proxy && std::abs(proxy.kld - q4->kld) < 1e-12,
+                      proxy.evidence == ch::Evidence::Proxy &&
+                      std::abs(proxy.kld - q4->kld) < 1e-12,
                   "the 4B's Q4_K_M, files unknown: its own label's point, a proxy");
             o.label           = "";
             o.bits_per_weight = 0.5 * (q4xl->bits_per_weight + q5->bits_per_weight);
@@ -1217,15 +1218,20 @@ void weighs_the_quantizations(const json& fixture) {
             reference = reference || (p->label == "Q8_0" && p->kld == 0);
             counted   = counted && (p->cards >= ch::kQuantKldCards || m.reference_nll > 0);
             for (const ch::QuantKldPoint* r : curve) {
-                if (r->bits_per_weight < p->bits_per_weight - 0.3 && r->kld < p->kld) { rising = false; }
+                if (r->bits_per_weight < p->bits_per_weight - 0.3 && r->kld < p->kld) {
+                    rising = false;
+                }
             }
         }
         check(curve.size() >= 10 && reference && counted && rising && !m.source.empty(),
-              std::string(m.name) + ": its curve starts at its Q8_0, counts and rises as the bits fall");
+              std::string(m.name) +
+                  ": its curve starts at its Q8_0, counts and rises as the bits fall");
     }
     for (const ch::QuantKldPoint& p : ch::kQuantKld) {
         bool known = false;
-        for (const ch::QuantKldModel& m : ch::kQuantKldModels) { known = known || m.params == p.params; }
+        for (const ch::QuantKldModel& m : ch::kQuantKldModels) {
+            known = known || m.params == p.params;
+        }
         check(known, std::string(p.label) + ": its model is in kQuantKldModels");
     }
     q.bits_per_weight = 5.2; // the same files counted at other bits: the curve at those bits, as before

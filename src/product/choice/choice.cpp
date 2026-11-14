@@ -2162,10 +2162,10 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     // The quantization: the measured curve (choice_constants.h).
     // Unknown bits (0) have no place on the curve: no term, and the quantization stays the rule's
     // (plan_quants weighs the quantizations only where every row's bits are known).
-    const QuantKld q = quant.bits_per_weight > 0
-                           ? quant_kld(quant.bits_per_weight, quant.label, quant.files, !other_curve,
-                                       model.params)
-                           : QuantKld{.evidence = Evidence::StandIn};
+    const QuantKld q =
+        quant.bits_per_weight > 0
+            ? quant_kld(quant.bits_per_weight, quant.label, quant.files, !other_curve, model.params)
+            : QuantKld{.evidence = Evidence::StandIn};
     // The curve read: the model's own (kQuantKldModels), else the default's.
     const QuantKldModel* own_model = other_curve ? nullptr : quant_kld_model(model.params);
     const std::string curve(own_model != nullptr ? own_model->source : kQuantKldSource);
