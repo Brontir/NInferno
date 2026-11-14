@@ -4,8 +4,10 @@
 #include "core/device.h"
 #include "core/generation.h"
 #include "core/pdl.cuh"
+#include "core/kernel_occupancy.h"
 #include "ops/common/arch_limits.h"
 #include "ops/common/math.h"
+#include "ops/generic/kernel_facts.h"
 #include "ops/softmax_attention/gemma4/kernel.cuh"
 #include "ops/softmax_attention/gemma4/volta_decode.h"
 
@@ -14,8 +16,11 @@
 #include <cstdlib>
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <limits>
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <type_traits>
 
@@ -297,14 +302,40 @@ void launch_attention(const Gemma4AttentionArgs& args, dim3 grid, cudaStream_t s
     }
 }
 
+// The kernel-facts key of gemma4_attention_kernel<Geo, WR, Bc, Partial, Fp8, Chain> (#830).
+template <class Geo, int WR, int Bc, bool Partial, bool Fp8, bool Chain>
+generic::kernel_facts::Gemma4KernelKey attention_key() {
+    generic::kernel_facts::Gemma4KernelKey key;
+    key.kernel  = "attention";
+    key.D       = Geo::D;
+    key.G       = Geo::G;
+    key.slice   = Geo::Width;
+    key.rows    = WR;
+    key.Bc      = Bc;
+    key.partial = Partial;
+    key.fp8     = Fp8;
+    key.chain   = Chain;
+    return key;
+}
+
+// The CTAs of gemma4_attention_kernel<Geo, WR, Bc, Partial, Fp8, Chain> one SM holds, from its
+// facts (gemma4_resident_ctas_per_sm); the live fallback prepares the kernel (its shared-memory
+// opt-in) only where it asks the device.
+template <class Geo, int WR, int Bc, bool Partial, bool Fp8 = false, bool Chain = false>
+int attention_resident_per_sm() {
+    using Tile = Gemma4Tile<Geo, WR, Bc, Fp8>;
+    return gemma4_resident_ctas_per_sm(
+        attention_key<Geo, WR, Bc, Partial, Fp8, Chain>(), Tile::Threads, Tile::SmemBytes, [] {
+            const auto kernel = prepared_kernel<Geo, WR, Bc, Partial, Fp8, Chain>();
+            return kernel_resident_ctas_per_sm(reinterpret_cast<const void*>(kernel), Tile::Threads,
+                                               Tile::SmemBytes);
+        });
+}
+
 // CTAs of one decode instance the whole device holds at once.
 template <class Geo, int WR>
 int decode_resident_ctas() {
-    using Tile        = Gemma4Tile<Geo, WR, kGeoDecodeBc<Geo>>;
-    const auto kernel = prepared_kernel<Geo, WR, kGeoDecodeBc<Geo>, true>();
-    const int per_sm  = kernel_resident_ctas_per_sm(reinterpret_cast<const void*>(kernel),
-                                                    Tile::Threads, Tile::SmemBytes);
-    return std::max(1, per_sm) * device_class().sms;
+    return attention_resident_per_sm<Geo, WR, kGeoDecodeBc<Geo>, true>() * device_class().sms;
 }
 
 // The layer's KV heads: a page pool keeps them on its fourth axis.
@@ -396,14 +427,15 @@ Gemma4DecodePlan gemma4_attention_decode_plan(std::int32_t head_dim, std::int32_
     }
     // One resident wave: every split of every row group and KV head runs concurrently. A second
     // wave measured no faster and doubles the partial traffic the combine has to read.
-    int resident = 0;
-    with_geometry(head_dim, q_heads, kv_heads, [&]<class Geo>() {
-        with_warp_rows<Geo>(warp_rows,
-                            [&]<int WR>() { resident = decode_resident_ctas<Geo, WR>(); });
-    });
     // The SIMT route (no native BF16 MMA) launches its own kernel, splits x KV heads CTAs.
+    int resident = 0;
     if (gemma4_volta_decode_takes(head_dim, rows)) {
         resident = gemma4_volta_decode_resident_ctas(head_dim, rows);
+    } else {
+        with_geometry(head_dim, q_heads, kv_heads, [&]<class Geo>() {
+            with_warp_rows<Geo>(warp_rows,
+                                [&]<int WR>() { resident = decode_resident_ctas<Geo, WR>(); });
+        });
     }
     const std::int32_t wanted = resident / (kv_heads * row_groups);
     return {
@@ -460,11 +492,7 @@ bool chain_enabled() {
 // CTAs of the chained kernel the device holds at once (its persistent grid).
 template <class TileGeo, int WR, int Bc>
 int chain_resident() {
-    using Tile        = Gemma4Tile<TileGeo, WR, Bc, false>;
-    const auto kernel = prepared_kernel<TileGeo, WR, Bc, false, false, true>();
-    const int per_sm  = kernel_resident_ctas_per_sm(reinterpret_cast<const void*>(kernel),
-                                                    Tile::Threads, Tile::SmemBytes);
-    return std::max(1, per_sm) * device_class().sms;
+    return attention_resident_per_sm<TileGeo, WR, Bc, false, false, true>() * device_class().sms;
 }
 
 // Whether a call chains (same bytes either way, so the device may decide): only where the plain
@@ -711,6 +739,47 @@ void gemma4_kv_append_launch(const Tensor& k, const Tensor& v, const Tensor& pos
     } else {
         throw std::invalid_argument("gemma4_kv_append: unregistered head width");
     }
+}
+
+int gemma4_resident_ctas_per_sm(const generic::kernel_facts::Gemma4KernelKey& key, int threads,
+                                std::size_t dynamic_shared_bytes,
+                                const std::function<int()>& live) {
+    namespace kf                          = generic::kernel_facts;
+    const std::optional<std::string> arch = kf::sass_arch();
+    // The key, threads and shared bytes are this build's tile (Gemma4Tile, kFittingBc: constexprs
+    // of NINFERNO_BUILD_ARCH): they are a board's only where its kernels are this build's (#912).
+    const bool own_tile = arch && *arch == kf::build_arch();
+    const std::optional<kf::KernelFacts> facts =
+        own_tile ? kf::gemma4_facts(*arch, key) : std::nullopt;
+    if (facts) {
+        const int per_sm = resident_ctas_per_sm(
+            device_class(),
+            KernelShape{facts->registers, facts->static_shared_bytes, threads, dynamic_shared_bytes,
+                        /*dynamic_shared_opt_in=*/dynamic_shared_bytes > 0});
+        if (per_sm < 1) {
+            throw std::runtime_error(
+                "gemma4_attention: the " + key.kernel +
+                " kernel does not fit one SM by its facts (sm_" + *arch + ": D " +
+                std::to_string(key.D) + " G " + std::to_string(key.G) + " slice " +
+                std::to_string(key.slice) + " rows " + std::to_string(key.rows) + " Bc " +
+                std::to_string(key.Bc) + ", " + std::to_string(facts->registers) + " registers, " +
+                std::to_string(facts->static_shared_bytes) + " B static and " +
+                std::to_string(dynamic_shared_bytes) + " B dynamic shared, " +
+                std::to_string(threads) + " threads)");
+        }
+        return per_sm;
+    }
+    // No snapshot holds the kernel: a substituted board has no answer of its own (the host GPU's
+    // kernels are not the board's), a real device its own kernel's.
+    if (substituted_device_class() != nullptr) {
+        throw std::runtime_error(
+            "gemma4_attention: no kernel facts of the " + key.kernel +
+            " kernel for the substituted board" + (arch ? " (sm_" + *arch + ")" : std::string()) +
+            (arch && !own_tile
+                 ? ": this build's tiles are sm_" + std::string(kf::build_arch()) + "'s (#912)"
+                 : std::string()));
+    }
+    return std::max(1, live());
 }
 
 } // namespace ninferno::ops::detail

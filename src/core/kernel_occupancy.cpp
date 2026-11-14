@@ -25,16 +25,18 @@ int resident_ctas_per_sm(const DeviceClass& d, const KernelShape& k) {
     p.numSms                      = d.sms;
     p.sharedMemPerBlockOptin      = d.smem_per_block_optin;
     p.reservedSharedMemPerBlock   = reserved_shared_bytes_per_cta(d.major);
-    // The kernel as its attributes describe it, without a dynamic shared-memory opt-in (the
-    // register-MMA launches stay within the 48 KiB; a launch past it is refused here as it would
-    // be by the driver without the attribute).
+    // The kernel as its attributes describe it. Without a dynamic shared-memory opt-in (the
+    // register-MMA launches stay within the 48 KiB) a launch past it is refused here as it would
+    // be by the driver without the attribute; with one (allow_dynamic_smem) the block may reach
+    // the architecture's opt-in limit.
     cudaOccFuncAttributes a;
     a.maxThreadsPerBlock        = k.threads;
     a.numRegs                   = k.registers;
     a.sharedSizeBytes           = k.static_shared_bytes;
     a.partitionedGCConfig       = PARTITIONED_GC_OFF;
-    a.shmemLimitConfig          = FUNC_SHMEM_LIMIT_DEFAULT;
-    a.maxDynamicSharedSizeBytes = 0;
+    a.shmemLimitConfig =
+        k.dynamic_shared_opt_in ? FUNC_SHMEM_LIMIT_OPTIN : FUNC_SHMEM_LIMIT_DEFAULT;
+    a.maxDynamicSharedSizeBytes = k.dynamic_shared_opt_in ? k.dynamic_shared_bytes : 0;
     a.numBlockBarriers          = 1;
     const cudaOccDeviceState state; // the default carveout: the whole shared memory of the SM
     cudaOccResult result;

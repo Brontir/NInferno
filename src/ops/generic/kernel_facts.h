@@ -145,7 +145,13 @@ struct SnapshotHeader {
 //   "w4a8"  the W4A8 tiles, w4a8_kernel and the producer-warp w4a8_ws_kernel: one iteration is
 //           a 128-value K tile; key "codec block_m block_n warps_m warps_n epilogue flavor stages
 //           producers" ("W4a8Q45K<4> 32 128 2 4 0 1 0 0")
-inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8"};
+//   "gemma4" the Gemma 4 attention kernels (#830), resources alone (no loop columns): key
+//           "kernel D G slice rows Bc partial fp8 chain", kernel `attention`
+//           (gemma4_attention_kernel<Gemma4Geometry<D, G, slice>, WR = rows, Bc, ...>: "attention
+//           256 8 256 2 64 1 0 0") or `volta` / `volta_tiled` (the Volta decode kernels <D,
+//           MaxRows = rows>, the other fields 0). The decode plan reads the CTAs an SM holds from
+//           them (#830), never the host's kernels.
+inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8", "gemma4"};
 
 struct MmqKernelKey {
     int type      = 0; // the ggml_type value: 12 Q4_K, 13 Q5_K, 14 Q6_K
@@ -163,6 +169,14 @@ struct W4a8KernelKey {
     int producers = 0;
 };
 
+struct Gemma4KernelKey {
+    std::string kernel; // "attention", "volta", "volta_tiled"
+    int D = 0, G = 0, slice = 0;
+    int rows     = 0; // the attention tile's warp rows; the Volta instance's MaxRows
+    int Bc       = 0;
+    bool partial = false, fp8 = false, chain = false;
+};
+
 // One section of a label's snapshot: the nvcc its rows were read under and their count; nullopt
 // where the label has no snapshot or the snapshot no such section.
 struct SectionHeader {
@@ -178,6 +192,8 @@ section_rows(std::string_view arch, std::string_view family);
 [[nodiscard]] std::optional<KernelFacts> mmq_facts(std::string_view arch, const MmqKernelKey& key);
 [[nodiscard]] std::optional<KernelFacts> w4a8_facts(std::string_view arch,
                                                     const W4a8KernelKey& key);
+[[nodiscard]] std::optional<KernelFacts> gemma4_facts(std::string_view arch,
+                                                      const Gemma4KernelKey& key);
 
 // The build architecture labels with a committed snapshot, in file order.
 [[nodiscard]] std::vector<std::string_view> snapshot_archs();

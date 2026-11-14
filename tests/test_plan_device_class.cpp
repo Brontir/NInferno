@@ -43,10 +43,11 @@
 // tile are left out of the size, not refused. A new caller outside the substitute's
 // scope gets that answer silently: keep the plan's reads inside plan_device_class.
 //
-// Known escape (kept by name and checked as it is, so the list only shrinks):
-// - #830: Gemma 4's attention decode plan reads the host GPU (kDecodePlanEscape, below). While it
-//   escapes, the registered Gemma 4 query never answers "start" under a substitute: the pieces
-//   above are what is checked of it.
+// No known escape. #830 (Gemma 4's attention decode plan read the host GPU) is closed: the decode
+// plan prices its residency from the gemma4 section of the kernel-facts snapshot of the kernels the
+// board runs (kernel_facts.h release_arch). A board whose kernels no snapshot holds refuses the
+// Gemma 4 query by name ("no kernel facts"), never by the host GPU; every other board answers
+// "start".
 //
 // The escaped calls print their CUDA_CHECK line to stderr; the test silences stderr around them
 // (QuietStderr) and writes its own failures to stdout.
@@ -65,6 +66,7 @@
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/sampling.h"
 #include "ninferno/ops/speculative_round.h"
+#include "ops/generic/kernel_facts.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "runtime/engine/plan_dry_run.h"
@@ -266,18 +268,18 @@ struct Subject {
     bool gemma                = false; // the registered Gemma 4 workspace query sizes it
 };
 
-// #830, the known escape: Gemma 4's attention decode plan (ops/softmax_attention/gemma4/launch.cu,
+// #830, closed: Gemma 4's attention decode plan (ops/softmax_attention/gemma4/launch.cu,
 // gemma4_attention_decode_plan, which ops::gemma4_attention_workspace_bytes calls, and so
 // models::gemma4::target_op_bytes and drafter_pass_bytes) counts its splits from the resident CTAs
-// of the decode kernel: it sets the kernel's shared-memory opt-in (allow_dynamic_smem,
-// cudaFuncSetAttribute on the current device) and asks the runtime's occupancy
-// (kernel_resident_ctas_per_sm, cudaOccupancyMaxActiveBlocksPerMultiprocessor, cached by the real
-// ordinal), then multiplies by the substitute's SMs; the Volta SIMT decode
-// (gemma4_volta_decode_resident_ctas) does the same. Under a substituted board the splits, and so
-// the partials' workspace, follow the host GPU's occupancy; with no GPU it throws, the Gemma 4
-// query is refused and the formula stands. The facts' answer (core/kernel_occupancy.h
-// resident_ctas_per_sm) needs these kernels in the kernel-facts snapshots, which carry none.
-constexpr std::string_view kDecodePlanEscape = "#830 (gemma4_attention_decode_plan)";
+// of the decode kernel, now from the kernel's committed facts (gemma4_resident_ctas_per_sm). A
+// board the snapshots cover and whose kernels are this build's (the tile is a constexpr of the
+// build, #912) answers; any other refuses by name, never by the host GPU.
+bool gemma4_facts_cover(const DeviceClass& d) {
+    namespace kf           = ops::detail::generic::kernel_facts;
+    const std::string arch = kf::release_arch(d.major, d.minor);
+    return !arch.empty() && arch == kf::build_arch() &&
+           kf::section_header(arch, "gemma4").has_value();
+}
 
 EngineOptions served(std::uint32_t context, std::uint32_t streams, SpeculativeBackend backend) {
     EngineOptions o =
@@ -550,7 +552,8 @@ std::string gemma_pieces(const NamedBoard& b, const Subject& s) {
     }
 
     // #830: the attention's capacity, of the target's sliding and full layers (and the
-    // assistant's, which takes the same geometry), reads the host GPU and throws with none.
+    // assistant's, which takes the same geometry), from the kernels' facts: answered where the
+    // snapshots cover the board, refused by name (never by the hidden device) where they do not.
     struct Layer {
         std::int32_t head_dim, kv_heads, window;
     };
@@ -561,20 +564,28 @@ std::string gemma_pieces(const NamedBoard& b, const Subject& s) {
          static_cast<std::int32_t>(m.window)},
         {static_cast<std::int32_t>(m.full_key_dim),
          static_cast<std::int32_t>(m.full_kv_heads_total / m.full_layers), 0}};
+    const bool covered = gemma4_facts_cover(b.substitute);
     for (const Layer& l : layers) {
-        bool escaped = false;
+        const std::string what =
+            b.name + ", " + s.name + ", attention D=" + std::to_string(l.head_dim);
+        std::string refusal;
         try {
             const QuietStderr quiet;
-            (void)ops::gemma4_attention_workspace_bytes(
+            const std::size_t bytes = ops::gemma4_attention_workspace_bytes(
                 l.head_dim, static_cast<std::int32_t>(m.query_heads), l.kv_heads,
                 ops::Gemma4AttentionEnvelope{static_cast<std::uint32_t>(context), 1}, l.window);
+            out += "attention D=" + std::to_string(l.head_dim) + " " + std::to_string(bytes) + "\n";
         } catch (const CudaError& error) {
-            escaped = error.code() == cudaErrorNoDevice;
-        } catch (const std::exception&) {}
-        check(escaped, b.name + ", " + s.name + ", attention D=" + std::to_string(l.head_dim) +
-                           ": the known escape " + std::string(kDecodePlanEscape) +
-                           " reads the hidden device (if it no longer does, the escape is gone: "
-                           "remove it and require \"start\" of the Gemma 4 query)");
+            refusal = "the hidden device: " + std::string(cudaGetErrorName(error.code()));
+        } catch (const std::exception& error) { refusal = error.what(); }
+        if (covered) {
+            check(refusal.empty(),
+                  what + ": the snapshots cover the board, yet refused: " + refusal);
+        } else {
+            check(refusal.find("no kernel facts") != std::string::npos,
+                  what + ": no snapshot covers the board, so the refusal names the facts, not '" +
+                      refusal + "'");
+        }
     }
     return out;
 }
@@ -606,8 +617,9 @@ std::string text_of(const std::optional<rt::PlanExpertRoute>& r) {
 }
 
 // The workspace the registered query answers under the board's class: the formula for Qwen 3.5
-// (its query declines facts without the artifact's directory, #615 W2); for Gemma 4 the query
-// refused by the hidden device (#830, whose reach gemma_pieces pins to the attention's capacity).
+// (its query declines facts without the artifact's directory, #615 W2); for Gemma 4 the start's
+// own answer where the kernel-facts snapshots cover the board, else the query's refusal by name
+// (#830).
 // Qwen 3.5's query declines facts that carry no converted artifact's directory
 // (plan_workspace.cpp).
 constexpr std::string_view kQwenWithoutDirectory =
@@ -616,11 +628,14 @@ constexpr std::string_view kQwenWithoutDirectory =
 void check_workspace(const NamedBoard& b, const Subject& s, const std::string& basis,
                      const std::string& where) {
     const std::string what = b.name + ", " + s.name + ", " + where;
-    if (s.gemma) {
+    if (s.gemma && gemma4_facts_cover(b.substitute)) {
+        check(starts_with(basis, "start"),
+              what + ": the Gemma 4 query answers the start's workspace, not '" + basis + "'");
+    } else if (s.gemma) {
         check(starts_with(basis, "formula: an Op's capacity query refused the facts") &&
-                  basis.find("cudaErrorNoDevice") != std::string::npos,
-              what + ": the Gemma 4 query is refused by the known escape " +
-                  std::string(kDecodePlanEscape) + ", not '" + basis + "'");
+                  basis.find("no kernel facts") != std::string::npos,
+              what + ": the Gemma 4 query is refused for want of kernel facts, not '" + basis +
+                  "'");
     } else {
         check(basis == kQwenWithoutDirectory,
               what + ": the formula without the artifact's directory, not '" + basis + "'");
