@@ -293,9 +293,9 @@ struct QuantPlan {
     };
     std::optional<Trade> trade;
     // Where the worth would weigh the quantizations (#368): the supported rows whose accuracy is
-    // an estimate, neither a measurement of their own files nor a transfer (choice::quant_authority; they take no
-    // part in the trade), and whether the rule's own pick is one of them (no trade then: the
-    // rule's largest stands).
+    // an estimate, neither a measurement of their own files nor a transfer
+    // (choice::quant_authority; they take no part in the trade), and whether the rule's own pick is
+    // one of them (no trade then: the rule's largest stands).
     std::vector<std::string> quality_estimates;
     bool quality_withheld = false;
     nlohmann::json rule_params = nlohmann::json::object();

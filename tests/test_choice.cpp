@@ -1237,7 +1237,8 @@ void weighs_the_quantizations(const json& fixture) {
         o.bits_per_weight = 6.67;
         check(ch::quant_authority(mid, o) == A::Transfer,
               "a 6B's Q6_K: the family curve, a transfer");
-        o.bits_per_weight = 6.20; // the label at other bits: the curve between points, not the label's
+        o.bits_per_weight =
+            6.20; // the label at other bits: the curve between points, not the label's
         check(ch::quant_authority(mid, o) == A::Estimate, "a 6B's Q6_K at other bits: an estimate");
         o.bits_per_weight = 4.0; // a file labelled Q6_K at 4 bits is not the label's quantization
         check(ch::quant_authority(mid, o) == A::Estimate, "a mislabelled file: an estimate");
