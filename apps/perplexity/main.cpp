@@ -326,7 +326,9 @@ int run(const Options& options, const std::shared_ptr<spdlog::logger>& logger,
                     const auto v = static_cast<std::int32_t>(t);
                     dump.write(reinterpret_cast<const char*>(&v), sizeof(v));
                 }
-                if (!dump) { throw std::runtime_error("cannot write " + options.tokens_out->string()); }
+                if (!dump) {
+                    throw std::runtime_error("cannot write " + options.tokens_out->string());
+                }
             }
         }
         std::vector<WindowPlan> windows =
