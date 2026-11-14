@@ -2140,8 +2140,9 @@ namespace {
 // points per KLD (0.2 / 40 = 0.005 for Qwen3.5); 0 where the family has no scale.
 double answer_noise_kld(std::string_view family) noexcept {
     const AnswerScale* scale = answer_scale_of(family);
-    return scale != nullptr && scale->points_per_kld > 0 ? scale->noise_points / scale->points_per_kld
-                                                         : 0;
+    return scale != nullptr && scale->points_per_kld > 0
+               ? scale->noise_points / scale->points_per_kld
+               : 0;
 }
 
 // #618 step 9's transfer rule: the default curve's point of `label` stands for a model of the
@@ -2154,7 +2155,9 @@ bool label_transfers(std::string_view family, std::string_view label, double par
     if (tolerance <= 0 || label.empty()) { return false; }
     double reference = -1;
     for (const QuantKldPoint& p : kQuantKld) {
-        if (std::abs(p.params - kQuantKldDefaultParams) < 0.5 && p.label == label) { reference = p.kld; }
+        if (std::abs(p.params - kQuantKldDefaultParams) < 0.5 && p.label == label) {
+            reference = p.kld;
+        }
     }
     if (reference < 0) { return false; }
     double lightest = 0;
@@ -2185,7 +2188,8 @@ QualityAuthority quant_authority(const ModelFacts& model, const QuantOption& qua
     const QuantKld q =
         quant_kld(quant.bits_per_weight, quant.label, quant.files, own_curve, model.params);
     if (own_curve && q.evidence == Evidence::Measured) { return QualityAuthority::Direct; }
-    if (own_curve && q.evidence != Evidence::Reference && quant_kld_model(model.params) == nullptr &&
+    if (own_curve && q.evidence != Evidence::Reference &&
+        quant_kld_model(model.params) == nullptr &&
         label_transfers(model.family, quant.label, model.params)) {
         return QualityAuthority::Transfer;
     }

@@ -1228,34 +1228,37 @@ void weighs_the_quantizations(const json& fixture) {
     // Q5_K_M (Qwen3.5-2B's lies 0.00502 below the 9B's) nor the 4-bit and lower labels (the 2B's
     // UD-Q4_K_XL 0.006 below, the 0.8B's Q4_K_M 0.007 above).
     {
-        using A             = ch::QualityAuthority;
-        ch::ModelFacts mid  = b.model;
-        mid.params          = 6.0e9; // between the 4B and the 9B, no curve of its own
-        ch::QuantOption o   = b.quants[0];
+        using A            = ch::QualityAuthority;
+        ch::ModelFacts mid = b.model;
+        mid.params         = 6.0e9; // between the 4B and the 9B, no curve of its own
+        ch::QuantOption o  = b.quants[0];
         o.files.clear();
-        o.label             = "Q6_K";
-        o.bits_per_weight   = 6.67;
-        check(ch::quant_authority(mid, o) == A::Transfer, "a 6B's Q6_K: the family curve, a transfer");
+        o.label           = "Q6_K";
+        o.bits_per_weight = 6.67;
+        check(ch::quant_authority(mid, o) == A::Transfer,
+              "a 6B's Q6_K: the family curve, a transfer");
         o.label           = "Q5_K_S";
         o.bits_per_weight = 5.7;
         check(ch::quant_authority(mid, o) == A::Transfer, "a 6B's Q5_K_S: a transfer");
-        o.label = "Q5_K_M";
+        o.label           = "Q5_K_M";
         o.bits_per_weight = 5.9;
-        check(ch::quant_authority(mid, o) == A::Estimate, "a 6B's Q5_K_M: the 2B just outside, an estimate");
-        o.label = "UD-Q4_K_XL";
+        check(ch::quant_authority(mid, o) == A::Estimate,
+              "a 6B's Q5_K_M: the 2B just outside, an estimate");
+        o.label           = "UD-Q4_K_XL";
         o.bits_per_weight = 5.4;
         check(ch::quant_authority(mid, o) == A::Estimate,
               "a 6B's UD-Q4_K_XL: the 2B lies outside the noise, an estimate");
         o.label = "";
         check(ch::quant_authority(mid, o) == A::Estimate, "no label: an estimate");
-        o.label           = "Q6_K";
-        o.bits_per_weight = 6.67;
+        o.label            = "Q6_K";
+        o.bits_per_weight  = 6.67;
         ch::ModelFacts big = mid;
         big.params         = 7.0e10; // beyond the measured sizes
         check(ch::quant_authority(big, o) == A::Estimate, "a 70B: outside the measured sizes");
         ch::ModelFacts four = mid;
         four.params         = 4118937600.0; // has its own curve: its own files or an estimate
-        check(ch::quant_authority(four, o) == A::Estimate, "the 4B's Q6_K of other files: an estimate");
+        check(ch::quant_authority(four, o) == A::Estimate,
+              "the 4B's Q6_K of other files: an estimate");
         ch::ModelFacts other = mid;
         other.family         = "gemma4_text";
         check(ch::quant_authority(other, o) == A::Estimate, "another family: an estimate");
