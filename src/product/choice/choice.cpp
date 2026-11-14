@@ -2084,7 +2084,9 @@ std::optional<double> answer_points(const Accuracy& accuracy, const AnswerScale*
         // (Evidence::Reference) says nothing of the model: a 27B's Q8_0 is 0 against its own Q8_0,
         // not on the 9B's file. Only the measured file's identity (Evidence::Measured, the
         // reference's file included) makes the term the calibrated model's.
-        if (t.transferred || t.evidence != Evidence::Measured) {
+        // And the model of the curve is the scale's: another measured model's own file (#618 step
+        // 9) is measured on its own curve, not calibrated on the scale's.
+        if (t.transferred || t.evidence != Evidence::Measured || t.curve_model != scale->model) {
             return say("model_not_calibrated");
         }
         if (why_code != nullptr) { *why_code = {}; }
@@ -2183,6 +2185,8 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     }
     add(Axis::Quant, quant.label, q.kld, q.evidence == Evidence::Measured, std::move(quant_source),
         q.evidence);
+    const QuantKldModel* read = own_model != nullptr ? own_model : quant_kld_model(kQuantKldDefaultParams);
+    if (read != nullptr) { out.terms.back().curve_model = std::string(read->name); }
 
     const std::string kv{kv_cache_storage_name(candidate.kv)};
     if (candidate.kv == KvCacheStorage::BFloat16) {

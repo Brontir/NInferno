@@ -1181,6 +1181,14 @@ void weighs_the_quantizations(const json& fixture) {
                       std::abs(own.kld - q4->kld) < 1e-12 &&
                       own.source.find("Qwen3.5-4B-GGUF") != std::string::npos,
                   "the 4B's own Q4_K_M file: direct, its own curve's KLD and source");
+            {
+                std::string_view why = "x";
+                check(own.curve_model == "Qwen3.5-4B" &&
+                          !ch::answer_points(ch::accuracy_of(four, o, c, b.card),
+                                             ch::answer_scale_of(four.family), &why) &&
+                          why == "model_not_calibrated",
+                      "answers: the 4B's own measured file is not on the 9B's scale");
+            }
             o.files.clear();
             const ch::Term proxy = term_of(four, o);
             check(ch::quant_authority(four, o) == A::Estimate &&

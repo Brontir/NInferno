@@ -764,6 +764,8 @@ struct Term {
     bool transferred = false; // measured on another family (kKldDefaultFamily, kQuantKldFamily)
     std::string source;
     Evidence evidence = Evidence::Measured;
+    // The quantization's term: the model whose curve it read (QuantKldModel::name); "" otherwise.
+    std::string curve_model;
 };
 
 struct Accuracy {
