@@ -272,11 +272,13 @@ struct Subject {
 // gemma4_attention_decode_plan, which ops::gemma4_attention_workspace_bytes calls, and so
 // models::gemma4::target_op_bytes and drafter_pass_bytes) counts its splits from the resident CTAs
 // of the decode kernel, now from the kernel's committed facts (gemma4_resident_ctas_per_sm). A
-// board the snapshots cover answers; one they do not refuses by name, never by the host GPU.
+// board the snapshots cover and whose kernels are this build's (the tile is a constexpr of the
+// build, #912) answers; any other refuses by name, never by the host GPU.
 bool gemma4_facts_cover(const DeviceClass& d) {
     namespace kf           = ops::detail::generic::kernel_facts;
     const std::string arch = kf::release_arch(d.major, d.minor);
-    return !arch.empty() && kf::section_header(arch, "gemma4").has_value();
+    return !arch.empty() && arch == kf::build_arch() &&
+           kf::section_header(arch, "gemma4").has_value();
 }
 
 EngineOptions served(std::uint32_t context, std::uint32_t streams, SpeculativeBackend backend) {
