@@ -29,7 +29,6 @@
 #include "artifact/formats.h"
 #include "artifact/schema.h"
 #include "core/cuda_error.h"
-#include "ops/generic/kernel_facts.h"
 #include "core/device_class.h"
 #include "core/weight_view.h"
 #include "models/dense/model.h"
@@ -41,6 +40,7 @@
 #include "models/qwen3_5/program/planning/sequence_plan.h"
 #include "models/qwen3_5/program/planning/startup.h"
 #include "ninferno/ops/prefill_routes.h"
+#include "ops/generic/kernel_facts.h"
 #include "ops/route_pins.h"
 #include "product/plan/plan_facts.h"
 #include "runtime/engine/plan_dry_run.h"
@@ -671,6 +671,19 @@ struct Case {
     EngineOptions options;
 };
 
+// A lab board of this build's arch (the decode tile is the build's, #912), or none: each case also
+// runs on it where its own board is of another arch, so every stand compares a start.
+std::optional<DeviceClass> own_board() {
+    namespace kf            = ninferno::ops::detail::generic::kernel_facts;
+    const std::string_view a = kf::build_arch();
+    if (a == "70") return board(0x1DBA, 7, 0, 80, 6);    // Quadro GV100
+    if (a == "75") return board(0x1E07, 7, 5, 68, 5);    // RTX 2080 Ti
+    if (a == "86") return board(0x2204, 8, 6, 82, 6);    // RTX 3090
+    if (a == "89") return board(0x2782, 8, 9, 60, 48);   // RTX 4070 Ti
+    if (a == "120a") return board(0x2B85, 12, 0, 170, 96); // RTX 5090
+    return std::nullopt;
+}
+
 void run(const Case& k) {
     const art::Directory directory = k.directory();
     rt::PlanModelFacts facts       = product::plan_facts_of_directory(directory, k.name).model;
@@ -680,6 +693,13 @@ void run(const Case& k) {
     // As plan_facts_of_artifact reads them from the file's resources.
     facts.tokenizer_tokens = k.tokens;
     compare(k.name, facts, directory, k.options, k.device);
+    if (!own_tile(k.device)) {
+        if (const auto own = own_board()) {
+            compare(k.name + " (on this build's arch, sm_" +
+                        std::string(ninferno::ops::detail::generic::kernel_facts::build_arch()) + ")",
+                    facts, directory, k.options, *own);
+        }
+    }
 }
 
 // The artifact files NINFERNO_PLAN_WORKSPACE_ARTIFACTS names, read as --plan reads them.
