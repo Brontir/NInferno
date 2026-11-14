@@ -18,6 +18,8 @@
 //   streamk_wide  floor(3 S / 2) row tiles x 1 column tile on S CTAs: stream-k with more tiles
 //             than CTAs, as the narrow-band launches run (64 tiles on 60 SMs), with the fixup;
 //   halfwave  the streamk shape as a tile a CTA (floor(S / 2) CTAs): what the split is against.
+//   wave1@P, split@P  (--grids only) the sweeps over the SMs loaded and a CTA's share of a tile
+//             (grid_of).
 // Each at K = 2048, 4096, 8192 (full: 4096, 8192), so that a unit is the slope of a call's time
 // over its longest CTA's units and the launch's fixed part the intercept (mmq_launch_law.py
 // derive). Beside them: the fixup kernel alone (both stream-k launches at the largest K: its
@@ -174,12 +176,6 @@ void parse(int argc, char** argv, Options& o) {
             throw std::invalid_argument("unknown option " + a);
         }
     }
-    for (const std::string& g : o.grids) {
-        if (std::find_if(std::begin(kGrids), std::end(kGrids),
-                         [&](const char* n) { return g == n; }) == std::end(kGrids)) {
-            throw std::invalid_argument("unknown grid " + g);
-        }
-    }
     for (const int j : o.widths) {
         if (ninferno::mmq_columns::work_index(j) < 0) {
             throw std::invalid_argument("width " + std::to_string(j) +
@@ -239,6 +235,17 @@ Grid grid_of(const std::string& name, int sms) {
     if (name == "streamk") return {name, half, 1, sms};
     if (name == "streamk_wide") return {name, std::max(sms + 1, 3 * sms / 2), 1, sms};
     if (name == "halfwave") return {name, half, 1, half};
+    // The sweeps over the SMs a launch loads (#785): wave1@P, P % of the SMs' row tiles x 1 column
+    // tile, a tile a CTA (P % of the SMs read the weights, the rest idle: the per-SM DRAM rate by
+    // the SMs loaded); split@P, P % of the SMs' row tiles x 1 column tile on every SM (stream-k: a
+    // CTA's share of a tile, P / 100, the narrow band's 0.13 to 1.5).
+    if (const std::size_t at = name.find('@'); at != std::string::npos) {
+        const std::string kind = name.substr(0, at);
+        const int percent      = std::stoi(name.substr(at + 1));
+        const int rows         = std::max(1, (sms * percent + 50) / 100);
+        if (percent > 0 && kind == "wave1") return {name, rows, 1, rows};
+        if (percent > 0 && kind == "split") return {name, rows, 1, sms};
+    }
     throw std::invalid_argument("unknown grid " + name);
 }
 
