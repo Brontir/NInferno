@@ -503,8 +503,8 @@ bool own_tile(const DeviceClass& device) {
 void check_refused_other_arch(const std::string& name, const std::string& basis) {
     check(basis.rfind("formula: ", 0) == 0 && basis.find("no kernel facts") != std::string::npos &&
               basis.find("#912") != std::string::npos,
-          name + ": a board of another arch than the build's keeps the formula, by name (" +
-              basis + ")");
+          name + ": a board of another arch than the build's keeps the formula, by name (" + basis +
+              ")");
 }
 
 // The rung's dry run against the start planner's capacity; prints the formula's beside it.
