@@ -267,9 +267,17 @@ endif()
 string(STRIP
   "${CMAKE_CUDA_FLAGS} ${CMAKE_CUDA_FLAGS_${ninferno_build_type_upper}} rdc=${ninferno_kernel_facts_rdc} lineinfo=${NINFERNO_CUDA_LINEINFO} ptx=${NINFERNO_CUDA_EMBED_PTX}"
   ninferno_kernel_facts_flags)
+# The check reads ninferno-serve where it is built: the shipped binary, and on sm_120a the only
+# one that holds the Gemma 4 kernels (that arch's link of the selector golden test holds none, while
+# libninferno_ops.a does; #830). Its register-MMA rows are the golden test's, byte for byte.
+if(TARGET ninferno-serve AND NOT NINFERNO_SHARED_OP_TESTS)
+  set(ninferno_kernel_facts_check_binary $<TARGET_FILE:ninferno-serve>)
+else()
+  set(ninferno_kernel_facts_check_binary ${ninferno_kernel_facts_binary})
+endif()
 add_test(NAME ninferno_kernel_facts_test
   COMMAND ${Python3_EXECUTABLE} -B ${PROJECT_SOURCE_DIR}/tools/kernel_facts/kernel_facts.py check
-    --binary ${ninferno_kernel_facts_binary} --expected ${ninferno_kernel_facts_snapshot}
+    --binary ${ninferno_kernel_facts_check_binary} --expected ${ninferno_kernel_facts_snapshot}
     --nvcc ${CMAKE_CUDA_COMPILER_VERSION} --cuda-bin ${ninferno_cuda_bin})
 ninferno_label_tests(ninferno_kernel_facts_test LABELS host slow)
 set_tests_properties(ninferno_kernel_facts_test PROPERTIES SKIP_RETURN_CODE 77)

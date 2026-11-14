@@ -29,6 +29,7 @@
 #include "artifact/formats.h"
 #include "artifact/schema.h"
 #include "core/cuda_error.h"
+#include "ops/generic/kernel_facts.h"
 #include "core/device_class.h"
 #include "core/weight_view.h"
 #include "models/dense/model.h"
@@ -491,6 +492,20 @@ bool device_hidden = false;
 
 // No known escape: #830 (the attention decode plan, which DensePass and NemotronH's Pass size their
 // attention with, read the host GPU's occupancy) is closed; the plan reads the kernels' facts.
+// Those price a board only where its kernels are this build's: the decode tile is a constexpr of
+// the build (#912), so a board of another arch refuses by name and keeps the formula.
+bool own_tile(const DeviceClass& device) {
+    namespace kf = ninferno::ops::detail::generic::kernel_facts;
+    return kf::release_arch(device.major, device.minor) == kf::build_arch();
+}
+
+// A board of another arch: the query refuses by name (#912) and the formula stands.
+void check_refused_other_arch(const std::string& name, const std::string& basis) {
+    check(basis.rfind("formula: ", 0) == 0 && basis.find("no kernel facts") != std::string::npos &&
+              basis.find("#912") != std::string::npos,
+          name + ": a board of another arch than the build's keeps the formula, by name (" +
+              basis + ")");
+}
 
 // The rung's dry run against the start planner's capacity; prints the formula's beside it.
 void compare(const std::string& name, const rt::PlanModelFacts& facts,
@@ -507,6 +522,12 @@ void compare(const std::string& name, const rt::PlanModelFacts& facts,
     rt::PlanModelFacts bare = facts;
     bare.artifact_directory.reset();
     const auto formula = rt::plan_rung_bytes(bare, rung, options, options.max_concurrency, false);
+    if (!own_tile(device)) {
+        std::cout << name << ": another arch than the build's, --plan workspace " << dry.workspace
+                  << " (" << dry.workspace_basis << ")" << std::endl;
+        check_refused_other_arch(name, dry.workspace_basis);
+        return;
+    }
     const auto start =
         start_plan(directory, options, static_cast<std::int32_t>(facts.tokenizer_tokens), plan);
     std::cout << name << ": start " << bytes(start) << "\n  --plan workspace " << dry.workspace
@@ -557,6 +578,10 @@ void declines(const std::string& name, const rt::PlanModelFacts& facts,
                        name + ": " + what + " keeps the formula (" + basis + ")");
     };
     const std::string answered = basis_of(facts, options, device);
+    if (!own_tile(device)) {
+        check_refused_other_arch(name, answered);
+        return;
+    }
     check(answered.rfind("start", 0) == 0,
           name + ": the query answers at the decline cases' options (" + answered + ")");
     rt::PlanModelFacts unread = facts;
