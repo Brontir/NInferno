@@ -8,7 +8,10 @@ the query stores in `DeviceClass::facts`.
 
 ## Fields
 
-Each row is one SKU, keyed by its PCI product id:
+Each row is a published reference configuration, keyed by its PCI product id. A product id is
+not always a unique SKU: NVIDIA also uses subsystem vendor/product ids to distinguish boards.
+The runtime lookup currently has no subsystem key; `variants` is audit metadata, not an exact
+variant selector. See [the shared-identity limitation](https://github.com/Brontir/NInferno/issues/903).
 
 | Field | Meaning |
 |---|---|
@@ -94,3 +97,47 @@ its range's bottom fingerprint alike whatever their driver reports.
    into the test's lab list, with the values its driver reports.
 4. If the board is a selector golden board, regenerate the goldens
    (`ninferno_selector_golden_test --update`) and review the diff.
+
+## Auditing identity coverage
+
+`tools/audit/gpu_catalog.py` compares the registry with saved
+[pci.ids](https://pci-ids.ucw.cz/v2.2/pci.ids) and NVIDIA's `README/supportedchips.html` lists
+([620.70.06](https://download.nvidia.com/XFree86/Linux-x86_64/620.70.06/README/supportedchips.html),
+[580.196.07](https://download.nvidia.com/XFree86/Linux-x86_64/580.196.07/README/supportedchips.html)).
+Use current and legacy driver lists: one current driver branch is not an inventory of every
+older board. Save the retrieval date and URLs beside the inputs; the report records their SHA-256
+hashes. Each driver identity refers to a source id made from the filename and its full hash, so two
+different driver versions saved as `supportedchips.html` cannot lose their separate provenance.
+It runs offline, without CUDA, a GPU or a driver:
+
+```bash
+python3 tools/audit/gpu_catalog.py --pci-ids /path/to/pci.ids \
+  --supported-chips /path/to/nvidia-620.70.06.html \
+  --supported-chips /path/to/nvidia-580.196.07.html \
+  --output /path/to/coverage.json
+```
+
+The report retains all observed subsystem identities and names, lists missing product ids by
+chip generation, excludes audio/USB/PCI-bridge functions, and keeps unclassified driver identities
+visible. Architecture follows a published chip name, not the marketing series: RTX 2050 is
+Ampere, whereas RTX 3050 A is Ada. Triage labels distinguish OEM clock-range work, engineering
+ids, mining boards, virtual/shared identities and platform review. They are not support claims:
+an id in pci.ids or a driver list does not prove a released, physically tested SKU. A row marked
+`multiple_driver_names` needs inspection; names alone do not prove different decision facts.
+The dated census and remaining qualification work are tracked in
+[#904](https://github.com/Brontir/NInferno/issues/904).
+
+Keep three questions separate: **identity listed**, **decision facts complete and applicable to
+that variant**, and **hardware qualified**. Registered product-id counts answer only the first.
+Do not fill a missing SKU's L2 with the full chip's cache, take a desktop clock for its mobile
+version, or infer a laptop's lower boost limit from one OEM's clock. For shared product ids, retain
+the subsystem evidence before adding a generic row. Capacity-only variants with identical pricing
+facts can use the existing `variants` metadata; variants that change reference clocks, SMs or L2
+need identity resolution before their facts can be called verified. A SoC or virtual identity
+also needs the relevant platform or partition contract; adding a name cannot establish it.
+
+Check conflicting sources field by field. For example, RTX 5880 Ada uses NVIDIA's published
+960 GB/s (20 Gbps on 384 bits), rather than TechPowerUp's 864 GB/s; Quadro RTX 5000's total board
+power is 265 W, while its 230 W graphics-power figure describes a different quantity. The row's
+sources and note record these distinctions. The catalogue audit discovers gaps; it never writes
+or guesses production specifications.

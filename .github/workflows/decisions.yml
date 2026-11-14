@@ -84,15 +84,15 @@ jobs:
           ccache -s
       - name: Run them (no GPU on this machine)
         run: |
-          # The tree's host suite is exactly the thirteen decision tests: a registration dropped,
+          # The tree's host suite is exactly the fourteen decision/audit tests: a registration dropped,
           # renamed or added (made conditional, say) shows here instead of passing unseen.
           names='selector_golden_host route_policy generic_routes_host choice gate_atlas
                  route_cost_constants fitted_holdouts route_rules rmma_geometry device_identity
-                 format_facts format_rules arch_requires'
+                 format_facts format_rules arch_requires gpu_catalog'
           expected=$(for n in $names; do echo "ninferno_${n}_test"; done | sort)
           found=$(ctest --test-dir build-decisions -N | sed -n 's/^ *Test *#[0-9]*: //p' | sort)
           host=$(ctest --test-dir build-decisions -N -L host | sed -n 's/^ *Test *#[0-9]*: //p' | sort)
           [ "$found" = "$expected" ] && [ "$host" = "$expected" ] || {
-            echo "expected the thirteen decision tests, all labeled host; registered:"; echo "$found"
+            echo "expected the fourteen decision/audit tests, all labeled host; registered:"; echo "$found"
             echo "labeled host:"; echo "$host"; exit 1; }
           ctest --preset decisions --no-tests=error

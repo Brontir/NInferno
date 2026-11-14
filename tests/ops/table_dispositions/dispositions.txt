@@ -4,20 +4,43 @@
 0x2BB1 RTX PRO 6000 Blackwell Workstation Edition | a8 carried sm120/170sm/96MiB/1792GBps 0.35 down=-1 2bit=00011111/00000001/00000000/ | q4 carried sm120/170sm/96MiB/1792GBps 0.35 47
 0x2BB4 RTX PRO 6000 Blackwell Max-Q Workstation Edition | a8 carried sm120/170sm/96MiB/1792GBps 0.35 down=-1 2bit=00011111/00000001/00000000/ | q4 carried sm120/170sm/96MiB/1792GBps 0.35 47
 0x2BB5 RTX PRO 6000 Blackwell Server Edition | a8 incomplete - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 incomplete - 0.00 47
+0x2B8C GeForce RTX 5090 D v2 | a8 carried sm120/170sm/96MiB/1792GBps 0.42 down=-1 2bit=00011111/00000001/00000000/ | q4 carried sm120/170sm/96MiB/1792GBps 0.42 47
+0x2BB3 RTX PRO 5000 Blackwell | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2BB9 RTX 6000D | a8 carried sm120/170sm/96MiB/1792GBps 0.59 down=-1 2bit=00011111/00000001/00000000/ | q4 carried sm120/170sm/96MiB/1792GBps 0.59 47
 0x2C02 GeForce RTX 5080 | a8 measured sm120/84sm/64MiB/960GBps 0.00 down=3 2bit=00111111/01111111/00033330/ | q4 none - 0.00 47
 0x2C05 GeForce RTX 5070 Ti | a8 carried sm120/84sm/64MiB/960GBps 0.57 down=3 2bit=00111111/01111111/00033330/ | q4 none - 0.00 47
 0x2F04 GeForce RTX 5070 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2F06 GeForce RTX 5060 (GB205) | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2F18 GeForce RTX 5070 Ti Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2F58 GeForce RTX 5070 Ti Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2D04 GeForce RTX 5060 Ti | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2D05 GeForce RTX 5060 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2D18 GeForce RTX 5070 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2D19 GeForce RTX 5060 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2D30 RTX PRO 2000 Blackwell | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2D58 GeForce RTX 5070 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2D59 GeForce RTX 5060 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2D83 GeForce RTX 5050 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2D98 GeForce RTX 5050 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2DD8 GeForce RTX 5050 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2C18 GeForce RTX 5090 Laptop GPU | a8 carried sm120/84sm/64MiB/960GBps 0.13 down=3 2bit=00111111/01111111/00033330/ | q4 none - 0.00 47
 0x2C58 GeForce RTX 5090 Laptop GPU | a8 carried sm120/84sm/64MiB/960GBps 0.13 down=3 2bit=00111111/01111111/00033330/ | q4 none - 0.00 47
 0x2C19 GeForce RTX 5080 Laptop GPU | a8 incomplete - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2C59 GeForce RTX 5080 Laptop GPU | a8 incomplete - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2C09 GeForce RTX 5070 (GB203) | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2C31 RTX PRO 4500 Blackwell Workstation Edition | a8 carried sm120/84sm/64MiB/960GBps 0.13 down=3 2bit=00111111/01111111/00033330/ | q4 none - 0.00 47
+0x2C33 RTX PRO 4000 Blackwell SFF Edition | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2C34 RTX PRO 4000 Blackwell | a8 carried sm120/84sm/64MiB/960GBps 0.99 down=3 2bit=00111111/01111111/00033330/ | q4 none - 0.00 47
+0x2C3A RTX PRO 4500 Blackwell Server Edition | a8 carried sm120/84sm/64MiB/960GBps 0.30 down=3 2bit=00111111/01111111/00033330/ | q4 none - 0.00 47
 0x2684 GeForce RTX 4090 | a8 measured sm89/128sm/72MiB/1008GBps 0.00 down=2 2bit=00000000/00000000/00000000/ | q4 measured sm89/128sm/72MiB/1008GBps 0.00 47
 0x2685 GeForce RTX 4090 D | a8 carried sm89/128sm/72MiB/1008GBps 0.17 down=2 2bit=00000000/00000000/00000000/ | q4 carried sm89/128sm/72MiB/1008GBps 0.17 47
 0x26B1 RTX 6000 Ada Generation | a8 carried sm89/128sm/72MiB/1008GBps 0.43 down=2 2bit=00000000/00000000/00000000/ | q4 carried sm89/128sm/72MiB/1008GBps 0.43 47
 0x26B5 L40 | a8 carried sm89/128sm/72MiB/1008GBps 0.58 down=2 2bit=00000000/00000000/00000000/ | q4 carried sm89/128sm/72MiB/1008GBps 0.58 47
 0x26B9 L40S | a8 incomplete - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 incomplete - 0.00 47
+0x2689 GeForce RTX 4070 Ti SUPER (AD102) | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x26B2 RTX 5000 Ada Generation | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x26B3 RTX 5880 Ada Generation | a8 carried sm89/128sm/72MiB/1008GBps 0.29 down=2 2bit=00000000/00000000/00000000/ | q4 carried sm89/128sm/72MiB/1008GBps 0.29 47
+0x26BA L20 | a8 carried sm89/128sm/72MiB/1008GBps 0.91 down=2 2bit=00000000/00000000/00000000/ | q4 carried sm89/128sm/72MiB/1008GBps 0.91 47
 0x2702 GeForce RTX 4080 SUPER | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2704 GeForce RTX 4080 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2705 GeForce RTX 4070 Ti SUPER | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
@@ -33,10 +56,14 @@
 0x28B0 RTX 2000 Ada Generation | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2717 GeForce RTX 4090 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2757 GeForce RTX 4090 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2709 GeForce RTX 4070 (AD103) | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x27A0 GeForce RTX 4080 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x27E0 GeForce RTX 4080 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2788 GeForce RTX 4060 Ti (AD104) | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x27B0 RTX 4000 SFF Ada Generation | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2820 GeForce RTX 4070 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2860 GeForce RTX 4070 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2808 GeForce RTX 4060 (AD106) | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x28A0 GeForce RTX 4060 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x28E0 GeForce RTX 4060 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x28A1 GeForce RTX 4050 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
@@ -52,20 +79,31 @@
 0x2235 A40 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 carried sm86/82sm/6MiB/936GBps 0.46 17
 0x2236 A10 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 carried sm86/82sm/6MiB/936GBps 0.83 17
 0x2237 A10G | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 incomplete - 0.00 47
+0x2207 GeForce RTX 3070 Ti (GA102) | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2232 RTX A4500 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2233 RTX A5500 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 carried sm86/82sm/6MiB/936GBps 0.32 17
+0x2414 GeForce RTX 3060 Ti (GA103) | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2484 GeForce RTX 3070 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2486 GeForce RTX 3060 Ti | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2482 GeForce RTX 3070 Ti | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2488 GeForce RTX 3070 Lite Hash Rate | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2489 GeForce RTX 3060 Ti Lite Hash Rate | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x24B0 RTX A4000 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2487 GeForce RTX 3060 12GB (GA104) | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x24C7 GeForce RTX 3060 8GB (GA104) | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x24C9 GeForce RTX 3060 Ti GDDR6X | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2503 GeForce RTX 3060 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2504 GeForce RTX 3060 Lite Hash Rate | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2507 GeForce RTX 3050 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2582 GeForce RTX 3050 8GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2584 GeForce RTX 3050 6GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x25B6 A2 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x25B0 RTX A1000 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2520 GeForce RTX 3060 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2560 GeForce RTX 3060 Laptop GPU | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2508 GeForce RTX 3050 OEM | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2531 RTX A2000 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x2571 RTX A2000 12GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x20B0 A100 SXM4 40GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x20B1 A100 PCIe 40GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x20F1 A100 PCIe 40GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
@@ -82,12 +120,20 @@
 0x1E87 GeForce RTX 2080 Rev. A | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1E84 GeForce RTX 2070 SUPER | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1EB8 Tesla T4 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x1E89 GeForce RTX 2060 (TU104) | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x1EB0 Quadro RTX 5000 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x1EB1 Quadro RTX 4000 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x1EC2 GeForce RTX 2070 SUPER | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x1EC7 GeForce RTX 2070 SUPER | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1F02 GeForce RTX 2070 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1F07 GeForce RTX 2070 Rev. A | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1F06 GeForce RTX 2060 SUPER | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1F08 GeForce RTX 2060 Rev. A | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1F09 GeForce GTX 1660 SUPER (TU106) | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1F0A GeForce GTX 1650 (TU106) | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x1F03 GeForce RTX 2060 12GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x1F42 GeForce RTX 2060 SUPER | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x1F47 GeForce RTX 2060 SUPER | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2182 GeForce GTX 1660 Ti | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x21C4 GeForce GTX 1660 SUPER | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x2184 GeForce GTX 1660 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
@@ -97,6 +143,7 @@
 0x1FF2 T400 4GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1FB1 T600 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1FF0 T1000 8GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x1F83 GeForce GTX 1630 | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1D81 TITAN V | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1DB1 Tesla V100 SXM2 16GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1DB5 Tesla V100 SXM2 32GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
@@ -104,3 +151,7 @@
 0x1DB4 Tesla V100 PCIe 16GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1DB6 Tesla V100 PCIe 32GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
 0x1DF6 Tesla V100S PCIe 32GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x1DB2 Tesla V100 DGXS 16GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x1DB3 Tesla V100 FHHL 16GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x1DB7 Tesla V100 DGXS 32GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47
+0x1DF5 Tesla V100 SXM2 16GB | a8 none - 0.00 down=-1 2bit=00000000/00000000/00000000/ | q4 none - 0.00 47

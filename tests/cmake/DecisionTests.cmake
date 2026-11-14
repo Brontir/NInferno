@@ -5,6 +5,12 @@
 # whole suite: `ctest -L host` there runs exactly these. The decisions workflow
 # (.github/workflows/decisions.yml) builds them in that tree, one per golden build set.
 
+# The offline GPU catalogue audit: PCI subsystem identities survive parsing, non-GPU PCI
+# functions are excluded, and marketing series cannot silently choose an architecture.
+add_test(NAME ninferno_gpu_catalog_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/../test_gpu_catalog.py)
+set_tests_properties(ninferno_gpu_catalog_test PROPERTIES LABELS host)
+
 # The selector golden's host twin: the same dump code as ninferno_selector_golden_test
 # (tests/ops/linear/tests.cmake), built and linked with no CUDA runtime (ninferno_ops_host): the
 # committed goldens must read the same from a host-only selector (#620). The stubs are the device

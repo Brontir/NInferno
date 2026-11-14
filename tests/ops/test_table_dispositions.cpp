@@ -300,6 +300,13 @@ void check_hand_written() {
         {0x2C02, "RTX 5080: an A8 row, no frontier row", M, 3, N, 47},
         // measured_boards.h: the 5070 Ti is 0.57 from the 5080.
         {0x2C05, "RTX 5070 Ti: near the 5080", C, 3, N, 47, 0.57, -1, &measured::kRtx5080},
+        // The published 70 SMs, 48 MiB and 672 GB/s give distance 0.985 from the 5080;
+        // the 110-SM PRO 5000 (96 MiB, 1344 GB/s) is 1.043 from the 5090, just outside.
+        // These two new SKUs narrow the reach's stability interval; a name/family match is
+        // insufficient to transfer the measured route to both.
+        {0x2C34, "RTX PRO 4000 Blackwell: just inside the 5080's reach", C, 3, N, 47, 0.99, -1,
+         &measured::kRtx5080},
+        {0x2BB3, "RTX PRO 5000 Blackwell: just outside the 5090's reach", N, -1, N, 47},
         // sparse_moe_prefill_plan.cpp: the 3090 measured 17; moe.cpp lists no Ampere row.
         {0x2204, "RTX 3090: the Ampere frontier row", N, -1, M, 17},
         // measured_boards.h: the 3090 Ti is 0.14 from the 3090.
@@ -369,14 +376,14 @@ void check_hand_written() {
            "5080 IQ2_S T = 4..7 w2r1, 8 w4r1");
 }
 
-// The counts docs/maintainer/table-dispositions.md quotes over the 105 target SKUs
+// The counts docs/maintainer/table-dispositions.md quotes over the 156 target SKUs
 // (measured / carried / incomplete / none).
 void check_counts(const Counts& a8, const Counts& q4) {
     const auto same = [](const Counts& c, int m, int ca, int i, int n) {
         return c.measured == m && c.carried == ca && c.incomplete == i && c.none == n;
     };
-    expect(same(a8, 4, 8, 4, 89), "A8 route counts differ from the document");
-    expect(same(q4, 4, 13, 4, 84), "frontier counts differ from the document");
+    expect(same(a8, 4, 15, 4, 133), "A8 route counts differ from the document");
+    expect(same(q4, 4, 18, 4, 130), "frontier counts differ from the document");
 }
 
 } // namespace
