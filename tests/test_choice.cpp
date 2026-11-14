@@ -1202,6 +1202,16 @@ void weighs_the_quantizations(const json& fixture) {
             o.bits_per_weight   = b.quants[0].bits_per_weight;
             check(std::abs(term_of(none, o).kld - 0.01925) < 1e-12,
                   "a model with no curve of its own reads the 9B's");
+            // Another family at the 4B's weights reads the 9B's curve, not the 4B's: the 4B's
+            // Q4_K_M file there is the 9B curve's interpolation at its bits.
+            ch::ModelFacts other = four;
+            other.family         = "gemma4_text";
+            o.files              = std::string(q4->file);
+            o.bits_per_weight    = q4->bits_per_weight;
+            const ch::Term moved = term_of(other, o);
+            check(ch::quant_authority(other, o) == A::Estimate && !moved.measured &&
+                      std::abs(moved.kld - q4->kld) > 1e-4,
+                  "another family at the 4B's weights: the 9B's curve, an estimate");
         }
     }
     // Every point decides on two cards, or on one where its model records the reference's

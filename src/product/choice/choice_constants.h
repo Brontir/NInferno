@@ -1059,18 +1059,22 @@ struct QuantKldPoint {
     // The file measured: its SHA-256 (the hub's LFS digest, spec::weights_identity of one file).
     // Only those bytes are the point's measurement; another file of the label is a proxy (#299).
     std::string_view file;
-    // The model measured: its weights (ModelFacts::params, the plan's count). A model's points
-    // are its own curve (kQuantKldModels); a model without one reads the default's, the 9B's.
+    // The model measured: its weights (ModelFacts::params, the plan's count from its geometry).
+    // A model's points are its own curve (kQuantKldModels); a model without one reads the
+    // default's, the 9B's. The key is the size: a fine-tune or another quantizer's files of the
+    // same base share it, and their labels take this curve's points as proxies (as the family's
+    // label rule did), never as their measurements (those are the files' own, `file`).
     double params = kQuantKldDefaultParams;
 };
 
-// A model whose curve kQuantKld holds (#618 step 9): its weights (the key), and the checksum of
-// its Q8_0 reference: the mean NLL per token the reference scored on the curve's corpus and
-// windows. KLD is a model constant (the exact route's bytes do not depend on the card: Qwen3.5-4B
-// against its Q8_0 on the RTX 4070 Ti and RTX 3060 within 0.1 % at every point, the reference's
-// NLL within 1e-4), so one card measures a model's curve where its reference is recorded: a run
-// on another card that scores the reference to this NLL measured the same curve. Two cards stay
-// the rule of a point whose model records none (kQuantKldCards).
+// A model whose curve kQuantKld holds (#618 step 9): its weights (the key), and its Q8_0
+// reference's checksum: the mean NLL per token the reference scored on the curve's corpus and
+// windows. KLD is a model constant (Qwen3.5-4B against its Q8_0 on the RTX 4070 Ti and RTX 3060,
+// FP8 KV: within 0.1 % at every point, the reference's NLL within 1.2e-4), so one card measures a
+// model's curve where its reference is recorded. The NLL is recorded, not yet checked: a run on
+// another card compares its reference's NLL with it, and the tolerance of that comparison is
+// #915's (it covers the Q8_0 forward alone; the quantized points' kernels differ by arch). Two
+// cards stay the rule of a point whose model records none (kQuantKldCards).
 struct QuantKldModel {
     double params;
     double reference_nll; // nats per token, ninferno-perplexity --quick 4096/2048, exact, BF16 KV
