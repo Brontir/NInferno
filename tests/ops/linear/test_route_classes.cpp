@@ -1084,6 +1084,9 @@ int run_resources(bool detail) {
                     }
                     if (!r) continue;
                     ++f.described;
+                    if (r->family != generic::family_facts(route.family)) {
+                        fail(at + ": described without its family's record (family_facts)");
+                    }
                     int threads = r->threads;
                     if (f.family == generic::Family::I8Mma) {
                         threads = generic::i8_schedule_info(i).threads;

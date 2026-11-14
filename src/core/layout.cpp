@@ -26,7 +26,8 @@ DeviceSpan LayoutRegion::bind(DeviceSpan backing) const {
     if (offset > backing.bytes || bytes > backing.bytes - offset) {
         throw std::out_of_range("layout region exceeds its backing allocation");
     }
-    return DeviceSpan{static_cast<unsigned char*>(backing.data) + offset, bytes};
+    return DeviceSpan{static_cast<unsigned char*>(backing.data) + offset, bytes,
+                      backing.ticket_page};
 }
 
 Tensor TensorRegion::bind(DeviceSpan backing) const {

@@ -72,17 +72,17 @@ __device__ __forceinline__ float router_row_dot(const __nv_bfloat16* x, const __
     return warp_reduce_sum(sum);
 }
 
-// Ticket for the last-arriving D1 block. atomicInc wraps at gridDim.x-1, so the
-// counter returns to zero on its own and needs no host-side initialisation or workspace slot.
-__device__ unsigned int g_sparse_moe_route_ticket = 0;
-
+// `ticket` counts the D1 blocks in; the last to arrive selects. It is the arena's ticket page's
+// (#889) or the call's workspace's (zeroed by the launch in stream order), not a device global: two
+// engines' D1 grids in flight on one GPU each count on their own (#882). atomicInc wraps at
+// gridDim.x-1, so the last block leaves it at zero.
 __global__ void sparse_moe_d1_kernel(const __nv_bfloat16* __restrict__ x,
                                      const __nv_bfloat16* __restrict__ router,
                                      float* __restrict__ scores,
                                      const char* __restrict__ shared_down_codes,
-                                     unsigned long long shared_down_bytes,
-                                     int* __restrict__ ids, float* __restrict__ alpha,
-                                     float* __restrict__ shared_scale) {
+                                     unsigned long long shared_down_bytes, int* __restrict__ ids,
+                                     float* __restrict__ alpha, float* __restrict__ shared_scale,
+                                     unsigned int* __restrict__ ticket) {
     __shared__ float partial[kD1Warps];
     __shared__ float selected_logits[kTopK];
     __shared__ bool is_last_block;
@@ -106,8 +106,8 @@ __global__ void sparse_moe_d1_kernel(const __nv_bfloat16* __restrict__ x,
     // its inputs and its comparison order are unchanged, hence the routing is bit-identical.
     if (threadIdx.x == 0) {
         __threadfence();
-        const unsigned int ticket = atomicInc(&g_sparse_moe_route_ticket, gridDim.x - 1u);
-        is_last_block             = ticket == gridDim.x - 1u;
+        const unsigned int arrived = atomicInc(ticket, gridDim.x - 1u);
+        is_last_block              = arrived == gridDim.x - 1u;
     }
     __syncthreads();
     if (is_last_block && warp == 0) {
@@ -607,13 +607,20 @@ unsigned long long shared_down_code_bytes(QType qtype) {
 
 void launch_d1(const Tensor& x, const SparseMoeWeights& weights,
                const SparseMoeDecodeWorkspace& workspace, cudaStream_t stream) {
+    // The ticket is zero in stream order when D1 starts: on the arena's ticket page it has been
+    // since the page was made (#889); in the workspace the bytes are another op's in between
+    // (#882), so it is zeroed here.
+    if (!workspace.ticket_zeroed) {
+        CUDA_CHECK(cudaMemsetAsync(workspace.ticket.data, 0, workspace.ticket.bytes(), stream));
+    }
     sparse_moe_d1_kernel<<<kRouterRows, kD1Warps * 32, 0, stream>>>(
         static_cast<const __nv_bfloat16*>(x.data),
         static_cast<const __nv_bfloat16*>(weights.router_shared_gate.qdata),
         static_cast<float*>(workspace.scratch.data),
         static_cast<const char*>(weights.shared_down.qdata),
         shared_down_code_bytes(weights.shared_down.qtype), static_cast<int*>(workspace.ids.data),
-        static_cast<float*>(workspace.alpha.data), static_cast<float*>(workspace.shared_scale.data));
+        static_cast<float*>(workspace.alpha.data), static_cast<float*>(workspace.shared_scale.data),
+        static_cast<unsigned int*>(workspace.ticket.data));
     CUDA_CHECK(cudaGetLastError());
 }
 

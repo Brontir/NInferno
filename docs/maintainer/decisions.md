@@ -2656,3 +2656,76 @@ and would want an end-to-end check at C = 5..8 first.
 
 **Open.** Re-time the RTX 2080 Ti's T = 5..8 cells on current kernels; the per-format widening for
 Q3_K and IQ3_XXS on Ampere; the A100, Hopper and datacenter Blackwell stay unmeasured.
+
+## 85. The choice's prefill prices the route the selector runs (#613 PR-9, 12.11, rule; no new measurement)
+
+**Decision.** The configuration choice's prefill estimate asks the generic selector which kernel
+each trunk linear's prefill call runs (`route_query`, `prefill = true`, on the planned board's
+class), instead of assuming it from the file's class. The engine registers the query for the plan
+(`runtime::register_plan_prefill_route_query`, beside the MoE op's); `product::with_prefill_routes`
+hands the choice the answer per linear, width and activations (`ModelFacts::prefill_routes`:
+ggml's matrix kernel, the W4A8 tiles, another 8- or 4-bit kernel, a 16-bit kernel). The choice
+then prices each linear on that route. A linear the selector runs on the kernel the file's tile
+law assumes (MMQ's tiles, `kMmqTileCost`, on a board where MMQ pays; the K-quant W4A8 tiles,
+`kW4a8KquantCost`, elsewhere; the int8 tile for a Q8_0 file) keeps that law. A Q8_0 linear the
+selector runs on the W4A8 tiles takes its int8 tile (`kTileCost`, DECISIONS 67), not the K step of
+the file's format. Every other answer goes to its activations' share of the generation's peak
+(a 16-bit kernel's at the BF16 share, `prefill_eta`), Transferred: that includes a K-quant
+linear answered on the other tile kernel than the file's branch assumes (W4A8 where the branch
+prices MMQ, or MMQ where it prices the K-quant W4A8 tiles), although a law for that kernel exists
+(no such answer occurs at a 7K prompt on any registry board). The basis of a linear priced by another
+law is that law's (its row's cards), as the int8 tiles' own path reads it: the selector's answer
+never makes an estimate more precise than the law it is priced by, whatever authority answered.
+Not asked: exact activations (the 16-bit route, priced as such), NVFP4, an expert's bank (its
+route is the plan's `expert_banks`), Volta (its CUTLASS route and rows, DECISIONS 70), a linear
+whose format neither the file nor the label names, and a program that registers no query
+(ninferno-ui): there the tile laws' kernels stand, as before. The class the plan asks on is the
+board's synthetic one (`synthetic_device_class` with the board's machine facts), as for the MoE
+query (DECISIONS 79), and a host's plan asks it too (`choose_for_artifact`): the answer reads the
+default route tables of that class, never the host's own tables nor an explicit `--route-table`.
+
+**Why not the selector's price.** #613's plan prices the selector's route with its own cost model
+(`price_routes`) at this step, but the shared MMQ and W4A8 terms (PR-5, PR-6) are not in yet: on
+the lab's boards the selector's price of a dense Q8_0 linear's W4A8 tile is 1.2-2.2x the int8
+tile's clock count the choice prices it by (Qwen3.5 9B's linears at a 1024-token chunk: RTX 3060
+and 3090 1.2x, 5070 Ti 1.5x, 5090 1.7-1.8x, 4060 Ti 2.0x, 4090 2.1-2.2x; the census holds the
+choice's law within -2 .. +6 % on five cards, DECISIONS 66), and its MMQ term is format-blind
+(`kMmqEfficiency` for every format: Q4_K and Q6_K the same 864.8 us for the 2 x 12288 x 4096
+gate/up where the choice's per-format K steps give 994 and 1150 us on the RTX 4090; the RTX 2080
+Ti's MMQ at 0.53-0.59x the choice's). Taking it would move every K-quant and Q8_0 prefill
+estimate and lose the per-format information the choice was measured on. The route is shared now;
+the price follows when PR-5 and PR-6 make the selector's terms the counted per-format ones, and
+the choice's tables become their fixtures.
+
+**What it changes** (`ninferno_choice_prefill_routes_test`, the selector of this tree on every
+board): on master's routes the selector runs every trunk linear on the kernel the tile laws
+assumed but one kind, a Q8_0 linear in a K-quant file (Qwen3.5 9B's Gated DeltaNet
+out-projection in its Q6_K and UD-Q4_K_XL files), which it runs on the W4A8 int8 tile where the
+choice priced it on MMQ's (or the K-quant W4A8) tile at the file's step. Of the 329 measured
+prefill points (`prefill_measured.json`) 28 move, those two files on seven cards at 7K and 22K
+tokens: rms of all points 5.09 % -> 5.10 %, of the moved ones 3.00 % -> 3.24 % (the Q6_K file
++0.9 .. +1.2 % faster on Ada and Blackwell: further from the RTX 4090's, 5090's and 5070 Ti's
+measurements, which it already priced fast, closer to the RTX 4060 Ti's and 4070 Ti's; the
+UD-Q4_K_XL file -0.4 .. +0.4 %). Over every registry board with tensor cores at the fixtures' models and
+quantizations (1326 estimates at a 7K prompt), 158 move, the same two files only: Ada -0.5 .. +1.5 %,
+Ampere -1.0 .. +0.6 %, Blackwell -0.2 .. +2.3 %, Turing -0.5 .. +0.2 %; no basis changes. The
+datacenter rows (A100, H100, B200) do not move: no tile law reads them, and the selector runs
+their linears on A8 kernels as the share assumed. Once Hopper and GB100 carry no fitted route
+scales (#821), the selector runs their linears at 16 bits under int8 activations and their
+estimate moves to the BF16 share (#822; `prefill_prices_the_selectors_route` in
+`ninferno_choice_test` checks that case on the H100 with a stand-in answer).
+
+**Open.**
+- The price itself (PR-5, PR-6, then this client prices by `price_routes`).
+- A 16-bit linear inside a K-quant file (a GGUF's F16 or BF16 projections) is priced at the BF16
+  share where the selector answers A16, a coarse price.
+- A K-quant linear the selector answers on the other tile kernel than the file's branch (W4A8 on
+  the MMQ branch, MMQ on the K-quant W4A8 branch) takes the int8 share, not `kW4a8KquantCost` or
+  `kMmqTileCost`: latent (no such answer at a 7K prompt on any registry board), to price by that
+  law when one appears.
+- The RTX 4090's and 5090's Qwen3.5 9B Q6_K estimates are now over the measured points by +6.3 and
+  +4.8 % at 7K tokens (+4.1 and +3.3 % at 22K): with the route the selector runs, another term
+  over-predicts the speed on Ada and Blackwell. It is to be found from the facts, not refitted.
+- Volta's prefill is not asked (its CUTLASS gates mirror the selector's `volta_cutlass_takes`, a
+  second copy); ninferno-ui registers no query (#766).
+- Not run on the stands.

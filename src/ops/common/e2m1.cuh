@@ -27,6 +27,21 @@ __device__ __forceinline__ __half2 e2m1x2_to_half2_bits(std::uint32_t byte) {
     return __hmul2(scaled, __half2half2(__ushort_as_half(0x7400U))); // 2^14
 }
 
+// Nibbles P and P + 4 of a 32-bit code word (P = 0..3) as two FP16 values, nibble P in the low
+// half, each E2M1(code) * 2^-14: the bit form above without its multiply. The two nibbles sit 16
+// bits apart, so one shift places both magnitudes (bits 9..11 and 25..27) and another both signs
+// (15 and 31). A consumer folds the 2^14 into a later FP32 scale: E2M1(code) * 2^-14 times an E4M3
+// cache scale (a multiple of 2^-9, at most 448) is a multiple of 2^-24 of at most 6 significant
+// bits, so the FP16 product is exact here as it is at full scale (kv_cache_nvfp4_dequant_f16x8).
+template <int P>
+__device__ __forceinline__ std::uint32_t e2m1_nibble_pair_bits(std::uint32_t word) {
+    static_assert(P >= 0 && P < 4);
+    std::uint32_t placed = word >> 3;
+    if constexpr (P < 3) placed = word << (9 - 4 * P);
+    const std::uint32_t sign = (word << (12 - 4 * P)) & 0x80008000U;
+    return (placed & 0x0e000e00U) | sign;
+}
+
 // The low byte of `byte` as two FP16 values, low nibble first.
 __device__ __forceinline__ __half2 e2m1x2_to_half2(std::uint32_t byte) {
 #if NINFERNO_ARCH_FAMILY_SPECIFIC >= 1000 && NINFERNO_ARCH_FAMILY_SPECIFIC < 1300

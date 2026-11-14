@@ -281,8 +281,32 @@ void print_dram_law(const kr::DramTerms& d) {
                 d.counted, d.round_rate / 1e9, us(d.bus), us(d.sm), d.bus_bound ? "bus" : "per-SM");
 }
 
-void print_register_mma(const kr::RegisterMmaTerms& t, bool heavy, double a16,
-                        std::optional<double> sel) {
+// The price the selector offers for an A16 tile's terms: total x the A16 scale, plus the
+// completeness terms where they are on (generic_cost.cpp price_routes, the same order).
+template <class Terms>
+double offered(const Terms& t, double a16, bool complete) {
+    const double scaled = t.total * a16;
+    return complete ? scaled + (t.output + t.residual + t.quant + t.launch) : scaled;
+}
+
+// The completeness terms of a tile (kernel_roofline.h Completeness, #613 PR-8a).
+template <class Terms>
+void print_completeness(const Terms& t, bool complete) {
+    std::printf(
+        "  completeness terms (%s): output %.2f + residual %.2f + quant %.2f + launch "
+        "%.2f%s us; complete %.2f us\n",
+        complete ? "on, offered" : "off, computed only", us(t.output), us(t.residual), us(t.quant),
+        us(t.launch),
+        t.launch_bound && t.launch_extrapolated
+            ? " (no launch facts: the slowest measured architecture's, its ramp extrapolated)"
+        : t.launch_bound        ? " (no launch facts: the slowest measured architecture's)"
+        : t.launch_extrapolated ? " (ramp extrapolated past the largest measured grid)"
+                                : "",
+        us(t.complete));
+}
+
+void print_register_mma(const kr::RegisterMmaTerms& t, bool heavy, double a16, double l2_fitted,
+                        bool complete, std::optional<double> sel) {
     print_grid(t.grid);
     if (!t.legacy) print_dram_law(t.dram_law);
     if (!heavy) {
@@ -296,24 +320,35 @@ void print_register_mma(const kr::RegisterMmaTerms& t, bool heavy, double a16,
     std::printf("  reduce: cluster %.2f + warps %.2f = %.2f us\n", us(t.reduce_cluster),
                 us(t.reduce_warps), us(t.reduce));
     std::printf("  chain %.2f us\n", us(t.chain));
-    const double scaled = t.total * a16;
+    // The L2 rate Little's law gives the busiest SM's warps at the counted bytes in flight, beside
+    // the fitted rate the heavy form prices by (printed, not priced: PR-7b's).
+    if (t.l2_little_bytes_per_clock) {
+        std::printf(
+            "  l2 by Little's law: %.0f warps x b_w / the ISA row's L2 latency = %.1f B/SM/clk "
+            "(no port cap), the fitted rate %.0f\n",
+            t.grid.warps, *t.l2_little_bytes_per_clock, l2_fitted);
+    }
+    print_completeness(t, complete);
+    const double scaled = offered(t, a16, complete);
     const char* law     = t.legacy ? "(bytes + mma + reduce) / fill + chain (legacy DRAM law)"
                           : heavy  ? "dram + (l2 + spill + mma) / fill + reduce + chain"
                                    : "mem + mma / fill + reduce + chain";
-    std::printf("  total %s = %.2f us, x a16 scale %.2f = %.2f us; selector %s%s\n", law,
-                us(t.total), a16, us(scaled),
+    std::printf("  total %s = %.2f us, x a16 scale %.2f%s = %.2f us; selector %s%s\n", law,
+                us(t.total), a16, complete ? " + the completeness terms" : "", us(scaled),
                 sel ? (std::to_string(us(*sel)) + " us ").c_str() : "", agreement(sel, scaled));
 }
 
-void print_pipelined(const kr::PipelinedTerms& t, double a16, std::optional<double> sel) {
+void print_pipelined(const kr::PipelinedTerms& t, double a16, bool complete,
+                     std::optional<double> sel) {
     print_grid(t.grid);
     if (!t.legacy) print_dram_law(t.dram_law);
     std::printf("  mem %.2f us, mma %.2f us, chain %.2f us\n", us(t.mem), us(t.mma), us(t.chain));
-    const double scaled = t.total * a16;
-    std::printf("  total %s = %.2f us, x a16 scale %.2f = %.2f us; selector %s%s\n",
+    print_completeness(t, complete);
+    const double scaled = offered(t, a16, complete);
+    std::printf("  total %s = %.2f us, x a16 scale %.2f%s = %.2f us; selector %s%s\n",
                 t.legacy ? "max(mem, mma) / fill + chain (legacy DRAM law)"
                          : "max(mem, mma / fill) + chain",
-                us(t.total), a16, us(scaled),
+                us(t.total), a16, complete ? " + the completeness terms" : "", us(scaled),
                 sel ? (std::to_string(us(*sel)) + " us ").c_str() : "", agreement(sel, scaled));
 }
 
@@ -334,13 +369,23 @@ int run(const Options& o) {
         std::fprintf(stderr, "price: %s has no roofline in its facts\n", row.name.c_str());
         return 1;
     }
-    const kr::ChipFacts chip  = kr::chip_facts_of(d);
-    const kr::Calibration cal = kr::calibration_of(d.major, d.minor);
-    const bool emulated       = !d.features.mma_bf16_native;
+    const kr::ChipFacts chip = kr::chip_facts_of(d);
+    // The selector's switch (generic_cost.cpp price_routes: completeness_terms()).
+    const kr::Calibration cal = [&] {
+        kr::Calibration c    = kr::calibration_of(d.major, d.minor);
+        c.completeness_terms = generic::completeness_terms();
+        return c;
+    }();
+    const bool complete = cal.completeness_terms;
+    const bool emulated = !d.features.mma_bf16_native;
     const double n = o.n, k = o.k;
     const std::uint64_t payload = generic::described_weight_bytes(qtype, o.epilogue, o.n, o.k);
-    const kr::Call call{n, k, static_cast<double>(o.t), o.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0,
-                        static_cast<double>(payload) / (n * k)};
+    const kr::Call call{n,
+                        k,
+                        static_cast<double>(o.t),
+                        o.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0,
+                        static_cast<double>(payload) / (n * k),
+                        o.epilogue == Epilogue::AddResidual};
     const bool heavy = has_subblock_scales(qtype) && rmma_terms_measured(d.major, d.minor);
     const double a16 = fitted_route_scales(d.major, d.minor).value_or(FittedRouteScales{}).a16_cost;
     const auto priced = generic::priced_routes_query(d, qtype, o.policy, o.epilogue, o.n, o.k, o.t);
@@ -383,6 +428,36 @@ int run(const Options& o) {
                 cal.l1_bytes_per_sm_clock, cal.spill_accesses_per_step, cal.cluster_reduce_cycles,
                 cal.warp_reduce_cycles, cal.pipelined_stage_cycles, cal.pipelined_stage_k,
                 cal.pipelined_saturating_warps, cal.min_warp_fill);
+    // The completeness terms (#613 PR-8a): their facts and counts, and whether the selector
+    // offers them.
+    if (chip.launch_node_s && chip.launch_ramp) {
+        std::printf("launch facts (core/launch_facts.h): graph node %.3f us, dispatch ramp",
+                    *chip.launch_node_s * 1e6);
+        const RampPoints& p = *chip.launch_ramp;
+        for (int i = 1; i < 5; ++i) {
+            if (p.seconds[0] && p.seconds[i]) {
+                std::printf(" %.0f CTAs %.3f us", p.ctas[i], (*p.seconds[i] - *p.seconds[0]) * 1e6);
+            }
+        }
+        std::printf(" (piecewise linear between them); ");
+    } else {
+        std::printf("launch facts: none for sm_%d%d (the launch term is unknown, priced at the "
+                    "slowest measured architecture's); ",
+                    d.major, d.minor);
+    }
+    std::printf(
+        "completeness terms %s (route_cost::kCompletenessTerms); output %.0f bytes = %.2f us"
+        "%s; quantizer bytes a value counted W4A8 %.3f (padding %.3f), I8 %.3f (padding "
+        "%.3f), MMQ %.3f, fitted %.1f with a %.1f us launch while off\n",
+        complete ? "on" : "off", n * o.t * 2.0, us(n * o.t * 2.0 / chip.dram_bytes_per_s),
+        call.residual ? ", the residual read the same" : "",
+        generic::route_cost::kQuantW4a8BytesPerValue.value(),
+        generic::route_cost::kQuantW4a8PadBytesPerValue.value(),
+        generic::route_cost::kQuantI8BytesPerValue.value(),
+        generic::route_cost::kQuantI8PadBytesPerValue.value(),
+        generic::route_cost::kQuantMmqBytesPerValue.value(),
+        generic::route_cost::kQuantBytesPerValue.value(),
+        us(generic::route_cost::kQuantLaunchSeconds.value()));
     if ((o.registers || o.local_bytes > 0) && !heavy) {
         std::printf("kernel facts given but not read: the plain form prices by threads alone\n");
     } else if (o.registers || o.local_bytes > 0) {
@@ -408,10 +483,22 @@ int run(const Options& o) {
 
     const bool one = o.only.has_value();
     if (!one) {
-        std::printf("%-10s %-9s %6s %5s %4s %6s %5s | %9s %9s %9s %9s | %9s %9s %s\n", "route",
-                    "tile", "ctas", "waves", "occ", "rounds", "fill", "bytes", "mma", "reduce",
-                    "chain", "total", in_domain ? "selector" : "formula", "");
+        std::printf("%-10s %-9s %6s %5s %4s %6s %5s | %9s %9s %9s %9s | %9s %9s %-2s | %9s %9s\n",
+                    "route", "tile", "ctas", "waves", "occ", "rounds", "fill", "bytes", "mma",
+                    "reduce", "chain", "total", in_domain ? "selector" : "formula", "", "launch",
+                    "if on");
     }
+    // The completeness columns of a table row: the tile's launch ("*" after it where its grid's
+    // ramp is extrapolated past the largest measured grid, "?" where the architecture has no
+    // launch facts and the slowest measured one's stands in) and the price the selector offers
+    // with the completeness terms on (total x a16 + the terms).
+    const auto completeness_columns = [&](const auto& t) {
+        std::printf(" | %8.2f%s %9.2f\n", us(t.launch),
+                    t.launch_bound          ? "?"
+                    : t.launch_extrapolated ? "*"
+                                            : " ",
+                    us(offered(t, a16, true)));
+    };
     const auto wants = [&](Route r) { return !one || *o.only == r; };
     // The selector's two rules, read from the selector: a route it does not admit for this call
     // (route_admitted_query: route_admits, the family's whole rule on this build and board, for
@@ -486,19 +573,20 @@ int run(const Options& o) {
         if (one) {
             std::printf("rmma:%d tile %s, %.0f threads, warps_k %.0f\n", i, tile_text.c_str(),
                         kernel.threads, kernel.warps_k);
-            print_register_mma(t, heavy, a16, sel);
+            print_register_mma(t, heavy, a16, cal.l2_bytes_per_sm_clock, complete, sel);
             continue;
         }
-        const double scaled = t.total * a16;
+        const double scaled = offered(t, a16, complete);
         std::printf(
             "rmma:%-5d %-9s %6.0f %5.0f %4.0f %6.0f %5.3f | %9.2f %9.2f %9.2f %9.2f | %9.2f ", i,
             tile_text.c_str(), t.grid.ctas, t.grid.waves, t.grid.occupancy, t.grid.rounds,
             t.grid.fill, us(t.bytes), us(t.mma), us(t.reduce), us(t.chain), us(scaled));
         if (sel) {
-            std::printf("%9.2f %s\n", us(*sel), agreement(sel, scaled));
+            std::printf("%9.2f %-2s", us(*sel), agreement(sel, scaled));
         } else {
-            std::printf("%9s %s\n", "", agreement(sel, scaled));
+            std::printf("%9s %-2s", "", agreement(sel, scaled));
         }
+        completeness_columns(t);
     }
     const auto pipelined = [&](Route r, const kr::PipelinedKernel& kernel) {
         const auto t                = kr::price_pipelined(chip, cal, call, kernel);
@@ -510,19 +598,20 @@ int run(const Options& o) {
             std::printf("%s:%d tile %s, %.0f threads, %.0f stages of %.0fx%.0f\n", family.c_str(),
                         r.schedule, tile_text.c_str(), kernel.threads, kernel.stages,
                         kernel.stage_rows, kernel.stage_cols);
-            print_pipelined(t, a16, sel);
+            print_pipelined(t, a16, complete, sel);
             return;
         }
-        const double scaled = t.total * a16;
+        const double scaled = offered(t, a16, complete);
         std::printf("%s:%-*d %-9s %6.0f %5.0f %4.0f %6.0f %5.3f | %9.2f %9.2f %9s %9.2f | %9.2f ",
                     family.c_str(), r.family == Family::TiledMma ? 4 : 3, r.schedule,
                     tile_text.c_str(), t.grid.ctas, t.grid.waves, t.grid.occupancy, t.grid.rounds,
                     t.grid.fill, us(t.mem), us(t.mma), "", us(t.chain), us(scaled));
         if (sel) {
-            std::printf("%9.2f %s\n", us(*sel), agreement(sel, scaled));
+            std::printf("%9.2f %-2s", us(*sel), agreement(sel, scaled));
         } else {
-            std::printf("%9s %s\n", "", agreement(sel, scaled));
+            std::printf("%9s %-2s", "", agreement(sel, scaled));
         }
+        completeness_columns(t);
     };
     for (int i = 0; i < generic::tiled_schedule_count(); ++i) {
         const Route r{Family::TiledMma, static_cast<std::uint8_t>(i)};

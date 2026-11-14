@@ -203,6 +203,13 @@ struct LinearShape {
     std::string format;
 };
 
+// The kernel a trunk linear's prefill call runs on, as the generic selector answers it (#613 PR-9,
+// ModelFacts::prefill_routes): ggml's matrix kernel; the W4A8 tiles, classic or producer-warp (a
+// Q8_0 linear's int8 tile among them); another kernel of 8- or 4-bit activations (I8, R8, the
+// vector kernel, W4A4); one of 16-bit activations (the register, tiled and staged MMA, the scalar
+// route; Volta's CUTLASS runs a tiled call). Unknown: not asked, or not answered.
+enum class PrefillKernel : std::uint8_t { Unknown, Mmq, W4a8, OtherA8, A16 };
+
 // The kernels of a routed layer's two grouped stages at a decode width, and the share of the
 // routed bytes the layers that take them hold (ModelFacts::moe_routes).
 struct MoeStepRoute {
@@ -268,6 +275,17 @@ struct ModelFacts {
     // sets it). The step still takes the measured pair's share, but its estimate is Transferred
     // past one row ("MoE route not queried"): which pair the op runs was never asked.
     bool moe_route_unqueried = false;
+    // The kernel a trunk linear's prefill call of `tokens` tokens runs on under `activations`
+    // (#613 PR-9): the generic selector's own answer (ops/generic route_query, prefill = true) on
+    // the card's class (product/plan with_prefill_routes), so the estimate prices the route the
+    // selector runs, never one it would not. `linear` is one of `linears` (never an expert's bank:
+    // the banks' route is QuantOption::expert_banks), its format the file's, or the quantization's
+    // where the file names none and the label names one (label_formats). Asked only on the int8
+    // route of a quantization that is not NVFP4. Unset: not asked, and the prefill prices the
+    // kernels its tile laws assume.
+    std::function<PrefillKernel(const LinearShape& linear, std::uint32_t tokens,
+                                ActivationMode activations)>
+        prefill_routes;
     [[nodiscard]] bool moe() const noexcept { return experts > 1 && routed_expert_params > 0; }
 };
 
@@ -574,14 +592,21 @@ struct ClosedGate {
     std::string family;     // the model family ("" where it is the generation's)
     int cards = 0;          // the lab cards the constant behind it rests on now
 };
+
 // A prefill's linears over a chunk of `tokens` by their tiles (DECISIONS 66): every linear's rounds
 // of tiles, an MoE's experts by jobs and its routing's gather and scatter of the tokens' rows;
 // seconds, 0 where the card's generation or the weights' GEMM has no row (a dense model: Q8_0
 // weights; an MoE: its banks' route and Q8_0 beside them).
 // `transferred` (when given) is set where a tile row rests on one card.
+// Where the selector answers a trunk linear's route (ModelFacts::prefill_routes, under
+// `activations`), the linear is priced on that route: by the law of the kernel it names where the
+// choice has one (MMQ's tiles, the W4A8 tiles; a Q8_0 linear's int8 tile, kTileCost), else at its
+// activations' share of the generation's peak (a 16-bit kernel's at the BF16 share); `transferred`
+// is set for a linear moved to a share or to a law read on one card.
 [[nodiscard]] double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card,
                                              const QuantOption& quant, double tokens,
-                                             bool* transferred = nullptr) noexcept;
+                                             bool* transferred          = nullptr,
+                                             ActivationMode activations = ActivationMode::Fast);
 // The rest of a prefill's chunk of `tokens` beside its linears and attention (DECISIONS 66): the
 // recurrent layers' chunked scan in SM-clocks, the norms, activations' quantization, convolution
 // and gates in bytes over the DRAM rate; seconds, 0 where the generation has no census.
