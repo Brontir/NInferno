@@ -2729,3 +2729,22 @@ estimate moves to the BF16 share (#822; `prefill_prices_the_selectors_route` in
 - Volta's prefill is not asked (its CUTLASS gates mirror the selector's `volta_cutlass_takes`, a
   second copy); ninferno-ui registers no query (#766).
 - Not run on the stands.
+
+## 86. The Qwen3.5 curve transfers to an unmeasured size where every measured size agrees within the answer noise (#618 step 9, 14.11, rule)
+
+**The question.** #914 gave five Qwen3.5 sizes (0.8B, 2B, 4B, 9B, 27B) their own quantization
+curves. A model of the family that is none of them (another size, a fine-tune's own weights) read
+the 9B's curve as an estimate, which never decides (#368). When may it decide?
+
+**Rule.** The 9B curve's point of a label decides for such a model (`QualityAuthority::Transfer`,
+weighed as a measurement in `plan_quants`) where every measured size's point of that label lies
+within the family's answer noise of the 9B's, and the model's weights lie within the measured
+sizes (no extrapolation in size). The noise is the answer scale's (`kAnswerScales`: 0.2 points of
+MMLU-Pro over 40 points per KLD = 0.005 KLD), declared before these curves were measured: two
+quantizations closer than that cannot be told apart by their answers. It is not read off the
+curves.
+
+**What moves.** The labels that pass: Q6_K, UD-Q5_K_XL and Q5_K_S. Q5_K_M just fails (the 2B's lies
+0.00502 below the 9B's), and every 4-bit and lower label fails (the 2B's UD-Q4_K_XL 0.006 below, the
+0.8B's Q4_K_M 0.007 above). A model outside 0.8B to 27B transfers nothing. No plan golden moves: no
+fixture model is an unmeasured size of the family.
