@@ -491,14 +491,36 @@ struct QuantKld {
     Evidence evidence = Evidence::Interpolated;
 };
 
-QuantKld quant_kld(double bits, std::string_view label, std::string_view files, bool same_family) {
-    double reference_bits = 0;
+// The model whose curve kQuantKld holds, by its weights (ModelFacts::params), or none.
+const QuantKldModel* quant_kld_model(double params) noexcept {
+    for (const QuantKldModel& m : kQuantKldModels) {
+        if (std::abs(m.params - params) < 0.5) { return &m; }
+    }
+    return nullptr;
+}
+
+// A point decides on two cards, or on one where its model records its reference's checksum (a
+// model constant: another card's run checks it against the same reference NLL).
+bool point_counts(const QuantKldPoint& p) noexcept {
+    if (p.cards >= kQuantKldCards) { return true; }
+    const QuantKldModel* m = quant_kld_model(p.params);
+    return m != nullptr && m->reference_nll > 0;
+}
+
+QuantKld quant_kld(double bits, std::string_view label, std::string_view files, bool same_family,
+                   double params) {
+    // The model's own curve where kQuantKld holds one (#618 step 9), else the default's (the 9B's):
+    // another model of the family, or another family, reads that one.
+    const QuantKldModel* own  = same_family ? quant_kld_model(params) : nullptr;
+    const double curve_params = own != nullptr ? own->params : kQuantKldDefaultParams;
+    double reference_bits     = 0;
     std::vector<const QuantKldPoint*> points;
     for (const QuantKldPoint& p : kQuantKld) {
-        // A point on fewer cards than kQuantKldCards is neither the label's value nor a curve
-        // point: an output-affecting choice rests on two cards (AGENTS.md). The reference is 0 by
-        // definition.
-        if (p.kld > 0 && p.cards < kQuantKldCards) { continue; }
+        if (std::abs(p.params - curve_params) >= 0.5) { continue; }
+        // A point that does not count (point_counts) is neither the label's value nor a curve
+        // point: an output-affecting choice rests on two cards (AGENTS.md) or on a checked
+        // reference. The reference is 0 by definition.
+        if (p.kld > 0 && !point_counts(p)) { continue; }
         // A point stands for its bits alone: the same file counted at other bits (an artifact's
         // tensors apart from a drafter's) takes the interpolation, as before (#299 changes no value).
         const bool same_bits  = std::abs(p.bits_per_weight - bits) < 0.05;
@@ -2115,7 +2137,8 @@ QualityAuthority quant_authority(const ModelFacts& model, const QuantOption& qua
     // The curve's points are the default family's measurements (kQuantKldFamily): on another
     // family every term is the curve's estimate. No transfer rule is registered.
     const bool own_curve = model.family == kQuantKldFamily;
-    const QuantKld q     = quant_kld(quant.bits_per_weight, quant.label, quant.files, own_curve);
+    const QuantKld q =
+        quant_kld(quant.bits_per_weight, quant.label, quant.files, own_curve, model.params);
     return own_curve && q.evidence == Evidence::Measured ? QualityAuthority::Direct
                                                          : QualityAuthority::Estimate;
 }
@@ -2140,9 +2163,12 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     // Unknown bits (0) have no place on the curve: no term, and the quantization stays the rule's
     // (plan_quants weighs the quantizations only where every row's bits are known).
     const QuantKld q = quant.bits_per_weight > 0
-                           ? quant_kld(quant.bits_per_weight, quant.label, quant.files, !other_curve)
+                           ? quant_kld(quant.bits_per_weight, quant.label, quant.files, !other_curve,
+                                       model.params)
                            : QuantKld{.evidence = Evidence::StandIn};
-    const std::string curve(kQuantKldSource);
+    // The curve read: the model's own (kQuantKldModels), else the default's.
+    const QuantKldModel* own_model = other_curve ? nullptr : quant_kld_model(model.params);
+    const std::string curve(own_model != nullptr ? own_model->source : kQuantKldSource);
     std::string quant_source = "interpolated by bits per weight on " + curve;
     if (quant.bits_per_weight <= 0) {
         quant_source = "unknown bits per weight: not weighed";

@@ -261,6 +261,8 @@ const std::vector<Spec>& specs() {
              "kQuantKldSource",
              "kQuantKldCards",
              "kQuantKld",
+             "kQuantKldDefaultParams",
+             "kQuantKldModels",
              // a measurement of answers against KLD (configuration-choice.md, #618 step 11): data
              // a caller shows, never a decision's, not fitted
              "kAnswerScales",

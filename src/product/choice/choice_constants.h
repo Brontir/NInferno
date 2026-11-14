@@ -1047,6 +1047,9 @@ inline constexpr KldTerm kKldTerms[] = {
 // interpolation in log KLD over bits per weight between the two nearest points (below them, the
 // lowest pair's slope; above Q6_K, a straight line to 0 at Q8_0's bits), marked as not measured; at
 // or above Q8_0's bits, and any model's Q8_0, it is the reference (0).
+// The default curve's model: Qwen3.5-9B (ModelFacts::params as the plan counts them).
+inline constexpr double kQuantKldDefaultParams = 8815378432.0;
+
 struct QuantKldPoint {
     double bits_per_weight;
     double kld;
@@ -1055,6 +1058,23 @@ struct QuantKldPoint {
     // The file measured: its SHA-256 (the hub's LFS digest, spec::weights_identity of one file).
     // Only those bytes are the point's measurement; another file of the label is a proxy (#299).
     std::string_view file;
+    // The model measured: its weights (ModelFacts::params, the plan's count). A model's points
+    // are its own curve (kQuantKldModels); a model without one reads the default's, the 9B's.
+    double params = kQuantKldDefaultParams;
+};
+
+// A model whose curve kQuantKld holds (#618 step 9): its weights (the key), and the checksum of
+// its Q8_0 reference: the mean NLL per token the reference scored on the curve's corpus and
+// windows. KLD is a model constant (the exact route's bytes do not depend on the card: Qwen3.5-4B
+// against its Q8_0 on the RTX 4070 Ti and RTX 3060 within 0.1 % at every point, the reference's
+// NLL within 1e-4), so one card measures a model's curve where its reference is recorded: a run
+// on another card that scores the reference to this NLL measured the same curve. Two cards stay
+// the rule of a point whose model records none (kQuantKldCards).
+struct QuantKldModel {
+    double params;
+    double reference_nll; // nats per token, ninferno-perplexity --quick 4096/2048, exact, BF16 KV
+    std::string_view name;
+    std::string_view source;
 };
 
 inline constexpr std::string_view kQuantKldSource =
@@ -1097,6 +1117,122 @@ inline constexpr QuantKldPoint kQuantKld[] = {
      "a31b6b4c603ddd66b5496ee065c9dd13b2b6de77dce9e5d59609aef8d39868e7"},
     {2.855, 0.33460, "UD-IQ2_XXS", 2, // 0.33445 / 0.33475, ppl 6.4693, top-1 0.7684
      "570ce2bbc92545cffbcb01df43cba59d86093dadc34c25da9f554d256bc70b91"},
+    // Qwen3.5-0.8B (752 393 024 tensor elements; ModelFacts::params 739 016 704), RTX 4070 Ti, one card:
+    {8.516, 0.00000, "Q8_0", 1, "0ad885ffd4bb022fc4f0d33a3308fa108ef8613159d3b3a67e23abca056b7a6c", 739016704.0},
+    {6.678, 0.00364, "Q6_K", 1, // top-1 96.47 %
+     "8408c5c222111cec253682b49eece2a02ed641ded68490001ec4ee160e71098e", 739016704.0},
+    {6.333, 0.00738, "UD-Q5_K_XL", 1, // top-1 95.06 %
+     "299824f81e5a1d84bf49db6b603b1c002a4e910c6e9f242a504ddc51e758ee0e", 739016704.0},
+    {6.157, 0.00848, "Q5_K_M", 1, // top-1 94.60 %
+     "c3ef5827b322c4be08a3a26ce424460d8b37daf593356c2cc1f4e40a7ab0581b", 739016704.0},
+    {5.932, 0.01024, "Q5_K_S", 1, // top-1 94.19 %
+     "a201a5899049a7f7845f910ad803574787b4474c3daffc0d33e8688f9114880f", 739016704.0},
+    {5.825, 0.01845, "UD-Q4_K_XL", 1, // top-1 92.45 %
+     "3177ebd67afe4438374da19e690bc1b98756f7e0fea9240e1be404336156a7b5", 739016704.0},
+    {5.546, 0.02630, "Q4_K_M", 1, // top-1 91.09 %
+     "bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517", 739016704.0},
+    {5.286, 0.03308, "Q4_K_S", 1, // top-1 90.17 %
+     "5f7ccfa6e9df0d9ebbaff9ee095b18202bec1e0ac313ca688d2c57c9c80a6bc9", 739016704.0},
+    {5.273, 0.03767, "IQ4_NL", 1, // top-1 89.50 %
+     "de9f7f28a4155c1678cbdae54c61ae63aa6326f7fffd2cdacfb765cfeab21670", 739016704.0},
+    {5.121, 0.03961, "IQ4_XS", 1, // top-1 89.06 %
+     "619917ae92f61eb6515a7070e944a0a7c2b198a2cf6536386f475485188a36ff", 739016704.0},
+    {4.883, 0.09829, "Q3_K_M", 1, // top-1 83.50 %
+     "c49ad509cd0a3f8584c4eff50d84202336bf9475b8a724c89f4061687c1fb510", 739016704.0},
+    {4.118, 0.21086, "UD-IQ3_XXS", 1, // top-1 77.23 %
+     "3dc1f2217751ca270d41f6fc3084160c386465fe09bf4596576dccd7a4565b8a", 739016704.0},
+    {3.838, 0.36182, "UD-IQ2_M", 1, // top-1 71.08 %
+     "e31519c0ffb8e5bec09f34d7783731c39f9eaee13c0ec5a0f14b191761bb5134", 739016704.0},
+    // Qwen3.5-2B (1 881 825 088 tensor elements; ModelFacts::params 1 855 520 768), RTX 4060, one card:
+    {8.507, 0.00000, "Q8_0", 1, "1b04acba824817554f4ce23639bc8495ff70453b8fcb047900c731521021f2c1", 1855520768.0},
+    {6.649, 0.00279, "Q6_K", 1, // top-1 96.95 %
+     "fc90339420b4298887aafb307a4291c55440b730133bbffe6ba9630503dcb548", 1855520768.0},
+    {6.189, 0.00551, "UD-Q5_K_XL", 1, // top-1 95.88 %
+     "67bff9774bc55e44af2eee3c448dc054478b45c0607858fc6df5b336b55f36f4", 1855520768.0},
+    {6.055, 0.00558, "Q5_K_M", 1, // top-1 95.88 %
+     "1885b3a9195f8cc09da9a7a7a75afdc1e8d5cbf9fc4a499c3961dddea37098ac", 1855520768.0},
+    {5.839, 0.00660, "Q5_K_S", 1, // top-1 95.57 %
+     "5503c57f038bd201e0583d64d50d4aebba2f628004834cb4d32abb141eb1bfda", 1855520768.0},
+    {5.649, 0.01226, "UD-Q4_K_XL", 1, // top-1 94.14 %
+     "0af96165ea615bea39a04118d63f0b6d35908aea850ee4a51aa6151d851b8b35", 1855520768.0},
+    {5.398, 0.01652, "Q4_K_M", 1, // top-1 93.20 %
+     "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223", 1855520768.0},
+    {5.130, 0.02030, "Q4_K_S", 1, // top-1 92.57 %
+     "56eee7b85a2023ba393c5f9a5a5e372e3645e7925a13adb4d13723fc5bc14124", 1855520768.0},
+    {5.111, 0.02473, "IQ4_NL", 1, // top-1 91.87 %
+     "e430d87ebc5abbb269c2e2461f1a49b9c5dc79847c13c786dc3615d0b116c4ba", 1855520768.0},
+    {4.940, 0.02553, "IQ4_XS", 1, // top-1 91.73 %
+     "3639f34b5ca22aa1c51f3616566eae8c355111554f6924ad97ee2652ed11c1cd", 1855520768.0},
+    {4.660, 0.06306, "Q3_K_M", 1, // top-1 87.45 %
+     "8b049f98461020b7e15797e13413fc63b9b500ffa883c74618b618ecbc2bfccf", 1855520768.0},
+    {3.915, 0.12919, "UD-IQ3_XXS", 1, // top-1 82.58 %
+     "36347f47f9eab7d433c7c37be1f87ac2253378c3d530da3cb25fb5f71f8f1a58", 1855520768.0},
+    {3.609, 0.22448, "UD-IQ2_M", 1, // top-1 77.97 %
+     "7df5673b6c1a8efb3b5f5988a506d991ab936b3e00ad29f94e0f75cfbf8599da", 1855520768.0},
+    // Qwen3.5-4B (4 205 751 296 tensor elements; ModelFacts::params 4 118 937 600), RTX 3060, one card:
+    {8.505, 0.00000, "Q8_0", 1, "10cc391b403021dd11c614679d2fd92f611c3681d29e29651b717316965d61e1", 4118937600.0},
+    {6.686, 0.00612, "Q6_K", 1, // top-1 97.39 %
+     "fdedd781c9ce676ab66b018ca247ff78e8a33c98098a822c1e2d5075e7718f66", 4118937600.0},
+    {6.163, 0.00913, "UD-Q5_K_XL", 1, // top-1 96.52 %
+     "b4c36a8e14a80c21bcab5a067ce342b2e70e28f60b4aa95ad12203fa17b87426", 4118937600.0},
+    {5.959, 0.00999, "Q5_K_M", 1, // top-1 96.43 %
+     "8814232b85594dcd46c50e5b8b29324a7efe9e746edbe8a3d1df3d3fce7aad39", 4118937600.0},
+    {5.733, 0.01211, "Q5_K_S", 1, // top-1 96.12 %
+     "161be121617c45ea247eae0fd4477d26f287a368b52702e3fc99c9bc52f23061", 4118937600.0},
+    {5.518, 0.01916, "UD-Q4_K_XL", 1, // top-1 94.77 %
+     "b252c5610a42ca82d20fe2a12813e9d069eed89292907e26c783eeb0bc961bc7", 4118937600.0},
+    {5.193, 0.02506, "Q4_K_M", 1, // top-1 93.98 %
+     "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4", 4118937600.0},
+    {4.907, 0.03037, "Q4_K_S", 1, // top-1 93.31 %
+     "27caeb0e4b999d92ce0a9fdbdd1a7ba5112908d9de125645883732274be2ea77", 4118937600.0},
+    {4.887, 0.03680, "IQ4_NL", 1, // top-1 92.85 %
+     "ff5c3e9740a5aa53f04fdf3b0b8cc75da556bf8948cdb19d61c512d3a43465d9", 4118937600.0},
+    {4.691, 0.03700, "IQ4_XS", 1, // top-1 92.79 %
+     "658a9e7e406deb06d0179755e3c14f6a82915a4be4962a2f92a64d948d2e572f", 4118937600.0},
+    {4.342, 0.07170, "Q3_K_M", 1, // top-1 89.21 %
+     "d6981ab4d77ba712b48ef69d69042d75b5e39b9dce5fb5a5b054fd08e06afb95", 4118937600.0},
+    {3.687, 0.13360, "UD-IQ3_XXS", 1, // top-1 84.98 %
+     "00aab66a2359a9afc52f0ab757e61f9be1656e6fcaba8468bd95579a8b2cbc40", 4118937600.0},
+    {3.327, 0.20917, "UD-IQ2_M", 1, // top-1 81.20 %
+     "cb4c45ca42c0d7777667e94e3963f8e59e939b3665098328ce601feb5be129c1", 4118937600.0},
+    // Qwen3.5-27B (26 895 998 464 tensor elements; ModelFacts::params 26 378 240 000), RTX 5090, one card:
+    {8.502, 0.00000, "Q8_0", 1, "6b0a101b0a86697fe11eabcc1a7db72699a9f3d4b18b6a1ac75ea3fb2c26c450", 26378240000.0},
+    {6.675, 0.00745, "Q6_K", 1, // top-1 98.08 %
+     "69e0f8527e0d937097cbcd486b51e2effaed963f49ef7962c9ef3eab45164ff8", 26378240000.0},
+    {5.997, 0.01110, "UD-Q5_K_XL", 1, // top-1 97.66 %
+     "423ebe4779f784a2921da340a0fab0c372fbafb4b9eb502ae3768218de01597a", 26378240000.0},
+    {5.829, 0.01149, "Q5_K_M", 1, // top-1 97.53 %
+     "e41a488a3f013dbfb323563d7250105b1e708daf084942f9011344ad1525996f", 26378240000.0},
+    {5.615, 0.01162, "Q5_K_S", 1, // top-1 97.46 %
+     "f4d4f26d54c36608a559f21df730ad55ff90943fb41ef9406c2733972644a9e8", 26378240000.0},
+    {5.238, 0.01861, "UD-Q4_K_XL", 1, // top-1 96.60 %
+     "13cb6228344898afa50d963c02ae0d991ae25094eea8837db8d0e452e91c5888", 26378240000.0},
+    {4.976, 0.02100, "Q4_K_M", 1, // top-1 96.16 %
+     "84b5f7f112156d63836a01a69dc3f11a6ba63b10a23b8ca7a7efaf52d5a2d806", 26378240000.0},
+    {4.687, 0.02383, "Q4_K_S", 1, // top-1 95.84 %
+     "223f8c0a94be9e94c36e3c4abf742067a0eea452f31b6b264824c030957508ee", 26378240000.0},
+    {4.663, 0.02530, "IQ4_NL", 1, // top-1 95.69 %
+     "2329e260f3b6d1aef7f7813bc47c16e2efc01cd7c032577549c4971235d6a96c", 26378240000.0},
+    {4.452, 0.02543, "IQ4_XS", 1, // top-1 95.60 %
+     "fb829c84491b30cda875b7366e29ce3e4cede19b40daf5b824003936bfc4dbbb", 26378240000.0},
+    {4.014, 0.04941, "Q3_K_M", 1, // top-1 93.22 %
+     "f08ce37ebe8a7130db0c198262336773976b1e374f2444f898c41117710f0bb3", 26378240000.0},
+    {3.419, 0.07791, "UD-IQ3_XXS", 1, // top-1 90.84 %
+     "b694e54fe124e299e1342a9f0b81f1a51e3c8bbccf11c0bd94394b28cc8ae2f9", 26378240000.0},
+    {3.027, 0.10807, "UD-IQ2_M", 1, // top-1 88.59 %
+     "3c05eb29a4eacbe0caf80990c14f5857d0581af0b162934a42357960a99fb4ba", 26378240000.0},
+};
+
+inline constexpr QuantKldModel kQuantKldModels[] = {
+    {739016704.0, 2.188232, "Qwen3.5-0.8B",
+     "unsloth/Qwen3.5-0.8B-GGUF against its Q8_0, RTX 4070 Ti (2026-11-14), ninferno-perplexity --quick --context 4096 --stride 2048 --activations exact --kv-dtype bf16"},
+    {1855520768.0, 1.912534, "Qwen3.5-2B",
+     "unsloth/Qwen3.5-2B-GGUF against its Q8_0, RTX 4060 (2026-11-14), ninferno-perplexity --quick --context 4096 --stride 2048 --activations exact --kv-dtype bf16"},
+    {4118937600.0, 1.739273, "Qwen3.5-4B",
+     "unsloth/Qwen3.5-4B-GGUF against its Q8_0, RTX 3060 (2026-11-14), ninferno-perplexity --quick --context 4096 --stride 2048 --activations exact --kv-dtype bf16"},
+    {8815378432.0, 1.602471, "Qwen3.5-9B", kQuantKldSource}, // its NLL: the RTX 4070 Ti rerun (2026-11-14), the curve within 1.7 %
+    {26378240000.0, 1.465996, "Qwen3.5-27B",
+     "unsloth/Qwen3.5-27B-GGUF against its Q8_0, RTX 5090 (2026-11-14), ninferno-perplexity --quick --context 4096 --stride 2048 --activations exact --kv-dtype bf16"},
 };
 
 // ---- The trade.
