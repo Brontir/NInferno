@@ -166,6 +166,9 @@ NOT_DECIDING = {
     "src/core/tune_timer.cu", "src/core/tune_timer.h", "src/core/units.h",
     "src/core/weight_view.cpp", "src/core/weight_view.h",
     "src/core/cuda_stream.h",  # the cudaStream_t handle type for host-only builds (#675)
+    # the plan's prefill route query (#613 PR-9): it asks route_query for the configuration
+    # choice's prefill estimate, product side; the selector goldens do not link it
+    "src/runtime/engine/plan_prefill_routes.cpp",
     # the dry run's workspace query (#615 W2): it reads the route pins to size the MoE path a
     # start takes (#844), it decides no route; the selector goldens do not call it
     "src/runtime/engine/plan_workspace.cpp",

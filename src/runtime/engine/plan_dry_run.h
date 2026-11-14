@@ -263,6 +263,14 @@ struct PlanDrafterGeometry {
     std::vector<std::string> projection_formats;
 };
 
+// The families whose start reads an HF text frontend and whose workspace the start's own planner
+// sizes since #615 W3: the dense decoder (dense_decoder, moe_decoder) and NemotronH. One list for
+// plan_facts.cpp (binds_directory) and plan_workspace.cpp (the query and the tokenizer count).
+inline bool hf_decoder_family(std::string_view model_type) {
+    return model_type == "dense_decoder" || model_type == "moe_decoder" ||
+           model_type == "nemotron_h";
+}
+
 struct PlanModelFacts {
     std::string model_type;   // the family (qwen3_5_text, gemma4_text, dense_decoder, ...); ""
     std::string architecture; // as the source names it (GGUF general.architecture, HF class)
@@ -541,6 +549,30 @@ using PlanMoeRouteQuery = std::function<std::optional<PlanExpertRoute>(
 void set_plan_moe_route_query(PlanMoeRouteQuery query);
 // The registered query (an empty function where none is).
 [[nodiscard]] const PlanMoeRouteQuery& plan_moe_route_query();
+
+// The kernel a trunk linear's prefill call runs (#613 PR-9), as the generic selector answers it
+// (ops/generic route_query, prefill = true, on the device's class): ggml's matrix kernel, the W4A8
+// tiles (classic or producer-warp), another kernel of 8- or 4-bit activations (I8, R8, the vector
+// kernel, W4A4), or one of 16-bit activations (the register, tiled and staged MMA, the scalar
+// route). Unknown: no answer (the selector does not read such a weight, or the format is not one
+// the format facts name).
+enum class PlanPrefillKernel : std::uint8_t { Unknown, Mmq, W4a8, OtherA8, A16 };
+
+// The kernel a prefill call of `tokens` tokens of an `n` x `k` linear stored as `format` (the
+// format facts' name: "ggml_q4_k", "q8_g32_fp16"; a gated pair `gated`, `n` both matrices' rows,
+// called as SwiGLU on n / 2) takes on `device` under `activations`: Exact A16 only, Fast and Int8
+// with int8 activations allowed. Under Fast that is the policy a GGUF's quantized linears record;
+// its BF16 and F16 linears record A16Only, which asks the same: the selector admits no A8 route
+// for a 16-bit weight, so it answers A16 under either policy.
+// The engine registers it (it links the Ops this library does not:
+// register_plan_prefill_route_query); unset, the choice's prefill prices the kernels its tile laws
+// assume (product/choice ModelFacts::prefill_routes).
+using PlanPrefillRouteQuery = std::function<PlanPrefillKernel(
+    const PlanDeviceFacts& device, std::string_view format, double n, double k, bool gated,
+    std::uint32_t tokens, ActivationMode activations)>;
+void set_plan_prefill_route_query(PlanPrefillRouteQuery query);
+// The registered query (an empty function where none is).
+[[nodiscard]] const PlanPrefillRouteQuery& plan_prefill_route_query();
 
 // A rung's bytes by the family planner's byte functions (model.offline_bytes): the persistent
 // layout and the CUDA graph allowance a start plans for `options` (normalized) at the rung's

@@ -1441,8 +1441,7 @@ PlanSourceFacts directory_facts(const artifact::Directory& dir, const std::strin
 // 3.5 (W2), the dense decoder and NemotronH (W3).
 bool binds_directory(const runtime::PlanModelFacts& model) {
     const std::string& type = model.model_type;
-    return type == "qwen3_5_text" || type == "qwen3_5_moe_text" || type == "dense_decoder" ||
-           type == "moe_decoder" || type == "nemotron_h";
+    return type == "qwen3_5_text" || type == "qwen3_5_moe_text" || runtime::hf_decoder_family(type);
 }
 
 // What the workspace query reads of an artifact beside its facts (#615): its directory and its

@@ -9,6 +9,7 @@
 // CPU.
 
 #include "product/choice/choice.h"
+#include "choice_fixture.h"
 #include "core/device_class.h"
 #include "core/machine_facts.h"
 #include "core/measured_boards.h"
@@ -154,97 +155,11 @@ KvCacheStorage kv_of(const std::string& name) {
     return *ninferno::parse_kv_cache_storage(name);
 }
 
-ch::ModelFacts model_of(const json& m) {
-    ch::ModelFacts out;
-    out.family               = m.at("family").get<std::string>();
-    out.params               = m.at("params").get<double>();
-    out.active_params        = m.at("active_params").get<double>();
-    out.experts              = m.at("experts").get<int>();
-    out.experts_per_token    = m.at("experts_per_token").get<int>();
-    out.routed_expert_params = m.at("routed_expert_params").get<double>();
-    out.input_table_params   = m.at("input_table_params").get<double>();
-    const json kv            = m.at("kv_bytes_per_token");
-    out.kv_bytes_per_token   = [kv](KvCacheStorage s) {
-        return kv.at(std::string(ninferno::kv_cache_storage_name(s))).get<std::uint64_t>();
-    };
-    const json st   = m.at("state_bytes");
-    out.state_bytes = [st](RecurrentStateStorage s) {
-        return st.value(std::string(ninferno::recurrent_state_storage_name(s)),
-                        st.at("f16").get<std::uint64_t>());
-    };
-    out.recurrent               = m.value("recurrent", true);
-    out.full_attention_width    = m.value("full_attention_width", 0.0);
-    out.sliding_attention_width = m.value("sliding_attention_width", 0.0);
-    out.layers                  = m.value("layers", 0U);
-    out.hidden                  = m.value("hidden", 0.0);
-    out.full_layers             = m.value("full_layers", 0U);
-    out.full_head_dim           = m.value("full_head_dim", 0.0);
-    out.full_kv_heads           = m.value("full_kv_heads", 0.0);
-    out.sliding_layers          = m.value("sliding_layers", 0U);
-    out.sliding_head_dim        = m.value("sliding_head_dim", 0.0);
-    out.sliding_kv_heads        = m.value("sliding_kv_heads", 0.0);
-    out.recurrent_state_elements = m.value("recurrent_state_elements", 0.0);
-    if (m.contains("linears")) {
-        for (const json& l : m.at("linears")) {
-            out.linears.push_back({l.at(0).get<double>(), l.at(1).get<double>(), l.at(2).get<double>(), false,
-                                   l.size() > 3 && l.at(3).get<int>() != 0});
-        }
-    }
-    if (m.contains("ring_bytes_per_token")) {
-        const json ring         = m.at("ring_bytes_per_token");
-        out.ring_bytes_per_token = [ring](KvCacheStorage s) {
-            return ring.at(std::string(ninferno::kv_cache_storage_name(s))).get<std::uint64_t>();
-        };
-        out.window = m.at("window").get<std::uint32_t>();
-    }
-    if (!out.recurrent) { out.state_bytes = nullptr; }
-    return out;
-}
-
-// The model at one quantization: its input table and speculation-only weights as stored.
-ch::ModelFacts model_at(const json& m, const std::string& quant) {
-    ch::ModelFacts out      = model_of(m);
-    const json& q           = m.at("quants").at(quant);
-    out.input_table_bytes   = q.value("input_table_bytes", 0.0);
-    // Each linear a format by its role's shares, as plan_facts.cpp splits a GGUF's.
-    if (q.contains("role_formats") && m.contains("linear_roles")) {
-        std::vector<ch::LinearShape> split;
-        for (std::size_t i = 0; i < out.linears.size(); ++i) {
-            const json& shares = q.at("role_formats").at(m.at("linear_roles").at(i).get<std::string>());
-            for (const auto& [format, share] : shares.items()) {
-                ch::LinearShape part = out.linears[i];
-                part.per_token *= share.get<double>();
-                part.format = format;
-                split.push_back(part);
-            }
-        }
-        out.linears = std::move(split);
-    }
-    return out;
-}
-
-ch::CardFacts card_of(const json& c) {
-    ch::CardFacts out;
-    out.major            = c.at("major").get<int>();
-    out.minor            = c.at("minor").get<int>();
-    out.sms              = c.at("sms").get<int>();
-    out.clock_hz         = c.at("clock_hz").get<double>();
-    out.dram_bytes_per_s = c.at("dram_bytes_per_s").get<double>();
-    out.fp4              = c.at("fp4").get<bool>();
-    return out;
-}
-
-ch::QuantOption quant_of(const std::string& label, const json& q) {
-    ch::QuantOption out;
-    out.label           = label;
-    out.bits_per_weight = q.at("bits_per_weight").get<double>();
-    // What a decode step reads (product::quant_option_of): the file less its MTP layers and drafter.
-    out.weight_bytes    = q.at("weight_bytes").get<double>() - q.value("speculation_bytes", 0.0);
-    out.weights         = ch::label_class(label);
-    // An MoE's routed banks as its GGUF's tensor table stores them (ffn_*_exps).
-    out.routed_expert_bytes = q.value("routed_expert_bytes", 0.0);
-    return out;
-}
+// The fixtures' records (tests/choice_fixture.h).
+using choice_fixture::card_of;
+using choice_fixture::model_at;
+using choice_fixture::model_of;
+using choice_fixture::quant_of;
 
 // The 2026-10-23 points: an MoE's decode from facts at one stream and on the 2026-10-30 step rows
 // (DECISIONS 65); a dense model's one-stream decode from facts (its several-stream rows are wave
@@ -1829,6 +1744,111 @@ void prices_dense_prefill_tiles() {
               "the W4A8 tiles where MMQ does not pay, from 128 tokens");
         check(std::abs(call(24576, 4096, true) / (2 * call(12288, 4096, false)) - 1) < 1e-3,
               "a gated pair: two grids of half its rows");
+    }
+}
+
+// The prefill prices the route the selector runs (#613 PR-9, ModelFacts::prefill_routes), answered
+// here by a stand-in for the plan's query (product/plan with_prefill_routes; the selector's own
+// answers on the lab's boards: ninferno_choice_prefill_routes_test). Where the selector answers the
+// kernel the tile laws assume, the estimate is as before, to the bit. A Q8_0 linear of a K-quant
+// file the selector runs on the W4A8 tiles takes the int8 tile (kTileCost), not MMQ's at the
+// file's K step. A linear it runs at 16 bits takes the BF16 share of its flops; where every linear
+// does (#822: Hopper and GB100 under int8 activations once they carry no fitted route scales, #821)
+// the estimate is the BF16 share's, never the int8 tiles' or the int8 share's, and Transferred.
+// Exact activations and Volta ask nothing.
+void prefill_prices_the_selectors_route(const json& fixture) {
+    using K           = ch::PrefillKernel;
+    const auto answer = [](K kernel) {
+        return [kernel](const ch::LinearShape&, std::uint32_t, ActivationMode) { return kernel; };
+    };
+    const json& qwen            = fixture.at("models").at("Qwen3.5-9B-MTP");
+    const ch::CardFacts rtx4090 = board_card(0x2684);
+    ch::Candidate fast;
+    fast.kv = KvCacheStorage::Int8Group64;
+    // Q8_0: the int8 tiles the selector runs it on (W4A8), as before.
+    {
+        const ch::ModelFacts m  = model_at(qwen, "Q8_0");
+        const ch::QuantOption q = quant_of("Q8_0", qwen.at("quants").at("Q8_0"));
+        ch::ModelFacts asked    = m;
+        asked.prefill_routes    = answer(K::W4a8);
+        bool was = false, is = false;
+        check(ch::prefill_linears_seconds(asked, rtx4090, q, 1024, &is) ==
+                      ch::prefill_linears_seconds(m, rtx4090, q, 1024, &was) &&
+                  is == was &&
+                  ch::speed_of(asked, rtx4090, q, fast, 1, 7000, 7000).prefill ==
+                      ch::speed_of(m, rtx4090, q, fast, 1, 7000, 7000).prefill,
+              "the selector's answer is the tiles' kernel: the estimate as before");
+        // Every linear at 16 bits on the RTX 4090: the BF16 share, as an exact route's.
+        ch::ModelFacts a16      = m;
+        a16.prefill_routes      = answer(K::A16);
+        ch::QuantOption no_int8 = q;
+        no_int8.int8_route      = false;
+        const ch::Speed share   = ch::speed_of(a16, rtx4090, q, fast, 1, 0, 0);
+        const ch::Speed bf16    = ch::speed_of(m, rtx4090, no_int8, fast, 1, 0, 0);
+        check(ch::prefill_linears_seconds(a16, rtx4090, q, 1024) == 0 &&
+                  std::abs(share.prefill / bf16.prefill - 1) < 1e-12 &&
+                  share.basis == ch::SpeedBasis::Transferred,
+              "every linear at 16 bits: the BF16 share, Transferred");
+        // #822: an H100 whose selector runs A16 under int8 activations prices the BF16 share, not
+        // the int8 share it priced before.
+        const ch::CardFacts h100 = board_card(0x2330);
+        ch::Candidate int8       = fast;
+        int8.activations         = ActivationMode::Int8;
+        const double hopper_a16  = ch::speed_of(a16, h100, q, int8, 1, 0, 0).prefill;
+        const double hopper_bf16 = ch::speed_of(m, h100, no_int8, int8, 1, 0, 0).prefill;
+        const double hopper_was  = ch::speed_of(m, h100, q, int8, 1, 0, 0).prefill;
+        std::cout << "H100 Q8_0 prefill, int8 activations: " << hopper_was << " tok/s on the int8 "
+                  << "share, " << hopper_a16 << " on the selector's 16-bit route\n";
+        check(std::abs(hopper_a16 / hopper_bf16 - 1) < 1e-12 && hopper_a16 != hopper_was,
+              "#822: the H100's 16-bit route at the BF16 share");
+        // Not asked under exact activations, nor on Volta.
+        ch::Candidate exact       = fast;
+        exact.activations         = ActivationMode::Exact;
+        const ch::CardFacts gv100 = board_card(0x1DBA);
+        check(ch::speed_of(a16, rtx4090, q, exact, 1, 7000, 7000).prefill ==
+                      ch::speed_of(m, rtx4090, q, exact, 1, 7000, 7000).prefill &&
+                  ch::speed_of(a16, gv100, q, fast, 1, 7000, 7000).prefill ==
+                      ch::speed_of(m, gv100, q, fast, 1, 7000, 7000).prefill,
+              "exact activations and Volta ask nothing");
+    }
+    // Qwen3.5 9B Q6_K, its Gated DeltaNet out-projection Q8_0 (MixerOut), on the RTX 4090 (MMQ):
+    // the selector runs that linear on the W4A8 int8 tile, the rest on MMQ.
+    {
+        const json& nine        = fixture.at("models").at("Qwen3.5-9B");
+        const ch::ModelFacts m  = model_at(nine, "Q6_K");
+        const ch::QuantOption q = quant_of("Q6_K", nine.at("quants").at("Q6_K"));
+        ch::ModelFacts asked    = m;
+        asked.prefill_routes    = [](const ch::LinearShape& l, std::uint32_t, ActivationMode) {
+            return l.format == "q8_g32_fp16" ? K::W4a8 : K::Mmq;
+        };
+        ch::ModelFacts rest = m, q8 = m;
+        rest.linears.clear(), q8.linears.clear();
+        for (const ch::LinearShape& l : m.linears) {
+            (l.format == "q8_g32_fp16" ? q8 : rest).linears.push_back(l);
+        }
+        ch::QuantOption q8_file = q;
+        q8_file.label           = "Q8_0";
+        q8_file.weights         = ch::WeightClass::Q8;
+        bool was = false, is = false;
+        const double before = ch::prefill_linears_seconds(m, rtx4090, q, 1024, &was);
+        const double after  = ch::prefill_linears_seconds(asked, rtx4090, q, 1024, &is);
+        const double parts  = ch::prefill_linears_seconds(rest, rtx4090, q, 1024) +
+                             ch::prefill_linears_seconds(q8, rtx4090, q8_file, 1024);
+        std::cout << "Qwen3.5 9B Q6_K linears, RTX 4090, 1024 tokens: " << before * 1e3
+                  << " ms with its Q8_0 linear at MMQ's Q6_K step, " << after * 1e3
+                  << " ms on the int8 tile\n";
+        // Both laws rest on two or more Ada cards (kMmqTileCost, kTileCost): the label as before.
+        check(!q8.linears.empty() && std::abs(after / parts - 1) < 1e-12 && after != before &&
+                  is == was,
+              "a Q8_0 linear the selector runs on the W4A8 tiles: its int8 tile");
+        // At 16 bits instead: the BF16 share beside MMQ's tiles.
+        ch::ModelFacts bf16_linear = m;
+        bf16_linear.prefill_routes = [](const ch::LinearShape& l, std::uint32_t, ActivationMode) {
+            return l.format == "q8_g32_fp16" ? K::A16 : K::Mmq;
+        };
+        check(ch::prefill_linears_seconds(bf16_linear, rtx4090, q, 1024) >
+                  ch::prefill_linears_seconds(rest, rtx4090, q, 1024),
+              "a linear at 16 bits: the BF16 share beside the tiles");
     }
 }
 
@@ -4036,6 +4056,7 @@ int main() {
         prefills_by_format(prefill_rows);
         prices_gemma_attention_tiles(prefill_rows);
         prefills_pay_tail_calls(prefill_rows);
+        prefill_prices_the_selectors_route(prefill_rows);
         std::ifstream census(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_census.json");
         const json census_rows = json::parse(census);
         counts_the_kernels(census_rows);

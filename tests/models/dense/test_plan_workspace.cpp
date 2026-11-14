@@ -10,8 +10,10 @@
 //   ninferno-serve registers it) carries the start planner's capacity to the byte for the start's
 //   sequence plan and the tokenizer's public ids, with "start" as its basis, under the fast and
 //   the exact profile (A16 activations, the invariant routes);
-// - the facts without the directory, without the tokenizer's ids, under a --moe-path pin, under
-//   speculation (the drafter is an artifact of its own), under --activations int8, with more
+// - the facts without the directory, without the tokenizer's ids, under a --moe-path pin (a model
+//   that routes experts; a dense one answers as unpinned, #892), under
+//   speculation (the drafter is an artifact of its own), under --activations int8,
+//   --rope-yarn-factor or --state-dtype bf16 (the start refuses them), with more
 //   tokenizer ids than embedding rows, and with a Use that reads the payload (an activation
 //   divisor) keep the formula and say why.
 // The capacity queries answer for a substituted board. No GPU, no files.
@@ -569,7 +571,16 @@ void declines(const std::string& name, const rt::PlanModelFacts& facts,
         // engine is not these options' (#842 review).
         EngineOptions pinned       = options;
         pinned.maintainer.moe_path = MoePath::Generic;
-        refuses(basis_of(facts, pinned, device), "--moe-path", "a pinned MoE path");
+        // The facts themselves, not only the rule: a dense decoder routes no experts.
+        check(facts.model_type != "dense_decoder" || facts.experts <= 1,
+              name + ": a dense_decoder's facts name no routed experts");
+        if (facts.model_type == "dense_decoder" && facts.experts <= 1) {
+            // No MoE layer for the pin to move: the answer is the unpinned one (#892).
+            check(basis_of(facts, pinned, device) == answered,
+                  name + ": a --moe-path pin leaves a model without experts as it is");
+        } else {
+            refuses(basis_of(facts, pinned, device), "--moe-path", "a pinned MoE path");
+        }
         EngineOptions routed           = options;
         routed.maintainer.decode_route = DecodeRoute::A16;
         refuses(basis_of(facts, routed, device), "route is pinned", "a pinned decode route");
@@ -590,6 +601,13 @@ void declines(const std::string& name, const rt::PlanModelFacts& facts,
     refuses(basis_of(facts, speculative, device), "speculation", "speculation");
     refuses(basis_of(facts, options_of(32768, 2048, 1, ActivationMode::Int8), device), "int8",
             "--activations int8");
+    // The start's other refusals of the Qwen-only options, in its words (#892).
+    EngineOptions yarn    = options;
+    yarn.rope_yarn_factor = 4.0F;
+    refuses(basis_of(facts, yarn, device), "--rope-yarn-factor", "--rope-yarn-factor");
+    EngineOptions narrow   = options;
+    narrow.recurrent_state = RecurrentStateStorage::BF16;
+    refuses(basis_of(facts, narrow, device), "--state-dtype", "--state-dtype bf16");
     // A Use that reads the payload: its activation divisor (an NVFP4 A4 route's calibration).
     art::Directory divided = directory;
     {

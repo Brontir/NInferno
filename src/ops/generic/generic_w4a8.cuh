@@ -54,6 +54,10 @@ struct W4a8Schedule {
     // One buffer: int8 codes (128 per row) and per 32-value block two floats (scale and min / sum).
     static constexpr int kBufferBytes = (BlockM + BlockN) * (128 + 32);
     static constexpr int kSmemBytes   = 2 * kBufferBytes;
+    // The family's record (family_facts.h), which the price reads (the buffers the launch takes:
+    // W4a8Buffer::kSmem).
+    static_assert(kBlocks * 32 == kW4a8MmaFacts.step_k && kW4a8MmaFacts.stage_k == kBlocks * 32 &&
+                  kBufferBytes == (BlockM + BlockN) * kW4a8MmaFacts.stage_row_bytes);
 };
 
 // The activation quantization of one 32-value block, shared by the W4A8 quantizer and the register
@@ -1319,6 +1323,8 @@ template <class S, bool HalfMin = false>
 struct W4a8Buffer {
     static constexpr int kBytes = S::kBufferBytes + (HalfMin ? S::kBlockN * 32 : 0);
     static constexpr int kSmem  = 2 * kBytes;
+    // The launch's buffers are the family's stages (family_facts.h), which the price reads.
+    static_assert(kSmem == kW4a8MmaFacts.stages * kBytes);
     std::uint8_t* a_codes; // [BlockM][128]
     std::uint8_t* b_codes; // [BlockN][128]
     float* a_scale;        // [BlockM][4]
@@ -1969,6 +1975,11 @@ void w4a8_ws_launch_schedule(const GemmArgs& args, W4a8Activation act, cudaStrea
     constexpr int kLut    = 4 * w4a8_lut_words<Cw>();
     constexpr int kStages = 3;
     constexpr int kSmem   = W4a8Stage<Cw, S, kStages>::kSmem + kLut;
+    // The family's record (family_facts.h), which the price reads: its stages, and a stage's bytes
+    // per row and token (a codec without a min or half-scale plane stages fewer).
+    static_assert(kStages == kW4a8MmaFacts.producer_stages &&
+                  W4a8Stage<Cw, S, kStages>::kBytes <=
+                      (S::kBlockM + S::kBlockN) * kW4a8MmaFacts.stage_row_bytes);
     static_assert(kSmem <= kW4a8MaxDynamicSmem, "the three-stage ring must fit");
     if constexpr (kSmem > kMaxSharedBytesPerBlock) {
         // The ring is sized for 99 KiB; route_admits never names it on a smaller build (w4a8_fits).

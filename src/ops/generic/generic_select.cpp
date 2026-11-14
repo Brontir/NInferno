@@ -781,8 +781,9 @@ namespace {
 
 // Before the rules, a decode call takes the entry for the exact problem in the table of the
 // nearest measured board (r8_decode_table.h), when that board is a variant of this one: the
-// codebook problems of Gemma 4 31B, Muse Glimmer 30B, Qwen3.6-35B-A3B and Qwen3.8-27B where another
-// schedule measured faster on that board. A table carries to boards within kR8CarryDistance of it
+// codebook problems of Gemma 4 31B, Muse Glimmer 30B, Qwen3.6-35B-A3B and Qwen3.8-27B, and the
+// K-quant down projection of Qwen3.5-9B (4096x12288), where another schedule measured faster on
+// that board. A table carries to boards within kR8CarryDistance of it
 // (board_distance: a 4090 D or a 3090 Ti takes the 4090's or the 3090's, at 0.17 and 0.14) and no
 // further: the 4090's 80 entries on the 4080 SUPER (distance 1.2; 3 sweeps) won 41, lost 30 (to
 // -22 %: IQ2_XS 4096x6656 w8r2), +0.1 % in the mean, where its own sweep keeps 52 that win.
@@ -1121,7 +1122,9 @@ bool r8_verify_takes(QType qtype) {
 // (forward-compatible SASS) must still turn the 144-160 KiB tiles away, so the device decides too.
 bool staged_device_fits(int schedule) {
     const auto s      = kStagedSchedules.at(static_cast<std::size_t>(schedule));
-    const auto bytes  = static_cast<std::size_t>(s.rows + s.tokens) * 64 * 2 * s.stages;
+    // A stage of every row and token (family_facts.h: one byte count for both).
+    const auto bytes =
+        static_cast<std::size_t>(s.rows + s.tokens) * kStagedMmaFacts.stage_row_bytes * s.stages;
     std::size_t limit = 0;
     try {
         limit = device_class().smem_per_block_optin;

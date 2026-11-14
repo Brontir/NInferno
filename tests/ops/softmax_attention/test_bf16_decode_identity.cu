@@ -7,6 +7,11 @@
 // (O, the log2 maximum, the sum; unwritten entries included) and, for append, the cache must
 // match byte for byte. --self compares each schedule with a second run of itself instead (the
 // kernels' determinism).
+//
+// On an sm_70 build and any 7.x card, Volta's key-major kernel (#877) runs too. It is not the MMA
+// emulation, so against the shipped schedule it is held to sums, not bits: the appended cache and
+// the set of written partials byte for byte, the output within one BF16 step and the partials
+// within the FP16 rounding of P (near_outputs). --self holds it to its own bits.
 
 #include "ops/softmax_attention/common/causal_geometry.h"
 #include "ops/softmax_attention/dense/causal_cache/bf16/plan.h"
@@ -17,12 +22,14 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <numeric>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -37,6 +44,9 @@ using Former = Bf16KvGroupedMmaSchedule<Shipped::kQueryRows, Shipped::kKeyRows, 
                                         Shipped::kMinBlocks, Shipped::kFixedWidth, 1>;
 static_assert(Shipped::kWarpsD == 2 && Former::kWarpsD == 1);
 
+// Volta's key-major kernel (#877) in a schedule's place.
+struct VoltaKeyMajor {};
+
 constexpr int D = kCausalHeadDim;
 
 // Every copy, fill and launch goes through this one stream, then a synchronize: a non-blocking
@@ -45,6 +55,7 @@ constexpr int D = kCausalHeadDim;
 // sentinel fill.
 cudaStream_t g_stream = nullptr;
 bool g_self           = false;
+bool g_volta          = false; // an sm_70 build on a 7.x card
 
 void check(cudaError_t status, const char* what) {
     if (status == cudaSuccess) return;
@@ -129,6 +140,7 @@ std::vector<std::uint16_t> f16_values(std::size_t n, std::uint64_t seed) {
 // One decode call: a context (keys seen, the new token's included) per batch row.
 struct Case {
     std::vector<int> contexts;
+    float q_amplitude = 1.0f; // 16: peaked scores (about 5 nats), rescales and FP16-subnormal P
 };
 
 // The device inputs of one geometry's calls: a page pool both runs read (and, for append, the
@@ -152,7 +164,7 @@ struct Inputs {
           positions(batch), valid(batch) {
         k_host = bf16_values(k.size, seed, 1.0f);
         v_host = f16_values(v.size, seed + 1);
-        q.upload(bf16_values(q.size, seed + 2, 1.0f));
+        q.upload(bf16_values(q.size, seed + 2, c.q_amplitude));
         new_k.upload(bf16_values(new_k.size, seed + 3, 1.0f));
         new_v.upload(bf16_values(new_v.size, seed + 4, 1.0f));
         // Every row's pages scattered over the pool (a reversed interleave), the rest of its table
@@ -211,14 +223,20 @@ Outputs run(Inputs<G>& in, const Bf16KvCausalPlan& plan) {
         in.pages_per_row,
         D,
         G::KVHeads};
+    const auto decode = [&](auto input) {
+        if constexpr (std::is_same_v<S, VoltaKeyMajor>) {
+            launch_bf16_kv_key_major_volta<G, MultiBatch, Masked, Append>(
+                p, cache, input, plan.partition, partials, stream);
+        } else {
+            launch_bf16_kv_grouped_mma<G, S, MultiBatch, Masked, Append>(
+                p, cache, input, plan.partition, partials, stream);
+        }
+    };
     if constexpr (Append) {
-        const CausalAppendInput input{reinterpret_cast<const __nv_bfloat16*>(in.new_k.data),
-                                      reinterpret_cast<const __nv_bfloat16*>(in.new_v.data)};
-        launch_bf16_kv_grouped_mma<G, S, MultiBatch, Masked, true>(p, cache, input, plan.partition,
-                                                                   partials, stream);
+        decode(CausalAppendInput{reinterpret_cast<const __nv_bfloat16*>(in.new_k.data),
+                                 reinterpret_cast<const __nv_bfloat16*>(in.new_v.data)});
     } else {
-        launch_bf16_kv_grouped_mma<G, S, MultiBatch, Masked, false>(
-            p, cache, CausalCachedInput{}, plan.partition, partials, stream);
+        decode(CausalCachedInput{});
     }
     launch_bf16_kv_merge<G, Bf16KvMergeSchedule<256>, MultiBatch, Masked, Append>(
         p, cache, plan.partition, partials, stream);
@@ -242,6 +260,73 @@ int compare(const std::string& label, const char* what, const std::vector<T>& a,
     return 1;
 }
 
+float bf16_value(std::uint16_t bits) {
+    const std::uint32_t wide = std::uint32_t(bits) << 16;
+    float v;
+    std::memcpy(&v, &wide, sizeof(v));
+    return v;
+}
+
+// The fill pattern of an entry no kernel wrote.
+template <class T>
+bool unwritten(const T& x) {
+    T fill;
+    std::memset(&fill, 0xa5, sizeof(fill));
+    return std::memcmp(&x, &fill, sizeof(T)) == 0;
+}
+
+// a and b within tolerance(i, x, y) at every entry, and written at the same entries.
+template <class T, class Value, class Tolerance>
+int near(const std::string& label, const char* what, const std::vector<T>& a,
+         const std::vector<T>& b, Value value, Tolerance tolerance) {
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (unwritten(a[i]) != unwritten(b[i])) {
+            std::fprintf(stderr, "FAIL %s: %s written by one kernel only at %zu\n", label.c_str(),
+                         what, i);
+            return 1;
+        }
+        if (unwritten(a[i])) continue;
+        const double x = value(a[i]), y = value(b[i]);
+        if (x == y || std::fabs(x - y) <= tolerance(i, x, y)) continue;
+        std::fprintf(stderr, "FAIL %s: %s at %zu: %.9g against %.9g\n", label.c_str(), what, i, x,
+                     y);
+        return 1;
+    }
+    return 0;
+}
+
+// Volta's kernel (b) against the shipped schedule (a). The scores differ in FP32 summation order
+// only (~1e-6 relative), so a probability can round to the neighbouring FP16 value (2^-11
+// relative): a numerator within 2^-9 of its row's largest magnitude, the output within one BF16
+// step (2^-8 relative) plus 2^-9 of its row's largest, the log2 maximum within 1e-5 and the sum
+// within 2^-10 relative.
+int near_outputs(const std::string& label, const Outputs& a, const Outputs& b) {
+    const auto same = [](float x) { return double(x); };
+    std::vector<double> row_scale(a.acc.size() / D, 0.0);
+    for (std::size_t i = 0; i < a.acc.size(); ++i)
+        if (!unwritten(a.acc[i]))
+            row_scale[i / D] = std::max(row_scale[i / D], double(std::fabs(a.acc[i])));
+    std::vector<double> out_scale(a.out.size() / D, 0.0);
+    for (std::size_t i = 0; i < a.out.size(); ++i)
+        if (!unwritten(a.out[i]))
+            out_scale[i / D] = std::max(out_scale[i / D], double(std::fabs(bf16_value(a.out[i]))));
+    return near(label, "output", a.out, b.out, bf16_value,
+                [&](std::size_t i, double x, double y) {
+                    // One BF16 step of the larger value (8 significant bits: 2^-7 of it at the
+                    // bottom of its binade), as the header promises; 2^-8 was half a step, and a
+                    // one-split call that rounds its own sum straight to BF16 lands a step off.
+                    return std::ldexp(std::max(std::fabs(x), std::fabs(y)), -7) +
+                           std::ldexp(out_scale[i / D], -9);
+                }) +
+           near(label, "partial O", a.acc, b.acc, same,
+                [&](std::size_t i, double, double) { return std::ldexp(row_scale[i / D], -9); }) +
+           near(label, "partial maximum", a.maximum, b.maximum, same,
+                [](std::size_t, double x, double) { return 1e-5 * std::max(1.0, std::fabs(x)); }) +
+           near(label, "partial sum", a.sum, b.sum, same,
+                [](std::size_t, double x, double) { return std::ldexp(std::fabs(x), -10); }) +
+           compare(label, "cache K", a.k, b.k) + compare(label, "cache V", a.v, b.v);
+}
+
 // 1 when the two runs differ in any compared byte.
 template <class G, class A, class B, bool MultiBatch, bool Masked, bool Append>
 int run_pair(Inputs<G>& in, const Bf16KvCausalPlan& plan, const std::string& label) {
@@ -261,15 +346,28 @@ int run_pair(Inputs<G>& in, const Bf16KvCausalPlan& plan, const std::string& lab
 // schedule against itself.
 template <class G, bool MultiBatch, bool Masked, bool Append>
 int run_both(Inputs<G>& in, const Bf16KvCausalPlan& plan, const std::string& label, int& pairs) {
+    int differs = 0;
+    if (g_volta) {
+        pairs += 1;
+        if (g_self) {
+            differs += run_pair<G, VoltaKeyMajor, VoltaKeyMajor, MultiBatch, Masked, Append>(
+                in, plan, label + " [volta]");
+        } else {
+            const Outputs a = run<G, Shipped, MultiBatch, Masked, Append>(in, plan);
+            const Outputs b = run<G, VoltaKeyMajor, MultiBatch, Masked, Append>(in, plan);
+            differs += near_outputs(label + " [volta]", a, b) ? 1 : 0;
+        }
+    }
     if (g_self) {
         pairs += 2;
-        return run_pair<G, Former, Former, MultiBatch, Masked, Append>(in, plan,
+        return differs +
+               run_pair<G, Former, Former, MultiBatch, Masked, Append>(in, plan,
                                                                        label + " [former]") +
                run_pair<G, Shipped, Shipped, MultiBatch, Masked, Append>(in, plan,
                                                                          label + " [shipped]");
     }
     pairs += 1;
-    return run_pair<G, Former, Shipped, MultiBatch, Masked, Append>(in, plan, label);
+    return differs + run_pair<G, Former, Shipped, MultiBatch, Masked, Append>(in, plan, label);
 }
 
 template <class G>
@@ -332,6 +430,11 @@ int main(int argc, char** argv) {
     }
     int sms = 0;
     check(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, 0), "SM count");
+    int major = 0, minor = 0;
+    check(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, 0), "major");
+    check(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, 0), "minor");
+    // A 70 build runs on any 7.x card (apps/serve), and launch.cu takes the kernel there too.
+    g_volta = NINFERNO_BUILD_ARCH == 70 && major == 7;
     check(cudaStreamCreateWithFlags(&g_stream, cudaStreamNonBlocking), "stream");
     // One row: page (64) and key-tile (32) edges, the split rounding near the targets, the long
     // target from 32768 keys. Eight rows: ragged contexts in one envelope, and equal ones.
@@ -352,6 +455,8 @@ int main(int argc, char** argv) {
         {{40001}},
         {{1, 63, 64, 65, 2049, 4096, 8191, 12000}},
         {{7843, 7843, 7843, 7843, 7843, 7843, 7843, 7843}},
+        {{2049}, 16.0f},
+        {{1, 63, 64, 65, 2049, 4096, 8191, 12000}, 16.0f},
     };
     int failures = 0, pairs = 0;
     std::uint64_t seed = 856;
@@ -367,7 +472,7 @@ int main(int argc, char** argv) {
         std::printf("FAIL (%s): %d of %d decode pairs differ\n", mode, failures, pairs);
         return 1;
     }
-    std::printf("bf16 decode identity (%s): %d decode pairs bit-identical on %d SMs\n", mode, pairs,
-                sms);
+    std::printf("bf16 decode identity (%s%s): %d decode pairs identical on %d SMs\n", mode,
+                g_volta ? "; Volta key-major within its bounds" : "", pairs, sms);
     return 0;
 }

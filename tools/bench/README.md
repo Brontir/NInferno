@@ -30,6 +30,8 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `make_bench_corpus.py` | Bake the token-id corpus used by `ninferno_bench`. |
 | `build_text_examples.py` | Build the long-context and long-decode CLI examples ([examples/cli](../../examples/cli/README.md)) from recent public-domain text and new problems. |
 | `r8_decode_table.py` | Generate `src/ops/generic/r8_decode_table.h` from R8 schedule sweeps. |
+| `run_850_r8_sweep.sh`, `r8_sweep_summary.py` | Three `ninferno_r8_schedule_bench` sweeps of Qwen3.5-9B's decode problems on one idle card (#850 (a), [kernel proposal P](../../docs/maintainer/kernel-proposals.md)): the down projections (the merge's input) apart from the rest of the step and the K >= 8192 rule-check shapes; then a paste-ready table per problem (each schedule's median, the rules' choice, the best, whether `r8_decode_table.py` would write an entry), the add check (a model step runs its down projection as an add call, which takes the store entry: an entry stays only where its schedule also wins on the add call), the frozen prediction's verdict for the card and the K rule's check, and the card's `--merge` argument. `--summarize OUT` prints it again without a GPU, and refuses unless all six files (`down_1..3.txt`, `context_1..3.txt`) are in OUT. |
+| `run_850_step_ab.sh`, `step_ab.py` | Kernel proposal P's acceptance item 4 on one idle card: the whole Qwen3.5-9B decode step, A = the merge base of `origin/master` and the checkout's HEAD (the master B was built on) against B = HEAD. It builds `ninferno-serve` alone from a worktree of each (Release, the card's `CMAKE_CUDA_ARCHITECTURES`, ccache), then runs ABBA rounds (6 a build) that each start that build's server (`--spec none`, C = 1, greedy) and decode 512 tokens after a fixed ~22K-token prompt twice, reading the server's decode tok/s. `summary.md` holds the per-round rates and clocks, each arm's median and spread, B/A, the noise (from the A-A and B-B spreads) and the "no slower" verdict. Usage: `tools/bench/run_850_step_ab.sh [OUT]` (OUT defaults to `${TMPDIR:-/tmp}/r8_850_step_<card>_<time>`; `QUANT=Q5_K_M` for the Q5_K entries; the header lists the rest), and `--summarize OUT` without a GPU. |
 | `hard_set.py` | One serving configuration through the hard question set ([eval/corpora/hard50](../../eval/corpora/hard50/README.md)): answers graded against the references, decode rate and, at a fixed speculative depth, tokens per round. |
 | `selection_regret.py` | Offline regret of recorded production choices against qualified, matched alternatives on held-out boards or models ([below](#offline-selection-regret)). |
 | `regret_bands.py` | Regret weighted by T band, per board, format and route family, from regret documents or plain route_tune CSVs ([below](#regret-by-t-band)). |
@@ -427,9 +429,13 @@ python3 tools/bench/make_bench_corpus.py --check
 `r8_decode_table.py` writes `src/ops/generic/r8_decode_table.h` from repeated
 `ninferno_r8_schedule_bench` sweeps. Each positional argument is `GPU=FILE[,FILE...]` where `GPU` is
 the class id printed on the bench's `device` line (for example `gb202:170sm`) and every file is a
-complete sweep (its `done` line). A problem gets an entry when the fastest schedule differs from the
+complete sweep (its `done` line) with at least one T = 1 R8 line in the bench's current format
+(`t=`, `decode=` and `h=` since #155, also read without them); a file of no such line is refused,
+since under `--merge` it would keep every old entry silently. A problem gets an entry when the fastest schedule differs from the
 shape-class rule, beats it by at least `--min-gain` in the median and in every sweep, and all
-schedules produced identical bytes. Each table records the board its sweeps ran on (the bench's
+schedules produced identical bytes. A store entry is also checked on the add call where the sweeps
+time it (an add call looks the store entry up): it is written only where its schedule wins there
+too, in the median and in every sweep that timed both. Each table records the board its sweeps ran on (the bench's
 `board` line: compute capability, SMs, L2, DRAM bandwidth; `--merge` keeps a header's), and a
 device takes the table of the nearest board within a variant's distance of it (`board_distance`,
 `kR8CarryDistance` in `generic_select.cpp`).
