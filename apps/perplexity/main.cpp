@@ -70,6 +70,9 @@ struct Options {
     // Quantization quality: record a reference (--kld-out) or measure against one (--kld).
     std::optional<std::filesystem::path> kld_out;
     std::optional<std::filesystem::path> kld;
+    // The first stream's token ids as tokenized, raw little-endian int32 (another tool scores the
+    // same ids: ninferno-gemma4 score --tokens).
+    std::optional<std::filesystem::path> tokens_out;
     std::uint32_t kld_top_k = ninferno::perplexity::kKldDefaultTopK;
     // --step-tokens N: the scored targets run N tokens per call (ScoreDetailRequest::step_tokens).
     std::uint32_t step_tokens = 0;
@@ -86,12 +89,13 @@ std::string usage_text() {
            "       [--kv-dtype bf16|int8|fp8|nvfp4|k8v4] [--activations exact|fast|int8]\n"
            "       [--state-dtype f32|bf16|f16] [--step-tokens N]\n"
            "       [--output <directory>]\n"
-           "       [--kld-out <file> [--kld-top-k N] | --kld <file>]\n"
+           "       [--kld-out <file> [--kld-top-k N] | --kld <file>] [--tokens-out <file>]\n"
            "       [--log-level trace|debug|info|warning|error|critical|off]\n" +
            std::string(ninferno::product::kScoringEngineFlagsUsage) +
            "  --kld-out  record this (reference) model's top-K tokens per position\n"
            "  --kld      KL divergence and top-1 agreement against such a reference, scored\n"
            "             on the same corpus, context and stride\n"
+           "  --tokens-out  write the first stream's token ids (raw int32) as tokenized\n"
            "  --step-tokens  run the scored targets N tokens per call, as decode (1) or a\n"
            "             speculative round (N) runs them\n"
            "  --device   N counts GPUs in PCI bus order, as nvidia-smi does\n";
@@ -156,6 +160,8 @@ Options parse_options(int argc, char** argv) {
             out.output = std::filesystem::path(value("--output"));
         } else if (option == "--log-level") {
             out.log_level = ninferno::product::parse_log_level(value("--log-level"));
+        } else if (option == "--tokens-out") {
+            out.tokens_out = std::filesystem::path(value("--tokens-out"));
         } else if (option == "--kld-out") {
             out.kld_out = std::filesystem::path(value("--kld-out"));
         } else if (option == "--kld") {
@@ -294,6 +300,10 @@ int run(const Options& options, const std::shared_ptr<spdlog::logger>& logger,
     // from it in place of the window's first token, as llama.cpp's perplexity and ninferno-gemma4
     // score do: a Gemma 4 window without it degrades along its length (26B at W 4096: ppl 954).
     const std::optional<ninferno::TokenId> document_start = engine.document_start_token();
+    // Which token every window starts from: a family that scores from its <bos> and finds none
+    // degrades along every window (#913), so the log says.
+    logger->info("document start: {}",
+                 document_start ? "token " + std::to_string(*document_start) : std::string("none"));
     std::vector<EvaluationStream> streams;
     streams.reserve(corpus.streams.size());
     std::uint64_t total_scored_tokens = 0;
@@ -303,6 +313,21 @@ int run(const Options& options, const std::shared_ptr<spdlog::logger>& logger,
         std::vector<ninferno::TokenId> tokens = engine.tokenize_text(source.text);
         if (tokens.size() < 2) {
             throw std::runtime_error("stream tokenized to fewer than two tokens: " + source.id);
+        }
+        if (streams.empty()) {
+            std::string head;
+            for (std::size_t i = 0; i < std::min<std::size_t>(tokens.size(), 12); ++i) {
+                head += (i ? " " : "") + std::to_string(tokens[i]);
+            }
+            logger->info("stream {}: {} tokens, the first: {}", source.id, tokens.size(), head);
+            if (options.tokens_out) {
+                std::ofstream dump(*options.tokens_out, std::ios::binary);
+                for (const ninferno::TokenId t : tokens) {
+                    const auto v = static_cast<std::int32_t>(t);
+                    dump.write(reinterpret_cast<const char*>(&v), sizeof(v));
+                }
+                if (!dump) { throw std::runtime_error("cannot write " + options.tokens_out->string()); }
+            }
         }
         std::vector<WindowPlan> windows =
             ninferno::perplexity::plan_windows(tokens.size(), options.context, options.stride);
