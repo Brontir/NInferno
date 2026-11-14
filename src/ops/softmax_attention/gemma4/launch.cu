@@ -744,17 +744,18 @@ void gemma4_kv_append_launch(const Tensor& k, const Tensor& v, const Tensor& pos
 int gemma4_resident_ctas_per_sm(const generic::kernel_facts::Gemma4KernelKey& key, int threads,
                                 std::size_t dynamic_shared_bytes,
                                 const std::function<int()>& live) {
-    namespace kf                               = generic::kernel_facts;
+    namespace kf                          = generic::kernel_facts;
     const std::optional<std::string> arch = kf::sass_arch();
-    // The key, threads and shared bytes are this build's tile (Gemma4Tile, kFittingBc: constexprs of
-    // NINFERNO_BUILD_ARCH): they are a board's only where its kernels are this build's (#912).
-    const bool own_tile                        = arch && *arch == kf::build_arch();
-    const std::optional<kf::KernelFacts> facts = own_tile ? kf::gemma4_facts(*arch, key) : std::nullopt;
+    // The key, threads and shared bytes are this build's tile (Gemma4Tile, kFittingBc: constexprs
+    // of NINFERNO_BUILD_ARCH): they are a board's only where its kernels are this build's (#912).
+    const bool own_tile = arch && *arch == kf::build_arch();
+    const std::optional<kf::KernelFacts> facts =
+        own_tile ? kf::gemma4_facts(*arch, key) : std::nullopt;
     if (facts) {
         const int per_sm = resident_ctas_per_sm(
-            device_class(), KernelShape{facts->registers, facts->static_shared_bytes, threads,
-                                        dynamic_shared_bytes,
-                                        /*dynamic_shared_opt_in=*/dynamic_shared_bytes > 0});
+            device_class(),
+            KernelShape{facts->registers, facts->static_shared_bytes, threads, dynamic_shared_bytes,
+                        /*dynamic_shared_opt_in=*/dynamic_shared_bytes > 0});
         if (per_sm < 1) {
             throw std::runtime_error(
                 "gemma4_attention: the " + key.kernel +
@@ -774,8 +775,9 @@ int gemma4_resident_ctas_per_sm(const generic::kernel_facts::Gemma4KernelKey& ke
         throw std::runtime_error(
             "gemma4_attention: no kernel facts of the " + key.kernel +
             " kernel for the substituted board" + (arch ? " (sm_" + *arch + ")" : std::string()) +
-            (arch && !own_tile ? ": this build's tiles are sm_" + std::string(kf::build_arch()) + "'s (#912)"
-                               : std::string()));
+            (arch && !own_tile
+                 ? ": this build's tiles are sm_" + std::string(kf::build_arch()) + "'s (#912)"
+                 : std::string()));
     }
     return std::max(1, live());
 }
