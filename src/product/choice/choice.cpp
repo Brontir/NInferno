@@ -2185,7 +2185,8 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     }
     add(Axis::Quant, quant.label, q.kld, q.evidence == Evidence::Measured, std::move(quant_source),
         q.evidence);
-    const QuantKldModel* read = own_model != nullptr ? own_model : quant_kld_model(kQuantKldDefaultParams);
+    const QuantKldModel* read =
+        own_model != nullptr ? own_model : quant_kld_model(kQuantKldDefaultParams);
     if (read != nullptr) { out.terms.back().curve_model = std::string(read->name); }
 
     const std::string kv{kv_cache_storage_name(candidate.kv)};
