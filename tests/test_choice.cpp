@@ -4084,9 +4084,9 @@ void reports_gates_and_bands(const json& fixture) {
     // Only the quantization's own term against Q8_0, on the calibrated model's measured files.
     ch::Accuracy measured;
     measured.kld   = 0.03;
-    measured.terms = {{ch::Axis::Quant, "Q4_K_M", 0.02, true, false, "", ch::Evidence::Measured,
-                       "Qwen3.5-9B"},
-                      {ch::Axis::Kv, "int8", 0.01, true, false, "", ch::Evidence::Measured}};
+    measured.terms = {
+        {ch::Axis::Quant, "Q4_K_M", 0.02, true, false, "", ch::Evidence::Measured, "Qwen3.5-9B"},
+        {ch::Axis::Kv, "int8", 0.01, true, false, "", ch::Evidence::Measured}};
     std::string_view why = "x";
     const auto pts       = ch::answer_points(measured, scale, &why);
     check(pts && std::abs(*pts - 0.8) < 1e-12 && why.empty(),
