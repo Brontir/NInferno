@@ -2160,17 +2160,18 @@ bool label_transfers(std::string_view family, std::string_view label, double par
         }
     }
     if (reference < 0) { return false; }
+    // The sizes that measured the label bound the range: a size beyond them is an extrapolation.
     double lightest = 0;
     double heaviest = 0;
     int others      = 0;
     for (const QuantKldModel& m : kQuantKldModels) {
-        lightest = lightest == 0 ? m.params : std::min(lightest, m.params);
-        heaviest = std::max(heaviest, m.params);
         for (const QuantKldPoint& p : kQuantKld) {
             if (std::abs(p.params - m.params) >= 0.5 || p.label != label || !point_counts(p)) {
                 continue;
             }
             if (std::abs(p.kld - reference) > tolerance) { return false; }
+            lightest = lightest == 0 ? m.params : std::min(lightest, m.params);
+            heaviest = std::max(heaviest, m.params);
             if (std::abs(m.params - kQuantKldDefaultParams) >= 0.5) { ++others; }
         }
     }
@@ -2188,8 +2189,10 @@ QualityAuthority quant_authority(const ModelFacts& model, const QuantOption& qua
     const QuantKld q =
         quant_kld(quant.bits_per_weight, quant.label, quant.files, own_curve, model.params);
     if (own_curve && q.evidence == Evidence::Measured) { return QualityAuthority::Direct; }
-    if (own_curve && q.evidence != Evidence::Reference &&
-        quant_kld_model(model.params) == nullptr &&
+    // The transferred value is the 9B label's own point (Evidence::Proxy: the row's bits within
+    // 0.05 of it), never an interpolation between its points: a label at other bits, or a file
+    // whose label is not its quantization, stays an estimate.
+    if (own_curve && q.evidence == Evidence::Proxy && quant_kld_model(model.params) == nullptr &&
         label_transfers(model.family, quant.label, model.params)) {
         return QualityAuthority::Transfer;
     }

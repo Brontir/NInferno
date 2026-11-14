@@ -2744,7 +2744,18 @@ MMLU-Pro over 40 points per KLD = 0.005 KLD), declared before these curves were 
 quantizations closer than that cannot be told apart by their answers. It is not read off the
 curves.
 
-**What moves.** The labels that pass: Q6_K, UD-Q5_K_XL and Q5_K_S. Q5_K_M just fails (the 2B's lies
-0.00502 below the 9B's), and every 4-bit and lower label fails (the 2B's UD-Q4_K_XL 0.006 below, the
-0.8B's Q4_K_M 0.007 above). A model outside 0.8B to 27B transfers nothing. No plan golden moves: no
-fixture model is an unmeasured size of the family.
+The value transferred is the 9B label's own point: the row's bits within 0.05 of it (as the
+family's label proxy, #299), never an interpolation; a label at other bits, or a mislabelled file,
+stays an estimate. The size range is that of the sizes that measured the label. The tolerance is
+absolute KLD, not log KLD as #618's plan row says: the answer scale is linear in KLD (40 points per
+KLD), so the noise it cannot resolve is a fixed KLD, not a ratio. In the trade, though, 0.005 KLD is
+not small: at the worth's lambda of 25 it weighs as 12.5 % of a request's time, wider than the 9B's
+own Q6_K to Q5_K_S gap (0.0047). A transfer is a value the answers cannot tell from the truth, not
+one the worth cannot tell; a tighter rule waits for a worth-side resolution (#915).
+
+**What moves.** The labels that pass: Q6_K, UD-Q5_K_XL and Q5_K_S (the largest gap, the 2B's
+Q5_K_S, 0.00443; the 2B's points are one card's, so their margin is inside that card's spread).
+Q5_K_M just fails (the 2B's lies 0.00503 below the 9B's), and every 4-bit and lower label fails (the
+2B's UD-Q4_K_XL 0.006 below, the 0.8B's Q4_K_M 0.007 above). A model outside the sizes that measured
+a label transfers nothing. No plan golden moves: no fixture model is an unmeasured size of the
+family.

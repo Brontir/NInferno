@@ -268,7 +268,7 @@ struct QuantRow {
     // parsed header's head taken as this row's).
     bool proposal_head_assumed = false;
     // Whether the row's accuracy term may decide between quantizations (choice::quant_authority:
-    // direct, transfer, estimate, unknown); the trade weighs only direct rows.
+    // direct, transfer, estimate, unknown); the trade weighs the direct and transfer rows.
     choice::QualityAuthority quality_authority = choice::QualityAuthority::Unknown;
 };
 
@@ -293,7 +293,7 @@ struct QuantPlan {
     };
     std::optional<Trade> trade;
     // Where the worth would weigh the quantizations (#368): the supported rows whose accuracy is
-    // an estimate, not a measurement of their own files (choice::quant_authority; they take no
+    // an estimate, neither a measurement of their own files nor a transfer (choice::quant_authority; they take no
     // part in the trade), and whether the rule's own pick is one of them (no trade then: the
     // rule's largest stands).
     std::vector<std::string> quality_estimates;
