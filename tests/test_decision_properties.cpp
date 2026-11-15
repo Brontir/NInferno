@@ -876,7 +876,8 @@ void property_cpu_equals_gpu(const std::vector<Row>& rows) {
         const std::string label = x.substr(0, x.find('\t'));
         std::string detail      = "the GPU-visible line " + x + ", the CPU line " + y;
         if (index < rows.size() && rows[index].label == label) {
-            const std::string gpu_text = decisions_of(generic::board_device_class(rows[index].board));
+            const std::string gpu_text =
+                decisions_of(generic::board_device_class(rows[index].board));
             const std::string cpu_text =
                 text_of_command(child + " --decisions " + std::to_string(index));
             detail += "; " + std::to_string(differing_lines(gpu_text, cpu_text)) +
