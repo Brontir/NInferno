@@ -681,6 +681,8 @@ std::optional<QType> price_find_format(std::string_view name) { return find_form
 
 std::string price_usage_text() { return usage_text(); }
 
+const GpuFactsRow* price_find_board(std::string_view board) { return find_board(board); }
+
 DeviceClass price_board_class(const GpuFactsRow& row) {
     return board_class({.pci_device_id = row.pci_device_id,
                         .major         = row.major,

@@ -218,6 +218,19 @@ void section_into(std::string& out, std::string_view name, const DecisionSection
     }
 }
 
+std::string unescaped(std::string_view text) {
+    std::string out;
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (text[i] != '\\' || i + 1 == text.size()) {
+            out += text[i];
+            continue;
+        }
+        const char c = text[++i];
+        out += c == 't' ? '\t' : c == 'n' ? '\n' : c == 'r' ? '\r' : c;
+    }
+    return out;
+}
+
 std::string schema_line() { return "schema\t" + std::string(kDecisionFingerprintSchema) + "\n"; }
 
 std::string short_hash(std::string_view text) { return sha256_hex(text).substr(0, 16); }
@@ -560,6 +573,24 @@ DecisionSection taint_of(const DecisionInputs& in) {
     }
     if (const auto fallback = value(in.sources, "spec_fit_fallback"); !fallback.empty()) {
         out["spec_fit_fallback"] = fallback;
+    }
+    return out;
+}
+
+DecisionSection section_of_text(std::string_view text, std::string_view name) {
+    DecisionSection out;
+    const std::string prefix = std::string(name) + ".";
+    std::size_t at           = 0;
+    while (at < text.size()) {
+        std::size_t end = text.find('\n', at);
+        if (end == std::string_view::npos) { end = text.size(); }
+        const std::string_view line = text.substr(at, end - at);
+        at                          = end + 1;
+        const std::size_t tab       = line.find('\t');
+        if (tab == std::string_view::npos) { continue; }
+        std::string key = unescaped(line.substr(0, tab));
+        if (key.rfind(prefix, 0) != 0) { continue; }
+        out[key.substr(prefix.size())] = unescaped(line.substr(tab + 1));
     }
     return out;
 }
