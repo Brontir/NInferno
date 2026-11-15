@@ -35,9 +35,12 @@ const char* usage() {
 
 int replay_routes_main(int argc, char** argv) {
     std::string board, log;
+    bool live = false; // #935: replay against the GPU's own probed class instead of the row's
     for (int i = 1; i < argc; ++i) {
         const std::string_view a = argv[i];
-        if ((a == "--board" || a == "--log") && i + 1 < argc) {
+        if (a == "--live") {
+            live = true;
+        } else if ((a == "--board" || a == "--log") && i + 1 < argc) {
             (a == "--board" ? board : log) = argv[++i];
         } else if (a == "--help" || a == "-h") {
             std::cout << usage();
@@ -148,7 +151,11 @@ int replay_routes_main(int argc, char** argv) {
     }
     // The board's class is the registry row's (its clocks the row's, not the start's driver's):
     // the replay checks that the registry gives the start's routes (#612 step 10).
-    const DeviceClass device = price_board_class(*row);
+    const DeviceClass device = live ? current_device_class() : price_board_class(*row);
+    if (live) {
+        std::cout << "replayed against this GPU's own class (" << device.id() << "), not the row's"
+                  << std::endl;
+    }
     // The class's facts against the start's (#935): a line that differs names a fact the start's
     // selection read that the registry row does not give. Skipped: the driver's version, the host's
     // and the build's (not the board's), the kernel facts' hash (the engine records it apart from
