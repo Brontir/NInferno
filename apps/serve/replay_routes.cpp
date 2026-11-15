@@ -14,6 +14,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace ninferno::tools {
@@ -26,7 +27,7 @@ const char* usage() {
            "  FILE   a start's request log (--request-log-jsonl): its last server_start record\n"
            "Asks the start's route lines again on a CPU against BOARD's class from its registry\n"
            "row, under the start's route policy, and prints the lines that moved. Refused: a\n"
-           "start with maintainer flags, built for another architecture, or on another board.\n"
+           "start with maintainer flags, with another build, or on another board.\n"
            "Exit 0: none moved; 1: some did; 2: a usage or input error or a refusal.\n";
 }
 
@@ -101,26 +102,30 @@ int replay_routes_main(int argc, char** argv) {
         std::cerr << " ): its routes are not the release selection's; not replayed" << std::endl;
         return 2;
     }
-#ifdef NINFERNO_BUILD_ARCH
-    const std::string here = std::to_string(NINFERNO_BUILD_ARCH);
-#else
-    const std::string here = "unknown";
-#endif
-    const auto arch = build.find("arch");
-    if (arch == build.end() || arch->second != here) {
-        std::cerr << "replay-routes: the start's build is sm_"
-                  << (arch == build.end() ? std::string("?") : arch->second) << ", this one sm_"
-                  << here << ": the selector reads the build's architecture" << std::endl;
-        return 2;
+    // The selector reads the build's compile definitions (its architecture, arch-specific
+    // features, NVFP4: a 120a and a plain 120 build both say sm_120): every build key but the
+    // version, the commit and the runtime must be this binary's.
+    const runtime::DecisionSection here = runtime::build_of();
+    for (const auto& [key, value] : here) {
+        if (key == "version" || key == "git_commit" || key == "cudart") { continue; }
+        const auto theirs = build.find(key);
+        if (theirs == build.end() || theirs->second != value) {
+            std::cerr << "replay-routes: the start's build." << key << " is "
+                      << (theirs == build.end() ? std::string("absent") : theirs->second)
+                      << ", this binary's " << value << ": the selector reads the build"
+                      << std::endl;
+            return 2;
+        }
     }
     const auto pci = facts.find("pci_device_id");
-    if (pci != facts.end() && pci->second != std::to_string(row->pci_device_id)) {
-        std::cerr << "replay-routes: the start ran on PCI id " << pci->second << ", not "
+    if (pci == facts.end() || pci->second != std::to_string(row->pci_device_id)) {
+        std::cerr << "replay-routes: the start ran on PCI id "
+                  << (pci == facts.end() ? std::string("?") : pci->second) << ", not "
                   << row->name << "'s " << row->pci_device_id << std::endl;
         return 2;
     }
     if (const auto commit = build.find("git_commit"); commit != build.end()) {
-        std::cout << "start: build " << commit->second << ", sm_" << arch->second
+        std::cout << "start: build " << commit->second << ", sm_" << here.at("arch")
                   << "; replayed against " << row->name << "'s registry row" << std::endl;
     }
     // The board's class is the registry row's (its clocks the row's, not the start's driver's):
