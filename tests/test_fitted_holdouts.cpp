@@ -263,6 +263,12 @@ const std::vector<Spec>& specs() {
              "kQuantKld",
              "kQuantKldDefaultParams",
              "kQuantKldModels",
+             // the curves' recorded protocol, and the reference check's tolerance: one measured
+             // card-to-card pair, declared before the rows it checks (#915), not fitted
+             "kQuantKldCorpus",
+             "kQuantKldContext",
+             "kQuantKldStride",
+             "kQuantKldReferenceNllTolerance",
              // a measurement of answers against KLD (configuration-choice.md, #618 step 11): data
              // a caller shows, never a decision's, not fitted
              "kAnswerScales",
