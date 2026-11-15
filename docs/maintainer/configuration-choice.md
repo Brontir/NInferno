@@ -151,8 +151,8 @@ Qwen3.5-0.8B, 2B, 4B and 27B beside the 9B's, each point keyed by the model's we
 none, and another family, read the 9B's. The 9B's points rest on two cards; the others on one,
 where `kQuantKldModels` records the model's Q8_0 reference NLL (KLD is a model constant: the 4B on
 two cards within 0.1 %). `ninferno-perplexity --reference-model NAME` checks a new run against it
-under the curves' protocol, within `kQuantKldReferenceNllTolerance` (1.2e-4 nats per token, the
-exact route's card-to-card spread), and exits 3 beyond it (#915); the check covers the Q8_0 forward
+under the curves' protocol, within `kQuantKldReferenceNllTolerance` (1.2e-4 nats per token, one
+measured card-to-card pair of the exact route), and exits 3 beyond it (#915); the check covers the Q8_0 forward
 alone, so a one-card model's quantized points are its card's arch until another arch re-measures
 them. A model of the family with no curve of its own, within the measured sizes, takes the 9B's
 label as a transfer where every measured size agrees within the answer noise (0.005 KLD: Q6_K,
