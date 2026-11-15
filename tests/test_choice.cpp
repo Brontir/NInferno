@@ -3171,7 +3171,9 @@ void route_answers_replay(const json& fixture) {
             const auto card    = board_card(0x2684);
             const auto allowed = ch::allowed_axes(model, KvCacheStorage::Int8Group64);
             const auto direct  = ch::choose(model, card, quant, allowed, pins, task, own);
+            calls              = 0; // the recording run's own queries
             const auto rec     = ch::record_choice(model, card, quant, allowed, pins, task, own);
+            const unsigned recorded_calls = calls;
             const auto back    = ReplayJson::parse(rec.inputs.dump());
             live               = false;
             const auto again   = ch::replay_choice(back);
@@ -3193,10 +3195,12 @@ void route_answers_replay(const json& fixture) {
             check(back["model"]["moe_route_unqueried"] == model.moe_route_unqueried,
                   "unqueried MoE flag is recorded");
             if (!routed && mode == 4) {
-                check(calls == 0 && answers.empty(),
+                check(recorded_calls == 0 && answers.empty(),
                       "installed but unasked callback has an empty table");
             } else if (present) {
-                check(calls > answers.size() && !answers.empty(),
+                // The recording run asks some keys more than once and records each once (a duplicate
+                // key is refused on replay, below).
+                check(recorded_calls > answers.size() && !answers.empty(),
                       "repeated queries have one recorded answer");
             }
             auto old      = back;
