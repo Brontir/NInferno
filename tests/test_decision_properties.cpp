@@ -942,6 +942,11 @@ void property_atlas_committed(const std::string& atlas) {
     }
     std::string header;
     std::getline(in, header);
+    if (header.rfind("# block_shared_bytes ", 0) != 0) {
+        note("atlas", "the committed atlas has no block limit line", "-",
+             atlas_path().string() + " starts with \"" + header + "\" (run with --update-atlas)");
+        return;
+    }
     std::map<std::string, std::string> committed;
     for (std::string line; std::getline(in, line);) {
         if (!line.empty()) { committed[line.substr(0, line.find('\t'))] = line; }
