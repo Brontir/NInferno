@@ -749,13 +749,10 @@ void run(const Case& k) {
                       ": the hazard follows the planner's offsets");
         }
         std::cout << "  prefill scratch: " << regions.size() << " regions, " << reused
-                  << " consecutive pairs on the same bytes
-                     ";
-            // The same early-writing chain over a disjoint packing of the same sizes has no hazard:
-            // the one found over the planner's offsets is its reuse.
-            std::vector<gen::LaunchLifetime>
-                early,
-            packed;
+                  << " consecutive pairs on the same bytes\n";
+        // The same early-writing chain over a disjoint packing of the same sizes has no hazard:
+        // the one found over the planner's offsets is its reuse.
+        std::vector<gen::LaunchLifetime> early, packed;
         std::size_t cursor = 0;
         for (std::size_t i = 0; i < regions.size(); ++i) {
             for (auto* list : {&early, &packed}) {
