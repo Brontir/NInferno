@@ -102,12 +102,14 @@ int replay_routes_main(int argc, char** argv) {
     // printed, and replayed. The start's table and lenders are printed too: a replay binary with
     // other route tables reports their change as moved lines.
     for (const auto& [key, value] : runtime::section_of_text(canonical, "sources")) {
-        if (key.rfind("route_table", 0) == 0) { std::cout << "start: sources." << key << '=' << value << '\n'; }
+        if (key.rfind("route_table", 0) == 0) {
+            std::cout << "start: sources." << key << '=' << value << '\n';
+        }
     }
     bool overridden = false;
     for (const auto& [key, value] : taint) {
         const bool overrides = key == "maintainer" || key == "user_tune_cache";
-        overridden = overridden || overrides;
+        overridden           = overridden || overrides;
         (overrides ? std::cerr : std::cout)
             << (overrides ? "replay-routes: the start's selection was overridden: taint."
                           : "note: taint.")
