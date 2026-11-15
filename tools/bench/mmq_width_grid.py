@@ -1027,10 +1027,14 @@ def grid(a: argparse.Namespace) -> None:
     elif fit["lof"] is not None and fit["lof"] > LOF_MAX:
         why5 = ("the residual exceeds the request noise after the run drift is taken out: the work law does not "
                 "fit this card (see the visit ratios for the drift)")
-        if fit["beyond"] is not None and fit["beyond"] <= WAVE_RMS:
+        if fit["beyond"] is not None and fit["beyond"] <= WAVE_RMS and os.environ.get("MMQ_GRID_LAW", "1") != "0":
             why5 += (f"; the residual beyond the request noise is {100 * fit['beyond']:.2f} % of the time, within the "
                      f"{100 * WAVE_RMS:g} % (a priori) that the wave quantisation of the stream-k launch over the card's "
                      "SMs (68 on the RTX 2080 Ti) can give, which the law does not hold: one candidate cause")
+        elif fit["beyond"] is not None:
+            # Off Turing the wave bound is the RTX 2080 Ti's (the law's board), not this card's: not offered.
+            why5 += (f"; the residual beyond the request noise is {100 * fit['beyond']:.2f} % of the time (the "
+                     "a priori wave bound is computed for the RTX 2080 Ti's 68 SMs only, not for this card)")
         s5, t5 = "nofit", (f"ratio {fit['lof']:.2f} above {LOF_MAX:g}: {why5}; the fit's f {fit['f']:.3f} is not a "
                            "measurement of f")
     else:
