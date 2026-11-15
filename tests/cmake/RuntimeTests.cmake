@@ -88,6 +88,9 @@ ninferno_add_test(ninferno_decision_route_evidence_test LABELS host
 ninferno_add_op_test(ninferno_decision_properties_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decision_properties.cpp"
   LIBRARIES ninferno_ops ninferno_core)
+# The committed atlas of every board (#614 F5): tests/data/decision_atlas/<build set>.txt.
+target_compile_definitions(ninferno_decision_properties_test PRIVATE
+  NINFERNO_DECISION_ATLAS_DIR="${PROJECT_SOURCE_DIR}/tests/data/decision_atlas")
 set_tests_properties(ninferno_decision_properties_test PROPERTIES LABELS host)
 
 ninferno_add_test(ninferno_process_options_lease_test LABELS host

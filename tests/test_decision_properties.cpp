@@ -58,6 +58,10 @@
 //       key is the live card's). Without a GPU in this process it is vacuous and says so; the
 //       stands' full runs give it a GPU.
 //
+// The atlas (#614 F5): the same per-row lines equal the build set's committed
+// tests/data/decision_atlas/<set>.txt (`--update-atlas` writes it), so a release's diff of those
+// files names every board of the table whose answers moved.
+//
 // P8 (B1 under `exact` reads no continuous fact) is in test_plan_dry_run.cpp, where the plan
 // fixtures are. P5 (the plan's workspace bytes equal the start's) is test_plan_bytes.cpp, checked
 // against the start's log on a GPU by #615 W2.
@@ -857,13 +861,13 @@ std::string text_of_command(const std::string& command) {
 // reads that card's route tables and tuned routes. A row that differs may also come from this
 // process's cache history (P1, P3 and P6 ran first; the child starts cold): either is a leak.
 // Without a GPU in this process the two runs are alike and the property is vacuous (printed).
-void property_cpu_equals_gpu(const std::vector<Row>& rows) {
+void property_cpu_equals_gpu(const std::vector<Row>& rows, const std::string& here) {
 #ifdef _WIN32
     (void)rows;
+    (void)here;
     std::cout << "P4: not run on Windows (no CUDA_VISIBLE_DEVICES child)\n";
 #else
     const bool gpu_seen     = current_device_ordinal_or_none() >= 0;
-    const std::string here  = atlas_of(rows);
     const std::string child = "CUDA_VISIBLE_DEVICES= '" + sys::self_exe().string() + "'";
     const std::string cpu   = text_of_command(child + " --atlas");
     std::istringstream a(here), b(cpu);
@@ -894,6 +898,55 @@ void property_cpu_equals_gpu(const std::vector<Row>& rows) {
 #endif
 }
 
+// ---- The atlas, committed (#614 F5) ----------------------------------------------------------------
+
+// The route set a build compiles decides what a board can pick, so each build set keeps its own
+// atlas, as the selector goldens do (test_selector_golden.cpp kBuildSet).
+constexpr const char* kAtlasSet =
+#if NINFERNO_BUILD_ARCH == 70
+    "sm70";
+#elif NINFERNO_BUILD_ARCH == 75
+    "sm75";
+#elif defined(NINFERNO_WITHOUT_NVFP4)
+    "base";
+#else
+    "full";
+#endif
+
+std::filesystem::path atlas_path() {
+    return std::filesystem::path(NINFERNO_DECISION_ATLAS_DIR) / (std::string(kAtlasSet) + ".txt");
+}
+
+// The atlas of this build against the committed one: what the selector answers for every board of
+// the table, a line per row (its decision text's SHA-256). A release's diff of these files names
+// every board whose answers moved (the per-board detail of a golden board is its selector golden;
+// of any row, `--decisions N` on two builds). Regenerate with --update-atlas on a build of the set.
+void property_atlas_committed(const std::string& atlas) {
+    std::ifstream in(atlas_path());
+    if (!in) {
+        note("atlas", "no committed atlas", "-",
+             atlas_path().string() + " is missing (run with --update-atlas)");
+        return;
+    }
+    std::stringstream committed;
+    committed << in.rdbuf();
+    std::istringstream a(atlas), b(committed.str());
+    std::size_t moved = 0;
+    for (std::string x, y; std::getline(a, x);) {
+        ++cases_checked;
+        if (!std::getline(b, y)) { y.clear(); }
+        if (x == y) { continue; }
+        ++moved;
+        note("atlas", "a row's decisions moved", x.substr(0, x.find('\t')),
+             "this build " + x + ", committed " + y + " (--update-atlas if the move is meant)");
+    }
+    if (std::string extra; std::getline(b, extra)) {
+        note("atlas", "the committed atlas has more rows", "-", extra);
+    }
+    std::cout << "atlas " << kAtlasSet << ": " << moved << " rows differ from "
+              << atlas_path().filename().string() << '\n';
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -914,6 +967,11 @@ int main(int argc, char** argv) {
             std::cout << decisions_of(generic::board_device_class(rows[index].board));
             return 0;
         }
+        if (argc > 1 && std::string_view(argv[1]) == "--update-atlas") {
+            std::ofstream(atlas_path(), std::ios::binary) << atlas_of(rows);
+            std::cout << "wrote " << atlas_path().string() << '\n';
+            return 0;
+        }
         std::cout << rows.size() << " board rows of gpu_facts.json (" << gpu_facts_table().size()
                   << " in the table)\n";
         std::cout << "build sm_" << NINFERNO_BUILD_ARCH_LABEL << ": NVFP4 and cluster kernels "
@@ -926,7 +984,9 @@ int main(int argc, char** argv) {
         property_price_monotone(rows);
         property_non_fact_fields(rows);
         property_clock_invariance(rows);
-        property_cpu_equals_gpu(rows);
+        const std::string atlas = atlas_of(rows);
+        property_cpu_equals_gpu(rows, atlas);
+        property_atlas_committed(atlas);
 
         for (const auto& [id, g] : groups) {
             std::cout << "FAIL  " << id.first << " [" << id.second << "]: " << g.count
