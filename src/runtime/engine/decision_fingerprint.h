@@ -94,6 +94,10 @@ struct DecisionFingerprint {
 };
 
 [[nodiscard]] std::string canonical_text(const DecisionInputs& inputs);
+// The section a fingerprint text (canonical_text, DecisionFingerprint::routes) writes for `name`
+// ("<name>.<key>	<value>" lines, escaped), read back: the replay of a start's recorded lines
+// (ninferno-serve replay-routes, #612 step 10). Lines of other sections are skipped.
+[[nodiscard]] DecisionSection section_of_text(std::string_view text, std::string_view name);
 [[nodiscard]] DecisionFingerprint decision_fingerprint(const DecisionInputs& inputs);
 
 // The host's facts as the Engine reads them: logical CPU count, the RAM the process may use

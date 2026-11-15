@@ -812,6 +812,18 @@ int stability_and_golden() {
                                       "sources.route_table\tgb202.json sha256:00\n"
                                       "taint.maintainer\tdense_tune\n";
     const auto golden               = rt::decision_fingerprint(pinned);
+    // #612 step 10: a recorded section reads back as it was written (ninferno-serve
+    // replay-routes): escapes, a section among others, and the route lines' own text.
+    {
+        rt::DecisionInputs routed = pinned;
+        routed.routes = {{"q4_K speed none 4096x4096 of 4096 rows", "1-3 r8	, 4-16 rmma; prefill 1024 mmq"},
+                         {"count", "1 problem"}};
+        const auto written = rt::decision_fingerprint(routed);
+        failures += check(rt::section_of_text(written.canonical, "options") == pinned.options &&
+                              rt::section_of_text(written.routes, "routes") == routed.routes &&
+                              rt::section_of_text(written.canonical, "routes").empty(),
+                          "a recorded section reads back as written");
+    }
     failures +=
         check(golden.canonical == expected_text, "pinned canonical text:\n" + golden.canonical);
     failures +=

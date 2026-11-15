@@ -39,5 +39,8 @@ int price_main(int argc, char** argv);
 // The board the tool prices: core's board_class of the row, its driver view the row's own
 // (registry_driver_view) and its memory the row's whole VRAM.
 [[nodiscard]] DeviceClass price_board_class(const GpuFactsRow& row);
+// The facts table's row of BOARD: a PCI id ("0x2684") or a name, case and spacing ignored
+// ("rtx4090", "GeForce RTX 4090"); nullptr for none.
+[[nodiscard]] const GpuFactsRow* price_find_board(std::string_view board);
 
 } // namespace ninferno::tools

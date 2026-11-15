@@ -298,7 +298,7 @@ static bool engine_help_requested(int argc, char** argv) {
     if (argc >= 2) {
         const std::string_view first = argv[1];
         if (first == "route-tune" || first == "selector-facts" || first == "spec-tune" ||
-            first == "spec-reselect") {
+            first == "spec-reselect" || first == "replay-routes") {
             return false;
         }
     }

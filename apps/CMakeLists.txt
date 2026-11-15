@@ -18,7 +18,7 @@ target_link_libraries(ninferno-ui PRIVATE ninferno_ui ninferno_product_update)
 
 # Also `ninferno-serve spec-tune` / `spec-reselect` (the CLI's own code) and `route-tune`: a
 # release's measurement tools run through the dispatcher on the GPU's engine (tools/kit).
-add_executable(ninferno-serve serve/main.cpp cli/spec_tune.cpp)
+add_executable(ninferno-serve serve/main.cpp serve/replay_routes.cpp cli/spec_tune.cpp)
 ninferno_internal_includes(ninferno-serve)
 target_link_libraries(ninferno-serve PRIVATE ninferno_serve ninferno_spec ninferno_product_logging
   ninferno_product_prompt_input ninferno_product_plan ninferno_product_update ninferno::cudart)

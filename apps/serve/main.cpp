@@ -2,6 +2,7 @@
 #include "core/device_class.h"
 #include "ops/generic/build_manifest.h"
 #include "ops/generic/price_tool.h"
+#include "replay_routes.h"
 #include "ops/generic/route_tune_tool.h"
 #include "ops/generic/selector_facts.h"
 #include "../cli/spec_tune.h"
@@ -185,6 +186,10 @@ int main(int argc, char** argv) {
     // table, no GPU.
     if (argc >= 2 && std::string_view(argv[1]) == "price") {
         return ninferno::tools::price_main(argc - 1, argv + 1);
+    }
+    // A start's route lines asked again on a CPU against a board of the facts table (#612 step 10).
+    if (argc >= 2 && std::string_view(argv[1]) == "replay-routes") {
+        return ninferno::tools::replay_routes_main(argc - 1, argv + 1);
     }
     if (argc >= 2 && (std::string_view(argv[1]) == "spec-tune" ||
                       std::string_view(argv[1]) == "spec-reselect")) {
