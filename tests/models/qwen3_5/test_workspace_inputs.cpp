@@ -750,17 +750,19 @@ void run(const Case& k) {
         }
         std::cout << "  prefill scratch: " << regions.size() << " regions, " << reused
                   << " consecutive pairs on the same bytes
-";
-        // The same early-writing chain over a disjoint packing of the same sizes has no hazard:
-        // the one found over the planner's offsets is its reuse.
-        std::vector<gen::LaunchLifetime> early, packed;
+                     ";
+            // The same early-writing chain over a disjoint packing of the same sizes has no hazard:
+            // the one found over the planner's offsets is its reuse.
+            std::vector<gen::LaunchLifetime>
+                early,
+            packed;
         std::size_t cursor = 0;
         for (std::size_t i = 0; i < regions.size(); ++i) {
             for (auto* list : {&early, &packed}) {
                 gen::LaunchLifetime e;
-                e.name         = names[i];
-                e.starts_early = true;
-                e.releases     = true;
+                e.name                    = names[i];
+                e.starts_early            = true;
+                e.releases                = true;
                 gen::ScratchRegion region = regions[i];
                 if (list == &packed) { region.offset = cursor; }
                 (void)e.add({region, gen::ScratchAccess::Write, gen::ScratchFirst::BeforeWait,
@@ -898,8 +900,7 @@ void run(const Case& k) {
           k.name + ": --plan's prefill regions are the start's (" +
               std::to_string(dry.workspace_regions.size()) + " against " +
               std::to_string(start.text_prefill_regions.size()) + ")");
-    check(formula.workspace_regions.empty(),
-          k.name + ": the formula records no regions");
+    check(formula.workspace_regions.empty(), k.name + ": the formula records no regions");
     check(formula.workspace_basis.rfind("formula: ", 0) == 0,
           k.name + ": facts without the artifact's bindings keep the formula and say why (" +
               formula.workspace_basis + ")");

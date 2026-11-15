@@ -103,6 +103,7 @@ public:
     // Records every region handed out from here on into `sink` (nullptr: stops), under the op the
     // caller names last (`op`). Recording changes no offset and no peak.
     void record(std::vector<WorkspaceRegion>* sink) noexcept { sink_ = sink; }
+
     [[nodiscard]] bool recording() const noexcept { return sink_ != nullptr; }
 
     void op(std::string name) { op_ = std::move(name); }
