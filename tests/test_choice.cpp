@@ -108,7 +108,7 @@ static_assert(work_tiles_format(QType::GGML_Q2_K, 8, 9) &&
 // work_tiles_format); any other format the rule names on any generation must be mapped there too,
 // so this fails first when the host rule grows.
 constexpr bool only_mapped_formats() {
-    for (int v = 0; v < 256; ++v) {
+    for (int v = 0; v < 64; ++v) { // every QType value (the largest is 43)
         const auto q = static_cast<QType>(v);
         if (q == QType::GGML_Q4_K || q == QType::GGML_Q6_K || q == QType::GGML_IQ4_XS ||
             q == QType::GGML_Q2_K) {
@@ -124,8 +124,8 @@ constexpr bool only_mapped_formats() {
 }
 
 static_assert(only_mapped_formats());
-// GA100 (8.0) has no work table; a major past the table borrows GB20x's name, so the rule says yes
-// for IQ4_XS there, and the work table stays off only because the generation is unknown.
+// GA100 (8.0): the rule says no for IQ4_XS. A major past the table (13.0) borrows GB20x's name, so
+// the rule says yes there, and the work table stays off only because the generation is unknown.
 static_assert(!ninferno::mmq_columns::uses_work_table(8, 0,
                                                       work_tiles_format(QType::GGML_IQ4_XS, 8, 0)));
 static_assert(

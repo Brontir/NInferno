@@ -2929,7 +2929,7 @@ its limit is #928 (#619's process: counts, a prediction, then an A/B on the GV10
 | RTX 4070 Ti | Q2_K | 0.20 (0.11..0.33) | 0.26 % (0.20) | in #619 | 9.53 % |
 | RTX 5090 | Q2_K | 0.10 (0.06..0.20) | 1.81 % (0.10), refuted | 1.81 % (0.059..0.111) | 16.39 % |
 
-The work law does not fit any of the first four (lack-of-fit 3.8 to 16, above the a priori 3), so R5 gives no verdict and the fit's f is not a measurement. The decision rests on the regret buckets, as DECISIONS 74's did.
+The last four rows were predicted after the first IQ4_XS grids refuted 0.30: the row's own f, range its bucket and the next. Their least buckets and the law's fit are in #619. The work law does not fit any of the first four (lack-of-fit 3.8 to 16, above the a priori 3), so R5 gives no verdict and the fit's f is not a measurement. The decision rests on the regret buckets, as DECISIONS 74's did.
 
 The prediction was wrong for IQ4_XS on GA10x and Ada. It put the fixed share at 0.30, on the reasoning that IQ4_XS's table decode costs 1.5-2× Q4_K's per weight and the decode is the fixed part. The grids' least regret lies in or next to Q4_K's bucket. So the decode is not what sets the share (or the J part grows with it). The row's f is kept, not a new one fitted: 0.20 is within 0.12 % of the best width on both cards.
 
