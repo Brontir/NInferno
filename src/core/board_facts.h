@@ -5,8 +5,9 @@
 // own SMs, clocks, bus and L2. No CUDA: includable from host code and from a .cu's host side.
 //
 // The L2's per-SM width is arch_registry's (l2_bytes_per_sm_l2_clock: it reads the architecture
-// rows, which this header does not include, so machine_facts.h may). The DRAM rate is the facts table's: two transfers a memory clock across
-// the bus (the clock half the data rate), the spelling MachineFacts::dram_bytes_per_s calls.
+// rows, which this header does not include, so machine_facts.h may). The DRAM rate is the facts
+// table's: two transfers a memory clock across the bus (the clock half the data rate), the spelling
+// MachineFacts::dram_bytes_per_s calls.
 
 
 namespace ninferno::board_facts {
