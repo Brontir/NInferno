@@ -27,7 +27,7 @@ const char* usage() {
            "  FILE   a start's request log (--request-log-jsonl): its last server_start record\n"
            "Asks the start's route lines again on a CPU against BOARD's class from its registry\n"
            "row, under the start's route policy, and prints the lines that moved. Refused: a\n"
-           "start with maintainer flags, with another build, or on another board.\n"
+           "start whose selection a maintainer overrode, with another build, or on another board.\n"
            "Exit 0: none moved; 1: some did; 2: a usage or input error or a refusal.\n";
 }
 
@@ -93,13 +93,25 @@ int replay_routes_main(int argc, char** argv) {
         return 2;
     }
     // What else entered the start's selection besides the board and the shipped tables: a
-    // maintainer's route table, directory, pins or tuners (the taint section names them), and the
-    // build (its selector reads the build's compile definitions). A replay without them would
-    // report moves that are not the board's: refused.
-    if (!taint.empty()) {
-        std::cerr << "replay-routes: the start ran with maintainer flags (";
-        for (const auto& [key, value] : taint) { std::cerr << ' ' << key << '=' << value; }
-        std::cerr << " ): its routes are not the release selection's; not replayed" << std::endl;
+    // maintainer's route table, directory, pins or tuners, a tuner's cache, a table keyed by a
+    // class outside the device's chain (taint maintainer, user_tune_cache, foreign_route_table),
+    // and the build (its selector reads the build's compile definitions). A replay without them
+    // would report moves that are not the board's: refused. The other taints are the release
+    // selection's own (entries the shipped tables lend, a driver without clocks, a carried context
+    // cost, a speculation fallback): printed, and replayed.
+    bool overridden = false;
+    for (const auto& [key, value] : taint) {
+        const bool overrides =
+            key == "maintainer" || key == "user_tune_cache" || key == "foreign_route_table";
+        overridden = overridden || overrides;
+        (overrides ? std::cerr : std::cout)
+            << (overrides ? "replay-routes: the start's selection was overridden: taint."
+                         : "note: taint.")
+            << key << '=' << value << std::endl;
+    }
+    if (overridden) {
+        std::cerr << "replay-routes: its routes are not the release selection's; not replayed"
+                  << std::endl;
         return 2;
     }
     // The selector reads the build's compile definitions (its architecture, arch-specific

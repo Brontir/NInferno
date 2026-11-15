@@ -6,8 +6,8 @@ namespace ninferno::tools {
 // last server_start record of a request log, --request-log-jsonl: decision.routes) asked again on
 // a CPU against BOARD's class built from its registry row (price_board_class: the row's clocks, no
 // GPU is read), under the start's route policy (its canonical text's
-// options.maintainer.route_policy). Refused (exit 2): a start with maintainer flags (a non-empty
-// taint section), a start whose build differs from this binary's in a key the selector reads
+// options.maintainer.route_policy). Refused (exit 2): a start whose selection was overridden (taint
+// maintainer, user_tune_cache or foreign_route_table; the other taints are printed), a start whose build differs from this binary's in a key the selector reads
 // (arch, arch_specific, nvfp4, the CUDA architectures: all but version, commit and runtime), a
 // start whose facts.pci_device_id is not BOARD's or is missing. Prints every line that moved and
 // the counts. Exit 0: none moved; 1: some did; 2: a usage or input error or a refusal.
