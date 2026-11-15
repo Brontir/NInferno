@@ -580,7 +580,8 @@ bool same_regions(const std::vector<WorkspaceRegion>& a, const std::vector<Works
 }
 
 bool same(const detail::WorkspacePlan& a, const detail::WorkspacePlan& b) {
-    return same_regions(a.text_prefill_regions, b.text_prefill_regions) && a.text_prefill == b.text_prefill && a.ordinary_round == b.ordinary_round &&
+    return same_regions(a.text_prefill_regions, b.text_prefill_regions) &&
+           a.text_prefill == b.text_prefill && a.ordinary_round == b.ordinary_round &&
            a.mtp_prefill == b.mtp_prefill && a.mtp_round == b.mtp_round &&
            a.dflash_context == b.dflash_context && a.dflash_round == b.dflash_round &&
            a.dflash_round_append == b.dflash_round_append && a.causal_score == b.causal_score &&
@@ -677,7 +678,7 @@ void run(const Case& k) {
     check(start.text_prefill > 0 && start.ordinary_round > 0, k.name + ": text arenas sized");
     // The prefill arena region by region (#615 W5): every region inside the arena, the highest end
     // its peak, the first layer's mixer and the head (or the sampler) named.
-    std::size_t top = 0;
+    std::size_t top  = 0;
     bool first_layer = false, tail = false;
     for (const WorkspaceRegion& r : start.text_prefill_regions) {
         top         = std::max(top, r.offset + r.bytes);
@@ -687,7 +688,8 @@ void run(const Case& k) {
     check(!start.text_prefill_regions.empty() && top == start.text_prefill,
           k.name + ": the prefill regions end at the arena's peak (" + std::to_string(top) +
               " against " + std::to_string(start.text_prefill) + ")");
-    check(first_layer && tail, k.name + ": the prefill regions name the layers' and the head's ops");
+    check(first_layer && tail,
+          k.name + ": the prefill regions name the layers' and the head's ops");
     // The prefill chain's scratch through the PDL check (#615 W5, ops/generic/scratch_lifetime.h):
     // every op's scratch written by its producer in stream order and read by a launch that joins
     // and releases (the widest overlap launch_overlap grants), at the planner's offsets: no hazard,
@@ -698,8 +700,8 @@ void run(const Case& k) {
         namespace gen = ninferno::ops::detail::generic;
         std::vector<gen::LaunchLifetime> chain, early;
         gen::LaunchOverlap widest;
-        widest.join    = gen::OverlapRefusal::None;
-        widest.release = gen::OverlapRefusal::None;
+        widest.join        = gen::OverlapRefusal::None;
+        widest.release     = gen::OverlapRefusal::None;
         std::uint32_t slot = 0;
         for (const WorkspaceRegion& r : start.text_prefill_regions) {
             if (!r.scratch) { continue; }
