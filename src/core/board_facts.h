@@ -2,13 +2,13 @@
 
 // A board's per-SM quantities, derived from its published facts (#612 step 7): constexpr functions
 // over the rows, never stored, so a neighbouring board of the same architecture interpolates by its
-// own SMs, clocks, bus and L2. No CUDA: includable from host code and from a .cu's host side.
+// own SMs, clocks and bus (its L2 per SM: arch_registry.h). No CUDA: includable from host code and
+// from a .cu's host side.
 //
 // The L2's per-SM width is arch_registry's (l2_bytes_per_sm_l2_clock: it reads the architecture
-// rows, which this header does not include, so machine_facts.h may). The DRAM rate is the facts
-// table's: two transfers a memory clock across the bus (the clock half the data rate), the spelling
-// MachineFacts::dram_bytes_per_s calls.
-
+// rows, so machine_facts.h can include this header without the generated rows). The DRAM rate is
+// the facts table's: two transfers a memory clock across the bus (the clock half the data rate),
+// the spelling MachineFacts::dram_bytes_per_s calls.
 
 namespace ninferno::board_facts {
 
@@ -40,7 +40,7 @@ namespace ninferno::board_facts {
     return ctas > 0 && slots > 0 ? (ctas + slots - 1) / slots : 0;
 }
 
-// The facts table's rows (memory clock, bus bits) and the profiler's L2 width.
+// The facts table's rows (memory clock, bus bits).
 static_assert(dram_bytes_per_s(10500000, 384, 1.0) == 1008e9, "RTX 4090: 1008 GB/s");
 static_assert(dram_bytes_per_s(14000000, 512, 1.0) == 1792e9, "RTX 5090: 1792 GB/s");
 static_assert(waves(1024, 170, 6) == 2 && waves(1020, 170, 6) == 1 && waves(0, 170, 6) == 0);

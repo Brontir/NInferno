@@ -497,11 +497,10 @@ struct PlanRungBytes {
 // decode column.
 // `plan`: the sequence plan the rung lays out (plan_rung_bytes'; nullptr on the approximate path).
 // `basis` (when given): PlanRungBytes::workspace_basis.
-[[nodiscard]] std::uint64_t
-plan_workspace_estimate(const PlanModelFacts& model, const PlanRung& rung,
-                        const EngineOptions& options, std::uint32_t concurrency,
-                        const models::qwen3_5::detail::SequencePlanImpl* plan = nullptr,
-                        std::string* basis                                    = nullptr);
+[[nodiscard]] std::uint64_t plan_workspace_estimate(
+    const PlanModelFacts& model, const PlanRung& rung, const EngineOptions& options,
+    std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan = nullptr,
+    std::string* basis = nullptr);
 
 // A family's workspace from its facts (#302): the arena a start would size for the rung's context,
 // chunk and `concurrency` under `options`, or no bytes where the facts do not carry what it needs,
