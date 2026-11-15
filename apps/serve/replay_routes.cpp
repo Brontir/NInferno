@@ -94,8 +94,8 @@ int replay_routes_main(int argc, char** argv) {
     }
     // What else entered the start's selection besides the board and the shipped tables: a
     // maintainer's route table, directory, pins or tuners (the taint section names them), and the
-    // build (its selector reads the build's compile definitions). A replay without them would report
-    // moves that are not the board's: refused.
+    // build (its selector reads the build's compile definitions). A replay without them would
+    // report moves that are not the board's: refused.
     if (!taint.empty()) {
         std::cerr << "replay-routes: the start ran with maintainer flags (";
         for (const auto& [key, value] : taint) { std::cerr << ' ' << key << '=' << value; }
