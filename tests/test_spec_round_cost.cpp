@@ -1649,15 +1649,15 @@ int main() {
         std::set<std::string> targets;
         for (const auto& p : registry.pairs()) { targets.insert(p.target); }
         const auto key_of = [](const ninferno::GpuFactsRow& row) {
-            const std::string id    = row.chip + ":" + std::to_string(row.sms) + "sm";
-            const int cc            = row.major * 10 + row.minor;
-            const std::string arch  = "sm" + std::to_string(cc);
-            const int clock         = row.boost_min_mhz > 0 ? row.boost_min_mhz : row.boost_mhz;
-            sp::GpuKey g            = card(id.c_str(), row.chip.c_str(), arch.c_str(), cc, row.sms,
-                                           clock, row.bus_bits / 8.0 * row.gbps);
-            g.memory_bytes          = static_cast<std::uint64_t>(row.vram_gib * double(1ull << 30));
-            g.l2_bytes              = row.l2_mib * double(1 << 20);
-            g.mma_slow              = row.mma_slow;
+            const std::string id   = row.chip + ":" + std::to_string(row.sms) + "sm";
+            const int cc           = row.major * 10 + row.minor;
+            const std::string arch = "sm" + std::to_string(cc);
+            const int clock        = row.boost_min_mhz > 0 ? row.boost_min_mhz : row.boost_mhz;
+            sp::GpuKey g   = card(id.c_str(), row.chip.c_str(), arch.c_str(), cc, row.sms, clock,
+                                  row.bus_bits / 8.0 * row.gbps);
+            g.memory_bytes = static_cast<std::uint64_t>(row.vram_gib * double(1ull << 30));
+            g.l2_bytes     = row.l2_mib * double(1 << 20);
+            g.mma_slow     = row.mma_slow;
             return g;
         };
         const auto same = [](double a, double b) { return std::abs(a - b) <= 1e-9 * std::abs(b); };
@@ -1686,7 +1686,8 @@ int main() {
                     ++by_facts;
                     expect(p.load_basis == "facts", row.name + ", " + target +
                                                         ": no lab board of its rates, priced by "
-                                                        "its own facts (" + p.load_basis + ")");
+                                                        "its own facts (" +
+                                                        p.load_basis + ")");
                 }
             }
             ++boards;
@@ -1695,9 +1696,9 @@ int main() {
             const auto [at, fresh] = by_rates.emplace(rates, std::pair{row.name, choices});
             if (!fresh) {
                 ++compared;
-                expect(at->second.second == choices, "same chip and rates, same drafter: " +
-                                                         row.name + " and " + at->second.first +
-                                                         " (" + rates + ")");
+                expect(at->second.second == choices,
+                       "same chip and rates, same drafter: " + row.name + " and " +
+                           at->second.first + " (" + rates + ")");
             }
         }
         expect(boards > 0 && by_facts > 0, "the scan met boards priced by their own facts");
