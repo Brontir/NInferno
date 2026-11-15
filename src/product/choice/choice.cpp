@@ -2374,9 +2374,9 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     out.resolutions         = bands;
 
     out.chunk_basis                    = chunk_basis_of(model, card, gates);
-    out.chunk_by_speed = (out.chunk_basis == ChunkBasis::Own ||
-                          out.chunk_basis == ChunkBasis::VerifiedCurve) &&
-                         !pins.chunk;
+    out.chunk_by_speed =
+        (out.chunk_basis == ChunkBasis::Own || out.chunk_basis == ChunkBasis::VerifiedCurve) &&
+        !pins.chunk;
     // The enumeration order breaks exact ties (better()): one canonical order of each axis's
     // values (allowed_axes'), never the order a caller listed them in (#301).
     std::vector<KvCacheStorage> kvs = pins.kv ? std::vector<KvCacheStorage>{*pins.kv} : allowed.kv;
