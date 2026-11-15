@@ -589,7 +589,7 @@ def compare_device(device, row):
         status = "match" if cap == s["persisting_l2_max_bytes"] else \
             "info" if PERSISTING_LOW * l2 <= cap <= l2 else "mismatch"
         out.append(result("arch", "persisting_l2_max_bytes", s["persisting_l2_max_bytes"], cap,
-                          status, "synthetic writes 3/4 of the L2; the driver's cap is the "
+                          status, "synthetic writes 3/4 of the L2 from sm_80 (0 below); the driver's cap is the "
                           "board's, between 1/8 of the L2 and all of it"))
     # The per-block limits the occupancy calculator assumes, against what the driver says.
     for name in OCCUPANCY_LIMITS:
