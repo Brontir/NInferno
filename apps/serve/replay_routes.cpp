@@ -150,7 +150,7 @@ int replay_routes_main(int argc, char** argv) {
     }
     // The board's class is the registry row's (its clocks the row's, not the start's driver's):
     // the replay checks that the registry gives the start's routes (#612 step 10).
-    DeviceClass device = price_board_class(*row);
+    DeviceClass device      = price_board_class(*row);
     const auto start_number = [&](const char* key) -> std::optional<std::size_t> {
         const auto it = facts.find(key);
         if (it == facts.end()) { return std::nullopt; }
