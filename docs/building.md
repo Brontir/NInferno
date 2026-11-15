@@ -104,7 +104,8 @@ checks those of the release architectures that no test machine builds (sm_80, sm
 on a CPU. After a kernel change, regenerate the snapshot
 of each architecture from a build of it (`ninja ninferno_kernel_facts_update` in a test tree, or
 `kernel_facts.py extract` on the release binary), then the selector goldens that move with it
-(`ninferno_selector_golden_test --update`).
+(`ninferno_selector_golden_test --update`) and the decision atlas of each build set
+(`ninferno_decision_properties_test --update-atlas`).
 A build label with no snapshot of its own (`121a`, `120f`, or an architecture added before its
 snapshot) prices its register-MMA kernels by threads alone and never takes their latency or wide
 variants; `ninferno_kernel_facts_test` fails on such a build until its snapshot is committed.
