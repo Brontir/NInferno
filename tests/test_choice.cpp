@@ -1250,7 +1250,8 @@ void weighs_the_quantizations(const json& fixture) {
     for (const ch::QuantKldModel& m : ch::kQuantKldModels) {
         check(ch::quant_kld_model_named(m.name) == &m, std::string(m.name) + ": found by its name");
     }
-    check(ch::quant_kld_model_named("Qwen3.5-7B") == nullptr && ch::quant_kld_model_named("") == nullptr,
+    check(ch::quant_kld_model_named("Qwen3.5-7B") == nullptr &&
+              ch::quant_kld_model_named("") == nullptr,
           "an unmeasured model's name: no row");
     check(ch::kQuantKldReferenceNllTolerance > 0 && ch::kQuantKldReferenceNllTolerance < 1e-3,
           "the reference NLL tolerance: the card-to-card spread");
