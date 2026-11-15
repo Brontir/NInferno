@@ -199,6 +199,10 @@ section_rows(std::string_view arch, std::string_view family);
 [[nodiscard]] std::vector<std::string_view> snapshot_archs();
 // The header of a label's snapshot; nullopt where none is committed.
 [[nodiscard]] std::optional<SnapshotHeader> snapshot_header(std::string_view arch);
+// The SHA-256 (hex) of a label's committed snapshot text, "" where none is committed: the decision
+// fingerprint's facts.kernel_facts_sha256 (#612 step 10), so that two builds whose decisions read
+// the same kernel facts say so whatever else differs between them.
+[[nodiscard]] std::string snapshot_sha256(std::string_view arch);
 // The facts of one kernel of a label's snapshot; nullopt where the label has no snapshot or the
 // snapshot holds no such kernel (the build then prices by threads alone).
 [[nodiscard]] std::optional<KernelFacts> rmma_facts(std::string_view arch,

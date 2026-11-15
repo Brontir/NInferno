@@ -1,5 +1,6 @@
 #include "runtime/engine/decision_fingerprint.h"
 
+#include "core/arch_registry.h"
 #include "core/sha256.h"
 
 #include <array>
@@ -254,6 +255,19 @@ DecisionFingerprint decision_fingerprint(const DecisionInputs& inputs) {
 DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int driver_version,
                          const HostFacts& host) {
     DecisionSection out;
+    // The architecture table's row the device's limits come from (#612 step 10: the row as data,
+    // core/arch_registry.h): its range and every limit, so that a table edit shows in the facts.
+    {
+        const arch_registry::ArchRow& r = arch_registry::find(d.major, d.minor);
+        out["arch_row"] = number(r.cc) + "-" + number(r.cc_to) + " " +
+                          number(static_cast<std::uint64_t>(r.smem_per_block_optin)) + "/" +
+                          number(static_cast<std::uint64_t>(r.smem_per_sm)) + " build " +
+                          number(static_cast<std::uint64_t>(r.build_smem_per_block_optin)) + "/" +
+                          number(static_cast<std::uint64_t>(r.build_smem_per_sm)) + " reserved " +
+                          number(r.smem_reserved_per_block) + " threads " +
+                          number(r.max_threads_per_sm) + " blocks " + number(r.max_blocks_per_sm) +
+                          " registers " + number(r.registers_per_sm);
+    }
     out["cc_major"]                = number(d.major);
     out["cc_minor"]                = number(d.minor);
     out["sms"]                     = number(d.sms);

@@ -1,6 +1,7 @@
 #include "ops/generic/kernel_facts.h"
 
 #include "core/device_class.h"
+#include "core/sha256.h"
 #include "ops/generic/embedded_kernel_facts.h" // generated: the committed snapshots' text
 
 #include <cctype>
@@ -327,6 +328,13 @@ std::vector<std::string_view> snapshot_archs() {
     std::vector<std::string_view> v;
     for (const auto& s : snapshots()) v.push_back(s->header.arch);
     return v;
+}
+
+std::string snapshot_sha256(std::string_view arch) {
+    for (const auto& e : embedded::kKernelFactsSnapshots) {
+        if (std::string_view(e.arch) == arch) { return sha256_hex(e.text); }
+    }
+    return {};
 }
 
 std::optional<SnapshotHeader> snapshot_header(std::string_view arch) {

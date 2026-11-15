@@ -15,6 +15,7 @@
 #include "ops/route_options.h"
 #include "ops/route_pins.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/kernel_facts.h"
 #include "runtime/contract/sampling.h"
 #include "runtime/contract/request.h"
 #include "ninferno/ops/moe.h"
@@ -160,6 +161,13 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     host.cpu_period_us      = load.cpu_quota_period_us;
     in.facts =
         runtime::facts_of(device_class(resolved.device), build_features(), driver_version, host);
+    // The kernel facts this build's decisions are priced from (#612 step 10): the committed
+    // snapshot of the build's architecture, by its text's digest ("none" without one).
+    {
+        namespace kf = ops::detail::generic::kernel_facts;
+        const std::string digest       = kf::snapshot_sha256(kf::build_arch());
+        in.facts["kernel_facts_sha256"] = digest.empty() ? std::string("none") : digest;
+    }
     in.build   = runtime::build_of();
     in.options = runtime::options_of(
         requested, load.source_identity.empty() ? std::string("unreadable") : load.source_identity,
