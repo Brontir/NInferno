@@ -2849,6 +2849,23 @@ context on the board. The record is the sweep, not a constant: no rate is refitt
 generation's prefill rows are unchanged. A capability the sweep's cards do not have (12.1, the
 GB10: its reference row does not decide) and a lent generation keep `CarriedCurve`.
 
+**The deciding prediction against the measurement.** The picks of this rule's build (`--plan`,
+the plan's own ask and context), against the fastest measured:
+
+| card | model | picked (context) | fastest measured |
+|---|---|---|---|
+| RTX 5090 | Qwen3.6-35B-A3B UD-IQ3_XXS | 4096 (262144) | 4096 at 21K, 2048 = 4096 at 1.8K |
+| RTX 5090 | Qwen3.6-35B-A3B UD-Q3_K_S | 4096 (262144) | 4096 at 21K, 2048 = 4096 at 1.8K |
+| RTX 5090 | gemma-4-26B-A4B UD-Q4_K_M | 4096 (262144) | 4096 at 7.8K, 2048 = 4096 at 1.8K |
+| RTX 5070 Ti | Qwen3.6-35B-A3B UD-IQ3_XXS | 4096 (149248) | 4096 at 21K, 2048 = 4096 at 1.8K |
+| RTX 5070 Ti | Qwen3.6-35B-A3B UD-Q3_K_S | 2048 (81344) | 4096 at 21K (+9.6 %), 2048 = 4096 at 1.8K |
+
+Four of the five picks are the fastest at every prompt. The 5070 Ti's Q3_K_S pick is tied at the
+short prompt and 9.6 % slower than 4096 at 21K, though a plan pinned to 4096 holds a larger
+context there (88704): the price ranks 2048 inside the tie at the plan's ask, where the
+measurement says 4096 wins at long prompts. That is a miss of the model, recorded as one, not fitted
+(#926); the pick is still 16 % faster than today's 1024 at both prompts.
+
 **What moves.** The chunk of an MoE plan on a gb20x board (5060 Ti, 5070, 5070 Ti, 5080, 5090 and
 the laptop parts of 12.0) moves from 1024 to the curve's fastest (2048 or 4096 by the ask and the
 memory). The choice test's Blackwell case: 2048 picked for a 2048-token prompt, the estimate gone.
