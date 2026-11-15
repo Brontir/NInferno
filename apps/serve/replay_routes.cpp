@@ -120,8 +120,8 @@ int replay_routes_main(int argc, char** argv) {
     const auto pci = facts.find("pci_device_id");
     if (pci == facts.end() || pci->second != std::to_string(row->pci_device_id)) {
         std::cerr << "replay-routes: the start ran on PCI id "
-                  << (pci == facts.end() ? std::string("?") : pci->second) << ", not "
-                  << row->name << "'s " << row->pci_device_id << std::endl;
+                  << (pci == facts.end() ? std::string("?") : pci->second) << ", not " << row->name
+                  << "'s " << row->pci_device_id << std::endl;
         return 2;
     }
     if (const auto commit = build.find("git_commit"); commit != build.end()) {
