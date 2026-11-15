@@ -1,5 +1,5 @@
-// Property tests for the projection selector's decisions, sets 1 and 2 (roadmap #620 steps 6, 14; the
-// specification is Roadmap 0's report 08, Q3). Every property runs over the board rows of
+// Property tests for the projection selector's decisions, sets 1 and 2 (roadmap #620 steps 6, 14;
+// the specification is Roadmap 0's report 08, Q3). Every property runs over the board rows of
 // core/data/gpu_facts.json through the same substitution the selector goldens use
 // (selector_facts.h board_device_class, ScopedDeviceClass), so it needs no GPU to run. The
 // register-MMA price reads the registers and spill of the compiled kernels from the committed
@@ -106,7 +106,7 @@
 #include <vector>
 
 #ifndef _WIN32
-#include <unistd.h>
+#    include <unistd.h>
 #endif
 
 namespace {
@@ -816,7 +816,8 @@ void property_clock_invariance(const std::vector<Row>& rows) {
     std::cout << '\n';
 }
 
-// ---- P4: the same decisions with a GPU visible and without one -----------------------------------
+// ---- P4: the same decisions with a GPU visible and without one
+// -----------------------------------
 
 // Every row's decisions over the grid, as one line per row: its label, the SHA-256 of its decision
 // text (16 hex digits) and the text's line count. The atlas of the build (#614 F5): what the
@@ -833,8 +834,8 @@ std::string atlas_of(const std::vector<Row>& rows) {
 
 std::string text_of_command(const std::string& command) {
     const std::filesystem::path path =
-        std::filesystem::temp_directory_path() /
-        ("ninferno_p4_" + std::to_string(::getpid()) + "_" + std::to_string(cases_checked) + ".txt");
+        std::filesystem::temp_directory_path() / ("ninferno_p4_" + std::to_string(::getpid()) +
+                                                  "_" + std::to_string(cases_checked) + ".txt");
     const int status = std::system((command + " > '" + path.string() + "'").c_str());
     std::ifstream in(path);
     std::stringstream text;
@@ -856,11 +857,11 @@ void property_cpu_equals_gpu(const std::vector<Row>& rows, const std::string& se
     (void)self;
     std::cout << "P4: not run on Windows (no CUDA_VISIBLE_DEVICES child)\n";
 #else
-    const char* visible = std::getenv("CUDA_VISIBLE_DEVICES");
-    const bool gpu_hidden = visible != nullptr && *visible == '\0';
-    const std::string here = atlas_of(rows);
+    const char* visible     = std::getenv("CUDA_VISIBLE_DEVICES");
+    const bool gpu_hidden   = visible != nullptr && *visible == '\0';
+    const std::string here  = atlas_of(rows);
     const std::string child = "CUDA_VISIBLE_DEVICES= '" + self + "'";
-    const std::string cpu  = text_of_command(child + " --atlas");
+    const std::string cpu   = text_of_command(child + " --atlas");
     std::istringstream a(here), b(cpu);
     std::size_t moved = 0;
     for (std::string x, y; std::getline(a, x);) {
@@ -869,8 +870,8 @@ void property_cpu_equals_gpu(const std::vector<Row>& rows, const std::string& se
         if (x == y) { continue; }
         ++moved;
         const std::string label = x.substr(0, x.find('\t'));
-        const auto row = std::find_if(rows.begin(), rows.end(),
-                                      [&](const Row& r) { return r.label == label; });
+        const auto row =
+            std::find_if(rows.begin(), rows.end(), [&](const Row& r) { return r.label == label; });
         std::string detail = "the GPU-visible line " + x + ", the CPU line " + y;
         if (row != rows.end()) {
             const std::string gpu_text = decisions_of(generic::board_device_class(row->board));
