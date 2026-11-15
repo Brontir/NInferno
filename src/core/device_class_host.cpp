@@ -458,7 +458,9 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
     d.max_threads_per_sm               = arch.max_threads_per_sm;
     d.max_blocks_per_sm                = arch.max_blocks_per_sm;
     d.registers_per_sm                 = arch.registers_per_sm;
-    d.persisting_l2_max_bytes          = l2_bytes * 3 / 4;
+    // The L2 set-aside for persisting accesses exists from compute capability 8.0 (the CUDA
+    // programming guide); below it the driver reports 0, as the RTX 2080 Ti's start did (#935).
+    d.persisting_l2_max_bytes = major >= 8 ? l2_bytes * 3 / 4 : 0;
     return d;
 }
 
