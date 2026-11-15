@@ -1645,8 +1645,8 @@ int i8_pick(const Problem& problem, QType qtype, std::int32_t tokens) {
         const double ctas =
             std::ceil(problem.n * sets / s.block_n) * std::ceil(tokens / double(s.block_m));
         // One CTA an SM a wave (an integer grid: the same count as ceil(ctas / sms)).
-        const auto waves = static_cast<double>(
-            board_facts::waves(static_cast<long long>(ctas), sms, 1));
+        const auto waves =
+            static_cast<double>(board_facts::waves(static_cast<long long>(ctas), sms, 1));
         const double cost  = waves * s.block_m * s.block_n / kI8Eff[i];
         if (best < 0 || cost < best_cost) {
             best      = i;
