@@ -1634,6 +1634,51 @@ int main() {
         }
         std::printf("load tables: %d facts-priced (target, card), %d moved\n", priced, moved);
     }
+    // #618 step 6: the drafter is priced on the board (B2). Every registry target's profile for
+    // every target board of the facts table is a function of the board's chip, SMs and rates
+    // alone: boards that share them (another board of the chip at the same clock and memory rate)
+    // get the same drafter and depth; a board of other rates whose generation has the round
+    // cost's rates is priced by its own facts (load_basis "facts"), never handed another board's.
+    {
+        const auto& registry = sp::Registry::builtin();
+        std::set<std::string> targets;
+        for (const auto& p : registry.pairs()) { targets.insert(p.target); }
+        std::map<std::string, std::string> by_rates; // chip, SMs, rates -> the profile's choices
+        int boards = 0, shared = 0, by_facts = 0;
+        for (const auto& row : ninferno::gpu_facts_table()) {
+            if (!row.target) { continue; }
+            const std::string id         = row.chip + ":" + std::to_string(row.sms) + "sm";
+            const int cc                 = row.major * 10 + row.minor;
+            const std::string generation = "sm" + std::to_string(cc);
+            const double dram            = row.bus_bits / 8.0 * row.gbps;
+            const sp::GpuKey gpu = card(id.c_str(), row.chip.c_str(), generation.c_str(), cc,
+                                        row.sms, row.boost_mhz, dram);
+            std::string choices;
+            for (const std::string& target : targets) {
+                const auto group = registry.measured(target);
+                if (group.empty()) { continue; }
+                const sp::Profile p = sp::profile_for_target(group, generation, {}, &gpu);
+                choices += target + "=" + p.overall.config.label() + "/" +
+                           p.thinking.config.label() + "/" + p.non_thinking.config.label() + "/" +
+                           sp::load_label(p.load) + ";";
+                by_facts += p.load_basis == "facts" ? 1 : 0;
+            }
+            ++boards;
+            const std::string rates = id + "@" + std::to_string(row.boost_mhz) + "/" +
+                                      std::to_string(dram) + (row.mma_slow ? "/slow" : "");
+            const auto [at, fresh] = by_rates.emplace(rates, choices);
+            if (!fresh) {
+                ++shared;
+                expect(at->second == choices,
+                       "same chip and rates, same drafter: " + row.name + " (" + rates + ")");
+            }
+        }
+        expect(boards > 0 && by_facts > 0,
+               "the scan met boards priced by their own facts");
+        std::printf("drafter by board: %d boards, %d sharing another's chip and rates, %d "
+                    "(target, board) priced by the board's facts\n",
+                    boards, shared, by_facts);
+    }
     if (failures == 0) { std::cout << "round cost: all passed\n"; }
     return failures == 0 ? 0 : 1;
 }
