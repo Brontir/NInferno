@@ -103,6 +103,7 @@ static_assert(work_tiles_format(QType::GGML_Q2_K, 8, 9) &&
               work_tiles_format(QType::GGML_Q2_K, 8, 6) &&
               !work_tiles_format(QType::GGML_Q2_K, 12, 0) &&
               !work_tiles_format(QType::GGML_Q2_K, 7, 5));
+
 // The device maps only these four ggml types onto the rule (ggml_mmq_internal.cuh
 // work_tiles_format); any other format the rule names on any generation must be mapped there too,
 // so this fails first when the host rule grows.
@@ -121,13 +122,14 @@ constexpr bool only_mapped_formats() {
     }
     return true;
 }
+
 static_assert(only_mapped_formats());
 // GA100 (8.0) has no work table; a major past the table borrows GB20x's name, so the rule says yes
 // for IQ4_XS there, and the work table stays off only because the generation is unknown.
-static_assert(!ninferno::mmq_columns::uses_work_table(
-    8, 0, work_tiles_format(QType::GGML_IQ4_XS, 8, 0)));
-static_assert(!ninferno::mmq_columns::uses_work_table(
-    13, 0, work_tiles_format(QType::GGML_IQ4_XS, 13, 0)));
+static_assert(!ninferno::mmq_columns::uses_work_table(8, 0,
+                                                      work_tiles_format(QType::GGML_IQ4_XS, 8, 0)));
+static_assert(
+    !ninferno::mmq_columns::uses_work_table(13, 0, work_tiles_format(QType::GGML_IQ4_XS, 13, 0)));
 } // namespace work_formats
 
 // A tile's shared memory (ggml's mmq_get_nbytes_shared): Q2_K's 128-column tile is 70 144 bytes,
