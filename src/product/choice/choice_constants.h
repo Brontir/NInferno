@@ -976,8 +976,8 @@ inline constexpr ChunkShare kMoeChunkShare[] = {
 // alone (a chunk has no accuracy term, so the accuracy terms' cards do not hold it). Another
 // generation whose own MoE prefill rate rests on two lab cards (kPrefillEta) carries the curve's
 // slope unchanged to estimate its best chunk (Choice::chunk_estimate); a generation's rows estimate
-// for another, they do not decide
-// (#300), so its pick stays the default until a sweep on it is measured.
+// for another, they do not decide (#300), so its pick stays the default until a sweep on its own
+// cards verifies the estimate (kMoeChunkVerified below: then it decides).
 inline constexpr bool kMoeChunkTwoCards                    = true;
 inline constexpr std::string_view kMoeChunkCurveGeneration = "ada";
 
