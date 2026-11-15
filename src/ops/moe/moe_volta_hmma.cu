@@ -4,7 +4,9 @@
 // mma.sync of the shapes the W4A8 and register-MMA tiles issue, sm_70 runs those on dp4a and FP32
 // FMAs over warp shuffles (ops/common/mma.cuh): on the V100, gpt-oss-20b prefill at 26K tokens
 // spent two thirds of its GPU time in the grouped W4A8 MXFP4 stages, 996 tok/s against
-// llama.cpp's 2888 (which decodes the experts to f16 and multiplies on cuBLAS / CUTLASS sm70).
+// llama.cpp's 2888 (which decodes the experts to f16 and multiplies on cuBLAS / CUTLASS sm70),
+// before this kernel (DECISIONS 89: 2889 tok/s at 23.7K with it, at about a fifth of the tensor
+// peak, #928).
 // Here each CTA takes 32 weight rows of one job's expert and 32 of its slots, and multiplies them
 // on mma.m8n8k4 as generic_volta_hmma.cu does for a dense call: the weight codes become exact f16
 // integers in the lane's own A fragments (generic_volta_hmma.cuh, a fragment per format; Q4_K also

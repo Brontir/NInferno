@@ -2872,7 +2872,7 @@ the laptop parts of 12.0) moves from 1024 to the curve's fastest (2048 or 4096 b
 memory). The choice test's Blackwell case: 2048 picked for a 2048-token prompt, the estimate gone.
 No selector golden moves (the chunk is the plan's, not a route's).
 
-## 89. Volta MoE prefill: the expert stages run on the HMMA kernel; nothing to widen (#616 step 8, 15.11, census; no rule change)
+## 89. Volta MoE prefill: the expert stages run on the HMMA kernel, at about a fifth of the tensor peak (#616 step 8, 15.11, census; no rule change)
 
 **Question.** #616's review counted "Volta MoE prefill 3x behind llama.cpp" as open: gpt-oss-20b at
 26K tokens did 996 tok/s against llama.cpp's 2888 on the V100, two thirds of the time in the
@@ -2881,25 +2881,31 @@ expert kernel. The census decides between widening `volta_hmma_admitted` and an 
 cuBLAS stage.
 
 **Census.** Quadro GV100 (80 SMs) at master 7515f7512. One timed prefill per point, nsys 2025.1.3
-with CUDA graph nodes traced, the kernels' time in the request's window:
+with CUDA graph nodes traced, the kernels' time in the request's window (attention includes the
+d256 flash path):
 
 | model | prompt | tok/s | HMMA experts | attention | W4A8 dp4a | other |
 |---|---|---|---|---|---|---|
 | gpt-oss-20b MXFP4 | 3711 | 4169 | 77.0 % | 9.9 % | 0.7 % | 12.5 % |
 | gpt-oss-20b MXFP4 | 23701 | 2889 | 52.1 % | 39.4 % | 0.1 % | 8.5 % |
-| Qwen3.6-35B-A3B UD-Q4_K_M | 3912 | 3245 | 55.2 % | 0.1 % | 0.9 % | 43.9 % |
-| Qwen3.6-35B-A3B UD-Q4_K_M | 25596 | 2976 | 49.6 % | 0.2 % | 0.1 % | 50.1 % |
+| Qwen3.6-35B-A3B UD-Q4_K_M | 3912 | 3245 | 55.2 % | 2.7 % | 0.9 % | 41.3 % |
+| Qwen3.6-35B-A3B UD-Q4_K_M | 25596 | 2976 | 49.6 % | 14.6 % | 0.1 % | 35.7 % |
 
-On the Qwen MoE the "other" is the dense projections on CUTLASS sm70 (13-14 %), the gated delta
-net's chunk recurrence (11-12 %) and, at 26K, the d256 flash attention (14 %; it is counted as
-"other" by the census's name classes).
+On the Qwen MoE the "other" is mostly the dense projections on CUTLASS sm70 (14.4 % at 3.9K, 12.7 %
+at 25.6K) and the gated delta net's chunk recurrence (11.8 %, 10.6 %).
 
-**Reading.** The 3x is gone. gpt-oss-20b at 26K now runs at llama.cpp's recorded 2888 (that number
-was not measured again). The expert stages are already on the HMMA kernel: dp4a's W4A8 stages are
-under 1 % at every point, so widening `volta_hmma_admitted` can gain at most that, and an
-f16-decode cuBLAS stage would replace a kernel that already runs the experts on the tensor cores.
-At long prompts the next share is attention: gpt-oss's sliding and full attention (39 % at 26K)
-and Qwen's d256 flash path.
+**Reading.**
+- The 3x is gone: gpt-oss-20b at 23.7K runs at 2889 tok/s, against llama.cpp's 2888 recorded at
+  26K (not measured again).
+- Widening `volta_hmma_admitted` gains at most the dp4a share left, under 1 % for these formats
+  (it admits MXFP4, Q8, Q4_K / Q5_K / Q6_K, Q4_1, Q5_0 / Q5_1). Q4_0 experts, left out on purpose,
+  still run on dp4a; no Q4_0 MoE was measured.
+- The HMMA kernel is not at its limit. gpt-oss-20b's experts are about 4.78 GFLOP a token, so the
+  kernel does 26 TFLOP/s at 3.7K and 27 at 23.7K, against the GV100's tensor peak of about 133
+  (80 SMs x 8 tensor cores x 128 FLOP x 1.627 GHz): about a fifth.
+- An f16-decode stage on cuBLAS / CUTLASS is therefore not ruled out by the census. It is one of
+  the two options #928 predicts from counts, the other being a wider tile or a decode out of the
+  K loop.
 
-**Decision.** Neither change. #616 step 8 closes on the census. A Volta prefill item, if any,
-starts from the attention kernels' share, not from the experts.
+**Decision.** No rule change from the census. #616 step 8 closes on it. The expert kernel below
+its limit is #928 (#619's process: counts, a prediction, then an A/B on the GV100).
