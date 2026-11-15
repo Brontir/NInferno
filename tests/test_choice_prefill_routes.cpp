@@ -15,6 +15,7 @@
 #include "core/board_registry.h"
 #include "core/device_class.h"
 #include "product/choice/choice.h"
+#include "product/choice/choice_replay.h"
 #include "product/plan/plan_choice.h"
 #include "runtime/engine/plan_dry_run.h"
 #include "runtime/engine/plan_prefill_routes.h"
@@ -161,6 +162,47 @@ void measured_points(const json& fixture) {
           "the prefill estimate on the selector's routes within #613 PR-9's 6.4 % rms");
 }
 
+// #931: these are the production callback cases that either changed twelve candidate prices
+// or threw ReplayIncomplete when the untouched record was read back. No model weights or GPU.
+void production_choices_replay(const json& fixture) {
+    for (const auto& [name, label, id, prompt] :
+         {std::tuple{"Qwen3.5-9B", "Q6_K", 0x2684U, 2048U},
+          std::tuple{"Qwen3.5-4B", "Q4_K_M", 0x2C05U, 22000U}}) {
+        rt::register_plan_prefill_route_query();
+        const auto& m     = fixture.at("models").at(name);
+        auto model        = model_at(m, label);
+        const auto quant  = quant_of(label, m.at("quants").at(label));
+        const auto device = device_of(ninferno::board_registry::row(id));
+        auto d            = ninferno::synthetic_device_class(id, device.compute_capability / 10,
+                                                             device.compute_capability % 10, device.sms, 0,
+                                                             device.total_bytes);
+        d.facts           = ninferno::machine_facts_of(d);
+        const auto card   = ch::card_facts_of(d);
+        pr::with_prefill_routes(model, device);
+        const auto allowed = ch::allowed_axes(model, KvCacheStorage::Int8Group64);
+        const auto own     = [](const ch::Candidate&) { return 32768U; };
+        ch::Task task;
+        task.contexts     = {32768};
+        task.prompt       = prompt;
+        const auto direct = ch::choose(model, card, quant, allowed, {}, task, own);
+        const auto record = ch::record_choice(model, card, quant, allowed, {}, task, own);
+        check(ch::choice_summary(record.choice) == ch::choice_summary(direct),
+              std::string(name) + ": recording leaves the production choice unchanged");
+        // Neither the original callback nor a new registration is available for replay.
+        model.prefill_routes = {};
+        rt::set_plan_prefill_route_query({});
+        try {
+            const auto again =
+                ch::replay_choice(nlohmann::ordered_json::parse(record.inputs.dump()));
+            check(ch::choice_summary(again) == ch::choice_summary(direct),
+                  std::string(name) + ": every production candidate and explanation replays");
+        } catch (const std::exception& e) {
+            check(false, std::string(name) + ": its own complete record was refused: " + e.what());
+        }
+    }
+    rt::register_plan_prefill_route_query();
+}
+
 // Every board of the registry with tensor cores at the fixtures' models and quantizations, a
 // 7K-token prompt: the estimates that move, by generation; none on a quantization without a Q8_0
 // linear.
@@ -299,6 +341,7 @@ int main() {
         check(query(rtx4090, "bf16", 4096, 4096, false, 1024, fast) == rt::PlanPrefillKernel::A16,
               "a BF16 linear under fast activations: a 16-bit kernel");
     }
+    production_choices_replay(fixture);
     measured_points(fixture);
     every_board(fixture);
     reference_prices(fixture);

@@ -3026,7 +3026,7 @@ void choices_replay(const json& fixture) {
         (void)ch::replay_choice(old_record);
     } catch (const std::invalid_argument& e) { old_message = e.what(); }
     check(old_message.find("replay/1") != std::string::npos &&
-              old_message.find("replay/3") != std::string::npos,
+              old_message.find(std::string(ch::kChoiceReplaySchema)) != std::string::npos,
           "a schema-1 record is refused with both versions named");
     // A record of the schema before the banks' int8 route (/2) is refused too: its quantization
     // has no expert_banks_int8 or expert_banks_assumed to replay.
@@ -3156,6 +3156,188 @@ void choices_replay(const json& fixture) {
         } catch (const std::invalid_argument&) { malformed = true; }
         check(malformed, "a malformed record is refused as invalid_argument");
     }
+}
+
+// #931: route answers are inputs too. Preserve absent, unasked, Unknown and mixed answers;
+// replay without the original callbacks; reject missing answers, duplicate keys and bad types.
+void route_answers_replay(const json& fixture) {
+    using ReplayJson = nlohmann::ordered_json;
+    std::ifstream in(std::string(NINFERNO_SOURCE_DIR) +
+                     "/tests/fixtures/choice/prefill_measured.json");
+    const auto prefill   = json::parse(in);
+    const auto own       = [](const ch::Candidate&) { return 16384U; };
+    const auto malformed = [&](const ReplayJson& record, const std::string& what) {
+        bool refused = false;
+        try {
+            (void)ch::replay_choice(record);
+        } catch (const std::invalid_argument&) { refused = true; }
+        check(refused, "route replay refuses " + what);
+    };
+    const auto incomplete = [&](const ReplayJson& record, const std::string& kind) {
+        bool refused = false;
+        try {
+            (void)ch::replay_choice(record);
+        } catch (const ch::ReplayIncomplete& e) {
+            refused = std::string(e.what()).find(kind) != std::string::npos;
+        }
+        check(refused, "route replay names the missing " + kind);
+    };
+    for (const bool routed : {false, true}) {
+        const auto& m           = routed ? fixture.at("models").at("Qwen3.6-35B-A3B")
+                                         : prefill.at("models").at("Qwen3.5-9B");
+        const std::string label = routed ? "UD-Q3_K_S" : "Q6_K";
+        const auto quant        = quant_of(label, m.at("quants").at(label));
+        for (int mode = 0; mode < 5; ++mode) {
+            auto model   = model_at(m, label);
+            model.layers = routed ? 40 : model.layers;
+            // Same N/K/format at different frequencies/epilogues: a key must retain both.
+            if (!routed && !model.linears.empty()) {
+                auto l = model.linears.front();
+                l.per_token += 1;
+                model.linears.push_back(l);
+                l.gated = !l.gated;
+                model.linears.push_back(l);
+            }
+            bool live      = true;
+            unsigned calls = 0;
+            if (routed) {
+                model.moe_route_unqueried = mode == 1;
+                if (mode >= 2) {
+                    model.moe_routes = [&](std::uint32_t rows, ActivationMode activations) {
+                        if (!live) {
+                            throw std::runtime_error("replay called the live MoE oracle");
+                        }
+                        ++calls;
+                        if (mode == 2) { return std::vector<ch::MoeStepRoute>{}; }
+                        if (mode == 3) { return std::vector<ch::MoeStepRoute>{{}}; }
+                        return std::vector<ch::MoeStepRoute>{
+                            {ch::ExpertKernel::R8, ch::ExpertKernel::RegisterMma, double(rows)},
+                            {ch::ExpertKernel::Unknown, ch::ExpertKernel::W4a8,
+                             activations == ActivationMode::Fast ? 1.0 : 2.0}};
+                    };
+                }
+            } else if (mode != 0) {
+                model.prefill_routes = [&](const ch::LinearShape& l, std::uint32_t tokens,
+                                           ActivationMode activations) {
+                    if (!live) {
+                        throw std::runtime_error("replay called the live prefill oracle");
+                    }
+                    ++calls;
+                    if (mode == 1 || tokens % 1024 != 0) { return ch::PrefillKernel::Unknown; }
+                    if (l.gated || activations == ActivationMode::Int8) {
+                        return ch::PrefillKernel::A16;
+                    }
+                    return std::fmod(l.per_token, 2) == 0 ? ch::PrefillKernel::Mmq
+                                                          : ch::PrefillKernel::W4a8;
+                };
+            }
+            ch::Task task;
+            task.contexts    = {32768, 16384}; // exercise the second-context repricing walk
+            task.prompt      = 2065;           // includes a partial chunk
+            task.concurrency = routed ? 4 : 1;
+            ch::Pins pins;
+            if (!routed && mode == 4) { pins.activations = ActivationMode::Exact; }
+            const auto card    = board_card(0x2684);
+            const auto allowed = ch::allowed_axes(model, KvCacheStorage::Int8Group64);
+            const auto direct  = ch::choose(model, card, quant, allowed, pins, task, own);
+            calls              = 0; // the recording run's own queries
+            const auto rec     = ch::record_choice(model, card, quant, allowed, pins, task, own);
+            const unsigned recorded_calls = calls;
+            const auto back               = ReplayJson::parse(rec.inputs.dump());
+            live                          = false;
+            const auto again              = ch::replay_choice(back);
+            check(ch::choice_summary(rec.choice) == ch::choice_summary(direct) &&
+                      ch::choice_summary(again) == ch::choice_summary(direct),
+                  "every route-dependent candidate and choice replays");
+            for (std::size_t i = 0; i < direct.scored.size() && i < again.scored.size(); ++i) {
+                const auto& a = direct.scored[i].speed;
+                const auto& b = again.scored[i].speed;
+                check(a.prefill == b.prefill && a.decode_per_stream == b.decode_per_stream &&
+                          a.basis == b.basis && a.why == b.why && a.transferred == b.transferred,
+                      "displayed route estimates and their uncertainty replay too");
+            }
+            const char* field   = routed ? "moe_routes" : "prefill_routes";
+            const auto& answers = back.at("model").at(field);
+            const bool present  = routed ? mode >= 2 : mode != 0;
+            check(present ? answers.is_array() : answers.is_null(),
+                  "callback presence is recorded");
+            check(back["model"]["moe_route_unqueried"] == model.moe_route_unqueried,
+                  "unqueried MoE flag is recorded");
+            if (!routed && mode == 4) {
+                check(recorded_calls == 0 && answers.empty(),
+                      "installed but unasked callback has an empty table");
+            } else if (present) {
+                // Every recorded key was asked by the recording run; each is recorded once (a
+                // duplicate key is refused on replay, below).
+                check(recorded_calls >= answers.size() && !answers.empty(),
+                      "the recording run's queries are recorded, one answer a key");
+            }
+            auto old      = back;
+            old["schema"] = "ninferno-choice-replay/3";
+            malformed(old, "schema 3 without route provenance");
+            auto missing_field = back;
+            missing_field["model"].erase(field);
+            malformed(missing_field, "an absent route-table field");
+            if (!present || answers.empty()) { continue; }
+            auto missing = back;
+            missing["model"][field].erase(missing["model"][field].begin());
+            incomplete(missing, routed ? "MoE route" : "prefill route");
+            auto duplicate = back;
+            duplicate["model"][field].push_back(answers.front());
+            malformed(duplicate, "duplicate route queries");
+            auto bad_count                                                    = back;
+            bad_count["model"][field][0]["query"][routed ? "rows" : "tokens"] = 4294967296ULL;
+            malformed(bad_count, "an overflowing route width");
+            auto bad_activation                                       = back;
+            bad_activation["model"][field][0]["query"]["activations"] = 256;
+            malformed(bad_activation, "an out-of-range activation mode");
+            auto bad_table            = back;
+            bad_table["model"][field] = ReplayJson::object();
+            malformed(bad_table, "a non-array route table");
+            if (!routed) {
+                auto bad_kernel                         = back;
+                bad_kernel["model"][field][0]["answer"] = 256;
+                malformed(bad_kernel, "an out-of-range prefill kernel");
+                // Changing each semantic argument must miss, not collide with the recorded key.
+                for (const char* part : {"n", "k", "per_token", "expert", "gated", "format"}) {
+                    auto changed = back;
+                    auto& l      = changed["model"][field][0]["query"]["linear"];
+                    if (std::string(part) == "format") {
+                        l[part] = "different_format";
+                    } else if (std::string(part) == "expert" || std::string(part) == "gated") {
+                        l[part] = !l[part].get<bool>();
+                    } else {
+                        l[part] = l[part].get<double>() + 0.5;
+                    }
+                    incomplete(changed, "prefill route");
+                }
+            } else if (!answers[0]["answer"].empty()) {
+                auto bad_kernel                                    = back;
+                bad_kernel["model"][field][0]["answer"][0]["down"] = -1;
+                malformed(bad_kernel, "an out-of-range expert kernel");
+                auto bad_share                                     = back;
+                bad_share["model"][field][0]["answer"][0]["share"] = "1";
+                malformed(bad_share, "a non-numeric route share");
+            }
+        }
+    }
+    // A stateful oracle cannot be captured as one value per key without losing information.
+    auto model = model_at(prefill.at("models").at("Qwen3.5-9B"), "Q6_K");
+    std::map<std::tuple<std::string, double, double, double, bool, std::uint32_t, ActivationMode>,
+             unsigned>
+        seen;
+    model.prefill_routes = [&](const ch::LinearShape& l, std::uint32_t tokens,
+                               ActivationMode activations) {
+        auto& count = seen[{l.format, l.n, l.k, l.per_token, l.gated, tokens, activations}];
+        return count++ % 2 == 0 ? ch::PrefillKernel::Mmq : ch::PrefillKernel::A16;
+    };
+    bool unstable = false;
+    try {
+        (void)ch::record_choice(model, board_card(0x2684),
+                                quant_of("Q6_K", prefill["models"]["Qwen3.5-9B"]["quants"]["Q6_K"]),
+                                ch::allowed_axes(model, KvCacheStorage::Int8Group64), {}, {}, own);
+    } catch (const std::invalid_argument&) { unstable = true; }
+    check(unstable, "recording refuses a route query whose answer changes for the same arguments");
 }
 
 // A one-row step's named low-bit linear on R8 (kR8DecodeIssue): its read takes the longer of its DRAM
@@ -4369,6 +4551,7 @@ int main() {
     board_facts_do_not_decide(fixture);
     board_route_answers_do_not_decide(fixture);
     choices_replay(fixture);
+    route_answers_replay(fixture);
     resolution_labels(fixture);
     resolution_rule();
     choice_properties(fixture);
