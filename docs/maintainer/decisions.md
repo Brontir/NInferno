@@ -2939,6 +2939,11 @@ The prediction was wrong for IQ4_XS on GA10x and Ada. It put the fixed share at 
   - By prompt size: 136..160 −23.3..−23.6 %, 176..192 −14.6 %, 264..288 −15.0..−15.2 %, 96 −12.2 %, 320 −7.7 %; 128, 200..256, 384..512 within 0.1 %.
   - The mix is 111.89 → 101.45 ms (**−9.3 %**); about −9 % was predicted from the grid.
 
-No size is slower on any card.
+- **RTX 3060, IQ4_XS at f 0.20.**
+  - By prompt size: 136..160 −18.5..−18.7 %, 176..192 −11.8..−12.2 %, 264..288 −12.9..−13.1 %, 96 −9.1 %, 320 −4.0 %; 128, 200..256, 384, 512 within 0.4 %.
+  - 448 tokens is **+2.4 %** (228.1 → 233.6 ms). At f 0.20 five 96-column tiles tie four 128-column ones (4.0 against 4.0 tile steps), the rule takes the narrower, and the card runs it slower. Q4_K has the same tie, so this is the rule's tie, not the format's; it stays until a tie term is counted.
+  - The mix is 129.34 → 119.64 ms (**−7.5 %**).
+
+No other size is slower on any card.
 
 **Numerics.** As DECISIONS 74: a different width changes the stream-k split and so the sums' order.
