@@ -898,7 +898,8 @@ void property_cpu_equals_gpu(const std::vector<Row>& rows, const std::string& he
 #endif
 }
 
-// ---- The atlas, committed (#614 F5) ----------------------------------------------------------------
+// ---- The atlas, committed (#614 F5)
+// ----------------------------------------------------------------
 
 // The route set a build compiles decides what a board can pick, so each build set keeps its own
 // atlas, as the selector goldens do (test_selector_golden.cpp kBuildSet).
