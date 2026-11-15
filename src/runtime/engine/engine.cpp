@@ -161,11 +161,13 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     host.cpu_period_us      = load.cpu_quota_period_us;
     in.facts =
         runtime::facts_of(device_class(resolved.device), build_features(), driver_version, host);
-    // The kernel facts this build's decisions are priced from (#612 step 10): the committed
-    // snapshot of the build's architecture, by its text's digest ("none" without one).
+    // The kernel facts this start's prices read (#612 step 10): the committed snapshot of the
+    // label its kernels run (sass_arch), by its text's digest; "none" where the device runs PTX the
+    // driver compiled, and the prices read no snapshot.
     {
-        namespace kf                    = ops::detail::generic::kernel_facts;
-        const std::string digest        = kf::snapshot_sha256(kf::build_arch());
+        namespace kf             = ops::detail::generic::kernel_facts;
+        const auto label         = kf::sass_arch();
+        const std::string digest = label ? kf::snapshot_sha256(*label) : std::string();
         in.facts["kernel_facts_sha256"] = digest.empty() ? std::string("none") : digest;
     }
     in.build   = runtime::build_of();

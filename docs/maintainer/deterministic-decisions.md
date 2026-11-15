@@ -524,11 +524,13 @@ the tier it was admitted at (`rung_reserve`) are the warm-up's measurement, reco
 section: they move `nm1` only, so a warm-up move that ends on the same rung keeps `nf1`. The free
 memory itself is not recorded: two starts whose free memory picks the same rung have the same `nf1`.
 
-The facts section also records `kernel_facts_sha256`, the digest of the build architecture's
-committed kernel-facts snapshot the prices read (ops/generic/kernel_facts.h, "none" without one),
-and `arch_row`, the architecture table's row the device's limits come from (core/arch_registry.h:
-its capability range and every limit). Two builds whose decisions read the same facts then say so
-in the fingerprint whatever their nvcc; a snapshot or table edit shows in it (#612 step 10).
+The facts section also records `kernel_facts_sha256`, the digest of the committed kernel-facts
+snapshot the prices read (the label the device's kernels run, `sass_arch`: "none" where it runs PTX
+the driver compiled and the prices read none; ops/generic/kernel_facts.h), and `arch_row`, the
+architecture table's row of the device's capability (core/arch_registry.h: its capability range and
+every limit; row 0, the unlisted capability's, for one the table lacks). Two builds whose decisions
+read the same facts then say so in their facts sections whatever their nvcc (their `nf1` values
+differ by the build section all the same); a snapshot or table edit shows in it (#612 step 10).
 
 ### Against master's continuous fit
 
