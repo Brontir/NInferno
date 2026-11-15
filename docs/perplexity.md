@@ -57,6 +57,7 @@ Run `./build/apps/ninferno-perplexity --help` for the complete command surface. 
 | `--kld-out FILE` | none | Record this (reference) model's top-K tokens per position. |
 | `--kld-top-k N` | `32` | Top-K to record, `1..64`. Only with `--kld-out`. |
 | `--kld FILE` | none | KL divergence and top-1 agreement against such a reference, scored on the same corpus, context and stride. Exclusive with `--kld-out`. |
+| `--reference-model NAME` | none | Check this Q8_0 reference's overall mean NLL against the one recorded for a measured model's quantization curve (`Qwen3.5-0.8B`, `Qwen3.5-2B`, `Qwen3.5-4B`, `Qwen3.5-9B`, `Qwen3.5-27B`). Only under the curves' protocol: the fixed corpus with `--quick`, `--context 4096 --stride 2048 --activations exact --kv-dtype bf16`, no `--kld`, `--step-tokens`, `--state-dtype`, `--rope-yarn-factor` or maintainer flag but `--artifact-io`. Exits 3 when the gap is above 1.2e-4 nats per token. |
 | `--log-level trace\|debug\|info\|warning\|error\|critical\|off` | `info` | Log detail. |
 
 ## The fixed corpus
@@ -78,6 +79,9 @@ long-form text, Chinese reference text, and NInferno C++/CUDA code. The default 
   prefill signature, with the workload and numerical results.
 - Reports contain unrounded NLL/PPL for every window, stream, domain and the token-weighted overall
   aggregate.
+- With `--reference-model`, stdout ends with the reference NLL line, and `report.json` holds
+  `reference_check`: the model, its recorded and measured mean NLL, the gap, the tolerance and
+  whether it is within. The report is written before an exit 3.
 
 ## Metric
 

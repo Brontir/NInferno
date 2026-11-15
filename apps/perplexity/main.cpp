@@ -10,6 +10,7 @@
 
 #include "ninferno/engine.h"
 #include "product/activation_options.h"
+#include "product/choice/choice_constants.h"
 #include "product/engine_flags.h"
 #include "product/logging/logging.h"
 #include "product/logging/pretty_format.h"
@@ -22,6 +23,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <chrono>
 #include <cctype>
 #include <cstdint>
@@ -70,6 +72,9 @@ struct Options {
     // Quantization quality: record a reference (--kld-out) or measure against one (--kld).
     std::optional<std::filesystem::path> kld_out;
     std::optional<std::filesystem::path> kld;
+    // --reference-model NAME: this run is the Q8_0 reference of a measured model's curve
+    // (product/choice kQuantKldModels); its mean NLL is checked against the row's (#915).
+    std::optional<std::string> reference_model;
     std::uint32_t kld_top_k = ninferno::perplexity::kKldDefaultTopK;
     // --step-tokens N: the scored targets run N tokens per call (ScoreDetailRequest::step_tokens).
     std::uint32_t step_tokens = 0;
@@ -86,12 +91,15 @@ std::string usage_text() {
            "       [--kv-dtype bf16|int8|fp8|nvfp4|k8v4] [--activations exact|fast|int8]\n"
            "       [--state-dtype f32|bf16|f16] [--step-tokens N]\n"
            "       [--output <directory>]\n"
-           "       [--kld-out <file> [--kld-top-k N] | --kld <file>]\n"
+           "       [--kld-out <file> [--kld-top-k N] | --kld <file>] [--reference-model NAME]\n"
            "       [--log-level trace|debug|info|warning|error|critical|off]\n" +
            std::string(ninferno::product::kScoringEngineFlagsUsage) +
            "  --kld-out  record this (reference) model's top-K tokens per position\n"
            "  --kld      KL divergence and top-1 agreement against such a reference, scored\n"
            "             on the same corpus, context and stride\n"
+           "  --reference-model  (not with --kld) check this Q8_0 reference's mean NLL against\n"
+           "             the measured model's recorded one (the curves' protocol; exit 3 beyond\n"
+           "             the tolerance)\n"
            "  --step-tokens  run the scored targets N tokens per call, as decode (1) or a\n"
            "             speculative round (N) runs them\n"
            "  --device   N counts GPUs in PCI bus order, as nvidia-smi does\n";
@@ -158,6 +166,8 @@ Options parse_options(int argc, char** argv) {
             out.log_level = ninferno::product::parse_log_level(value("--log-level"));
         } else if (option == "--kld-out") {
             out.kld_out = std::filesystem::path(value("--kld-out"));
+        } else if (option == "--reference-model") {
+            out.reference_model = std::string(value("--reference-model"));
         } else if (option == "--kld") {
             out.kld = std::filesystem::path(value("--kld"));
         } else if (option == "--step-tokens") {
@@ -184,6 +194,34 @@ Options parse_options(int argc, char** argv) {
         usage_error("context/stride must satisfy context>=2 and 1<=stride<context");
     }
     if (out.kld_out && out.kld) { usage_error("--kld-out and --kld are exclusive"); }
+    if (out.reference_model) {
+        namespace choice = ninferno::product::choice;
+        if (choice::quant_kld_model_named(*out.reference_model) == nullptr) {
+            std::string names;
+            for (const choice::QuantKldModel& m : choice::kQuantKldModels) {
+                names += (names.empty() ? "" : ", ") + std::string(m.name);
+            }
+            usage_error("--reference-model must be one of " + names);
+        }
+        // The rows' protocol (choice::kQuantKldCorpus and beside it), and the release's forward:
+        // another protocol, a decode or speculative step (--step-tokens), another state format,
+        // a RoPE factor or a route, table or tuner pin scores another NLL, which the check would
+        // accept or refuse for no fault of the forward. Only the weights' I/O mode is free.
+        ninferno::MaintainerOptions pins = out.maintainer;
+        pins.artifact_io                 = ninferno::MaintainerOptions{}.artifact_io;
+        if (!out.corpus || !out.quick || out.context != choice::kQuantKldContext ||
+            out.stride != choice::kQuantKldStride || out.kld ||
+            out.kv != ninferno::KvCacheStorage::BFloat16 ||
+            ninferno::product::activation_mode_name(out.activations) != std::string_view("exact") ||
+            out.step_tokens != 0 || out.state != ninferno::RecurrentStateStorage::FP32 ||
+            out.rope_yarn_factor != 1.0F || !(pins == ninferno::MaintainerOptions{})) {
+            usage_error("--reference-model scores under the curves' protocol: --corpus "
+                        "eval/corpora/perplexity-1m/manifest.json --quick --context 4096 --stride "
+                        "2048 --activations exact --kv-dtype bf16, without --kld, --step-tokens, "
+                        "--state-dtype, --rope-yarn-factor or any maintainer flag but "
+                        "--artifact-io");
+        }
+    }
     if (out.kld_top_k == 0 || out.kld_top_k > 64) { usage_error("--kld-top-k must be 1..64"); }
     if (kld_top_k_given && !out.kld_out) {
         usage_error("--kld-top-k goes with --kld-out (--kld reads K from the reference)");
@@ -290,6 +328,11 @@ int run(const Options& options, const std::shared_ptr<spdlog::logger>& logger,
     CorpusSelection corpus = options.corpus
                                  ? ninferno::perplexity::load_corpus(*options.corpus, options.quick)
                                  : ninferno::perplexity::load_custom_text(*options.text);
+    if (options.reference_model && corpus.corpus_id != ninferno::product::choice::kQuantKldCorpus) {
+        throw std::runtime_error("--reference-model scores the curves' corpus " +
+                                 std::string(ninferno::product::choice::kQuantKldCorpus) +
+                                 ", not " + corpus.corpus_id);
+    }
     // A model whose tokenizer starts a document with a token (Gemma 4's <bos>) scores every window
     // from it in place of the window's first token, as llama.cpp's perplexity and ninferno-gemma4
     // score do: a Gemma 4 window without it degrades along its length (26B at W 4096: ppl 954).
@@ -577,6 +620,23 @@ int run(const Options& options, const std::shared_ptr<spdlog::logger>& logger,
         {"domains", std::move(domain_reports)},
         {"overall", aggregate_json(overall)},
     };
+    // #915: the reference's mean NLL against its model's recorded one.
+    const ninferno::product::choice::QuantKldModel* const checked =
+        options.reference_model
+            ? ninferno::product::choice::quant_kld_model_named(*options.reference_model)
+            : nullptr;
+    const double nll_gap = checked != nullptr ? overall.mean_nll() - checked->reference_nll : 0.0;
+    const bool nll_within =
+        std::abs(nll_gap) <= ninferno::product::choice::kQuantKldReferenceNllTolerance;
+    if (checked != nullptr) {
+        report["reference_check"] = {
+            {"model", checked->name},
+            {"recorded_mean_nll", checked->reference_nll},
+            {"mean_nll", overall.mean_nll()},
+            {"gap", nll_gap},
+            {"tolerance", ninferno::product::choice::kQuantKldReferenceNllTolerance},
+            {"within", nll_within}};
+    }
     if (options.kld_out) {
         report["kld_reference"] = {
             {"path", std::filesystem::absolute(*options.kld_out).lexically_normal().string()},
@@ -631,8 +691,17 @@ int run(const Options& options, const std::shared_ptr<spdlog::logger>& logger,
                   << " %, PPL ratio: " << kld_overall.ppl_ratio() << '\n';
     }
     if (options.kld_out) { std::cout << "KLD reference: " << *options.kld_out << '\n'; }
+    if (checked != nullptr) {
+        std::cout << std::setprecision(6) << "reference NLL: " << overall.mean_nll() << ", "
+                  << checked->name << "'s recorded " << checked->reference_nll << ", gap "
+                  << std::scientific << std::setprecision(2) << nll_gap << " against "
+                  << ninferno::product::choice::kQuantKldReferenceNllTolerance << std::fixed
+                  << (nll_within ? ": within\n"
+                                 : ": REFUSED, another forward; its points do not stand for the "
+                                   "row's\n");
+    }
     std::cout << "report: " << final << '\n';
-    return 0;
+    return nll_within ? 0 : 3;
 }
 
 } // namespace
