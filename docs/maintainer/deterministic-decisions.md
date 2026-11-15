@@ -526,7 +526,7 @@ memory itself is not recorded: two starts whose free memory picks the same rung 
 
 The facts section also records `kernel_facts_sha256`, the digest of the committed kernel-facts
 snapshot the prices read (the label the device's kernels run, `sass_arch`: "none" where it runs PTX
-the driver compiled and the prices read none; ops/generic/kernel_facts.h), and `arch_row`, the
+the driver compiled and the prices read none, or no snapshot is committed for it; ops/generic/kernel_facts.h), and `arch_row`, the
 architecture table's row of the device's capability (core/arch_registry.h: its capability range and
 every limit; row 0, the unlisted capability's, for one the table lacks). Two builds whose decisions
 read the same facts then say so in their facts sections whatever their nvcc (their `nf1` values

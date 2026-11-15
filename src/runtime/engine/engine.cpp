@@ -163,7 +163,7 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
         runtime::facts_of(device_class(resolved.device), build_features(), driver_version, host);
     // The kernel facts this start's prices read (#612 step 10): the committed snapshot of the
     // label its kernels run (sass_arch), by its text's digest; "none" where the device runs PTX the
-    // driver compiled, and the prices read no snapshot.
+    // driver compiled and the prices read no snapshot, or none is committed for its label.
     {
         namespace kf                    = ops::detail::generic::kernel_facts;
         const auto label                = kf::sass_arch();
