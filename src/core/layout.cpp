@@ -92,7 +92,7 @@ Tensor WorkspaceLayoutBuilder::alloc(DType dtype, std::initializer_list<std::int
     const std::size_t offset = align_up(cursor_, alignment, "workspace layout");
     cursor_                  = checked_add(offset, tensor.bytes(), "workspace layout");
     if (cursor_ > peak_) { peak_ = cursor_; }
-    note(offset, tensor.bytes());
+    note(offset, tensor.bytes(), false);
     return tensor;
 }
 
@@ -101,12 +101,12 @@ DeviceSpan WorkspaceLayoutBuilder::alloc_bytes(std::size_t bytes, std::size_t al
     const std::size_t offset = align_up(cursor_, alignment, "workspace layout");
     cursor_                  = checked_add(offset, bytes, "workspace layout");
     if (cursor_ > peak_) { peak_ = cursor_; }
-    note(offset, bytes);
+    note(offset, bytes, true);
     return DeviceSpan{nullptr, bytes};
 }
 
-void WorkspaceLayoutBuilder::note(std::size_t offset, std::size_t bytes) {
-    if (sink_ != nullptr) { sink_->push_back({op_, offset, bytes}); }
+void WorkspaceLayoutBuilder::note(std::size_t offset, std::size_t bytes, bool scratch) {
+    if (sink_ != nullptr) { sink_->push_back({op_, offset, bytes, scratch}); }
 }
 
 WorkspaceLayoutBuilder::Scope WorkspaceLayoutBuilder::scope() noexcept { return Scope(*this); }

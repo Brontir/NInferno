@@ -40,6 +40,7 @@
 #include "models/qwen3_5/program/planning/workspace_plan.h"
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/weight_input.h"
+#include "ops/generic/scratch_lifetime.h"
 #include "ops/route_pins.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
@@ -570,7 +571,8 @@ EngineOptions options_of(std::uint32_t context, std::uint32_t chunk, std::uint32
 bool same_regions(const std::vector<WorkspaceRegion>& a, const std::vector<WorkspaceRegion>& b) {
     if (a.size() != b.size()) { return false; }
     for (std::size_t i = 0; i < a.size(); ++i) {
-        if (a[i].op != b[i].op || a[i].offset != b[i].offset || a[i].bytes != b[i].bytes) {
+        if (a[i].op != b[i].op || a[i].offset != b[i].offset || a[i].bytes != b[i].bytes ||
+            a[i].scratch != b[i].scratch) {
             return false;
         }
     }
@@ -686,6 +688,38 @@ void run(const Case& k) {
           k.name + ": the prefill regions end at the arena's peak (" + std::to_string(top) +
               " against " + std::to_string(start.text_prefill) + ")");
     check(first_layer && tail, k.name + ": the prefill regions name the layers' and the head's ops");
+    // The prefill chain's scratch through the PDL check (#615 W5, ops/generic/scratch_lifetime.h):
+    // every op's scratch written by its producer in stream order and read by a launch that joins
+    // and releases (the widest overlap launch_overlap grants), at the planner's offsets: no hazard,
+    // the reads are stamped after the wait. The control: launches that wrote their scratch before
+    // the wait would race the scope reuse the planner makes, so the offsets the check reads do
+    // overlap and the first check is not vacuous.
+    {
+        namespace gen = ninferno::ops::detail::generic;
+        std::vector<gen::LaunchLifetime> chain, early;
+        gen::LaunchOverlap widest;
+        widest.join    = gen::OverlapRefusal::None;
+        widest.release = gen::OverlapRefusal::None;
+        std::uint32_t slot = 0;
+        for (const WorkspaceRegion& r : start.text_prefill_regions) {
+            if (!r.scratch) { continue; }
+            const gen::ScratchRegion region{slot++, r.offset, r.bytes};
+            chain.push_back(gen::quantizer_lifetime(r.op, region));
+            chain.push_back(gen::launch_lifetime(r.op, widest, true, gen::PreparedRule{}, region));
+            gen::LaunchLifetime e;
+            e.name         = r.op;
+            e.starts_early = true;
+            e.releases     = true;
+            (void)e.add({region, gen::ScratchAccess::Write, gen::ScratchFirst::BeforeWait,
+                         gen::ScratchLast::AtExit});
+            early.push_back(e);
+        }
+        check(slot >= 2 && !gen::first_scratch_violation(chain),
+              k.name + ": the prefill chain's " + std::to_string(slot) +
+                  " scratch regions pass the PDL check under the widest overlap");
+        check(gen::first_scratch_violation(early).has_value(),
+              k.name + ": the prefill scratch offsets are reused (a write before the wait races)");
+    }
     check(mtp == (start.mtp_prefill > 0 && start.mtp_round > 0),
           k.name + ": MTP arenas sized exactly under MTP");
     check(start.dflash_context == 0 && start.dflash_round == 0 && start.causal_score == 0,

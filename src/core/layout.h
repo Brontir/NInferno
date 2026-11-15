@@ -70,6 +70,7 @@ struct WorkspaceRegion {
     std::string op;
     std::size_t offset = 0;
     std::size_t bytes  = 0;
+    bool scratch       = false; // an op's raw scratch (alloc_bytes), not a tensor (alloc)
 };
 
 // Dry-run counterpart of WorkspaceArena. Target allocation helpers can run against this builder
@@ -104,7 +105,7 @@ public:
     void op(std::string name) { op_ = std::move(name); }
 
 private:
-    void note(std::size_t offset, std::size_t bytes);
+    void note(std::size_t offset, std::size_t bytes, bool scratch);
 
     std::size_t cursor_                 = 0;
     std::size_t peak_                   = 0;

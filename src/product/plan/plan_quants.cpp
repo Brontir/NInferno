@@ -1246,7 +1246,8 @@ Json plan_json(const runtime::DryRunPlan& plan, bool ladder) {
         // them: the op that takes each region, its offset and bytes.
         Json regions = Json::array();
         for (const WorkspaceRegion& r : chosen->bytes.workspace_regions) {
-            regions.push_back({{"op", r.op}, {"offset", r.offset}, {"bytes", r.bytes}});
+            regions.push_back(
+                {{"op", r.op}, {"offset", r.offset}, {"bytes", r.bytes}, {"scratch", r.scratch}});
         }
         out["workspace_regions"] = std::move(regions);
         out["context"]          = chosen->rung.max_context;
