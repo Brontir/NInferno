@@ -1259,6 +1259,7 @@ Json plan_json(const runtime::DryRunPlan& plan, bool ladder) {
         out["reserve"]          = "";
         out["reserve_kept"]     = false;
         out["chosen"]           = nullptr;
+        out["workspace_regions"] = Json::array();
         out["context"]          = 0;
         out["pool_contexts"]    = 0;
         out["private_contexts"] = false;

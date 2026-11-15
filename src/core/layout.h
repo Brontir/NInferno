@@ -64,8 +64,9 @@ private:
 };
 
 // A region a dry-run builder handed out (#615 W5): the op that took it and its bytes in the arena.
-// Regions of one scope never overlap; a scope's regions are reused by the next scope at the same
-// offsets, which is what a check of concurrent launches reads (ops/generic/scratch_lifetime.h).
+// Regions live together never overlap; a closed scope's bytes are reused by what comes after it
+// at the same offsets (a scratch scope's by the next tensor of its parent), which is what a check
+// of concurrent launches reads (ops/generic/scratch_lifetime.h). Offsets are the arena's own.
 struct WorkspaceRegion {
     std::string op;
     std::size_t offset = 0;
@@ -102,6 +103,7 @@ public:
     // Records every region handed out from here on into `sink` (nullptr: stops), under the op the
     // caller names last (`op`). Recording changes no offset and no peak.
     void record(std::vector<WorkspaceRegion>* sink) noexcept { sink_ = sink; }
+    [[nodiscard]] bool recording() const noexcept { return sink_ != nullptr; }
 
     void op(std::string name) { op_ = std::move(name); }
 

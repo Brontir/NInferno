@@ -112,6 +112,7 @@ WorkspacePlan build_workspace_plan(const WorkspaceInputs& inputs, const Sequence
         for (const auto& block : inputs.text.layers) {
             // The op names a recorded region carries (WorkspaceLayoutBuilder::record, #615 W5).
             const auto at = [&, layer = index++](const char* what) {
+                if (!layout.recording()) { return; }
                 char name[48];
                 std::snprintf(name, sizeof name, "L%02d.%s", layer, what);
                 layout.op(name);

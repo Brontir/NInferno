@@ -415,6 +415,7 @@ std::uint64_t plan_workspace_estimate(const PlanModelFacts& model, const PlanRun
                                       const EngineOptions& options, std::uint32_t concurrency,
                                       const models::qwen3_5::detail::SequencePlanImpl* plan,
                                       std::string* basis, std::vector<WorkspaceRegion>* regions) {
+    if (regions != nullptr) { regions->clear(); }
     std::string why;
     if (const PlanWorkspaceQuery& query = workspace_query(); query) {
         PlanWorkspaceAnswer answer = query(model, rung, options, concurrency, plan);
