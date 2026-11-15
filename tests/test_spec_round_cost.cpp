@@ -1634,25 +1634,40 @@ int main() {
         }
         std::printf("load tables: %d facts-priced (target, card), %d moved\n", priced, moved);
     }
-    // #618 step 6: the drafter is priced on the board (B2). Every registry target's profile for
-    // every target board of the facts table is a function of the board's chip, SMs and rates
-    // alone: boards that share them (another board of the chip at the same clock and memory rate)
-    // get the same drafter and depth; a board of other rates whose generation has the round
-    // cost's rates is priced by its own facts (load_basis "facts"), never handed another board's.
+    // #618 step 6: the drafter is priced on the board (B2), on the registry's path
+    // (profile_for_target, DECISIONS 87). For every target board of the facts table, its key as a
+    // plan builds it (its class, chip and arch; its SMs, the clock it is priced at, a laptop's
+    // bottom of the boost range; its memory rate, memory, L2 and mma_slow):
+    //  - boards that share the chip, SMs and rates get the same drafter, depth and load table
+    //    whatever their memory, L2 or name (the profile reads the rates alone);
+    //  - a board whose rates match none of the target's lab boards, in a generation whose rates
+    //    the round cost knows (kSmallTEta), is priced by its own facts (load_basis "facts").
+    // A lab board itself, and the generations without those rates, take the lab cards'
+    // measurement (their own, the generation's median or a transfer): DECISIONS 87.
     {
         const auto& registry = sp::Registry::builtin();
         std::set<std::string> targets;
         for (const auto& p : registry.pairs()) { targets.insert(p.target); }
-        std::map<std::string, std::string> by_rates; // chip, SMs, rates -> the profile's choices
-        int boards = 0, shared = 0, by_facts = 0;
+        const auto key_of = [](const ninferno::GpuFactsRow& row) {
+            const std::string id    = row.chip + ":" + std::to_string(row.sms) + "sm";
+            const int cc            = row.major * 10 + row.minor;
+            const std::string arch  = "sm" + std::to_string(cc);
+            const int clock         = row.boost_min_mhz > 0 ? row.boost_min_mhz : row.boost_mhz;
+            sp::GpuKey g            = card(id.c_str(), row.chip.c_str(), arch.c_str(), cc, row.sms,
+                                           clock, row.bus_bits / 8.0 * row.gbps);
+            g.memory_bytes          = static_cast<std::uint64_t>(row.vram_gib * double(1ull << 30));
+            g.l2_bytes              = row.l2_mib * double(1 << 20);
+            g.mma_slow              = row.mma_slow;
+            return g;
+        };
+        const auto same = [](double a, double b) { return std::abs(a - b) <= 1e-9 * std::abs(b); };
+        std::map<std::string, std::pair<std::string, std::string>> by_rates; // -> board, choices
+        int boards = 0, compared = 0, by_facts = 0;
         for (const auto& row : ninferno::gpu_facts_table()) {
             if (!row.target) { continue; }
-            const std::string id         = row.chip + ":" + std::to_string(row.sms) + "sm";
-            const int cc                 = row.major * 10 + row.minor;
-            const std::string generation = "sm" + std::to_string(cc);
-            const double dram            = row.bus_bits / 8.0 * row.gbps;
-            const sp::GpuKey gpu = card(id.c_str(), row.chip.c_str(), generation.c_str(), cc,
-                                        row.sms, row.boost_mhz, dram);
+            const sp::GpuKey gpu         = key_of(row);
+            const std::string generation = gpu.chain[2];
+            const sp::CardRates here     = sp::card_rates(gpu);
             std::string choices;
             for (const std::string& target : targets) {
                 const auto group = registry.measured(target);
@@ -1661,22 +1676,34 @@ int main() {
                 choices += target + "=" + p.overall.config.label() + "/" +
                            p.thinking.config.label() + "/" + p.non_thinking.config.label() + "/" +
                            sp::load_label(p.load) + ";";
-                by_facts += p.load_basis == "facts" ? 1 : 0;
+                bool lab_rates = false;
+                for (const auto* pair : group) {
+                    const sp::CardRates at = sp::card_rates_of_board(pair->lab_board);
+                    lab_rates = lab_rates || (same(at.dram_bytes_per_s, here.dram_bytes_per_s) &&
+                                              same(at.int8_ops_per_s, here.int8_ops_per_s));
+                }
+                if (here.known() && !lab_rates && !p.disabled) {
+                    ++by_facts;
+                    expect(p.load_basis == "facts", row.name + ", " + target +
+                                                        ": no lab board of its rates, priced by "
+                                                        "its own facts (" + p.load_basis + ")");
+                }
             }
             ++boards;
-            const std::string rates = id + "@" + std::to_string(row.boost_mhz) + "/" +
-                                      std::to_string(dram) + (row.mma_slow ? "/slow" : "");
-            const auto [at, fresh] = by_rates.emplace(rates, choices);
+            const std::string rates = gpu.chain[0] + "@" + std::to_string(gpu.sm_clock_khz) + "/" +
+                                      std::to_string(gpu.dram_gbps) + (gpu.mma_slow ? "/slow" : "");
+            const auto [at, fresh] = by_rates.emplace(rates, std::pair{row.name, choices});
             if (!fresh) {
-                ++shared;
-                expect(at->second == choices,
-                       "same chip and rates, same drafter: " + row.name + " (" + rates + ")");
+                ++compared;
+                expect(at->second.second == choices, "same chip and rates, same drafter: " +
+                                                         row.name + " and " + at->second.first +
+                                                         " (" + rates + ")");
             }
         }
         expect(boards > 0 && by_facts > 0, "the scan met boards priced by their own facts");
-        std::printf("drafter by board: %d boards, %d sharing another's chip and rates, %d "
-                    "(target, board) priced by the board's facts\n",
-                    boards, shared, by_facts);
+        std::printf("drafter by board: %d boards, %d compared with a board of the same chip and "
+                    "rates, %d (target, board) priced by the board's facts\n",
+                    boards, compared, by_facts);
     }
     if (failures == 0) { std::cout << "round cost: all passed\n"; }
     return failures == 0 ? 0 : 1;

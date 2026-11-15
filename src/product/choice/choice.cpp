@@ -1652,8 +1652,9 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     out.decode_per_stream = step > 0 && std::isfinite(step) ? 1 / step : 0;
     // A drafter's measured gain over plain decode at the depth its load table lets these many
     // streams draft (a gain no measurement gives is not counted: DrafterOption::measured). Not
-    // part of the basis: the gain is the speculation profile's measurement on the lab cards it
-    // names (DrafterOption), not a rate of this card's generation; SpeedBasis covers the
+    // part of the basis: the gain is the speculation profile resolved for the plan's board
+    // (DrafterOption: a lab card's measurement, or the pair's tokens a round over R(k) on the
+    // board's facts, DECISIONS 87), not a rate of this card's generation; SpeedBasis covers the
     // plain-decode estimate it multiplies.
     if (candidate.drafter > 0 && candidate.drafter <= model.drafters.size()) {
         const DrafterOption& d = model.drafters[candidate.drafter - 1];

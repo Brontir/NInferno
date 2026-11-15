@@ -2772,13 +2772,21 @@ term: it is B2, which may read the board's canonical facts. Step 6 asked that it
 board.
 
 **What the code already does.** The drafter's gain that `choose()` weighs is the speculation profile
-resolved for the plan's own board (`inputs.gpu`, plan_choice.cpp `drafter_axis`), never the
-reference card's: the board's own measurement where the lab measured it; else, where its generation
-has the round cost's rates (`kSmallTEta`: Ada, GB20x), the pair's tokens a round over R(k) priced on
-the board's own DRAM rate, SMs, clock and launch facts (spec/pairs.cpp `priced_by_facts_for`,
-DECISIONS 53); else the generation's lab cards' measurement, or a transfer said as one. The board's rates then enter the
-drafter's order through R(k) alone; the plain decode seconds it scales are the reference card's and
-the same factor for every drafter.
+resolved for the plan's own board (`inputs.gpu`, plan_choice.cpp `drafter_axis`), never re-resolved
+for the reference card. On the registry's path (`profile_for_target`, spec/pairs.cpp) that is:
+- a board whose rates match none of the target's lab boards, in a generation whose rates the round
+  cost knows (`kSmallTEta`: Ada, GB20x): the pair's tokens a round over R(k) priced on the board's
+  own DRAM rate, SMs, clock and launch facts (`priced_by_facts_for`, DECISIONS 53);
+- a lab board itself: its own record, or, where two or more lab cards of the generation measured
+  the target, their median round cost (`generation_median`), not its own alone;
+- a generation without those rates (Volta, Turing, Ampere and the others): the generation's lab
+  cards' measurement (their median, or the one card's), whatever the board's rates, else a
+  transfer said as one.
+Outside that path the gain is not the board's own either: a published manifest profile is picked
+along the board's similarity chain (a similar chip's, or the `"*"` profile under its stand-in load
+cap), and the built-in default's load table is a literal. So the board's rates reach the drafter's
+order through R(k) on Ada and GB20x boards the lab did not measure; the plain decode seconds the gain
+scales are the reference card's, the same factor for every drafter.
 
 **Rule.** No pass in `choose()`: a first version (#910's draft) re-priced the chosen storages'
 candidates on the board's rates, but a drafter only scales the decode by its gain, which reads no
@@ -2786,9 +2794,11 @@ card fact there, so the pass could not move a drafter by the board's rates; wher
 changed the equal-KLD tie of `resolve_within_resolution` instead (a separate question). The step is
 closed by the property, not by new pricing.
 
-**Property.** test_spec_round_cost: every registry target's profile for every target board of the
-facts table is a function of the board's chip, SMs and rates alone. Boards that share them get the
-same drafter, depth and load table; boards of other rates in a generation with the round cost's rates
-are priced by their own facts (`load_basis` "facts").
+**Property.** test_spec_round_cost, on the registry's path: every registry target's profile for
+every target board of the facts table, its key built from the board's row (its memory, L2, laptop
+clock and mma_slow included), is the same for boards that share the chip, SMs and rates whatever
+their memory or name; and every (target, board) whose rates match none of the target's lab boards,
+in a generation with the round cost's rates, is priced by its own facts (`load_basis` "facts").
+The published profiles' memory ranges (`"mem"`) are outside it: they select by memory.
 
 **What moves.** Nothing: no code path changes, no plan golden moves.
