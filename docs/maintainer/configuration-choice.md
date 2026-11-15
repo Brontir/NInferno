@@ -274,3 +274,13 @@ own context, decode and prefill speed, KLD, worth, and why it lost:
 
 A caller re-runs `choose` with another task (context, streams, request shape) to show what an input
 changes.
+
+`record_choice` records the inputs to one choice for `replay_choice` to evaluate without a device,
+model file or registered selector. Schema `ninferno-choice-replay/4` includes the prefill and MoE
+route answers for every query made, as well as the storage and capacity answers. An absent callback
+is `null`; an installed callback that was not asked has an empty list. `Unknown` kernels and empty
+MoE answers are recorded answers. The prefill key includes every linear field, token count and
+activation mode; the MoE key includes row count and activation mode. A repeated query whose answer
+changes cannot be recorded. Missing answers raise `ReplayIncomplete`; malformed records and older
+schemas are refused, so an older record must be captured again. Constants remain those of the
+replaying build; the replay never fills a missing route from that build's selector (#931).
