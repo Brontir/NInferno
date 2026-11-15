@@ -1067,7 +1067,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         // linear's own, else the file's (Q4_K, Q6_K). A name the matrix kernel does not run
         // (bf16, q8_g32_fp16) has no tile of its own (widest_tile: 128).
         const QType q = l.format.empty() ? format->q : find_format(l.format).value_or(QType::BF16);
-        const bool measured_format = q == QType::GGML_Q4_K || q == QType::GGML_Q6_K;
+        const bool measured_format = mmq_columns::work_tiles_format(q, card.major, card.minor);
         // A guard for a future Q2_K step row: today step_of prices Q2_K as the int8 share, so no
         // Q2_K linear reaches here (cost_route, ops/generic/generic_cost.cpp, has the live cap).
         // The widest tile the card's shared memory holds for the linear's format (a label's

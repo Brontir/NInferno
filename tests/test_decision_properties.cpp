@@ -480,7 +480,7 @@ Explained explain_rmma_rise(const DeviceClass& base, const DeviceClass& more,
 // picks it, as a8_candidates reads it (the slice's columns, the widest tile the device's shared
 // memory holds, the board's reference clock and DRAM rate); 0 where no law picks it.
 int mmq_law_width(const DeviceClass& d, const generic::Problem& p, std::int32_t tokens) {
-    const bool format = mmq_columns::work_tiles_format(p.qtype);
+    const bool format = mmq_columns::work_tiles_format(p.qtype, d.major, d.minor);
     if (mmq_columns::launch_law(d.major, d.minor, format) == nullptr) return 0;
     const int columns = std::min(tokens, generic::kMmqPrefillSlice);
     const mmq_columns::LaunchFacts facts{p.n, p.k, d.sms, d.facts.reference_clock_hz(),

@@ -244,7 +244,7 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         // 64 KiB: Q2_K's 128-column tile does not fit, the kernel runs 64).
         // A generation whose widths a launch law prices (Turing, DECISIONS 78) takes the width
         // that law picks for the product's grid on this card (the facts below).
-        const bool format   = mmq_columns::work_tiles_format(problem.qtype);
+        const bool format   = mmq_columns::work_tiles_format(problem.qtype, d.major, d.minor);
         const int widest    = mmq_columns::widest_tile(problem.qtype, d.major, d.minor);
         const mmq_columns::LaunchFacts facts{static_cast<int>(n), static_cast<int>(k), d.sms, clk,
                                              bw};

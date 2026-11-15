@@ -794,7 +794,7 @@ int run_column_tiles() {
         {Type::IQ2_XS, QType::GGML_IQ2_XS},   {Type::IQ2_S, QType::GGML_IQ2_S},
         {Type::IQ1_S, QType::GGML_IQ1_S}};
     for (const auto& [type, qtype] : formats) {
-        const bool format = ninferno::mmq_columns::work_tiles_format(qtype);
+        const bool format = ninferno::mmq_columns::work_tiles_format(qtype, d.major, d.minor);
         // The widest tile the device holds for the format: a wide product launches it, and the
         // estimate takes it from the shared memory the format's layout needs (widest_tile).
         const int launched = ninferno::ops::ggml_mmq::column_tile(type, 4096, 512, 4096);

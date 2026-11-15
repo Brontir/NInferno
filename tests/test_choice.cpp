@@ -84,10 +84,18 @@ static_assert(pick(70, 7, 5, true, 128, {}) == 128 && pick(121, 7, 5, true, 128,
 static_assert(pick(144, 8, 6, false, 128, k4096) == 128 &&
               pick(192, 12, 0, false, 128, k4096) == 128 &&
               pick(16, 8, 6, false, 128, k4096) == 16);
-static_assert(ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_Q4_K) &&
-              ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_Q6_K) &&
-              !ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_Q4_0) &&
-              !ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_IQ4_XS));
+// Q4_K and Q6_K on every generation; IQ4_XS on GA10x, Ada and GB20x and Q2_K on Ada, where their
+// grids ran (#619 step 13); not on Turing, whose launch law the Q4_K / Q6_K grid fitted.
+namespace wtf {
+using ninferno::QType;
+using ninferno::mmq_columns::work_tiles_format;
+static_assert(work_tiles_format(QType::GGML_Q4_K, 7, 5) && work_tiles_format(QType::GGML_Q6_K, 12, 0));
+static_assert(!work_tiles_format(QType::GGML_Q4_0, 8, 9) && !work_tiles_format(QType::GGML_IQ4_NL, 8, 9));
+static_assert(work_tiles_format(QType::GGML_IQ4_XS, 8, 6) && work_tiles_format(QType::GGML_IQ4_XS, 8, 9) &&
+              work_tiles_format(QType::GGML_IQ4_XS, 12, 0) && !work_tiles_format(QType::GGML_IQ4_XS, 7, 5));
+static_assert(work_tiles_format(QType::GGML_Q2_K, 8, 9) && !work_tiles_format(QType::GGML_Q2_K, 8, 6) &&
+              !work_tiles_format(QType::GGML_Q2_K, 12, 0) && !work_tiles_format(QType::GGML_Q2_K, 7, 5));
+} // namespace wtf
 
 // A tile's shared memory (ggml's mmq_get_nbytes_shared): Q2_K's 128-column tile is 70 144 bytes,
 // over Turing's 64 KiB (its widest there is 64) and under Volta's 96 KiB and Ampere's; Q4_K's

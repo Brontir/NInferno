@@ -1696,7 +1696,7 @@ A width costs about 0.2 MB and 1.1 s of compile a format and architecture it is 
 differently), as they already did between a prefill chunk of 128 and 1024: on natural text the mean
 |logprob| difference old vs new is 0.000-0.03, old build's chunks 128 vs 1024 0.003-0.026.
 
-**Not done.** Turing, Volta and Thor rows (own grids); the A10; other formats than Q4_K and
+**Not done.** (IQ4_XS and Q2_K joined on some generations by their own grids: DECISIONS 90.) Turing, Volta and Thor rows (own grids); the A10; other formats than Q4_K and
 Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tiles until their grids); the RTX 5070 Ti and 5060 Ti prefill Q4_K / Q6_K
 on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 -> 107 ms from 144 to
 256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.
@@ -2909,3 +2909,32 @@ at 25.6K) and the gated delta net's chunk recurrence (11.8 %, 10.6 %).
 
 **Decision.** No rule change from the census. #616 step 8 closes on it. The expert kernel below
 its limit is #928 (#619's process: counts, a prediction, then an A/B on the GV100).
+
+## 90. IQ4_XS and Q2_K take the column tile of least work where their own grids ran (#619 step 13, 15.11, measured)
+
+**Decision.** `mmq_columns::work_tiles_format` takes the generation as well as the format. Q4_K and Q6_K are unchanged: every generation with `mmq_work_tiles` (DECISIONS 74, 78). IQ4_XS joins on GA10x, Ada and GB20x, and Q2_K on Ada. On those generations ggml's matrix kernel ranks the widths 16, 32, 64, 80, 96, 128 by the least work at the row's own `mmq_tile_fixed` (GA10x and Ada 0.20, GB20x 0.10), as it does for Q4_K. Every other format, and these two on every other generation, keep the fewest tiles. Turing's launch law was fitted on the Q4_K / Q6_K grid, so IQ4_XS and Q2_K wait for a Turing grid of their own. The 80- and 96-column kernels are already built for those architectures for every format (`work_tiles_arch`), so no kernel is added.
+
+**Grids** (the DECISIONS 74 kit, `tools/bench/run_524_turing_grid.sh` with `ARCH_CC` and `PRED`; Qwen3-8B IQ4_XS and Q2_K, 8 widths × 21 slice sizes × 2 visits, 4 requests a point, k = 7 probed exact, request noise 0.3 %):
+
+| card | format | predicted f (range) | regret at the row's f | least bucket | fewest tiles |
+|---|---|---|---|---|---|
+| RTX 3060 | IQ4_XS | 0.30 (0.22..0.40) | 0.12 % (0.20) | 0.00 % (0.200..0.333) | 6.75 % |
+| RTX 4070 Ti | IQ4_XS | 0.30 (0.22..0.40) | 0.00 % (0.20) | 0.00 % (0.111..0.200) | 4.88 % |
+| RTX 4060 Ti | Q2_K | 0.15 (0.10..0.25) | 0.03 % (0.20) | 0.02 % (0.200..0.333) | 9.02 % |
+| RTX 5090 | IQ4_XS | 0.15 (0.10..0.25) | 0.21 % (0.10) | 0.21 % (0.059..0.111) | 6.53 % |
+
+The work law does not fit any of the four (lack-of-fit 3.8 to 16, above the a priori 3), so R5 gives no verdict and the fit's f is not a measurement. The decision rests on the regret buckets, as DECISIONS 74's did.
+
+The prediction was wrong for IQ4_XS on GA10x and Ada. It put the fixed share at 0.30, on the reasoning that IQ4_XS's table decode costs 1.5-2× Q4_K's per weight and the decode is the fixed part. The grids' least regret lies in or next to Q4_K's bucket. So the decode is not what sets the share (or the J part grows with it). The row's f is kept, not a new one fitted: 0.20 is within 0.12 % of the best width on both cards.
+
+**Measured** (A B A B, three rounds of four requests, the same hooked binary; old = the fewest tiles, new = the work table at the row's f):
+- **RTX 4070 Ti, IQ4_XS at f 0.20.**
+  - By prompt size: 136..160 tokens −14.3..−14.4 %, 176..192 −9.5..−9.6 %, 264..288 −10.9..−11.0 %, 96 −6.3 %, 448 −1.3 %; 128, 200..256, 320..512 within 0.6 %.
+  - The 144..256 mix is 53.76 → 50.58 ms (**−5.9 %**). The prediction from the grid was the regret difference, about −4.9 % over the grid's sizes, and the Q4_K bracket was −8.2..−5.4 %.
+- **RTX 5090, IQ4_XS at f 0.10.**
+  - By prompt size: 136..160 −16.2..−16.5 %, 176..192 −10.6..−10.7 %, 200..240 −2.1..−2.5 %, 264..288 −12.6..−13.0 %, 320 −8.0 %, 96 −6.7 %; 128, 256, 384, 512 unchanged.
+  - The mix is 22.96 → 21.23 ms (**−7.5 %**); about −6.3 % was predicted from the grid.
+
+No size is slower on either card. The RTX 4060 Ti's Q2_K and the RTX 3060's IQ4_XS A/B: see the entry's follow-up comment in #619.
+
+**Numerics.** As DECISIONS 74: a different width changes the stream-k split and so the sums' order.
