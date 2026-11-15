@@ -99,7 +99,7 @@
 # used (set CUDA_VISIBLE_DEVICES to one index or UUID for another: the GPU checks query that device,
 # and CUDA_DEVICE_ORDER=PCI_BUS_ID makes CUDA's index the one nvidia-smi shows).
 # Env: MODEL (required), OUT (results dir, default profiles/524_turing), BUILD (default build-524t),
-# PORT (18524; it must be free: a server that already answers is refused), K (tokens - columns,
+# ARCH_CC and PRED (above), PORT (18524; it must be free: a server that already answers is refused), K (tokens - columns,
 # default 7, assumed), F_AB (A/B f, default 0.20; set it to the grid's best), AB_ARM (the A/B's second
 # arm: new, the tile law at F_AB, default; or law, the production ranking, on Turing the launch law of
 # DECISIONS 78, read against the law's own prediction, R4 (law)), JOBS (8), FORCE=1 (skip
@@ -119,6 +119,15 @@ F_AB=${F_AB:-0.20}
 AB_ARM=${AB_ARM:-new}
 case "$AB_ARM" in new | law) ;; *) echo "AB_ARM must be new (the tile law at F_AB) or law (got $AB_ARM)"; exit 2 ;; esac
 JOBS=${JOBS:-8}
+# Another generation's or format's grid (#619 step 13): ARCH_CC is the card's compute capability
+# (default 7.5, Turing), PRED="f,lo,hi" the f under test and the range R5 tests, written down before
+# the run (default Turing Q4_K's 0.20, 0.15..0.25). Off Turing the reader leaves out the launch law
+# (Turing's row) and the `ab` phase's predicted ranges are DECISIONS 74's Q4_K bracket: run
+# `build`, `probe` and `grid`, and an A/B of the format's own prediction apart.
+ARCH_CC=${ARCH_CC:-7.5}
+[[ "$ARCH_CC" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "ARCH_CC must be a compute capability like 8.9 (got $ARCH_CC)"; exit 2; }
+if [ -n "${PRED:-}" ]; then export MMQ_GRID_PRED="$PRED"; fi
+[ "$ARCH_CC" = 7.5 ] || export MMQ_GRID_LAW=0
 PATCH=tools/bench/524_grid_hook.patch
 PY=${PY:-python3}
 BIN="$BUILD/apps/ninferno-serve"
@@ -137,7 +146,7 @@ DEV=${DEV%%,*}
 cc=$(nvidia-smi -i "$DEV" --query-gpu=compute_cap --format=csv,noheader)
 name=$(nvidia-smi -i "$DEV" --query-gpu=name --format=csv,noheader)
 echo "GPU $DEV: $name sm_${cc/./}"
-[ "$cc" = "7.5" ] || { echo "not a Turing card (compute capability $cc)"; exit 1; }
+[ "$cc" = "$ARCH_CC" ] || { echo "not an sm_${ARCH_CC/./} card (compute capability $cc; ARCH_CC=$ARCH_CC)"; exit 1; }
 if [ "${FORCE:-0}" != 1 ] && [ -n "$(nvidia-smi -i "$DEV" --query-compute-apps=pid --format=csv,noheader)" ]; then
   echo "the GPU is busy (nvidia-smi compute apps); stop them or FORCE=1"; exit 1
 fi
@@ -191,7 +200,7 @@ need_hooked_binary() {
 build() {
   check_hook
   git apply "$PATCH"; HOOKED=1
-  cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=75 > "$OUT/cmake.log" 2>&1 ||
+  cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES="${ARCH_CC/./}" > "$OUT/cmake.log" 2>&1 ||
     { tail -20 "$OUT/cmake.log"; exit 1; }
   cmake --build "$BUILD" --target ninferno-serve -j "$JOBS" > "$OUT/build.log" 2>&1 ||
     { tail -30 "$OUT/build.log"; exit 1; }

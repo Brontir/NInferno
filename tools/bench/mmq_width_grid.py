@@ -100,6 +100,7 @@ edges of PRED_AB, all set a priori and labelled so.
 from __future__ import annotations
 
 import argparse
+import os
 import itertools
 import json
 import random
@@ -129,7 +130,11 @@ EDGE_WIDTHS = [64, 80, 96, 128]
 # mmq_prefill_gate: a call of fewer tokens goes elsewhere); a fact of the route, not a threshold
 MMQ_GATE = 17
 MARGIN_WARN = 4
-ASSUMED_F = 0.20  # the assumption under test (an assumption, not a derivation)
+# The assumption under test (an assumption, not a derivation) and the range R5 tests. Another format
+# or generation than the Turing Q4_K grid (#619 step 13) states its own before the run: the kit's
+# PRED="f,lo,hi" reaches the reader as MMQ_GRID_PRED. Unset: the Turing grid's 0.20 in 0.15..0.25.
+_PRED = os.environ.get("MMQ_GRID_PRED")
+ASSUMED_F, PRED_LO, PRED_HI = tuple(float(v) for v in _PRED.split(",")) if _PRED else (0.20, 0.15, 0.25)
 F_ONE = 0.43  # DECISIONS 69, shown as the representative of the top bucket when it lies in it
 SALT_DIGITS = 6  # a fixed-width salt: every request spends the same number of tokens on it
 TOL = 2.0  # percent: a predicted width slower than the best by more than this is a material mismatch
@@ -139,7 +144,6 @@ R2_SHARE = 0.25  # share of sizes with a material mismatch at the assumed f
 R4_PP = 2.0  # percentage points the A/B mix may lie outside the predicted mix range
 # The prediction R5 tests is the stated range, not the point: "f 0.20, best range 0.15-0.25" (the
 # script's header; DECISIONS 74's measured cards are best at 0.15-0.20 or 0.25-0.30). A priori.
-PRED_LO, PRED_HI = 0.15, 0.25
 FIT_LEVEL = 0.95  # chosen a priori: the two-sided level of the bootstrap interval of the fitted f
 BOOT_N = 1000  # bootstrap draws over the width visits (a priori; enough for a 95 % percentile interval)
 BOOT_SEED = 524  # fixed: the same files print the same interval
@@ -1060,7 +1064,10 @@ def grid(a: argparse.Namespace) -> None:
         verdict = (f"no verdict on f {ASSUMED_F:.2f}: {why5}; R2 and R3 find no "
                    f"fault with the table at f {ASSUMED_F:.2f}")
     print("  " + verdict)
-    launch_law_report(d, data, sizes, cols, med, best)
+    # The launch law is Turing's row (kTuringMmqLaw on the RTX 2080 Ti's facts): another card's grid
+    # (the kit's ARCH_CC) does not print it.
+    if os.environ.get("MMQ_GRID_LAW", "1") != "0":
+        launch_law_report(d, data, sizes, cols, med, best)
 
 
 def pred_range(c: int) -> tuple[float, float] | None:
