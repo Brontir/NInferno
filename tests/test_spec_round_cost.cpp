@@ -1673,8 +1673,7 @@ int main() {
                        "same chip and rates, same drafter: " + row.name + " (" + rates + ")");
             }
         }
-        expect(boards > 0 && by_facts > 0,
-               "the scan met boards priced by their own facts");
+        expect(boards > 0 && by_facts > 0, "the scan met boards priced by their own facts");
         std::printf("drafter by board: %d boards, %d sharing another's chip and rates, %d "
                     "(target, board) priced by the board's facts\n",
                     boards, shared, by_facts);
