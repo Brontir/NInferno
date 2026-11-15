@@ -170,15 +170,18 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
 // What the per-kernel residual holds, against the launch facts per architecture (#613 PR-8b,
 // core/launch_facts.h; on paper, no value moves: PR-8e prices it from the table): a graph node
 // (node_ns, gb20x's with PDL) plus the dispatch ramp of a decode GEMV's grid of about 1024 CTAs
-// (floor_ns_1024 - floor_ns_1), and the rest named, not yet counted: the first loads' DRAM latency
-// a round of resident CTAs, the drain and the epilogue.
+// (floor_ns_1024 - floor_ns_1; measured without PDL, so on gb20x PDL may hide part of it), and the
+// rest named, not yet counted: the first loads' DRAM latency per round of resident CTAs, the drain
+// and the epilogue. These are the probe's facts; the paragraph above holds the census-fitted t0
+// (launch_node_seconds) these replace in PR-8e.
 //   ada    2.35 us = node 0.50 + ramp 0.68 + rest 1.17
-//   gb20x  1.90 us = node 0.29 (PDL) + ramp 0.39 + rest 1.22
+//   gb20x  1.90 us = node 0.29 (PDL) + ramp 0.39 + rest 1.21 (RTX 5090's probe)
 //   ga10x  4.72 us = node 0.57 + ramp 0.66 + rest 3.50
 //   turing 8.56 us = node 0.69 + ramp 0.53 + rest 7.34
 //   volta  6.37 us = node 0.95 + ramp 1.52 + rest 3.90
-// The launch is a third of the residual on Ada and gb20x and under a fifth on Turing: the rest,
-// not the launch, is the term to count (L0 x rounds + drain, from the kernels' facts).
+// The launch is half the residual on Ada, a third on gb20x, a quarter on GA10x and under a fifth on
+// Turing: beyond Ada the rest, not the launch, is the term to count (L0 x rounds + drain, from the
+// kernels' facts).
 struct KernelCost {
     std::string_view generation;
     double gemv;  // seconds a weight-reading kernel beyond its bytes
