@@ -1,5 +1,5 @@
-// Property tests for the projection selector's decisions, set 1 (roadmap #620 step 6; the
-// specification is Roadmap 0's report 08, Q3). Every property runs over the board rows of
+// Property tests for the projection selector's decisions, sets 1 and 2 (roadmap #620 steps 6, 14;
+// the specification is Roadmap 0's report 08, Q3). Every property runs over the board rows of
 // core/data/gpu_facts.json through the same substitution the selector goldens use
 // (selector_facts.h board_device_class, ScopedDeviceClass), so it needs no GPU to run. The
 // register-MMA price reads the registers and spill of the compiled kernels from the committed
@@ -51,9 +51,16 @@
 //       A row whose facts read the driver on purpose (a laptop without a published boost floor:
 //       MachineFacts::driver_read) is counted and left out.
 //       The decision only: a clock that leaks into a price and flips no route stays invisible here.
+//   P4  CPU == GPU (set 2, #620 step 14): every row's decisions in this process, which may see a
+//       GPU, equal those of a child run with CUDA_VISIBLE_DEVICES empty (`--atlas`: a line per row,
+//       the SHA-256 of its decision text; `--decisions N`: the Nth row's text). Narrow by design:
+//       the live GPU reaches a decision only through substituted_foreign_class (a row whose class
+//       key is the live card's). Without a GPU in this process it is vacuous and says so; the
+//       stands' full runs give it a GPU.
 //
 // P8 (B1 under `exact` reads no continuous fact) is in test_plan_dry_run.cpp, where the plan
-// fixtures are.
+// fixtures are. P5 (the plan's workspace bytes equal the start's) is test_plan_bytes.cpp, checked
+// against the start's log on a GPU by #615 W2.
 //
 // Failures are grouped by (property, key); every group fails the test and prints its count, its
 // rows and its worst case. (The waivers #639 recorded for the idle-SM charges of the price are
@@ -63,6 +70,9 @@
 #include "core/format_facts.h"
 #include "core/generation.h"
 #include "core/machine_facts.h"
+#include "core/per_device.h"
+#include "core/sha256.h"
+#include "core/sys.h"
 #include "core/mmq_columns.h"
 #include "core/units.h"
 #include "core/weight.h"
@@ -80,7 +90,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iterator>
 #include <iostream>
@@ -88,7 +101,10 @@
 #include <optional>
 #include <span>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -800,11 +816,104 @@ void property_clock_invariance(const std::vector<Row>& rows) {
     std::cout << '\n';
 }
 
+// ---- P4: the same decisions with a GPU visible and without one
+// -----------------------------------
+
+// Every row's decisions over the grid, as one line per row: its label, the SHA-256 of its decision
+// text (16 hex digits) and the text's line count. The atlas of the build (#614 F5): what the
+// selector answers for every board of the table, on whatever host runs it.
+std::string atlas_of(const std::vector<Row>& rows) {
+    std::ostringstream out;
+    for (const Row& row : rows) {
+        const std::string text = decisions_of(generic::board_device_class(row.board));
+        out << row.label << '\t' << sha256_hex(std::string_view(text)).substr(0, 16) << '\t'
+            << std::count(text.begin(), text.end(), '\n') << '\n';
+    }
+    return out.str();
+}
+
+// A shell command's stdout; a command that fails throws.
+std::string text_of_command(const std::string& command) {
+    static int calls = 0;
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() /
+        ("ninferno_p4_" + std::to_string(sys::pid()) + "_" + std::to_string(++calls) + ".txt");
+    const int status = std::system((command + " > '" + path.string() + "'").c_str());
+    std::ifstream in(path);
+    std::stringstream text;
+    text << in.rdbuf();
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    if (status != 0) { throw std::runtime_error("P4: `" + command + "` failed"); }
+    return text.str();
+}
+
+// P4 (#620 step 14, report 08 Q3): the decisions of every row are the same in this process, which
+// may see a GPU, and in a child run with CUDA_VISIBLE_DEVICES empty, which sees none. The board is
+// substituted either way and the kernel facts are the committed snapshot's (#612). What it can
+// catch: route_query substitutes the board (ScopedDeviceClass) and the selector's per-device state
+// is keyed by the class's content, so the live GPU enters a decision only through
+// substituted_foreign_class (core/device_class.cpp): a row whose class key equals the live card's
+// reads that card's route tables and tuned routes. A row that differs may also come from this
+// process's cache history (P1, P3 and P6 ran first; the child starts cold): either is a leak.
+// Without a GPU in this process the two runs are alike and the property is vacuous (printed).
+void property_cpu_equals_gpu(const std::vector<Row>& rows) {
+#ifdef _WIN32
+    (void)rows;
+    std::cout << "P4: not run on Windows (no CUDA_VISIBLE_DEVICES child)\n";
+#else
+    const bool gpu_seen     = current_device_ordinal_or_none() >= 0;
+    const std::string here  = atlas_of(rows);
+    const std::string child = "CUDA_VISIBLE_DEVICES= '" + sys::self_exe().string() + "'";
+    const std::string cpu   = text_of_command(child + " --atlas");
+    std::istringstream a(here), b(cpu);
+    std::size_t moved = 0, index = 0;
+    for (std::string x, y; std::getline(a, x); ++index) {
+        ++cases_checked;
+        if (!std::getline(b, y)) { y.clear(); }
+        if (x == y) { continue; }
+        ++moved;
+        const std::string label = x.substr(0, x.find('\t'));
+        std::string detail      = "the GPU-visible line " + x + ", the CPU line " + y;
+        if (index < rows.size() && rows[index].label == label) {
+            const std::string gpu_text =
+                decisions_of(generic::board_device_class(rows[index].board));
+            const std::string cpu_text =
+                text_of_command(child + " --decisions " + std::to_string(index));
+            detail += "; " + std::to_string(differing_lines(gpu_text, cpu_text)) +
+                      " decisions move, first " + first_difference(gpu_text, cpu_text);
+        }
+        note("P4 CPU == GPU", "decisions differ", label, label + ": " + detail);
+    }
+    if (std::string extra; std::getline(b, extra)) {
+        note("P4 CPU == GPU", "the child's atlas has more lines", "-", extra);
+    }
+    std::cout << "P4: " << rows.size() << " rows, " << moved
+              << " differ between this process and a CUDA_VISIBLE_DEVICES= child"
+              << (gpu_seen ? "" : " (this process sees no GPU either: vacuous)") << '\n';
+#endif
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
         const std::vector<Row> rows = rows_of_table();
+        // P4's child modes: the atlas, or one row's decision text (by its index in the table's
+        // order), and nothing else on stdout.
+        if (argc > 1 && std::string_view(argv[1]) == "--atlas") {
+            std::cout << atlas_of(rows);
+            return 0;
+        }
+        if (argc > 2 && std::string_view(argv[1]) == "--decisions") {
+            const std::size_t index = std::stoul(argv[2]);
+            if (index >= rows.size()) {
+                std::cerr << "decision properties: no row " << argv[2] << '\n';
+                return 2;
+            }
+            std::cout << decisions_of(generic::board_device_class(rows[index].board));
+            return 0;
+        }
         std::cout << rows.size() << " board rows of gpu_facts.json (" << gpu_facts_table().size()
                   << " in the table)\n";
         std::cout << "build sm_" << NINFERNO_BUILD_ARCH_LABEL << ": NVFP4 and cluster kernels "
@@ -817,6 +926,7 @@ int main() {
         property_price_monotone(rows);
         property_non_fact_fields(rows);
         property_clock_invariance(rows);
+        property_cpu_equals_gpu(rows);
 
         for (const auto& [id, g] : groups) {
             std::cout << "FAIL  " << id.first << " [" << id.second << "]: " << g.count
