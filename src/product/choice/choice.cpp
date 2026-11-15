@@ -2648,7 +2648,8 @@ std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
         }
         const Scored& p = scored[pick];
         if (pick == anchor || s.accuracy.kld < p.accuracy.kld - kWorthTie ||
-            (std::abs(s.accuracy.kld - p.accuracy.kld) <= kWorthTie && faster_or_first(s, i, p, pick))) {
+            (std::abs(s.accuracy.kld - p.accuracy.kld) <= kWorthTie &&
+             faster_or_first(s, i, p, pick))) {
             pick = i;
         }
     }
