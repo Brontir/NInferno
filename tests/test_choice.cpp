@@ -2795,6 +2795,75 @@ void board_facts_do_not_decide(const json& fixture) {
     }
 }
 
+// #930: board-specific route answers (including an unqueried MoE) enter the displayed estimates,
+// never the synthetic reference's prices, uncertainty or choice. Keep this in the CPU-only suite
+// too; test_choice_prefill_routes exercises the same boundary with the production selector.
+void board_route_answers_do_not_decide(const json& fixture) {
+    std::ifstream in(std::string(NINFERNO_SOURCE_DIR) +
+                     "/tests/fixtures/choice/prefill_measured.json");
+    const auto prefill = json::parse(in);
+    const auto& dense  = prefill.at("models").at("Qwen3.5-4B");
+    const auto& moe    = fixture.at("models").at("Qwen3.6-35B-A3B");
+    for (const bool routed : {false, true}) {
+        const auto& m                = routed ? moe : dense;
+        const std::string quant_name = routed ? "UD-IQ3_XXS" : "Q4_K_M";
+        auto base_model              = choice_fixture::model_at(m, quant_name);
+        if (routed) { base_model.layers = 40; }
+        const auto quant = quant_of(quant_name, m.at("quants").at(quant_name));
+        const auto card  = board_card(routed ? 0x2684 : 0x2B85);
+        ch::Task task;
+        task.contexts        = {32768};
+        task.prompt          = 22000;
+        task.concurrency     = routed ? 4 : 1;
+        const auto own       = [](const ch::Candidate&) { return 32768U; };
+        const auto allowed   = ch::allowed_axes(base_model, KvCacheStorage::Int8Group64);
+        const auto base      = ch::choose(base_model, card, quant, allowed, {}, task, own);
+        bool estimates_moved = false;
+        for (const auto kernel : {ch::PrefillKernel::Unknown, ch::PrefillKernel::Mmq,
+                                  ch::PrefillKernel::W4a8, ch::PrefillKernel::A16}) {
+            auto model     = base_model;
+            unsigned calls = 0;
+            if (routed) {
+                if (kernel == ch::PrefillKernel::Unknown) {
+                    model.moe_route_unqueried = true;
+                } else {
+                    const auto expert = kernel == ch::PrefillKernel::Mmq
+                                            ? ch::ExpertKernel::R8
+                                            : ch::ExpertKernel::RegisterMma;
+                    model.moe_routes  = [&, expert](std::uint32_t, ninferno::ActivationMode) {
+                        ++calls;
+                        return std::vector<ch::MoeStepRoute>{{expert, expert, 1}};
+                    };
+                }
+            } else {
+                model.prefill_routes = [&](const ch::LinearShape&, std::uint32_t,
+                                           ninferno::ActivationMode) {
+                    ++calls;
+                    return kernel;
+                };
+            }
+            const auto result = ch::choose(model, card, quant, allowed, {}, task, own);
+            check(result.chosen == base.chosen &&
+                      result.resolution_basis == base.resolution_basis &&
+                      result.scored.size() == base.scored.size(),
+                  "board route answers do not change the reference choice or band");
+            if (result.scored.size() != base.scored.size()) { continue; }
+            for (std::size_t i = 0; i < base.scored.size(); ++i) {
+                const auto& a = result.scored[i];
+                const auto& b = base.scored[i];
+                check(a.decision_seconds == b.decision_seconds &&
+                          a.decision_basis == b.decision_basis && a.worth == b.worth,
+                      "board route answers do not enter reference prices");
+                estimates_moved = estimates_moved || a.seconds != b.seconds ||
+                                  a.speed.basis != b.speed.basis || a.speed.why != b.speed.why;
+            }
+            check(calls > 0 || model.moe_route_unqueried,
+                  "the board estimates still ask the route query");
+        }
+        check(estimates_moved, "board route answers still affect displayed estimates");
+    }
+}
+
 // #300: a compute capability the generation table has no row of (a newer major) estimates on the
 // nearest row (gb20x), says so, and its reference decides nothing, whatever reference cards the
 // lent generation gains later; a known generation keeps its own evidence. Today no lent row has a
@@ -4298,6 +4367,7 @@ int main() {
     joint_price_replays(fixture);
     axis_order_does_not_decide(fixture);
     board_facts_do_not_decide(fixture);
+    board_route_answers_do_not_decide(fixture);
     choices_replay(fixture);
     resolution_labels(fixture);
     resolution_rule();

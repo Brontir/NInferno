@@ -265,6 +265,8 @@ struct ModelFacts {
     // drafters, 0 for plain).
     std::vector<DrafterOption> drafters;
     std::size_t default_drafter = 0;
+    // Board estimates only: the synthetic generation reference uses the measured pair, without
+    // either board callback or moe_route_unqueried (#930).
     // The kernels the MoE op runs a decode step's routed banks on at `rows` rows (#616 step 7): its
     // own route query on the card's class (product/plan with_moe_routes: ops/moe moe_route_query),
     // by the routed bytes of the layers each kernel pair takes. Unset, or empty: not asked, and the
@@ -282,7 +284,8 @@ struct ModelFacts {
     // the banks' route is QuantOption::expert_banks), its format the file's, or the quantization's
     // where the file names none and the label names one (label_formats). Asked only on the int8
     // route of a quantization that is not NVFP4. Unset: not asked, and the prefill prices the
-    // kernels its tile laws assume.
+    // kernels its tile laws assume. The synthetic generation reference always uses those laws:
+    // this board-bound query does not enter its decision price (#930).
     std::function<PrefillKernel(const LinearShape& linear, std::uint32_t tokens,
                                 ActivationMode activations)>
         prefill_routes;
