@@ -2613,6 +2613,20 @@ std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
     return resolve_within_resolution(scored, eligible, anchor, Resolutions{one, one, one});
 }
 
+namespace {
+
+// Between two candidates of equal KLD (#918: the drafters of one set of storages, whose accuracy
+// terms are the same), the fewer seconds by more than the tie, then the lower index: the index
+// alone handed the pick to the earliest listed, often plain decode, whatever the drafters' worth.
+bool faster_or_first(const Scored& s, std::size_t i, const Scored& p, std::size_t at) noexcept {
+    const double gap = std::log(s.decision_seconds / p.decision_seconds);
+    if (gap < -kWorthTie) { return true; }
+    if (gap > kWorthTie) { return false; }
+    return i < at;
+}
+
+} // namespace
+
 std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
                                       const std::vector<std::size_t>& eligible, std::size_t anchor,
                                       const Resolutions& bands) noexcept {
@@ -2634,7 +2648,7 @@ std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
         }
         const Scored& p = scored[pick];
         if (pick == anchor || s.accuracy.kld < p.accuracy.kld - kWorthTie ||
-            (std::abs(s.accuracy.kld - p.accuracy.kld) <= kWorthTie && i < pick)) {
+            (std::abs(s.accuracy.kld - p.accuracy.kld) <= kWorthTie && faster_or_first(s, i, p, pick))) {
             pick = i;
         }
     }
@@ -2654,7 +2668,7 @@ std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
             }
             const bool lower = !by || s.accuracy.kld < scored[*by].accuracy.kld - kWorthTie;
             const bool tie = by && std::abs(s.accuracy.kld - scored[*by].accuracy.kld) <= kWorthTie;
-            if (lower || (tie && i < *by)) { by = i; }
+            if (lower || (tie && faster_or_first(s, i, scored[*by], *by))) { by = i; }
         }
         if (by) {
             pick  = *by;

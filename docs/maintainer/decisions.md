@@ -1768,7 +1768,8 @@ card), the band does not decide and the comparison is resolved at its own floor 
 never beyond. On a compute capability with no generation row the floor is the lent generation's
 own band (cc 13.0, priced from Blackwell's rows: 0.0170), not the lender's. A moved pick is never
 dominated on both axes by an eligible candidate: among those no slower and strictly more accurate
-than it, the lowest KLD, then the lowest index, takes it, which may lie beyond its own comparison's
+than it, the lowest KLD, then the fewer seconds, then the lowest index, takes it (equal KLD is the
+drafters of one set of storages: the index alone handed the pick to the earliest listed, #918), which may lie beyond its own comparison's
 width (`explain` says so; with equal widths, as today, it moves nothing). The worth itself still
 ranks by point estimates (their error per basis is the cost model's work, #613). With
 `Gates::typed_resolution` closed, the old single number weighs every comparison as before (#618).

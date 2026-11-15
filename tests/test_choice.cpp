@@ -3175,6 +3175,18 @@ void resolution_rule() {
           "equal KLD: the lower index");
     check(ch::resolve_within_resolution(scored, {4, 1}, 4, 0.02) == 4,
           "equal KLD to the anchor: it stays");
+    // #918: of two equal-KLD candidates inside the resolution, the faster wins whatever its index
+    // (the drafters of one set of storages); equal seconds keep the lower index.
+    {
+        std::vector<ch::Scored> drafters = scored;
+        drafters[4].decision_seconds     = 1.010; // listed after 1, as accurate, faster
+        check(ch::resolve_within_resolution(drafters, {0, 1, 4}, 0, 0.02) == 4,
+              "equal KLD: the fewer seconds, not the lower index");
+        drafters[2].accuracy.kld = 0.02; // C no longer the most accurate
+        drafters[3].accuracy.kld = 0.02;
+        check(ch::resolve_within_resolution(drafters, {0, 1, 2, 3, 4}, 0, 0.02) == 4,
+              "equal KLD after the domination pass: the fewer seconds");
+    }
     // A lower index of equal KLD and equal context must not move the pick (#507: BF16 over INT8).
     check(ch::resolve_within_resolution(scored, {5, 0}, 0, 0.02) == 0,
           "equal KLD and context: the anchor stays");

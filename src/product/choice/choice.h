@@ -900,9 +900,10 @@ struct Alternative {
 // request time is longer by no more than the resolution of the two's comparison (worth units: ln
 // of the time ratio): `bands` by the wider of their decision_basis (#618), at resolution_width (a
 // band that does not decide: its Own floor, never beyond). Among the winners the lowest KLD, then
-// the lowest index in `scored`; none: the anchor. A moved pick is never dominated: where eligible
-// candidates are no slower and strictly more accurate than it, the one of the lowest KLD (then
-// index) takes it, which may lie beyond its own comparison's width (explain says so; with the
+// (equal KLD, as the drafters of one set of storages have: #918) the fewer seconds by more than
+// kWorthTie, then the lowest index in `scored`; none: the anchor. A moved pick is never dominated:
+// where eligible candidates are no slower and strictly more accurate than it, the one of the
+// lowest KLD (then the fewer seconds, then index) takes it, which may lie beyond its own comparison's width (explain says so; with the
 // widths equal, as on every generation today, it never moves anything). Context beyond what was
 // asked is headroom (DECISIONS 73) and does not count. A resolution of 0 returns `anchor`.
 [[nodiscard]] std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
