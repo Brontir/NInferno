@@ -34,10 +34,12 @@ const char* usage() {
 } // namespace
 
 int replay_routes_main(int argc, char** argv) {
-    std::string board, log;
+    std::string board, log, as_start;
     for (int i = 1; i < argc; ++i) {
         const std::string_view a = argv[i];
-        if ((a == "--board" || a == "--log") && i + 1 < argc) {
+        if (a == "--as-start" && i + 1 < argc) {
+            as_start = argv[++i]; // #935 bisection: global, persisting or both from the start
+        } else if ((a == "--board" || a == "--log") && i + 1 < argc) {
             (a == "--board" ? board : log) = argv[++i];
         } else if (a == "--help" || a == "-h") {
             std::cout << usage();
@@ -148,7 +150,20 @@ int replay_routes_main(int argc, char** argv) {
     }
     // The board's class is the registry row's (its clocks the row's, not the start's driver's):
     // the replay checks that the registry gives the start's routes (#612 step 10).
-    const DeviceClass device = price_board_class(*row);
+    DeviceClass device = price_board_class(*row);
+    const auto start_number = [&](const char* key) -> std::optional<std::size_t> {
+        const auto it = facts.find(key);
+        if (it == facts.end()) { return std::nullopt; }
+        return static_cast<std::size_t>(std::stoull(it->second));
+    };
+    if (as_start == "global" || as_start == "both") {
+        if (const auto v = start_number("global_bytes")) { device.global_bytes = *v; }
+    }
+    if (as_start == "persisting" || as_start == "both") {
+        if (const auto v = start_number("persisting_l2_max_bytes")) {
+            device.persisting_l2_max_bytes = *v;
+        }
+    }
     // The class's facts against the start's (#935): a line that differs names a fact the start's
     // selection read that the registry row does not give (the driver's version, the host's and the
     // build's are not the board's and are skipped).
