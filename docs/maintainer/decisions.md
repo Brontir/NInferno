@@ -2833,9 +2833,8 @@ three models (the 5070 Ti's Q3_K_S: 2048).
 Where the estimate is 4096 it held at every point: 4096 is the fastest at the long prompts (+5 to
 +11 % over 2048) and ties 2048 at the short ones (within 2 %, inside the runs' spread). The 5070
 Ti's Q3_K_S estimate is 2048, against a measured 4096 faster by 9.6 % at 21K: the one point where
-the board-priced estimate missed (the estimate is priced at the plan's own ask and context on the
-16 GB card, the A/B at the server's; the deciding price, below, is the reference card's). 1024, today's pick, is the slowest everywhere (12 to 23 %
-below the best). Decode does not move with the chunk (within 1 %).
+the board-priced estimate missed (its cause is open, #926; the deciding price, below, is the
+reference card's). 1024, today's pick, is the slowest everywhere (12 to 23 % below the best). Decode does not move with the chunk (within 1 %).
 #659's own written prediction for gemma (2048 at every ask) was wrong at 7.8K; the plan's estimate
 (4096) was right. gemma does not start on the 16 GB 5070 Ti (15.78 GiB of weights), so its chunk
 has no point there.
@@ -2864,7 +2863,7 @@ Four of the five picks are the fastest at every prompt. The 5070 Ti's Q3_K_S pic
 short prompt and 9.6 % slower than 4096 at 21K, though a plan pinned to 4096 holds a larger
 context there (88704): the price ranks 2048 inside the tie at the plan's ask, where the
 measurement says 4096 wins at long prompts. That is a miss of the model, recorded as one, not fitted
-(#926); the pick is still 16 % faster than today's 1024 at both prompts.
+(#926); the pick is still 16-18 % faster than today's 1024 at both prompts.
 
 **What moves.** The chunk of an MoE plan on a gb20x board (5060 Ti, 5070, 5070 Ti, 5080, 5090 and
 the laptop parts of 12.0) moves from 1024 to the curve's fastest (2048 or 4096 by the ask and the
