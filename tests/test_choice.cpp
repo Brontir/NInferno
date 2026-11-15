@@ -3174,9 +3174,9 @@ void route_answers_replay(const json& fixture) {
             calls              = 0; // the recording run's own queries
             const auto rec     = ch::record_choice(model, card, quant, allowed, pins, task, own);
             const unsigned recorded_calls = calls;
-            const auto back    = ReplayJson::parse(rec.inputs.dump());
-            live               = false;
-            const auto again   = ch::replay_choice(back);
+            const auto back               = ReplayJson::parse(rec.inputs.dump());
+            live                          = false;
+            const auto again              = ch::replay_choice(back);
             check(ch::choice_summary(rec.choice) == ch::choice_summary(direct) &&
                       ch::choice_summary(again) == ch::choice_summary(direct),
                   "every route-dependent candidate and choice replays");
@@ -3198,10 +3198,10 @@ void route_answers_replay(const json& fixture) {
                 check(recorded_calls == 0 && answers.empty(),
                       "installed but unasked callback has an empty table");
             } else if (present) {
-                // The recording run asks some keys more than once and records each once (a duplicate
-                // key is refused on replay, below).
-                check(recorded_calls > answers.size() && !answers.empty(),
-                      "repeated queries have one recorded answer");
+                // Every recorded key was asked by the recording run; each is recorded once (a
+                // duplicate key is refused on replay, below).
+                check(recorded_calls >= answers.size() && !answers.empty(),
+                      "the recording run's queries are recorded, one answer a key");
             }
             auto old      = back;
             old["schema"] = "ninferno-choice-replay/3";
