@@ -10,6 +10,7 @@
 // one that is no kernel's, the architecture table's row it is read off (kCountedSources). No GPU.
 
 #include "core/arch_registry.h"
+#include "core/board_facts.h"
 #include "core/board_registry.h"
 #include "ops/generic/family_facts.h"
 #include "ops/generic/route_cost_constants.h"
