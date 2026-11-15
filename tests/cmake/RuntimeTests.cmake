@@ -91,7 +91,7 @@ ninferno_add_op_test(ninferno_decision_properties_test
 # The committed atlas of every board (#614 F5): tests/data/decision_atlas/<build set>.txt.
 target_compile_definitions(ninferno_decision_properties_test PRIVATE
   NINFERNO_DECISION_ATLAS_DIR="${PROJECT_SOURCE_DIR}/tests/data/decision_atlas")
-set_tests_properties(ninferno_decision_properties_test PROPERTIES LABELS host)
+set_tests_properties(ninferno_decision_properties_test PROPERTIES LABELS "host;golden")
 
 ninferno_add_test(ninferno_process_options_lease_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_process_options_lease.cpp"
