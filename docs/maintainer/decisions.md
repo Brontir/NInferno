@@ -2935,6 +2935,10 @@ The prediction was wrong for IQ4_XS on GA10x and Ada. It put the fixed share at 
   - By prompt size: 136..160 −16.2..−16.5 %, 176..192 −10.6..−10.7 %, 200..240 −2.1..−2.5 %, 264..288 −12.6..−13.0 %, 320 −8.0 %, 96 −6.7 %; 128, 256, 384, 512 unchanged.
   - The mix is 22.96 → 21.23 ms (**−7.5 %**); about −6.3 % was predicted from the grid.
 
-No size is slower on either card. The RTX 4060 Ti's Q2_K and the RTX 3060's IQ4_XS A/B: see the entry's follow-up comment in #619.
+- **RTX 4060 Ti, Q2_K at f 0.20.**
+  - By prompt size: 136..160 −23.3..−23.6 %, 176..192 −14.6 %, 264..288 −15.0..−15.2 %, 96 −12.2 %, 320 −7.7 %; 128, 200..256, 384..512 within 0.1 %.
+  - The mix is 111.89 → 101.45 ms (**−9.3 %**); about −9 % was predicted from the grid.
+
+No size is slower on any card.
 
 **Numerics.** As DECISIONS 74: a different width changes the stream-k split and so the sums' order.
