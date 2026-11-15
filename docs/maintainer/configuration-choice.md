@@ -120,7 +120,11 @@ on Ada too.
 B1 of [Deterministic decisions](deterministic-decisions.md)): they may not read a board's clock or
 bandwidth. So T is priced on the generation's *reference card* (`kReferenceCards`: the mean of the
 generation's lab cards), never on the board itself: every board of a generation decides the same,
-and a board's own facts feed only the estimates a caller shows. The reference card decides only
+and a board's own facts feed only the estimates a caller shows. The reference is a declared mean,
+not a PCI board: its prefill uses the generation's tile laws and its MoE decode the measured kernel
+pair. The planned board's route queries and their availability affect only the displayed board
+estimates, never the reference prices or their uncertainty (#930). No donor PCI identity or route
+table is assigned to the mean. The reference card decides only
 where the KV read factors and the exact-route factor were measured on two lab cards of the
 generation (principle 4); elsewhere the family's defaults stand (the automatic KV codec,
 `--activations fast`), and the choice says so. Ada has them (RTX 4070 Ti and 4090: KV factors within
