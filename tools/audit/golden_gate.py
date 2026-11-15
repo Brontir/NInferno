@@ -13,6 +13,8 @@
 The labels come from the pull_request event payload, so the job needs no token.
 Only the selector goldens (tests/ops/linear/selector_golden) are read. The MoE plan goldens
 (tests/ops/moe_plan_golden) are not compared: a change there is counted and named, nothing more.
+A changed decision atlas (tests/data/decision_atlas, every gpu_facts board's decisions hashed) is a
+golden change: some board's answers moved, which the selector goldens may not show.
 The label is not tied to a commit: it stays on after later pushes, and the author's claim then
 covers them all.
 Exit: 0 pass, 1 gate failed, 2 the tools themselves failed.
@@ -31,6 +33,7 @@ PATHS_FILE = HERE / "decision_paths.txt"
 GOLDEN_DIFF = HERE / "golden_diff.py"
 SELECTOR_GOLDENS = "tests/ops/linear/selector_golden/"
 MOE_GOLDENS = "tests/ops/moe_plan_golden/"
+ATLAS = "tests/data/decision_atlas/"  # every board's decisions, hashed (#614 F5)
 # the gate's own files: a PR that edits them changes what the gate checks
 GATE_FILES = ("tools/audit/decision_paths.txt", "tools/audit/golden_gate.py", "tools/audit/golden_diff.py",
               "tests/test_golden_diff.py", "tests/test_golden_gate.py", ".github/workflows/golden-gate.yml")
@@ -194,6 +197,12 @@ def main(argv=None, run_diff=None, changed_files=None, base_list=None):
             if golden_rc not in (0, 1):
                 print("golden_gate: golden_diff failed", file=sys.stderr)
                 return 2
+        atlas = [f for f in changed if f.startswith(ATLAS)]
+        if atlas:
+            print(f"{len(atlas)} decision atlas file(s) changed: some board's decisions moved "
+                  "(the rows of a set's file name them)")
+            if touched and golden_rc == 0:
+                golden_rc = 1
         code, message = decide(touched, golden_rc, labels_of(event))
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f"golden_gate: {getattr(error, 'stderr', None) or error}", file=sys.stderr)

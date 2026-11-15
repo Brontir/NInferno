@@ -1,3 +1,4 @@
+# block_shared_bytes 98304
 GeForce RTX 5090 [0x2B85]	263dca54c94cf8d5	2772
 GeForce RTX 5090 D [0x2B87]	263dca54c94cf8d5	2772
 RTX PRO 6000 Blackwell Workstation Edition [0x2BB1]	3ba61341f8e35244	2772

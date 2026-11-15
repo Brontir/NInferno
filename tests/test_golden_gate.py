@@ -1143,6 +1143,12 @@ class Gate(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("goldens-equal", out)
 
+    def test_a_moved_decision_atlas_counts_as_a_golden_change(self):
+        rc, out, _, _ = run(["routes/gb202.json", "tests/data/decision_atlas/base.txt"],
+                            (0, "no golden changes"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("decision atlas", out)
+
     def test_equal_with_label_passes_and_prints_claim(self):
         rc, out, _, _ = run(["routes/gb202.json"], (0, "no golden changes"), labels=["goldens-equal"])
         self.assertEqual(rc, 0)
