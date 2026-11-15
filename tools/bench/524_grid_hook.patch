@@ -1,24 +1,8 @@
-diff --git a/src/ops/generic/ggml_mmq/ggml_mmq.cu b/src/ops/generic/ggml_mmq/ggml_mmq.cu
-index 056d414a8..543e2bcfa 100644
---- a/src/ops/generic/ggml_mmq/ggml_mmq.cu
-+++ b/src/ops/generic/ggml_mmq/ggml_mmq.cu
-@@ -252,8 +252,9 @@ void quantize_activation(Type type, const __nv_bfloat16* x, int ldx, int k, int
- 
- std::size_t fixup_bound(int columns) {
-     // A stream-k launch holds at most one 128-row tile of the call's column tile per SM.
--    int j = 16;
--    while (j < columns && j < 128) j *= 2;
-+    // GRID HOOK: the buffer is sized for the widest forced width (J 128) whatever the call's columns
-+    int j = 128;
-+    (void) columns;
-     return std::size_t(detail::device_facts().sm_count) * j * 128 * sizeof(float);
- }
- 
 diff --git a/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh b/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
-index 65ed9a95c..483118fac 100644
+index c42115c76..bda7f169e 100644
 --- a/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
 +++ b/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
-@@ -41,7 +41,7 @@ constexpr bool work_tiles_arch_matches_table() {
+@@ -42,7 +42,7 @@ constexpr bool work_tiles_arch_matches_table() {
  
  static_assert(work_tiles_arch_matches_table());
  } // namespace ninferno::ops::ggml_mmq::detail
@@ -27,7 +11,7 @@ index 65ed9a95c..483118fac 100644
  #    define NINFERNO_MMQ_SKIP_SPECIALIZATION(J)                                                    \
          (((J) == 80 || (J) == 96) &&                                                               \
           !::ninferno::ops::ggml_mmq::detail::work_tiles_arch(__CUDA_ARCH__))
-@@ -50,12 +50,16 @@ static_assert(work_tiles_arch_matches_table());
+@@ -51,12 +51,16 @@ static_assert(work_tiles_arch_matches_table());
  #include "ggml-cuda/common.cuh"
  #include "ggml-cuda/mmq.cuh"
  
@@ -44,7 +28,7 @@ index 65ed9a95c..483118fac 100644
  
  namespace ninferno::ops::ggml_mmq::detail {
  
-@@ -136,12 +140,28 @@ Launch select_launch(int rows, int columns, int k) {
+@@ -148,12 +152,28 @@ Launch select_launch(int rows, int columns, int k) {
      // they run (core/mmq_columns.h width_cost; the others rank by the tile count).
      const mmq_columns::LaunchFacts facts{rows, k, device.sm_count, device.clock_hz,
                                           device.dram_bytes_per_s};
@@ -75,7 +59,7 @@ index 65ed9a95c..483118fac 100644
          if (cost < best_cost) {
              best_cost     = cost;
              best.k_vram   = config.K_vram;
-@@ -163,6 +183,20 @@ Launch select_launch(int rows, int columns, int k) {
+@@ -175,6 +195,20 @@ Launch select_launch(int rows, int columns, int k) {
          rows, k, columns, best.J, device.sm_count, best.stream_k, best.k_vram, best.I);
      best.blocks = l.blocks;
      best.fixup  = l.fixup;
@@ -96,7 +80,7 @@ index 65ed9a95c..483118fac 100644
      return best;
  }
  
-@@ -250,6 +284,12 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
+@@ -265,6 +299,12 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
      case 32:
          return launch<type, 32>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
                                  out_column_stride, f, stream);
@@ -109,3 +93,19 @@ index 65ed9a95c..483118fac 100644
      case 64:
          return launch<type, 64>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
                                  out_column_stride, f, stream);
+diff --git a/src/ops/generic/ggml_mmq_host.cpp b/src/ops/generic/ggml_mmq_host.cpp
+index eae7ecb06..e0c93147f 100644
+--- a/src/ops/generic/ggml_mmq_host.cpp
++++ b/src/ops/generic/ggml_mmq_host.cpp
+@@ -58,8 +58,9 @@ std::size_t fixup_bound(int columns) {
+     // (select_launch, ggml_mmq_internal.cuh) counts the running device's SMs (device_facts()); the
+     // two are the same device wherever no substitute is set, and a substitute only prices a
+     // workspace for a board it never launches on.
+-    int j = 16;
+-    while (j < columns && j < 128) j *= 2;
++    // GRID HOOK: the buffer is sized for the widest forced width (J 128) whatever the call's columns
++    int j = 128;
++    (void) columns;
+     return std::size_t(device_class().sms) * j * 128 * sizeof(float);
+ }
+ 
