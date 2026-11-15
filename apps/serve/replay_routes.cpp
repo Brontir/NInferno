@@ -106,7 +106,7 @@ int replay_routes_main(int argc, char** argv) {
         overridden = overridden || overrides;
         (overrides ? std::cerr : std::cout)
             << (overrides ? "replay-routes: the start's selection was overridden: taint."
-                         : "note: taint.")
+                          : "note: taint.")
             << key << '=' << value << std::endl;
     }
     if (overridden) {
