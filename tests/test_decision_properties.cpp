@@ -947,7 +947,7 @@ void property_atlas_committed(const std::string& atlas) {
         if (!line.empty()) { committed[line.substr(0, line.find('\t'))] = line; }
     }
     const bool own_limit = header == atlas_header();
-    std::size_t moved = 0;
+    std::size_t moved    = 0;
     std::istringstream a(atlas);
     for (std::string x; std::getline(a, x);) {
         ++cases_checked;
@@ -981,8 +981,9 @@ void property_atlas_committed(const std::string& atlas) {
     }
     std::cout << "atlas " << kAtlasSet << ": " << moved << " rows differ from "
               << atlas_path().filename().string()
-              << (own_limit ? "" : " (made on a build with another block shared memory: " + header +
-                                       "; printed, not failed)")
+              << (own_limit ? ""
+                            : " (made on a build with another block shared memory: " + header +
+                                  "; printed, not failed)")
               << '\n';
 }
 
