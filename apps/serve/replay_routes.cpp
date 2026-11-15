@@ -93,16 +93,20 @@ int replay_routes_main(int argc, char** argv) {
         return 2;
     }
     // What else entered the start's selection besides the board and the shipped tables: a
-    // maintainer's route table, directory, pins or tuners, a tuner's cache, a table keyed by a
-    // class outside the device's chain (taint maintainer, user_tune_cache, foreign_route_table),
-    // and the build (its selector reads the build's compile definitions). A replay without them
-    // would report moves that are not the board's: refused. The other taints are the release
-    // selection's own (entries the shipped tables lend, a driver without clocks, a carried context
-    // cost, a speculation fallback): printed, and replayed.
+    // maintainer's route table, directory, pins or tuners, or a tuner's cache (taint maintainer,
+    // user_tune_cache), and the build (its selector reads the build's compile definitions). A
+    // replay without them would report moves that are not the board's: refused. The other taints
+    // are the release selection's own, which the replay's lookup repeats for the board's class (the
+    // nearest board's table where the board has none, foreign_route_table; entries the shipped
+    // tables lend; a driver without clocks; a carried context cost; a speculation fallback):
+    // printed, and replayed. The start's table and lenders are printed too: a replay binary with
+    // other route tables reports their change as moved lines.
+    for (const auto& [key, value] : runtime::section_of_text(canonical, "sources")) {
+        if (key.rfind("route_table", 0) == 0) { std::cout << "start: sources." << key << '=' << value << '\n'; }
+    }
     bool overridden = false;
     for (const auto& [key, value] : taint) {
-        const bool overrides =
-            key == "maintainer" || key == "user_tune_cache" || key == "foreign_route_table";
+        const bool overrides = key == "maintainer" || key == "user_tune_cache";
         overridden = overridden || overrides;
         (overrides ? std::cerr : std::cout)
             << (overrides ? "replay-routes: the start's selection was overridden: taint."

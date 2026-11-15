@@ -520,7 +520,10 @@ version, the commit and the runtime).
 |---|---|
 | `0` | no route line moved: the registry row gives the start's routes |
 | `1` | some lines moved: each is printed with the start's and the replay's value |
-| `2` | a usage or input error, or a refusal: a start whose selection a maintainer overrode (taint `maintainer`, `user_tune_cache`, `foreign_route_table`), a start of another build, a start on another PCI id than `BOARD` |
+| `2` | a usage or input error, or a refusal: a start whose selection a maintainer overrode (taint `maintainer`, `user_tune_cache`), a start of another build, a start on another PCI id than `BOARD` |
 
-Other taints (`borrowed_routes`, `clocks`, `carried_context_cost`, the speculation ones) belong to
-the release selection: they are printed as notes and the start is replayed.
+Other taints (`foreign_route_table`: the nearest board's table where the board has none,
+`borrowed_routes`, `clocks`, `carried_context_cost`, the speculation ones) belong to the release
+selection, which the replay's own lookup repeats: they are printed as notes and the start is
+replayed. The start's `sources.route_table` lines are printed too: a binary with other route tables
+reports their change as moved lines.
