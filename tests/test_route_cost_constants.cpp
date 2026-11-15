@@ -10,9 +10,11 @@
 // one that is no kernel's, the architecture table's row it is read off (kCountedSources). No GPU.
 
 #include "core/arch_registry.h"
+#include "core/board_registry.h"
 #include "ops/generic/family_facts.h"
 #include "ops/generic/route_cost_constants.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -273,6 +275,37 @@ int main(int argc, char** argv) {
                 std::printf("\n");
             }
         }
+    }
+    // #612 step 7: the fitted L2 rates against the L2's rated width (arch_registry
+    // l2_bytes_per_l2_clock over the board's SMs, an L2 clock; the L2 clock runs at 0.87-0.95 of
+    // the SM clock on the cards ncu read, so a rate per SM clock is lower still). Printed, not
+    // failed: a fitted rate above the ceiling is the cost model's error (#613), not this table's.
+    {
+        namespace br = ninferno::board_registry;
+        double lo = 0, hi = 0;
+        int boards = 0;
+        for (const br::BoardRow& row : br::kRows) {
+            const int cc = row.major * 10 + row.minor;
+            const double l2_per_clk =
+                ninferno::arch_registry::l2_bytes_per_l2_clock(cc, row.l2_mib);
+            if (cc != 120 || l2_per_clk <= 0 || row.sms <= 0) continue;
+            const double ceiling = l2_per_clk / row.sms;
+            lo                   = boards == 0 ? ceiling : std::min(lo, ceiling);
+            hi                   = std::max(hi, ceiling);
+            ++boards;
+        }
+        if (boards > 0) {
+            const double fit = rc::kL2BytesPerSmClockGb20x.value();
+            std::printf("L2 GB20x: fitted %g B/clk/SM, the rated width over the SMs %.1f..%.1f on "
+                        "%d boards (fitted x%.2f..x%.2f)\n",
+                        fit, lo, hi, boards, fit / hi, fit / lo);
+        } else {
+            std::printf("FAIL: no GB20x board has an L2 slice count\n");
+            ++failures;
+        }
+        std::printf("L2 GA10x: fitted %g B/clk/SM; no slice size (GA102 0.25 MiB, GA106 0.33 MiB "
+                    "a slice: per chip, #612)\n",
+                    rc::kL2BytesPerSmClockGa10x.value());
     }
     std::printf("route cost constants: %zu listed, %zu fitted\n",
                 std::size(rc::kRouteCostConstants), fitted);
