@@ -2912,7 +2912,7 @@ its limit is #928 (#619's process: counts, a prediction, then an A/B on the GV10
 
 ## 90. IQ4_XS and Q2_K take the column tile of least work where their own grids ran (#619 step 13, 15.11, measured)
 
-**Decision.** `mmq_columns::work_tiles_format` takes the generation as well as the format. Q4_K and Q6_K are unchanged: every generation with `mmq_work_tiles` (DECISIONS 74, 78). IQ4_XS joins on GA10x, Ada and GB20x, and Q2_K on Ada. On those generations ggml's matrix kernel ranks the widths 16, 32, 64, 80, 96, 128 by the least work at the row's own `mmq_tile_fixed` (GA10x and Ada 0.20, GB20x 0.10), as it does for Q4_K. Every other format, and these two on every other generation, keep the fewest tiles. Turing's launch law was fitted on the Q4_K / Q6_K grid, so IQ4_XS and Q2_K wait for a Turing grid of their own. The 80- and 96-column kernels are already built for those architectures for every format (`work_tiles_arch`), so no kernel is added.
+**Decision.** `mmq_columns::work_tiles_format` takes the generation as well as the format. Q4_K and Q6_K are unchanged: every generation with `mmq_work_tiles` (DECISIONS 74, 78). IQ4_XS joins on GA10x, Ada and GB20x, and Q2_K on GA10x and Ada. Q2_K stays off GB20x: its grid there (RTX 5090) leaves 1.81 % regret at f 0.10 against the 0.5 % bound written before the run, with the 128-column tile 8-11 % slower than two 64-column ones (one 70 144-byte CTA a SM against two), a term the tile law lacks (#941). On those generations ggml's matrix kernel ranks the widths 16, 32, 64, 80, 96, 128 by the least work at the row's own `mmq_tile_fixed` (GA10x and Ada 0.20, GB20x 0.10), as it does for Q4_K. Every other format, and these two on every other generation, keep the fewest tiles. Turing's launch law was fitted on the Q4_K / Q6_K grid, so IQ4_XS and Q2_K wait for a Turing grid of their own. The 80- and 96-column kernels are already built for those architectures for every format (`work_tiles_arch`), so no kernel is added.
 
 **Grids** (the DECISIONS 74 kit, `tools/bench/run_524_turing_grid.sh` with `ARCH_CC` and `PRED`; Qwen3-8B IQ4_XS and Q2_K, 8 widths × 21 slice sizes × 2 visits, 4 requests a point, k = 7 probed exact, request noise 0.3 %):
 
@@ -2944,6 +2944,14 @@ The prediction was wrong for IQ4_XS on GA10x and Ada. It put the fixed share at 
   - 448 tokens is **+2.4 %** (228.1 → 233.6 ms). At f 0.20 five 96-column tiles tie four 128-column ones (4.0 against 4.0 tile steps), the rule takes the narrower, and the card runs it slower. Q4_K has the same tie, so this is the rule's tie, not the format's; it stays until a tie term is counted.
   - The mix is 129.34 → 119.64 ms (**−7.5 %**).
 
+- **RTX 3060, Q2_K at f 0.20.** 136..160 −24.6..−24.8 %, 176..192 −14.2..−14.5 %, 264..288 −15.1..−15.2 %, 96 −16.8 %, 320 −8.8 %; 448 **+2.6 %** (the same tie as above); the mix 169.08 → 152.60 ms (**−9.7 %**).
+
 No other size is slower on any card.
+
+**Route choice.** The selector's MMQ term now prices the tile the kernel runs for these formats: the work table's width, not 8-column steps. `route-tune` at the branch head (RTX 4070 Ti, 4060 Ti, 5090) has every cell the change moves onto ggml_mmq at 192 tokens as the fastest timed route. One direction got worse, on the RTX 4060 Ti, Q2_K at 48 tokens:
+- 4096x4096: W4A8 64x64 at 76.8 µs against ggml_mmq's 69.6 (+10 %);
+- 1024x4096: rmma at 36.4 against 29.3 (+24 %).
+
+At 48 columns the kernel runs a 64-column tile either way. The old term priced 48 columns and so cancelled #785's error (MMQ priced high and W4A8 low at T 17-64 on Ada); the new term prices the 64 the kernel runs and exposes it. Over the cells timed on both builds on that card the change is −5.3 %. The two regressed cells are #785's, recorded there, and not fitted here.
 
 **Numerics.** As DECISIONS 74: a different width changes the stream-k split and so the sums' order.

@@ -18,7 +18,7 @@
 // widths are priced by the launch each runs (launch_seconds): its longest CTA's units times a
 // unit's cost, plus the stream-k fixup where the launch splits tiles. No other generation or format
 // has been run over the widths: a generation joins by its row, a format by its grid on that
-// generation (work_tiles_format: IQ4_XS on GA10x, Ada and GB20x, Q2_K on Ada, #619 step 13).
+// generation (work_tiles_format: IQ4_XS on GA10x, Ada and GB20x, Q2_K on GA10x and Ada, #619 step 13).
 
 #include "core/arch_registry.h"
 #include "core/generation.h"

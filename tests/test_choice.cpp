@@ -85,7 +85,7 @@ static_assert(pick(144, 8, 6, false, 128, k4096) == 128 &&
               pick(192, 12, 0, false, 128, k4096) == 128 &&
               pick(16, 8, 6, false, 128, k4096) == 16);
 
-// Q4_K and Q6_K on every generation; IQ4_XS on GA10x, Ada and GB20x and Q2_K on Ada, where their
+// Q4_K and Q6_K on every generation; IQ4_XS on GA10x, Ada and GB20x and Q2_K on GA10x and Ada, where their
 // grids ran (#619 step 13); not on Turing, whose launch law the Q4_K / Q6_K grid fitted.
 namespace wtf {
 using ninferno::QType;
@@ -99,7 +99,7 @@ static_assert(work_tiles_format(QType::GGML_IQ4_XS, 8, 6) &&
               work_tiles_format(QType::GGML_IQ4_XS, 12, 0) &&
               !work_tiles_format(QType::GGML_IQ4_XS, 7, 5));
 static_assert(work_tiles_format(QType::GGML_Q2_K, 8, 9) &&
-              !work_tiles_format(QType::GGML_Q2_K, 8, 6) &&
+              work_tiles_format(QType::GGML_Q2_K, 8, 6) &&
               !work_tiles_format(QType::GGML_Q2_K, 12, 0) &&
               !work_tiles_format(QType::GGML_Q2_K, 7, 5));
 } // namespace wtf
