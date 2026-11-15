@@ -91,14 +91,15 @@ std::string usage_text() {
            "       [--kv-dtype bf16|int8|fp8|nvfp4|k8v4] [--activations exact|fast|int8]\n"
            "       [--state-dtype f32|bf16|f16] [--step-tokens N]\n"
            "       [--output <directory>]\n"
-           "       [--kld-out <file> [--kld-top-k N] [--reference-model NAME] | --kld <file>]\n"
+           "       [--kld-out <file> [--kld-top-k N] | --kld <file>] [--reference-model NAME]\n"
            "       [--log-level trace|debug|info|warning|error|critical|off]\n" +
            std::string(ninferno::product::kScoringEngineFlagsUsage) +
            "  --kld-out  record this (reference) model's top-K tokens per position\n"
            "  --kld      KL divergence and top-1 agreement against such a reference, scored\n"
            "             on the same corpus, context and stride\n"
-           "  --reference-model  check this Q8_0 reference's mean NLL against the measured\n"
-           "             model's recorded one (the curves' protocol; exit 3 beyond the tolerance)\n"
+           "  --reference-model  (not with --kld) check this Q8_0 reference's mean NLL against\n"
+           "             the measured model's recorded one (the curves' protocol; exit 3 beyond\n"
+           "             the tolerance)\n"
            "  --step-tokens  run the scored targets N tokens per call, as decode (1) or a\n"
            "             speculative round (N) runs them\n"
            "  --device   N counts GPUs in PCI bus order, as nvidia-smi does\n";
@@ -217,7 +218,8 @@ Options parse_options(int argc, char** argv) {
             usage_error("--reference-model scores under the curves' protocol: --corpus "
                         "eval/corpora/perplexity-1m/manifest.json --quick --context 4096 --stride "
                         "2048 --activations exact --kv-dtype bf16, without --kld, --step-tokens, "
-                        "--state-dtype, --rope-yarn-factor or a route, table or tuner pin");
+                        "--state-dtype, --rope-yarn-factor or any maintainer flag but "
+                        "--artifact-io");
         }
     }
     if (out.kld_top_k == 0 || out.kld_top_k > 64) { usage_error("--kld-top-k must be 1..64"); }
