@@ -65,6 +65,15 @@ void snapshots_parse() {
         std::cout << "sm_" << arch << ": " << header->kernels << " kernels, nvcc " << header->nvcc
                   << ", source " << header->source.substr(0, 12) << '\n';
         expect(header->kernels > 0, "sm_" + std::string(arch) + " holds no kernel");
+        // The fingerprint's digest of the snapshot (#612 step 10): 64 hex digits, one per label.
+        const std::string digest = kf::snapshot_sha256(arch);
+        expect(digest.size() == 64 &&
+                   digest.find_first_not_of("0123456789abcdef") == std::string::npos,
+               "sm_" + std::string(arch) + ": the snapshot's sha256");
+        for (const auto other : archs) {
+            expect(other == arch || kf::snapshot_sha256(other) != digest,
+                   "sm_" + std::string(arch) + " and sm_" + std::string(other) + ": one digest");
+        }
         expect(!header->nvcc.empty() && header->nvcc != "unknown",
                "sm_" + std::string(arch) + " records no nvcc");
     }

@@ -396,6 +396,16 @@ int facts_reach_their_section() {
         {"facts.mma_slow", [](DeviceClass& d) { d.facts.mma_slow = true; }},
     };
     int failures = each_field_reaches("facts", sample_device(), collect, edits);
+    // The architecture table's row (#612 step 10): another capability's row is another value.
+    {
+        DeviceClass volta = sample_device();
+        volta.major       = 7;
+        volta.minor       = 0;
+        const auto here   = collect(sample_device());
+        failures += check(here.contains("arch_row") && !here.at("arch_row").empty() &&
+                              here.at("arch_row") != collect(volta).at("arch_row"),
+                          "facts: the architecture table's row reaches its section");
+    }
     // Off the verified table the driver's values feed the facts, and are inputs.
     DeviceClass unknown   = sample_device();
     unknown.pci_device_id = 0;
