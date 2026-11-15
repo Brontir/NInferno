@@ -165,9 +165,9 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     // label its kernels run (sass_arch), by its text's digest; "none" where the device runs PTX the
     // driver compiled, and the prices read no snapshot.
     {
-        namespace kf             = ops::detail::generic::kernel_facts;
-        const auto label         = kf::sass_arch();
-        const std::string digest = label ? kf::snapshot_sha256(*label) : std::string();
+        namespace kf                    = ops::detail::generic::kernel_facts;
+        const auto label                = kf::sass_arch();
+        const std::string digest        = label ? kf::snapshot_sha256(*label) : std::string();
         in.facts["kernel_facts_sha256"] = digest.empty() ? std::string("none") : digest;
     }
     in.build   = runtime::build_of();
