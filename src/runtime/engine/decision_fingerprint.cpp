@@ -259,7 +259,7 @@ DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int 
     // core/arch_registry.h): its range and every limit, so that a table edit shows in the facts.
     {
         const arch_registry::ArchRow& r = arch_registry::find(d.major, d.minor);
-        out["arch_row"] = number(r.cc) + "-" + number(r.cc_to) + " " +
+        out["arch_row"]                 = number(r.cc) + "-" + number(r.cc_to) + " " +
                           number(static_cast<std::uint64_t>(r.smem_per_block_optin)) + "/" +
                           number(static_cast<std::uint64_t>(r.smem_per_sm)) + " build " +
                           number(static_cast<std::uint64_t>(r.build_smem_per_block_optin)) + "/" +

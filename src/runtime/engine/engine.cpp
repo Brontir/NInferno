@@ -164,8 +164,8 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     // The kernel facts this build's decisions are priced from (#612 step 10): the committed
     // snapshot of the build's architecture, by its text's digest ("none" without one).
     {
-        namespace kf = ops::detail::generic::kernel_facts;
-        const std::string digest       = kf::snapshot_sha256(kf::build_arch());
+        namespace kf                    = ops::detail::generic::kernel_facts;
+        const std::string digest        = kf::snapshot_sha256(kf::build_arch());
         in.facts["kernel_facts_sha256"] = digest.empty() ? std::string("none") : digest;
     }
     in.build   = runtime::build_of();
