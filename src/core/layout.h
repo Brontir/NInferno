@@ -7,7 +7,10 @@
 #include <cstdint>
 #include <initializer_list>
 #include <array>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace ninferno {
 
@@ -60,6 +63,17 @@ private:
     std::size_t peak_   = 0;
 };
 
+// A region a dry-run builder handed out (#615 W5): the op that took it and its bytes in the arena.
+// Regions live together never overlap; a closed scope's bytes are reused by what comes after it
+// at the same offsets (a scratch scope's by the next tensor of its parent), which is what a check
+// of concurrent launches reads (ops/generic/scratch_lifetime.h). Offsets are the arena's own.
+struct WorkspaceRegion {
+    std::string op;
+    std::size_t offset = 0;
+    std::size_t bytes  = 0;
+    bool scratch       = false; // an op's raw scratch (alloc_bytes), not a tensor (alloc)
+};
+
 // Dry-run counterpart of WorkspaceArena. Target allocation helpers can run against this builder
 // and the real arena, including identical nested scope lifetimes, without maintaining byte
 // formulas.
@@ -86,9 +100,21 @@ public:
     [[nodiscard]] Scope scope() noexcept;
     [[nodiscard]] std::size_t peak_bytes(std::size_t alignment = 256) const;
 
+    // Records every region handed out from here on into `sink` (nullptr: stops), under the op the
+    // caller names last (`op`). Recording changes no offset and no peak.
+    void record(std::vector<WorkspaceRegion>* sink) noexcept { sink_ = sink; }
+
+    [[nodiscard]] bool recording() const noexcept { return sink_ != nullptr; }
+
+    void op(std::string name) { op_ = std::move(name); }
+
 private:
-    std::size_t cursor_ = 0;
-    std::size_t peak_   = 0;
+    void note(std::size_t offset, std::size_t bytes, bool scratch);
+
+    std::size_t cursor_                 = 0;
+    std::size_t peak_                   = 0;
+    std::vector<WorkspaceRegion>* sink_ = nullptr;
+    std::string op_;
 };
 
 } // namespace ninferno

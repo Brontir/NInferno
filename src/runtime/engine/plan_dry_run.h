@@ -30,6 +30,7 @@
 // Pure: no files, no clock, and no CUDA but the class of a CUDA device the facts name that is not
 // this thread's current one (dry_run_plan).
 
+#include "core/layout.h"
 #include "models/qwen3_5/program/planning/state_shape.h"
 #include "ninferno/types.h"
 #include "runtime/engine/plan_ladder.h"
@@ -461,6 +462,9 @@ struct PlanRungBytes {
     // How the workspace was sized: "start" (the family's query: a start's own capacity functions
     // over the facts), else "formula" with why the query did not answer (#302).
     std::string workspace_basis;
+    // The prefill chunk's arena region by region where the family's query records them (Qwen 3.5,
+    // #615 W5): the op that takes each, its offset and bytes. Empty under the formula.
+    std::vector<WorkspaceRegion> workspace_regions;
     std::uint64_t graphs    = 0; // the CUDA graph allowance
     // The rest of the persistent layout: page tables, replay records, the drafter's features, the
     // Program's round and sampling buffers, alignment (the approximate estimate: a declared share).
@@ -500,7 +504,7 @@ struct PlanRungBytes {
 [[nodiscard]] std::uint64_t plan_workspace_estimate(
     const PlanModelFacts& model, const PlanRung& rung, const EngineOptions& options,
     std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan = nullptr,
-    std::string* basis = nullptr);
+    std::string* basis = nullptr, std::vector<WorkspaceRegion>* regions = nullptr);
 
 // A family's workspace from its facts (#302): the arena a start would size for the rung's context,
 // chunk and `concurrency` under `options`, or no bytes where the facts do not carry what it needs,
@@ -511,6 +515,7 @@ struct PlanRungBytes {
 struct PlanWorkspaceAnswer {
     std::optional<std::uint64_t> bytes;
     std::string why;
+    std::vector<WorkspaceRegion> regions; // the prefill arena's, where the planner records them
 };
 using PlanWorkspaceQuery = std::function<PlanWorkspaceAnswer(
     const PlanModelFacts& model, const PlanRung& rung, const EngineOptions& options,
