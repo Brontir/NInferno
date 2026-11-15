@@ -52,6 +52,7 @@
 
 #include "core/cost_constants.h"
 #include "ninferno/types.h"
+#include "ops/generic/route_cost_constants.h"
 #include "ops/softmax_attention/dense/causal_cache/int8/prompt_fast_cost.h"
 
 #include <cstdint>
@@ -166,6 +167,21 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
 // 60); a generation without a row takes Ada's (transferred). Ampere (RTX 3060, one card): a
 // weight-reading kernel 3.1-5.8 us, no PDL, no Ada L2. Volta (Quadro GV100, one card): its own row,
 // a weight-reading kernel's from Q8_0 alone (its K-quants: kWeightSmRate, DECISIONS 72).
+// What the per-kernel residual holds, against the launch facts per architecture (#613 PR-8b,
+// core/launch_facts.h; on paper, no value moves: PR-8e prices it from the table): a graph node
+// (node_ns, gb20x's with PDL) plus the dispatch ramp of a decode GEMV's grid of about 1024 CTAs
+// (floor_ns_1024 - floor_ns_1; measured without PDL, so on gb20x PDL may hide part of it), and the
+// rest named, not yet counted: the first loads' DRAM latency per round of resident CTAs, the drain
+// and the epilogue. These are the probe's facts; the paragraph above holds the census-fitted t0
+// (launch_node_seconds) these replace in PR-8e.
+//   ada    2.35 us = node 0.50 + ramp 0.68 + rest 1.17
+//   gb20x  1.90 us = node 0.29 (PDL) + ramp 0.39 + rest 1.21 (RTX 5090's probe)
+//   ga10x  4.72 us = node 0.57 + ramp 0.66 + rest 3.50
+//   turing 8.56 us = node 0.69 + ramp 0.53 + rest 7.34
+//   volta  6.37 us = node 0.95 + ramp 1.52 + rest 3.90
+// The launch is half the residual on Ada, a third on gb20x, a quarter on GA10x and under a fifth on
+// Turing: beyond Ada the rest, not the launch, is the term to count (L0 x rounds + drain, from the
+// kernels' facts).
 struct KernelCost {
     std::string_view generation;
     double gemv;  // seconds a weight-reading kernel beyond its bytes
@@ -645,10 +661,17 @@ inline constexpr double kMmqTile        = 128;
 // of the two), at the DRAM rate (the census: RTX 3060, 2080 Ti and 5090 within 8 %; Ada's L2 holds
 // part of them). The small kernels' passes (kSmallKernelCost, read on the int8 route) also count
 // that route's one quantization an input, which MMQ does not run: not taken out. A stream-k call's
-// fixup reads and writes a tile's FP32 partial a SM.
-inline constexpr double kMmqInputBytes   = 3.125; // an input element, a grid
-inline constexpr double kMmqOutputBytes  = 4;     // read, an output element of the tiles
-inline constexpr double kMmqWrittenBytes = 2;     // written, an element of the call's output
+// fixup reads and writes a tile's FP32 partial a SM. Counted, not fitted (#613 PR-8c): the input's
+// bytes are the selector's own count of ggml's quantizer (route_cost::kQuantMmqBytesPerValue: 2 B
+// of BF16 read and one 144-byte block_q8_1_mmq written a 128 values, ggml_mmq.cu static_asserts
+// it), the output's the tiles' FP32 element read and the call's 16-bit element written. The FP32
+// plane the tiles write is inside the kernel's residual (kKernelCost) until the shared MMQ term
+// prices it (#613 PR-5).
+inline constexpr double kMmqInputBytes =
+    ops::detail::generic::route_cost::kQuantMmqBytesPerValue.value(); // an input element, a grid
+inline constexpr double kMmqOutputBytes  = sizeof(float);             // read, an output element
+inline constexpr double kMmqWrittenBytes = 2; // written, a 16-bit element of the call's output
+static_assert(kMmqInputBytes == 3.125, "PR-8c re-tags the count: the value stays");
 
 // A prefill's small kernels (DECISIONS 66, the census of Qwen3.5 9B Q8_0's 1819-token prompt outside
 // its linears, attention and tail calls, seven cards). The Gated DeltaNet's chunked scan is a count
