@@ -225,6 +225,7 @@ const std::vector<Spec>& specs() {
              "kTransferGeneration",
              "kMoeChunkTwoCards",
              "kMoeChunkCurveGeneration", // the generation kMoeChunkShare (recorded) was read on
+             "kMoeChunkVerified",        // the generations a sweep verified the carried curve on
              "kDefaultChunk",
              "kMoeChunks",
              // the kernels' own geometry and thresholds, read off their source

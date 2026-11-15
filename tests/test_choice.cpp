@@ -1395,8 +1395,9 @@ void weighs_the_quantizations(const json& fixture) {
 
 // The chunk of an MoE: on Ada a 2048-token prompt fills a chunk of 2048 (4096 adds nothing for it,
 // and the tie goes to the narrower: more context), by speed alone (a chunk has no accuracy term, so
-// the accuracy gate does not hold it); on Blackwell (no reference card) the default, with the chunk
-// the carried curve estimates; on a generation without such rows the default.
+// the accuracy gate does not hold it); on Blackwell by the carried curve a sweep verified
+// (kMoeChunkVerified), on its 12.1 capability the default with the curve's estimate; on a
+// generation without such rows the default.
 void chooses_the_chunk(const json& fixture) {
     const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
     Bench b{model_of(m35), card_of(fixture.at("cards").at("RTX 4090")), {quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"))}};
@@ -1435,11 +1436,23 @@ void chooses_the_chunk(const json& fixture) {
     check(pinned.chosen && chosen(pinned).candidate.chunk == 4096 && !pinned.chunk_by_speed, "a pinned chunk stays");
     b.card = card_of(fixture.at("cards").at("RTX 5070 Ti"));
     const ch::Choice bw = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
-    // Blackwell has no measured chunk sweep: its own MoE prefill rate (two lab cards) with the
-    // curve's slope carried estimates the chunk, and the pick stays the default.
-    check(bw.chosen && !bw.chunk_by_speed && bw.chunk_basis == ch::ChunkBasis::CarriedCurve &&
-              chosen(bw).candidate.chunk == 1024 && bw.chunk_estimate == 2048,
-          "Blackwell: the default chunk, 2048 estimated for a 2048-token prompt");
+    // Blackwell: its own MoE prefill rate (two lab cards) with the curve's slope carried, which a
+    // sweep on two of its cards verified (kMoeChunkVerified, #618 step 2): it decides, by speed.
+    check(bw.chosen && bw.chunk_by_speed && bw.chunk_basis == ch::ChunkBasis::VerifiedCurve &&
+              chosen(bw).candidate.chunk == 2048 && bw.chunk_estimate == 0,
+          "Blackwell: the verified curve picks 2048 for a 2048-token prompt");
+    // A capability of the generation no lab card has (12.1, the GB10) carries the curve only to
+    // estimate: its reference row does not decide.
+    {
+        auto gb10       = b;
+        gb10.card.minor = 1;
+        const ch::Choice e =
+            ch::choose(gb10.model, gb10.card, gb10.quants[0],
+                       ch::allowed_axes(gb10.model, KvCacheStorage::Int8Group64), {}, task, own);
+        check(e.chosen && !e.chunk_by_speed && e.chunk_basis == ch::ChunkBasis::CarriedCurve &&
+                  chosen(e).candidate.chunk == 1024 && e.chunk_estimate == 2048,
+              "a 12.1 board: the default chunk, 2048 estimated");
+    }
     check(ada.chunk_basis == ch::ChunkBasis::Own && ada.chunk_estimate == 0,
           "Ada: the chunk rests on its own rows");
     // A generation without an MoE prefill row of two cards keeps the default chunk.

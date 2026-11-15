@@ -2107,9 +2107,18 @@ ChunkBasis chunk_basis_of(const ModelFacts& model, const CardFacts& card, const 
     if (!generation_known(card.major, card.minor)) { return ChunkBasis::Transferred; }
     // Another generation whose own MoE prefill rate rests on two lab cards: its saturated rate
     // times the measured shares' slope, carried unchanged, estimates the chunk but never decides
-    // it (#300: another generation's rows estimate, they do not decide).
+    // it (#300: another generation's rows estimate, they do not decide), until a sweep on two of
+    // its own cards verified the estimate (kMoeChunkVerified): then the carried curve decides on
+    // the generation's boards (its reference row's, not a borrowed or lent one).
     for (const PrefillEta& row : kPrefillEta) {
-        if (row.moe && row.generation == gen && row.cards >= 2) { return ChunkBasis::CarriedCurve; }
+        if (!row.moe || row.generation != gen || row.cards < 2) { continue; }
+        const auto ref = reference_of(card, gates);
+        for (const VerifiedChunkCurve& v : kMoeChunkVerified) {
+            if (v.generation == gen && v.cards >= 2 && ref && ref->chunk_decides && !ref->lent) {
+                return ChunkBasis::VerifiedCurve;
+            }
+        }
+        return ChunkBasis::CarriedCurve;
     }
     return ChunkBasis::Transferred;
 }
@@ -2365,7 +2374,9 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     out.resolutions         = bands;
 
     out.chunk_basis                    = chunk_basis_of(model, card, gates);
-    out.chunk_by_speed                 = out.chunk_basis == ChunkBasis::Own && !pins.chunk;
+    out.chunk_by_speed =
+        (out.chunk_basis == ChunkBasis::Own || out.chunk_basis == ChunkBasis::VerifiedCurve) &&
+        !pins.chunk;
     // The enumeration order breaks exact ties (better()): one canonical order of each axis's
     // values (allowed_axes'), never the order a caller listed them in (#301).
     std::vector<KvCacheStorage> kvs = pins.kv ? std::vector<KvCacheStorage>{*pins.kv} : allowed.kv;
