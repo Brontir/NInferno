@@ -816,8 +816,9 @@ int stability_and_golden() {
     // replay-routes): escapes, a section among others, and the route lines' own text.
     {
         rt::DecisionInputs routed = pinned;
-        routed.routes = {{"q4_K speed none 4096x4096 of 4096 rows", "1-3 r8	, 4-16 rmma; prefill 1024 mmq"},
-                         {"count", "1 problem"}};
+        routed.routes             = {
+            {"q4_K speed none 4096x4096 of 4096 rows", "1-3 r8	, 4-16 rmma; prefill 1024 mmq"},
+            {"count", "1 problem"}};
         const auto written = rt::decision_fingerprint(routed);
         failures += check(rt::section_of_text(written.canonical, "options") == pinned.options &&
                               rt::section_of_text(written.routes, "routes") == routed.routes &&

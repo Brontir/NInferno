@@ -86,7 +86,7 @@ int replay_routes_main(int argc, char** argv) {
     }
     int moved = 0;
     for (const auto& [key, value] : recorded) {
-        const auto again = replayed.find(key);
+        const auto again      = replayed.find(key);
         const std::string now = again == replayed.end() ? std::string("<absent>") : again->second;
         if (now == value) { continue; }
         ++moved;
