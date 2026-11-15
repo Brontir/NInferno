@@ -2834,7 +2834,9 @@ Where the estimate is 4096 it held at every point: 4096 is the fastest at the lo
 +11 % over 2048) and ties 2048 at the short ones (within 2 %, inside the runs' spread). The 5070
 Ti's Q3_K_S estimate is 2048, against a measured 4096 faster by 9.6 % at 21K: the one point where
 the board-priced estimate missed (its cause is open, #926; the deciding price, below, is the
-reference card's). 1024, today's pick, is the slowest everywhere (12 to 23 % below the best). Decode does not move with the chunk (within 1 %).
+reference card's).
+1024, today's pick, is the slowest everywhere (12 to 23 % below the best). Decode does not move
+with the chunk (within 1 %).
 #659's own written prediction for gemma (2048 at every ask) was wrong at 7.8K; the plan's estimate
 (4096) was right. gemma does not start on the 16 GB 5070 Ti (15.78 GiB of weights), so its chunk
 has no point there.
