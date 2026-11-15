@@ -1749,7 +1749,8 @@ it decides, else at its own floor, `resolution_width`; `Choice::resolution` repo
 worth's band) is indistinguishable from it in speed, so the speed term does not rank them; the
 accuracy term does. The order is the one of the cross-quantization band (DECISIONS 60): a candidate
 wins only if its modelled KLD is lower than the anchor's by more than `kWorthTie`; the lowest KLD
-first, then the lowest canonical index; otherwise the anchor stays (`resolve_within_resolution`).
+first, then the fewer seconds (beyond `kWorthTie`; equal KLD: the drafters of one set of storages,
+#918), then the lowest canonical index; otherwise the anchor stays (`resolve_within_resolution`).
 Context beyond what was asked is headroom (DECISIONS 73) and does not count, so an equal-KLD
 sibling (a narrower chunk, plain against a drafter, BF16 against INT8 at 8K) never moves the pick.
 A NaN KLD never wins. Without a reference card the resolution is 0 and nothing changes.
@@ -1768,9 +1769,10 @@ card), the band does not decide and the comparison is resolved at its own floor 
 never beyond. On a compute capability with no generation row the floor is the lent generation's
 own band (cc 13.0, priced from Blackwell's rows: 0.0170), not the lender's. A moved pick is never
 dominated on both axes by an eligible candidate: among those no slower and strictly more accurate
-than it, the lowest KLD, then the fewer seconds, then the lowest index, takes it (equal KLD is the
-drafters of one set of storages: the index alone handed the pick to the earliest listed, #918), which may lie beyond its own comparison's
-width (`explain` says so; with equal widths, as today, it moves nothing). The worth itself still
+than it, or as accurate and faster (#918), the lowest KLD, then the fewer seconds, then the lowest
+index, takes it, which may lie beyond its own comparison's width (`explain` says so; with equal
+widths, as today, it moves nothing). The index alone had handed an equal-KLD pick to the earliest
+listed drafter, often plain decode (#918). The worth itself still
 ranks by point estimates (their error per basis is the cost model's work, #613). With
 `Gates::typed_resolution` closed, the old single number weighs every comparison as before (#618).
 

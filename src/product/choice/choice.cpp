@@ -2654,17 +2654,23 @@ std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
         }
     }
     // A moved pick is never dominated: among the candidates no slower and strictly more accurate
-    // than it, the one of the lowest KLD, then the lowest index, takes it (comparisons of unequal
-    // widths could otherwise leave it out). Such a pick may lie beyond its own comparison's width
-    // of the anchor; it is no slower than one inside its band.
+    // than it, or as accurate and faster by more than the tie (#918), the one of the lowest KLD,
+    // then the fewer seconds, then the lowest index, takes it (comparisons of unequal widths could
+    // otherwise leave it out). Such a pick may lie beyond its own comparison's width of the
+    // anchor; it is no slower than one inside its band. Every step lowers the KLD by more than the
+    // tie, or keeps it and lowers the seconds by more than the tie: the pass ends.
     for (bool again = pick != anchor; again;) {
         again           = false;
         const Scored& p = scored[pick];
         std::optional<std::size_t> by;
         for (const std::size_t i : eligible) {
             const Scored& s = scored[i];
+            const bool more_accurate = s.accuracy.kld + kWorthTie < p.accuracy.kld;
+            const bool as_accurate_faster =
+                std::abs(s.accuracy.kld - p.accuracy.kld) <= kWorthTie &&
+                std::log(s.decision_seconds / p.decision_seconds) < -kWorthTie;
             if (!(s.decision_seconds > 0) || s.decision_seconds > p.decision_seconds ||
-                !(s.accuracy.kld + kWorthTie < p.accuracy.kld)) {
+                !(more_accurate || as_accurate_faster)) {
                 continue;
             }
             const bool lower = !by || s.accuracy.kld < scored[*by].accuracy.kld - kWorthTie;
