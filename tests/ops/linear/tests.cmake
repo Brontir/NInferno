@@ -267,21 +267,32 @@ endif()
 string(STRIP
   "${CMAKE_CUDA_FLAGS} ${CMAKE_CUDA_FLAGS_${ninferno_build_type_upper}} rdc=${ninferno_kernel_facts_rdc} lineinfo=${NINFERNO_CUDA_LINEINFO} ptx=${NINFERNO_CUDA_EMBED_PTX}"
   ninferno_kernel_facts_flags)
+# The check reads ninferno-serve where it is built: the shipped binary, and on sm_120a the only
+# one that holds the Gemma 4 kernels (that arch's link of the selector golden test holds none, while
+# libninferno_ops.a does; #830). Its register-MMA rows are the golden test's, byte for byte.
+if(TARGET ninferno-serve AND NOT NINFERNO_SHARED_OP_TESTS)
+  set(ninferno_kernel_facts_check_binary $<TARGET_FILE:ninferno-serve>)
+  set(ninferno_kernel_facts_check_target ninferno-serve)
+else()
+  set(ninferno_kernel_facts_check_binary ${ninferno_kernel_facts_binary})
+  set(ninferno_kernel_facts_check_target ninferno_selector_golden_test)
+endif()
 add_test(NAME ninferno_kernel_facts_test
   COMMAND ${Python3_EXECUTABLE} -B ${PROJECT_SOURCE_DIR}/tools/kernel_facts/kernel_facts.py check
-    --binary ${ninferno_kernel_facts_binary} --expected ${ninferno_kernel_facts_snapshot}
+    --binary ${ninferno_kernel_facts_check_binary} --expected ${ninferno_kernel_facts_snapshot}
     --nvcc ${CMAKE_CUDA_COMPILER_VERSION} --cuda-bin ${ninferno_cuda_bin})
 ninferno_label_tests(ninferno_kernel_facts_test LABELS host slow)
 set_tests_properties(ninferno_kernel_facts_test PROPERTIES SKIP_RETURN_CODE 77)
 # `ninja ninferno_kernel_facts_update`: the snapshot of this build's architecture rewritten from
-# its binary into the source tree (then regenerate the selector goldens that move with it).
+# the binary the check reads (ninferno-serve where built: every family's kernels) into the source
+# tree (then regenerate the selector goldens that move with it).
 add_custom_target(ninferno_kernel_facts_update
   COMMAND ${Python3_EXECUTABLE} -B ${PROJECT_SOURCE_DIR}/tools/kernel_facts/kernel_facts.py extract
-    --binary ${ninferno_kernel_facts_binary} --arch ${NINFERNO_BUILD_ARCH_LABEL}
+    --binary ${ninferno_kernel_facts_check_binary} --arch ${NINFERNO_BUILD_ARCH_LABEL}
     --nvcc ${CMAKE_CUDA_COMPILER_VERSION} --cuda-bin ${ninferno_cuda_bin}
     --flags "${ninferno_kernel_facts_flags}" --source-root ${PROJECT_SOURCE_DIR}
     -o ${ninferno_kernel_facts_snapshot}
-  DEPENDS ninferno_selector_golden_test
+  DEPENDS ${ninferno_kernel_facts_check_target}
   VERBATIM)
 
 ninferno_add_op_test(ninferno_kernel_facts_lookup_test LABELS host

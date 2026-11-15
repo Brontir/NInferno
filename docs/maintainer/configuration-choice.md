@@ -143,10 +143,19 @@ counts.
 
 The quantization's own term is the measured curve `kQuantKld` (Qwen3.5-9B GGUF against Q8_0:
 Q6_K 0.0063, Q5_K_M 0.0106, Q4_K_M 0.0193, IQ4_XS 0.0285, Q3_K_M 0.068, UD-IQ3_XXS 0.107, UD-IQ2_M
-0.161, UD-IQ2_XXS 0.334), interpolated in log KLD over bits per weight for other quantizations and
-models (marked as not measured); above Q6_K it falls on a straight line to 0 at Q8_0's bits, and
-any model's Q8_0 is its own reference (0). A point is the measurement of one file
-(`unsloth/Qwen3.5-9B-GGUF` revision 3885219b, each point's SHA-256): a quantization's term says
+0.161, UD-IQ2_XXS 0.334), interpolated in log KLD over bits per weight for other quantizations
+(marked as not measured); above Q6_K it falls on a straight line to 0 at Q8_0's bits, and any
+model's Q8_0 is its own reference (0). Since #618 step 9 it holds one curve per measured model:
+Qwen3.5-0.8B, 2B, 4B and 27B beside the 9B's, each point keyed by the model's weights
+(`ModelFacts::params`). A model reads its own curve (`kQuantKldModels`); a model of the family with
+none, and another family, read the 9B's. The 9B's points rest on two cards; the others on one,
+where `kQuantKldModels` records the model's Q8_0 reference NLL (KLD is a model constant: the 4B on
+two cards within 0.1 %); checking a new run against it is #915. A model of the family with no curve of its own, within
+the measured sizes, takes the 9B's label as a transfer where every measured size agrees within the
+answer noise (0.005 KLD: Q6_K, UD-Q5_K_XL, Q5_K_S; DECISIONS 86), and a transfer decides as a
+measurement does. The answer scale stays the 9B's:
+another model's measured file is not calibrated on it. A point is the measurement of one file
+(the 9B's: `unsloth/Qwen3.5-9B-GGUF` revision 3885219b, each point's SHA-256): a quantization's term says
 `measured` only on those files at its bits (`QuantOption::files`, spec::weights_identity of a hub row's
 digests, an artifact's recorded base inputs or a fetched GGUF's); the same family's label at the same
 bits on other or unknown files takes the same value as a `proxy` (#299: another repository's

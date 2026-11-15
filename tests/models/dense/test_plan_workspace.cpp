@@ -17,10 +17,9 @@
 //   tokenizer ids than embedding rows, and with a Use that reads the payload (an activation
 //   divisor) keep the formula and say why.
 // The capacity queries answer for a substituted board. No GPU, no files.
-// Known escape #830 (kDecodePlanEscape, below): the attention decode plan reads the host GPU. With
-// every CUDA device hidden (as ctest runs it) the start's planner throws cudaErrorNoDevice and
-// the query is refused, the formula standing: that is what is checked then, and the declines;
-// with a device visible the bytes are compared (the GPU test
+// With every CUDA device hidden (as ctest runs it) the bytes are compared as with one visible: the
+// attention decode plan prices its residency from the kernels' committed facts (#830, closed), so
+// nothing on the start's planner reads the host GPU (the GPU test
 // ninferno_decoder_plan_workspace_real_test compares them against a real start).
 //
 // With NINFERNO_PLAN_WORKSPACE_ARTIFACTS (paths joined by ':'), each artifact file of these
@@ -41,6 +40,7 @@
 #include "models/qwen3_5/program/planning/sequence_plan.h"
 #include "models/qwen3_5/program/planning/startup.h"
 #include "ninferno/ops/prefill_routes.h"
+#include "ops/generic/kernel_facts.h"
 #include "ops/route_pins.h"
 #include "product/plan/plan_facts.h"
 #include "runtime/engine/plan_dry_run.h"
@@ -490,20 +490,21 @@ std::string with_commas(std::uint64_t n) {
 // No CUDA device is visible (ctest runs this with CUDA_VISIBLE_DEVICES=-1).
 bool device_hidden = false;
 
-// Known escape (kept by name and checked as it is, so the list only shrinks): #830, the attention
-// decode plan (gemma4_attention_decode_plan, which DensePass and NemotronH's Pass size their
-// attention with) reads the host GPU's occupancy; under a substituted board with a GPU the arenas
-// follow the host GPU's, with none it throws, the query is refused and the formula stands
-// (tests/test_plan_device_class.cpp checks the same for Gemma 4).
-constexpr std::string_view kDecodePlanEscape = "#830 (gemma4_attention_decode_plan)";
+// No known escape: #830 (the attention decode plan, which DensePass and NemotronH's Pass size their
+// attention with, read the host GPU's occupancy) is closed; the plan reads the kernels' facts.
+// Those price a board only where its kernels are this build's: the decode tile is a constexpr of
+// the build (#912), so a board of another arch refuses by name and keeps the formula.
+bool own_tile(const DeviceClass& device) {
+    namespace kf = ninferno::ops::detail::generic::kernel_facts;
+    return kf::release_arch(device.major, device.minor) == kf::build_arch();
+}
 
-// The refused query's basis carrying cudaErrorNoDevice. Its limit: it names the error, not the
-// call site, so another device read on the planner's path that fails the same way passes as this
-// escape too (cuda_check prints the site on stderr: core/per_device.h, cudaFuncSetAttribute of the
-// decode plan's kernel, on every refused case of this file).
-bool is_escape(const std::string& basis) {
-    return basis.rfind("formula: an Op's capacity query refused the facts", 0) == 0 &&
-           basis.find("cudaErrorNoDevice") != std::string::npos;
+// A board of another arch: the query refuses by name (#912) and the formula stands.
+void check_refused_other_arch(const std::string& name, const std::string& basis) {
+    check(basis.rfind("formula: ", 0) == 0 && basis.find("no kernel facts") != std::string::npos &&
+              basis.find("#912") != std::string::npos,
+          name + ": a board of another arch than the build's keeps the formula, by name (" + basis +
+              ")");
 }
 
 // The rung's dry run against the start planner's capacity; prints the formula's beside it.
@@ -521,23 +522,10 @@ void compare(const std::string& name, const rt::PlanModelFacts& facts,
     rt::PlanModelFacts bare = facts;
     bare.artifact_directory.reset();
     const auto formula = rt::plan_rung_bytes(bare, rung, options, options.max_concurrency, false);
-    if (device_hidden) {
-        // The known escape #830: the start's planner reads the hidden device (the attention
-        // decode plan), so the query is refused and the formula stands; the start's own planner
-        // throws the same.
-        bool escaped = false;
-        try {
-            (void)start_plan(directory, options, static_cast<std::int32_t>(facts.tokenizer_tokens),
-                             plan);
-        } catch (const CudaError& error) { escaped = error.code() == cudaErrorNoDevice; }
-        std::cout << name << ": the device hidden, --plan workspace " << dry.workspace << " ("
-                  << dry.workspace_basis << ")\n";
-        check(escaped && is_escape(dry.workspace_basis),
-              name + ": the known escape " + std::string(kDecodePlanEscape) +
-                  " reads the hidden device (if it no longer does, the escape is gone: compare "
-                  "the bytes here), not '" +
-                  dry.workspace_basis + "'");
-        check(dry.workspace == formula.workspace, name + ": the formula stands");
+    if (!own_tile(device)) {
+        std::cout << name << ": another arch than the build's, --plan workspace " << dry.workspace
+                  << " (" << dry.workspace_basis << ")" << std::endl;
+        check_refused_other_arch(name, dry.workspace_basis);
         return;
     }
     const auto start =
@@ -590,7 +578,11 @@ void declines(const std::string& name, const rt::PlanModelFacts& facts,
                        name + ": " + what + " keeps the formula (" + basis + ")");
     };
     const std::string answered = basis_of(facts, options, device);
-    check(device_hidden ? is_escape(answered) : answered.rfind("start", 0) == 0,
+    if (!own_tile(device)) {
+        check_refused_other_arch(name, answered);
+        return;
+    }
+    check(answered.rfind("start", 0) == 0,
           name + ": the query answers at the decline cases' options (" + answered + ")");
     rt::PlanModelFacts unread = facts;
     unread.tokenizer_tokens   = 0;
@@ -679,6 +671,19 @@ struct Case {
     EngineOptions options;
 };
 
+// A lab board of this build's arch (the decode tile is the build's, #912), or none: each case also
+// runs on it where its own board is of another arch, so every stand compares a start.
+std::optional<DeviceClass> own_board() {
+    namespace kf             = ninferno::ops::detail::generic::kernel_facts;
+    const std::string_view a = kf::build_arch();
+    if (a == "70") return board(0x1DBA, 7, 0, 80, 6);      // Quadro GV100
+    if (a == "75") return board(0x1E07, 7, 5, 68, 5);      // RTX 2080 Ti
+    if (a == "86") return board(0x2204, 8, 6, 82, 6);      // RTX 3090
+    if (a == "89") return board(0x2782, 8, 9, 60, 48);     // RTX 4070 Ti
+    if (a == "120a") return board(0x2B85, 12, 0, 170, 96); // RTX 5090
+    return std::nullopt;
+}
+
 void run(const Case& k) {
     const art::Directory directory = k.directory();
     rt::PlanModelFacts facts       = product::plan_facts_of_directory(directory, k.name).model;
@@ -688,6 +693,14 @@ void run(const Case& k) {
     // As plan_facts_of_artifact reads them from the file's resources.
     facts.tokenizer_tokens = k.tokens;
     compare(k.name, facts, directory, k.options, k.device);
+    if (!own_tile(k.device)) {
+        if (const auto own = own_board()) {
+            compare(k.name + " (on this build's arch, sm_" +
+                        std::string(ninferno::ops::detail::generic::kernel_facts::build_arch()) +
+                        ")",
+                    facts, directory, k.options, *own);
+        }
+    }
 }
 
 // The artifact files NINFERNO_PLAN_WORKSPACE_ARTIFACTS names, read as --plan reads them.
@@ -756,8 +769,7 @@ int main() {
         int devices   = 0;
         device_hidden = cudaGetDeviceCount(&devices) != cudaSuccess || devices == 0;
         if (device_hidden) {
-            std::cout << "every CUDA device hidden: the known escape " << kDecodePlanEscape
-                      << " is checked in place of the bytes\n";
+            std::cout << "every CUDA device hidden: the bytes are compared all the same (#830)\n";
         }
         const DeviceClass rtx5090   = board(0x2B85, 12, 0, 170, 96);
         const DeviceClass rtx4070ti = board(0x2782, 8, 9, 60, 48);

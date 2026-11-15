@@ -2730,7 +2730,40 @@ estimate moves to the BF16 share (#822; `prefill_prices_the_selectors_route` in
   second copy); ninferno-ui registers no query (#766).
 - Not run on the stands.
 
-## 86. The drafter is priced on the board where the worth decides it; the storages stay the reference card's (#618 step 6, 13.11, rule)
+## 86. The Qwen3.5 curve transfers to an unmeasured size where every measured size agrees within the answer noise (#618 step 9, 14.11, rule)
+
+**The question.** #914 gave five Qwen3.5 sizes (0.8B, 2B, 4B, 9B, 27B) their own quantization
+curves. A model of the family that is none of them (another size, a fine-tune's own weights) read
+the 9B's curve as an estimate, which never decides (#368). When may it decide?
+
+**Rule.** The 9B curve's point of a label decides for such a model (`QualityAuthority::Transfer`,
+weighed as a measurement in `plan_quants`) where every measured size's point of that label lies
+within the family's answer noise of the 9B's, and the model's weights lie within the measured
+sizes (no extrapolation in size). The noise is the answer scale's (`kAnswerScales`: 0.2 points of
+MMLU-Pro over 40 points per KLD = 0.005 KLD), declared before these curves were measured: two
+quantizations closer than that cannot be told apart by their answers. It is not read off the
+curves.
+
+The value transferred is the 9B label's own point: the row's bits within 0.05 of it (as the
+family's label proxy, #299), never an interpolation; a label at other bits, or a mislabelled file,
+stays an estimate. The size range is that of the sizes that measured the label. The tolerance is
+absolute KLD, not log KLD as #618's plan row says: the answer scale is linear in KLD (40 points per
+KLD), so the noise it cannot resolve is a fixed KLD, not a ratio. In the trade, though, 0.005 KLD is
+not small: at the worth's lambda of 25 it weighs as 12.5 % of a request's time, wider than the 9B's
+own Q6_K to Q5_K_S gap (0.0047). A transfer is a value the answers cannot tell from the truth, not
+one the worth cannot tell; a tighter rule waits for a worth-side resolution (#915).
+
+**What moves.** The labels that pass, where the file's bits match the 9B label's within 0.05 (a
+label's bits shift with the model's size: Q6_K at every measured size, 6.649 to 6.686; UD-Q5_K_XL
+only near 9B to 27B, 6.016 to 5.997 against the 0.8B's 6.333; Q5_K_S near 5B to 25B; elsewhere the
+label stays an estimate): Q6_K, UD-Q5_K_XL and Q5_K_S (the largest gap, the 2B's
+Q5_K_S, 0.00443; the 2B's points are one card's, so their margin is inside that card's spread).
+Q5_K_M just fails (the 2B's lies 0.00503 below the 9B's), and every 4-bit and lower label fails (the
+2B's UD-Q4_K_XL 0.006 below, the 0.8B's Q4_K_M 0.007 above). A model outside the sizes that measured
+a label transfers nothing. No plan golden moves: no fixture model is an unmeasured size of the
+family.
+
+## 87. The drafter is priced on the board where the worth decides it; the storages stay the reference card's (#618 step 6, 13.11, rule)
 
 **The question.** A generation's reference card decides the storages (KV codec, activations, state
 dtype, chunk), so that a generation's boards write the same bytes (B1, deterministic-decisions.md).
