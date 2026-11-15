@@ -126,6 +126,7 @@ JOBS=${JOBS:-8}
 # `build`, `probe` and `grid`, and an A/B of the format's own prediction apart.
 ARCH_CC=${ARCH_CC:-7.5}
 [[ "$ARCH_CC" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "ARCH_CC must be a compute capability like 8.9 (got $ARCH_CC)"; exit 2; }
+CUDA_ARCH=${CUDA_ARCH:-${ARCH_CC/./}} # the build's architecture: 120a on GB20x, as the release
 if [ -n "${PRED:-}" ]; then export MMQ_GRID_PRED="$PRED"; fi
 [ "$ARCH_CC" = 7.5 ] || export MMQ_GRID_LAW=0
 PATCH=tools/bench/524_grid_hook.patch
@@ -200,7 +201,7 @@ need_hooked_binary() {
 build() {
   check_hook
   git apply "$PATCH"; HOOKED=1
-  cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES="${ARCH_CC/./}" > "$OUT/cmake.log" 2>&1 ||
+  cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH" > "$OUT/cmake.log" 2>&1 ||
     { tail -20 "$OUT/cmake.log"; exit 1; }
   cmake --build "$BUILD" --target ninferno-serve -j "$JOBS" > "$OUT/build.log" 2>&1 ||
     { tail -30 "$OUT/build.log"; exit 1; }
