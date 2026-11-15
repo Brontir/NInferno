@@ -150,13 +150,16 @@ int replay_routes_main(int argc, char** argv) {
     // the replay checks that the registry gives the start's routes (#612 step 10).
     const DeviceClass device = price_board_class(*row);
     // The class's facts against the start's (#935): a line that differs names a fact the start's
-    // selection read that the registry row does not give (the driver's version, the host's and the
-    // build's are not the board's and are skipped).
+    // selection read that the registry row does not give. Skipped: the driver's version, the host's
+    // and the build's (not the board's), the kernel facts' hash (the engine records it apart from
+    // the class) and the memory size (the driver's totalGlobalMem against the row's marketed GiB:
+    // differs on every start, and P3 of test_decision_properties shows no route reads it).
     {
         const runtime::DecisionSection row_facts =
             runtime::facts_of(device, build_features(), 0, runtime::HostFacts{});
         const auto skipped = [](const std::string& key) {
-            return key == "driver_version" || key.rfind("host.", 0) == 0 ||
+            return key == "driver_version" || key == "kernel_facts_sha256" ||
+                   key == "global_bytes" || key.rfind("host.", 0) == 0 ||
                    key.rfind("build_feature.", 0) == 0;
         };
         for (const auto& [key, value] : row_facts) {
