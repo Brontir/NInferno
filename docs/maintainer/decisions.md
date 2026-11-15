@@ -1696,8 +1696,10 @@ A width costs about 0.2 MB and 1.1 s of compile a format and architecture it is 
 differently), as they already did between a prefill chunk of 128 and 1024: on natural text the mean
 |logprob| difference old vs new is 0.000-0.03, old build's chunks 128 vs 1024 0.003-0.026.
 
-**Not done.** (IQ4_XS and Q2_K joined on some generations by their own grids: DECISIONS 90.) Turing, Volta and Thor rows (own grids); the A10; other formats than Q4_K and
-Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tiles until their grids); the RTX 5070 Ti and 5060 Ti prefill Q4_K / Q6_K
+**Not done.** Turing, Volta and Thor rows (own grids); the A10; other formats than Q4_K and
+Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tiles until their
+grids; IQ4_XS and Q2_K joined some generations by their own grids, DECISIONS 90); the RTX 5070 Ti
+and 5060 Ti prefill Q4_K / Q6_K
 on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 -> 107 ms from 144 to
 256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.
 
@@ -2922,8 +2924,12 @@ its limit is #928 (#619's process: counts, a prediction, then an A/B on the GV10
 | RTX 4070 Ti | IQ4_XS | 0.30 (0.22..0.40) | 0.00 % (0.20) | 0.00 % (0.111..0.200) | 4.88 % |
 | RTX 4060 Ti | Q2_K | 0.15 (0.10..0.25) | 0.03 % (0.20) | 0.02 % (0.200..0.333) | 9.02 % |
 | RTX 5090 | IQ4_XS | 0.15 (0.10..0.25) | 0.21 % (0.10) | 0.21 % (0.059..0.111) | 6.53 % |
+| RTX 4060 Ti | IQ4_XS | 0.20 (0.11..0.33) | 0.07 % (0.20) | in #619 | 5.35 % |
+| RTX 3060 | Q2_K | 0.20 (0.11..0.33) | 0.16 % (0.20) | in #619 | 10.17 % |
+| RTX 4070 Ti | Q2_K | 0.20 (0.11..0.33) | 0.26 % (0.20) | in #619 | 9.53 % |
+| RTX 5090 | Q2_K | 0.10 (0.06..0.20) | 1.81 % (0.10), refuted | 1.81 % (0.059..0.111) | 16.39 % |
 
-The work law does not fit any of the four (lack-of-fit 3.8 to 16, above the a priori 3), so R5 gives no verdict and the fit's f is not a measurement. The decision rests on the regret buckets, as DECISIONS 74's did.
+The work law does not fit any of the first four (lack-of-fit 3.8 to 16, above the a priori 3), so R5 gives no verdict and the fit's f is not a measurement. The decision rests on the regret buckets, as DECISIONS 74's did.
 
 The prediction was wrong for IQ4_XS on GA10x and Ada. It put the fixed share at 0.30, on the reasoning that IQ4_XS's table decode costs 1.5-2× Q4_K's per weight and the decode is the fixed part. The grids' least regret lies in or next to Q4_K's bucket. So the decode is not what sets the share (or the J part grows with it). The row's f is kept, not a new one fitted: 0.20 is within 0.12 % of the best width on both cards.
 
