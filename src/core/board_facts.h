@@ -4,12 +4,10 @@
 // over the rows, never stored, so a neighbouring board of the same architecture interpolates by its
 // own SMs, clocks, bus and L2. No CUDA: includable from host code and from a .cu's host side.
 //
-// The L2 width is checked against the profiler's rated width (ncu lts__t_bytes.sum.peak_sustained,
-// #612's comments: slices x 64 B an L2 clock on five Ada and GB20x cards, arch_registry
-// l2_bytes_per_l2_clock). The DRAM rate is the facts table's: two transfers a memory clock across
+// The L2's per-SM width is arch_registry's (l2_bytes_per_sm_l2_clock: it reads the architecture
+// rows, which this header does not include, so machine_facts.h may). The DRAM rate is the facts table's: two transfers a memory clock across
 // the bus (the clock half the data rate), the spelling MachineFacts::dram_bytes_per_s calls.
 
-#include "core/arch_registry.h"
 
 namespace ninferno::board_facts {
 
@@ -28,13 +26,6 @@ namespace ninferno::board_facts {
                : 0;
 }
 
-// The L2's rated bytes per SM an L2 clock (slices x 64 B over the SMs); 0 where the architecture's
-// slice size is unknown. Per SM clock it is this times the L2 clock over the SM clock, which no
-// table publishes (0.87-0.95 on the cards ncu read).
-[[nodiscard]] constexpr double l2_bytes_per_sm_l2_clock(int cc, double l2_mib, int sms) noexcept {
-    return sms > 0 ? arch_registry::l2_bytes_per_l2_clock(cc, l2_mib) / sms : 0;
-}
-
 // A board's tensor rate a second: its SMs at the clock, times the rate per SM clock (the
 // generation row's, generation.h bf16/s8).
 [[nodiscard]] constexpr double tensor_flops_per_s(int sms, double clock_hz,
@@ -51,7 +42,6 @@ namespace ninferno::board_facts {
 // The facts table's rows (memory clock, bus bits) and the profiler's L2 width.
 static_assert(dram_bytes_per_s(10500000, 384, 1.0) == 1008e9, "RTX 4090: 1008 GB/s");
 static_assert(dram_bytes_per_s(14000000, 512, 1.0) == 1792e9, "RTX 5090: 1792 GB/s");
-static_assert(l2_bytes_per_sm_l2_clock(89, 72, 128) == 18.0, "RTX 4090: 36 slices x 64 B, 128 SMs");
 static_assert(waves(1024, 170, 6) == 2 && waves(1020, 170, 6) == 1 && waves(0, 170, 6) == 0);
 
 } // namespace ninferno::board_facts
