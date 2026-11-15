@@ -669,9 +669,10 @@ struct Accuracy;
 // its reference card: it decides), CarriedCurve (another generation whose MoE prefill rate rests on
 // two lab cards: its saturated rate times the shares' slope, carried unchanged, estimates the best
 // chunk (Choice::chunk_estimate) but never decides it: another generation's rows estimate, #300),
-// Transferred (neither: the default chunk stands, no estimate), None (not an MoE, or the gate is
-// closed).
-enum class ChunkBasis : std::uint8_t { None, Own, CarriedCurve, Transferred };
+// VerifiedCurve (a carried curve a sweep on two of the generation's cards verified,
+// kMoeChunkVerified: it decides, by speed), Transferred (neither: the default chunk stands, no
+// estimate), None (not an MoE, or the gate is closed).
+enum class ChunkBasis : std::uint8_t { None, Own, CarriedCurve, VerifiedCurve, Transferred };
 
 [[nodiscard]] constexpr std::string_view chunk_basis_name(ChunkBasis basis) noexcept {
     switch (basis) {
@@ -681,6 +682,8 @@ enum class ChunkBasis : std::uint8_t { None, Own, CarriedCurve, Transferred };
         return "own";
     case ChunkBasis::CarriedCurve:
         return "carried_curve";
+    case ChunkBasis::VerifiedCurve:
+        return "verified_curve";
     case ChunkBasis::Transferred:
         return "transferred";
     }

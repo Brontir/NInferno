@@ -1435,11 +1435,23 @@ void chooses_the_chunk(const json& fixture) {
     check(pinned.chosen && chosen(pinned).candidate.chunk == 4096 && !pinned.chunk_by_speed, "a pinned chunk stays");
     b.card = card_of(fixture.at("cards").at("RTX 5070 Ti"));
     const ch::Choice bw = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
-    // Blackwell has no measured chunk sweep: its own MoE prefill rate (two lab cards) with the
-    // curve's slope carried estimates the chunk, and the pick stays the default.
-    check(bw.chosen && !bw.chunk_by_speed && bw.chunk_basis == ch::ChunkBasis::CarriedCurve &&
-              chosen(bw).candidate.chunk == 1024 && bw.chunk_estimate == 2048,
-          "Blackwell: the default chunk, 2048 estimated for a 2048-token prompt");
+    // Blackwell: its own MoE prefill rate (two lab cards) with the curve's slope carried, which a
+    // sweep on two of its cards verified (kMoeChunkVerified, #618 step 2): it decides, by speed.
+    check(bw.chosen && bw.chunk_by_speed && bw.chunk_basis == ch::ChunkBasis::VerifiedCurve &&
+              chosen(bw).candidate.chunk == 2048 && bw.chunk_estimate == 0,
+          "Blackwell: the verified curve picks 2048 for a 2048-token prompt");
+    // A capability of the generation no lab card has (12.1, the GB10) carries the curve only to
+    // estimate: its reference row does not decide.
+    {
+        auto gb10       = b;
+        gb10.card.minor = 1;
+        const ch::Choice e =
+            ch::choose(gb10.model, gb10.card, gb10.quants[0],
+                       ch::allowed_axes(gb10.model, KvCacheStorage::Int8Group64), {}, task, own);
+        check(e.chosen && !e.chunk_by_speed && e.chunk_basis == ch::ChunkBasis::CarriedCurve &&
+                  chosen(e).candidate.chunk == 1024 && e.chunk_estimate == 2048,
+              "a 12.1 board: the default chunk, 2048 estimated");
+    }
     check(ada.chunk_basis == ch::ChunkBasis::Own && ada.chunk_estimate == 0,
           "Ada: the chunk rests on its own rows");
     // A generation without an MoE prefill row of two cards keeps the default chunk.

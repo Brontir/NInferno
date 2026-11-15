@@ -2805,3 +2805,45 @@ in a generation with the round cost's rates, is priced by its own facts (`load_b
 The published profiles' memory ranges (`"mem"`) are outside it: they select by memory.
 
 **What moves.** Nothing: no code path changes, no plan golden moves.
+
+## 88. The GB20x MoE chunk is decided by the carried curve, verified on two of its cards (#618 step 2, 15.11, rule from an A/B)
+
+**Before.** #659 typed the chunk's basis: Ada decides by its own measured shares (`Own`); another
+generation whose own MoE prefill rate rests on two lab cards carries the shares' slope to estimate
+its best chunk (`CarriedCurve`, `chunk_estimate` in the plan) and keeps the default 1024 (#300:
+another generation's rows estimate, they do not decide). The estimate was a prediction for an A/B.
+
+**Measurement (verifies, fits nothing).** RTX 5090 and RTX 5070 Ti at master 49cacc619, prefill
+tok/s, median of 3 (perf_matrix), chunks 1024 / 2048 / 4096. The plan's estimate: 4096 for all
+three models (the 5070 Ti's Q3_K_S: 2048).
+
+| card | model | prompt | 1024 | 2048 | 4096 |
+|---|---|---|---|---|---|
+| RTX 5090 | Qwen3.6-35B-A3B UD-IQ3_XXS | ~1.8K | 14289 | 16816 | 16789 |
+| RTX 5090 | Qwen3.6-35B-A3B UD-IQ3_XXS | ~21K | 15272 | 17626 | 19061 |
+| RTX 5090 | Qwen3.6-35B-A3B UD-Q3_K_S | ~1.8K | 16217 | 19955 | 19797 |
+| RTX 5090 | Qwen3.6-35B-A3B UD-Q3_K_S | ~21K | 17082 | 20002 | 22101 |
+| RTX 5090 | gemma-4-26B-A4B UD-Q4_K_M | ~1.8K | 18452 | 20882 | 20524 |
+| RTX 5090 | gemma-4-26B-A4B UD-Q4_K_M | ~7.8K | 19266 | 21631 | 22740 |
+| RTX 5070 Ti | Qwen3.6-35B-A3B UD-IQ3_XXS | ~1.8K | 7380 | 8879 | 8890 |
+| RTX 5070 Ti | Qwen3.6-35B-A3B UD-IQ3_XXS | ~21K | 7557 | 8871 | 9692 |
+| RTX 5070 Ti | Qwen3.6-35B-A3B UD-Q3_K_S | ~1.8K | 8604 | 10141 | 10168 |
+| RTX 5070 Ti | Qwen3.6-35B-A3B UD-Q3_K_S | ~21K | 8546 | 9904 | 10859 |
+
+The estimate held at every point: 4096 is the fastest at the long prompts (+5 to +11 % over 2048)
+and ties 2048 at the short ones (within 2 %, inside the runs' spread); 1024, today's pick, is the
+slowest everywhere (12 to 23 % below the best). Decode does not move with the chunk (within 1 %).
+#659's own written prediction for gemma (2048 at every ask) was wrong at 7.8K; the plan's estimate
+(4096) was right. gemma does not start on the 16 GB 5070 Ti (15.78 GiB of weights), so its chunk
+has no point there.
+
+**Rule.** A generation whose carried curve a sweep on two of its own cards verified, every model
+at every prompt, decides its chunk by speed (`ChunkBasis::VerifiedCurve`, `kMoeChunkVerified`:
+gb20x, 2 cards). The record is the sweep, not a constant: no rate is refitted, the curve and the
+generation's prefill rows are unchanged. A capability the sweep's cards do not have (12.1, the
+GB10: its reference row does not decide) and a lent generation keep `CarriedCurve`.
+
+**What moves.** The chunk of an MoE plan on a gb20x board (5060 Ti, 5070, 5070 Ti, 5080, 5090 and
+the laptop parts of 12.0) moves from 1024 to the curve's fastest (2048 or 4096 by the ask and the
+memory). The choice test's Blackwell case: 2048 picked for a 2048-token prompt, the estimate gone.
+No selector golden moves (the chunk is the plan's, not a route's).

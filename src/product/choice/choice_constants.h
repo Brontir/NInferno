@@ -980,6 +980,18 @@ inline constexpr ChunkShare kMoeChunkShare[] = {
 // (#300), so its pick stays the default until a sweep on it is measured.
 inline constexpr bool kMoeChunkTwoCards                    = true;
 inline constexpr std::string_view kMoeChunkCurveGeneration = "ada";
+// The generations whose carried curve a sweep on two of their own cards verified: the chunk it
+// predicts fastest was the fastest measured, or inside the noise of it, for every model of the
+// sweep at every prompt (ChunkBasis::VerifiedCurve: it decides, by speed alone). gb20x: #618 step
+// 2 on the RTX 5070 Ti and 5090, Qwen3.6-35B-A3B UD-IQ3_XXS and UD-Q3_K_S at ~1.8K and ~21K
+// prompts and gemma-4-26B-A4B UD-Q4_K_M at ~1.8K and ~7.8K (chunks 1024/2048/4096): 4096 predicted
+// for all three, fastest at the long prompts (+5 to +11 % over 2048), tied with 2048 at the short
+// ones (within 2 %), 1024 the slowest everywhere (DECISIONS 88).
+struct VerifiedChunkCurve {
+    std::string_view generation;
+    int cards; // the generation's cards the sweep ran on
+};
+inline constexpr VerifiedChunkCurve kMoeChunkVerified[] = {{"gb20x", 2}};
 inline constexpr std::uint32_t kDefaultChunk = 1024;
 inline constexpr std::uint32_t kMoeChunks[] = {1024, 2048, 4096};
 
