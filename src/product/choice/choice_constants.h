@@ -1255,6 +1255,32 @@ inline constexpr QuantKldModel kQuantKldModels[] = {
      "--quick --context 4096 --stride 2048 --activations exact --kv-dtype bf16"},
 };
 
+// The protocol every kQuantKldModels reference NLL was scored under (ninferno-perplexity --corpus
+// eval/corpora/perplexity-1m/manifest.json --quick --context 4096 --stride 2048 --activations
+// exact --kv-dtype bf16): a run checks its reference against a row only under it
+// (ninferno-perplexity --reference-model, #915).
+inline constexpr std::string_view kQuantKldCorpus = "ninferno-ppl-1m-v1";
+inline constexpr std::uint32_t kQuantKldContext   = 4096;
+inline constexpr std::uint32_t kQuantKldStride    = 2048;
+// How far a run's Q8_0 reference NLL (nats per token) may lie from its row's: the largest
+// card-to-card spread the exact route's reference has shown, Qwen3.5-4B's Q8_0 on the RTX 4070 Ti
+// and the RTX 3060 (Ada and GA10x) under FP8 KV, 1.2e-4. The protocol's BF16 KV takes the KV
+// format's rounding out of it, so it bounds the BF16 runs from above; it is declared from that
+// pair, not from the rows it checks. Beyond it the run is another forward (another file,
+// tokenizer, corpus or a kernel that differs), and its points do not stand for the row's. The
+// check covers the Q8_0 forward alone: a quantized point's decode is its format's kernel on the
+// measuring card's arch, so a model's one-card points (the 0.8B's and 2B's on Ada, the 4B's on
+// GA10x, the 27B's on GB20x) are that arch's until another arch's card re-measures them.
+inline constexpr double kQuantKldReferenceNllTolerance = 1.2e-4;
+
+// The row of a model by its name (QuantKldModel::name), nullptr for none.
+[[nodiscard]] constexpr const QuantKldModel* quant_kld_model_named(std::string_view name) noexcept {
+    for (const QuantKldModel& m : kQuantKldModels) {
+        if (m.name == name) { return &m; }
+    }
+    return nullptr;
+}
+
 // ---- The trade.
 
 inline constexpr double kAccuracyWeight      = 25.0; // lambda: 0.001 KLD = 2.5 % of a request's time
