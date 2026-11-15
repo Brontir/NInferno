@@ -969,7 +969,13 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--update-atlas") {
-            std::ofstream(atlas_path(), std::ios::binary) << atlas_of(rows);
+            std::filesystem::create_directories(atlas_path().parent_path());
+            std::ofstream out(atlas_path(), std::ios::binary);
+            out << atlas_of(rows);
+            if (!out.flush()) {
+                std::cerr << "decision properties: cannot write " << atlas_path().string() << '\n';
+                return 1;
+            }
             std::cout << "wrote " << atlas_path().string() << '\n';
             return 0;
         }
