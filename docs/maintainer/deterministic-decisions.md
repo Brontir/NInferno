@@ -514,6 +514,13 @@ from `src/product/choice` ([Configuration choice](configuration-choice.md)). The
 prices its candidates on the generation's reference card, a declared constant per generation,
 never on the board: the board's clock and bandwidth enter only the estimates shown. It decides only
 where its constants rest on two lab cards of the generation; elsewhere the family's defaults stand.
+The drafter is B2 (depth under `fast`: its bytes are the same for the same chip type and request
+schedule) and carries no accuracy term. Its gain is the speculation profile resolved for the board
+(DECISIONS 87): on Ada and GB20x boards the lab did not measure, the round cost R(k) on the board's
+own facts; on a lab board, its record or its generation's median; elsewhere the generation's lab
+measurement or a published profile of a similar chip, whatever the board's rates. On the
+registry's path the same chip type and rates get the same drafter (#618 step 6); the storages stay
+the reference card's.
 The quantization stays the rule above until a measured KLD curve over the quantizations exists.
 
 ### The fingerprint
