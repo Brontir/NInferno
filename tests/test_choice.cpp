@@ -3755,12 +3755,16 @@ void resolution_by_pair() {
                                           make(1.04, 0.010, S::Transferred)};
     check(ch::resolve_within_resolution(unequal, {0, 1, 2}, 0, wider) == 1,
           "unequal widths: a dominated pick gives way to the candidate dominating it");
-    // Among several dominators the lowest KLD, then the lowest index (choice.h, DECISIONS 75).
-    const std::vector<ch::Scored> several{make(1.00, 0.020, S::Own), make(1.035, 0.006, S::Own),
-                                          make(1.035, 0.004, S::Own), make(1.03, 0.004, S::Own),
-                                          make(1.04, 0.010, S::Transferred)};
+    // Among several dominators the lowest KLD, then the fewer seconds (#918), then the lowest index
+    // (choice.h, DECISIONS 75): 2 and 3 share the lowest KLD, 3 is the faster.
+    std::vector<ch::Scored> several{make(1.00, 0.020, S::Own), make(1.035, 0.006, S::Own),
+                                    make(1.035, 0.004, S::Own), make(1.03, 0.004, S::Own),
+                                    make(1.04, 0.010, S::Transferred)};
+    check(ch::resolve_within_resolution(several, {0, 1, 2, 3, 4}, 0, wider) == 3,
+          "several dominators: the lowest KLD, then the fewer seconds");
+    several[3].decision_seconds = 1.035; // as slow as 2: the lower index
     check(ch::resolve_within_resolution(several, {0, 1, 2, 3, 4}, 0, wider) == 2,
-          "several dominators: the lowest KLD, then the lowest index");
+          "several dominators of equal KLD and seconds: the lowest index");
     // A deciding Transferred band: inside it the more accurate, outside it the best worth.
     const ch::Resolutions deciding{own, {RB::Transferred, 0.0786, true, 0.0226}, lent};
     const std::vector<ch::Scored> carry{make(1.0, 0.02, S::Own), make(1.05, 0.005, S::Transferred)};
