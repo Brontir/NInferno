@@ -1267,7 +1267,9 @@ inline constexpr std::uint32_t kQuantKldStride    = 2048;
 // 3060 (Ada and GA10x) under FP8 KV, recorded as within 1.2e-4 (so no margin above that pair). It
 // is declared from that pair, not from the rows it checks. That it bounds the protocol's BF16 runs
 // on other arches (BF16 KV removes the KV format's rounding; Turing runs the exact route without
-// BF16 tensor cores) is a prediction, checked by #917's runs on the RTX 3060 and RTX 2080 Ti.
+// BF16 tensor cores) was a prediction, checked before use (15.11): Qwen3.5-0.8B's reference on the
+// RTX 3060 (GA10x) against its row (RTX 4070 Ti) +4.6e-7, Qwen3.5-2B's on the RTX 2080 Ti
+// (Turing) against its row (RTX 4060) -5.3e-5.
 // Beyond it the run is another forward (another file, tokenizer, corpus or a kernel that differs),
 // and its points do not stand for the row's. The check covers the Q8_0 forward alone: a quantized
 // point's decode is its format's kernel on the measuring card's arch, so a model's one-card points
