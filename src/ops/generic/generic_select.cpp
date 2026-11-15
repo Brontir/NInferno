@@ -1062,7 +1062,7 @@ double dram_bytes_per_sm_cycle() {
         const auto& f = d.facts;
         if (!f.has_roofline() || d.sms <= 0) return 0.0;
         return board_facts::dram_bytes_per_sm_clock(f.dram_bytes_per_s(), d.sms,
-                                                     f.reference_clock_hz());
+                                                    f.reference_clock_hz());
     });
 }
 
