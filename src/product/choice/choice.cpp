@@ -2134,15 +2134,69 @@ bool weighs_quantizations(const ModelFacts& model, const CardFacts& card, const 
            (gates.accuracy ? *gates.accuracy : kQuantKldCards >= 2);
 }
 
+namespace {
+
+// The KLD two quantizations' answers cannot tell apart: the family's answer scale's noise over its
+// points per KLD (0.2 / 40 = 0.005 for Qwen3.5); 0 where the family has no scale.
+double answer_noise_kld(std::string_view family) noexcept {
+    const AnswerScale* scale = answer_scale_of(family);
+    return scale != nullptr && scale->points_per_kld > 0
+               ? scale->noise_points / scale->points_per_kld
+               : 0;
+}
+
+// #618 step 9's transfer rule: the default curve's point of `label` stands for a model of the
+// family that has no curve of its own (QualityAuthority::Transfer) where every measured model's
+// point of the label lies within the answer noise of it, and the model's weights lie within the
+// measured models' range (no extrapolation in size). The tolerance is the answer scale's, declared
+// before these curves were measured, not read off them.
+bool label_transfers(std::string_view family, std::string_view label, double params) noexcept {
+    const double tolerance = answer_noise_kld(family);
+    if (tolerance <= 0 || label.empty()) { return false; }
+    double reference = -1;
+    for (const QuantKldPoint& p : kQuantKld) {
+        if (std::abs(p.params - kQuantKldDefaultParams) < 0.5 && p.label == label) {
+            reference = p.kld;
+        }
+    }
+    if (reference < 0) { return false; }
+    // The sizes that measured the label bound the range: a size beyond them is an extrapolation.
+    double lightest = 0;
+    double heaviest = 0;
+    int others      = 0;
+    for (const QuantKldModel& m : kQuantKldModels) {
+        for (const QuantKldPoint& p : kQuantKld) {
+            if (std::abs(p.params - m.params) >= 0.5 || p.label != label || !point_counts(p)) {
+                continue;
+            }
+            if (std::abs(p.kld - reference) > tolerance) { return false; }
+            lightest = lightest == 0 ? m.params : std::min(lightest, m.params);
+            heaviest = std::max(heaviest, m.params);
+            if (std::abs(m.params - kQuantKldDefaultParams) >= 0.5) { ++others; }
+        }
+    }
+    return others > 0 && params >= lightest && params <= heaviest;
+}
+
+} // namespace
+
 QualityAuthority quant_authority(const ModelFacts& model, const QuantOption& quant) {
     if (quant.bits_per_weight <= 0) { return QualityAuthority::Unknown; }
-    // The curve's points are the default family's measurements (kQuantKldFamily): on another
-    // family every term is the curve's estimate. No transfer rule is registered.
+    // The curves are the default family's measurements (kQuantKldFamily): on another family every
+    // term is the curve's estimate. A model of the family with its own curve has its files
+    // measured (Direct) or estimated; one without may take the default curve's label (Transfer).
     const bool own_curve = model.family == kQuantKldFamily;
     const QuantKld q =
         quant_kld(quant.bits_per_weight, quant.label, quant.files, own_curve, model.params);
-    return own_curve && q.evidence == Evidence::Measured ? QualityAuthority::Direct
-                                                         : QualityAuthority::Estimate;
+    if (own_curve && q.evidence == Evidence::Measured) { return QualityAuthority::Direct; }
+    // The transferred value is the 9B label's own point (Evidence::Proxy: the row's bits within
+    // 0.05 of it), never an interpolation between its points: a label at other bits, or a file
+    // whose label is not its quantization, stays an estimate.
+    if (own_curve && q.evidence == Evidence::Proxy && quant_kld_model(model.params) == nullptr &&
+        label_transfers(model.family, quant.label, model.params)) {
+        return QualityAuthority::Transfer;
+    }
+    return QualityAuthority::Estimate;
 }
 
 Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Candidate& candidate,

@@ -154,7 +154,10 @@ two cards within 0.1 %). `ninferno-perplexity --reference-model NAME` checks a n
 under the curves' protocol, within `kQuantKldReferenceNllTolerance` (1.2e-4 nats per token, the
 exact route's card-to-card spread), and exits 3 beyond it (#915); the check covers the Q8_0 forward
 alone, so a one-card model's quantized points are its card's arch until another arch re-measures
-them. The answer scale stays the 9B's:
+them. A model of the family with no curve of its own, within the measured sizes, takes the 9B's
+label as a transfer where every measured size agrees within the answer noise (0.005 KLD: Q6_K,
+UD-Q5_K_XL, Q5_K_S; DECISIONS 86), and a transfer decides as a measurement does. The answer scale
+stays the 9B's:
 another model's measured file is not calibrated on it. A point is the measurement of one file
 (the 9B's: `unsloth/Qwen3.5-9B-GGUF` revision 3885219b, each point's SHA-256): a quantization's term says
 `measured` only on those files at its bits (`QuantOption::files`, spec::weights_identity of a hub row's
