@@ -80,7 +80,7 @@ int replay_routes_main(int argc, char** argv) {
         return 2;
     }
     const nlohmann::json& decision = (*start)["decision"];
-    const std::string canonical = text_of(decision, "canonical");
+    const std::string canonical    = text_of(decision, "canonical");
     const runtime::DecisionSection recorded =
         runtime::section_of_text(text_of(decision, "routes"), "routes");
     const runtime::DecisionSection options = runtime::section_of_text(canonical, "options");
