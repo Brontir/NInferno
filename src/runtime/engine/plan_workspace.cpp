@@ -444,8 +444,9 @@ PlanWorkspaceAnswer qwen3_5_workspace(const PlanModelFacts& m, const EngineOptio
     }
     // --activations exact: the invariant route profile, as Qwen35Execution::workspace_plan sizes.
     const ops::ScopedInvariantRoutes routes(options.activations == ActivationMode::Exact);
-    const detail::WorkspacePlan arenas = start->workspace_plan(planned);
-    return {arenas.capacity, "the start's planner over the artifact's bindings"};
+    detail::WorkspacePlan arenas = start->workspace_plan(planned);
+    return {arenas.capacity, "the start's planner over the artifact's bindings",
+            std::move(arenas.text_prefill_regions)};
 }
 
 // A dense decoder's or NemotronH's model described once for a directory and its activation

@@ -1242,6 +1242,13 @@ Json plan_json(const runtime::DryRunPlan& plan, bool ladder) {
         out["reserve"]          = reserve_name(plan.reserve);
         out["reserve_kept"]     = plan.reserve == runtime::PlanReserve::Kept;
         out["chosen"]           = rung_json(*chosen);
+        // The chosen rung's prefill arena region by region (#615 W5), where the planner records
+        // them: the op that takes each region, its offset and bytes.
+        Json regions = Json::array();
+        for (const WorkspaceRegion& r : chosen->bytes.workspace_regions) {
+            regions.push_back({{"op", r.op}, {"offset", r.offset}, {"bytes", r.bytes}});
+        }
+        out["workspace_regions"] = std::move(regions);
         out["context"]          = chosen->rung.max_context;
         out["pool_contexts"]    = round_to(plan.pool_contexts(), 0.1);
         out["private_contexts"] = plan.private_contexts();

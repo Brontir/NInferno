@@ -567,8 +567,18 @@ EngineOptions options_of(std::uint32_t context, std::uint32_t chunk, std::uint32
     return o;
 }
 
+bool same_regions(const std::vector<WorkspaceRegion>& a, const std::vector<WorkspaceRegion>& b) {
+    if (a.size() != b.size()) { return false; }
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (a[i].op != b[i].op || a[i].offset != b[i].offset || a[i].bytes != b[i].bytes) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool same(const detail::WorkspacePlan& a, const detail::WorkspacePlan& b) {
-    return a.text_prefill == b.text_prefill && a.ordinary_round == b.ordinary_round &&
+    return same_regions(a.text_prefill_regions, b.text_prefill_regions) && a.text_prefill == b.text_prefill && a.ordinary_round == b.ordinary_round &&
            a.mtp_prefill == b.mtp_prefill && a.mtp_round == b.mtp_round &&
            a.dflash_context == b.dflash_context && a.dflash_round == b.dflash_round &&
            a.dflash_round_append == b.dflash_round_append && a.causal_score == b.causal_score &&
@@ -663,6 +673,19 @@ void run(const Case& k) {
     check(same(start, described), k.name + ": the described forms' plan (" + bytes(described) +
                                       ") is the start's (" + bytes(start) + ")");
     check(start.text_prefill > 0 && start.ordinary_round > 0, k.name + ": text arenas sized");
+    // The prefill arena region by region (#615 W5): every region inside the arena, the highest end
+    // its peak, the first layer's mixer and the head (or the sampler) named.
+    std::size_t top = 0;
+    bool first_layer = false, tail = false;
+    for (const WorkspaceRegion& r : start.text_prefill_regions) {
+        top         = std::max(top, r.offset + r.bytes);
+        first_layer = first_layer || r.op.rfind("L00.", 0) == 0;
+        tail        = tail || r.op == "output_head" || r.op == "sampling";
+    }
+    check(!start.text_prefill_regions.empty() && top == start.text_prefill,
+          k.name + ": the prefill regions end at the arena's peak (" + std::to_string(top) +
+              " against " + std::to_string(start.text_prefill) + ")");
+    check(first_layer && tail, k.name + ": the prefill regions name the layers' and the head's ops");
     check(mtp == (start.mtp_prefill > 0 && start.mtp_round > 0),
           k.name + ": MTP arenas sized exactly under MTP");
     check(start.dflash_context == 0 && start.dflash_round == 0 && start.causal_score == 0,
@@ -783,6 +806,10 @@ void run(const Case& k) {
     check(dry.workspace == start.capacity,
           k.name + ": the dry run's workspace " + std::to_string(dry.workspace) +
               " is the start's capacity " + std::to_string(start.capacity));
+    check(same_regions(dry.workspace_regions, start.text_prefill_regions),
+          k.name + ": --plan's prefill regions are the start's (" +
+              std::to_string(dry.workspace_regions.size()) + " against " +
+              std::to_string(start.text_prefill_regions.size()) + ")");
     check(formula.workspace_basis.rfind("formula: ", 0) == 0,
           k.name + ": facts without the artifact's bindings keep the formula and say why (" +
               formula.workspace_basis + ")");
