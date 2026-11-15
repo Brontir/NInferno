@@ -91,7 +91,7 @@ std::string usage_text() {
            "       [--kv-dtype bf16|int8|fp8|nvfp4|k8v4] [--activations exact|fast|int8]\n"
            "       [--state-dtype f32|bf16|f16] [--step-tokens N]\n"
            "       [--output <directory>]\n"
-           "       [--kld-out <file> [--kld-top-k N] | --kld <file>] [--reference-model NAME]\n"
+           "       [--kld-out <file> [--kld-top-k N] [--reference-model NAME] | --kld <file>]\n"
            "       [--log-level trace|debug|info|warning|error|critical|off]\n" +
            std::string(ninferno::product::kScoringEngineFlagsUsage) +
            "  --kld-out  record this (reference) model's top-K tokens per position\n"
@@ -202,15 +202,22 @@ Options parse_options(int argc, char** argv) {
             }
             usage_error("--reference-model must be one of " + names);
         }
-        // The rows' protocol (choice::kQuantKldCorpus and beside it): another one scores another
-        // NLL, which the check would refuse for no fault of the forward.
+        // The rows' protocol (choice::kQuantKldCorpus and beside it), and the release's forward:
+        // another protocol, a decode or speculative step (--step-tokens), another state format,
+        // a RoPE factor or a route, table or tuner pin scores another NLL, which the check would
+        // accept or refuse for no fault of the forward. Only the weights' I/O mode is free.
+        ninferno::MaintainerOptions pins = out.maintainer;
+        pins.artifact_io                 = ninferno::MaintainerOptions{}.artifact_io;
         if (!out.corpus || !out.quick || out.context != choice::kQuantKldContext ||
             out.stride != choice::kQuantKldStride || out.kld ||
             out.kv != ninferno::KvCacheStorage::BFloat16 ||
-            ninferno::product::activation_mode_name(out.activations) != std::string_view("exact")) {
+            ninferno::product::activation_mode_name(out.activations) != std::string_view("exact") ||
+            out.step_tokens != 0 || out.state != ninferno::RecurrentStateStorage::FP32 ||
+            out.rope_yarn_factor != 1.0F || !(pins == ninferno::MaintainerOptions{})) {
             usage_error("--reference-model scores under the curves' protocol: --corpus "
                         "eval/corpora/perplexity-1m/manifest.json --quick --context 4096 --stride "
-                        "2048 --activations exact --kv-dtype bf16, without --kld");
+                        "2048 --activations exact --kv-dtype bf16, without --kld, --step-tokens, "
+                        "--state-dtype, --rope-yarn-factor or a route, table or tuner pin");
         }
     }
     if (out.kld_top_k == 0 || out.kld_top_k > 64) { usage_error("--kld-top-k must be 1..64"); }

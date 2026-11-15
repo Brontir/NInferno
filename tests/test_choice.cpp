@@ -1293,15 +1293,23 @@ void weighs_the_quantizations(const json& fixture) {
                   ": its curve starts at its Q8_0, counts and rises as the bits fall");
     }
     // #915: ninferno-perplexity --reference-model finds each row by its name, and the tolerance
-    // is the exact route's card-to-card spread, far below any curve's first quantized point.
+    // (an NLL gap, nats per token) is positive and under a tenth of the smallest quantized point's
+    // KLD (nats per token too): a reference within it is not another quantization's forward.
     for (const ch::QuantKldModel& m : ch::kQuantKldModels) {
         check(ch::quant_kld_model_named(m.name) == &m, std::string(m.name) + ": found by its name");
     }
     check(ch::quant_kld_model_named("Qwen3.5-7B") == nullptr &&
               ch::quant_kld_model_named("") == nullptr,
           "an unmeasured model's name: no row");
-    check(ch::kQuantKldReferenceNllTolerance > 0 && ch::kQuantKldReferenceNllTolerance < 1e-3,
-          "the reference NLL tolerance: the card-to-card spread");
+    {
+        double smallest = 1.0;
+        for (const ch::QuantKldPoint& p : ch::kQuantKld) {
+            if (p.kld > 0) { smallest = std::min(smallest, p.kld); }
+        }
+        check(ch::kQuantKldReferenceNllTolerance > 0 &&
+                  ch::kQuantKldReferenceNllTolerance < 0.1 * smallest,
+              "the reference NLL tolerance: under a tenth of the smallest quantized point");
+    }
     for (const ch::QuantKldPoint& p : ch::kQuantKld) {
         bool known = false;
         for (const ch::QuantKldModel& m : ch::kQuantKldModels) {
