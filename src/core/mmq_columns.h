@@ -18,8 +18,8 @@
 // widths are priced by the launch each runs (launch_seconds): its longest CTA's units times a
 // unit's cost, plus the stream-k fixup where the launch splits tiles. No other generation or format
 // has been run over the widths: a generation joins by its row, a format by its grid on that
-// generation (work_tiles_format: IQ4_XS on GA10x, Ada and GB20x, Q2_K on GA10x and Ada, #619 step
-// 13).
+// generation (work_tiles_format: IQ4_XS on Turing, GA10x, Ada and GB20x, Q3_K on GA10x, Ada and
+// GB20x, Q2_K on none; #619 step 13, DECISIONS 90).
 
 #include "core/arch_registry.h"
 #include "core/generation.h"
@@ -42,7 +42,7 @@ inline constexpr double kTileFixed      = 0.43;
 // The weight formats whose grids ran on the generation of major.minor. Q4_K and Q6_K on every
 // generation of the table's own (Qwen3-8B Q4_K_M's linears, DECISIONS 74 and 78). IQ4_XS on Turing,
 // GA10x, Ada and GB20x, and Q3_K on GA10x, Ada and GB20x (Qwen3-8B IQ4_XS and Q3_K_M, #619 step 13,
-// DECISIONS 90: the regret at the row's mmq_tile_fixed 0.00-0.22 % against 4.9-8.4 % for the fewest
+// DECISIONS 90: the regret at the row's mmq_tile_fixed 0.00-0.29 % against 4.9-8.4 % for the fewest
 // tiles; A/B -5.9..-9.4 % over 144..256 tokens, -9.0 % for IQ4_XS on the RTX 2080 Ti under
 // Turing's launch law). Q2_K keeps the fewest tiles on every generation: its grid fails the 0.5 %
 // bound on each generation's large chip (RTX 3090, 4090, 5090: 1.8-3.8 %), a cost of its tile the

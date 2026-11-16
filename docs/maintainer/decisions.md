@@ -2914,11 +2914,11 @@ its limit is #928 (#619's process: counts, a prediction, then an A/B on the GV10
 
 ## 90. IQ4_XS and Q3_K take the column tile of least work where their own grids ran (#619 step 13, 15-16.11, measured)
 
-**Revised 16.11 (supersedes the Q2_K part below).** The rule is: IQ4_XS on Turing, GA10x, Ada and GB20x; Q3_K on GA10x, Ada and GB20x; **Q2_K on no generation**.
+**Revised 16.11 (supersedes the Decision paragraph below for Q2_K, Q3_K and Turing).** The rule is: IQ4_XS on Turing, GA10x, Ada and GB20x; Q3_K on GA10x, Ada and GB20x; **Q2_K on no generation**.
 - **Q2_K fails the frozen 0.5 % bound on each generation's large chip,** at the row's f: RTX 3090 1.77 %, RTX 4090 3.83 % (R2 met), RTX 5090 1.81 %. The small chips pass: 3060 0.16 %, 4060 Ti 0.03 %, 4070 Ti 0.26 %.
   - The bound is not narrowed, so Q2_K keeps the fewest tiles until #941's term for its 70 144-byte tile is predicted and verified.
   - The table would gain 13 pp on the 3090, measured −11.7 % in its A/B. That is the price of the missing term, recorded in #941.
-- **Q3_K: grids on five cards** at the row's f, against the fewest tiles:
+- **Q3_K: grids on six cards** at the row's f, against the fewest tiles:
 
   | card | at the row's f | fewest tiles |
   |---|---|---|
@@ -2926,6 +2926,7 @@ its limit is #928 (#619's process: counts, a prediction, then an A/B on the GV10
   | RTX 3090 | 0.05 % | 8.37 % |
   | RTX 4060 Ti | 0.05 % | 6.60 % |
   | RTX 4070 Ti | 0.00 % | 6.29 % |
+  | RTX 4090 | 0.29 % | 6.44 % |
   | RTX 5090 | 0.22 % | 7.82 % |
 
   - A/Bs over 144..256 tokens: 3060 −8.6 %, 4070 Ti −7.1 %, 5090 −9.4 % (predicted −8, −6 and −6). The 448-token tie is +1.6 % on the 3060; no other size is slower.
@@ -2937,7 +2938,6 @@ its limit is #928 (#619's process: counts, a prediction, then an A/B on the GV10
 - **Not joined yet, a follow-up:**
   - IQ3_XXS: grids pass on four cards, but the 5090's A/B is +5.5 % at 448 tokens, which is not named yet.
   - Q5_K: grids running.
-
 
 **Decision.** `mmq_columns::work_tiles_format` takes the generation as well as the format. Q4_K and Q6_K are unchanged: every generation with `mmq_work_tiles` (DECISIONS 74, 78). IQ4_XS joins on GA10x, Ada and GB20x, and Q2_K on GA10x and Ada. Q2_K stays off GB20x: its grid there (RTX 5090) leaves 1.81 % regret at f 0.10 against the 0.5 % bound written before the run, with the 128-column tile 8-11 % slower than two 64-column ones (one 70 144-byte CTA a SM against two), a term the tile law lacks (#941). On those generations ggml's matrix kernel ranks the widths 16, 32, 64, 80, 96, 128 by the least work at the row's own `mmq_tile_fixed` (GA10x and Ada 0.20, GB20x 0.10), as it does for Q4_K. Every other format, and these two on every other generation, keep the fewest tiles. Turing's launch law was fitted on the Q4_K / Q6_K grid, so IQ4_XS and Q2_K wait for a Turing grid of their own. The 80- and 96-column kernels are already built for those architectures for every format (`work_tiles_arch`), so no kernel is added.
 
