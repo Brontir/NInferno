@@ -75,7 +75,7 @@ def read_prediction(path: Path):
 
 def read_grid(paths, nt):
     times = collections.defaultdict(dict)  # key -> schedule -> fastest pass
-    rules = {}
+    dispatched, shape_rules = {}, {}
     for p in paths:
         for line in Path(p).read_text(errors="replace").splitlines():
             m = LINE.match(line)
@@ -88,8 +88,15 @@ def read_grid(paths, nt):
             t = float(us)
             if sched not in times[key] or t < times[key][sched]:
                 times[key][sched] = t
+            # The rules' R8 schedule: the dispatcher's pick where it takes R8 (`picked`, the
+            # table entries included, as at one token), else the shape-class rules' R8 schedule
+            # (`rules`): from 2 tokens on the dispatcher may take another family, and the R8 choice
+            # the law competes with is then that one.
             if picked or " picked " in line:
-                rules[key] = sched
+                dispatched[key] = sched
+            elif " rules " in line:
+                shape_rules[key] = sched
+    rules = {**shape_rules, **dispatched}
     return times, rules
 
 
