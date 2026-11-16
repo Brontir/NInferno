@@ -1228,6 +1228,13 @@ struct Call {
 inline constexpr std::int32_t kDenseTuneMaxTokens = 16;
 void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream);
 [[nodiscard]] std::optional<Route> tuned_dense_route(const Problem& problem, std::int32_t tokens);
+// The release's dense tuner entry for a problem no call of this process has read (a replay, #935).
+[[nodiscard]] std::optional<Route> release_dense_route(const Problem& problem, const Weight& weight,
+                                                       std::int32_t tokens);
+// Its prefill band at `tokens` when timed against `heuristic` (the release's entry, as above).
+[[nodiscard]] std::optional<Route> release_prefill_route(const Problem& problem,
+                                                         const Weight& weight, std::int32_t tokens,
+                                                         Route heuristic);
 // Its prefill-band route for a call of `tokens` >= 17 whose heuristic route is `heuristic`
 // (nullopt: the heuristic's, also where the band was timed against another route): a W4A8
 // schedule for a W4A8 call, a route of the prefill profile's summation order otherwise.

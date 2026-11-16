@@ -2,6 +2,7 @@
 
 #include "core/device_class.h"
 #include "core/machine_facts.h"
+#include "ops/generic/generic_gemm.h"
 #include "ops/generic/price_tool.h"
 #include "runtime/engine/decision_fingerprint.h"
 #include "runtime/engine/decision_routes.h"
@@ -101,10 +102,12 @@ int replay_routes_main(int argc, char** argv) {
     // tables lend; a driver without clocks; a carried context cost; a speculation fallback):
     // printed, and replayed. The start's table and lenders are printed too: a replay binary with
     // other route tables reports their change as moved lines.
+    bool dense_tune = false;
     for (const auto& [key, value] : runtime::section_of_text(canonical, "sources")) {
-        if (key.rfind("route_table", 0) == 0) {
+        if (key.rfind("route_table", 0) == 0 || key.rfind("dense_tune", 0) == 0) {
             std::cout << "start: sources." << key << '=' << value << '\n';
         }
+        dense_tune = dense_tune || key == "dense_tune.shipped";
     }
     bool overridden = false;
     for (const auto& [key, value] : taint) {
@@ -175,6 +178,16 @@ int replay_routes_main(int argc, char** argv) {
             if (!skipped(key) && row_facts.find(key) == row_facts.end()) {
                 std::cout << "facts differ: " << key << ": start " << value << ", row absent\n";
             }
+        }
+    }
+    // A loaded model's selection reads the release's dense tuner entries (routes/tuner/
+    // dense_tune.json; the start records their hash as sources.dense_tune.shipped): the replay
+    // reads them too, read only, or every band they decide is reported moved (#935).
+    if (dense_tune) {
+        ops::detail::generic::set_dense_tune(TuneMode::Off, {});
+        ops::detail::generic::enable_dense_tune(true);
+        for (const auto& [key, value] : ops::detail::generic::dense_tune_sources()) {
+            std::cout << "replay: sources." << key << '=' << value << '\n';
         }
     }
     runtime::DecisionSection replayed;
