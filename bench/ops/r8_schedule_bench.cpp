@@ -93,8 +93,8 @@ std::size_t g_span_bytes = 0;
 // includes the memset; profile the graph for the R8 kernel's own duration.
 std::size_t g_interleave_bytes = 0;
 
-// --interleave-weight FORMAT,N: the dispatcher's decode route of another weight (FORMAT, N rows,
-// the problem's K, a fresh copy each launch) runs between launches: other code and only clean lines
+// --interleave-weight FORMAT,N: the dispatcher's decode route of another weight (FORMAT, N rows, the
+// problem's K, a fresh copy each launch) runs between launches: other code and only clean lines
 // pass through the L2, as between a model step's projections. Its copies cover four times the L2
 // (not --span-mib).
 // Repeatable: several formats run in turn (their code, too, passes through the instruction caches).
@@ -107,8 +107,8 @@ double median(std::vector<double> v) {
 
 void run_problem(const Problem& p, int samples, int launches, std::size_t l2_bytes,
                  std::int32_t tokens) {
-    const char* fmt         = generic::qtype_name(p.qtype);
-    const char* epi         = generic::epilogue_name(p.epilogue);
+    const char* fmt = generic::qtype_name(p.qtype);
+    const char* epi = generic::epilogue_name(p.epilogue);
     const bool swiglu       = p.epilogue == generic::Epilogue::SwiGlu;
     const std::int32_t rows = swiglu ? 2 * p.n : p.n;
     if (!generic::r8_supports(p.qtype) || (p.k % 128) != 0 || !generic::r8_fits(p.qtype, p.k, 1)) {
@@ -221,7 +221,6 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
 
     std::unique_ptr<DeviceBuffer> scratch;
     if (g_interleave_bytes > 0) scratch = std::make_unique<DeviceBuffer>(g_interleave_bytes);
-
     // One entry per --interleave-weight: copies of a weight of that format, its output, its route.
     struct Other {
         std::vector<std::unique_ptr<bench::RandomWeight>> copies;
@@ -230,7 +229,6 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         generic::Route route{};
         std::int32_t rows = 0;
     };
-
     std::vector<Other> others(g_interleave.size());
     for (std::size_t o = 0; o < g_interleave.size(); ++o) {
         Other& other   = others[o];
@@ -247,19 +245,19 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         other.y  = std::make_unique<DeviceBuffer>(static_cast<std::size_t>(other.rows) * 2);
         other.ty = std::make_unique<Tensor>(other.y->p, DType::BF16,
                                             std::initializer_list<std::int32_t>{other.rows, 1});
-        other.route =
-            generic::select_route(generic::Problem{oq, ops::LinearPolicy::AllowA8, other.rows, p.k,
-                                                   generic::Epilogue::Store},
-                                  other.copies[0]->weight, 1, false);
+        other.route = generic::select_route(
+            generic::Problem{oq, ops::LinearPolicy::AllowA8, other.rows, p.k,
+                             generic::Epilogue::Store},
+            other.copies[0]->weight, 1, false);
     }
     // Each interleaved route runs once before the capture (a first call may do work a graph cannot
     // hold).
     const auto interleave = [&](int l) {
         for (const Other& other : others) {
             generic::Call call;
-            call.x      = &tx1;
-            call.weight = &other.copies[static_cast<std::size_t>(l) % other.copies.size()]->weight;
-            call.rows   = other.rows;
+            call.x               = &tx1;
+            call.weight          = &other.copies[static_cast<std::size_t>(l) % other.copies.size()]->weight;
+            call.rows            = other.rows;
             call.epilogue        = generic::Epilogue::Store;
             call.out[0]          = other.ty.get();
             call.segment_rows[0] = other.rows;
@@ -319,15 +317,15 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         // FNV-1a of the whole output: one route's bytes compared across builds.
         std::uint64_t hash = 14695981039346656037ULL;
         for (const std::uint8_t c : outputs[i]) hash = (hash ^ c) * 1099511628211ULL;
-        std::printf(
-            "r8 %s %s n=%d k=%d t=%d %s %.2f us %.1f GB/s same=%d decode=%d%s%s%s h=%016llx\n", fmt,
-            epi, p.n, p.k, tokens, generic::route_name(r).c_str(), med[i],
-            static_cast<double>(bytes) / (med[i] * 1e3), outputs[i] == outputs[0] ? 1 : 0,
-            same_decode ? 1 : 0, r == picked ? " picked" : "", r == rules ? " rules" : "",
-            r == picked16 ? " a16pick" : "", static_cast<unsigned long long>(hash));
+        std::printf("r8 %s %s n=%d k=%d t=%d %s %.2f us %.1f GB/s same=%d decode=%d%s%s%s h=%016llx\n",
+                    fmt, epi, p.n, p.k, tokens, generic::route_name(r).c_str(), med[i],
+                    static_cast<double>(bytes) / (med[i] * 1e3), outputs[i] == outputs[0] ? 1 : 0,
+                    same_decode ? 1 : 0, r == picked ? " picked" : "", r == rules ? " rules" : "",
+                    r == picked16 ? " a16pick" : "",
+                    static_cast<unsigned long long>(hash));
     }
-    std::printf("pick %s %s n=%d k=%d t=%d picked=%s %.2f us best=%s %.2f us\n", fmt, epi, p.n, p.k,
-                tokens, generic::route_name(picked).c_str(), med[at_picked],
+    std::printf("pick %s %s n=%d k=%d t=%d picked=%s %.2f us best=%s %.2f us\n", fmt, epi, p.n,
+                p.k, tokens, generic::route_name(picked).c_str(), med[at_picked],
                 generic::route_name(routes[best]).c_str(), med[best]);
     std::fflush(stdout);
 
@@ -422,8 +420,7 @@ int main(int argc, char** argv) {
                         static_cast<unsigned>(device.pci_device_id));
         }
         for (const Problem& p : problems) {
-            for (const std::int32_t t : widths)
-                run_problem(p, samples, launches, device.l2_bytes, t);
+            for (const std::int32_t t : widths) run_problem(p, samples, launches, device.l2_bytes, t);
         }
         std::printf("done\n");
         return 0;
