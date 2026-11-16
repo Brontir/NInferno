@@ -6,6 +6,7 @@
 
 #include "ops/generic/generic_gemm.h"
 
+#include "core/board_facts.h"
 #include "core/device_class.h"
 #include "core/format_facts.h"
 #include "core/generation.h"
@@ -1060,7 +1061,8 @@ double dram_bytes_per_sm_cycle() {
         const auto& d = device_class();
         const auto& f = d.facts;
         if (!f.has_roofline() || d.sms <= 0) return 0.0;
-        return f.dram_bytes_per_s() / (d.sms * f.reference_clock_hz());
+        return board_facts::dram_bytes_per_sm_clock(f.dram_bytes_per_s(), d.sms,
+                                                    f.reference_clock_hz());
     });
 }
 
@@ -1634,7 +1636,7 @@ std::optional<Route> nvfp4_tiled_route(const Problem& problem, const Weight& wei
 
 int i8_pick(const Problem& problem, QType qtype, std::int32_t tokens) {
     const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
-    const double sms  = std::max(sm_count(), 1);
+    const int sms     = std::max(sm_count(), 1);
     int best          = -1;
     double best_cost  = 0;
     for (int i = 0; i < i8_schedule_count(); ++i) {
@@ -1642,7 +1644,9 @@ int i8_pick(const Problem& problem, QType qtype, std::int32_t tokens) {
         const auto s = kI8Schedules[i];
         const double ctas =
             std::ceil(problem.n * sets / s.block_n) * std::ceil(tokens / double(s.block_m));
-        const double waves = std::ceil(ctas / sms);
+        // One CTA an SM a wave (an integer grid: the same count as ceil(ctas / sms)).
+        const auto waves =
+            static_cast<double>(board_facts::waves(static_cast<long long>(ctas), sms, 1));
         const double cost  = waves * s.block_m * s.block_n / kI8Eff[i];
         if (best < 0 || cost < best_cost) {
             best      = i;
