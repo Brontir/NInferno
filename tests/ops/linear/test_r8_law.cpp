@@ -257,7 +257,10 @@ void check_kernel_keys() {
                        std::to_string(key->rows) + " " + std::to_string(key->nt) + " " +
                        std::to_string(key->epilogue));
             const auto verify = g::r8_kernel_key(i, f.q, g::Epilogue::Store, 3, true);
-            expect(verify && verify->nt == 4 && verify->pre && verify->epilogue == 0,
+            // Q3_K has no pre-quantized form (compiled_codecs.h PREQUANT false): no key.
+            expect(g::r8_verify_compiled(f.q)
+                       ? verify && verify->nt == 4 && verify->pre && verify->epilogue == 0
+                       : !verify,
                    std::string("R8 verify kernel key of ") + f.name);
         }
     }
@@ -365,8 +368,8 @@ void check_selector_is_the_prediction() {
         }
         std::cout << b.name << ": the law is the frozen T=1 prediction on " << agree << " of "
                   << picks.size() << " calls\n";
-        // A call no measured table holds (none has 4608 x 3584) takes the law at one token and the
-        // rules at two.
+        // A call no measured table holds (none has 4608 x 3584) takes the law at one token, and at
+        // two the law is not asked (the selector may route it off R8: the vec rule).
         const auto at = [&](std::int32_t t) {
             return g::route_answer_query(d, ninferno::QType::GGML_Q4_K,
                                          ninferno::ops::LinearPolicy::AllowA8, g::Epilogue::Store,
@@ -379,8 +382,8 @@ void check_selector_is_the_prediction() {
                    one->evidence.ranker == g::Evidence::Ranker::Cost,
                std::string("T=1 evidence is not the law's: ") + b.name + " " +
                    (one ? g::evidence_text(one->evidence) : std::string("none")));
-        expect(two && two->evidence.source == "r8-rules",
-               std::string("T=2 evidence is not the rules': ") + b.name + " " +
+        expect(two && two->evidence.source != "r8-law",
+               std::string("T=2 evidence is the law's: ") + b.name + " " +
                    (two ? g::evidence_text(two->evidence) : std::string("none")));
     }
 }

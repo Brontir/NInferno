@@ -255,6 +255,8 @@ constexpr CodecTraits codec_traits() {
 
 template <Ggml32 F>
 struct W4a8Ggml32 {
+    // Its kernel-facts key (kernel_facts.h decoder_name): the snapshot spells the enum by value.
+    static constexpr int kKeyArgument = static_cast<int>(F);
     static constexpr bool kFive    = F == Ggml32::Q5_0 || F == Ggml32::Q5_1;
     static constexpr bool kWithMin = F == Ggml32::Q4_1 || F == Ggml32::Q5_1;
     static constexpr bool kMin     = kWithMin;
