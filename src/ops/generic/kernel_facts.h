@@ -184,8 +184,8 @@ struct Gemma4KernelKey {
 struct R8KernelKey {
     std::string codec; // canonical type name: "W4a8Q45K<4>", "W4a8Q6K"
     int warps = 0, rows = 0;
-    int nt       = 0; // the token slots the kernel is compiled for
-    int epilogue = 0; // Epilogue as an integer
+    int nt       = 0;     // the token slots the kernel is compiled for
+    int epilogue = 0;     // Epilogue as an integer
     bool pre     = false; // the activation arrives quantized (kPre)
 };
 
