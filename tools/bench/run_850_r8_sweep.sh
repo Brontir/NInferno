@@ -9,7 +9,9 @@
 # BENCH is ninferno_r8_schedule_bench of a build of this card's architecture (configure with
 # -DNINFERNO_BUILD_BENCHMARKS=ON; it lands in <build>/bench/). Master's binary and this branch's
 # time the same kernels and print the same rules mark: either serves. OUT defaults to
-# r8_850_<class>_<MMDD_HHMM> in the current directory. With several cards, pick one
+# r8_850_<class>_<MMDD_HHMM> under $TMPDIR (/tmp without it), not the current directory: run
+# from a checkout, it would leave an untracked folder whose meta.txt holds the local bench path
+# (#876). With several cards, pick one
 # (CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=<i>). A compute process already on the GPUs
 # stops the script (ALLOW_BUSY=1 runs anyway; the figures are then not the protocol's).
 #
@@ -104,7 +106,7 @@ protocol=(--samples 15 --launches 60)
 probe=$("$bench" --problem q4k,store,1024,4096 --samples 1 --launches 1)
 class=$(sed -n 's/^device .* class \([^,]*\),.*/\1/p' <<<"$probe" | head -1)
 [[ -n "$class" ]] || { echo "the bench printed no device line:" >&2; echo "$probe" >&2; exit 1; }
-out=${2:-r8_850_${class/:/_}_$(date +%m%d_%H%M)}
+out=${2:-${TMPDIR:-/tmp}/r8_850_${class/:/_}_$(date +%m%d_%H%M)}
 mkdir -p "$out"
 {
     echo "bench $bench"
