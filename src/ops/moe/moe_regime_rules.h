@@ -224,7 +224,8 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      kR8Tokens,
      Label::Measured,
      {kRtx5090, kRtx5070Ti},
-     "R8 against the register MMA at T = 5..8, every K-quant and IQ3_XXS: RTX 5070 Ti -7..-14 %, "
+     "R8 against the register MMA at T = 5..8, every K-quant and IQ3_XXS (A16 baseline; against "
+     "the A8 register MMA Q6_K loses, so r8_q6k_narrow holds it to four): RTX 5070 Ti -7..-14 %, "
      "RTX 5090 -5..-15 %; end to end C8 Qwen3.6-35B 180.8 -> 189.0 tok/s, Gemma 4 26B 161.0 -> "
      "167.4 (RTX 5090)",
      kR8T8Sweep},
@@ -254,7 +255,9 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      "moe_bench --plans auto; moe.cpp r8_token_limit(bank)"},
     // Q6_K's 6-bit planes: R8's per-token unpack loses to the register MMA's once-per-weight
     // decode above four tokens on GB20x, and is level on Ada; GA10x and Turing already stop at
-    // four (#860).
+    // four (#860). Measured on the gate/up bank; a down bank is held the same way (its R8 at
+    // T = 5..8 loses more in the same sweeps: the R8 gate/up and down plan against R8 gate/up
+    // alone, RTX 5070 Ti +17..+18 %). The RTX 4070 Ti, also level, has no Card constant here.
     {"r8_q6k_narrow",
      Regime::BankLimit,
      {},
