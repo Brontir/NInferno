@@ -8,9 +8,10 @@
 # sm_100.txt before tools/release/package.sh does at release time (#758, #762). Per architecture:
 #   - configures a test tree with the release flags (Release, NINFERNO_CUDA_LINEINFO=OFF,
 #     NINFERNO_CUDA_EMBED_PTX=OFF; ccache launchers where ccache is installed);
-#   - builds ninferno_selector_golden_test, the binary the check reads (1.3 GB a tree; 20 to 30
-#     minutes cold at -j8 on a 16-core machine, less with ccache), at the lowest CPU and I/O
-#     priority;
+#   - builds ninferno_selector_golden_test and, where the tree has the target, ninferno-serve,
+#     the binary the check reads where it is built (tests/ops/linear/tests.cmake, #830) (1.3 GB a
+#     tree for the test alone; 20 to 30 minutes cold at -j8 on a 16-core machine, less with
+#     ccache), at the lowest CPU and I/O priority;
 #   - runs ninferno_kernel_facts_test (cuobjdump on the binary, the SASS pass included: about ten
 #     minutes), with no GPU visible. Its skip (exit 77: this nvcc is not the snapshot's) is a
 #     failure here: the job exists to compare, so it refuses to start on a toolkit other than the
@@ -91,7 +92,11 @@ for a in "${ARCHS[@]}"; do
     tail -15 "$L/kfa_cmake_$a.log"; RESULT[$a]="configure failed ($L/kfa_cmake_$a.log)"; worst 2; continue
   fi
   tick "sm_$a configured"
-  if ! (cd "$B" && $LOW ninja -j"$JOBS" ninferno_selector_golden_test > "$L/kfa_ninja_$a.log" 2>&1); then
+  # The check reads ninferno-serve where the tree builds it (every family's kernels, #830), else
+  # the selector golden test: build both, or ctest finds no binary to read.
+  TARGETS=(ninferno_selector_golden_test)
+  ninja -C "$B" -t targets all 2>/dev/null | grep -q '^ninferno-serve:' && TARGETS+=(ninferno-serve)
+  if ! (cd "$B" && $LOW ninja -j"$JOBS" "${TARGETS[@]}" > "$L/kfa_ninja_$a.log" 2>&1); then
     grep -m8 -E "error|FAILED" "$L/kfa_ninja_$a.log" || tail -8 "$L/kfa_ninja_$a.log"
     RESULT[$a]="build failed ($L/kfa_ninja_$a.log)"; worst 2; continue
   fi
