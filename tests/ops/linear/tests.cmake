@@ -190,6 +190,13 @@ ninferno_add_op_test(ninferno_r8_law_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_r8_law.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# The law's per-board prediction over a shapes file (tests/ops/linear/r8_law_predict.cpp): built so
+# that it keeps compiling, run by hand; its output is committed before a grid is scored (#613 PR-10).
+ninferno_add_test(ninferno_r8_law_predict
+  NO_DEFAULT_TEST
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/r8_law_predict.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # The generator of that golden table (tests/ops/linear/gen_kernel_roofline_golden.cpp): built so that
 # it keeps compiling, not run by ctest (it is run once, against the code before the move).
 ninferno_add_test(ninferno_gen_kernel_roofline_golden
