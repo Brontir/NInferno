@@ -3026,3 +3026,22 @@ d2|, 1.024 µs); a verdict needs both passes beyond it.
 `r8.w4r1` / `r8.w4r2`, faster than all three kernels in some cells: 5 of 6 on the 4060 Ti, 3 of 6 on the 4070 Ti (by
 1.4-1.7 %), 3 on the 3090, 2 on the 3060, 2 on the GV100. That ranking belongs to #613 PR-10
 (`rules_r8` priced), not to the vector rule.
+
+## 92. Q5_K takes the column tile of least work on GA10x and Ada (#619, 16.11, measured)
+
+**Decision.** `work_tiles_format` adds Q5_K on GA10x and Ada. GB20x waits: there, its A/B leaves
+448 tokens +3.5 % on the 64-column tile, which the law predicted at −3.7 %. Q4_K's A/B on the
+same card gives −1.4 % at that cell, so the miss is Q5_K's tile, not the rule at f 0.10. The
+predictions were posted in #619 before each run (f 0.20, range 0.11..0.33, bound 0.5 %).
+
+| card | at the row's f | fewest tiles | A/B, 144..256 tokens |
+|---|---|---|---|
+| RTX 4060 Ti (Ada) | 0.05 % | 5.11 % | −6.2 % (predicted −5) |
+| RTX 4070 Ti (Ada) | 0.00 % | 4.73 % | −5.7 % (predicted −4.5) |
+| RTX 3090 (GA10x) | 0.00 % | 6.81 % | −7.4 % (predicted −6.5) |
+| RTX 3060 (GA10x) | 0.07 % | 6.87 % | grid only (second GA10x card, review) |
+| RTX 5090 (GB20x) | 0.17 % | 5.82 % | −7.0 %, 448 +3.5 %: not joined |
+
+No size is more than 0.9 % slower in the three GA10x and Ada A/Bs. IQ3_XXS waits too: its grids pass on four
+cards, but its A/Bs miss at single sizes (5090 448 +5.5 %, 4070 Ti 320 +1.4 % on a repeat). A
+term for those tiles comes first.
