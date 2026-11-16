@@ -933,6 +933,7 @@
               "probe": "warp_inflight 5",
               "source_sha256": "2abe75c6aef0a477cd05bcaf47b7b2c3a3a55cff1a02d3f9205f464a1ae5903c"
             },
+            "clocks_waived": true,
             "dram_stream_latency_ns": 300.6,
             "ring2_rows": {
               "free": [
