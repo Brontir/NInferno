@@ -420,6 +420,26 @@ void count_reproduced_entries() {
     }
 }
 
+// A board whose class id is a decode table's but whose facts differ a little (a driver's clocks,
+// another memory clock) takes its own table as measured here, distance 0, before the law
+// (r8_hit_here); the same table's entry on another class is carried and yields to the law.
+void check_table_here() {
+    ninferno::DeviceClass d  = g::board_device_class(g::registry_facts_board("rtx4090", 0x2684));
+    d.memory_clock_khz       = static_cast<int>(d.memory_clock_khz * 1.05);
+    d.facts.memory_clock_khz = static_cast<int>(d.facts.memory_clock_khz * 1.05);
+    // ad102:128sm's first entry: IQ2_S store 4096 x 2048, w4r1.
+    const auto a =
+        g::route_answer_query(d, ninferno::QType::GGML_IQ2_S, ninferno::ops::LinearPolicy::AllowA8,
+                              g::Epilogue::Store, 4096, 2048, 1);
+    expect(a && a->evidence.source == "r8-table" &&
+               a->evidence.kind == g::Evidence::Kind::Measured && a->evidence.distance == 0 &&
+               a->route.family == g::Family::R8Mma &&
+               g::r8_schedule_info(a->route.schedule).warps == 4 &&
+               g::r8_schedule_info(a->route.schedule).rows == 1,
+           std::string("the RTX 4090 with other memory facts does not take its own table: ") +
+               (a ? g::evidence_text(a->evidence) : std::string("none")));
+}
+
 } // namespace
 
 int main() {
@@ -427,6 +447,7 @@ int main() {
     check_kernel_keys();
     check_selector_is_the_prediction();
     count_reproduced_entries();
+    check_table_here();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

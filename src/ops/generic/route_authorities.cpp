@@ -311,7 +311,9 @@ std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
     if (hit) {
         answer.evidence.ranker   = Evidence::Ranker::None;
         answer.evidence.source   = "r8-table";
-        answer.evidence.distance = hit->distance;
+        // A table of this board's own class is its measurement: distance 0 whatever the facts'
+        // small differences (r8_hit_here).
+        answer.evidence.distance = here ? 0.0 : hit->distance;
         if (here) {
             answer.evidence.kind = Evidence::Kind::Measured;
         } else {

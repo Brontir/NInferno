@@ -942,7 +942,10 @@ std::optional<int> law_r8_uncached(const Problem& p, const DeviceClass& device);
 // device and call and kept: select_route asks it on every linear call. PerDevice keeps a
 // substituted board's answers apart by the substitute's whole content (device_class_key).
 std::optional<int> law_r8(const Problem& p) {
-    const DeviceClass device = device_class();
+    DeviceClass device;
+    try {
+        device = device_class();
+    } catch (const std::exception&) { return std::nullopt; } // a host build with no device
     if (!r8_law_generation(device)) return std::nullopt;
 
     struct Memo {
@@ -1000,8 +1003,14 @@ std::optional<int> law_r8_uncached(const Problem& p, const DeviceClass& device) 
         if (!facts) continue;
         const R8ScheduleInfo s = r8_schedule_info(i);
         const auto t           = r8_law::terms(chip, device, *facts, call, {s.warps, s.rows});
-        // Equal ranks are a tie the law does not break: the first schedule keeps it.
-        if (t && (!best || t->rank < best_rank)) {
+        // Equal ranks are a tie the law does not break: the fewer warps, then the fewer rows,
+        // keep it (the frozen predictor's order, w4r1 w4r2 w8r1 w8r2, not the table's).
+        const auto order = [](int j) {
+            const R8ScheduleInfo x = r8_schedule_info(j);
+            return std::pair{x.warps, x.rows};
+        };
+        if (t &&
+            (!best || t->rank < best_rank || (t->rank == best_rank && order(i) < order(*best)))) {
             best      = i;
             best_rank = t->rank;
         }
