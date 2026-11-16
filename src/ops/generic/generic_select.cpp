@@ -919,7 +919,7 @@ std::optional<kernel_facts::R8KernelKey> r8_kernel_key(int schedule, QType qtype
 }
 
 bool r8_law_generation(const DeviceClass& d) noexcept {
-    return (d.major == 8 && d.minor == 9) || (d.major == 7 && d.minor == 0);
+    return (d.major == 8 && d.minor == 9) || (d.major == 7 && (d.minor == 0 || d.minor == 5));
 }
 
 std::optional<int> law_r8(const Problem& p) {

@@ -317,9 +317,9 @@ void check_selector_is_the_prediction() {
     };
 
     constexpr HoldBoard kBoards[] = {
-        {"rtx4090", 0x2684, true},    {"rtx4070ti", 0x2782, true}, {"rtx4060ti", 0x2805, true},
-        {"gv100", 0x1DBA, true},      {"rtx3090", 0x2204, false},  {"rtx3060", 0x2504, false},
-        {"rtx2080ti", 0x1E07, false}, {"rtx5090", 0x2B85, false},
+        {"rtx4090", 0x2684, true},   {"rtx4070ti", 0x2782, true}, {"rtx4060ti", 0x2805, true},
+        {"gv100", 0x1DBA, true},     {"rtx3090", 0x2204, false},  {"rtx3060", 0x2504, false},
+        {"rtx2080ti", 0x1E07, true}, {"rtx5090", 0x2B85, false},
     };
     const auto dir = std::filesystem::path(NINFERNO_SOURCE_DIR) / "tests/fixtures/r8_law";
     for (const HoldBoard& b : kBoards) {

@@ -812,13 +812,14 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "at one token only, where its frozen predictions were scored; no board places the gate",
      ""},
     {"r8_law_generation: the law's generations", Basis::Measured, "generic_select.cpp",
-     "return (d.major == 8 && d.minor == 9) || (d.major == 7 && d.minor == 0);", 0,
-     "ad102:128sm, ad104:60sm, ad106:34sm, gv100:80sm", "RTX 4090, RTX 4070 Ti, RTX 4060 Ti, GV100",
+     "return (d.major == 8 && d.minor == 9) || (d.major == 7 && (d.minor == 0 || d.minor == 5));",
+     0, "ad102:128sm, ad104:60sm, ad106:34sm, gv100:80sm, tu102:68sm",
+     "RTX 4090, RTX 4070 Ti, RTX 4060 Ti, GV100, RTX 2080 Ti",
      "the generations whose holdout grids (192 problems no law version was shaped on, predictions "
      "frozen at 9bdd25031 before the grids were read) the R8 schedule law beat the rules on at "
-     "T = 1: mean regret 0.90 / 0.92 / 0.71 / 2.16 % against the rules' 4.04 / 2.76 / 2.27 / "
-     "5.37 % (#613 PR-10); GA10x is left out (its issue floor overcounts, #960), Turing until its "
-     "holdout is scored, GB20x has no SM-rate row the law can read",
+     "T = 1: mean regret 0.90 / 0.92 / 0.71 / 2.16 / 3.84 % against the rules' 4.04 / 2.76 / "
+     "2.27 / 5.37 / 6.10 % (#613 PR-10); GA10x is left out (its issue floor overcounts, #960), "
+     "GB20x has no SM-rate row the law can read",
      ""},
     {"rmma_narrow_fallback: narrow tiles", Basis::Unknown, "route_authorities.cpp",
      "for (const int n_tiles : {2, 1}) { const int index = rmma_index(4, 1, 1, n_tiles); const "

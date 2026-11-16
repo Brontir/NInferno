@@ -106,10 +106,10 @@ int heuristic_r8(const Problem& p, std::int32_t tokens);
 // term it cannot price.
 std::optional<int> law_r8(const Problem& p);
 
-// Where the law decides at one token: Ada (sm_89) and Volta (sm_70), the generations whose
-// unread holdout grids it beat the rules on (#613, predictions frozen at 9bdd25031). GA10x keeps
-// the rules (floors above measured times, #960), GB20x has no SM-rate row (its transfer is
-// refuted, the law abstains), Turing waits for its holdout grid.
+// Where the law decides at one token: Ada (sm_89), Volta (sm_70) and Turing (sm_75), the
+// generations whose unread holdout grids it beat the rules on (#613, predictions frozen at
+// 9bdd25031). GA10x keeps the rules (its issue term overcounts the FMA pipe's work, #960), GB20x
+// has no SM-rate row (its transfer is refuted, the law abstains).
 [[nodiscard]] bool r8_law_generation(const DeviceClass& d) noexcept;
 
 // The R8 decode table's entry for the exact problem (r8_decode_table.h), from the table of the
