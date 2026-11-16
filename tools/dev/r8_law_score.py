@@ -88,16 +88,27 @@ def read_grid(paths, nt):
             t = float(us)
             if sched not in times[key] or t < times[key][sched]:
                 times[key][sched] = t
-            # The rules' R8 schedule: the dispatcher's pick where it takes R8 (`picked`, the
-            # table entries included, as at one token), else the shape-class rules' R8 schedule
-            # (`rules`): from 2 tokens on the dispatcher may take another family, and the R8 choice
-            # the law competes with is then that one.
+            # The rules' R8 schedule: the dispatcher's pick where it takes R8 (`picked`, its table
+            # entries included). Elsewhere, at one token, the bench's `rules` marker; from 2 tokens
+            # on that marker is still the one-token rule (r8_schedule_bench.cpp passes T = 1), so the
+            # tokens rule of generic_select.cpp rules_r8 stands in for it (rules_at_tokens).
             if picked or " picked " in line:
                 dispatched[key] = sched
-            elif " rules " in line:
+            elif nt == 1 and " rules " in line:
                 shape_rules[key] = sched
+            elif nt >= 2:
+                shape_rules[key] = rules_at_tokens(fmt, int(n), nt)
     rules = {**shape_rules, **dispatched}
-    return times, rules
+    return times, rules, len(dispatched)
+
+
+# generic_select.cpp rules_r8 from 2 tokens on: four warps of one row, of two rows for the IQ2
+# family (format_traits.h sched_iq2) at 4 tokens or from N 34816. The bench does not mark it.
+SCHED_IQ2 = {"iq2xxs", "iq2xs", "iq2s", "iq1s", "iq1m"}
+
+
+def rules_at_tokens(fmt: str, n: int, nt: int) -> str:
+    return "w4r2" if fmt in SCHED_IQ2 and (nt >= 4 or n >= 34816) else "w4r1"
 
 
 def main() -> int:
@@ -112,7 +123,7 @@ def main() -> int:
         print(f"r8_law_score: the prediction is not frozen: {sha}", file=sys.stderr)
         return 3
     ranks, none, floors = read_prediction(a.predicted)
-    times, rules = read_grid(a.grid, a.nt)
+    times, rules, dispatched = read_grid(a.grid, a.nt)
     law_regret, rule_regret, within, tie_hits, scored, ties = [], [], 0, 0, 0, 0
     common_law, broken = [], 0  # the law's regret where the rules picked too; floors above a time
     for key in sorted(ranks):
@@ -150,7 +161,8 @@ def main() -> int:
     if rule_regret:
         print(f"on the {len(rule_regret)} problems the rules picked too: law mean "
               f"{mean(common_law):.2f} %, rules mean {mean(rule_regret):.2f} %, worst "
-              f"{100 * max(common_law):.1f} / {100 * max(rule_regret):.1f} %")
+              f"{100 * max(common_law):.1f} / {100 * max(rule_regret):.1f} % "
+              f"({dispatched} of the grid's problems run R8 in the dispatcher)")
     print(f"floors above the measured time (max(bus, dram, issue) of a schedule over its time): "
           f"{broken}")
     return 0
