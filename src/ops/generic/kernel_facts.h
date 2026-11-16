@@ -151,7 +151,11 @@ struct SnapshotHeader {
 //           256 8 256 2 64 1 0 0") or `volta` / `volta_tiled` (the Volta decode kernels <D,
 //           MaxRows = rows>, the other fields 0). The decode plan reads the CTAs an SM holds from
 //           them (#830), never the host's kernels.
-inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8", "gemma4"};
+//   "r8"    the R8 decode kernels r8_kernel<codec, R8Schedule<warps, rows>, NT, epilogue, kPre>
+//           (#613 PR-10): one iteration of the loop holding the dp4a is a group of 32-value
+//           blocks per lane and row (no MMA: k_iter 0); key "codec warps rows nt epilogue pre"
+//           ("W4a8Q45K<4> 4 1 1 0 0").
+inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8", "gemma4", "r8"};
 
 struct MmqKernelKey {
     int type      = 0; // the ggml_type value: 12 Q4_K, 13 Q5_K, 14 Q6_K
@@ -177,6 +181,14 @@ struct Gemma4KernelKey {
     bool partial = false, fp8 = false, chain = false;
 };
 
+struct R8KernelKey {
+    std::string codec; // canonical type name: "W4a8Q45K<4>", "W4a8Q6K"
+    int warps = 0, rows = 0;
+    int nt       = 0; // the token slots the kernel is compiled for
+    int epilogue = 0; // Epilogue as an integer
+    bool pre     = false; // the activation arrives quantized (kPre)
+};
+
 // One section of a label's snapshot: the nvcc its rows were read under and their count; nullopt
 // where the label has no snapshot or the snapshot no such section.
 struct SectionHeader {
@@ -194,6 +206,7 @@ section_rows(std::string_view arch, std::string_view family);
                                                     const W4a8KernelKey& key);
 [[nodiscard]] std::optional<KernelFacts> gemma4_facts(std::string_view arch,
                                                       const Gemma4KernelKey& key);
+[[nodiscard]] std::optional<KernelFacts> r8_facts(std::string_view arch, const R8KernelKey& key);
 
 // The build architecture labels with a committed snapshot, in file order.
 [[nodiscard]] std::vector<std::string_view> snapshot_archs();

@@ -210,6 +210,18 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual((c.loops, c.mma, c.k_iter, c.mma_shape), (1, 0, 0, "-"))
         self.assertEqual(c.fp, 7)
 
+    def test_idp_marked_loop(self):
+        # The R8 decode kernels (#613 PR-10): no tensor-core MMA, the dp4a marks the loop. An FFMA
+        # loop beside it (the activation's quantizer) is not a candidate under the IDP marker.
+        lines = [(o, t.replace("HMMA.16816.F32.BF16", "IDP.4A.S8.S8").replace(", RZ ;", ", R0 ;"))
+                 for o, t in KERNEL]
+        c = sc.loop_counts(body_of(lines), tiles=1, marker="IDP")
+        self.assertEqual((c.loops, c.mma, c.k_iter, c.mma_shape), (1, 0, 0, "-"))
+        self.assertEqual(c.int, sc.loop_counts(body_of(KERNEL), tiles=1).int + 6)
+        ffma = [(o, t.replace("HMMA.16816.F32.BF16", "FFMA").replace(", RZ ;", ", R0 ;"))
+                for o, t in KERNEL]
+        self.assertEqual(sc.loop_counts(body_of(ffma), tiles=1, marker="IDP").loops, 0)
+
     def test_mixed_shapes_and_odd_k(self):
         lines = [(o, t.replace("HMMA.16816.F32.BF16 R40", "HMMA.1688.F32 R40")) for o, t in KERNEL]
         c = sc.loop_counts(body_of(lines), tiles=2)
@@ -784,6 +796,13 @@ class Sections(unittest.TestCase):
               f"({ns}Epilogue)0, 3, 4>({ns}GemmArgs, {ns}W4a8Activation)")
         self.assertEqual(kernel_facts.w4a8_key(ws), ("W4a8Q6K", 128, 64, 4, 2, 0, 0, 3, 4))
         self.assertIsNone(kernel_facts.w4a8_key(f"void {ns}w4a8_quantize_kernel(float *)"))
+        r8 = (f"void {ns}r8_kernel<{ns}W4a8Q45K<(int)4>, {ns}R8Schedule<(int)4, (int)1>, (int)1, "
+              f"({ns}Epilogue)0, (bool)0>({ns}GemmArgs, {ns}W4a8Activation)")
+        self.assertEqual(kernel_facts.r8_key(r8), ("W4a8Q45K<4>", 4, 1, 1, 0, 0))
+        pre = r8.replace("(int)1, ", "(int)8, ", 1).replace("(bool)0", "true")
+        self.assertEqual(kernel_facts.r8_key(pre)[3:], (8, 0, 1))
+        self.assertIsNone(kernel_facts.r8_key(classic))
+        self.assertIsNone(kernel_facts.w4a8_key(r8))
         self.assertIsNone(kernel_facts.rmma_key(self.MMQ_NAME))
 
     def test_pipe_counts(self):

@@ -41,7 +41,8 @@ After the register-MMA rows a snapshot holds one section per further kernel fami
 #785): ggml's matrix kernel `mul_mat_q<type, J, fallback, prec>` (mmq) and the W4A8 tiles
 (w4a8), each with its own nvcc, kernel count and columns (`family_nvcc`, `family_kernels`,
 `family_columns` after its `family <name>` line), and the pipe counts of the loop
-(sass_counts.PIPE_FIELDS) besides schema 4's. `extract --families mmq,w4a8 --update FILE`
+(sass_counts.PIPE_FIELDS) besides schema 4's; the R8 decode kernels (r8, #613 PR-10) the
+same way, their loop marked by the dp4a. `extract --families mmq,w4a8 --update FILE`
 rewrites those sections alone and keeps the rest of FILE byte for byte. `check` compares every
 section the snapshot has: in full where the build's nvcc is the one the section records, its
 kernel set alone otherwise (the exit code then follows the register-MMA rows); a family the
@@ -296,6 +297,22 @@ def w4a8_key(demangled):
     return None
 
 
+R8_SCHEDULE = re.compile(r"R8Schedule<(\d+),(\d+)>")
+
+
+def r8_key(demangled):
+    """The key of an R8 decode kernel (generic_r8.cuh, #613 PR-10): r8_kernel<C, R8Schedule<Warps,
+    Rows>, NT, E, kPre>, keyed as the codec, the warps and rows per warp, the token slots NT, the
+    epilogue and kPre (1: the activation arrives quantized). None for other symbols."""
+    args = template_args(demangled, "void " + NAMESPACE + "r8_kernel<")
+    if args is None:
+        return None
+    m = R8_SCHEDULE.fullmatch(args[1]) if len(args) == 5 else None
+    if not m or not all(re.fullmatch(r"\d+", a) for a in args[2:4]):
+        fail(f"unexpected r8_kernel arguments in {demangled}")
+    return (args[0], *(int(v) for v in m.groups()), int(args[2]), int(args[3]), as_bool(args[4]))
+
+
 GEMMA4_NAMESPACE = "ninferno::ops::"
 GEMMA4_GEOMETRY = re.compile(r"(?:ninferno::ops::)?Gemma4Geometry<(\d+),(-?\d+),(\d+)>")
 
@@ -334,8 +351,12 @@ class Family:
     of its key (the first spelled as text where `text_key`, the others integers), the m16n8 tiles
     k_iter divides a warp's MMA work by, and whether its rows carry the pipe counts."""
 
-    def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True):
+    def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True,
+                 marker=None):
         self.name = name
+        # The opcode that marks the counted loop where the kernel has no tensor-core MMA
+        # (sass_counts.loop_counts): IDP, the dp4a of the R8 kernels.
+        self.marker = marker
         # Whether the SASS pass counts its loop: a family whose price reads its resources alone
         # (the CTAs an SM holds) is a resources-only section, schema 1's columns.
         self.loop = loop
@@ -374,6 +395,8 @@ FAMILIES = {
     "gemma4": Family("gemma4", ("kernel", "D", "G", "slice", "rows", "Bc", "partial", "fp8",
                                 "chain"), lambda d: gemma4_key(d), "gemma4_", lambda key: 1,
                      False, True, loop=False),
+    "r8": Family("r8", ("codec", "warps", "rows", "nt", "epilogue", "pre"), lambda d: r8_key(d),
+                 "r8_kernel", lambda key: 1, True, True, marker="IDP"),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -475,7 +498,8 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
     for name, body in sass_counts.iter_functions(lines, lambda n: n in keys):
         fk = keys[name]
         family = FAMILIES[fk[0]]
-        c = sass_counts.loop_counts(body, family.tiles(fk[1])).with_pipes(family.pipes)
+        c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker).with_pipes(
+            family.pipes)
         if fk in counts and counts[fk] != c:
             fail(f"{name} is disassembled twice in {arch} with different loops {counts[fk]} "
                  f"and {c}")
@@ -561,7 +585,8 @@ def family_audit(family, rows):
     producer-warp tile's consumers wait on a full stage and mark it empty). Q2_K's k_iter is
     above its unit's in both families (5 / 4 of it: its min term, a scale and a min per 16
     values, takes MMAs of its own that advance no K, which the ones-register search of
-    sass_counts.py does not tell apart)."""
+    sass_counts.py does not tell apart). The R8 decode kernels: one loop marked by its dp4a,
+    no CTA barrier and no MMA in it."""
     out = []
     for k, v in sorted(rows.items()):
         c = v[4]
@@ -599,6 +624,15 @@ def family_audit(family, rows):
                 problems.append(f"k_iter {c.k_iter}, not {want}")
             if c.bar != 2:
                 problems.append(f"{c.bar} barriers in the iteration")
+        elif family == "r8":
+            # One loop of dp4a per lane and group, no CTA barrier in it (the activation is in
+            # shared memory before the loop starts) and no MMA.
+            if c.loops != 1:
+                problems.append(f"{c.loops} candidate loops")
+            if c.bar != 0:
+                problems.append(f"{c.bar} barriers in the iteration")
+            if c.mma != 0:
+                problems.append(f"{c.mma} MMAs in the iteration")
         problems += c.schedule_problems()
         if problems:
             out.append(f"{family} {row_key(k)}: {'; '.join(problems)}")
@@ -702,6 +736,13 @@ SECTION_NOTES = {
         "# and gemma4_volta_decode_tiled_kernel<D, MaxRows> (`volta`, `volta_tiled`, rows = MaxRows,",
         "# the other columns 0). Resources alone: the decode plan reads the CTAs an SM holds",
         "# (core/kernel_occupancy.h), never the host's kernels.",
+    ),
+    "r8": (
+        "# The R8 decode kernels (src/ops/generic/generic_r8.cuh, #613 PR-10): r8_kernel<codec,",
+        "# R8Schedule<warps, rows>, NT, epilogue, kPre> (pre 1: the activation arrives quantized;",
+        "# otherwise each CTA quantizes the [NT, K] activation into shared memory first). No",
+        "# tensor-core MMA: the counted loop is the one holding the dp4a (IDP), one iteration a",
+        "# group of 32-value blocks per lane and row; k_iter and the MMA columns are 0.",
     ),
 }
 

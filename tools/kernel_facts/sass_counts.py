@@ -691,10 +691,12 @@ def schedule_counts(body, control, iteration, outside):
     return out
 
 
-def loop_counts(body, tiles=1):
+def loop_counts(body, tiles=1, marker=None):
     """The K loop's LoopCounts of a function body (iter_functions); `tiles` the m16n8 tiles one
     warp accumulates (m_tiles * n_tiles * row sets), for k_iter. The schedule fields where every
-    instruction carries its control code."""
+    instruction carries its control code. `marker`, an opcode (IDP), marks the loop of a kernel
+    without tensor-core MMAs (the R8 decode kernels' dp4a); otherwise the MMAs mark it, or FFMA
+    where the body has none (Volta's emulated MMA)."""
     out = LoopCounts()
     if not body:
         return out
@@ -715,8 +717,10 @@ def loop_counts(body, tiles=1):
     dom, preds = dominators(edges, live)
     loops = natural_loops(edges, dom, preds, live)
     has_mma = any(base_opcode(op) in MMA_OPCODES for _, _, op, *_ in body)
-    marker = (lambda op: base_opcode(op) in MMA_OPCODES) if has_mma else \
-        (lambda op: base_opcode(op) == "FFMA")
+    marked_opcodes = (marker,) if marker is not None else MMA_OPCODES if has_mma else ("FFMA",)
+
+    def marker(op):
+        return base_opcode(op) in marked_opcodes
 
     def indices(members):
         for b in sorted(members):
