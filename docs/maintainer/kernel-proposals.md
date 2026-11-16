@@ -154,8 +154,8 @@ P from #850's plan. A, G, N and P have frozen predictions so far.
 - Law: the vec kernel's bounded twin excludes gated launches (`kVecHasBoundedTwin`): they spill
   under 72 registers. A twin needs the gate and up rows on separate warps. The gain is small, on one
   class (SMs x clock / bandwidth ~0.17).
-- Prototype: `tools/bench/run_521_gateup.sh` (#606; run on seven cards, DECISIONS 91: no loss above
-  3 % that a board fact explains, so nothing is built).
+- Prototype: `tools/bench/run_521_gateup.sh` (#606; run on seven cards, DECISIONS 91: the 3060 loses
+  2.7-4.7 % on 15360x3840 at T 3-4, but #606's rule does not hold on the 3090, so nothing is built).
 - Decision: run the kit first. Build only if the loss is above 3 % and #606's rule holds on the
   3090.
 
