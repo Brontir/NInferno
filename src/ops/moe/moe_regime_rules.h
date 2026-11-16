@@ -264,9 +264,10 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      kR8NarrowTokens,
      Label::Measured,
      {kRtx5070Ti, kRtx5090, kRtx4090, kRtx4060Ti},
-     "Q6_K gate/up, the route's own R8 plan against the best register-MMA plan at T = 5..8: RTX "
-     "5070 Ti +6.0 / +5.7 / +4.9 / +5.7 % (145.4 against 137.2 us at T = 5), RTX 5090 PENDING; Ada "
-     "level: RTX 4090 0.0..+0.8 %, 4070 Ti +0.3..+1.2 %, 4060 Ti +0.4..+0.8 %",
+     "Q6_K gate/up, R8 against the register MMA at T = 5..8: RTX 5070 Ti +4.9..+6.0 % (the route's "
+     "own R8 plan, 145.4 against 137.2 us at T = 5), RTX 5090 +6.5..+9.8 % (the best R8 gate/up "
+     "plan, 84.0 against 77.8 us at T = 5); Ada level: RTX 4090 0.0..+0.8 %, 4070 Ti +0.3..+1.2 %, "
+     "4060 Ti +0.4..+0.8 %",
      "moe_bench H 2048 F 512 E 128 k 8, published layout, --plans auto and --plans sweep --a8 1, "
      "T = 1..8, two passes (2026-11-16, master a8c09e817 and 782b5c6db; #860)"},
     {"r8_frag_q4k_wide",
