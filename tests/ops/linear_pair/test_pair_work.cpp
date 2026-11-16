@@ -3,6 +3,8 @@
 // kernels' compiled resources and K loops and the board's SM limits only. The separate side's
 // tile comes from the shape's table (select_q8_a16_launch, which reads a route table's route_as
 // band where the board has one: no table has a Q8 1024x5120 band, so the table's own tile).
+// The residency needs the toolkit's occupancy calculator to know every major of the table
+// (cuda_occupancy.h: 8.6, 8.9, 12.0); a cell it cannot answer fails "both sides priced".
 //
 // The cells: ninferno_linear_pair_bench --alternative pair|separate, K = 5120 (the 27B MTP K/V
 // pair, 1024 rows), graph replay, cold L2, master 26902b47 (2026-11-16), the median of four runs

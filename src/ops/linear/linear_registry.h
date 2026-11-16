@@ -145,7 +145,7 @@ linear_pair_requested_bytes(const Weight& first, const Weight& second, std::int3
 
 // The residency price of each alternative on `device` (#617 D, cta_facts.h): the fused
 // kernel's one-launch DualMma schedule, the two calls with the tile the shape's own table names.
-// No device and no gate: the law the selection reads, for its replica test. nullopt where the
+// No current device and no gate: the law the selection reads, for its replica test. nullopt where the
 // alternative's CTA facts are not known (TwoSimtR8C4, the split-K and Concat schedules on the
 // fused side; a tile without facts on the separate one).
 struct LinearPairPrice {

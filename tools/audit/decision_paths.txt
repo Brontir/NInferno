@@ -64,6 +64,7 @@ src/core/arch_requires.h
 src/core/device_identity.h
 src/core/machine_facts.h
 src/ops/common/arch_limits.h
+src/ops/common/cta_facts.h
 src/ops/common/native_nvfp4.h
 src/ops/common/route_compute.h
 src/ops/common/route_probe.h
