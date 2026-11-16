@@ -69,6 +69,7 @@
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/device_class.h"
+#include "core/format_facts.h"
 #include "core/tune_timer.h"
 #include "core/weight_view.h"
 #include "ninferno/ops/prefill_routes.h"
@@ -548,7 +549,17 @@ int route_tune_main(int argc, char** argv) {
                     // scalar route, Volta's CUTLASS band) or the snapshot has no loop for it.
                     std::optional<generic::KernelResources> kr;
                     try {
-                        kr = generic::route_resources(r, w.weight, p.epilogue, t);
+                        // In the prefill profile a min-term register-MMA tile may launch the
+                        // group-sums plane's instance (--group-sums-plane 1): describe that one,
+                        // the kernel this row timed (resolve_route reads the same two facts).
+                        const auto codec = format_facts(p.qtype).codec;
+                        const bool group_sums =
+                            r.family == generic::Family::RegisterMma &&
+                            ops::prefill_routes_active() && codec &&
+                            generic::rmma_group_sums(*codec) &&
+                            generic::rmma_plane_taken(r.schedule, w.weight, p.epilogue, t);
+                        kr = generic::route_resources(r, w.weight, p.epilogue, t, 0, std::nullopt,
+                                                      group_sums);
                     } catch (const std::exception&) { kr.reset(); }
                     if (kr) {
                         routes_csv << ',' << kr->threads << ',' << kr->grid_x << ',' << kr->grid_y
