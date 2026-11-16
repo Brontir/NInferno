@@ -968,8 +968,10 @@ def cmd_extract(args):
     if args.update:
         with open(args.update) as f:
             old = f.read()
-        parse_sections(old)
         top, sections = split_sections(old)
+        # What is kept must parse; a family replaced may be in an earlier column layout.
+        parse_sections(top + "".join(sections[f] for f in SECTION_FAMILIES
+                                     if f in sections and f not in families))
     if FAMILY in families:
         source = args.source or (source_hash(args.source_root) if args.source_root else "unknown")
         top = render(args.arch, extracted[FAMILY], nvcc, args.flags or "unknown", source)
