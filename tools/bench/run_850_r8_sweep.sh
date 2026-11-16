@@ -33,7 +33,8 @@
 # keeps every entry of a card it was not given and every problem the sweeps did not time):
 #   python3 tools/bench/r8_decode_table.py --merge src/ops/generic/r8_decode_table.h \
 #     --out src/ops/generic/r8_decode_table.h <class>=<OUT>/down_1.txt,<OUT>/down_2.txt,<OUT>/down_3.txt ...
-# (the summary prints each card's argument). Then regenerate nothing else: no selector golden has
+# (the summary prints each card's argument, relative to the folder the OUT directories are
+# copied into: run the merge there). Then regenerate nothing else: no selector golden has
 # a 4096x12288 row, so a merge of the down files moves none (check with
 # tools/audit/golden_diff.py --range origin/master...HEAD).
 set -euo pipefail
@@ -65,7 +66,9 @@ summarize() {
     local class
     class=$(sed -n 's/^device .* class \([^,]*\),.*/\1/p' "$out/down_1.txt" | head -1)
     echo
-    echo "merge argument: ${class}=$out/down_1.txt,$out/down_2.txt,$out/down_3.txt" |
+    local base
+    base=$(basename "$out")
+    echo "merge argument: ${class}=$base/down_1.txt,$base/down_2.txt,$base/down_3.txt" |
         tee -a "$out/summary.md"
 }
 

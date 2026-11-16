@@ -33,7 +33,8 @@ inline constexpr Board kA10          = board_registry::board(0x2236);
 inline constexpr Board kA100Sxm40    = board_registry::board(0x20B0);
 inline constexpr Board kRtx2080Ti    = board_registry::board(0x1E07);
 // The three boards whose R8 decode tables came later (#874): the RTX 4070 Ti, the RTX 3060 (its
-// Lite Hash Rate id, the lab's card) and the RTX 5070 Ti.
+// Lite Hash Rate id, the lab's card and its R8 table's; moe_regime_rules.h names the 0x2503 row, of
+// the same facts) and the RTX 5070 Ti.
 inline constexpr Board kRtx4070Ti = board_registry::board(0x2782);
 inline constexpr Board kRtx3060   = board_registry::board(0x2504);
 inline constexpr Board kRtx5070Ti = board_registry::board(0x2C05);
