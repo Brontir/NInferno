@@ -1,10 +1,10 @@
 #pragma once
 
+#include "core/device_class.h"
 #include "core/weight.h"
 #include "ops/common/cta_facts.h"
 #include "ninferno/ops/linear.h" // LinearPolicy
 
-#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -143,7 +143,7 @@ struct LinearPairRequested {
 [[nodiscard]] LinearPairRequested
 linear_pair_requested_bytes(const Weight& first, const Weight& second, std::int32_t tokens);
 
-// The residency price of each alternative on an SM of `sm` (#617 D, cta_facts.h): the fused
+// The residency price of each alternative on `device` (#617 D, cta_facts.h): the fused
 // kernel's one-launch DualMma schedule, the two calls with the tile the shape's own table names.
 // No device and no gate: the law the selection reads, for its replica test. nullopt where the
 // alternative's CTA facts are not known (TwoSimtR8C4, the split-K and Concat schedules on the
@@ -154,7 +154,7 @@ struct LinearPairPrice {
 };
 
 [[nodiscard]] LinearPairPrice linear_pair_price(std::int32_t n, std::int32_t k, std::int32_t tokens,
-                                                const SmLimits& sm);
+                                                const DeviceClass& device);
 [[nodiscard]] std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first,
                                                                       const Weight& second,
                                                                       std::int32_t tokens);

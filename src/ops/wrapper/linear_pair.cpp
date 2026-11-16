@@ -146,25 +146,16 @@ std::optional<ChainPrice> separate_chain(std::int32_t n, std::int32_t k, std::in
     return ChainPrice{2.0 * *one, 2};
 }
 
-// The fused one-launch DualMma schedule's residency price on `sm` (#617 D, cta_facts.h): its
+// The fused one-launch DualMma schedule's residency price on `device` (#617 D, cta_facts.h): its
 // grid of x_row_blocks x ceil(T / tile_cols) CTAs in rounds of the CTAs an SM holds, each round
 // one CTA's K chain.
 std::optional<double> fused_price(std::int32_t n, std::int32_t k, std::int32_t tokens,
-                                  const detail::SmLimits& sm) {
+                                  const DeviceClass& device) {
     const auto g = detail::q8_pair_geometry(detail::Q8PairProblem{n, k, k, tokens});
-    if (!g || g->launches != 1 || !g->cta || sm.sms <= 0) { return std::nullopt; }
+    if (!g || g->launches != 1 || !g->cta) { return std::nullopt; }
     const double ctas = static_cast<double>(g->x_row_blocks) *
                         std::ceil(static_cast<double>(tokens) / g->tile_cols);
-    return detail::residency_chain(ctas, *g->cta, sm, k);
-}
-
-// The device's SM limits, all 0 on a host without a device (nothing is then priced).
-detail::SmLimits device_sm() {
-    try {
-        const DeviceClass& d = device_class();
-        return {d.sms, d.registers_per_sm, d.smem_per_sm, d.max_threads_per_sm,
-                d.max_blocks_per_sm};
-    } catch (const std::runtime_error&) { return {0, 0, 0, 0, 0}; }
+    return detail::residency_chain(ctas, *g->cta, device, k);
 }
 
 // Whether a call of the pair's domain runs the fused kernel: the cheaper chain where both are
@@ -182,7 +173,7 @@ detail::SmLimits device_sm() {
 // shape's 41 KB r16_t32 tile takes 5 rounds (RTX 3060 T = 128: the fused kernel wins, 211 against
 // 239 us). On seven boards it never lost a measured winner by more than 3 % outside a tie
 // (tests/ops/linear_pair/test_pair_work.cpp). A tie keeps the fused kernel (it saves a launch):
-// there the two calls win on six boards by 5-11 % and the fused kernel on the RTX 5090, the tile
+// there the two calls win on five boards by 5-11 % and the fused kernel on the RTX 5090, the tile
 // efficiency the chain does not count (#947). The Concat and split-K schedules (K = 2048) and
 // TwoSimtR8C4 have no CTA facts and keep the call as before. The
 // separate side is priced only where the shape's table runs the call with a tile the device's MMA
@@ -199,7 +190,8 @@ bool chain_prefers_fused(std::int32_t n, std::int32_t k, std::int32_t tokens) {
         // #617 D: a one-launch schedule against the two calls, by residency (residency_chain).
         // The separate side is priced only where separate_chain is (the gate above); a tie keeps
         // the fused kernel, which also saves a launch.
-        const auto fw = fused_price(n, k, tokens, device_sm());
+        // separate_chain priced means a device answered (a host without one prices nothing).
+        const auto fw = fused_price(n, k, tokens, device_class());
         const auto sw = detail::linear_q8_residency_price(pair_row_weight(n, k), tokens);
         if (!fw || !sw) { return true; }
         return *fw <= 2.0 * *sw;
@@ -229,15 +221,15 @@ bool linear_pair_runs_fused(std::int32_t n, std::int32_t k, std::int32_t tokens)
 }
 
 LinearPairPrice linear_pair_price(std::int32_t n, std::int32_t k, std::int32_t tokens,
-                                  const SmLimits& sm) {
+                                  const DeviceClass& device) {
     LinearPairPrice out;
-    if (tokens <= 0 || sm.sms <= 0 || !q8_pair_registered(n, k)) { return out; }
-    out.fused       = fused_price(n, k, tokens, sm);
+    if (tokens <= 0 || !q8_pair_registered(n, k)) { return out; }
+    out.fused       = fused_price(n, k, tokens, device);
     const auto tile = q8_launch_tile(select_q8_a16_launch(n, k, tokens));
     if (tile && tile->cta) {
         const double ctas = std::ceil(static_cast<double>(n) / tile->rows) *
                             std::ceil(static_cast<double>(tokens) / tile->tokens);
-        out.separate = 2.0 * residency_chain(ctas, *tile->cta, sm, k);
+        if (const auto one = residency_chain(ctas, *tile->cta, device, k)) { out.separate = 2.0 * *one; }
     }
     return out;
 }

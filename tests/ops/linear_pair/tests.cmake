@@ -8,7 +8,7 @@ ninferno_add_op_test(ninferno_linear_pair_candidates_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_pair_candidates.cpp"
   LIBRARIES ninferno_ops)
 
-# #617 D: the busiest-SM work law of linear_pair's one-launch schedules against six boards'
+# #617 D: the residency price of linear_pair's one-launch schedules against seven boards'
 # measured cells (no GPU).
 ninferno_add_op_test(ninferno_linear_pair_work_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_pair_work.cpp"

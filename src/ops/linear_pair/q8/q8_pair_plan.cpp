@@ -520,7 +520,8 @@ void launch_exact_tail(Q8PairScheduleId exact_schedule, const Q8PairProblem& pro
 
 namespace {
 
-// The DualMma kernel's facts (q8_pair_gemm_mma.cuh, #617 D): cuobjdump of the sm_89 build; a CTA
+// The DualMma kernel's facts (q8_pair_gemm_mma.cuh, #617 D): cuobjdump of the sm_89 build (every
+// build for now, #949); a CTA
 // of TileCols / 16 warps, each 32 rows x 16 columns of both weights, BK 64.
 CtaFacts dual_mma_cta(Q8PairScheduleId schedule) {
     return schedule == Q8PairScheduleId::DualMmaR32C64
@@ -539,19 +540,18 @@ std::optional<Q8PairGeometry> q8_pair_geometry(const Q8PairProblem& problem) {
     if (schedule == Q8PairScheduleId::TwoSimtR8C4) {
         // One single-weight launch per weight, 8 rows by 4 columns a CTA.
         return Q8PairGeometry{2, blocks(problem.rows, schedule_rows(schedule)),
-                              schedule_cols(schedule), schedule_rows(schedule), std::nullopt};
+                              schedule_cols(schedule), std::nullopt};
     }
     if (schedule == Q8PairScheduleId::DualMmaR32C64 ||
         schedule == Q8PairScheduleId::DualMmaR32C128) {
         // One launch: a CTA takes 32 rows of both weights.
         return Q8PairGeometry{1, blocks(problem.rows, schedule_rows(schedule)),
-                              schedule_cols(schedule), 2 * schedule_rows(schedule),
-                              dual_mma_cta(schedule)};
+                              schedule_cols(schedule), dual_mma_cta(schedule)};
     }
     if (is_concat_schedule(schedule)) {
         // One launch over the two weights' rows as one plane.
         return Q8PairGeometry{1, blocks(2 * problem.rows, schedule_rows(schedule)),
-                              schedule_cols(schedule), schedule_rows(schedule), std::nullopt};
+                              schedule_cols(schedule), std::nullopt};
     }
     return std::nullopt;
 }

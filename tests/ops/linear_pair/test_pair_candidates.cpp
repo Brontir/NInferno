@@ -111,11 +111,10 @@ int main() {
                   "the separate side is priced where the shape's table runs it" + at);
             // From 86 columns the fused schedule is one launch: the residency price decides
             // (#617 D), the board's SM limits included; a tie keeps the fused kernel.
-            const auto& dc = ninferno::device_class();
+            // (The same law as the selection: this checks the plumbing; the law itself is held to
+            // seven boards' measurements by test_pair_work.cpp.)
             const auto w =
-                ops::detail::linear_pair_price(1024, 5120, t,
-                                               {dc.sms, dc.registers_per_sm, dc.smem_per_sm,
-                                                dc.max_threads_per_sm, dc.max_blocks_per_sm});
+                ops::detail::linear_pair_price(1024, 5120, t, ninferno::device_class());
             const bool fused = t > 85
                                    ? (!priced || !w.fused || !w.separate || *w.fused <= *w.separate)
                                    : (!r.separate || *r.fused <= *r.separate);

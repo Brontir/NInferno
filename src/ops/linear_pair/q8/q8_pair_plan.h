@@ -91,7 +91,6 @@ struct Q8PairGeometry {
     std::int32_t launches;     // kernel launches of the call
     std::int32_t x_row_blocks; // row tiles that each request the whole activation, per launch
     std::int32_t tile_cols;    // token columns of one CTA
-    std::int32_t cta_rows;     // weight rows one CTA multiplies, both weights' rows counted
     // The CTA's resources and K chain (#617 D, cta_facts.h): the DualMma schedules; nullopt for
     // the others (not priced against the two calls by residency).
     std::optional<CtaFacts> cta;
