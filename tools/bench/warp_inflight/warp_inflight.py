@@ -838,6 +838,7 @@ def transfer_of(row, runs):
         checks.append({
             "source": name, "card": head["card"], "sms": int(head["sms"]),
             "tool": {"probe": head["probe"], "source_sha256": head["source_sha256"]},
+            "clocks_waived": any(n.startswith(CLOCK_WAIVED) for n in head["notes"]),
             "dram_stream_latency_ns": own_l0(rows),
             "ring2_rows": rings["ring2"], "ring4_rows": rings["ring4"],
             "law_over_measured": {
