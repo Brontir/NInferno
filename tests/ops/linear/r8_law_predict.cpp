@@ -15,6 +15,7 @@
 // the same for all): pick 1 on the law's choice, 2 on a schedule whose rank equals it (a tie the
 // law does not break; the choice is then the first in the snapshot's order).
 #include "core/device_class.h"
+#include "core/format_facts.h"
 #include "ops/generic/codec_traits.h"
 #include "ops/generic/kernel_facts.h"
 #include "ops/generic/kernel_roofline.h"
@@ -38,25 +39,24 @@ namespace kf = g::kernel_facts;
 namespace kr = g::kernel_roofline;
 namespace rl = g::r8_law;
 
-// A format of the grid: the snapshot's codec key, the weight's DRAM bytes per value (the ggml
-// block over its values), whether its blocks carry a min, its staged grid in 32-bit words.
+// A format of the grid: its snapshot codec key and its QType. The weight's DRAM bytes per value
+// (ggml_bits_per_value), its min (codec_traits: the activation's block sums travel with it) and
+// its staged grid (codec_traits grid_words) are read from the format's own facts.
 struct Format {
     const char* name;
     const char* codec;
-    double bytes_per_value;
-    bool sums;
-    int grid_words;
+    ninferno::QType q;
 };
 
 constexpr Format kFormats[] = {
-    {"q4k", "W4a8Q45K<4>", 144.0 / 256, true, 0},
-    {"q6k", "W4a8Q6K", 210.0 / 256, false, 0},
-    {"q3k", "W4a8Q3K", 110.0 / 256, false, 0},
-    {"iq2xxs", "W4a8Iq2Xxs", 66.0 / 256, false, 512},
-    {"iq2xs", "W4a8Iq2Xs", 74.0 / 256, false, 1024},
-    {"iq2s", "W4a8Iq2S", 82.0 / 256, false, 2048},
-    {"iq3xxs", "W4a8Iq3Xxs", 98.0 / 256, false, 256},
-    {"iq3s", "W4a8Iq3S", 110.0 / 256, false, 512},
+    {"q4k", "W4a8Q45K<4>", ninferno::QType::GGML_Q4_K},
+    {"q6k", "W4a8Q6K", ninferno::QType::GGML_Q6_K},
+    {"q3k", "W4a8Q3K", ninferno::QType::GGML_Q3_K},
+    {"iq2xxs", "W4a8Iq2Xxs", ninferno::QType::GGML_IQ2_XXS},
+    {"iq2xs", "W4a8Iq2Xs", ninferno::QType::GGML_IQ2_XS},
+    {"iq2s", "W4a8Iq2S", ninferno::QType::GGML_IQ2_S},
+    {"iq3xxs", "W4a8Iq3Xxs", ninferno::QType::GGML_IQ3_XXS},
+    {"iq3s", "W4a8Iq3S", ninferno::QType::GGML_IQ3_S},
 };
 
 const Format* format_of(const std::string& name) {
@@ -112,18 +112,19 @@ int main(int argc, char** argv) {
         if (!(fields >> format >> compute >> epilogue >> n >> k)) continue;
         const Format* f = format_of(format);
         if (f == nullptr) continue;
-        const bool swiglu = epilogue == "swiglu";
+        const bool swiglu           = epilogue == "swiglu";
+        const g::CodecTraits traits = g::codec_traits(f->q);
         rl::Call call;
         call.n                      = n;
         call.k                      = k;
         call.nt                     = nt;
         call.slots                  = rl::slots_of(device);
         call.swiglu                 = swiglu;
-        call.sums                   = f->sums;
-        call.weight_bytes_per_value = f->bytes_per_value;
+        call.sums                   = traits.min;
+        call.weight_bytes_per_value = ninferno::ggml_bits_per_value(f->q) / 8.0;
         // Below sm_80 a codebook grid is staged in shared memory after the activation.
-        call.grid_bytes = device.major < 8 && f->grid_words > 0
-                              ? static_cast<std::int64_t>(f->grid_words) * 4 +
+        call.grid_bytes = device.major < 8 && traits.grid_words > 0
+                              ? static_cast<std::int64_t>(traits.grid_words) * 4 +
                                     static_cast<std::int64_t>(g::r8_grid_pad)
                               : 0;
 

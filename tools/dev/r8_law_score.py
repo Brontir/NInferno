@@ -9,8 +9,10 @@ since, in a commit that is an ancestor of HEAD (the script refuses otherwise). T
 ninferno_r8_schedule_bench's output (one `r8 <format> <epilogue> n=N k=K t=1 r8.wWrR <us> us ...`
 line per schedule, `picked` on the rules' choice); a schedule's time is its fastest pass.
 
-Per problem the law's pick (pick 1; pick 2 rows are ties the law does not break) is set against
-the fastest measured schedule among those the prediction covers. Output: one line per problem
+Per problem the law's pick is the schedule of least rank_us among those the grid measured (the
+prediction may cover schedules the grid does not time); schedules of equal rank are a tie the law
+does not break, and the first in the CSV's order is its pick. It is set against the fastest
+measured schedule among those the prediction covers. Output: one line per problem
 where the law misses by more than the band, then the summary: problems scored, picks within the
 band, the law's and the rules' mean and worst regret (t(pick) / t(best) - 1), and abstentions.
 Exit 0 on a score (whatever it is), 2 on usage, 3 when the prediction is not frozen.
@@ -50,19 +52,15 @@ def frozen(path: Path) -> str:
 
 
 def read_prediction(path: Path):
-    picks, ties, covered, none = {}, collections.defaultdict(set), collections.defaultdict(set), []
+    ranks, none = collections.defaultdict(dict), []  # key -> schedule -> rank (CSV order)
     with path.open(newline="") as f:
         for row in csv.DictReader(f):
             key = (row["format"], row["epilogue"], int(row["n"]), int(row["k"]))
             if row["schedule"] == "none":
                 none.append(key)
                 continue
-            covered[key].add(row["schedule"])
-            if row["pick"] == "1":
-                picks[key] = row["schedule"]
-            if row["pick"] in ("1", "2"):
-                ties[key].add(row["schedule"])
-    return picks, ties, covered, none
+            ranks[key][row["schedule"]] = float(row["rank_us"])
+    return ranks, none
 
 
 def read_grid(paths):
@@ -93,13 +91,17 @@ def main() -> int:
     if sha.startswith("error"):
         print(f"r8_law_score: the prediction is not frozen: {sha}", file=sys.stderr)
         return 3
-    picks, ties, covered, none = read_prediction(a.predicted)
+    ranks, none = read_prediction(a.predicted)
     times, rules = read_grid(a.grid)
-    law_regret, rule_regret, within, tie_hits, scored = [], [], 0, 0, 0
-    for key, pick in sorted(picks.items()):
-        measured = {s: t for s, t in times.get(key, {}).items() if s in covered[key]}
-        if pick not in measured:
+    law_regret, rule_regret, within, tie_hits, scored, ties = [], [], 0, 0, 0, 0
+    for key in sorted(ranks):
+        measured = {s: t for s, t in times.get(key, {}).items() if s in ranks[key]}
+        if not measured:
             continue
+        rank = {s: r for s, r in ranks[key].items() if s in measured}
+        pick = min(rank, key=rank.get)  # the first of equal ranks in the CSV's order
+        tied = {s for s, r in rank.items() if r == rank[pick]}
+        ties += len(tied) > 1
         scored += 1
         best_s = min(measured, key=measured.get)
         best = measured[best_s]
@@ -107,7 +109,7 @@ def main() -> int:
         law_regret.append(reg)
         if reg <= a.band:
             within += 1
-        elif any(measured.get(s, 1e18) / best - 1 <= a.band for s in ties[key] - {pick}):
+        elif any(measured[s] / best - 1 <= a.band for s in tied - {pick}):
             tie_hits += 1
         if reg > a.band:
             print(f"miss {' '.join(map(str, key))}: law {pick} {measured[pick]:.2f} us, "
@@ -120,7 +122,7 @@ def main() -> int:
     mean = lambda v: 100 * sum(v) / len(v) if v else float("nan")
     print(f"prediction {sha[:12]} ({a.predicted.name}), {len(a.grid)} pass(es), band {100 * a.band:g} %")
     print(f"scored {scored}, law within the band {within} ({100 * within / scored:.1f} %), "
-          f"a tie within it {tie_hits}, abstained {len(none)}")
+          f"ties {ties} (another of the tie within the band {tie_hits}), abstained {len(none)}")
     print(f"law regret: mean {mean(law_regret):.2f} %, worst {100 * max(law_regret):.1f} %")
     if rule_regret:
         print(f"rules regret ({len(rule_regret)} problems): mean {mean(rule_regret):.2f} %, "
