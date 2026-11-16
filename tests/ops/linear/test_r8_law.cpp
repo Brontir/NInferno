@@ -413,9 +413,8 @@ void count_reproduced_entries() {
             same += s.warps == e.warps && s.rows == e.rows ? 1 : 0;
         }
         std::cout << t.gpu << ": the law reproduces " << same << " of " << t.entries.size()
-                  << " decode table entries (" << none
-                  << " unanswered)
-                     ";
+                  << " decode table entries (" << none << " unanswered)" << '
+';
     }
 }
 
