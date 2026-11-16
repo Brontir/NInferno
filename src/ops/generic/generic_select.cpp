@@ -47,6 +47,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -918,13 +920,57 @@ std::optional<kernel_facts::R8KernelKey> r8_kernel_key(int schedule, QType qtype
                                      static_cast<int>(epilogue), prequantized};
 }
 
+bool r8_hit_here(const R8TableHit& hit) {
+    if (hit.distance == 0) return true;
+    try {
+        return hit.gpu == device_class().id();
+    } catch (const std::exception&) { return false; }
+}
+
 bool r8_law_generation(const DeviceClass& d) noexcept {
     return (d.major == 8 && d.minor == 9) || (d.major == 7 && d.minor == 0);
 }
 
+namespace {
+
+std::optional<int> law_r8_uncached(const Problem& p, const DeviceClass& device);
+
+} // namespace
+
+// The law's answer depends only on the device class and the call's format, epilogue and extents
+// (no policy: the law ranks schedules, route_admits judges the route), so it is computed once per
+// device and call and kept: select_route asks it on every linear call. PerDevice keeps a
+// substituted board's answers apart by the substitute's whole content (device_class_key).
 std::optional<int> law_r8(const Problem& p) {
     const DeviceClass device = device_class();
     if (!r8_law_generation(device)) return std::nullopt;
+
+    struct Memo {
+        std::mutex mutex;
+        std::map<std::tuple<int, int, std::int32_t, std::int32_t>, std::optional<int>> answers;
+    };
+
+    static PerDevice<std::shared_ptr<Memo>> memos;
+    std::shared_ptr<Memo> held;
+    try {
+        held = memos.get([](int) { return std::make_shared<Memo>(); });
+    } catch (const std::exception&) { return law_r8_uncached(p, device); }
+    Memo& memo = *held;
+    const std::tuple<int, int, std::int32_t, std::int32_t> key{
+        static_cast<int>(p.qtype), static_cast<int>(p.epilogue), p.n, p.k};
+    {
+        const std::lock_guard<std::mutex> lock(memo.mutex);
+        if (const auto it = memo.answers.find(key); it != memo.answers.end()) return it->second;
+    }
+    const auto answer = law_r8_uncached(p, device);
+    const std::lock_guard<std::mutex> lock(memo.mutex);
+    memo.answers.emplace(key, answer);
+    return answer;
+}
+
+namespace {
+
+std::optional<int> law_r8_uncached(const Problem& p, const DeviceClass& device) {
     const auto arch = kernel_facts::sass_arch();
     if (!arch) return std::nullopt;
     const kernel_roofline::ChipFacts chip = kernel_roofline::chip_facts_of(device);
@@ -962,6 +1008,8 @@ std::optional<int> law_r8(const Problem& p) {
     }
     return best;
 }
+
+} // namespace
 
 bool w4a8_ws_supports(QType q) { return compiled(Variant::W4a8Ws, q); }
 
@@ -1141,9 +1189,13 @@ int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t to
 }
 
 int heuristic_r8(const Problem& p, std::int32_t tokens) {
+    // At one token: measured on this board first, then the law, then a table carried from a
+    // nearby board (#622: measured here, the ranker, then carried).
     if (tokens == 1) {
-        if (const auto tuned = tuned_r8(p)) return tuned->schedule;
+        const auto tuned = tuned_r8(p);
+        if (tuned && r8_hit_here(*tuned)) return tuned->schedule;
         if (const auto law = law_r8(p)) return *law;
+        if (tuned) return tuned->schedule;
     }
     return rules_r8(p, tokens);
 }

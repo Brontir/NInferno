@@ -796,7 +796,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the half-L2 line; the layout is a fact of the format, no timing places it",
      ""},
     {"r8_schedule: the decode table's width", Basis::Structural, "route_authorities.cpp",
-     "const auto hit = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;", 1, kUnknown, kUnknown,
+     "auto hit = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;", 1, kUnknown, kUnknown,
      "the nearest measured board's decode table is consulted at one token only: its entries are "
      "T = 1 timings (r8_decode_table.h, written by tools/bench/r8_decode_table.py) and none exist "
      "for other widths; the gate follows from the table's layout, and no board places it (the "
@@ -804,8 +804,9 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the same bare 1 is written in heuristic_r8 (generic_select.cpp, the next descriptor)",
      ""},
     {"heuristic_r8: the decode table's width", Basis::Structural, "generic_select.cpp",
-     "if (tokens == 1) { if (const auto tuned = tuned_r8(p)) return tuned->schedule; if (const "
-     "auto law = law_r8(p)) return *law; }",
+     "if (tokens == 1) { const auto tuned = tuned_r8(p); if (tuned && r8_hit_here(*tuned)) return "
+     "tuned->schedule; if (const auto law = law_r8(p)) return *law; if (tuned) return "
+     "tuned->schedule; }",
      1, kUnknown, kUnknown,
      "the same one-token gate as r8_schedule's, written again in the heuristic's own path; the "
      "table (r8_decode_table.h) has T = 1 entries only, and the schedule law (law_r8) is taken "

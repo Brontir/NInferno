@@ -291,14 +291,17 @@ std::optional<RouteAnswer> cost_model(const Ask& ask, const Problem& problem,
 }
 
 // R8 for decode and for the verify of the formats with an R8 codec (r8_call): at one token the
-// entry of the nearest measured board's decode table (tuned_r8, within kR8CarryDistance), else the
-// R8 schedule law where it answers (law_r8: a counted ranker, "r8-law"), else the R8 rules
-// (r8_rules_route), each asked only when the one before does not answer.
+// entry of this board's own decode table (tuned_r8 at distance 0), else the R8 schedule law where
+// it answers (law_r8: a counted ranker, "r8-law"), else the entry carried from the nearest
+// measured board (within kR8CarryDistance), else the R8 rules (r8_rules_route): measured here,
+// then the ranker, then carried (#622).
 std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
                                        const Weight& weight) {
     if (!r8_call(problem, weight, ask.tokens)) return std::nullopt;
-    const auto hit = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;
-    const auto law = ask.tokens == 1 && !hit ? law_r8(problem) : std::nullopt;
+    auto hit        = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;
+    const bool here = hit && r8_hit_here(*hit);
+    const auto law  = ask.tokens == 1 && !here ? law_r8(problem) : std::nullopt;
+    if (law) hit.reset(); // a carried entry yields to the law
     RouteAnswer answer =
         hit   ? RouteAnswer{Route{Family::R8Mma, static_cast<std::uint8_t>(hit->schedule)},
                           Evidence{}}
@@ -309,7 +312,7 @@ std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
         answer.evidence.ranker   = Evidence::Ranker::None;
         answer.evidence.source   = "r8-table";
         answer.evidence.distance = hit->distance;
-        if (hit->distance == 0) {
+        if (here) {
             answer.evidence.kind = Evidence::Kind::Measured;
         } else {
             answer.evidence.kind  = Evidence::Kind::Carried;

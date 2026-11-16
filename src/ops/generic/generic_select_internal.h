@@ -124,6 +124,11 @@ struct R8TableHit {
 
 std::optional<R8TableHit> tuned_r8(const Problem& p);
 
+// Whether a decode-table hit was measured on this board's own class (the table's GPU class id is
+// the device's, or the boards' facts are equal): measured here, which ranks before the law; any
+// other hit is carried from a nearby board and ranks after it (#622).
+[[nodiscard]] bool r8_hit_here(const R8TableHit& hit);
+
 // The route selection's rules and fixed routes, which route_authorities.cpp asks in order
 // (generic_select.cpp holds the bodies and their measurements).
 // Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits; the
