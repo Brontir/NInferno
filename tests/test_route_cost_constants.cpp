@@ -305,8 +305,9 @@ int main(int argc, char** argv) {
             }
             std::printf("L2 %s: fitted %g B/clk/SM, the rated width over the SMs %.1f..%.1f on "
                         "%d boards (fitted x%.2f..x%.2f)
-",
-                        name, fit, lo, hi, boards, fit / hi, fit / lo);
+                        ",
+                        name,
+                        fit, lo, hi, boards, fit / hi, fit / lo);
         };
         ceiling(120, "GB20x", rc::kL2BytesPerSmClockGb20x.value());
         ceiling(86, "GA10x", rc::kL2BytesPerSmClockGa10x.value());
