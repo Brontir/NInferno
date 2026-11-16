@@ -54,7 +54,9 @@ inline constexpr double kTileFixed      = 0.43;
     const std::string_view generation = generation_row(major, minor).name;
     const bool from_ga10x = generation == "ga10x" || generation == "ada" || generation == "gb20x";
     if (qtype == QType::GGML_IQ4_XS) { return from_ga10x || generation == "turing"; }
-    if (qtype == QType::GGML_Q5_K) { return generation == "ga10x" || generation == "ada" || generation == "gb20x"; }
+    if (qtype == QType::GGML_Q5_K) {
+        return generation == "ga10x" || generation == "ada" || generation == "gb20x";
+    }
     return qtype == QType::GGML_Q3_K && from_ga10x;
 }
 
