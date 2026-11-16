@@ -450,7 +450,7 @@ void sections_read() {
         for (const auto& [key, f] : kf::section_rows(arch, "r8")) {
             const bool pre = key.size() >= 2 && key.compare(key.size() - 2, 2, " 1") == 0;
             const bool ok  = f.loop && f.loop->loops == 1 && f.loop->mma == 0 && f.loop->pipes &&
-                            f.loop->pipes->bar == 0 && f.prologue &&
+                            f.loop->pipes->bar == 0 && f.loop->k_iter > 0 && f.prologue &&
                             f.prologue->loops == (pre ? 0 : 1);
             if (!ok && r8_bad++ == 0) r8_first = key;
         }
