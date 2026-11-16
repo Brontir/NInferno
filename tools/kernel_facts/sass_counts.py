@@ -152,11 +152,16 @@ PIPE_FIELDS = tuple(PIPE_OPCODES)
 # counts follow the pipe counts, prefixed pro_: the loops found (0 where the kernel reads a
 # quantized activation), and of one iteration the instructions, the integer and float ALU work,
 # the global bytes it loads and the shared bytes it stores (per warp), and its stall sum.
+# After them, the waits that expose a global load's latency (#613 PR-10, the law's latency term):
+# an instruction whose wait mask names a scoreboard with a global load (LDG, LD) pending since
+# that scoreboard's last wait, in the dp4a loop's iteration (walked twice, the second counted, as
+# the local waits), outside it, and in one iteration of the quantizer's loop.
 PROLOGUE_FIELDS = ("pro_loops", "pro_total", "pro_int", "pro_fp", "pro_ldg_bytes",
-                   "pro_sts_bytes", "pro_stall")
+                   "pro_sts_bytes", "pro_stall", "glb_waits", "outside_glb_waits", "pro_glb_waits")
 PROLOGUE_OF = {"pro_loops": "loops", "pro_total": "total", "pro_int": "int", "pro_fp": "fp",
                "pro_ldg_bytes": "ldg_bytes", "pro_sts_bytes": "sts_bytes",
-               "pro_stall": "stall_sum"}
+               "pro_stall": "stall_sum", "pro_glb_waits": "glb_waits"}
+GLOBAL_LOADS = ("LDG", "LD")
 PIPE_OF = {opcode: field for field, opcodes in PIPE_OPCODES.items() for opcode in opcodes}
 NO_BARRIER = 7
 
@@ -700,6 +705,33 @@ def schedule_counts(body, control, iteration, outside):
                     local[b] = False
             if c.write_barrier != NO_BARRIER and base_opcode(body[i][2]) == "LDL":
                 local[c.write_barrier] = True
+    outside_counts(body, control, outside, out)
+    out["glb_waits"] = global_waits(body, control, iteration, 2)
+    out["outside_glb_waits"] = global_waits(body, control, outside, 1)
+    return out
+
+
+def global_waits(body, control, indices, walks):
+    """The instructions of `indices` (in order, walked `walks` times, the last one counted) whose
+    wait mask names a scoreboard with a global load (GLOBAL_LOADS) pending since its last wait."""
+    pending = [False] * 6
+    count = 0
+    for walk in range(walks):
+        for i in indices:
+            c = control[i]
+            if c.wait_mask:
+                waited = [b for b in range(6) if (c.wait_mask >> b) & 1]
+                if walk == walks - 1 and any(pending[b] for b in waited):
+                    count += 1
+                for b in waited:
+                    pending[b] = False
+            if c.write_barrier != NO_BARRIER and base_opcode(body[i][2]) in GLOBAL_LOADS:
+                pending[c.write_barrier] = True
+    return count
+
+
+def outside_counts(body, control, outside, out):
+    """Adds the outside fields of SCHEDULE_FIELDS over `outside` to `out`."""
     for i in outside:
         out["outside_total"] += 1
         out["outside_stall"] += control[i].stall

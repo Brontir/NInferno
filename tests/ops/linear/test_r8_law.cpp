@@ -3,6 +3,7 @@
 // the law's own arithmetic, so a later change of a term is a deliberate edit here.
 
 #include "core/device_class.h"
+#include "core/isa_facts.h"
 #include "ops/generic/kernel_facts.h"
 #include "ops/generic/kernel_roofline.h"
 #include "ops/generic/r8_law.h"
@@ -151,6 +152,23 @@ void check_terms() {
     // Chain: the static schedule of one warp, every round (outside 1500 less the quantizer's 400).
     expect(near(t->chain, t->rounds * (400.0 + 624.0 + 1100.0) / chip.clock_hz),
            "chain from the stall sums");
+    // Waits on global loads expose their latency: the loop's at DRAM's L0, the quantizer's and
+    // the rest's at the ISA table's L2 hit (one warp alone).
+    kf::KernelFacts waits                = f;
+    waits.prologue->loop_global_waits    = 2;
+    waits.prologue->global_waits         = 1;
+    waits.prologue->outside_global_waits = 3;
+    const auto tw                        = rl::terms(chip, *device, waits, call, {4, 1});
+    const auto isa                       = ninferno::isa_row(device->major, device->minor);
+    expect(isa && isa->l2_latency.w1.has_value(), "the rtx4090's ISA row has an L2 latency");
+    if (tw && isa && isa->l2_latency.w1) {
+        const double exposed =
+            1 * 2 * *chip.dram_latency_s * chip.clock_hz + (1 * 1 + 3) * *isa->l2_latency.w1;
+        expect(near(tw->exposed_clocks, exposed), "exposed: waits x their latency");
+        expect(near(tw->chain, t->rounds * (400.0 + 624.0 + 1100.0 + exposed) / chip.clock_hz),
+               "chain adds the exposed latency, round after round");
+    }
+    expect(t->exposed_clocks == 0, "no waits on global loads, no exposed latency");
     expect(t->rank == std::max({t->dram, t->issue, t->chain}), "the rank is the longest SM term");
     expect(t->total == std::max(t->bus, t->rank), "the time is the rank or the bus");
     // SwiGLU doubles a CTA's bytes; a quantized activation (no quantizer loop) has no passes.

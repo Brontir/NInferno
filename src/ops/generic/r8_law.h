@@ -14,7 +14,9 @@
 //            bytes in flight) (#690)
 //   issue  = q x I_cta x cycles / (4 schedulers x clock),
 //            I_cta = warp passes x prologue + W x (iterations x loop + the rest outside it)
-//   chain  = rounds x (passes x prologue stall + iterations x loop stall + the rest) / clock
+//   chain  = rounds x (passes x prologue stall + iterations x loop stall + the rest
+//            + the waits on global loads x their latency: the loop's at DRAM's L0, the
+//            quantizer's and the rest's at an L2 hit) / clock
 //   rank   = max(dram, issue, chain): what schedules are compared on
 //   total  = max(bus, rank), bus = every CTA's bytes over the chip's bandwidth (the same for
 //            every schedule)
@@ -31,6 +33,7 @@
 // the rules answer (rules_r8).
 
 #include "core/device_class.h"
+#include "core/isa_facts.h"
 #include "core/kernel_occupancy.h"
 #include "ops/generic/kernel_facts.h"
 #include "ops/generic/kernel_roofline.h"
@@ -70,20 +73,21 @@ struct Schedule {
 };
 
 struct Terms {
-    double ctas        = 0;
-    double occupancy   = 0; // c
-    double waves       = 0; // q
-    double rounds      = 0;
-    double passes      = 0; // quantizer passes a thread runs before the barrier
-    double warp_passes = 0; // quantizer warp passes a CTA issues
-    double iterations  = 0; // dp4a loop iterations a warp runs
-    double cta_bytes   = 0;
-    double bus         = 0; // seconds: every CTA's bytes over the chip's bandwidth
-    double dram        = 0; // seconds: the busiest SM's residency rounds at its own rate
-    double issue       = 0; // seconds: the busiest SM's issue, the INT32 and FP32 pipes
-    double chain       = 0; // seconds: one warp's static schedule, round after round
-    double rank        = 0; // max(dram, issue, chain): what schedules are compared on
-    double total       = 0; // max(bus, rank)
+    double ctas           = 0;
+    double occupancy      = 0; // c
+    double waves          = 0; // q
+    double rounds         = 0;
+    double passes         = 0; // quantizer passes a thread runs before the barrier
+    double warp_passes    = 0; // quantizer warp passes a CTA issues
+    double iterations     = 0; // dp4a loop iterations a warp runs
+    double cta_bytes      = 0;
+    double bus            = 0; // seconds: every CTA's bytes over the chip's bandwidth
+    double dram           = 0; // seconds: the busiest SM's residency rounds at its own rate
+    double issue          = 0; // seconds: the busiest SM's issue, the INT32 and FP32 pipes
+    double exposed_clocks = 0; // a warp's waits on global loads at their latency, SM clocks
+    double chain          = 0; // seconds: one warp's static schedule and waits, round after round
+    double rank           = 0; // max(dram, issue, chain): what schedules are compared on
+    double total          = 0; // max(bus, rank)
 };
 
 // The K values one quantizer pass covers: one 32-value block a thread.
@@ -110,6 +114,10 @@ inline constexpr double kValuesPerTask = 32.0;
         static_cast<std::size_t>(call.nt * (call.k / 32) * (call.sums ? 40 : 36) + call.grid_bytes);
     const int resident = resident_ctas_per_sm(device, shape);
     if (resident <= 0) return std::nullopt;
+    // The L2 hit's latency of one warp alone (the ISA table, in SM clocks).
+    const auto isa = isa_row(device.major, device.minor);
+    if (!isa || !isa->l2_latency.w1) return std::nullopt;
+    const double l2_clocks = *isa->l2_latency.w1;
 
     Terms t;
     const double rows_per_cta = static_cast<double>(s.warps) * s.rows;
@@ -146,13 +154,19 @@ inline constexpr double kValuesPerTask = 32.0;
           cta_fp * rmma_counted::fp32_cycles_per_warp_instruction(chip.major)});
     t.issue = t.waves * cycles / (rmma_counted::kSchedulersPerSm * chip.clock_hz);
 
-    // Chain: one warp alone issues its static schedule; a round lasts at least that long.
+    // Chain: one warp alone issues its static schedule, and every wait on a global load exposes
+    // that load's latency: the dp4a loop's (the weights) a DRAM fetch (L0), the quantizer's and
+    // the code's outside the loops (the activation, which every CTA reads) an L2 hit. A round
+    // lasts at least that long; the CTAs resident at once share it (rounds counts them).
     if (l.schedule) {
         const double outside_stall =
             std::max(0.0, l.schedule->outside_stall - quantizer * p.stall_sum);
         const double warp_clocks =
             t.passes * p.stall_sum + t.iterations * l.schedule->stall_sum + outside_stall;
-        t.chain = t.rounds * warp_clocks / chip.clock_hz;
+        const double dram_clocks = *chip.dram_latency_s * chip.clock_hz;
+        t.exposed_clocks         = t.iterations * p.loop_global_waits * dram_clocks +
+                           (t.passes * p.global_waits + p.outside_global_waits) * l2_clocks;
+        t.chain = t.rounds * (warp_clocks + t.exposed_clocks) / chip.clock_hz;
     }
     t.rank  = std::max({t.dram, t.issue, t.chain});
     t.total = std::max(t.bus, t.rank);

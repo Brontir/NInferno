@@ -32,8 +32,8 @@ namespace ninferno::ops::detail::generic::kernel_facts {
 struct RmmaKernelKey {
     std::string decoder; // canonical type name: "GgmlQ45KQuadDecoder<4>", "Bf16Decoder"
     int warps_m = 0, warps_k = 0, m_tiles = 0, n_tiles = 0, cluster = 1;
-    int epilogue  = 0; // Epilogue as an integer
-    bool latency  = false;
+    int epilogue = 0; // Epilogue as an integer
+    bool latency = false;
     // Where a min-term kernel's group sums come from (rmma_kernel's RmmaSums): 0 the MMA with
     // ones (every other decoder's kernels too), 1 FP32 adds, 2 the call's pre-summed plane.
     int sums = 0;
@@ -92,6 +92,12 @@ struct PrologueCounts {
     int ldg_bytes = 0; // global bytes one iteration loads, per warp
     int sts_bytes = 0; // shared bytes one iteration stores, per warp
     int stall_sum = 0; // the static schedule's clocks for one warp alone
+    // The waits that expose a global load's latency (sass_counts.py global_waits): in one
+    // iteration of this loop, in one iteration of the dp4a loop and outside both (the r8 row's
+    // glb_waits columns, kept here beside the quantizer's: only the r8 section has them).
+    int global_waits         = 0;
+    int loop_global_waits    = 0;
+    int outside_global_waits = 0;
 };
 
 struct LoopCounts {
@@ -123,11 +129,11 @@ struct LoopCounts {
 };
 
 struct KernelFacts {
-    int registers                   = 0; // per thread
-    std::size_t stack_bytes         = 0; // per thread: the stack frame (spills and stack arrays)
-    std::size_t local_bytes         = 0; // per thread: other local memory
-    std::size_t static_shared_bytes = 0; // per CTA
-    std::optional<LoopCounts> loop;      // schema 4 snapshots; nullopt in a resources-only one
+    int registers                   = 0;    // per thread
+    std::size_t stack_bytes         = 0;    // per thread: the stack frame (spills and stack arrays)
+    std::size_t local_bytes         = 0;    // per thread: other local memory
+    std::size_t static_shared_bytes = 0;    // per CTA
+    std::optional<LoopCounts> loop;         // schema 4 snapshots; nullopt in a resources-only one
     std::optional<PrologueCounts> prologue; // the r8 section's pro_ columns (#613 PR-10)
 
     // Per thread: every local-memory byte (the driver's localSizeBytes), the one spill measure

@@ -785,7 +785,10 @@ SECTION_NOTES = {
         "# row and token (128 per dp4a over rows x sets x token slots), the MMA columns 0. After the",
         "# pipe counts, the pro_ columns: the activation quantizer's loop (marked by F2I; pro_loops",
         "# 0 where pre is 1), one iteration's instructions, integer and float work, global bytes",
-        "# loaded and shared bytes stored per warp, and its stall sum.",
+        "# loaded and shared bytes stored per warp, and its stall sum. Then the waits that expose a",
+        "# global load's latency (a wait on a scoreboard with an LDG pending): glb_waits in one",
+        "# dp4a iteration, outside_glb_waits outside both loops, pro_glb_waits in one quantizer",
+        "# iteration.",
     ),
 }
 

@@ -420,6 +420,15 @@ class StaticSchedule(unittest.TestCase):
         self.assertEqual(c.schedule_problems(), [])
         self.assertGreaterEqual(c.stall_sum, c.total)
 
+    def test_global_waits(self):
+        # One wait a iteration exposes the LDG's latency: 0x1a0 on its scoreboard (#613 PR-10).
+        c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=2)
+        self.assertEqual(c.glb_waits, 1)
+        # The same scoreboard set by a shared load exposes no global latency.
+        ldg = [o for o, t in SCHEDULED if t.startswith("LDG")]
+        lds = [(o, t.replace("LDG.E", "LDS", 1) if o in ldg else t) for o, t in SCHEDULED]
+        self.assertEqual(sc.loop_counts(body_of(lds, SCHEDULED_WORDS), tiles=2).glb_waits, 0)
+
     def test_local_wait_needs_the_ldl(self):
         # The same scoreboard set by a shared load is no local wait; a wait in between clears it.
         lds = [(o, "LDS R26, [R1] ;" if o == 0x1c0 else t) for o, t in SCHEDULED]

@@ -69,7 +69,8 @@ constexpr SectionFamily kSections[] = {
     {"gemma4", "family kernel D G slice rows Bc partial fp8 chain registers stack local shared", 1,
      8},
     {"r8", "family codec warps rows nt epilogue pre registers stack local shared", 1, 5,
-     " pro_loops pro_total pro_int pro_fp pro_ldg_bytes pro_sts_bytes pro_stall"},
+     " pro_loops pro_total pro_int pro_fp pro_ldg_bytes pro_sts_bytes pro_stall glb_waits"
+     " outside_glb_waits pro_glb_waits"},
 };
 static_assert(std::size(kSections) == std::size(kSectionFamilies));
 
@@ -132,7 +133,7 @@ void read_section_row(Section& s, const SectionFamily& f, Columns columns,
         if (!f.extra_columns.empty()) {
             PrologueCounts p;
             fields >> p.loops >> p.total >> p.int_alu >> p.fp_alu >> p.ldg_bytes >> p.sts_bytes >>
-                p.stall_sum;
+                p.stall_sum >> p.loop_global_waits >> p.outside_global_waits >> p.global_waits;
             if (!fields) throw std::runtime_error("kernel facts: malformed prologue: " + line);
             k.prologue = p;
         }
@@ -163,7 +164,7 @@ std::string row_key(const RmmaKernelKey& k) {
 // family_nvcc, family_kernels and family_columns lines and rows of that family alone.
 Snapshot parse(std::string_view text) {
     Snapshot s;
-    std::optional<Columns> columns; // what the columns line, read before any row, promises
+    std::optional<Columns> columns;        // what the columns line, read before any row, promises
     Section* section            = nullptr; // the section being read, after its `family` line
     const SectionFamily* family = nullptr;
     std::optional<Columns> section_columns;
