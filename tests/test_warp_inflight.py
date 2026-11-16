@@ -553,6 +553,8 @@ class WarpInflight(unittest.TestCase):
             for c in row["transfer"]["runs"]:
                 self.assertEqual(c["source"], f"warp_inflight_{key}_{wi.card_slug(c['card'])}.txt")
                 self.assertNotEqual(c["card"], row["card"], key)
+                # Whether the run's clock check was waived (#955), as the row's own record says.
+                self.assertIsInstance(c["clocks_waived"], bool, key)
                 t = c["tool"]
                 self.assertEqual(t["source_sha256"],
                                  wi.source_sha256() if t["probe"] == wi.checked_in_probe()

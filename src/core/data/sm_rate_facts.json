@@ -1243,6 +1243,7 @@
               "probe": "warp_inflight 3",
               "source_sha256": "c903f40008fb45fa109c837b07bd78d9a5dbb565c9906afa1cbcd9b4711d93e8"
             },
+            "clocks_waived": true,
             "dram_stream_latency_ns": 254.1,
             "ring2_rows": {
               "free": [
@@ -1476,6 +1477,7 @@
               "probe": "warp_inflight 3",
               "source_sha256": "c903f40008fb45fa109c837b07bd78d9a5dbb565c9906afa1cbcd9b4711d93e8"
             },
+            "clocks_waived": true,
             "dram_stream_latency_ns": 256.9,
             "ring2_rows": {
               "free": [
@@ -2024,6 +2026,7 @@
               "probe": "warp_inflight 3",
               "source_sha256": "c903f40008fb45fa109c837b07bd78d9a5dbb565c9906afa1cbcd9b4711d93e8"
             },
+            "clocks_waived": true,
             "dram_stream_latency_ns": 266.0,
             "ring2_rows": {
               "free": [
