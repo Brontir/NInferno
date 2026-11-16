@@ -2,12 +2,13 @@
 """Score the R8 schedule law's frozen prediction against a measured r8 grid (#613 PR-10, step 10c).
 
   r8_law_score.py --predicted tests/fixtures/r8_law/predicted_<board>.csv \
-                  --grid PASS_1.txt [--grid PASS_2.txt ...] [--band 0.02]
+                  --grid PASS_1.txt [--grid PASS_2.txt ...] [--band 0.02] [--nt 1]
 
 The prediction must be frozen before the grid is read: the CSV has to be committed, unchanged
 since, in a commit that is an ancestor of HEAD (the script refuses otherwise). The grid is
 ninferno_r8_schedule_bench's output (one `r8 <format> <epilogue> n=N k=K t=1 r8.wWrR <us> us ...`
-line per schedule, `picked` on the rules' choice); a schedule's time is its fastest pass.
+line per schedule, `picked` on the rules' choice); a schedule's time is its fastest pass. Only the
+grid's lines of `t=NT` are read (--nt, 1 by default): a prediction made with `--nt NT` scores them.
 
 Per problem the law's pick is the schedule of least rank_us among those the grid measured (the
 prediction may cover schedules the grid does not time); schedules of equal rank are a tie the law
@@ -27,7 +28,7 @@ import sys
 from pathlib import Path
 
 LINE = re.compile(
-    r"^r8 (\S+) (\S+) n=(\d+) k=(\d+) t=1 r8\.w(\d+)r(\d+) ([0-9.]+) us .*?(picked)?(?: rules)?\s+h="
+    r"^r8 (\S+) (\S+) n=(\d+) k=(\d+) t=(\d+) r8\.w(\d+)r(\d+) ([0-9.]+) us .*?(picked)?(?: rules)?\s+h="
 )
 
 
@@ -72,7 +73,7 @@ def read_prediction(path: Path):
     return ranks, none, floors
 
 
-def read_grid(paths):
+def read_grid(paths, nt):
     times = collections.defaultdict(dict)  # key -> schedule -> fastest pass
     rules = {}
     for p in paths:
@@ -80,7 +81,9 @@ def read_grid(paths):
             m = LINE.match(line)
             if not m:
                 continue
-            fmt, epi, n, k, w, r, us, picked = m.groups()
+            fmt, epi, n, k, tokens, w, r, us, picked = m.groups()
+            if int(tokens) != nt:
+                continue
             key, sched = (fmt, epi, int(n), int(k)), f"w{w}r{r}"
             t = float(us)
             if sched not in times[key] or t < times[key][sched]:
@@ -95,13 +98,14 @@ def main() -> int:
     ap.add_argument("--predicted", required=True, type=Path)
     ap.add_argument("--grid", required=True, action="append")
     ap.add_argument("--band", type=float, default=0.02)
+    ap.add_argument("--nt", type=int, default=1, choices=(1, 2, 4, 8))
     a = ap.parse_args()
     sha = frozen(a.predicted)
     if sha.startswith("error"):
         print(f"r8_law_score: the prediction is not frozen: {sha}", file=sys.stderr)
         return 3
     ranks, none, floors = read_prediction(a.predicted)
-    times, rules = read_grid(a.grid)
+    times, rules = read_grid(a.grid, a.nt)
     law_regret, rule_regret, within, tie_hits, scored, ties = [], [], 0, 0, 0, 0
     common_law, broken = [], 0  # the law's regret where the rules picked too; floors above a time
     for key in sorted(ranks):
