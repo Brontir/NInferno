@@ -64,6 +64,9 @@ struct Call {
     std::int64_t grid_bytes = 0; // a codebook grid staged in shared memory (below sm_80), with pad
     double weight_bytes_per_value = 0; // DRAM bytes of the weight per row and K value
     int slots                     = 2; // the dp4a ring's slots: slots_of(device)
+    // The pre-quantized verify form (kPre, 2..8 tokens with a workspace): the activation arrives
+    // quantized from a separate launch, so the CTA stages none of it in shared memory.
+    bool pre = false;
 };
 
 // The R8 kernel's ring slots: one on sm_70 (NINFERNO_R8_ONE_SLOT), two elsewhere.
@@ -111,11 +114,11 @@ inline constexpr double kValuesPerTask = 32.0;
     const kernel_facts::PrologueCounts& p = *f.prologue;
     const int threads                     = 32 * s.warps;
     KernelShape shape;
-    shape.registers           = f.registers;
-    shape.static_shared_bytes = f.static_shared_bytes;
-    shape.threads             = threads;
-    shape.dynamic_shared_bytes =
-        static_cast<std::size_t>(call.nt * (call.k / 32) * (call.sums ? 40 : 36) + call.grid_bytes);
+    shape.registers            = f.registers;
+    shape.static_shared_bytes  = f.static_shared_bytes;
+    shape.threads              = threads;
+    shape.dynamic_shared_bytes = static_cast<std::size_t>(
+        (call.pre ? 0 : call.nt * (call.k / 32) * (call.sums ? 40 : 36)) + call.grid_bytes);
     const int resident = resident_ctas_per_sm(device, shape);
     if (resident <= 0) return std::nullopt;
     // The L2 hit's latency of one warp alone (the ISA table, in SM clocks).

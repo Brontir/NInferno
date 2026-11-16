@@ -136,10 +136,20 @@ int main(int argc, char** argv) {
         std::vector<Row> rows;
         for (const rl::Schedule s : {rl::Schedule{4, 1}, rl::Schedule{4, 2}, rl::Schedule{8, 1},
                                      rl::Schedule{8, 2}, rl::Schedule{2, 1}}) {
+            // As the launch takes it (r8_launch_schedule): 2..8 tokens with a workspace run the
+            // pre-quantized verify form where the codec has it (its facts row), else the in-CTA
+            // quantizer up to 4 tokens; 8 tokens have no other form.
+            const auto pre_facts =
+                nt > 1 ? kf::r8_facts(arch, {f->codec, s.warps, s.rows, nt, swiglu ? 2 : 0, true})
+                       : std::nullopt;
             const auto facts =
-                kf::r8_facts(arch, {f->codec, s.warps, s.rows, nt, swiglu ? 2 : 0, false});
+                pre_facts
+                    ? pre_facts
+                    : kf::r8_facts(arch, {f->codec, s.warps, s.rows, nt, swiglu ? 2 : 0, false});
             if (!facts) continue;
-            if (const auto t = rl::terms(chip, device, *facts, call, s)) rows.push_back({s, *t});
+            rl::Call c = call;
+            c.pre      = pre_facts.has_value();
+            if (const auto t = rl::terms(chip, device, *facts, c, s)) rows.push_back({s, *t});
         }
         if (rows.empty()) {
             std::printf("%s,%s,%lld,%lld,none,,,,,,,,,,0\n", format.c_str(), epilogue.c_str(),
