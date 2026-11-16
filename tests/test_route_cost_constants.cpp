@@ -258,6 +258,7 @@ int main(int argc, char** argv) {
                          static_cast<int>(checked->constant.size()), checked->constant.data(),
                          constant_of(c.name).c_str());
             ++failures;
+            continue;
         }
         if (source == nullptr && checked != nullptr) {
             if (!kernel_asserts(checked->file, checked->constant)) {

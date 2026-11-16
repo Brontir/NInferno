@@ -489,7 +489,7 @@ bool filtered_out(const std::string& label) {
     return false;
 }
 
-// Every completed filtered run says what the filter let through (the exception path, the 77
+// Every completed filtered run says what the filter let through (main's exception path, the 77
 // skips and the usage error print nothing); false when it let nothing. `part` is main's --part
 // argument, empty for the whole suite.
 bool filter_matched(const std::string& part) {
@@ -498,8 +498,11 @@ bool filter_matched(const std::string& part) {
               << " case check(s)\n";
     if (matched_cases != 0) return true;
     std::cerr << "moe: the case filter matched no case"
-              << (part.empty() ? std::string() : " in --part " + part)
-              << " (it applies to each process: a part without a matching case fails)\n";
+              << (part.empty() ? std::string()
+                               : " in --part " + part +
+                                     " (it applies to each process: a part without a matching "
+                                     "case fails)")
+              << '\n';
     return false;
 }
 
@@ -2032,7 +2035,9 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (part == "streams") {
-        // Two layers' calls in flight on two streams at once (#882).
+        // Two layers' calls in flight on two streams at once (#882). It is a check without a case,
+        // so a filtered run skips it and then fails as any part without a matching case does.
+        if (filtering()) return filter_matched(part) ? 0 : 1;
         if (!cuda_available()) return 77;
         int failures = 0;
         try {
