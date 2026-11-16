@@ -1,0 +1,8 @@
+shape, T             |   gated1  2xsngl1    rmma1 |   gated2  2xsngl2    rmma2 |      d1      d2  spread | verdict        | fastest other (us, route)
+q4k 12288x4096 T=2   |    107.1    113.3    128.1 |    106.8    113.0    129.2 |    -6.3    -6.2     1.0 | gated*         | 111.1 r8.w4r2
+q4k 12288x4096 T=3   |    111.9    122.8    112.6 |    112.0    123.2    113.2 |    -0.8    -1.2     1.0 | within spread  | 123.6 r8.w4r1
+q4k 12288x4096 T=4   |    112.0    148.1    113.9 |    112.6    148.7    115.4 |    -1.9    -2.7     1.0 | gated*         | 140.6 r8.w4r2
+q4k 15360x3840 T=2   |    127.9    131.6    131.9 |    127.7    131.2    131.8 |    -3.6    -3.5     1.0 | gated*         | 127.7 r8.w4r1
+q4k 15360x3840 T=3   |    132.4    141.7    134.7 |    132.2    141.0    134.7 |    -2.3    -2.5     1.0 | gated*         | 148.5 r8.w4r1
+q4k 15360x3840 T=4   |    132.9    177.0    135.9 |    132.7    177.2    135.9 |    -2.9    -3.2     1.0 | gated*         | 159.7 r8.w4r2
+# 2 shape(s) x 3 point(s), all 18 cells present in both passes; 984 row(s) of other widths, shapes or epilogues skipped

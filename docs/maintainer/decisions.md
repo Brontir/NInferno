@@ -2909,3 +2909,26 @@ at 25.6K) and the gated delta net's chunk recurrence (11.8 %, 10.6 %).
 
 **Decision.** No rule change from the census. #616 step 8 closes on it. The expert kernel below
 its limit is #928 (#619's process: counts, a prediction, then an A/B on the GV100).
+
+## 91. The gated gate/up pairs keep T 2-4 on every measured card; DECISIONS 76's candidate rule is not taken (#613 PR-11, 16.11, measured on seven cards)
+
+**Decision.** No route change and no rule. The vector rule's band (`kVecRuleMaxTokens` 4) and the gated gate/up kernel at T 2-4 stay as they are. DECISIONS 76 left one measurement missing: the gated pair's own timings. The kit `tools/bench/run_521_gateup.sh` has now run on seven cards: two shapes (q4k 12288x4096, 15360x3840) at T 2, 3 and 4, two passes each. Gated is compared with two single launches and with the register MMA (rmma). The summaries are committed in `tools/bench/data/gateup_521/` (one file a card, the kit's own table).
+
+**Count** (42 cells; d = gated minus the best other, both passes beyond the 1 % spread):
+
+| card | gated wins | within spread | another wins |
+|---|---|---|---|
+| Quadro GV100 | 6 | 0 | 0 |
+| RTX 2080 Ti | 5 | 1 | 0 |
+| RTX 3060 | 3 | 1 | 2: rmma, 15360x3840 T 3-4, 6-10 % |
+| RTX 3090 | 3 | 3 | 0 |
+| RTX 4060 Ti | 2 | 3 | 1: rmma, 15360x3840 T 3, 1.8 % |
+| RTX 4070 Ti | 3 | 1 | 2: two singles, 15360x3840 T 2-3, 3-4 % |
+| RTX 5070 Ti | 4 | 2 | 0 |
+
+- Gated wins or ties 37 of 42 cells.
+- The five losses are on three cards and one shape, and point in two directions (rmma on GA106 and AD106, two singles on AD104).
+- No board fact found separates them: the 3060 and the 3090 are one generation with the same per-T issue term (DECISIONS 76's ρ 5.8 % against 5.4 %), and only the 3060 loses.
+- A rule moving these cells would be a per-card literal, which the pillar forbids. The losses stay recorded here until a counted term names them; candidates are the wave quantisation of the 15360-row grid over 28 and 34 SMs, and #941's tile occupancy.
+
+**Seen in passing.** On both Ada cards the R8 pair `r8.w4r1` is faster than all three of these kernels in 5 of the 6 cells (by 1-4 %), but not on Turing. That belongs to #613 PR-10 (`rules_r8` priced), not to the vector rule.
