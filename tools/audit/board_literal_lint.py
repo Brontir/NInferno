@@ -90,18 +90,22 @@ ALLOW = {
         (
             "Board{12,0,170,96,1792}",
             "Board{12,0,36,32,448}",
+            "Board{12,0,70,48,896}",
             "Board{12,0,84,64,960}",
             "Board{7,0,80,6,898.048}",
             "Board{7,5,68,5.5,616}",
             "Board{8,0,108,40,1555.2}",
+            "Board{8,6,28,2.25,360}",
             "Board{8,6,72,6,600}",
             "Board{8,6,82,6,936}",
             "Board{8,9,128,72,1008}",
             "Board{8,9,34,32,288}",
             "Board{8,9,58,48,300}",
+            "Board{8,9,60,48,504}",
             "Board{8,9,80,64,736}",
         ),
-        "pins: static_asserts that each registry row equals the literal it replaced"),
+        "pins: static_asserts that each registry row equals the literal it replaced, and the "
+        "figures the three later R8 table boards (#874) were measured under (#876)"),
     "tests/test_device.cpp": (
         (
             "ninferno::Board known{12,0,170,8,1792}",

@@ -32,6 +32,12 @@ inline constexpr Board kRtx3090      = board_registry::board(0x2204);
 inline constexpr Board kA10          = board_registry::board(0x2236);
 inline constexpr Board kA100Sxm40    = board_registry::board(0x20B0);
 inline constexpr Board kRtx2080Ti    = board_registry::board(0x1E07);
+// The three boards whose R8 decode tables came later (#874): the RTX 4070 Ti, the RTX 3060 (its
+// Lite Hash Rate id, the lab's card and its R8 table's; moe_regime_rules.h names the 0x2503 row, of
+// the same facts) and the RTX 5070 Ti.
+inline constexpr Board kRtx4070Ti = board_registry::board(0x2782);
+inline constexpr Board kRtx3060   = board_registry::board(0x2504);
+inline constexpr Board kRtx5070Ti = board_registry::board(0x2C05);
 // The row's 4096-bit HBM2 at 1.754 Gbps, 898.048 GB/s. NVIDIA prints the rounded 900, which the
 // board carried as an override until #612. Dropping it moved no answer: every registry row keeps
 // the nearest entry of each table keyed by this board, and the V100 SXM2 and PCIe rows now read
@@ -91,6 +97,10 @@ static_assert(same_board_facts(measured::kA10, Board{8, 6, 72, 6, 600}));
 static_assert(same_board_facts(measured::kA100Sxm40, Board{8, 0, 108, 40, 1555.2}));
 static_assert(same_board_facts(measured::kRtx2080Ti, Board{7, 5, 68, 5.5, 616}));
 static_assert(same_board_facts(measured::kV100Sxm2, Board{7, 0, 80, 6, 898.048}));
+// The R8 decode table boards of #874, pinned as the older table boards are (#876).
+static_assert(same_board_facts(measured::kRtx4070Ti, Board{8, 9, 60, 48, 504}));
+static_assert(same_board_facts(measured::kRtx3060, Board{8, 6, 28, 2.25, 360}));
+static_assert(same_board_facts(measured::kRtx5070Ti, Board{12, 0, 70, 48, 896}));
 
 // How far a measured choice carries (board_distance): to the variants of the board (a 4090 D or a
 // 3090 Ti, 0.17 and 0.14 from the 4090 and the 3090) and to its near neighbours (an A40 0.43 from

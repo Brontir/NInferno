@@ -9,7 +9,9 @@
 # BENCH is ninferno_r8_schedule_bench of a build of this card's architecture (configure with
 # -DNINFERNO_BUILD_BENCHMARKS=ON; it lands in <build>/bench/). Master's binary and this branch's
 # time the same kernels and print the same rules mark: either serves. OUT defaults to
-# r8_850_<class>_<MMDD_HHMM> in the current directory. With several cards, pick one
+# r8_850_<class>_<MMDD_HHMM> under $TMPDIR (/tmp without it), not the current directory: run
+# from a checkout, it would leave an untracked folder whose meta.txt holds the local bench path
+# (#876). With several cards, pick one
 # (CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=<i>). A compute process already on the GPUs
 # stops the script (ALLOW_BUSY=1 runs anyway; the figures are then not the protocol's).
 #
@@ -31,7 +33,8 @@
 # keeps every entry of a card it was not given and every problem the sweeps did not time):
 #   python3 tools/bench/r8_decode_table.py --merge src/ops/generic/r8_decode_table.h \
 #     --out src/ops/generic/r8_decode_table.h <class>=<OUT>/down_1.txt,<OUT>/down_2.txt,<OUT>/down_3.txt ...
-# (the summary prints each card's argument). Then regenerate nothing else: no selector golden has
+# (the summary prints each card's argument, relative to the folder the OUT directories are
+# copied into: run the merge there). Then regenerate nothing else: no selector golden has
 # a 4096x12288 row, so a merge of the down files moves none (check with
 # tools/audit/golden_diff.py --range origin/master...HEAD).
 set -euo pipefail
@@ -63,7 +66,9 @@ summarize() {
     local class
     class=$(sed -n 's/^device .* class \([^,]*\),.*/\1/p' "$out/down_1.txt" | head -1)
     echo
-    echo "merge argument: ${class}=$out/down_1.txt,$out/down_2.txt,$out/down_3.txt" |
+    local base
+    base=$(basename "$out")
+    echo "merge argument: ${class}=$base/down_1.txt,$base/down_2.txt,$base/down_3.txt" |
         tee -a "$out/summary.md"
 }
 
@@ -104,7 +109,7 @@ protocol=(--samples 15 --launches 60)
 probe=$("$bench" --problem q4k,store,1024,4096 --samples 1 --launches 1)
 class=$(sed -n 's/^device .* class \([^,]*\),.*/\1/p' <<<"$probe" | head -1)
 [[ -n "$class" ]] || { echo "the bench printed no device line:" >&2; echo "$probe" >&2; exit 1; }
-out=${2:-r8_850_${class/:/_}_$(date +%m%d_%H%M)}
+out=${2:-${TMPDIR:-/tmp}/r8_850_${class/:/_}_$(date +%m%d_%H%M)}
 mkdir -p "$out"
 {
     echo "bench $bench"
