@@ -462,10 +462,17 @@ bool reference_token(const Case& c, const Layer& l, const std::vector<double>& x
 
 // NINFERNO_TEST_MOE_CASE=<text> runs only the cases whose label holds the text (the checks
 // without a case are skipped), so one case can loop alone. A filter that matches no case fails
-// the run (main): a mistyped or stale one would otherwise pass having checked nothing.
+// the run (main): a mistyped or stale one would otherwise pass having checked nothing. The filter
+// applies to each process, so under ctest a filter right for one --part fails every part that
+// holds no matching case; the message names the part. The old name, NINFERNO_MOE_TEST_CASE, is
+// not read: a shell that still sets it runs every case, and gets a warning.
 const std::string& case_filter() {
     static const std::string filter = [] {
         const char* v = std::getenv("NINFERNO_TEST_MOE_CASE");
+        if (v == nullptr && std::getenv("NINFERNO_MOE_TEST_CASE") != nullptr) {
+            std::cerr << "moe: NINFERNO_MOE_TEST_CASE is the old name and is ignored; set "
+                         "NINFERNO_TEST_MOE_CASE to filter the cases\n";
+        }
         return std::string(v != nullptr ? v : "");
     }();
     return filter;
@@ -482,13 +489,20 @@ bool filtered_out(const std::string& label) {
     return false;
 }
 
-// Every exit of a filtered run says what the filter let through; false when it let nothing.
-bool filter_matched() {
+// Every completed filtered run says what the filter let through (main's exception path, the 77
+// skips and the usage error print nothing); false when it let nothing. `part` is main's --part
+// argument, empty for the whole suite.
+bool filter_matched(const std::string& part) {
     if (!filtering()) return true;
     std::cout << "moe: NINFERNO_TEST_MOE_CASE=\"" << case_filter() << "\" ran " << matched_cases
               << " case check(s)\n";
     if (matched_cases != 0) return true;
-    std::cerr << "moe: the case filter matched no case\n";
+    std::cerr << "moe: the case filter matched no case"
+              << (part.empty() ? std::string()
+                               : " in --part " + part +
+                                     " (it applies to each process: a part without a matching "
+                                     "case fails)")
+              << '\n';
     return false;
 }
 
@@ -1895,9 +1909,16 @@ int check_concurrent_streams() {
         c.epilogue       = ops::MoeEpilogue::Store;
         return c;
     };
+    const std::array<std::int32_t, 2> experts{128, 256};
+    // The two cases run together: a case filter selects the check when it matches either label.
+    if (filtering()) {
+        bool selected = false;
+        for (const std::int32_t e : experts)
+            selected = !filtered_out(make_case(e).label) || selected;
+        if (!selected) return 0;
+    }
     int failures = 0;
     std::array<Side, 2> sides;
-    const std::array<std::int32_t, 2> experts{128, 256};
     const std::array<std::int32_t, 2> widths{1, 4};
     for (std::size_t s = 0; s < sides.size(); ++s) {
         Side& side              = sides[s];
@@ -2021,7 +2042,9 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (part == "streams") {
-        // Two layers' calls in flight on two streams at once (#882).
+        // Two layers' calls in flight on two streams at once (#882). Under a case filter it runs
+        // when the filter matches one of its two labels, and fails as any part without a
+        // matching case does otherwise.
         if (!cuda_available()) return 77;
         int failures = 0;
         try {
@@ -2030,6 +2053,7 @@ int main(int argc, char** argv) {
             std::cerr << "streams: " << e.what() << '\n';
             ++failures;
         }
+        if (!filter_matched(part)) return 1;
         if (failures != 0) {
             std::cerr << "moe streams: " << failures << " failure(s)\n";
             return 1;
@@ -2061,7 +2085,7 @@ int main(int argc, char** argv) {
             std::cerr << "mx8: " << e.what() << '\n';
             ++failures;
         }
-        if (!filter_matched()) return 1;
+        if (!filter_matched(part)) return 1;
         if (failures != 0) {
             std::cerr << "moe mx8: " << failures << " failure(s)\n";
             return 1;
@@ -2588,7 +2612,7 @@ int main(int argc, char** argv) {
         std::cerr << "moe test: unexpected exception: " << e.what() << '\n';
         return 1;
     }
-    if (!filter_matched()) return 1;
+    if (!filter_matched(part)) return 1;
     if (failures != 0) {
         std::cerr << "moe: " << failures << " failure(s)\n";
         return 1;
