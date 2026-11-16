@@ -1909,9 +1909,16 @@ int check_concurrent_streams() {
         c.epilogue       = ops::MoeEpilogue::Store;
         return c;
     };
+    const std::array<std::int32_t, 2> experts{128, 256};
+    // The two cases run together: a case filter selects the check when it matches either label.
+    if (filtering()) {
+        bool selected = false;
+        for (const std::int32_t e : experts)
+            selected = !filtered_out(make_case(e).label) || selected;
+        if (!selected) return 0;
+    }
     int failures = 0;
     std::array<Side, 2> sides;
-    const std::array<std::int32_t, 2> experts{128, 256};
     const std::array<std::int32_t, 2> widths{1, 4};
     for (std::size_t s = 0; s < sides.size(); ++s) {
         Side& side              = sides[s];
@@ -2035,9 +2042,9 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (part == "streams") {
-        // Two layers' calls in flight on two streams at once (#882). It is a check without a case,
-        // so a filtered run skips it and then fails as any part without a matching case does.
-        if (filtering()) return filter_matched(part) ? 0 : 1;
+        // Two layers' calls in flight on two streams at once (#882). Under a case filter it runs
+        // when the filter matches one of its two labels, and fails as any part without a
+        // matching case does otherwise.
         if (!cuda_available()) return 77;
         int failures = 0;
         try {
@@ -2046,6 +2053,7 @@ int main(int argc, char** argv) {
             std::cerr << "streams: " << e.what() << '\n';
             ++failures;
         }
+        if (!filter_matched(part)) return 1;
         if (failures != 0) {
             std::cerr << "moe streams: " << failures << " failure(s)\n";
             return 1;
