@@ -40,18 +40,19 @@ inline constexpr int kTilesWork[]       = {16, 32, 64, 80, 96, 128};
 inline constexpr double kTileFixed      = 0.43;
 
 // The weight formats whose grids ran on the generation of major.minor. Q4_K and Q6_K on every
-// generation of the table's own (Qwen3-8B Q4_K_M's linears, DECISIONS 74 and 78). IQ4_XS on GA10x,
-// Ada and GB20x and Q2_K on GA10x and Ada (Qwen3-8B IQ4_XS and Q2_K, #619 step 13: the regret at
-// the row's mmq_tile_fixed 0.00-0.21 % against 4.9-9.0 % for the fewest tiles; A/B -5.9 % on the
-// RTX 4070 Ti and -7.5 % on the RTX 5090 over 144..256 tokens). Another format, or one of these on
-// another generation (Turing's launch law was fitted on Q4_K and Q6_K), keeps the fewest tiles.
+// generation of the table's own (Qwen3-8B Q4_K_M's linears, DECISIONS 74 and 78). IQ4_XS on Turing,
+// GA10x, Ada and GB20x, and Q3_K on GA10x, Ada and GB20x (Qwen3-8B IQ4_XS and Q3_K_M, #619 step 13,
+// DECISIONS 90: the regret at the row's mmq_tile_fixed 0.00-0.22 % against 4.9-8.4 % for the fewest
+// tiles; A/B -5.9..-9.4 % over 144..256 tokens, -9.0 % for IQ4_XS on the RTX 2080 Ti under
+// Turing's launch law). Q2_K keeps the fewest tiles on every generation: its grid fails the 0.5 %
+// bound on each generation's large chip (RTX 3090, 4090, 5090: 1.8-3.8 %), a cost of its tile the
+// law lacks (#941). Another format keeps the fewest tiles.
 [[nodiscard]] constexpr bool work_tiles_format(QType qtype, int major, int minor) noexcept {
     if (qtype == QType::GGML_Q4_K || qtype == QType::GGML_Q6_K) { return true; }
     const std::string_view generation = generation_row(major, minor).name;
-    if (qtype == QType::GGML_IQ4_XS) {
-        return generation == "ga10x" || generation == "ada" || generation == "gb20x";
-    }
-    return qtype == QType::GGML_Q2_K && (generation == "ga10x" || generation == "ada");
+    const bool from_ga10x = generation == "ga10x" || generation == "ada" || generation == "gb20x";
+    if (qtype == QType::GGML_IQ4_XS) { return from_ga10x || generation == "turing"; }
+    return qtype == QType::GGML_Q3_K && from_ga10x;
 }
 
 [[nodiscard]] constexpr bool uses_work_table(int major, int minor, bool format) noexcept {
