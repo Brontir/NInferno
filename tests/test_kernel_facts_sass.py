@@ -429,6 +429,17 @@ class StaticSchedule(unittest.TestCase):
         lds = [(o, t.replace("LDG.E", "LDS", 1) if o in ldg else t) for o, t in SCHEDULED]
         self.assertEqual(sc.loop_counts(body_of(lds, SCHEDULED_WORDS), tiles=2).glb_waits, 0)
 
+    def test_global_waits_one_per_burst(self):
+        # Two loads issued before any wait return together: the second wait exposes nothing more.
+        C = sc.Control
+        body = [(0, False, "LDG.E", "R1, [R2]", None), (16, False, "LDG.E", "R3, [R4]", None),
+                (32, False, "IADD3", "R5, R1", None), (48, False, "IADD3", "R6, R3", None),
+                (64, False, "LDG.E", "R7, [R2]", None), (80, False, "IADD3", "R8, R7", None)]
+        words = [high_word(1, write=0), high_word(1, write=1), high_word(1, wait=1 << 0),
+                 high_word(1, wait=1 << 1), high_word(1, write=2), high_word(1, wait=1 << 2)]
+        control = [C(w) for w in words]
+        self.assertEqual(sc.global_waits(body, control, range(6), 1), 2)
+
     def test_local_wait_needs_the_ldl(self):
         # The same scoreboard set by a shared load is no local wait; a wait in between clears it.
         lds = [(o, "LDS R26, [R1] ;" if o == 0x1c0 else t) for o, t in SCHEDULED]

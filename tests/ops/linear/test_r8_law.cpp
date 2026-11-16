@@ -153,7 +153,8 @@ void check_terms() {
     expect(near(t->chain, t->rounds * (400.0 + 624.0 + 1100.0) / chip.clock_hz),
            "chain from the stall sums");
     // Waits on global loads expose their latency: the loop's at DRAM's L0, the quantizer's and
-    // the rest's at the ISA table's L2 hit (one warp alone).
+    // the rest's at the ISA table's L2 hit (one warp alone); the outside count holds the quantizer
+    // loop's once, which the law takes out.
     kf::KernelFacts waits                = f;
     waits.prologue->loop_global_waits    = 2;
     waits.prologue->global_waits         = 1;
@@ -163,7 +164,7 @@ void check_terms() {
     expect(isa && isa->l2_latency.w1.has_value(), "the rtx4090's ISA row has an L2 latency");
     if (tw && isa && isa->l2_latency.w1) {
         const double exposed =
-            1 * 2 * *chip.dram_latency_s * chip.clock_hz + (1 * 1 + 3) * *isa->l2_latency.w1;
+            1 * 2 * *chip.dram_latency_s * chip.clock_hz + (1 * 1 + (3 - 1)) * *isa->l2_latency.w1;
         expect(near(tw->exposed_clocks, exposed), "exposed: waits x their latency");
         expect(near(tw->chain, t->rounds * (400.0 + 624.0 + 1100.0 + exposed) / chip.clock_hz),
                "chain adds the exposed latency, round after round");

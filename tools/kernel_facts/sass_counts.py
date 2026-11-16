@@ -712,21 +712,26 @@ def schedule_counts(body, control, iteration, outside):
 
 
 def global_waits(body, control, indices, walks):
-    """The instructions of `indices` (in order, walked `walks` times, the last one counted) whose
-    wait mask names a scoreboard with a global load (GLOBAL_LOADS) pending since its last wait."""
-    pending = [False] * 6
-    count = 0
+    """The waits of `indices` (in order, walked `walks` times, the last one counted) that expose a
+    global load's latency, one per generation of loads: a wait counts where a scoreboard of its
+    mask holds a global load (GLOBAL_LOADS) issued after the last counted wait. Loads issued in
+    one burst return together, so the waits on the rest of the burst expose nothing more. The
+    static stalls between a load and its wait are not taken off (the law adds both)."""
+    pending = [None] * 6  # per scoreboard: the generation of its newest pending global load
+    generation, count = 0, 0
     for walk in range(walks):
         for i in indices:
             c = control[i]
             if c.wait_mask:
                 waited = [b for b in range(6) if (c.wait_mask >> b) & 1]
-                if walk == walks - 1 and any(pending[b] for b in waited):
-                    count += 1
+                if any(pending[b] == generation for b in waited):
+                    if walk == walks - 1:
+                        count += 1
+                    generation += 1
                 for b in waited:
-                    pending[b] = False
+                    pending[b] = None
             if c.write_barrier != NO_BARRIER and base_opcode(body[i][2]) in GLOBAL_LOADS:
-                pending[c.write_barrier] = True
+                pending[c.write_barrier] = generation
     return count
 
 

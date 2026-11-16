@@ -44,6 +44,10 @@ def frozen(path: Path) -> str:
                              capture_output=True, text=True, check=True).stdout.strip()
         if not sha:
             return f"error: {rel} is not committed"
+        added = subprocess.run(["git", "log", "--diff-filter=A", "--format=%H", "--", rel], cwd=top,
+                               capture_output=True, text=True, check=True).stdout.split()
+        if not added or added[-1] != sha:
+            return f"error: {rel} changed after the commit that added it (a new law writes new files)"
         if subprocess.run(["git", "merge-base", "--is-ancestor", sha, "HEAD"], cwd=top).returncode:
             return f"error: {sha} is not an ancestor of HEAD"
         return sha
@@ -52,7 +56,10 @@ def frozen(path: Path) -> str:
 
 
 def read_prediction(path: Path):
+    """({key: {schedule: rank}} in CSV order, [keys without an answer], {key: {schedule: floor}}:
+    max(bus, dram, issue), the terms that are lower bounds of the call's time)."""
     ranks, none = collections.defaultdict(dict), []  # key -> schedule -> rank (CSV order)
+    floors = collections.defaultdict(dict)
     with path.open(newline="") as f:
         for row in csv.DictReader(f):
             key = (row["format"], row["epilogue"], int(row["n"]), int(row["k"]))
@@ -60,7 +67,9 @@ def read_prediction(path: Path):
                 none.append(key)
                 continue
             ranks[key][row["schedule"]] = float(row["rank_us"])
-    return ranks, none
+            floors[key][row["schedule"]] = max(float(row["bus_us"]), float(row["dram_us"]),
+                                               float(row["issue_us"]))
+    return ranks, none, floors
 
 
 def read_grid(paths):
@@ -91,9 +100,10 @@ def main() -> int:
     if sha.startswith("error"):
         print(f"r8_law_score: the prediction is not frozen: {sha}", file=sys.stderr)
         return 3
-    ranks, none = read_prediction(a.predicted)
+    ranks, none, floors = read_prediction(a.predicted)
     times, rules = read_grid(a.grid)
     law_regret, rule_regret, within, tie_hits, scored, ties = [], [], 0, 0, 0, 0
+    common_law, broken = [], 0  # the law's regret where the rules picked too; floors above a time
     for key in sorted(ranks):
         measured = {s: t for s, t in times.get(key, {}).items() if s in ranks[key]}
         if not measured:
@@ -116,6 +126,8 @@ def main() -> int:
                   f"best {best_s} {best:.2f} us ({100 * reg:+.1f} %)")
         if key in rules and rules[key] in measured:
             rule_regret.append(measured[rules[key]] / best - 1)
+            common_law.append(reg)
+        broken += sum(1 for sch, t in measured.items() if floors[key][sch] > t)
     if not scored:
         print("r8_law_score: no problem of the prediction is in the grid", file=sys.stderr)
         return 2
@@ -125,8 +137,11 @@ def main() -> int:
           f"ties {ties} (another of the tie within the band {tie_hits}), abstained {len(none)}")
     print(f"law regret: mean {mean(law_regret):.2f} %, worst {100 * max(law_regret):.1f} %")
     if rule_regret:
-        print(f"rules regret ({len(rule_regret)} problems): mean {mean(rule_regret):.2f} %, "
-              f"worst {100 * max(rule_regret):.1f} %")
+        print(f"on the {len(rule_regret)} problems the rules picked too: law mean "
+              f"{mean(common_law):.2f} %, rules mean {mean(rule_regret):.2f} %, worst "
+              f"{100 * max(common_law):.1f} / {100 * max(rule_regret):.1f} %")
+    print(f"floors above the measured time (max(bus, dram, issue) of a schedule over its time): "
+          f"{broken}")
     return 0
 
 

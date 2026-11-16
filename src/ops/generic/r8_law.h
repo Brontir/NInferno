@@ -27,8 +27,12 @@
 // ceil(slots x K / k_iter) / slots iterations, k_iter the K values a whole iteration covers per
 // row and token. The snapshot's outside counts hold the quantizer loop once; the law takes it out
 // of them. A warp keeps one iteration's weight bytes in flight; its other loads (codebook
-// lookups, re-read headers) hit the cache. A kernel that spills (stack or local bytes) has no
-// term here: the law gives no answer for it.
+// lookups, re-read headers) hit the cache. A kernel that spills (stack or local bytes), or whose
+// loop holds generic loads or asynchronous copies (waits the counts do not see), has no term
+// here: the law gives no answer for it. The waits on global loads are counted one per burst
+// (sass_counts.py global_waits); the stalls between a load and its wait are not taken off the
+// latency, and every dp4a-loop wait is priced at DRAM's L0, codebook lookups included: both
+// make the chain an upper estimate of the wait, recorded, not fitted.
 // Where a fact is missing (no r8 row, no loop counts, no SM rate row) the law gives no answer, and
 // the rules answer (rules_r8).
 
@@ -100,7 +104,7 @@ inline constexpr double kValuesPerTask = 32.0;
     if (!f.loop || !f.prologue || f.loop->loops != 1 || f.loop->k_iter <= 0 || legacy_dram(chip) ||
         chip.sms <= 0 || chip.clock_hz <= 0 || call.n <= 0 || call.k <= 0 || s.warps <= 0 ||
         s.rows <= 0 || call.slots <= 0 || !(call.weight_bytes_per_value > 0) ||
-        f.spill_bytes() > 0 || f.loop->local > 0) {
+        f.spill_bytes() > 0 || f.loop->local > 0 || f.loop->ld > 0 || f.loop->ldgsts > 0) {
         return std::nullopt;
     }
     const kernel_facts::LoopCounts& l     = *f.loop;
@@ -165,7 +169,9 @@ inline constexpr double kValuesPerTask = 32.0;
             t.passes * p.stall_sum + t.iterations * l.schedule->stall_sum + outside_stall;
         const double dram_clocks = *chip.dram_latency_s * chip.clock_hz;
         t.exposed_clocks         = t.iterations * p.loop_global_waits * dram_clocks +
-                           (t.passes * p.global_waits + p.outside_global_waits) * l2_clocks;
+                           (t.passes * p.global_waits +
+                            std::max(0.0, p.outside_global_waits - quantizer * p.global_waits)) *
+                               l2_clocks;
         t.chain = t.rounds * (warp_clocks + t.exposed_clocks) / chip.clock_hz;
     }
     t.rank  = std::max({t.dram, t.issue, t.chain});
