@@ -3038,9 +3038,9 @@ predictions were posted in #619 before each run (f 0.20, range 0.11..0.33, bound
 |---|---|---|---|
 | RTX 4060 Ti (Ada) | 0.05 % | 5.11 % | −6.2 % (predicted −5) |
 | RTX 4070 Ti (Ada) | 0.00 % | 4.73 % | −5.7 % (predicted −4.5) |
-| RTX 3090 (GA10x) | 0.00 % | 6.81 % | in the PR |
+| RTX 3090 (GA10x) | 0.00 % | 6.81 % | −7.4 % (predicted −6.5) |
 | RTX 5090 (GB20x) | 0.17 % | 5.82 % | −7.0 %, 448 +3.5 %: not joined |
 
-No size is more than 0.9 % slower in the Ada A/Bs. IQ3_XXS waits too: its grids pass on four
+No size is more than 0.9 % slower in the three GA10x and Ada A/Bs. IQ3_XXS waits too: its grids pass on four
 cards, but its A/Bs miss at single sizes (5090 448 +5.5 %, 4070 Ti 320 +1.4 % on a repeat). A
 term for those tiles comes first.
