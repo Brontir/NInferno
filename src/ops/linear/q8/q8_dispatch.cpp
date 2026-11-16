@@ -80,11 +80,16 @@ std::optional<Q8LaunchTile> q8_launch_tile(Q8Launch launch) {
         {launch_q8_a16_simt_r8_t4, {8, 4, false}},
         {launch_q8_a16_simt_r8_t8, {8, 8, false}},
         {launch_q8_a16_sliced_r16_t16_w8_s2, {16, 16, true}},
-        {launch_q8_a16_sliced_r16_t16_w4_s2, {16, 16, true}},
-        {launch_q8_a16_sliced_r16_t32_w4_s2, {16, 32, true}},
+        // The K-sliced tiles' facts (#617 D): cuobjdump of the sm_89 build (registers, the most of
+        // the instances; static shared); a group stages 4 x 64 K, a warp multiplies its 64.
+        {launch_q8_a16_sliced_r16_t16_w4_s2,
+         {16, 16, true, CtaFacts{128, 161, 25088, 256, 64, 16, 16, 1}}},
+        {launch_q8_a16_sliced_r16_t32_w4_s2,
+         {16, 32, true, CtaFacts{128, 147, 41472, 256, 64, 16, 32, 1}}},
         {launch_q8_a16_mma_r32_t64, {32, 64, true}},
         {launch_q8_a16_mma_r32_t96, {32, 96, true}},
-        {launch_q8_a16_mma_r32_t128, {32, 128, true}},
+        // 8 warps of 32 x 16, BK 64 (Q8A16MmaSchedule<32, 128, 64, 32, 16, 2, 2>).
+        {launch_q8_a16_mma_r32_t128, {32, 128, true, CtaFacts{256, 89, 39424, 64, 64, 32, 16, 1}}},
         {launch_q8_a16_mma_r48_t64, {48, 64, true}},
         {launch_q8_a16_mma_r64_t96, {64, 96, true}},
         {launch_q8_a16_mma_r64_t128, {64, 128, true}},

@@ -146,19 +146,24 @@ std::optional<ChainPrice> separate_chain(std::int32_t n, std::int32_t k, std::in
     return ChainPrice{2.0 * *one, 2};
 }
 
-// The fused one-launch schedule's busiest-SM MMA work on `sms` SMs: its CTAs tile both weights'
-// 2n rows (cta_rows of them a CTA, both weights counted) by tile_cols columns.
-std::optional<double> fused_work(std::int32_t n, std::int32_t k, std::int32_t tokens, int sms) {
+// The fused one-launch DualMma schedule's residency price on `sm` (#617 D, cta_facts.h): its
+// grid of x_row_blocks x ceil(T / tile_cols) CTAs in rounds of the CTAs an SM holds, each round
+// one CTA's K chain.
+std::optional<double> fused_price(std::int32_t n, std::int32_t k, std::int32_t tokens,
+                                  const detail::SmLimits& sm) {
     const auto g = detail::q8_pair_geometry(detail::Q8PairProblem{n, k, k, tokens});
-    if (!g || g->launches != 1 || sms <= 0) { return std::nullopt; }
-    return detail::busiest_sm_mma_work(2.0 * n, k, tokens, g->cta_rows, g->tile_cols, sms);
+    if (!g || g->launches != 1 || !g->cta || sm.sms <= 0) { return std::nullopt; }
+    const double ctas = static_cast<double>(g->x_row_blocks) *
+                        std::ceil(static_cast<double>(tokens) / g->tile_cols);
+    return detail::residency_chain(ctas, *g->cta, sm, k);
 }
 
-// The device's SM count, 0 on a host without a device (nothing is then priced).
-int device_sms() {
+// The device's SM limits, all 0 on a host without a device (nothing is then priced).
+detail::SmLimits device_sm() {
     try {
-        return device_class().sms;
-    } catch (const std::runtime_error&) { return 0; }
+        const DeviceClass& d = device_class();
+        return {d.sms, d.registers_per_sm, d.smem_per_sm, d.max_threads_per_sm, d.max_blocks_per_sm};
+    } catch (const std::runtime_error&) { return {0, 0, 0, 0, 0}; }
 }
 
 // Whether a call of the pair's domain runs the fused kernel: the cheaper chain where both are
@@ -168,13 +173,17 @@ int device_sms() {
 // 8 rows by 4 columns a CTA) saves none, and the chains differ only in how often the tiles
 // re-request the weights, so the one requesting fewer bytes runs; a tie keeps the fused kernel.
 //
-// A one-launch schedule (DualMma from 86 columns at K = 5120, the Concat tiles at K = 2048) is
-// priced by the busiest SM's MMA work instead (#617 D, busiest_sm_mma_work): the fused grid of
-// 32 row blocks leaves SMs idle on a large board at narrow T, where the two calls' grids fill it
-// (RTX 4090 T = 86: 132 against 45 us). It takes the two calls only where their work is lower;
-// on six boards that never lost a measured fused win (tests/ops/linear_pair/test_pair_work.cpp).
-// A tie keeps the fused kernel: there the two calls still win on five boards by 2-59 %, the MMA
-// tile's efficiency the work does not count (#947); the split-K partials stay unpriced too. The
+// A one-launch DualMma schedule (K = 5120 from 86 columns) is priced by residency instead (#617 D,
+// cta_facts.h residency_chain): rounds of the CTAs an SM holds on the busiest SM, each one CTA's
+// serial K chain, counted from the kernels' compiled resources and K loops. The fused grid of 32
+// row blocks of 4 warps leaves SMs idle on a large board at narrow T, where the two calls' grids
+// fill it (RTX 4090 T = 86: 132 against 45 us); on a small board its CTAs share the SMs and the
+// shape's 41 KB r16_t32 tile takes 5 rounds (RTX 3060 T = 128: the fused kernel wins, 211 against
+// 239 us). On seven boards it never lost a measured winner by more than 3 % outside a tie
+// (tests/ops/linear_pair/test_pair_work.cpp). A tie keeps the fused kernel (it saves a launch):
+// there the two calls win on six boards by 5-11 % and the fused kernel on the RTX 5090, the tile
+// efficiency the chain does not count (#947). The Concat and split-K schedules (K = 2048) and
+// TwoSimtR8C4 have no CTA facts and keep the call as before. The
 // separate side is priced only where the shape's table runs the call with a tile the device's MMA
 // takes natively, so the numeric contract of the two calls is the SIMT pair's (A16 sums of the
 // same products) and Volta/Turing keep the fused kernel. A call's summation order already depends
@@ -186,11 +195,11 @@ bool chain_prefers_fused(std::int32_t n, std::int32_t k, std::int32_t tokens) {
     const auto separate = separate_chain(n, k, tokens);
     if (!fused || !separate) { return true; }
     if (fused->launches < separate->launches) {
-        // #617 D: a one-launch schedule against the two calls, by the busiest SM's MMA work
-        // (busiest_sm_mma_work). The separate side is priced only where separate_chain is (the
-        // gate above); a tie keeps the fused kernel, which also saves a launch.
-        const auto fw = fused_work(n, k, tokens, device_sms());
-        const auto sw = detail::linear_q8_busiest_sm_work(pair_row_weight(n, k), tokens);
+        // #617 D: a one-launch schedule against the two calls, by residency (residency_chain).
+        // The separate side is priced only where separate_chain is (the gate above); a tie keeps
+        // the fused kernel, which also saves a launch.
+        const auto fw = fused_price(n, k, tokens, device_sm());
+        const auto sw = detail::linear_q8_residency_price(pair_row_weight(n, k), tokens);
         if (!fw || !sw) { return true; }
         return *fw <= 2.0 * *sw;
     }
@@ -218,12 +227,16 @@ bool linear_pair_runs_fused(std::int32_t n, std::int32_t k, std::int32_t tokens)
     return q8_pair_registered(n, k) && chain_prefers_fused(n, k, tokens);
 }
 
-LinearPairWork linear_pair_work(std::int32_t n, std::int32_t k, std::int32_t tokens, int sms) {
-    LinearPairWork out;
-    if (tokens <= 0 || sms <= 0 || !q8_pair_registered(n, k)) { return out; }
-    out.fused = fused_work(n, k, tokens, sms);
-    if (const auto tile = q8_launch_tile(select_q8_a16_launch(n, k, tokens))) {
-        out.separate = 2.0 * busiest_sm_mma_work(n, k, tokens, tile->rows, tile->tokens, sms);
+LinearPairPrice linear_pair_price(std::int32_t n, std::int32_t k, std::int32_t tokens,
+                                  const SmLimits& sm) {
+    LinearPairPrice out;
+    if (tokens <= 0 || sm.sms <= 0 || !q8_pair_registered(n, k)) { return out; }
+    out.fused = fused_price(n, k, tokens, sm);
+    const auto tile = q8_launch_tile(select_q8_a16_launch(n, k, tokens));
+    if (tile && tile->cta) {
+        const double ctas = std::ceil(static_cast<double>(n) / tile->rows) *
+                            std::ceil(static_cast<double>(tokens) / tile->tokens);
+        out.separate = 2.0 * residency_chain(ctas, *tile->cta, sm, k);
     }
     return out;
 }
@@ -253,7 +266,7 @@ std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first, con
         // In the kernel's domain, and its chain is dearer than the shape's own launches.
         kernel.status = Status::Dominated;
         kernel.why    = "the fused chain is priced dearer than the two linear() calls (#565 bytes, "
-                        "#617 D busiest-SM work)";
+                        "#617 D residency)";
     } else if (!fused) {
         kernel.why = !same ? "the two weights must share one [N,K] shape"
                      : !q8_pair_registered(first.n, first.k) ? "no fused kernel for this [N,K]"

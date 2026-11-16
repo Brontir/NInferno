@@ -109,10 +109,13 @@ int main() {
                 owned && (t <= 4 || ninferno::device_class().features.mma_bf16_native);
             check(r.separate.has_value() == priced,
                   "the separate side is priced where the shape's table runs it" + at);
-            // From 86 columns the fused schedule is one launch: the busiest SM's MMA work decides
-            // (#617 D), the board's SM count included; a tie keeps the fused kernel.
-            const auto w =
-                ops::detail::linear_pair_work(1024, 5120, t, ninferno::device_class().sms);
+            // From 86 columns the fused schedule is one launch: the residency price decides
+            // (#617 D), the board's SM limits included; a tie keeps the fused kernel.
+            const auto& dc = ninferno::device_class();
+            const auto w   = ops::detail::linear_pair_price(
+                1024, 5120, t,
+                {dc.sms, dc.registers_per_sm, dc.smem_per_sm, dc.max_threads_per_sm,
+                 dc.max_blocks_per_sm});
             const bool fused = t > 85
                                    ? (!priced || !w.fused || !w.separate || *w.fused <= *w.separate)
                                    : (!r.separate || *r.fused <= *r.separate);
