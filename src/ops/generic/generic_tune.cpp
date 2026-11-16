@@ -806,9 +806,11 @@ static std::optional<Tuned> release_entry(const Problem& problem, const Weight& 
     std::lock_guard lock(g_mutex);
     // A substituted foreign board's queries read its class's entry whatever this device has
     // called: the device's own records (key_of keys by the device ordinal) are not that board's.
-    const Key id = key_of(problem);
-    if (!substituted_foreign_class() && (g_attempted.count(id) != 0 || g_tuned.count(id) != 0)) {
-        return std::nullopt;
+    // Without a device (a CPU replay) substituted_foreign_class is true, so key_of (which reads
+    // the current device ordinal) is not reached.
+    if (!substituted_foreign_class()) {
+        const Key id = key_of(problem);
+        if (g_attempted.count(id) != 0 || g_tuned.count(id) != 0) return std::nullopt;
     }
     load_cache_locked(false);
     auto& problems        = g_cache["problems"];
