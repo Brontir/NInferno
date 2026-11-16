@@ -414,12 +414,14 @@ const PlanPrefillRouteQuery& plan_prefill_route_query() { return prefill_route_q
 std::uint64_t plan_workspace_estimate(const PlanModelFacts& model, const PlanRung& rung,
                                       const EngineOptions& options, std::uint32_t concurrency,
                                       const models::qwen3_5::detail::SequencePlanImpl* plan,
-                                      std::string* basis) {
+                                      std::string* basis, std::vector<WorkspaceRegion>* regions) {
+    if (regions != nullptr) { regions->clear(); }
     std::string why;
     if (const PlanWorkspaceQuery& query = workspace_query(); query) {
         PlanWorkspaceAnswer answer = query(model, rung, options, concurrency, plan);
         if (answer.bytes) {
             if (basis != nullptr) { *basis = answer.why.empty() ? "start" : "start: " + answer.why; }
+            if (regions != nullptr) { *regions = std::move(answer.regions); }
             return *answer.bytes;
         }
         why = std::move(answer.why);
@@ -491,7 +493,7 @@ PlanRungBytes plan_rung_bytes(const PlanModelFacts& model, const PlanRung& rung,
     out.graphs           = plan->graph_allowance_bytes;
     // The workspace's round logits over the resolved window's columns, as the start's are.
     out.workspace        = plan_workspace_estimate(model, rung, planned, concurrency, plan.get(),
-                                                   &out.workspace_basis);
+                                                   &out.workspace_basis, &out.workspace_regions);
     out.host_state_image = images.host.image_bytes;
     return out;
 }

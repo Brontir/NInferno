@@ -120,7 +120,11 @@ on Ada too.
 B1 of [Deterministic decisions](deterministic-decisions.md)): they may not read a board's clock or
 bandwidth. So T is priced on the generation's *reference card* (`kReferenceCards`: the mean of the
 generation's lab cards), never on the board itself: every board of a generation decides the same,
-and a board's own facts feed only the estimates a caller shows. The reference card decides only
+and a board's own facts feed only the estimates a caller shows. The reference is a declared mean,
+not a PCI board: its prefill uses the generation's tile laws and its MoE decode the measured kernel
+pair. The planned board's route queries and their availability affect only the displayed board
+estimates, never the reference prices or their uncertainty (#930). No donor PCI identity or route
+table is assigned to the mean. The reference card decides only
 where the KV read factors and the exact-route factor were measured on two lab cards of the
 generation (principle 4); elsewhere the family's defaults stand (the automatic KV codec,
 `--activations fast`), and the choice says so. Ada has them (RTX 4070 Ti and 4090: KV factors within
@@ -274,3 +278,13 @@ own context, decode and prefill speed, KLD, worth, and why it lost:
 
 A caller re-runs `choose` with another task (context, streams, request shape) to show what an input
 changes.
+
+`record_choice` records the inputs to one choice for `replay_choice` to evaluate without a device,
+model file or registered selector. Schema `ninferno-choice-replay/4` includes the prefill and MoE
+route answers for every query made, as well as the storage and capacity answers. An absent callback
+is `null`; an installed callback that was not asked has an empty list. `Unknown` kernels and empty
+MoE answers are recorded answers. The prefill key includes every linear field, token count and
+activation mode; the MoE key includes row count and activation mode. A repeated query whose answer
+changes cannot be recorded. Missing answers raise `ReplayIncomplete`; malformed records and older
+schemas are refused, so an older record must be captured again. Constants remain those of the
+replaying build; the replay never fills a missing route from that build's selector (#931).

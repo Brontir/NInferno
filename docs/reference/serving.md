@@ -2581,6 +2581,7 @@ PLAN:
 | `context`, `pool_contexts`, `private_contexts` | the rung's context, the whole contexts its pool holds, and whether every stream has one of its own (`false`: the streams share one pool) |
 | `chosen` | the rung: `context`, `kv_tokens`, `cached_states`, `prefill_chunk`, `step`, `survival`, `bytes` (`kv`, `states`, `rings`, `workspace`, `graphs`, `fixed`, `total`, `workspace_basis`: `start: <what sized it>` where the family sizes it with a start's own capacity functions over the facts (Gemma 4 without vision, #302: "start: no speculative round" or "start: the MTP round at window W, R row(s)"), else `formula` or `formula: <why the query did not answer>`), `needed_bytes` |
 | `description` | the rung in words |
+| `workspace_regions` | the chosen rung's text prefill arena region by region, where the family's planner records them (Qwen 3.5): `op` (`L03.gdn.output`, `output_head`, `sampling`), `offset` (from the prefill arena's base, not the whole workspace), `bytes`, `scratch` (an op's raw scratch, not a tensor); `[]` under the formula or when nothing fits |
 | `kv_dtype`, `state_dtype` | the codecs the plan resolved (`auto` resolved for the family and the card) |
 | `weights_bytes`, `free_bytes`, `free_after_weights_bytes`, `class_reserve_bytes`, `base_margin_bytes`, `allowance_bytes`, `context_ceiling` | the selection's inputs |
 | `estimate_basis`, `estimate_reason` | `family_planner` (the rung bytes are the start planner's but the workspace) or `approximate` and why |

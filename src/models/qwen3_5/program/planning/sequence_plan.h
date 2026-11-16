@@ -105,6 +105,9 @@ struct WorkspacePlan {
     std::size_t general_capacity    = 0;
     std::optional<VisionWorkspacePlan> vision;
     std::size_t capacity = 0;
+    // The text prefill arena's regions in the order the chunk takes them (#615 W5): every
+    // activation and scratch region with the op that takes it ("L03.gdn.output", "output_head").
+    std::vector<WorkspaceRegion> text_prefill_regions;
 };
 
 struct SequencePlanningInputs {

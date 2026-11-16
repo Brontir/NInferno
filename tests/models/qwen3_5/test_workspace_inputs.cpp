@@ -40,6 +40,7 @@
 #include "models/qwen3_5/program/planning/workspace_plan.h"
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/weight_input.h"
+#include "ops/generic/scratch_lifetime.h"
 #include "ops/route_pins.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
@@ -59,6 +60,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -567,8 +569,20 @@ EngineOptions options_of(std::uint32_t context, std::uint32_t chunk, std::uint32
     return o;
 }
 
+bool same_regions(const std::vector<WorkspaceRegion>& a, const std::vector<WorkspaceRegion>& b) {
+    if (a.size() != b.size()) { return false; }
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (a[i].op != b[i].op || a[i].offset != b[i].offset || a[i].bytes != b[i].bytes ||
+            a[i].scratch != b[i].scratch) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool same(const detail::WorkspacePlan& a, const detail::WorkspacePlan& b) {
-    return a.text_prefill == b.text_prefill && a.ordinary_round == b.ordinary_round &&
+    return same_regions(a.text_prefill_regions, b.text_prefill_regions) &&
+           a.text_prefill == b.text_prefill && a.ordinary_round == b.ordinary_round &&
            a.mtp_prefill == b.mtp_prefill && a.mtp_round == b.mtp_round &&
            a.dflash_context == b.dflash_context && a.dflash_round == b.dflash_round &&
            a.dflash_round_append == b.dflash_round_append && a.causal_score == b.causal_score &&
@@ -663,6 +677,102 @@ void run(const Case& k) {
     check(same(start, described), k.name + ": the described forms' plan (" + bytes(described) +
                                       ") is the start's (" + bytes(start) + ")");
     check(start.text_prefill > 0 && start.ordinary_round > 0, k.name + ": text arenas sized");
+    // The prefill arena region by region (#615 W5): every region inside the arena, the highest end
+    // its peak, the first layer's mixer and the head (or the sampler) named.
+    std::size_t top  = 0;
+    bool first_layer = false, tail = false;
+    for (const WorkspaceRegion& r : start.text_prefill_regions) {
+        top         = std::max(top, r.offset + r.bytes);
+        first_layer = first_layer || r.op.rfind("L00.", 0) == 0;
+        tail        = tail || r.op == "output_head" || r.op == "sampling";
+    }
+    check(!start.text_prefill_regions.empty() && top == start.text_prefill,
+          k.name + ": the prefill regions end at the arena's peak (" + std::to_string(top) +
+              " against " + std::to_string(start.text_prefill) + ")");
+    check(first_layer && tail,
+          k.name + ": the prefill regions name the layers' and the head's ops");
+    // The prefill chain's scratch through the PDL check (#615 W5, ops/generic/scratch_lifetime.h).
+    // A planner region is an op's whole scratch capacity, not one launch's prepared activations:
+    // each stands for one producer and one consumer here, a simplification.
+    {
+        namespace gen = ninferno::ops::detail::generic;
+        std::vector<gen::ScratchRegion> regions;
+        std::vector<std::string_view> names;
+        for (const WorkspaceRegion& r : start.text_prefill_regions) {
+            if (!r.scratch) { continue; }
+            regions.push_back({static_cast<std::uint32_t>(regions.size()), r.offset, r.bytes});
+            names.emplace_back(r.op);
+        }
+        // Plumbing: every producer in stream order, every consumer under the widest overlap
+        // launch_overlap grants (join and release), its read stamped after the wait. Under these
+        // stamps no layout can fail the check (the header: no kernel makes a scratch use before the
+        // wait today), so this holds the chain's construction, not the offsets.
+        gen::LaunchOverlap widest;
+        widest.join    = gen::OverlapRefusal::None;
+        widest.release = gen::OverlapRefusal::None;
+        std::vector<gen::LaunchLifetime> chain;
+        for (std::size_t i = 0; i < regions.size(); ++i) {
+            chain.push_back(gen::quantizer_lifetime(names[i], regions[i]));
+            chain.push_back(
+                gen::launch_lifetime(names[i], widest, true, gen::PreparedRule{}, regions[i]));
+        }
+        check(regions.size() >= 2 && !gen::first_scratch_violation(chain),
+              k.name + ": the prefill chain's " + std::to_string(regions.size()) +
+                  " scratch regions pass the PDL check under the widest overlap");
+        // The check reads the chain: a consumer that read its scratch before the wait races its
+        // producer's write.
+        std::vector<gen::LaunchLifetime> mutated = chain;
+        mutated[1].uses[0].first                 = gen::ScratchFirst::BeforeWait;
+        const auto race                          = gen::first_scratch_violation(mutated);
+        check(race && race->launch == 1 && race->predecessor == 0 &&
+                  race->hazard == gen::ScratchHazard::ReadAfterWrite,
+              k.name + ": a read before the wait races its producer");
+        // Where the planner's layout decides: op i releases while it still reads its scratch, op
+        // i + 1 starts under it and writes its own before the wait. A hazard exactly where the
+        // planner placed the two regions over the same bytes.
+        std::size_t reused = 0;
+        for (std::size_t i = 0; i + 1 < regions.size(); ++i) {
+            gen::LaunchLifetime before;
+            before.name     = names[i];
+            before.releases = true;
+            (void)before.add({regions[i], gen::ScratchAccess::Read, gen::ScratchFirst::AfterWait,
+                              gen::ScratchLast::AtExit});
+            gen::LaunchLifetime next;
+            next.name         = names[i + 1];
+            next.starts_early = true;
+            (void)next.add({regions[i + 1], gen::ScratchAccess::Write,
+                            gen::ScratchFirst::BeforeWait, gen::ScratchLast::AtExit});
+            const bool overlap = gen::regions_overlap(regions[i], regions[i + 1]);
+            reused += overlap ? 1 : 0;
+            check(gen::first_scratch_violation({before, next}).has_value() == overlap,
+                  k.name + ": " + std::string(names[i]) + " -> " + std::string(names[i + 1]) +
+                      ": the hazard follows the planner's offsets");
+        }
+        std::cout << "  prefill scratch: " << regions.size() << " regions, " << reused
+                  << " consecutive pairs on the same bytes\n";
+        // The same early-writing chain over a disjoint packing of the same sizes has no hazard:
+        // the one found over the planner's offsets is its reuse.
+        std::vector<gen::LaunchLifetime> early, packed;
+        std::size_t cursor = 0;
+        for (std::size_t i = 0; i < regions.size(); ++i) {
+            for (auto* list : {&early, &packed}) {
+                gen::LaunchLifetime e;
+                e.name                    = names[i];
+                e.starts_early            = true;
+                e.releases                = true;
+                gen::ScratchRegion region = regions[i];
+                if (list == &packed) { region.offset = cursor; }
+                (void)e.add({region, gen::ScratchAccess::Write, gen::ScratchFirst::BeforeWait,
+                             gen::ScratchLast::AtExit});
+                list->push_back(e);
+            }
+            cursor += regions[i].bytes;
+        }
+        check(gen::first_scratch_violation(early).has_value() &&
+                  !gen::first_scratch_violation(packed),
+              k.name + ": early writes race over the planner's reused offsets, not over a "
+                       "disjoint packing");
+    }
     check(mtp == (start.mtp_prefill > 0 && start.mtp_round > 0),
           k.name + ": MTP arenas sized exactly under MTP");
     check(start.dflash_context == 0 && start.dflash_round == 0 && start.causal_score == 0,
@@ -783,6 +893,11 @@ void run(const Case& k) {
     check(dry.workspace == start.capacity,
           k.name + ": the dry run's workspace " + std::to_string(dry.workspace) +
               " is the start's capacity " + std::to_string(start.capacity));
+    check(same_regions(dry.workspace_regions, start.text_prefill_regions),
+          k.name + ": --plan's prefill regions are the start's (" +
+              std::to_string(dry.workspace_regions.size()) + " against " +
+              std::to_string(start.text_prefill_regions.size()) + ")");
+    check(formula.workspace_regions.empty(), k.name + ": the formula records no regions");
     check(formula.workspace_basis.rfind("formula: ", 0) == 0,
           k.name + ": facts without the artifact's bindings keep the formula and say why (" +
               formula.workspace_basis + ")");

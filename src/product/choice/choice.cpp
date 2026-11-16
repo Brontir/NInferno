@@ -1,5 +1,6 @@
 #include "product/choice/choice.h"
 
+#include "core/board_facts.h"
 #include "core/device_class.h"
 #include "core/generation.h"
 #include "core/measured_boards.h"
@@ -42,7 +43,7 @@ double peak(const CardFacts& card, Route route) noexcept {
     const GenerationRow& row = generation_row(card.major, card.minor);
     const double s8          = row.s8 > 0 ? row.s8 : row.bf16;
     const double rate        = route == Route::Bf16 ? row.bf16 : route == Route::Fp4 ? 2 * s8 : s8;
-    return card.sms * card.clock_hz * rate;
+    return board_facts::tensor_flops_per_s(card.sms, card.clock_hz, rate);
 }
 
 // The generation's own row of a per-generation table, else kTransferGeneration's (`transferred`).
@@ -592,9 +593,9 @@ std::string fixed(double value, int digits) {
     return out.str();
 }
 
-Scored score(const ModelFacts& model, const CardFacts& card, const std::optional<Reference>& ref,
-             const QuantOption& quant, const Candidate& c, const Task& task,
-             const OwnContextFn& own_context) {
+Scored score(const ModelFacts& model, const ModelFacts& reference_model, const CardFacts& card,
+             const std::optional<Reference>& ref, const QuantOption& quant, const Candidate& c,
+             const Task& task, const OwnContextFn& own_context) {
     Scored s;
     s.candidate   = c;
     if (c.drafter > 0 && c.drafter <= model.drafters.size()) { s.drafter = model.drafters[c.drafter - 1].label; }
@@ -605,7 +606,8 @@ Scored score(const ModelFacts& model, const CardFacts& card, const std::optional
     s.prefill_band = prefill_band_of(model, card, quant, c, s.speed.basis, task.prompt);
     s.seconds     = request_seconds(model, card, quant, c, task);
     if (ref) {
-        s.decision_seconds = request_seconds(model, ref->card, quant, c, task, &s.decision_basis);
+        s.decision_seconds =
+            request_seconds(reference_model, ref->card, quant, c, task, &s.decision_basis);
         s.worth = -std::log(s.decision_seconds) - task.accuracy_weight * s.accuracy.kld;
     }
     return s;
@@ -2341,6 +2343,14 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     // bands the board's estimates carry. None of it decides anything.
     const std::optional<Reference> ref = reference_of(card, gates);
     out.reference                      = ref;
+    // The generation reference is a declared mean, not a board with a PCI identity or a route
+    // table. Price it with the generation's tile laws and measured MoE pair. The callbacks capture
+    // the planned board: they inform only that board's displayed estimates, never B1 (#930).
+    // Build this view once, including when candidates are repriced at a smaller context.
+    ModelFacts reference_model          = model;
+    reference_model.prefill_routes      = {};
+    reference_model.moe_routes          = {};
+    reference_model.moe_route_unqueried = false;
     out.gates_closed                   = closed_gates(model, card, gates);
     out.board_resolutions              = {resolution_of(card, SpeedBasis::Own),
                                           resolution_of(card, SpeedBasis::Transferred),
@@ -2417,9 +2427,10 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
             const Coupled coupled = coupled_storages(model, kv, mode, pins);
             for (const std::size_t drafter : drafters) {
                 for (const std::uint32_t chunk : chunks) {
-                    out.scored.push_back(score(model, card, ref, quant,
-                                               {kv, coupled.ring, coupled.state, mode, chunk, drafter},
-                                               task, own_context));
+                    out.scored.push_back(
+                        score(model, reference_model, card, ref, quant,
+                              {kv, coupled.ring, coupled.state, mode, chunk, drafter}, task,
+                              own_context));
                 }
             }
         }
@@ -2479,7 +2490,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         at.contexts = {context};
         if (at.long_prompt() != priced.long_prompt()) {
             for (Scored& s : out.scored) {
-                s = score(model, card, ref, quant, s.candidate, at, own_context);
+                s = score(model, reference_model, card, ref, quant, s.candidate, at, own_context);
             }
             priced = at;
         }
@@ -2609,7 +2620,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         }
     }
     for (const Candidate& v : variants) {
-        Scored s  = score(model, card, ref, quant, v, priced, own_context);
+        Scored s  = score(model, reference_model, card, ref, quant, v, priced, own_context);
         s.variant = true;
         s.fits    = s.own_context >= settled;
         out.scored.push_back(std::move(s));

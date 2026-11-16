@@ -5,8 +5,10 @@
 // clock or measurement, and compared with the one that was made.
 //
 // What choose() reads through functions is recorded as the values it asked for: the model's KV,
-// ring and state bytes per storage (every storage), and the own context of each candidate the
-// choice enumerated (record_choice calls choose() once with a recording oracle). A replay that asks
+// ring and state bytes per storage (every storage), the prefill and MoE route answers (including
+// Unknown/empty answers), and the own context of each candidate the choice enumerated.
+// record_choice calls choose() once with recording oracles; a route query which changes its answer
+// for the same arguments is rejected. A replay that asks
 // a value the record lacks is incomplete, never a guess: replay_choice throws ReplayIncomplete.
 // The record names its schema (kChoiceReplaySchema); the constants the choice prices with are the
 // build's (choice_constants.h), so a replay under another build answers what that build decides.
@@ -21,9 +23,11 @@
 
 namespace ninferno::product::choice {
 
-// /3 (#769): the quantization's expert_banks_int8 and expert_banks_assumed. Records of an older
+// /4 (#931): prefill_routes, moe_routes and moe_route_unqueried. null is an absent callback; an
+// empty list is a callback that was not asked. Queries include every callback argument, and their
+// answers are used without the live selector or its caches. Records of an older
 // schema are refused (replay_choice), not read with defaults.
-inline constexpr std::string_view kChoiceReplaySchema = "ninferno-choice-replay/3";
+inline constexpr std::string_view kChoiceReplaySchema = "ninferno-choice-replay/4";
 
 struct ReplayIncomplete : std::runtime_error {
     using std::runtime_error::runtime_error;
