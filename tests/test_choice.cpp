@@ -113,7 +113,7 @@ static_assert(!work_tiles_format(QType::GGML_Q2_K, 8, 9) &&
               !work_tiles_format(QType::GGML_Q2_K, 12, 0) &&
               !work_tiles_format(QType::GGML_Q2_K, 7, 5));
 
-// The device maps only these four ggml types onto the rule (ggml_mmq_internal.cuh
+// The device maps only these five ggml types onto the rule (ggml_mmq_internal.cuh
 // work_tiles_format); any other format the rule names on any generation must be mapped there too,
 // so this fails first when the host rule grows.
 constexpr bool only_mapped_formats() {

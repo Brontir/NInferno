@@ -19,7 +19,7 @@
 // unit's cost, plus the stream-k fixup where the launch splits tiles. No other generation or format
 // has been run over the widths: a generation joins by its row, a format by its grid on that
 // generation (work_tiles_format: IQ4_XS on Turing, GA10x, Ada and GB20x, Q3_K on GA10x, Ada and
-// GB20x, Q2_K on none; #619 step 13, DECISIONS 90).
+// GB20x, Q5_K on GA10x and Ada, Q2_K on none; #619 step 13, DECISIONS 90 and 92).
 
 #include "core/arch_registry.h"
 #include "core/generation.h"
