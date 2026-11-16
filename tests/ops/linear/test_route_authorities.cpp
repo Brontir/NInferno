@@ -79,8 +79,9 @@ constexpr Shape kShapes[]        = {{256, 2048}, {1024, 4096}, {4096, 4096}, {17
 constexpr std::int32_t kTokens[] = {1,  2,  3,  4,  5,   8,   9,   12,  16,   17,  24,
                                     32, 48, 64, 96, 128, 192, 256, 512, 1024, 2048};
 
-// The names an answer may carry: every list's entries and the two an authority answers under
-// when a measured entry stands in for its rule (r8_schedule's table, the dense tuner's band).
+// The names an answer may carry: every list's entries, the two an authority answers under when a
+// measured entry stands in for its rule (r8_schedule's table, the dense tuner's band), and the R8
+// schedule law r8_schedule asks before its rules (law_r8).
 std::set<std::string_view> listed_sources() {
     std::set<std::string_view> names;
     for (const auto list : {generic::select_authorities(), generic::auto_authorities(),
@@ -88,6 +89,7 @@ std::set<std::string_view> listed_sources() {
         for (const generic::NamedAuthority& a : list) names.insert(a.name);
     }
     names.insert("r8-table");
+    names.insert("r8-law");
     names.insert("dense-tune-prefill-band");
     return names;
 }
@@ -226,12 +228,14 @@ void check_direct(const generic::Ask& ask, const generic::Problem& problem, cons
                 ++g_direct_answers;
                 const std::string_view source = answer->evidence.source;
                 // r8-rules answers as r8-table only where the decode table gave the entry (a
-                // measured or carried answer); its own rule answers are the ranker's.
+                // measured or carried answer), as r8-law where the schedule law ranked (a cost
+                // ranker); its own rule answers are the rule ranker's.
+                const auto& e = answer->evidence;
                 const bool right =
                     a.name == "r8-rules"
-                        ? source == (answer->evidence.kind == generic::Evidence::Kind::Ranker
-                                         ? "r8-rules"
-                                         : "r8-table")
+                        ? source == (e.kind != generic::Evidence::Kind::Ranker     ? "r8-table"
+                                     : e.ranker == generic::Evidence::Ranker::Cost ? "r8-law"
+                                                                                   : "r8-rules")
                         : source == a.name;
                 if (!right) {
                     fail(where + ": " + std::string(a.name) + " answered as '" +
@@ -405,6 +409,10 @@ void check_evidence(const generic::RouteAnswer& a, const std::set<std::string_vi
     }
     if (e.source == "r8-rules" && e.kind != K::Ranker) {
         fail(where + ": r8-rules answer of kind " + generic::evidence_kind_name(e.kind));
+    }
+    // The R8 schedule law is a counted cost ranker (law_r8), never a rule or a measurement.
+    if (e.source == "r8-law" && (e.kind != K::Ranker || e.ranker != R::Cost)) {
+        fail(where + ": r8-law answer of kind " + generic::evidence_kind_name(e.kind));
     }
     if (e.source == "route-pin" || e.source == "route-probe") {
         if (e.kind != K::Pin) fail(where + ": a pin's answer is not Pin evidence");

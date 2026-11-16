@@ -32,6 +32,7 @@
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/r8_decode_table.h"
+#include "ops/generic/r8_law.h"
 #include "ops/generic/route_cost_constants.h"
 #include "ops/generic/route_table.h"
 #include "ops/linear/nvfp4/nvfp4_a4_plan.h"
@@ -820,6 +821,51 @@ std::optional<R8TableHit> tuned_r8(const Problem& p) {
     return std::nullopt;
 }
 
+bool r8_law_generation(const DeviceClass& d) noexcept {
+    return (d.major == 8 && d.minor == 9) || (d.major == 7 && d.minor == 0);
+}
+
+std::optional<int> law_r8(const Problem& p) {
+    const DeviceClass device = device_class();
+    if (!r8_law_generation(device)) return std::nullopt;
+    const auto arch = kernel_facts::sass_arch();
+    if (!arch) return std::nullopt;
+    const kernel_roofline::ChipFacts chip = kernel_roofline::chip_facts_of(device);
+    const CodecTraits traits              = codec_traits(p.qtype);
+    r8_law::Call call;
+    call.n                      = p.n;
+    call.k                      = p.k;
+    call.nt                     = 1;
+    call.slots                  = r8_law::slots_of(device);
+    call.swiglu                 = p.epilogue == Epilogue::SwiGlu;
+    call.sums                   = traits.min;
+    call.weight_bytes_per_value = ggml_bits_per_value(p.qtype) / 8.0;
+    // Below sm_80 a codebook grid is staged in shared memory after the activation.
+    call.grid_bytes = device.major < 8 && traits.grid_words > 0
+                          ? static_cast<std::int64_t>(traits.grid_words) * 4 +
+                                static_cast<std::int64_t>(r8_grid_pad)
+                          : 0;
+    // The add epilogue is priced as the store, as the decode tables carry it (tuned_r8) and as the
+    // holdout grids scored it: its residual read is N values against the weight's N x K.
+    const Epilogue epilogue = p.epilogue == Epilogue::AddResidual ? Epilogue::Store : p.epilogue;
+    std::optional<int> best;
+    double best_rank = 0;
+    for (int i = 0; i < r8_schedule_count(); ++i) {
+        const auto key = r8_kernel_key(i, p.qtype, epilogue, 1, false);
+        if (!key) continue;
+        const auto facts = kernel_facts::r8_facts(*arch, *key);
+        if (!facts) continue;
+        const R8ScheduleInfo s = r8_schedule_info(i);
+        const auto t           = r8_law::terms(chip, device, *facts, call, {s.warps, s.rows});
+        // Equal ranks are a tie the law does not break: the first schedule keeps it.
+        if (t && (!best || t->rank < best_rank)) {
+            best      = i;
+            best_rank = t->rank;
+        }
+    }
+    return best;
+}
+
 bool w4a8_ws_supports(QType q) { return compiled(Variant::W4a8Ws, q); }
 
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
@@ -1000,6 +1046,7 @@ int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t to
 int heuristic_r8(const Problem& p, std::int32_t tokens) {
     if (tokens == 1) {
         if (const auto tuned = tuned_r8(p)) return tuned->schedule;
+        if (const auto law = law_r8(p)) return *law;
     }
     return rules_r8(p, tokens);
 }

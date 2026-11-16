@@ -95,8 +95,22 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
 int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t tokens);
 
 // The R8 schedule of a call: at one token the nearest measured board's decode table entry
-// (tuned_r8), else the R8 rules (r8_rules_route).
+// (tuned_r8), else the R8 schedule law where it answers (law_r8), else the R8 rules
+// (r8_rules_route).
 int heuristic_r8(const Problem& p, std::int32_t tokens);
+
+// The R8 decode schedule law's choice at one token (ops/generic/r8_law.h, #613 PR-10): the
+// schedule of least rank among those the device's kernel-facts snapshot holds, from the chip's
+// facts and each instance's counted SASS, no measurement. nullopt where it does not answer: a
+// generation it is not taken on (r8_law_generation), no snapshot or no row for the call, or a
+// term it cannot price.
+std::optional<int> law_r8(const Problem& p);
+
+// Where the law decides at one token: Ada (sm_89) and Volta (sm_70), the generations whose
+// unread holdout grids it beat the rules on (#613, predictions frozen at 9bdd25031). GA10x keeps
+// the rules (floors above measured times, #960), GB20x has no SM-rate row (its transfer is
+// refuted, the law abstains), Turing waits for its holdout grid.
+[[nodiscard]] bool r8_law_generation(const DeviceClass& d) noexcept;
 
 // The R8 decode table's entry for the exact problem (r8_decode_table.h), from the table of the
 // nearest measured board within kR8CarryDistance: the schedule, the board's distance to this

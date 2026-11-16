@@ -4,18 +4,30 @@
 
 #include "core/device_class.h"
 #include "core/isa_facts.h"
+#include "core/format_facts.h"
+#include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_gemm_internal.h"
+#include "ops/generic/generic_select_internal.h"
 #include "ops/generic/kernel_facts.h"
 #include "ops/generic/kernel_roofline.h"
 #include "ops/generic/r8_law.h"
+#include "ops/generic/route_authorities.h"
+#include "ops/generic/route_query.h"
 #include "ops/generic/selector_facts.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <optional>
+#include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -197,10 +209,151 @@ void check_terms() {
            "209 registers hold fewer CTAs than 77");
 }
 
+#ifndef NINFERNO_SOURCE_DIR
+#    error "NINFERNO_SOURCE_DIR is defined by the test's CMake target"
+#endif
+
+// The formats of the frozen prediction files (r8_law_predict.cpp kFormats): their name there, the
+// codec name their snapshot rows carry, the QType.
+struct LawFormat {
+    const char* name;
+    const char* codec;
+    ninferno::QType q;
+};
+
+constexpr LawFormat kLawFormats[] = {
+    {"q4k", "W4a8Q45K<4>", ninferno::QType::GGML_Q4_K},
+    {"q6k", "W4a8Q6K", ninferno::QType::GGML_Q6_K},
+    {"q3k", "W4a8Q3K", ninferno::QType::GGML_Q3_K},
+    {"iq2xxs", "W4a8Iq2Xxs", ninferno::QType::GGML_IQ2_XXS},
+    {"iq2xs", "W4a8Iq2Xs", ninferno::QType::GGML_IQ2_XS},
+    {"iq2s", "W4a8Iq2S", ninferno::QType::GGML_IQ2_S},
+    {"iq3xxs", "W4a8Iq3Xxs", ninferno::QType::GGML_IQ3_XXS},
+    {"iq3s", "W4a8Iq3S", ninferno::QType::GGML_IQ3_S},
+};
+
+std::string schedule_name(int i) {
+    const g::R8ScheduleInfo s = g::r8_schedule_info(i);
+    return "w" + std::to_string(s.warps) + "r" + std::to_string(s.rows);
+}
+
+// The launch names the kernel instance whose snapshot row the law reads (r8_kernel_key): the
+// predictor's codec spelling, every schedule's warps and rows, one token slot, the epilogue, the
+// in-kernel quantizer; and the pre-quantized verify form where asked.
+void check_kernel_keys() {
+    for (const LawFormat& f : kLawFormats) {
+        for (int i = 0; i < g::r8_schedule_count(); ++i) {
+            const g::R8ScheduleInfo s = g::r8_schedule_info(i);
+            const auto key            = g::r8_kernel_key(i, f.q, g::Epilogue::SwiGlu, 1, false);
+            expect(key.has_value(), std::string("no R8 kernel key: ") + f.name);
+            if (!key) continue;
+            expect(key->codec == f.codec && key->warps == s.warps && key->rows == s.rows &&
+                       key->nt == 1 && key->epilogue == 2 && !key->pre,
+                   std::string("R8 kernel key of ") + f.name + " " + schedule_name(i) + ": " +
+                       key->codec + " " + std::to_string(key->warps) + " " +
+                       std::to_string(key->rows) + " " + std::to_string(key->nt) + " " +
+                       std::to_string(key->epilogue));
+            const auto verify = g::r8_kernel_key(i, f.q, g::Epilogue::Store, 3, true);
+            expect(verify && verify->nt == 4 && verify->pre && verify->epilogue == 0,
+                   std::string("R8 verify kernel key of ") + f.name);
+        }
+    }
+    expect(!g::r8_kernel_key(0, ninferno::QType::BF16, g::Epilogue::Store, 1, false),
+           "a format without an R8 codec has a kernel key");
+    expect(!g::r8_kernel_key(g::r8_schedule_count(), ninferno::QType::GGML_Q4_K, g::Epilogue::Store,
+                             1, false),
+           "an undeclared R8 schedule has a kernel key");
+}
+
+// The selector's law (law_r8) is the frozen prediction: on every board the law decides on, every
+// call of its unread holdout grid's T = 1 file (tests/fixtures/r8_law, frozen at 9bdd25031) takes
+// the schedule the file picks; where the law does not decide (GA10x, Turing, GB20x) it answers
+// nothing; and the route's evidence names the law, a cost ranker, where it answered.
+void check_selector_is_the_prediction() {
+    struct HoldBoard {
+        const char* name;
+        std::uint32_t pci;
+        bool decides;
+    };
+
+    constexpr HoldBoard kBoards[] = {
+        {"rtx4090", 0x2684, true},    {"rtx4070ti", 0x2782, true}, {"rtx4060ti", 0x2805, true},
+        {"gv100", 0x1DBA, true},      {"rtx3090", 0x2204, false},  {"rtx3060", 0x2504, false},
+        {"rtx2080ti", 0x1E07, false}, {"rtx5090", 0x2B85, false},
+    };
+    const auto dir = std::filesystem::path(NINFERNO_SOURCE_DIR) / "tests/fixtures/r8_law";
+    for (const HoldBoard& b : kBoards) {
+        const ninferno::DeviceClass d =
+            g::board_device_class(g::registry_facts_board(b.name, b.pci));
+        expect(g::r8_law_generation(d) == b.decides,
+               std::string("the law's generations: ") + b.name);
+        const ninferno::ScopedDeviceClass scoped(d);
+        if (!b.decides) {
+            const g::Problem p{ninferno::QType::GGML_Q4_K, ninferno::ops::LinearPolicy::AllowA8,
+                               4096, 4096, g::Epilogue::Store};
+            expect(!g::law_r8(p), std::string("the law answered off its generations: ") + b.name);
+            continue;
+        }
+        std::ifstream in(dir / ("predicted_v2_hold_" + std::string(b.name) + "_t1.csv"));
+        expect(static_cast<bool>(in), std::string("no T=1 prediction file: ") + b.name);
+        // (format, epilogue, n, k) -> the schedule the file picks.
+        std::map<std::string, std::string> picks;
+        for (std::string line; std::getline(in, line);) {
+            std::vector<std::string> c;
+            std::stringstream fields(line);
+            for (std::string v; std::getline(fields, v, ',');) c.push_back(v);
+            if (c.size() != 15 || c[14] != "1") continue;
+            picks[c[0] + ' ' + c[1] + ' ' + c[2] + ' ' + c[3]] = c[4];
+        }
+        expect(!picks.empty(), std::string("no picks in the T=1 prediction: ") + b.name);
+        std::size_t agree = 0;
+        for (const auto& [call, pick] : picks) {
+            std::stringstream fields(call);
+            std::string format, epilogue;
+            std::int32_t n = 0, k = 0;
+            fields >> format >> epilogue >> n >> k;
+            const auto* f = std::find_if(std::begin(kLawFormats), std::end(kLawFormats),
+                                         [&](const LawFormat& x) { return format == x.name; });
+            expect(f != std::end(kLawFormats), "an unknown format in a prediction: " + format);
+            if (f == std::end(kLawFormats)) continue;
+            const g::Epilogue e = epilogue == "swiglu" ? g::Epilogue::SwiGlu
+                                  : epilogue == "add"  ? g::Epilogue::AddResidual
+                                                       : g::Epilogue::Store;
+            const g::Problem p{f->q, ninferno::ops::LinearPolicy::AllowA8, n, k, e};
+            const auto law        = g::law_r8(p);
+            const std::string got = law ? schedule_name(*law) : "none";
+            expect(got == pick, std::string(b.name) + " " + call + ": the selector's law takes " +
+                                    got + ", the frozen prediction " + pick);
+            agree += got == pick ? 1 : 0;
+        }
+        std::cout << b.name << ": the law is the frozen T=1 prediction on " << agree << " of "
+                  << picks.size() << " calls\n";
+        // A call no measured table holds (none has 4608 x 3584) takes the law at one token and the
+        // rules at two.
+        const auto at = [&](std::int32_t t) {
+            return g::route_answer_query(d, ninferno::QType::GGML_Q4_K,
+                                         ninferno::ops::LinearPolicy::AllowA8, g::Epilogue::Store,
+                                         4608, 3584, t);
+        };
+        const auto one = at(1);
+        const auto two = at(2);
+        expect(one && one->evidence.source == "r8-law" &&
+                   one->evidence.kind == g::Evidence::Kind::Ranker &&
+                   one->evidence.ranker == g::Evidence::Ranker::Cost,
+               std::string("T=1 evidence is not the law's: ") + b.name + " " +
+                   (one ? g::evidence_text(one->evidence) : std::string("none")));
+        expect(two && two->evidence.source == "r8-rules",
+               std::string("T=2 evidence is not the rules': ") + b.name + " " +
+                   (two ? g::evidence_text(two->evidence) : std::string("none")));
+    }
+}
+
 } // namespace
 
 int main() {
     check_terms();
+    check_kernel_keys();
+    check_selector_is_the_prediction();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

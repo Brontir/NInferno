@@ -185,8 +185,10 @@ ninferno_add_op_test(ninferno_kernel_roofline_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_kernel_roofline.cpp"
   LIBRARIES ninferno_linear_test_support)
 
-# The R8 decode schedule law's terms (ops/generic/r8_law.h, #613 PR-10) on constructed facts.
-ninferno_add_op_test(ninferno_r8_law_test LABELS host
+# The R8 decode schedule law's terms (ops/generic/r8_law.h, #613 PR-10) on constructed facts, the
+# kernel keys the R8 launch names, and the selector's law (law_r8) against the frozen T=1
+# predictions of tests/fixtures/r8_law on substituted boards.
+ninferno_add_op_test(ninferno_r8_law_test LABELS host NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_r8_law.cpp"
   LIBRARIES ninferno_linear_test_support)
 

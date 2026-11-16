@@ -292,16 +292,19 @@ std::optional<RouteAnswer> cost_model(const Ask& ask, const Problem& problem,
 
 // R8 for decode and for the verify of the formats with an R8 codec (r8_call): at one token the
 // entry of the nearest measured board's decode table (tuned_r8, within kR8CarryDistance), else the
-// R8 rules (r8_rules_route), asked only when the table does not answer.
+// R8 schedule law where it answers (law_r8: a counted ranker, "r8-law"), else the R8 rules
+// (r8_rules_route), each asked only when the one before does not answer.
 std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
                                        const Weight& weight) {
     if (!r8_call(problem, weight, ask.tokens)) return std::nullopt;
-    // The rules' schedule is computed only when the T=1 table does not answer.
     const auto hit = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;
+    const auto law = ask.tokens == 1 && !hit ? law_r8(problem) : std::nullopt;
     RouteAnswer answer =
-        hit ? RouteAnswer{Route{Family::R8Mma, static_cast<std::uint8_t>(hit->schedule)},
+        hit   ? RouteAnswer{Route{Family::R8Mma, static_cast<std::uint8_t>(hit->schedule)},
                           Evidence{}}
-            : by_rule(r8_rules_route(problem, ask.tokens), "r8-rules");
+        : law ? RouteAnswer{Route{Family::R8Mma, static_cast<std::uint8_t>(*law)},
+                            Evidence{Evidence::Kind::Ranker, Evidence::Ranker::Cost, "r8-law"}}
+              : by_rule(r8_rules_route(problem, ask.tokens), "r8-rules");
     if (hit) {
         answer.evidence.ranker   = Evidence::Ranker::None;
         answer.evidence.source   = "r8-table";
@@ -463,7 +466,7 @@ constexpr NamedAuthority kRuleAuthorities[] = {
     {"w4a4-rule", w4a4_rule},
     {"vec-rule", vec_kernel_rule},
     {"cost-model", cost_model},
-    {"r8-rules", r8_schedule}, // "r8-table" where the decode table answers
+    {"r8-rules", r8_schedule}, // "r8-table" / "r8-law" where the table / law answers
     {"mmq-prefill-gate", mmq_prefill_gate},
     {"i8-rule", i8_rule},
     {"w4a8-rule", w4a8_rule},
