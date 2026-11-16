@@ -33,8 +33,9 @@ void expect(bool ok, const std::string& what) {
 
 bool near(double a, double b) { return std::fabs(a - b) <= 1e-9 * std::max(std::fabs(b), 1.0); }
 
-// A dp4a loop of `k_iter` K values a row-token product, with the quantizer loop beside it: the
-// sm_89 Q4_K w4r1 counts (#613's PR-10 plan) as the base, scaled by rows where a test asks.
+// A dp4a loop of `k_iter` K values a row-token product, with the quantizer loop beside it: counts
+// of the size of the sm_89 Q4_K w4r1 row (258 loop instructions, a 549-clock loop schedule), not
+// its exact values; the outside counts hold the quantizer loop once, as the snapshot's do.
 kf::KernelFacts facts(int registers, int k_iter, int total, int stall, bool prologue = true) {
     kf::KernelFacts f;
     f.registers = registers;
@@ -96,6 +97,9 @@ void check_terms() {
     kr::ChipFacts legacy  = chip;
     legacy.dram_latency_s = std::nullopt;
     expect(!rl::terms(legacy, *device, f, call, {4, 1}), "no answer on a legacy-DRAM chip");
+    kf::KernelFacts spills = f;
+    spills.stack_bytes     = 8;
+    expect(!rl::terms(chip, *device, spills, call, {4, 1}), "no answer for a kernel that spills");
 
     const auto t = rl::terms(chip, *device, f, call, {4, 1});
     expect(t.has_value(), "an answer with every fact");
@@ -112,22 +116,43 @@ void check_terms() {
     const auto t8 = rl::terms(chip, *device, f, wide, {8, 1});
     expect(t5 && t5->passes == 2, "K 5120 on four warps: two passes");
     expect(t8 && t8->passes == 1, "K 5120 on eight warps: one pass");
-    // The dp4a loop: K / k_iter iterations.
-    expect(t->iterations == 1, "K 4096 at 4096 a iteration: one");
+    // Warp passes a CTA: 128 tasks (160 at K 5120) over 32 lanes, whatever the warps.
+    expect(t->warp_passes == 4, "K 4096: four warp passes a CTA");
+    expect(t5 && t8 && t5->warp_passes == 5 && t8->warp_passes == 5,
+           "K 5120: five warp passes a CTA on four or eight warps");
+    // The dp4a loop: two slots an iteration, the last one may stop after its first slot.
+    expect(t->iterations == 1, "K 4096 at 4096 an iteration: one");
+    expect(t5 && t5->iterations == 1.5, "K 5120 at 4096 an iteration: one and a half");
+    rl::Call volta = wide;
+    volta.slots    = 1;
+    const auto t1  = rl::terms(chip, *device, f, volta, {4, 1});
+    expect(t1 && t1->iterations == 2, "one slot: K 5120 at 4096 an iteration takes two");
+    expect(rl::slots_of(*device) == 2, "two slots on Ada");
     // The DRAM term is the DRAM law's, on the CTA's bytes.
     const double cta_bytes = 4 * 4096 * 144.0 / 256.0;
     expect(near(t->cta_bytes, cta_bytes), "a CTA's bytes: rows x K x bytes per value");
-    expect(near(t->dram, kr::dram_terms(chip, 1024, t->occupancy, 4, cta_bytes, 1024, true).total),
-           "dram is dram_terms of the call");
+    // A warp's bytes in flight: the loop's 1024 load bytes, under one iteration's 2304 weight
+    // bytes.
+    const auto d = kr::dram_terms(chip, 1024, t->occupancy, 4, cta_bytes, 1024, true);
+    expect(near(t->dram, d.sm) && near(t->bus, d.bus), "dram and bus are dram_terms of the call");
+    kf::KernelFacts lookups = f;
+    lookups.loop->ldg_bytes = 4096;
+    const auto tl           = rl::terms(chip, *device, lookups, call, {4, 1});
+    expect(
+        tl && near(tl->dram, kr::dram_terms(chip, 1024, t->occupancy, 4, cta_bytes, 2304, true).sm),
+        "loads past one iteration's weight bytes hit the cache");
     // Issue: the busiest SM's warp instructions over four schedulers, the INT32 pipe's two clocks
     // where they take longer.
-    const double per_warp =
-        std::max({1.0 * 120 + 1.0 * 259 + 480, 2.0 * (40 + 129), 1.0 * (60 + 32)});
-    expect(near(t->issue, 8 * 4 * per_warp / (4 * chip.clock_hz)), "issue from the counts");
-    // Chain: the static schedule of one warp, every round.
-    expect(near(t->chain, t->rounds * (400.0 + 624.0 + 1500.0) / chip.clock_hz),
+    // A CTA: four warp passes of the quantizer, four warps of one iteration and the rest outside
+    // (480 less the quantizer's 120).
+    const double per_cta = std::max(
+        {4.0 * 120 + 4 * (259.0 + 360), 2.0 * (4 * 40 + 4 * 129), 1.0 * (4 * 60 + 4 * 32)});
+    expect(near(t->issue, 8 * per_cta / (4 * chip.clock_hz)), "issue from the counts");
+    // Chain: the static schedule of one warp, every round (outside 1500 less the quantizer's 400).
+    expect(near(t->chain, t->rounds * (400.0 + 624.0 + 1100.0) / chip.clock_hz),
            "chain from the stall sums");
-    expect(t->total == std::max({t->dram, t->issue, t->chain}), "the time is the longest term");
+    expect(t->rank == std::max({t->dram, t->issue, t->chain}), "the rank is the longest SM term");
+    expect(t->total == std::max(t->bus, t->rank), "the time is the rank or the bus");
     // SwiGLU doubles a CTA's bytes; a quantized activation (no quantizer loop) has no passes.
     rl::Call gate = call;
     gate.swiglu   = true;

@@ -3,13 +3,17 @@
 // snapshots alone (no GPU). Its output is committed before the lab's grids are scored, so the
 // prediction is frozen by its commit (tests/fixtures/r8_law/predicted_<board>.csv).
 //
-//   ninferno_r8_law_predict --board <name> --pci 0x2684 --shapes FILE
+//   ninferno_r8_law_predict --board <name> --pci 0x2684 --shapes FILE [--nt 1]
 //
 // FILE is the r8 grid's "<format> <compute> <epilogue> <n> <k>" per line (format q4k, q6k, q3k,
-// iq2xxs, iq2xs, iq2s, iq3xxs, iq3s; epilogue store or swiglu), decode at T = 1. Output CSV:
-//   format,epilogue,n,k,schedule,occupancy,rounds,passes,dram_us,issue_us,chain_us,total_us,pick
-// one row per schedule the snapshot holds (pick 1 on the law's choice), or one row with schedule
-// "none" where the law has no answer (a fact missing).
+// iq2xxs, iq2xs, iq2s, iq3xxs, iq3s; epilogue store or swiglu); --nt the kernel's token slots
+// (1, 2, 4, 8; default 1, decode at T = 1). Output CSV:
+//   format,epilogue,n,k,schedule,occupancy,rounds,passes,bus_us,dram_us,issue_us,chain_us,
+//   rank_us,total_us,pick
+// one row per schedule the snapshot holds, or one row with schedule "none" where the law has no
+// answer (a fact missing). The schedules are compared on rank (the busiest SM's terms; the bus is
+// the same for all): pick 1 on the law's choice, 2 on a schedule whose rank equals it (a tie the
+// law does not break; the choice is then the first in the snapshot's order).
 #include "core/device_class.h"
 #include "ops/generic/codec_traits.h"
 #include "ops/generic/kernel_facts.h"
@@ -73,6 +77,7 @@ std::string arch_label(const ninferno::DeviceClass& d) {
 int main(int argc, char** argv) {
     std::string board, shapes;
     std::uint32_t pci = 0;
+    int nt            = 1;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string a = argv[i];
         if (a == "--board")
@@ -81,9 +86,12 @@ int main(int argc, char** argv) {
             pci = static_cast<std::uint32_t>(std::strtoul(argv[i + 1], nullptr, 0));
         else if (a == "--shapes")
             shapes = argv[i + 1];
+        else if (a == "--nt")
+            nt = std::atoi(argv[i + 1]);
     }
-    if (board.empty() || pci == 0 || shapes.empty()) {
-        std::cerr << "usage: ninferno_r8_law_predict --board <name> --pci 0x.... --shapes FILE\n";
+    if (board.empty() || pci == 0 || shapes.empty() || (nt != 1 && nt != 2 && nt != 4 && nt != 8)) {
+        std::cerr << "usage: ninferno_r8_law_predict --board <name> --pci 0x.... --shapes FILE "
+                     "[--nt 1|2|4|8]\n";
         return 2;
     }
     const g::FactsBoard facts_board    = g::registry_facts_board(board.c_str(), pci);
@@ -95,8 +103,8 @@ int main(int argc, char** argv) {
         std::cerr << "cannot read " << shapes << '\n';
         return 2;
     }
-    std::printf("format,epilogue,n,k,schedule,occupancy,rounds,passes,dram_us,issue_us,chain_us,"
-                "total_us,pick\n");
+    std::printf("format,epilogue,n,k,schedule,occupancy,rounds,passes,bus_us,dram_us,issue_us,"
+                "chain_us,rank_us,total_us,pick\n");
     for (std::string line; std::getline(in, line);) {
         std::istringstream fields(line);
         std::string format, compute, epilogue;
@@ -108,7 +116,8 @@ int main(int argc, char** argv) {
         rl::Call call;
         call.n                      = n;
         call.k                      = k;
-        call.nt                     = 1;
+        call.nt                     = nt;
+        call.slots                  = rl::slots_of(device);
         call.swiglu                 = swiglu;
         call.sums                   = f->sums;
         call.weight_bytes_per_value = f->bytes_per_value;
@@ -127,25 +136,28 @@ int main(int argc, char** argv) {
         for (const rl::Schedule s : {rl::Schedule{4, 1}, rl::Schedule{4, 2}, rl::Schedule{8, 1},
                                      rl::Schedule{8, 2}, rl::Schedule{2, 1}}) {
             const auto facts =
-                kf::r8_facts(arch, {f->codec, s.warps, s.rows, 1, swiglu ? 2 : 0, false});
+                kf::r8_facts(arch, {f->codec, s.warps, s.rows, nt, swiglu ? 2 : 0, false});
             if (!facts) continue;
             if (const auto t = rl::terms(chip, device, *facts, call, s)) rows.push_back({s, *t});
         }
         if (rows.empty()) {
-            std::printf("%s,%s,%lld,%lld,none,,,,,,,,0\n", format.c_str(), epilogue.c_str(),
+            std::printf("%s,%s,%lld,%lld,none,,,,,,,,,,0\n", format.c_str(), epilogue.c_str(),
                         static_cast<long long>(n), static_cast<long long>(k));
             continue;
         }
         std::size_t best = 0;
         for (std::size_t i = 1; i < rows.size(); ++i) {
-            if (rows[i].t.total < rows[best].t.total) best = i;
+            if (rows[i].t.rank < rows[best].t.rank) best = i;
         }
+        const double best_rank = rows[best].t.rank;
         for (std::size_t i = 0; i < rows.size(); ++i) {
-            const auto& r = rows[i];
-            std::printf("%s,%s,%lld,%lld,w%dr%d,%g,%g,%g,%.3f,%.3f,%.3f,%.3f,%d\n", format.c_str(),
-                        epilogue.c_str(), static_cast<long long>(n), static_cast<long long>(k),
-                        r.s.warps, r.s.rows, r.t.occupancy, r.t.rounds, r.t.passes, r.t.dram * 1e6,
-                        r.t.issue * 1e6, r.t.chain * 1e6, r.t.total * 1e6, i == best ? 1 : 0);
+            const auto& r  = rows[i];
+            const int pick = i == best ? 1 : r.t.rank == best_rank ? 2 : 0;
+            std::printf("%s,%s,%lld,%lld,w%dr%d,%g,%g,%g,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%d\n",
+                        format.c_str(), epilogue.c_str(), static_cast<long long>(n),
+                        static_cast<long long>(k), r.s.warps, r.s.rows, r.t.occupancy, r.t.rounds,
+                        r.t.passes, r.t.bus * 1e6, r.t.dram * 1e6, r.t.issue * 1e6, r.t.chain * 1e6,
+                        r.t.rank * 1e6, r.t.total * 1e6, pick);
         }
     }
     return 0;
