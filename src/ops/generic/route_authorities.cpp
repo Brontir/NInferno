@@ -233,7 +233,8 @@ std::optional<RouteAnswer> dense_tune_entry(const Ask& ask, const Problem& probl
 // the prefill profile.
 std::optional<RouteAnswer> dense_tune_prefill_band(const Ask& ask, const Problem& problem,
                                                    const Weight& weight, Route heuristic) {
-    const auto band = tuned_prefill_route(problem, ask.tokens, heuristic);
+    auto band = tuned_prefill_route(problem, ask.tokens, heuristic);
+    if (!band) band = release_prefill_route(problem, weight, ask.tokens, heuristic);
     if (!band || !route_admits(*band, weight, problem.policy)) return std::nullopt;
     if ((band->family == Family::W4a8Mma && heuristic.family == Family::W4a8Mma) ||
         (ask.prefill() && band->family != Family::W4a8Mma &&
