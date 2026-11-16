@@ -298,8 +298,8 @@ int near(const std::string& label, const char* what, const std::vector<T>& a,
 // Volta's kernel (b) against the shipped schedule (a). The scores differ in FP32 summation order
 // only (~1e-6 relative), so a probability can round to the neighbouring FP16 value (2^-11
 // relative): a numerator within 2^-9 of its row's largest magnitude, the output within one BF16
-// step (2^-7 relative: the bottom of a binade) plus 2^-9 of its row's largest, the log2 maximum within 1e-5 and the sum
-// within 2^-10 relative.
+// step (2^-7 relative: the bottom of a binade) plus 2^-9 of its row's largest, the log2 maximum
+// within 1e-5 and the sum within 2^-10 relative.
 int near_outputs(const std::string& label, const Outputs& a, const Outputs& b) {
     const auto same = [](float x) { return double(x); };
     std::vector<double> row_scale(a.acc.size() / D, 0.0);
