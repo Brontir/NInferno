@@ -462,10 +462,17 @@ bool reference_token(const Case& c, const Layer& l, const std::vector<double>& x
 
 // NINFERNO_TEST_MOE_CASE=<text> runs only the cases whose label holds the text (the checks
 // without a case are skipped), so one case can loop alone. A filter that matches no case fails
-// the run (main): a mistyped or stale one would otherwise pass having checked nothing.
+// the run (main): a mistyped or stale one would otherwise pass having checked nothing. The filter
+// applies to each process, so under ctest a filter right for one --part fails every part that
+// holds no matching case; the message names the part. The old name, NINFERNO_MOE_TEST_CASE, is
+// not read: a shell that still sets it runs every case, and gets a warning.
 const std::string& case_filter() {
     static const std::string filter = [] {
         const char* v = std::getenv("NINFERNO_TEST_MOE_CASE");
+        if (v == nullptr && std::getenv("NINFERNO_MOE_TEST_CASE") != nullptr) {
+            std::cerr << "moe: NINFERNO_MOE_TEST_CASE is the old name and is ignored; set "
+                         "NINFERNO_TEST_MOE_CASE to filter the cases\n";
+        }
         return std::string(v != nullptr ? v : "");
     }();
     return filter;
@@ -482,13 +489,17 @@ bool filtered_out(const std::string& label) {
     return false;
 }
 
-// Every exit of a filtered run says what the filter let through; false when it let nothing.
-bool filter_matched() {
+// Every completed filtered run says what the filter let through (the exception path, the 77
+// skips and the usage error print nothing); false when it let nothing. `part` is main's --part
+// argument, empty for the whole suite.
+bool filter_matched(const std::string& part) {
     if (!filtering()) return true;
     std::cout << "moe: NINFERNO_TEST_MOE_CASE=\"" << case_filter() << "\" ran " << matched_cases
               << " case check(s)\n";
     if (matched_cases != 0) return true;
-    std::cerr << "moe: the case filter matched no case\n";
+    std::cerr << "moe: the case filter matched no case"
+              << (part.empty() ? std::string() : " in --part " + part)
+              << " (it applies to each process: a part without a matching case fails)\n";
     return false;
 }
 
@@ -2061,7 +2072,7 @@ int main(int argc, char** argv) {
             std::cerr << "mx8: " << e.what() << '\n';
             ++failures;
         }
-        if (!filter_matched()) return 1;
+        if (!filter_matched(part)) return 1;
         if (failures != 0) {
             std::cerr << "moe mx8: " << failures << " failure(s)\n";
             return 1;
@@ -2588,7 +2599,7 @@ int main(int argc, char** argv) {
         std::cerr << "moe test: unexpected exception: " << e.what() << '\n';
         return 1;
     }
-    if (!filter_matched()) return 1;
+    if (!filter_matched(part)) return 1;
     if (failures != 0) {
         std::cerr << "moe: " << failures << " failure(s)\n";
         return 1;
