@@ -80,9 +80,9 @@ std::optional<Q8LaunchTile> q8_launch_tile(Q8Launch launch) {
         {launch_q8_a16_simt_r8_t4, {8, 4, false}},
         {launch_q8_a16_simt_r8_t8, {8, 8, false}},
         {launch_q8_a16_sliced_r16_t16_w8_s2, {16, 16, true}},
-        // The K-sliced tiles' facts (#617 D): cuobjdump of the sm_89 build, every build for now (#949;
-        // registers, the most of
-        // the instances; static shared); a group stages 4 x 64 K, a warp multiplies its 64.
+        // The K-sliced tiles' facts (#617 D): cuobjdump of the sm_89 build, every build for now
+        // (#949; registers, the most of the instances; static shared); a group stages 4 x 64 K, a
+        // warp multiplies its 64.
         {launch_q8_a16_sliced_r16_t16_w4_s2,
          {16, 16, true, CtaFacts{128, 161, 25088, 256, 64, 16, 16, 1}}},
         {launch_q8_a16_sliced_r16_t32_w4_s2,

@@ -229,7 +229,9 @@ LinearPairPrice linear_pair_price(std::int32_t n, std::int32_t k, std::int32_t t
     if (tile && tile->cta) {
         const double ctas = std::ceil(static_cast<double>(n) / tile->rows) *
                             std::ceil(static_cast<double>(tokens) / tile->tokens);
-        if (const auto one = residency_chain(ctas, *tile->cta, device, k)) { out.separate = 2.0 * *one; }
+        if (const auto one = residency_chain(ctas, *tile->cta, device, k)) {
+            out.separate = 2.0 * *one;
+        }
     }
     return out;
 }

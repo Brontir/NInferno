@@ -15,10 +15,11 @@
 //     winner.
 // Where the price ties (the fused CTA's chain is the two calls' together, both grids in the same
 // rounds) the fused kernel keeps the call, as on master; there the two calls win on five of seven
-// boards by 5-11 % (the 5070 Ti's ties are within 2 %, the 5090 keeps the fused kernel ahead), the tile efficiency the chain does not count (the fused DualMma holds one warp
-// a scheduler: ncu, #947). Those cells are counted, printed and held to their number, so a law
-// that names the term must change it. (The busiest-SM MMA work, the first law tried, missed the
-// RTX 3060 at T = 128: it took the two calls, measured 12 % slower.)
+// boards by 5-11 % (the 5070 Ti's ties are within 2 %, the 5090 keeps the fused kernel ahead), the
+// tile efficiency the chain does not count (the fused DualMma holds one warp a scheduler: ncu,
+// #947). Those cells are counted, printed and held to their number, so a law that names the term
+// must change it. (The busiest-SM MMA work, the first law tried, missed the RTX 3060 at T = 128: it
+// took the two calls, measured 12 % slower.)
 
 #include "core/device_class.h"
 #include "ops/linear/linear_registry.h"
@@ -129,7 +130,7 @@ int main() {
     int ties_lost = 0;
     for (const Cell& c : kCells) {
         const std::string at = std::string(" ") + c.card + " T=" + std::to_string(c.tokens);
-        const auto w = d::linear_pair_price(1024, 5120, c.tokens, board(c));
+        const auto w         = d::linear_pair_price(1024, 5120, c.tokens, board(c));
         check(w.fused.has_value() && w.separate.has_value(), "both sides priced" + at);
         if (!w.fused || !w.separate) continue;
         const bool takes_separate = *w.fused > *w.separate;
@@ -147,7 +148,8 @@ int main() {
         }
     }
     // The open cells of the tie, held to their number (see the header).
-    check(ties_lost == 12, "12 tied cells where the two calls win, not " + std::to_string(ties_lost));
+    check(ties_lost == 12,
+          "12 tied cells where the two calls win, not " + std::to_string(ties_lost));
     // The law needs a board: no limits, nothing priced.
     const auto none = d::linear_pair_price(1024, 5120, 128, ninferno::DeviceClass{});
     check(!none.fused && !none.separate, "no SM count prices nothing");
