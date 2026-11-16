@@ -441,6 +441,20 @@ void sections_read() {
             }
             expect(found, name + " w4a8: no " + codec + " 32 x 128 store row with a loop");
         }
+        // The R8 decode kernels (#613 PR-10): one loop marked by the dp4a, no MMA and no CTA
+        // barrier in it; the Q4_K four-warp single-row decode kernel is among them.
+        if (!kf::section_header(arch, "r8")) continue;
+        int r8_bad = 0;
+        std::string r8_first;
+        for (const auto& [key, f] : kf::section_rows(arch, "r8")) {
+            const bool ok = f.loop && f.loop->loops == 1 && f.loop->mma == 0 && f.loop->pipes &&
+                            f.loop->pipes->bar == 0;
+            if (!ok && r8_bad++ == 0) r8_first = key;
+        }
+        expect(r8_bad == 0, name + " r8: " + std::to_string(r8_bad) +
+                                " rows without one barrier-free dp4a loop, first " + r8_first);
+        expect(kf::r8_facts(arch, {"W4a8Q45K<4>", 4, 1, 1, 0, false}).has_value(),
+               name + " r8: no W4a8Q45K<4> 4 1 1 0 0 row");
     }
     std::cout << "sections: " << with_sections << " snapshots with the mmq section\n";
     // The reader takes a section after the rows and refuses one that breaks its form.
