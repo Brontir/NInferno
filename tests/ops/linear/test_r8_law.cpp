@@ -183,12 +183,13 @@ void check_terms() {
     expect(tp && tp->passes == 0, "a quantized activation: no quantizer pass");
     // Eight tokens at K 12288 stage 8 x 384 x 40 = 122880 activation bytes: more shared memory
     // than an Ada SM has, so no CTA is resident. The pre-quantized form stages none.
-    rl::Call wide = call;
-    wide.nt       = 8;
-    wide.k        = 12288;
-    expect(!rl::terms(chip, *device, pre, wide, {4, 1}), "8 tokens at K 12288 staged: no CTA fits");
-    wide.pre       = true;
-    const auto tw8 = rl::terms(chip, *device, pre, wide, {4, 1});
+    rl::Call verify = call;
+    verify.nt       = 8;
+    verify.k        = 12288;
+    expect(!rl::terms(chip, *device, pre, verify, {4, 1}),
+           "8 tokens at K 12288 staged: no CTA fits");
+    verify.pre     = true;
+    const auto tw8 = rl::terms(chip, *device, pre, verify, {4, 1});
     expect(tw8 && tw8->occupancy > 0, "the pre-quantized form stages no activation: CTAs fit");
     // More registers, fewer resident CTAs, more rounds for the same grid.
     const auto heavy = rl::terms(chip, *device, facts(209, 4096, 259, 624), call, {4, 1});
