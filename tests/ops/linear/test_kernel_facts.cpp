@@ -454,8 +454,10 @@ void sections_read() {
                             f.prologue->loops == (pre ? 0 : 1);
             if (!ok && r8_bad++ == 0) r8_first = key;
         }
-        expect(r8_bad == 0, name + " r8: " + std::to_string(r8_bad) +
-                                " rows without one barrier-free dp4a loop and its quantizer loop, first " + r8_first);
+        expect(r8_bad == 0,
+               name + " r8: " + std::to_string(r8_bad) +
+                   " rows without one barrier-free dp4a loop and its quantizer loop, first " +
+                   r8_first);
         expect(kf::r8_facts(arch, {"W4a8Q45K<4>", 4, 1, 1, 0, false}).has_value(),
                name + " r8: no W4a8Q45K<4> 4 1 1 0 0 row");
     }
