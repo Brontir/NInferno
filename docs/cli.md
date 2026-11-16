@@ -505,3 +505,25 @@ take `--key value` pairs and refuse unknown keys. The full rules are in `apps/cl
 
 `spec-reselect` needs `--publish`, `--gpu-class`, `--gpu`, `--applies-to` and `--measured-on`, and
 takes `--engine MODEL_TYPE` and `--out PROFILE`.
+
+## Replaying a start's routes on a CPU (maintainers)
+
+`ninferno-serve replay-routes --board BOARD --log FILE` asks a start's route lines again on a CPU,
+against a board's class built from its row of the facts table (no GPU is read), and prints the lines
+that moved (#612 step 10). `FILE` is a start's request log (`--request-log-jsonl`); its last
+`server_start` record supplies the route lines (`decision.routes`) and the start's canonical text
+(the route policy, the build, the facts and the taint). `BOARD` is a PCI id (`0x2B85`) or a row name
+(`rtx5090`). The binary must be a build of the same set as the start's (every build key but the
+version, the commit and the runtime).
+
+| exit | meaning |
+|---|---|
+| `0` | no route line moved: the registry row gives the start's routes |
+| `1` | some lines moved: each is printed with the start's and the replay's value |
+| `2` | a usage or input error, or a refusal: a start whose selection a maintainer overrode (taint `maintainer`, `user_tune_cache`), a start of another build, a start on another PCI id than `BOARD` |
+
+Other taints (`foreign_route_table`: the nearest board's table where the board has none,
+`borrowed_routes`, `clocks`, `carried_context_cost`, the speculation ones) belong to the release
+selection, which the replay's own lookup repeats: they are printed as notes and the start is
+replayed. The start's `sources.route_table` lines are printed too: a binary with other route tables
+reports their change as moved lines.

@@ -46,10 +46,6 @@ ninferno_add_test(ninferno_device_image_negative_test LABELS gpu STATIC_LINK
   LIBRARIES ninferno_core)
 set_tests_properties(ninferno_device_image_negative_test PROPERTIES SKIP_RETURN_CODE 77)
 
-# The PCI-ID reference table of board facts and machine_facts() (core/machine_facts.h). No GPU.
-ninferno_add_test(ninferno_machine_facts_test LABELS host NEEDS_SOURCE_DIR
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_machine_facts.cpp"
-  LIBRARIES ninferno_core)
 # The ISA facts reader (core/isa_facts.h) against src/core/data/isa_facts.json, field by field
 # (#613). No GPU.
 ninferno_add_test(ninferno_isa_facts_reader_test LABELS host NEEDS_SOURCE_DIR
@@ -60,11 +56,6 @@ ninferno_add_test(ninferno_isa_facts_reader_test LABELS host NEEDS_SOURCE_DIR
 ninferno_add_test(ninferno_sm_rate_facts_reader_test LABELS host NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_sm_rate_facts.cpp"
   LIBRARIES ninferno_core ninferno::json)
-# The constexpr board registry (core/board_registry.h) against the reference table, and the
-# measured boards against the figures they were spelled with before it. No GPU.
-ninferno_add_test(ninferno_board_registry_test LABELS host
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_board_registry.cpp"
-  LIBRARIES ninferno_core)
 # The architecture table (core/arch_registry.h) against the per-architecture limits the build, the
 # MMQ tile widths and the synthetic device class held before it. No GPU.
 ninferno_add_test(ninferno_arch_registry_test LABELS host

@@ -60,6 +60,11 @@ struct I8Tile {
     static constexpr int kStageBytes = kSumOffset + kSumStage;
     static constexpr int kRingBytes  = 2 * kN * 8 * 2; // fp16 weight scales, 2 chunks of 8 groups
     static constexpr int kSmemBytes  = kStages * kStageBytes + kRingBytes;
+    // The family's record (family_facts.h), which the price reads: a stage is one group of
+    // stage_k values.
+    static_assert(kAStage == kT * kI8MmaFacts.stage_k &&
+                  kAStage + kSxStage + kSumStage == kT * kI8MmaFacts.stage_token_bytes &&
+                  kBStage == kN * kI8MmaFacts.stage_row_bytes);
 };
 
 __device__ __forceinline__ unsigned i8_smem(const void* p) {

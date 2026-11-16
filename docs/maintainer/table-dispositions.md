@@ -4,8 +4,9 @@ Two answers of the MoE ops rest on a table of boards where something was measure
 boards by `board_distance`. The rule of this project is that a decision comes from the card's
 published facts and the kernels' counted facts, and a measurement only verifies it. So each table
 gets a disposition: **derived** from facts, or **declared** (a literal with its provenance, labelled
-as such in every answer). This note records the disposition of each and why. No choice changes: a
-derivation that would change one stays a proposal until it is predicted and then verified.
+as such in every answer). This note records the disposition of each and why. Sourcing a missing
+board fact can change its answer under the existing rule; those changes are recorded below.
+A new derivation stays a proposal until it is predicted and then verified.
 
 ## The mechanism (code)
 
@@ -52,13 +53,13 @@ the answer is `Incomplete` or `None`. Only a table with an incomplete row could 
   under test, so that file pins behaviour, it is not an independent expectation).
 
 **What the counts below are over.** They are over the published-facts table: each SKU's board is
-built from its `gpu_facts.json` row (`measured::table_board`), whose L2 is the row's `l2_mib`. Six
-rows of the table (five SKUs) are `Incomplete` in one table or both, because the row has no
-`l2_mib` and a measured row is near: A10G and GeForce RTX 3080 12GB (frontier), L40S and RTX PRO 6000
-Blackwell Server Edition (both tables), and the two RTX 5080 Laptop GPU rows (A8 route). No `l2_mib`
-is invented for them. A device reports its L2 through the driver, so on hardware those SKUs would be
-`Carried` (or `None`) by their real distance, not `Incomplete`. The table is not a statement about
-what a device of that SKU gets.
+built from its `gpu_facts.json` row (`measured::table_board`), whose L2 is the row's `l2_mib`.
+The 2026-11-13 L2 audit completes six formerly incomplete PCI rows (five SKUs): A10G and
+GeForce RTX 3080 12GB (frontier), L40S and RTX PRO 6000 Blackwell Server Edition (both tables),
+and the two RTX 5080 Laptop GPU rows (A8 route). They now answer `Carried` at distances
+0.677 / 0.266 / 0.580 / 0.353 / 0.792 from their respective donors, under the unchanged
+distance rule. This is transfer evidence, not a measurement on those cards. The remaining
+target with unknown L2, GTX 1660 SUPER on TU106, has no donor in either table and answers `None`.
 
 Counts over the 156 target SKUs (measured / carried / incomplete / none):
 A8 route 4 / 15 / 4 / 133; Q4 frontier 4 / 18 / 4 / 130.

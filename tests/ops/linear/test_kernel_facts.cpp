@@ -65,6 +65,15 @@ void snapshots_parse() {
         std::cout << "sm_" << arch << ": " << header->kernels << " kernels, nvcc " << header->nvcc
                   << ", source " << header->source.substr(0, 12) << '\n';
         expect(header->kernels > 0, "sm_" + std::string(arch) + " holds no kernel");
+        // The fingerprint's digest of the snapshot (#612 step 10): 64 hex digits, one per label.
+        const std::string digest = kf::snapshot_sha256(arch);
+        expect(digest.size() == 64 &&
+                   digest.find_first_not_of("0123456789abcdef") == std::string::npos,
+               "sm_" + std::string(arch) + ": the snapshot's sha256");
+        for (const auto other : archs) {
+            expect(other == arch || kf::snapshot_sha256(other) != digest,
+                   "sm_" + std::string(arch) + " and sm_" + std::string(other) + ": one digest");
+        }
         expect(!header->nvcc.empty() && header->nvcc != "unknown",
                "sm_" + std::string(arch) + " records no nvcc");
     }
@@ -359,14 +368,16 @@ void sections_read() {
     // k_iter 32 J (a 128-row x J-column tile over 256 K on 8 warps, per m16n8 tile); the int8 MMA
     // the generation has (Turing's m8n8k16, m16n8k32 from sm_80 on); and the W4A8 32 x 128 tile
     // (Q4_K, Q6_K) with one loop, two barriers per 128-value K tile and k_iter 16 x 32.
-    // sm_70 has none: its snapshot is made with CUDA 12.8 (#762), and Volta takes no MMQ law.
+    // sm_70 has no mmq or w4a8 section: its snapshot is made with CUDA 12.8 (#762), and Volta takes
+    // no MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts.
     constexpr std::string_view kWithoutSections[] = {"70"};
     int with_sections                             = 0;
     for (const auto arch : kf::snapshot_archs()) {
         const std::string name = "sm_" + std::string(arch);
-        const bool waived      = std::find(std::begin(kWithoutSections), std::end(kWithoutSections),
-                                           arch) != std::end(kWithoutSections);
         for (const auto family : kf::kSectionFamilies) {
+            const bool waived = family != "gemma4" &&
+                                std::find(std::begin(kWithoutSections), std::end(kWithoutSections),
+                                          arch) != std::end(kWithoutSections);
             const auto header = kf::section_header(arch, family);
             expect(header.has_value() != waived,
                    name + (waived ? ": has a " : ": no ") + std::string(family) + " section");

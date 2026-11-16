@@ -27,6 +27,11 @@ struct SparseMoeDecodeWorkspace {
     Tensor alpha;
     Tensor shared_scale;
     Tensor scratch;
+    // D1's last-block ticket (#882): the call's own, never a device global another engine's grid
+    // in flight on the GPU counts on too. ticket_zeroed: it lies on the arena's ticket page
+    // (#889), zero since the page was made, and needs no zeroing launch.
+    Tensor ticket;
+    bool ticket_zeroed = false;
 };
 
 template <class Arena>
@@ -38,6 +43,14 @@ SparseMoeDecodeWorkspace allocate_sparse_moe_decode_workspace(Arena& arena) {
     // D1 uses the first 257 values as scores. D3 then reuses the same lifetime for [9,512]
     // natural FP32 SwiGLU results consumed by D4.
     out.scratch = arena.alloc(DType::FP32, {9, 512}, 256);
+    // Last, so the buffers above keep their offsets.
+    out.ticket = arena.alloc(DType::I32, {1}, 16);
+    if constexpr (requires { arena.ticket_page(); }) {
+        if (int* page = arena.ticket_page()) {
+            out.ticket        = Tensor(page + arena_tickets::kSparseD1, DType::I32, {1});
+            out.ticket_zeroed = true;
+        }
+    }
     return out;
 }
 

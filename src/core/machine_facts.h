@@ -16,6 +16,8 @@
 // driver reported none (FactSource::None: no roofline, the cost model stands aside as before).
 // This header and its source need no CUDA.
 
+#include "core/board_facts.h"
+
 #include <cstdint>
 #include <span>
 #include <string>
@@ -122,7 +124,7 @@ struct MachineFacts {
     // DRAM bandwidth in bytes per second: two transfers per memory clock across the bus, times
     // share.
     [[nodiscard]] double dram_bytes_per_s() const noexcept {
-        return 2.0 * memory_clock_khz * 1e3 * memory_bus_bits / 8.0 * share;
+        return board_facts::dram_bytes_per_s(memory_clock_khz, memory_bus_bits, share);
     }
 
     [[nodiscard]] double dram_gbps() const noexcept { return dram_bytes_per_s() / 1e9; }

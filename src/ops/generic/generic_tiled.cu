@@ -47,13 +47,15 @@ void launch_schedule(const GemmArgs& args, cudaStream_t stream) {
 }
 
 // generic_shared_bytes.h's table of this build's tiled layouts (tiled_fits reads it with no CUDA
-// header), held equal to the layouts' own sizes.
+// header), held equal to the layouts' own sizes, and their activation stages to the family's
+// record (tiled_stage_counted).
 template <class C>
 constexpr bool tiled_table_holds(int codec_index) {
     bool holds = true;
 #define NINFERNO_GENERIC_HOLDS(I, BM, BN, WM, WN, ST)                                              \
     holds = holds && tiled_shared_bytes<TiledSchedule<BM, BN, WM, WN, ST>, C>() ==                 \
-                         tiled_shared_table(codec_index, I);
+                         tiled_shared_table(codec_index, I);                                       \
+    holds = holds && tiled_stage_counted<TiledSchedule<BM, BN, WM, WN, ST>, C>();
     NINFERNO_GENERIC_TILED_SCHEDULES(NINFERNO_GENERIC_HOLDS)
 #undef NINFERNO_GENERIC_HOLDS
     return holds;

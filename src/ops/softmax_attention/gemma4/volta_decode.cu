@@ -540,10 +540,57 @@ VoltaDecodeKernel kernel_for(std::int32_t head_dim, std::int32_t rows) {
 
 } // namespace
 
+namespace {
+
+// The instance's MaxRows: kernel_for_rows's choice, step for step (keep the two together; the
+// facts' key and the launched kernel must name the same instance).
+template <int D>
+int max_rows_for(std::int32_t rows) {
+    if (rows <= 4) return 4;
+    if (rows <= 8) return 8;
+    if constexpr (max_rows<D>() >= 16) {
+        if (rows <= 16) return 16;
+    }
+    if constexpr (max_rows<D>() >= 32) {
+        if (rows <= 32) return 32;
+    }
+    return max_rows<D>();
+}
+
+generic::kernel_facts::Gemma4KernelKey volta_key(std::int32_t head_dim, std::int32_t rows) {
+    int max = 0;
+    switch (head_dim) {
+    case 64:
+        max = max_rows_for<64>(rows);
+        break;
+    case 128:
+        max = max_rows_for<128>(rows);
+        break;
+    case 256:
+        max = max_rows_for<256>(rows);
+        break;
+    case 512:
+        max = max_rows_for<512>(rows);
+        break;
+    default:
+        throw std::invalid_argument("gemma4_attention: the Volta decode route takes D = 64..512");
+    }
+    generic::kernel_facts::Gemma4KernelKey key;
+    key.kernel = head_dim <= 128 ? "volta_tiled" : "volta";
+    key.D      = head_dim;
+    key.rows   = max;
+    return key;
+}
+
+} // namespace
+
 int gemma4_volta_decode_resident_ctas(std::int32_t head_dim, std::int32_t rows) {
-    const int per_sm = kernel_resident_ctas_per_sm(
-        reinterpret_cast<const void*>(kernel_for(head_dim, rows)), kVoltaThreads, 0);
-    return std::max(1, per_sm) * device_class().sms;
+    const int per_sm =
+        gemma4_resident_ctas_per_sm(volta_key(head_dim, rows), kVoltaThreads, 0, [&] {
+            return kernel_resident_ctas_per_sm(
+                reinterpret_cast<const void*>(kernel_for(head_dim, rows)), kVoltaThreads, 0);
+        });
+    return per_sm * device_class().sms;
 }
 
 void gemma4_volta_decode_launch(const Gemma4AttentionArgs& args, std::int32_t head_dim,

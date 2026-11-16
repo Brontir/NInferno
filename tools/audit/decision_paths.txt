@@ -48,6 +48,8 @@ src/core/device_class.*
 src/core/device_class_host.*
 src/core/arch_registry.h
 src/core/generation.*
+# the board formulas the price and the int8 pick read: DRAM bytes, tensor rate, waves (#612 step 7)
+src/core/board_facts.h
 # the occupancy rule of the register-MMA variants (generic_rmma_describe.cpp) counts resident CTAs
 src/core/kernel_occupancy.*
 src/ops/generic/data/kernel_facts/**
@@ -62,6 +64,7 @@ src/core/arch_requires.h
 src/core/device_identity.h
 src/core/machine_facts.h
 src/ops/common/arch_limits.h
+src/ops/common/cta_facts.h
 src/ops/common/native_nvfp4.h
 src/ops/common/route_compute.h
 src/ops/common/route_probe.h

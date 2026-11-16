@@ -225,6 +225,7 @@ const std::vector<Spec>& specs() {
              "kTransferGeneration",
              "kMoeChunkTwoCards",
              "kMoeChunkCurveGeneration", // the generation kMoeChunkShare (recorded) was read on
+             "kMoeChunkVerified",        // the generations a sweep verified the carried curve on
              "kDefaultChunk",
              "kMoeChunks",
              // the kernels' own geometry and thresholds, read off their source
@@ -261,6 +262,14 @@ const std::vector<Spec>& specs() {
              "kQuantKldSource",
              "kQuantKldCards",
              "kQuantKld",
+             "kQuantKldDefaultParams",
+             "kQuantKldModels",
+             // the curves' recorded protocol, and the reference check's tolerance: one measured
+             // card-to-card pair, declared before the rows it checks (#915), not fitted
+             "kQuantKldCorpus",
+             "kQuantKldContext",
+             "kQuantKldStride",
+             "kQuantKldReferenceNllTolerance",
              // a measurement of answers against KLD (configuration-choice.md, #618 step 11): data
              // a caller shows, never a decision's, not fitted
              "kAnswerScales",

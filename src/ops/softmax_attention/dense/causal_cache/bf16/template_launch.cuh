@@ -4,6 +4,7 @@
 #include "core/tensor.h"
 #include "core/device.h"
 #include "ops/softmax_attention/dense/causal_cache/bf16/grouped_mma.cuh"
+#include "ops/softmax_attention/dense/causal_cache/bf16/key_major_volta.cuh"
 #include "ops/softmax_attention/dense/causal_cache/bf16/tiled_mma.cuh"
 #include "ops/softmax_attention/dense/causal_cache/bf16/merge.cuh"
 #include "ops/common/arch_limits.h"
@@ -75,6 +76,33 @@ void launch_bf16_kv_grouped_mma(const CausalAttentionOperands& p, Bf16KvCacheVie
         if (partition.aligned) return launch.template operator()<true>();
     }
     launch.template operator()<false>();
+}
+
+// Volta's width-1 decode (key_major_volta.cuh): the GroupedDecode instance's partition and
+// partials, read by the same merge.
+template <class G, bool MultiBatch, bool Masked, bool Writable, class Input>
+void launch_bf16_kv_key_major_volta(const CausalAttentionOperands& p,
+                                    Bf16KvCacheView<Writable> cache, Input input,
+                                    Bf16KvPartition partition, CausalPartialView partials,
+                                    cudaStream_t stream) {
+    static_assert(Writable == Input::writes_cache && kBf16KvVoltaKeyMajor<G>);
+    validate_bf16_kv_operands<G>(p, cache);
+    if (p.width != 1 || partition.aligned || partition.aligned_keys != 0 ||
+        partition.key_rows != kBf16KvVoltaStepKeys || partition.capacity < 1 ||
+        partition.capacity > 256 || partition.normal_target < 1 || partition.long_target < 1 ||
+        partition.live(p.visible_capacity).splits > partition.capacity || !partials.acc ||
+        !partials.maximum || !partials.sum || MultiBatch != (p.batch > 1) ||
+        Masked != (cache.valid_columns != nullptr))
+        throw std::invalid_argument("BF16 Volta decode: invalid partition or metadata");
+    if constexpr (Input::writes_cache) {
+        if (!input.k || !input.v) throw std::invalid_argument("BF16 Volta decode requires K/V");
+    }
+    const dim3 grid(G::KVHeads, partition.capacity, p.batch);
+    bf16_kv_key_major_volta_kernel<G, MultiBatch, Masked, Input>
+        <<<grid, kBf16KvVoltaWarps * 32, 0, stream>>>(
+            p.q, input, p.positions, cache.keys, cache.values, cache.tables, cache.valid_columns,
+            cache.table_rows, cache.table_stride, p.scale, partition, partials);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 template <class G, class S, bool MultiBatch, bool Masked, bool Writable,

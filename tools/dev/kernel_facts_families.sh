@@ -1,6 +1,9 @@
 #!/bin/bash
-# kernel_facts_families.sh REPO [ARCH...] : regenerate the mmq and w4a8 sections of the kernel-facts
-# snapshots (#785) on the release toolchain, on a build machine's CPU, and check them.
+# kernel_facts_families.sh REPO [ARCH...] : regenerate the section families of the kernel-facts
+# snapshots (mmq and w4a8, #785; gemma4, #830) on the release toolchain, on a build machine's CPU,
+# and check them. KFF_FAMILIES picks them (default mmq,w4a8,gemma4): sm_70's snapshot is made with
+# CUDA 12.8 and holds the gemma4 section alone (CUDACXX=/usr/local/cuda-12.8/bin/nvcc
+# KFF_FAMILIES=gemma4 kernel_facts_families.sh REPO 70).
 #
 # The sections were first read from nvcc 13.2.86 builds (their family_nvcc line); a release build
 # compares them in full only under the nvcc they record. This job rewrites them with the
@@ -15,7 +18,7 @@
 #     priority. Not an object-only build: the W4A8 tiles are relocatable device code (ninferno_ops),
 #     whose shared memory and stack the device link decides, so their rows must be read off the
 #     linked binary, and `check` compares the register-MMA rows of the same binary too;
-#   - kernel_facts.py extract --families mmq,w4a8 --update sm_<arch>.txt with this nvcc and its own
+#   - kernel_facts.py extract --families $KFF_FAMILIES --update sm_<arch>.txt with this nvcc and its own
 #     cuobjdump and cu++filt (a few minutes);
 #   - kernel_facts.py check on the updated file: every family compared in full (the SASS pass, about
 #     ten minutes), no GPU;
@@ -28,7 +31,7 @@
 #       1 a check differs, the extract audit failed, or a byte outside the sections moved
 #       2 configure or build failed
 #       3 usage/setup (no snapshot, wrong nvcc, disk, dirty checkout)
-# Env: KFF_ROOT (build dir, default $HOME/kff) CUDACXX (nvcc, default /usr/local/cuda-13.4/bin/nvcc)
+# Env: KFF_TARGET (ninferno_selector_golden_test, or ninferno-serve) KFF_ROOT (build dir, default $HOME/kff) CUDACXX (nvcc, default /usr/local/cuda-13.4/bin/nvcc)
 #      KFF_JOBS (8) KFF_MIN_FREE_GB (10) KFF_CLEAN=1 (remove each build tree after its check)
 set -Eeuo pipefail
 trap 'rc=$?; echo "kernel_facts_families.sh: internal error (exit $rc) at line $LINENO" >&2; exit 3' ERR
@@ -37,6 +40,15 @@ REPO=$(realpath "$1"); shift
 ARCHS=("$@"); [ ${#ARCHS[@]} -gt 0 ] || ARCHS=(75 80 86 89 90 100 120a)
 ROOT=$(realpath -m "${KFF_ROOT:-$HOME/kff}"); mkdir -p "$ROOT"
 JOBS=${KFF_JOBS:-8}; NVCC=${CUDACXX:-/usr/local/cuda-13.4/bin/nvcc}
+FAMS=${KFF_FAMILIES:-mmq,w4a8,gemma4}; IFS=, read -r -a FAM_LIST <<< "$FAMS"
+# The binary read (KFF_TARGET): the selector golden test by default. Its sm_120a link holds no
+# Gemma 4 kernel (libninferno_ops.a does, 232), so that family is read there from ninferno-serve.
+TARGET=${KFF_TARGET:-ninferno_selector_golden_test}
+case "$TARGET" in
+  ninferno-serve) BIN_REL=apps/ninferno-serve ;;
+  ninferno_selector_golden_test) BIN_REL=tests/ninferno_selector_golden_test ;;
+  *) echo "KFF_TARGET must be ninferno_selector_golden_test or ninferno-serve"; exit 3 ;;
+esac
 L=$ROOT/logs; mkdir -p "$L"
 exec 9> "$ROOT/kff.lock"
 flock -n 9 || { echo "kernel_facts_families.sh: another run is active, waiting"; flock 9; }
@@ -52,7 +64,7 @@ FACTS=$REPO/$FACTS_REL
 case "$ROOT/" in "$REPO"/*) echo "KFF_ROOT=$ROOT is inside $REPO; build outside the checkout"; exit 3 ;; esac
 [ -z "$(git -C "$REPO" status --porcelain -- "$FACTS_REL")" ] \
   || { echo "$REPO has uncommitted changes in $FACTS_REL; start from a clean checkout"; exit 3; }
-echo "== mmq and w4a8 sections of ${ARCHS[*]} at $(git -C "$REPO" log --oneline -1 | cut -c1-100)"
+echo "== $FAMS sections of ${ARCHS[*]} at $(git -C "$REPO" log --oneline -1 | cut -c1-100)"
 
 # 2. the toolkit: the nvcc every snapshot records, and its own cuobjdump and cu++filt
 [ -x "$NVCC" ] || { echo "no nvcc at $NVCC (set CUDACXX)"; exit 3; }
@@ -96,17 +108,17 @@ for a in "${ARCHS[@]}"; do
     tail -15 "$L/kff_cmake_$a.log"; RESULT[$a]="configure failed ($L/kff_cmake_$a.log)"; worst 2; continue
   fi
   tick "sm_$a configured"
-  if ! (cd "$B" && $LOW ninja -j"$JOBS" ninferno_selector_golden_test > "$L/kff_ninja_$a.log" 2>&1); then
+  if ! (cd "$B" && $LOW ninja -j"$JOBS" "$TARGET" > "$L/kff_ninja_$a.log" 2>&1); then
     grep -m8 -E "error|FAILED" "$L/kff_ninja_$a.log" || tail -8 "$L/kff_ninja_$a.log"
     RESULT[$a]="build failed ($L/kff_ninja_$a.log)"; worst 2; continue
   fi
-  BIN=$B/tests/ninferno_selector_golden_test
+  BIN=$B/$BIN_REL
   [ -x "$BIN" ] || { RESULT[$a]="no $BIN after the build"; worst 2; continue; }
   tick "sm_$a built ($(du -sh "$B" | cut -f1))"
   # The audit refuses counts it cannot settle (exit 1): nothing is kept then.
   cp "$f" "$L/sm_$a.before.txt"
   if ! CUDA_VISIBLE_DEVICES= $LOW "${KF[@]}" extract --binary "$BIN" --arch "$a" --nvcc "$VERSION" \
-    --cuda-bin "$CUDA_BIN" --families mmq,w4a8 --update "$f" > "$L/kff_extract_$a.log" 2>&1; then
+    --cuda-bin "$CUDA_BIN" --families "$FAMS" --update "$f" > "$L/kff_extract_$a.log" 2>&1; then
     cp "$L/sm_$a.before.txt" "$f"
     tail -8 "$L/kff_extract_$a.log"; RESULT[$a]="extract failed ($L/kff_extract_$a.log)"; worst 1; continue
   fi
@@ -116,18 +128,22 @@ for a in "${ARCHS[@]}"; do
     cp "$L/sm_$a.before.txt" "$f"
     RESULT[$a]="the part before the sections changed: restored, nothing kept"; worst 1; continue
   fi
-  sections=$(grep -c '^family ' "$f" || true)
+  missing=""
+  for fam in "${FAM_LIST[@]}"; do grep -qx "family $fam" "$f" || missing="$missing $fam"; done
   nvccs=$(grep '^family_nvcc ' "$f" | cut -d' ' -f2 | sort -u | tr '\n' ' ')
-  if [ "$sections" != 2 ] || [ "$nvccs" != "$VERSION " ]; then
-    RESULT[$a]="expected 2 sections at nvcc $VERSION, found $sections at ${nvccs:-none}"; worst 1; continue
+  if [ -n "$missing" ] || [ "$nvccs" != "$VERSION " ]; then
+    RESULT[$a]="sections at nvcc $VERSION expected; missing:${missing:- none}, nvccs ${nvccs:-none}"; worst 1; continue
   fi
   (CUDA_VISIBLE_DEVICES= $LOW "${KF[@]}" check --binary "$BIN" --expected "$f" --nvcc "$VERSION" \
     --cuda-bin "$CUDA_BIN" > "$L/kff_check_$a.log" 2>&1) && rc=0 || rc=$?
   rmma=$(grep -m1 -oE "^kernel_facts: [0-9]+ kernels of sm_$a equal" "$L/kff_check_$a.log" | grep -oE "[0-9]+ kernels" || true)
-  mmq=$(grep -m1 -oE "^kernel_facts: [0-9]+ mmq kernels of sm_$a equal" "$L/kff_check_$a.log" | grep -oE "[0-9]+" | head -1 || true)
-  w4a8=$(grep -m1 -oE "^kernel_facts: [0-9]+ w4a8 kernels of sm_$a equal" "$L/kff_check_$a.log" | grep -oE "[0-9]+" | head -1 || true)
-  if [ $rc = 0 ] && [ -n "$rmma" ] && [ -n "$mmq" ] && [ -n "$w4a8" ]; then
-    RESULT[$a]="ok: rmma $rmma, mmq $mmq, w4a8 $w4a8 equal (nvcc $VERSION), header and rmma rows byte-identical"
+  equal=""; unequal=""
+  for fam in "${FAM_LIST[@]}"; do
+    n=$(grep -m1 -oE "^kernel_facts: [0-9]+ $fam kernels of sm_$a equal" "$L/kff_check_$a.log" | grep -oE "[0-9]+" | head -1 || true)
+    if [ -n "$n" ]; then equal="$equal, $fam $n"; else unequal="$unequal $fam"; fi
+  done
+  if [ $rc = 0 ] && [ -n "$rmma" ] && [ -z "$unequal" ]; then
+    RESULT[$a]="ok: rmma $rmma$equal equal (nvcc $VERSION), header and rmma rows byte-identical"
   else
     grep -E "differ from|missing in|not in the snapshot|SKIPPED" "$L/kff_check_$a.log" | head -12 || true
     RESULT[$a]="check failed (rc $rc, $L/kff_check_$a.log)"; worst 1
@@ -136,7 +152,7 @@ for a in "${ARCHS[@]}"; do
   [ "${KFF_CLEAN:-0}" != 1 ] || rm -rf "$B"
 done
 
-echo "== mmq and w4a8 sections, nvcc $VERSION, $(($(date +%s) - T0)) s"
+echo "== $FAMS sections, nvcc $VERSION, $(($(date +%s) - T0)) s"
 for a in "${ARCHS[@]}"; do printf '  sm_%-5s %s\n' "$a" "${RESULT[$a]:-not run}"; done
 # What moved in the checkout: section lines only (each file's part before its first section was
 # compared with HEAD above).

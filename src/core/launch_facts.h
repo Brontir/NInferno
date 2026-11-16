@@ -104,18 +104,19 @@ inline std::optional<double> seconds(const std::optional<double>& ns) {
 }
 
 // The CTA dispatch ramp's measured points (#613 PR-8a): the floors' CTA counts (1, the probe
-// card's SMs, 4 x its SMs, 1024) and their durations in seconds, as the launch entry holds them.
+// card's SMs, 4 x its SMs, 1024, 4096) and their durations in seconds, as the launch entry holds
+// them (a launch_probe 1 row has no 4096 point).
 struct RampPoints {
-    std::array<double, 4> ctas{};
-    std::array<std::optional<double>, 4> seconds{};
+    std::array<double, 5> ctas{};
+    std::array<std::optional<double>, 5> seconds{};
 };
 
 [[nodiscard]] inline RampPoints ramp_points(const IsaLaunch& l) {
     using launch_facts_detail::seconds;
     RampPoints p;
-    p.ctas    = {1.0, static_cast<double>(l.sms), 4.0 * l.sms, 1024.0};
+    p.ctas    = {1.0, static_cast<double>(l.sms), 4.0 * l.sms, 1024.0, 4096.0};
     p.seconds = {seconds(l.floor_ns_1), seconds(l.floor_ns_sms), seconds(l.floor_ns_4sms),
-                 seconds(l.floor_ns_1024)};
+                 seconds(l.floor_ns_1024), seconds(l.floor_ns_4096)};
     return p;
 }
 
@@ -128,16 +129,17 @@ struct Ramp {
 
 // The ramp of a grid of `ctas` CTAs from the measured points: piecewise linear between them (each
 // point reproduced exactly: floor_s[i] - floor_s[0]), 0 at one CTA and below; past the last point
-// (1024 CTAs) the last segment's slope carries on and the answer says it is extrapolated. The
-// slopes are not one figure a generation (#870: the RTX 4090's fall 1.13, 0.81, 0.44 ns a CTA,
-// gb20x's rise 0.23, 0.40, 0.43), so no single rate stands in for the points. A point the entry
-// lacks is left out; nullopt without the one-CTA floor and at least one more point.
+// (4096 CTAs, 1024 on a launch_probe 1 row) the last segment's slope carries on and the answer says
+// it is extrapolated. The slopes are not one figure a generation (#870, #896: the RTX 4090's
+// 1.13, 0.81, 0.44, 0.45 ns a CTA, gb20x's 0.22, 0.40, 0.43, 0.46), so no single rate stands in
+// for the points. A point the entry lacks is left out; nullopt without the one-CTA floor and at
+// least one more point.
 [[nodiscard]] inline std::optional<Ramp> ramp_from(const RampPoints& p, double ctas) {
-    std::array<double, 4> x{}, y{};
+    std::array<double, 5> x{}, y{};
     int m = 0;
-    for (int i = 0; i < 4; ++i) {
-        // The one-CTA floor first; then the points in increasing CTA count (a probe card with 256
-        // SMs or more would put 4 x SMs at or past 1024: such a point is left out).
+    for (int i = 0; i < 5; ++i) {
+        // The one-CTA floor first; then the points in increasing CTA count (on a probe card with
+        // 256 SMs or more 4 x SMs reaches 1024, and the 1024 point, not past it, is left out).
         if (!p.seconds[i] || (m > 0 && !(p.ctas[i] > x[m - 1]))) continue;
         if (m == 0 && i != 0) return std::nullopt;
         x[m] = p.ctas[i];

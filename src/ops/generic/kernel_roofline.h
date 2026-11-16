@@ -76,9 +76,11 @@ struct ChipFacts {
     int major                 = 0; // the architecture: its pipes' ISA facts (rmma_counted_terms.h)
     // The architecture's launch facts (core/launch_facts.h, #613 PR-8b), absent where its ISA row
     // has no launch entry or the entry lacks the fact: the graph node (one launch as a node of a
-    // captured graph) and the CTA dispatch ramp's four measured points (ramp_points; ramp_from
-    // reads them piecewise linear).
+    // captured graph), the same node under programmatic dependent launch (from sm_90 on only, as
+    // launch_seconds(GraphNodePdl) reads it) and the CTA dispatch ramp's measured points
+    // (ramp_points; ramp_from reads them piecewise linear).
     std::optional<double> launch_node_s;
+    std::optional<double> launch_node_pdl_s;
     std::optional<RampPoints> launch_ramp;
     // The architecture's dependent L2 load latency in SM clocks alone and under 2, 4 and 8 chasing
     // warps an SM (core/isa_facts.h l2_latency), absent without an ISA row: what Little's law reads
@@ -148,11 +150,16 @@ struct Call {
 //  - residual: AddResidual reads the old output first, the same bytes again;
 //  - quant: the A8 activation quantizer (a8_candidates: its counted bytes over the bus and its own
 //    launch); 0 for an A16 tile, which reads BF16 as it is;
-//  - launch: the kernel's launch as a graph node plus the dispatch ramp of its grid, read piecewise
-//    linear between the probe's four measured grids (core/launch_facts.h launch_seconds GraphNode
-//    + ramp_seconds; past 1024 CTAs the last segment's slope, `launch_extrapolated`), where the
-//    architecture's launch facts are known; unknown (`launch_known` false), it is 0 and says so: an
-//    unknown fact is not given a number.
+//  - launch: the kernel's launch as a graph node of its kind (launch_term: GraphNodePdl for a
+//    kernel the engine always launches dependent from sm_90 on, GraphNode otherwise; a register
+//    MMA tile launches dependent only when joined to the call before it (join_previous,
+//    pdl_prefetch), which one call's price does not see, so it keeps the plain node, the slower
+//    one, #886) plus the dispatch ramp of its grid, read piecewise linear between the probe's
+//    measured grids (core/launch_facts.h; past the last one the last segment's slope,
+//    `launch_extrapolated`), where the architecture's launch facts are known. Unknown
+//    (`launch_known` false), it is the slowest launch of that grid any measured architecture has
+//    (`launch_bound`): an unknown fact is conservative and labelled (deterministic-decisions
+//    principle 7), one rule for every launch the price counts (#886 item 1).
 // The output and residual are additive, not under the warp fill: the epilogue is the CTA's tail,
 // after its last MMA, and its bytes add to the bus. A term common to every route of a call moves no
 // argmin among them; the quantizer and the second launch separate A8 from A16, and the ramp the
@@ -164,34 +171,78 @@ struct Completeness {
     double quant             = 0;
     double launch            = 0;
     bool launch_known        = false;
-    bool launch_extrapolated = false; // the grid is past the probe's largest (1024 CTAs)
+    bool launch_extrapolated = false; // the grid is past the probe's largest measured one
+    bool launch_bound        = false; // unknown: the slowest measured architecture's launch
 
     [[nodiscard]] double sum() const { return output + residual + quant + launch; }
 };
 
-// One launch of a grid of `ctas` CTAs as a graph node: node + the dispatch ramp of the grid
-// (ramp_from: piecewise linear between the measured points, extrapolated past the last and saying
-// so); nullopt where either fact is unknown.
-[[nodiscard]] inline std::optional<Ramp> launch_seconds_of(const ChipFacts& chip, double ctas) {
+// One launch of a grid of `ctas` CTAs as a graph node of `kind`: the node + the dispatch ramp of
+// the grid (ramp_from: piecewise linear between the measured points, extrapolated past the last and
+// saying so); nullopt where either fact is unknown. GraphNodePdl reads the PDL node where the
+// architecture has one (sm_90 on, and measured); else the plain node, which the probe measures
+// slower (120a: 294 ns against 392) and which the engine launches below sm_90.
+[[nodiscard]] inline std::optional<Ramp>
+launch_seconds_of(const ChipFacts& chip, double ctas, LaunchKind kind = LaunchKind::GraphNode) {
     if (!chip.launch_node_s || !chip.launch_ramp) return std::nullopt;
     const std::optional<Ramp> ramp = ramp_from(*chip.launch_ramp, ctas);
     if (!ramp) return std::nullopt;
-    return Ramp{*chip.launch_node_s + ramp->seconds, ramp->extrapolated};
+    const double node = kind == LaunchKind::GraphNodePdl && chip.launch_node_pdl_s
+                            ? *chip.launch_node_pdl_s
+                            : *chip.launch_node_s;
+    return Ramp{node + ramp->seconds, ramp->extrapolated};
 }
 
-// The completeness terms of a call whose kernel launches `ctas` CTAs, with `quant` the quantizer's
-// seconds (0 for an A16 tile).
+// The slowest launch of a grid of `ctas` CTAs as a plain graph node on any architecture with launch
+// facts (each row's node + its own ramp of that grid): what an architecture without them is priced
+// at. nullopt only if no row has launch facts.
+[[nodiscard]] inline std::optional<Ramp> slowest_launch_seconds(double ctas) {
+    std::optional<Ramp> slowest;
+    for (const IsaRow& row : isa_facts_table()) {
+        if (!row.launch || !row.launch->node_ns) continue;
+        const std::optional<Ramp> ramp = ramp_from(ramp_points(*row.launch), ctas);
+        if (!ramp) continue;
+        const Ramp r{*row.launch->node_ns * 1e-9 + ramp->seconds, ramp->extrapolated};
+        if (!slowest || r.seconds > slowest->seconds) slowest = r;
+    }
+    return slowest;
+}
+
+// The launch term of a kernel of `ctas` CTAs and `kind` on the chip: its own facts where known,
+// else the slowest measured architecture's (`bound`). One rule for the route's kernel and the A8
+// quantizer alike (#886).
+struct LaunchTerm {
+    double seconds    = 0;
+    bool known        = false;
+    bool extrapolated = false;
+    bool bound        = false;
+};
+
+[[nodiscard]] inline LaunchTerm launch_term(const ChipFacts& chip, double ctas,
+                                            LaunchKind kind = LaunchKind::GraphNode) {
+    if (const std::optional<Ramp> own = launch_seconds_of(chip, ctas, kind)) {
+        return {own->seconds, true, own->extrapolated, false};
+    }
+    const std::optional<Ramp> slowest = slowest_launch_seconds(ctas);
+    return slowest ? LaunchTerm{slowest->seconds, false, slowest->extrapolated, true}
+                   : LaunchTerm{};
+}
+
+// The completeness terms of a call whose kernel launches `ctas` CTAs as `kind`, with `quant` the
+// quantizer's seconds (0 for an A16 tile).
 [[nodiscard]] inline Completeness completeness(const ChipFacts& chip, const Call& call, double ctas,
-                                               double quant = 0) {
+                                               double quant    = 0,
+                                               LaunchKind kind = LaunchKind::GraphNode) {
     Completeness c;
-    c.output_bytes                   = call.n * call.tokens * 2.0;
-    c.output                         = c.output_bytes / chip.dram_bytes_per_s;
-    c.residual                       = call.residual ? c.output : 0.0;
-    c.quant                          = quant;
-    const std::optional<Ramp> launch = launch_seconds_of(chip, ctas);
-    c.launch_known                   = launch.has_value();
-    c.launch                         = launch ? launch->seconds : 0.0;
-    c.launch_extrapolated            = launch && launch->extrapolated;
+    c.output_bytes          = call.n * call.tokens * 2.0;
+    c.output                = c.output_bytes / chip.dram_bytes_per_s;
+    c.residual              = call.residual ? c.output : 0.0;
+    c.quant                 = quant;
+    const LaunchTerm launch = launch_term(chip, ctas, kind);
+    c.launch_known          = launch.known;
+    c.launch                = launch.seconds;
+    c.launch_extrapolated   = launch.extrapolated;
+    c.launch_bound          = launch.bound;
     return c;
 }
 
@@ -381,11 +432,13 @@ struct RegisterMmaTerms {
     // (dram_time). Legacy: (bytes + mma + reduce) / fill + chain.
     double total = 0;
     // The completeness terms of the tile's grid (Completeness; quant 0: an A16 tile), the launch
-    // unknown and 0 where the architecture has no launch facts, and `complete` = total + output +
-    // residual + quant + launch. Computed whatever Calibration::completeness_terms says.
+    // the slowest measured architecture's where this one has no launch facts (launch_bound), and
+    // `complete` = total + output + residual + quant + launch. Computed whatever
+    // Calibration::completeness_terms says.
     double output = 0, residual = 0, quant = 0, launch = 0;
     bool launch_known        = false;
-    bool launch_extrapolated = false; // the grid's ramp past the probe's 1024 CTAs
+    bool launch_extrapolated = false; // the grid's ramp past the probe's largest measured grid
+    bool launch_bound        = false;
     double complete          = 0;
     // Little's-law L2 rate of the busiest SM's resident warps (l2_little_bytes_per_clock) at the
     // counted bytes a warp keeps in flight, beside cal.l2_bytes_per_sm_clock: printed, not priced.
@@ -401,6 +454,7 @@ void set_completeness(Terms& t, const Completeness& c) {
     t.launch              = c.launch;
     t.launch_extrapolated = c.launch_extrapolated;
     t.launch_known        = c.launch_known;
+    t.launch_bound        = c.launch_bound;
     t.complete            = t.total + c.sum();
 }
 
@@ -550,6 +604,7 @@ struct PipelinedTerms {
     double output = 0, residual = 0, quant = 0, launch = 0;
     bool launch_known        = false;
     bool launch_extrapolated = false;
+    bool launch_bound        = false;
     double complete          = 0;
 };
 
@@ -635,6 +690,9 @@ inline void fill_isa_facts(ChipFacts& c, int major, int minor) {
         c.l2_latency_clk = row.l2_latency;
         if (row.launch) {
             if (row.launch->node_ns) c.launch_node_s = *row.launch->node_ns * 1e-9;
+            if (row.launch->node_pdl_ns && major >= 9) {
+                c.launch_node_pdl_s = *row.launch->node_pdl_ns * 1e-9;
+            }
             c.launch_ramp = ramp_points(*row.launch);
         }
         return;

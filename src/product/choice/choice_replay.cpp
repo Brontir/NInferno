@@ -3,6 +3,7 @@
 #include <array>
 #include <algorithm>
 #include <cstdint>
+#include <cmath>
 #include <limits>
 #include <type_traits>
 #include <map>
@@ -152,12 +153,126 @@ std::function<std::uint64_t(E)> table_fn(const json& table, const char* what,
     };
 }
 
+json linear_json(const LinearShape& l) {
+    return {{"n", l.n},           {"k", l.k},         {"per_token", l.per_token},
+            {"expert", l.expert}, {"gated", l.gated}, {"format", l.format}};
+}
+
+LinearShape linear_of(const json& j) {
+    LinearShape l;
+    read(l.n, j.at("n"));
+    read(l.k, j.at("k"));
+    read(l.per_token, j.at("per_token"));
+    read(l.expert, j.at("expert"));
+    read(l.gated, j.at("gated"));
+    read(l.format, j.at("format"));
+    return l;
+}
+
+// The full arguments, not a linear's index: selected_kernel can fill in a missing format from
+// the quantization, and the callback's contract includes every LinearShape field (#931).
+std::string prefill_key(const LinearShape& l, std::uint32_t tokens, ActivationMode activations) {
+    if (!std::isfinite(l.n) || !std::isfinite(l.k) || !std::isfinite(l.per_token)) {
+        throw std::invalid_argument(
+            "a prefill route query must have finite dimensions and frequency");
+    }
+    return json{{"linear", linear_json(l)}, {"tokens", tokens}, {"activations", code(activations)}}
+        .dump();
+}
+
+std::string moe_key(std::uint32_t rows, ActivationMode activations) {
+    return json{{"rows", rows}, {"activations", code(activations)}}.dump();
+}
+
+json moe_answer(const std::vector<MoeStepRoute>& routes) {
+    json out = json::array();
+    for (const auto& r : routes) {
+        if (!std::isfinite(r.share)) {
+            throw std::invalid_argument("a MoE route share must be finite");
+        }
+        out.push_back({{"gate_up", code(r.gate_up)}, {"down", code(r.down)}, {"share", r.share}});
+    }
+    return out;
+}
+
+using RouteAnswers = std::map<std::string, json>;
+
+void record_answer(RouteAnswers& answers, const std::string& key, const json& answer) {
+    const auto [it, inserted] = answers.emplace(key, answer);
+    if (!inserted && it->second != answer) {
+        throw std::invalid_argument("a route query changed its answer while recording: " + key);
+    }
+}
+
+json routes_json(bool present, const RouteAnswers& answers) {
+    if (!present) { return nullptr; }
+    json out = json::array();
+    for (const auto& [key, answer] : answers) {
+        out.push_back({{"query", json::parse(key)}, {"answer", answer}});
+    }
+    return out;
+}
+
+// null: no callback. []: a callback which was never asked. Unknown/empty answers are entries,
+// not absent callbacks. No lookup may silently fall back to today's selector or assumed route.
+decltype(ModelFacts::prefill_routes) prefill_fn(const json& table) {
+    if (table.is_null()) { return {}; }
+    if (!table.is_array()) { throw std::invalid_argument("prefill_routes must be a list or null"); }
+    auto answers = std::make_shared<std::map<std::string, PrefillKernel>>();
+    for (const auto& entry : table) {
+        const auto& q     = object_at(entry, "query");
+        const auto key    = prefill_key(linear_of(object_at(q, "linear")),
+                                        unsigned_of<std::uint32_t>(q.at("tokens")),
+                                        enum_of<ActivationMode>(q.at("activations"), 3));
+        const auto answer = enum_of<PrefillKernel>(entry.at("answer"), 5);
+        if (!answers->emplace(key, answer).second) {
+            throw std::invalid_argument("duplicate prefill route query: " + key);
+        }
+    }
+    return [answers](const LinearShape& l, std::uint32_t tokens, ActivationMode activations) {
+        const auto key = prefill_key(l, tokens, activations);
+        const auto it  = answers->find(key);
+        if (it == answers->end()) {
+            throw ReplayIncomplete("the record lacks the prefill route: " + key);
+        }
+        return it->second;
+    };
+}
+
+decltype(ModelFacts::moe_routes) moe_fn(const json& table) {
+    if (table.is_null()) { return {}; }
+    if (!table.is_array()) { throw std::invalid_argument("moe_routes must be a list or null"); }
+    auto answers = std::make_shared<std::map<std::string, std::vector<MoeStepRoute>>>();
+    for (const auto& entry : table) {
+        const auto& q  = object_at(entry, "query");
+        const auto key = moe_key(unsigned_of<std::uint32_t>(q.at("rows")),
+                                 enum_of<ActivationMode>(q.at("activations"), 3));
+        std::vector<MoeStepRoute> answer;
+        for (const auto& r : array_at(entry, "answer")) {
+            const auto share = value_of<double>(r.at("share"));
+            if (!std::isfinite(share)) {
+                throw std::invalid_argument("a MoE route share must be finite");
+            }
+            answer.push_back({enum_of<ExpertKernel>(r.at("gate_up"), 5),
+                              enum_of<ExpertKernel>(r.at("down"), 5), share});
+        }
+        if (!answers->emplace(key, std::move(answer)).second) {
+            throw std::invalid_argument("duplicate MoE route query: " + key);
+        }
+    }
+    return [answers](std::uint32_t rows, ActivationMode activations) {
+        const auto key = moe_key(rows, activations);
+        const auto it  = answers->find(key);
+        if (it == answers->end()) {
+            throw ReplayIncomplete("the record lacks the MoE route: " + key);
+        }
+        return it->second;
+    };
+}
+
 json model_json(const ModelFacts& m) {
     json linears = json::array();
-    for (const LinearShape& l : m.linears) {
-        linears.push_back({{"n", l.n}, {"k", l.k}, {"per_token", l.per_token}, {"expert", l.expert},
-                           {"gated", l.gated}, {"format", l.format}});
-    }
+    for (const LinearShape& l : m.linears) { linears.push_back(linear_json(l)); }
     json drafters = json::array();
     for (const DrafterOption& d : m.drafters) {
         json load = json::array();
@@ -211,6 +326,7 @@ json model_json(const ModelFacts& m) {
         {"recurrent_state_elements", m.recurrent_state_elements},
         {"drafters", std::move(drafters)},
         {"default_drafter", m.default_drafter},
+        {"moe_route_unqueried", m.moe_route_unqueried},
     };
 }
 
@@ -243,16 +359,7 @@ ModelFacts model_of(const json& j) {
     read(m.sliding_attending_layers, j.at("sliding_attending_layers"));
     read(m.recurrent, j.at("recurrent"));
     read(m.fp8_ring, j.at("fp8_ring"));
-    for (const auto& l : array_at(j, "linears")) {
-        LinearShape shape;
-        read(shape.n, l.at("n"));
-        read(shape.k, l.at("k"));
-        read(shape.per_token, l.at("per_token"));
-        read(shape.expert, l.at("expert"));
-        read(shape.gated, l.at("gated"));
-        read(shape.format, l.at("format"));
-        m.linears.push_back(std::move(shape));
-    }
+    for (const auto& l : array_at(j, "linears")) { m.linears.push_back(linear_of(l)); }
     read(m.recurrent_state_elements, j.at("recurrent_state_elements"));
     for (const auto& d : array_at(j, "drafters")) {
         DrafterOption o;
@@ -293,6 +400,9 @@ ModelFacts model_of(const json& j) {
         m.drafters.push_back(std::move(o));
     }
     read(m.default_drafter, j.at("default_drafter"));
+    read(m.moe_route_unqueried, j.at("moe_route_unqueried"));
+    m.prefill_routes = prefill_fn(j.at("prefill_routes"));
+    m.moe_routes     = moe_fn(j.at("moe_routes"));
     return m;
 }
 
@@ -460,15 +570,31 @@ ChoiceRecord record_choice(const ModelFacts& model, const CardFacts& card, const
         return tokens;
     };
     ChoiceRecord out;
-    out.choice = choose(model, card, quant, allowed, pins, task, recording, gates);
-    out.inputs = json{{"schema", kChoiceReplaySchema},
-                      {"model", model_json(model)},
-                      {"card", card_json(card)},
-                      {"quant", quant_json(quant)},
-                      {"allowed", allowed_json(allowed)},
-                      {"pins", pins_json(pins)},
-                      {"task", task_json(task)},
-                      {"gates", gates_json(gates)},
+    ModelFacts recorded = model;
+    RouteAnswers prefill, moe;
+    if (model.prefill_routes) {
+        recorded.prefill_routes = [&](const LinearShape& l, std::uint32_t tokens,
+                                      ActivationMode activations) {
+            const auto answer = model.prefill_routes(l, tokens, activations);
+            record_answer(prefill, prefill_key(l, tokens, activations), code(answer));
+            return answer;
+        };
+    }
+    if (model.moe_routes) {
+        recorded.moe_routes = [&](std::uint32_t rows, ActivationMode activations) {
+            const auto answer = model.moe_routes(rows, activations);
+            record_answer(moe, moe_key(rows, activations), moe_answer(answer));
+            return answer;
+        };
+    }
+    out.choice       = choose(recorded, card, quant, allowed, pins, task, recording, gates);
+    json model_input = model_json(model);
+    model_input["prefill_routes"] = routes_json(bool(model.prefill_routes), prefill);
+    model_input["moe_routes"]     = routes_json(bool(model.moe_routes), moe);
+    out.inputs = json{{"schema", kChoiceReplaySchema},    {"model", std::move(model_input)},
+                      {"card", card_json(card)},          {"quant", quant_json(quant)},
+                      {"allowed", allowed_json(allowed)}, {"pins", pins_json(pins)},
+                      {"task", task_json(task)},          {"gates", gates_json(gates)},
                       {"own_context", std::move(own)}};
     return out;
 }

@@ -283,6 +283,8 @@ __device__ __forceinline__ void plan_body(const PlanArgs& a, int* plan_smem) {
     const int lo     = min(A, warp * chunk);
     const int hi     = min(A, lo + chunk);
 
+    // The call's fused-combine tickets start at zero (PlanArgs::zero_tickets).
+    for (int i = tid; i < a.zero_count; i += blockDim.x) a.zero_tickets[i] = 0;
     for (int i = tid; i < Warps * E; i += blockDim.x) base[i] = 0;
     __syncthreads();
     for (int x = lo + lane; x < hi; x += 32) atomicAdd(&base[warp * E + a.ids[x]], 1);
@@ -371,6 +373,8 @@ __device__ __forceinline__ void plan_body(const PlanArgs& a, int* plan_smem) {
 // many TUs include).
 __device__ __forceinline__ void plan_warp(const PlanArgs& a, int lane, const int* ids,
                                           int* jobs_at) {
+    // The call's fused-combine tickets start at zero (PlanArgs::zero_tickets).
+    for (int i = lane; i < a.zero_count; i += 32) a.zero_tickets[i] = 0;
     const int A          = a.assignments;
     const bool valid     = lane < A;
     const int e          = valid ? ids[lane] : 0;

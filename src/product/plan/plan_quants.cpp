@@ -754,6 +754,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         const PlanSourceFacts facts = row_facts(shape, row);
         choice::ModelFacts model     = choice_model_of(facts);
         with_moe_routes(model, facts, inputs.device);
+        with_prefill_routes(model, inputs.device);
         const choice::CardFacts card = choice_card_of(inputs.gpu);
         // The quantization as the choice prices it (product::quant_option_of: one rule for a
         // hub row, the CLI's plan and a start's artifact).
@@ -890,17 +891,20 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
     const bool bits_known = std::all_of(out.rows.begin(), out.rows.end(), [](const QuantRow& row) {
         return !row.candidate.supported || row.candidate.bits_per_weight > 0; // what the choice reads
     });
-    // Only a measurement of a row's own files decides on its accuracy (#368,
-    // choice::quant_authority): the trade weighs the rows that have one, against the rule's pick
-    // only where it has one too; an estimate is shown, never decisive.
+    // Only a measurement of a row's own files, or a transfer of the family curve, decides on its
+    // accuracy (#368, choice::quant_authority): the trade weighs the rows that have one, against
+    // the rule's pick only where it has one too; an estimate is shown, never decisive.
     // Each row's authority is kept for the plan JSON (`quality_authority`, #618 step 11).
     const choice::ModelFacts quality_model = choice_model_of(shape);
     for (QuantRow& row : out.rows) {
         row.quality_authority = choice::quant_authority(
             quality_model, quant_option_of(row_facts(shape, row), row.listing.quant));
     }
+    // A transfer (#618 step 9: the family curve within the answer noise of every measured size)
+    // decides as a measurement does.
     const auto authorized = [](const QuantRow& row) {
-        return row.quality_authority == choice::QualityAuthority::Direct;
+        return row.quality_authority == choice::QualityAuthority::Direct ||
+               row.quality_authority == choice::QualityAuthority::Transfer;
     };
     const bool weighs = out.pick && bits_known &&
                         choice::weighs_quantizations(quality_model, choice_card_of(inputs.gpu)) &&
@@ -1238,6 +1242,14 @@ Json plan_json(const runtime::DryRunPlan& plan, bool ladder) {
         out["reserve"]          = reserve_name(plan.reserve);
         out["reserve_kept"]     = plan.reserve == runtime::PlanReserve::Kept;
         out["chosen"]           = rung_json(*chosen);
+        // The chosen rung's prefill arena region by region (#615 W5), where the planner records
+        // them: the op that takes each region, its offset and bytes.
+        Json regions = Json::array();
+        for (const WorkspaceRegion& r : chosen->bytes.workspace_regions) {
+            regions.push_back(
+                {{"op", r.op}, {"offset", r.offset}, {"bytes", r.bytes}, {"scratch", r.scratch}});
+        }
+        out["workspace_regions"] = std::move(regions);
         out["context"]          = chosen->rung.max_context;
         out["pool_contexts"]    = round_to(plan.pool_contexts(), 0.1);
         out["private_contexts"] = plan.private_contexts();
@@ -1247,6 +1259,7 @@ Json plan_json(const runtime::DryRunPlan& plan, bool ladder) {
         out["reserve"]          = "";
         out["reserve_kept"]     = false;
         out["chosen"]           = nullptr;
+        out["workspace_regions"] = Json::array();
         out["context"]          = 0;
         out["pool_contexts"]    = 0;
         out["private_contexts"] = false;

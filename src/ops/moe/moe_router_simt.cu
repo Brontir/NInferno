@@ -29,13 +29,14 @@ namespace {
 // up to 3072 values.
 constexpr int kSimtSteps = 12;
 
-// The route ticket: zero at load, the last CTA sets it back (one router at a time on a device: a
-// MoE layer's calls are in stream order).
-__device__ int g_route_ticket;
-
+// The route ticket (`ticket`, Route only) is one int of the arena's ticket page (zero since the
+// page was made, #889) or of the call's workspace (zeroed by the call in stream order), zero when
+// the grid starts; the last CTA sets it back. Not a device global (#882): two engines' routers in
+// flight on one GPU each count on their own.
 template <int T, bool Route, bool Staged>
 __global__ __launch_bounds__(kRouterSimtWarps *
-                             32) void router_simt_kernel(GemmArgs a, SelectArgs s, PlanArgs p) {
+                             32) void router_simt_kernel(GemmArgs a, SelectArgs s, PlanArgs p,
+                                                         int* ticket) {
     extern __shared__ __align__(16) unsigned char router_smem[];
     const int lane           = static_cast<int>(threadIdx.x) & 31;
     const int warp           = static_cast<int>(threadIdx.x) >> 5;
@@ -135,8 +136,8 @@ __global__ __launch_bounds__(kRouterSimtWarps *
         __syncthreads();
         bool last = false;
         if (threadIdx.x == 0) {
-            last = atomicAdd(&g_route_ticket, 1) == static_cast<int>(gridDim.x) - 1;
-            if (last) g_route_ticket = 0;
+            last = atomicAdd(ticket, 1) == static_cast<int>(gridDim.x) - 1;
+            if (last) *ticket = 0;
         }
         if (!__syncthreads_or(last)) return;
         __threadfence();
@@ -149,7 +150,7 @@ __global__ __launch_bounds__(kRouterSimtWarps *
 }
 
 template <int T, bool Route, bool Staged>
-void launch_route(const GemmArgs& args, const SelectArgs& select, const PlanArgs& plan,
+void launch_route(const GemmArgs& args, const SelectArgs& select, const PlanArgs& plan, int* ticket,
                   cudaStream_t stream) {
     const dim3 grid(static_cast<unsigned>((args.rows + kRouterSimtWarps - 1) / kRouterSimtWarps));
     // The route's ids and job offsets reuse x's staging: 64 ints.
@@ -159,58 +160,61 @@ void launch_route(const GemmArgs& args, const SelectArgs& select, const PlanArgs
     // Urgent: a decode layer's shared expert runs beside it on the branch stream (moe.cpp
     // shared_branch), and its pending CTAs otherwise go first.
     CUDA_CHECK(pdl::launch({grid, dim3(kRouterSimtWarps * 32), smem, stream}, args.pdl != 0, true,
-                           kernel, args, select, plan));
+                           kernel, args, select, plan, ticket));
 }
 
 template <int T>
-void launch_t(const GemmArgs& args, const SelectArgs* select, const PlanArgs* plan,
+void launch_t(const GemmArgs& args, const SelectArgs* select, const PlanArgs* plan, int* ticket,
               cudaStream_t stream) {
     const bool staged = router_simt_smem_bytes(T, args.w.k) <= kStaticSharedBytesPerBlock;
     if (select != nullptr) {
         if (staged) {
-            launch_route<T, true, true>(args, *select, *plan, stream);
+            launch_route<T, true, true>(args, *select, *plan, ticket, stream);
         } else {
-            launch_route<T, true, false>(args, *select, *plan, stream);
+            launch_route<T, true, false>(args, *select, *plan, ticket, stream);
         }
     } else if (staged) {
-        launch_route<T, false, true>(args, SelectArgs{}, PlanArgs{}, stream);
+        launch_route<T, false, true>(args, SelectArgs{}, PlanArgs{}, nullptr, stream);
     } else {
-        launch_route<T, false, false>(args, SelectArgs{}, PlanArgs{}, stream);
+        launch_route<T, false, false>(args, SelectArgs{}, PlanArgs{}, nullptr, stream);
     }
 }
 
 } // namespace
 
 void launch_router_simt(const GemmArgs& args, cudaStream_t stream, const SelectArgs* select,
-                        const PlanArgs* plan) {
+                        const PlanArgs* plan, int* route_ticket) {
     if (select != nullptr &&
         (plan == nullptr || plan->assignments > 32 || select->tokens > kRouterSimtWarps)) {
         throw std::invalid_argument("moe: the router routes at most 32 assignments");
     }
+    if (select != nullptr && route_ticket == nullptr) {
+        throw std::invalid_argument("moe: a routing router counts on the call's route ticket");
+    }
     switch (args.tokens) {
     case 1:
-        launch_t<1>(args, select, plan, stream);
+        launch_t<1>(args, select, plan, route_ticket, stream);
         return;
     case 2:
-        launch_t<2>(args, select, plan, stream);
+        launch_t<2>(args, select, plan, route_ticket, stream);
         return;
     case 3:
-        launch_t<3>(args, select, plan, stream);
+        launch_t<3>(args, select, plan, route_ticket, stream);
         return;
     case 4:
-        launch_t<4>(args, select, plan, stream);
+        launch_t<4>(args, select, plan, route_ticket, stream);
         return;
     case 5:
-        launch_t<5>(args, select, plan, stream);
+        launch_t<5>(args, select, plan, route_ticket, stream);
         return;
     case 6:
-        launch_t<6>(args, select, plan, stream);
+        launch_t<6>(args, select, plan, route_ticket, stream);
         return;
     case 7:
-        launch_t<7>(args, select, plan, stream);
+        launch_t<7>(args, select, plan, route_ticket, stream);
         return;
     case 8:
-        launch_t<8>(args, select, plan, stream);
+        launch_t<8>(args, select, plan, route_ticket, stream);
         return;
     default:
         throw std::invalid_argument("moe: the SIMT router takes 1..8 tokens");

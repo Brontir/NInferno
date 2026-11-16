@@ -233,5 +233,38 @@ int main() {
         failures += expect_size(ninferno::pinned_host_bytes(), base, "dropping a set unpins it");
     }
 
+    // The ticket page (#889): an owning arena has one, zeroed, outside its capacity; a view carved
+    // from it shares it; a view of a foreign region has none; a move carries it.
+    {
+        ninferno::DeviceArena owner(4096);
+        int* page = owner.ticket_page();
+        if (page == nullptr) {
+            ++failures;
+            std::cerr << "an owning arena has no ticket page\n";
+        } else {
+            std::array<int, ninferno::kArenaTicketInts> host{};
+            host.fill(-1);
+            CUDA_CHECK(cudaMemcpy(host.data(), page, sizeof(host), cudaMemcpyDeviceToHost));
+            for (int v : host) {
+                if (v != 0) {
+                    ++failures;
+                    std::cerr << "the ticket page is not zero at construction\n";
+                    break;
+                }
+            }
+            failures += expect_size(owner.capacity(), 4096, "the page is outside the capacity");
+            const ninferno::DeviceSpan carved = owner.alloc_bytes(1024);
+            ninferno::DeviceArena view(carved);
+            failures += expect_ptr(view.ticket_page(), page, "a carved view shares the page");
+            ninferno::DeviceArena nested(view.alloc_bytes(256));
+            failures += expect_ptr(nested.ticket_page(), page, "a view of a view shares it");
+            ninferno::DeviceArena foreign(ninferno::DeviceSpan{owner.base(), 512});
+            failures += expect_ptr(foreign.ticket_page(), nullptr, "a foreign region has none");
+            ninferno::DeviceArena moved(std::move(owner));
+            failures += expect_ptr(moved.ticket_page(), page, "a move carries the page");
+            failures += expect_ptr(owner.ticket_page(), nullptr, "the moved-from arena has none");
+        }
+    }
+
     return failures == 0 ? 0 : fail("arena test failed");
 }

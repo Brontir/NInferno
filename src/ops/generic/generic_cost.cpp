@@ -95,16 +95,19 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     };
     // The completeness terms (#613 PR-8a). The quantizer by its kernel's counts
     // (route_cost_constants.h kQuant*BytesPerValue): its bytes over the bus, and its grid's launch
-    // as a graph node plus the dispatch ramp (kernel_roofline.h launch_seconds_of); where the
-    // architecture has no launch facts, the fitted launch kQuantLaunchSeconds stands in for that
-    // one part. W4A8: T rows of w4a8_ld(K) values, the padding past K written as zeros; I8: K over
-    // the tokens padded to 256, the padding tokens written as zeros; MMQ: a slice's columns over K.
-    // Then every route's output write, residual read and its own kernel's launch (`beyond`).
+    // by the one launch rule (kernel_roofline.h launch_term: its node and dispatch ramp, the
+    // slowest measured architecture's where this one has no launch facts, #886) as the kind the
+    // engine launches it: the W4A8 and I8 quantizers as plain nodes (<<<>>>), MMQ's dependent
+    // (pdl::launch_dependent, a PDL node from sm_90 on). W4A8: T rows of w4a8_ld(K) values, the
+    // padding past K written as zeros; I8: K over the tokens padded to 256, the padding tokens
+    // written as zeros; MMQ: a slice's columns over K. Then every route's output write, residual
+    // read and its own kernel's launch (`beyond`), a plain node: the W4A8 and I8 tiles launch with
+    // <<<>>>.
     const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
     const kr::Call call{n, k, t, sets, bpw, problem.epilogue == Epilogue::AddResidual};
-    const auto quant_counted = [&](double bytes, double ctas) {
-        const std::optional<Ramp> launch = kr::launch_seconds_of(chip, ctas);
-        return (launch ? launch->seconds : route_cost::kQuantLaunchSeconds.value()) + bytes / bw;
+    const auto quant_counted = [&](double bytes, double ctas,
+                                   LaunchKind kind = LaunchKind::GraphNode) {
+        return kr::launch_term(chip, ctas, kind).seconds + bytes / bw;
     };
     const auto beyond = [&](double ctas) {
         const kr::Completeness c = kr::completeness(chip, call, ctas);
@@ -130,8 +133,9 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double rows_o  = tile.out_rows;
             const double threads =
                 s.producers > 0 ? 384.0 : rows_w == 64.0 && cols == 64.0 ? 128.0 : 256.0;
-            // Two stages, three with producer warps (generic_w4a8.cuh kStages).
-            const double stages = s.producers > 0 ? 3.0 : 2.0;
+            // Two stages, three with producer warps (family_facts.h, generic_w4a8.cuh).
+            const double stages =
+                s.producers > 0 ? kW4a8MmaFacts.producer_stages : kW4a8MmaFacts.stages;
             const double smem =
                 stages * (rows_w + cols) * route_cost::kW4a8StageBytesPerRow.value();
             const double occ     = std::max(
@@ -240,7 +244,7 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         // 64 KiB: Q2_K's 128-column tile does not fit, the kernel runs 64).
         // A generation whose widths a launch law prices (Turing, DECISIONS 78) takes the width
         // that law picks for the product's grid on this card (the facts below).
-        const bool format   = mmq_columns::work_tiles_format(problem.qtype);
+        const bool format   = mmq_columns::work_tiles_format(problem.qtype, d.major, d.minor);
         const int widest    = mmq_columns::widest_tile(problem.qtype, d.major, d.minor);
         const mmq_columns::LaunchFacts facts{static_cast<int>(n), static_cast<int>(k), d.sms, clk,
                                              bw};
@@ -264,7 +268,8 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         // gives the last slice the remaining tokens, so 513 tokens quantize 512 and then 1.
         const auto quant_mmq_counted = [&](double width) {
             return quant_counted(width * k * route_cost::kQuantMmqBytesPerValue.value(),
-                                 width * cdiv(k, route_cost::kQuantMmqValuesPerCta.value()));
+                                 width * cdiv(k, route_cost::kQuantMmqValuesPerCta.value()),
+                                 LaunchKind::GraphNodePdl);
         };
         const double slice_body =
             std::max(mem, mma / (route_cost::kMmqEfficiency.value() * scale)) + chain;

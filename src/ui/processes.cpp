@@ -504,6 +504,20 @@ void ProcessPool::forget_ended(std::chrono::seconds age) {
     }
 }
 
+void ProcessPool::forget(std::uint64_t id) {
+    std::unique_ptr<Child> dropped;
+    {
+        std::lock_guard lock(mutex_);
+        const auto it = children_.find(id);
+        if (it == children_.end()) { return; }
+        const auto& info = it->second->info;
+        if (info.state != "exited" && info.state != "failed") { return; }
+        dropped = std::move(it->second);
+        children_.erase(it);
+    }
+    if (dropped->reader.joinable()) { dropped->reader.join(); }
+}
+
 int ProcessPool::free_port(int first) const {
     std::set<int> taken;
     {

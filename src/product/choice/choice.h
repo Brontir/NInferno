@@ -203,6 +203,13 @@ struct LinearShape {
     std::string format;
 };
 
+// The kernel a trunk linear's prefill call runs on, as the generic selector answers it (#613 PR-9,
+// ModelFacts::prefill_routes): ggml's matrix kernel; the W4A8 tiles, classic or producer-warp (a
+// Q8_0 linear's int8 tile among them); another kernel of 8- or 4-bit activations (I8, R8, the
+// vector kernel, W4A4); one of 16-bit activations (the register, tiled and staged MMA, the scalar
+// route; Volta's CUTLASS runs a tiled call). Unknown: not asked, or not answered.
+enum class PrefillKernel : std::uint8_t { Unknown, Mmq, W4a8, OtherA8, A16 };
+
 // The kernels of a routed layer's two grouped stages at a decode width, and the share of the
 // routed bytes the layers that take them hold (ModelFacts::moe_routes).
 struct MoeStepRoute {
@@ -258,6 +265,8 @@ struct ModelFacts {
     // drafters, 0 for plain).
     std::vector<DrafterOption> drafters;
     std::size_t default_drafter = 0;
+    // Board estimates only: the synthetic generation reference uses the measured pair, without
+    // either board callback or moe_route_unqueried (#930).
     // The kernels the MoE op runs a decode step's routed banks on at `rows` rows (#616 step 7): its
     // own route query on the card's class (product/plan with_moe_routes: ops/moe moe_route_query),
     // by the routed bytes of the layers each kernel pair takes. Unset, or empty: not asked, and the
@@ -268,6 +277,18 @@ struct ModelFacts {
     // sets it). The step still takes the measured pair's share, but its estimate is Transferred
     // past one row ("MoE route not queried"): which pair the op runs was never asked.
     bool moe_route_unqueried = false;
+    // The kernel a trunk linear's prefill call of `tokens` tokens runs on under `activations`
+    // (#613 PR-9): the generic selector's own answer (ops/generic route_query, prefill = true) on
+    // the card's class (product/plan with_prefill_routes), so the estimate prices the route the
+    // selector runs, never one it would not. `linear` is one of `linears` (never an expert's bank:
+    // the banks' route is QuantOption::expert_banks), its format the file's, or the quantization's
+    // where the file names none and the label names one (label_formats). Asked only on the int8
+    // route of a quantization that is not NVFP4. Unset: not asked, and the prefill prices the
+    // kernels its tile laws assume. The synthetic generation reference always uses those laws:
+    // this board-bound query does not enter its decision price (#930).
+    std::function<PrefillKernel(const LinearShape& linear, std::uint32_t tokens,
+                                ActivationMode activations)>
+        prefill_routes;
     [[nodiscard]] bool moe() const noexcept { return experts > 1 && routed_expert_params > 0; }
 };
 
@@ -574,14 +595,21 @@ struct ClosedGate {
     std::string family;     // the model family ("" where it is the generation's)
     int cards = 0;          // the lab cards the constant behind it rests on now
 };
+
 // A prefill's linears over a chunk of `tokens` by their tiles (DECISIONS 66): every linear's rounds
 // of tiles, an MoE's experts by jobs and its routing's gather and scatter of the tokens' rows;
 // seconds, 0 where the card's generation or the weights' GEMM has no row (a dense model: Q8_0
 // weights; an MoE: its banks' route and Q8_0 beside them).
 // `transferred` (when given) is set where a tile row rests on one card.
+// Where the selector answers a trunk linear's route (ModelFacts::prefill_routes, under
+// `activations`), the linear is priced on that route: by the law of the kernel it names where the
+// choice has one (MMQ's tiles, the W4A8 tiles; a Q8_0 linear's int8 tile, kTileCost), else at its
+// activations' share of the generation's peak (a 16-bit kernel's at the BF16 share); `transferred`
+// is set for a linear moved to a share or to a law read on one card.
 [[nodiscard]] double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card,
                                              const QuantOption& quant, double tokens,
-                                             bool* transferred = nullptr) noexcept;
+                                             bool* transferred          = nullptr,
+                                             ActivationMode activations = ActivationMode::Fast);
 // The rest of a prefill's chunk of `tokens` beside its linears and attention (DECISIONS 66): the
 // recurrent layers' chunked scan in SM-clocks, the norms, activations' quantization, convolution
 // and gates in bytes over the DRAM rate; seconds, 0 where the generation has no census.
@@ -644,9 +672,10 @@ struct Accuracy;
 // its reference card: it decides), CarriedCurve (another generation whose MoE prefill rate rests on
 // two lab cards: its saturated rate times the shares' slope, carried unchanged, estimates the best
 // chunk (Choice::chunk_estimate) but never decides it: another generation's rows estimate, #300),
-// Transferred (neither: the default chunk stands, no estimate), None (not an MoE, or the gate is
-// closed).
-enum class ChunkBasis : std::uint8_t { None, Own, CarriedCurve, Transferred };
+// VerifiedCurve (a carried curve a sweep on two of the generation's cards verified,
+// kMoeChunkVerified: it decides, by speed), Transferred (neither: the default chunk stands, no
+// estimate), None (not an MoE, or the gate is closed).
+enum class ChunkBasis : std::uint8_t { None, Own, CarriedCurve, VerifiedCurve, Transferred };
 
 [[nodiscard]] constexpr std::string_view chunk_basis_name(ChunkBasis basis) noexcept {
     switch (basis) {
@@ -656,6 +685,8 @@ enum class ChunkBasis : std::uint8_t { None, Own, CarriedCurve, Transferred };
         return "own";
     case ChunkBasis::CarriedCurve:
         return "carried_curve";
+    case ChunkBasis::VerifiedCurve:
+        return "verified_curve";
     case ChunkBasis::Transferred:
         return "transferred";
     }
@@ -739,6 +770,8 @@ struct Term {
     bool transferred = false; // measured on another family (kKldDefaultFamily, kQuantKldFamily)
     std::string source;
     Evidence evidence = Evidence::Measured;
+    // The quantization's term: the model whose curve it read (QuantKldModel::name); "" otherwise.
+    std::string curve_model;
 };
 
 struct Accuracy {
@@ -873,11 +906,14 @@ struct Alternative {
 // request time is longer by no more than the resolution of the two's comparison (worth units: ln
 // of the time ratio): `bands` by the wider of their decision_basis (#618), at resolution_width (a
 // band that does not decide: its Own floor, never beyond). Among the winners the lowest KLD, then
-// the lowest index in `scored`; none: the anchor. A moved pick is never dominated: where eligible
-// candidates are no slower and strictly more accurate than it, the one of the lowest KLD (then
-// index) takes it, which may lie beyond its own comparison's width (explain says so; with the
-// widths equal, as on every generation today, it never moves anything). Context beyond what was
-// asked is headroom (DECISIONS 73) and does not count. A resolution of 0 returns `anchor`.
+// (equal KLD, as the drafters of one set of storages have: #918) the fewer seconds by more than
+// kWorthTie, then the lowest index in `scored`; none: the anchor. A moved pick is never dominated:
+// where eligible candidates are no slower and strictly more accurate than it, or as accurate and
+// faster (#918), the one of the
+// lowest KLD (then the fewer seconds, then index) takes it, which may lie beyond its own
+// comparison's width (explain says so; with the widths equal, as on every generation today, it
+// never moves anything). Context beyond what was asked is headroom (DECISIONS 73) and does not
+// count. A resolution of 0 returns `anchor`.
 [[nodiscard]] std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
                                                     const std::vector<std::size_t>& eligible,
                                                     std::size_t anchor,

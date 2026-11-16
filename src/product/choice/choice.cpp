@@ -1,5 +1,6 @@
 #include "product/choice/choice.h"
 
+#include "core/board_facts.h"
 #include "core/device_class.h"
 #include "core/generation.h"
 #include "core/measured_boards.h"
@@ -42,7 +43,7 @@ double peak(const CardFacts& card, Route route) noexcept {
     const GenerationRow& row = generation_row(card.major, card.minor);
     const double s8          = row.s8 > 0 ? row.s8 : row.bf16;
     const double rate        = route == Route::Bf16 ? row.bf16 : route == Route::Fp4 ? 2 * s8 : s8;
-    return card.sms * card.clock_hz * rate;
+    return board_facts::tensor_flops_per_s(card.sms, card.clock_hz, rate);
 }
 
 // The generation's own row of a per-generation table, else kTransferGeneration's (`transferred`).
@@ -491,14 +492,36 @@ struct QuantKld {
     Evidence evidence = Evidence::Interpolated;
 };
 
-QuantKld quant_kld(double bits, std::string_view label, std::string_view files, bool same_family) {
-    double reference_bits = 0;
+// The model whose curve kQuantKld holds, by its weights (ModelFacts::params), or none.
+const QuantKldModel* quant_kld_model(double params) noexcept {
+    for (const QuantKldModel& m : kQuantKldModels) {
+        if (std::abs(m.params - params) < 0.5) { return &m; }
+    }
+    return nullptr;
+}
+
+// A point decides on two cards, or on one where its model records its reference's checksum (a
+// model constant: another card's run checks it against the same reference NLL).
+bool point_counts(const QuantKldPoint& p) noexcept {
+    if (p.cards >= kQuantKldCards) { return true; }
+    const QuantKldModel* m = quant_kld_model(p.params);
+    return m != nullptr && m->reference_nll > 0;
+}
+
+QuantKld quant_kld(double bits, std::string_view label, std::string_view files, bool same_family,
+                   double params) {
+    // The model's own curve where kQuantKld holds one (#618 step 9), else the default's (the 9B's):
+    // another model of the family, or another family, reads that one.
+    const QuantKldModel* own  = same_family ? quant_kld_model(params) : nullptr;
+    const double curve_params = own != nullptr ? own->params : kQuantKldDefaultParams;
+    double reference_bits     = 0;
     std::vector<const QuantKldPoint*> points;
     for (const QuantKldPoint& p : kQuantKld) {
-        // A point on fewer cards than kQuantKldCards is neither the label's value nor a curve
-        // point: an output-affecting choice rests on two cards (AGENTS.md). The reference is 0 by
-        // definition.
-        if (p.kld > 0 && p.cards < kQuantKldCards) { continue; }
+        if (std::abs(p.params - curve_params) >= 0.5) { continue; }
+        // A point that does not count (point_counts) is neither the label's value nor a curve
+        // point: an output-affecting choice rests on two cards (AGENTS.md) or on a checked
+        // reference. The reference is 0 by definition.
+        if (p.kld > 0 && !point_counts(p)) { continue; }
         // A point stands for its bits alone: the same file counted at other bits (an artifact's
         // tensors apart from a drafter's) takes the interpolation, as before (#299 changes no value).
         const bool same_bits  = std::abs(p.bits_per_weight - bits) < 0.05;
@@ -570,9 +593,9 @@ std::string fixed(double value, int digits) {
     return out.str();
 }
 
-Scored score(const ModelFacts& model, const CardFacts& card, const std::optional<Reference>& ref,
-             const QuantOption& quant, const Candidate& c, const Task& task,
-             const OwnContextFn& own_context) {
+Scored score(const ModelFacts& model, const ModelFacts& reference_model, const CardFacts& card,
+             const std::optional<Reference>& ref, const QuantOption& quant, const Candidate& c,
+             const Task& task, const OwnContextFn& own_context) {
     Scored s;
     s.candidate   = c;
     if (c.drafter > 0 && c.drafter <= model.drafters.size()) { s.drafter = model.drafters[c.drafter - 1].label; }
@@ -583,7 +606,8 @@ Scored score(const ModelFacts& model, const CardFacts& card, const std::optional
     s.prefill_band = prefill_band_of(model, card, quant, c, s.speed.basis, task.prompt);
     s.seconds     = request_seconds(model, card, quant, c, task);
     if (ref) {
-        s.decision_seconds = request_seconds(model, ref->card, quant, c, task, &s.decision_basis);
+        s.decision_seconds =
+            request_seconds(reference_model, ref->card, quant, c, task, &s.decision_basis);
         s.worth = -std::log(s.decision_seconds) - task.accuracy_weight * s.accuracy.kld;
     }
     return s;
@@ -629,6 +653,69 @@ QuantOption prefill_quant(const QuantOption& quant, ActivationMode activations) 
     return out;
 }
 
+// The kernel the selector runs a trunk linear's prefill call of `tokens` tokens on
+// (ModelFacts::prefill_routes, #613 PR-9); Unknown where none is asked: no query, an expert's bank
+// (its route is QuantOption::expert_banks), a quantization off the int8 route or NVFP4, exact
+// activations (the 16-bit route, priced as such), Volta (its prefill is its CUTLASS route's,
+// volta_linears_seconds, DECISIONS 70), or a linear whose format neither the file nor the label
+// names.
+PrefillKernel selected_kernel(const ModelFacts& model, const QuantOption& quant,
+                              const CardFacts& card, const LinearShape& l, double tokens,
+                              ActivationMode activations) {
+    if (!model.prefill_routes || l.expert || !quant.int8_route || quant.nvfp4 ||
+        activations == ActivationMode::Exact || tokens <= 0 ||
+        (card.major == 7 && card.minor < 5)) {
+        return PrefillKernel::Unknown;
+    }
+    LinearShape asked = l;
+    if (asked.format.empty()) {
+        const std::optional<std::set<QType>> label = label_formats(quant.label);
+        if (!label || label->size() != 1) { return PrefillKernel::Unknown; }
+        asked.format = std::string(format_facts(*label->begin()).name);
+    }
+    return model.prefill_routes(asked, static_cast<std::uint32_t>(std::ceil(tokens)), activations);
+}
+
+// The share of the trunk's linear weights (a token's: n x k x per_token) the selector runs on a
+// 16-bit kernel at a prefill call of `tokens` tokens (selected_kernel); 0 where none is asked.
+double a16_weight_share(const ModelFacts& model, const QuantOption& quant, const CardFacts& card,
+                        double tokens, ActivationMode activations) {
+    if (!model.prefill_routes) { return 0; }
+    double a16 = 0, all = 0;
+    for (const LinearShape& l : model.linears) {
+        const double weights = l.n * l.k * l.per_token;
+        all += weights;
+        if (selected_kernel(model, quant, card, l, tokens, activations) == PrefillKernel::A16) {
+            a16 += weights;
+        }
+    }
+    return all > 0 ? a16 / all : 0;
+}
+
+// The flops of a prefill's linears that no tile law prices, each at its activations' share of the
+// generation's peak (prefill_eta's dense rows): a format no law reads (DECISIONS 66), and a linear
+// the selector runs on another kernel than the law assumes and the choice has no law for (#613
+// PR-9), a 16-bit kernel's at the BF16 share.
+struct ShareFlops {
+    double a8  = 0;
+    double a16 = 0;
+};
+
+// Their seconds; nullopt where a share they need has no rate.
+std::optional<double> share_seconds(const ShareFlops& flops, const CardFacts& card) {
+    const std::string_view gen = generation_of(card);
+    double seconds             = 0;
+    for (const auto& [f, route] :
+         {std::pair{flops.a8, Route::Int8}, std::pair{flops.a16, Route::Bf16}}) {
+        if (f <= 0) { continue; }
+        bool share_transferred = false;
+        const double rate = prefill_eta(false, gen, route, share_transferred) * peak(card, route);
+        if (rate <= 0) { return std::nullopt; }
+        seconds += f / rate;
+    }
+    return seconds;
+}
+
 // A dense model's int8 route on the int8 tiles (Q8 weights): the tile's clock count at the model's
 // hidden width (2 x 64 x 64 operations a tile over c0 + K c1 SM-clocks, against the s8 rate a
 // SM-clock), Turing's measured row, else the generation's int8 row, transferred.
@@ -653,21 +740,25 @@ double tiles_eta(const CardFacts& card, double hidden, bool& transferred) noexce
 // prefill_linears_seconds, prefill_small_seconds), seconds; 0 where either has no row (the shares
 // below stand). One card's census of the small kernels prices only its own boards.
 double tiled_chunk_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-                           Route route, double tokens, bool& transferred) noexcept;
+                           Route route, double tokens, bool& transferred,
+                           ActivationMode activations);
 
 // The linears' prefill rate (tokens a second) with chunks of `filled` tokens: by the tiles where
-// they have a row (`tiles`; decode's compute bound keeps the shares), else the generation's share of
-// the peak, an MoE's chunk filling its experts only as far as its tokens reach (its share of the
-// saturated rate).
+// they have a row (`tiles`; decode's compute bound keeps the shares), else the generation's share
+// of the peak, an MoE's chunk filling its experts only as far as its tokens reach (its share of the
+// saturated rate). On the share, the linears the selector runs on a 16-bit kernel (#613 PR-9,
+// a16_weight_share) take the BF16 share of their weights' flops, Transferred.
 double linear_prefill(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-                      Route route, std::uint32_t filled, bool& transferred, bool tiles = true) noexcept {
+                      Route route, std::uint32_t filled, bool& transferred,
+                      ActivationMode activations, bool tiles = true) {
     // A prefill of banks on a kept format the file does not tell (Gemma 4's GGUF MXFP4 experts,
     // QuantOption::expert_banks_assumed) is Transferred on every path: the tiles, and the share
     // below where the tiles have no row or the linears beside the banks are not Q8. (`tiles` off:
     // decode's compute bound, which reads no prefill route.)
     if (tiles && model.moe() && quant.expert_banks_assumed) { transferred = true; }
     if (tiles && filled > 0) {
-        const double seconds = tiled_chunk_seconds(model, card, quant, route, filled, transferred);
+        const double seconds =
+            tiled_chunk_seconds(model, card, quant, route, filled, transferred, activations);
         if (seconds > 0) { return filled / seconds; }
     }
     const double params = model.active_params > 0 ? model.active_params : model.params;
@@ -677,6 +768,14 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
                                      ? tiles_eta(card, model.hidden, transferred)
                                      : prefill_eta(model.moe(), gen, route, transferred);
     double rate = eta * peak(card, route) / (2 * params);
+    if (tiles && route != Route::Bf16) {
+        if (const double a16 = a16_weight_share(model, quant, card, filled, activations); a16 > 0) {
+            const double a16_rate = prefill_eta(model.moe(), gen, Route::Bf16, transferred) *
+                                    peak(card, Route::Bf16) / (2 * params);
+            transferred = true;
+            rate        = rate > 0 && a16_rate > 0 ? 1 / ((1 - a16) / rate + a16 / a16_rate) : 0;
+        }
+    }
     if (model.moe() && model.experts_per_token > 0) {
         rate *= chunk_share(model, filled);
     }
@@ -727,11 +826,68 @@ double volta_linears_seconds(const ModelFacts& model, const CardFacts& card, con
     return clocks / card.clock_hz + bytes / (dram_eta("volta") * card.dram_bytes_per_s);
 }
 
+// The generation's tile row of `kernel` (kTileCost), nullptr where it has none.
+const TileCost* tile_cost(std::string_view generation, TileKernel kernel) noexcept {
+    for (const TileCost& row : kTileCost) {
+        if (row.generation == generation && row.kernel == kernel) { return &row; }
+    }
+    return nullptr;
+}
+
+// A grid of `ctas` tiles' time in tiles: its rounds of SMs x resident CTAs, each `resident` tiles'
+// time; a grid of no more CTAs than SMs runs one a SM alone (kLoneTile).
+double tile_rounds(const TileCost& c, double ctas, double sms) noexcept {
+    const double resident = std::max(c.resident, 1);
+    return resident > 1 && ctas <= sms ? kLoneTile : std::ceil(ctas / (sms * resident)) * resident;
+}
+
+// A trunk linear on the tiles of `c` over a chunk of `tokens` (64 tokens x 64 rows a tile, the
+// whole K deep: DECISIONS 66), seconds.
+double trunk_tile_seconds(const LinearShape& l, const TileCost& c, const CardFacts& card,
+                          double tokens) noexcept {
+    const double tile = (c.c0 + l.k * c.c1) / card.clock_hz;
+    return l.per_token * tile_rounds(c, std::ceil(tokens / 64) * std::ceil(l.n / 64), card.sms) *
+           tile;
+}
+
+// Whether a linear's file names Q8_0 for it (q8_g32_fp16: the W4A8 int8 tile's codec,
+// q8_prefill_a8).
+bool q8_linear(const LinearShape& l) noexcept {
+    return !l.format.empty() && find_format(l.format) == QType::Q8_G32_FP16;
+}
+
+// Where the selector runs a trunk linear on another kernel than `assumed`, the one a tile law
+// prices it by (#613 PR-9): the linear priced on the selector's route instead, its seconds added to
+// `seconds` where the choice has a law for that route (a Q8_0 linear's int8 tile on the W4A8
+// tiles, kTileCost), else its flops to `shares` at its activations' share. A Q8_0 linear the law
+// prices at its file's K step (`assumed` MMQ or the K-quant W4A8 tiles) takes its int8 tile where
+// the selector runs the W4A8 tiles. False where the law's kernel stands: not asked, or the
+// selector's answer is `assumed` on the law's own tile. `transferred` as the law the linear moves
+// to says (its row's cards, as the int8 tiles' own path reads it), and always for a share.
+bool priced_off_route(const ModelFacts& model, const QuantOption& quant, const CardFacts& card,
+                      const LinearShape& l, double tokens, ActivationMode activations,
+                      PrefillKernel assumed, bool own_tile, double& seconds, ShareFlops& shares,
+                      bool* transferred) {
+    const PrefillKernel kind = selected_kernel(model, quant, card, l, tokens, activations);
+    if (kind == PrefillKernel::Unknown || (kind == assumed && own_tile)) { return false; }
+    if (kind == PrefillKernel::W4a8 && q8_linear(l)) {
+        if (const TileCost* int8 = tile_cost(generation_of(card), TileKernel::Int8)) {
+            if (transferred != nullptr && int8->cards < 2) { *transferred = true; }
+            seconds += trunk_tile_seconds(l, *int8, card, tokens);
+            return true;
+        }
+    }
+    if (transferred != nullptr) { *transferred = true; }
+    (kind == PrefillKernel::A16 ? shares.a16 : shares.a8) += 2 * l.per_token * tokens * l.k * l.n;
+    return true;
+}
+
 // A dense model's K-quant or IQ4_XS linears on ggml's matrix kernel (kMmqTileCost) where the card's
 // nearest measured board takes it, else on the W4A8 tiles (kW4a8KquantCost); 0 where the generation
-// has no row or a linear's format was not read.
+// has no row or a linear's format was not read. A linear the selector runs on another kernel
+// (priced_off_route) is priced on it.
 double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-                           double tokens, bool* transferred) noexcept {
+                           double tokens, bool* transferred, ActivationMode activations) {
     const ::ninferno::Board board{card.major, card.minor, card.sms, card.l2_bytes / (1 << 20),
                                 card.dram_bytes_per_s / 1e9};
     const bool mmq             = measured::mmq_prefill_pays(board);
@@ -834,7 +990,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         }
         // A format not read (IQ4_NL: a 64 x 64 W4A8 tile; MXFP4, NVFP4: their block-scaled routes):
         // none (the share, with_unread). Q8_0 and 16-bit linears among the named ones take the
-        // file's step (open: their own routes).
+        // file's step where the selector is not asked (asked: their own routes, priced_off_route).
         if (!l.format.empty() && q != QType::Q8_G32_FP16 && q != QType::BF16) { return 0.0; }
         reads_q41 = reads_q41 || format == q41;
         return named ? format->step : label_step;
@@ -845,15 +1001,23 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     // (Qwen3.8 27B UD-Q6_K, two IQ4_NL ffn_gate of 400 linears: 3975 tokens/s on the RTX 4090 against
     // 3166 measured; its MMQ tiles 562 ms against the census's 587). None read: 0, the share whole.
     double unread_flops = 0;
+    // The linears the selector runs on another kernel than the tiles' (priced_off_route): the
+    // seconds of those the choice has a law for, the shares of the rest.
+    double moved_seconds = 0;
+    ShareFlops moved;
     const auto with_unread = [&](double seconds) {
         if (transferred != nullptr && seconds > 0 && ((reads_q41 && cost->q41_cards < 2) || reads_iq_transferred)) {
             *transferred = true;
         }
-        if (seconds <= 0 || unread_flops <= 0) { return seconds > 0 ? seconds : 0.0; }
-        bool share_transferred = false;
-        const double rate = prefill_eta(false, generation_of(card), Route::Int8, share_transferred) * peak(card, Route::Int8);
+        seconds += moved_seconds;
+        ShareFlops shares = moved;
+        shares.a8 += unread_flops;
+        if (seconds <= 0 || (shares.a8 <= 0 && shares.a16 <= 0)) {
+            return seconds > 0 ? seconds : 0.0;
+        }
         if (transferred != nullptr) { *transferred = true; }
-        return rate > 0 ? seconds + unread_flops / rate : 0.0;
+        const std::optional<double> share = share_seconds(shares, card);
+        return share ? seconds + *share : 0.0;
     };
     // The W4A8 tiles from 128 tokens (kW4a8WideMinTokens; a narrower call takes the 64-row, 32-row or
     // vector kernels, not read: the share) on sm_120 (sm_121 runs Q4_K / Q6_K on the classic tile).
@@ -865,6 +1029,10 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     if (transferred != nullptr && cost->cards < 2) { *transferred = true; }
     if (!mmq) { // the W4A8 tiles: a call's grid of 128-token x 64-row tiles, a tile a CTA in rounds
         for (const LinearShape& l : model.linears) {
+            if (priced_off_route(model, quant, card, l, tokens, activations, PrefillKernel::W4a8,
+                                 !q8_linear(l), moved_seconds, moved, transferred)) {
+                continue;
+            }
             const double step = step_of(l);
             if (step <= 0) {
                 unread_flops += 2 * l.per_token * tokens * l.k * l.n;
@@ -887,6 +1055,10 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         return with_unread(clocks / card.clock_hz);
     }
     for (const LinearShape& l : model.linears) {
+        if (priced_off_route(model, quant, card, l, tokens, activations, PrefillKernel::Mmq, true,
+                             moved_seconds, moved, transferred)) {
+            continue;
+        }
         // A gated pair runs as two grids of n / 2 rows; its SwiGLU writes one row of the two.
         const double grids = l.gated ? 2 : 1, n = l.n / grids, step = step_of(l);
         if (step <= 0) {
@@ -897,7 +1069,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         // linear's own, else the file's (Q4_K, Q6_K). A name the matrix kernel does not run
         // (bf16, q8_g32_fp16) has no tile of its own (widest_tile: 128).
         const QType q = l.format.empty() ? format->q : find_format(l.format).value_or(QType::BF16);
-        const bool measured_format = q == QType::GGML_Q4_K || q == QType::GGML_Q6_K;
+        const bool measured_format = mmq_columns::work_tiles_format(q, card.major, card.minor);
         // A guard for a future Q2_K step row: today step_of prices Q2_K as the int8 share, so no
         // Q2_K linear reaches here (cost_route, ops/generic/generic_cost.cpp, has the live cap).
         // The widest tile the card's shared memory holds for the linear's format (a label's
@@ -951,20 +1123,16 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
 
 } // namespace
 
-double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-                                double tokens, bool* transferred) noexcept {
+double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card,
+                               const QuantOption& quant, double tokens, bool* transferred,
+                               ActivationMode activations) {
     if (model.linears.empty() || tokens <= 0 || card.sms <= 0 || card.clock_hz <= 0 ||
         card.dram_bytes_per_s <= 0) {
         return 0;
     }
     const bool moe = model.moe() && model.experts_per_token > 0;
     const std::string_view gen = generation_of(card);
-    const auto cost = [gen](TileKernel kernel) -> const TileCost* {
-        for (const TileCost& row : kTileCost) {
-            if (row.generation == gen && row.kernel == kernel) { return &row; }
-        }
-        return nullptr;
-    };
+    const auto cost            = [gen](TileKernel kernel) { return tile_cost(gen, kernel); };
     // The banks' GEMM (product/plan expert_prefill_of): MXFP4 takes the block-scaled MMA on
     // Blackwell, Ada converts it to int8. The linears beside them take the classic int8 tiles when
     // their weights are Q8_0; a K-quant's take a tile by format and card (generic_select.cpp
@@ -985,7 +1153,8 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
     // mmq_linears_seconds reads the format, 0 for none).
     if (!moe && (quant.weights == WeightClass::KQuant || quant.weights == WeightClass::IQ4 ||
                  quant.weights == WeightClass::Other)) {
-        const double mmq = mmq_linears_seconds(model, card, quant, tokens, transferred);
+        const double mmq =
+            mmq_linears_seconds(model, card, quant, tokens, transferred, activations);
         if (mmq > 0 || quant.weights == WeightClass::KQuant) { return mmq; }
     }
     if ((moe ? quant.rest_weights : quant.weights) != WeightClass::Q8) { return 0; }
@@ -997,30 +1166,33 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
     const double slots = std::ceil(tokens) * picks;
     const double jobs  = moe ? std::ceil(slots / kExpertJobSlots) + std::min<double>(slots, model.experts) : 0;
 
-    const double sms = card.sms;
     double seconds = 0, hidden = 0, moe_layers = 0;
+    // A trunk linear the selector runs on another kernel than the int8 tile (priced_off_route): its
+    // share beside the tiles.
+    ShareFlops moved;
     for (const LinearShape& l : model.linears) {
-        const TileCost& c  = l.expert ? *bank : *rest;
-        const double tile  = (c.c0 + l.k * c.c1) / card.clock_hz;
-        const double cols  = std::ceil(l.n / 64);
-        // A grid's rounds of SMs x resident CTAs, each `resident` tiles' time; a grid of no more CTAs
-        // than SMs runs one a SM alone (kLoneTile).
-        const double resident = std::max(c.resident, 1);
-        const auto waves      = [&](double ctas) {
-            return resident > 1 && ctas <= sms ? kLoneTile : std::ceil(ctas / (sms * resident)) * resident;
-        };
         if (l.expert && moe) {
             // A layer's bank is one call over its jobs; the gate and up come first (K the hidden).
+            const TileCost& c   = *bank;
+            const double tile   = (c.c0 + l.k * c.c1) / card.clock_hz;
             const double layers = l.per_token / picks;
             if (hidden == 0) { hidden = l.k, moe_layers = layers; }
-            seconds += layers * waves(jobs * cols) * tile;
-        } else {
-            seconds += l.per_token * waves(std::ceil(tokens / 64) * cols) * tile;
+            seconds += layers * tile_rounds(c, jobs * std::ceil(l.n / 64), card.sms) * tile;
+        } else if (!priced_off_route(model, quant, card, l, tokens, activations,
+                                     PrefillKernel::W4a8, true, seconds, moved, transferred)) {
+            seconds += trunk_tile_seconds(l, *rest, card, tokens);
         }
     }
     // The routing gathers every pick's token row into its expert's run and scatters the result
     // back: 16-bit rows of the hidden width, read and written, a layer.
     seconds += moe_layers * tokens * picks * hidden * 2 * 2 / (dram_eta(gen) * card.dram_bytes_per_s);
+    // No linear left on a tile (every one moved to a share): 0, the share whole (linear_prefill),
+    // as mmq_linears_seconds gives where none is read.
+    if (seconds <= 0) { return 0; }
+    if (moved.a8 > 0 || moved.a16 > 0) {
+        const std::optional<double> share = share_seconds(moved, card);
+        return share ? seconds + *share : 0;
+    }
     return seconds;
 }
 
@@ -1305,10 +1477,12 @@ double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts&
 namespace {
 
 double tiled_chunk_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-                           Route route, double tokens, bool& transferred) noexcept {
+                           Route route, double tokens, bool& transferred,
+                           ActivationMode activations) {
     if (route != Route::Int8) { return 0; }
     bool tiles_transferred = false;
-    const double linears   = prefill_linears_seconds(model, card, quant, tokens, &tiles_transferred);
+    const double linears =
+        prefill_linears_seconds(model, card, quant, tokens, &tiles_transferred, activations);
     const double small     = linears > 0 ? prefill_small_seconds(model, card, tokens) : 0;
     if (small <= 0) { return 0; }
     transferred = transferred || tiles_transferred;
@@ -1470,7 +1644,9 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.
     QuantOption decode_quant = quant;
     decode_quant.weights     = WeightClass::KQuant;
-    const double flops_rate  = linear_prefill(model, card, decode_quant, route, kDefaultChunk, flops_transferred, false) * 2 * params;
+    const double flops_rate  = linear_prefill(model, card, decode_quant, route, kDefaultChunk,
+                                              flops_transferred, candidate.activations, false) *
+                              2 * params;
     const double flops       = flops_rate > 0 ? rows * 2 * params / flops_rate : 0;
     const double step        = std::max(reads + launches + exact, flops);
     // The step rests on the flops' rate where it binds: its basis then counts.
@@ -1478,8 +1654,9 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     out.decode_per_stream = step > 0 && std::isfinite(step) ? 1 / step : 0;
     // A drafter's measured gain over plain decode at the depth its load table lets these many
     // streams draft (a gain no measurement gives is not counted: DrafterOption::measured). Not
-    // part of the basis: the gain is the speculation profile's measurement on the lab cards it
-    // names (DrafterOption), not a rate of this card's generation; SpeedBasis covers the
+    // part of the basis: the gain is the speculation profile resolved for the plan's board
+    // (DrafterOption: a lab card's measurement, or the pair's tokens a round over R(k) on the
+    // board's facts, DECISIONS 87), not a rate of this card's generation; SpeedBasis covers the
     // plain-decode estimate it multiplies.
     if (candidate.drafter > 0 && candidate.drafter <= model.drafters.size()) {
         const DrafterOption& d = model.drafters[candidate.drafter - 1];
@@ -1491,7 +1668,7 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     bool prefill_transferred = false;
     const std::uint32_t filled = prompt > 0 ? std::min(candidate.chunk, prompt) : candidate.chunk;
     out.prefill = linear_prefill(model, card, prefill_quant(quant, candidate.activations), route,
-                                 filled, prefill_transferred);
+                                 filled, prefill_transferred, candidate.activations);
     if (prompt > 0 && out.prefill > 0) {
         // Exact activations run every route invariant (ScopedInvariantRoutes): attention on the grouped
         // kernels at every width, never the prompt kernel.
@@ -1696,10 +1873,12 @@ double single_request_seconds(const ModelFacts& model, const CardFacts& card,
     prefill_seconds += tail_calls_seconds(model, card, quant, candidate, prompt, transferred);
     const QuantOption banks = prefill_quant(quant, candidate.activations);
     if (whole > 0) {
-        prefill_seconds += whole / linear_prefill(model, card, banks, route, chunk, transferred);
+        prefill_seconds += whole / linear_prefill(model, card, banks, route, chunk, transferred,
+                                                  candidate.activations);
     }
     if (rest > 0) {
-        prefill_seconds += rest / linear_prefill(model, card, banks, route, rest, transferred);
+        prefill_seconds += rest / linear_prefill(model, card, banks, route, rest, transferred,
+                                                 candidate.activations);
     }
     if (basis != nullptr && transferred) { *basis = widest(*basis, SpeedBasis::Transferred); }
     return prefill_seconds + task.answer / speed.decode_per_stream;
@@ -1908,7 +2087,9 @@ std::optional<double> answer_points(const Accuracy& accuracy, const AnswerScale*
         // (Evidence::Reference) says nothing of the model: a 27B's Q8_0 is 0 against its own Q8_0,
         // not on the 9B's file. Only the measured file's identity (Evidence::Measured, the
         // reference's file included) makes the term the calibrated model's.
-        if (t.transferred || t.evidence != Evidence::Measured) {
+        // And the model of the curve is the scale's: another measured model's own file (#618 step
+        // 9) is measured on its own curve, not calibrated on the scale's.
+        if (t.transferred || t.evidence != Evidence::Measured || t.curve_model != scale->model) {
             return say("model_not_calibrated");
         }
         if (why_code != nullptr) { *why_code = {}; }
@@ -1928,9 +2109,18 @@ ChunkBasis chunk_basis_of(const ModelFacts& model, const CardFacts& card, const 
     if (!generation_known(card.major, card.minor)) { return ChunkBasis::Transferred; }
     // Another generation whose own MoE prefill rate rests on two lab cards: its saturated rate
     // times the measured shares' slope, carried unchanged, estimates the chunk but never decides
-    // it (#300: another generation's rows estimate, they do not decide).
+    // it (#300: another generation's rows estimate, they do not decide), until a sweep on two of
+    // its own cards verified the estimate (kMoeChunkVerified): then the carried curve decides on
+    // the generation's boards (its reference row's, not a borrowed or lent one).
     for (const PrefillEta& row : kPrefillEta) {
-        if (row.moe && row.generation == gen && row.cards >= 2) { return ChunkBasis::CarriedCurve; }
+        if (!row.moe || row.generation != gen || row.cards < 2) { continue; }
+        const auto ref = reference_of(card, gates);
+        for (const VerifiedChunkCurve& v : kMoeChunkVerified) {
+            if (v.generation == gen && v.cards >= 2 && ref && ref->chunk_decides && !ref->lent) {
+                return ChunkBasis::VerifiedCurve;
+            }
+        }
+        return ChunkBasis::CarriedCurve;
     }
     return ChunkBasis::Transferred;
 }
@@ -1956,14 +2146,69 @@ bool weighs_quantizations(const ModelFacts& model, const CardFacts& card, const 
            (gates.accuracy ? *gates.accuracy : kQuantKldCards >= 2);
 }
 
+namespace {
+
+// The KLD two quantizations' answers cannot tell apart: the family's answer scale's noise over its
+// points per KLD (0.2 / 40 = 0.005 for Qwen3.5); 0 where the family has no scale.
+double answer_noise_kld(std::string_view family) noexcept {
+    const AnswerScale* scale = answer_scale_of(family);
+    return scale != nullptr && scale->points_per_kld > 0
+               ? scale->noise_points / scale->points_per_kld
+               : 0;
+}
+
+// #618 step 9's transfer rule: the default curve's point of `label` stands for a model of the
+// family that has no curve of its own (QualityAuthority::Transfer) where every measured model's
+// point of the label lies within the answer noise of it, and the model's weights lie within the
+// measured models' range (no extrapolation in size). The tolerance is the answer scale's, declared
+// before these curves were measured, not read off them.
+bool label_transfers(std::string_view family, std::string_view label, double params) noexcept {
+    const double tolerance = answer_noise_kld(family);
+    if (tolerance <= 0 || label.empty()) { return false; }
+    double reference = -1;
+    for (const QuantKldPoint& p : kQuantKld) {
+        if (std::abs(p.params - kQuantKldDefaultParams) < 0.5 && p.label == label) {
+            reference = p.kld;
+        }
+    }
+    if (reference < 0) { return false; }
+    // The sizes that measured the label bound the range: a size beyond them is an extrapolation.
+    double lightest = 0;
+    double heaviest = 0;
+    int others      = 0;
+    for (const QuantKldModel& m : kQuantKldModels) {
+        for (const QuantKldPoint& p : kQuantKld) {
+            if (std::abs(p.params - m.params) >= 0.5 || p.label != label || !point_counts(p)) {
+                continue;
+            }
+            if (std::abs(p.kld - reference) > tolerance) { return false; }
+            lightest = lightest == 0 ? m.params : std::min(lightest, m.params);
+            heaviest = std::max(heaviest, m.params);
+            if (std::abs(m.params - kQuantKldDefaultParams) >= 0.5) { ++others; }
+        }
+    }
+    return others > 0 && params >= lightest && params <= heaviest;
+}
+
+} // namespace
+
 QualityAuthority quant_authority(const ModelFacts& model, const QuantOption& quant) {
     if (quant.bits_per_weight <= 0) { return QualityAuthority::Unknown; }
-    // The curve's points are the default family's measurements (kQuantKldFamily): on another
-    // family every term is the curve's estimate. No transfer rule is registered.
+    // The curves are the default family's measurements (kQuantKldFamily): on another family every
+    // term is the curve's estimate. A model of the family with its own curve has its files
+    // measured (Direct) or estimated; one without may take the default curve's label (Transfer).
     const bool own_curve = model.family == kQuantKldFamily;
-    const QuantKld q     = quant_kld(quant.bits_per_weight, quant.label, quant.files, own_curve);
-    return own_curve && q.evidence == Evidence::Measured ? QualityAuthority::Direct
-                                                         : QualityAuthority::Estimate;
+    const QuantKld q =
+        quant_kld(quant.bits_per_weight, quant.label, quant.files, own_curve, model.params);
+    if (own_curve && q.evidence == Evidence::Measured) { return QualityAuthority::Direct; }
+    // The transferred value is the 9B label's own point (Evidence::Proxy: the row's bits within
+    // 0.05 of it), never an interpolation between its points: a label at other bits, or a file
+    // whose label is not its quantization, stays an estimate.
+    if (own_curve && q.evidence == Evidence::Proxy && quant_kld_model(model.params) == nullptr &&
+        label_transfers(model.family, quant.label, model.params)) {
+        return QualityAuthority::Transfer;
+    }
+    return QualityAuthority::Estimate;
 }
 
 Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Candidate& candidate,
@@ -1985,10 +2230,13 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     // The quantization: the measured curve (choice_constants.h).
     // Unknown bits (0) have no place on the curve: no term, and the quantization stays the rule's
     // (plan_quants weighs the quantizations only where every row's bits are known).
-    const QuantKld q = quant.bits_per_weight > 0
-                           ? quant_kld(quant.bits_per_weight, quant.label, quant.files, !other_curve)
-                           : QuantKld{.evidence = Evidence::StandIn};
-    const std::string curve(kQuantKldSource);
+    const QuantKld q =
+        quant.bits_per_weight > 0
+            ? quant_kld(quant.bits_per_weight, quant.label, quant.files, !other_curve, model.params)
+            : QuantKld{.evidence = Evidence::StandIn};
+    // The curve read: the model's own (kQuantKldModels), else the default's.
+    const QuantKldModel* own_model = other_curve ? nullptr : quant_kld_model(model.params);
+    const std::string curve(own_model != nullptr ? own_model->source : kQuantKldSource);
     std::string quant_source = "interpolated by bits per weight on " + curve;
     if (quant.bits_per_weight <= 0) {
         quant_source = "unknown bits per weight: not weighed";
@@ -2003,6 +2251,9 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     }
     add(Axis::Quant, quant.label, q.kld, q.evidence == Evidence::Measured, std::move(quant_source),
         q.evidence);
+    const QuantKldModel* read =
+        own_model != nullptr ? own_model : quant_kld_model(kQuantKldDefaultParams);
+    if (read != nullptr) { out.terms.back().curve_model = std::string(read->name); }
 
     const std::string kv{kv_cache_storage_name(candidate.kv)};
     if (candidate.kv == KvCacheStorage::BFloat16) {
@@ -2092,6 +2343,14 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     // bands the board's estimates carry. None of it decides anything.
     const std::optional<Reference> ref = reference_of(card, gates);
     out.reference                      = ref;
+    // The generation reference is a declared mean, not a board with a PCI identity or a route
+    // table. Price it with the generation's tile laws and measured MoE pair. The callbacks capture
+    // the planned board: they inform only that board's displayed estimates, never B1 (#930).
+    // Build this view once, including when candidates are repriced at a smaller context.
+    ModelFacts reference_model          = model;
+    reference_model.prefill_routes      = {};
+    reference_model.moe_routes          = {};
+    reference_model.moe_route_unqueried = false;
     out.gates_closed                   = closed_gates(model, card, gates);
     out.board_resolutions              = {resolution_of(card, SpeedBasis::Own),
                                           resolution_of(card, SpeedBasis::Transferred),
@@ -2125,7 +2384,9 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     out.resolutions         = bands;
 
     out.chunk_basis                    = chunk_basis_of(model, card, gates);
-    out.chunk_by_speed                 = out.chunk_basis == ChunkBasis::Own && !pins.chunk;
+    out.chunk_by_speed =
+        (out.chunk_basis == ChunkBasis::Own || out.chunk_basis == ChunkBasis::VerifiedCurve) &&
+        !pins.chunk;
     // The enumeration order breaks exact ties (better()): one canonical order of each axis's
     // values (allowed_axes'), never the order a caller listed them in (#301).
     std::vector<KvCacheStorage> kvs = pins.kv ? std::vector<KvCacheStorage>{*pins.kv} : allowed.kv;
@@ -2166,9 +2427,10 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
             const Coupled coupled = coupled_storages(model, kv, mode, pins);
             for (const std::size_t drafter : drafters) {
                 for (const std::uint32_t chunk : chunks) {
-                    out.scored.push_back(score(model, card, ref, quant,
-                                               {kv, coupled.ring, coupled.state, mode, chunk, drafter},
-                                               task, own_context));
+                    out.scored.push_back(
+                        score(model, reference_model, card, ref, quant,
+                              {kv, coupled.ring, coupled.state, mode, chunk, drafter}, task,
+                              own_context));
                 }
             }
         }
@@ -2228,7 +2490,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         at.contexts = {context};
         if (at.long_prompt() != priced.long_prompt()) {
             for (Scored& s : out.scored) {
-                s = score(model, card, ref, quant, s.candidate, at, own_context);
+                s = score(model, reference_model, card, ref, quant, s.candidate, at, own_context);
             }
             priced = at;
         }
@@ -2358,7 +2620,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         }
     }
     for (const Candidate& v : variants) {
-        Scored s  = score(model, card, ref, quant, v, priced, own_context);
+        Scored s  = score(model, reference_model, card, ref, quant, v, priced, own_context);
         s.variant = true;
         s.fits    = s.own_context >= settled;
         out.scored.push_back(std::move(s));
@@ -2372,6 +2634,20 @@ std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
     const Resolution one{ResolutionBasis::Own, resolution, resolution > 0, resolution};
     return resolve_within_resolution(scored, eligible, anchor, Resolutions{one, one, one});
 }
+
+namespace {
+
+// Between two candidates of equal KLD (#918: the drafters of one set of storages, whose accuracy
+// terms are the same), the fewer seconds by more than the tie, then the lower index: the index
+// alone handed the pick to the earliest listed, often plain decode, whatever the drafters' worth.
+bool faster_or_first(const Scored& s, std::size_t i, const Scored& p, std::size_t at) noexcept {
+    const double gap = std::log(s.decision_seconds / p.decision_seconds);
+    if (gap < -kWorthTie) { return true; }
+    if (gap > kWorthTie) { return false; }
+    return i < at;
+}
+
+} // namespace
 
 std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
                                       const std::vector<std::size_t>& eligible, std::size_t anchor,
@@ -2394,27 +2670,34 @@ std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
         }
         const Scored& p = scored[pick];
         if (pick == anchor || s.accuracy.kld < p.accuracy.kld - kWorthTie ||
-            (std::abs(s.accuracy.kld - p.accuracy.kld) <= kWorthTie && i < pick)) {
+            (std::abs(s.accuracy.kld - p.accuracy.kld) <= kWorthTie &&
+             faster_or_first(s, i, p, pick))) {
             pick = i;
         }
     }
     // A moved pick is never dominated: among the candidates no slower and strictly more accurate
-    // than it, the one of the lowest KLD, then the lowest index, takes it (comparisons of unequal
-    // widths could otherwise leave it out). Such a pick may lie beyond its own comparison's width
-    // of the anchor; it is no slower than one inside its band.
+    // than it, or as accurate and faster by more than the tie (#918), the one of the lowest KLD,
+    // then the fewer seconds, then the lowest index, takes it (comparisons of unequal widths could
+    // otherwise leave it out). Such a pick may lie beyond its own comparison's width of the
+    // anchor; it is no slower than one inside its band. Every step lowers the KLD by more than the
+    // tie, or keeps it and lowers the seconds by more than the tie: the pass ends.
     for (bool again = pick != anchor; again;) {
         again           = false;
         const Scored& p = scored[pick];
         std::optional<std::size_t> by;
         for (const std::size_t i : eligible) {
             const Scored& s = scored[i];
+            const bool more_accurate = s.accuracy.kld + kWorthTie < p.accuracy.kld;
+            const bool as_accurate_faster =
+                std::abs(s.accuracy.kld - p.accuracy.kld) <= kWorthTie &&
+                std::log(s.decision_seconds / p.decision_seconds) < -kWorthTie;
             if (!(s.decision_seconds > 0) || s.decision_seconds > p.decision_seconds ||
-                !(s.accuracy.kld + kWorthTie < p.accuracy.kld)) {
+                !(more_accurate || as_accurate_faster)) {
                 continue;
             }
             const bool lower = !by || s.accuracy.kld < scored[*by].accuracy.kld - kWorthTie;
             const bool tie = by && std::abs(s.accuracy.kld - scored[*by].accuracy.kld) <= kWorthTie;
-            if (lower || (tie && i < *by)) { by = i; }
+            if (lower || (tie && faster_or_first(s, i, scored[*by], *by))) { by = i; }
         }
         if (by) {
             pick  = *by;

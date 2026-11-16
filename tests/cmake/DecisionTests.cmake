@@ -5,6 +5,18 @@
 # whole suite: `ctest -L host` there runs exactly these. The decisions workflow
 # (.github/workflows/decisions.yml) builds them in that tree, one per golden build set.
 
+# Board facts feed every decision. Check the parsed and constexpr registries in decisions-only
+# CI too, including sourced L2 coverage; these tests need neither nvcc nor a CUDA runtime.
+foreach(facts_test IN ITEMS machine_facts board_registry)
+  ninferno_add_test(ninferno_${facts_test}_test LABELS host NEEDS_SOURCE_DIR STATIC_LINK
+    SOURCES "${PROJECT_SOURCE_DIR}/tests/test_${facts_test}.cpp"
+            "${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp"
+            "${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp"
+    LIBRARIES ninferno_core_host)
+endforeach()
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_machine_facts_test)
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_board_registry_test)
+
 # The offline GPU catalogue audit: PCI subsystem identities survive parsing, non-GPU PCI
 # functions are excluded, and marketing series cannot silently choose an architecture.
 add_test(NAME ninferno_gpu_catalog_test
@@ -87,9 +99,13 @@ target_sources(ninferno_gate_atlas_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/d
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_gate_atlas_test)
 
 # The route cost model's constants, each tagged fact / counted / fitted
-# (ops/generic/route_cost_constants.h); `--list` prints them. No GPU.
+# (ops/generic/route_cost_constants.h); `--list` prints them. The Counted ones are held to the
+# kernel families' records and the architecture table (core/arch_registry.h: the generated rows
+# of ninferno_core_host's include directory). No GPU.
 ninferno_add_test(ninferno_route_cost_constants_test LABELS host NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_cost_constants.cpp")
+target_include_directories(ninferno_route_cost_constants_test PRIVATE
+  $<TARGET_PROPERTY:ninferno_core_host,INTERFACE_INCLUDE_DIRECTORIES>)
 set_tests_properties(ninferno_route_cost_constants_test PROPERTIES LABELS host)
 
 # The holdout records of the fitted constants it covers (core/fitted_holdouts.h, the one mechanism;

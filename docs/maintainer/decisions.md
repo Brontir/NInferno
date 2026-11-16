@@ -1697,7 +1697,9 @@ differently), as they already did between a prefill chunk of 128 and 1024: on na
 |logprob| difference old vs new is 0.000-0.03, old build's chunks 128 vs 1024 0.003-0.026.
 
 **Not done.** Turing, Volta and Thor rows (own grids); the A10; other formats than Q4_K and
-Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tiles until their grids); the RTX 5070 Ti and 5060 Ti prefill Q4_K / Q6_K
+Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tiles until their
+grids; IQ4_XS and Q2_K joined some generations by their own grids, DECISIONS 90); the RTX 5070 Ti
+and 5060 Ti prefill Q4_K / Q6_K
 on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 -> 107 ms from 144 to
 256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.
 
@@ -1749,7 +1751,8 @@ it decides, else at its own floor, `resolution_width`; `Choice::resolution` repo
 worth's band) is indistinguishable from it in speed, so the speed term does not rank them; the
 accuracy term does. The order is the one of the cross-quantization band (DECISIONS 60): a candidate
 wins only if its modelled KLD is lower than the anchor's by more than `kWorthTie`; the lowest KLD
-first, then the lowest canonical index; otherwise the anchor stays (`resolve_within_resolution`).
+first, then the fewer seconds (beyond `kWorthTie`; equal KLD: the drafters of one set of storages,
+#918), then the lowest canonical index; otherwise the anchor stays (`resolve_within_resolution`).
 Context beyond what was asked is headroom (DECISIONS 73) and does not count, so an equal-KLD
 sibling (a narrower chunk, plain against a drafter, BF16 against INT8 at 8K) never moves the pick.
 A NaN KLD never wins. Without a reference card the resolution is 0 and nothing changes.
@@ -1768,8 +1771,10 @@ card), the band does not decide and the comparison is resolved at its own floor 
 never beyond. On a compute capability with no generation row the floor is the lent generation's
 own band (cc 13.0, priced from Blackwell's rows: 0.0170), not the lender's. A moved pick is never
 dominated on both axes by an eligible candidate: among those no slower and strictly more accurate
-than it, the lowest KLD, then the lowest index, takes it, which may lie beyond its own comparison's
-width (`explain` says so; with equal widths, as today, it moves nothing). The worth itself still
+than it, or as accurate and faster (#918), the lowest KLD, then the fewer seconds, then the lowest
+index, takes it, which may lie beyond its own comparison's width (`explain` says so; with equal
+widths, as today, it moves nothing). The index alone had handed an equal-KLD pick to the earliest
+listed drafter, often plain decode (#918). The worth itself still
 ranks by point estimates (their error per basis is the cost model's work, #613). With
 `Gates::typed_resolution` closed, the old single number weighs every comparison as before (#618).
 
@@ -1791,7 +1796,7 @@ counted saving; by elimination the rest is expected in the gated gate/up launche
 measured: the issue's data has no gated-shape row. A rule would move calls nobody timed, and the
 only gated-shape timings at hand (earlier tuner files, below) say the sign depends on the shape, so
 the candidate rule is not supported as stated. The measurement that is missing is a kit,
-`tools/bench/run_521_gateup.sh`, not run on a card yet.
+`tools/bench/run_521_gateup.sh`, not run on a card yet (run on seven cards since: DECISIONS 91).
 
 **Where the numbers come from.** The measured numbers of this entry (the gains and losses, the 47 %,
 the end-to-end +1.6 % and +2.8 %, the per-T slopes) and the SASS count "105 + 37 T" are the ones
@@ -2656,3 +2661,387 @@ and would want an end-to-end check at C = 5..8 first.
 
 **Open.** Re-time the RTX 2080 Ti's T = 5..8 cells on current kernels; the per-format widening for
 Q3_K and IQ3_XXS on Ampere; the A100, Hopper and datacenter Blackwell stay unmeasured.
+
+## 85. The choice's prefill prices the route the selector runs (#613 PR-9, 12.11, rule; no new measurement)
+
+**Decision.** The configuration choice's prefill estimate asks the generic selector which kernel
+each trunk linear's prefill call runs (`route_query`, `prefill = true`, on the planned board's
+class), instead of assuming it from the file's class. The engine registers the query for the plan
+(`runtime::register_plan_prefill_route_query`, beside the MoE op's); `product::with_prefill_routes`
+hands the choice the answer per linear, width and activations (`ModelFacts::prefill_routes`:
+ggml's matrix kernel, the W4A8 tiles, another 8- or 4-bit kernel, a 16-bit kernel). The choice
+then prices each linear on that route. A linear the selector runs on the kernel the file's tile
+law assumes (MMQ's tiles, `kMmqTileCost`, on a board where MMQ pays; the K-quant W4A8 tiles,
+`kW4a8KquantCost`, elsewhere; the int8 tile for a Q8_0 file) keeps that law. A Q8_0 linear the
+selector runs on the W4A8 tiles takes its int8 tile (`kTileCost`, DECISIONS 67), not the K step of
+the file's format. Every other answer goes to its activations' share of the generation's peak
+(a 16-bit kernel's at the BF16 share, `prefill_eta`), Transferred: that includes a K-quant
+linear answered on the other tile kernel than the file's branch assumes (W4A8 where the branch
+prices MMQ, or MMQ where it prices the K-quant W4A8 tiles), although a law for that kernel exists
+(no such answer occurs at a 7K prompt on any registry board). The basis of a linear priced by another
+law is that law's (its row's cards), as the int8 tiles' own path reads it: the selector's answer
+never makes an estimate more precise than the law it is priced by, whatever authority answered.
+Not asked: exact activations (the 16-bit route, priced as such), NVFP4, an expert's bank (its
+route is the plan's `expert_banks`), Volta (its CUTLASS route and rows, DECISIONS 70), a linear
+whose format neither the file nor the label names, and a program that registers no query
+(ninferno-ui): there the tile laws' kernels stand, as before. The class the plan asks on is the
+board's synthetic one (`synthetic_device_class` with the board's machine facts), as for the MoE
+query (DECISIONS 79), and a host's plan asks it too (`choose_for_artifact`): the answer reads the
+default route tables of that class, never the host's own tables nor an explicit `--route-table`.
+
+**Why not the selector's price.** #613's plan prices the selector's route with its own cost model
+(`price_routes`) at this step, but the shared MMQ and W4A8 terms (PR-5, PR-6) are not in yet: on
+the lab's boards the selector's price of a dense Q8_0 linear's W4A8 tile is 1.2-2.2x the int8
+tile's clock count the choice prices it by (Qwen3.5 9B's linears at a 1024-token chunk: RTX 3060
+and 3090 1.2x, 5070 Ti 1.5x, 5090 1.7-1.8x, 4060 Ti 2.0x, 4090 2.1-2.2x; the census holds the
+choice's law within -2 .. +6 % on five cards, DECISIONS 66), and its MMQ term is format-blind
+(`kMmqEfficiency` for every format: Q4_K and Q6_K the same 864.8 us for the 2 x 12288 x 4096
+gate/up where the choice's per-format K steps give 994 and 1150 us on the RTX 4090; the RTX 2080
+Ti's MMQ at 0.53-0.59x the choice's). Taking it would move every K-quant and Q8_0 prefill
+estimate and lose the per-format information the choice was measured on. The route is shared now;
+the price follows when PR-5 and PR-6 make the selector's terms the counted per-format ones, and
+the choice's tables become their fixtures.
+
+**What it changes** (`ninferno_choice_prefill_routes_test`, the selector of this tree on every
+board): on master's routes the selector runs every trunk linear on the kernel the tile laws
+assumed but one kind, a Q8_0 linear in a K-quant file (Qwen3.5 9B's Gated DeltaNet
+out-projection in its Q6_K and UD-Q4_K_XL files), which it runs on the W4A8 int8 tile where the
+choice priced it on MMQ's (or the K-quant W4A8) tile at the file's step. Of the 329 measured
+prefill points (`prefill_measured.json`) 28 move, those two files on seven cards at 7K and 22K
+tokens: rms of all points 5.09 % -> 5.10 %, of the moved ones 3.00 % -> 3.24 % (the Q6_K file
++0.9 .. +1.2 % faster on Ada and Blackwell: further from the RTX 4090's, 5090's and 5070 Ti's
+measurements, which it already priced fast, closer to the RTX 4060 Ti's and 4070 Ti's; the
+UD-Q4_K_XL file -0.4 .. +0.4 %). Over every registry board with tensor cores at the fixtures' models and
+quantizations (1326 estimates at a 7K prompt), 158 move, the same two files only: Ada -0.5 .. +1.5 %,
+Ampere -1.0 .. +0.6 %, Blackwell -0.2 .. +2.3 %, Turing -0.5 .. +0.2 %; no basis changes. The
+datacenter rows (A100, H100, B200) do not move: no tile law reads them, and the selector runs
+their linears on A8 kernels as the share assumed. Once Hopper and GB100 carry no fitted route
+scales (#821), the selector runs their linears at 16 bits under int8 activations and their
+estimate moves to the BF16 share (#822; `prefill_prices_the_selectors_route` in
+`ninferno_choice_test` checks that case on the H100 with a stand-in answer).
+
+**Open.**
+- The price itself (PR-5, PR-6, then this client prices by `price_routes`).
+- A 16-bit linear inside a K-quant file (a GGUF's F16 or BF16 projections) is priced at the BF16
+  share where the selector answers A16, a coarse price.
+- A K-quant linear the selector answers on the other tile kernel than the file's branch (W4A8 on
+  the MMQ branch, MMQ on the K-quant W4A8 branch) takes the int8 share, not `kW4a8KquantCost` or
+  `kMmqTileCost`: latent (no such answer at a 7K prompt on any registry board), to price by that
+  law when one appears.
+- The RTX 4090's and 5090's Qwen3.5 9B Q6_K estimates are now over the measured points by +6.3 and
+  +4.8 % at 7K tokens (+4.1 and +3.3 % at 22K): with the route the selector runs, another term
+  over-predicts the speed on Ada and Blackwell. It is to be found from the facts, not refitted.
+- Volta's prefill is not asked (its CUTLASS gates mirror the selector's `volta_cutlass_takes`, a
+  second copy); ninferno-ui registers no query (#766).
+- Not run on the stands.
+
+## 86. The Qwen3.5 curve transfers to an unmeasured size where every measured size agrees within the answer noise (#618 step 9, 14.11, rule)
+
+**The question.** #914 gave five Qwen3.5 sizes (0.8B, 2B, 4B, 9B, 27B) their own quantization
+curves. A model of the family that is none of them (another size, a fine-tune's own weights) read
+the 9B's curve as an estimate, which never decides (#368). When may it decide?
+
+**Rule.** The 9B curve's point of a label decides for such a model (`QualityAuthority::Transfer`,
+weighed as a measurement in `plan_quants`) where every measured size's point of that label lies
+within the family's answer noise of the 9B's, and the model's weights lie within the measured
+sizes (no extrapolation in size). The noise is the answer scale's (`kAnswerScales`: 0.2 points of
+MMLU-Pro over 40 points per KLD = 0.005 KLD), declared before these curves were measured: two
+quantizations closer than that cannot be told apart by their answers. It is not read off the
+curves.
+
+The value transferred is the 9B label's own point: the row's bits within 0.05 of it (as the
+family's label proxy, #299), never an interpolation; a label at other bits, or a mislabelled file,
+stays an estimate. The size range is that of the sizes that measured the label. The tolerance is
+absolute KLD, not log KLD as #618's plan row says: the answer scale is linear in KLD (40 points per
+KLD), so the noise it cannot resolve is a fixed KLD, not a ratio. In the trade, though, 0.005 KLD is
+not small: at the worth's lambda of 25 it weighs as 12.5 % of a request's time, wider than the 9B's
+own Q6_K to Q5_K_S gap (0.0047). A transfer is a value the answers cannot tell from the truth, not
+one the worth cannot tell; a tighter rule waits for a worth-side resolution (#915).
+
+**What moves.** The labels that pass, where the file's bits match the 9B label's within 0.05 (a
+label's bits shift with the model's size: Q6_K at every measured size, 6.649 to 6.686; UD-Q5_K_XL
+only near 9B to 27B, 6.016 to 5.997 against the 0.8B's 6.333; Q5_K_S near 5B to 25B; elsewhere the
+label stays an estimate): Q6_K, UD-Q5_K_XL and Q5_K_S (the largest gap, the 2B's
+Q5_K_S, 0.00443; the 2B's points are one card's, so their margin is inside that card's spread).
+Q5_K_M just fails (the 2B's lies 0.00503 below the 9B's), and every 4-bit and lower label fails (the
+2B's UD-Q4_K_XL 0.006 below, the 0.8B's Q4_K_M 0.007 above). A model outside the sizes that measured
+a label transfers nothing. No plan golden moves: no fixture model is an unmeasured size of the
+family.
+
+## 87. The drafter is priced on the board by its own round cost; the storages stay the reference card's (#618 step 6, 15.11, rule; no new measurement)
+
+**The question.** A generation's reference card decides the storages (KV codec, activations, state
+dtype, chunk), so that a generation's boards write the same bytes (B1, deterministic-decisions.md).
+The drafter writes no other bytes for a given chip type and request schedule and carries no accuracy
+term: it is B2, which may read the board's canonical facts. Step 6 asked that it be priced on the
+board.
+
+**What the code already does.** The drafter's gain that `choose()` weighs is the speculation profile
+resolved for the plan's own board (`inputs.gpu`, plan_choice.cpp `drafter_axis`), never re-resolved
+for the reference card. On the registry's path (`profile_for_target`, spec/pairs.cpp) that is:
+- a board whose rates match none of the target's lab boards, in a generation whose rates the round
+  cost knows (`kSmallTEta`: Ada, GB20x): the pair's tokens a round over R(k) priced on the board's
+  own DRAM rate, SMs, clock and launch facts (`priced_by_facts_for`, DECISIONS 53);
+- a lab board itself: its own record, or, where two or more lab cards of the generation measured
+  the target, their median round cost (`generation_median`), not its own alone;
+- a generation without those rates (Volta, Turing, Ampere and the others): the generation's lab
+  cards' measurement (their median, or the one card's), whatever the board's rates, else a
+  transfer said as one.
+Outside that path the gain is not the board's own either: a published manifest profile is picked
+along the board's similarity chain (a similar chip's, or the `"*"` profile under its stand-in load
+cap), and the built-in default's load table is a literal. So the board's rates reach the drafter's
+order through R(k) on Ada and GB20x boards the lab did not measure; the plain decode seconds the gain
+scales are the reference card's, the same factor for every drafter.
+
+**Rule.** No pass in `choose()`: a first version (#910's draft) re-priced the chosen storages'
+candidates on the board's rates, but a drafter only scales the decode by its gain, which reads no
+card fact there, so the pass could not move a drafter by the board's rates; where it moved one, it
+changed the equal-KLD tie of `resolve_within_resolution` instead (a separate question). The step is
+closed by the property, not by new pricing.
+
+**Property.** test_spec_round_cost, on the registry's path: every registry target's profile for
+every target board of the facts table, its key built from the board's row (its memory, L2, laptop
+clock and mma_slow included), is the same for boards that share the chip, SMs and rates whatever
+their memory or name; and every (target, board) whose rates match none of the target's lab boards,
+in a generation with the round cost's rates, is priced by its own facts (`load_basis` "facts").
+The published profiles' memory ranges (`"mem"`) are outside it: they select by memory.
+
+**What moves.** Nothing: no code path changes, no plan golden moves.
+
+## 88. The GB20x MoE chunk is decided by the carried curve, verified on two of its cards (#618 step 2, 15.11, rule from an A/B)
+
+**Before.** #659 typed the chunk's basis: Ada decides by its own measured shares (`Own`); another
+generation whose own MoE prefill rate rests on two lab cards carries the shares' slope to estimate
+its best chunk (`CarriedCurve`, `chunk_estimate` in the plan) and keeps the default 1024 (#300:
+another generation's rows estimate, they do not decide). The estimate was a prediction for an A/B.
+
+**Measurement (verifies, fits nothing).** RTX 5090 and RTX 5070 Ti at master 49cacc619, prefill
+tok/s, median of 3 (perf_matrix), chunks 1024 / 2048 / 4096. The plan's estimate: 4096 for all
+three models (the 5070 Ti's Q3_K_S: 2048).
+
+| card | model | prompt | 1024 | 2048 | 4096 |
+|---|---|---|---|---|---|
+| RTX 5090 | Qwen3.6-35B-A3B UD-IQ3_XXS | ~1.8K | 14289 | 16816 | 16789 |
+| RTX 5090 | Qwen3.6-35B-A3B UD-IQ3_XXS | ~21K | 15272 | 17626 | 19061 |
+| RTX 5090 | Qwen3.6-35B-A3B UD-Q3_K_S | ~1.8K | 16217 | 19955 | 19797 |
+| RTX 5090 | Qwen3.6-35B-A3B UD-Q3_K_S | ~21K | 17082 | 20002 | 22101 |
+| RTX 5090 | gemma-4-26B-A4B UD-Q4_K_M | ~1.8K | 18452 | 20882 | 20524 |
+| RTX 5090 | gemma-4-26B-A4B UD-Q4_K_M | ~7.8K | 19266 | 21631 | 22740 |
+| RTX 5070 Ti | Qwen3.6-35B-A3B UD-IQ3_XXS | ~1.8K | 7380 | 8879 | 8890 |
+| RTX 5070 Ti | Qwen3.6-35B-A3B UD-IQ3_XXS | ~21K | 7557 | 8871 | 9692 |
+| RTX 5070 Ti | Qwen3.6-35B-A3B UD-Q3_K_S | ~1.8K | 8604 | 10141 | 10168 |
+| RTX 5070 Ti | Qwen3.6-35B-A3B UD-Q3_K_S | ~21K | 8546 | 9904 | 10859 |
+
+Where the estimate is 4096 it held at every point: 4096 is the fastest at the long prompts (+5 to
++11 % over 2048) and ties 2048 at the short ones (within 2 %, inside the runs' spread). The 5070
+Ti's Q3_K_S estimate is 2048, against a measured 4096 faster by 9.6 % at 21K: the one point where
+the board-priced estimate missed (its cause is open, #926; the deciding price, below, is the
+reference card's).
+1024, today's pick, is the slowest everywhere (12 to 23 % below the best). Decode does not move
+with the chunk (within 1 %).
+#659's own written prediction for gemma (2048 at every ask) was wrong at 7.8K; the plan's estimate
+(4096) was right. gemma does not start on the 16 GB 5070 Ti (15.78 GiB of weights), so its chunk
+has no point there.
+
+**Rule.** A generation whose carried curve a sweep on two of its own cards verified decides its
+chunk by speed (`ChunkBasis::VerifiedCurve`, `kMoeChunkVerified`: gb20x, 2 cards; the Qwen MoE on
+both cards, gemma on the RTX 5090 alone, since it does not start on the 5070 Ti). The decision is
+priced as Ada's is, on the generation's reference card (`decision_seconds`), with the same
+`request_seconds` the estimate prices on the board; a wider chunk must still hold the settled
+context on the board. The record is the sweep, not a constant: no rate is refitted, the curve and the
+generation's prefill rows are unchanged. A capability the sweep's cards do not have (12.1, the
+GB10: its reference row does not decide) and a lent generation keep `CarriedCurve`.
+
+**The deciding prediction against the measurement.** The picks of this rule's build (`--plan`,
+the plan's own ask and context), against the fastest measured:
+
+| card | model | picked (context) | fastest measured |
+|---|---|---|---|
+| RTX 5090 | Qwen3.6-35B-A3B UD-IQ3_XXS | 4096 (262144) | 4096 at 21K, 2048 = 4096 at 1.8K |
+| RTX 5090 | Qwen3.6-35B-A3B UD-Q3_K_S | 4096 (262144) | 4096 at 21K, 2048 = 4096 at 1.8K |
+| RTX 5090 | gemma-4-26B-A4B UD-Q4_K_M | 4096 (262144) | 4096 at 7.8K, 2048 = 4096 at 1.8K |
+| RTX 5070 Ti | Qwen3.6-35B-A3B UD-IQ3_XXS | 4096 (149248) | 4096 at 21K, 2048 = 4096 at 1.8K |
+| RTX 5070 Ti | Qwen3.6-35B-A3B UD-Q3_K_S | 2048 (81344) | 4096 at 21K (+9.6 %), 2048 = 4096 at 1.8K |
+
+Four of the five picks are the fastest at every prompt. The 5070 Ti's Q3_K_S pick is tied at the
+short prompt and 9.6 % slower than 4096 at 21K, though a plan pinned to 4096 holds a larger
+context there (88704): the price ranks 2048 inside the tie at the plan's ask, where the
+measurement says 4096 wins at long prompts. That is a miss of the model, recorded as one, not fitted
+(#926); the pick is still 16-18 % faster than today's 1024 at both prompts.
+
+**What moves.** The chunk of an MoE plan on a gb20x board (5060 Ti, 5070, 5070 Ti, 5080, 5090 and
+the laptop parts of 12.0) moves from 1024 to the curve's fastest (2048 or 4096 by the ask and the
+memory). The choice test's Blackwell case: 2048 picked for a 2048-token prompt, the estimate gone.
+No selector golden moves (the chunk is the plan's, not a route's).
+
+## 89. Volta MoE prefill: the expert stages run on the HMMA kernel, at about a fifth of the tensor peak (#616 step 8, 15.11, census; no rule change)
+
+**Question.** #616's review counted "Volta MoE prefill 3x behind llama.cpp" as open: gpt-oss-20b at
+26K tokens did 996 tok/s against llama.cpp's 2888 on the V100, two thirds of the time in the
+grouped W4A8 MXFP4 stages on dp4a (`moe_volta_hmma.cu`'s header). That figure predates the HMMA
+expert kernel. The census decides between widening `volta_hmma_admitted` and an f16-decode
+cuBLAS stage.
+
+**Census.** Quadro GV100 (80 SMs) at master 7515f7512. One timed prefill per point, nsys 2025.1.3
+with CUDA graph nodes traced, the kernels' time in the request's window (attention includes the
+d256 flash path):
+
+| model | prompt | tok/s | HMMA experts | attention | W4A8 dp4a | other |
+|---|---|---|---|---|---|---|
+| gpt-oss-20b MXFP4 | 3711 | 4169 | 77.0 % | 9.9 % | 0.7 % | 12.5 % |
+| gpt-oss-20b MXFP4 | 23701 | 2889 | 52.1 % | 39.4 % | 0.1 % | 8.5 % |
+| Qwen3.6-35B-A3B UD-Q4_K_M | 3912 | 3245 | 55.2 % | 2.7 % | 0.9 % | 41.3 % |
+| Qwen3.6-35B-A3B UD-Q4_K_M | 25596 | 2976 | 49.6 % | 14.6 % | 0.1 % | 35.7 % |
+
+On the Qwen MoE the "other" is mostly the dense projections on CUTLASS sm70 (14.4 % at 3.9K, 12.7 %
+at 25.6K) and the gated delta net's chunk recurrence (11.8 %, 10.6 %).
+
+**Reading.**
+- The 3x is gone: gpt-oss-20b at 23.7K runs at 2889 tok/s, against llama.cpp's 2888 recorded at
+  26K (not measured again).
+- Widening `volta_hmma_admitted` gains at most the dp4a share left, under 1 % for these formats
+  (it admits MXFP4, Q8, Q4_K / Q5_K / Q6_K, Q4_1, Q5_0 / Q5_1). Q4_0 experts, left out on purpose,
+  still run on dp4a; no Q4_0 MoE was measured.
+- The HMMA kernel is not at its limit. gpt-oss-20b's experts are about 4.78 GFLOP a token, so the
+  kernel does 26 TFLOP/s at 3.7K and 27 at 23.7K, against the GV100's tensor peak of about 133
+  (80 SMs x 8 tensor cores x 128 FLOP x 1.627 GHz): about a fifth.
+- An f16-decode stage on cuBLAS / CUTLASS is therefore not ruled out by the census. It is one of
+  the two options #928 predicts from counts, the other being a wider tile or a decode out of the
+  K loop.
+
+**Decision.** No rule change from the census. #616 step 8 closes on it. The expert kernel below
+its limit is #928 (#619's process: counts, a prediction, then an A/B on the GV100).
+
+## 90. IQ4_XS and Q3_K take the column tile of least work where their own grids ran (#619 step 13, 15-16.11, measured)
+
+**Revised 16.11 (supersedes the Decision paragraph below for Q2_K, Q3_K and Turing).** The rule is: IQ4_XS on Turing, GA10x, Ada and GB20x; Q3_K on GA10x, Ada and GB20x; **Q2_K on no generation**.
+- **Q2_K fails the frozen 0.5 % bound on each generation's large chip,** at the row's f: RTX 3090 1.77 %, RTX 4090 3.83 % (R2 met), RTX 5090 1.81 %. The small chips pass: 3060 0.16 %, 4060 Ti 0.03 %, 4070 Ti 0.26 %.
+  - The bound is not narrowed, so Q2_K keeps the fewest tiles until #941's term for its 70 144-byte tile is predicted and verified.
+  - The table would gain 13 pp on the 3090, measured −11.7 % in its A/B. That is the price of the missing term, recorded in #941.
+- **Q3_K: grids on six cards** at the row's f, against the fewest tiles:
+
+  | card | at the row's f | fewest tiles |
+  |---|---|---|
+  | RTX 3060 | 0.08 % | 8.06 % |
+  | RTX 3090 | 0.05 % | 8.37 % |
+  | RTX 4060 Ti | 0.05 % | 6.60 % |
+  | RTX 4070 Ti | 0.00 % | 6.29 % |
+  | RTX 4090 | 0.29 % | 6.44 % |
+  | RTX 5090 | 0.22 % | 7.82 % |
+
+  - A/Bs over 144..256 tokens: 3060 −8.6 %, 4070 Ti −7.1 %, 5090 −9.4 % (predicted −8, −6 and −6). The 448-token tie is +1.6 % on the 3060; no other size is slower.
+  - The 3090's 0.05 % shows the large-chip cost is Q2_K's tile, not the chip.
+- **IQ4_XS on Turing.**
+  - Grid on the 2080 Ti: 0.64 % at f 0.20 (my 0.5 % bound refuted), least 0.31 % in (0.20, 0.33], fewest tiles 7.82 %.
+  - Turing ranks by its launch law, not by f, so the A/B decides: the production ranking against the fewest tiles is −9.0 % (predicted −6 %), and no size is more than 0.3 % slower.
+  - Further IQ4_XS grids: the 4090 0.19 % against 5.02 %.
+- **Not joined yet, a follow-up:**
+  - IQ3_XXS: grids pass on four cards, but the 5090's A/B is +5.5 % at 448 tokens, which is not named yet.
+  - Q5_K: grids running.
+
+**Decision.** `mmq_columns::work_tiles_format` takes the generation as well as the format. Q4_K and Q6_K are unchanged: every generation with `mmq_work_tiles` (DECISIONS 74, 78). IQ4_XS joins on GA10x, Ada and GB20x, and Q2_K on GA10x and Ada. Q2_K stays off GB20x: its grid there (RTX 5090) leaves 1.81 % regret at f 0.10 against the 0.5 % bound written before the run, with the 128-column tile 8-11 % slower than two 64-column ones (one 70 144-byte CTA a SM against two), a term the tile law lacks (#941). On those generations ggml's matrix kernel ranks the widths 16, 32, 64, 80, 96, 128 by the least work at the row's own `mmq_tile_fixed` (GA10x and Ada 0.20, GB20x 0.10), as it does for Q4_K. Every other format, and these two on every other generation, keep the fewest tiles. Turing's launch law was fitted on the Q4_K / Q6_K grid, so IQ4_XS and Q2_K wait for a Turing grid of their own. The 80- and 96-column kernels are already built for those architectures for every format (`work_tiles_arch`), so no kernel is added.
+
+**Grids** (the DECISIONS 74 kit, `tools/bench/run_524_turing_grid.sh` with `ARCH_CC` and `PRED`; Qwen3-8B IQ4_XS and Q2_K, 8 widths × 21 slice sizes × 2 visits, 4 requests a point, k = 7 probed exact, request noise 0.3 %):
+
+| card | format | predicted f (range) | regret at the row's f | least bucket | fewest tiles |
+|---|---|---|---|---|---|
+| RTX 3060 | IQ4_XS | 0.30 (0.22..0.40) | 0.12 % (0.20) | 0.00 % (0.200..0.333) | 6.75 % |
+| RTX 4070 Ti | IQ4_XS | 0.30 (0.22..0.40) | 0.00 % (0.20) | 0.00 % (0.111..0.200) | 4.88 % |
+| RTX 4060 Ti | Q2_K | 0.15 (0.10..0.25) | 0.03 % (0.20) | 0.02 % (0.200..0.333) | 9.02 % |
+| RTX 5090 | IQ4_XS | 0.15 (0.10..0.25) | 0.21 % (0.10) | 0.21 % (0.059..0.111) | 6.53 % |
+| RTX 4060 Ti | IQ4_XS | 0.20 (0.11..0.33) | 0.07 % (0.20) | in #619 | 5.35 % |
+| RTX 3060 | Q2_K | 0.20 (0.11..0.33) | 0.16 % (0.20) | in #619 | 10.17 % |
+| RTX 4070 Ti | Q2_K | 0.20 (0.11..0.33) | 0.26 % (0.20) | in #619 | 9.53 % |
+| RTX 5090 | Q2_K | 0.10 (0.06..0.20) | 1.81 % (0.10), refuted | 1.81 % (0.059..0.111) | 16.39 % |
+
+The last four rows were predicted after the first IQ4_XS grids refuted 0.30: the row's own f, range its bucket and the next. Their least buckets and the law's fit are in #619. The work law does not fit any of the first four (lack-of-fit 3.8 to 16, above the a priori 3), so R5 gives no verdict and the fit's f is not a measurement. The decision rests on the regret buckets, as DECISIONS 74's did.
+
+The prediction was wrong for IQ4_XS on GA10x and Ada. It put the fixed share at 0.30, on the reasoning that IQ4_XS's table decode costs 1.5-2× Q4_K's per weight and the decode is the fixed part. The grids' least regret lies in or next to Q4_K's bucket. So the decode is not what sets the share (or the J part grows with it). The row's f is kept, not a new one fitted: 0.20 is within 0.12 % of the best width on both cards.
+
+**Measured** (A B A B, three rounds of four requests, the same hooked binary; old = the fewest tiles, new = the work table at the row's f):
+- **RTX 4070 Ti, IQ4_XS at f 0.20.**
+  - By prompt size: 136..160 tokens −14.3..−14.4 %, 176..192 −9.5..−9.6 %, 264..288 −10.9..−11.0 %, 96 −6.3 %, 448 −1.3 %; 128, 200..256, 320..512 within 0.6 %.
+  - The 144..256 mix is 53.76 → 50.58 ms (**−5.9 %**). The prediction from the grid was the regret difference, about −4.9 % over the grid's sizes, and the Q4_K bracket was −8.2..−5.4 %.
+- **RTX 5090, IQ4_XS at f 0.10.**
+  - By prompt size: 136..160 −16.2..−16.5 %, 176..192 −10.6..−10.7 %, 200..240 −2.1..−2.5 %, 264..288 −12.6..−13.0 %, 320 −8.0 %, 96 −6.7 %; 128, 256, 384, 512 unchanged.
+  - The mix is 22.96 → 21.23 ms (**−7.5 %**); about −6.3 % was predicted from the grid.
+
+- **RTX 4060 Ti, Q2_K at f 0.20.**
+  - By prompt size: 136..160 −23.3..−23.6 %, 176..192 −14.6 %, 264..288 −15.0..−15.2 %, 96 −12.2 %, 320 −7.7 %; 128, 200..256, 384..512 within 0.1 %.
+  - The mix is 111.89 → 101.45 ms (**−9.3 %**); about −9 % was predicted from the grid.
+
+- **RTX 3060, IQ4_XS at f 0.20.**
+  - By prompt size: 136..160 −18.5..−18.7 %, 176..192 −11.8..−12.2 %, 264..288 −12.9..−13.1 %, 96 −9.1 %, 320 −4.0 %; 128, 200..256, 384, 512 within 0.4 %.
+  - 448 tokens is **+2.4 %** (228.1 → 233.6 ms). At f 0.20 five 96-column tiles tie four 128-column ones (4.0 against 4.0 tile steps), the rule takes the narrower, and the card runs it slower. Q4_K has the same tie, so this is the rule's tie, not the format's; it stays until a tie term is counted.
+  - The mix is 129.34 → 119.64 ms (**−7.5 %**).
+
+- **RTX 3060, Q2_K at f 0.20.** 136..160 −24.6..−24.8 %, 176..192 −14.2..−14.5 %, 264..288 −15.1..−15.2 %, 96 −16.8 %, 320 −8.8 %; 448 **+2.6 %** (the same tie as above); the mix 169.08 → 152.60 ms (**−9.7 %**).
+
+No other size is slower on any card.
+
+**Route choice.** The selector's MMQ term now prices the tile the kernel runs for these formats: the work table's width, not 8-column steps. `route-tune` at the branch head (RTX 4070 Ti, 4060 Ti, 5090) has every cell the change moves onto ggml_mmq at 192 tokens as the fastest timed route. One direction got worse, on the RTX 4060 Ti, Q2_K at 48 tokens:
+- 4096x4096: W4A8 64x64 at 76.8 µs against ggml_mmq's 69.6 (+10 %);
+- 1024x4096: rmma at 36.4 against 29.3 (+24 %).
+
+At 48 columns the kernel runs a 64-column tile either way. The old term priced 48 columns and so cancelled #785's error (MMQ priced high and W4A8 low at T 17-64 on Ada); the new term prices the 64 the kernel runs and exposes it. Over the cells timed on both builds on that card the change is −5.3 %. The two regressed cells are #785's, recorded there, and not fitted here.
+
+**Numerics.** As DECISIONS 74: a different width changes the stream-k split and so the sums' order.
+
+## 91. The gated gate/up pairs keep T 2-4 on every measured card; DECISIONS 76's candidate rule is not taken (#613 PR-11, 16.11, measured on seven cards)
+
+**Decision.** No route change and no rule. The vector rule's band (`kVecRuleMaxTokens` 4) and the
+gated gate/up kernel at T 2-4 stay. DECISIONS 76 lacked the gated pair's own timings. The kit
+`tools/bench/run_521_gateup.sh` has now run on seven cards: q4k 12288x4096 and 15360x3840 at T 2,
+3 and 4, two passes each. It compares the gated kernel with the register MMA (rmma) and with the
+twin estimate (two single launches; no production sequence runs it, DECISIONS 76).
+
+The summaries, the kit's own table one file a card, are committed in
+`tools/bench/data/gateup_521/`. They come from master 9761e792b (3060, 3090, 5070 Ti, GV100),
+754e4b8c9 (4070 Ti) and d2e8b1eab (2080 Ti); the 4060 Ti's build is not recorded.
+
+**Count.** 42 cells. The kit's d is gated minus min(twin, rmma), in µs. Its spread is max(|d1 -
+d2|, 1.024 µs); a verdict needs both passes beyond it.
+
+| card | gated wins | within spread | another wins |
+|---|---|---|---|
+| Quadro GV100 | 6 | 0 | 0 |
+| RTX 2080 Ti | 5 | 1 | 0 |
+| RTX 3060 | 3 | 1 | 2: rmma, 15360x3840 T 3-4, by 5.8-9.9 µs (2.7-4.7 %) |
+| RTX 3090 | 3 | 3 | 0 |
+| RTX 4060 Ti | 2 | 3 | 1: rmma, 15360x3840 T 3, by 1.7-1.8 µs (0.7 %) |
+| RTX 4070 Ti | 3 | 1 | 2: the twin estimate, 15360x3840 T 2-3, by 2.7-4.2 µs (1.8-2.8 %) |
+| RTX 5070 Ti | 4 | 2 | 0 |
+
+- Gated wins or ties in 37 of 42 cells.
+- The five losses are on three cards and one shape, and point two ways: rmma on GA106 and AD106,
+  the twin estimate (not a production route) on AD104.
+- No board fact found separates them. The 3060 and the 3090 are one generation with the same
+  per-T issue term (DECISIONS 76's ρ, 5.8 % against 5.4 %), and only the 3060 loses.
+- A rule that moved these cells would be a per-card literal, which the pillar forbids. The losses
+  stay recorded here until a counted term names them. Candidates, for the 3060 and 4060 Ti only:
+  the wave quantisation of the 15360-row grid over 28 and 34 SMs. The 4070 Ti's 60 SMs are not
+  covered by that candidate.
+
+**Seen in passing.** The kit's "fastest other" column (the route-tune winner) is the R8 pair
+`r8.w4r1` / `r8.w4r2`, faster than all three kernels in some cells: 5 of 6 on the 4060 Ti, 3 of 6 on the 4070 Ti (by
+1.4-1.7 %), 3 on the 3090, 2 on the 3060, 2 on the GV100. That ranking belongs to #613 PR-10
+(`rules_r8` priced), not to the vector rule.
+
+## 92. Q5_K takes the column tile of least work on GA10x and Ada (#619, 16.11, measured)
+
+**Decision.** `work_tiles_format` adds Q5_K on GA10x and Ada. GB20x waits: there, its A/B leaves
+448 tokens +3.5 % on the 64-column tile, which the law predicted at −3.7 %. Q4_K's A/B on the
+same card gives −1.4 % at that cell, so the miss is Q5_K's tile, not the rule at f 0.10. The
+predictions were posted in #619 before each run (f 0.20, range 0.11..0.33, bound 0.5 %).
+
+| card | at the row's f | fewest tiles | A/B, 144..256 tokens |
+|---|---|---|---|
+| RTX 4060 Ti (Ada) | 0.05 % | 5.11 % | −6.2 % (predicted −5) |
+| RTX 4070 Ti (Ada) | 0.00 % | 4.73 % | −5.7 % (predicted −4.5) |
+| RTX 3090 (GA10x) | 0.00 % | 6.81 % | −7.4 % (predicted −6.5) |
+| RTX 3060 (GA10x) | 0.07 % | 6.87 % | grid only (second GA10x card, review) |
+| RTX 5090 (GB20x) | 0.17 % | 5.82 % | −7.0 %, 448 +3.5 %: not joined |
+
+No size is more than 0.9 % slower in the three GA10x and Ada A/Bs. IQ3_XXS waits too: its grids pass on four
+cards, but its A/Bs miss at single sizes (5090 448 +5.5 %, 4070 Ti 320 +1.4 % on a repeat). A
+term for those tiles comes first.

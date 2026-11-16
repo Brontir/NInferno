@@ -9,6 +9,7 @@
 // CPU.
 
 #include "product/choice/choice.h"
+#include "choice_fixture.h"
 #include "core/device_class.h"
 #include "core/machine_facts.h"
 #include "core/measured_boards.h"
@@ -83,10 +84,62 @@ static_assert(pick(70, 7, 5, true, 128, {}) == 128 && pick(121, 7, 5, true, 128,
 static_assert(pick(144, 8, 6, false, 128, k4096) == 128 &&
               pick(192, 12, 0, false, 128, k4096) == 128 &&
               pick(16, 8, 6, false, 128, k4096) == 16);
-static_assert(ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_Q4_K) &&
-              ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_Q6_K) &&
-              !ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_Q4_0) &&
-              !ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_IQ4_XS));
+
+// Q4_K and Q6_K on every generation; IQ4_XS on Turing, GA10x, Ada and GB20x and Q3_K on GA10x,
+// Ada and GB20x, where their grids and A/Bs ran (#619 step 13, DECISIONS 90); Q5_K on GA10x and
+// Ada (DECISIONS 92); Q2_K on none (#941).
+namespace work_formats {
+using ninferno::QType;
+using ninferno::mmq_columns::work_tiles_format;
+static_assert(work_tiles_format(QType::GGML_Q4_K, 7, 5) &&
+              work_tiles_format(QType::GGML_Q6_K, 12, 0));
+static_assert(!work_tiles_format(QType::GGML_Q4_0, 8, 9) &&
+              !work_tiles_format(QType::GGML_IQ4_NL, 8, 9));
+static_assert(work_tiles_format(QType::GGML_IQ4_XS, 8, 6) &&
+              work_tiles_format(QType::GGML_IQ4_XS, 8, 9) &&
+              work_tiles_format(QType::GGML_IQ4_XS, 12, 0) &&
+              work_tiles_format(QType::GGML_IQ4_XS, 7, 5) &&
+              !work_tiles_format(QType::GGML_IQ4_XS, 7, 0));
+static_assert(work_tiles_format(QType::GGML_Q3_K, 8, 9) &&
+              work_tiles_format(QType::GGML_Q3_K, 8, 6) &&
+              work_tiles_format(QType::GGML_Q3_K, 12, 0) &&
+              !work_tiles_format(QType::GGML_Q3_K, 7, 5));
+static_assert(work_tiles_format(QType::GGML_Q5_K, 8, 6) &&
+              work_tiles_format(QType::GGML_Q5_K, 8, 9) &&
+              !work_tiles_format(QType::GGML_Q5_K, 12, 0) &&
+              !work_tiles_format(QType::GGML_Q5_K, 7, 5));
+static_assert(!work_tiles_format(QType::GGML_Q2_K, 8, 9) &&
+              !work_tiles_format(QType::GGML_Q2_K, 8, 6) &&
+              !work_tiles_format(QType::GGML_Q2_K, 12, 0) &&
+              !work_tiles_format(QType::GGML_Q2_K, 7, 5));
+
+// The device maps only these five ggml types onto the rule (ggml_mmq_internal.cuh
+// work_tiles_format); any other format the rule names on any generation must be mapped there too,
+// so this fails first when the host rule grows.
+constexpr bool only_mapped_formats() {
+    for (int v = 0; v < 64; ++v) { // every QType value (the largest is 43)
+        const auto q = static_cast<QType>(v);
+        if (q == QType::GGML_Q4_K || q == QType::GGML_Q6_K || q == QType::GGML_IQ4_XS ||
+            q == QType::GGML_Q3_K || q == QType::GGML_Q5_K) {
+            continue;
+        }
+        for (const auto& row : ninferno::kGenerations) {
+            for (int minor = row.minor_lo; minor <= row.minor_hi; ++minor) {
+                if (work_tiles_format(q, row.major, minor)) { return false; }
+            }
+        }
+    }
+    return true;
+}
+
+static_assert(only_mapped_formats());
+// GA100 (8.0): the rule says no for IQ4_XS. A major past the table (13.0) borrows GB20x's name, so
+// the rule says yes there, and the work table stays off only because the generation is unknown.
+static_assert(!ninferno::mmq_columns::uses_work_table(8, 0,
+                                                      work_tiles_format(QType::GGML_IQ4_XS, 8, 0)));
+static_assert(
+    !ninferno::mmq_columns::uses_work_table(13, 0, work_tiles_format(QType::GGML_IQ4_XS, 13, 0)));
+} // namespace work_formats
 
 // A tile's shared memory (ggml's mmq_get_nbytes_shared): Q2_K's 128-column tile is 70 144 bytes,
 // over Turing's 64 KiB (its widest there is 64) and under Volta's 96 KiB and Ampere's; Q4_K's
@@ -154,97 +207,11 @@ KvCacheStorage kv_of(const std::string& name) {
     return *ninferno::parse_kv_cache_storage(name);
 }
 
-ch::ModelFacts model_of(const json& m) {
-    ch::ModelFacts out;
-    out.family               = m.at("family").get<std::string>();
-    out.params               = m.at("params").get<double>();
-    out.active_params        = m.at("active_params").get<double>();
-    out.experts              = m.at("experts").get<int>();
-    out.experts_per_token    = m.at("experts_per_token").get<int>();
-    out.routed_expert_params = m.at("routed_expert_params").get<double>();
-    out.input_table_params   = m.at("input_table_params").get<double>();
-    const json kv            = m.at("kv_bytes_per_token");
-    out.kv_bytes_per_token   = [kv](KvCacheStorage s) {
-        return kv.at(std::string(ninferno::kv_cache_storage_name(s))).get<std::uint64_t>();
-    };
-    const json st   = m.at("state_bytes");
-    out.state_bytes = [st](RecurrentStateStorage s) {
-        return st.value(std::string(ninferno::recurrent_state_storage_name(s)),
-                        st.at("f16").get<std::uint64_t>());
-    };
-    out.recurrent               = m.value("recurrent", true);
-    out.full_attention_width    = m.value("full_attention_width", 0.0);
-    out.sliding_attention_width = m.value("sliding_attention_width", 0.0);
-    out.layers                  = m.value("layers", 0U);
-    out.hidden                  = m.value("hidden", 0.0);
-    out.full_layers             = m.value("full_layers", 0U);
-    out.full_head_dim           = m.value("full_head_dim", 0.0);
-    out.full_kv_heads           = m.value("full_kv_heads", 0.0);
-    out.sliding_layers          = m.value("sliding_layers", 0U);
-    out.sliding_head_dim        = m.value("sliding_head_dim", 0.0);
-    out.sliding_kv_heads        = m.value("sliding_kv_heads", 0.0);
-    out.recurrent_state_elements = m.value("recurrent_state_elements", 0.0);
-    if (m.contains("linears")) {
-        for (const json& l : m.at("linears")) {
-            out.linears.push_back({l.at(0).get<double>(), l.at(1).get<double>(), l.at(2).get<double>(), false,
-                                   l.size() > 3 && l.at(3).get<int>() != 0});
-        }
-    }
-    if (m.contains("ring_bytes_per_token")) {
-        const json ring         = m.at("ring_bytes_per_token");
-        out.ring_bytes_per_token = [ring](KvCacheStorage s) {
-            return ring.at(std::string(ninferno::kv_cache_storage_name(s))).get<std::uint64_t>();
-        };
-        out.window = m.at("window").get<std::uint32_t>();
-    }
-    if (!out.recurrent) { out.state_bytes = nullptr; }
-    return out;
-}
-
-// The model at one quantization: its input table and speculation-only weights as stored.
-ch::ModelFacts model_at(const json& m, const std::string& quant) {
-    ch::ModelFacts out      = model_of(m);
-    const json& q           = m.at("quants").at(quant);
-    out.input_table_bytes   = q.value("input_table_bytes", 0.0);
-    // Each linear a format by its role's shares, as plan_facts.cpp splits a GGUF's.
-    if (q.contains("role_formats") && m.contains("linear_roles")) {
-        std::vector<ch::LinearShape> split;
-        for (std::size_t i = 0; i < out.linears.size(); ++i) {
-            const json& shares = q.at("role_formats").at(m.at("linear_roles").at(i).get<std::string>());
-            for (const auto& [format, share] : shares.items()) {
-                ch::LinearShape part = out.linears[i];
-                part.per_token *= share.get<double>();
-                part.format = format;
-                split.push_back(part);
-            }
-        }
-        out.linears = std::move(split);
-    }
-    return out;
-}
-
-ch::CardFacts card_of(const json& c) {
-    ch::CardFacts out;
-    out.major            = c.at("major").get<int>();
-    out.minor            = c.at("minor").get<int>();
-    out.sms              = c.at("sms").get<int>();
-    out.clock_hz         = c.at("clock_hz").get<double>();
-    out.dram_bytes_per_s = c.at("dram_bytes_per_s").get<double>();
-    out.fp4              = c.at("fp4").get<bool>();
-    return out;
-}
-
-ch::QuantOption quant_of(const std::string& label, const json& q) {
-    ch::QuantOption out;
-    out.label           = label;
-    out.bits_per_weight = q.at("bits_per_weight").get<double>();
-    // What a decode step reads (product::quant_option_of): the file less its MTP layers and drafter.
-    out.weight_bytes    = q.at("weight_bytes").get<double>() - q.value("speculation_bytes", 0.0);
-    out.weights         = ch::label_class(label);
-    // An MoE's routed banks as its GGUF's tensor table stores them (ffn_*_exps).
-    out.routed_expert_bytes = q.value("routed_expert_bytes", 0.0);
-    return out;
-}
+// The fixtures' records (tests/choice_fixture.h).
+using choice_fixture::card_of;
+using choice_fixture::model_at;
+using choice_fixture::model_of;
+using choice_fixture::quant_of;
 
 // The 2026-10-23 points: an MoE's decode from facts at one stream and on the 2026-10-30 step rows
 // (DECISIONS 65); a dense model's one-stream decode from facts (its several-stream rows are wave
@@ -1231,6 +1198,177 @@ void weighs_the_quantizations(const json& fixture) {
         other.family         = "gemma4_text";
         check(ch::quant_authority(other, a) == A::Estimate, "another family's curve: an estimate");
     }
+    // #618 step 9: a model's own curve (kQuantKldModels, keyed by ModelFacts::params). Qwen3.5-4B's
+    // measured Q4_K_M file is direct at its own KLD, not the 9B curve's at those bits; without the
+    // file, the label's point of its own curve stands as a proxy; between its points the curve is
+    // its own; a model of the family with no curve of its own reads the 9B's.
+    {
+        using A             = ch::QualityAuthority;
+        const double four_b = 4118937600.0;
+        const auto point_of = [&](std::string_view label) -> const ch::QuantKldPoint* {
+            for (const ch::QuantKldPoint& p : ch::kQuantKld) {
+                if (p.params == four_b && p.label == label) { return &p; }
+            }
+            return nullptr;
+        };
+        const ch::QuantKldPoint* q4   = point_of("Q4_K_M");
+        const ch::QuantKldPoint* q5   = point_of("Q5_K_S");
+        const ch::QuantKldPoint* q4xl = point_of("UD-Q4_K_XL");
+        check(q4 != nullptr && q5 != nullptr && q4xl != nullptr, "the 4B's curve holds its points");
+        if (q4 != nullptr && q5 != nullptr && q4xl != nullptr) {
+            ch::ModelFacts four = b.model;
+            four.params         = four_b;
+            const auto term_of  = [&](const ch::ModelFacts& m, const ch::QuantOption& o) {
+                for (const ch::Term& t : ch::accuracy_of(m, o, c, b.card).terms) {
+                    if (t.axis == ch::Axis::Quant) { return t; }
+                }
+                return ch::Term{};
+            };
+            ch::QuantOption o  = b.quants[0];
+            o.label            = "Q4_K_M";
+            o.files            = std::string(q4->file);
+            o.bits_per_weight  = q4->bits_per_weight;
+            const ch::Term own = term_of(four, o);
+            check(ch::quant_authority(four, o) == A::Direct && own.measured &&
+                      std::abs(own.kld - q4->kld) < 1e-12 &&
+                      own.source.find("Qwen3.5-4B-GGUF") != std::string::npos,
+                  "the 4B's own Q4_K_M file: direct, its own curve's KLD and source");
+            {
+                std::string_view why = "x";
+                check(own.curve_model == "Qwen3.5-4B" &&
+                          !ch::answer_points(ch::accuracy_of(four, o, c, b.card),
+                                             ch::answer_scale_of(four.family), &why) &&
+                          why == "model_not_calibrated",
+                      "answers: the 4B's own measured file is not on the 9B's scale");
+            }
+            o.files.clear();
+            const ch::Term proxy = term_of(four, o);
+            check(ch::quant_authority(four, o) == A::Estimate &&
+                      proxy.evidence == ch::Evidence::Proxy &&
+                      std::abs(proxy.kld - q4->kld) < 1e-12,
+                  "the 4B's Q4_K_M, files unknown: its own label's point, a proxy");
+            o.label           = "";
+            o.bits_per_weight = 0.5 * (q4xl->bits_per_weight + q5->bits_per_weight);
+            const double t    = (o.bits_per_weight - q4xl->bits_per_weight) /
+                             (q5->bits_per_weight - q4xl->bits_per_weight);
+            const double between =
+                std::exp(std::log(q4xl->kld) + t * (std::log(q5->kld) - std::log(q4xl->kld)));
+            check(std::abs(term_of(four, o).kld - between) < 1e-12,
+                  "between the 4B's UD-Q4_K_XL and Q5_K_S: its own curve, in log KLD");
+            ch::ModelFacts none = four;
+            none.params         = 5.0e9; // a model of the family no curve is measured on
+            o.label             = "Q4_K_M";
+            o.files             = std::string(measured_q4);
+            o.bits_per_weight   = b.quants[0].bits_per_weight;
+            check(std::abs(term_of(none, o).kld - 0.01925) < 1e-12,
+                  "a model with no curve of its own reads the 9B's");
+            // Another family at the 4B's weights reads the 9B's curve, not the 4B's: the 4B's
+            // Q4_K_M file there is the 9B curve's interpolation at its bits.
+            ch::ModelFacts other = four;
+            other.family         = "gemma4_text";
+            o.files              = std::string(q4->file);
+            o.bits_per_weight    = q4->bits_per_weight;
+            const ch::Term moved = term_of(other, o);
+            check(ch::quant_authority(other, o) == A::Estimate && !moved.measured &&
+                      std::abs(moved.kld - q4->kld) > 1e-4,
+                  "another family at the 4B's weights: the 9B's curve, an estimate");
+        }
+    }
+    // #618 step 9's transfer: a model of the family with no curve of its own, within the measured
+    // sizes, takes the 9B curve's label as a transfer where every measured size's point of it lies
+    // within the answer noise (0.2 points / 40 per KLD = 0.005): Q6_K, UD-Q5_K_XL and Q5_K_S; not
+    // Q5_K_M (Qwen3.5-2B's lies 0.00503 below the 9B's) nor the 4-bit and lower labels (the 2B's
+    // UD-Q4_K_XL 0.006 below, the 0.8B's Q4_K_M 0.007 above).
+    {
+        using A            = ch::QualityAuthority;
+        ch::ModelFacts mid = b.model;
+        mid.params         = 6.0e9; // between the 4B and the 9B, no curve of its own
+        ch::QuantOption o  = b.quants[0];
+        o.files.clear();
+        o.label           = "Q6_K";
+        o.bits_per_weight = 6.67;
+        check(ch::quant_authority(mid, o) == A::Transfer,
+              "a 6B's Q6_K: the family curve, a transfer");
+        o.bits_per_weight =
+            6.20; // the label at other bits: the curve between points, not the label's
+        check(ch::quant_authority(mid, o) == A::Estimate, "a 6B's Q6_K at other bits: an estimate");
+        o.bits_per_weight = 4.0; // a file labelled Q6_K at 4 bits is not the label's quantization
+        check(ch::quant_authority(mid, o) == A::Estimate, "a mislabelled file: an estimate");
+        o.bits_per_weight = 6.67;
+        o.label           = "Q5_K_S";
+        o.bits_per_weight = 5.7;
+        check(ch::quant_authority(mid, o) == A::Transfer, "a 6B's Q5_K_S: a transfer");
+        o.label           = "Q5_K_M";
+        o.bits_per_weight = 5.9;
+        check(ch::quant_authority(mid, o) == A::Estimate,
+              "a 6B's Q5_K_M: the 2B just outside, an estimate");
+        o.label           = "UD-Q4_K_XL";
+        o.bits_per_weight = 5.4;
+        check(ch::quant_authority(mid, o) == A::Estimate,
+              "a 6B's UD-Q4_K_XL: the 2B lies outside the noise, an estimate");
+        o.label = "";
+        check(ch::quant_authority(mid, o) == A::Estimate, "no label: an estimate");
+        o.label            = "Q6_K";
+        o.bits_per_weight  = 6.67;
+        ch::ModelFacts big = mid;
+        big.params         = 7.0e10; // beyond the measured sizes
+        check(ch::quant_authority(big, o) == A::Estimate, "a 70B: outside the measured sizes");
+        ch::ModelFacts four = mid;
+        four.params         = 4118937600.0; // has its own curve: its own files or an estimate
+        check(ch::quant_authority(four, o) == A::Estimate,
+              "the 4B's Q6_K of other files: an estimate");
+        ch::ModelFacts other = mid;
+        other.family         = "gemma4_text";
+        check(ch::quant_authority(other, o) == A::Estimate, "another family: an estimate");
+    }
+    // Every point decides on two cards, or on one where its model records the reference's
+    // checksum; every model's curve starts at its Q8_0 (0) and its KLD rises as the bits fall.
+    for (const ch::QuantKldModel& m : ch::kQuantKldModels) {
+        std::vector<const ch::QuantKldPoint*> curve;
+        for (const ch::QuantKldPoint& p : ch::kQuantKld) {
+            if (p.params == m.params) { curve.push_back(&p); }
+        }
+        bool reference = false;
+        bool rising    = true;
+        bool counted   = true;
+        for (const ch::QuantKldPoint* p : curve) {
+            reference = reference || (p->label == "Q8_0" && p->kld == 0);
+            counted   = counted && (p->cards >= ch::kQuantKldCards || m.reference_nll > 0);
+            for (const ch::QuantKldPoint* r : curve) {
+                if (r->bits_per_weight < p->bits_per_weight - 0.3 && r->kld < p->kld) {
+                    rising = false;
+                }
+            }
+        }
+        check(curve.size() >= 10 && reference && counted && rising && !m.source.empty(),
+              std::string(m.name) +
+                  ": its curve starts at its Q8_0, counts and rises as the bits fall");
+    }
+    // #915: ninferno-perplexity --reference-model finds each row by its name, and the tolerance
+    // (an NLL gap, nats per token) is positive and under a tenth of the smallest quantized point's
+    // KLD (nats per token too): a reference within it is not another quantization's forward.
+    for (const ch::QuantKldModel& m : ch::kQuantKldModels) {
+        check(ch::quant_kld_model_named(m.name) == &m, std::string(m.name) + ": found by its name");
+    }
+    check(ch::quant_kld_model_named("Qwen3.5-7B") == nullptr &&
+              ch::quant_kld_model_named("") == nullptr,
+          "an unmeasured model's name: no row");
+    {
+        double smallest = 1.0;
+        for (const ch::QuantKldPoint& p : ch::kQuantKld) {
+            if (p.kld > 0) { smallest = std::min(smallest, p.kld); }
+        }
+        check(ch::kQuantKldReferenceNllTolerance > 0 &&
+                  ch::kQuantKldReferenceNllTolerance < 0.1 * smallest,
+              "the reference NLL tolerance: under a tenth of the smallest quantized point");
+    }
+    for (const ch::QuantKldPoint& p : ch::kQuantKld) {
+        bool known = false;
+        for (const ch::QuantKldModel& m : ch::kQuantKldModels) {
+            known = known || m.params == p.params;
+        }
+        check(known, std::string(p.label) + ": its model is in kQuantKldModels");
+    }
     q.bits_per_weight = 5.2; // the same files counted at other bits: the curve at those bits, as before
     check(!quant_term(q).measured && quant_term(q).evidence == ch::Evidence::Interpolated &&
               quant_term(q).kld < 0.01925 && quant_term(q).kld > 0.01828,
@@ -1309,8 +1447,9 @@ void weighs_the_quantizations(const json& fixture) {
 
 // The chunk of an MoE: on Ada a 2048-token prompt fills a chunk of 2048 (4096 adds nothing for it,
 // and the tie goes to the narrower: more context), by speed alone (a chunk has no accuracy term, so
-// the accuracy gate does not hold it); on Blackwell (no reference card) the default, with the chunk
-// the carried curve estimates; on a generation without such rows the default.
+// the accuracy gate does not hold it); on Blackwell by the carried curve a sweep verified
+// (kMoeChunkVerified), on its 12.1 capability the default with the curve's estimate; on a
+// generation without such rows the default.
 void chooses_the_chunk(const json& fixture) {
     const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
     Bench b{model_of(m35), card_of(fixture.at("cards").at("RTX 4090")), {quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"))}};
@@ -1349,11 +1488,23 @@ void chooses_the_chunk(const json& fixture) {
     check(pinned.chosen && chosen(pinned).candidate.chunk == 4096 && !pinned.chunk_by_speed, "a pinned chunk stays");
     b.card = card_of(fixture.at("cards").at("RTX 5070 Ti"));
     const ch::Choice bw = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
-    // Blackwell has no measured chunk sweep: its own MoE prefill rate (two lab cards) with the
-    // curve's slope carried estimates the chunk, and the pick stays the default.
-    check(bw.chosen && !bw.chunk_by_speed && bw.chunk_basis == ch::ChunkBasis::CarriedCurve &&
-              chosen(bw).candidate.chunk == 1024 && bw.chunk_estimate == 2048,
-          "Blackwell: the default chunk, 2048 estimated for a 2048-token prompt");
+    // Blackwell: its own MoE prefill rate (two lab cards) with the curve's slope carried, which a
+    // sweep on two of its cards verified (kMoeChunkVerified, #618 step 2): it decides, by speed.
+    check(bw.chosen && bw.chunk_by_speed && bw.chunk_basis == ch::ChunkBasis::VerifiedCurve &&
+              chosen(bw).candidate.chunk == 2048 && bw.chunk_estimate == 0,
+          "Blackwell: the verified curve picks 2048 for a 2048-token prompt");
+    // A capability of the generation no lab card has (12.1, the GB10) carries the curve only to
+    // estimate: its reference row does not decide.
+    {
+        auto gb10       = b;
+        gb10.card.minor = 1;
+        const ch::Choice e =
+            ch::choose(gb10.model, gb10.card, gb10.quants[0],
+                       ch::allowed_axes(gb10.model, KvCacheStorage::Int8Group64), {}, task, own);
+        check(e.chosen && !e.chunk_by_speed && e.chunk_basis == ch::ChunkBasis::CarriedCurve &&
+                  chosen(e).candidate.chunk == 1024 && e.chunk_estimate == 2048,
+              "a 12.1 board: the default chunk, 2048 estimated");
+    }
     check(ada.chunk_basis == ch::ChunkBasis::Own && ada.chunk_estimate == 0,
           "Ada: the chunk rests on its own rows");
     // A generation without an MoE prefill row of two cards keeps the default chunk.
@@ -1829,6 +1980,111 @@ void prices_dense_prefill_tiles() {
               "the W4A8 tiles where MMQ does not pay, from 128 tokens");
         check(std::abs(call(24576, 4096, true) / (2 * call(12288, 4096, false)) - 1) < 1e-3,
               "a gated pair: two grids of half its rows");
+    }
+}
+
+// The prefill prices the route the selector runs (#613 PR-9, ModelFacts::prefill_routes), answered
+// here by a stand-in for the plan's query (product/plan with_prefill_routes; the selector's own
+// answers on the lab's boards: ninferno_choice_prefill_routes_test). Where the selector answers the
+// kernel the tile laws assume, the estimate is as before, to the bit. A Q8_0 linear of a K-quant
+// file the selector runs on the W4A8 tiles takes the int8 tile (kTileCost), not MMQ's at the
+// file's K step. A linear it runs at 16 bits takes the BF16 share of its flops; where every linear
+// does (#822: Hopper and GB100 under int8 activations once they carry no fitted route scales, #821)
+// the estimate is the BF16 share's, never the int8 tiles' or the int8 share's, and Transferred.
+// Exact activations and Volta ask nothing.
+void prefill_prices_the_selectors_route(const json& fixture) {
+    using K           = ch::PrefillKernel;
+    const auto answer = [](K kernel) {
+        return [kernel](const ch::LinearShape&, std::uint32_t, ActivationMode) { return kernel; };
+    };
+    const json& qwen            = fixture.at("models").at("Qwen3.5-9B-MTP");
+    const ch::CardFacts rtx4090 = board_card(0x2684);
+    ch::Candidate fast;
+    fast.kv = KvCacheStorage::Int8Group64;
+    // Q8_0: the int8 tiles the selector runs it on (W4A8), as before.
+    {
+        const ch::ModelFacts m  = model_at(qwen, "Q8_0");
+        const ch::QuantOption q = quant_of("Q8_0", qwen.at("quants").at("Q8_0"));
+        ch::ModelFacts asked    = m;
+        asked.prefill_routes    = answer(K::W4a8);
+        bool was = false, is = false;
+        check(ch::prefill_linears_seconds(asked, rtx4090, q, 1024, &is) ==
+                      ch::prefill_linears_seconds(m, rtx4090, q, 1024, &was) &&
+                  is == was &&
+                  ch::speed_of(asked, rtx4090, q, fast, 1, 7000, 7000).prefill ==
+                      ch::speed_of(m, rtx4090, q, fast, 1, 7000, 7000).prefill,
+              "the selector's answer is the tiles' kernel: the estimate as before");
+        // Every linear at 16 bits on the RTX 4090: the BF16 share, as an exact route's.
+        ch::ModelFacts a16      = m;
+        a16.prefill_routes      = answer(K::A16);
+        ch::QuantOption no_int8 = q;
+        no_int8.int8_route      = false;
+        const ch::Speed share   = ch::speed_of(a16, rtx4090, q, fast, 1, 0, 0);
+        const ch::Speed bf16    = ch::speed_of(m, rtx4090, no_int8, fast, 1, 0, 0);
+        check(ch::prefill_linears_seconds(a16, rtx4090, q, 1024) == 0 &&
+                  std::abs(share.prefill / bf16.prefill - 1) < 1e-12 &&
+                  share.basis == ch::SpeedBasis::Transferred,
+              "every linear at 16 bits: the BF16 share, Transferred");
+        // #822: an H100 whose selector runs A16 under int8 activations prices the BF16 share, not
+        // the int8 share it priced before.
+        const ch::CardFacts h100 = board_card(0x2330);
+        ch::Candidate int8       = fast;
+        int8.activations         = ActivationMode::Int8;
+        const double hopper_a16  = ch::speed_of(a16, h100, q, int8, 1, 0, 0).prefill;
+        const double hopper_bf16 = ch::speed_of(m, h100, no_int8, int8, 1, 0, 0).prefill;
+        const double hopper_was  = ch::speed_of(m, h100, q, int8, 1, 0, 0).prefill;
+        std::cout << "H100 Q8_0 prefill, int8 activations: " << hopper_was << " tok/s on the int8 "
+                  << "share, " << hopper_a16 << " on the selector's 16-bit route\n";
+        check(std::abs(hopper_a16 / hopper_bf16 - 1) < 1e-12 && hopper_a16 != hopper_was,
+              "#822: the H100's 16-bit route at the BF16 share");
+        // Not asked under exact activations, nor on Volta.
+        ch::Candidate exact       = fast;
+        exact.activations         = ActivationMode::Exact;
+        const ch::CardFacts gv100 = board_card(0x1DBA);
+        check(ch::speed_of(a16, rtx4090, q, exact, 1, 7000, 7000).prefill ==
+                      ch::speed_of(m, rtx4090, q, exact, 1, 7000, 7000).prefill &&
+                  ch::speed_of(a16, gv100, q, fast, 1, 7000, 7000).prefill ==
+                      ch::speed_of(m, gv100, q, fast, 1, 7000, 7000).prefill,
+              "exact activations and Volta ask nothing");
+    }
+    // Qwen3.5 9B Q6_K, its Gated DeltaNet out-projection Q8_0 (MixerOut), on the RTX 4090 (MMQ):
+    // the selector runs that linear on the W4A8 int8 tile, the rest on MMQ.
+    {
+        const json& nine        = fixture.at("models").at("Qwen3.5-9B");
+        const ch::ModelFacts m  = model_at(nine, "Q6_K");
+        const ch::QuantOption q = quant_of("Q6_K", nine.at("quants").at("Q6_K"));
+        ch::ModelFacts asked    = m;
+        asked.prefill_routes    = [](const ch::LinearShape& l, std::uint32_t, ActivationMode) {
+            return l.format == "q8_g32_fp16" ? K::W4a8 : K::Mmq;
+        };
+        ch::ModelFacts rest = m, q8 = m;
+        rest.linears.clear(), q8.linears.clear();
+        for (const ch::LinearShape& l : m.linears) {
+            (l.format == "q8_g32_fp16" ? q8 : rest).linears.push_back(l);
+        }
+        ch::QuantOption q8_file = q;
+        q8_file.label           = "Q8_0";
+        q8_file.weights         = ch::WeightClass::Q8;
+        bool was = false, is = false;
+        const double before = ch::prefill_linears_seconds(m, rtx4090, q, 1024, &was);
+        const double after  = ch::prefill_linears_seconds(asked, rtx4090, q, 1024, &is);
+        const double parts  = ch::prefill_linears_seconds(rest, rtx4090, q, 1024) +
+                             ch::prefill_linears_seconds(q8, rtx4090, q8_file, 1024);
+        std::cout << "Qwen3.5 9B Q6_K linears, RTX 4090, 1024 tokens: " << before * 1e3
+                  << " ms with its Q8_0 linear at MMQ's Q6_K step, " << after * 1e3
+                  << " ms on the int8 tile\n";
+        // Both laws rest on two or more Ada cards (kMmqTileCost, kTileCost): the label as before.
+        check(!q8.linears.empty() && std::abs(after / parts - 1) < 1e-12 && after != before &&
+                  is == was,
+              "a Q8_0 linear the selector runs on the W4A8 tiles: its int8 tile");
+        // At 16 bits instead: the BF16 share beside MMQ's tiles.
+        ch::ModelFacts bf16_linear = m;
+        bf16_linear.prefill_routes = [](const ch::LinearShape& l, std::uint32_t, ActivationMode) {
+            return l.format == "q8_g32_fp16" ? K::A16 : K::Mmq;
+        };
+        check(ch::prefill_linears_seconds(bf16_linear, rtx4090, q, 1024) >
+                  ch::prefill_linears_seconds(rest, rtx4090, q, 1024),
+              "a linear at 16 bits: the BF16 share beside the tiles");
     }
 }
 
@@ -2591,6 +2847,75 @@ void board_facts_do_not_decide(const json& fixture) {
     }
 }
 
+// #930: board-specific route answers (including an unqueried MoE) enter the displayed estimates,
+// never the synthetic reference's prices, uncertainty or choice. Keep this in the CPU-only suite
+// too; test_choice_prefill_routes exercises the same boundary with the production selector.
+void board_route_answers_do_not_decide(const json& fixture) {
+    std::ifstream in(std::string(NINFERNO_SOURCE_DIR) +
+                     "/tests/fixtures/choice/prefill_measured.json");
+    const auto prefill = json::parse(in);
+    const auto& dense  = prefill.at("models").at("Qwen3.5-4B");
+    const auto& moe    = fixture.at("models").at("Qwen3.6-35B-A3B");
+    for (const bool routed : {false, true}) {
+        const auto& m                = routed ? moe : dense;
+        const std::string quant_name = routed ? "UD-IQ3_XXS" : "Q4_K_M";
+        auto base_model              = choice_fixture::model_at(m, quant_name);
+        if (routed) { base_model.layers = 40; }
+        const auto quant = quant_of(quant_name, m.at("quants").at(quant_name));
+        const auto card  = board_card(routed ? 0x2684 : 0x2B85);
+        ch::Task task;
+        task.contexts        = {32768};
+        task.prompt          = 22000;
+        task.concurrency     = routed ? 4 : 1;
+        const auto own       = [](const ch::Candidate&) { return 32768U; };
+        const auto allowed   = ch::allowed_axes(base_model, KvCacheStorage::Int8Group64);
+        const auto base      = ch::choose(base_model, card, quant, allowed, {}, task, own);
+        bool estimates_moved = false;
+        for (const auto kernel : {ch::PrefillKernel::Unknown, ch::PrefillKernel::Mmq,
+                                  ch::PrefillKernel::W4a8, ch::PrefillKernel::A16}) {
+            auto model     = base_model;
+            unsigned calls = 0;
+            if (routed) {
+                if (kernel == ch::PrefillKernel::Unknown) {
+                    model.moe_route_unqueried = true;
+                } else {
+                    const auto expert = kernel == ch::PrefillKernel::Mmq
+                                            ? ch::ExpertKernel::R8
+                                            : ch::ExpertKernel::RegisterMma;
+                    model.moe_routes  = [&, expert](std::uint32_t, ninferno::ActivationMode) {
+                        ++calls;
+                        return std::vector<ch::MoeStepRoute>{{expert, expert, 1}};
+                    };
+                }
+            } else {
+                model.prefill_routes = [&](const ch::LinearShape&, std::uint32_t,
+                                           ninferno::ActivationMode) {
+                    ++calls;
+                    return kernel;
+                };
+            }
+            const auto result = ch::choose(model, card, quant, allowed, {}, task, own);
+            check(result.chosen == base.chosen &&
+                      result.resolution_basis == base.resolution_basis &&
+                      result.scored.size() == base.scored.size(),
+                  "board route answers do not change the reference choice or band");
+            if (result.scored.size() != base.scored.size()) { continue; }
+            for (std::size_t i = 0; i < base.scored.size(); ++i) {
+                const auto& a = result.scored[i];
+                const auto& b = base.scored[i];
+                check(a.decision_seconds == b.decision_seconds &&
+                          a.decision_basis == b.decision_basis && a.worth == b.worth,
+                      "board route answers do not enter reference prices");
+                estimates_moved = estimates_moved || a.seconds != b.seconds ||
+                                  a.speed.basis != b.speed.basis || a.speed.why != b.speed.why;
+            }
+            check(calls > 0 || model.moe_route_unqueried,
+                  "the board estimates still ask the route query");
+        }
+        check(estimates_moved, "board route answers still affect displayed estimates");
+    }
+}
+
 // #300: a compute capability the generation table has no row of (a newer major) estimates on the
 // nearest row (gb20x), says so, and its reference decides nothing, whatever reference cards the
 // lent generation gains later; a known generation keeps its own evidence. Today no lent row has a
@@ -2753,7 +3078,7 @@ void choices_replay(const json& fixture) {
         (void)ch::replay_choice(old_record);
     } catch (const std::invalid_argument& e) { old_message = e.what(); }
     check(old_message.find("replay/1") != std::string::npos &&
-              old_message.find("replay/3") != std::string::npos,
+              old_message.find(std::string(ch::kChoiceReplaySchema)) != std::string::npos,
           "a schema-1 record is refused with both versions named");
     // A record of the schema before the banks' int8 route (/2) is refused too: its quantization
     // has no expert_banks_int8 or expert_banks_assumed to replay.
@@ -2885,6 +3210,188 @@ void choices_replay(const json& fixture) {
     }
 }
 
+// #931: route answers are inputs too. Preserve absent, unasked, Unknown and mixed answers;
+// replay without the original callbacks; reject missing answers, duplicate keys and bad types.
+void route_answers_replay(const json& fixture) {
+    using ReplayJson = nlohmann::ordered_json;
+    std::ifstream in(std::string(NINFERNO_SOURCE_DIR) +
+                     "/tests/fixtures/choice/prefill_measured.json");
+    const auto prefill   = json::parse(in);
+    const auto own       = [](const ch::Candidate&) { return 16384U; };
+    const auto malformed = [&](const ReplayJson& record, const std::string& what) {
+        bool refused = false;
+        try {
+            (void)ch::replay_choice(record);
+        } catch (const std::invalid_argument&) { refused = true; }
+        check(refused, "route replay refuses " + what);
+    };
+    const auto incomplete = [&](const ReplayJson& record, const std::string& kind) {
+        bool refused = false;
+        try {
+            (void)ch::replay_choice(record);
+        } catch (const ch::ReplayIncomplete& e) {
+            refused = std::string(e.what()).find(kind) != std::string::npos;
+        }
+        check(refused, "route replay names the missing " + kind);
+    };
+    for (const bool routed : {false, true}) {
+        const auto& m           = routed ? fixture.at("models").at("Qwen3.6-35B-A3B")
+                                         : prefill.at("models").at("Qwen3.5-9B");
+        const std::string label = routed ? "UD-Q3_K_S" : "Q6_K";
+        const auto quant        = quant_of(label, m.at("quants").at(label));
+        for (int mode = 0; mode < 5; ++mode) {
+            auto model   = model_at(m, label);
+            model.layers = routed ? 40 : model.layers;
+            // Same N/K/format at different frequencies/epilogues: a key must retain both.
+            if (!routed && !model.linears.empty()) {
+                auto l = model.linears.front();
+                l.per_token += 1;
+                model.linears.push_back(l);
+                l.gated = !l.gated;
+                model.linears.push_back(l);
+            }
+            bool live      = true;
+            unsigned calls = 0;
+            if (routed) {
+                model.moe_route_unqueried = mode == 1;
+                if (mode >= 2) {
+                    model.moe_routes = [&](std::uint32_t rows, ActivationMode activations) {
+                        if (!live) {
+                            throw std::runtime_error("replay called the live MoE oracle");
+                        }
+                        ++calls;
+                        if (mode == 2) { return std::vector<ch::MoeStepRoute>{}; }
+                        if (mode == 3) { return std::vector<ch::MoeStepRoute>{{}}; }
+                        return std::vector<ch::MoeStepRoute>{
+                            {ch::ExpertKernel::R8, ch::ExpertKernel::RegisterMma, double(rows)},
+                            {ch::ExpertKernel::Unknown, ch::ExpertKernel::W4a8,
+                             activations == ActivationMode::Fast ? 1.0 : 2.0}};
+                    };
+                }
+            } else if (mode != 0) {
+                model.prefill_routes = [&](const ch::LinearShape& l, std::uint32_t tokens,
+                                           ActivationMode activations) {
+                    if (!live) {
+                        throw std::runtime_error("replay called the live prefill oracle");
+                    }
+                    ++calls;
+                    if (mode == 1 || tokens % 1024 != 0) { return ch::PrefillKernel::Unknown; }
+                    if (l.gated || activations == ActivationMode::Int8) {
+                        return ch::PrefillKernel::A16;
+                    }
+                    return std::fmod(l.per_token, 2) == 0 ? ch::PrefillKernel::Mmq
+                                                          : ch::PrefillKernel::W4a8;
+                };
+            }
+            ch::Task task;
+            task.contexts    = {32768, 16384}; // exercise the second-context repricing walk
+            task.prompt      = 2065;           // includes a partial chunk
+            task.concurrency = routed ? 4 : 1;
+            ch::Pins pins;
+            if (!routed && mode == 4) { pins.activations = ActivationMode::Exact; }
+            const auto card    = board_card(0x2684);
+            const auto allowed = ch::allowed_axes(model, KvCacheStorage::Int8Group64);
+            const auto direct  = ch::choose(model, card, quant, allowed, pins, task, own);
+            calls              = 0; // the recording run's own queries
+            const auto rec     = ch::record_choice(model, card, quant, allowed, pins, task, own);
+            const unsigned recorded_calls = calls;
+            const auto back               = ReplayJson::parse(rec.inputs.dump());
+            live                          = false;
+            const auto again              = ch::replay_choice(back);
+            check(ch::choice_summary(rec.choice) == ch::choice_summary(direct) &&
+                      ch::choice_summary(again) == ch::choice_summary(direct),
+                  "every route-dependent candidate and choice replays");
+            for (std::size_t i = 0; i < direct.scored.size() && i < again.scored.size(); ++i) {
+                const auto& a = direct.scored[i].speed;
+                const auto& b = again.scored[i].speed;
+                check(a.prefill == b.prefill && a.decode_per_stream == b.decode_per_stream &&
+                          a.basis == b.basis && a.why == b.why && a.transferred == b.transferred,
+                      "displayed route estimates and their uncertainty replay too");
+            }
+            const char* field   = routed ? "moe_routes" : "prefill_routes";
+            const auto& answers = back.at("model").at(field);
+            const bool present  = routed ? mode >= 2 : mode != 0;
+            check(present ? answers.is_array() : answers.is_null(),
+                  "callback presence is recorded");
+            check(back["model"]["moe_route_unqueried"] == model.moe_route_unqueried,
+                  "unqueried MoE flag is recorded");
+            if (!routed && mode == 4) {
+                check(recorded_calls == 0 && answers.empty(),
+                      "installed but unasked callback has an empty table");
+            } else if (present) {
+                // Every recorded key was asked by the recording run; each is recorded once (a
+                // duplicate key is refused on replay, below).
+                check(recorded_calls >= answers.size() && !answers.empty(),
+                      "the recording run's queries are recorded, one answer a key");
+            }
+            auto old      = back;
+            old["schema"] = "ninferno-choice-replay/3";
+            malformed(old, "schema 3 without route provenance");
+            auto missing_field = back;
+            missing_field["model"].erase(field);
+            malformed(missing_field, "an absent route-table field");
+            if (!present || answers.empty()) { continue; }
+            auto missing = back;
+            missing["model"][field].erase(missing["model"][field].begin());
+            incomplete(missing, routed ? "MoE route" : "prefill route");
+            auto duplicate = back;
+            duplicate["model"][field].push_back(answers.front());
+            malformed(duplicate, "duplicate route queries");
+            auto bad_count                                                    = back;
+            bad_count["model"][field][0]["query"][routed ? "rows" : "tokens"] = 4294967296ULL;
+            malformed(bad_count, "an overflowing route width");
+            auto bad_activation                                       = back;
+            bad_activation["model"][field][0]["query"]["activations"] = 256;
+            malformed(bad_activation, "an out-of-range activation mode");
+            auto bad_table            = back;
+            bad_table["model"][field] = ReplayJson::object();
+            malformed(bad_table, "a non-array route table");
+            if (!routed) {
+                auto bad_kernel                         = back;
+                bad_kernel["model"][field][0]["answer"] = 256;
+                malformed(bad_kernel, "an out-of-range prefill kernel");
+                // Changing each semantic argument must miss, not collide with the recorded key.
+                for (const char* part : {"n", "k", "per_token", "expert", "gated", "format"}) {
+                    auto changed = back;
+                    auto& l      = changed["model"][field][0]["query"]["linear"];
+                    if (std::string(part) == "format") {
+                        l[part] = "different_format";
+                    } else if (std::string(part) == "expert" || std::string(part) == "gated") {
+                        l[part] = !l[part].get<bool>();
+                    } else {
+                        l[part] = l[part].get<double>() + 0.5;
+                    }
+                    incomplete(changed, "prefill route");
+                }
+            } else if (!answers[0]["answer"].empty()) {
+                auto bad_kernel                                    = back;
+                bad_kernel["model"][field][0]["answer"][0]["down"] = -1;
+                malformed(bad_kernel, "an out-of-range expert kernel");
+                auto bad_share                                     = back;
+                bad_share["model"][field][0]["answer"][0]["share"] = "1";
+                malformed(bad_share, "a non-numeric route share");
+            }
+        }
+    }
+    // A stateful oracle cannot be captured as one value per key without losing information.
+    auto model = model_at(prefill.at("models").at("Qwen3.5-9B"), "Q6_K");
+    std::map<std::tuple<std::string, double, double, double, bool, std::uint32_t, ActivationMode>,
+             unsigned>
+        seen;
+    model.prefill_routes = [&](const ch::LinearShape& l, std::uint32_t tokens,
+                               ActivationMode activations) {
+        auto& count = seen[{l.format, l.n, l.k, l.per_token, l.gated, tokens, activations}];
+        return count++ % 2 == 0 ? ch::PrefillKernel::Mmq : ch::PrefillKernel::A16;
+    };
+    bool unstable = false;
+    try {
+        (void)ch::record_choice(model, board_card(0x2684),
+                                quant_of("Q6_K", prefill["models"]["Qwen3.5-9B"]["quants"]["Q6_K"]),
+                                ch::allowed_axes(model, KvCacheStorage::Int8Group64), {}, {}, own);
+    } catch (const std::invalid_argument&) { unstable = true; }
+    check(unstable, "recording refuses a route query whose answer changes for the same arguments");
+}
+
 // A one-row step's named low-bit linear on R8 (kR8DecodeIssue): its read takes the longer of its DRAM
 // time and its warp instructions at the generation's issue rate. Against route-tune's fastest T = 1 R8
 // time of a 16384 x 5120 IQ2_XXS store (master 75b7209e, 2026-11-06), less the launch (kKernelCost):
@@ -2984,6 +3491,18 @@ void resolution_rule() {
           "equal KLD: the lower index");
     check(ch::resolve_within_resolution(scored, {4, 1}, 4, 0.02) == 4,
           "equal KLD to the anchor: it stays");
+    // #918: of two equal-KLD candidates inside the resolution, the faster wins whatever its index
+    // (the drafters of one set of storages); equal seconds keep the lower index.
+    {
+        std::vector<ch::Scored> drafters = scored;
+        drafters[4].decision_seconds     = 1.010; // listed after 1, as accurate, faster
+        check(ch::resolve_within_resolution(drafters, {0, 1, 4}, 0, 0.02) == 4,
+              "equal KLD: the fewer seconds, not the lower index");
+        drafters[2].accuracy.kld = 0.02; // C no longer the most accurate
+        drafters[3].accuracy.kld = 0.02;
+        check(ch::resolve_within_resolution(drafters, {0, 1, 2, 3, 4}, 0, 0.02) == 4,
+              "equal KLD among more candidates: the fewer seconds");
+    }
     // A lower index of equal KLD and equal context must not move the pick (#507: BF16 over INT8).
     check(ch::resolve_within_resolution(scored, {5, 0}, 0, 0.02) == 0,
           "equal KLD and context: the anchor stays");
@@ -3552,12 +4071,22 @@ void resolution_by_pair() {
                                           make(1.04, 0.010, S::Transferred)};
     check(ch::resolve_within_resolution(unequal, {0, 1, 2}, 0, wider) == 1,
           "unequal widths: a dominated pick gives way to the candidate dominating it");
-    // Among several dominators the lowest KLD, then the lowest index (choice.h, DECISIONS 75).
-    const std::vector<ch::Scored> several{make(1.00, 0.020, S::Own), make(1.035, 0.006, S::Own),
-                                          make(1.035, 0.004, S::Own), make(1.03, 0.004, S::Own),
-                                          make(1.04, 0.010, S::Transferred)};
+    // Among several dominators the lowest KLD, then the fewer seconds (#918), then the lowest index
+    // (choice.h, DECISIONS 75): 2 and 3 share the lowest KLD, 3 is the faster.
+    std::vector<ch::Scored> several{make(1.00, 0.020, S::Own), make(1.035, 0.006, S::Own),
+                                    make(1.035, 0.004, S::Own), make(1.03, 0.004, S::Own),
+                                    make(1.04, 0.010, S::Transferred)};
+    check(ch::resolve_within_resolution(several, {0, 1, 2, 3, 4}, 0, wider) == 3,
+          "several dominators: the lowest KLD, then the fewer seconds");
+    several[3].decision_seconds = 1.035; // as slow as 2: the lower index
     check(ch::resolve_within_resolution(several, {0, 1, 2, 3, 4}, 0, wider) == 2,
-          "several dominators: the lowest KLD, then the lowest index");
+          "several dominators of equal KLD and seconds: the lowest index");
+    // The weak domination of unequal widths (#918): P (Transferred, inside its wider band) is
+    // picked; C (Own, as accurate, faster, just beyond the Own floor) dominates it at equal KLD.
+    const std::vector<ch::Scored> weak{make(1.00, 0.020, S::Own), make(1.04, 0.004, S::Transferred),
+                                       make(1.03, 0.004, S::Own)};
+    check(ch::resolve_within_resolution(weak, {0, 1, 2}, 0, wider) == 2,
+          "an as accurate, faster candidate dominates the pick: equal KLD takes the fewer seconds");
     // A deciding Transferred band: inside it the more accurate, outside it the best worth.
     const ch::Resolutions deciding{own, {RB::Transferred, 0.0786, true, 0.0226}, lent};
     const std::vector<ch::Scored> carry{make(1.0, 0.02, S::Own), make(1.05, 0.005, S::Transferred)};
@@ -3958,8 +4487,9 @@ void reports_gates_and_bands(const json& fixture) {
     // Only the quantization's own term against Q8_0, on the calibrated model's measured files.
     ch::Accuracy measured;
     measured.kld   = 0.03;
-    measured.terms = {{ch::Axis::Quant, "Q4_K_M", 0.02, true, false, "", ch::Evidence::Measured},
-                      {ch::Axis::Kv, "int8", 0.01, true, false, "", ch::Evidence::Measured}};
+    measured.terms = {
+        {ch::Axis::Quant, "Q4_K_M", 0.02, true, false, "", ch::Evidence::Measured, "Qwen3.5-9B"},
+        {ch::Axis::Kv, "int8", 0.01, true, false, "", ch::Evidence::Measured}};
     std::string_view why = "x";
     const auto pts       = ch::answer_points(measured, scale, &why);
     check(pts && std::abs(*pts - 0.8) < 1e-12 && why.empty(),
@@ -4036,6 +4566,7 @@ int main() {
         prefills_by_format(prefill_rows);
         prices_gemma_attention_tiles(prefill_rows);
         prefills_pay_tail_calls(prefill_rows);
+        prefill_prices_the_selectors_route(prefill_rows);
         std::ifstream census(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_census.json");
         const json census_rows = json::parse(census);
         counts_the_kernels(census_rows);
@@ -4070,7 +4601,9 @@ int main() {
     joint_price_replays(fixture);
     axis_order_does_not_decide(fixture);
     board_facts_do_not_decide(fixture);
+    board_route_answers_do_not_decide(fixture);
     choices_replay(fixture);
+    route_answers_replay(fixture);
     resolution_labels(fixture);
     resolution_rule();
     choice_properties(fixture);

@@ -5,10 +5,18 @@
 // instead of deriving them. The header's own text is read too: every constant it defines must be
 // in the descriptor and every listed one defined, so a new one cannot bypass the checks by being
 // left out. The Holdout record of each Fitted constant is in core/fitted_holdouts.h and checked by
-// ninferno_fitted_holdouts_test. No GPU.
+// ninferno_fitted_holdouts_test. Every Counted constant equals what it counts: a field of its
+// kernel family's record (ops/generic/family_facts.h, which the kernels static_assert), or for the
+// one that is no kernel's, the architecture table's row it is read off (kCountedSources). No GPU.
 
+#include "core/arch_registry.h"
+#include "core/board_facts.h"
+#include "core/board_registry.h"
+#include "ops/generic/family_facts.h"
 #include "ops/generic/route_cost_constants.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -18,10 +26,96 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 
+namespace g  = ninferno::ops::detail::generic;
 namespace rc = ninferno::ops::detail::generic::route_cost;
 
 namespace {
+
+// What each Counted constant counts. A new Counted constant names its source here, or the test
+// fails: a counted number is not typed by hand.
+struct CountedSource {
+    std::string_view name;
+    double value;
+};
+
+// The opt-in shared memory of a block on the parts the model reads it off (sm_86, sm_89, sm_120).
+constexpr double tile_shared_cap() {
+    const std::size_t cap = ninferno::arch_registry::find(86).smem_per_block_optin;
+    return ninferno::arch_registry::find(89).smem_per_block_optin == cap &&
+                   ninferno::arch_registry::find(120).smem_per_block_optin == cap
+               ? static_cast<double>(cap)
+               : 0.0;
+}
+
+constexpr CountedSource kCountedSources[] = {
+    {"rmma_step_k", g::kRegisterMmaFacts.mma_k},
+    {"rmma_heavy_step_k", g::kRegisterMmaFacts.step_k},
+    {"pipelined_stage_k", g::kStagedMmaFacts.stage_k},
+    {"pipelined_stage_bytes_per_row", g::kStagedMmaFacts.stage_row_bytes},
+    {"max_tile_shared_bytes", tile_shared_cap()},
+    {"w4a8_stage_bytes_per_row", g::kW4a8MmaFacts.stage_row_bytes},
+    {"w4a8_step_k", g::kW4a8MmaFacts.step_k},
+    {"i8_stage_k", g::kI8MmaFacts.stage_k},
+    {"mmq_tile_rows", g::kGgmlMmqFacts.tile_rows},
+    {"mmq_column_step", g::kGgmlMmqFacts.column_step},
+};
+static_assert(tile_shared_cap() > 0, "sm_86, sm_89 and sm_120 no longer share one block cap");
+
+// The Counted constants whose source is the kernel itself (#613 PR-8a): the activation quantizers'
+// bytes a value and grids, which the kernel's own translation unit static_asserts against the
+// block it writes and the threads it launches. No host record restates them; the test reads that
+// each named file holds the static_assert of the constant.
+struct KernelChecked {
+    std::string_view name;     // the descriptor's name
+    std::string_view constant; // the C++ name the static_assert spells
+    std::string_view file;     // under src/ops/generic
+};
+
+constexpr KernelChecked kCheckedInKernel[] = {
+    {"quant_w4a8_bytes_per_value", "kQuantW4a8BytesPerValue", "generic_w4a8.cu"},
+    {"quant_w4a8_pad_bytes_per_value", "kQuantW4a8PadBytesPerValue", "generic_w4a8.cu"},
+    {"quant_i8_bytes_per_value", "kQuantI8BytesPerValue", "generic_i8.cu"},
+    {"quant_i8_pad_bytes_per_value", "kQuantI8PadBytesPerValue", "generic_i8.cu"},
+    {"quant_threads_per_cta", "kQuantThreadsPerCta", "generic_w4a8.cu"},
+    {"quant_mmq_bytes_per_value", "kQuantMmqBytesPerValue", "ggml_mmq/ggml_mmq.cu"},
+    {"quant_mmq_values_per_cta", "kQuantMmqValuesPerCta", "ggml_mmq/ggml_mmq.cu"},
+};
+
+// A source text without its comments (block comments, then line comments), so a commented-out
+// declaration or static_assert counts as absent.
+std::string without_comments(std::string text) {
+    text = std::regex_replace(text, std::regex(R"(/\*[\s\S]*?\*/)"), "");
+    return std::regex_replace(text, std::regex(R"(//[^\n]*)"), "");
+}
+
+// Whether `file` (under src/ops/generic) static_asserts route_cost::`constant` outside a comment.
+bool kernel_asserts(std::string_view file, std::string_view constant) {
+    const std::filesystem::path path =
+        std::filesystem::path(NINFERNO_SOURCE_DIR) / "src/ops/generic" / std::string(file);
+    std::ifstream in(path);
+    const std::string text = without_comments(
+        std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()));
+    return text.find("static_assert(route_cost::" + std::string(constant) + ".value() ==") !=
+           std::string::npos;
+}
+
+// The C++ name a descriptor's name spells (route_cost_constants.h): "quant_w4a8_bytes_per_value"
+// is kQuantW4a8BytesPerValue, each underscore-separated word capitalised after a k.
+std::string constant_of(std::string_view name) {
+    std::string out = "k";
+    bool start      = true;
+    for (const char ch : name) {
+        if (ch == '_') {
+            start = true;
+            continue;
+        }
+        out += start ? static_cast<char>(std::toupper(static_cast<unsigned char>(ch))) : ch;
+        start = false;
+    }
+    return out;
+}
 
 const char* provenance_name(rc::Provenance p) {
     switch (p) {
@@ -56,9 +150,8 @@ HeaderNames header_names() {
         return out;
     }
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    // Comments may name constants too; drop them first (block comments, then line comments).
-    text = std::regex_replace(text, std::regex(R"(/\*[\s\S]*?\*/)"), "");
-    text = std::regex_replace(text, std::regex(R"(//[^\n]*)"), "");
+    // Comments may name constants too; drop them first.
+    text = without_comments(std::move(text));
     const std::regex definition(
         R"(\b(?:constexpr|const)\b(?![^;{}=()]*\bbool\b)[^;{}=()]*?\b(k[A-Z]\w*)\s*[{(=\[])");
     for (std::sregex_iterator it(text.begin(), text.end(), definition), end; it != end; ++it) {
@@ -140,6 +233,70 @@ int main(int argc, char** argv) {
         }
         fitted += c.from == rc::Provenance::Fitted;
     }
+    std::set<std::string_view> counted;
+    for (const auto& c : rc::kRouteCostConstants) {
+        if (c.from != rc::Provenance::Counted) continue;
+        counted.insert(c.name);
+        const CountedSource* source = nullptr;
+        for (const auto& s : kCountedSources) {
+            if (s.name == c.name) source = &s;
+        }
+        const KernelChecked* checked = nullptr;
+        for (const auto& k : kCheckedInKernel) {
+            if (k.name == c.name) checked = &k;
+        }
+        if (source != nullptr && checked != nullptr) {
+            std::fprintf(stderr,
+                         "%.*s is in both kCountedSources and kCheckedInKernel: name one source\n",
+                         static_cast<int>(c.name.size()), c.name.data());
+            ++failures;
+            continue;
+        }
+        if (checked != nullptr && checked->constant != constant_of(c.name)) {
+            std::fprintf(stderr, "kCheckedInKernel spells %.*s as %.*s; its name says %s\n",
+                         static_cast<int>(c.name.size()), c.name.data(),
+                         static_cast<int>(checked->constant.size()), checked->constant.data(),
+                         constant_of(c.name).c_str());
+            ++failures;
+            continue;
+        }
+        if (source == nullptr && checked != nullptr) {
+            if (!kernel_asserts(checked->file, checked->constant)) {
+                std::fprintf(stderr, "%.*s: src/ops/generic/%.*s holds no static_assert of %.*s\n",
+                             static_cast<int>(c.name.size()), c.name.data(),
+                             static_cast<int>(checked->file.size()), checked->file.data(),
+                             static_cast<int>(checked->constant.size()), checked->constant.data());
+                ++failures;
+            }
+            continue;
+        }
+        if (source == nullptr) {
+            std::fprintf(stderr,
+                         "%.*s is Counted but names no source in kCountedSources (its kernel "
+                         "family's record, ops/generic/family_facts.h)\n",
+                         static_cast<int>(c.name.size()), c.name.data());
+            ++failures;
+            continue;
+        }
+        const double value = c.values.size() == 1 ? c.values[0] : 0.0;
+        if (c.values.size() != 1 || value != source->value) {
+            std::fprintf(stderr, "%.*s: %g, its source counts %g\n",
+                         static_cast<int>(c.name.size()), c.name.data(), value, source->value);
+            ++failures;
+        }
+    }
+    for (const auto& k : kCheckedInKernel) {
+        if (counted.count(k.name) != 0) continue;
+        std::fprintf(stderr, "kCheckedInKernel names %.*s, which is no Counted constant\n",
+                     static_cast<int>(k.name.size()), k.name.data());
+        ++failures;
+    }
+    for (const auto& s : kCountedSources) {
+        if (counted.count(s.name) != 0) continue;
+        std::fprintf(stderr, "kCountedSources names %.*s, which is no Counted constant\n",
+                     static_cast<int>(s.name.size()), s.name.data());
+        ++failures;
+    }
     constexpr std::size_t kExpectedFitted = 26;
     if (fitted != kExpectedFitted) {
         std::fprintf(stderr,
@@ -159,6 +316,38 @@ int main(int argc, char** argv) {
                 std::printf("\n");
             }
         }
+    }
+    // #612 step 7: the fitted L2 rates against the L2's rated width (arch_registry
+    // l2_bytes_per_l2_clock over the board's SMs, an L2 clock; the L2 clock runs at 0.87-0.95 of
+    // the SM clock on the cards ncu read, so a rate per SM clock is lower still). Printed, not
+    // failed: a fitted rate above the ceiling is the cost model's error (#613), not this table's.
+    {
+        namespace br = ninferno::board_registry;
+        // The fitted L2 rate of a generation against its boards' rated width over their SMs.
+        const auto ceiling = [&](int want, const char* name, double fit) {
+            double lo = 0, hi = 0;
+            int boards = 0;
+            for (const br::BoardRow& row : br::kRows) {
+                const int cc = row.major * 10 + row.minor;
+                const double l2_per_clk =
+                    ninferno::arch_registry::l2_bytes_per_l2_clock(cc, row.l2_mib);
+                if (cc != want || l2_per_clk <= 0 || row.sms <= 0) continue;
+                const double c = l2_per_clk / row.sms;
+                lo             = boards == 0 ? c : std::min(lo, c);
+                hi             = std::max(hi, c);
+                ++boards;
+            }
+            if (boards == 0) {
+                std::printf("FAIL: no %s board has an L2 slice count\n", name);
+                ++failures;
+                return;
+            }
+            std::printf("L2 %s: fitted %g B/clk/SM, the rated width over the SMs %.1f..%.1f on "
+                        "%d boards (fitted x%.2f..x%.2f)\n",
+                        name, fit, lo, hi, boards, fit / hi, fit / lo);
+        };
+        ceiling(120, "GB20x", rc::kL2BytesPerSmClockGb20x.value());
+        ceiling(86, "GA10x", rc::kL2BytesPerSmClockGa10x.value());
     }
     std::printf("route cost constants: %zu listed, %zu fitted\n",
                 std::size(rc::kRouteCostConstants), fitted);

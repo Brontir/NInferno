@@ -19,6 +19,9 @@ struct KernelShape {
     std::size_t static_shared_bytes  = 0; // per CTA
     int threads                      = 0; // per CTA, the launch's
     std::size_t dynamic_shared_bytes = 0; // per CTA, the launch's
+    // The launch raised cudaFuncAttributeMaxDynamicSharedMemorySize to its dynamic bytes
+    // (allow_dynamic_smem): the block may then reach the architecture's opt-in limit, not 48 KiB.
+    bool dynamic_shared_opt_in = false;
 };
 
 // 0 where the kernel does not fit one SM, a field is unknown (0), or the calculator does not know

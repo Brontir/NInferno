@@ -68,7 +68,8 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
       kv_payload_bytes(plan.persistent.kv_payload_bytes),
       graph_allowance_bytes(plan.graph_allowance_bytes), workspace_plan(plan.workspace),
       persistent(plan.persistent.bytes), workspace_storage(plan.workspace.capacity),
-      work(DeviceSpan{workspace_storage.base(), plan.workspace.general_capacity}),
+      work(DeviceSpan{workspace_storage.base(), plan.workspace.general_capacity,
+                      workspace_storage.ticket_page()}),
       continuation_states(continuation_capacity), continuation_slots(continuation_capacity),
       shared_prefix_states(shared_prefix_capacity), shared_prefix_slots(shared_prefix_capacity),
       round_host(plan.causal_scoring ? std::nullopt
