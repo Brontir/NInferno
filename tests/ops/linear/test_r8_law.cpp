@@ -10,6 +10,7 @@
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/kernel_facts.h"
 #include "ops/generic/kernel_roofline.h"
+#include "ops/generic/r8_decode_table.h"
 #include "ops/generic/r8_law.h"
 #include "ops/generic/route_authorities.h"
 #include "ops/generic/route_query.h"
@@ -27,6 +28,8 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -382,12 +385,47 @@ void check_selector_is_the_prediction() {
     }
 }
 
+// How many entries of each measured decode table (r8_decode_table.h) on a generation the law
+// decides on it reproduces (#613 PR-10: an entry the law reproduces can be retired), on the table's
+// own board. Printed, not failed: the tables stay first, so a law that differs moves no call.
+void count_reproduced_entries() {
+    // The tables' boards by PCI id (r8_decode_table.h kR8DecodeTables: board_of_pci).
+    constexpr std::pair<std::string_view, std::uint32_t> kTableBoards[] = {
+        {"ad102:128sm", 0x2684}, {"ad103:80sm", 0x2702}, {"ad104:60sm", 0x2782},
+        {"ad106:34sm", 0x2805},  {"tu102:68sm", 0x1E07}, {"ga102:82sm", 0x2204}};
+    for (const g::R8DecodeTable& t : g::kR8DecodeTables) {
+        const auto* b = std::find_if(std::begin(kTableBoards), std::end(kTableBoards),
+                                     [&](const auto& x) { return x.first == t.gpu; });
+        if (b == std::end(kTableBoards)) continue;
+        const ninferno::DeviceClass d =
+            g::board_device_class(g::registry_facts_board(std::string(t.gpu).c_str(), b->second));
+        if (!g::r8_law_generation(d)) continue;
+        const ninferno::ScopedDeviceClass scoped(d);
+        std::size_t same = 0, none = 0;
+        for (const g::R8DecodeEntry& e : t.entries) {
+            const g::Problem p{e.qtype, ninferno::ops::LinearPolicy::AllowA8, e.n, e.k, e.epilogue};
+            const auto law = g::law_r8(p);
+            if (!law) {
+                ++none;
+                continue;
+            }
+            const g::R8ScheduleInfo s = g::r8_schedule_info(*law);
+            same += s.warps == e.warps && s.rows == e.rows ? 1 : 0;
+        }
+        std::cout << t.gpu << ": the law reproduces " << same << " of " << t.entries.size()
+                  << " decode table entries (" << none
+                  << " unanswered)
+                     ";
+    }
+}
+
 } // namespace
 
 int main() {
     check_terms();
     check_kernel_keys();
     check_selector_is_the_prediction();
+    count_reproduced_entries();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;
