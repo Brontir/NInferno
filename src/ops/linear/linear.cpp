@@ -203,13 +203,22 @@ std::optional<std::string> owned_launch_id(QType qtype, std::int32_t n, std::int
     }
 }
 
-std::optional<double> linear_q8_requested_bytes(const Weight& w, std::int32_t tokens) {
+namespace {
+
+// The tile of a Q8_G32 call the pair's laws price, with the device's SM count: where the shape's
+// own table runs the call with a tile it names, natively on the device's MMA (see
+// linear_q8_requested_bytes). A host without a device (the host-only warm-up check) prices
+// nothing: the fused kernel keeps the call, as wherever the separate side is unpriced.
+struct PricedQ8Tile {
+    Q8LaunchTile tile;
+    int sms;
+};
+
+std::optional<PricedQ8Tile> priced_q8_tile(const Weight& w, std::int32_t tokens) {
     if (w.qtype != QType::Q8_G32_FP16 || tokens <= 0 || w.n <= 0 || w.k <= 0 ||
         w.layout == QuantLayout::GgmlFrag || !linear_shape_registered(w.qtype, w.n, w.k)) {
         return std::nullopt;
     }
-    // A host without a device (the host-only warm-up check) prices nothing: the fused kernel keeps
-    // the call, as wherever the separate side is unpriced.
     const DeviceClass* device = nullptr;
     try {
         device = &device_class();
@@ -219,6 +228,22 @@ std::optional<double> linear_q8_requested_bytes(const Weight& w, std::int32_t to
     }
     const auto tile = q8_launch_tile(select_q8_a16_launch(w.n, w.k, tokens));
     if (!tile || (tile->mma && !device->features.mma_bf16_native)) { return std::nullopt; }
+    return PricedQ8Tile{*tile, device->sms};
+}
+
+} // namespace
+
+std::optional<double> linear_q8_busiest_sm_work(const Weight& w, std::int32_t tokens) {
+    const auto priced = priced_q8_tile(w, tokens);
+    if (!priced || priced->sms <= 0) { return std::nullopt; }
+    return busiest_sm_mma_work(w.n, w.k, tokens, priced->tile.rows, priced->tile.tokens,
+                               priced->sms);
+}
+
+std::optional<double> linear_q8_requested_bytes(const Weight& w, std::int32_t tokens) {
+    const auto priced = priced_q8_tile(w, tokens);
+    if (!priced) { return std::nullopt; }
+    const Q8LaunchTile* tile = &priced->tile;
     const auto cdiv = [](double a, double b) { return std::ceil(a / b); };
     const double n = w.n, k = w.k, t = tokens;
     // The row-split Q8_G32 payload of the weight's own rows: codes and an FP16 scale a 32 (a row

@@ -3,6 +3,7 @@
 #include "core/weight.h"
 #include "ninferno/ops/linear.h" // LinearPolicy
 
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -102,6 +103,22 @@ struct LinearCandidate {
 [[nodiscard]] std::optional<double> linear_q8_requested_bytes(const Weight& weight,
                                                               std::int32_t tokens);
 
+// The MMA work the busiest SM of one launch does (#617 D): a grid of ceil(n / cta_rows) x
+// ceil(tokens / cta_cols) CTAs, each multiplying cta_rows weight rows by cta_cols token columns
+// over K (2 flops a product, the tile's padded columns included), ceil(CTAs / SMs) of them on the
+// SM that gets the most. Counted from the tile and the SM count alone: the grid that leaves SMs
+// idle pays for it, as no bytes law does. It orders two schedules of one problem; it is not a time.
+[[nodiscard]] inline double busiest_sm_mma_work(double n, double k, double tokens, double cta_rows,
+                                                double cta_cols, double sms) {
+    const double ctas = std::ceil(n / cta_rows) * std::ceil(tokens / cta_cols);
+    return std::ceil(ctas / sms) * 2.0 * cta_rows * cta_cols * k;
+}
+
+// busiest_sm_mma_work of ops::linear's call for one Q8_G32 weight on the current device, priced
+// where linear_q8_requested_bytes is (the shape's own tile, natively on the MMA); nullopt elsewhere.
+[[nodiscard]] std::optional<double> linear_q8_busiest_sm_work(const Weight& weight,
+                                                              std::int32_t tokens);
+
 // ops::linear_pair's implementations for one call (#310): the fused Q8 pair kernel
 // ("fused:q8_pair", its two registered geometries in the converter's RowSplit Q8_G32 layout) and
 // the two separate linear() calls ("separate", A16 as linear_pair's contract has it), each with the
@@ -133,6 +150,19 @@ struct LinearPairRequested {
 
 [[nodiscard]] LinearPairRequested
 linear_pair_requested_bytes(const Weight& first, const Weight& second, std::int32_t tokens);
+
+// The busiest SM's MMA work of each alternative on a board of `sms` SMs (#617 D,
+// busiest_sm_mma_work): the fused kernel's one-launch schedule, the two calls with the tile the
+// shape's own table names. No device and no gate: the law the selection reads, for its replica
+// test. nullopt where the alternative's tile is not known (the two-launch TwoSimtR8C4 schedule
+// and the split-K schedules on the fused side, a tile without a name on the separate one).
+struct LinearPairWork {
+    std::optional<double> fused;
+    std::optional<double> separate;
+};
+
+[[nodiscard]] LinearPairWork linear_pair_work(std::int32_t n, std::int32_t k, std::int32_t tokens,
+                                              int sms);
 [[nodiscard]] std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first,
                                                                       const Weight& second,
                                                                       std::int32_t tokens);

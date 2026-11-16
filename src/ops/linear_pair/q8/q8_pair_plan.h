@@ -90,6 +90,7 @@ struct Q8PairGeometry {
     std::int32_t launches;     // kernel launches of the call
     std::int32_t x_row_blocks; // row tiles that each request the whole activation, per launch
     std::int32_t tile_cols;    // token columns of one CTA
+    std::int32_t cta_rows;     // weight rows one CTA multiplies, both weights' rows counted
 };
 
 [[nodiscard]] std::optional<Q8PairGeometry> q8_pair_geometry(const Q8PairProblem& problem);

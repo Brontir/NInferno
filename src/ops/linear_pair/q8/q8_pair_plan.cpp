@@ -527,18 +527,18 @@ std::optional<Q8PairGeometry> q8_pair_geometry(const Q8PairProblem& problem) {
     if (schedule == Q8PairScheduleId::TwoSimtR8C4) {
         // One single-weight launch per weight, 8 rows by 4 columns a CTA.
         return Q8PairGeometry{2, blocks(problem.rows, schedule_rows(schedule)),
-                              schedule_cols(schedule)};
+                              schedule_cols(schedule), schedule_rows(schedule)};
     }
     if (schedule == Q8PairScheduleId::DualMmaR32C64 ||
         schedule == Q8PairScheduleId::DualMmaR32C128) {
         // One launch: a CTA takes 32 rows of both weights.
         return Q8PairGeometry{1, blocks(problem.rows, schedule_rows(schedule)),
-                              schedule_cols(schedule)};
+                              schedule_cols(schedule), 2 * schedule_rows(schedule)};
     }
     if (is_concat_schedule(schedule)) {
         // One launch over the two weights' rows as one plane.
         return Q8PairGeometry{1, blocks(2 * problem.rows, schedule_rows(schedule)),
-                              schedule_cols(schedule)};
+                              schedule_cols(schedule), schedule_rows(schedule)};
     }
     return std::nullopt;
 }

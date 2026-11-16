@@ -1,9 +1,11 @@
 #include "core/weight.h"
+#include "core/device_class.h"
 #include "ninferno/ops/linear_pair.h"
 
 #include "ninferno/ops/linear.h"
 #include "ops/common/tensor_checks.h"
 #include "ops/linear/linear_registry.h"
+#include "ops/linear/q8/q8_dispatch.h"
 #include "ops/linear_pair/q8/q8_pair_plan.h"
 
 #include <algorithm>
@@ -118,9 +120,9 @@ std::optional<ChainPrice> fused_chain(std::int32_t n_rows, std::int32_t k_in, st
                       geometry->launches};
 }
 
-// The two calls' chain: the weights linear() sees in the pair's domain are Q8_G32 row-split
-// [n,k] ones, so the shape alone describes them (the selection and the warm-up share this).
-std::optional<ChainPrice> separate_chain(std::int32_t n, std::int32_t k, std::int32_t tokens) {
+// The weight linear() sees in the pair's domain: a Q8_G32 row-split [n,k] one, so the shape alone
+// describes it (the selection and the warm-up share this).
+Weight pair_row_weight(std::int32_t n, std::int32_t k) {
     Weight w;
     w.qtype           = QType::Q8_G32_FP16;
     w.n               = n;
@@ -134,9 +136,29 @@ std::optional<ChainPrice> separate_chain(std::int32_t n, std::int32_t k, std::in
     w.group_size      = 32;
     w.layout          = QuantLayout::RowSplit;
     w.scale_dtype     = DType::FP16;
-    const auto one    = detail::linear_q8_requested_bytes(w, tokens);
+    return w;
+}
+
+// The two calls' chain.
+std::optional<ChainPrice> separate_chain(std::int32_t n, std::int32_t k, std::int32_t tokens) {
+    const auto one = detail::linear_q8_requested_bytes(pair_row_weight(n, k), tokens);
     if (!one) { return std::nullopt; }
     return ChainPrice{2.0 * *one, 2};
+}
+
+// The fused one-launch schedule's busiest-SM MMA work on `sms` SMs: its CTAs tile both weights'
+// 2n rows (cta_rows of them a CTA, both weights counted) by tile_cols columns.
+std::optional<double> fused_work(std::int32_t n, std::int32_t k, std::int32_t tokens, int sms) {
+    const auto g = detail::q8_pair_geometry(detail::Q8PairProblem{n, k, k, tokens});
+    if (!g || g->launches != 1 || sms <= 0) { return std::nullopt; }
+    return detail::busiest_sm_mma_work(2.0 * n, k, tokens, g->cta_rows, g->tile_cols, sms);
+}
+
+// The device's SM count, 0 on a host without a device (nothing is then priced).
+int device_sms() {
+    try {
+        return device_class().sms;
+    } catch (const std::runtime_error&) { return 0; }
 }
 
 // Whether a call of the pair's domain runs the fused kernel: the cheaper chain where both are
@@ -158,7 +180,16 @@ std::optional<ChainPrice> separate_chain(std::int32_t n, std::int32_t k, std::in
 bool chain_prefers_fused(std::int32_t n, std::int32_t k, std::int32_t tokens) {
     const auto fused    = fused_chain(n, k, tokens);
     const auto separate = separate_chain(n, k, tokens);
-    if (!fused || !separate || fused->launches < separate->launches) { return true; }
+    if (!fused || !separate) { return true; }
+    if (fused->launches < separate->launches) {
+        // #617 D: a one-launch schedule against the two calls, by the busiest SM's MMA work
+        // (busiest_sm_mma_work). The separate side is priced only where separate_chain is (the
+        // gate above); a tie keeps the fused kernel, which also saves a launch.
+        const auto fw = fused_work(n, k, tokens, device_sms());
+        const auto sw = detail::linear_q8_busiest_sm_work(pair_row_weight(n, k), tokens);
+        if (!fw || !sw) { return true; }
+        return *fw <= 2.0 * *sw;
+    }
     return fused->requested_bytes <= separate->requested_bytes;
 }
 
@@ -181,6 +212,16 @@ namespace detail {
 
 bool linear_pair_runs_fused(std::int32_t n, std::int32_t k, std::int32_t tokens) {
     return q8_pair_registered(n, k) && chain_prefers_fused(n, k, tokens);
+}
+
+LinearPairWork linear_pair_work(std::int32_t n, std::int32_t k, std::int32_t tokens, int sms) {
+    LinearPairWork out;
+    if (tokens <= 0 || sms <= 0 || !q8_pair_registered(n, k)) { return out; }
+    out.fused = fused_work(n, k, tokens, sms);
+    if (const auto tile = q8_launch_tile(select_q8_a16_launch(n, k, tokens))) {
+        out.separate = 2.0 * busiest_sm_mma_work(n, k, tokens, tile->rows, tile->tokens, sms);
+    }
+    return out;
 }
 
 LinearPairRequested linear_pair_requested_bytes(const Weight& first, const Weight& second,
@@ -207,7 +248,8 @@ std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first, con
     if (!fused && domain) {
         // In the kernel's domain, and its chain is dearer than the shape's own launches.
         kernel.status = Status::Dominated;
-        kernel.why    = "the fused chain requests more bytes than the two linear() calls";
+        kernel.why    = "the fused chain is priced dearer than the two linear() calls (#565 bytes, "
+                        "#617 D busiest-SM work)";
     } else if (!fused) {
         kernel.why = !same ? "the two weights must share one [N,K] shape"
                      : !q8_pair_registered(first.n, first.k) ? "no fused kernel for this [N,K]"
