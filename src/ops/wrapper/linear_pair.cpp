@@ -162,7 +162,8 @@ std::optional<double> fused_price(std::int32_t n, std::int32_t k, std::int32_t t
 detail::SmLimits device_sm() {
     try {
         const DeviceClass& d = device_class();
-        return {d.sms, d.registers_per_sm, d.smem_per_sm, d.max_threads_per_sm, d.max_blocks_per_sm};
+        return {d.sms, d.registers_per_sm, d.smem_per_sm, d.max_threads_per_sm,
+                d.max_blocks_per_sm};
     } catch (const std::runtime_error&) { return {0, 0, 0, 0, 0}; }
 }
 
@@ -231,7 +232,7 @@ LinearPairPrice linear_pair_price(std::int32_t n, std::int32_t k, std::int32_t t
                                   const SmLimits& sm) {
     LinearPairPrice out;
     if (tokens <= 0 || sm.sms <= 0 || !q8_pair_registered(n, k)) { return out; }
-    out.fused = fused_price(n, k, tokens, sm);
+    out.fused       = fused_price(n, k, tokens, sm);
     const auto tile = q8_launch_tile(select_q8_a16_launch(n, k, tokens));
     if (tile && tile->cta) {
         const double ctas = std::ceil(static_cast<double>(n) / tile->rows) *

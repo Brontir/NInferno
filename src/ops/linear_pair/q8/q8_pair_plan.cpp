@@ -523,8 +523,9 @@ namespace {
 // The DualMma kernel's facts (q8_pair_gemm_mma.cuh, #617 D): cuobjdump of the sm_89 build; a CTA
 // of TileCols / 16 warps, each 32 rows x 16 columns of both weights, BK 64.
 CtaFacts dual_mma_cta(Q8PairScheduleId schedule) {
-    return schedule == Q8PairScheduleId::DualMmaR32C64 ? CtaFacts{128, 154, 25600, 64, 64, 32, 16, 2}
-                                                       : CtaFacts{256, 128, 41984, 64, 64, 32, 16, 2};
+    return schedule == Q8PairScheduleId::DualMmaR32C64
+               ? CtaFacts{128, 154, 25600, 64, 64, 32, 16, 2}
+               : CtaFacts{256, 128, 41984, 64, 64, 32, 16, 2};
 }
 
 } // namespace

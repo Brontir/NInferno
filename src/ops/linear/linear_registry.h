@@ -153,8 +153,8 @@ struct LinearPairPrice {
     std::optional<double> separate;
 };
 
-[[nodiscard]] LinearPairPrice linear_pair_price(std::int32_t n, std::int32_t k,
-                                                std::int32_t tokens, const SmLimits& sm);
+[[nodiscard]] LinearPairPrice linear_pair_price(std::int32_t n, std::int32_t k, std::int32_t tokens,
+                                                const SmLimits& sm);
 [[nodiscard]] std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first,
                                                                       const Weight& second,
                                                                       std::int32_t tokens);

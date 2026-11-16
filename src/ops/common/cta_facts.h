@@ -38,9 +38,10 @@ struct SmLimits {
 [[nodiscard]] inline int resident_ctas(const CtaFacts& f, const SmLimits& sm) {
     const int warps          = (f.threads + 31) / 32;
     const int warp_registers = ((f.registers * 32 + 255) / 256) * 256;
-    const int by_registers   = warps * warp_registers > 0 ? sm.registers / (warps * warp_registers) : 1;
-    const int by_shared      = static_cast<int>(sm.shared_bytes / (f.shared_bytes + 1024));
-    const int by_threads     = f.threads > 0 ? sm.threads / f.threads : 1;
+    const int by_registers =
+        warps * warp_registers > 0 ? sm.registers / (warps * warp_registers) : 1;
+    const int by_shared  = static_cast<int>(sm.shared_bytes / (f.shared_bytes + 1024));
+    const int by_threads = f.threads > 0 ? sm.threads / f.threads : 1;
     return std::max(1, std::min({by_registers, by_shared, by_threads, std::max(sm.ctas, 1)}));
 }
 

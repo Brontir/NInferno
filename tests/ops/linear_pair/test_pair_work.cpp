@@ -111,7 +111,7 @@ int main() {
     int ties_lost = 0;
     for (const Cell& c : kCells) {
         const std::string at = std::string(" ") + c.card + " T=" + std::to_string(c.tokens);
-        const auto w = d::linear_pair_price(1024, 5120, c.tokens, c.sm);
+        const auto w         = d::linear_pair_price(1024, 5120, c.tokens, c.sm);
         check(w.fused.has_value() && w.separate.has_value(), "both sides priced" + at);
         if (!w.fused || !w.separate) continue;
         const bool takes_separate = *w.fused > *w.separate;

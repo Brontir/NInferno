@@ -228,9 +228,8 @@ std::optional<PricedQ8Tile> priced_q8_tile(const Weight& w, std::int32_t tokens)
     }
     const auto tile = q8_launch_tile(select_q8_a16_launch(w.n, w.k, tokens));
     if (!tile || (tile->mma && !device->features.mma_bf16_native)) { return std::nullopt; }
-    return PricedQ8Tile{*tile,
-                        SmLimits{device->sms, device->registers_per_sm, device->smem_per_sm,
-                                 device->max_threads_per_sm, device->max_blocks_per_sm}};
+    return PricedQ8Tile{*tile, SmLimits{device->sms, device->registers_per_sm, device->smem_per_sm,
+                                        device->max_threads_per_sm, device->max_blocks_per_sm}};
 }
 
 } // namespace
