@@ -115,7 +115,8 @@ struct LinearCandidate {
 }
 
 // busiest_sm_mma_work of ops::linear's call for one Q8_G32 weight on the current device, priced
-// where linear_q8_requested_bytes is (the shape's own tile, natively on the MMA); nullopt elsewhere.
+// where linear_q8_requested_bytes is (the shape's own tile, natively on the MMA); nullopt
+// elsewhere.
 [[nodiscard]] std::optional<double> linear_q8_busiest_sm_work(const Weight& weight,
                                                               std::int32_t tokens);
 
