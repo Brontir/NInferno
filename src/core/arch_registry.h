@@ -88,6 +88,10 @@ static_assert(l2_bytes_per_l2_clock(120, 96) == 3072, "RTX 5090: 48 slices");
 static_assert(l2_bytes_per_l2_clock(120, 48) == 1536, "RTX 5070 Ti: 24 slices");
 static_assert(l2_bytes_per_l2_clock(89, 72) == 2304, "RTX 4090: 36 slices");
 static_assert(l2_bytes_per_l2_clock(89, 32) == 1024, "RTX 4060 Ti 16GB: 16 slices");
+static_assert(l2_bytes_per_l2_clock(86, 6) == 1536, "RTX 3090: 24 slices");
+static_assert(l2_bytes_per_l2_clock(86, 2.25) == 576, "RTX 3060: 9 slices");
+static_assert(l2_bytes_per_l2_clock(75, 5.5) == 1408, "RTX 2080 Ti: 22 slices");
+static_assert(l2_bytes_per_l2_clock(70, 6) == 2048, "Quadro GV100: 32 slices");
 
 // The L2's rated bytes per SM an L2 clock (slices x 64 B over the SMs); 0 where the architecture's
 // slice size is unknown. Per SM clock it is this times the L2 clock over the SM clock, which no

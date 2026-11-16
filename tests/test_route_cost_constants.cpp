@@ -283,30 +283,31 @@ int main(int argc, char** argv) {
     // failed: a fitted rate above the ceiling is the cost model's error (#613), not this table's.
     {
         namespace br = ninferno::board_registry;
-        double lo = 0, hi = 0;
-        int boards = 0;
-        for (const br::BoardRow& row : br::kRows) {
-            const int cc = row.major * 10 + row.minor;
-            const double l2_per_clk =
-                ninferno::arch_registry::l2_bytes_per_l2_clock(cc, row.l2_mib);
-            if (cc != 120 || l2_per_clk <= 0 || row.sms <= 0) continue;
-            const double ceiling = l2_per_clk / row.sms;
-            lo                   = boards == 0 ? ceiling : std::min(lo, ceiling);
-            hi                   = std::max(hi, ceiling);
-            ++boards;
-        }
-        if (boards > 0) {
-            const double fit = rc::kL2BytesPerSmClockGb20x.value();
-            std::printf("L2 GB20x: fitted %g B/clk/SM, the rated width over the SMs %.1f..%.1f on "
+        // The fitted L2 rate of a generation against its boards' rated width over their SMs.
+        const auto ceiling = [&](int want, const char* name, double fit) {
+            double lo = 0, hi = 0;
+            int boards = 0;
+            for (const br::BoardRow& row : br::kRows) {
+                const int cc = row.major * 10 + row.minor;
+                const double l2_per_clk =
+                    ninferno::arch_registry::l2_bytes_per_l2_clock(cc, row.l2_mib);
+                if (cc != want || l2_per_clk <= 0 || row.sms <= 0) continue;
+                const double c = l2_per_clk / row.sms;
+                lo             = boards == 0 ? c : std::min(lo, c);
+                hi             = std::max(hi, c);
+                ++boards;
+            }
+            if (boards == 0) {
+                std::printf("FAIL: no %s board has an L2 slice count\n", name);
+                ++failures;
+                return;
+            }
+            std::printf("L2 %s: fitted %g B/clk/SM, the rated width over the SMs %.1f..%.1f on "
                         "%d boards (fitted x%.2f..x%.2f)\n",
-                        fit, lo, hi, boards, fit / hi, fit / lo);
-        } else {
-            std::printf("FAIL: no GB20x board has an L2 slice count\n");
-            ++failures;
-        }
-        std::printf("L2 GA10x: fitted %g B/clk/SM; no slice size (GA102 0.25 MiB, GA106 0.33 MiB "
-                    "a slice: per chip, #612)\n",
-                    rc::kL2BytesPerSmClockGa10x.value());
+                        name, fit, lo, hi, boards, fit / hi, fit / lo);
+        };
+        ceiling(120, "GB20x", rc::kL2BytesPerSmClockGb20x.value());
+        ceiling(86, "GA10x", rc::kL2BytesPerSmClockGa10x.value());
     }
     std::printf("route cost constants: %zu listed, %zu fitted\n",
                 std::size(rc::kRouteCostConstants), fitted);
