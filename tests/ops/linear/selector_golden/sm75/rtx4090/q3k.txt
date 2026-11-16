@@ -238,7 +238,7 @@ q3k p1 store 4096x4096 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 q3k p1 store 4096x4096 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 q3k p1 store 4096x4096 speed T=48..96 ggml_mmq ws=0
 q3k p1 store 4096x4096 speed T=128 w4a8.64x64 ws=655360
-q3k p1 store 4096x4096 speed T=192 w4a8.128x64 ws=983040
+q3k p1 store 4096x4096 speed T=192 ggml_mmq ws=0
 q3k p1 store 4096x4096 speed T=256 w4a8.128x64 ws=1310720
 q3k p1 store 4096x4096 speed T=512..2048 ggml_mmq ws=0
 q3k p1 store 4096x4096 prefill T=17..2048 ggml_mmq ws=0
@@ -253,7 +253,7 @@ q3k p1 add 4096x4096 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 q3k p1 add 4096x4096 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 q3k p1 add 4096x4096 speed T=48..96 ggml_mmq ws=0
 q3k p1 add 4096x4096 speed T=128 w4a8.64x64 ws=655360
-q3k p1 add 4096x4096 speed T=192 w4a8.128x64 ws=983040
+q3k p1 add 4096x4096 speed T=192 ggml_mmq ws=0
 q3k p1 add 4096x4096 speed T=256 w4a8.128x64 ws=1310720
 q3k p1 add 4096x4096 speed T=512..2048 ggml_mmq ws=0
 q3k p1 add 4096x4096 prefill T=17..2048 ggml_mmq ws=0
@@ -267,7 +267,7 @@ q3k p1 swiglu 2048x4096 speed T=5..16 rmma.m1.n1.w1x16 ws=0
 q3k p1 swiglu 2048x4096 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 q3k p1 swiglu 2048x4096 speed T=48..96 ggml_mmq ws=0
 q3k p1 swiglu 2048x4096 speed T=128 w4a8.64x64 ws=655360
-q3k p1 swiglu 2048x4096 speed T=192 w4a8.128x64 ws=983040
+q3k p1 swiglu 2048x4096 speed T=192 ggml_mmq ws=0
 q3k p1 swiglu 2048x4096 speed T=256 w4a8.128x64 ws=1310720
 q3k p1 swiglu 2048x4096 speed T=512..2048 ggml_mmq ws=0
 q3k p1 swiglu 2048x4096 prefill T=17..2048 ggml_mmq ws=0

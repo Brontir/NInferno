@@ -131,10 +131,17 @@ struct Launch {
     int k_vram         = 0; // the config's K_vram: a stream-k block's unit of work along k
 };
 
-// mmq_columns::work_tiles_format in ggml's names (test_route_classes checks the launch against the
-// table for every format).
+// mmq_columns::work_tiles_format in ggml's names, on the device's generation (test_route_classes
+// checks the launch against the table for every format).
 template <ggml_type type>
-inline constexpr bool kWorkTilesFormat = type == GGML_TYPE_Q4_K || type == GGML_TYPE_Q6_K;
+[[nodiscard]] constexpr bool work_tiles_format(int major, int minor) noexcept {
+    constexpr QType qtype = type == GGML_TYPE_Q4_K     ? QType::GGML_Q4_K
+                            : type == GGML_TYPE_Q6_K   ? QType::GGML_Q6_K
+                            : type == GGML_TYPE_IQ4_XS ? QType::GGML_IQ4_XS
+                            : type == GGML_TYPE_Q3_K   ? QType::GGML_Q3_K
+                                                       : QType::BF16;
+    return mmq_columns::work_tiles_format(qtype, major, minor);
+}
 
 template <ggml_type type>
 Launch select_launch(int rows, int columns, int k) {
@@ -143,7 +150,7 @@ Launch select_launch(int rows, int columns, int k) {
     double best_cost  = 1e300;
     const int major   = device.cc / 100;
     const int minor   = device.cc / 10 % 10;
-    const bool format = kWorkTilesFormat<type>;
+    const bool format = work_tiles_format<type>(major, minor);
     // The product's shape and the card, for a generation that prices its widths by the launch
     // they run (core/mmq_columns.h width_cost; the others rank by the tile count).
     const mmq_columns::LaunchFacts facts{rows, k, device.sm_count, device.clock_hz,

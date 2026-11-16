@@ -1697,7 +1697,9 @@ differently), as they already did between a prefill chunk of 128 and 1024: on na
 |logprob| difference old vs new is 0.000-0.03, old build's chunks 128 vs 1024 0.003-0.026.
 
 **Not done.** Turing, Volta and Thor rows (own grids); the A10; other formats than Q4_K and
-Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tiles until their grids); the RTX 5070 Ti and 5060 Ti prefill Q4_K / Q6_K
+Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tiles until their
+grids; IQ4_XS and Q2_K joined some generations by their own grids, DECISIONS 90); the RTX 5070 Ti
+and 5060 Ti prefill Q4_K / Q6_K
 on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 -> 107 ms from 144 to
 256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.
 
@@ -2909,6 +2911,81 @@ at 25.6K) and the gated delta net's chunk recurrence (11.8 %, 10.6 %).
 
 **Decision.** No rule change from the census. #616 step 8 closes on it. The expert kernel below
 its limit is #928 (#619's process: counts, a prediction, then an A/B on the GV100).
+
+## 90. IQ4_XS and Q3_K take the column tile of least work where their own grids ran (#619 step 13, 15-16.11, measured)
+
+**Revised 16.11 (supersedes the Decision paragraph below for Q2_K, Q3_K and Turing).** The rule is: IQ4_XS on Turing, GA10x, Ada and GB20x; Q3_K on GA10x, Ada and GB20x; **Q2_K on no generation**.
+- **Q2_K fails the frozen 0.5 % bound on each generation's large chip,** at the row's f: RTX 3090 1.77 %, RTX 4090 3.83 % (R2 met), RTX 5090 1.81 %. The small chips pass: 3060 0.16 %, 4060 Ti 0.03 %, 4070 Ti 0.26 %.
+  - The bound is not narrowed, so Q2_K keeps the fewest tiles until #941's term for its 70 144-byte tile is predicted and verified.
+  - The table would gain 13 pp on the 3090, measured −11.7 % in its A/B. That is the price of the missing term, recorded in #941.
+- **Q3_K: grids on six cards** at the row's f, against the fewest tiles:
+
+  | card | at the row's f | fewest tiles |
+  |---|---|---|
+  | RTX 3060 | 0.08 % | 8.06 % |
+  | RTX 3090 | 0.05 % | 8.37 % |
+  | RTX 4060 Ti | 0.05 % | 6.60 % |
+  | RTX 4070 Ti | 0.00 % | 6.29 % |
+  | RTX 4090 | 0.29 % | 6.44 % |
+  | RTX 5090 | 0.22 % | 7.82 % |
+
+  - A/Bs over 144..256 tokens: 3060 −8.6 %, 4070 Ti −7.1 %, 5090 −9.4 % (predicted −8, −6 and −6). The 448-token tie is +1.6 % on the 3060; no other size is slower.
+  - The 3090's 0.05 % shows the large-chip cost is Q2_K's tile, not the chip.
+- **IQ4_XS on Turing.**
+  - Grid on the 2080 Ti: 0.64 % at f 0.20 (my 0.5 % bound refuted), least 0.31 % in (0.20, 0.33], fewest tiles 7.82 %.
+  - Turing ranks by its launch law, not by f, so the A/B decides: the production ranking against the fewest tiles is −9.0 % (predicted −6 %), and no size is more than 0.3 % slower.
+  - Further IQ4_XS grids: the 4090 0.19 % against 5.02 %.
+- **Not joined yet, a follow-up:**
+  - IQ3_XXS: grids pass on four cards, but the 5090's A/B is +5.5 % at 448 tokens, which is not named yet.
+  - Q5_K: grids running.
+
+**Decision.** `mmq_columns::work_tiles_format` takes the generation as well as the format. Q4_K and Q6_K are unchanged: every generation with `mmq_work_tiles` (DECISIONS 74, 78). IQ4_XS joins on GA10x, Ada and GB20x, and Q2_K on GA10x and Ada. Q2_K stays off GB20x: its grid there (RTX 5090) leaves 1.81 % regret at f 0.10 against the 0.5 % bound written before the run, with the 128-column tile 8-11 % slower than two 64-column ones (one 70 144-byte CTA a SM against two), a term the tile law lacks (#941). On those generations ggml's matrix kernel ranks the widths 16, 32, 64, 80, 96, 128 by the least work at the row's own `mmq_tile_fixed` (GA10x and Ada 0.20, GB20x 0.10), as it does for Q4_K. Every other format, and these two on every other generation, keep the fewest tiles. Turing's launch law was fitted on the Q4_K / Q6_K grid, so IQ4_XS and Q2_K wait for a Turing grid of their own. The 80- and 96-column kernels are already built for those architectures for every format (`work_tiles_arch`), so no kernel is added.
+
+**Grids** (the DECISIONS 74 kit, `tools/bench/run_524_turing_grid.sh` with `ARCH_CC` and `PRED`; Qwen3-8B IQ4_XS and Q2_K, 8 widths × 21 slice sizes × 2 visits, 4 requests a point, k = 7 probed exact, request noise 0.3 %):
+
+| card | format | predicted f (range) | regret at the row's f | least bucket | fewest tiles |
+|---|---|---|---|---|---|
+| RTX 3060 | IQ4_XS | 0.30 (0.22..0.40) | 0.12 % (0.20) | 0.00 % (0.200..0.333) | 6.75 % |
+| RTX 4070 Ti | IQ4_XS | 0.30 (0.22..0.40) | 0.00 % (0.20) | 0.00 % (0.111..0.200) | 4.88 % |
+| RTX 4060 Ti | Q2_K | 0.15 (0.10..0.25) | 0.03 % (0.20) | 0.02 % (0.200..0.333) | 9.02 % |
+| RTX 5090 | IQ4_XS | 0.15 (0.10..0.25) | 0.21 % (0.10) | 0.21 % (0.059..0.111) | 6.53 % |
+| RTX 4060 Ti | IQ4_XS | 0.20 (0.11..0.33) | 0.07 % (0.20) | in #619 | 5.35 % |
+| RTX 3060 | Q2_K | 0.20 (0.11..0.33) | 0.16 % (0.20) | in #619 | 10.17 % |
+| RTX 4070 Ti | Q2_K | 0.20 (0.11..0.33) | 0.26 % (0.20) | in #619 | 9.53 % |
+| RTX 5090 | Q2_K | 0.10 (0.06..0.20) | 1.81 % (0.10), refuted | 1.81 % (0.059..0.111) | 16.39 % |
+
+The last four rows were predicted after the first IQ4_XS grids refuted 0.30: the row's own f, range its bucket and the next. Their least buckets and the law's fit are in #619. The work law does not fit any of the first four (lack-of-fit 3.8 to 16, above the a priori 3), so R5 gives no verdict and the fit's f is not a measurement. The decision rests on the regret buckets, as DECISIONS 74's did.
+
+The prediction was wrong for IQ4_XS on GA10x and Ada. It put the fixed share at 0.30, on the reasoning that IQ4_XS's table decode costs 1.5-2× Q4_K's per weight and the decode is the fixed part. The grids' least regret lies in or next to Q4_K's bucket. So the decode is not what sets the share (or the J part grows with it). The row's f is kept, not a new one fitted: 0.20 is within 0.12 % of the best width on both cards.
+
+**Measured** (A B A B, three rounds of four requests, the same hooked binary; old = the fewest tiles, new = the work table at the row's f):
+- **RTX 4070 Ti, IQ4_XS at f 0.20.**
+  - By prompt size: 136..160 tokens −14.3..−14.4 %, 176..192 −9.5..−9.6 %, 264..288 −10.9..−11.0 %, 96 −6.3 %, 448 −1.3 %; 128, 200..256, 320..512 within 0.6 %.
+  - The 144..256 mix is 53.76 → 50.58 ms (**−5.9 %**). The prediction from the grid was the regret difference, about −4.9 % over the grid's sizes, and the Q4_K bracket was −8.2..−5.4 %.
+- **RTX 5090, IQ4_XS at f 0.10.**
+  - By prompt size: 136..160 −16.2..−16.5 %, 176..192 −10.6..−10.7 %, 200..240 −2.1..−2.5 %, 264..288 −12.6..−13.0 %, 320 −8.0 %, 96 −6.7 %; 128, 256, 384, 512 unchanged.
+  - The mix is 22.96 → 21.23 ms (**−7.5 %**); about −6.3 % was predicted from the grid.
+
+- **RTX 4060 Ti, Q2_K at f 0.20.**
+  - By prompt size: 136..160 −23.3..−23.6 %, 176..192 −14.6 %, 264..288 −15.0..−15.2 %, 96 −12.2 %, 320 −7.7 %; 128, 200..256, 384..512 within 0.1 %.
+  - The mix is 111.89 → 101.45 ms (**−9.3 %**); about −9 % was predicted from the grid.
+
+- **RTX 3060, IQ4_XS at f 0.20.**
+  - By prompt size: 136..160 −18.5..−18.7 %, 176..192 −11.8..−12.2 %, 264..288 −12.9..−13.1 %, 96 −9.1 %, 320 −4.0 %; 128, 200..256, 384, 512 within 0.4 %.
+  - 448 tokens is **+2.4 %** (228.1 → 233.6 ms). At f 0.20 five 96-column tiles tie four 128-column ones (4.0 against 4.0 tile steps), the rule takes the narrower, and the card runs it slower. Q4_K has the same tie, so this is the rule's tie, not the format's; it stays until a tie term is counted.
+  - The mix is 129.34 → 119.64 ms (**−7.5 %**).
+
+- **RTX 3060, Q2_K at f 0.20.** 136..160 −24.6..−24.8 %, 176..192 −14.2..−14.5 %, 264..288 −15.1..−15.2 %, 96 −16.8 %, 320 −8.8 %; 448 **+2.6 %** (the same tie as above); the mix 169.08 → 152.60 ms (**−9.7 %**).
+
+No other size is slower on any card.
+
+**Route choice.** The selector's MMQ term now prices the tile the kernel runs for these formats: the work table's width, not 8-column steps. `route-tune` at the branch head (RTX 4070 Ti, 4060 Ti, 5090) has every cell the change moves onto ggml_mmq at 192 tokens as the fastest timed route. One direction got worse, on the RTX 4060 Ti, Q2_K at 48 tokens:
+- 4096x4096: W4A8 64x64 at 76.8 µs against ggml_mmq's 69.6 (+10 %);
+- 1024x4096: rmma at 36.4 against 29.3 (+24 %).
+
+At 48 columns the kernel runs a 64-column tile either way. The old term priced 48 columns and so cancelled #785's error (MMQ priced high and W4A8 low at T 17-64 on Ada); the new term prices the 64 the kernel runs and exposes it. Over the cells timed on both builds on that card the change is −5.3 %. The two regressed cells are #785's, recorded there, and not fitted here.
+
+**Numerics.** As DECISIONS 74: a different width changes the stream-k split and so the sums' order.
 
 ## 91. The gated gate/up pairs keep T 2-4 on every measured card; DECISIONS 76's candidate rule is not taken (#613 PR-11, 16.11, measured on seven cards)
 

@@ -504,7 +504,9 @@ inline constexpr FittedHoldout kGenerationHoldouts[] = {
          "the stream-k ratio are measured, launch_seconds the mean of two nsys fixup times "
          "(5.0 and 1.6 us), a fitted summary",
          "one card, carried to the generation as a transfer (DECISIONS 78; no second Turing card "
-         "is measured): nothing left out; the other rows have no law (null: the tile law)",
+         "is measured), and to IQ4_XS as a format transfer (DECISIONS 90: its A/B on the RTX 2080 "
+         "Ti, -9.0 %, is the check): nothing left out; the other rows have no law (null: the tile "
+         "law)",
          "core/generation.h at kTuringMmqLaw")},
 };
 
