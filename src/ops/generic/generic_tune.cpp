@@ -772,6 +772,42 @@ std::optional<Route> tuned_dense_route(const Problem& problem, std::int32_t toke
     return it->second.routes[static_cast<std::size_t>(tokens)];
 }
 
+// The release's entry (routes/tuner/dense_tune.json) for a problem no call of this process has
+// read: a replay of a start or a query before the first call (#935). It is keyed by the class the
+// query runs under (problem_key), so a substituted board reads its own class's entry, and it is
+// read as tune_dense reads it in mode Off: the whole decode range present and every route
+// admitted for the weight, or none at all. Only while the tuner is on in mode Off (the engine's
+// default; never a tuning run's user cache), and not under the invariant profile or a probe.
+std::optional<Route> release_dense_route(const Problem& problem, const Weight& weight,
+                                         std::int32_t tokens) {
+    if (tokens < 1 || tokens > kDenseTuneMaxTokens) return std::nullopt;
+    if (!g_enabled.load(std::memory_order_relaxed) ||
+        g_mode.load(std::memory_order_relaxed) != TuneMode::Off || invariant_routes_active() ||
+        route_probe_state.quantized_act >= 0 || route_probe_state.tokens_as > 0) {
+        return std::nullopt;
+    }
+    std::lock_guard lock(g_mutex);
+    const Key id = key_of(problem);
+    if (g_attempted.count(id) != 0 || g_tuned.count(id) != 0) return std::nullopt;
+    load_cache_locked(false);
+    auto& problems        = g_cache["problems"];
+    const std::string key = problem_key(problem);
+    if (!problems.contains(key) || !problems[key].contains("routes")) return std::nullopt;
+    const auto& routes = problems[key]["routes"];
+    std::optional<Route> out;
+    for (std::int32_t t = 1; t <= kDenseTuneMaxTokens; ++t) {
+        const auto name = std::to_string(t);
+        if (!routes.contains(name)) return std::nullopt;
+        const auto& v = routes[name];
+        if (v.is_null()) continue;
+        if (!v.is_string()) return std::nullopt;
+        const auto r = parse_route(v.get<std::string>());
+        if (!r || !route_admits(*r, weight, problem.policy)) return std::nullopt;
+        if (t == tokens) out = *r;
+    }
+    return out;
+}
+
 std::optional<Route> tuned_prefill_route(const Problem& problem, std::int32_t tokens,
                                          Route heuristic) {
     if (tokens <= kDenseTuneMaxTokens || !g_enabled.load(std::memory_order_relaxed) ||

@@ -216,7 +216,8 @@ std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& prob
 std::optional<RouteAnswer> dense_tune_entry(const Ask& ask, const Problem& problem,
                                             const Weight& weight) {
     if (a8_wide_call(ask, problem, weight)) return std::nullopt;
-    const auto dense = tuned_dense_route(problem, ask.tokens);
+    auto dense = tuned_dense_route(problem, ask.tokens);
+    if (!dense) dense = release_dense_route(problem, weight, ask.tokens);
     if (!dense || !route_admits(*dense, weight, problem.policy)) return std::nullopt;
     const bool r8 = r8_call(problem, weight, ask.tokens);
     if (dense->family == Family::R8Mma) {
