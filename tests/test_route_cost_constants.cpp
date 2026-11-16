@@ -298,16 +298,13 @@ int main(int argc, char** argv) {
                 ++boards;
             }
             if (boards == 0) {
-                std::printf("FAIL: no %s board has an L2 slice count
-", name);
+                std::printf("FAIL: no %s board has an L2 slice count\n", name);
                 ++failures;
                 return;
             }
             std::printf("L2 %s: fitted %g B/clk/SM, the rated width over the SMs %.1f..%.1f on "
-                        "%d boards (fitted x%.2f..x%.2f)
-                        ",
-                        name,
-                        fit, lo, hi, boards, fit / hi, fit / lo);
+                        "%d boards (fitted x%.2f..x%.2f)\n",
+                        name, fit, lo, hi, boards, fit / hi, fit / lo);
         };
         ceiling(120, "GB20x", rc::kL2BytesPerSmClockGb20x.value());
         ceiling(86, "GA10x", rc::kL2BytesPerSmClockGa10x.value());
