@@ -710,6 +710,33 @@ P from #850's plan. A, G, N and P have frozen predictions so far.
 - Decision: narrowed. The narrow chunk is now taken by law 2 only, and keeps 256 columns on the
   RTX 3060, 4070 Ti and 4060 Ti at a decode token. The staged loop stays everywhere, pending the
   rerun of A/B 1 on all boards under prediction 2 and the 3060's ncu.
+- Status at merge (16.11), after the reruns of A/B 1 under prediction 2 and the 3060's ncu:
+  - Fixed part of the step, branch against master, µs a step (BF16, INT8, FP8, NVFP4, K8V4):
+
+    | board | BF16 | INT8 | FP8 | NVFP4 | K8V4 |
+    |---|---|---|---|---|---|
+    | RTX 5090 | 26.3 | 24.6 | 25.9 | 8.8 | 16.0 |
+    | RTX 5070 Ti | 11.4 | 13.2 | 13.3 | 4.6 | 5.3 |
+    | RTX 4070 Ti | 6.8 | 6.5 | 6.8 | 7.0 | 3.1 |
+    | RTX 4060 Ti | 6.8 | 4.7 | 2.7 | 0.1 | 1.1 |
+
+    No board got slower.
+  - RTX 3090, NVFP4 settled (three ABBA runs): +0.4 µs a step, inside the predicted -2..+9.
+    The earlier -5.0 / -5.2 were master's fast mode (145-146 µs), not the branch. The kernel
+    profile's 0.9 µs a call faster merge does not reach the step's fixed part (7 µs predicted
+    over 8 layers): recorded, not explained.
+  - RTX 3060, ncu L2-hot at 21961 keys, merge master / branch: NVFP4 (4, 7 splits) 3.5 / 3.4 µs,
+    K8V4 (4, 14 splits) 3.8 / 3.6 µs a call; attention 91.9 / 92.3 and 238.8 / 238.2 µs. The
+    0.1-0.2 µs a call (1-2 µs a step) matches the ABBA cells and not prediction 2's 6 (5-10).
+  - **Refuted, kept as an open finding:** at 256 columns the staged loop gains a fifth or less of
+    what the law prices, on NVFP4 and K8V4, on GA10x and the RTX 4060 Ti. NVFP4 runs 7 splits on
+    the 3060, not the 14 the cell assumed. The law's 256-column term is to be re-derived from the
+    kernel's counts (#963), not refit to these cells.
+  - RTX 2080 Ti: unreadable twice (one side's arms differ 2x to 5x; 21.7 s of thermal slowdown and
+    36 s of power capping logged). Its cells decide nothing until the card's clocks and throttle
+    reasons are checked under this bench.
+  - Merged: the gains hold on six boards where they read and nothing measured slower; the
+    256-column cells are a law finding, not a regression.
 
 ### P. R8 decode schedule of the wide-K Q6_K down projection (#850 candidate (a))
 - Regime: the R8 decode kernel (`r8_kernel`, A8) at T = 1, store and add epilogues: Qwen3.5-9B's
