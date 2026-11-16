@@ -1794,7 +1794,7 @@ counted saving; by elimination the rest is expected in the gated gate/up launche
 measured: the issue's data has no gated-shape row. A rule would move calls nobody timed, and the
 only gated-shape timings at hand (earlier tuner files, below) say the sign depends on the shape, so
 the candidate rule is not supported as stated. The measurement that is missing is a kit,
-`tools/bench/run_521_gateup.sh`, not run on a card yet.
+`tools/bench/run_521_gateup.sh`, not run on a card yet (run on seven cards since: DECISIONS 91).
 
 **Where the numbers come from.** The measured numbers of this entry (the gains and losses, the 47 %,
 the end-to-end +1.6 % and +2.8 %, the per-T slopes) and the SASS count "105 + 37 T" are the ones
@@ -2909,3 +2909,43 @@ at 25.6K) and the gated delta net's chunk recurrence (11.8 %, 10.6 %).
 
 **Decision.** No rule change from the census. #616 step 8 closes on it. The expert kernel below
 its limit is #928 (#619's process: counts, a prediction, then an A/B on the GV100).
+
+## 91. The gated gate/up pairs keep T 2-4 on every measured card; DECISIONS 76's candidate rule is not taken (#613 PR-11, 16.11, measured on seven cards)
+
+**Decision.** No route change and no rule. The vector rule's band (`kVecRuleMaxTokens` 4) and the
+gated gate/up kernel at T 2-4 stay. DECISIONS 76 lacked the gated pair's own timings. The kit
+`tools/bench/run_521_gateup.sh` has now run on seven cards: q4k 12288x4096 and 15360x3840 at T 2,
+3 and 4, two passes each. It compares the gated kernel with the register MMA (rmma) and with the
+twin estimate (two single launches; no production sequence runs it, DECISIONS 76).
+
+The summaries, the kit's own table one file a card, are committed in
+`tools/bench/data/gateup_521/`. They come from master 9761e792b (3060, 3090, 5070 Ti, GV100),
+754e4b8c9 (4070 Ti) and d2e8b1eab (2080 Ti); the 4060 Ti's build is not recorded.
+
+**Count.** 42 cells. The kit's d is gated minus min(twin, rmma), in µs. Its spread is max(|d1 -
+d2|, 1.024 µs); a verdict needs both passes beyond it.
+
+| card | gated wins | within spread | another wins |
+|---|---|---|---|
+| Quadro GV100 | 6 | 0 | 0 |
+| RTX 2080 Ti | 5 | 1 | 0 |
+| RTX 3060 | 3 | 1 | 2: rmma, 15360x3840 T 3-4, by 5.8-9.9 µs (2.7-4.7 %) |
+| RTX 3090 | 3 | 3 | 0 |
+| RTX 4060 Ti | 2 | 3 | 1: rmma, 15360x3840 T 3, by 1.7-1.8 µs (0.7 %) |
+| RTX 4070 Ti | 3 | 1 | 2: the twin estimate, 15360x3840 T 2-3, by 2.7-4.2 µs (1.8-2.8 %) |
+| RTX 5070 Ti | 4 | 2 | 0 |
+
+- Gated wins or ties in 37 of 42 cells.
+- The five losses are on three cards and one shape, and point two ways: rmma on GA106 and AD106,
+  the twin estimate (not a production route) on AD104.
+- No board fact found separates them. The 3060 and the 3090 are one generation with the same
+  per-T issue term (DECISIONS 76's ρ, 5.8 % against 5.4 %), and only the 3060 loses.
+- A rule that moved these cells would be a per-card literal, which the pillar forbids. The losses
+  stay recorded here until a counted term names them. Candidates, for the 3060 and 4060 Ti only:
+  the wave quantisation of the 15360-row grid over 28 and 34 SMs. The 4070 Ti's 60 SMs are not
+  covered by that candidate.
+
+**Seen in passing.** The kit's "fastest other" column (the route-tune winner) is the R8 pair
+`r8.w4r1` / `r8.w4r2`, faster than all three kernels in some cells: 5 of 6 on the 4060 Ti, 3 of 6 on the 4070 Ti (by
+1.4-1.7 %), 3 on the 3090, 2 on the 3060, 2 on the GV100. That ranking belongs to #613 PR-10
+(`rules_r8` priced), not to the vector rule.
