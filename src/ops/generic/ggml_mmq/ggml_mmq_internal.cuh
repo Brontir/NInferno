@@ -139,6 +139,7 @@ template <ggml_type type>
                             : type == GGML_TYPE_Q6_K   ? QType::GGML_Q6_K
                             : type == GGML_TYPE_IQ4_XS ? QType::GGML_IQ4_XS
                             : type == GGML_TYPE_Q3_K   ? QType::GGML_Q3_K
+                            : type == GGML_TYPE_Q5_K   ? QType::GGML_Q5_K
                                                        : QType::BF16;
     return mmq_columns::work_tiles_format(qtype, major, minor);
 }

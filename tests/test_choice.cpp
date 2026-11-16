@@ -86,7 +86,8 @@ static_assert(pick(144, 8, 6, false, 128, k4096) == 128 &&
               pick(16, 8, 6, false, 128, k4096) == 16);
 
 // Q4_K and Q6_K on every generation; IQ4_XS on Turing, GA10x, Ada and GB20x and Q3_K on GA10x,
-// Ada and GB20x, where their grids and A/Bs ran (#619 step 13, DECISIONS 90); Q2_K on none (#941).
+// Ada and GB20x, where their grids and A/Bs ran (#619 step 13, DECISIONS 90); Q5_K on GA10x and
+// Ada (DECISIONS 92); Q2_K on none (#941).
 namespace work_formats {
 using ninferno::QType;
 using ninferno::mmq_columns::work_tiles_format;
@@ -103,6 +104,10 @@ static_assert(work_tiles_format(QType::GGML_Q3_K, 8, 9) &&
               work_tiles_format(QType::GGML_Q3_K, 8, 6) &&
               work_tiles_format(QType::GGML_Q3_K, 12, 0) &&
               !work_tiles_format(QType::GGML_Q3_K, 7, 5));
+static_assert(work_tiles_format(QType::GGML_Q5_K, 8, 6) &&
+              work_tiles_format(QType::GGML_Q5_K, 8, 9) &&
+              !work_tiles_format(QType::GGML_Q5_K, 12, 0) &&
+              !work_tiles_format(QType::GGML_Q5_K, 7, 5));
 static_assert(!work_tiles_format(QType::GGML_Q2_K, 8, 9) &&
               !work_tiles_format(QType::GGML_Q2_K, 8, 6) &&
               !work_tiles_format(QType::GGML_Q2_K, 12, 0) &&
@@ -115,7 +120,7 @@ constexpr bool only_mapped_formats() {
     for (int v = 0; v < 64; ++v) { // every QType value (the largest is 43)
         const auto q = static_cast<QType>(v);
         if (q == QType::GGML_Q4_K || q == QType::GGML_Q6_K || q == QType::GGML_IQ4_XS ||
-            q == QType::GGML_Q3_K) {
+            q == QType::GGML_Q3_K || q == QType::GGML_Q5_K) {
             continue;
         }
         for (const auto& row : ninferno::kGenerations) {

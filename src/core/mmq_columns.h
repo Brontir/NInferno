@@ -46,12 +46,15 @@ inline constexpr double kTileFixed      = 0.43;
 // tiles; A/B -5.9..-9.4 % over 144..256 tokens, -9.0 % for IQ4_XS on the RTX 2080 Ti under
 // Turing's launch law). Q2_K keeps the fewest tiles on every generation: its grid fails the 0.5 %
 // bound on each generation's large chip (RTX 3090, 4090, 5090: 1.8-3.8 %), a cost of its tile the
-// law lacks (#941). Another format keeps the fewest tiles.
+// law lacks (#941). Q5_K on GA10x and Ada (#619: grids 0.00-0.05 % against 4.7-6.8 %, A/Bs on the
+// RTX 4060 Ti, 4070 Ti and 3090); not GB20x, where its 448-token cell is +3.5 % (open). Another
+// format keeps the fewest tiles.
 [[nodiscard]] constexpr bool work_tiles_format(QType qtype, int major, int minor) noexcept {
     if (qtype == QType::GGML_Q4_K || qtype == QType::GGML_Q6_K) { return true; }
     const std::string_view generation = generation_row(major, minor).name;
     const bool from_ga10x = generation == "ga10x" || generation == "ada" || generation == "gb20x";
     if (qtype == QType::GGML_IQ4_XS) { return from_ga10x || generation == "turing"; }
+    if (qtype == QType::GGML_Q5_K) { return generation == "ga10x" || generation == "ada"; }
     return qtype == QType::GGML_Q3_K && from_ga10x;
 }
 
