@@ -185,6 +185,11 @@ ninferno_add_op_test(ninferno_kernel_roofline_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_kernel_roofline.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# The R8 decode schedule law's terms (ops/generic/r8_law.h, #613 PR-10) on constructed facts.
+ninferno_add_op_test(ninferno_r8_law_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_r8_law.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # The generator of that golden table (tests/ops/linear/gen_kernel_roofline_golden.cpp): built so that
 # it keeps compiling, not run by ctest (it is run once, against the code before the move).
 ninferno_add_test(ninferno_gen_kernel_roofline_golden
