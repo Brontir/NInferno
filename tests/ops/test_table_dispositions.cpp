@@ -385,8 +385,8 @@ void check_counts(const Counts& a8, const Counts& q4) {
     const auto same = [](const Counts& c, int m, int ca, int i, int n) {
         return c.measured == m && c.carried == ca && c.incomplete == i && c.none == n;
     };
-    expect(same(a8, 4, 15, 4, 133), "A8 route counts differ from the document");
-    expect(same(q4, 4, 18, 4, 130), "frontier counts differ from the document");
+    expect(same(a8, 4, 19, 0, 133), "A8 route counts differ from the document");
+    expect(same(q4, 4, 22, 0, 130), "frontier counts differ from the document");
 }
 
 } // namespace

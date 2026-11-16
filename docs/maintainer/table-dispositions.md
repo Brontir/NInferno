@@ -62,7 +62,7 @@ distance rule. This is transfer evidence, not a measurement on those cards. The 
 target with unknown L2, GTX 1660 SUPER on TU106, has no donor in either table and answers `None`.
 
 Counts over the 156 target SKUs (measured / carried / incomplete / none):
-A8 route 4 / 15 / 4 / 133; Q4 frontier 4 / 18 / 4 / 130.
+A8 route 4 / 19 / 0 / 133; Q4 frontier 4 / 22 / 0 / 130.
 
 ## `a8_default_route`
 
@@ -94,14 +94,14 @@ have a row and every other format takes w4r1. It is already fact-based, and it s
   w4r1, where the register MMA lost by x1.15..1.36 (V100 x3.5..4). On the one card where the schedule
   was measured against it (RTX 4060 Ti) every schedule is within 1..3 % of w4r1: the literal's cost,
   where measured, is at most that.
-- The literal answers 137 of 156 rows (`None` 133, `Incomplete` 4): every Ampere, Turing and Volta card
+- The literal answers 133 of 156 rows (`None` 133, `Incomplete` 0): every Ampere, Turing and Volta card
   (no row of those instruction sets), every Ada card outside distance 1.0 of the 4090 (RTX 4080 and
-  SUPER, the 4070 and 4060 families, L4, RTX 2000..5000 Ada, the Ada laptop parts; the L40S is
-  `Incomplete`), and the consumer Blackwell cards outside reach of the 5090 and 5080: the RTX 5070,
-  5060 Ti, 5060, 5050, their newly listed laptop parts and PRO 2000 / 4000 SFF / 5000 (`None`),
-  the RTX PRO 6000 Blackwell Server Edition and the two 5080 Laptop rows (`Incomplete`: no L2 in
-  the facts table). New carried boards are RTX 5090 D v2, RTX 6000D, PRO 4000 and the two PRO 4500
-  Blackwell editions, RTX 5880 Ada and L20. Hopper and datacenter Blackwell (H100, H200, H800,
+  SUPER, the 4070 and 4060 families, L4, RTX 2000..5000 Ada, the Ada laptop parts), and the consumer
+  Blackwell cards outside reach of the 5090 and 5080: the RTX 5070, 5060 Ti, 5060, 5050, their newly
+  listed laptop parts and PRO 2000 / 4000 SFF / 5000 (`None`). L40S, RTX PRO 6000 Blackwell Server
+  Edition and both 5080 Laptop rows carry their donors' routes after the L2 audit (#895). Other
+  carried boards are RTX 5090 D v2, RTX 6000D, PRO 4000 and the two PRO 4500 Blackwell editions,
+  RTX 5880 Ada and L20. Hopper and datacenter Blackwell (H100, H200, H800,
   H20 variants, B200) are not among the 156 target SKUs. That is the table's real coverage; it is
   labelled, not hidden.
 
@@ -131,16 +131,15 @@ parameters fits them exactly, which is a fit, not a derivation.
 **Disposition: declared.** Rows RTX 5090, 4090 (`kSparseMoePrefillQ4Q5Min` = 47) and RTX 3090 (17),
 measured ABBA as above; `Carried` within 1.0 (RTX PRO 6000 0.35, 4090 D 0.17, 6000 Ada 0.43, L40
 0.58; 3090 Ti 0.14, 3080 0.70, 3080 Ti 0.07, A6000 0.32, A5000 0.64, A40 0.46, A10 0.83).
-Fallback literal: 47, the Blackwell/Ada edge. The literal answers 134 of 156 rows (`None` 130,
-`Incomplete` 4: A10G, RTX 3080 12GB, L40S, RTX PRO 6000 Server).
+The L2 audit (#895) adds A10G (0.677) and RTX 3080 12GB (0.266), which carry the 3090's frontier
+of 17 instead of the fallback 47; L40S (0.580) and RTX PRO 6000 Server (0.353) carry 47.
+Fallback literal: 47, the Blackwell/Ada edge. The literal answers 130 of 156 rows (`None` 130,
+`Incomplete` 0).
 
 **Open risk.** Ampere cards outside the 3090's reach take the 47 literal: the RTX 3060, 3060 Ti,
 3070, 3070 Ti, A1000, A2000, A4000, A4500, 3050, A2 and the two RTX 3060 Laptop GPU rows (24 rows,
 with their LHR, memory and alternate-chip variants). So do the cards of the generations with no
-row at all: the 8 GA100 rows (A100, A30, A800), the 32 Turing rows and the 11 Volta rows.
-(The A10G and the RTX 3080 12GB are `Incomplete` in
-the facts table only because it has no L2 for them; a device reports its own L2, so they may well be
-`Carried` from the 3090 at their real distance.) The only Ampere measurement (3090) lost 28 % at C4
+row at all: the 8 GA100 rows (A100, A30, A800), the 32 Turing rows and the 11 Volta rows. The only Ampere measurement (3090) lost 28 % at C4
 with 47 against 17, so the step may carry to the whole generation. A C4 sweep at frontier 47 / 25 /
 17 on an RTX 3060 would show whether it does; if it does, a generation-keyed rule (a frontier of 17
 for a board without Ada's tensor-core rate) would turn those SKUs into a measured-and-labelled
