@@ -36,7 +36,7 @@ ScopedR8Key::ScopedR8Key(kernel_facts::R8KernelKey& out) noexcept : previous_(t_
 
 ScopedR8Key::~ScopedR8Key() { t_r8 = previous_; }
 
-std::optional<kernel_facts::R8KernelKey> r8_kernel_key(int schedule, QType qtype, Epilogue epilogue,
+std::optional<kernel_facts::R8KernelKey> r8_launch_key(int schedule, QType qtype, Epilogue epilogue,
                                                        std::int32_t tokens, bool prequantized) {
     const auto codec = format_facts(qtype).codec;
     if (!codec || schedule < 0 || schedule >= r8_schedule_count() || tokens < 1) {
@@ -54,7 +54,8 @@ std::optional<kernel_facts::R8KernelKey> r8_kernel_key(int schedule, QType qtype
         const ScopedR8Key named(key);
         launch_r8(schedule, *codec, epilogue, args, nullptr, pre);
     } catch (const std::invalid_argument&) { return std::nullopt; }
-    if (key.codec.empty()) return std::nullopt;
+    // A codec without the pre-quantized form runs the in-kernel quantizer's instead: not asked for.
+    if (key.codec.empty() || key.pre != prequantized) return std::nullopt;
     return key;
 }
 

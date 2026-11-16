@@ -258,6 +258,40 @@ void check_kernel_keys() {
                    std::string("R8 verify kernel key of ") + f.name);
         }
     }
+    // The host's key (r8_decoder_name's table, the launch's widths) is the launch's own, for every
+    // format, schedule, epilogue, token count and form.
+    int compared = 0;
+    for (const ninferno::FormatFacts& f : ninferno::kFormatFacts) {
+        for (int i = 0; i < g::r8_schedule_count(); ++i) {
+            for (const g::Epilogue e :
+                 {g::Epilogue::Store, g::Epilogue::AddResidual, g::Epilogue::SwiGlu}) {
+                for (std::int32_t t = 1; t <= 9; ++t) {
+                    for (const bool pre : {false, true}) {
+                        const auto host   = g::r8_kernel_key(i, f.q, e, t, pre);
+                        const auto launch = g::r8_launch_key(i, f.q, e, t, pre);
+                        const bool same =
+                            host.has_value() == launch.has_value() &&
+                            (!host ||
+                             (host->codec == launch->codec && host->warps == launch->warps &&
+                              host->rows == launch->rows && host->nt == launch->nt &&
+                              host->epilogue == launch->epilogue && host->pre == launch->pre));
+                        expect(same,
+                               std::string("the host's R8 kernel key is not the launch's: ") +
+                                   std::string(f.name) + " " + schedule_name(i) +
+                                   " T=" + std::to_string(t) + (pre ? " pre" : "") + ": host " +
+                                   (host ? host->codec + " nt " + std::to_string(host->nt)
+                                         : std::string("none")) +
+                                   ", launch " +
+                                   (launch ? launch->codec + " nt " + std::to_string(launch->nt)
+                                           : std::string("none")));
+                        compared += launch ? 1 : 0;
+                    }
+                }
+            }
+        }
+    }
+    expect(compared > 0, "no R8 launch named a kernel");
+    std::cout << "R8 kernel keys: the host's equal the launch's on " << compared << " launches\n";
     expect(!g::r8_kernel_key(0, ninferno::QType::BF16, g::Epilogue::Store, 1, false),
            "a format without an R8 codec has a kernel key");
     expect(!g::r8_kernel_key(g::r8_schedule_count(), ninferno::QType::GGML_Q4_K, g::Epilogue::Store,

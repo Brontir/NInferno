@@ -821,6 +821,103 @@ std::optional<R8TableHit> tuned_r8(const Problem& p) {
     return std::nullopt;
 }
 
+namespace {
+
+// The canonical name (kernel_facts.h decoder_name) of the type each R8 codec instantiates
+// (compiled_codecs.h's NINFERNO_R8_CODECS): "" for a codec without an R8 launch. The enum
+// argument of W4a8Ggml32 is spelled by value, as the snapshot keeps it. ninferno_r8_law_test
+// compares every key built from this table with the one the launch names (r8_launch_key).
+std::string_view r8_decoder_name(WeightCodec codec) {
+    switch (codec) {
+    case WeightCodec::Q8:
+        return "W4a8Q8";
+    case WeightCodec::Q4:
+        return "W4a8G64<4>";
+    case WeightCodec::Q5:
+        return "W4a8G64<5>";
+    case WeightCodec::Q6:
+        return "W4a8G64<6>";
+    case WeightCodec::U4Zp:
+        return "W4a8U4ZpG<128>";
+    case WeightCodec::U4ZpG32:
+        return "W4a8U4ZpG<32>";
+    case WeightCodec::U4ZpG64:
+        return "W4a8U4ZpG<64>";
+    case WeightCodec::Q3G128:
+        return "W4a8Q3<128>";
+    case WeightCodec::Q3G64:
+        return "W4a8Q3<64>";
+    case WeightCodec::GgmlIq3Xxs:
+        return "W4a8Iq3Xxs";
+    case WeightCodec::GgmlIq3S:
+        return "W4a8Iq3S";
+    case WeightCodec::GgmlIq2Xxs:
+        return "W4a8Iq2Xxs";
+    case WeightCodec::GgmlIq2Xs:
+        return "W4a8Iq2Xs";
+    case WeightCodec::GgmlIq2S:
+        return "W4a8Iq2S";
+    case WeightCodec::GgmlIq1S:
+        return "W4a8Iq1S";
+    case WeightCodec::GgmlIq1M:
+        return "W4a8Iq1M";
+    case WeightCodec::GgmlQ40:
+        return "W4a8Ggml32<0>";
+    case WeightCodec::GgmlQ41:
+        return "W4a8Ggml32<1>";
+    case WeightCodec::GgmlQ50:
+        return "W4a8Ggml32<2>";
+    case WeightCodec::GgmlQ51:
+        return "W4a8Ggml32<3>";
+    case WeightCodec::GgmlIq4Nl:
+        return "W4a8Ggml32<4>";
+    case WeightCodec::GgmlIq4Xs:
+        return "W4a8Iq4Xs";
+    case WeightCodec::Mxfp4:
+        return "W4a8Mxfp4";
+    case WeightCodec::Nvfp4:
+        return "W4a8Nvfp4";
+    case WeightCodec::GgmlQ4K:
+        return "W4a8Q45K<4>";
+    case WeightCodec::GgmlQ5K:
+        return "W4a8Q45K<5>";
+    case WeightCodec::GgmlQ6K:
+        return "W4a8Q6K";
+    case WeightCodec::GgmlQ3K:
+        return "W4a8Q3K";
+    case WeightCodec::GgmlQ2K:
+        return "W4a8Q2K";
+    default:
+        return "";
+    }
+}
+
+} // namespace
+
+// The launch's token slots (generic_r8.cuh r8_launch_schedule): 1, 2 or 4 with the in-kernel
+// quantizer; 2, 4 or 8 in the pre-quantized form, where the codec compiles it.
+std::optional<kernel_facts::R8KernelKey> r8_kernel_key(int schedule, QType qtype, Epilogue epilogue,
+                                                       std::int32_t tokens, bool prequantized) {
+    const auto codec = format_facts(qtype).codec;
+    if (!codec || !r8_supports(qtype) || schedule < 0 || schedule >= r8_schedule_count() ||
+        tokens < 1) {
+        return std::nullopt;
+    }
+    const std::string_view name = r8_decoder_name(*codec);
+    if (name.empty()) return std::nullopt;
+    int nt = 0;
+    if (prequantized) {
+        if (!r8_verify_compiled(qtype)) return std::nullopt;
+        nt = tokens <= 2 ? 2 : tokens <= 4 ? 4 : tokens <= 8 ? 8 : 0;
+    } else {
+        nt = tokens <= 1 ? 1 : tokens <= 2 ? 2 : tokens <= 4 ? 4 : 0;
+    }
+    if (nt == 0) return std::nullopt;
+    const R8ScheduleInfo s = r8_schedule_info(schedule);
+    return kernel_facts::R8KernelKey{std::string(name),          s.warps,     s.rows, nt,
+                                     static_cast<int>(epilogue), prequantized};
+}
+
 bool r8_law_generation(const DeviceClass& d) noexcept {
     return (d.major == 8 && d.minor == 9) || (d.major == 7 && d.minor == 0);
 }
