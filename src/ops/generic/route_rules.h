@@ -804,10 +804,21 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the same bare 1 is written in heuristic_r8 (generic_select.cpp, the next descriptor)",
      ""},
     {"heuristic_r8: the decode table's width", Basis::Structural, "generic_select.cpp",
-     "if (tokens == 1) { if (const auto tuned = tuned_r8(p)) return tuned->schedule; }", 1,
-     kUnknown, kUnknown,
+     "if (tokens == 1) { if (const auto tuned = tuned_r8(p)) return tuned->schedule; if (const "
+     "auto law = law_r8(p)) return *law; }",
+     1, kUnknown, kUnknown,
      "the same one-token gate as r8_schedule's, written again in the heuristic's own path; the "
-     "table (r8_decode_table.h) has T = 1 entries only; no board places the gate",
+     "table (r8_decode_table.h) has T = 1 entries only, and the schedule law (law_r8) is taken "
+     "at one token only, where its frozen predictions were scored; no board places the gate",
+     ""},
+    {"r8_law_generation: the law's generations", Basis::Measured, "generic_select.cpp",
+     "return (d.major == 8 && d.minor == 9) || (d.major == 7 && d.minor == 0);", 0,
+     "ad102:128sm, ad104:60sm, ad106:34sm, gv100:80sm", "RTX 4090, RTX 4070 Ti, RTX 4060 Ti, GV100",
+     "the generations whose holdout grids (192 problems no law version was shaped on, predictions "
+     "frozen at 9bdd25031 before the grids were read) the R8 schedule law beat the rules on at "
+     "T = 1: mean regret 0.90 / 0.92 / 0.71 / 2.16 % against the rules' 4.04 / 2.76 / 2.27 / "
+     "5.37 % (#613 PR-10); GA10x is left out (its issue floor overcounts, #960), Turing until its "
+     "holdout is scored, GB20x has no SM-rate row the law can read",
      ""},
     {"rmma_narrow_fallback: narrow tiles", Basis::Unknown, "route_authorities.cpp",
      "for (const int n_tiles : {2, 1}) { const int index = rmma_index(4, 1, 1, n_tiles); const "
