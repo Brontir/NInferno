@@ -785,9 +785,19 @@ static std::optional<Tuned> release_entry(const Problem& problem, const Weight& 
         route_probe_state.quantized_act >= 0 || route_probe_state.tokens_as > 0) {
         return std::nullopt;
     }
+    // A weight tune_dense records nothing for (offloaded, or another column order) runs the
+    // heuristic route after its first call, so it reads no entry before it either. A weight with
+    // no codes (a replay's description of the call) is not one.
+    if (weight.qdata != nullptr && (weight.k_order != nullptr || !on_device(weight.qdata))) {
+        return std::nullopt;
+    }
     std::lock_guard lock(g_mutex);
+    // A substituted foreign board's queries read its class's entry whatever this device has
+    // called: the device's own records (key_of keys by the device ordinal) are not that board's.
     const Key id = key_of(problem);
-    if (g_attempted.count(id) != 0 || g_tuned.count(id) != 0) return std::nullopt;
+    if (!substituted_foreign_class() && (g_attempted.count(id) != 0 || g_tuned.count(id) != 0)) {
+        return std::nullopt;
+    }
     load_cache_locked(false);
     auto& problems        = g_cache["problems"];
     const std::string key = problem_key(problem);
