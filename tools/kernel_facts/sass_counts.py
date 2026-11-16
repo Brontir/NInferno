@@ -147,6 +147,16 @@ PIPE_OPCODES = {
     "bar": ("BAR",),
 }
 PIPE_FIELDS = tuple(PIPE_OPCODES)
+# A second counted loop (#613 PR-10): the R8 decode kernels quantize the activation into shared
+# memory in a loop of their own before the dp4a loop, one 32-value block per thread and pass. Its
+# counts follow the pipe counts, prefixed pro_: the loops found (0 where the kernel reads a
+# quantized activation), and of one iteration the instructions, the integer and float ALU work,
+# the global bytes it loads and the shared bytes it stores (per warp), and its stall sum.
+PROLOGUE_FIELDS = ("pro_loops", "pro_total", "pro_int", "pro_fp", "pro_ldg_bytes",
+                   "pro_sts_bytes", "pro_stall")
+PROLOGUE_OF = {"pro_loops": "loops", "pro_total": "total", "pro_int": "int", "pro_fp": "fp",
+               "pro_ldg_bytes": "ldg_bytes", "pro_sts_bytes": "sts_bytes",
+               "pro_stall": "stall_sum"}
 PIPE_OF = {opcode: field for field, opcodes in PIPE_OPCODES.items() for opcode in opcodes}
 NO_BARRIER = 7
 
@@ -582,15 +592,18 @@ class LoopCounts:
         self.loops = 0
         self.k_iter = 0
         self.mma_shape = "-"
-        for f in COUNT_FIELDS + SCHEDULE_FIELDS + PIPE_FIELDS:
+        for f in COUNT_FIELDS + SCHEDULE_FIELDS + PIPE_FIELDS + PROLOGUE_FIELDS:
             setattr(self, f, 0)
         self.scheduled = False
         self.pipes = False
+        self.prologue = False
 
     def columns(self):
         if not self.scheduled:
             return LOOP_COLUMNS
-        return COLUMNS + PIPE_FIELDS if self.pipes else COLUMNS
+        if not self.pipes:
+            return COLUMNS
+        return COLUMNS + PIPE_FIELDS + (PROLOGUE_FIELDS if self.prologue else ())
 
     def row(self):
         """The snapshot's columns (COLUMNS, LOOP_COLUMNS without the schedule, COLUMNS and
@@ -604,9 +617,11 @@ class LoopCounts:
             setattr(c, name, getattr(self, name))
         return c
 
-    def with_pipes(self, pipes=True):
-        """This row's columns with (or without) the pipe counts, the counts unchanged."""
+    def with_pipes(self, pipes=True, prologue=False):
+        """This row's columns with (or without) the pipe counts, and after them the prologue
+        loop's (PROLOGUE_FIELDS, only with the pipes), the counts unchanged."""
         self.pipes = pipes
+        self.prologue = prologue and pipes
         return self
 
     @classmethod
@@ -614,13 +629,15 @@ class LoopCounts:
         """The counts of a snapshot row's loop columns, with the schedule (COLUMNS), without it
         (LOOP_COLUMNS) or with the schedule and the pipes (COLUMNS + PIPE_FIELDS); ValueError on
         a field that is no count."""
-        widths = (len(COLUMNS), len(LOOP_COLUMNS), len(COLUMNS) + len(PIPE_FIELDS))
+        piped = len(COLUMNS) + len(PIPE_FIELDS)
+        widths = (len(COLUMNS), len(LOOP_COLUMNS), piped, piped + len(PROLOGUE_FIELDS))
         if len(fields) not in widths:
             raise ValueError(f"{len(fields)} loop fields, {' or '.join(map(str, widths))} columns")
         c = cls()
         c.scheduled = len(fields) != len(LOOP_COLUMNS)
-        c.pipes = len(fields) == len(COLUMNS) + len(PIPE_FIELDS)
-        for name, value in zip(COLUMNS + PIPE_FIELDS, fields):
+        c.pipes = len(fields) >= piped
+        c.prologue = len(fields) == piped + len(PROLOGUE_FIELDS)
+        for name, value in zip(COLUMNS + PIPE_FIELDS + PROLOGUE_FIELDS, fields):
             setattr(c, name, value if name == "mma_shape" else int(value))
         return c
 
@@ -691,7 +708,19 @@ def schedule_counts(body, control, iteration, outside):
     return out
 
 
-def loop_counts(body, tiles=1, marker=None):
+def loop_counts(body, tiles=1, marker=None, prologue_marker=None):
+    """loop_counts_of (below), and where `prologue_marker` names an opcode (F2I), the counts of
+    the loop that opcode marks in the same body as the PROLOGUE_FIELDS (the R8 kernels'
+    activation quantizer). A row writes them only under with_pipes(prologue=True)."""
+    out = loop_counts_of(body, tiles, marker)
+    if prologue_marker is not None:
+        pro = loop_counts_of(body, 1, prologue_marker)
+        for field, source in PROLOGUE_OF.items():
+            setattr(out, field, getattr(pro, source))
+    return out
+
+
+def loop_counts_of(body, tiles=1, marker=None):
     """The K loop's LoopCounts of a function body (iter_functions); `tiles` the m16n8 tiles one
     warp accumulates (m_tiles * n_tiles * row sets), for k_iter. The schedule fields where every
     instruction carries its control code. `marker`, an opcode (IDP), marks the loop of a kernel

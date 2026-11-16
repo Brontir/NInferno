@@ -81,6 +81,19 @@ struct PipeCounts {
     int bar  = 0; // CTA barriers: BAR.SYNC, BAR.ARV, BAR.RED
 };
 
+// A second counted loop of a section row (#613 PR-10): the R8 decode kernels' activation
+// quantizer, the F2I-marked loop before the dp4a loop (sass_counts.py PROLOGUE_FIELDS). One
+// iteration's counts; loops 0 where the kernel reads a quantized activation (kPre).
+struct PrologueCounts {
+    int loops     = 0;
+    int total     = 0; // instructions of one iteration
+    int int_alu   = 0;
+    int fp_alu    = 0;
+    int ldg_bytes = 0; // global bytes one iteration loads, per warp
+    int sts_bytes = 0; // shared bytes one iteration stores, per warp
+    int stall_sum = 0; // the static schedule's clocks for one warp alone
+};
+
 struct LoopCounts {
     int loops  = 0; // candidate K loops found: 1 normally; 0 none (every count is 0); 2+ ambiguous
     int k_iter = 0; // K values per warp per iteration from the weight MMAs; 0 unknown
@@ -115,6 +128,7 @@ struct KernelFacts {
     std::size_t local_bytes         = 0; // per thread: other local memory
     std::size_t static_shared_bytes = 0; // per CTA
     std::optional<LoopCounts> loop;      // schema 4 snapshots; nullopt in a resources-only one
+    std::optional<PrologueCounts> prologue; // the r8 section's pro_ columns (#613 PR-10)
 
     // Per thread: every local-memory byte (the driver's localSizeBytes), the one spill measure
     // the price, the wide rule and the live check all read.

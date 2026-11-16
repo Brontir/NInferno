@@ -222,6 +222,35 @@ class LoopFinder(unittest.TestCase):
                 for o, t in KERNEL]
         self.assertEqual(sc.loop_counts(body_of(ffma), tiles=1, marker="IDP").loops, 0)
 
+    def test_prologue_loop(self):
+        # The R8 kernels' quantizer loop (#613 PR-10): a second loop, marked by F2I, counted into
+        # the pro_ columns beside the dp4a loop; none where the body has no F2I loop.
+        quantizer = [(0x600 + i * 0x10, t) for i, t in enumerate([
+            "LDG.E.128 R4, [R2.64] ;",
+            "F2I.NTZ R8, R5 ;",
+            "IADD3 R10, R10, 0x1, RZ ;",
+            "STS.128 [R12], R4 ;",
+            "ISETP.GE.AND P0, PT, R10, R11, PT ;",
+            "@!P0 BRA 0x600 ;",
+            "BRA 0x430 ;",
+        ])]
+        lines = [(o, t.replace("HMMA.16816.F32.BF16", "IDP.4A.S8.S8").replace(", RZ ;", ", R0 ;"))
+                 for o, t in KERNEL]
+        lines = [(o, t) if o != 0x430 else (o, "BRA 0x600 ;") for o, t in lines]
+        c = sc.loop_counts(body_of(lines + quantizer), tiles=1, marker="IDP",
+                           prologue_marker="F2I")
+        self.assertEqual(c.loops, 1)
+        self.assertEqual((c.pro_loops, c.pro_total, c.pro_ldg_bytes, c.pro_sts_bytes),
+                         (1, 6, 512, 512))
+        self.assertEqual(sc.loop_counts(body_of(lines), tiles=1, marker="IDP",
+                                        prologue_marker="F2I").pro_loops, 0)
+        # The columns follow the pipe counts only where asked, and the row reads back.
+        piped = c.with_pipes(True, prologue=True)
+        self.assertEqual(len(piped.row()),
+                         len(sc.COLUMNS) + len(sc.PIPE_FIELDS) + len(sc.PROLOGUE_FIELDS))
+        self.assertEqual(sc.LoopCounts.from_row(piped.row()), piped)
+        self.assertEqual(len(c.with_pipes(True).row()), len(sc.COLUMNS) + len(sc.PIPE_FIELDS))
+
     def test_mixed_shapes_and_odd_k(self):
         lines = [(o, t.replace("HMMA.16816.F32.BF16 R40", "HMMA.1688.F32 R40")) for o, t in KERNEL]
         c = sc.loop_counts(body_of(lines), tiles=2)

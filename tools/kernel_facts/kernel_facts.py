@@ -352,11 +352,14 @@ class Family:
     k_iter divides a warp's MMA work by, and whether its rows carry the pipe counts."""
 
     def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True,
-                 marker=None):
+                 marker=None, prologue=None):
         self.name = name
         # The opcode that marks the counted loop where the kernel has no tensor-core MMA
         # (sass_counts.loop_counts): IDP, the dp4a of the R8 kernels.
         self.marker = marker
+        # The opcode that marks a second counted loop, written as the PROLOGUE_FIELDS after the
+        # pipe counts: F2I, the R8 kernels' activation quantizer.
+        self.prologue = prologue
         # Whether the SASS pass counts its loop: a family whose price reads its resources alone
         # (the CTAs an SM holds) is a resources-only section, schema 1's columns.
         self.loop = loop
@@ -371,7 +374,8 @@ class Family:
     def schema_columns(self):
         """{schema: (columns, loop fields)}: the resources alone (1), and the loop (4; with the
         pipe counts for a family that carries them)."""
-        loop = sass_counts.COLUMNS + (sass_counts.PIPE_FIELDS if self.pipes else ())
+        loop = sass_counts.COLUMNS + (sass_counts.PIPE_FIELDS if self.pipes else ()) + (
+            sass_counts.PROLOGUE_FIELDS if self.pipes and self.prologue else ())
         return {1: (self.row_head, 0), 4: (self.row_head + loop, len(loop))}
 
     def parse_key(self, fields):
@@ -396,7 +400,7 @@ FAMILIES = {
                                 "chain"), lambda d: gemma4_key(d), "gemma4_", lambda key: 1,
                      False, True, loop=False),
     "r8": Family("r8", ("codec", "warps", "rows", "nt", "epilogue", "pre"), lambda d: r8_key(d),
-                 "r8_kernel", lambda key: 1, True, True, marker="IDP"),
+                 "r8_kernel", lambda key: 1, True, True, marker="IDP", prologue="F2I"),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -498,8 +502,9 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
     for name, body in sass_counts.iter_functions(lines, lambda n: n in keys):
         fk = keys[name]
         family = FAMILIES[fk[0]]
-        c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker).with_pipes(
-            family.pipes)
+        c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker,
+                                    family.prologue).with_pipes(family.pipes,
+                                                                family.prologue is not None)
         if fk in counts and counts[fk] != c:
             fail(f"{name} is disassembled twice in {arch} with different loops {counts[fk]} "
                  f"and {c}")
@@ -586,7 +591,8 @@ def family_audit(family, rows):
     above its unit's in both families (5 / 4 of it: its min term, a scale and a min per 16
     values, takes MMAs of its own that advance no K, which the ones-register search of
     sass_counts.py does not tell apart). The R8 decode kernels: one loop marked by its dp4a,
-    no CTA barrier and no MMA in it."""
+    no CTA barrier and no MMA in it, and one F2I-marked quantizer loop where pre is 0, none
+    where it is 1."""
     out = []
     for k, v in sorted(rows.items()):
         c = v[4]
@@ -633,6 +639,10 @@ def family_audit(family, rows):
                 problems.append(f"{c.bar} barriers in the iteration")
             if c.mma != 0:
                 problems.append(f"{c.mma} MMAs in the iteration")
+            # The activation quantizer: one F2I loop where the kernel quantizes (pre 0), none
+            # where it reads a quantized activation (pre 1).
+            if c.pro_loops != (0 if k[5] else 1):
+                problems.append(f"{c.pro_loops} quantizer loops (pre {k[5]})")
         problems += c.schedule_problems()
         if problems:
             out.append(f"{family} {row_key(k)}: {'; '.join(problems)}")
@@ -742,7 +752,10 @@ SECTION_NOTES = {
         "# R8Schedule<warps, rows>, NT, epilogue, kPre> (pre 1: the activation arrives quantized;",
         "# otherwise each CTA quantizes the [NT, K] activation into shared memory first). No",
         "# tensor-core MMA: the counted loop is the one holding the dp4a (IDP), one iteration a",
-        "# group of 32-value blocks per lane and row; k_iter and the MMA columns are 0.",
+        "# group of 32-value blocks per lane and row; k_iter and the MMA columns are 0. After the",
+        "# pipe counts, the pro_ columns: the activation quantizer's loop (marked by F2I; pro_loops",
+        "# 0 where pre is 1), one iteration's instructions, integer and float work, global bytes",
+        "# loaded and shared bytes stored per warp, and its stall sum.",
     ),
 }
 
