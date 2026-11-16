@@ -369,13 +369,14 @@ void sections_read() {
     // the generation has (Turing's m8n8k16, m16n8k32 from sm_80 on); and the W4A8 32 x 128 tile
     // (Q4_K, Q6_K) with one loop, two barriers per 128-value K tile and k_iter 16 x 32.
     // sm_70 has no mmq or w4a8 section: its snapshot is made with CUDA 12.8 (#762), and Volta takes
-    // no MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts.
+    // no MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts,
+    // and the r8 one (#613 PR-10): the R8 law reads the one-slot ring's.
     constexpr std::string_view kWithoutSections[] = {"70"};
     int with_sections                             = 0;
     for (const auto arch : kf::snapshot_archs()) {
         const std::string name = "sm_" + std::string(arch);
         for (const auto family : kf::kSectionFamilies) {
-            const bool waived = family != "gemma4" &&
+            const bool waived = family != "gemma4" && family != "r8" &&
                                 std::find(std::begin(kWithoutSections), std::end(kWithoutSections),
                                           arch) != std::end(kWithoutSections);
             const auto header = kf::section_header(arch, family);
