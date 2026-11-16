@@ -1,5 +1,6 @@
 #include "product/choice/choice.h"
 
+#include "core/board_facts.h"
 #include "core/device_class.h"
 #include "core/generation.h"
 #include "core/measured_boards.h"
@@ -42,7 +43,7 @@ double peak(const CardFacts& card, Route route) noexcept {
     const GenerationRow& row = generation_row(card.major, card.minor);
     const double s8          = row.s8 > 0 ? row.s8 : row.bf16;
     const double rate        = route == Route::Bf16 ? row.bf16 : route == Route::Fp4 ? 2 * s8 : s8;
-    return card.sms * card.clock_hz * rate;
+    return board_facts::tensor_flops_per_s(card.sms, card.clock_hz, rate);
 }
 
 // The generation's own row of a per-generation table, else kTransferGeneration's (`transferred`).
