@@ -2,6 +2,7 @@
 
 #include "core/weight.h"
 #include "ninferno/ops/linear.h"
+#include "ops/common/cta_facts.h"
 #include "ops/linear/q8/q8_launch.h"
 
 #include <cstdint>
@@ -26,6 +27,9 @@ struct Q8LaunchTile {
     std::int32_t rows;
     std::int32_t tokens;
     bool mma; // a tensor-core (mma.sync) tile, not the SIMT one
+    // The CTA's resources and K chain (#617 D, cta_facts.h), for the launches the Q8 pair is
+    // priced against (K = 5120 from 86 columns); nullopt elsewhere.
+    std::optional<CtaFacts> cta = std::nullopt;
 };
 
 [[nodiscard]] std::optional<Q8LaunchTile> q8_launch_tile(Q8Launch launch);

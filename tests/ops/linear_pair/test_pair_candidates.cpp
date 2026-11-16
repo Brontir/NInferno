@@ -109,8 +109,17 @@ int main() {
                 owned && (t <= 4 || ninferno::device_class().features.mma_bf16_native);
             check(r.separate.has_value() == priced,
                   "the separate side is priced where the shape's table runs it" + at);
-            const bool fused = t > 85 || !r.separate || *r.fused <= *r.separate;
-            if (priced) { check(fused == (t < 5 || t > 85), "the price flips 5..85 columns" + at); }
+            // From 86 columns the fused schedule is one launch: the residency price decides
+            // (#617 D), the board's SM limits included; a tie keeps the fused kernel.
+            // (The same law as the selection: this checks the plumbing; the law itself is held to
+            // seven boards' measurements by test_pair_work.cpp.)
+            const auto w = ops::detail::linear_pair_price(1024, 5120, t, ninferno::device_class());
+            const bool fused = t > 85
+                                   ? (!priced || !w.fused || !w.separate || *w.fused <= *w.separate)
+                                   : (!r.separate || *r.fused <= *r.separate);
+            if (priced && t <= 85) {
+                check(fused == (t < 5), "the price flips 5..85 columns" + at);
+            }
             check(c.size() == 2 && c[0].id == "fused:q8_pair" &&
                       c[0].status == (fused ? Status::Selected : Status::Dominated) &&
                       c[1].id == "separate" &&

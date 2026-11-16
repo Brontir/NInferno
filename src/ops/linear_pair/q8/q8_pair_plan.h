@@ -2,6 +2,7 @@
 
 #include "core/weight.h"
 #include "core/tensor.h"
+#include "ops/common/cta_facts.h"
 
 #include <cuda_runtime.h>
 
@@ -90,6 +91,9 @@ struct Q8PairGeometry {
     std::int32_t launches;     // kernel launches of the call
     std::int32_t x_row_blocks; // row tiles that each request the whole activation, per launch
     std::int32_t tile_cols;    // token columns of one CTA
+    // The CTA's resources and K chain (#617 D, cta_facts.h): the DualMma schedules; nullopt for
+    // the others (not priced against the two calls by residency).
+    std::optional<CtaFacts> cta;
 };
 
 [[nodiscard]] std::optional<Q8PairGeometry> q8_pair_geometry(const Q8PairProblem& problem);

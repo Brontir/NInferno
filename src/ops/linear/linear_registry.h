@@ -1,6 +1,8 @@
 #pragma once
 
+#include "core/device_class.h"
 #include "core/weight.h"
+#include "ops/common/cta_facts.h"
 #include "ninferno/ops/linear.h" // LinearPolicy
 
 #include <cstdint>
@@ -102,6 +104,13 @@ struct LinearCandidate {
 [[nodiscard]] std::optional<double> linear_q8_requested_bytes(const Weight& weight,
                                                               std::int32_t tokens);
 
+// The residency price of ops::linear's call for one Q8_G32 weight on the current device (#617 D,
+// cta_facts.h residency_chain): the rounds its grid takes on the busiest SM times one CTA's K
+// chain, for the shape's own tile where linear_q8_requested_bytes prices it and the tile's CTA
+// facts are known; nullopt elsewhere.
+[[nodiscard]] std::optional<double> linear_q8_residency_price(const Weight& weight,
+                                                              std::int32_t tokens);
+
 // ops::linear_pair's implementations for one call (#310): the fused Q8 pair kernel
 // ("fused:q8_pair", its two registered geometries in the converter's RowSplit Q8_G32 layout) and
 // the two separate linear() calls ("separate", A16 as linear_pair's contract has it), each with the
@@ -133,6 +142,19 @@ struct LinearPairRequested {
 
 [[nodiscard]] LinearPairRequested
 linear_pair_requested_bytes(const Weight& first, const Weight& second, std::int32_t tokens);
+
+// The residency price of each alternative on `device` (#617 D, cta_facts.h): the fused
+// kernel's one-launch DualMma schedule, the two calls with the tile the shape's own table names.
+// No current device and no gate: the law the selection reads, for its replica test. nullopt where
+// the alternative's CTA facts are not known (TwoSimtR8C4, the split-K and Concat schedules on the
+// fused side; a tile without facts on the separate one).
+struct LinearPairPrice {
+    std::optional<double> fused;
+    std::optional<double> separate;
+};
+
+[[nodiscard]] LinearPairPrice linear_pair_price(std::int32_t n, std::int32_t k, std::int32_t tokens,
+                                                const DeviceClass& device);
 [[nodiscard]] std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first,
                                                                       const Weight& second,
                                                                       std::int32_t tokens);
