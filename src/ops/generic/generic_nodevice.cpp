@@ -21,6 +21,14 @@ std::optional<Route> tuned_prefill_route(const Problem&, std::int32_t, Route) {
     return std::nullopt;
 }
 
+std::optional<Route> release_dense_route(const Problem&, const Weight&, std::int32_t) {
+    return std::nullopt;
+}
+
+std::optional<Route> release_prefill_route(const Problem&, const Weight&, std::int32_t, Route) {
+    return std::nullopt;
+}
+
 // The kernel a route would launch is read from the device's binary (generic_describe.cpp): a host
 // with no device describes none.
 std::optional<KernelResources> route_resources(Route, const Weight&, Epilogue, std::int32_t,

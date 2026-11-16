@@ -316,6 +316,18 @@ bool on_device(const void* p) {
     return a.type == cudaMemoryTypeDevice || a.type == cudaMemoryTypeManaged;
 }
 
+// An offloaded weight: its codes in pinned host memory (the engine's offload keeps them there for
+// the transfer). A described weight's stand-in address (route_query: never read) is unregistered
+// and is not one.
+bool host_resident(const void* p) {
+    cudaPointerAttributes a{};
+    if (cudaPointerGetAttributes(&a, p) != cudaSuccess) {
+        (void)cudaGetLastError();
+        return false;
+    }
+    return a.type == cudaMemoryTypeHost;
+}
+
 struct Bench {
     Call call;
     Tensor x, out;
@@ -770,6 +782,74 @@ std::optional<Route> tuned_dense_route(const Problem& problem, std::int32_t toke
     const auto it = g_tuned.find(key_of(problem));
     if (it == g_tuned.end()) return std::nullopt;
     return it->second.routes[static_cast<std::size_t>(tokens)];
+}
+
+// The release's entry (routes/tuner/dense_tune.json) for a problem no call of this process has
+// read: a replay of a start or a query before the first call (#935). It is keyed by the class the
+// query runs under (problem_key), so a substituted board reads its own class's entry, and it is
+// read as tune_dense reads it in mode Off: the decode widths only when the whole range is present
+// and every route is admitted for the weight, the prefill bands only with them and only as
+// read_prefill_bands accepts them. Only while the tuner is on in mode Off (the engine's default;
+// never a tuning run's user cache), and not under the invariant profile or a probe.
+static std::optional<Tuned> release_entry(const Problem& problem, const Weight& weight) {
+    if (!g_enabled.load(std::memory_order_relaxed) ||
+        g_mode.load(std::memory_order_relaxed) != TuneMode::Off || invariant_routes_active() ||
+        route_probe_state.quantized_act >= 0 || route_probe_state.tokens_as > 0) {
+        return std::nullopt;
+    }
+    // A weight tune_dense records nothing for (offloaded, or another column order) runs the
+    // heuristic route after its first call, so it reads no entry before it either. A described
+    // weight (a replay's or a plan's query: a stand-in address, never read) is not one (#945).
+    if (weight.k_order != nullptr || (weight.qdata != nullptr && host_resident(weight.qdata))) {
+        return std::nullopt;
+    }
+    std::lock_guard lock(g_mutex);
+    // A substituted foreign board's queries read its class's entry whatever this device has
+    // called: the device's own records (key_of keys by the device ordinal) are not that board's.
+    // Without a device (a CPU replay) substituted_foreign_class is true, so key_of (which reads
+    // the current device ordinal) is not reached.
+    if (!substituted_foreign_class()) {
+        const Key id = key_of(problem);
+        if (g_attempted.count(id) != 0 || g_tuned.count(id) != 0) return std::nullopt;
+    }
+    load_cache_locked(false);
+    auto& problems        = g_cache["problems"];
+    const std::string key = problem_key(problem);
+    if (!problems.contains(key) || !problems[key].contains("routes")) return std::nullopt;
+    const auto& entry  = problems[key];
+    const auto& routes = entry["routes"];
+    Tuned tuned;
+    for (std::int32_t t = 1; t <= kDenseTuneMaxTokens; ++t) {
+        const auto name = std::to_string(t);
+        if (!routes.contains(name)) return std::nullopt;
+        const auto& v = routes[name];
+        if (v.is_null()) continue;
+        if (!v.is_string()) return std::nullopt;
+        const auto r = parse_route(v.get<std::string>());
+        if (!r || !route_admits(*r, weight, problem.policy)) return std::nullopt;
+        tuned.routes[static_cast<std::size_t>(t)] = *r;
+    }
+    (void)read_prefill_bands(problem, weight, entry, tuned);
+    return tuned;
+}
+
+std::optional<Route> release_dense_route(const Problem& problem, const Weight& weight,
+                                         std::int32_t tokens) {
+    if (tokens < 1 || tokens > kDenseTuneMaxTokens) return std::nullopt;
+    const auto tuned = release_entry(problem, weight);
+    if (!tuned) return std::nullopt;
+    return tuned->routes[static_cast<std::size_t>(tokens)];
+}
+
+std::optional<Route> release_prefill_route(const Problem& problem, const Weight& weight,
+                                           std::int32_t tokens, Route heuristic) {
+    if (tokens <= kDenseTuneMaxTokens) return std::nullopt;
+    const auto tuned = release_entry(problem, weight);
+    if (!tuned) return std::nullopt;
+    const std::size_t b = prefill_band(tokens);
+    const auto& base    = tuned->prefill_base[b];
+    if (!base || !(*base == heuristic)) return std::nullopt;
+    return tuned->prefill[b];
 }
 
 std::optional<Route> tuned_prefill_route(const Problem& problem, std::int32_t tokens,
