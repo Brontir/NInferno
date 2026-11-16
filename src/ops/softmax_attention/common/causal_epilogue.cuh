@@ -32,6 +32,15 @@ __device__ __forceinline__ __nv_bfloat16 causal_gated_output(float value,
     return __float2bfloat16_rn(__bfloat162float(rounded) * sigmoid(__bfloat162float(*gate)));
 }
 
+// The same, with the gate already loaded (the merges load it before their split loop): `gated`
+// stands for a set gate pointer, `gate` for the value it holds.
+__device__ __forceinline__ __nv_bfloat16 causal_gated_output(float value, bool gated,
+                                                             __nv_bfloat16 gate) {
+    const __nv_bfloat16 rounded = __float2bfloat16(value);
+    if (!gated) return rounded;
+    return __float2bfloat16_rn(__bfloat162float(rounded) * sigmoid(__bfloat162float(gate)));
+}
+
 // A warp converts one normalized row from the represented rotated V coordinates.
 template <class G>
 __device__ __forceinline__ void
