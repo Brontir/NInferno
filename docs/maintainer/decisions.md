@@ -2946,6 +2946,6 @@ d2|, 1.024 µs); a verdict needs both passes beyond it.
   covered by that candidate.
 
 **Seen in passing.** The kit's "fastest other" column (the route-tune winner) is the R8 pair
-`r8.w4r1` / `r8.w4r2`, faster than all three kernels in some cells: 3 of 6 on the 4070 Ti (by
-0.3-1.8 %), 3 on the 3090, 2 on the 3060, 2 on the GV100. That ranking belongs to #613 PR-10
+`r8.w4r1` / `r8.w4r2`, faster than all three kernels in some cells: 5 of 6 on the 4060 Ti, 3 of 6 on the 4070 Ti (by
+1.4-1.7 %), 3 on the 3090, 2 on the 3060, 2 on the GV100. That ranking belongs to #613 PR-10
 (`rules_r8` priced), not to the vector rule.
