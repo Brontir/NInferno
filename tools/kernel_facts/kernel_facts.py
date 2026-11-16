@@ -314,10 +314,20 @@ def r8_key(demangled):
 
 
 
+# The R8 codecs with kHalfMin (codec_traits.h half_min: Q2_K): per block and token slot the loop
+# also takes the code sums of values 0..15 and 16..31 by dp4a against ones (generic_r8.cuh), the
+# same eight dp4a a block as one row's product.
+R8_HALF_MIN_CODECS = ("W4a8Q2K",)
+
+
 def r8_products(key):
-    """The (row, token) products one warp of an R8 kernel accumulates: rows x row sets (two under
-    SwiGLU) x token slots, what the dp4a count is divided by for k_iter."""
-    return key[2] * key[3] * (2 if key[4] == EPILOGUE_SWIGLU else 1)
+    """The dp4a products one warp of an R8 kernel issues per block: rows x row sets (two under
+    SwiGLU) x token slots, plus one per token slot for a kHalfMin codec's ones sums; what the dp4a
+    count is divided by for k_iter."""
+    nt = key[3]
+    return key[2] * nt * (2 if key[4] == EPILOGUE_SWIGLU else 1) + (
+        nt if key[0] in R8_HALF_MIN_CODECS else 0)
+
 
 GEMMA4_NAMESPACE = "ninferno::ops::"
 GEMMA4_GEOMETRY = re.compile(r"(?:ninferno::ops::)?Gemma4Geometry<(\d+),(-?\d+),(\d+)>")
@@ -655,6 +665,16 @@ def family_audit(family, rows):
         problems += c.schedule_problems()
         if problems:
             out.append(f"{family} {row_key(k)}: {'; '.join(problems)}")
+    if family == "r8":
+        # One codec's loop covers the same K an iteration in every schedule, epilogue and token
+        # width (its group and ring are the codec's and the architecture's, not the schedule's).
+        per_codec = {}
+        for k, v in rows.items():
+            if v[4] is not None and v[4].k_iter > 0:
+                per_codec.setdefault(k[0], set()).add(v[4].k_iter)
+        for codec, values in sorted(per_codec.items()):
+            if len(values) != 1:
+                out.append(f"r8 {codec}: k_iter differs between its rows: {sorted(values)}")
     return out
 
 
