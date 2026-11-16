@@ -714,13 +714,15 @@ def loop_counts(body, tiles=1, marker=None, prologue_marker=None):
     activation quantizer). A row writes them only under with_pipes(prologue=True)."""
     out = loop_counts_of(body, tiles, marker)
     if prologue_marker is not None:
-        pro = loop_counts_of(body, 1, prologue_marker)
+        # The quantizer's loop holds no dp4a: a codec whose weight decode converts with F2I
+        # (NVFP4's) has F2I in the dp4a loop too, which is not the prologue.
+        pro = loop_counts_of(body, 1, prologue_marker, exclude=marker)
         for field, source in PROLOGUE_OF.items():
             setattr(out, field, getattr(pro, source))
     return out
 
 
-def loop_counts_of(body, tiles=1, marker=None):
+def loop_counts_of(body, tiles=1, marker=None, exclude=None):
     """The K loop's LoopCounts of a function body (iter_functions); `tiles` the m16n8 tiles one
     warp accumulates (m_tiles * n_tiles * row sets), for k_iter. The schedule fields where every
     instruction carries its control code. `marker`, an opcode (IDP), marks the loop of a kernel
@@ -767,6 +769,9 @@ def loop_counts_of(body, tiles=1, marker=None):
 
     marked = {h: sum(weight(b)[0] for b in m) for h, m in loops.items()}
     candidates = [h for h, n in marked.items() if n > 0]
+    if exclude is not None:  # a loop holding the excluded opcode is no candidate
+        candidates = [h for h in candidates
+                      if not any(base_opcode(body[i][2]) == exclude for i in indices(loops[h]))]
     innermost = [h for h in candidates
                  if not any(o != h and loops[o] < loops[h] for o in candidates)]
     iterations = {h: longest_iteration(edges, dom, h, loops[h], weight) for h in innermost}

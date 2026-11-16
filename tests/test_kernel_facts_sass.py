@@ -247,6 +247,14 @@ class LoopFinder(unittest.TestCase):
                          (1, 6, 512, 512))
         self.assertEqual(sc.loop_counts(body_of(lines), tiles=1, marker="IDP",
                                         prologue_marker="F2I").pro_loops, 0)
+        # An F2I in the dp4a loop (NVFP4's weight decode) does not make it the prologue.
+        first = next(o for o, t in lines if t.startswith("IDP"))
+        mixed = [(o, "F2I.NTZ R8, R5 ;") if o == first else (o, t) for o, t in lines]
+        m = sc.loop_counts(body_of(mixed + quantizer), tiles=1, marker="IDP",
+                           prologue_marker="F2I")
+        self.assertEqual((m.loops, m.pro_loops, m.pro_total), (1, 1, 6))
+        self.assertEqual(sc.loop_counts(body_of(mixed), tiles=1, marker="IDP",
+                                        prologue_marker="F2I").pro_loops, 0)
         # The columns follow the pipe counts only where asked, and the row reads back.
         piped = c.with_pipes(True, prologue=True)
         self.assertEqual(len(piped.row()),
