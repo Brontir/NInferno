@@ -168,9 +168,13 @@ int device_sms() {
 // 8 rows by 4 columns a CTA) saves none, and the chains differ only in how often the tiles
 // re-request the weights, so the one requesting fewer bytes runs; a tie keeps the fused kernel.
 //
-// This is a narrow override for one schedule (TwoSimtR8C4), not yet a general price: a one-launch
-// schedule's saving, the MMA tile's efficiency and the split-K partials are unpriced, so those keep
-// the fused kernel (the follow-up of #310 prices them; the measured misses are listed there). The
+// A one-launch schedule (DualMma from 86 columns at K = 5120, the Concat tiles at K = 2048) is
+// priced by the busiest SM's MMA work instead (#617 D, busiest_sm_mma_work): the fused grid of
+// 32 row blocks leaves SMs idle on a large board at narrow T, where the two calls' grids fill it
+// (RTX 4090 T = 86: 132 against 45 us). It takes the two calls only where their work is lower;
+// on six boards that never lost a measured fused win (tests/ops/linear_pair/test_pair_work.cpp).
+// A tie keeps the fused kernel: there the two calls still win on five boards by 2-59 %, the MMA
+// tile's efficiency the work does not count (#947); the split-K partials stay unpriced too. The
 // separate side is priced only where the shape's table runs the call with a tile the device's MMA
 // takes natively, so the numeric contract of the two calls is the SIMT pair's (A16 sums of the
 // same products) and Volta/Turing keep the fused kernel. A call's summation order already depends

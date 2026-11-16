@@ -17,7 +17,7 @@
                     "function": "fused_pair"
                 },
                 "rule_today":
-                    "fused_pair = fused_domain() (registered Q8 G32 shapes, row views for K=2048) and chain_prefers_fused(). The #565 requested-bytes law (generic::route_traffic) can pick the two linear() calls only for the two-launch TwoSimtR8C4 schedule (K=5120, T<=85) and only where the shape table runs the call with a tile the device MMA takes natively; Volta and Turing keep the fused kernel (numeric contract), and so does the invariant route profile. One-launch fused schedules are unpriced.",
+                    "fused_pair = fused_domain() (registered Q8 G32 shapes, row views for K=2048) and chain_prefers_fused(). The #565 requested-bytes law (generic::route_traffic) can pick the two linear() calls only for the two-launch TwoSimtR8C4 schedule (K=5120, T<=85) and only where the shape table runs the call with a tile the device MMA takes natively; Volta and Turing keep the fused kernel (numeric contract), and so does the invariant route profile. A one-launch fused schedule (DualMma, Concat) is priced against the two calls by the busiest SM's MMA work (#617 D, busiest_sm_mma_work: the tile and the board's SM count); a tie keeps the fused kernel. The split-K schedules (K=2048) stay unpriced.",
                 "alternatives": [
                     "fused dual kernel (q8_pair_dispatch)",
                     "two linear() calls"
