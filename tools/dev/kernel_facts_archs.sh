@@ -93,12 +93,11 @@ for a in "${ARCHS[@]}"; do
   fi
   tick "sm_$a configured"
   # The check reads ninferno-serve where the tree builds it (every family's kernels, #830), else
-  # the selector golden test: build both, or ctest finds no binary to read.
+  # the selector golden test: both are built (a tree without the app reads the test).
   TARGETS=(ninferno_selector_golden_test)
-  # The target list is read whole first: under pipefail `ninja ... | grep -q` can fail on ninja's
-  # SIGPIPE after grep's early exit and drop ninferno-serve without a word.
-  ALL_TARGETS=$(ninja -C "$B" -t targets all 2>/dev/null || true)
-  if grep '^ninferno-serve:' <<< "$ALL_TARGETS" > /dev/null; then TARGETS+=(ninferno-serve); fi
+  # `ninja -t query` names the exact target (no list piped to grep, whose early exit fails a
+  # pipefail pipe on ninja's SIGPIPE).
+  if ninja -C "$B" -t query ninferno-serve > /dev/null 2>&1; then TARGETS+=(ninferno-serve); fi
   if ! (cd "$B" && $LOW ninja -j"$JOBS" "${TARGETS[@]}" > "$L/kfa_ninja_$a.log" 2>&1); then
     grep -m8 -E "error|FAILED" "$L/kfa_ninja_$a.log" || tail -8 "$L/kfa_ninja_$a.log"
     RESULT[$a]="build failed ($L/kfa_ninja_$a.log)"; worst 2; continue
