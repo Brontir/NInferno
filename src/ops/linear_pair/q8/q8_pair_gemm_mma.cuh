@@ -218,20 +218,26 @@ __launch_bounds__((TileCols / 16) * 32, kQ8PairMmaMinBlocks<TileCols>) void q8_p
         ninferno::ops::cp_wait<0>();
         __syncthreads();
 
+        // Each buffer's next stage is issued as soon as its last reader has passed a barrier
+        // (#947): the activation's other stage at once (its readers, the MMAs of kt - 1, are
+        // done), K's codes and scales after K's dequant, V's after V's. The loads then overlap
+        // the MMAs of both weights instead of V's alone. Same products, same order.
+        const int next = kt + 1;
+        if (next < nkt) { stage_x(next & 1, next); }
+
         dequant(0, kt);
         __syncthreads();
+        if (next < nkt) {
+            stage_codes(0, next);
+            stage_scales(0, next);
+        }
         mma_pair(0, stage);
         __syncthreads();
 
         dequant(1, kt);
         __syncthreads();
-
-        const int next = kt + 1;
         if (next < nkt) {
-            stage_x(next & 1, next);
-            stage_codes(0, next);
             stage_codes(1, next);
-            stage_scales(0, next);
             stage_scales(1, next);
             ninferno::ops::cp_commit();
         }
