@@ -313,6 +313,12 @@ def r8_key(demangled):
     return (args[0], *(int(v) for v in m.groups()), int(args[2]), int(args[3]), as_bool(args[4]))
 
 
+
+def r8_products(key):
+    """The (row, token) products one warp of an R8 kernel accumulates: rows x row sets (two under
+    SwiGLU) x token slots, what the dp4a count is divided by for k_iter."""
+    return key[2] * key[3] * (2 if key[4] == EPILOGUE_SWIGLU else 1)
+
 GEMMA4_NAMESPACE = "ninferno::ops::"
 GEMMA4_GEOMETRY = re.compile(r"(?:ninferno::ops::)?Gemma4Geometry<(\d+),(-?\d+),(\d+)>")
 
@@ -400,7 +406,8 @@ FAMILIES = {
                                 "chain"), lambda d: gemma4_key(d), "gemma4_", lambda key: 1,
                      False, True, loop=False),
     "r8": Family("r8", ("codec", "warps", "rows", "nt", "epilogue", "pre"), lambda d: r8_key(d),
-                 "r8_kernel", lambda key: 1, True, True, marker="IDP", prologue="F2I"),
+                 "r8_kernel", lambda key: r8_products(key), True, True, marker="IDP",
+                 prologue="F2I"),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -639,6 +646,8 @@ def family_audit(family, rows):
                 problems.append(f"{c.bar} barriers in the iteration")
             if c.mma != 0:
                 problems.append(f"{c.mma} MMAs in the iteration")
+            if c.k_iter <= 0:
+                problems.append("no K count from the dp4a")
             # The activation quantizer: one F2I loop where the kernel quantizes (pre 0), none
             # where it reads a quantized activation (pre 1).
             if c.pro_loops != (0 if k[5] else 1):
@@ -752,7 +761,8 @@ SECTION_NOTES = {
         "# R8Schedule<warps, rows>, NT, epilogue, kPre> (pre 1: the activation arrives quantized;",
         "# otherwise each CTA quantizes the [NT, K] activation into shared memory first). No",
         "# tensor-core MMA: the counted loop is the one holding the dp4a (IDP), one iteration a",
-        "# group of 32-value blocks per lane and row; k_iter and the MMA columns are 0. After the",
+        "# group of 32-value blocks per lane and row; k_iter the K values one iteration covers per",
+        "# row and token (128 per dp4a over rows x sets x token slots), the MMA columns 0. After the",
         "# pipe counts, the pro_ columns: the activation quantizer's loop (marked by F2I; pro_loops",
         "# 0 where pre is 1), one iteration's instructions, integer and float work, global bytes",
         "# loaded and shared bytes stored per warp, and its stall sum.",

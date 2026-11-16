@@ -216,7 +216,10 @@ class LoopFinder(unittest.TestCase):
         lines = [(o, t.replace("HMMA.16816.F32.BF16", "IDP.4A.S8.S8").replace(", RZ ;", ", R0 ;"))
                  for o, t in KERNEL]
         c = sc.loop_counts(body_of(lines), tiles=1, marker="IDP")
-        self.assertEqual((c.loops, c.mma, c.k_iter, c.mma_shape), (1, 0, 0, "-"))
+        # Six dp4a a lane: 6 x 4 x 32 = 768 K values per product; over three products, 256.
+        self.assertEqual((c.loops, c.mma, c.k_iter, c.mma_shape), (1, 0, 768, "-"))
+        self.assertEqual(sc.loop_counts(body_of(lines), tiles=3, marker="IDP").k_iter, 256)
+        self.assertEqual(sc.loop_counts(body_of(lines), tiles=5, marker="IDP").k_iter, 0)
         self.assertEqual(c.int, sc.loop_counts(body_of(KERNEL), tiles=1).int + 6)
         ffma = [(o, t.replace("HMMA.16816.F32.BF16", "FFMA").replace(", RZ ;", ", R0 ;"))
                 for o, t in KERNEL]

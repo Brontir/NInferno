@@ -811,6 +811,13 @@ def loop_counts_of(body, tiles=1, marker=None):
         per_tile = 16 * 8 * tiles
         if mnk_sum and not unknown_shape and mnk_sum % per_tile == 0:
             out.k_iter = mnk_sum // per_tile
+    elif marked_opcodes == ("IDP",):
+        # A dp4a loop (the R8 kernels): each IDP is 4 int8 products of one lane, so a warp's 32
+        # lanes cover 128 K values per IDP and (row, token) product; `tiles` is the products one
+        # warp accumulates (rows x row sets x token slots).
+        idp = sum(1 for i in indices(path) if base_opcode(body[i][2]) == "IDP")
+        if idp and (128 * idp) % tiles == 0:
+            out.k_iter = 128 * idp // tiles
     # Outside: what the entry reaches beyond the blocks of the loop whose iteration was counted
     # (its header is the path's first block).
     return scheduled(list(in_order(path)), list(indices(live - loops[path[0]])))
