@@ -248,7 +248,10 @@ int route_tune_main(int argc, char** argv) {
             if (!routes_csv) throw std::runtime_error("cannot open " + opt["--routes-out"]);
             routes_csv << "format,compute,epilogue,n,k,T,route,median_us,model_us,registers,"
                           "local_bytes,weight_bytes,activation_bytes,output_bytes,run,device,"
-                          "protocol,calls,samples,pci_device_id\n";
+                          "protocol,calls,samples,pci_device_id,kernel_threads,grid_x,grid_y,"
+                          "grid_z,shared_bytes,kernel_registers,kernel_local_bytes,loop_k_iter,"
+                          "loop_total,loop_int,loop_fp,loop_mma,loop_ldg_bytes,loop_lds_bytes,"
+                          "loop_stall,loop_imad,loop_ffma\n";
         }
         // The route the production path runs at each band point (#301): select_route's choice
         // with the tables this device loads, resolved for the contiguous call and this workspace,
@@ -537,7 +540,35 @@ int route_tune_main(int argc, char** argv) {
                                    : timer.flushes() ? "flushed"
                                                      : "warm")
                                << ',' << (rotated ? 1 + spare.size() : std::size_t{1}) << ','
-                               << samples << ',' << pci_id << '\n';
+                               << samples << ',' << pci_id;
+                    // The kernel the route launches for this call (route_resources, every family
+                    // the generic path launches itself) and the counted K loop of its SASS where
+                    // the kernel-facts snapshot carries one: what a resource law of the kernel's
+                    // time reads (the kernel atlas). Empty where nothing describes the route (the
+                    // scalar route, Volta's CUTLASS band) or the snapshot has no loop for it.
+                    std::optional<generic::KernelResources> kr;
+                    try {
+                        kr = generic::route_resources(r, w.weight, p.epilogue, t);
+                    } catch (const std::exception&) { kr.reset(); }
+                    if (kr) {
+                        routes_csv << ',' << kr->threads << ',' << kr->grid_x << ',' << kr->grid_y
+                                   << ',' << kr->grid_z << ',' << kr->static_smem + kr->dynamic_smem
+                                   << ',' << kr->registers << ',' << kr->local_bytes;
+                    } else {
+                        routes_csv << ",,,,,,,";
+                    }
+                    if (kr && kr->loop) {
+                        const auto& l = *kr->loop;
+                        routes_csv << ',' << l.k_iter << ',' << l.total << ',' << l.int_alu << ','
+                                   << l.fp_alu << ',' << l.mma << ',' << l.ldg_bytes << ','
+                                   << l.lds_bytes << ','
+                                   << (l.schedule ? std::to_string(l.schedule->stall_sum) : "")
+                                   << ',' << (l.pipes ? std::to_string(l.pipes->imad) : "") << ','
+                                   << (l.pipes ? std::to_string(l.pipes->ffma) : "");
+                    } else {
+                        routes_csv << ",,,,,,,,,,";
+                    }
+                    routes_csv << '\n';
                 }
                 return us; // microseconds
             };
