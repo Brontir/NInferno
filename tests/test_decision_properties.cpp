@@ -1,5 +1,5 @@
-// Property tests for the projection selector's decisions, set 1 (roadmap #620 step 6; the
-// specification is Roadmap 0's report 08, Q3). Every property runs over the board rows of
+// Property tests for the projection selector's decisions, sets 1 and 2 (roadmap #620 steps 6, 14;
+// the specification is Roadmap 0's report 08, Q3). Every property runs over the board rows of
 // core/data/gpu_facts.json through the same substitution the selector goldens use
 // (selector_facts.h board_device_class, ScopedDeviceClass), so it needs no GPU to run. The
 // register-MMA price reads the registers and spill of the compiled kernels from the committed
@@ -51,9 +51,20 @@
 //       A row whose facts read the driver on purpose (a laptop without a published boost floor:
 //       MachineFacts::driver_read) is counted and left out.
 //       The decision only: a clock that leaks into a price and flips no route stays invisible here.
+//   P4  CPU == GPU (set 2, #620 step 14): every row's decisions in this process, which may see a
+//       GPU, equal those of a child run with CUDA_VISIBLE_DEVICES empty (`--atlas`: a line per row,
+//       the SHA-256 of its decision text; `--decisions N`: the Nth row's text). Narrow by design:
+//       the live GPU reaches a decision only through substituted_foreign_class (a row whose class
+//       key is the live card's). Without a GPU in this process it is vacuous and says so; the
+//       stands' full runs give it a GPU.
+//
+// The atlas (#614 F5): the same per-row lines equal the build set's committed
+// tests/data/decision_atlas/<set>.txt (`--update-atlas` writes it), so a release's diff of those
+// files names every board of the table whose answers moved.
 //
 // P8 (B1 under `exact` reads no continuous fact) is in test_plan_dry_run.cpp, where the plan
-// fixtures are.
+// fixtures are. P5 (the plan's workspace bytes equal the start's) is test_plan_bytes.cpp, checked
+// against the start's log on a GPU by #615 W2.
 //
 // Failures are grouped by (property, key); every group fails the test and prints its count, its
 // rows and its worst case. (The waivers #639 recorded for the idle-SM charges of the price are
@@ -63,6 +74,9 @@
 #include "core/format_facts.h"
 #include "core/generation.h"
 #include "core/machine_facts.h"
+#include "core/per_device.h"
+#include "core/sha256.h"
+#include "core/sys.h"
 #include "core/mmq_columns.h"
 #include "core/units.h"
 #include "core/weight.h"
@@ -80,7 +94,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iterator>
 #include <iostream>
@@ -88,7 +105,10 @@
 #include <optional>
 #include <span>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -179,7 +199,8 @@ constexpr Shape kShapes[] = {{1024, 4096}, {17408, 5120}};
 // width bound it switches at (held below), and widths inside the bands.
 // Besides the named bounds: 3 / 4 (rules_r8's IQ2-class formats from 4), 64 / 65 (heuristic_w4a8's
 // 64x64 tile up to 64 and the prefill narrow band, then a choice by the SM count), 8 / 9
-// (kMmqVerifyMinTokens), 255 / 256 (kVoltaTileMaxTokens), local to generic_select.cpp.
+// (kMmqVerifyMinTokens, format_rules.h), 255 / 256 (kVoltaTileMaxTokens, local to
+// generic_select.cpp).
 constexpr std::int32_t kTokens[] = {1,  2,  3,  4,   5,   8,   9,   12,  16,  17,  32,
                                     33, 64, 65, 127, 128, 255, 256, 512, 513, 1024};
 // The widths the price is checked at: from the first the cost model ranks (17), both sides of
@@ -459,7 +480,7 @@ Explained explain_rmma_rise(const DeviceClass& base, const DeviceClass& more,
 // picks it, as a8_candidates reads it (the slice's columns, the widest tile the device's shared
 // memory holds, the board's reference clock and DRAM rate); 0 where no law picks it.
 int mmq_law_width(const DeviceClass& d, const generic::Problem& p, std::int32_t tokens) {
-    const bool format = mmq_columns::work_tiles_format(p.qtype);
+    const bool format = mmq_columns::work_tiles_format(p.qtype, d.major, d.minor);
     if (mmq_columns::launch_law(d.major, d.minor, format) == nullptr) return 0;
     const int columns = std::min(tokens, generic::kMmqPrefillSlice);
     const mmq_columns::LaunchFacts facts{p.n, p.k, d.sms, d.facts.reference_clock_hz(),
@@ -799,11 +820,209 @@ void property_clock_invariance(const std::vector<Row>& rows) {
     std::cout << '\n';
 }
 
+// ---- P4: the same decisions with a GPU visible and without one
+// -----------------------------------
+
+// Every row's decisions over the grid, as one line per row: its label, the SHA-256 of its decision
+// text (16 hex digits) and the text's line count. The atlas of the build (#614 F5): what the
+// selector answers for every board of the table, on whatever host runs it.
+std::string atlas_of(const std::vector<Row>& rows) {
+    std::ostringstream out;
+    for (const Row& row : rows) {
+        const std::string text = decisions_of(generic::board_device_class(row.board));
+        out << row.label << '\t' << sha256_hex(std::string_view(text)).substr(0, 16) << '\t'
+            << std::count(text.begin(), text.end(), '\n') << '\n';
+    }
+    return out.str();
+}
+
+// A shell command's stdout; a command that fails throws.
+std::string text_of_command(const std::string& command) {
+    static int calls = 0;
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() /
+        ("ninferno_p4_" + std::to_string(sys::pid()) + "_" + std::to_string(++calls) + ".txt");
+    const int status = std::system((command + " > '" + path.string() + "'").c_str());
+    std::ifstream in(path);
+    std::stringstream text;
+    text << in.rdbuf();
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    if (status != 0) { throw std::runtime_error("P4: `" + command + "` failed"); }
+    return text.str();
+}
+
+// P4 (#620 step 14, report 08 Q3): the decisions of every row are the same in this process, which
+// may see a GPU, and in a child run with CUDA_VISIBLE_DEVICES empty, which sees none. The board is
+// substituted either way and the kernel facts are the committed snapshot's (#612). What it can
+// catch: route_query substitutes the board (ScopedDeviceClass) and the selector's per-device state
+// is keyed by the class's content, so the live GPU enters a decision only through
+// substituted_foreign_class (core/device_class.cpp): a row whose class key equals the live card's
+// reads that card's route tables and tuned routes. A row that differs may also come from this
+// process's cache history (P1, P3 and P6 ran first; the child starts cold): either is a leak.
+// Without a GPU in this process the two runs are alike and the property is vacuous (printed).
+void property_cpu_equals_gpu(const std::vector<Row>& rows, const std::string& here) {
+#ifdef _WIN32
+    (void)rows;
+    (void)here;
+    std::cout << "P4: not run on Windows (no CUDA_VISIBLE_DEVICES child)\n";
+#else
+    const bool gpu_seen     = current_device_ordinal_or_none() >= 0;
+    const std::string child = "CUDA_VISIBLE_DEVICES= '" + sys::self_exe().string() + "'";
+    const std::string cpu   = text_of_command(child + " --atlas");
+    std::istringstream a(here), b(cpu);
+    std::size_t moved = 0, index = 0;
+    for (std::string x, y; std::getline(a, x); ++index) {
+        ++cases_checked;
+        if (!std::getline(b, y)) { y.clear(); }
+        if (x == y) { continue; }
+        ++moved;
+        const std::string label = x.substr(0, x.find('\t'));
+        std::string detail      = "the GPU-visible line " + x + ", the CPU line " + y;
+        if (index < rows.size() && rows[index].label == label) {
+            const std::string gpu_text =
+                decisions_of(generic::board_device_class(rows[index].board));
+            const std::string cpu_text =
+                text_of_command(child + " --decisions " + std::to_string(index));
+            detail += "; " + std::to_string(differing_lines(gpu_text, cpu_text)) +
+                      " decisions move, first " + first_difference(gpu_text, cpu_text);
+        }
+        note("P4 CPU == GPU", "decisions differ", label, label + ": " + detail);
+    }
+    if (std::string extra; std::getline(b, extra)) {
+        note("P4 CPU == GPU", "the child's atlas has more lines", "-", extra);
+    }
+    std::cout << "P4: " << rows.size() << " rows, " << moved
+              << " differ between this process and a CUDA_VISIBLE_DEVICES= child"
+              << (gpu_seen ? "" : " (this process sees no GPU either: vacuous)") << '\n';
+#endif
+}
+
+// ---- The atlas, committed (#614 F5)
+// ----------------------------------------------------------------
+
+// The route set a build compiles decides what a board can pick, so each build set keeps its own
+// atlas, by the selector goldens' sets (test_selector_golden.cpp kBuildSet). Unlike the goldens the
+// atlas's grid holds BF16, whose staged schedules a build admits by its block shared memory
+// (generic_routes.cpp staged_fits: 99 KiB on sm_86/89/120, 163 KiB on sm_80, 227 KiB from sm_90):
+// a file's first line records the limit of the build it was made on, and a build of the set with
+// another limit (sm_80, sm_90, sm_100 in base) prints its moves instead of failing on them.
+constexpr const char* kAtlasSet =
+#if NINFERNO_BUILD_ARCH == 70
+    "sm70";
+#elif NINFERNO_BUILD_ARCH == 75
+    "sm75";
+#elif defined(NINFERNO_WITHOUT_NVFP4)
+    "base";
+#else
+    "full";
+#endif
+
+std::filesystem::path atlas_path() {
+    return std::filesystem::path(NINFERNO_DECISION_ATLAS_DIR) / (std::string(kAtlasSet) + ".txt");
+}
+
+// The atlas of this build against the committed one: what the selector answers for every board of
+// the table, a line per row (its decision text's SHA-256). A release's diff of these files names
+// every board whose answers moved (the per-board detail of a golden board is its selector golden;
+// of any row, `--decisions N` on two builds). Regenerate with --update-atlas on a build of the set.
+// The atlas file's first line: the block shared memory of the build that made it.
+std::string atlas_header() {
+    return "# block_shared_bytes " + std::to_string(ops::kMaxSharedBytesPerBlock);
+}
+
+// Rows are compared by their label, so a row added to or removed from the facts table moves no
+// other row's line.
+void property_atlas_committed(const std::string& atlas) {
+    std::ifstream in(atlas_path());
+    if (!in) {
+        note("atlas", "no committed atlas", "-",
+             atlas_path().string() + " is missing (run with --update-atlas)");
+        return;
+    }
+    std::string header;
+    std::getline(in, header);
+    if (header.rfind("# block_shared_bytes ", 0) != 0) {
+        note("atlas", "the committed atlas has no block limit line", "-",
+             atlas_path().string() + " starts with \"" + header + "\" (run with --update-atlas)");
+        return;
+    }
+    std::map<std::string, std::string> committed;
+    for (std::string line; std::getline(in, line);) {
+        if (!line.empty()) { committed[line.substr(0, line.find('\t'))] = line; }
+    }
+    const bool own_limit = header == atlas_header();
+    std::size_t moved    = 0;
+    std::istringstream a(atlas);
+    for (std::string x; std::getline(a, x);) {
+        ++cases_checked;
+        const std::string label = x.substr(0, x.find('\t'));
+        const auto it           = committed.find(label);
+        if (it != committed.end() && it->second == x) {
+            committed.erase(it);
+            continue;
+        }
+        ++moved;
+        const std::string what =
+            it == committed.end() ? "a row the committed atlas lacks" : "a row's decisions moved";
+        const std::string detail = "this build " + x + ", committed " +
+                                   (it == committed.end() ? std::string("none") : it->second) +
+                                   " (--update-atlas if the move is meant)";
+        if (it != committed.end()) { committed.erase(it); }
+        if (own_limit) {
+            note("atlas", what, label, detail);
+        } else {
+            std::cout << "  atlas (not failed, another block limit): " << what << ": " << detail
+                      << '\n';
+        }
+    }
+    for (const auto& [label, line] : committed) {
+        ++moved;
+        if (own_limit) {
+            note("atlas", "a committed row this build lacks", label, line);
+        } else {
+            std::cout << "  atlas (not failed): a committed row this build lacks: " << line << '\n';
+        }
+    }
+    std::cout << "atlas " << kAtlasSet << ": " << moved << " rows differ from "
+              << atlas_path().filename().string()
+              << (own_limit ? ""
+                            : " (made on a build with another block shared memory: " + header +
+                                  "; printed, not failed)")
+              << '\n';
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
         const std::vector<Row> rows = rows_of_table();
+        // P4's child modes: the atlas, or one row's decision text (by its index in the table's
+        // order), and nothing else on stdout.
+        if (argc > 1 && std::string_view(argv[1]) == "--atlas") {
+            std::cout << atlas_of(rows);
+            return 0;
+        }
+        if (argc > 2 && std::string_view(argv[1]) == "--decisions") {
+            const std::size_t index = std::stoul(argv[2]);
+            if (index >= rows.size()) {
+                std::cerr << "decision properties: no row " << argv[2] << '\n';
+                return 2;
+            }
+            std::cout << decisions_of(generic::board_device_class(rows[index].board));
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--update-atlas") {
+            std::filesystem::create_directories(atlas_path().parent_path());
+            std::ofstream out(atlas_path(), std::ios::binary);
+            out << atlas_header() << '\n' << atlas_of(rows);
+            if (!out.flush()) {
+                std::cerr << "decision properties: cannot write " << atlas_path().string() << '\n';
+                return 1;
+            }
+            std::cout << "wrote " << atlas_path().string() << '\n';
+            return 0;
+        }
         std::cout << rows.size() << " board rows of gpu_facts.json (" << gpu_facts_table().size()
                   << " in the table)\n";
         std::cout << "build sm_" << NINFERNO_BUILD_ARCH_LABEL << ": NVFP4 and cluster kernels "
@@ -816,6 +1035,9 @@ int main() {
         property_price_monotone(rows);
         property_non_fact_fields(rows);
         property_clock_invariance(rows);
+        const std::string atlas = atlas_of(rows);
+        property_cpu_equals_gpu(rows, atlas);
+        property_atlas_committed(atlas);
 
         for (const auto& [id, g] : groups) {
             std::cout << "FAIL  " << id.first << " [" << id.second << "]: " << g.count

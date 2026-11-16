@@ -60,6 +60,9 @@ inline constexpr I8ScheduleInfo kI8Schedules[] = {
 static_assert(kI8Schedules[0].smem_bytes == i8_smem_bytes(256, 128, 4, 4));
 static_assert(kI8Schedules[1].smem_bytes == i8_smem_bytes(128, 128, 4, 4));
 static_assert(kI8Schedules[2].smem_bytes == i8_smem_bytes(128, 64, 4, 4));
+// And a 4-bit stage is the family's record (family_facts.h).
+static_assert(static_cast<int>(i8_stage_bytes(1, 0, 4)) == kI8MmaFacts.stage_token_bytes &&
+              static_cast<int>(i8_stage_bytes(0, 1, 4)) == kI8MmaFacts.stage_row_bytes);
 
 // Each I8 tile's fraction of the int8 peak at a full grid (stage-1 probe, RTX 3090, 4090 and
 // 5070 Ti, 27B shapes): 256x128 0.53, 128x128 0.46, 128x64 0.42.

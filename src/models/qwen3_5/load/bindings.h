@@ -59,9 +59,11 @@ private:
                                       const std::string& component);
 void bind_dflash2(Bindings& bindings, DraftWeights& weights, const DraftConfig& config,
                   const TextConfig& target);
+// `read_ids` false leaves an indexed head's global ids unread and unchecked (a model described
+// without its payload, describe_model: what it sizes is the head's rows).
 [[nodiscard]] ProposalWeights bind_proposal(Bindings& bindings, const artifact::Proposal& proposal,
                                             const TextConfig& target, const LoadOptions& options,
-                                            std::uint32_t public_tokens);
+                                            std::uint32_t public_tokens, bool read_ids = true);
 [[nodiscard]] std::vector<BoundWeight>
 resolve_weights(std::vector<PendingWeight>&& pending,
                 const artifact::MaterializedArtifact& materialized);

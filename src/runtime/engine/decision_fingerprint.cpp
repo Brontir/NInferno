@@ -1,5 +1,6 @@
 #include "runtime/engine/decision_fingerprint.h"
 
+#include "core/arch_registry.h"
 #include "core/sha256.h"
 
 #include <array>
@@ -217,6 +218,19 @@ void section_into(std::string& out, std::string_view name, const DecisionSection
     }
 }
 
+std::string unescaped(std::string_view text) {
+    std::string out;
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (text[i] != '\\' || i + 1 == text.size()) {
+            out += text[i];
+            continue;
+        }
+        const char c = text[++i];
+        out += c == 't' ? '\t' : c == 'n' ? '\n' : c == 'r' ? '\r' : c;
+    }
+    return out;
+}
+
 std::string schema_line() { return "schema\t" + std::string(kDecisionFingerprintSchema) + "\n"; }
 
 std::string short_hash(std::string_view text) { return sha256_hex(text).substr(0, 16); }
@@ -254,6 +268,19 @@ DecisionFingerprint decision_fingerprint(const DecisionInputs& inputs) {
 DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int driver_version,
                          const HostFacts& host) {
     DecisionSection out;
+    // The architecture table's row the device's limits come from (#612 step 10: the row as data,
+    // core/arch_registry.h): its range and every limit, so that a table edit shows in the facts.
+    {
+        const arch_registry::ArchRow& r = arch_registry::find(d.major, d.minor);
+        out["arch_row"]                 = number(r.cc) + "-" + number(r.cc_to) + " " +
+                          number(static_cast<std::uint64_t>(r.smem_per_block_optin)) + "/" +
+                          number(static_cast<std::uint64_t>(r.smem_per_sm)) + " build " +
+                          number(static_cast<std::uint64_t>(r.build_smem_per_block_optin)) + "/" +
+                          number(static_cast<std::uint64_t>(r.build_smem_per_sm)) + " reserved " +
+                          number(r.smem_reserved_per_block) + " threads " +
+                          number(r.max_threads_per_sm) + " blocks " + number(r.max_blocks_per_sm) +
+                          " registers " + number(r.registers_per_sm);
+    }
     out["cc_major"]                = number(d.major);
     out["cc_minor"]                = number(d.minor);
     out["sms"]                     = number(d.sms);
@@ -546,6 +573,24 @@ DecisionSection taint_of(const DecisionInputs& in) {
     }
     if (const auto fallback = value(in.sources, "spec_fit_fallback"); !fallback.empty()) {
         out["spec_fit_fallback"] = fallback;
+    }
+    return out;
+}
+
+DecisionSection section_of_text(std::string_view text, std::string_view name) {
+    DecisionSection out;
+    const std::string prefix = std::string(name) + ".";
+    std::size_t at           = 0;
+    while (at < text.size()) {
+        std::size_t end = text.find('\n', at);
+        if (end == std::string_view::npos) { end = text.size(); }
+        const std::string_view line = text.substr(at, end - at);
+        at                          = end + 1;
+        const std::size_t tab       = line.find('\t');
+        if (tab == std::string_view::npos) { continue; }
+        std::string key = unescaped(line.substr(0, tab));
+        if (key.rfind(prefix, 0) != 0) { continue; }
+        out[key.substr(prefix.size())] = unescaped(line.substr(tab + 1));
     }
     return out;
 }

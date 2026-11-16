@@ -52,7 +52,18 @@ struct LayerIds {
 
 std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceContext& device,
                                    ActivationProfile profile) {
-    artifact::Reader reader(path);
+    const artifact::Reader reader(path);
+    return build(reader, &device, profile);
+}
+
+std::unique_ptr<Model> Model::describe(const artifact::Directory& directory,
+                                       ActivationProfile profile) {
+    const auto reader = artifact::Reader::detached(directory);
+    return build(reader, nullptr, profile);
+}
+
+std::unique_ptr<Model> Model::build(const artifact::Reader& reader, DeviceContext* device,
+                                    ActivationProfile profile) {
     auto model     = std::unique_ptr<Model>(new Model());
     model->config_ = parse_config(loading::open_text_component(reader, "dense decoder"));
     const auto& c  = model->config_;
@@ -146,21 +157,23 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
         }
     }
 
-    model->backing_ = demands.materialize(device);
+    model->backing_ = device != nullptr ? demands.materialize(*device) : demands.describe();
     auto& backing   = *model->backing_;
     const loading::Prepare prepare(demands, backing, profile == ActivationProfile::Artifact);
     auto& w           = model->weights_;
     w.token_embedding = native_weight(prepare.view(embedding));
     w.output_head     = prepare.projection(head);
     w.final_norm      = prepare.tensor(final_norm);
+    // Uploaded tables of the load's own: none without a device (a described model's).
     const auto frequencies = [&](const std::vector<float>& values) {
-        if (values.empty()) { return Tensor{}; }
+        if (values.empty() || device == nullptr) { return Tensor{}; }
         auto& buffer = backing.derived.emplace_back(values.size() * sizeof(float));
         buffer.copy_from_host(values.data(), buffer.bytes);
         return Tensor(buffer.p, DType::FP32, {static_cast<std::int32_t>(values.size())});
     };
     // A norm without weight runs with gain 1 (unit offset off): one BF16 vector of ones.
     const auto ones = [&](std::int32_t n) {
+        if (device == nullptr) { return Tensor{}; }
         const std::vector<std::uint16_t> values(static_cast<std::size_t>(n), 0x3F80); // BF16 1.0
         auto& buffer = backing.derived.emplace_back(values.size() * sizeof(std::uint16_t));
         buffer.copy_from_host(values.data(), buffer.bytes);

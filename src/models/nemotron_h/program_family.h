@@ -30,4 +30,14 @@ make_program_execution(const Model& model, const MtpWeights* mtp, DeviceContext&
 // or sample.
 [[nodiscard]] StateShape state_shape(const Config& config, std::int32_t public_tokens);
 
+// The arenas the target's own calls size for `plan` (the execution's workspace plan without the
+// MTP head): the text prefill (under the prefill route profile), the ordinary round, and under
+// causal scoring the scoring tiles; their widest is the capacity. `public_tokens` the sampler's
+// domain. The start's execution sizes its arena with this, the head's parts added; the plan
+// without the weights calls it over a described model (Model::describe, #615). The caller sets
+// the activations' route profile (ops::ScopedInvariantRoutes under exact).
+[[nodiscard]] qwen3_5::detail::WorkspacePlan
+target_workspace_plan(const Model& model, std::int32_t public_tokens,
+                      const qwen3_5::detail::SequencePlanImpl& plan);
+
 } // namespace ninferno::models::nemotron_h

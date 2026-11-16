@@ -78,7 +78,8 @@ inline constexpr bool kStagedF16 = NINFERNO_SM75_MMA != 0;
 template <int HeadDim, int Group, int SliceWidth = kGemma4Slice>
 struct Gemma4Geometry {
     static constexpr int D     = HeadDim;
-    static constexpr int G     = Group; // 0: runtime group
+    static constexpr int G     = Group;      // 0: runtime group
+    static constexpr int Width = SliceWidth; // the template's own argument (kernel-facts key)
     static constexpr int Slice = HeadDim < SliceWidth ? HeadDim : SliceWidth;
     static constexpr int WC    = HeadDim / Slice;
     // 128-column score partials: per warp column, and of the head (summed in index order).

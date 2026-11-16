@@ -139,30 +139,19 @@ PersistentLayout DenseExecution::persistent_layout(const SequencePlanImpl& plan)
 }
 
 WorkspacePlan DenseExecution::workspace_plan(const SequencePlanImpl& plan) const {
-    const auto chunk   = static_cast<std::int32_t>(std::min(plan.prefill_chunk, plan.capacity));
-    const auto batch   = static_cast<std::int32_t>(plan.max_concurrency);
-    const auto context = static_cast<std::int32_t>(plan.capacity);
     // Every capacity query under the route profiles its calls run under
     // (ninferno/ops/prefill_routes.h): the invariant one under --activations exact, and the prefill
     // one for a prefill chunk, whose routes can take another workspace than a decode width's.
     const ops::ScopedInvariantRoutes routes(invariant_);
-    WorkspacePlan out;
-    // One call's activations and every Op's transient capacity, plus the sampler of the rows it
-    // draws for.
-    {
+    WorkspacePlan out = target_workspace_plan(model_, traits_.public_tokens, plan);
+    // A drafter's parts: the prefill's tapped features (under the prefill profile, as its calls
+    // run), and its own arenas.
+    if (drafter_ != nullptr) {
         const ops::ScopedPrefillRoutes prefill(true);
-        out.text_prefill = DensePass::workspace_bytes(model_, context, chunk, 1) +
-                           ops::sampling_workspace_capacity_bytes(traits_.public_tokens, 1, 1) +
-                           (drafter_ != nullptr ? prefill_tap_bytes(chunk) : 0);
+        out.text_prefill += prefill_tap_bytes(
+            static_cast<std::int32_t>(std::min(plan.prefill_chunk, plan.capacity)));
     }
-    out.ordinary_round = DensePass::workspace_bytes(model_, context, batch, batch) +
-                         ops::sampling_workspace_capacity_bytes(traits_.public_tokens, 1, batch);
     if (plan.features.masked_draft()) { dflash_workspace(plan, out); }
-    // Causal scoring (ninferno-perplexity): the Program's scoring tiles over the output head.
-    if (plan.causal_scoring) {
-        out.causal_score = qwen3_5::detail::causal_score_workspace_bytes(
-            traits_.output_rows, model_.weights().output_head);
-    }
     out.general_capacity = std::max({out.text_prefill, out.ordinary_round, out.dflash_context,
                                      out.dflash_round, out.causal_score});
     out.capacity = out.general_capacity;
@@ -337,6 +326,32 @@ program::PrefillChunkResult DenseExecution::prefill_text_chunk(
 }
 
 } // namespace detail
+
+qwen3_5::detail::WorkspacePlan
+target_workspace_plan(const Model& model, std::int32_t public_tokens,
+                      const qwen3_5::detail::SequencePlanImpl& plan) {
+    const auto chunk   = static_cast<std::int32_t>(std::min(plan.prefill_chunk, plan.capacity));
+    const auto batch   = static_cast<std::int32_t>(plan.max_concurrency);
+    const auto context = static_cast<std::int32_t>(plan.capacity);
+    qwen3_5::detail::WorkspacePlan out;
+    // One call's activations and every Op's transient capacity, plus the sampler of the rows it
+    // draws for.
+    {
+        const ops::ScopedPrefillRoutes prefill(true);
+        out.text_prefill = DensePass::workspace_bytes(model, context, chunk, 1) +
+                           ops::sampling_workspace_capacity_bytes(public_tokens, 1, 1);
+    }
+    out.ordinary_round = DensePass::workspace_bytes(model, context, batch, batch) +
+                         ops::sampling_workspace_capacity_bytes(public_tokens, 1, batch);
+    // Causal scoring (ninferno-perplexity): the Program's scoring tiles over the output head.
+    if (plan.causal_scoring) {
+        out.causal_score = qwen3_5::detail::causal_score_workspace_bytes(
+            model.config().vocab_size, model.weights().output_head);
+    }
+    out.general_capacity = std::max({out.text_prefill, out.ordinary_round, out.causal_score});
+    out.capacity         = out.general_capacity;
+    return out;
+}
 
 StateShape state_shape(const Config& config, const speculation::DFlashConfig* drafter,
                        std::int32_t feature_rows, std::int32_t prefill_feature_rows,

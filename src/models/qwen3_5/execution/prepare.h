@@ -1,0 +1,420 @@
+#pragma once
+
+// The forms a Qwen 3.5 load prepares its matrices in (execution::Parameters), over any source that
+// binds the model's weights as a Model does: the start's Model, or a model an artifact's directory
+// describes without its payload (load.h, DescribedModel: the plan without the weights, #615). One
+// function prepares both, so the forms a plan sizes its workspace over are the start's.
+//
+// A Source has config(), options(), weights(), weight(WeightId) (the BoundWeight) and
+// input(WeightId), input(WeightUseId) (the ops::WeightInput a linear reads, bound_weight_input).
+
+#include "core/weight_view.h"
+#include "models/qwen3_5/config.h"
+#include "models/qwen3_5/execution/parameter_types.h"
+#include "models/qwen3_5/weights.h"
+#include "ninferno/ops/linear.h"
+#include "ninferno/ops/weight_input.h"
+#include "ops/route_pins.h"
+
+#include <algorithm>
+#include <array>
+#include <limits>
+#include <optional>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
+
+namespace ninferno::models::qwen3_5::execution {
+namespace prepare_detail {
+
+template <class Function>
+auto with_context(const std::string& context, Function&& function) {
+    try {
+        return function();
+    } catch (const std::invalid_argument& error) {
+        throw std::invalid_argument(context + ": " + error.what());
+    }
+}
+
+// `note`: the MoE path choice enters the route pin ledger (a start; a plan leaves it alone).
+template <class Source>
+class Prepare {
+public:
+    Prepare(const Source& model, bool note) : model_(model), note_(note) {}
+
+    LinearParameters linear(WeightId id) const {
+        return with_context(model_.weight(id).name,
+                            [&] { return ops::prepare_linear_weight(model_.input(id)); });
+    }
+
+    LinearParameters linear(WeightUseId id) const {
+        return with_context(model_.weight(id.parameter).name,
+                            [&] { return ops::prepare_linear_weight(model_.input(id)); });
+    }
+
+    // The leading `rows` rows of a projection (weight_row_prefix); none where its layout has no
+    // row views.
+    std::optional<LinearParameters> linear_rows(WeightId id, std::uint32_t rows) const {
+        return with_context(model_.weight(id).name, [&]() -> std::optional<LinearParameters> {
+            const auto input = model_.input(id);
+            const auto view  = weight_row_prefix(input.weight, rows);
+            if (!view) { return std::nullopt; }
+            return ops::prepare_linear_weight(
+                ops::WeightInput{*view, input.policy, input.activation_input_divisor});
+        });
+    }
+
+    // A row table read by id (DFlash2 codebooks): the stored matrix as it is, any format.
+    Weight codebook(WeightId id) const {
+        const auto& bound = model_.weight(id);
+        return with_context(bound.name, [&] { return native_weight(bound.view); });
+    }
+
+    Tensor tensor(WeightId id) const {
+        const auto& bound = model_.weight(id);
+        return with_context(bound.name, [&] {
+            const auto& view = bound.view;
+            if (view.shape.size() > 4) {
+                throw std::invalid_argument("direct parameter exceeds Tensor rank");
+            }
+            std::array<std::int32_t, 4> axes{1, 1, 1, 1};
+            for (std::size_t i = 0; i < view.shape.size(); ++i) {
+                const auto extent = view.shape[view.shape.size() - 1 - i];
+                if (extent > std::uint64_t(std::numeric_limits<std::int32_t>::max())) {
+                    throw std::invalid_argument("direct parameter exceeds Tensor extent");
+                }
+                axes[i] = static_cast<std::int32_t>(extent);
+            }
+            return weight_tensor(view, {axes[0], axes[1], axes[2], axes[3]});
+        });
+    }
+
+    // A drafter's projection: A8 where the recorded policy is A16Only and the format verifies a
+    // draft block on R8 (ops::drafter_linear_policy); --activations exact keeps BF16.
+    LinearParameters drafter(LinearParameters p, ops::DrafterOp op) const {
+        if (model_.options().activations != ActivationMode::Exact) {
+            p.policy = ops::drafter_linear_policy(p.weight, p.policy, op);
+        }
+        return p;
+    }
+
+    DenseParameters dense(const DenseWeights& w) const {
+        auto gate_up = with_context(model_.weight(w.gate).name, [&] {
+            return ops::prepare_dense_gate_up_weights(model_.input(w.gate), model_.input(w.up));
+        });
+        if (auto* split = std::get_if<ops::SegmentedProjectionWeights>(&gate_up)) {
+            return {{}, linear(w.down), std::move(*split)};
+        }
+        return {std::get<ops::SingleProjectionWeight>(gate_up), linear(w.down), std::nullopt};
+    }
+
+    FfnParameters ffn(const BlockWeights& w) const {
+        if (const auto* d = std::get_if<DenseWeights>(&w.ffn)) { return dense(*d); }
+        const auto& moe  = std::get<MoeWeights>(w.ffn);
+        const auto top_k = std::get<MoeConfig>(model_.config().text.ffn).num_experts_per_tok;
+        std::vector<ops::WeightInput> gate_up, down;
+        gate_up.reserve(2 * moe.experts.size());
+        down.reserve(moe.experts.size());
+        for (const auto& expert : moe.experts) {
+            gate_up.push_back(model_.input(expert.gate));
+            gate_up.push_back(model_.input(expert.up));
+            down.push_back(model_.input(expert.down));
+        }
+        return with_context(model_.weight(moe.router).name, [&]() -> FfnParameters {
+            auto generic = ops::prepare_moe_weights(
+                model_.input(moe.router), model_.input(moe.shared_score), gate_up, down,
+                model_.input(moe.shared.gate), model_.input(moe.shared.up),
+                model_.input(moe.shared.down));
+            // SparseMoe NVFP4 encodes its prefill in four bits (it requires AllowA4), so experts
+            // held above that take the generic MoE: at eight bits (--activations int8) its NVFP4
+            // banks have a W4A8 prefill, at sixteen (--activations exact) their A16 routes (#438:
+            // Qwen3.6-35B-A3B NVFP4 refused to load under exact on sm_120a).
+            // Each input SparseMoe NVFP4 reads needs AllowA4 (prepare_sparse_moe_weights).
+            const auto held = [](const ops::WeightInput& in) { return !ops::allows_a4(in.policy); };
+            const bool a4_held =
+                generic.gate_up.qtype == QType::NVFP4 &&
+                (std::any_of(gate_up.begin(), gate_up.end(), held) ||
+                 std::any_of(down.begin(), down.end(), held) ||
+                 held(model_.input(moe.shared.gate)) || held(model_.input(moe.shared.up)) ||
+                 held(model_.input(moe.shared.down)));
+            // --moe-path (ops/route_pins.h): auto takes SparseMoe where it runs the layer, generic
+            // never, fused refuses a layer it cannot run.
+            const bool fused_ready = top_k == 8 && !a4_held && ops::sparse_moe_admits(generic);
+            const std::string why_not =
+                top_k != 8 ? "top-k " + std::to_string(top_k) + ", SparseMoe takes 8"
+                : a4_held  ? "the NVFP4 experts are held above four-bit activations "
+                             "(--activations int8 or exact), SparseMoe encodes its prefill in four"
+                           : "SparseMoe does not read these experts' format or shape";
+            if (ops::moe_takes_fused(fused_ready, why_not, note_)) {
+                return ops::prepare_sparse_moe_weights(
+                    model_.input(moe.router), model_.input(moe.shared_score), gate_up, down,
+                    model_.input(moe.shared.gate), model_.input(moe.shared.up),
+                    model_.input(moe.shared.down));
+            }
+            // Qwen3.5-MoE routing: softmax over every expert, top-k renormalized, SwiGLU experts
+            // with gate rows before up rows, the shared expert behind sigmoid(shared_score . x).
+            ops::MoeConfig config;
+            config.top_k          = static_cast<std::int32_t>(top_k);
+            config.scoring        = ops::MoeScoring::Softmax;
+            config.renormalize    = true;
+            config.activation     = ops::MoeActivation::SwiGlu;
+            config.gate_up_layout = ops::MoeGateUpLayout::Concatenated;
+            return GenericMoeParameters{std::move(generic), config};
+        });
+    }
+
+    BlockParameters block(const BlockWeights& w) const {
+        BlockParameters out;
+        out.input_norm          = tensor(w.input_norm);
+        out.post_attention_norm = tensor(w.post_attention_norm);
+        out.ffn                 = ffn(w);
+        if (const auto* a = std::get_if<AttentionWeights>(&w.mixer)) {
+            out.mixer = AttentionParameters{
+                ops::prepare_attn_input_proj_weights(model_.input(a->query), model_.input(a->key),
+                                                     model_.input(a->gate), model_.input(a->value)),
+                tensor(a->query_norm), tensor(a->key_norm), linear(a->output)};
+            out.projection_prefetch =
+                prefetch(std::get<AttentionParameters>(out.mixer).projection, a->query);
+        } else {
+            const auto& g = std::get<GdnWeights>(w.mixer);
+            out.mixer     = GdnParameters{
+                ops::prepare_gdn_input_proj_weights(model_.input(g.query), model_.input(g.key),
+                                                        model_.input(g.value), model_.input(g.z)),
+                ops::prepare_gdn_gating_proj_weights(model_.input(g.a_projection),
+                                                         model_.input(g.b_projection)),
+                tensor(g.a_log),
+                tensor(g.dt_bias),
+                tensor(g.convolution),
+                tensor(g.norm),
+                linear(g.output)};
+            out.projection_prefetch =
+                prefetch(std::get<GdnParameters>(out.mixer).projection, g.query);
+        }
+        return out;
+    }
+
+    ops::SparseMoeHints prefetch(const ops::ProjectionWeights& projection, WeightId query) const {
+        if (const auto* segmented = std::get_if<ops::SegmentedProjectionWeights>(&projection)) {
+            // The generic path takes no prefetch hint.
+            (void)segmented;
+            return {};
+        }
+        const auto* single = std::get_if<LinearParameters>(&projection);
+        const auto& weight =
+            single ? single->weight : std::get<ops::PairedProjectionWeights>(projection).first;
+        const auto& geometry = model_.weight(query).view.parts.front().parent->geometry;
+        const auto row_bytes = geometry.layout == QuantLayout::Contiguous
+                                   ? std::uint64_t(weight.k) * dtype_size(DType::BF16)
+                                   : geometry.code_bytes_per_row;
+        return {weight.qdata, static_cast<std::size_t>(row_bytes * weight.n)};
+    }
+
+    MtpParameters mtp(const MtpWeights& w) const {
+        const auto& a = std::get<AttentionWeights>(w.layer.mixer);
+        const std::array inputs{model_.input(a.query), model_.input(a.key), model_.input(a.gate),
+                                model_.input(a.value)};
+        MtpParameters out;
+        out.input_projection    = linear(w.input_projection);
+        out.embedding_norm      = tensor(w.embedding_norm);
+        out.hidden_norm         = tensor(w.hidden_norm);
+        out.input_norm          = tensor(w.layer.input_norm);
+        out.post_attention_norm = tensor(w.layer.post_attention_norm);
+        out.final_norm          = tensor(w.final_norm);
+        const bool dense        = model_.config().text.architecture == Architecture::Qwen3_5;
+        if (!dense || ops::consecutive_rows_of_one_parent(inputs)) {
+            out.projection.packed = ops::prepare_linear_weight(inputs);
+        }
+        if (dense) {
+            out.projection.rows = {linear(a.query), linear(a.key), linear(a.gate), linear(a.value)};
+        }
+        out.query_norm  = tensor(a.query_norm);
+        out.key_norm    = tensor(a.key_norm);
+        out.output      = linear(a.output);
+        out.ffn         = ffn(w.layer);
+        out.output_head = linear(w.output_head_use);
+        return out;
+    }
+
+    NormParameters norm(const NormWeights& w) const { return {tensor(w.weight), tensor(w.bias)}; }
+
+    std::optional<Tensor> joined_bias(const std::array<WeightId, 3>& ids) const {
+        WeightView view;
+        std::uint64_t count = 0;
+        for (const auto id : ids) {
+            const auto& input = model_.weight(id).view;
+            count += weight_element_count(input.shape);
+            for (const auto& part : input.parts) {
+                if (!view.parts.empty() && (view.parts.back().parent != part.parent ||
+                                            view.parts.back().end != part.begin)) {
+                    return std::nullopt;
+                }
+                view.parts.push_back(part);
+            }
+        }
+        if (count > std::uint64_t(std::numeric_limits<std::int32_t>::max())) {
+            throw std::invalid_argument("Vision bias exceeds Tensor extent");
+        }
+        view.shape = {count};
+        return weight_tensor(view, {static_cast<std::int32_t>(count)});
+    }
+
+    VisionParameters vision(const VisionWeights& w) const {
+        VisionParameters out;
+        out.patch_embedding      = linear(w.patch_embedding);
+        out.patch_embedding_bias = tensor(w.patch_embedding_bias);
+        out.position_embedding   = tensor(w.position_embedding);
+        out.layers.reserve(w.layers.size());
+        for (std::size_t i = 0; i < w.layers.size(); ++i) {
+            out.layers.push_back(with_context("vision/layers/" + std::to_string(i), [&] {
+                const auto& layer = w.layers[i];
+                const std::array qkv{model_.input(layer.query), model_.input(layer.key),
+                                     model_.input(layer.value)};
+                const std::array ids{layer.query_bias, layer.key_bias, layer.value_bias};
+                const auto bias = joined_bias(ids);
+                if (!bias) {
+                    throw std::invalid_argument(
+                        "Vision QKV bias: this fixed call requires a contiguous bias bank");
+                }
+                return VisionBlockParameters{norm(layer.norm1),
+                                             norm(layer.norm2),
+                                             ops::prepare_linear_weight(qkv),
+                                             *bias,
+                                             linear(layer.output),
+                                             linear(layer.fc1),
+                                             linear(layer.fc2),
+                                             tensor(layer.output_bias),
+                                             tensor(layer.fc1_bias),
+                                             tensor(layer.fc2_bias)};
+            }));
+        }
+        out.merger_norm     = norm(w.merger_norm);
+        out.merger_fc1      = linear(w.merger_fc1);
+        out.merger_fc2      = linear(w.merger_fc2);
+        out.merger_fc1_bias = tensor(w.merger_fc1_bias);
+        out.merger_fc2_bias = tensor(w.merger_fc2_bias);
+        return out;
+    }
+
+    DynamicConvParameters convolution(const DynamicConvWeights& w) const {
+        return {tensor(w.base_kernel), linear(w.kernel_projection)};
+    }
+
+    DraftParameters draft(const DraftWeights& w) const {
+        DraftParameters out;
+        out.feature_projection = drafter(linear(w.feature_projection), ops::DrafterOp::Linear);
+        out.context_norm       = tensor(w.context_norm);
+        out.final_norm         = tensor(w.final_norm);
+        out.output_head        = linear(w.output_head_use);
+        out.layers.reserve(w.layers.size());
+        for (std::size_t i = 0; i < w.layers.size(); ++i) {
+            out.layers.push_back(with_context(
+                std::string(model_.options().speculative_component()) + "/layers/" +
+                    std::to_string(i),
+                [&] {
+                    const auto& layer = w.layers[i];
+                    const auto& a     = layer.attention;
+                    DraftBlockParameters result;
+                    result.input_norm          = tensor(layer.input_norm);
+                    result.post_attention_norm = tensor(layer.post_attention_norm);
+                    const std::array<ops::WeightInput, 3> qkv{
+                        model_.input(a.query), model_.input(a.key), model_.input(a.value)};
+                    result.query_key_value_bank = ops::prepare_segmented_projection_weights(qkv);
+                    for (auto& slice : result.query_key_value_bank.slices) {
+                        slice.policy = drafter(LinearParameters{slice.parent, slice.policy},
+                                               ops::DrafterOp::Generic)
+                                           .policy;
+                    }
+                    // The fused Q/K/V kernel reads one RowSplit Q8 parent of its compiled
+                    // geometry; a published drafter whose Q/K/V are one parent in another format
+                    // (the dflash GGUF's Q4_0 blocks), or another width (Qwen3.5-9B's 4096), runs
+                    // through the bank (draft.cpp, fused_q8).
+                    if (ops::consecutive_rows_of_one_parent(qkv) &&
+                        ops::fused_attn_input_proj_geometry(qkv[0], qkv[1], qkv[2])) {
+                        const auto joined =
+                            ops::prepare_linear_weight(std::span<const ops::WeightInput>(qkv));
+                        if (fused_q8_weight(joined.weight)) {
+                            result.query_key_value =
+                                ops::prepare_attn_input_proj_weights(qkv[0], qkv[1], qkv[2]);
+                        }
+                    }
+                    result.context_key   = linear(a.context_key);
+                    result.context_value = linear(a.context_value);
+                    result.query_norm    = tensor(a.query_norm);
+                    result.key_norm      = tensor(a.key_norm);
+                    result.output        = drafter(linear(a.output), ops::DrafterOp::LinearAdd);
+                    result.mlp           = dense(layer.mlp);
+                    if (result.mlp.split_gate_up) {
+                        throw std::invalid_argument("draft MLP: gate and up must share one parent");
+                    }
+                    result.mlp.gate_up = drafter(result.mlp.gate_up, ops::DrafterOp::LinearSwiGlu);
+                    result.mlp.down    = drafter(result.mlp.down, ops::DrafterOp::LinearAdd);
+                    if (layer.attention_conv) {
+                        result.attention_conv = convolution(*layer.attention_conv);
+                    }
+                    if (layer.mlp_conv) { result.mlp_conv = convolution(*layer.mlp_conv); }
+                    return result;
+                }));
+        }
+        if (w.selector) {
+            out.selector = SelectorParameters{linear(w.selector->hidden_projection),
+                                              codebook(w.selector->predecessor_codebook),
+                                              codebook(w.selector->successor_codebook)};
+        }
+        return out;
+    }
+
+private:
+    const Source& model_;
+    bool note_;
+};
+
+} // namespace prepare_detail
+
+// The forms of every part `source` binds: the text, the MTP layer, the Vision encoder, the drafter
+// and the proposal head. `note_moe_choice`: whether each MoE layer's path choice enters the route
+// pin ledger (ops::moe_takes_fused), as a start's does.
+template <class Source>
+PreparedParameters prepare_parameters(const Source& source, bool note_moe_choice) {
+    using prepare_detail::with_context;
+    const prepare_detail::Prepare<Source> prepare(source, note_moe_choice);
+    PreparedParameters out;
+    const auto& w            = source.weights();
+    out.text.token_embedding = native_weight(source.weight(w.text.token_embedding).view);
+    out.text.output_head     = prepare.linear(w.text.output_head_use);
+    out.text.final_norm      = prepare.tensor(w.text.final_norm);
+    out.text.layers.reserve(w.text.layers.size());
+    for (std::size_t i = 0; i < w.text.layers.size(); ++i) {
+        out.text.layers.push_back(with_context("text/layers/" + std::to_string(i),
+                                               [&] { return prepare.block(w.text.layers[i]); }));
+    }
+    if (w.mtp) {
+        out.mtp = with_context("mtp", [&] { return prepare.mtp(*w.mtp); });
+    }
+    if (w.vision) {
+        out.vision = with_context("vision", [&] { return prepare.vision(*w.vision); });
+    }
+    if (w.draft) {
+        out.draft = with_context(std::string(source.options().speculative_component()),
+                                 [&] { return prepare.draft(*w.draft); });
+    }
+    if (w.proposal) {
+        // The loaded drafter's rows: a prefix of the head where it asks fewer (its layout keeping
+        // row views), the whole head otherwise.
+        auto prefix = w.proposal->draft_rows < w.proposal->rows
+                          ? prepare.linear_rows(w.proposal->head, w.proposal->draft_rows)
+                          : std::nullopt;
+        out.proposal =
+            prefix ? ProposalParameters{std::move(*prefix), std::nullopt, w.proposal->draft_rows}
+                   : ProposalParameters{prepare.linear(w.proposal->head), std::nullopt,
+                                        w.proposal->rows};
+        if (w.proposal->token_ids) {
+            out.proposal->token_ids = prepare.tensor(*w.proposal->token_ids);
+        }
+    }
+    return out;
+}
+
+} // namespace ninferno::models::qwen3_5::execution

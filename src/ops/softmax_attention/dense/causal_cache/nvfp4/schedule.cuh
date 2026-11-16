@@ -1,6 +1,7 @@
 #pragma once
 #include "ops/common/arch_limits.h"
 #include "ops/softmax_attention/common/causal_geometry.h"
+#include "ops/softmax_attention/dense/causal_cache/nvfp4/slab_rule.h"
 
 namespace ninferno::ops::detail {
 // NINFERNO-SPECIAL(arch:sm75): the grouped kernel's P tile keeps 64 columns for a 32-key tile (its
@@ -25,6 +26,25 @@ struct Nvfp4KvGroupedMmaSchedule {
     static constexpr int kKeyRows = Keys, kMinBlocks = MinBlocks;
     static constexpr bool kCompactKVStage = Compact, kDynamicArena = Dynamic;
     static constexpr int kArenaBytes = (Compact ? 3 : 5) * Keys * 256;
+    static constexpr bool kSlab      = false;
+    using Grouped                    = Nvfp4KvGroupedMmaSchedule;
+};
+
+// The slab kernel's schedule (slab_mma.cuh, #849): kNvfp4KvSlabWarps warps, each owning a
+// kNvfp4KvSlabKeys-key slab of every Warps * SlabKeys keys with a warp-private cp.async ring of
+// kNvfp4KvSlabStages stages, one CTA per SM. `Grouped` is the grouped schedule the instance takes
+// otherwise; the aligned launches (the invariant route profile) keep it.
+template <int Tokens, int Rows, class GroupedSchedule>
+struct Nvfp4KvSlabSchedule {
+    static_assert(Tokens > 0 && Rows >= Tokens && !GroupedSchedule::kSlab);
+    static constexpr bool kSlab     = true;
+    using Grouped                   = GroupedSchedule;
+    static constexpr int kTokenTile = Tokens, kWarps = kNvfp4KvSlabWarps, kThreads = kWarps * 32;
+    static constexpr int kSlabKeys = kNvfp4KvSlabKeys, kStages = kNvfp4KvSlabStages;
+    static constexpr int kStageBytes = kNvfp4KvSlabStageBytes, kMinBlocks = 1;
+    static constexpr int kArenaBytes = kNvfp4KvSlabArenaBytes;
+    static constexpr int kRows = Rows, kSharedBytes = nvfp4_kv_slab_shared_bytes(Rows);
+    static constexpr bool kFitsSharedLimit = kSharedBytes <= int(kMaxSharedBytesPerBlock);
 };
 
 // Four consumer warps each own 16 query rows; producer warps decode K/V concurrently.

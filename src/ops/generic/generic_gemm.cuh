@@ -3324,6 +3324,10 @@ __launch_bounds__(Schedule::kThreads,
     constexpr int R        = Decoder::kRun;
     constexpr int KStep    = 4 * R;
     constexpr int J        = R / 4; // MMAs per K step
+    // The family's record (family_facts.h), which the price reads: J MMAs of mma_k a step, and
+    // the step of the 32-value runs.
+    static_assert(KStep == J * kRegisterMmaFacts.mma_k &&
+                  (R != 32 || KStep == kRegisterMmaFacts.step_k));
     constexpr int MT       = Schedule::kMTiles;
     constexpr int NT       = Schedule::kNTiles;
     constexpr int WK       = Schedule::kWarpsK;

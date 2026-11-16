@@ -94,3 +94,7 @@ its range's bottom fingerprint alike whatever their driver reports.
    into the test's lab list, with the values its driver reports.
 4. If the board is a selector golden board, regenerate the goldens
    (`ninferno_selector_golden_test --update`) and review the diff.
+5. Regenerate the decision atlas of every build set: `ninferno_decision_properties_test
+   --update-atlas` on a build of each set (base: sm_86 or sm_89; full: sm_120a; sm75; sm70) writes
+   `tests/data/decision_atlas/<set>.txt`, a line per row (#614 F5). The new row appears there, and
+   any other row that moved is a decision the change made.

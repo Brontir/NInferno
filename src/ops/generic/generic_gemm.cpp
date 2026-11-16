@@ -1,10 +1,9 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/format_traits.h"
-#include "core/per_device.h"
+#include "ops/generic/format_requires.h"
 #include "ops/common/native_nvfp4.h"
 
 #include "core/device_class.h"
-#include "core/generation.h"
 #include "core/tensor.h"
 #include "core/layout.h"
 #include "ninferno/ops/prefill_routes.h"
@@ -326,13 +325,12 @@ namespace {
 // quarter of int8). Qwen3.8-27B Q4/Q5 G64 24K prefill, MTP 3: RTX 4090
 // +18.7 %, L4 +14 %, A10 +7.8 %. The HBM training parts run fp32-accumulate HMMA at full rate,
 // and the activation quantization pass then costs more than the faster mma wins: A100 -3.5 %.
+// The facts are a declared requirement (format_requires::kQxPrefillA8Pays): not on a chip whose
+// mma.sync is emulated (mma_slow: TU116 / TU117), as for ggml's mmq; a generation without a row of
+// its own has no measured kind: A16 (#300).
 bool qx_prefill_a8_pays() {
     try {
-        const auto& d = device_class();
-        // Not on a chip whose mma.sync is emulated (mma_slow: TU116 / TU117), as for ggml's mmq.
-        // A generation without a row of its own has no measured kind: A16 (#300).
-        const auto full_rate = fp32acc_full_rate_of(d.major, d.minor);
-        return d.features.mma_tensor && !d.features.mma_slow && full_rate && !*full_rate;
+        return satisfied(format_requires::kQxPrefillA8Pays, current_arch_facts());
     } catch (const std::exception&) { return false; }
 }
 
@@ -384,8 +382,7 @@ std::size_t prefill_a8_workspace_bytes(const Problem& problem, std::int32_t min_
 }
 
 bool prefill_a8_format(QType qtype) {
-    static PerDevice<bool> pays;
-    const bool qx = qx_prefill_a8_takes(pays.get([](int) { return qx_prefill_a8_pays(); }));
+    const bool qx = qx_prefill_a8_takes(qx_prefill_a8_pays());
     switch (qtype) {
     case QType::Q8_G32_FP16:
         // --prefill-route a16 keeps Q8 on its shape tables' A16 kernels too.

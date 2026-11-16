@@ -15,6 +15,7 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/moe/moe_internal.h"
+#include "ops/moe/moe_regime_rules.h"
 #include "ops/common/arch_limits.h"
 
 #include <algorithm>
@@ -383,7 +384,25 @@ struct Workspace {
     Tensor x_h;
     // MoePlan::w4a8: the quantized x ([T] rows) and intermediate ([T * top_k] slot rows).
     Tensor x_codes, x_scales, x_sums, mid_codes, mid_scales, mid_sums;
+    // The call's last-block tickets (#882): [0] the SIMT router's route ticket, then the fused
+    // combine's run tickets (combine_ticket_count). They were device globals, shared by every
+    // engine's MoE on the GPU: two grids in flight on one counter could elect a last CTA early.
+    Tensor tickets;
 };
+
+// The fused combine's run tickets a layer may take: one per CTA column of an R8 down stage at the
+// fewest rows a CTA holds (32 lanes a row), at most kCombineTickets (r8_down_fuses_combine); none
+// with a shared expert, which keeps the separate combine. Geometry only, so every plan's
+// workspace bound holds them.
+std::int32_t combine_ticket_count(const Geometry& g) {
+    if (g.shared) { return 0; }
+    int rows = r8_schedule_info(0).rows_per_cta();
+    for (int s = 1; s < r8_schedule_count(); ++s) {
+        rows = std::min(rows, r8_schedule_info(s).rows_per_cta());
+    }
+    return static_cast<std::int32_t>(std::min<std::int64_t>(
+        kCombineTickets, (static_cast<std::int64_t>(g.hidden) + rows - 1) / rows));
+}
 
 // The router's CTAs quantize x for an R8 gate/up (GemmArgs::xq) where x is the bank's input as
 // it is (no zero-padded copy).
@@ -453,6 +472,8 @@ Workspace allocate(Arena& arena, const Geometry& g, const MoeConfig& c, std::int
         w.shared_out = arena.alloc(DType::BF16, {g.hidden, tokens});
         if (g.shared_gate) { w.shared_gate = arena.alloc(DType::BF16, {1, tokens}); }
     }
+    // Last, so the buffers above keep their offsets.
+    w.tickets = arena.alloc(DType::I32, {1 + combine_ticket_count(g)});
     return w;
 }
 
@@ -751,57 +772,22 @@ bool plan_compiled(const MoeWeights& w, const MoePlan& plan) {
 
 
 std::int32_t r8_token_limit() {
-    // The measured families by name, not a compute-capability inequality (core/device_class.h):
-    // Ada (sm_89) and consumer Blackwell (sm_120, sm_121). Hopper and datacenter Blackwell are not
-    // measured and keep four.
+    // The generation's rule (moe_regime_rules.h): eight on Ada and consumer Blackwell, measured on
+    // two cards each; four elsewhere, and on a generation the table does not know.
     const auto& d = device_class();
-    return (d.major == 8 && d.minor == 9) || d.major == 12 ? kR8Tokens : kR8NarrowTokens;
+    return regime::generation_rule(d.major, d.minor).limit;
 }
 
-namespace {
-
-// The FP4-element formats (MXFP4, NVFP4) keep four tokens: above four the register MMA beats R8
-// on MXFP4 on both Blackwell boards in gpt-oss's shape (moe_bench, H 2880, F 2880, E 32, k 4, auto
-// plans, R8 against the register MMA at T = 5 / 6 / 8: RTX 5070 Ti +11.5 / +12.3 / +13.9 %, RTX
-// 5090 +4.9 / +5.6 / +11.2 %; end to end gpt-oss-20b MXFP4 C8 on the RTX 5070 Ti 109.4 -> 97.1
-// tok/s, RTX 4060 Ti 39.5 -> 38.7), and NVFP4 decodes the same elements. The other 4-bit formats of
-// one scale per block take eight: R8 ahead on three of the four board and shape pairs (Q4_0,
-// IQ4_NL: RTX 5090 -2..-8 % in both shapes, RTX 5070 Ti -1..-5 % in gpt-oss's, +2..+10 % in
-// Qwen3.6-35B's: H 2048, F 512, E 256, k 8), every K-quant, Q4_1, Q5_0, Q5_1 and IQ3_XXS ahead on
-// both boards (-1..-19 %).
-bool r8_fp4_elements(QType q) { return q == QType::MXFP4 || q == QType::NVFP4; }
-
-// A ggml_frag_v1 bank is laid out for the register MMA's fragments, whose decode then costs that
-// kernel little. Above four tokens R8 keeps its edge there where the board has the SM cycles to
-// spare per DRAM byte, below kRmmaLatencySwiGluBytes (generic_gemm_internal.h: from there the
-// register MMA's SwiGLU tiles take their latency variant and hold the DRAM bus themselves).
-// moe_bench, Qwen3.6-35B's shape (H 2048, F 512, E 256, k 8), frag, R8 against the register MMA
-// at T = 5..8, and the board's DRAM bytes per SM cycle (dram_bytes_per_sm_cycle):
-//   RTX 4090 (3.1):    IQ3_XXS -9..-10 %, IQ2_S -6..-8 %, Q4_K -5..-7 %, Q4_0 -2 %
-//   RTX 4060 Ti (3.3): IQ3_XXS -3..-6 %, IQ2_S -2..-4 %, Q4_K -1..-3 %, Q4_0 0
-//   RTX 5090 (4.4):    IQ3_XXS -4..-8 %, IQ2_S -4..-8 %, Q4_K -10..-13 %, Q4_0 +2..+6 %
-//   RTX 5070 Ti (5.2): IQ3_XXS -1..-4 %, IQ2_S -1..-6 %, Q4_K -11..-13 %, Q4_0 +11..+12 %
-// The random routing of moe_bench spreads the slots over more experts than a model's (R8's cost
-// follows the slots, the register MMA's the jobs), so the thin edges turn end to end, C8, frag
-// gate/up eight tokens against four: Qwen3.6-35B UD-Q3_K_S (frag IQ3_XXS) RTX 4090 129.1 -> 134.0
-// tok/s, 4060 Ti 45.2 -> 45.6, RTX 5070 Ti 104.9 -> 102.8 (R8 gate/up 85.9 us a call against the
-// register MMA's 83.9, nsys); UD-IQ3_XXS RTX 4090 133.8 -> 136.4, 4060 Ti 50.2 -> 50.5. Q4_K's
-// super-block takes R8 on every board; Q4_0 loses on both Blackwell boards and only ties on Ada,
-// so it keeps four everywhere. An unknown board (no roofline) keeps four.
-bool r8_frag_narrow(const Weight& bank) {
-    if (bank.layout != QuantLayout::GgmlFrag || bank.qtype == QType::GGML_Q4_K) return false;
-    if (bank.qtype == QType::GGML_Q4_0) return true;
-    const double bytes = generic::dram_bytes_per_sm_cycle();
-    return bytes <= 0 || bytes >= generic::kRmmaLatencySwiGluBytes;
+regime::R8LimitAnswer regime::r8_limit_answer(const Weight& bank) {
+    // Only a ggml_frag_v1 bank's rules read the board's DRAM bytes per SM cycle.
+    const BankFacts facts{bank.qtype, bank.layout,
+                          bank.layout == QuantLayout::GgmlFrag ? generic::dram_bytes_per_sm_cycle()
+                                                               : 0.0};
+    const auto& d = device_class();
+    return r8_limit_answer(d.major, d.minor, facts);
 }
 
-} // namespace
-
-std::int32_t r8_token_limit(const Weight& bank) {
-    const std::int32_t limit = r8_token_limit();
-    return r8_fp4_elements(bank.qtype) || r8_frag_narrow(bank) ? std::min(limit, kR8NarrowTokens)
-                                                                : limit;
-}
+std::int32_t r8_token_limit(const Weight& bank) { return regime::r8_limit_answer(bank).limit; }
 
 bool moe_format_has_min(QType q) {
     return q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 || q == QType::GGML_Q4_K ||
@@ -1482,7 +1468,6 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     const Workspace ws = allocate(workspace, g, c, t, p);
     const std::int32_t a = t * c.top_k;
     const std::int32_t jobs = max_jobs(a, g.experts, p.job_columns);
-    bool fused_combine      = false; // the R8 down stage combines (GemmArgs::combine_tickets)
 
     // The shared expert, through the generic projection path: x and its own buffers only, and
     // (A8) its activation planes in `arena`. On the branch it runs beside steps 1-5, which take
@@ -1533,6 +1518,29 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         }
     };
 
+    // Whether the R8 down stage combines (step 5, GemmArgs::combine_tickets), on how many runs of
+    // rows: each run counts on a ticket of the call's own (ws.tickets past the route ticket), which
+    // the plan zeroes in stream order before the down stage.
+    std::int32_t combine_runs = 0;
+    if (branch == nullptr && !p.volta_hmma && !p.w4a8_down && p.down_r8 >= 0 &&
+        fused_combine_enabled() && r8_down_fuses_combine(w, g, p.down_r8)) {
+        const int rows = r8_schedule_info(p.down_r8).rows_per_cta() * (32 / r8_lanes(w.down));
+        combine_runs   = static_cast<std::int32_t>(blocks(g.hidden, rows));
+        if (combine_runs > ws.tickets.ne[0] - 1) {
+            fail("the fused combine's tickets exceed the workspace's");
+        }
+    }
+    const bool fused_combine = combine_runs > 0;
+    // The tickets: the arena's ticket page where it has one (#889: zero since its construction,
+    // each grid leaves its ticket at zero, no launch), else the call's workspace (#882), whose
+    // route ticket is zeroed in stream order below. The combine tickets are the plan's to zero
+    // either way, at no cost.
+    int* const page = workspace.ticket_page();
+    int* const route_ticket =
+        page != nullptr ? page + arena_tickets::kMoeRoute : static_cast<int*>(ws.tickets.data);
+    int* const run_tickets = page != nullptr ? page + arena_tickets::kMoeCombine
+                                             : static_cast<int*>(ws.tickets.data) + 1;
+
     // 2. Selection and 3. plan: one launch for a call of at most kPlanWarps tokens.
     SelectArgs select;
     {
@@ -1562,6 +1570,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         plan.job_begin    = static_cast<int*>(ws.job_begin.data);
         plan.job_count    = static_cast<int*>(ws.job_count.data);
         plan.job_total    = static_cast<int*>(ws.job_total.data);
+        plan.zero_tickets = run_tickets;
+        plan.zero_count   = combine_runs;
     }
     // The router's kernel (router_kernel, the rule the layer price reads too).
     const MoeRouterKernel router = router_kernel(w, g, p, t);
@@ -1602,7 +1612,13 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         }
         const bool router_hmma = router == MoeRouterKernel::VoltaHmma;
         if (router_simt) {
-            launch_router_simt(args, stream, route_in_router ? &select : nullptr, &plan);
+            // The route ticket is zero in stream order when the router starts: the workspace's
+            // bytes are another op's in between (#882).
+            if (route_in_router && page == nullptr) {
+                CUDA_CHECK(cudaMemsetAsync(route_ticket, 0, sizeof(int), stream));
+            }
+            launch_router_simt(args, stream, route_in_router ? &select : nullptr, &plan,
+                               route_ticket);
         } else if (router_hmma) {
             launch_moe_volta_hmma(generic::WeightCodec::Bf16, false, Stage::Router, args,
                                   dim3(blocks(g.experts, kVoltaHmmaRows), blocks(t, kVoltaHmmaSlots)),
@@ -1752,11 +1768,9 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         } else if (p.down_r8 >= 0) {
             args.r8_lanes  = r8_lanes(w.down);
             const int rows = r8_schedule_info(p.down_r8).rows_per_cta() * (32 / args.r8_lanes);
-            if (branch == nullptr && fused_combine_enabled() &&
-                r8_down_fuses_combine(w, g, p.down_r8)) {
-                args.combine_tickets = combine_tickets();
+            if (fused_combine) {
+                args.combine_tickets = run_tickets;
                 args.combine         = combine_args(ws, g, c, epilogue, out, t, false);
-                fused_combine        = true;
             }
             launch_r8_gemm(generic::codec_of(w.down), is_frag(w.down), Stage::Down, p.down_r8, t,
                            args, dim3(blocks(g.hidden, rows), static_cast<unsigned>(jobs)), stream);

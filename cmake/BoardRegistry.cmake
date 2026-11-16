@@ -47,10 +47,10 @@ endfunction()
 # (core/arch_registry.h) from the "archs" array of the same file, one initializer per row, in the
 # file's order:
 #
-#   {120, 120, 101376, 102400, 101376, 102400, 1024, 1536, 32, 65536},
+#   {120, 120, 101376, 102400, 101376, 102400, 1024, 1536, 32, 65536, 2048},
 #   // cc, cc_to (the row covers cc..cc_to), shared per block opt-in and per SM (bytes), the same two
 #   // as the kernels are compiled against, reserved per block, max threads and blocks per SM,
-#   // registers per SM
+#   // registers per SM, the L2 slice size in KiB (0: unknown)
 #
 # The row with cc 0 is the one an unlisted capability gets. Rewritten only when its text changes.
 function(ninferno_generate_arch_registry json_file out_file)
@@ -65,6 +65,10 @@ function(ninferno_generate_arch_registry json_file out_file)
                 max_blocks_per_sm registers_per_sm)
       string(JSON ${key} GET "${text}" archs ${i} ${key})
     endforeach()
+    string(JSON l2_slice_kib ERROR_VARIABLE slice_error GET "${text}" archs ${i} l2_slice_kib)
+    if(NOT slice_error STREQUAL "NOTFOUND")
+      set(l2_slice_kib 0)
+    endif()
     string(JSON cc_to ERROR_VARIABLE to_error GET "${text}" archs ${i} cc_to)
     if(NOT to_error STREQUAL "NOTFOUND")
       set(cc_to ${cc})
@@ -75,7 +79,7 @@ function(ninferno_generate_arch_registry json_file out_file)
     math(EXPR build_sm "${build_smem_per_sm_kib} * 1024")
     string(APPEND rows "{${cc}, ${cc_to}, ${block}, ${sm}, ${build_block}, ${build_sm}, "
                        "${smem_reserved_per_block}, ${max_threads_per_sm}, ${max_blocks_per_sm}, "
-                       "${registers_per_sm}},\n")
+                       "${registers_per_sm}, ${l2_slice_kib}},\n")
   endforeach()
   set(old "")
   if(EXISTS ${out_file})

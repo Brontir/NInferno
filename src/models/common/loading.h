@@ -43,6 +43,9 @@ struct ArtifactBacking {
     // element's address stable as the bank grows.
     std::deque<WeightView> views;
     std::deque<DeviceBuffer> derived;
+    // A described backing's parents (Demands::describe): one an object the views point into,
+    // in place of `materialized`'s.
+    std::deque<WeightParent> described;
 };
 
 namespace loading {
@@ -82,6 +85,13 @@ public:
     // Consumes the binder: uploads every demanded parameter and binds each one's view at its Id.
     // No demand may follow.
     [[nodiscard]] std::unique_ptr<ArtifactBacking> materialize(DeviceContext& device);
+
+    // A backing without the payload (the plan without the weights, #615): consumes the binder as
+    // materialize does (the same refusal of unbound parameters), then binds each demand's view on
+    // one parent an object, with the object's geometry, an address that is never read (distinct a
+    // parent: the forms compare parents, not addresses) and, for NVFP4, a positive weight divisor
+    // in place of the payload's (the forms read whether it is there, not its value). No device.
+    [[nodiscard]] std::unique_ptr<ArtifactBacking> describe();
 
     [[nodiscard]] const std::vector<Pending>& items() const noexcept { return items_; }
 

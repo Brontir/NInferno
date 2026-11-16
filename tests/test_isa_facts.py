@@ -4,7 +4,8 @@
 Measured with its source file, every fact present with a positive value in its unit, the card and
 tool named, the levels in order), the table equals its regeneration from the inputs, every row is
 from the checked-in probe (its version and the sha256 of its source), a probe output round-trips
-into a row, and odd or incomplete outputs are refused. No GPU, no CUDA toolkit."""
+into a row, and odd or incomplete outputs are refused; likewise the launch facts of
+launch_probe.cu, merged into the rows' launch entries (#613 PR-8b). No GPU, no CUDA toolkit."""
 
 import argparse
 import contextlib
@@ -837,6 +838,287 @@ class IsaFacts(unittest.TestCase):
                 held, mma = fa["sm_clock_mhz_chase_held"]["value"], fa["sm_clock_mhz_mma"]["value"]
                 self.assertLess(abs(held - mma) / mma, 0.10,
                                 f"{key}: held chases at {held} MHz, the tensor loop at {mma}")
+
+
+# A launch_probe run as `run --section launch` writes it (a test fixture, no card's numbers).
+IDLE_NOTES = ("note compute processes on the probe's GPU before the run: 0\n"
+              "note compute processes on the probe's GPU after the run: 0\n" + DURING_IDLE)
+LAUNCH_SAMPLE = "source_sha256 " + ip.source_sha256(ip.LAUNCH_SOURCE) + """
+arch sm_89
+probe """ + ip.checked_in_launch_probe() + """
+card NVIDIA GeForce RTX 4090
+cc 89
+sms 128
+driver 13040
+runtime 13040
+nvcc 13.4.92
+note device 0 is the GPU at PCI 0000:01:00.0
+fact node_ns 880.000 ns
+fact node_pdl_ns 1350.000 ns
+fact stream_ns 1500.000 ns
+fact floor_ns_1 885.000 ns
+fact floor_ns_sms 1100.000 ns
+fact floor_ns_4sms 1300.000 ns
+fact floor_ns_1024 1450.000 ns
+fact floor_ns_4096 2800.000 ns
+selfcheck ok
+end
+""" + IDLE_NOTES
+# The lines `run` writes around launch_probe's own output.
+LAUNCH_RUN_LINES = ("source_sha256 ", "arch ", "note compute processes")
+
+
+def launch_of_card(text, card, cc, sms, arch):
+    """LAUNCH_SAMPLE as a run on another card."""
+    return (text.replace("card NVIDIA GeForce RTX 4090", f"card {card}")
+            .replace("cc 89\n", f"cc {cc}\n").replace("sms 128\n", f"sms {sms}\n")
+            .replace("arch sm_89\n", f"arch sm_{arch}\n"))
+
+
+class FakeProc:
+    """A subprocess.Popen stand-in whose stdout is `text`, read as it comes."""
+
+    def __init__(self, text, pid):
+        self.text, self.returncode, self.pid = text, 0, pid
+        self.stdout = io.StringIO(text)
+
+    def terminate(self):
+        pass
+
+    def poll(self):
+        return 0
+
+    def wait(self):
+        return 0
+
+    def communicate(self):
+        return self.text, None
+
+
+class LaunchFacts(unittest.TestCase):
+    def test_older_probe_has_no_4096_floor(self):
+        # launch_probe 1 printed no floor_ns_4096 (#886): its runs stay rows, the fact unknown;
+        # a run of the checked-in version without it is incomplete.
+        line = "fact floor_ns_4096 2800.000 ns\n"
+        older = (LAUNCH_SAMPLE.replace(line, "")
+                 .replace("probe " + ip.checked_in_launch_probe(), "probe launch_probe 1"))
+        old_head, old_facts = ip.parse_launch_run(older)
+        self.assertNotIn("floor_ns_4096", old_facts)
+        with self.assertRaises(ValueError) as e:
+            ip.parse_launch_run(LAUNCH_SAMPLE.replace(line, ""))
+        self.assertIn("missing floor_ns_4096", str(e.exception))
+
+    def test_parse_and_entry(self):
+        head, facts = ip.parse_launch_run(LAUNCH_SAMPLE)
+        self.assertEqual(set(facts), set(ip.LAUNCH_FACTS))
+        entry = ip.launch_of(head, facts, "launch_probe_89.txt")
+        self.assertEqual((entry["provenance"], entry["source"], entry["card"], entry["cc"],
+                          entry["sms"]),
+                         ("Measured", "launch_probe_89.txt", "NVIDIA GeForce RTX 4090", 89, 128))
+        self.assertEqual((entry["tool"]["probe"], entry["tool"]["arch"],
+                          entry["tool"]["source_sha256"]),
+                         (ip.checked_in_launch_probe(), "sm_89",
+                          ip.source_sha256(ip.LAUNCH_SOURCE)))
+        self.assertEqual(list(entry["facts"]), list(ip.LAUNCH_FACTS))
+        self.assertEqual(entry["facts"]["node_ns"], {"value": 880.0, "unit": "ns"})
+        self.assertEqual(ip.card_label("NVIDIA GeForce RTX 5070 Ti"), "rtx5070ti")
+        self.assertEqual(ip.card_label("Quadro GV100"), "gv100")
+        # Each probe's output is its own parser's: neither takes the other's.
+        self.assertTrue(ip.is_launch_run(LAUNCH_SAMPLE))
+        self.assertFalse(ip.is_launch_run(SAMPLE))
+        with self.assertRaises(ValueError):
+            ip.parse_run(LAUNCH_SAMPLE)
+        with self.assertRaises(ValueError):
+            ip.parse_launch_run(SAMPLE)
+
+    def test_refusals(self):
+        def refused(text, why):
+            with self.assertRaises(ValueError) as e:
+                ip.parse_launch_run(text)
+            self.assertIn(why, str(e.exception))
+
+        pdl = "fact node_pdl_ns 1350.000 ns\n"
+        unmeasured = "note node_pdl_ns not measured: operation not supported\n"
+        sha = ip.source_sha256(ip.LAUNCH_SOURCE)
+        now = ip.checked_in_launch_probe()
+        for old, new, why in (
+                ("fact node_ns 880.000 ns\n", "", "missing node_ns"),
+                ("fact node_ns 880.000 ns", "fact node_ns 0.880 us", "in ns, not us"),
+                ("fact node_ns 880.000 ns", "fact node_ns 5.000 ns", "outside the probe's"),
+                ("fact node_ns 880.000 ns", "fact node_ns nan ns", "positive finite"),
+                ("fact node_ns 880.000 ns", "fact other_ns 880.000 ns", "unknown fact"),
+                ("fact stream_ns 1500.000 ns\n", "fact stream_ns 1500.000 ns\n" * 2, "twice"),
+                ("selfcheck ok", "selfcheck FAIL node_ns: the slope moves", "self-check failed"),
+                ("end\n", "", "incomplete run"),
+                ("cc 89\n", "", "no cc line"),
+                ("sms 128", "sms 0", "sms is no positive count"),
+                ("arch sm_89", "arch sm_86", "built for sm_86, not sm_89"),
+                ("source_sha256 " + sha, "source_sha256 " + "0" * 64,
+                 "not the checked-in launch_probe.cu's"),
+                ("probe " + now, "probe launch_probe 99", "newer"),
+                ("probe " + now, "probe launch_probe one", "odd probe"),
+                ("before the run: 0", "before the run: 1 (pid 999)", "another compute process"),
+                # node_pdl_ns is owed unless the probe noted it as not measured, below sm_90.
+                (pdl, "", "missing node_pdl_ns"),
+                (pdl, pdl + unmeasured, "given and noted as not measured")):
+            self.assertIn(old, LAUNCH_SAMPLE, old)
+            refused(LAUNCH_SAMPLE.replace(old, new, 1), why)
+        refused(LAUNCH_SAMPLE + "garbage line\n", "unknown line")
+        _, facts = ip.parse_launch_run(LAUNCH_SAMPLE.replace(pdl, unmeasured))
+        self.assertNotIn("node_pdl_ns", facts)
+        blackwell = launch_of_card(LAUNCH_SAMPLE, "NVIDIA GeForce RTX 5090", 120, 170, "120a")
+        ip.parse_launch_run(blackwell)
+        refused(blackwell.replace(pdl, unmeasured), "owed from sm_90 on")
+
+    def table_in(self, d, files):
+        for name, text in files.items():
+            with open(os.path.join(d, name), "w", newline="\n") as f:
+                f.write(text)
+        return ip.build_table(d)
+
+    def test_in_the_table(self):
+        check = launch_of_card(LAUNCH_SAMPLE, "NVIDIA GeForce RTX 4070 Ti", 89, 60, "89")
+        with tempfile.TemporaryDirectory() as d:
+            table = self.table_in(d, {"isa_probe_89.txt": SAMPLE,
+                                      "launch_probe_89.txt": LAUNCH_SAMPLE,
+                                      "launch_probe_89_rtx4070ti.txt": check})
+            row = table["arches"]["89"]
+            want = ip.launch_of(*ip.parse_launch_run(LAUNCH_SAMPLE), "launch_probe_89.txt")
+            want["checks"] = [ip.launch_of(*ip.parse_launch_run(check),
+                                           "launch_probe_89_rtx4070ti.txt")]
+            self.assertEqual(row["launch"], want)
+            # The row's own facts are isa_probe's alone.
+            self.assertEqual(set(row["facts"]), set(ip.FACTS))
+        with tempfile.TemporaryDirectory() as d:
+            row = self.table_in(d, {"isa_probe_89.txt": SAMPLE})["arches"]["89"]
+            self.assertNotIn("launch", row)
+        for files, why in (
+                ({"launch_probe_89.txt": LAUNCH_SAMPLE}, "has no ISA row"),
+                ({"isa_probe_89.txt": SAMPLE, "launch_probe_89_rtx4070ti.txt": check},
+                 "which has no launch row"),
+                ({"isa_probe_89.txt": SAMPLE, "launch_probe_89.txt": LAUNCH_SAMPLE,
+                  "launch_probe_89_other.txt": check}, "named after its card"),
+                ({"isa_probe_89.txt": SAMPLE, "launch_probe_86.txt": LAUNCH_SAMPLE},
+                 "a run of sm_89, not of sm_86"),
+                ({"isa_probe_89.txt": SAMPLE, "launch_probe_89.txt": "garbage line\n"},
+                 "launch_probe_89.txt")):
+            with tempfile.TemporaryDirectory() as d:
+                with self.assertRaises(ValueError) as e:
+                    self.table_in(d, files)
+                self.assertIn(why, str(e.exception), list(files))
+
+    def test_merge(self):
+        check = launch_of_card(LAUNCH_SAMPLE, "NVIDIA GeForce RTX 4070 Ti", 89, 60, "89")
+        with tempfile.TemporaryDirectory() as d:
+            inputs = os.path.join(d, "inputs")
+            os.mkdir(inputs)
+            table = os.path.join(d, "t.json")
+
+            def merge(text, check_flag=False, other_card=False):
+                run = os.path.join(d, "run.txt")
+                with open(run, "w", newline="\n") as f:
+                    f.write(text)
+                args = argparse.Namespace(input=run, inputs=inputs, table=table, check=check_flag,
+                                          other_card=other_card)
+                with contextlib.redirect_stderr(io.StringIO()), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    return ip.cmd_merge(args)
+
+            # A launch run needs its architecture's ISA row: without one nothing is merged.
+            self.assertEqual(merge(LAUNCH_SAMPLE), 1)
+            self.assertEqual(os.listdir(inputs), [])
+            self.assertEqual(merge(SAMPLE), 0)
+            self.assertEqual(merge(SAMPLE, check_flag=True), 1)  # an ISA row has no checks
+            self.assertEqual(merge(LAUNCH_SAMPLE), 0)
+            self.assertEqual(merge(check, check_flag=True), 0)
+            self.assertEqual(sorted(os.listdir(inputs)),
+                             ["isa_probe_89.txt", "launch_probe_89.txt",
+                              "launch_probe_89_rtx4070ti.txt"])
+            with open(table) as f:
+                row = json.load(f)["arches"]["89"]
+            self.assertEqual(row["launch"]["card"], "NVIDIA GeForce RTX 4090")
+            self.assertEqual([c["card"] for c in row["launch"]["checks"]],
+                             ["NVIDIA GeForce RTX 4070 Ti"])
+            # Another card's run does not replace the row's run of the architecture (launch or
+            # ISA) unless --other-card says so; the same card's does.
+            dest = os.path.join(inputs, "launch_probe_89.txt")
+            with open(dest) as f:
+                before = f.read()
+            self.assertEqual(merge(check), 1)
+            with open(dest) as f:
+                self.assertEqual(f.read(), before)
+            other_isa = SAMPLE.replace("card NVIDIA GeForce RTX 4090",
+                                       "card NVIDIA GeForce RTX 4070 Ti")
+            self.assertEqual(merge(other_isa), 1)
+            self.assertEqual(merge(LAUNCH_SAMPLE), 0)
+            self.assertEqual(merge(check, other_card=True), 0)
+            with open(table) as f:
+                self.assertEqual(json.load(f)["arches"]["89"]["launch"]["card"],
+                                 "NVIDIA GeForce RTX 4070 Ti")
+
+    def test_run(self):
+        # `run --section launch` builds launch_probe.cu (no SASS read) and writes the row's file,
+        # or <out>.refused for a run that is none.
+        lines = [l for l in LAUNCH_SAMPLE.splitlines() if not l.startswith(LAUNCH_RUN_LINES)]
+        good = "\n".join(lines) + "\n"
+        for probe_out, rc_want in ((good, 0),
+                                   (good.replace("selfcheck ok", "selfcheck FAIL x"), 3)):
+            built = []
+
+            def run(cmd, **kw):
+                exe = os.path.basename(cmd[0])
+                if exe == "nvcc":
+                    built.append(cmd[-1])
+                    return ip.subprocess.CompletedProcess(cmd, 0)
+                self.assertEqual(exe, "nvidia-smi")
+                return ip.subprocess.CompletedProcess(cmd, 0, "", "")
+
+            def popen(cmd, **kw):
+                if os.path.basename(cmd[0]) != "nvidia-smi":
+                    return FakeProc(probe_out, 4321)
+                if cmd[1].startswith("--query-gpu"):
+                    return FakeProc("00000000:01:00.0, P0, 2520, 10501\n" * 20, 1)
+                return FakeProc(during_of([["4321"]] * 20), 2)
+
+            with tempfile.TemporaryDirectory() as d:
+                out = os.path.join(d, "launch_probe_89_1.txt")
+                args = argparse.Namespace(arch="89", nvcc="nvcc", cuobjdump=None, out=out,
+                                          idle_unchecked=False, section="launch")
+                with mock.patch.object(ip.subprocess, "run", run), \
+                        mock.patch.object(ip.subprocess, "Popen", popen), \
+                        contextlib.redirect_stderr(io.StringIO()), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(ip.cmd_run(args), rc_want)
+                self.assertEqual(built, [ip.LAUNCH_SOURCE])
+                self.assertEqual(os.path.exists(out), rc_want == 0)
+                self.assertEqual(os.path.exists(out + ip.REFUSED), rc_want != 0)
+                if rc_want == 0:
+                    with open(out) as f:
+                        ip.parse_launch_run(f.read())
+
+    def test_committed_entries(self):
+        # Every launch entry of the committed table is a run of the checked-in launch probe (a
+        # changed probe makes its entries stale, as isa_probe's rows), Measured, from its file,
+        # of its row's architecture, with the facts in ns and node_pdl_ns from sm_90 on.
+        with open(ip.DEFAULT_TABLE) as f:
+            table = json.load(f)
+        now, sha = ip.checked_in_launch_probe(), ip.source_sha256(ip.LAUNCH_SOURCE)
+        for key, row in table["arches"].items():
+            if "launch" not in row:
+                continue
+            for entry in [row["launch"]] + row["launch"].get("checks", []):
+                where = f"sm_{key} {entry['source']}"
+                self.assertEqual((entry["tool"]["probe"], entry["tool"]["source_sha256"]),
+                                 (now, sha), f"{where}: re-take it with `run --section launch`")
+                self.assertEqual(entry["provenance"], "Measured", where)
+                self.assertEqual(entry["cc"], row["cc"], where)
+                self.assertTrue(os.path.exists(os.path.join(ip.DEFAULT_INPUTS, entry["source"])),
+                                where)
+                self.assertLessEqual(set(entry["facts"]), set(ip.LAUNCH_FACTS), where)
+                for name, v in entry["facts"].items():
+                    self.assertEqual(v["unit"], "ns", f"{where} {name}")
+                if row["cc"] >= 90:
+                    self.assertIn("node_pdl_ns", entry["facts"], where)
 
 
 if __name__ == "__main__":

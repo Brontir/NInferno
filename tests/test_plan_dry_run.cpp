@@ -2162,8 +2162,8 @@ void test_plan_now() {
 // (ops/moe moe_route_query on the board's class), asked per routed kind and rows, the answers by
 // the kinds' bytes. gpt-oss-20b's MXFP4 banks (E32 k4 H2880 F2880) on the RTX 4090: R8 on the
 // gate/up over the register-MMA down at four rows, both stages on the register MMA from five
-// (the FP4-element banks keep R8 to four tokens: moe.cpp r8_fp4_elements), and the invariant
-// profile's register MMA under --activations exact; a kind not read whole has no answer.
+// (the FP4-element banks keep R8 to four tokens: moe_regime_rules.h r8_fp4_elements), and the
+// invariant profile's register MMA under --activations exact; a kind not read whole has no answer.
 void test_moe_routes() {
     rt::register_plan_moe_route_query();
     pr::PlanSourceFacts f;
@@ -2429,7 +2429,7 @@ void test_choice_json_gates() {
         q8.family = "qwen3_5_text";
         ch::Scored s;
         s.accuracy.terms = {{ch::Axis::Quant, "Q8_0", 0, own, false, "",
-                             own ? ch::Evidence::Measured : ch::Evidence::Reference}};
+                             own ? ch::Evidence::Measured : ch::Evidence::Reference, "Qwen3.5-9B"}};
         q8.choice.scored.push_back(s);
         q8.choice.chosen       = 0;
         const nlohmann::json q = pr::choice_json(q8);

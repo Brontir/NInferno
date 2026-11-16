@@ -504,7 +504,9 @@ inline constexpr FittedHoldout kGenerationHoldouts[] = {
          "the stream-k ratio are measured, launch_seconds the mean of two nsys fixup times "
          "(5.0 and 1.6 us), a fitted summary",
          "one card, carried to the generation as a transfer (DECISIONS 78; no second Turing card "
-         "is measured): nothing left out; the other rows have no law (null: the tile law)",
+         "is measured), and to IQ4_XS as a format transfer (DECISIONS 90: its A/B on the RTX 2080 "
+         "Ti, -9.0 %, is the check): nothing left out; the other rows have no law (null: the tile "
+         "law)",
          "core/generation.h at kTuringMmqLaw")},
 };
 
@@ -759,8 +761,10 @@ inline constexpr FittedHoldout kKernelHoldouts[] = {
                    "5..8: RTX 5090 / 5070 Ti -5..-15 %, RTX 4090 -3..-7 %, RTX 4060 Ti -0.4..-6 % "
                    "(so kR8Tokens on sm_89 and sm_12x); RTX 2080 Ti Q6_K +38..+45 %, Q3_K "
                    "+15..+19 % (so four)",
-                   "the boards that ran the A/B are its only check: none left out; Ampere, Hopper "
-                   "and datacenter Blackwell are unmeasured and keep four",
+                   "the boards that ran the A/B are its only check: none left out; Ampere (RTX "
+                   "3090, 3060, 13.11) keeps four, its two cards disagreeing above four tokens; "
+                   "the A100, Hopper and datacenter Blackwell are unmeasured and keep four "
+                   "(ops/moe/moe_regime_rules.h)",
                    "ops/moe/moe_internal.h at kR8NarrowTokens")},
     {kQ4LinearSwiglu, "kNarrowTailCols",
      Holdout::none("a remainder of at most 40 columns measured cheaper on the narrow routes than "

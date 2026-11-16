@@ -195,8 +195,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     {"kGgmlVecMaxTokens", Basis::Structural, "generic_gemm.h",
      "inline constexpr std::int32_t kGgmlVecMaxTokens = 8;", 8, kUnknown, kUnknown,
      "ggml_mmq::kVecMaxColumns, the kernel's own width; no margin recorded", ""},
-    {"kMmqVerifyMinTokens", Basis::Measured, "generic_select.cpp",
-     "constexpr std::int32_t kMmqVerifyMinTokens = 9;", 9,
+    {"kMmqVerifyMinTokens", Basis::Measured, "format_rules.h",
+     "inline constexpr std::int32_t kMmqVerifyMinTokens = 9;", 9,
      "ad104:58sm (L4), gb203:70sm, ad102:128sm, tu102:68sm",
      "L4, RTX 5070 Ti, RTX 4090, RTX 2080 Ti",
      "ISTA IQ3_S 27B C4 MTP3 (16-token verify): L4 79.4 -> 89.2 tok/s (+12.3 %), RTX 5070 Ti "
@@ -291,7 +291,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the decode and verify widths the dense tuner times; no margin recorded; equal to "
      "kDecodePinMaxTokens today, not defined from it",
      ""},
-    {"kR8VerifyQ40MinValues", Basis::PlacedBetweenMeasured, "generic_select.cpp",
+    {"kR8VerifyQ40MinValues", Basis::PlacedBetweenMeasured, "format_rules.h",
      "inline constexpr std::int64_t kR8VerifyQ40MinValues = 24ll << 20;", 25165824,
      "ad102:128sm, ga102:82sm", "RTX 4090, RTX 3090",
      "Q4_0 R8 at T = 2..4 pays on a large matrix (Gemma 4 31B QAT, every dense matrix >= 44M "
@@ -800,7 +800,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the nearest measured board's decode table is consulted at one token only: its entries are "
      "T = 1 timings (r8_decode_table.h, written by tools/bench/r8_decode_table.py) and none exist "
      "for other widths; the gate follows from the table's layout, and no board places it (the "
-     "table holds nine boards, none of them the RTX 5080 of the decode rule kR8DecodeTokens); "
+     "table holds twelve boards, none of them the RTX 5080 of the decode rule kR8DecodeTokens); "
      "the same bare 1 is written in heuristic_r8 (generic_select.cpp, the next descriptor)",
      ""},
     {"heuristic_r8: the decode table's width", Basis::Structural, "generic_select.cpp",
@@ -864,8 +864,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "memory), not a measured edge",
      ""},
     // --- w4a8_ws_wins and its neighbour ---
-    {"w4a8_ws_extra: sm_89 and sm_120 only", Basis::Measured, "generic_select.cpp",
-     "return gb20x_cc(d.major, d.minor) || ada_cc(d.major, d.minor);", 0, "gb206:36sm, ad106:34sm",
+    {"w4a8_ws_extra: sm_89 and sm_120 only", Basis::Measured, "format_requires.h",
+     "kW4a8WsTunedArch{.cc_any_of = {{{8, 9}, {12, 0}}}}", 0, "gb206:36sm, ad106:34sm",
      "RTX 5060 Ti, RTX 4060 Ti",
      "IQ4_XS, IQ2_XS, IQ2_XXS and IQ3_S take the producer-warp tile where a measured choice names "
      "it, on sm_89 and sm_120 only: product, 24K prefill, A B B A, greedy byte-identical: RTX "
@@ -936,7 +936,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "measured on the RTX 5080 (gb203:84sm), which this comment does not repeat",
      ""},
     {"rules_r8: turing eight warps", Basis::Measured, "generic_select.cpp",
-     "if (!device_class().features.mma_bf16_native) { const bool decode_heavy = "
+     "if (satisfied(format_requires::kR8WithoutNativeBf16, arch)) { const bool decode_heavy = "
      "format_traits(p.qtype).decode_heavy; if (decode_heavy && p.k >= 5120) return r8_index(8, 2);",
      5120, "tu102:68sm", "RTX 2080 Ti",
      "ninferno_r8_schedule_bench on the IQ3 16 GB artifacts' 63 problems: the picks +6.25 % above "
@@ -951,8 +951,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "40.3",
      ""},
     {"rules_r8: volta one slot", Basis::Measured, "generic_select.cpp",
-     "if (p.qtype == QType::GGML_Q6_K && p.epilogue != Epilogue::SwiGlu && r8_one_slot_build() && "
-     "!device_class().features.mma_tensor) return r8_index(4, 1);",
+     "if (p.qtype == QType::GGML_Q6_K && p.epilogue != Epilogue::SwiGlu && "
+     "satisfied(format_requires::kR8OneSlot, arch)) return r8_index(4, 1);",
      0, "gv100:80sm", "V100 (GV100)",
      "4096x12288 add w4r1 88.8 against w4r2 94.7 us, 8192x4096 store 57.9 against 63.3 (ten other "
      "kernels between launches)",

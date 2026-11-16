@@ -26,7 +26,8 @@ DeviceSpan LayoutRegion::bind(DeviceSpan backing) const {
     if (offset > backing.bytes || bytes > backing.bytes - offset) {
         throw std::out_of_range("layout region exceeds its backing allocation");
     }
-    return DeviceSpan{static_cast<unsigned char*>(backing.data) + offset, bytes};
+    return DeviceSpan{static_cast<unsigned char*>(backing.data) + offset, bytes,
+                      backing.ticket_page};
 }
 
 Tensor TensorRegion::bind(DeviceSpan backing) const {
@@ -91,6 +92,7 @@ Tensor WorkspaceLayoutBuilder::alloc(DType dtype, std::initializer_list<std::int
     const std::size_t offset = align_up(cursor_, alignment, "workspace layout");
     cursor_                  = checked_add(offset, tensor.bytes(), "workspace layout");
     if (cursor_ > peak_) { peak_ = cursor_; }
+    note(offset, tensor.bytes(), false);
     return tensor;
 }
 
@@ -99,7 +101,12 @@ DeviceSpan WorkspaceLayoutBuilder::alloc_bytes(std::size_t bytes, std::size_t al
     const std::size_t offset = align_up(cursor_, alignment, "workspace layout");
     cursor_                  = checked_add(offset, bytes, "workspace layout");
     if (cursor_ > peak_) { peak_ = cursor_; }
+    note(offset, bytes, true);
     return DeviceSpan{nullptr, bytes};
+}
+
+void WorkspaceLayoutBuilder::note(std::size_t offset, std::size_t bytes, bool scratch) {
+    if (sink_ != nullptr) { sink_->push_back({op_, offset, bytes, scratch}); }
 }
 
 WorkspaceLayoutBuilder::Scope WorkspaceLayoutBuilder::scope() noexcept { return Scope(*this); }

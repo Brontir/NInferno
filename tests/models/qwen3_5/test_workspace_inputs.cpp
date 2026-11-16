@@ -12,22 +12,40 @@
 //   without the weights can describe;
 // - the arenas the plan's features ask for are sized, the others are 0, and the widest is the
 //   capacity (no Vision region: qwen3_5_workspace_plan adds it);
-// - a plan whose features read a part the view does not carry is refused.
+// - a plan whose features read a part the view does not carry is refused;
+// - the plan without the weights (#615 W2): the same model as a converted artifact's directory, in
+//   the same packing, read by --plan's facts (product::plan_facts_of_directory), sizes the dry
+//   run's rung (runtime::plan_rung_bytes, the workspace query registered as ninferno-serve
+//   registers it) at the start's capacity to the byte, with "start" as its basis, every arena of
+//   the described start equal to the start's at the tokenizer's public ids (fewer than the
+//   embedding rows); facts without the directory (a config.json, a GGUF header) or without the
+//   tokenizer's ids keep the formula and say so, as do a --moe-path pin and an indexed proposal
+//   head wider than the tokenizer's ids (the start refuses it).
 // The capacity queries answer for a substituted board (the RTX 5090, the RTX 4060 Ti), and for
 // every target board of gpu_facts.json with every CUDA device hidden from the process (#615 W4:
 // a device read the substitute does not answer throws), the same in either board order.
 
+#include "artifact/formats.h"
+#include "artifact/schema.h"
 #include "core/device_class.h"
 #include "core/machine_facts.h"
 #include "core/weight_view.h"
+#include "models/load_options.h"
 #include "models/qwen3_5/config.h"
 #include "models/qwen3_5/execution/parameter_types.h"
 #include "models/qwen3_5/program/internal.h"
+#include "models/qwen3_5/program/planning/described_start.h"
 #include "models/qwen3_5/program/planning/sequence_bytes.h"
 #include "models/qwen3_5/program/planning/startup.h"
 #include "models/qwen3_5/program/planning/workspace_plan.h"
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/weight_input.h"
+#include "ops/generic/scratch_lifetime.h"
+#include "ops/route_pins.h"
+#include "product/plan/plan_facts.h"
+#include "product/plan/plan_quants.h"
+#include "runtime/engine/plan_dry_run.h"
+#include "runtime/engine/plan_workspace.h"
 #include "support/named_board.h"
 #include "support/no_device.h"
 
@@ -42,6 +60,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -51,6 +70,8 @@ using namespace ninferno;
 namespace qwen   = ninferno::models::qwen3_5;
 namespace ex     = ninferno::models::qwen3_5::execution;
 namespace detail = ninferno::models::qwen3_5::detail;
+namespace art    = ninferno::artifact;
+namespace rt     = ninferno::runtime;
 
 int failures = 0;
 
@@ -259,6 +280,218 @@ private:
     Described d_;
 };
 
+// The same model as a converted artifact's directory, without its payload: Forms' parents as its
+// objects (each bank one object where the layout packs it, else one object a tensor), every
+// parameter a load binds (load/text.cpp, load/mtp.cpp, bind_proposal) as a row range of its
+// object with the Uses it reads, each recording the converter's policy for its format, the MTP
+// component and an indexed proposal head of `proposal_rows`, and the text config as the converter
+// writes it (convert/qwen3_5.cpp text_config).
+class DirectoryOf {
+public:
+    DirectoryOf(const qwen::Config& config, const Layout& layout) : c_(config), f_(layout) {}
+
+    art::Directory build(std::uint32_t proposal_rows) {
+        const std::uint64_t h = c_.text.hidden_size, v = c_.text.vocab_size;
+        const bool moe               = std::holds_alternative<qwen::MoeConfig>(c_.text.ffn);
+        d_.components["text"].config = text_config(moe);
+        d_.components["mtp"].config =
+            art::Json{{"architectures", art::Json::array({moe ? "Qwen3_5MoeMTP" : "Qwen3_5MTP"})}};
+        d_.components["mtp"].target = "text";
+        object(f_.head, h, {{"text/token_embedding", v, {}}});
+        object(f_.head, h, {{"text/output_head", v, {"text/final_hidden", "mtp/final_hidden"}}});
+        direct("text/final_norm", {h});
+        for (std::size_t i = 0; i < c_.text.layer_types.size(); ++i) {
+            block("text/layers/" + std::to_string(i) + "/", c_.text.layer_types[i]);
+        }
+        object(f_.linear, 2 * h, {{"mtp/input_projection", h, {"mtp/stem_input"}}});
+        for (const char* norm : {"mtp/embedding_norm", "mtp/hidden_norm", "mtp/final_norm"}) {
+            direct(norm, {h});
+        }
+        block("mtp/layers/0/", qwen::MixerKind::FullAttention);
+        art::Proposal proposal;
+        proposal.indexed               = true;
+        proposal.rows                  = proposal_rows;
+        d_.components["text"].proposal = proposal;
+        object(f_.head, h, {{"proposal/head", proposal_rows, {"mtp/final_hidden"}}});
+        direct("proposal/token_ids", {proposal_rows}, QType::INT32);
+        return std::move(d_);
+    }
+
+private:
+    struct Member {
+        std::string name;
+        std::uint64_t rows = 0;
+        std::vector<std::string> inputs;
+    };
+
+    // One object of the members' rows stacked, `k` wide, in `qtype`: each member a row range.
+    void object(QType qtype, std::uint64_t k, const std::vector<Member>& members) {
+        std::uint64_t total = 0;
+        for (const Member& m : members) { total += m.rows; }
+        const std::vector<std::uint64_t> shape{total, k};
+        add(qtype, shape, members, k);
+    }
+
+    // A bank as one object where the layout packs it, else one object a member.
+    void inputs(bool packed, QType qtype, std::uint64_t k, const std::vector<Member>& members) {
+        if (packed) {
+            object(qtype, k, members);
+            return;
+        }
+        for (const Member& m : members) { object(qtype, k, {m}); }
+    }
+
+    // A parameter a load reads as a Tensor (a norm, a convolution, the ids): its own object.
+    void direct(const std::string& name, std::vector<std::uint64_t> shape,
+                QType qtype = QType::BF16) {
+        std::uint64_t elements = 1;
+        for (const std::uint64_t d : shape) { elements *= d; }
+        add(qtype, shape, {{name, elements, {}}}, 1);
+    }
+
+    void add(QType qtype, const std::vector<std::uint64_t>& shape,
+             const std::vector<Member>& members, std::uint64_t row_elements) {
+        const QuantLayout layout = default_weight_layout(qtype);
+        const WeightGeometry g   = weight_geometry(qtype, layout, shape);
+        offset_                  = (offset_ + g.alignment - 1) / g.alignment * g.alignment;
+        art::TensorObject t;
+        t.id     = members.front().name + "#object";
+        t.shape  = shape;
+        t.format = std::string(art::format_name(qtype));
+        t.layout = std::string(art::layout_name(layout));
+        t.offset = offset_;
+        t.bytes  = g.bytes;
+        offset_ += g.bytes;
+        const art::ObjectHandle handle{d_.objects.size()};
+        d_.objects.emplace_back(t);
+        d_.object_index[t.id] = handle;
+        std::uint64_t row     = 0;
+        for (const Member& m : members) {
+            art::Binding b;
+            b.whole_object = members.size() == 1;
+            b.elements     = m.rows * row_elements;
+            b.parts        = {art::Part{handle, row * row_elements, (row + m.rows) * row_elements}};
+            row += m.rows;
+            d_.bindings[m.name] = b;
+            for (const std::string& input : m.inputs) {
+                art::Use use;
+                use.parameter             = m.name;
+                use.input                 = input;
+                const ops::LinearPolicy p = policy_of(qtype);
+                use.activation_policy =
+                    p == ops::LinearPolicy::A16Only   ? art::ActivationPolicy::A16Only
+                    : p == ops::LinearPolicy::AllowA4 ? art::ActivationPolicy::AllowA4
+                                                      : art::ActivationPolicy::AllowA8;
+                d_.uses[{m.name, input}] = use;
+            }
+        }
+    }
+
+    void block(const std::string& p, qwen::MixerKind kind) {
+        const std::uint64_t h = c_.text.hidden_size;
+        direct(p + "input_norm", {h});
+        direct(p + "post_attention_norm", {h});
+        const std::vector<std::string> mixer{p + "mixer_input"};
+        if (kind == qwen::MixerKind::FullAttention) {
+            const auto& a         = *c_.text.attention;
+            const std::uint64_t q = a.query_width(), kv = a.key_width();
+            inputs(f_.packed, f_.linear, h,
+                   {{p + "attention/query", q, mixer},
+                    {p + "attention/key", kv, mixer},
+                    {p + "attention/gate", q, mixer},
+                    {p + "attention/value", kv, mixer}});
+            direct(p + "attention/query_norm", {a.head_dim});
+            direct(p + "attention/key_norm", {a.head_dim});
+            object(f_.linear, q, {{p + "attention/output", h, {p + "attention/gated_output"}}});
+        } else {
+            const auto& g          = *c_.text.gdn;
+            const std::uint64_t kw = g.key_width(), vw = g.value_width(),
+                                heads = g.linear_num_value_heads;
+            inputs(f_.packed, f_.linear, h,
+                   {{p + "gdn/query", kw, mixer},
+                    {p + "gdn/key", kw, mixer},
+                    {p + "gdn/value", vw, mixer},
+                    {p + "gdn/z", vw, mixer}});
+            inputs(
+                f_.packed, f_.control, h,
+                {{p + "gdn/a_projection", heads, mixer}, {p + "gdn/b_projection", heads, mixer}});
+            direct(p + "gdn/a_log", {heads}, QType::FP32);
+            direct(p + "gdn/dt_bias", {heads}, QType::FP32);
+            direct(p + "gdn/convolution", {g.linear_conv_kernel_dim, g.conv_channels()});
+            direct(p + "gdn/norm", {g.linear_value_head_dim});
+            object(f_.linear, vw, {{p + "gdn/output", h, {p + "gdn/gated_output"}}});
+        }
+        const std::vector<std::string> in{p + "ffn_input"};
+        if (const auto* dense = std::get_if<qwen::DenseConfig>(&c_.text.ffn)) {
+            const std::uint64_t i = dense->intermediate_size;
+            inputs(f_.packed, f_.linear, h, {{p + "mlp/gate", i, in}, {p + "mlp/up", i, in}});
+            object(f_.linear, i, {{p + "mlp/down", h, {p + "mlp/product"}}});
+            return;
+        }
+        const auto& m         = std::get<qwen::MoeConfig>(c_.text.ffn);
+        const std::uint64_t e = m.num_experts, ff = m.moe_intermediate_size,
+                            s = m.shared_expert_intermediate_size;
+        inputs(f_.packed, QType::BF16, h,
+               {{p + "moe/router", e, in}, {p + "moe/shared_score", 1, in}});
+        std::vector<Member> gate_up, down;
+        for (std::uint64_t x = 0; x < e; ++x) {
+            const std::string ep = p + "moe/experts/" + std::to_string(x) + "/";
+            gate_up.push_back({ep + "gate", ff, in});
+            gate_up.push_back({ep + "up", ff, in});
+            down.push_back({ep + "down", h, {ep + "product"}});
+        }
+        object(f_.expert_up, h, gate_up);
+        object(f_.expert_down, ff, down);
+        object(f_.linear, h, {{p + "moe/shared/gate", s, in}, {p + "moe/shared/up", s, in}});
+        object(f_.linear, s, {{p + "moe/shared/down", h, {p + "moe/shared/product"}}});
+    }
+
+    art::Json text_config(bool moe) const {
+        const auto& t    = c_.text;
+        art::Json layers = art::Json::array();
+        for (const qwen::MixerKind kind : t.layer_types) {
+            layers.push_back(kind == qwen::MixerKind::FullAttention ? "full_attention"
+                                                                    : "linear_attention");
+        }
+        art::Json out = {{"architectures",
+                          art::Json::array({moe ? "Qwen3_5MoeForCausalLM" : "Qwen3_5ForCausalLM"})},
+                         {"model_type", moe ? "qwen3_5_moe_text" : "qwen3_5_text"},
+                         {"hidden_size", t.hidden_size},
+                         {"vocab_size", t.vocab_size},
+                         {"num_hidden_layers", t.num_hidden_layers},
+                         {"max_position_embeddings", t.max_position_embeddings},
+                         {"tie_word_embeddings", false},
+                         {"rms_norm_eps", 1e-6},
+                         {"layer_types", layers},
+                         {"num_attention_heads", t.attention->num_attention_heads},
+                         {"num_key_value_heads", t.attention->num_key_value_heads},
+                         {"head_dim", t.attention->head_dim},
+                         {"rope_parameters",
+                          {{"rope_theta", 10000000.0},
+                           {"partial_rotary_factor", 0.25},
+                           {"mrope_section", art::Json::array({11, 11, 10})}}},
+                         {"linear_num_key_heads", t.gdn->linear_num_key_heads},
+                         {"linear_key_head_dim", t.gdn->linear_key_head_dim},
+                         {"linear_num_value_heads", t.gdn->linear_num_value_heads},
+                         {"linear_value_head_dim", t.gdn->linear_value_head_dim},
+                         {"linear_conv_kernel_dim", t.gdn->linear_conv_kernel_dim}};
+        if (const auto* m = std::get_if<qwen::MoeConfig>(&t.ffn)) {
+            out["num_experts"]                     = m->num_experts;
+            out["num_experts_per_tok"]             = m->num_experts_per_tok;
+            out["moe_intermediate_size"]           = m->moe_intermediate_size;
+            out["shared_expert_intermediate_size"] = m->shared_expert_intermediate_size;
+        } else {
+            out["intermediate_size"] = std::get<qwen::DenseConfig>(t.ffn).intermediate_size;
+        }
+        return out;
+    }
+
+    const qwen::Config& c_;
+    Layout f_;
+    art::Directory d_;
+    std::uint64_t offset_ = 0;
+};
+
 std::vector<qwen::MixerKind> hybrid_layers(std::uint32_t layers) {
     std::vector<qwen::MixerKind> out;
     for (std::uint32_t i = 0; i < layers; ++i) {
@@ -336,8 +569,20 @@ EngineOptions options_of(std::uint32_t context, std::uint32_t chunk, std::uint32
     return o;
 }
 
+bool same_regions(const std::vector<WorkspaceRegion>& a, const std::vector<WorkspaceRegion>& b) {
+    if (a.size() != b.size()) { return false; }
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (a[i].op != b[i].op || a[i].offset != b[i].offset || a[i].bytes != b[i].bytes ||
+            a[i].scratch != b[i].scratch) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool same(const detail::WorkspacePlan& a, const detail::WorkspacePlan& b) {
-    return a.text_prefill == b.text_prefill && a.ordinary_round == b.ordinary_round &&
+    return same_regions(a.text_prefill_regions, b.text_prefill_regions) &&
+           a.text_prefill == b.text_prefill && a.ordinary_round == b.ordinary_round &&
            a.mtp_prefill == b.mtp_prefill && a.mtp_round == b.mtp_round &&
            a.dflash_context == b.dflash_context && a.dflash_round == b.dflash_round &&
            a.dflash_round_append == b.dflash_round_append && a.causal_score == b.causal_score &&
@@ -389,8 +634,12 @@ struct Case {
 
 void run(const Case& k) {
     const ScopedDeviceClass substitute(k.device);
-    const qwen::Config config             = k.config();
-    const std::int32_t public_tokens      = static_cast<std::int32_t>(config.text.vocab_size);
+    const qwen::Config config = k.config();
+    // The start's public ids are its tokenizer's (FrontendResources::public_token_count), fewer
+    // than the embedding's 248320 rows, as the 265 of the loading fixture's 272: far enough below
+    // that the sampler's and the accept step's scratch (512-id tiles) differ, so an arena sized
+    // over the embedding's rows instead fails the comparison below.
+    const std::int32_t public_tokens      = 240000;
     const auto plan                       = plan_of(config, k.options, k.device.sms);
     const bool mtp                        = plan.features.mtp();
     const bool optimal                    = plan.proposal_head == ProposalHead::Optimized;
@@ -428,6 +677,102 @@ void run(const Case& k) {
     check(same(start, described), k.name + ": the described forms' plan (" + bytes(described) +
                                       ") is the start's (" + bytes(start) + ")");
     check(start.text_prefill > 0 && start.ordinary_round > 0, k.name + ": text arenas sized");
+    // The prefill arena region by region (#615 W5): every region inside the arena, the highest end
+    // its peak, the first layer's mixer and the head (or the sampler) named.
+    std::size_t top  = 0;
+    bool first_layer = false, tail = false;
+    for (const WorkspaceRegion& r : start.text_prefill_regions) {
+        top         = std::max(top, r.offset + r.bytes);
+        first_layer = first_layer || r.op.rfind("L00.", 0) == 0;
+        tail        = tail || r.op == "output_head" || r.op == "sampling";
+    }
+    check(!start.text_prefill_regions.empty() && top == start.text_prefill,
+          k.name + ": the prefill regions end at the arena's peak (" + std::to_string(top) +
+              " against " + std::to_string(start.text_prefill) + ")");
+    check(first_layer && tail,
+          k.name + ": the prefill regions name the layers' and the head's ops");
+    // The prefill chain's scratch through the PDL check (#615 W5, ops/generic/scratch_lifetime.h).
+    // A planner region is an op's whole scratch capacity, not one launch's prepared activations:
+    // each stands for one producer and one consumer here, a simplification.
+    {
+        namespace gen = ninferno::ops::detail::generic;
+        std::vector<gen::ScratchRegion> regions;
+        std::vector<std::string_view> names;
+        for (const WorkspaceRegion& r : start.text_prefill_regions) {
+            if (!r.scratch) { continue; }
+            regions.push_back({static_cast<std::uint32_t>(regions.size()), r.offset, r.bytes});
+            names.emplace_back(r.op);
+        }
+        // Plumbing: every producer in stream order, every consumer under the widest overlap
+        // launch_overlap grants (join and release), its read stamped after the wait. Under these
+        // stamps no layout can fail the check (the header: no kernel makes a scratch use before the
+        // wait today), so this holds the chain's construction, not the offsets.
+        gen::LaunchOverlap widest;
+        widest.join    = gen::OverlapRefusal::None;
+        widest.release = gen::OverlapRefusal::None;
+        std::vector<gen::LaunchLifetime> chain;
+        for (std::size_t i = 0; i < regions.size(); ++i) {
+            chain.push_back(gen::quantizer_lifetime(names[i], regions[i]));
+            chain.push_back(
+                gen::launch_lifetime(names[i], widest, true, gen::PreparedRule{}, regions[i]));
+        }
+        check(regions.size() >= 2 && !gen::first_scratch_violation(chain),
+              k.name + ": the prefill chain's " + std::to_string(regions.size()) +
+                  " scratch regions pass the PDL check under the widest overlap");
+        // The check reads the chain: a consumer that read its scratch before the wait races its
+        // producer's write.
+        std::vector<gen::LaunchLifetime> mutated = chain;
+        mutated[1].uses[0].first                 = gen::ScratchFirst::BeforeWait;
+        const auto race                          = gen::first_scratch_violation(mutated);
+        check(race && race->launch == 1 && race->predecessor == 0 &&
+                  race->hazard == gen::ScratchHazard::ReadAfterWrite,
+              k.name + ": a read before the wait races its producer");
+        // Where the planner's layout decides: op i releases while it still reads its scratch, op
+        // i + 1 starts under it and writes its own before the wait. A hazard exactly where the
+        // planner placed the two regions over the same bytes.
+        std::size_t reused = 0;
+        for (std::size_t i = 0; i + 1 < regions.size(); ++i) {
+            gen::LaunchLifetime before;
+            before.name     = names[i];
+            before.releases = true;
+            (void)before.add({regions[i], gen::ScratchAccess::Read, gen::ScratchFirst::AfterWait,
+                              gen::ScratchLast::AtExit});
+            gen::LaunchLifetime next;
+            next.name         = names[i + 1];
+            next.starts_early = true;
+            (void)next.add({regions[i + 1], gen::ScratchAccess::Write,
+                            gen::ScratchFirst::BeforeWait, gen::ScratchLast::AtExit});
+            const bool overlap = gen::regions_overlap(regions[i], regions[i + 1]);
+            reused += overlap ? 1 : 0;
+            check(gen::first_scratch_violation({before, next}).has_value() == overlap,
+                  k.name + ": " + std::string(names[i]) + " -> " + std::string(names[i + 1]) +
+                      ": the hazard follows the planner's offsets");
+        }
+        std::cout << "  prefill scratch: " << regions.size() << " regions, " << reused
+                  << " consecutive pairs on the same bytes\n";
+        // The same early-writing chain over a disjoint packing of the same sizes has no hazard:
+        // the one found over the planner's offsets is its reuse.
+        std::vector<gen::LaunchLifetime> early, packed;
+        std::size_t cursor = 0;
+        for (std::size_t i = 0; i < regions.size(); ++i) {
+            for (auto* list : {&early, &packed}) {
+                gen::LaunchLifetime e;
+                e.name                    = names[i];
+                e.starts_early            = true;
+                e.releases                = true;
+                gen::ScratchRegion region = regions[i];
+                if (list == &packed) { region.offset = cursor; }
+                (void)e.add({region, gen::ScratchAccess::Write, gen::ScratchFirst::BeforeWait,
+                             gen::ScratchLast::AtExit});
+                list->push_back(e);
+            }
+            cursor += regions[i].bytes;
+        }
+        check(gen::first_scratch_violation(early).has_value() &&
+                  !gen::first_scratch_violation(packed),
+              k.name + ": early writes race over the planner's reused offsets, not over a "
+                       "disjoint packing");
+    }
     check(mtp == (start.mtp_prefill > 0 && start.mtp_round > 0),
           k.name + ": MTP arenas sized exactly under MTP");
     check(start.dflash_context == 0 && start.dflash_round == 0 && start.causal_score == 0,
@@ -456,6 +801,109 @@ void run(const Case& k) {
             check(refused, k.name + ": an optimized-head plan without the head is refused");
         }
     }
+
+    // The plan without the weights (#615 W2): the same model as an artifact's directory, its
+    // facts as --plan reads them, the dry run's rung at the case's options and context.
+    const art::Directory directory = DirectoryOf(config, k.layout).build(kProposalRows);
+    rt::PlanModelFacts facts       = product::plan_facts_of_directory(directory, k.name).model;
+    check(facts.offline_bytes && facts.artifact_directory != nullptr,
+          k.name + ": the artifact's facts lay out its state and keep its directory (" +
+              facts.offline_reason + ")");
+    rt::PlanRung rung;
+    rung.max_context   = k.options.max_context;
+    rung.prefill_chunk = k.options.prefill_chunk;
+    const auto at      = [&](const rt::PlanModelFacts& f) {
+        return rt::plan_rung_bytes(f, rung, k.options, k.options.max_concurrency, false);
+    };
+    // A directory without its file: the tokenizer is not read, the formula stands.
+    const auto unread = at(facts);
+    check(unread.workspace_basis.find("tokenizer") != std::string::npos,
+          k.name + ": without the tokenizer's public ids the formula stands (" +
+              unread.workspace_basis + ")");
+    // As plan_facts_of_artifact reads them from the file's resources.
+    facts.tokenizer_tokens = static_cast<std::uint32_t>(public_tokens);
+    const auto dry         = at(facts);
+    // Every arena of the described start, the sampler's and the accept step's domain included.
+    const auto described_start  = detail::describe_start(directory, models::load_options(k.options),
+                                                         static_cast<std::uint32_t>(public_tokens));
+    const auto described_arenas = described_start->workspace_plan(plan);
+    check(same(described_arenas, start), k.name + ": the described start's arenas (" +
+                                             bytes(described_arenas) + ") are the start's (" +
+                                             bytes(start) + ")");
+    if (optimal) {
+        // A tokenizer naming fewer ids than the indexed head's rows: the start refuses the head
+        // (bind_proposal), and so does the plan.
+        rt::PlanModelFacts narrow = facts;
+        narrow.tokenizer_tokens   = kProposalRows - 1;
+        const auto refused        = at(narrow);
+        check(refused.workspace_basis.rfind("formula: ", 0) == 0,
+              k.name + ": a proposal head wider than the tokenizer's ids is refused (" +
+                  refused.workspace_basis + ")");
+    }
+    {
+        // A --moe-path pin in the options planned: the plan sizes the automatic path only.
+        EngineOptions pinned_options       = k.options;
+        pinned_options.maintainer.moe_path = MoePath::Generic;
+        const auto pinned =
+            rt::plan_rung_bytes(facts, rung, pinned_options, pinned_options.max_concurrency, false);
+        check(pinned.workspace_basis.find("--moe-path") != std::string::npos,
+              k.name + ": a pinned MoE path keeps the formula (" + pinned.workspace_basis + ")");
+        // A pin left in the process by an earlier engine is not these options' (#842 review).
+        ops::RoutePins stale;
+        stale.moe = MoePath::Generic;
+        ops::set_route_pins(stale);
+        const auto unpinned = at(facts);
+        ops::set_route_pins({});
+        check(unpinned.workspace_basis.find("--moe-path") == std::string::npos,
+              k.name + ": a stale process pin does not decline the plan (" +
+                  unpinned.workspace_basis + ")");
+    }
+    // A quantization row of equal bytes (another packing of the same widths) is not the source
+    // file: it keeps no directory, so it is never planned with the source's forms; the row whose
+    // files are the source's keeps it (codex on #832).
+    {
+        product::PlanSourceFacts shape = product::plan_facts_of_directory(directory, k.name);
+        shape.shape.weights            = "digest:source";
+        product::QuantRow other;
+        other.weight_bytes    = shape.model.weight_bytes;
+        other.basis           = shape.model.weight_basis;
+        other.listing.weights = "digest:other";
+        check(product::row_facts(shape, other).model.artifact_directory == nullptr,
+              k.name + ": an equal-bytes row of other files has no directory");
+        product::QuantRow unknown = other;
+        unknown.listing.weights.clear();
+        check(product::row_facts(shape, unknown).model.artifact_directory == nullptr,
+              k.name + ": a row of unknown files has no directory");
+        product::QuantRow same = other;
+        same.listing.weights   = "digest:source";
+        check(product::row_facts(shape, same).model.artifact_directory != nullptr,
+              k.name + ": the source file's own row keeps its directory");
+    }
+    // The same facts without the directory: a config.json's or a GGUF header's.
+    rt::PlanModelFacts bare = facts;
+    bare.artifact_directory.reset();
+    const auto formula =
+        rt::plan_rung_bytes(bare, rung, k.options, k.options.max_concurrency, false);
+    std::cout << "  --plan workspace " << dry.workspace << " (" << dry.workspace_basis
+              << "), the formula's " << formula.workspace << " (" << formula.workspace_basis
+              << ")\n";
+    check(dry.workspace_basis.rfind("start", 0) == 0,
+          k.name + ": the dry run sizes the workspace by the start's planner (" +
+              dry.workspace_basis + ")");
+    check(dry.workspace == start.capacity,
+          k.name + ": the dry run's workspace " + std::to_string(dry.workspace) +
+              " is the start's capacity " + std::to_string(start.capacity));
+    check(same_regions(dry.workspace_regions, start.text_prefill_regions),
+          k.name + ": --plan's prefill regions are the start's (" +
+              std::to_string(dry.workspace_regions.size()) + " against " +
+              std::to_string(start.text_prefill_regions.size()) + ")");
+    check(formula.workspace_regions.empty(), k.name + ": the formula records no regions");
+    check(formula.workspace_basis.rfind("formula: ", 0) == 0,
+          k.name + ": facts without the artifact's bindings keep the formula and say why (" +
+              formula.workspace_basis + ")");
+    // The rest of the rung is the start's whatever sizes the workspace.
+    check(dry.total() - dry.workspace == formula.total() - formula.workspace,
+          k.name + ": only the workspace differs");
 }
 
 // The start's plan of a case on `device` (substituted): its forms prepared and planned there.
@@ -525,8 +973,12 @@ int main() {
         return 1;
     }
     try {
+        // The plan's workspace query, as ninferno-serve registers it.
+        rt::register_plan_workspace_queries();
         const DeviceClass rtx5090   = board(0x2B85, 12, 0, 170, 96);
         const DeviceClass rtx4060ti = board(0x2805, 8, 9, 34, 32);
+        const DeviceClass rtx4070ti = board(0x2782, 8, 9, 60, 48);
+        const DeviceClass rtx2080ti = board(0x1E07, 7, 5, 68, 5);
         const Layout converter_q8{};
         // A GGUF: one parent a tensor (the generic segmented projections), K-quant experts (the
         // generic MoE), a Q8_0 control.
@@ -558,6 +1010,16 @@ int main() {
             {"Qwen3.6-35B-A3B GGUF, RTX 4060 Ti, no speculation, 1 stream", qwen36_35b_a3b, gguf,
              rtx4060ti, options_of(32768, 2048, 1, SpeculativeBackend::None, ProposalHead::Full),
              "segmented/segmented/segmented/generic moe"},
+            // The boards of the lab's --plan against the start's log (#615 W2).
+            {"Qwen3.5-9B Q8_0, RTX 4070 Ti, MTP 3 optimized head, 2 streams", qwen35_9b,
+             converter_q8, rtx4070ti,
+             options_of(32768, 2048, 2, SpeculativeBackend::Mtp, ProposalHead::Optimized), nine_b},
+            {"Qwen3.5-9B Q8_0, RTX 2080 Ti, no speculation, 1 stream", qwen35_9b, converter_q8,
+             rtx2080ti, options_of(16384, 1024, 1, SpeculativeBackend::None, ProposalHead::Full),
+             nine_b},
+            {"Qwen3.6-35B-A3B Q8, RTX 2080 Ti, MTP 3, 1 stream", qwen36_35b_a3b, converter_q8,
+             rtx2080ti, options_of(16384, 1024, 1, SpeculativeBackend::Mtp, ProposalHead::Full),
+             a3b_q8},
         };
         for (const Case& k : cases) { run(k); }
         every_board(cases);

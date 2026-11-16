@@ -166,6 +166,12 @@ NOT_DECIDING = {
     "src/core/tune_timer.cu", "src/core/tune_timer.h", "src/core/units.h",
     "src/core/weight_view.cpp", "src/core/weight_view.h",
     "src/core/cuda_stream.h",  # the cudaStream_t handle type for host-only builds (#675)
+    # the plan's prefill route query (#613 PR-9): it asks route_query for the configuration
+    # choice's prefill estimate, product side; the selector goldens do not link it
+    "src/runtime/engine/plan_prefill_routes.cpp",
+    # the dry run's workspace query (#615 W2): it reads the route pins to size the MoE path a
+    # start takes (#844), it decides no route; the selector goldens do not call it
+    "src/runtime/engine/plan_workspace.cpp",
     # rmsnorm_rope's fused-width bound (#661): it reads route_cost_constants.h for its pending fit and
     # decides the rope fusion of Qwen's text attention, not a linear route; the golden test does not
     # call it
@@ -222,6 +228,7 @@ GENERATED = {
     "core/board_registry_rows.inc": "cmake/BoardRegistry.cmake",
     "core/embedded_gpu_facts.h": "src/core/embedded_gpu_facts.h.in",
     "core/embedded_sm_rate_facts.h": "src/core/embedded_sm_rate_facts.h.in",
+    "core/embedded_isa_facts.h": "src/core/embedded_isa_facts.h.in",
     "core/arch_registry_rows.inc": "cmake/BoardRegistry.cmake",  # rows of the "archs" array of gpu_facts.json
     # which sm_*.txt snapshots are embedded is decided by sources.cmake (listed too)
     "ops/generic/embedded_kernel_facts.h": "src/ops/generic/embedded_kernel_facts.h.in",
@@ -319,11 +326,6 @@ EXCLUDED = [
     ("src/core/host_memory.cpp", "host memory"), ("src/core/host_worker_pool.cpp", "host threads"),
     ("src/core/decode_graph.cpp", "CUDA graph capture"), ("src/core/debug_poison.cpp", "debug"),
     ("src/core/gdn_replay_records.cpp", "state records"),
-    # the ISA facts (#668): today only tests/test_isa_facts.cpp reads them; the price that reads them
-    # moves these lines to decision_paths.txt
-    ("src/core/isa_facts.cpp", "ISA facts reader, no selector caller yet"),
-    ("src/core/embedded_isa_facts.h.in", "ISA facts embedding, no selector caller yet"),
-    ("src/core/data/isa_facts.json", "ISA facts rows, no selector caller yet"),
     ("src/core/data/isa_probe/*", "raw ISA probe output the rows were read from"),
     ("src/core/data/warp_inflight/*", "raw bytes-in-flight probe output the SM rate facts rows "
                                        "were read from (sm_rate_facts.json is listed)"),
@@ -1030,6 +1032,7 @@ REVERSE_HEADERS = {
     "src/ops/generic/selector_facts.h", "src/ops/generic/route_query.h", "src/ops/generic/route_table.h",
     "include/ninferno/ops/route_table.h", "src/ops/generic/route_cost_constants.h",
     "src/ops/generic/generic_select_internal.h", "src/ops/generic/format_traits.h",
+    "src/ops/generic/format_rules.h",
     "src/ops/generic/generic_gemm.h", "src/ops/route_pins.h", "src/core/mmq_columns.h",
     "src/core/board_registry.h", "src/core/cost_constants.h", "src/core/machine_facts.h",
     "src/ops/generic/generic_gemm_internal.h", "src/ops/generic/ggml_mmq/ggml_mmq.h",
@@ -1139,6 +1142,12 @@ class Gate(unittest.TestCase):
         rc, out, _, _ = run(["routes/gb202.json"], (0, "no golden changes"))
         self.assertEqual(rc, 1)
         self.assertIn("goldens-equal", out)
+
+    def test_a_moved_decision_atlas_counts_as_a_golden_change(self):
+        rc, out, _, _ = run(["routes/gb202.json", "tests/data/decision_atlas/base.txt"],
+                            (0, "no golden changes"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("decision atlas", out)
 
     def test_equal_with_label_passes_and_prints_claim(self):
         rc, out, _, _ = run(["routes/gb202.json"], (0, "no golden changes"), labels=["goldens-equal"])

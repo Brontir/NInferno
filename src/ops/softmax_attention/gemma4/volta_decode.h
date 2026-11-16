@@ -1,8 +1,12 @@
 #pragma once
 
+#include "ops/generic/kernel_facts.h"
+
 #include <cuda_runtime.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 
 namespace ninferno::ops {
 struct Gemma4AttentionArgs;
@@ -18,6 +22,17 @@ namespace ninferno::ops::detail {
 // The CTAs of the instance a call of `rows` query rows per KV head takes that the device keeps
 // resident at once: the decode plan sizes its splits to one such wave.
 [[nodiscard]] int gemma4_volta_decode_resident_ctas(std::int32_t head_dim, std::int32_t rows);
+
+// The CTAs of a Gemma 4 attention kernel one SM of device_class() holds (#830), by the occupancy
+// calculator (core/kernel_occupancy.h) over the kernel's committed facts (kernel_facts.h, the
+// gemma4 section of the snapshot of the kernels the board runs: sass_arch), never the host's
+// kernels: a substituted board answers as the real one would, and a host without a GPU answers.
+// Where no snapshot holds the kernel, a real device asks its own kernel (`live`: a build or a
+// board the snapshots do not cover, the device the call runs on); a substituted board throws, so
+// a plan of it keeps its formula estimate rather than the host GPU's answer. At least 1.
+[[nodiscard]] int gemma4_resident_ctas_per_sm(const generic::kernel_facts::Gemma4KernelKey& key,
+                                              int threads, std::size_t dynamic_shared_bytes,
+                                              const std::function<int()>& live);
 
 // The keys a split of this route takes are rounded to multiples of this many (the combine derives
 // the same split boundaries from it). A CTA walks its keys one after another, one warp a scheduler

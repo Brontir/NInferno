@@ -173,6 +173,12 @@ add_test(NAME ninferno_regret_due_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_due.py)
 set_tests_properties(ninferno_regret_due_test PROPERTIES LABELS host)
 
+# tools/bench/r8_decode_table.py and r8_sweep_summary.py: the R8 schedule bench's output as it
+# prints it, the table's entries and #850's sweep verdicts, synthetic sweeps, no GPU.
+add_test(NAME ninferno_r8_sweep_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_r8_sweep.py)
+set_tests_properties(ninferno_r8_sweep_test PROPERTIES LABELS host)
+
 # tools/bench/sweep_manifest.py: the route sweep archive's manifest (#613 PR-0), no GPU.
 add_test(NAME ninferno_sweep_manifest_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_sweep_manifest.py)

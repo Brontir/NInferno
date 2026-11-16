@@ -104,6 +104,14 @@ void validate_qwen3_5_options(const execution::Parameters& parameters, DeviceCon
                                                          const SequencePlanImpl& plan);
 [[nodiscard]] WorkspacePlan qwen3_5_workspace_plan(const execution::Parameters& parameters,
                                                    const SequencePlanImpl& plan);
+// What qwen3_5_workspace_plan sizes, over any prepared forms (a start's Parameters, or the forms
+// a plan without the weights prepares over a described model, described_start.h): the text, MTP,
+// proposal and drafter arenas, then a Vision plan's encoder region. `public_tokens` the ids a
+// request may carry or sample.
+[[nodiscard]] WorkspacePlan prepared_workspace_plan(const qwen3_5::Config& config,
+                                                    std::int32_t public_tokens,
+                                                    const execution::PreparedParameters& forms,
+                                                    const SequencePlanImpl& plan);
 // The shape of the persistent state a Qwen 3.5 config lays out (sequence_bytes.h,
 // plan_persistent_layout): `public_tokens` the ids a request may carry or sample.
 [[nodiscard]] StateShape qwen3_5_state_shape(const qwen3_5::Config& config,

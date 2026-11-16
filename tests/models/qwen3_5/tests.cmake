@@ -2,9 +2,11 @@ ninferno_add_test(ninferno_qwen3_5_loading_real_test LABELS real gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_loading_real.cpp"
   LIBRARIES ninferno_model_loading)
 
+# Also --plan's facts of the fixture's file through the registered queries (#615 W2).
 ninferno_add_test(ninferno_qwen3_5_loading_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_loading.cpp"
-  LIBRARIES ninferno_model_loading)
+  LIBRARIES ninferno_product_plan ninferno_engine ninferno_model_loading)
+target_include_directories(ninferno_qwen3_5_loading_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 set_tests_properties(
   ninferno_qwen3_5_loading_real_test
@@ -55,10 +57,13 @@ ninferno_add_test(ninferno_qwen3_5_runtime_mechanisms_test LABELS host
 
 # The workspace planner over a view of prepared forms (#615 W1): the start's view of its own forms
 # and one built over the same forms described at other addresses size the same arenas, for the
-# 9B and 35B-A3B geometries on a substituted RTX 5090 and RTX 4060 Ti. No GPU, no files.
+# 9B and 35B-A3B geometries on substituted RTX 5090, 4070 Ti, 4060 Ti and 2080 Ti boards; and
+# --plan's dry run over the same model as an artifact's directory sizes the start's capacity
+# (#615 W2). No GPU, no files.
 ninferno_add_test(ninferno_qwen3_5_workspace_inputs_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_workspace_inputs.cpp"
-  LIBRARIES ninferno_engine ninferno_model_runtime ninferno_core)
+  LIBRARIES ninferno_product_plan ninferno_engine ninferno_model_runtime ninferno_core
+    ninferno::json)
 target_include_directories(ninferno_qwen3_5_workspace_inputs_test PRIVATE
   ${PROJECT_SOURCE_DIR}/src)
 # And on every target board of gpu_facts.json with every CUDA device hidden (#615 W4): a device

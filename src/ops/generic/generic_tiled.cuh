@@ -374,6 +374,16 @@ constexpr int tiled_shared_bytes() {
     return static_cast<int>(sizeof(TiledShared<S, C, TiledStages<S, C>::value>));
 }
 
+// The family's record (family_facts.h), which the price reads: a stage holds a K tile of stage_k
+// BF16 values of every token.
+template <class S, class C>
+constexpr bool tiled_stage_counted() {
+    constexpr int kStages = TiledStages<S, C>::value;
+    return kTiledMmaFacts.stage_token_bytes == kTiledMmaFacts.stage_k * 2 && // BF16
+           sizeof(TiledShared<S, C, kStages>::act) ==
+               static_cast<std::size_t>(kStages * S::kBlockM * kTiledMmaFacts.stage_token_bytes);
+}
+
 template <class S, class C>
 constexpr bool tiled_schedule_fits() {
     return tiled_shared_bytes<S, C>() <= static_cast<int>(kMaxSharedBytesPerBlock);

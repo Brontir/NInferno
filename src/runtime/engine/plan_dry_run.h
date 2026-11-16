@@ -30,12 +30,15 @@
 // Pure: no files, no clock, and no CUDA but the class of a CUDA device the facts name that is not
 // this thread's current one (dry_run_plan).
 
+#include "core/layout.h"
 #include "models/qwen3_5/program/planning/state_shape.h"
 #include "ninferno/types.h"
 #include "runtime/engine/plan_ladder.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -44,6 +47,11 @@
 namespace ninferno {
 struct DeviceClass;
 } // namespace ninferno
+
+namespace ninferno::artifact {
+struct Directory;
+class Reader;
+} // namespace ninferno::artifact
 
 namespace ninferno::models::qwen3_5::detail {
 struct SequencePlanImpl;
@@ -256,6 +264,14 @@ struct PlanDrafterGeometry {
     std::vector<std::string> projection_formats;
 };
 
+// The families whose start reads an HF text frontend and whose workspace the start's own planner
+// sizes since #615 W3: the dense decoder (dense_decoder, moe_decoder) and NemotronH. One list for
+// plan_facts.cpp (binds_directory) and plan_workspace.cpp (the query and the tokenizer count).
+inline bool hf_decoder_family(std::string_view model_type) {
+    return model_type == "dense_decoder" || model_type == "moe_decoder" ||
+           model_type == "nemotron_h";
+}
+
 struct PlanModelFacts {
     std::string model_type;   // the family (qwen3_5_text, gemma4_text, dense_decoder, ...); ""
     std::string architecture; // as the source names it (GGUF general.architecture, HF class)
@@ -375,6 +391,16 @@ struct PlanModelFacts {
     bool offline_bytes = false;
     std::string offline_reason;
     models::StateShape state;
+    // The parsed directory of the artifact the facts are read from (plan_facts_of_directory, a
+    // Qwen 3.5, dense decoder or NemotronH artifact's), null for any other source: what the
+    // family's workspace query binds the model over, as a start binds it (#615; its payload is
+    // never read). Shared: facts copy.
+    std::shared_ptr<const artifact::Directory> artifact_directory;
+    // The ids the artifact's tokenizer makes public (a start's public_token_count: the sampler's
+    // domain, the bound of an indexed proposal head), read from its resources when the facts come
+    // from the artifact's file (plan_tokenizer_tokens); 0: not read (a directory alone). The
+    // embedding rows (vocab) may be more.
+    std::uint32_t tokenizer_tokens = 0;
 
     // Whether the shape is enough to plan: a context and some attention.
     [[nodiscard]] bool known() const noexcept {
@@ -400,9 +426,10 @@ struct PlanDeviceFacts {
     int cuda_device = -1;
 };
 
-// The device class the plan reads for a board known by its facts (#829): the chip from the PCI id
-// or the SM count, the architecture's limits, the board table's facts, no L2 size or driver
-// clocks, the architecture's features not intersected with this build's. What a named board's
+// The device class the plan reads for a board known by its facts (#829): core's board_class with
+// an empty driver view, so the chip from the PCI id or the SM count, the architecture's limits,
+// the board table's facts, no L2 size or driver clocks, the architecture's features not
+// intersected with this build's. What a named board's
 // rung sizing (dry_run_plan), its speculation key (product::gpu_key_of) and its MoE routes
 // (register_plan_moe_route_query) read; a rule that reads what the class leaves out can answer
 // otherwise than on the real card.
@@ -435,6 +462,9 @@ struct PlanRungBytes {
     // How the workspace was sized: "start" (the family's query: a start's own capacity functions
     // over the facts), else "formula" with why the query did not answer (#302).
     std::string workspace_basis;
+    // The prefill chunk's arena region by region where the family's query records them (Qwen 3.5,
+    // #615 W5): the op that takes each, its offset and bytes. Empty under the formula.
+    std::vector<WorkspaceRegion> workspace_regions;
     std::uint64_t graphs    = 0; // the CUDA graph allowance
     // The rest of the persistent layout: page tables, replay records, the drafter's features, the
     // Program's round and sampling buffers, alignment (the approximate estimate: a declared share).
@@ -474,7 +504,7 @@ struct PlanRungBytes {
 [[nodiscard]] std::uint64_t plan_workspace_estimate(
     const PlanModelFacts& model, const PlanRung& rung, const EngineOptions& options,
     std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan = nullptr,
-    std::string* basis = nullptr);
+    std::string* basis = nullptr, std::vector<WorkspaceRegion>* regions = nullptr);
 
 // A family's workspace from its facts (#302): the arena a start would size for the rung's context,
 // chunk and `concurrency` under `options`, or no bytes where the facts do not carry what it needs,
@@ -485,11 +515,21 @@ struct PlanRungBytes {
 struct PlanWorkspaceAnswer {
     std::optional<std::uint64_t> bytes;
     std::string why;
+    std::vector<WorkspaceRegion> regions; // the prefill arena's, where the planner records them
 };
 using PlanWorkspaceQuery = std::function<PlanWorkspaceAnswer(
     const PlanModelFacts& model, const PlanRung& rung, const EngineOptions& options,
     std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan)>;
 void set_plan_workspace_query(PlanWorkspaceQuery query);
+
+// The public ids of an artifact's tokenizer (PlanModelFacts::tokenizer_tokens), read from the
+// resources of the artifact `reader` has open, as a start reads them; nullopt where they cannot be
+// read. The engine registers it beside the workspace queries (it links the families' frontends);
+// unset, nullopt. The caller keeps the count (a start reads the facts several times).
+using PlanTokenizerQuery =
+    std::function<std::optional<std::uint32_t>(const artifact::Reader& reader)>;
+void set_plan_tokenizer_query(PlanTokenizerQuery query);
+[[nodiscard]] std::optional<std::uint32_t> plan_tokenizer_tokens(const artifact::Reader& reader);
 
 // The kernel a routed layer's grouped stage runs (#616 step 7), as the MoE op's route query answers
 // (ops/moe moe_route_query, the op's own cascade on the device's class): R8 (int8 activations, one
@@ -514,6 +554,30 @@ using PlanMoeRouteQuery = std::function<std::optional<PlanExpertRoute>(
 void set_plan_moe_route_query(PlanMoeRouteQuery query);
 // The registered query (an empty function where none is).
 [[nodiscard]] const PlanMoeRouteQuery& plan_moe_route_query();
+
+// The kernel a trunk linear's prefill call runs (#613 PR-9), as the generic selector answers it
+// (ops/generic route_query, prefill = true, on the device's class): ggml's matrix kernel, the W4A8
+// tiles (classic or producer-warp), another kernel of 8- or 4-bit activations (I8, R8, the vector
+// kernel, W4A4), or one of 16-bit activations (the register, tiled and staged MMA, the scalar
+// route). Unknown: no answer (the selector does not read such a weight, or the format is not one
+// the format facts name).
+enum class PlanPrefillKernel : std::uint8_t { Unknown, Mmq, W4a8, OtherA8, A16 };
+
+// The kernel a prefill call of `tokens` tokens of an `n` x `k` linear stored as `format` (the
+// format facts' name: "ggml_q4_k", "q8_g32_fp16"; a gated pair `gated`, `n` both matrices' rows,
+// called as SwiGLU on n / 2) takes on `device` under `activations`: Exact A16 only, Fast and Int8
+// with int8 activations allowed. Under Fast that is the policy a GGUF's quantized linears record;
+// its BF16 and F16 linears record A16Only, which asks the same: the selector admits no A8 route
+// for a 16-bit weight, so it answers A16 under either policy.
+// The engine registers it (it links the Ops this library does not:
+// register_plan_prefill_route_query); unset, the choice's prefill prices the kernels its tile laws
+// assume (product/choice ModelFacts::prefill_routes).
+using PlanPrefillRouteQuery = std::function<PlanPrefillKernel(
+    const PlanDeviceFacts& device, std::string_view format, double n, double k, bool gated,
+    std::uint32_t tokens, ActivationMode activations)>;
+void set_plan_prefill_route_query(PlanPrefillRouteQuery query);
+// The registered query (an empty function where none is).
+[[nodiscard]] const PlanPrefillRouteQuery& plan_prefill_route_query();
 
 // A rung's bytes by the family planner's byte functions (model.offline_bytes): the persistent
 // layout and the CUDA graph allowance a start plans for `options` (normalized) at the rung's

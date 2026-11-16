@@ -155,4 +155,14 @@ struct ProposalParameters {
     std::uint32_t rows = 0;
 };
 
+// Every part's prepared forms (prepare.h, prepare_parameters): what Parameters owns for a start,
+// and what a plan without the weights prepares over a described model.
+struct PreparedParameters {
+    TextParameters text;
+    std::optional<MtpParameters> mtp;
+    std::optional<VisionParameters> vision;
+    std::optional<DraftParameters> draft;
+    std::optional<ProposalParameters> proposal;
+};
+
 } // namespace ninferno::models::qwen3_5::execution

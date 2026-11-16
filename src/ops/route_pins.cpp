@@ -107,8 +107,8 @@ RoutePinLedger route_pin_ledger() noexcept {
 }
 
 // FUSION-SITE: sparse_moe_fused
-bool moe_takes_fused(bool fused_ready, const std::string& why_not) {
-    note_moe_choice(fused_ready);
+bool moe_takes_fused(bool fused_ready, const std::string& why_not, bool note) {
+    if (note) { note_moe_choice(fused_ready); }
     switch (route_pins().moe) {
     case MoePath::Auto:
         return fused_ready;

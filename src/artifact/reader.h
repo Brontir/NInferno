@@ -31,6 +31,9 @@ class Reader {
 public:
     explicit Reader(const std::filesystem::path& path,
                     PendingRelayout pending = PendingRelayout::Refuse);
+    // A directory without its files (the plan without the weights binds a model over it, #615):
+    // its bindings, uses and the objects' geometry; reading a byte of the payload throws.
+    [[nodiscard]] static Reader detached(Directory directory);
     ~Reader();
     Reader(Reader&&) noexcept;
     Reader& operator=(Reader&&) noexcept;
@@ -55,6 +58,7 @@ public:
 
 private:
     struct Impl;
+    explicit Reader(std::unique_ptr<Impl> impl);
     std::unique_ptr<Impl> impl_;
 };
 

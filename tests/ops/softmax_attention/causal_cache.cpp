@@ -2729,6 +2729,46 @@ int run_nvfp4_cases(DeviceExecutionView execution) {
     return failures;
 }
 
+// The slab kernel (nvfp4/slab_mma.cuh, #849) serves the decode widths whose query rows fit one n8
+// tile (W = 1 on every geometry, W = 2 at four query heads per KV head) on sm_80 and later; other
+// builds run these cases on the grouped kernel. The contexts sit on both sides of a 16-key slab, of
+// the eight warps' 128 keys, of a 64-key page and of the 512-key boundaries. The SM counts give the
+// device's wave partition and those of the RTX 3060 (28) and RTX 5090 (170): splits of whole slabs
+// that leave a CTA's warps unequal slab counts, and splits whose last slab is partial.
+int run_nvfp4_slab_cases(DeviceExecutionView execution) {
+    constexpr KvCacheStorage storage = KvCacheStorage::Nvfp4Group16;
+    constexpr int kBases[]           = {0, 15, 16, 127, 128, 511, 512, 1023, 1024, 4095};
+    int failures                     = 0;
+    std::uint32_t seed               = 730u;
+    for (const Geometry& geometry : kGeometries) {
+        const int widest = geometry.q_heads / geometry.kv_heads <= 4 ? 2 : 1;
+        for (const int sms : {execution.multiprocessor_count, 28, 170}) {
+            const DeviceExecutionView partitioned{execution.stream, sms};
+            for (const int base : kBases)
+                failures += run_a3_case(partitioned, geometry, storage,
+                                        {1, base, static_cast<std::uint32_t>(base + 1), seed++},
+                                        MappingPattern::Fragmented);
+            for (int width = 1; width <= widest; ++width)
+                failures +=
+                    run_a1_case(partitioned, geometry, storage,
+                                {width, 1001, 1001u + width, seed++}, MappingPattern::Fragmented);
+            // W = 2 (eight rows, the MTP verify width at four query heads per KV head) on both
+            // sides of the warps' 128 keys and of 1024.
+            if (widest == 2)
+                for (const int base : {127, 128, 1023, 1024})
+                    failures += run_a3_case(partitioned, geometry, storage,
+                                            {2, base, static_cast<std::uint32_t>(base + 2), seed++},
+                                            MappingPattern::Fragmented);
+        }
+    }
+    // The census depths on the RTX 5090's partition: 42 splits of 32-33 slabs over four KV heads.
+    failures += run_a3_case({execution.stream, 170}, kGeometries[3], storage,
+                            {1, 21960, 21961u, seed++}, MappingPattern::Fragmented);
+    failures += run_a1_case({execution.stream, 170}, kGeometries[2], storage,
+                            {2, 7841, 7843u, seed++}, MappingPattern::Fragmented);
+    return failures;
+}
+
 int run_k8v4_cases(DeviceExecutionView execution) {
     int failures = 0;
     for (const Geometry& geometry : kGeometries) {
@@ -3255,6 +3295,7 @@ int run_storage_cases(DeviceExecutionView execution, KvCacheStorage storage) {
     }
     if (storage == KvCacheStorage::Nvfp4Group16) {
         failures += run_nvfp4_cases(execution);
+        failures += run_nvfp4_slab_cases(execution);
         failures += run_quantized_batch_cases(execution, storage, 720u);
         failures += report_quantization_quality(storage, 724u);
     } else if (storage == KvCacheStorage::Fp8KeyNvfp4Value) {

@@ -3,6 +3,9 @@
 #include "artifact/formats.h"
 #include "models/qwen3_5/load.h"
 #include "ops/common/native_nvfp4.h"
+#include "product/plan/plan_facts.h"
+#include "runtime/engine/plan_dry_run.h"
+#include "runtime/engine/plan_workspace.h"
 
 #include <algorithm>
 #include <array>
@@ -181,6 +184,35 @@ void logical_data_and_instances() {
     require(plan.resources().public_token_count == 265 &&
                 plan.resources().tokenizer->encode("<|video_pad|>") == std::vector<int>{264},
             "tokenizer_config added tokens were not included in the public domain");
+    // The plan without the weights (#615 W2) reads the same public ids from the tokenizer
+    // resources alone (265 of the embedding's 272 rows), and binds the directory without its
+    // payload only where no binding reads it: these Uses' activation divisors do.
+    require(qwen::public_token_count(reader) == 265,
+            "the plan's tokenizer read differs from plan_load's public domain");
+    rejects([&] { (void)qwen::describe_model(reader.directory(), {}, 265); },
+            "a directory-only binding read a Use's activation divisor from the payload");
+    {
+        auto divisorless = reader.directory();
+        for (auto& [key, use] : divisorless.uses) { use.auxiliaries.clear(); }
+        const auto described = qwen::describe_model(divisorless, {}, 265);
+        require(described->weights().text.layers.size() == 1 &&
+                    described->weight(described->weights().text.output_head).view.shape ==
+                        std::vector<std::uint64_t>{272, 128},
+                "the directory-only binding differs from plan_load's");
+    }
+    {
+        // --plan's facts of the artifact file, the queries registered as ninferno-serve registers
+        // them: the tokenizer's 265 ids and the directory reach the workspace query, read once
+        // (a second read of the same file shares the kept directory).
+        runtime::register_plan_workspace_queries();
+        const auto facts = product::plan_facts_of_artifact(fixture.file.entry).model;
+        require(facts.artifact_directory != nullptr && facts.tokenizer_tokens == 265,
+                "--plan's facts of the artifact lack its directory or its tokenizer's 265 ids");
+        const auto again = product::plan_facts_of_artifact(fixture.file.entry).model;
+        require(again.artifact_directory == facts.artifact_directory &&
+                    again.tokenizer_tokens == 265,
+                "a second read of the artifact's facts did not share the kept directory");
+    }
     const auto& attention = std::get<qwen::AttentionWeights>(plan.weights().text.layers[0].mixer);
     const auto& query     = plan.parameter(attention.query);
     const auto& gate      = plan.parameter(attention.gate);

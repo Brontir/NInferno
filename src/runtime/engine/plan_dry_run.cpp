@@ -293,11 +293,14 @@ std::uint64_t plan_idle_free_bytes(const PlanDeviceFacts& device) noexcept {
 }
 
 DeviceClass plan_device_class(const PlanDeviceFacts& device) {
-    DeviceClass d =
-        synthetic_device_class(device.pci_device_id, device.compute_capability / 10,
-                               device.compute_capability % 10, device.sms, 0, device.total_bytes);
-    d.facts = machine_facts_of(d);
-    return d;
+    // An explicit empty driver view: no L2 and no driver clocks, as the plan's class had before
+    // the one builder (#612 step 10; the row's L2 for the plan is a later, decision-moving PR).
+    return board_class({.pci_device_id = device.pci_device_id,
+                        .major         = device.compute_capability / 10,
+                        .minor         = device.compute_capability % 10,
+                        .sms           = device.sms,
+                        .global_bytes  = static_cast<std::size_t>(device.total_bytes),
+                        .driver        = BoardDriverView{}});
 }
 
 std::uint64_t plan_board_total_bytes(double vram_gib) noexcept {
@@ -370,6 +373,21 @@ PlanWorkspaceQuery& workspace_query() {
 void set_plan_workspace_query(PlanWorkspaceQuery query) { workspace_query() = std::move(query); }
 
 namespace {
+PlanTokenizerQuery& tokenizer_query() {
+    static PlanTokenizerQuery query;
+    return query;
+}
+} // namespace
+
+void set_plan_tokenizer_query(PlanTokenizerQuery query) { tokenizer_query() = std::move(query); }
+
+std::optional<std::uint32_t> plan_tokenizer_tokens(const artifact::Reader& reader) {
+    const PlanTokenizerQuery& query = tokenizer_query();
+    if (!query) { return std::nullopt; }
+    return query(reader);
+}
+
+namespace {
 PlanMoeRouteQuery& moe_route_query() {
     static PlanMoeRouteQuery query;
     return query;
@@ -380,15 +398,30 @@ void set_plan_moe_route_query(PlanMoeRouteQuery query) { moe_route_query() = std
 
 const PlanMoeRouteQuery& plan_moe_route_query() { return moe_route_query(); }
 
+namespace {
+PlanPrefillRouteQuery& prefill_route_query() {
+    static PlanPrefillRouteQuery query;
+    return query;
+}
+} // namespace
+
+void set_plan_prefill_route_query(PlanPrefillRouteQuery query) {
+    prefill_route_query() = std::move(query);
+}
+
+const PlanPrefillRouteQuery& plan_prefill_route_query() { return prefill_route_query(); }
+
 std::uint64_t plan_workspace_estimate(const PlanModelFacts& model, const PlanRung& rung,
                                       const EngineOptions& options, std::uint32_t concurrency,
                                       const models::qwen3_5::detail::SequencePlanImpl* plan,
-                                      std::string* basis) {
+                                      std::string* basis, std::vector<WorkspaceRegion>* regions) {
+    if (regions != nullptr) { regions->clear(); }
     std::string why;
     if (const PlanWorkspaceQuery& query = workspace_query(); query) {
         PlanWorkspaceAnswer answer = query(model, rung, options, concurrency, plan);
         if (answer.bytes) {
             if (basis != nullptr) { *basis = answer.why.empty() ? "start" : "start: " + answer.why; }
+            if (regions != nullptr) { *regions = std::move(answer.regions); }
             return *answer.bytes;
         }
         why = std::move(answer.why);
@@ -460,7 +493,7 @@ PlanRungBytes plan_rung_bytes(const PlanModelFacts& model, const PlanRung& rung,
     out.graphs           = plan->graph_allowance_bytes;
     // The workspace's round logits over the resolved window's columns, as the start's are.
     out.workspace        = plan_workspace_estimate(model, rung, planned, concurrency, plan.get(),
-                                                   &out.workspace_basis);
+                                                   &out.workspace_basis, &out.workspace_regions);
     out.host_state_image = images.host.image_bytes;
     return out;
 }

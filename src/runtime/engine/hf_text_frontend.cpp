@@ -4,10 +4,36 @@
 #include "artifact/reader.h"
 #include "models/qwen3_5/frontend/resources.h"
 
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
 namespace ninferno::runtime {
+namespace {
+
+// The HF tokenizer over `files`, its public vocabulary checked to be a contiguous domain within
+// `embedding_rows` (resources.public_token_count): what a start's frontend and the plan's count
+// both read. `family` names the model in the error.
+models::qwen3_5::FrontendResources
+hf_text_resources(const HfTextFiles& files, std::size_t embedding_rows, std::string_view family) {
+    models::qwen3_5::FrontendResources resources{
+        .tokenizer_json         = files.tokenizer_json,
+        .tokenizer_config_json  = files.tokenizer_config_json,
+        .chat_template_jinja    = files.chat_template_jinja,
+        .generation_config_json = files.generation_config_json,
+    };
+    models::qwen3_5::attach_hf_text_tokenizer(resources);
+    const std::size_t vocabulary = resources.public_token_count;
+    if (vocabulary == 0 || vocabulary > embedding_rows ||
+        !resources.tokenizer->has_exact_token_domain(vocabulary)) {
+        throw std::invalid_argument(std::string(family) +
+                                    " tokenizer must expose a contiguous public domain within the "
+                                    "embedding rows");
+    }
+    return resources;
+}
+
+} // namespace
 
 void refuse_qwen_only_options(const EngineOptions& options, std::string_view family) {
     if (options.rope_yarn_factor != 1.0F) {
@@ -29,6 +55,17 @@ void refuse_qwen_only_options(const EngineOptions& options, std::string_view fam
 
 HfTextFiles read_hf_text_files(const std::filesystem::path& artifact) {
     const artifact::Reader reader(artifact);
+    return read_hf_text_files(reader);
+}
+
+std::uint32_t hf_public_token_count(const artifact::Reader& reader) {
+    const HfTextFiles files = read_hf_text_files(reader);
+    // The embedding rows are the start's check (the plan's query refuses a wider count).
+    return hf_text_resources(files, std::numeric_limits<std::size_t>::max(), "the artifact's")
+        .public_token_count;
+}
+
+HfTextFiles read_hf_text_files(const artifact::Reader& reader) {
     artifact::Binder binder(reader);
     const auto resource = [&](std::string_view role) {
         const auto bytes = binder.host_object(binder.resource("text", role));
@@ -45,20 +82,8 @@ HfTextFiles read_hf_text_files(const std::filesystem::path& artifact) {
 std::int32_t attach_hf_text_frontend(FamilyLoad& out, const HfTextFiles& files,
                                      const EngineOptions& options, std::size_t embedding_rows,
                                      std::string_view family, bool gemma4_vision) {
-    models::qwen3_5::FrontendResources resources{
-        .tokenizer_json         = files.tokenizer_json,
-        .tokenizer_config_json  = files.tokenizer_config_json,
-        .chat_template_jinja    = files.chat_template_jinja,
-        .generation_config_json = files.generation_config_json,
-    };
-    models::qwen3_5::attach_hf_text_tokenizer(resources);
-    const std::size_t vocabulary = resources.public_token_count;
-    if (vocabulary == 0 || vocabulary > embedding_rows ||
-        !resources.tokenizer->has_exact_token_domain(vocabulary)) {
-        throw std::invalid_argument(std::string(family) +
-                                    " tokenizer must expose a contiguous public domain within the "
-                                    "embedding rows");
-    }
+    models::qwen3_5::FrontendResources resources = hf_text_resources(files, embedding_rows, family);
+    const std::size_t vocabulary                 = resources.public_token_count;
     models::qwen3_5::FrontendOptions frontend_options{
         .chat_template_path = options.chat_template_path,
         .sampling           = models::qwen3_5::checkpoint_sampling(files.generation_config_json),

@@ -7,6 +7,8 @@
 #include "ggml_mmq_internal.cuh"
 
 #include "core/device_class.h"
+#include "ops/generic/family_facts.h"
+#include "ops/generic/route_cost_constants.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -84,6 +86,43 @@ constexpr int kQuantizeThreads = 128;
 // The sizes ggml_mmq_host.cpp computes with no ggml header (ggml_mmq.h), held equal to ggml's own.
 static_assert(kQ8MmqValues == QK8_1_MMQ);
 static_assert(kQ8MmqBlockBytes == sizeof(block_q8_1_mmq));
+
+// The family's record (generic/family_facts.h), which the price reads: a K step of MMQ_ITER_K
+// values (the K multiple), and every tile of the formats served here 128 weight rows (the row
+// multiple, mmq_columns' tile) by columns in steps of 8, in ggml's table of the NVIDIA tensor-core
+// generations (the Blackwell table adds only the native FP4 types to it).
+constexpr ::ninferno::ops::detail::generic::FamilyFacts kMmqFacts =
+    ::ninferno::ops::detail::generic::kGgmlMmqFacts;
+
+constexpr bool config_table_holds_facts() {
+    for (const ggml_type type :
+         {GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_IQ4_XS, GGML_TYPE_IQ3_XXS,
+          GGML_TYPE_IQ3_S, GGML_TYPE_Q4_0, GGML_TYPE_Q4_1, GGML_TYPE_Q5_0, GGML_TYPE_Q5_1,
+          GGML_TYPE_IQ4_NL, GGML_TYPE_Q2_K, GGML_TYPE_Q3_K, GGML_TYPE_IQ2_XXS, GGML_TYPE_IQ2_XS,
+          GGML_TYPE_IQ2_S, GGML_TYPE_IQ1_S}) {
+        for (const int j : mmq_columns::kTilesWork) {
+            const ggml_cuda_mmq_config c = ggml_cuda_mmq_get_config_ampere(type, j, false);
+            if (c.type != type || c.I != kMmqFacts.tile_rows || c.J % kMmqFacts.column_step != 0 ||
+                c.K_vram != kMmqFacts.step_k) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static_assert(config_table_holds_facts());
+static_assert(kKMultiple == MMQ_ITER_K && kMmqFacts.step_k == MMQ_ITER_K &&
+              kRowMultiple == kMmqFacts.tile_rows && mmq_columns::kTile == kMmqFacts.tile_rows);
+
+// The quantizer's DRAM bytes and grid, counted from quantize_kernel below for the cost model
+// (route_cost::kQuantMmqBytesPerValue and kQuantMmqValuesPerCta, #613 PR-8a): each value is read
+// once as BF16, and each QK8_1_MMQ values are written as one block_q8_1_mmq; a CTA of
+// kQuantizeThreads threads quantizes four values a thread.
+namespace route_cost = ::ninferno::ops::detail::generic::route_cost;
+static_assert(route_cost::kQuantMmqBytesPerValue.value() ==
+              sizeof(__nv_bfloat16) + static_cast<double>(sizeof(block_q8_1_mmq)) / QK8_1_MMQ);
+static_assert(route_cost::kQuantMmqValuesPerCta.value() == 4 * kQuantizeThreads);
 
 // Token c of x (BF16, at x + c * ldx) -> ggml's q8_1 tiles in the scale/sum layout of the format.
 // A block's sum is its codes' (d * sum q), not the raw values' as in ggml's quantizer: the formats

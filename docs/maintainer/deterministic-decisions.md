@@ -106,6 +106,9 @@ This page states the rule and its target. The engine does not meet all of it yet
   logs add a carried machine's distance) and where each component came from
   (`sources.context_cost.transfer`, `.prefill`), and a carried machine that still prices one of
   them is the taint `carried_context_cost`;
+- the MoE R8 token limit is a table of declared rules, not a law (`src/ops/moe/moe_regime_rules.h`,
+  DECISIONS 84): Ada, consumer Blackwell and Ampere rest on two lab cards each, Turing on one, and
+  Volta, the A100, Hopper and datacenter Blackwell take the conservative four, unmeasured;
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
 - decode/verify parity is unverified for 18 formats;
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;
@@ -511,6 +514,13 @@ from `src/product/choice` ([Configuration choice](configuration-choice.md)). The
 prices its candidates on the generation's reference card, a declared constant per generation,
 never on the board: the board's clock and bandwidth enter only the estimates shown. It decides only
 where its constants rest on two lab cards of the generation; elsewhere the family's defaults stand.
+The drafter is B2 (depth under `fast`: its bytes are the same for the same chip type and request
+schedule) and carries no accuracy term. Its gain is the speculation profile resolved for the board
+(DECISIONS 87): on Ada and GB20x boards the lab did not measure, the round cost R(k) on the board's
+own facts; on a lab board, its record or its generation's median; elsewhere the generation's lab
+measurement or a published profile of a similar chip, whatever the board's rates. On the
+registry's path the same chip type and rates get the same drafter (#618 step 6); the storages stay
+the reference card's.
 The quantization stays the rule above until a measured KLD curve over the quantizations exists.
 
 ### The fingerprint
@@ -520,6 +530,14 @@ and `cached_device_states`. The rung the selection picked before the warm-up (`r
 the tier it was admitted at (`rung_reserve`) are the warm-up's measurement, recorded in the observed
 section: they move `nm1` only, so a warm-up move that ends on the same rung keeps `nf1`. The free
 memory itself is not recorded: two starts whose free memory picks the same rung have the same `nf1`.
+
+The facts section also records `kernel_facts_sha256`, the digest of the committed kernel-facts
+snapshot the prices read (the label the device's kernels run, `sass_arch`: "none" where it runs PTX
+the driver compiled and the prices read none, or no snapshot is committed for it; ops/generic/kernel_facts.h), and `arch_row`, the
+architecture table's row of the device's capability (core/arch_registry.h: its capability range and
+every limit; row 0, the unlisted capability's, for one the table lacks). Two builds whose decisions
+read the same facts then say so in their facts sections whatever their nvcc (their `nf1` values
+differ by the build section all the same); a snapshot or table edit shows in it (#612 step 10).
 
 ### Against master's continuous fit
 

@@ -91,7 +91,7 @@ choice falls back and says why. `choice_constants.h` holds the gates:
 | each `kKldTerms` row's `cards`, `kQuantKldCards` (`accuracy_decides`) | the KV codecs' and the int8 activations' terms (model constants, or a generation's own row), the quantization curve | the quant rule's largest and the family's defaults (automatic KV codec, `--activations fast`) |
 | `KldTerm::family`, `kQuantKldFamily` | the families the switches' terms (Qwen 3.5 dense and MoE; dense decoders: FP8 KV and fast, Qwen3-8B on two Ada cards and a Blackwell one) and the quantization curve (Qwen 3.5 dense) were measured on | another family (Gemma 4, gpt-oss, Nemotron-H) keeps its defaults; a family with switch terms but no curve (Qwen 3.5 MoE, dense decoders) keeps the quant rule's largest |
 | `kMoeChunkTwoCards` | the MoE chunk shares | the default chunk (1024) |
-| `Gates::typed_resolution` (default true), `kDecodePredictionError` (`cards`), `kTransferredDecodeError` (`cards`, `card`) | the resolution of a comparison the resolution rule weighs (the best worth against a candidate), typed by the wider of the two estimates' bases (`resolution_of(board, estimates)`, #618; each candidate's `Scored::decision_basis` on the reference card): `own` where both are Own and the board's generation has a `kDecodePredictionError` row (Ada, Blackwell gb20x); `transferred` where either is Transferred: the generation's `kTransferredDecodeError` row where it has one (ga10x, Turing, Volta: Ada's rows carried onto it), else (a generation with its own error, an estimate on a weight class or a row not measured on two of its cards) the largest measured carry, assumed; `unmeasured`, the same assumed number (`kUnmeasuredCarryDecodeError`, a label, not a bound), for lent estimates (a compute capability with no generation row) and for a known generation with neither row (ga100, Hopper, gb100, Thor). It is never narrower than the Own band its estimates rest on or are carried from. A band decides (`Resolution::decides`) only on a row of two or more lab cards: Ada's own rests on three, gb20x's on two, each carry on one (RTX 3060, RTX 2080 Ti, Quadro GV100: one board's residual, the basis of a `route_rules.h` `ScaledFromOneBoard` rule), the assumed number on none. A comparison whose band does not decide is resolved at its Own floor (`Resolution::floor`, `resolution_width`; `Scored::weighed_at` records the width each candidate was weighed at), never beyond: widening alone would not be conservative (a wider band lets a slower, more accurate candidate displace the best worth, up to 72 % slower at the largest carry), and falling back to the best worth would let a one-card point estimate decide below the floor, within which the estimates are indistinguishable. A moved pick is never dominated on both axes by an eligible candidate. `Choice::resolution` and `resolution_basis` report the best worth's own band, `resolution_decides` whether it decides at full width, `resolution_floor` its floor; the worth still ranks by point estimates. `choose()` sets it only when `reference_of()` finds a reference card (`kReferenceCards` holds Ada and Blackwell GB20x; a compute capability with no generation row is given a lent one). So the served `resolution_basis` is `own` (Ada 0.0226, GB20x 0.0170) or, where the best worth reads a one-card row, a carried row or an unmeasured class, `transferred` (0.5447, not deciding: resolved at the generation's Own floor) on Ada and GB20x, `unmeasured` on a compute capability with no generation row, and `none` with resolution 0 on every other board, whatever its generation | closed (`false`, a test switch): the one number of the reference card's generation (`worth_band`: its `kDecodePredictionError`, 0 where it has none), basis `own` for a known generation, `transferred` for a lent one, weighing every comparison whatever its estimates rest on |
+| `Gates::typed_resolution` (default true), `kDecodePredictionError` (`cards`), `kTransferredDecodeError` (`cards`, `card`) | the resolution of a comparison the resolution rule weighs (the best worth against a candidate), typed by the wider of the two estimates' bases (`resolution_of(board, estimates)`, #618; each candidate's `Scored::decision_basis` on the reference card): `own` where both are Own and the board's generation has a `kDecodePredictionError` row (Ada, Blackwell gb20x); `transferred` where either is Transferred: the generation's `kTransferredDecodeError` row where it has one (ga10x, Turing, Volta: Ada's rows carried onto it), else (a generation with its own error, an estimate on a weight class or a row not measured on two of its cards) the largest measured carry, assumed; `unmeasured`, the same assumed number (`kUnmeasuredCarryDecodeError`, a label, not a bound), for lent estimates (a compute capability with no generation row) and for a known generation with neither row (ga100, Thor; Hopper and GB100 are lent rows). It is never narrower than the Own band its estimates rest on or are carried from. A band decides (`Resolution::decides`) only on a row of two or more lab cards: Ada's own rests on three, gb20x's on two, each carry on one (RTX 3060, RTX 2080 Ti, Quadro GV100: one board's residual, the basis of a `route_rules.h` `ScaledFromOneBoard` rule), the assumed number on none. A comparison whose band does not decide is resolved at its Own floor (`Resolution::floor`, `resolution_width`; `Scored::weighed_at` records the width each candidate was weighed at), never beyond: widening alone would not be conservative (a wider band lets a slower, more accurate candidate displace the best worth, up to 72 % slower at the largest carry), and falling back to the best worth would let a one-card point estimate decide below the floor, within which the estimates are indistinguishable. A moved pick is never dominated on both axes by an eligible candidate. `Choice::resolution` and `resolution_basis` report the best worth's own band, `resolution_decides` whether it decides at full width, `resolution_floor` its floor; the worth still ranks by point estimates. `choose()` sets it only when `reference_of()` finds a reference card (`kReferenceCards` holds Ada and Blackwell GB20x; a compute capability with no generation row is given a lent one). So the served `resolution_basis` is `own` (Ada 0.0226, GB20x 0.0170) or, where the best worth reads a one-card row, a carried row or an unmeasured class, `transferred` (0.5447, not deciding: resolved at the generation's Own floor) on Ada and GB20x, `unmeasured` on a compute capability with no generation row, and `none` with resolution 0 on every other board, whatever its generation | closed (`false`, a test switch): the one number of the reference card's generation (`worth_band`: its `kDecodePredictionError`, 0 where it has none), basis `own` for a known generation, `transferred` for a lent one, weighing every comparison whatever its estimates rest on |
 
 The switches' terms are per family: Qwen 3.5 MoE (Qwen3.6-35B-A3B) loses 3.4 times dense's KLD
 to INT8 KV (0.0033 against 0.00095) and more to fast (0.0049 against 0.0039), so one family's terms
@@ -120,7 +120,11 @@ on Ada too.
 B1 of [Deterministic decisions](deterministic-decisions.md)): they may not read a board's clock or
 bandwidth. So T is priced on the generation's *reference card* (`kReferenceCards`: the mean of the
 generation's lab cards), never on the board itself: every board of a generation decides the same,
-and a board's own facts feed only the estimates a caller shows. The reference card decides only
+and a board's own facts feed only the estimates a caller shows. The reference is a declared mean,
+not a PCI board: its prefill uses the generation's tile laws and its MoE decode the measured kernel
+pair. The planned board's route queries and their availability affect only the displayed board
+estimates, never the reference prices or their uncertainty (#930). No donor PCI identity or route
+table is assigned to the mean. The reference card decides only
 where the KV read factors and the exact-route factor were measured on two lab cards of the
 generation (principle 4); elsewhere the family's defaults stand (the automatic KV codec,
 `--activations fast`), and the choice says so. Ada has them (RTX 4070 Ti and 4090: KV factors within
@@ -143,10 +147,23 @@ counts.
 
 The quantization's own term is the measured curve `kQuantKld` (Qwen3.5-9B GGUF against Q8_0:
 Q6_K 0.0063, Q5_K_M 0.0106, Q4_K_M 0.0193, IQ4_XS 0.0285, Q3_K_M 0.068, UD-IQ3_XXS 0.107, UD-IQ2_M
-0.161, UD-IQ2_XXS 0.334), interpolated in log KLD over bits per weight for other quantizations and
-models (marked as not measured); above Q6_K it falls on a straight line to 0 at Q8_0's bits, and
-any model's Q8_0 is its own reference (0). A point is the measurement of one file
-(`unsloth/Qwen3.5-9B-GGUF` revision 3885219b, each point's SHA-256): a quantization's term says
+0.161, UD-IQ2_XXS 0.334), interpolated in log KLD over bits per weight for other quantizations
+(marked as not measured); above Q6_K it falls on a straight line to 0 at Q8_0's bits, and any
+model's Q8_0 is its own reference (0). Since #618 step 9 it holds one curve per measured model:
+Qwen3.5-0.8B, 2B, 4B and 27B beside the 9B's, each point keyed by the model's weights
+(`ModelFacts::params`). A model reads its own curve (`kQuantKldModels`); a model of the family with
+none, and another family, read the 9B's. The 9B's points rest on two cards; the others on one,
+where `kQuantKldModels` records the model's Q8_0 reference NLL (KLD is a model constant: the 4B on
+two cards within 0.1 %). `ninferno-perplexity --reference-model NAME` checks a new run against it
+under the curves' protocol, within `kQuantKldReferenceNllTolerance` (1.2e-4 nats per token, one
+measured card-to-card pair of the exact route), and exits 3 beyond it (#915); the check covers the Q8_0 forward
+alone, so a one-card model's quantized points are its card's arch until another arch re-measures
+them. A model of the family with no curve of its own, within the measured sizes, takes the 9B's
+label as a transfer where every measured size agrees within the answer noise (0.005 KLD: Q6_K,
+UD-Q5_K_XL, Q5_K_S; DECISIONS 86), and a transfer decides as a measurement does. The answer scale
+stays the 9B's:
+another model's measured file is not calibrated on it. A point is the measurement of one file
+(the 9B's: `unsloth/Qwen3.5-9B-GGUF` revision 3885219b, each point's SHA-256): a quantization's term says
 `measured` only on those files at its bits (`QuantOption::files`, spec::weights_identity of a hub row's
 digests, an artifact's recorded base inputs or a fetched GGUF's); the same family's label at the same
 bits on other or unknown files takes the same value as a `proxy` (#299: another repository's
@@ -261,3 +278,13 @@ own context, decode and prefill speed, KLD, worth, and why it lost:
 
 A caller re-runs `choose` with another task (context, streams, request shape) to show what an input
 changes.
+
+`record_choice` records the inputs to one choice for `replay_choice` to evaluate without a device,
+model file or registered selector. Schema `ninferno-choice-replay/4` includes the prefill and MoE
+route answers for every query made, as well as the storage and capacity answers. An absent callback
+is `null`; an installed callback that was not asked has an empty list. `Unknown` kernels and empty
+MoE answers are recorded answers. The prefill key includes every linear field, token count and
+activation mode; the MoE key includes row count and activation mode. A repeated query whose answer
+changes cannot be recorded. Missing answers raise `ReplayIncomplete`; malformed records and older
+schemas are refused, so an older record must be captured again. Constants remain those of the
+replaying build; the replay never fills a missing route from that build's selector (#931).

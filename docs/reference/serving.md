@@ -1866,6 +1866,8 @@ contract.
 | `--json` | with `--plan`: print it as JSON | off |
 | `--no-load` | with `--plan`: plan without loading or downloading the weights and without a GPU, from the model's header or config ([the plan without the weights](#the-plan-without-the-weights)) | off |
 | `--plan-device NAME` | with `--plan --no-load`: plan for a named board of the PCI-ID table (`"RTX 4090"`, `0x2684`, then `,headless`/`,display`, `,linux`/`,wddm`) instead of the CUDA device | the CUDA device |
+| `--plan-idle` | with `--plan --no-load`: plan the idle card, and put what a start right now would get at the free memory beside it (`now`); ninferno-ui plans a model converted here this way. The exit code then says whether the idle card fits (0) or not (2); `now.fits_now` says whether a start right now would | the free memory now |
+| `--plan-free-now BYTES` | with `--plan --no-load --plan-idle`: the card's free memory as the caller reads it (NVML), for `now` where serve cannot read it itself: a card too busy to open a context still names its board. ninferno-ui passes it. Refused without `--plan-idle` or with `--plan-device` | none (serve's own reading) |
 | `--with-drafters` | always attach the drafters of a GGUF hub model (a separate download), and fail the start when one cannot be had | attached when the choice drafts with one |
 | `--model-id ID` | override the public OpenAI model alias | the artifact's `metadata.name`, else its file name; a Hugging Face id when serving one |
 | `--chat-template FILE` | local Jinja chat template | the artifact's |
@@ -2388,6 +2390,11 @@ has an automatic axis (`plan_automatic_fit`: the driver's default per-thread sta
 0.09-0.19 GiB on the lab's cards, returned first). On a named board, and in ninferno-ui, the dry run takes an idle card: the
 memory less 512 MiB for the CUDA context, and less a desktop's share when the card drives one
 (Linux 256 MiB, Windows and WSL 2 1.5 GiB). These shares are declared, not measured.
+With `--plan-idle` a real device's plan is the idle card's too, and the document's `now` (with
+`device.free_now_bytes` and `device.fits_now`) is what a start right now would get at the free
+memory: ninferno-ui runs `ninferno-serve <artifact> --plan --no-load --plan-idle --json` for a model
+converted here, so its plan has the start's workspace (#843). It passes NVML's free memory too
+(`--plan-free-now`): a card too busy to open a context still gets its `now` (#891).
 
 **What is the start's, and what is estimated.** A rung's persistent bytes are the family planner's
 own: the start and the dry run call the same function (`plan_persistent_layout` over a
@@ -2574,6 +2581,7 @@ PLAN:
 | `context`, `pool_contexts`, `private_contexts` | the rung's context, the whole contexts its pool holds, and whether every stream has one of its own (`false`: the streams share one pool) |
 | `chosen` | the rung: `context`, `kv_tokens`, `cached_states`, `prefill_chunk`, `step`, `survival`, `bytes` (`kv`, `states`, `rings`, `workspace`, `graphs`, `fixed`, `total`, `workspace_basis`: `start: <what sized it>` where the family sizes it with a start's own capacity functions over the facts (Gemma 4 without vision, #302: "start: no speculative round" or "start: the MTP round at window W, R row(s)"), else `formula` or `formula: <why the query did not answer>`), `needed_bytes` |
 | `description` | the rung in words |
+| `workspace_regions` | the chosen rung's text prefill arena region by region, where the family's planner records them (Qwen 3.5): `op` (`L03.gdn.output`, `output_head`, `sampling`), `offset` (from the prefill arena's base, not the whole workspace), `bytes`, `scratch` (an op's raw scratch, not a tensor); `[]` under the formula or when nothing fits |
 | `kv_dtype`, `state_dtype` | the codecs the plan resolved (`auto` resolved for the family and the card) |
 | `weights_bytes`, `free_bytes`, `free_after_weights_bytes`, `class_reserve_bytes`, `base_margin_bytes`, `allowance_bytes`, `context_ceiling` | the selection's inputs |
 | `estimate_basis`, `estimate_reason` | `family_planner` (the rung bytes are the start planner's but the workspace) or `approximate` and why |
@@ -2600,7 +2608,7 @@ CHOICE:
 | `resolution_decides` | `true` when the band may decide at its full width: an `own` band, its error measured on two or more lab cards. `false` otherwise: a `transferred` or `unmeasured` band rests on one lab card or on an assumption, so it never widens a decision: a comparison resting on it is resolved at `resolution_floor` only (the `why` says so). The worth itself still ranks the candidates by their point estimates |
 | `resolution_floor` | the Own band the reported band widens, of two or more lab cards: the board generation's own (Ada's 0.0226, three cards), on a compute capability with no generation row the lent generation's (cc 13.0, priced from Blackwell's rows: 0.0170), else Ada's. The estimates are indistinguishable at least within it, so every comparison is resolved within it, a `transferred` or `unmeasured` one never beyond it; 0 without a reference card |
 | `chunk_by_speed` | `true` when an MoE's prefill chunk was the fastest on the generation's reference card; `false` when the default (or the pinned) chunk stood |
-| `chunk_basis` | what the chunk decision rests on: `own` (the generation the shares were measured on: it decides), `carried_curve` (another generation with two cards of MoE prefill rows: its saturated rate times the measured slope estimates the chunk, never decides it), `transferred` (neither), `none` (not an MoE, or the MoE chunk gate is closed) |
+| `chunk_basis` | what the chunk decision rests on: `own` (the generation the shares were measured on: it decides), `carried_curve` (another generation with two cards of MoE prefill rows: its saturated rate times the measured slope estimates the chunk, never decides it), `verified_curve` (such a generation whose carried curve a sweep on its own cards verified, today GB20x: it decides by speed on the generation's reference card, DECISIONS 88), `transferred` (neither), `none` (not an MoE, or the MoE chunk gate is closed) |
 | `chunk_estimate` | with `carried_curve`: the chunk the carried curve predicts fastest on this board; an estimate for an A/B, the pick stays the default |
 | `kv_options` | every `--kv-dtype` codec as a start of this model takes it: `codec`, `allowed`, `why_code` (`""`, `family_codec`: the family keeps BF16 or FP8 only, `head_width`: the Qwen paged pool's layout takes another head width, `shape_unknown`), `why` (English), `slow_on_card` (FP8 codes widened in software: no E4M3 instructions below sm_89; the codec runs, slower). The engine's own rules; ninferno-ui's KV buttons are drawn from it |
 | `activations_allowed` | the `--activations` modes the model's family runs (`fast`, `exact`, and `int8` for Qwen), whatever is pinned: what ninferno-ui's selector offers |
@@ -2611,12 +2619,14 @@ ESTIMATES: `own_context`, `fits`, `decode_tok_s`, `prefill_tok_s` (on this board
 measurements), `speed_transferred` (true unless `speed_basis` is `own`), `speed_basis` (`own`: the
 card's generation's rows, each on two lab cards; `transferred`: a constant from another generation or
 one lab card, or an MoE decode step whose kernel pair the op was not asked (no route query in the
-program, or no answer for a layer kind); `lent_generation`: the card's compute capability has no generation row of its own and
+program, or no answer for a layer kind), or one on assumed banks; `lent_generation`: the card's compute capability has no generation row of its own and
 the nearest one's stand in, a rough estimate that decides nothing), `speed_why` (present only with
 `speed_basis` `transferred` where a rule names a reason, one reason among any others: `MoE route not
 queried`: the program registers no MoE route query (ninferno-ui), so the step takes the measured
 kernel pair's share past one stream; `MoE route not answered`: the query gave no kernels for a
-layer kind), `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
+layer kind; `MoE banks assumed`: the file does not tell the format its routed banks are kept as
+(Gemma 4's GGUF MXFP4 experts, a split MoE GGUF's parts), so the bytes priced and the pair asked
+may not be what the start runs; at any stream count), `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
 measured, transferred, source, evidence}]`: `measured` true only for `evidence` `measured`,
 `transferred` for a term measured on another family; `evidence` what the term rests on: `measured` (a
 quantization's own files, or the family's switch), `proxy` (the same quantization label measured on

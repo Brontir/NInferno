@@ -119,7 +119,7 @@ TextWeights bind_text(Bindings& b, const TextConfig& config, const LoadOptions& 
 
 ProposalWeights bind_proposal(Bindings& b, const artifact::Proposal& proposal,
                               const TextConfig& target, const LoadOptions& options,
-                              std::uint32_t public_tokens) {
+                              std::uint32_t public_tokens, bool read_ids) {
     const auto rows = proposal.indexed ? proposal.rows : target.vocab_size;
     if (rows > std::numeric_limits<std::uint32_t>::max() ||
         (proposal.indexed && rows > public_tokens)) {
@@ -137,6 +137,7 @@ ProposalWeights bind_proposal(Bindings& b, const artifact::Proposal& proposal,
                            {std::string(options.speculative_component()) + "/final_hidden"});
     if (proposal.indexed) {
         out.token_ids = b.direct("proposal/token_ids", {rows}, QType::INT32);
+        if (!read_ids) { return out; }
         out.global_token_ids =
             b.binder.values(b.at(*out.token_ids).reference.binding, QType::INT32).integers();
         validate_token_ids(out.global_token_ids, public_tokens, "proposal token IDs");

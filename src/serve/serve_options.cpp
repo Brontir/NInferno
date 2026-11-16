@@ -35,7 +35,8 @@ std::string serve_usage_text(const char* argv0) {
            " --build-manifest\n       " + argv0 +
            " <model.ninferno | checkpoint-dir | model.gguf | org/name[@revision]> "
            "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json] [--no-load "
-           "[--plan-device NAME]]] [--with-drafters] [--accept-converted | --refetch "
+           "[--plan-device NAME] [--plan-idle [--plan-free-now BYTES]]]] [--with-drafters] "
+           "[--accept-converted | --refetch "
            "[--keep-replaced]] [--round-tiny-scales] "
            "[--host H] [--port N] [--api-key KEY | --api-key-file PATH] "
            "[--model-id ID] [--max-context N] [--max-context-cap N] [--kv-capacity N|auto] "
@@ -100,6 +101,9 @@ std::string serve_usage_text(const char* argv0) {
            "       --quant it lists every quantization and the largest that fits.\n"
            "       --plan-device NAME plans for a named board instead (\"RTX 4090\", 0x2684,\n"
            "       then ,headless or ,display and ,linux or ,wddm).\n"
+           "       --plan-idle plans the idle card and puts what a start right now would get\n"
+           "       at the free memory beside it; --plan-free-now BYTES gives that free memory\n"
+           "       (NVML's) for a card too busy to open a context.\n"
            "       Without --quant a GGUF hub repository is fetched at the largest\n"
            "       quantization that fits --max-context x --max-concurrency on this GPU (an\n"
            "       idle card of its class), and refused before the download when none does.\n"
@@ -610,6 +614,10 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.plan_no_load = true;
         } else if (arg == "--plan-device") {
             options.plan_device = require_value("--plan-device");
+        } else if (arg == "--plan-idle") {
+            options.plan_idle = true;
+        } else if (arg == "--plan-free-now") {
+            options.plan_free_now = parse_u64(require_value("--plan-free-now"), "plan-free-now");
         } else if (arg == "--with-drafters") {
             options.with_drafters = true;
         } else if (arg == "--accept-converted") {
@@ -666,6 +674,18 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     if (!options.plan_device.empty() && !options.plan_no_load) {
         throw std::invalid_argument("--plan-device names a board to plan for: it needs --plan "
                                     "--no-load");
+    }
+    if (options.plan_idle && !options.plan_no_load) {
+        throw std::invalid_argument("--plan-idle plans the idle card without the weights: it needs "
+                                    "--plan --no-load");
+    }
+    if (options.plan_free_now && !options.plan_idle) {
+        throw std::invalid_argument("--plan-free-now is the free memory of --plan-idle's `now`: it "
+                                    "needs --plan --no-load --plan-idle");
+    }
+    if (options.plan_free_now && !options.plan_device.empty()) {
+        throw std::invalid_argument("--plan-free-now is a real card's free memory: --plan-device "
+                                    "names a board with none");
     }
     if (options.plan_only && options.prepare_only) {
         throw std::invalid_argument("--plan and --prepare-only exclude each other");

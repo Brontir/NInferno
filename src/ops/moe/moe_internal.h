@@ -16,6 +16,7 @@
 // job is (expert, run of up to kJobColumns slots); its rows come from the expert's span of the
 // stacked plane and its columns are gathered through the slot -> token map.
 
+#include "core/arena.h"
 #include "core/device_class.h"
 #include "core/measured_disposition.h"
 #include "core/tensor.h"
@@ -78,6 +79,11 @@ struct PlanArgs {
     int* job_begin    = nullptr;
     int* job_count    = nullptr;
     int* job_total    = nullptr; // [1]
+    // The call's fused-combine tickets (GemmArgs::combine_tickets), which the plan sets to zero
+    // before the down stage counts on them (#882): zero_count ints, none when the call keeps the
+    // separate combine.
+    int* zero_tickets = nullptr;
+    int zero_count    = 0;
 };
 
 // The SIMT router (moe_router_simt.cu): warps per CTA, the widest call, and its dynamic shared
@@ -160,7 +166,9 @@ struct GemmArgs {
     // Down (R8): the combine in the down stage (moe_r8.cuh). The last CTA of each run of output
     // rows to finish, counted on combine_tickets[blockIdx.x], adds the run's rows of every token's
     // experts into combine.out as combine_kernel does (combine.shared unset: no shared expert),
-    // and the separate combine launch is skipped. nullptr: the down stage stores y only.
+    // and the separate combine launch is skipped. nullptr: the down stage stores y only. The
+    // tickets are the call's own (its workspace, zeroed by its plan), never shared with another
+    // call in flight.
     int* combine_tickets = nullptr;
     CombineArgs combine;
     // Host only: launch as a programmatic dependent of the stream's previous kernel (core/pdl.cuh).
@@ -210,17 +218,19 @@ struct R8ScheduleInfo {
 // at most T slots (a token selects an expert once), whose quantized activation must fit it
 // unless the router quantized it (r8_admits). Wider calls compute A16.
 inline constexpr std::int32_t kR8Tokens = 8;
-// The widest R8 call on this GPU (r8_admits): kR8Tokens on Ada (sm_89) and consumer Blackwell
-// (sm_12x), four elsewhere (Hopper and datacenter Blackwell unmeasured). moe_bench
-// (H 2048, F 512, E 128, k 8, published layout), R8 against the register MMA at T = 5..8: RTX 5090
-// / 5070 Ti -5..-15 % on every K-quant and IQ3_XXS, RTX 4090 -3..-7 % (Q6_K level), RTX 4060 Ti
-// -0.4..-6 %; RTX 2080 Ti Q6_K +38..+45 %, Q3_K +15..+19 % (Q4_K, Q5_K, IQ3_XXS ahead). Ampere
-// is not measured and keeps four; Volta splits a wider call into calls of four (moe()).
+// The widest R8 call on this GPU (r8_admits) where its generation's rule does not take kR8Tokens,
+// and the conservative limit of an unmeasured generation: the rules, with the cards and margins
+// they rest on, are moe_regime_rules.h (kR8Tokens on Ada and consumer Blackwell, measured on two
+// cards each; Ampere four, measured on two cards that disagree above four tokens; Turing four,
+// measured on one card; Volta, the A100, Hopper and datacenter Blackwell unmeasured). Volta
+// splits a wider call into calls of four (moe()).
 inline constexpr std::int32_t kR8NarrowTokens = 4;
+// The generation's widest R8 call (moe_regime_rules.h generation_rule).
 [[nodiscard]] std::int32_t r8_token_limit();
-// The widest R8 call over `bank`: r8_token_limit(), but four for the FP4-element formats (MXFP4,
-// NVFP4), a ggml_frag_v1 Q4_0 bank, and another frag bank but Q4_K on a board of many DRAM bytes
-// per SM cycle, where the register MMA wins above four tokens (moe.cpp).
+// The widest R8 call over `bank`: r8_token_limit(), narrowed by the first bank rule of
+// moe_regime_rules.h that holds (four for the FP4-element formats MXFP4 and NVFP4, a
+// ggml_frag_v1 Q4_0 bank, and another frag bank but Q4_K on a board of many DRAM bytes per SM
+// cycle or none known).
 [[nodiscard]] std::int32_t r8_token_limit(const Weight& bank);
 // The formats the R8 kernel reads: the codebook ones (IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S),
 // the K-quants (Q3_K, Q4_K, Q5_K, Q6_K) and the 32-value ggml blocks (Q4_0, Q4_1, Q5_0, Q5_1,
@@ -679,16 +689,22 @@ void launch_plan(const PlanArgs& args, cudaStream_t stream);
 void launch_select_plan(const SelectArgs& select, const PlanArgs& plan, cudaStream_t stream);
 
 void launch_combine(const CombineArgs& args, cudaStream_t stream);
-// Run tickets of the fused combine (GemmArgs::combine_tickets): zero at load, each run's last CTA
-// sets its ticket back to zero. A down grid of more runs keeps the separate combine. One such
-// down stage runs at a time on a device (a MoE layer's calls are in stream order).
+// The most run tickets of the fused combine (GemmArgs::combine_tickets) a down grid takes: one of
+// more runs keeps the separate combine. The tickets are in the call's workspace (#882: a device
+// global was shared by every engine's MoE on the GPU), its plan zeroes them, and each run's last
+// CTA sets its ticket back to zero.
 inline constexpr int kCombineTickets = 1024;
-[[nodiscard]] int* combine_tickets();
+static_assert(arena_tickets::kMoeCombine + kCombineTickets <= kArenaTicketInts,
+              "the fused combine's tickets fit the arena's ticket page");
 // The BF16 router at 1..kRouterSimtMaxTokens tokens, one warp per expert (GemmArgs of the
 // register-MMA router: weights, x, bias, logits and xq). With select and plan (at most 32
-// assignments) its last CTA also selects and plans: launch_select_plan's results.
+// assignments) its last CTA also selects and plans: launch_select_plan's results. The CTAs then
+// count themselves in on route_ticket, one int of the arena's ticket page (#889) or of the call's
+// workspace, zero in stream order when the router starts (#882); the last CTA sets it back to
+// zero.
 void launch_router_simt(const GemmArgs& args, cudaStream_t stream,
-                        const SelectArgs* select = nullptr, const PlanArgs* plan = nullptr);
+                        const SelectArgs* select = nullptr, const PlanArgs* plan = nullptr,
+                        int* route_ticket = nullptr);
 
 
 // Route choices the test compares with their alternatives, process-wide: the MXFP4 banks'

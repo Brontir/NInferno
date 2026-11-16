@@ -23,6 +23,7 @@
 #include "ninferno/ops/speculative_round.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -107,14 +108,24 @@ WorkspacePlan build_workspace_plan(const WorkspaceInputs& inputs, const Sequence
         // and everything else under the speed profile; the capacity queries answer for the active
         // one.
         const ops::ScopedPrefillRoutes route_profile(phase == qwen3_5::TextPhase::Prefill);
+        int index = 0;
         for (const auto& block : inputs.text.layers) {
+            // The op names a recorded region carries (WorkspaceLayoutBuilder::record, #615 W5).
+            const auto at = [&, layer = index++](const char* what) {
+                if (!layout.recording()) { return; }
+                char name[48];
+                std::snprintf(name, sizeof name, "L%02d.%s", layer, what);
+                layout.op(name);
+            };
             {
                 auto stage = layout.scope();
                 if (const auto* attention =
                         std::get_if<execution::AttentionParameters>(&block.mixer)) {
+                    at("attention.projection");
                     (void)workspace::text_attention_projection(layout, config, last);
                     scratch(layout, execution::attention_projection_workspace_bytes(*attention,
                                                                                     first, last));
+                    at("attention.core");
                     (void)workspace::text_attention_results(layout, config, last);
                     scratch(layout, ops::causal_softmax_attention_workspace_capacity_bytes(
                                         {dimension(config.attention->head_dim),
@@ -122,13 +133,16 @@ WorkspacePlan build_workspace_plan(const WorkspaceInputs& inputs, const Sequence
                                          dimension(config.attention->num_key_value_heads)},
                                         plan.kv_storage, envelope, batch_size, min_width, max_width,
                                         device_execution));
+                    at("attention.output");
                     add_scratch(layout, attention->output, first, last);
                 } else {
                     const auto& gdn = std::get<execution::GdnParameters>(block.mixer);
+                    at("gdn.control");
                     (void)workspace::gdn_control(layout, config, last);
                     scratch(layout,
                             execution::gdn_control_workspace_bytes(
                                 gdn, *config.gdn, dimension(config.hidden_size), first, last));
+                    at("gdn.projection");
                     (void)workspace::gdn_projection(layout, config, last);
                     if (path == GdnWorkspacePath::Snapshot) {
                         scratch(layout, execution::gdn_snapshot_workspace_bytes(
@@ -141,6 +155,7 @@ WorkspacePlan build_workspace_plan(const WorkspaceInputs& inputs, const Sequence
                         scratch(layout,
                                 execution::gdn_projection_workspace_bytes(gdn, first, last));
                     }
+                    at("gdn.recurrence");
                     (void)workspace::gdn_recurrent_output(layout, config, last);
                     if (path == GdnWorkspacePath::Prefill) {
                         scratch(layout,
@@ -148,11 +163,13 @@ WorkspacePlan build_workspace_plan(const WorkspaceInputs& inputs, const Sequence
                                     dimension(config.gdn->linear_num_key_heads),
                                     dimension(config.gdn->linear_num_value_heads), first, last));
                     }
+                    at("gdn.output");
                     (void)workspace::gdn_normalized_output(layout, config, last);
                     add_scratch(layout, gdn.output, first, last);
                 }
             }
             auto stage = layout.scope();
+            at("ffn");
             (void)workspace::post_mixer_hidden(layout, config, last);
             scratch(layout, execution::ffn_workspace_bytes(block.ffn, first, last));
         }
@@ -160,6 +177,7 @@ WorkspacePlan build_workspace_plan(const WorkspaceInputs& inputs, const Sequence
             // A prefill chunk projects only its last column through the head
             // (TextContext::prefill).
             const std::int32_t head_last = phase == qwen3_5::TextPhase::Prefill ? 1 : last;
+            layout.op("output_head");
             linear_scratch(layout, inputs.text.output_head, std::min(first, head_last), head_last);
         }
     };
@@ -241,12 +259,16 @@ WorkspacePlan build_workspace_plan(const WorkspaceInputs& inputs, const Sequence
 
     WorkspacePlan out;
     WorkspaceLayoutBuilder text_prefill;
+    text_prefill.record(&out.text_prefill_regions);
+    text_prefill.op("roots");
     text_common_root(text_prefill, chunk);
     target_body(text_prefill, 1, chunk, qwen3_5::TextPhase::Prefill, GdnWorkspacePath::Prefill, 1,
                 1, chunk, text_envelope);
     if (!plan.causal_scoring) {
+        text_prefill.op("sampling");
         scratch(text_prefill, ops::sampling_workspace_capacity_bytes(inputs.public_tokens, 1, 1));
     }
+    text_prefill.record(nullptr);
     out.text_prefill = finish(text_prefill);
 
     if (plan.causal_scoring) {

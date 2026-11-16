@@ -6,6 +6,9 @@
 #include "ops/kv_cache/append/launch.h"
 #include "ops/softmax_attention/dense/causal_cache/nvfp4/tiled_launch.h"
 
+#include <string>
+#include <utility>
+
 namespace ninferno::ops::detail {
 namespace {
 
@@ -129,6 +132,35 @@ void execute_parallel(const CausalAttentionOperands& p, Nvfp4KvReadView cache,
         });
 }
 
+template <class G, int Tokens, bool MultiBatch, bool Masked, class Input, bool ParallelQueries>
+void slab_resources(std::vector<Nvfp4KvSlabKernelResources>& out) {
+    using Instance = Nvfp4KvGroupedInstance<G, Tokens>;
+    if constexpr (Instance::kSlab) {
+        using S = typename Instance::Schedule;
+        const auto kernel =
+            nvfp4_kv_slab_mma_kernel<G, S, MultiBatch, Masked, Input, ParallelQueries>;
+        Nvfp4KvSlabKernelResources r;
+        r.name = "h" + std::to_string(G::QHeads) + "/" + std::to_string(G::KVHeads) +
+                 " T=" + std::to_string(Tokens) + (Input::writes_cache ? " append" : " cached") +
+                 (MultiBatch ? " batch" : "") + (Masked ? " masked" : "") +
+                 (ParallelQueries ? " parallel" : "");
+        r.dynamic_shared_bytes = S::kArenaBytes;
+        r.threads              = S::kThreads;
+        r.min_blocks           = S::kMinBlocks;
+        cudaFuncAttributes attributes{};
+        r.status = cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                        S::kArenaBytes);
+        if (r.status == cudaSuccess) r.status = cudaFuncGetAttributes(&attributes, kernel);
+        if (r.status == cudaSuccess)
+            r.status = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&r.blocks_per_sm, kernel,
+                                                                     S::kThreads, S::kArenaBytes);
+        r.registers           = attributes.numRegs;
+        r.local_bytes         = attributes.localSizeBytes;
+        r.static_shared_bytes = attributes.sharedSizeBytes;
+        out.push_back(std::move(r));
+    }
+}
+
 // The plan picks the tiled family only where its kernel (the non-RDC archive) is built.
 void tiled([[maybe_unused]] const CausalAttentionOperands& p,
            [[maybe_unused]] Nvfp4KvReadView cache, [[maybe_unused]] cudaStream_t stream) {
@@ -187,6 +219,32 @@ void nvfp4_kv_cached_attention(const Tensor& q, const Tensor& positions, float s
     else
         execute_grouped(q, positions, scale, view, nullptr, nullptr, CausalCachedInput{}, plan,
                         workspace, out, stream);
+}
+
+std::vector<Nvfp4KvSlabKernelResources> nvfp4_kv_slab_kernel_resources() {
+    std::vector<Nvfp4KvSlabKernelResources> out;
+    // The instances grouped_instance (tokens 1..8, append and cached) and parallel_query_tile
+    // (5..8, cached) launch, as their variants (multi-batch, masked).
+    const auto variants = [&]<class G, int Tokens, class Input, bool ParallelQueries>() {
+        slab_resources<G, Tokens, false, false, Input, ParallelQueries>(out);
+        slab_resources<G, Tokens, false, true, Input, ParallelQueries>(out);
+        slab_resources<G, Tokens, true, false, Input, ParallelQueries>(out);
+        slab_resources<G, Tokens, true, true, Input, ParallelQueries>(out);
+    };
+    const auto geometry = [&]<class G>() {
+        [&]<int... T>(std::integer_sequence<int, T...>) {
+            (variants.template operator()<G, T + 1, CausalAppendInput, false>(), ...);
+            (variants.template operator()<G, T + 1, CausalCachedInput, false>(), ...);
+        }(std::make_integer_sequence<int, Nvfp4KvCausalPlan::kTokenTile>{});
+        [&]<int... T>(std::integer_sequence<int, T...>) {
+            (variants.template operator()<G, T + 5, CausalCachedInput, true>(), ...);
+        }(std::make_integer_sequence<int, 4>{});
+    };
+#define NINFERNO_NVFP4_SLAB_GEOMETRY(Q, KV)                                                        \
+    geometry.template operator()<CausalGeometry<kCausalHeadDim, (Q), (KV)>>();
+    NINFERNO_CAUSAL_GEOMETRIES(NINFERNO_NVFP4_SLAB_GEOMETRY)
+#undef NINFERNO_NVFP4_SLAB_GEOMETRY
+    return out;
 }
 
 } // namespace ninferno::ops::detail

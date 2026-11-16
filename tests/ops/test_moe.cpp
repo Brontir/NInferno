@@ -29,6 +29,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -36,6 +37,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <numeric>
 #include <random>
 #include <string>
@@ -458,6 +460,52 @@ bool reference_token(const Case& c, const Layer& l, const std::vector<double>& x
     return true;
 }
 
+// NINFERNO_TEST_MOE_CASE=<text> runs only the cases whose label holds the text (the checks
+// without a case are skipped), so one case can loop alone. A filter that matches no case fails
+// the run (main): a mistyped or stale one would otherwise pass having checked nothing. The filter
+// applies to each process, so under ctest a filter right for one --part fails every part that
+// holds no matching case; the message names the part. The old name, NINFERNO_MOE_TEST_CASE, is
+// not read: a shell that still sets it runs every case, and gets a warning.
+const std::string& case_filter() {
+    static const std::string filter = [] {
+        const char* v = std::getenv("NINFERNO_TEST_MOE_CASE");
+        if (v == nullptr && std::getenv("NINFERNO_MOE_TEST_CASE") != nullptr) {
+            std::cerr << "moe: NINFERNO_MOE_TEST_CASE is the old name and is ignored; set "
+                         "NINFERNO_TEST_MOE_CASE to filter the cases\n";
+        }
+        return std::string(v != nullptr ? v : "");
+    }();
+    return filter;
+}
+
+bool filtering() { return !case_filter().empty(); }
+
+int matched_cases = 0; // the case checks the filter let through
+
+bool filtered_out(const std::string& label) {
+    if (!filtering()) return false;
+    if (label.find(case_filter()) == std::string::npos) return true;
+    ++matched_cases;
+    return false;
+}
+
+// Every completed filtered run says what the filter let through (main's exception path, the 77
+// skips and the usage error print nothing); false when it let nothing. `part` is main's --part
+// argument, empty for the whole suite.
+bool filter_matched(const std::string& part) {
+    if (!filtering()) return true;
+    std::cout << "moe: NINFERNO_TEST_MOE_CASE=\"" << case_filter() << "\" ran " << matched_cases
+              << " case check(s)\n";
+    if (matched_cases != 0) return true;
+    std::cerr << "moe: the case filter matched no case"
+              << (part.empty() ? std::string()
+                               : " in --part " + part +
+                                     " (it applies to each process: a part without a matching "
+                                     "case fails)")
+              << '\n';
+    return false;
+}
+
 struct Run {
     std::vector<std::uint16_t> out;
     std::size_t peak = 0, capacity = 0;
@@ -553,6 +601,7 @@ int compare_run(const Case& c, const Layer& l, const std::vector<std::uint16_t>&
 }
 
 int check_case(const Case& c, std::uint32_t seed, const std::vector<std::int32_t>& widths) {
+    if (filtered_out(c.label)) return 0;
     const Layer l = make_layer(c, seed);
     const std::int32_t t_max = *std::max_element(widths.begin(), widths.end());
     const auto x        = random_bf16(static_cast<std::size_t>(t_max) * c.hidden, seed + 21, -1.0, 1.0);
@@ -571,6 +620,7 @@ int check_case(const Case& c, std::uint32_t seed, const std::vector<std::int32_t
 
 // Under the prefill profile every call of 17 tokens or more gives a token the same bytes.
 int check_invariance(const Case& c, std::uint32_t seed) {
+    if (filtered_out(c.label)) return 0;
     const Layer l = make_layer(c, seed);
     const std::int32_t wide = 300;
     const auto x        = random_bf16(static_cast<std::size_t>(wide) * c.hidden, seed + 31, -1.0, 1.0);
@@ -595,6 +645,7 @@ int check_invariance(const Case& c, std::uint32_t seed) {
 // Under the invariant profile (--activations exact) every call, a single token included, gives a
 // token the same bytes as the wide call.
 int check_invariant_profile(const Case& c, std::uint32_t seed) {
+    if (filtered_out(c.label)) return 0;
     const Layer l = make_layer(c, seed);
     const std::int32_t wide = 300;
     const auto x        = random_bf16(static_cast<std::size_t>(wide) * c.hidden, seed + 31, -1.0, 1.0);
@@ -638,6 +689,7 @@ int check_invariant_profile(const Case& c, std::uint32_t seed) {
 // at T = 5..8). Any R8 plan under A16Only is refused, and the default route there stays on the
 // register MMA.
 int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_t>& widths) {
+    if (filtered_out(base.label)) return 0;
     namespace moe = ops::detail::moe;
     Case c         = base;
     c.expert_policy = ops::LinearPolicy::AllowA8;
@@ -853,6 +905,7 @@ const char* qname(QType q);
 // those of the widest call at any T and position (no K split; a slot's sums do not depend on its
 // job). The widths cross a job (64 slots) and leave partial W4A8 tiles.
 int check_w4a8(const Case& base, std::uint32_t seed, const std::vector<std::int32_t>& widths) {
+    if (filtered_out(base.label)) return 0;
     namespace moe           = ops::detail::moe;
     Case c                  = base;
     c.expert_policy         = ops::LinearPolicy::AllowA8;
@@ -929,6 +982,7 @@ int check_w4a8(const Case& base, std::uint32_t seed, const std::vector<std::int3
 // kMoeW4a8SpeedMinTokens on, on admitted banks and by default; narrower calls keep the A16 / R8
 // plans. The selected wide plan matches the oracle with both stages' activations quantized.
 int check_speed_w4a8(const Case& base, std::uint32_t seed) {
+    if (filtered_out(base.label)) return 0;
     namespace moe   = ops::detail::moe;
     Case c          = base;
     c.expert_policy = ops::LinearPolicy::AllowA8;
@@ -972,6 +1026,7 @@ int check_speed_w4a8(const Case& base, std::uint32_t seed) {
 // 4090, 4060 Ti, 5090) and four at or above it (RTX 5070 Ti) or without a roofline, frag Q4_K at
 // eight; Turing four throughout.
 int check_r8_bank_limits() {
+    if (filtering()) return 0;
     namespace moe = ops::detail::moe;
     struct Board {
         const char* name;
@@ -1027,6 +1082,7 @@ int check_r8_bank_limits() {
 }
 
 int check_a8_route_rule() {
+    if (filtering()) return 0;
     namespace moe = ops::detail::moe;
     const auto route = moe::a8_default_route();
     if (!route) {
@@ -1069,6 +1125,7 @@ int check_a8_route_rule() {
 }
 
 int check_r8_table() {
+    if (filtering()) return 0;
     namespace moe = ops::detail::moe;
     const auto route = moe::a8_default_route();
     const std::string tuned_down = "rmma.m1.n1.w1x4";
@@ -1152,6 +1209,7 @@ int check_r8_table() {
 // limit; T = 2, 3 and the limit match the oracle, and a token's bytes are the same at T = 1 and at
 // the limit.
 int check_r8_k_limit() {
+    if (filtering()) return 0;
     namespace moe = ops::detail::moe;
     const auto route = moe::a8_default_route();
     Case c;
@@ -1204,6 +1262,7 @@ int check_r8_k_limit() {
 // width); every Use AllowA8 gives AllowA8 and the class's default route. IQ2_S experts, E 4, H 256,
 // F 256, a BF16 router and shared expert.
 int check_expert_policy() {
+    if (filtering()) return 0;
     namespace moe = ops::detail::moe;
     constexpr std::uint64_t E = 4, H = 256, F = 256;
     struct Parent {
@@ -1363,6 +1422,7 @@ Case qwen36_a3b_u4(QType format, QType shared) {
 }
 
 int check_table_plans() {
+    if (filtering()) return 0;
     const TempDir scratch("ninferno_test_moe_routes");
     const auto file        = scratch.path() / "routes.json";
     const std::string path = utf8_path(file); // the route-table API takes UTF-8
@@ -1481,6 +1541,7 @@ const char* qname(QType q) {
 // (moe()'s bytes are its selected plan's), the cache gives the same plans back to a process that
 // forgot them without timing again, and TuneMode::Off, the default, tunes nothing.
 int check_tuner() {
+    if (filtering()) return 0;
     namespace mo = ops::detail::moe;
     int failures   = 0;
     const TempDir scratch("ninferno_test_moe_tune");
@@ -1540,6 +1601,7 @@ int check_tuner() {
 // the separate selection and the CTA plan: the same ids, weights, slots and job list, bit for bit.
 // Ties included (logits from a few levels), narrow jobs included (an expert's run cut in several).
 int check_warp_plan() {
+    if (filtering()) return 0;
     namespace mo = ops::detail::moe;
     int failures = 0;
     std::mt19937 rng(20261001U);
@@ -1642,6 +1704,7 @@ int check_warp_plan() {
 // Each bank's refusal per stage (#311), from facts of the format alone: no weights are read, so
 // the banks are descriptions at an aligned stand-in address.
 int check_bank_refusals() {
+    if (filtering()) return 0;
     namespace moe = ops::detail::moe;
     using R       = moe::BankRefusal;
     alignas(16) static const std::uint8_t stand_in[32] = {};
@@ -1796,15 +1859,207 @@ int check_bank_refusals() {
     return failures;
 }
 
+// Two MoE layers in flight on one GPU at once (#882), as two engines run them: each its own stream
+// and workspace, E = 128 at T = 1 and E = 256 at T = 4 (router grids of 32 and 64 CTAs). The
+// last-block tickets (the SIMT router's route ticket where its last CTA routes, the R8 down stage's
+// fused combine) are each call's own, so every call gives the bytes it gives alone. On one device
+// counter both grids counted in, a CTA could elect itself last before its own grid had stored and
+// route on the logits buffer's previous bytes: every call takes the next of three inputs, so those
+// bytes are another input's. Eager calls first, then each stream's calls replayed from its graph
+// (the tickets' addresses fixed in the graph, one workspace per stream).
+int check_concurrent_streams() {
+    namespace mo           = ops::detail::moe;
+    constexpr int kInputs  = 3;   // a call's x is input (call % kInputs)
+    constexpr int kCalls   = 8;   // calls a stream holds between two synchronizations
+    constexpr int kEager   = 250; // rounds of kCalls eager calls per stream
+    constexpr int kReplays = 250; // replays of each stream's graph of kCalls calls
+
+    struct Side {
+        Case c;
+        Layer l;
+        std::int32_t t = 0;
+        std::vector<DeviceBuffer> x, out;
+        std::vector<std::vector<std::uint16_t>> want; // per input, the call alone
+        ops::detail::moe::MoePlan plan;
+        cudaStream_t stream = nullptr;
+        std::unique_ptr<DeviceArena> workspace;
+        cudaGraphExec_t graph = nullptr;
+        int wrong             = 0;
+    };
+
+    const auto make_case = [](std::int32_t experts) {
+        Case c;
+        c.label        = "streams q4 a8 E" + std::to_string(experts) + " k8 H1024 F64";
+        c.experts      = experts;
+        c.top_k        = 8;
+        c.hidden       = 1024;
+        c.inter        = 64;
+        c.shared_inter = 0;
+        c.gate_up      = QType::Q4_G64_FP16;
+        c.down         = QType::Q4_G64_FP16;
+        // A8: both stages on R8 where the banks take it (below), whose down stage combines in
+        // its epilogue (no shared expert).
+        c.expert_policy  = ops::LinearPolicy::AllowA8;
+        c.config.top_k   = 8;
+        c.router_bias    = false;
+        c.selection_bias = false;
+        c.expert_scale   = false;
+        c.expert_bias    = false;
+        c.shared_gate    = false;
+        c.epilogue       = ops::MoeEpilogue::Store;
+        return c;
+    };
+    const std::array<std::int32_t, 2> experts{128, 256};
+    // The two cases run together: a case filter selects the check when it matches either label.
+    if (filtering()) {
+        bool selected = false;
+        for (const std::int32_t e : experts)
+            selected = !filtered_out(make_case(e).label) || selected;
+        if (!selected) return 0;
+    }
+    int failures = 0;
+    std::array<Side, 2> sides;
+    const std::array<std::int32_t, 2> widths{1, 4};
+    for (std::size_t s = 0; s < sides.size(); ++s) {
+        Side& side              = sides[s];
+        side.c                  = make_case(experts[s]);
+        side.l                  = make_layer(side.c, 4100U + static_cast<std::uint32_t>(s));
+        side.t                  = widths[s];
+        const std::size_t bytes = static_cast<std::size_t>(side.t) * side.c.hidden * 2;
+        // The default plan with both stages on R8 (as check_r8 forces them), where both banks
+        // take R8 at T: the fused combine's run tickets too.
+        side.plan = mo::select_plan(side.l.weights, side.c.config, side.t, false);
+        if (side.t <= std::min(mo::r8_token_limit(side.l.weights.gate_up),
+                               mo::r8_token_limit(side.l.weights.down))) {
+            side.plan.gate_up_r8 = 0;
+            side.plan.down_r8    = 0;
+            side.plan.volta_hmma = false;
+        }
+        check(cudaStreamCreateWithFlags(&side.stream, cudaStreamNonBlocking), "stream");
+        side.workspace = std::make_unique<DeviceArena>(std::max<std::size_t>(
+            ops::moe_workspace_bytes(side.l.weights, side.c.config, side.t, side.t), 256));
+        for (int i = 0; i < kInputs; ++i) {
+            const auto x =
+                random_bf16(bytes / 2, 4200U + static_cast<std::uint32_t>(10 * s + i), -1.0, 1.0);
+            side.x.emplace_back(bytes);
+            side.x.back().copy_from_host(x.data(), bytes);
+            // The call alone (one stream, nothing beside it), against the oracle.
+            const Run run    = run_op(side.c, side.l, x, 0, side.t, {}, &side.plan);
+            const auto& plan = side.plan;
+            const std::string label =
+                side.c.label + " T=" + std::to_string(side.t) + " input " + std::to_string(i);
+            failures +=
+                compare_run(side.c, side.l, x, {}, 0, side.t, run, a8_stages(side.c, plan), label);
+            side.want.push_back(run.out);
+            if (i == 0) {
+                const bool simt = mo::moe_router_kernel(side.l.weights, side.c.config, plan,
+                                                        side.t) == mo::MoeRouterKernel::Simt;
+                std::cout << label << ": plan " << mo::plan_name(plan) << ", SIMT router "
+                          << (simt ? "yes" : "no") << ", routes in the router "
+                          << (simt && side.t * side.c.top_k <= 32 && !device_class().features.pdl
+                                  ? "yes"
+                                  : "no")
+                          << ", fused combine "
+                          << (plan.down_r8 >= 0 && mo::moe_r8_down_fuses_combine(
+                                                       side.l.weights, side.c.config, plan.down_r8)
+                                  ? "yes"
+                                  : "no")
+                          << '\n';
+            }
+        }
+        for (int i = 0; i < kCalls; ++i) side.out.emplace_back(bytes);
+    }
+    const auto enqueue = [&](Side& side, int call) {
+        Tensor tx(side.x[static_cast<std::size_t>(call % kInputs)].p, DType::BF16,
+                  {side.c.hidden, side.t});
+        Tensor tout(side.out[static_cast<std::size_t>(call)].p, DType::BF16,
+                    {side.c.hidden, side.t});
+        mo::moe_with_plan(tx, side.l.weights, side.c.config, side.c.epilogue, tout, *side.workspace,
+                          side.stream, side.plan);
+    };
+    const auto collect = [&](Side& side) {
+        check(cudaStreamSynchronize(side.stream), "streams sync");
+        for (int i = 0; i < kCalls; ++i) {
+            std::vector<std::uint16_t> got(static_cast<std::size_t>(side.t) * side.c.hidden);
+            // On the side's own stream: the legacy stream does not order with a non-blocking one.
+            check(cudaMemcpyAsync(got.data(), side.out[static_cast<std::size_t>(i)].p,
+                                  got.size() * 2, cudaMemcpyDeviceToHost, side.stream),
+                  "streams download");
+            check(cudaMemsetAsync(side.out[static_cast<std::size_t>(i)].p, 0xff, got.size() * 2,
+                                  side.stream),
+                  "streams poison");
+            check(cudaStreamSynchronize(side.stream), "streams download sync");
+            if (got != side.want[static_cast<std::size_t>(i % kInputs)]) ++side.wrong;
+        }
+    };
+    // Eager: the two streams' calls enqueued in turn, so their grids overlap.
+    for (int round = 0; round < kEager; ++round) {
+        for (int i = 0; i < kCalls; ++i) {
+            for (Side& side : sides) enqueue(side, i);
+        }
+        for (Side& side : sides) collect(side);
+    }
+    for (const Side& side : sides) {
+        std::cout << side.c.label << " T=" << side.t << ": " << side.wrong << " of "
+                  << kEager * kCalls << " eager calls beside the other stream differ from the call "
+                  << "alone (must be 0)\n";
+        failures += side.wrong != 0 ? 1 : 0;
+    }
+    // Graphs: each stream's kCalls calls captured once, both replayed together.
+    for (Side& side : sides) {
+        side.wrong        = 0;
+        cudaGraph_t graph = nullptr;
+        check(cudaStreamBeginCapture(side.stream, cudaStreamCaptureModeThreadLocal), "capture");
+        for (int i = 0; i < kCalls; ++i) enqueue(side, i);
+        check(cudaStreamEndCapture(side.stream, &graph), "end capture");
+        check(cudaGraphInstantiate(&side.graph, graph, nullptr, nullptr, 0), "instantiate");
+        check(cudaGraphDestroy(graph), "destroy graph");
+    }
+    for (int replay = 0; replay < kReplays; ++replay) {
+        for (Side& side : sides) check(cudaGraphLaunch(side.graph, side.stream), "replay");
+        for (Side& side : sides) collect(side);
+    }
+    for (Side& side : sides) {
+        std::cout << side.c.label << " T=" << side.t << ": " << side.wrong << " of "
+                  << kReplays * kCalls << " graph-replayed calls beside the other stream differ "
+                  << "from the call alone (must be 0)\n";
+        failures += side.wrong != 0 ? 1 : 0;
+        check(cudaGraphExecDestroy(side.graph), "destroy graph exec");
+        check(cudaStreamDestroy(side.stream), "destroy stream");
+    }
+    return failures;
+}
+
 // --part random0|random1|random2|layers runs one share of the cases, no argument all of them:
 // ctest runs the four shares apart (tests/ops/tests.cmake), 125 s in one process on the RTX 5090.
 // Every random case is still drawn in each share, so the generator's sequence never moves.
 int main(int argc, char** argv) {
     const std::string part = argc == 3 && std::string_view(argv[1]) == "--part" ? argv[2] : "";
     if (argc != 1 && part != "random0" && part != "random1" && part != "random2" &&
-        part != "layers" && part != "mx8" && part != "int8") {
-        std::cerr << "usage: ninferno_moe_test [--part random0|random1|random2|layers|mx8|int8]\n";
+        part != "layers" && part != "mx8" && part != "int8" && part != "streams") {
+        std::cerr << "usage: ninferno_moe_test "
+                     "[--part random0|random1|random2|layers|mx8|int8|streams]\n";
         return 2;
+    }
+    if (part == "streams") {
+        // Two layers' calls in flight on two streams at once (#882). Under a case filter it runs
+        // when the filter matches one of its two labels, and fails as any part without a
+        // matching case does otherwise.
+        if (!cuda_available()) return 77;
+        int failures = 0;
+        try {
+            failures += check_concurrent_streams();
+        } catch (const std::exception& e) {
+            std::cerr << "streams: " << e.what() << '\n';
+            ++failures;
+        }
+        if (!filter_matched(part)) return 1;
+        if (failures != 0) {
+            std::cerr << "moe streams: " << failures << " failure(s)\n";
+            return 1;
+        }
+        std::cout << "moe streams: OK\n";
+        return 0;
     }
     // int8: random0 with the MXFP4 banks on the int8 W4A8, which sm_120a builds otherwise leave
     // for the block-scaled MMA.
@@ -1830,6 +2085,7 @@ int main(int argc, char** argv) {
             std::cerr << "mx8: " << e.what() << '\n';
             ++failures;
         }
+        if (!filter_matched(part)) return 1;
         if (failures != 0) {
             std::cerr << "moe mx8: " << failures << " failure(s)\n";
             return 1;
@@ -2248,7 +2504,7 @@ int main(int argc, char** argv) {
                 if (ops::detail::generic::w4a8_supports(QType::NVFP4)) {
                     failures += check_w4a8(qwen3_like(), 116U, {17, 96});
                 }
-                if (ops::detail::generic::w4a4_schedule_count() > 0) {
+                if (!filtering() && ops::detail::generic::w4a4_schedule_count() > 0) {
                     namespace moe   = ops::detail::moe;
                     Case c          = qwen3_like();
                     c.expert_policy = ops::LinearPolicy::AllowA4;
@@ -2328,7 +2584,7 @@ int main(int argc, char** argv) {
             failures += check_table_plans();
             failures += check_tuner();
             // 4. Refusals.
-            {
+            if (!filtering()) {
                 Case c;
                 c.label        = "refusal";
                 c.experts      = 8;
@@ -2356,6 +2612,7 @@ int main(int argc, char** argv) {
         std::cerr << "moe test: unexpected exception: " << e.what() << '\n';
         return 1;
     }
+    if (!filter_matched(part)) return 1;
     if (failures != 0) {
         std::cerr << "moe: " << failures << " failure(s)\n";
         return 1;

@@ -13,9 +13,27 @@
 
 namespace ninferno {
 
+// The ints of an owning DeviceArena's ticket page (#889): last-block tickets of the ops that run
+// on the arena, outside its scoped region and its capacity(). Each ticket returns to zero when its
+// grid ends, so a page zeroed once at construction stays valid across calls, layers and graph
+// replays in the arena's stream order. Two layers share a slot: each leaves it at zero.
+inline constexpr std::size_t kArenaTicketInts = 1056;
+
+// The slots of the page: the generic MoE route ticket, the sparse MoE's D1 and S1 tickets, and
+// from kMoeCombine the fused combine's run tickets (ops/moe kCombineTickets of them).
+namespace arena_tickets {
+inline constexpr int kMoeRoute   = 0;
+inline constexpr int kSparseD1   = 1;
+inline constexpr int kSparseS1   = 2;
+inline constexpr int kMoeCombine = 32;
+} // namespace arena_tickets
+
 struct DeviceSpan {
     void* data        = nullptr;
     std::size_t bytes = 0;
+    // The ticket page of the arena the span was carved from (nullptr: none): an arena over the span
+    // inherits it (DeviceArena(DeviceSpan)).
+    int* ticket_page = nullptr;
 };
 
 // Owning device allocation for long-lived buffers. DeviceArena remains the
@@ -68,8 +86,10 @@ public:
         std::uint64_t saved_generation_ = 0;
     };
 
+    // Allocates capacity_bytes and the ticket page (zeroed here, outside any stream capture).
     explicit DeviceArena(std::size_t capacity_bytes);
-    // Non-owning arena over an already allocated device region.
+    // Non-owning arena over an already allocated device region; it shares storage.ticket_page,
+    // the page of the arena the region came from (none for a region of another origin).
     explicit DeviceArena(DeviceSpan storage);
     ~DeviceArena();
 
@@ -84,6 +104,10 @@ public:
     void reset() noexcept;
 
     void* base() const noexcept;
+
+    // kArenaTicketInts zeroed ints of this arena's own or its parent's ticket page (#889), or
+    // nullptr: an op then zeroes a ticket of its workspace in stream order before its grid.
+    [[nodiscard]] int* ticket_page() const noexcept { return tickets_; }
     std::size_t used() const noexcept;
     std::size_t capacity() const noexcept;
     std::size_t peak_used() const noexcept;
@@ -96,6 +120,8 @@ private:
     std::size_t peak_ = 0;
     std::uint64_t generation_ = 0;
     bool owns_        = true;
+    int* tickets_             = nullptr;
+    bool owns_tickets_        = false;
 };
 
 // A pin the driver refused (cudaMallocHost), with the bytes asked for: a caller sizing an
