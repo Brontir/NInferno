@@ -316,6 +316,18 @@ bool on_device(const void* p) {
     return a.type == cudaMemoryTypeDevice || a.type == cudaMemoryTypeManaged;
 }
 
+// An offloaded weight: its codes in pinned host memory (the engine's offload keeps them there for
+// the transfer). A described weight's stand-in address (route_query: never read) is unregistered
+// and is not one.
+bool host_resident(const void* p) {
+    cudaPointerAttributes a{};
+    if (cudaPointerGetAttributes(&a, p) != cudaSuccess) {
+        (void)cudaGetLastError();
+        return false;
+    }
+    return a.type == cudaMemoryTypeHost;
+}
+
 struct Bench {
     Call call;
     Tensor x, out;
@@ -786,9 +798,9 @@ static std::optional<Tuned> release_entry(const Problem& problem, const Weight& 
         return std::nullopt;
     }
     // A weight tune_dense records nothing for (offloaded, or another column order) runs the
-    // heuristic route after its first call, so it reads no entry before it either. A weight with
-    // no codes (a replay's description of the call) is not one.
-    if (weight.qdata != nullptr && (weight.k_order != nullptr || !on_device(weight.qdata))) {
+    // heuristic route after its first call, so it reads no entry before it either. A described
+    // weight (a replay's or a plan's query: a stand-in address, never read) is not one (#945).
+    if (weight.k_order != nullptr || (weight.qdata != nullptr && host_resident(weight.qdata))) {
         return std::nullopt;
     }
     std::lock_guard lock(g_mutex);
