@@ -76,6 +76,11 @@ fact int32_cycles_per_warp_instruction 2.01 clk
     "fact sm_clock_mhz_mma 1900.0 mhz\nfact shared_latency 29.5 clk\n" + \
     "fact l1_ldg32_cycles_per_sm 2.0 clk\nfact l2_ldg32_cycles_per_sm 8.4 clk\n" + \
     "fact l2_bytes_per_sm_clock 15.2 byte\n" + \
+    "".join(f"fact imma_{role}_{what} {v:.1f} clk\n"
+            for role, base in (("wide", 32.0), ("narrow", 16.0))
+            for what, v in (("cycles_per_partition", base), ("cycles_per_partition_w4", base * 1.4),
+                            ("cycles_per_partition_w8", base * 1.1),
+                            ("dependent_latency", base + 2.0))) + \
     "".join(f"fact lat_{op} {v:.1f} clk\n" for op, v in (
         ("imad", 4.5), ("add_chain", 4.0), ("lop3", 4.2), ("prmt", 4.4), ("shf", 4.5),
         ("hfma2", 5.0), ("ffma", 4.1), ("shfl", 24.0), ("cvt_i2f", 4.5), ("cvt_f2i", 12.0),
