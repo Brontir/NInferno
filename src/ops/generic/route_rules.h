@@ -832,6 +832,19 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "2.27 / 5.37 / 6.10 % (#613 PR-10); GA10x is left out (its issue floor overcounts, #960), "
      "GB20x has no SM-rate row the law can read",
      ""},
+    {"r8_law_format: the law's formats", Basis::Measured, "generic_select.cpp",
+     "case QType::GGML_IQ2_S: case QType::GGML_IQ2_XS: case QType::GGML_IQ2_XXS: case "
+     "QType::GGML_IQ3_S: case QType::GGML_IQ3_XXS: case QType::GGML_Q3_K: case "
+     "QType::GGML_Q6_K: return true;",
+     0, "ad102:128sm, ad104:60sm, ad106:34sm, gv100:80sm, tu102:68sm",
+     "RTX 4090, RTX 4070 Ti, RTX 4060 Ti, GV100, RTX 2080 Ti",
+     "the formats of the same T = 1 holdout grids (24 calls a format and board) on which the law's "
+     "mean regret was below the rules' on most boards: IQ2_S 5 of 5 (1.69 against 7.96 % pooled), "
+     "IQ2_XS 4 (2.03 / 5.10), IQ2_XXS 4 (1.75 / 2.86), IQ3_S 5 (2.24 / 5.17), IQ3_XXS 3 (2.08 / "
+     "2.81), Q3_K 3 (1.61 / 6.75), Q6_K 4 (1.03 / 6.27); Q4_K 2 of 5 (1.08 / 1.20) is left out, "
+     "and Qwen3.5-9B Q4_K_M's decode step lost 0.35 % (RTX 4070 Ti) to its picks there (#966); "
+     "formats the grids did not hold are not taken",
+     ""},
     {"rmma_narrow_fallback: narrow tiles", Basis::Unknown, "route_authorities.cpp",
      "for (const int n_tiles : {2, 1}) { const int index = rmma_index(4, 1, 1, n_tiles); const "
      "Route narrow{Family::RegisterMma, static_cast<std::uint8_t>(index)};",

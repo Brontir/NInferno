@@ -102,8 +102,8 @@ int heuristic_r8(const Problem& p, std::int32_t tokens);
 // The R8 decode schedule law's choice at one token (ops/generic/r8_law.h, #613 PR-10): the
 // schedule of least rank among those the device's kernel-facts snapshot holds, from the chip's
 // facts and each instance's counted SASS, no measurement. nullopt where it does not answer: a
-// generation it is not taken on (r8_law_generation), no snapshot or no row for the call, or a
-// term it cannot price.
+// generation or a format it is not taken on (r8_law_generation, r8_law_format), no snapshot or no
+// row for the call, or a term it cannot price.
 std::optional<int> law_r8(const Problem& p);
 // The law's choice where it outranks an entry carried from another board: nullopt where the law
 // does not answer, or where `carried` names a schedule the law could not price (a spilling
@@ -116,6 +116,12 @@ std::optional<int> law_r8_before(const Problem& p, std::optional<int> carried);
 // 9bdd25031). GA10x keeps the rules (its issue term overcounts the FMA pipe's work, #960), GB20x
 // has no SM-rate row (its transfer is refuted, the law abstains).
 [[nodiscard]] bool r8_law_generation(const DeviceClass& d) noexcept;
+// The formats the law decides at one token: those whose T = 1 holdout calls (24 a board, five
+// boards) it beat the rules on, on most of the boards: IQ2_S, IQ2_XS, IQ2_XXS, IQ3_S, IQ3_XXS,
+// Q3_K and Q6_K. Q4_K keeps the tables and the rules (the law beat them on two boards of five:
+// it takes eight warps where four are as fast or faster, #966), and a format the holdout did not
+// hold (Q5_K, the 32-value codecs, IQ4) is one no grid verified.
+[[nodiscard]] bool r8_law_format(QType q) noexcept;
 
 // The R8 decode table's entry for the exact problem (r8_decode_table.h), from the table of the
 // nearest measured board within kR8CarryDistance: the schedule, the board's distance to this

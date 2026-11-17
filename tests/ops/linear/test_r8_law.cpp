@@ -367,16 +367,18 @@ void check_selector_is_the_prediction() {
             const g::Problem p{f->q, ninferno::ops::LinearPolicy::AllowA8, n, k, e};
             const auto law        = g::law_r8(p);
             const std::string got = law ? schedule_name(*law) : "none";
-            expect(got == pick, std::string(b.name) + " " + call + ": the selector's law takes " +
+            // A format the law is not taken on (r8_law_format: Q4_K) answers nothing.
+            const std::string want = g::r8_law_format(f->q) ? pick : "none";
+            expect(got == want, std::string(b.name) + " " + call + ": the selector's law takes " +
                                     got + ", the frozen prediction " + pick);
-            agree += got == pick ? 1 : 0;
+            agree += got == want ? 1 : 0;
         }
         std::cout << b.name << ": the law is the frozen T=1 prediction on " << agree << " of "
                   << picks.size() << " calls\n";
         // A call no measured table holds (none has 4608 x 3584) takes the law at one token, and at
         // two the law is not asked (the selector may route it off R8: the vec rule).
         const auto at = [&](std::int32_t t) {
-            return g::route_answer_query(d, ninferno::QType::GGML_Q4_K,
+            return g::route_answer_query(d, ninferno::QType::GGML_Q6_K,
                                          ninferno::ops::LinearPolicy::AllowA8, g::Epilogue::Store,
                                          4608, 3584, t);
         };

@@ -934,6 +934,21 @@ bool r8_law_generation(const DeviceClass& d) noexcept {
     return (d.major == 8 && d.minor == 9) || (d.major == 7 && (d.minor == 0 || d.minor == 5));
 }
 
+bool r8_law_format(QType q) noexcept {
+    switch (q) {
+    case QType::GGML_IQ2_S:
+    case QType::GGML_IQ2_XS:
+    case QType::GGML_IQ2_XXS:
+    case QType::GGML_IQ3_S:
+    case QType::GGML_IQ3_XXS:
+    case QType::GGML_Q3_K:
+    case QType::GGML_Q6_K:
+        return true;
+    default:
+        return false;
+    }
+}
+
 namespace {
 
 // The law's choice and the schedules it priced (bit i: schedule i had a row and terms).
@@ -968,7 +983,7 @@ LawR8 law_r8_memo(const Problem& p) {
     try {
         device = device_class();
     } catch (const std::exception&) { return {}; } // a host build with no device
-    if (!r8_law_generation(device)) return {};
+    if (!r8_law_generation(device) || !r8_law_format(p.qtype)) return {};
 
     struct Memo {
         std::mutex mutex;
