@@ -786,7 +786,8 @@ namespace {
 // Before the rules, a decode call takes the entry for the exact problem in the table of the
 // nearest measured board (r8_decode_table.h), when that board is a variant of this one and the
 // R8 law does not answer for it (law_r8_before: on sm_89, sm_70 and sm_75 a carried entry yields
-// to the law, except where it names a schedule the law could not price): the
+// to the law, except where it names a schedule the law could not price or one it predicts no
+// slower than its own pick): the
 // codebook problems of Gemma 4 31B, Muse Glimmer 30B, Qwen3.6-35B-A3B and Qwen3.8-27B, and the
 // K-quant down projection of Qwen3.5-9B (4096x12288), where another schedule measured faster on
 // that board. A table carries to boards within kR8CarryDistance of it
@@ -940,6 +941,8 @@ namespace {
 struct LawR8 {
     std::optional<int> pick;
     std::uint32_t priced = 0;
+    // Each priced schedule's predicted time, max(bus, rank) (r8_law.h: total), in seconds.
+    std::array<double, 32> total{};
 };
 
 LawR8 law_r8_uncached(const Problem& p, const DeviceClass& device);
@@ -953,9 +956,20 @@ LawR8 law_r8_memo(const Problem& p);
 // substituted board's answers apart by the substitute's whole content (device_class_key).
 std::optional<int> law_r8(const Problem& p) { return law_r8_memo(p).pick; }
 
-std::optional<int> law_r8_before(const Problem& p, std::optional<int> carried) {
+std::optional<int> law_r8_before(const Problem& p, std::optional<int> carried, int rules) {
     const LawR8 law = law_r8_memo(p);
-    if (carried && (*carried < 0 || *carried >= 32 || (law.priced >> *carried & 1U) == 0)) {
+    if (!law.pick) return std::nullopt;
+    const auto priced = [&](int i) { return i >= 0 && i < 32 && (law.priced >> i & 1U) != 0; };
+    if (carried && !priced(*carried)) return std::nullopt;
+    // The other answer stands unless the law predicts it slower than its own pick: the law ranks
+    // on rank, but predicts total = max(bus, rank), and where every schedule is held at the bus
+    // (a bandwidth-bound decode call, every Qwen3.5-9B projection on the RTX 4070 Ti and the GV100)
+    // the totals tie and the rank below the bus orders nothing the law can see (#966: there its
+    // picks lost 45 to 57 us a token to the carried w4r1 entries, measured alone and in a step).
+    const int other = carried ? *carried : rules;
+    if (other == *law.pick) return law.pick;
+    if (priced(other) && law.total[static_cast<std::size_t>(other)] <=
+                             law.total[static_cast<std::size_t>(*law.pick)]) {
         return std::nullopt;
     }
     return law.pick;
@@ -1037,6 +1051,7 @@ LawR8 law_r8_uncached(const Problem& p, const DeviceClass& device) {
         };
         if (!t) continue;
         law.priced |= 1U << i;
+        law.total[static_cast<std::size_t>(i)] = t->total;
         if (!law.pick || t->rank < best_rank ||
             (t->rank == best_rank && order(i) < order(*law.pick))) {
             law.pick  = i;
@@ -1232,7 +1247,7 @@ int heuristic_r8(const Problem& p, std::int32_t tokens) {
         const auto tuned = tuned_r8(p);
         if (tuned && r8_hit_here(*tuned)) return tuned->schedule;
         const auto carried = tuned ? std::optional<int>(tuned->schedule) : std::nullopt;
-        if (const auto law = law_r8_before(p, carried)) return *law;
+        if (const auto law = law_r8_before(p, carried, rules_r8(p, 1))) return *law;
         if (tuned) return tuned->schedule;
     }
     return rules_r8(p, tokens);

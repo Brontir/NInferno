@@ -806,7 +806,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     {"heuristic_r8: the decode table's width", Basis::Structural, "generic_select.cpp",
      "if (tokens == 1) { const auto tuned = tuned_r8(p); if (tuned && r8_hit_here(*tuned)) return "
      "tuned->schedule; const auto carried = tuned ? std::optional<int>(tuned->schedule) : "
-     "std::nullopt; if (const auto law = law_r8_before(p, carried)) return *law; if (tuned) "
+     "std::nullopt; if (const auto law = law_r8_before(p, carried, rules_r8(p, 1))) return *law; "
+     "if (tuned) "
      "return tuned->schedule; }",
      1, kUnknown, kUnknown,
      "the same one-token gate as r8_schedule's, written again in the heuristic's own path; the "
@@ -815,7 +816,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      ""},
     {"r8_schedule: the law's width", Basis::Structural, "route_authorities.cpp",
      "const auto law = ask.tokens == 1 && !here ? law_r8_before(problem, hit ? "
-     "std::optional<int>(hit->schedule) : std::nullopt) : std::nullopt;",
+     "std::optional<int>(hit->schedule) : std::nullopt, r8_rules_route(problem, 1).schedule) : "
+     "std::nullopt;",
      1, kUnknown, kUnknown,
      "the R8 schedule law is asked at one token only, and only where this board's own table "
      "entry did not answer (here): its predictions were frozen and scored at T = 1 (#613 PR-10, "
@@ -848,7 +850,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "sweeps): won 41, lost 30 (to -22 %), +0.1 % in the mean; the comment names a 4090 D and a "
      "3090 Ti (0.17, 0.14) as boards that take their tables, as a consequence of the bound, with "
      "no timing (on sm_89, sm_70 and sm_75 a carried entry now yields to the R8 law, "
-     "law_r8_before, except where it names a schedule the law could not price); nothing places "
+     "law_r8_before, except where it names a schedule the law could not price or predicts no "
+     "slower than its own pick); nothing places "
      "the 0.5",
      ""},
     {"kCarryDistance", Basis::Unknown, "../../core/measured_boards.h",

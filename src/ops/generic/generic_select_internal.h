@@ -105,11 +105,13 @@ int heuristic_r8(const Problem& p, std::int32_t tokens);
 // generation it is not taken on (r8_law_generation), no snapshot or no row for the call, or a
 // term it cannot price.
 std::optional<int> law_r8(const Problem& p);
-// The law's choice where it outranks an entry carried from another board: nullopt where the law
-// does not answer, or where `carried` names a schedule the law could not price (a spilling
-// instance it skips: Q6_K SwiGLU w4r2 and w8r2 on sm_89), which then stands. Without a carried
-// entry, law_r8.
-std::optional<int> law_r8_before(const Problem& p, std::optional<int> carried);
+// The law's choice where it outranks the call's other answer: the entry carried from another
+// board, else the rules' schedule `rules` (rules_r8 at one token). nullopt, and the other answer
+// stands, where the law does not answer, where `carried` names a schedule the law could not price
+// (a spilling instance it skips: Q6_K SwiGLU w4r2 and w8r2 on sm_89), or where the law's predicted
+// time (r8_law.h total, max(bus, rank)) of the other answer is no longer than its pick's: a
+// bandwidth-bound call, every schedule at the bus, is a tie the law does not break (#966).
+std::optional<int> law_r8_before(const Problem& p, std::optional<int> carried, int rules);
 
 // Where the law decides at one token: Ada (sm_89), Volta (sm_70) and Turing (sm_75), the
 // generations whose unread holdout grids it beat the rules on (#613, predictions frozen at

@@ -373,19 +373,26 @@ void check_selector_is_the_prediction() {
         }
         std::cout << b.name << ": the law is the frozen T=1 prediction on " << agree << " of "
                   << picks.size() << " calls\n";
-        // A call no measured table holds (none has 4608 x 3584) takes the law at one token, and at
-        // two the law is not asked (the selector may route it off R8: the vec rule).
+        // A call no measured table holds (none has 4608 x 3584) takes the law at one token where
+        // the law predicts the rules' schedule slower (law_r8_before), else the rules, and at two
+        // the law is not asked (the selector may route it off R8: the vec rule).
         const auto at = [&](std::int32_t t) {
             return g::route_answer_query(d, ninferno::QType::GGML_Q4_K,
                                          ninferno::ops::LinearPolicy::AllowA8, g::Epilogue::Store,
                                          4608, 3584, t);
         };
+        const g::Problem free_call{ninferno::QType::GGML_Q4_K, ninferno::ops::LinearPolicy::AllowA8,
+                                   4608, 3584, g::Epilogue::Store};
+        const auto before =
+            g::law_r8_before(free_call, std::nullopt, g::r8_rules_route(free_call, 1).schedule);
         const auto one = at(1);
         const auto two = at(2);
-        expect(one && one->evidence.source == "r8-law" &&
-                   one->evidence.kind == g::Evidence::Kind::Ranker &&
-                   one->evidence.ranker == g::Evidence::Ranker::Cost,
-               std::string("T=1 evidence is not the law's: ") + b.name + " " +
+        expect(one && (before ? one->evidence.source == "r8-law" &&
+                                    one->evidence.kind == g::Evidence::Kind::Ranker &&
+                                    one->evidence.ranker == g::Evidence::Ranker::Cost &&
+                                    one->route.schedule == *before
+                              : one->evidence.source == "r8-rules"),
+               std::string("T=1 evidence is not law_r8_before's: ") + b.name + " " +
                    (one ? g::evidence_text(one->evidence) : std::string("none")));
         expect(two && two->evidence.source != "r8-law",
                std::string("T=2 evidence is the law's: ") + b.name + " " +
@@ -495,8 +502,9 @@ void check_evidence_paths() {
 
 // law_r8_before: where the law decides (an RTX 4090 D: Ada, no table of its own), an entry carried
 // from another board that names a schedule the law could not price (a spilling instance: Q6_K
-// SwiGLU's w4r2 and w8r2 on sm_89) stands, and one naming the law's own pick yields to it; without
-// a carried entry it is law_r8.
+// SwiGLU's w4r2 and w8r2 on sm_89) stands, one naming the law's own pick is the law's, and an
+// answer the law predicts no slower than its pick (a bandwidth-bound call: every schedule's total
+// is the bus's) stands (#966).
 void check_law_before() {
     const ninferno::DeviceClass d =
         g::board_device_class(g::registry_facts_board("rtx4090d", 0x2685));
@@ -506,21 +514,35 @@ void check_law_before() {
     const auto law = g::law_r8(p);
     expect(law.has_value(), "rtx4090d Q6_K SwiGLU 12288x4096: the law does not answer");
     if (!law) return;
-    expect(g::law_r8_before(p, std::nullopt) == law, "law_r8_before without a carried entry");
-    expect(g::law_r8_before(p, *law) == law,
-           "a carried entry naming the law's pick does not yield");
+    expect(g::law_r8_before(p, std::nullopt, *law) == law,
+           "law_r8_before: rules naming the law's pick");
+    expect(g::law_r8_before(p, *law, 0) == law, "a carried entry naming the law's pick");
     int spilling = 0;
     for (int i = 0; i < g::r8_schedule_count(); ++i) {
         const auto key   = g::r8_kernel_key(i, p.qtype, p.epilogue, 1, false);
         const auto facts = key ? g::kernel_facts::r8_facts("89", *key) : std::nullopt;
         if (!facts || facts->spill_bytes() == 0) continue;
         ++spilling;
-        expect(!g::law_r8_before(p, i),
+        expect(!g::law_r8_before(p, i, *law),
                "a carried " + schedule_name(i) +
                    " the law could not price (it spills) yields to the law");
     }
     expect(spilling > 0,
            "no spilling Q6_K SwiGLU R8 instance on sm_89: the case this checks is gone");
+    // Q5_K store 4096 x 4096 (Qwen3.5-9B's ssm_out) is held at the bus on every schedule: the
+    // other answer stands, whichever priced schedule it names.
+    const g::Problem bus{ninferno::QType::GGML_Q5_K, ninferno::ops::LinearPolicy::AllowA8, 4096,
+                         4096, g::Epilogue::Store};
+    const auto bus_law = g::law_r8(bus);
+    expect(bus_law.has_value(), "rtx4090d Q5_K 4096x4096: the law does not answer");
+    for (int i = 0; bus_law && i < g::r8_schedule_count(); ++i) {
+        if (i == *bus_law) continue;
+        expect(!g::law_r8_before(bus, std::nullopt, i),
+               "a bandwidth-bound call: rules naming " + schedule_name(i) + " yield to the law's " +
+                   schedule_name(*bus_law));
+        expect(!g::law_r8_before(bus, i, *bus_law),
+               "a bandwidth-bound call: a carried " + schedule_name(i) + " yields to the law");
+    }
 }
 
 } // namespace

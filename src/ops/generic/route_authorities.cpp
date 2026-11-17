@@ -292,9 +292,9 @@ std::optional<RouteAnswer> cost_model(const Ask& ask, const Problem& problem,
 
 // R8 for decode and for the verify of the formats with an R8 codec (r8_call): at one token the
 // entry of this board's own decode table (tuned_r8 at distance 0), else the R8 schedule law where
-// it answers (law_r8: a counted ranker, "r8-law"), else the entry carried from the nearest
-// measured board (within kR8CarryDistance), else the R8 rules (r8_rules_route): measured here,
-// then the ranker, then carried (#622).
+// it answers and predicts the other answer slower (law_r8_before: a counted ranker, "r8-law"),
+// else the entry carried from the nearest measured board (within kR8CarryDistance), else the R8
+// rules (r8_rules_route): measured here, then the ranker, then carried (#622).
 std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
                                        const Weight& weight) {
     if (!r8_call(problem, weight, ask.tokens)) return std::nullopt;
@@ -302,7 +302,8 @@ std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
     const bool here = hit && r8_hit_here(*hit);
     const auto law =
         ask.tokens == 1 && !here
-            ? law_r8_before(problem, hit ? std::optional<int>(hit->schedule) : std::nullopt)
+            ? law_r8_before(problem, hit ? std::optional<int>(hit->schedule) : std::nullopt,
+                            r8_rules_route(problem, 1).schedule)
             : std::nullopt;
     if (law) hit.reset(); // a carried entry yields to the law
     RouteAnswer answer =
