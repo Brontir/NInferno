@@ -170,6 +170,26 @@ function(ninferno_define_redirects)
       NINFERNO_REDIRECT_STATIC ninferno_${m}
       NINFERNO_REDIRECT_SHARED ninferno_ops_shared)
   endforeach()
+  # The selector's host objects (ninferno_ops_host, src/ops/generic/host_sources.cmake) are not a
+  # member: ninferno_ops holds the same objects. A library that links them for a host-only consumer
+  # (the choice, #613 PR-5) links ninferno::ops_host, which on a shared-library test resolves to the
+  # library, whose ninferno_ops holds them, so that test holds one copy of their state (the
+  # kernel-facts cache, the MMQ switch); everywhere else to the archive.
+  if(TARGET ninferno_ops_host)
+    if(NOT NINFERNO_SHARED_OP_TESTS)
+      add_library(ninferno::ops_host ALIAS ninferno_ops_host)
+    else()
+      add_library(ninferno::ops_host INTERFACE IMPORTED GLOBAL)
+      set(shared "$<BOOL:$<TARGET_PROPERTY:NINFERNO_SHARED_OPS>>")
+      set_property(TARGET ninferno::ops_host PROPERTY INTERFACE_LINK_LIBRARIES
+        "$<${shared}:ninferno_ops_shared>"
+        "$<IF:${shared},$<COMPILE_ONLY:ninferno_ops_host>,ninferno_ops_host>")
+      set_target_properties(ninferno::ops_host PROPERTIES
+        NINFERNO_REDIRECT_KEY NINFERNO_SHARED_OPS
+        NINFERNO_REDIRECT_STATIC ninferno_ops_host
+        NINFERNO_REDIRECT_SHARED ninferno_ops_shared)
+    endif()
+  endif()
 endfunction()
 
 # The link closure of `root` as its link line holds it: every target and name it reaches, each

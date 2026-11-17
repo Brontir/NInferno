@@ -7,9 +7,10 @@ add_library(ninferno_product_choice STATIC
   choice/choice_replay.cpp
 )
 ninferno_internal_includes(ninferno_product_choice)
-# The selector's host objects (ninferno_ops_host): the counted MMQ unit the choice prices ggml's
-# matrix kernel by, the same function as the selector's (ops/generic/mmq_unit.h, #613 PR-5).
-target_link_libraries(ninferno_product_choice PUBLIC ninferno::core_host ninferno::json ninferno_ops_host)
+# The selector's host objects (ninferno::ops_host, its redirect: one copy on a shared-library test):
+# the counted MMQ unit the choice prices ggml's matrix kernel by, the same function as the
+# selector's (ops/generic/mmq_unit.h, #613 PR-5).
+target_link_libraries(ninferno_product_choice PUBLIC ninferno::core_host ninferno::json ninferno::ops_host)
 
 if(NINFERNO_DECISIONS_ONLY)
   return()
