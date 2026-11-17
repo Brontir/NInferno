@@ -323,6 +323,11 @@ def parse_run(text):
     missing = [f for f in FACTS if f not in facts and owed_fact(f, owed, cc)]
     if missing or not ended or not checked:
         raise ValueError(f"incomplete run: missing {missing}, ended={ended}, selfcheck={checked}")
+    # An int8 MMA fact on a card without int8 MMA (sm_70) is impossible: a stale or edited file.
+    unowed = [f for f in PROBE_19_FACTS
+              if f in facts and cc is not None and cc < IMMA_SINCE_CC]
+    if unowed:
+        raise ValueError(f"facts this card cannot have (cc {cc}): {unowed}")
     if failures:
         raise ValueError("the probe's self-check failed: " + "; ".join(failures))
     for k in HEADER + tuple(k for k, since in HEADER_SINCE.items() if since <= owed):

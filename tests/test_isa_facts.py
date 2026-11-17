@@ -162,6 +162,14 @@ class IsaFacts(unittest.TestCase):
             self.assertTrue(ip.owed_fact(name, 19, None), name)
         self.assertTrue(ip.owed_fact("shared_latency", 19, 70))
 
+    def test_imma_facts_refused_on_sm_70(self):
+        # A probe-19 sm_70 file with int8 MMA lines (stale or edited) is refused, not merged.
+        text = SAMPLE.replace("cc 89", "cc 70")
+        if "cc 70" not in text:
+            self.skipTest("the sample names no cc line")
+        with self.assertRaisesRegex(ValueError, "cannot have"):
+            ip.parse_run(text)
+
     def test_parse_and_row(self):
         head, facts = ip.parse_run(SAMPLE)
         self.assertEqual(head["card"], "NVIDIA GeForce RTX 4090")
@@ -191,6 +199,8 @@ class IsaFacts(unittest.TestCase):
             .replace("fact mma_cycles_per_partition 32.048", "fact mma_cycles_per_partition 8.056") \
             .replace("fact tensor_flops_per_sm_clock 511.233", "fact tensor_flops_per_sm_clock 254.220") \
             .replace("arch sm_89", "arch sm_70").replace("sass_per_mma 1", "sass_per_mma 4")
+        # sm_70 has no int8 MMA: its run prints no imma facts.
+        volta = "\n".join(l for l in volta.split("\n") if not l.startswith("fact imma_"))
         head, facts = ip.parse_run(volta)
         row = ip.row_of(head, facts, "isa_probe_70.txt")
         self.assertEqual(row["mma_flops"], 2048)
