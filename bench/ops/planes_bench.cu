@@ -13,8 +13,9 @@
 // (The first runs, 17.11, used one 32-value group a lane, kb = lane + 32 i, which is not R8's
 // mapping, and a memset-only flush; the #979 review found both, and the runs were redone. The
 // second runs used all 32 lanes on one row and a fixed planes-then-interleaved order; codex found
-// both (R8 puts 16 lanes on a row at K 4096), and the runs were redone with ABBA rounds; the
-// fourth runs write the eviction buffer once, not before every sample.)
+// both (R8 puts 16 lanes on a row at K 4096), and the third runs took ABBA rounds; the fourth
+// runs write the eviction buffer once, not before every sample. One row a lane group and one
+// set: R8's GateUp keeps two sets in flight, so this is a layout test, not an end-to-end time.)
 #include <cuda_runtime.h>
 
 #include <algorithm>
@@ -160,6 +161,7 @@ int main(int argc, char** argv) {
         for (int r = 0; r < repeat + 2; ++r) {
             read_kernel<<<4 * prop.multiProcessorCount, 256>>>(
                 reinterpret_cast<const uint4*>(flush), flush_bytes / 16, out);
+            CHECK(cudaGetLastError()); // a flush launch error named here, not at the timed kernel
             CHECK(cudaEventRecord(a));
             if (interleaved)
                 loads_kernel<true><<<grid, block>>>(p, inter, rows, groups, lanes, out);
@@ -173,7 +175,8 @@ int main(int argc, char** argv) {
             if (r >= 2) ms.push_back(t);
         }
         std::sort(ms.begin(), ms.end());
-        return ms[ms.size() / 2];
+        const std::size_t m = ms.size();
+        return m % 2 ? ms[m / 2] : 0.5f * (ms[m / 2 - 1] + ms[m / 2]); // the median
     };
     // ABBA rounds (planes first, then interleaved first, ...), so a drift of clocks or heat over
     // the run falls on both layouts alike; the median of four rounds is the mean of the middle two.
