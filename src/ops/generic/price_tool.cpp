@@ -486,8 +486,9 @@ int run(const Options& o) {
     if ((o.registers || o.local_bytes > 0) && !heavy) {
         std::printf("kernel facts given but not read: the plain form prices by threads alone\n");
     } else if (o.registers || o.local_bytes > 0) {
-        std::printf("kernel facts given: %s registers, %.0f local bytes per thread\n",
-                    o.registers ? std::to_string(*o.registers).c_str() : "unset", o.local_bytes);
+        std::printf("kernel facts given: %s registers, %.0f local bytes per thread%s\n",
+                    o.registers ? std::to_string(*o.registers).c_str() : "unset", o.local_bytes,
+                    cal.rmma_counted_law ? " (the snapshot's for the rest, the counted law)" : "");
     } else if (heavy && cal.rmma_counted_law) {
         std::printf("kernel facts: the snapshot's, as the selector reads them (the counted law)\n");
     } else if (heavy) {
@@ -583,8 +584,8 @@ int run(const Options& o) {
         kernel.k_step  = static_cast<double>(generic::rmma_step_values(qtype, o.k));
         kernel.heavy   = heavy;
         // The instance's static shared memory by the geometry rule; the selector reads the
-        // compiled whole where it reads the kernel's facts (the heavy form), which this replica is
-        // not given.
+        // compiled whole where it reads the kernel's facts (the heavy form), which this replica
+        // takes too under the counted law (below).
         kernel.shared_bytes = kr::register_mma_static_shared_bytes(
             generic::rmma_geometry_decoder(qtype), s.warps_m, s.warps_k, s.m_tiles, s.n_tiles,
             s.cluster, o.epilogue == Epilogue::SwiGlu, d.major * 10 + d.minor);

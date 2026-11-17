@@ -1425,23 +1425,24 @@ void check_price_counted_law() {
         price_stdout({"--board", board_id(*board), "--format", "q4_k", "--n", "4096", "--k", "4096",
                       "--t", "64", "--rmma-counted-law", "on"},
                      rc);
-    long rows = 0, differ = 0;
+    long rows = 0, differ = 0, equal = 0;
     for (std::size_t at = text.find("\nrmma:"); at != std::string::npos;
          at             = text.find("\nrmma:", at + 1)) {
         const std::size_t end  = text.find("\n", at + 1);
         const std::string line = text.substr(at + 1, end - at - 1);
         ++rows;
+        if (line.find(" = ") != std::string::npos) ++equal;
         if (line.find(" != ") != std::string::npos || line.find(" !=") == line.size() - 3) {
             std::fprintf(stderr, "FAIL: price --rmma-counted-law on: %s\n", line.c_str());
             ++differ;
         }
     }
-    std::printf("price counted law: %d of %d Q4_K schedules counted, %ld rmma rows, %ld differ, "
-                "rc %d\n",
-                counted, g::rmma_schedule_count(), rows, differ, rc);
+    std::printf("price counted law: %d of %d Q4_K schedules counted, %ld rmma rows, %ld equal, "
+                "%ld differ, rc %d\n",
+                counted, g::rmma_schedule_count(), rows, equal, differ, rc);
     if (counted == 0) std::fprintf(stderr, "FAIL: no Q4_K schedule has its loop counted\n");
-    if (rows == 0) std::fprintf(stderr, "FAIL: price printed no rmma row\n");
-    if (counted == 0 || rows == 0 || differ > 0 || rc != 0) ++failures;
+    if (equal == 0) std::fprintf(stderr, "FAIL: no rmma row compared equal to the selector\n");
+    if (counted == 0 || equal == 0 || differ > 0 || rc != 0) ++failures;
 }
 
 int main() {
