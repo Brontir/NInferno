@@ -409,10 +409,12 @@ void count_reproduced_entries() {
         const auto* b = std::find_if(std::begin(kTableBoards), std::end(kTableBoards),
                                      [&](const auto& x) { return x.first == t.gpu; });
         if (b == std::end(kTableBoards)) {
-            // Only a table this map names can be held; a law generation's table must be named.
-            const bool law_chip = t.gpu.rfind("ad10", 0) == 0 || t.gpu.rfind("tu10", 0) == 0 ||
-                                  t.gpu.rfind("gv10", 0) == 0;
-            expect(!law_chip,
+            // Only a table this map names can be held; a table on a generation the law decides
+            // on (its own board's, r8_law_generation) must be named.
+            ninferno::DeviceClass on;
+            on.major = t.board.major;
+            on.minor = t.board.minor;
+            expect(!g::r8_law_generation(on),
                    std::string(t.gpu) + ": a law generation's table the test does not map");
             continue;
         }

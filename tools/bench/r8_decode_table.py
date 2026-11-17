@@ -244,8 +244,8 @@ def add_check_holds(key, best, add_runs):
 
 
 def read_retired(path):
-    """{(gpu, (qtype, epilogue, n, k))} of a --retire file."""
-    out = set()
+    """{(gpu, (qtype, epilogue, n, k)): (warps, rows)} of a --retire file."""
+    out = {}
     for number, line in enumerate(open(path, encoding="utf-8"), 1):
         line = line.split("#", 1)[0].strip()
         if not line:
@@ -253,23 +253,32 @@ def read_retired(path):
         fields = line.split()
         if len(fields) != 7:
             sys.exit(f"{path}:{number}: not GPU QTYPE EPILOGUE N K WARPS ROWS: {line}")
-        gpu, qtype, epilogue, n, k = fields[:5]
-        out.add((gpu, (qtype, epilogue, int(n), int(k))))
+        gpu, qtype, epilogue, n, k, warps, rows = fields
+        try:
+            out[(gpu, (qtype, epilogue, int(n), int(k)))] = (int(warps), int(rows))
+        except ValueError:
+            sys.exit(f"{path}:{number}: N K WARPS ROWS are integers: {line}")
     return out
 
 
 def retire(tables, retired):
-    """The tables without the retired entries; a retired entry no table holds stops the tool."""
+    """The tables without the retired entries. A retired entry no table holds stops the tool, and
+    so does one whose schedule is not the listed one (a new sweep measured another best there: the
+    list no longer names what the law reproduces, so the entry is not dropped silently)."""
     found, out = set(), []
     for gpu, sweeps, rows, board in tables:
         kept = []
         for key, line in rows:
             if (gpu, key) in retired:
+                m = ENTRY.match(line)
+                if not m or (int(m.group(5)), int(m.group(6))) != retired[(gpu, key)]:
+                    sys.exit(f"--retire: {gpu} {key} is listed as w{retired[(gpu, key)][0]}"
+                             f"r{retired[(gpu, key)][1]} but the table holds: {line}")
                 found.add((gpu, key))
             else:
                 kept.append((key, line))
         out.append((gpu, sweeps, kept, board))
-    missing = sorted(retired - found)
+    missing = sorted(set(retired) - found)
     if missing:
         sys.exit("--retire lists entries no table holds: " + "; ".join(f"{g} {k}" for g, k in missing))
     return out

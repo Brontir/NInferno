@@ -251,6 +251,18 @@ class Retire(unittest.TestCase):
             self.run_tool("gb202:170sm GGML_Q6_K Store 7 7 4 1\n")
         self.assertIn("no table holds", str(raised.exception))
 
+    def test_a_listed_schedule_the_table_does_not_hold_stops(self):
+        entries, _ = tool.read_header(str(self.HEADER))["gb202:170sm"]
+        key = sorted(entries)[0]
+        with self.assertRaises(SystemExit) as raised:
+            self.run_tool(f"gb202:170sm {key[0]} {key[1]} {key[2]} {key[3]} 16 8\n")
+        self.assertIn("is listed as w16r8", str(raised.exception))
+
+    def test_a_line_without_the_schedule_is_refused(self):
+        with self.assertRaises(SystemExit) as raised:
+            self.run_tool("gb202:170sm GGML_IQ2_S Store 4096 2048\n")
+        self.assertIn("not GPU QTYPE EPILOGUE N K WARPS ROWS", str(raised.exception))
+
     def test_the_committed_table_holds_no_retired_entry(self):
         held = tool.read_header(str(self.HEADER))
         listing = self.HEADER.parents[3] / "tools" / "bench" / "data" / "r8_law_retired.txt"
