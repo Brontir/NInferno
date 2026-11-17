@@ -158,10 +158,13 @@ inline constexpr bool kCompletenessTerms = false;
 // slice (kMmqEfficiency, kMmqChainK, kMmqChainCycles, kMmqSliceSeconds below; what the selector
 // goldens hold); true, the counted unit of ops/generic/mmq_unit.h (the kernel's SASS counts, the
 // arch's isa_probe facts, the board's facts) times the launch's units, where every input is known,
-// and the fitted slice where one is missing. One switch a binary, as kRmmaCountedLaw; a test flips
-// it for its process (mmq_unit::counted_for_test, mmq_unit.h). It ships false until the A/B on
-// the RTX 3060 and 4090 (#613 PR-5).
-inline constexpr bool kMmqCountedUnit = false;
+// and the fitted slice where one is missing (every format but Q4_K, Q5_K and Q6_K:
+// mmq_unit::scored). One switch a binary, as kRmmaCountedLaw; a test flips it for its process
+// (mmq_unit::counted_for_test, mmq_unit.h). On since the A/B on the RTX 3060 and 4090 (#613 PR-5,
+// 17.11): Qwen3.5-9B prefill at 512-8192 tokens moved -0.21..+0.35 %, inside the noise, and the
+// sealed grids scored the counted unit 10.5 % (RTX 5070 Ti) / 14.3 % (RTX 4070 Ti) against the
+// fitted slice's 15.4 % / 12.0 %.
+inline constexpr bool kMmqCountedUnit = true;
 // The activation quantizers' DRAM bytes per value, counted from their kernels and static_asserted
 // there against the block each thread writes:
 //   W4A8 (generic_w4a8.cu w4a8_quantize_kernel): a thread a 32-value block reads 64 B of BF16 and
