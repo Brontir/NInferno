@@ -1403,6 +1403,28 @@ void check_l1_latency() {
     if (rows < 5) fail("fewer than five ISA rows with an L1 latency");
 }
 
+// The price tool's K-loop counts under the counted law (#613 PR-7a review): rmma_loop_query reads
+// what price_routes hands the law, so on a board whose release snapshot holds the Q4_K register-MMA
+// instances some schedule has its loop counted.
+void check_rmma_loop_query() {
+    const g::FactsBoard* board = facts_board("rtx4090");
+    if (!board) {
+        std::fprintf(stderr, "FAIL: no rtx4090 board\n");
+        ++failures;
+        return;
+    }
+    const DeviceClass d = g::board_device_class(*board);
+    int counted         = 0;
+    for (int i = 0; i < g::rmma_schedule_count(); ++i) {
+        const auto loop =
+            g::rmma_loop_query(d, i, QType::GGML_Q4_K, g::Epilogue::Store, 4096, 4096, 64);
+        if (loop && loop->loops >= 1) ++counted;
+    }
+    std::printf("rmma loop query: %d of %d Q4_K schedules counted on the rtx4090\n", counted,
+                g::rmma_schedule_count());
+    if (counted == 0) ++failures;
+}
+
 int main() {
     check_golden();
     check_l1_latency();
@@ -1416,6 +1438,7 @@ int main() {
     check_price_admitted();
     check_price_arguments();
     check_price_a8_rows();
+    check_rmma_loop_query();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;
