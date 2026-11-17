@@ -215,5 +215,48 @@ class StepAB(unittest.TestCase):
         self.assertIn("Verdict: no slower", text)
 
 
+class Retire(unittest.TestCase):
+    """--retire drops the entries the R8 law reproduces (#613 PR-10) from a --merge header with no
+    sweeps; an entry the tables do not hold stops the tool."""
+
+    HEADER = Path(__file__).resolve().parents[1] / "src" / "ops" / "generic" / "r8_decode_table.h"
+
+    def run_tool(self, retired):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        listing, out = Path(tmp.name) / "retired.txt", Path(tmp.name) / "table.h"
+        listing.write_text("# a comment\n" + retired)
+        argv, sys.argv = sys.argv, ["r8_decode_table.py", "--merge", str(self.HEADER), "--retire",
+                                    str(listing), "--out", str(out)]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                tool.main()
+        finally:
+            sys.argv = argv
+        return tool.read_header(str(out))
+
+    def test_drops_the_listed_entry_and_keeps_the_rest(self):
+        before = tool.read_header(str(self.HEADER))
+        entries, _ = before["gb202:170sm"]
+        key = sorted(entries)[0]
+        after = self.run_tool(f"gb202:170sm {key[0]} {key[1]} {key[2]} {key[3]}\n")
+        self.assertNotIn(key, after["gb202:170sm"][0])
+        self.assertEqual(len(after["gb202:170sm"][0]), len(entries) - 1)
+        for gpu, (rows, board) in before.items():
+            if gpu != "gb202:170sm":
+                self.assertEqual(after[gpu], (rows, board))
+
+    def test_an_entry_no_table_holds_stops(self):
+        with self.assertRaises(SystemExit) as raised:
+            self.run_tool("gb202:170sm GGML_Q6_K Store 7 7\n")
+        self.assertIn("no table holds", str(raised.exception))
+
+    def test_the_committed_table_holds_no_retired_entry(self):
+        held = tool.read_header(str(self.HEADER))
+        listing = self.HEADER.parents[3] / "tools" / "bench" / "data" / "r8_law_retired.txt"
+        for gpu, key in tool.read_retired(str(listing)):
+            self.assertNotIn(key, held[gpu][0], f"{gpu} {key} is retired but in the table")
+
+
 if __name__ == "__main__":
     unittest.main()

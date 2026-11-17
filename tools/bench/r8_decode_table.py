@@ -19,6 +19,12 @@ projection as an add call); r8_sweep_summary.py reports the same check.
 --merge HEADER keeps HEADER's entries (another format family's sweeps, another GPU's) for every
 problem the given sweeps of that GPU did not measure; a measured problem takes the new verdict.
 
+--retire FILE drops the entries FILE lists ("GPU QTYPE EPILOGUE N K" a line, the header's spelling,
+# comments): the entries the R8 schedule law reproduces on their own board (#613 PR-10,
+tools/bench/data/r8_law_retired.txt), which the law answers before any carried entry. With
+--merge and no sweeps it rewrites the merged header without them. A listed entry the tables do not
+hold stops the tool.
+
 Each table names the board its sweeps ran on by PCI id, which the bench's "board" line prints
 (`pci 0x2684`), and the header reads its facts from the registry
 (`measured::board_of_pci(0x2684)`, core/measured_boards.h): no board's facts are written here
@@ -237,6 +243,38 @@ def add_check_holds(key, best, add_runs):
             and all(b < r for b, r in pairs))
 
 
+def read_retired(path):
+    """{(gpu, (qtype, epilogue, n, k))} of a --retire file."""
+    out = set()
+    for number, line in enumerate(open(path, encoding="utf-8"), 1):
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        fields = line.split()
+        if len(fields) != 5:
+            sys.exit(f"{path}:{number}: not GPU QTYPE EPILOGUE N K: {line}")
+        gpu, qtype, epilogue, n, k = fields
+        out.add((gpu, (qtype, epilogue, int(n), int(k))))
+    return out
+
+
+def retire(tables, retired):
+    """The tables without the retired entries; a retired entry no table holds stops the tool."""
+    found, out = set(), []
+    for gpu, sweeps, rows, board in tables:
+        kept = []
+        for key, line in rows:
+            if (gpu, key) in retired:
+                found.add((gpu, key))
+            else:
+                kept.append((key, line))
+        out.append((gpu, sweeps, kept, board))
+    missing = sorted(retired - found)
+    if missing:
+        sys.exit("--retire lists entries no table holds: " + "; ".join(f"{g} {k}" for g, k in missing))
+    return out
+
+
 def table_name(gpu):
     chip, _, variant = gpu.partition(":")
     return "kR8Decode" + chip[:1].upper() + chip[1:] + ("_" + variant if variant else "")
@@ -247,8 +285,11 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--min-gain", type=float, default=0.005)
     parser.add_argument("--merge", help="keep this header's entries for unmeasured problems")
-    parser.add_argument("sweeps", nargs="+", help="GPU=FILE[,FILE...], GPU as 'gb202:170sm'")
+    parser.add_argument("--retire", help="drop the entries this file lists (the R8 law's)")
+    parser.add_argument("sweeps", nargs="*", help="GPU=FILE[,FILE...], GPU as 'gb202:170sm'")
     args = parser.parse_args()
+    if not args.sweeps and not args.merge:
+        parser.error("no sweeps and no --merge header")
 
     old = read_header(args.merge) if args.merge else {}
     tables = []
@@ -275,6 +316,8 @@ def main():
         if board is None:
             sys.exit(f"{gpu}: the --merge header records no board")
         tables.append((gpu, 0, list(entries.items()), board))
+    if args.retire:
+        tables = retire(tables, read_retired(args.retire))
     known = registry_rows()
     for gpu, _, _, board in tables:
         if board not in known:

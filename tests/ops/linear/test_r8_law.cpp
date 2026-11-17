@@ -395,9 +395,11 @@ void check_selector_is_the_prediction() {
     }
 }
 
-// How many entries of each measured decode table (r8_decode_table.h) on a generation the law
-// decides on it reproduces (#613 PR-10: an entry the law reproduces can be retired), on the table's
-// own board. Printed, not failed: the tables stay first, so a law that differs moves no call.
+// No measured decode table (r8_decode_table.h) on a generation the law decides on holds an entry
+// the law reproduces on the table's own board (#613 PR-10): such an entry moves no call (the law
+// answers before a carried entry, with the same schedule), so it is retired
+// (tools/bench/data/r8_law_retired.txt, r8_decode_table.py --retire). A law change that comes to
+// reproduce another entry names it here; the entries it answers otherwise are counted.
 void count_reproduced_entries() {
     // The tables' boards by PCI id (r8_decode_table.h kR8DecodeTables: board_of_pci).
     constexpr std::pair<std::string_view, std::uint32_t> kTableBoards[] = {
@@ -420,10 +422,18 @@ void count_reproduced_entries() {
                 continue;
             }
             const g::R8ScheduleInfo s = g::r8_schedule_info(*law);
-            same += s.warps == e.warps && s.rows == e.rows ? 1 : 0;
+            if (s.warps == e.warps && s.rows == e.rows) {
+                ++same;
+                std::cerr << "FAIL: " << t.gpu << " " << ninferno::format_facts(e.qtype).name
+                          << " n " << e.n << " k " << e.k
+                          << ": the law reproduces this entry; retire it "
+                          << "(tools/bench/data/r8_law_retired.txt)\n";
+            }
         }
-        std::cout << t.gpu << ": the law reproduces " << same << " of " << t.entries.size()
-                  << " decode table entries (" << none << " unanswered)\n";
+        expect(same == 0, std::string(t.gpu) + ": decode table entries the law reproduces");
+        std::cout << t.gpu << ": the law answers " << t.entries.size() - none - same << " of "
+                  << t.entries.size() << " decode table entries otherwise (" << none
+                  << " unanswered)\n";
     }
 }
 
