@@ -479,8 +479,7 @@ struct PrefillPredictionError {
 };
 
 inline constexpr PrefillPredictionError kPrefillPredictionError[] = {
-    {"ada", 0.0497, 0.1519,
-     3}, // RTX 4060 Ti, 4070 Ti, 4090: 70 points (counted MMQ unit, #613 PR-5)
+    {"ada", 0.0476, 0.1519, 3}, // RTX 4060 Ti, 4070 Ti, 4090: 70 points
 };
 // The shortest and the longest prompt of the fixture's rows the error is over (its 41K and 82K
 // rows have their own guard).

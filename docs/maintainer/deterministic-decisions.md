@@ -48,10 +48,10 @@ This page states the rule and its target. The engine does not meet all of it yet
 - MMQ prefill bytes depend on where a chunk is cut;
 - Turing's A8 routes (W4A8 and ggml MMQ, `generic_cost.cpp` `a8_candidates`) are priced with
   efficiencies fitted on Ampere and Ada (`kW4a8Efficiency`, `kMmqEfficiency`, its row's
-  `w4a8_eff_scale` 1.0): no Turing card is in the fit, so they are a transfer. Since #613 PR-5,
-  ggml MMQ on Q4_K, Q5_K and Q6_K is priced by the counted unit instead (`mmq_unit.h`: the sm_75
-  snapshot's counts and isa_probe 18 row), on Turing as everywhere; the other MMQ formats and
-  W4A8 keep the fit. On the RTX 2080 Ti
+  `w4a8_eff_scale` 1.0): no Turing card is in the fit, so they are a transfer. #613 PR-5 adds
+  a counted unit for ggml MMQ on Q4_K, Q5_K and Q6_K (`mmq_unit.h`), scored on sm_86, sm_89 and
+  sm_120a only and off (`kMmqCountedUnit`) until the selector's pick regret falls with it (#973);
+  Turing keeps the fit either way. On the RTX 2080 Ti
   A5 sweep they read 0.58-0.75 of the measured time (MMQ) and 0.70-0.74 (W4A8), in the right
   order. Without them Turing took the register MMA at up to 4.7x the fastest route's time (#781).
   The gap closes with the chip fact they lack, MMQ's dequantize on 64 CUDA-core lanes a SM against
