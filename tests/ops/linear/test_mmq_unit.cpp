@@ -117,6 +117,15 @@ int main() {
            "no unit where the row has no L2 floor (an older probe's)");
     expect(!mmq_unit::unit_seconds("89", QType::GGML_Q4_K, 24, row, f),
            "no unit at a width no kernel has");
+    // The architectures the unit was scored on; Turing's prefill fixtures refuted it (scored_arch).
+    expect(mmq_unit::scored_arch("86") && mmq_unit::scored_arch("89") &&
+               mmq_unit::scored_arch("120a"),
+           "the unit prices the scored architectures");
+    expect(!mmq_unit::scored_arch("75") && !mmq_unit::scored_arch("70") &&
+               !mmq_unit::scored_arch("80") && !mmq_unit::scored_arch("90") &&
+               !mmq_unit::scored_arch("100"),
+           "the fitted price where the unit is not scored");
+    expect(!mmq_unit::unit_seconds("75", QType::GGML_Q4_K, 64, row, f), "no unit on sm_75");
     if (failures == 0) std::cout << "mmq_unit: ok\n";
     return failures == 0 ? 0 : 1;
 }

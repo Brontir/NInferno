@@ -730,7 +730,7 @@ def schedule_counts(body, control, iteration, outside):
                 op = base_opcode(body[i][2])
                 if op == "LDL":
                     local[c.write_barrier] = True
-                elif op in ("LDG", "LD"):
+                elif op in GLOBAL_LOADS:
                     glob[c.write_barrier] = True
                 elif op in ("LDS", "LDSM"):
                     shared[c.write_barrier] = True
