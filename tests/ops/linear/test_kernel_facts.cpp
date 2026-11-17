@@ -522,6 +522,24 @@ void section_wait_columns() {
     expect(kf::snapshot_text_accepted(r8(prologue, 30 + 7 + 10)), "an r8 section, its prologue");
     expect(!kf::snapshot_text_accepted(r8(waits + prologue, 30 + 7 + 2 + 10)),
            "an r8 section with the mmq waits");
+    // The w4a8 section carries the producer warps' loop after its waits (#613 PR-6); an mmq
+    // section with it, and a w4a8 section without it, are refused.
+    const std::string producer =
+        " prod_loops prod_total prod_stall prod_sb_waits prod_glb_waits prod_shd_waits prod_int";
+    const auto w4a8 = [&](const std::string& extra, int fields) {
+        return base +
+               "family w4a8\nfamily_nvcc 13.0\nfamily_kernels 1\nfamily_columns family codec "
+               "block_m block_n warps_m warps_n epilogue flavor stages producers registers stack "
+               "local shared" +
+               loop + pipes + extra + "\nw4a8 W4a8Q6K 128 64 4 2 0 0 3 4 168 0 0 0" +
+               values(fields) + "\n";
+    };
+    expect(kf::snapshot_text_accepted(w4a8(waits + producer, 30 + 7 + 2 + 7)),
+           "a w4a8 section with its waits and producer loop");
+    expect(!kf::snapshot_text_accepted(w4a8(waits, 30 + 7 + 2)),
+           "a w4a8 section without the producer loop");
+    expect(!kf::snapshot_text_accepted(mmq(waits + producer, 30 + 7 + 2 + 7)),
+           "an mmq section with the producer loop");
 }
 
 void old_columns_refused() {

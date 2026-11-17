@@ -19,6 +19,7 @@
 #include "ops/generic/kernel_facts.h"
 #include "ops/generic/kernel_roofline.h"
 #include "ops/generic/mmq_unit.h"
+#include "ops/generic/w4a8_unit.h"
 #include "ops/generic/route_cost_constants.h"
 
 #include <algorithm>
@@ -171,8 +172,33 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             // flight whatever the stages, over the warps that load it: every warp of the classic
             // tile, the producer warps of the ws tile (generic_w4a8.cuh w4a8_kernel and
             // w4a8_ws_kernel). The ring's stages hold decoded data in shared memory, not loads.
+            // The counted K tile (#613 PR-6, w4a8_unit::counted): every resident CTA's K tiles at
+            // the cycles the snapshot's loops and the arch's shared latency give, the waves of
+            // `occ` CTAs an SM one after the other, against the same DRAM time; the fitted
+            // efficiency and chain where an input is missing.
             const double load_warps = s.producers > 0 ? s.producers : threads / 32;
             const double in_flight  = rows_o * route_cost::kW4a8StepK.value() * bpw / load_warps;
+            if (w4a8_unit::counted()) {
+                const std::string arch          = kernel_facts::release_arch(d.major, d.minor);
+                const std::optional<IsaRow> isa = isa_row(d.major, d.minor);
+                const auto key =
+                    w4a8_unit::scored_arch(arch) && isa
+                        ? w4a8_unit::kernel_key(i, problem.qtype, problem.epilogue, arch)
+                        : std::nullopt;
+                const double k_tiles = std::ceil(ld / route_cost::kW4a8StepK.value());
+                const auto cycles    = key ? w4a8_unit::tile_cycles(arch, *key, *isa,
+                                                                    static_cast<int>(std::min(q, occ)),
+                                                                    static_cast<int>(k_tiles))
+                                           : std::nullopt;
+                if (cycles) {
+                    const double mem = kr::dram_time(chip, ctas, occ, load_warps, rows_o * k * bpw,
+                                                     in_flight, true);
+                    const double compute = std::ceil(q / occ) * k_tiles * *cycles / clk;
+                    const double price   = quant_w4a8 + std::max(mem, compute);
+                    offer(r, complete ? price + beyond(ctas) : price);
+                    continue;
+                }
+            }
             const double mem =
                 kr::dram_time(chip, ctas, occ, load_warps, rows_o * k * bpw, in_flight, true);
             const double price = quant_w4a8 + std::max(mem, mma / eff / fill) + chain;

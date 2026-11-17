@@ -95,6 +95,17 @@ struct IsaRow {
     // buffer, 4 CTAs of 4 warps an SM, 8 in flight a warp (isa_probe 18 on; unknown on a row an
     // older probe measured).
     std::optional<double> l2_bytes_per_sm_clock;
+    // The int8 MMA shapes the W4A8 tiles run, by role (isa_probe 19, #978): `wide` the 32-value K
+    // group's (IMMA.16832 from sm_80, IMMA.8816 on sm_75), `narrow` the 16-value sub-block
+    // codecs' (IMMA.16816; IMMA.8816 on sm_75), per SASS IMMA a partition with every partition
+    // busy, and a dependent chain's period. Per SASS instruction, as kernel facts count them: on
+    // sm_75 one mma_s8 (wide) is four IMMA.8816 and one mma_s8_k16 (narrow) two (common/mma.cuh),
+    // so a price over tile calls multiplies there. None on sm_70 (no int8 MMA). The table's
+    // _w4 / _w8 variants (one CTA of 4 or 8 warps) check the saturation and are not read here.
+    std::optional<double> imma_wide_cycles_per_partition;
+    std::optional<double> imma_narrow_cycles_per_partition;
+    std::optional<double> imma_wide_dependent_latency;
+    std::optional<double> imma_narrow_dependent_latency;
 
     // The launch facts, nullopt where the architecture has no launch run (core/launch_facts.h
     // reads them as seconds).

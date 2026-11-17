@@ -1,5 +1,6 @@
 #include "ops/generic/price_tool.h"
 #include "ops/generic/mmq_unit.h"
+#include "ops/generic/w4a8_unit.h"
 
 #include "core/device_class.h"
 #include "core/generation.h"
@@ -66,7 +67,10 @@ std::string usage_text() {
     return "usage: ninferno-serve price --board BOARD --format FORMAT --n N --k K --t T\n"
            "                            [--epilogue store|add|swiglu] [--policy a16|a8]\n"
            "                            [--registers R] [--local-bytes B] [--route FAMILY:INDEX]\n"
-           "                            [--mmq-counted-unit on|off] [--rmma-counted-law on|off]\n"
+           "                            [--mmq-counted-unit on|off] [--rmma-counted-law on|off]
+           "
+           "                            [--w4a8-counted on|off]
+           "
            "       ninferno-serve price --list-boards\n"
            "BOARD: a facts-table name without spaces (rtx4090, l4, a100pcie40gb; see "
            "--list-boards) or\n"
@@ -143,6 +147,7 @@ struct Options {
     std::optional<Route> only;
     std::optional<bool> mmq_counted_unit; // --mmq-counted-unit on|off: the selector's switch
     std::optional<bool> rmma_counted_law; // --rmma-counted-law on|off: route_cost::kRmmaCountedLaw
+    std::optional<bool> w4a8_counted;     // --w4a8-counted on|off: route_cost::kW4a8CountedStep
     bool list_boards = false;
 };
 
@@ -240,6 +245,9 @@ Options parse(int argc, char** argv) {
         } else if (a == "--rmma-counted-law") {
             if (v != "on" && v != "off") throw std::invalid_argument("--rmma-counted-law on|off");
             o.rmma_counted_law = v == "on";
+        } else if (a == "--w4a8-counted") {
+            if (v != "on" && v != "off") throw std::invalid_argument("--w4a8-counted on|off");
+            o.w4a8_counted = v == "on";
         } else if (a == "--mmq-counted-unit") {
             if (v != "on" && v != "off") throw std::invalid_argument("--mmq-counted-unit on|off");
             o.mmq_counted_unit = v == "on";
@@ -377,17 +385,20 @@ int run(const Options& o) {
     // The A8 MMQ slice by the counted unit or the fitted one (#613 PR-5), for this process.
     if (o.mmq_counted_unit) mmq_unit::counted_for_test(*o.mmq_counted_unit);
     if (o.rmma_counted_law) generic::rmma_counted_law_for_test(*o.rmma_counted_law);
+    if (o.w4a8_counted) w4a8_unit::counted_for_test(*o.w4a8_counted);
 
     // The switches hold for this run only: a later run in the same process (the tests call
     // price_main many times) prices by the binary's own.
     struct Restore {
-        bool mmq, rmma;
+        bool mmq, rmma, w4a8;
 
         ~Restore() {
             if (mmq) mmq_unit::counted_for_test(std::nullopt);
             if (rmma) generic::rmma_counted_law_for_test(std::nullopt);
+            if (w4a8) w4a8_unit::counted_for_test(std::nullopt);
         }
-    } const restore{o.mmq_counted_unit.has_value(), o.rmma_counted_law.has_value()};
+    } const restore{o.mmq_counted_unit.has_value(), o.rmma_counted_law.has_value(),
+                    o.w4a8_counted.has_value()};
     const DeviceClass d    = price_board_class(row);
     if (d.sms <= 0 || d.registers_per_sm <= 0 || !d.facts.has_roofline()) {
         std::fprintf(stderr, "price: %s has no roofline in its facts\n", row.name.c_str());

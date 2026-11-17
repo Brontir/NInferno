@@ -42,7 +42,7 @@ After the register-MMA rows a snapshot holds one section per further kernel fami
 (w4a8), each with its own nvcc, kernel count and columns (`family_nvcc`, `family_kernels`,
 `family_columns` after its `family <name>` line), and the pipe counts of the loop
 (sass_counts.PIPE_FIELDS) besides schema 4's, then the wait classes (sass_counts.WAIT_FIELDS,
-mmq and w4a8); the R8 decode kernels (r8, #613 PR-10) the same way, their loop marked by the
+mmq and w4a8) and in w4a8 the producer warps' loop (sass_counts.PRODUCER_FIELDS); the R8 decode kernels (r8, #613 PR-10) the same way, their loop marked by the
 dp4a and the quantizer's loop after the pipe counts. `extract --families mmq,w4a8 --update FILE`
 rewrites those sections alone and keeps the rest of FILE byte for byte. `check` compares every
 section the snapshot has: in full where the build's nvcc is the one the section records, its
@@ -369,8 +369,13 @@ class Family:
     k_iter divides a warp's MMA work by, and whether its rows carry the pipe counts."""
 
     def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True,
-                 marker=None, prologue=None, waits=False):
+                 marker=None, prologue=None, waits=False, producer=None):
         self.name = name
+        # (marker, excluded) of the producer warps' loop, written as the PRODUCER_FIELDS after
+        # the wait classes (sass_counts.loop_counts): BAR, and no MMA or dp4a in the loop, the
+        # w4a8 producer-warp tile's loop (#613 PR-6); the classic tile's rows carry it as zeros.
+        # A tile with producer warps (the key's last field) must have exactly one such loop.
+        self.producer = producer
         # Whether its rows carry the iteration's wait classes (sass_counts.WAIT_FIELDS) after the
         # pipe counts: the mmq and w4a8 sections (#613 PR-5).
         self.waits = waits
@@ -396,6 +401,7 @@ class Family:
         pipe counts for a family that carries them)."""
         loop = sass_counts.COLUMNS + (sass_counts.PIPE_FIELDS if self.pipes else ()) + (
             sass_counts.WAIT_FIELDS if self.pipes and self.waits else ()) + (
+            sass_counts.PRODUCER_FIELDS if self.pipes and self.waits and self.producer else ()) + (
             sass_counts.PROLOGUE_FIELDS if self.pipes and self.prologue else ())
         return {1: (self.row_head, 0), 4: (self.row_head + loop, len(loop))}
 
@@ -416,7 +422,8 @@ FAMILIES = {
                   lambda key: 1, True, False, waits=True),
     "w4a8": Family("w4a8", ("codec", "block_m", "block_n", "warps_m", "warps_n", "epilogue",
                             "flavor", "stages", "producers"), lambda d: w4a8_key(d), "w4a8_",
-                   lambda key: 1, True, True, waits=True),
+                   lambda key: 1, True, True, waits=True,
+                   producer=("BAR", sass_counts.MMA_OPCODES + ("IDP",))),
     "gemma4": Family("gemma4", ("kernel", "D", "G", "slice", "rows", "Bc", "partial", "fp8",
                                 "chain"), lambda d: gemma4_key(d), "gemma4_", lambda key: 1,
                      False, True, loop=False),
@@ -524,10 +531,13 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
     for name, body in sass_counts.iter_functions(lines, lambda n: n in keys):
         fk = keys[name]
         family = FAMILIES[fk[0]]
-        c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker,
-                                    family.prologue).with_pipes(family.pipes,
-                                                                family.prologue is not None,
-                                                                family.waits)
+        c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker, family.prologue,
+                                    family.producer).with_pipes(
+            family.pipes, family.prologue is not None, family.waits, family.producer is not None)
+        if family.producer is not None and fk[1][-1] > 0 and c.prod_loops != 1:
+            fail(f"{name}: {c.prod_loops} producer loops in a tile with {fk[1][-1]} producer warps")
+        if family.producer is not None and fk[1][-1] == 0 and c.prod_loops != 0:
+            fail(f"{name}: {c.prod_loops} producer loops in a tile without producer warps")
         if fk in counts and counts[fk] != c:
             fail(f"{name} is disassembled twice in {arch} with different loops {counts[fk]} "
                  f"and {c}")
@@ -771,8 +781,10 @@ SECTION_NOTES = {
     "w4a8": (
         "# The W4A8 tiles (src/ops/generic/generic_w4a8.cuh): w4a8_kernel<codec, schedule, epilogue,",
         "# flavor> (stages and producers 0) and the producer-warp tile w4a8_ws_kernel<codec,",
-        "# schedule, epilogue, stages, producers> (flavor 0; its MMA warps' loop is counted, the",
-        "# producers' decode loop is not). One iteration is one 128-value K tile.",
+        "# schedule, epilogue, stages, producers> (flavor 0; its MMA warps' loop is the counted",
+        "# loop). One iteration is one 128-value K tile. After the wait classes, the producer",
+        "# warps' loop (prod_, #613 PR-6): the BAR loop without an MMA, one iteration a K tile;",
+        "# loops 0 on the classic tile.",
     ),
     "gemma4": (
         "# The Gemma 4 attention kernels (src/ops/softmax_attention/gemma4, #830):",
