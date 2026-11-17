@@ -94,9 +94,9 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
 
 int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t tokens);
 
-// The R8 schedule of a call: at one token the nearest measured board's decode table entry
-// (tuned_r8), else the R8 schedule law where it answers (law_r8), else the R8 rules
-// (r8_rules_route).
+// The R8 schedule of a call: at one token this board's own decode table entry (tuned_r8,
+// r8_hit_here), else the R8 schedule law where it answers (law_r8_before), else an entry carried
+// from a nearby board, else the R8 rules (r8_rules_route).
 int heuristic_r8(const Problem& p, std::int32_t tokens);
 
 // The R8 decode schedule law's choice at one token (ops/generic/r8_law.h, #613 PR-10): the
@@ -105,6 +105,11 @@ int heuristic_r8(const Problem& p, std::int32_t tokens);
 // generation it is not taken on (r8_law_generation), no snapshot or no row for the call, or a
 // term it cannot price.
 std::optional<int> law_r8(const Problem& p);
+// The law's choice where it outranks an entry carried from another board: nullopt where the law
+// does not answer, or where `carried` names a schedule the law could not price (a spilling
+// instance it skips: Q6_K SwiGLU w4r2 and w8r2 on sm_89), which then stands. Without a carried
+// entry, law_r8.
+std::optional<int> law_r8_before(const Problem& p, std::optional<int> carried);
 
 // Where the law decides at one token: Ada (sm_89), Volta (sm_70) and Turing (sm_75), the
 // generations whose unread holdout grids it beat the rules on (#613, predictions frozen at

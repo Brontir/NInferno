@@ -805,12 +805,22 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      ""},
     {"heuristic_r8: the decode table's width", Basis::Structural, "generic_select.cpp",
      "if (tokens == 1) { const auto tuned = tuned_r8(p); if (tuned && r8_hit_here(*tuned)) return "
-     "tuned->schedule; if (const auto law = law_r8(p)) return *law; if (tuned) return "
-     "tuned->schedule; }",
+     "tuned->schedule; const auto carried = tuned ? std::optional<int>(tuned->schedule) : "
+     "std::nullopt; if (const auto law = law_r8_before(p, carried)) return *law; if (tuned) "
+     "return tuned->schedule; }",
      1, kUnknown, kUnknown,
      "the same one-token gate as r8_schedule's, written again in the heuristic's own path; the "
-     "table (r8_decode_table.h) has T = 1 entries only, and the schedule law (law_r8) is taken "
-     "at one token only, where its frozen predictions were scored; no board places the gate",
+     "table (r8_decode_table.h) has T = 1 entries only, and the schedule law (law_r8_before) is "
+     "taken at one token only, where its frozen predictions were scored; no board places the gate",
+     ""},
+    {"r8_schedule: the law's width", Basis::Structural, "route_authorities.cpp",
+     "const auto law = ask.tokens == 1 && !here ? law_r8_before(problem, hit ? "
+     "std::optional<int>(hit->schedule) : std::nullopt) : std::nullopt;",
+     1, kUnknown, kUnknown,
+     "the R8 schedule law is asked at one token only, and only where this board's own table "
+     "entry did not answer (here): its predictions were frozen and scored at T = 1 (#613 PR-10, "
+     "holdout grids at T 1, 2, 4, 8; it beat the rules at T = 1 on the boards of "
+     "r8_law_generation and not at every T); no board places the 1",
      ""},
     {"r8_law_generation: the law's generations", Basis::Measured, "generic_select.cpp",
      "return (d.major == 8 && d.minor == 9) || (d.major == 7 && (d.minor == 0 || d.minor == 5));",
@@ -837,7 +847,9 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the one measured distance is the 4090's 80 entries on the 4080 SUPER (distance 1.2; 3 "
      "sweeps): won 41, lost 30 (to -22 %), +0.1 % in the mean; the comment names a 4090 D and a "
      "3090 Ti (0.17, 0.14) as boards that take their tables, as a consequence of the bound, with "
-     "no timing; nothing places the 0.5",
+     "no timing (on sm_89, sm_70 and sm_75 a carried entry now yields to the R8 law, "
+     "law_r8_before, except where it names a schedule the law could not price); nothing places "
+     "the 0.5",
      ""},
     {"kCarryDistance", Basis::Unknown, "../../core/measured_boards.h",
      "inline constexpr double kCarryDistance = 1.0;", 1.0, "ad102:128sm, ad103:80sm",

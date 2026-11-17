@@ -300,7 +300,10 @@ std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
     if (!r8_call(problem, weight, ask.tokens)) return std::nullopt;
     auto hit        = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;
     const bool here = hit && r8_hit_here(*hit);
-    const auto law  = ask.tokens == 1 && !here ? law_r8(problem) : std::nullopt;
+    const auto law =
+        ask.tokens == 1 && !here
+            ? law_r8_before(problem, hit ? std::optional<int>(hit->schedule) : std::nullopt)
+            : std::nullopt;
     if (law) hit.reset(); // a carried entry yields to the law
     RouteAnswer answer =
         hit   ? RouteAnswer{Route{Family::R8Mma, static_cast<std::uint8_t>(hit->schedule)},

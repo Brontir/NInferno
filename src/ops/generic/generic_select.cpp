@@ -784,11 +784,14 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
 namespace {
 
 // Before the rules, a decode call takes the entry for the exact problem in the table of the
-// nearest measured board (r8_decode_table.h), when that board is a variant of this one: the
+// nearest measured board (r8_decode_table.h), when that board is a variant of this one and the
+// R8 law does not answer for it (law_r8_before: on sm_89, sm_70 and sm_75 a carried entry yields
+// to the law, except where it names a schedule the law could not price): the
 // codebook problems of Gemma 4 31B, Muse Glimmer 30B, Qwen3.6-35B-A3B and Qwen3.8-27B, and the
 // K-quant down projection of Qwen3.5-9B (4096x12288), where another schedule measured faster on
 // that board. A table carries to boards within kR8CarryDistance of it
-// (board_distance: a 4090 D or a 3090 Ti takes the 4090's or the 3090's, at 0.17 and 0.14) and no
+// (board_distance: a 3090 Ti takes the 3090's at 0.14; a 4090 D, at 0.17 of the 4090, is Ada,
+// where the law answers first) and no
 // further: the 4090's 80 entries on the 4080 SUPER (distance 1.2; 3 sweeps) won 41, lost 30 (to
 // -22 %: IQ2_XS 4096x6656 w8r2), +0.1 % in the mean, where its own sweep keeps 52 that win.
 constexpr double kR8CarryDistance = 0.5;
@@ -933,7 +936,14 @@ bool r8_law_generation(const DeviceClass& d) noexcept {
 
 namespace {
 
-std::optional<int> law_r8_uncached(const Problem& p, const DeviceClass& device);
+// The law's choice and the schedules it priced (bit i: schedule i had a row and terms).
+struct LawR8 {
+    std::optional<int> pick;
+    std::uint32_t priced = 0;
+};
+
+LawR8 law_r8_uncached(const Problem& p, const DeviceClass& device);
+LawR8 law_r8_memo(const Problem& p);
 
 } // namespace
 
@@ -941,16 +951,28 @@ std::optional<int> law_r8_uncached(const Problem& p, const DeviceClass& device);
 // (no policy: the law ranks schedules, route_admits judges the route), so it is computed once per
 // device and call and kept: select_route asks it on every linear call. PerDevice keeps a
 // substituted board's answers apart by the substitute's whole content (device_class_key).
-std::optional<int> law_r8(const Problem& p) {
+std::optional<int> law_r8(const Problem& p) { return law_r8_memo(p).pick; }
+
+std::optional<int> law_r8_before(const Problem& p, std::optional<int> carried) {
+    const LawR8 law = law_r8_memo(p);
+    if (carried && (*carried < 0 || *carried >= 32 || (law.priced >> *carried & 1U) == 0)) {
+        return std::nullopt;
+    }
+    return law.pick;
+}
+
+namespace {
+
+LawR8 law_r8_memo(const Problem& p) {
     DeviceClass device;
     try {
         device = device_class();
-    } catch (const std::exception&) { return std::nullopt; } // a host build with no device
-    if (!r8_law_generation(device)) return std::nullopt;
+    } catch (const std::exception&) { return {}; } // a host build with no device
+    if (!r8_law_generation(device)) return {};
 
     struct Memo {
         std::mutex mutex;
-        std::map<std::tuple<int, int, std::int32_t, std::int32_t>, std::optional<int>> answers;
+        std::map<std::tuple<int, int, std::int32_t, std::int32_t>, LawR8> answers;
     };
 
     static PerDevice<std::shared_ptr<Memo>> memos;
@@ -971,11 +993,9 @@ std::optional<int> law_r8(const Problem& p) {
     return answer;
 }
 
-namespace {
-
-std::optional<int> law_r8_uncached(const Problem& p, const DeviceClass& device) {
+LawR8 law_r8_uncached(const Problem& p, const DeviceClass& device) {
     const auto arch = kernel_facts::sass_arch();
-    if (!arch) return std::nullopt;
+    if (!arch) return {};
     const kernel_roofline::ChipFacts chip = kernel_roofline::chip_facts_of(device);
     const CodecTraits traits              = codec_traits(p.qtype);
     r8_law::Call call;
@@ -994,9 +1014,10 @@ std::optional<int> law_r8_uncached(const Problem& p, const DeviceClass& device) 
     // The add epilogue is priced as the store, as the decode tables carry it (tuned_r8) and as the
     // holdout grids scored it: its residual read is N values against the weight's N x K.
     const Epilogue epilogue = p.epilogue == Epilogue::AddResidual ? Epilogue::Store : p.epilogue;
-    std::optional<int> best;
+    // The priced mask holds 32 schedules; the R8 list has four (generic_schedules.h).
+    LawR8 law;
     double best_rank = 0;
-    for (int i = 0; i < r8_schedule_count(); ++i) {
+    for (int i = 0; i < r8_schedule_count() && i < 32; ++i) {
         const auto key = r8_kernel_key(i, p.qtype, epilogue, 1, false);
         if (!key) continue;
         const auto facts = kernel_facts::r8_facts(*arch, *key);
@@ -1009,13 +1030,15 @@ std::optional<int> law_r8_uncached(const Problem& p, const DeviceClass& device) 
             const R8ScheduleInfo x = r8_schedule_info(j);
             return std::pair{x.warps, x.rows};
         };
-        if (t &&
-            (!best || t->rank < best_rank || (t->rank == best_rank && order(i) < order(*best)))) {
-            best      = i;
+        if (!t) continue;
+        law.priced |= 1U << i;
+        if (!law.pick || t->rank < best_rank ||
+            (t->rank == best_rank && order(i) < order(*law.pick))) {
+            law.pick  = i;
             best_rank = t->rank;
         }
     }
-    return best;
+    return law;
 }
 
 } // namespace
@@ -1203,7 +1226,8 @@ int heuristic_r8(const Problem& p, std::int32_t tokens) {
     if (tokens == 1) {
         const auto tuned = tuned_r8(p);
         if (tuned && r8_hit_here(*tuned)) return tuned->schedule;
-        if (const auto law = law_r8(p)) return *law;
+        const auto carried = tuned ? std::optional<int>(tuned->schedule) : std::nullopt;
+        if (const auto law = law_r8_before(p, carried)) return *law;
         if (tuned) return tuned->schedule;
     }
     return rules_r8(p, tokens);
