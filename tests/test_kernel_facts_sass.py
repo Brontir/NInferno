@@ -483,6 +483,25 @@ class StaticSchedule(unittest.TestCase):
         self.assertEqual((unknown.loops, unknown.outside_total), (0, 0))
         self.assertEqual(len(kernel_facts.family_audit("mmq", {(2, 80, 0, 0): (0, 0, 0, 0, unknown)})), 1)
 
+    def test_i8_audit(self):
+        # One loop, one barrier and k_iter 2048 pass; an empty build's kernel (no loop, a few
+        # instructions, no barrier) passes; anything else is named.
+        from types import SimpleNamespace as N
+        ok = N(loops=1, bar=1, k_iter=kernel_facts.I8_K_ITER, scheduled=True, outside_bar=0,
+               outside_total=900, schedule_problems=lambda: [])
+        key = (4, 2, 4, 4, 0)
+        self.assertEqual(kernel_facts.family_audit("i8", {key: (0, 0, 0, 0, ok)}), [])
+        empty = N(loops=0, bar=0, k_iter=0, scheduled=True, outside_bar=0, outside_total=2,
+                    schedule_problems=lambda: [])
+        self.assertEqual(kernel_facts.family_audit("i8", {key: (0, 0, 0, 0, empty)}), [])
+        lost = N(loops=0, bar=0, k_iter=0, scheduled=True, outside_bar=1, outside_total=900, schedule_problems=lambda: [])
+        self.assertEqual(len(kernel_facts.family_audit("i8", {key: (0, 0, 0, 0, lost)})), 1)
+        two = N(loops=2, bar=2, k_iter=1024, scheduled=True, outside_bar=0, outside_total=900, schedule_problems=lambda: [])
+        problems = kernel_facts.family_audit("i8", {key: (0, 0, 0, 0, two)})
+        self.assertEqual(len(problems), 1)
+        for what in ("2 candidate loops", "2 barriers", "k_iter 1024"):
+            self.assertIn(what, problems[0])
+
     def test_problems(self):
         c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=2)
         c.stall_sum = c.total - 1
@@ -879,6 +898,15 @@ class Sections(unittest.TestCase):
         self.assertIsNone(kernel_facts.r8_key(classic))
         self.assertIsNone(kernel_facts.w4a8_key(r8))
         self.assertIsNone(kernel_facts.rmma_key(self.MMQ_NAME))
+        # The I8 tile sits in generic_i8.cu's anonymous namespace; the quantizer is not keyed.
+        i8 = (f"void {ns}(anonymous namespace)::i8_kernel<(int)4, (int)2, (int)3, (int)4, "
+              f"({ns}Epilogue)0>({ns}GemmArgs, const signed char *, const float *, const int *, int)")
+        self.assertEqual(kernel_facts.i8_key(i8), (4, 2, 3, 4, 0))
+        self.assertEqual(kernel_facts.i8_key(i8.replace("(anonymous namespace)", "<unnamed>")),
+                         (4, 2, 3, 4, 0))
+        self.assertIsNone(kernel_facts.i8_key(
+            f"void {ns}(anonymous namespace)::i8_quantize_kernel(const float *, int)"))
+        self.assertIsNone(kernel_facts.i8_key(r8))
 
     def test_pipe_counts(self):
         c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=1)

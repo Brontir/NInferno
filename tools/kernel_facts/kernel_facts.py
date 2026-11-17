@@ -298,6 +298,20 @@ def w4a8_key(demangled):
     return None
 
 
+def i8_key(demangled):
+    """The key of an I8 tile (generic_i8.cu, #613 PR-6): i8_kernel<WT, WN, Stages, Bits, E> in the
+    file's anonymous namespace, keyed as its warps along the tokens and the rows, its cp.async
+    stages, the code width and the epilogue. None for other symbols (the activation quantizer)."""
+    head = "void " + NAMESPACE + "(anonymousnamespace)::i8_kernel<"
+    unnamed = demangled.replace("(anonymous namespace)", "(anonymousnamespace)")
+    args = template_args(unnamed.replace("<unnamed>", "(anonymousnamespace)"), head)
+    if args is None:
+        return None
+    if len(args) != 5 or not all(re.fullmatch(r"\d+", a) for a in args):
+        fail(f"unexpected i8_kernel arguments in {demangled}")
+    return tuple(int(a) for a in args)
+
+
 R8_SCHEDULE = re.compile(r"R8Schedule<(\d+),(\d+)>")
 
 
@@ -430,6 +444,8 @@ FAMILIES = {
     "r8": Family("r8", ("codec", "warps", "rows", "nt", "epilogue", "pre"), lambda d: r8_key(d),
                  "r8_kernel", lambda key: r8_products(key), True, True, marker="IDP",
                  prologue="F2I"),
+    "i8": Family("i8", ("WT", "WN", "stages", "bits", "epilogue"), lambda d: i8_key(d),
+                 "i8_kernel", lambda key: 1, True, False, waits=True),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -610,6 +626,10 @@ def loop_audit(rows):
 MMQ_EMPTY_INSTRUCTIONS = 64
 
 
+# The I8 tile's k_iter (family_audit): 32 m16n8 tiles a warp over one 64-value K group.
+I8_K_ITER = 32 * 64
+
+
 def family_audit(family, rows):
     """loop_audit for a section family's rows (#785): lines naming the kernels whose counted
     iteration is not the unit the family's price reads. ggml's matrix kernel: one or two
@@ -663,6 +683,23 @@ def family_audit(family, rows):
                 problems.append(f"k_iter {c.k_iter}, not {want}")
             if c.bar != 2:
                 problems.append(f"{c.bar} barriers in the iteration")
+        elif family == "i8":
+            # One K loop of int8 MMAs a cp.async stage (one 64-value group), one CTA barrier in it,
+            # and k_iter 2048: a warp's 64 x 64 output is 32 m16n8 tiles over the group's 64 K
+            # values (32 x 64). Below sm_80 the kernels are compiled empty: no loop, a few
+            # instructions, no barrier.
+            if c.loops == 0:
+                if c.scheduled and (c.outside_bar or
+                                    not 0 < c.outside_total <= MMQ_EMPTY_INSTRUCTIONS):
+                    out.append(f"{family} {row_key(k)}: no K loop, and not empty "
+                               f"({c.outside_total} instructions, {c.outside_bar} barriers)")
+                continue
+            if c.loops != 1:
+                problems.append(f"{c.loops} candidate loops")
+            if c.bar != 1:
+                problems.append(f"{c.bar} barriers in the iteration")
+            if c.k_iter != I8_K_ITER:
+                problems.append(f"k_iter {c.k_iter}, not {I8_K_ITER}")
         elif family == "r8":
             # One loop of dp4a per lane and group, no CTA barrier in it (the activation is in
             # shared memory before the loop starts) and no MMA.
@@ -807,6 +844,14 @@ SECTION_NOTES = {
         "# global load's latency (a wait on a scoreboard with an LDG pending): glb_waits in one",
         "# dp4a iteration, outside_glb_waits outside both loops, pro_glb_waits in one quantizer",
         "# iteration.",
+    ),
+    "i8": (
+        "# The I8 tiles (src/ops/generic/generic_i8.cu, #613 PR-6): i8_kernel<WT, WN, Stages, Bits,",
+        "# epilogue> (I8Tile: a CTA of WT x WN warps over 64 WT tokens x 64 WN weight rows, the",
+        "# weight codes as the int8 MMA's unsigned operand, the activation quantized by",
+        "# i8_quantize_kernel first). Compiled from sm_80 on (NINFERNO_I8_KERNELS); below, empty",
+        "# bodies (loops 0). One iteration of the counted loop is one cp.async stage: one group of",
+        "# 64 K values.",
     ),
 }
 
