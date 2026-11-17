@@ -2972,7 +2972,10 @@ QuantAxisPick choose_quants(const ModelFacts& quality_model, const CardFacts& ca
     std::vector<RowBound> bounds;
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const QuantAxisRow& row = rows[i];
-        if (!row.on_tier || (any_measured && !measured(row)) || !authorized(row)) { continue; }
+        if (!row.on_tier || !row.choose_at || (any_measured && !measured(row)) ||
+            !authorized(row)) {
+            continue;
+        }
         const auto bound = row.choose_at(false);
         if (bound && bound->chosen) { bounds.push_back({i, bound->anchor_worth}); }
     }

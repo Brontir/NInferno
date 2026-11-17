@@ -1144,6 +1144,85 @@ void decides_by_generation(const json& fixture) {
 // log KLD; at or above Q8_0's bits it is the reference. The worth weighs the switches at a
 // quantization where its family's terms rest on two cards (which quantization a listing serves is
 // plan_quants', test_plan_dry_run).
+// #618 step 5: the quantization axis (choice::choose_quants) on rows whose choices are given: a
+// row whose accuracy is only an estimate never wins, whatever its worth; within the band the lower
+// KLD wins; a row whose choice falls short of the target context is passed over; a row off the
+// tier is not asked; a row whose bound cannot reach the band is not served (its memory never
+// planned); and a tie of worth and KLD goes to the rule's order.
+void quant_axis_decides(const json& fixture) {
+    const Bench b = nine_b(fixture, "RTX 4090");
+    const std::string measured_q4 =
+        "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8";
+    ch::QuantOption direct = b.quants[0];
+    direct.label           = "Q4_K_M";
+    direct.files           = measured_q4;
+    check(ch::quant_authority(b.model, direct) == ch::QualityAuthority::Direct,
+          "quant axis: the fixture row is direct");
+    ch::QuantOption estimate = direct;
+    estimate.files.clear();
+    // A choice whose one candidate scores `worth` and `kld` at `context`.
+    const auto choice_at = [](double worth, double kld, std::uint32_t context) {
+        ch::Choice c;
+        ch::Scored s;
+        s.worth        = worth;
+        s.accuracy.kld = kld;
+        c.scored.push_back(s);
+        c.chosen       = 0;
+        c.context      = context;
+        c.anchor_worth = worth;
+        return c;
+    };
+
+    struct Row {
+        ch::QuantOption q;
+        bool on_tier;
+        double worth, kld;
+        std::uint32_t context;
+    };
+
+    const auto run = [&](const std::vector<Row>& rows, std::uint32_t target,
+                         std::vector<int>& served, const ch::RanksAbove& ranks) {
+        std::vector<ch::QuantAxisRow> axis;
+        served.assign(rows.size(), 0);
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            ch::QuantAxisRow a;
+            a.quant     = rows[i].q;
+            a.on_tier   = rows[i].on_tier;
+            a.choose_at = [&, i](bool steps) -> std::optional<ch::Choice> {
+                if (steps) { ++served[i]; }
+                return choice_at(rows[i].worth, rows[i].kld, rows[i].context);
+            };
+            axis.push_back(std::move(a));
+        }
+        return ch::choose_quants(b.model, b.card, axis, 0.05, target, ranks);
+    };
+    const ch::RanksAbove lower_index = [](std::size_t a, std::size_t c) { return a < c; };
+    std::vector<int> served;
+    // 0: direct, 1: an estimate at a far higher worth, 2: direct, lower KLD within the band,
+    // 3: off the tier, 4: direct but short of the target context, 5: direct, out of reach.
+    const std::vector<Row> rows = {
+        {direct, true, 1.00, 0.020, 32768}, {estimate, true, 3.00, 0.001, 32768},
+        {direct, true, 0.98, 0.010, 32768}, {direct, false, 2.00, 0.001, 32768},
+        {direct, true, 1.01, 0.001, 16384}, {direct, true, 0.50, 0.001, 32768},
+    };
+    const ch::QuantAxisPick pick = run(rows, 32768, served, lower_index);
+    check(pick.row && *pick.row == 2 && pick.context == 32768,
+          "quant axis: the lower KLD within the band wins over the higher worth");
+    check(served[1] == 0 && served[3] == 0,
+          "quant axis: an estimate and an off-tier row are not served");
+    check(served[4] == 1, "quant axis: the short row is served, then passed over");
+    check(served[5] == 0, "quant axis: a bound out of reach is not served");
+    // Worth and KLD tied: the rule's order decides, both ways.
+    const std::vector<Row> tied = {{direct, true, 1.0, 0.01, 32768},
+                                   {direct, true, 1.0, 0.01, 32768}};
+    check(*run(tied, 32768, served, lower_index).row == 0,
+          "quant axis: a tie keeps the rule's first");
+    check(*run(tied, 32768, served, [](std::size_t a, std::size_t c) { return a > c; }).row == 1,
+          "quant axis: a tie goes to the row the rule ranks above");
+    // No row reaches the target: no pick.
+    check(!run(tied, 65536, served, lower_index).row, "quant axis: nothing at the target, no pick");
+}
+
 void weighs_the_quantizations(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4090");
     ch::Candidate c;
@@ -4579,6 +4658,7 @@ int main() {
     lent_generation_does_not_decide(fixture);
     steps_before_the_floor(fixture);
     weighs_the_quantizations(fixture);
+    quant_axis_decides(fixture);
     chooses_the_chunk(fixture);
     prices_the_request_mix(fixture);
     coarse_quant_keeps_kv(fixture);
