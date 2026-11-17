@@ -154,6 +154,14 @@ inline constexpr Scalar kQuantBytesPerValue{{4.3}, Provenance::Fitted, "quant_by
 // scale were fitted with these costs inside the timings, so switching it on alone would count
 // them twice. It flips per family with that family's counted law (PR-5c, PR-6, PR-7b; #613 PR-8d).
 inline constexpr bool kCompletenessTerms = false;
+// Which MMQ slice the A8 candidate prices (#613 PR-5): false, the fitted efficiency, chain and
+// slice (kMmqEfficiency, kMmqChainK, kMmqChainCycles, kMmqSliceSeconds below; what the selector
+// goldens hold); true, the counted unit of ops/generic/mmq_unit.h (the kernel's SASS counts, the
+// arch's isa_probe facts, the board's facts) times the launch's units, where every input is known,
+// and the fitted slice where one is missing. One switch a binary, as kRmmaCountedLaw; a test flips
+// it for its process (mmq_counted_unit_for_test, generic_gemm.h). It ships false until the A/B on
+// the RTX 3060 and 4090 (#613 PR-5).
+inline constexpr bool kMmqCountedUnit = false;
 // The activation quantizers' DRAM bytes per value, counted from their kernels and static_asserted
 // there against the block each thread writes:
 //   W4A8 (generic_w4a8.cu w4a8_quantize_kernel): a thread a 32-value block reads 64 B of BF16 and

@@ -6,6 +6,8 @@
 #include "core/mmq_columns.h"
 #include "core/device_class.h"
 #include "core/generation.h"
+#include "core/isa_facts.h"
+#include "core/launch_facts.h"
 #include "core/weight.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
@@ -14,13 +16,16 @@
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
+#include "ops/generic/kernel_facts.h"
 #include "ops/generic/kernel_roofline.h"
+#include "ops/generic/mmq_unit.h"
 #include "ops/generic/route_cost_constants.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <utility>
 
 namespace ninferno::ops::detail::generic {
@@ -271,8 +276,26 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
                                  width * cdiv(k, route_cost::kQuantMmqValuesPerCta.value()),
                                  LaunchKind::GraphNodePdl);
         };
-        const double slice_body =
+        double slice_body =
             std::max(mem, mma / (route_cost::kMmqEfficiency.value() * scale)) + chain;
+        // The counted slice (#613 PR-5, mmq_counted_unit): the launch's units at the unit its
+        // own resident CTAs give, with the fixup's bytes and graph node; the fitted slice where
+        // the kernel's counts, the arch's facts or the width's unit are missing.
+        if (mmq_counted_unit()) {
+            // The release engine's kernels for the board (release_arch), the same answer on
+            // every machine whatever its build, as the register MMA's facts are (#556).
+            const std::string arch          = kernel_facts::release_arch(d.major, d.minor);
+            const std::optional<IsaRow> isa = isa_row(d.major, d.minor);
+            if (!arch.empty() && isa) {
+                const double node =
+                    ninferno::launch_seconds(d.major, d.minor, LaunchKind::GraphNode).value_or(0.0);
+                if (const auto counted = mmq_unit::launch_seconds(
+                        arch, problem.qtype, *isa, static_cast<int>(n * sets), static_cast<int>(k),
+                        static_cast<int>(tt), static_cast<int>(cols), d.sms, clk, bw, node)) {
+                    slice_body = *counted;
+                }
+            }
+        }
         const double price =
             complete ? slices * (slice_body + route_cost::kMmqSliceSeconds.value()) +
                            (slices - 1) * quant_mmq_counted(tt) +
@@ -339,6 +362,10 @@ std::optional<bool> g_rmma_counted_law_override;
 // to a8_candidates.
 std::optional<bool> g_completeness_terms_override;
 
+// The counted MMQ unit (mmq_unit.h, #613 PR-5): route_cost::kMmqCountedUnit says whether this
+// binary prices it (false: golden-equal), a test overrides it for its process.
+std::optional<bool> g_mmq_counted_unit_override;
+
 } // namespace
 
 bool rmma_counted_law() noexcept {
@@ -355,6 +382,14 @@ bool completeness_terms() noexcept {
 
 void completeness_terms_for_test(std::optional<bool> on) noexcept {
     g_completeness_terms_override = on;
+}
+
+bool mmq_counted_unit() noexcept {
+    return g_mmq_counted_unit_override.value_or(route_cost::kMmqCountedUnit);
+}
+
+void mmq_counted_unit_for_test(std::optional<bool> on) noexcept {
+    g_mmq_counted_unit_override = on;
 }
 
 bool a16_route_priced(Route route, bool bf16_mma_native) {
