@@ -163,11 +163,9 @@ inline constexpr Holdout h_l2_ga10x = Holdout::none(
     "the RTX 3090 was out of sample only for the first version of the terms: production geomean "
     "1.136 -> 1.091 (90 cases, 2 passes x 7 samples, worst 1.83 -> 1.83)");
 inline constexpr Holdout h_l1_hit_latency =
-    Holdout::none("none: Turing's published L1 hit latency (32 clk); every architecture with an "
-                  "ISA row prices by "
-                  "its own measured isa_probe l1_latency_w1 (28 / 32 / 33 / 34 / 38 clk on sm_70 / "
-                  "75 / 86 / 89 / "
-                  "120a)",
+    Holdout::none("Turing's published L1 hit latency (32 clk), not a fit to data; an architecture "
+                  "with an ISA row prices by its own measured isa_probe l1_latency_w1 (28 / 32 / "
+                  "33 / 34 / 38 clk on sm_70 / 75 / 86 / 89 / 120a)",
                   "a transfer to sm_80, sm_90 and sm_100, which have no lab card and no ISA row",
                   "#613 PR-7a review (12.11); kernel_roofline.h calibration_of",
                   "no price reads it while route_cost::kRmmaCountedLaw is off");

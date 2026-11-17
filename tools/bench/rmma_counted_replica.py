@@ -57,7 +57,7 @@ K = dict(rmma_step_cycles=150.0, rmma_step_k=16.0, rmma_saturating_warps=11.0,
          rmma_heavy_saturating_warps=8.0, l2_ga10x=32.0, l2_gb20x=24.0, rmma_heavy_step_k=128.0,
          spill_accesses_per_step=2.0, l1_bytes_per_sm_clock=128.0, reg_alloc_per_warp=256.0,
          cluster_reduce_cycles=30.0, warp_reduce_cycles=2.75, min_warp_fill=0.05,
-         l1_hit_latency_cycles=32.0)
+         l1_hit_latency_cycles=32.0)  # the transfer for an arch with no ISA row
 ROUTE = re.compile(r"rmma\.m(\d+)\.n(\d+)\.w(\d+)x(\d+)(?:\.c(\d+))?")
 MMA_FLOPS = {"16816": 4096, "1688": 2048, "1684": 1024}
 LAWS = ("today", "ones", "ones_spill", "issue_max", "issue_nofill")
@@ -75,7 +75,17 @@ def chip_of(repo, name):
         regs_sm=65536.0, l2=K["l2_gb20x"] if cc == 120 else K["l2_ga10x"],
         heavy_ok=cc in (86, 120),
         # rmma_counted_terms.h: INT32 2 clocks a warp instruction, FP32 2 on Turing, 1 after
-        int_cycles=2.0, fp_cycles=2.0 if cc == 75 else 1.0, schedulers=4.0)
+        int_cycles=2.0, fp_cycles=2.0 if cc == 75 else 1.0, schedulers=4.0,
+        # kernel_roofline.h calibration_of: the arch's measured isa_probe L1 hit latency
+        l1_lat=l1_latency_of(repo, cc))
+
+
+def l1_latency_of(repo, cc):
+    arches = json.load(open(os.path.join(repo, "src/core/data/isa_facts.json")))["arches"]
+    for row in arches.values():
+        if row.get("cc") == cc and "l1_latency_w1" in row:
+            return float(row["l1_latency_w1"]["value"])
+    return K["l1_hit_latency_cycles"]
 
 
 def load_snapshot(repo, arch):
@@ -169,7 +179,7 @@ def price(chip, call, inst, sched, law):
         per_slot = 1.0 / (chip["schedulers"] * clk)
         t.update(iters=iters,
                  mma_counted=wi * inst["mma"] * flops / peak_sm,
-                 spill_counted=wi * inst["local"] * K["l1_hit_latency_cycles"]
+                 spill_counted=wi * inst["local"] * chip["l1_lat"]
                  / max(1.0, warps / chip["schedulers"]) / clk,
                  int_pipe=wi * inst["int"] * chip["int_cycles"] * per_slot,
                  fp_pipe=wi * inst["fp"] * chip["fp_cycles"] * per_slot)

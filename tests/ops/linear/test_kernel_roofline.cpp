@@ -1380,8 +1380,32 @@ void check_launch_rule() {
     if (bad > 0 || checked == 0 || pdl == 0 || bound == 0 || board_bound == 0) ++failures;
 }
 
+// calibration_of's L1 hit latency: each ISA row's measured l1_latency_w1, the Fitted transfer
+// value on an architecture without a row (sm_80).
+void check_l1_latency() {
+    const auto fail = [](const std::string& what) {
+        std::fprintf(stderr, "FAIL: %s\n", what.c_str());
+        ++failures;
+    };
+    long rows = 0;
+    for (const IsaRow& row : isa_facts_table()) {
+        if (!row.l1_latency.w1) continue;
+        ++rows;
+        if (kr::calibration_of(row.major, row.minor).l1_hit_latency_cycles != *row.l1_latency.w1) {
+            fail("calibration_of(" + std::to_string(row.major) + ", " + std::to_string(row.minor) +
+                 ") does not read the ISA row's l1_latency_w1");
+        }
+    }
+    if (kr::calibration_of(8, 0).l1_hit_latency_cycles !=
+        g::route_cost::kL1HitLatencyCycles.value()) {
+        fail("sm_80 (no ISA row) does not take kL1HitLatencyCycles");
+    }
+    if (rows < 5) fail("fewer than five ISA rows with an L1 latency");
+}
+
 int main() {
     check_golden();
+    check_l1_latency();
     check_wiring();
     check_completeness();
     check_launch_rule();
