@@ -616,6 +616,10 @@ def loop_audit(rows):
 MMQ_EMPTY_INSTRUCTIONS = 64
 
 
+# The I8 tile's k_iter (family_audit): 32 m16n8 tiles a warp over one 64-value K group.
+I8_K_ITER = 32 * 64
+
+
 def family_audit(family, rows):
     """loop_audit for a section family's rows (#785): lines naming the kernels whose counted
     iteration is not the unit the family's price reads. ggml's matrix kernel: one or two
@@ -669,6 +673,23 @@ def family_audit(family, rows):
                 problems.append(f"k_iter {c.k_iter}, not {want}")
             if c.bar != 2:
                 problems.append(f"{c.bar} barriers in the iteration")
+        elif family == "i8":
+            # One K loop of int8 MMAs a cp.async stage (one 64-value group), one CTA barrier in it,
+            # and k_iter 2048: a warp's 64 x 64 output is 32 m16n8 tiles over the group's 64 K
+            # values (32 x 64). Below sm_80 the kernels are compiled empty: no loop, a few
+            # instructions, no barrier.
+            if c.loops == 0:
+                if c.scheduled and (c.outside_bar or
+                                    not 0 < c.outside_total <= MMQ_EMPTY_INSTRUCTIONS):
+                    out.append(f"{family} {row_key(k)}: no K loop, and not empty "
+                               f"({c.outside_total} instructions, {c.outside_bar} barriers)")
+                continue
+            if c.loops != 1:
+                problems.append(f"{c.loops} candidate loops")
+            if c.bar != 1:
+                problems.append(f"{c.bar} barriers in the iteration")
+            if c.k_iter != I8_K_ITER:
+                problems.append(f"k_iter {c.k_iter}, not {I8_K_ITER}")
         elif family == "r8":
             # One loop of dp4a per lane and group, no CTA barrier in it (the activation is in
             # shared memory before the loop starts) and no MMA.

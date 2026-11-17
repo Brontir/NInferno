@@ -180,8 +180,10 @@ struct SnapshotHeader {
 //           blocks per lane and row (no MMA: k_iter 0); key "codec warps rows nt epilogue pre"
 //           ("W4a8Q45K<4> 4 1 1 0 0").
 //   "i8"    the I8 tiles i8_kernel<WT, WN, Stages, Bits, epilogue> (#613 PR-6): one iteration of
-//           the counted loop is one cp.async stage, a group of 64 K values; key "WT WN stages bits
-//           epilogue" ("4 2 3 4 0"). Empty bodies (no loop) below sm_80.
+//           the counted loop is one cp.async stage, a group of 64 K values (k_iter 2048: a warp's
+//           32 m16n8 tiles x 64 K); key "WT WN stages bits epilogue" ("4 2 4 4 0"). The stages
+//           are the build's (generic_i8_schedules.h i8_stages: 3 for 6-bit codes on sm_86 / 89 /
+//           120a); empty bodies (no loop) below sm_80.
 inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8", "gemma4", "r8", "i8"};
 
 struct MmqKernelKey {
@@ -219,7 +221,7 @@ struct R8KernelKey {
 struct I8KernelKey {
     int WT = 0, WN = 0; // warps along the tokens and along the rows
     int stages   = 0;   // the cp.async ring (generic_i8_schedules.h i8_stages)
-    int bits     = 0;   // the code width: 4, 5, 6 or 8
+    int bits     = 0;   // the code width: 4, 5 or 6 (generic_i8.cu's instances)
     int epilogue = 0;   // Epilogue as an integer
 };
 

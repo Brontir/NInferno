@@ -474,6 +474,9 @@ void sections_read() {
             const bool ok = i8_built ? looped : !f.loop || f.loop->loops == 0;
             if (!ok && i8_bad++ == 0) i8_first = key;
         }
+        // The reader's key: the 4x2-warp, 4-bit Store tile (three stages on sm_75's empty build).
+        expect(kf::i8_facts(arch, {4, 2, i8_built ? 4 : 3, 4, 0}).has_value(),
+               name + " i8: no 4 2 " + (i8_built ? "4" : "3") + " 4 0 row");
         expect(i8_bad == 0, name + " i8: " + std::to_string(i8_bad) +
                                 (i8_built ? " rows without one int8-MMA loop, first "
                                           : " rows with a loop in an empty build, first ") +
