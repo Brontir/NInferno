@@ -982,20 +982,38 @@ using RanksAbove = std::function<bool(std::size_t a, std::size_t b)>;
 // weights: steps false, its own context unbounded (no memory planned: the bound); true, the
 // context in the ladder's steps (its memory planned). nullopt: no choice there.
 struct QuantAxisRow {
-    QuantOption quant;    // as the choice prices it (product::quant_option_of)
-    bool on_tier = false; // supported, and on the rule pick's side of the quality floor
+    QuantOption quant;        // as the choice prices it (product::quant_option_of)
+    bool supported   = false; // the start runs it
+    double rule_bits = 0;     // the bits the rule's candidate carries (0: unknown)
+    bool on_tier     = false; // supported, and on the rule pick's side of the quality floor
     std::function<std::optional<Choice>(bool steps)> choose_at;
 };
 
+// The axis: the rows, the rule's pick among them (runtime::largest_fitting_quant) and whether its
+// tier holds the own context per stream (Own, OwnStepped, OwnBelowFloor: the tiers the worth may
+// trade within), the context it reached, and the rule's order.
+struct QuantAxis {
+    std::vector<QuantAxisRow> rows;
+    std::size_t rule_pick        = 0;
+    bool rule_pick_own_tier      = false;
+    std::uint32_t target_context = 0;
+    RanksAbove ranks_above;
+};
+
 struct QuantAxisPick {
+    // Whether the worth weighs the rows at all: every supported row's bits known, a generation and
+    // family the curve decides on (weighs_quantizations), the rule's pick in an own-context tier.
+    bool weighs = false;
+    // Weighed, the rows whose accuracy is only an estimate (shown, never decisive), and whether the
+    // rule's pick is one (then nothing is traded against it).
+    std::vector<std::size_t> estimates;
+    bool withheld = false;
     std::optional<std::size_t> row; // the winner's place in the rows; nullopt: none served
     std::uint32_t context = 0;      // the context its choice reached
     Scored scored;                  // its chosen configuration
 };
 
 [[nodiscard]] QuantAxisPick choose_quants(const ModelFacts& quality_model, const CardFacts& card,
-                                          const std::vector<QuantAxisRow>& rows, double band,
-                                          std::uint32_t target_context,
-                                          const RanksAbove& ranks_above);
+                                          const QuantAxis& axis);
 
 } // namespace ninferno::product::choice

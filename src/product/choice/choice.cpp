@@ -2952,14 +2952,33 @@ RowRank rank_rows(const std::vector<ServedRow>& rows, double band, const RanksAb
 }
 
 QuantAxisPick choose_quants(const ModelFacts& quality_model, const CardFacts& card,
-                            const std::vector<QuantAxisRow>& rows, double band,
-                            std::uint32_t target_context, const RanksAbove& ranks_above) {
-    // Only a measurement of a row's own files, or a transfer of the family curve, decides on its
-    // accuracy (#368, quant_authority).
+                            const QuantAxis& axis) {
+    const std::vector<QuantAxisRow>& rows = axis.rows;
+    QuantAxisPick out;
+    // Only a measurement of a row's own files, or a transfer of the family curve (#618 step 9: the
+    // curve within the answer noise of every measured size), decides on its accuracy (#368,
+    // quant_authority): the trade weighs the rows that have one, against the rule's pick only
+    // where it has one too; an estimate is shown, never decisive.
     const auto authorized = [&](const QuantAxisRow& row) {
         const QualityAuthority a = quant_authority(quality_model, row.quant);
         return a == QualityAuthority::Direct || a == QualityAuthority::Transfer;
     };
+    // Only where every supported row's bits place it on the quantization curve (an unknown one has
+    // no accuracy term and would look exact).
+    const bool bits_known = std::all_of(rows.begin(), rows.end(), [](const QuantAxisRow& row) {
+        return !row.supported || row.rule_bits > 0;
+    });
+    out.weighs            = axis.rule_pick < rows.size() && bits_known &&
+                 weighs_quantizations(quality_model, card) && axis.rule_pick_own_tier;
+    if (!out.weighs) { return out; }
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (rows[i].supported && !authorized(rows[i])) { out.estimates.push_back(i); }
+    }
+    out.withheld = !authorized(rows[axis.rule_pick]);
+    if (out.withheld) { return out; }
+    // Two rows' worths within the generation's measured decode error are a tie: the lower KLD wins
+    // (DECISIONS 60), then the rule's order.
+    const double band = std::max(kWorthTie, worth_band(card));
     // A row whose weights take routes this generation did not measure on two cards
     // (class_measured: Other's codebook IQ*, Q4_0/1, FP4 anywhere; IQ4 off Ada) has a transferred
     // speed: it wins no decision while a measured row is in the tier.
@@ -2986,7 +3005,7 @@ QuantAxisPick choose_quants(const ModelFacts& quality_model, const CardFacts& ca
     for (const auto& [i, bound] : bounds) {
         if (!bound_in_reach(bound, top, band)) { break; }
         const auto at = rows[i].choose_at(true);
-        if (!at || !at->chosen || at->context < target_context) { continue; }
+        if (!at || !at->chosen || at->context < axis.target_context) { continue; }
         const Scored& sc = at->scored[*at->chosen];
         served_scored.push_back(sc);
         served.push_back({i, at->context, sc.worth, sc.accuracy.kld, at->anchor_worth});
@@ -2995,8 +3014,7 @@ QuantAxisPick choose_quants(const ModelFacts& quality_model, const CardFacts& ca
     // Within the band of the best worth served (the rows' anchors, #301): a row is eligible by the
     // worth of the configuration it would serve, so a row whose choice already moved inside its
     // own resolution cannot trail the top by more than one band in all.
-    const RowRank ranking = rank_rows(served, band, ranks_above);
-    QuantAxisPick out;
+    const RowRank ranking = rank_rows(served, band, axis.ranks_above);
     if (ranking.best) {
         out.row     = served[*ranking.best].index;
         out.context = served[*ranking.best].context;

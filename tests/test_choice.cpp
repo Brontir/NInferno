@@ -1182,19 +1182,25 @@ void quant_axis_decides(const json& fixture) {
 
     const auto run = [&](const std::vector<Row>& rows, std::uint32_t target,
                          std::vector<int>& served, const ch::RanksAbove& ranks) {
-        std::vector<ch::QuantAxisRow> axis;
+        ch::QuantAxis axis;
         served.assign(rows.size(), 0);
         for (std::size_t i = 0; i < rows.size(); ++i) {
             ch::QuantAxisRow a;
             a.quant     = rows[i].q;
+            a.supported = true;
+            a.rule_bits = rows[i].q.bits_per_weight;
             a.on_tier   = rows[i].on_tier;
             a.choose_at = [&, i](bool steps) -> std::optional<ch::Choice> {
                 if (steps) { ++served[i]; }
                 return choice_at(rows[i].worth, rows[i].kld, rows[i].context);
             };
-            axis.push_back(std::move(a));
+            axis.rows.push_back(std::move(a));
         }
-        return ch::choose_quants(b.model, b.card, axis, 0.05, target, ranks);
+        axis.rule_pick          = 0; // a direct row: nothing is withheld
+        axis.rule_pick_own_tier = true;
+        axis.target_context     = target;
+        axis.ranks_above        = ranks;
+        return ch::choose_quants(b.model, b.card, axis);
     };
     const ch::RanksAbove lower_index = [](std::size_t a, std::size_t c) { return a < c; };
     std::vector<int> served;
@@ -1206,6 +1212,8 @@ void quant_axis_decides(const json& fixture) {
         {direct, true, 1.01, 0.001, 16384}, {direct, true, 0.50, 0.001, 32768},
     };
     const ch::QuantAxisPick pick = run(rows, 32768, served, lower_index);
+    check(pick.weighs && !pick.withheld && pick.estimates == std::vector<std::size_t>{1},
+          "quant axis: weighed, the rule's pick direct, the estimate listed");
     check(pick.row && *pick.row == 2 && pick.context == 32768,
           "quant axis: the lower KLD within the band wins over the higher worth");
     check(served[1] == 0 && served[3] == 0,
