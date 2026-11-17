@@ -107,8 +107,7 @@ int main(int argc, char** argv) {
     const int warps  = arg(argc, argv, "--warps", 4);
     const int repeat = arg(argc, argv, "--repeat", 20);
     if (k % 256 != 0 || rows < 1 || warps < 1 || warps > 32 || repeat < 1) {
-        std::fprintf(stderr, "--k must be a multiple of 256; rows, repeat >= 1; warps 1..32
-");
+        std::fprintf(stderr, "--k must be a multiple of 256; rows, repeat >= 1; warps 1..32\n");
         return 1;
     }
     const int groups          = k / 32;
