@@ -26,7 +26,7 @@
 # the version (default `git describe`, without a leading v), NINFERNO_CMAKE_ARGS adds configure
 # arguments and NINFERNO_PACKAGE_TARGETS more targets for the first tree. NINFERNO_FFMPEG_PREFIX is
 # where ffmpeg.sh builds FFmpeg (default NINFERNO_BUILD_ROOT/build-release-ffmpeg; it needs nasm,
-# meson and ninja). The C library, the
+# meson, ninja and zlib's header and library). The C library, the
 # dynamic loader and the NVIDIA driver libraries stay the user's; build on the oldest
 # distribution the archive should support (the glibc it needs is the build machine's, and it must
 # not be newer than the GLIBC_MIN install.sh checks).
