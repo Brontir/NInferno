@@ -13,6 +13,7 @@
 #include "convert/qwen3_5.h"
 #include "core/sys.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -217,6 +218,30 @@ int main() {
               "a --vision conversion");
         check(!converted_name("m.gguf") && !converted_name("plain.ninferno"),
               "another name is no conversion's");
+    }
+    // Where a model's artifacts go (#691): beside it, else NInferno's own cache under a key of the
+    // directory's absolute path, the same for every spelling of one directory.
+    {
+        using ninferno::convert::artifact_cache_dirs;
+        const fs::path root = fs::temp_directory_path() / "ninferno_cache_dirs_test";
+        fs::remove_all(root);
+        fs::create_directories(root / "a" / "b");
+        fs::create_directories(root / "xdg");
+#ifdef _WIN32
+        const bool set = _putenv_s("LOCALAPPDATA", (root / "xdg").string().c_str()) == 0;
+#else
+        const bool set = setenv("XDG_CACHE_HOME", (root / "xdg").c_str(), 1) == 0;
+#endif
+        const auto one   = artifact_cache_dirs(root / "a");
+        const auto again = artifact_cache_dirs(root / "a" / "b" / "..");
+        const auto other = artifact_cache_dirs(root / "a" / "b");
+        check(one.beside == root / "a" / ".ninferno-cache", "beside: <dir>/.ninferno-cache");
+        check(set && !one.own.empty() && one.own.parent_path().filename() == "converted" &&
+                  one.own.filename().string().size() == 16,
+              "own: <cache_dir>/converted/<16 hex digits>");
+        check(one.own == again.own, "one directory, one key, however spelled");
+        check(one.own != other.own, "another directory, another key");
+        fs::remove_all(root);
     }
     if (failures == 0) { std::cout << "cache revision: all checks passed\n"; }
     return failures == 0 ? 0 : 1;
