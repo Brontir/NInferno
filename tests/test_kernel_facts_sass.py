@@ -222,6 +222,12 @@ class LoopFinder(unittest.TestCase):
         body = body_of(lines)
         i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
         self.assertEqual(body[sc.switch_targets(body, i)[-1]][0], body[-1][0])
+        # A switch before the K loop (the loop's back edge among its targets): unknown flow.
+        early = [(o, {0x010: "BRXU UR4 -0x20 ;"}.get(o, t)) for o, t in KERNEL]
+        body = body_of(early)
+        i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
+        self.assertIsNone(sc.switch_targets(body, i))
+        self.assertEqual(sc.loop_counts(body, tiles=2).loops, 0)
 
     def test_ffma_loop_without_tensor_mma(self):
         # Volta's build: the loop with the FFMAs stands in; no shape, no k_iter.
@@ -501,6 +507,25 @@ class StaticSchedule(unittest.TestCase):
         self.assertTrue(unknown.scheduled)
         self.assertEqual((unknown.loops, unknown.outside_total), (0, 0))
         self.assertEqual(len(kernel_facts.family_audit("mmq", {(2, 80, 0, 0): (0, 0, 0, 0, unknown)})), 1)
+
+    def test_i8_audit(self):
+        # One loop, one barrier and k_iter 2048 pass; an empty build's kernel (no loop, a few
+        # instructions, no barrier) passes; anything else is named.
+        from types import SimpleNamespace as N
+        ok = N(loops=1, bar=1, k_iter=kernel_facts.I8_K_ITER, scheduled=True, outside_bar=0,
+               outside_total=900, schedule_problems=lambda: [])
+        key = (4, 2, 4, 4, 0)
+        self.assertEqual(kernel_facts.family_audit("i8", {key: (0, 0, 0, 0, ok)}), [])
+        empty = N(loops=0, bar=0, k_iter=0, scheduled=True, outside_bar=0, outside_total=2,
+                    schedule_problems=lambda: [])
+        self.assertEqual(kernel_facts.family_audit("i8", {key: (0, 0, 0, 0, empty)}), [])
+        lost = N(loops=0, bar=0, k_iter=0, scheduled=True, outside_bar=1, outside_total=900, schedule_problems=lambda: [])
+        self.assertEqual(len(kernel_facts.family_audit("i8", {key: (0, 0, 0, 0, lost)})), 1)
+        two = N(loops=2, bar=2, k_iter=1024, scheduled=True, outside_bar=0, outside_total=900, schedule_problems=lambda: [])
+        problems = kernel_facts.family_audit("i8", {key: (0, 0, 0, 0, two)})
+        self.assertEqual(len(problems), 1)
+        for what in ("2 candidate loops", "2 barriers", "k_iter 1024"):
+            self.assertIn(what, problems[0])
 
     def test_problems(self):
         c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=2)
@@ -898,6 +923,15 @@ class Sections(unittest.TestCase):
         self.assertIsNone(kernel_facts.r8_key(classic))
         self.assertIsNone(kernel_facts.w4a8_key(r8))
         self.assertIsNone(kernel_facts.rmma_key(self.MMQ_NAME))
+        # The I8 tile sits in generic_i8.cu's anonymous namespace; the quantizer is not keyed.
+        i8 = (f"void {ns}(anonymous namespace)::i8_kernel<(int)4, (int)2, (int)3, (int)4, "
+              f"({ns}Epilogue)0>({ns}GemmArgs, const signed char *, const float *, const int *, int)")
+        self.assertEqual(kernel_facts.i8_key(i8), (4, 2, 3, 4, 0))
+        self.assertEqual(kernel_facts.i8_key(i8.replace("(anonymous namespace)", "<unnamed>")),
+                         (4, 2, 3, 4, 0))
+        self.assertIsNone(kernel_facts.i8_key(
+            f"void {ns}(anonymous namespace)::i8_quantize_kernel(const float *, int)"))
+        self.assertIsNone(kernel_facts.i8_key(r8))
         # The routed-expert kernels (#619 step 11): their Stage cast is moe's, not generic's.
         moe = "ninferno::ops::detail::moe::"
         moe_r8 = (f"void {moe}moe_r8_kernel<{ns}W4a8Ggml32<({ns}Ggml32)0>, {ns}R8Schedule<(int)2, "

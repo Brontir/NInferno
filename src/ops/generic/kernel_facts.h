@@ -193,14 +193,19 @@ struct SnapshotHeader {
 //           (#613 PR-10): one iteration of the loop holding the dp4a is a group of 32-value
 //           blocks per lane and row (no MMA: k_iter 0); key "codec warps rows nt epilogue pre"
 //           ("W4a8Q45K<4> 4 1 1 0 0").
+//   "i8"    the I8 tiles i8_kernel<WT, WN, Stages, Bits, epilogue> (#613 PR-6): one iteration of
+//           the counted loop is one cp.async stage, a group of 64 K values (k_iter 2048: a warp's
+//           32 m16n8 tiles x 64 K); key "WT WN stages bits epilogue" ("4 2 4 4 0"). The stages
+//           are the build's (generic_i8_schedules.h i8_stages: 3 for 6-bit codes on sm_86 / 89 /
+//           120a); empty bodies (no loop) below sm_80.
 //   "moer8"   the routed-expert R8 kernels moe_r8_kernel<codec, R8Schedule<warps, rows>, NT,
 //             stage, kPre> (#619 step 11), counted as the r8 rows; key "codec warps rows nt stage
 //             pre", stage as moe_internal.h's Stage (0 Router, 1 GateUp, 2 Down, 3 Up).
 //   "moegemm" the routed-expert register-MMA kernels moe_gemm_kernel<decoder, RmmaSchedule<warps_m,
 //             warps_k, m_tiles, n_tiles, cluster>, stage> (#619 step 11): key "decoder warps_m
 //             warps_k m_tiles n_tiles cluster stage".
-inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8",  "gemma4",
-                                                        "r8",  "moer8", "moegemm"};
+inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8",  "gemma4", "r8",
+                                                        "i8",  "moer8", "moegemm"};
 
 struct MmqKernelKey {
     int type      = 0; // the ggml_type value: 12 Q4_K, 13 Q5_K, 14 Q6_K
@@ -234,6 +239,13 @@ struct R8KernelKey {
     bool pre     = false; // the activation arrives quantized (kPre)
 };
 
+struct I8KernelKey {
+    int WT = 0, WN = 0; // warps along the tokens and along the rows
+    int stages   = 0;   // the cp.async ring (generic_i8_schedules.h i8_stages)
+    int bits     = 0;   // the code width: 4, 5 or 6 (generic_i8.cu's instances)
+    int epilogue = 0;   // Epilogue as an integer
+};
+
 // One section of a label's snapshot: the nvcc its rows were read under and their count; nullopt
 // where the label has no snapshot or the snapshot no such section.
 struct SectionHeader {
@@ -252,6 +264,7 @@ section_rows(std::string_view arch, std::string_view family);
 [[nodiscard]] std::optional<KernelFacts> gemma4_facts(std::string_view arch,
                                                       const Gemma4KernelKey& key);
 [[nodiscard]] std::optional<KernelFacts> r8_facts(std::string_view arch, const R8KernelKey& key);
+[[nodiscard]] std::optional<KernelFacts> i8_facts(std::string_view arch, const I8KernelKey& key);
 
 // The build architecture labels with a committed snapshot, in file order.
 [[nodiscard]] std::vector<std::string_view> snapshot_archs();

@@ -1,8 +1,8 @@
 #!/bin/bash
 # kernel_facts_families.sh REPO [ARCH...] : regenerate the section families of the kernel-facts
-# snapshots (mmq and w4a8, #785; gemma4, #830; r8, #613 PR-10; moer8 and moegemm, #619 step 11) on the
-# release toolchain, on a build machine's CPU, and check them. KFF_FAMILIES picks them (default
-# mmq,w4a8,gemma4,r8,moer8,moegemm): sm_70's snapshot is made with
+# snapshots (mmq and w4a8, #785; gemma4, #830; r8, #613 PR-10; i8, #613 PR-6; moer8 and moegemm,
+# #619 step 11) on the release toolchain, on a build machine's CPU, and check them. KFF_FAMILIES
+# picks them (default mmq,w4a8,gemma4,r8,i8,moer8,moegemm): sm_70's snapshot is made with
 # CUDA 12.8 and holds the gemma4 section alone (CUDACXX=/usr/local/cuda-12.8/bin/nvcc
 # KFF_FAMILIES=gemma4 kernel_facts_families.sh REPO 70).
 #
@@ -41,7 +41,7 @@ REPO=$(realpath "$1"); shift
 ARCHS=("$@"); [ ${#ARCHS[@]} -gt 0 ] || ARCHS=(75 80 86 89 90 100 120a)
 ROOT=$(realpath -m "${KFF_ROOT:-$HOME/kff}"); mkdir -p "$ROOT"
 JOBS=${KFF_JOBS:-8}; NVCC=${CUDACXX:-/usr/local/cuda-13.4/bin/nvcc}
-FAMS=${KFF_FAMILIES:-mmq,w4a8,gemma4,r8,moer8,moegemm}; IFS=, read -r -a FAM_LIST <<< "$FAMS"
+FAMS=${KFF_FAMILIES:-mmq,w4a8,gemma4,r8,i8,moer8,moegemm}; IFS=, read -r -a FAM_LIST <<< "$FAMS"
 # The binary read (KFF_TARGET): the selector golden test by default. Its sm_120a link holds no
 # Gemma 4 kernel (libninferno_ops.a does, 232) and no routed-expert one (moer8, moegemm), so those
 # families are read there from ninferno-serve (KFF_TARGET=ninferno-serve KFF_FAMILIES=...).

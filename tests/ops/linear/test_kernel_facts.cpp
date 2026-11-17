@@ -483,6 +483,25 @@ void sections_read() {
                                   " rows without one barrier-free MMA loop, first " + gemm_first);
         expect(kf::r8_facts(arch, {"W4a8Q45K<4>", 4, 1, 1, 0, false}).has_value(),
                name + " r8: no W4a8Q45K<4> 4 1 1 0 0 row");
+        // The I8 tiles (#613 PR-6): from sm_80 on every row has one K loop of int8 MMAs (one
+        // cp.async stage an iteration); below, generic_i8.cu compiles them empty.
+        if (!kf::section_header(arch, "i8")) continue;
+        const bool i8_built = arch != "75";
+        int i8_bad          = 0;
+        std::string i8_first;
+        for (const auto& [key, f] : kf::section_rows(arch, "i8")) {
+            const bool looped = f.loop && f.loop->loops == 1 && f.loop->mma > 0 &&
+                                f.loop->mma_shape.rfind("IMMA.", 0) == 0;
+            const bool ok = i8_built ? looped : !f.loop || f.loop->loops == 0;
+            if (!ok && i8_bad++ == 0) i8_first = key;
+        }
+        // The reader's key: the 4x2-warp, 4-bit Store tile (three stages on sm_75's empty build).
+        expect(kf::i8_facts(arch, {4, 2, i8_built ? 4 : 3, 4, 0}).has_value(),
+               name + " i8: no 4 2 " + (i8_built ? "4" : "3") + " 4 0 row");
+        expect(i8_bad == 0, name + " i8: " + std::to_string(i8_bad) +
+                                (i8_built ? " rows without one int8-MMA loop, first "
+                                          : " rows with a loop in an empty build, first ") +
+                                i8_first);
     }
     std::cout << "sections: " << with_sections << " snapshots with the mmq section\n";
     // The reader takes a section after the rows and refuses one that breaks its form.
