@@ -883,6 +883,13 @@ class Sections(unittest.TestCase):
         waited = c.with_pipes(waits=True)
         self.assertEqual(len(waited.row()), len(sc.COLUMNS) + len(sc.SECTION_FIELDS))
         self.assertEqual(sc.LoopCounts.from_row(waited.row()), waited)
+        # The w4a8 section's rows: the producer warps' loop after the wait classes (#613 PR-6).
+        produced = c.with_pipes(waits=True, producer=True)
+        self.assertEqual(len(produced.row()), len(sc.COLUMNS) + len(sc.SECTION_FIELDS) +
+                         len(sc.PRODUCER_FIELDS))
+        self.assertEqual(sc.LoopCounts.from_row(produced.row()), produced)
+        with self.assertRaises(AssertionError):
+            sc.LoopCounts().with_pipes(producer=True)  # the producer loop rides on the waits
         lines = [(o, {0x170: "I2F.F32.S32 R25, R24 ;", 0x1d0: "IMAD R9, R9, R10, RZ ;",
                       0x210: "BAR.SYNC.DEFER_BLOCKING 0x0 ;"}.get(o, t)) for o, t in KERNEL]
         c = sc.loop_counts(body_of(lines), tiles=1)
