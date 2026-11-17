@@ -1189,6 +1189,25 @@ def list_differences(args, differ, missing, extra, expected, got, line):
         print(f"  ... {shown - args.show} more")
 
 
+# Section rows whose SASS ptxas does not reproduce from the same source (#968): built twice clean
+# from one tree (sm_89, nvcc 13.4.92, no ccache, the five R8 translation units), 2 of 2019
+# functions came out with another schedule (3540 against 3556 SASS lines), and a third after a
+# comment line elsewhere in a header they include: these three pre-quantized nt = 8 instances. The
+# same rows moved on sm_75 and sm_86 between trees. check holds them to their resources (the
+# registers, stack, local and shared bytes, which never moved) and reports their loop counts
+# beside, never failing on them: the R8 law prices T = 1 only and reads no nt = 8 row (#966).
+# extract still writes the build's counts. A key is the family and the row's key fields as written.
+SASS_UNSTABLE = frozenset({
+    "r8 W4a8Ggml32<2> 4 2 8 0 1",
+    "r8 W4a8U4ZpG<128> 4 2 8 1 1",
+    "r8 W4a8U4ZpG<64> 4 2 8 1 1",
+})
+
+
+def sass_unstable(family, key):
+    return f"{family} {row_key(key)}" in SASS_UNSTABLE
+
+
 def section_line(family):
     """A section row's text, as render_section writes it."""
     return lambda k, v: " ".join(str(x) for x in [family, *k, *v[:4]] +
@@ -1207,6 +1226,12 @@ def check_section(args, family, section, got, other_nvcc, with_sass, arch):
     extra = sorted(k for k in got if k not in expected)
     differ = [] if other_nvcc else sorted(
         k for k in expected if k in got and expected[k] != got[k])
+    # #968: a row ptxas does not reproduce is held to its resources alone.
+    unstable = [k for k in differ if sass_unstable(family, k) and expected[k][:4] == got[k][:4]]
+    differ = [k for k in differ if k not in unstable]
+    for k in unstable:
+        print(f"kernel_facts: {family} {row_key(k)}: loop counts differ from the section, a row "
+              f"ptxas does not reproduce (#968), resources equal: not a failure")
     if not (missing or extra or differ):
         if other_nvcc:
             print(f"kernel_facts: {len(got)} {family} kernels of sm_{arch}: the set equals "

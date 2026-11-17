@@ -999,5 +999,15 @@ class Sections(unittest.TestCase):
         self.assertEqual(self.check(self.root / "moved.txt"), 1)
 
 
+class SassUnstable(unittest.TestCase):
+    # #968: the three R8 rows ptxas does not reproduce are named by family and key; a neighbour
+    # row of the same kernel is not.
+    def test_named_rows_only(self):
+        self.assertTrue(kernel_facts.sass_unstable("r8", ("W4a8Ggml32<2>", 4, 2, 8, 0, 1)))
+        self.assertTrue(kernel_facts.sass_unstable("r8", ("W4a8U4ZpG<64>", 4, 2, 8, 1, 1)))
+        self.assertFalse(kernel_facts.sass_unstable("r8", ("W4a8U4ZpG<64>", 4, 2, 4, 1, 1)))
+        self.assertFalse(kernel_facts.sass_unstable("mmq", ("W4a8Ggml32<2>", 4, 2, 8, 0, 1)))
+
+
 if __name__ == "__main__":
     unittest.main()
