@@ -278,6 +278,9 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         };
         double slice_body =
             std::max(mem, mma / (route_cost::kMmqEfficiency.value() * scale)) + chain;
+        // The slice's launch and fixup: the fitted kMmqSliceSeconds, or under the counted unit
+        // the kernel's own graph node (its fixup is inside the counted seconds).
+        double slice_fixed = route_cost::kMmqSliceSeconds.value();
         // The counted slice (#613 PR-5, mmq_counted_unit): the launch's units at the unit its
         // own resident CTAs give, with the fixup's bytes and graph node; the fitted slice where
         // the kernel's counts, the arch's facts or the width's unit are missing.
@@ -296,11 +299,10 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
                 }
             }
         }
-        const double price =
-            complete ? slices * (slice_body + route_cost::kMmqSliceSeconds.value()) +
-                           (slices - 1) * quant_mmq_counted(tt) +
-                           quant_mmq_counted(t - (slices - 1) * tt)
-                     : slices * (slice_body + quant(tt) + route_cost::kMmqSliceSeconds.value());
+        const double price = complete ? slices * (slice_body + slice_fixed) +
+                                            (slices - 1) * quant_mmq_counted(tt) +
+                                            quant_mmq_counted(t - (slices - 1) * tt)
+                                      : slices * (slice_body + quant(tt) + slice_fixed);
         if (complete) {
             const kr::Completeness c = kr::completeness(chip, call, 1.0);
             offer(Route{Family::GgmlMmq, 0}, price + c.output + c.residual);
