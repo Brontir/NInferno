@@ -1,0 +1,36 @@
+# Decode table entries the R8 schedule law reproduces on the entry's own board (#613 PR-10).
+# tools/bench/r8_decode_table.py --retire drops them: the law (law_r8_before) answers these calls
+# before any carried entry, with the same schedule, so an entry here moves no call. Each line:
+# GPU QTYPE EPILOGUE N K WARPS ROWS, the header's spelling and the entry's measured schedule.
+# test_r8_law holds the law to that schedule on the table's board, so a law change that moves a
+# retired call fails there; it also fails where the law reproduces an entry a table still holds.
+# Listed by test_r8_law's count_reproduced_entries on cf194ffa1 (the answer is the same in every
+# build: a substituted board reads its own arch's kernel-facts snapshot). A table regenerated from
+# new sweeps passes --retire with this file.
+ad102:128sm GGML_IQ2_XS Store 6144 5120 8 2
+ad102:128sm GGML_IQ2_XXS Store 9216 2048 4 1
+ad102:128sm GGML_IQ2_XXS Store 6144 5120 8 2
+ad102:128sm GGML_IQ3_S Store 5120 6144 4 2
+ad102:128sm GGML_IQ3_S Store 4608 6656 4 2
+ad102:128sm GGML_IQ3_S Store 5120 17408 8 1
+ad102:128sm GGML_IQ3_XXS Store 4608 6656 4 2
+ad102:128sm GGML_Q6_K Store 1024 5120 8 1
+ad102:128sm GGML_Q6_K Store 1024 6656 8 1
+ad102:128sm GGML_Q6_K Store 4096 12288 8 1
+ad102:128sm GGML_Q6_K Store 5120 17408 8 1
+ad103:80sm GGML_IQ2_S Store 4096 2048 4 1
+ad103:80sm GGML_IQ2_S Store 8192 2048 4 1
+ad104:60sm GGML_Q6_K Store 4096 12288 8 1
+ad106:34sm GGML_IQ2_S Store 5120 6144 8 1
+ad106:34sm GGML_IQ2_S Store 5120 17408 8 1
+ad106:34sm GGML_IQ2_XS Store 5120 17408 8 1
+ad106:34sm GGML_IQ2_XXS Store 5120 6144 8 1
+ad106:34sm GGML_IQ2_XXS Store 5120 17408 8 1
+ad106:34sm GGML_IQ3_S Store 1024 5120 8 1
+ad106:34sm GGML_IQ3_S Store 6144 5120 8 1
+ad106:34sm GGML_IQ3_S Store 5120 6144 8 1
+ad106:34sm GGML_IQ3_S Store 5120 17408 8 1
+ad106:34sm GGML_Q6_K Store 2048 4096 8 1
+ad106:34sm GGML_Q6_K Store 2816 8192 8 1
+tu102:68sm GGML_IQ3_S Store 1024 5120 8 1
+tu102:68sm GGML_IQ3_XXS Store 1024 5120 8 1

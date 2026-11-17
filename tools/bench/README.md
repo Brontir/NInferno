@@ -445,8 +445,14 @@ device takes the table of the nearest board within a variant's distance of it (`
 | `--out FILE` | required | Header to write. |
 | `--min-gain F` | 0.005 | Minimum relative gain over the rules' choice. |
 | `--merge HEADER` | none | Keep this header's entries for problems the given sweeps did not measure (another GPU or format family). |
+| `--retire FILE` | none | Drop the entries FILE lists (`GPU QTYPE EPILOGUE N K WARPS ROWS` a line, the entry's schedule last): the ones the R8 schedule law reproduces on their own board, `tools/bench/data/r8_law_retired.txt` (#613 PR-10). With `--merge` and no sweeps it rewrites the header without them. An entry the tables no longer hold counts as already retired; one whose schedule differs, or of a GPU no table is for, stops the tool. |
 
 ```bash
 python3 tools/bench/r8_decode_table.py --out src/ops/generic/r8_decode_table.h \
+  --retire tools/bench/data/r8_law_retired.txt \
   ad102:128sm=a1.txt,a2.txt,a3.txt gb202:170sm=b1.txt,b2.txt,b3.txt
 ```
+
+`test_r8_law` fails where the law reproduces an entry a table still holds, and names it: add it
+to `r8_law_retired.txt` and regenerate (`--merge src/ops/generic/r8_decode_table.h --retire ...`
+with no sweeps).
