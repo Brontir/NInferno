@@ -82,6 +82,12 @@ constexpr SectionFamily kSections[] = {
      false,
      " pro_loops pro_total pro_int pro_fp pro_ldg_bytes pro_sts_bytes pro_stall glb_waits"
      " outside_glb_waits pro_glb_waits"},
+    {"moer8", "family codec warps rows nt stage pre registers stack local shared", 1, 5, false,
+     " pro_loops pro_total pro_int pro_fp pro_ldg_bytes pro_sts_bytes pro_stall glb_waits"
+     " outside_glb_waits pro_glb_waits"},
+    {"moegemm",
+     "family decoder warps_m warps_k m_tiles n_tiles cluster stage registers stack local shared", 1,
+     6, true},
 };
 static_assert(std::size(kSections) == std::size(kSectionFamilies));
 

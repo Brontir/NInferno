@@ -298,6 +298,77 @@ def w4a8_key(demangled):
     return None
 
 
+MOE_NAMESPACE = "ninferno::ops::detail::moe::"
+# moe_internal.h Stage: Router 0, GateUp 1, Down 2, Up 3.
+MOE_STAGE = re.compile(r"\(" + re.escape(MOE_NAMESPACE) + r"Stage\)(\d+)")
+MOE_GATE_UP = 1
+
+
+def moe_stage(arg):
+    """A moe Stage template argument as its integer, `(ninferno::ops::detail::moe::Stage)1` -> 1."""
+    m = MOE_STAGE.fullmatch(arg.strip())
+    return int(m.group(1)) if m else None
+
+
+def moe_args(demangled, name):
+    """The raw template arguments of a moe kernel, the Stage cast kept for moe_stage, or None."""
+    head = "void " + MOE_NAMESPACE + name + "<"
+    if not demangled.startswith(head):
+        return None
+    depth, end = 1, len(head)
+    while end < len(demangled) and depth > 0:
+        if demangled[end] == "<":
+            depth += 1
+        elif demangled[end] == ">":
+            depth -= 1
+        end += 1
+    return split_top_level(demangled[len(head):end - 1])
+
+
+def moe_r8_key(demangled):
+    """The key of a routed-expert R8 kernel (src/ops/moe/moe_r8.cuh, #619 step 11):
+    moe_r8_kernel<C, R8Schedule<Warps, Rows>, NT, Stage, kPre>, keyed as the codec, the warps and
+    rows per warp, the token slots, the stage and kPre. None for other symbols."""
+    raw = moe_args(demangled, "moe_r8_kernel")
+    if raw is None:
+        return None
+    stage = moe_stage(raw[3]) if len(raw) == 5 else None
+    args = [canonical(a) for a in raw]
+    m = R8_SCHEDULE.fullmatch(args[1]) if len(args) == 5 else None
+    if not m or stage is None or not re.fullmatch(r"\d+", args[2]):
+        fail(f"unexpected moe_r8_kernel arguments in {demangled}")
+    return (args[0], *(int(v) for v in m.groups()), int(args[2]), stage, as_bool(args[4]))
+
+
+def moe_gemm_key(demangled):
+    """The key of a routed-expert register-MMA kernel (src/ops/moe/moe_gemm.cuh, #619 step 11):
+    moe_gemm_kernel<Decoder, RmmaSchedule<warps_m, warps_k, m_tiles, n_tiles, cluster>, Stage>,
+    keyed as the decoder, the schedule's five fields and the stage. None for other symbols."""
+    raw = moe_args(demangled, "moe_gemm_kernel")
+    if raw is None:
+        return None
+    stage = moe_stage(raw[2]) if len(raw) == 3 else None
+    args = [canonical(a) for a in raw]
+    m = re.fullmatch(r"RmmaSchedule<(\d+),(\d+),(\d+),(\d+),(\d+)>", args[1]) if len(args) == 3 else None
+    if not m or stage is None:
+        fail(f"unexpected moe_gemm_kernel arguments in {demangled}")
+    return (args[0], *(int(v) for v in m.groups()), stage)
+
+
+def moe_r8_products(key):
+    """The dp4a products one warp of a routed R8 kernel issues per block, as r8_products: rows x
+    row sets (two in the GateUp stage) x token slots, plus the half-min codec's ones sums."""
+    nt = key[3]
+    return key[2] * nt * (2 if key[4] == MOE_GATE_UP else 1) + (
+        nt if key[0] in R8_HALF_MIN_CODECS else 0)
+
+
+def moe_gemm_tiles(key):
+    """The m16n8 tiles one warp of a routed register-MMA kernel accumulates: m_tiles x n_tiles,
+    twice in the GateUp stage (gate and up)."""
+    return key[3] * key[4] * (2 if key[6] == MOE_GATE_UP else 1)
+
+
 R8_SCHEDULE = re.compile(r"R8Schedule<(\d+),(\d+)>")
 
 
@@ -430,6 +501,13 @@ FAMILIES = {
     "r8": Family("r8", ("codec", "warps", "rows", "nt", "epilogue", "pre"), lambda d: r8_key(d),
                  "r8_kernel", lambda key: r8_products(key), True, True, marker="IDP",
                  prologue="F2I"),
+    "moer8": Family("moer8", ("codec", "warps", "rows", "nt", "stage", "pre"),
+                    lambda d: moe_r8_key(d), "moe_r8_kernel", lambda key: moe_r8_products(key),
+                    True, True, marker="IDP", prologue="F2I"),
+    "moegemm": Family("moegemm", ("decoder", "warps_m", "warps_k", "m_tiles", "n_tiles",
+                                  "cluster", "stage"), lambda d: moe_gemm_key(d),
+                      "moe_gemm_kernel", lambda key: moe_gemm_tiles(key), True, True,
+                      waits=True),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -807,6 +885,17 @@ SECTION_NOTES = {
         "# global load's latency (a wait on a scoreboard with an LDG pending): glb_waits in one",
         "# dp4a iteration, outside_glb_waits outside both loops, pro_glb_waits in one quantizer",
         "# iteration.",
+    ),
+    "moer8": (
+        "# The routed-expert R8 kernels (src/ops/moe/moe_r8.cuh, #619 step 11): moe_r8_kernel<codec,",
+        "# R8Schedule<warps, rows>, NT, stage, kPre>, stage as moe_internal.h's Stage (0 Router,",
+        "# 1 GateUp, 2 Down, 3 Up). Counted as the r8 rows: the dp4a loop (IDP), the pro_ columns",
+        "# the activation quantizer's loop (F2I), the global-load waits after them.",
+    ),
+    "moegemm": (
+        "# The routed-expert register-MMA kernels (src/ops/moe/moe_gemm.cuh, #619 step 11):",
+        "# moe_gemm_kernel<decoder, RmmaSchedule<warps_m, warps_k, m_tiles, n_tiles, cluster>,",
+        "# stage>; k_iter as the rmma rows' (m16n8 tiles a warp, twice in the GateUp stage).",
     ),
 }
 

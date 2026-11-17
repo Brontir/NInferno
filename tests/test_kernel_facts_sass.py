@@ -879,6 +879,19 @@ class Sections(unittest.TestCase):
         self.assertIsNone(kernel_facts.r8_key(classic))
         self.assertIsNone(kernel_facts.w4a8_key(r8))
         self.assertIsNone(kernel_facts.rmma_key(self.MMQ_NAME))
+        # The routed-expert kernels (#619 step 11): their Stage cast is moe's, not generic's.
+        moe = "ninferno::ops::detail::moe::"
+        moe_r8 = (f"void {moe}moe_r8_kernel<{ns}W4a8Ggml32<({ns}Ggml32)0>, {ns}R8Schedule<(int)2, "
+                  f"(int)1>, (int)1, ({moe}Stage)1, (bool)0>({moe}GemmArgs)")
+        self.assertEqual(kernel_facts.moe_r8_key(moe_r8), ("W4a8Ggml32<0>", 2, 1, 1, 1, 0))
+        self.assertEqual(kernel_facts.moe_r8_products(("W4a8Q45K<4>", 4, 2, 4, 1, 0)), 16)
+        moe_gemm = (f"void {moe}moe_gemm_kernel<{ns}Fp8Decoder, {ns}RmmaSchedule<(int)1, (int)4, "
+                    f"(int)1, (int)2, (int)1>, ({moe}Stage)1>({moe}GemmArgs)")
+        self.assertEqual(kernel_facts.moe_gemm_key(moe_gemm), ("Fp8Decoder", 1, 4, 1, 2, 1, 1))
+        self.assertEqual(kernel_facts.moe_gemm_tiles(kernel_facts.moe_gemm_key(moe_gemm)), 4)
+        self.assertIsNone(kernel_facts.moe_r8_key(moe_gemm))
+        self.assertIsNone(kernel_facts.moe_gemm_key(moe_r8))
+        self.assertIsNone(kernel_facts.r8_key(moe_r8))
 
     def test_pipe_counts(self):
         c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=1)
