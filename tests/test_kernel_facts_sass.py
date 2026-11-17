@@ -5,6 +5,8 @@ alternative version of a step, an epilogue, a subroutine after EXIT), the heavie
 once, the min-term MMAs told apart, k_iter from the weight MMAs; then the snapshot round trip and
 the check's verdicts. No GPU, no CUDA toolkit."""
 
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -1009,6 +1011,25 @@ class SassUnstable(unittest.TestCase):
         self.assertFalse(kernel_facts.sass_unstable("r8", ("W4a8U4ZpG<64>", 4, 2, 4, 1, 1)))
         self.assertFalse(kernel_facts.sass_unstable("r8", ("W4a8U4ZpG<64>", 4, 2, 8, 1, 0)))
         self.assertFalse(kernel_facts.sass_unstable("mmq", ("W4a8Ggml32<2>", 4, 2, 8, 0, 1)))
+
+    def test_check_section_holds_them_to_their_resources(self):
+        # The check itself: a held row whose loop counts moved passes; the same row with a
+        # resource moved fails; a row the law reads (nt = 1) with its counts moved fails.
+        import types
+        args = types.SimpleNamespace(expected="sm_89.txt", nvcc="13.4.92", binary="serve",
+                                     dump=None, show=10)
+        before, after = sc.LoopCounts(), sc.LoopCounts()
+        before.total, after.total = 1547, 1549
+        held, read = ("W4a8Ggml32<2>", 4, 2, 8, 1, 1), ("W4a8Ggml32<2>", 4, 2, 1, 1, 0)
+
+        def check(key, expected, got):
+            section = {"rows": {key: expected}, "nvcc": "13.4.92"}
+            with contextlib.redirect_stdout(io.StringIO()):
+                return kernel_facts.check_section(args, "r8", section, {key: got}, False, True, "89")
+
+        self.assertEqual(check(held, (158, 0, 0, 0, before), (158, 0, 0, 0, after)), 0)
+        self.assertEqual(check(held, (158, 0, 0, 0, before), (159, 0, 0, 0, after)), 1)
+        self.assertEqual(check(read, (158, 0, 0, 0, before), (158, 0, 0, 0, after)), 1)
 
 
 if __name__ == "__main__":
