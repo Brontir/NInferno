@@ -89,10 +89,9 @@ bool ggml_mmq_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& 
         if (tokens <= kMmqMaxTokens) {
             return ggml_mmq_takes_tuned(x, *h.weight, h.policy, h.row, rows, stream);
         }
-        const Problem problem{h.weight->qtype, h.policy, rows, k, Epilogue::Store};
-        return (rows % ggml_mmq::kRowMultiple) == 0 && mmq_admits(*h.weight, h.policy) &&
-               select_route(problem, *h.weight, tokens, prefill_routes_active()).family ==
-                   Family::GgmlMmq;
+        // exp/617f-mmq-pair (A/B only, never merged): the pair wherever the kernel admits both
+        // halves, whatever a call of each half alone would select.
+        return (rows % ggml_mmq::kRowMultiple) == 0 && mmq_admits(*h.weight, h.policy);
     };
     if (!takes(gate) || !takes(up)) return false;
     const std::int32_t slice = std::min(tokens, kMmqPrefillSlice);
