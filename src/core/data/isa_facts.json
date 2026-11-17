@@ -2300,12 +2300,12 @@
       "sass_per_mma": 1,
       "mem_clock_khz": 14001000,
       "tool": {
-        "probe": "isa_probe 17",
+        "probe": "isa_probe 18",
         "nvcc": "13.4.92",
         "driver": "13040",
         "runtime": "13040",
         "arch": "sm_120a",
-        "source_sha256": "cde151411d78b687c618a444a700b23561ccc123cb64e112f6a258fa828bdefd"
+        "source_sha256": "ae69e5d3c8e481415cde41f7bfe75cba9c7a08dfb58158a1570157d50858bbc1"
       },
       "notes": [
         "device 0 is the GPU at PCI 0000:01:00.0",
@@ -2313,14 +2313,15 @@
         "mma_cycles_per_sm_w4: 170 of 170 SMs ran 1 CTA(s) of 4 warps at once, the others are left out",
         "mma_cycles_per_sm_w8: 170 of 170 SMs ran 1 CTA(s) of 8 warps at once, the others are left out",
         "mma_cycles_per_sm_w16: 170 of 170 SMs ran 1 CTA(s) of 16 warps at once, the others are left out",
-        "the SM clock under the MMA loop: 2878 MHz at the first of 651 launches, 2872..2879 over the last quarter",
+        "the SM clock under the MMA loop: 2891 MHz at the first of 673 launches, 2876..2879 over the last quarter",
         "fp32_cycles_per_warp_instruction: 170 of 170 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
         "int32_cycles_per_warp_instruction: 170 of 170 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "l1_ldg32_cycles_per_sm: 170 of 170 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "l2_ldg32_cycles_per_sm: 170 of 170 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
         "l2_held_latency_w2: 154 of 170 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_tlbwarm_held_latency_w2: 94 of 170 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_held_latency_w2: 98 of 170 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_lanes_held_latency_w2: 94 of 170 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_lanes_half_held_latency_w2: 79 of 85 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "dram_tlbwarm_held_latency_w2: 104 of 170 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "dram_held_latency_w2: 84 of 170 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "dram_lanes_held_latency_w2: 78 of 170 CTAs had an SM to themselves and one FFMA warp, the others are left out",
         "compute processes on the probe's GPU before the run: 0",
         "compute processes on the probe's GPU after the run: 0",
         "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
@@ -2332,7 +2333,7 @@
           "unit": "clk"
         },
         "mma_cycles_per_partition": {
-          "value": 32.011,
+          "value": 32.01,
           "unit": "clk"
         },
         "tensor_flops_per_sm_clock": {
@@ -2360,7 +2361,7 @@
           "unit": "clk"
         },
         "int32_cycles_per_warp_instruction": {
-          "value": 2.01,
+          "value": 2.011,
           "unit": "clk"
         },
         "l1_latency_w1": {
@@ -2372,7 +2373,7 @@
           "unit": "clk"
         },
         "l1_latency_w4": {
-          "value": 39.002,
+          "value": 39.003,
           "unit": "clk"
         },
         "l1_latency_w8": {
@@ -2380,103 +2381,103 @@
           "unit": "clk"
         },
         "l2_latency_w1": {
-          "value": 354.333,
+          "value": 354.138,
           "unit": "clk"
         },
         "l2_latency_w2": {
-          "value": 354.368,
+          "value": 353.654,
           "unit": "clk"
         },
         "l2_latency_w4": {
-          "value": 352.901,
+          "value": 351.908,
           "unit": "clk"
         },
         "l2_latency_w8": {
-          "value": 352.346,
+          "value": 351.763,
           "unit": "clk"
         },
         "dram_latency_w1": {
-          "value": 874.285,
+          "value": 871.859,
           "unit": "clk"
         },
         "dram_latency_w2": {
-          "value": 876.793,
+          "value": 874.049,
           "unit": "clk"
         },
         "dram_latency_w4": {
-          "value": 841.664,
+          "value": 840.973,
           "unit": "clk"
         },
         "dram_latency_w8": {
-          "value": 837.379,
+          "value": 836.551,
           "unit": "clk"
         },
         "l2_latency_ns_w1": {
-          "value": 123.328,
+          "value": 122.984,
           "unit": "ns"
         },
         "l2_latency_ns_w2": {
-          "value": 123.094,
+          "value": 122.891,
           "unit": "ns"
         },
         "l2_latency_ns_w4": {
-          "value": 122.703,
+          "value": 122.578,
           "unit": "ns"
         },
         "l2_latency_ns_w8": {
-          "value": 122.469,
+          "value": 122.328,
           "unit": "ns"
         },
         "dram_latency_ns_w1": {
-          "value": 303.625,
+          "value": 302.812,
           "unit": "ns"
         },
         "dram_latency_ns_w2": {
-          "value": 304.5,
+          "value": 303.938,
           "unit": "ns"
         },
         "dram_latency_ns_w4": {
-          "value": 292.938,
+          "value": 292.188,
           "unit": "ns"
         },
         "dram_latency_ns_w8": {
-          "value": 291.438,
+          "value": 290.688,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_w1": {
-          "value": 864.314,
+          "value": 864.568,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w2": {
-          "value": 868.266,
+          "value": 865.252,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w4": {
-          "value": 836.656,
+          "value": 834.371,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w8": {
-          "value": 828.1,
+          "value": 828.754,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_ns_w1": {
-          "value": 300.875,
+          "value": 300.375,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w2": {
-          "value": 302.188,
+          "value": 300.688,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w4": {
-          "value": 291.125,
+          "value": 289.938,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w8": {
-          "value": 288.5,
+          "value": 288.0,
           "unit": "ns"
         },
         "sm_clock_mhz_chase": {
-          "value": 2877.027,
+          "value": 2877.618,
           "unit": "mhz"
         },
         "shared_latency": {
@@ -2532,71 +2533,71 @@
           "unit": "clk"
         },
         "sm_clock_mhz_mma": {
-          "value": 2878.587,
+          "value": 2878.052,
           "unit": "mhz"
         },
         "dram_lanes_latency_w1": {
-          "value": 1765.93,
+          "value": 1749.906,
           "unit": "clk"
         },
         "dram_lanes_latency_w2": {
-          "value": 2168.215,
+          "value": 2176.715,
           "unit": "clk"
         },
         "dram_lanes_latency_w4": {
-          "value": 3598.145,
+          "value": 3593.52,
           "unit": "clk"
         },
         "dram_lanes_latency_w8": {
-          "value": 7012.496,
+          "value": 7022.605,
           "unit": "clk"
         },
         "dram_lanes_latency_ns_w1": {
-          "value": 613.5,
+          "value": 608.375,
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w2": {
-          "value": 753.5,
+          "value": 756.5,
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w4": {
-          "value": 1250.625,
+          "value": 1249.375,
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w8": {
-          "value": 2441.0,
+          "value": 2441.375,
           "unit": "ns"
         },
         "dram_lanes_half_latency_w1": {
-          "value": 1511.332,
+          "value": 1504.254,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w2": {
-          "value": 1770.359,
+          "value": 1747.539,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w4": {
-          "value": 2181.496,
+          "value": 2175.121,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w8": {
-          "value": 3598.312,
+          "value": 3600.449,
           "unit": "clk"
         },
         "dram_lanes_half_latency_ns_w1": {
-          "value": 525.0,
+          "value": 522.5,
           "unit": "ns"
         },
         "dram_lanes_half_latency_ns_w2": {
-          "value": 615.125,
+          "value": 607.0,
           "unit": "ns"
         },
         "dram_lanes_half_latency_ns_w4": {
-          "value": 758.375,
+          "value": 756.25,
           "unit": "ns"
         },
         "dram_lanes_half_latency_ns_w8": {
-          "value": 1250.5,
+          "value": 1251.625,
           "unit": "ns"
         },
         "l1_held_latency_w1": {
@@ -2608,7 +2609,7 @@
           "unit": "clk"
         },
         "l1_held_latency_w4": {
-          "value": 40.923,
+          "value": 40.924,
           "unit": "clk"
         },
         "l1_held_latency_w8": {
@@ -2616,151 +2617,151 @@
           "unit": "clk"
         },
         "l2_held_latency_w1": {
-          "value": 354.514,
+          "value": 353.984,
           "unit": "clk"
         },
         "l2_held_latency_w2": {
-          "value": 354.22,
+          "value": 353.646,
           "unit": "clk"
         },
         "l2_held_latency_w4": {
-          "value": 352.766,
+          "value": 352.275,
           "unit": "clk"
         },
         "l2_held_latency_w8": {
-          "value": 352.098,
+          "value": 351.643,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w1": {
-          "value": 864.094,
+          "value": 864.215,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w2": {
-          "value": 867.035,
+          "value": 868.979,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w4": {
-          "value": 836.574,
+          "value": 835.0,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w8": {
-          "value": 829.131,
+          "value": 828.791,
           "unit": "clk"
         },
         "dram_held_latency_w1": {
-          "value": 873.438,
+          "value": 871.893,
           "unit": "clk"
         },
         "dram_held_latency_w2": {
-          "value": 875.223,
+          "value": 871.914,
           "unit": "clk"
         },
         "dram_held_latency_w4": {
-          "value": 843.412,
+          "value": 836.879,
           "unit": "clk"
         },
         "dram_held_latency_w8": {
-          "value": 838.316,
+          "value": 837.068,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w1": {
-          "value": 1762.023,
+          "value": 1768.301,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w2": {
-          "value": 2172.059,
+          "value": 2162.055,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w4": {
-          "value": 3598.266,
+          "value": 3598.309,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w8": {
-          "value": 7029.355,
+          "value": 7055.977,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w1": {
-          "value": 1510.156,
+          "value": 1507.645,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w2": {
-          "value": 1745.34,
+          "value": 1741.699,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w4": {
-          "value": 2173.469,
+          "value": 2162.809,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w8": {
-          "value": 3601.105,
+          "value": 3597.496,
           "unit": "clk"
         },
         "l2_held_latency_ns_w1": {
-          "value": 123.125,
+          "value": 122.945,
           "unit": "ns"
         },
         "l2_held_latency_ns_w2": {
-          "value": 123.016,
+          "value": 122.836,
           "unit": "ns"
         },
         "l2_held_latency_ns_w4": {
-          "value": 122.625,
+          "value": 122.453,
           "unit": "ns"
         },
         "l2_held_latency_ns_w8": {
-          "value": 122.484,
+          "value": 122.281,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w1": {
-          "value": 300.062,
+          "value": 300.125,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w2": {
-          "value": 301.188,
+          "value": 302.0,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w4": {
-          "value": 290.75,
+          "value": 290.125,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w8": {
-          "value": 288.062,
+          "value": 288.0,
           "unit": "ns"
         },
         "dram_held_latency_ns_w1": {
-          "value": 303.375,
+          "value": 303.5,
           "unit": "ns"
         },
         "dram_held_latency_ns_w2": {
-          "value": 304.0,
+          "value": 303.312,
           "unit": "ns"
         },
         "dram_held_latency_ns_w4": {
-          "value": 293.0,
+          "value": 292.062,
           "unit": "ns"
         },
         "dram_held_latency_ns_w8": {
-          "value": 291.188,
+          "value": 290.875,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w1": {
-          "value": 612.25,
+          "value": 614.25,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w2": {
-          "value": 755.0,
+          "value": 751.375,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w4": {
-          "value": 1250.375,
+          "value": 1251.0,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w8": {
-          "value": 2442.25,
+          "value": 2452.25,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w1": {
-          "value": 524.625,
+          "value": 525.0,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w2": {
@@ -2768,16 +2769,28 @@
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w4": {
-          "value": 755.125,
+          "value": 754.125,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w8": {
-          "value": 1251.5,
+          "value": 1250.5,
           "unit": "ns"
         },
         "sm_clock_mhz_chase_held": {
-          "value": 2878.318,
+          "value": 2877.348,
           "unit": "mhz"
+        },
+        "l1_ldg32_cycles_per_sm": {
+          "value": 2.044,
+          "unit": "clk"
+        },
+        "l2_ldg32_cycles_per_sm": {
+          "value": 8.908,
+          "unit": "clk"
+        },
+        "l2_bytes_per_sm_clock": {
+          "value": 14.369,
+          "unit": "byte"
         }
       },
       "launch": {
