@@ -49,6 +49,16 @@ void keys_are_snapshot_rows() {
                                std::to_string(key->block_m) + "x" + std::to_string(key->block_n) +
                                " flavor " + std::to_string(key->flavor) + " epilogue " +
                                std::to_string(static_cast<int>(e)));
+                    // Every producer-warp row of a scored arch prices: no silent fitted fallback.
+                    if (key->producers > 0 && w4a8_unit::scored_arch(arch)) {
+                        const auto isa = isa_row(8, std::string(arch) == "86" ? 6 : 9);
+                        const auto c =
+                            isa ? w4a8_unit::tile_cycles(arch, *key, *isa, 1, 32) : std::nullopt;
+                        expect(c && *c > 0, std::string("sm_") + arch + " prices " + key->codec +
+                                                " " + std::to_string(key->block_m) + "x" +
+                                                std::to_string(key->block_n) + " epilogue " +
+                                                std::to_string(static_cast<int>(e)));
+                    }
                 }
             }
         }

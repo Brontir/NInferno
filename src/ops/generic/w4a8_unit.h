@@ -26,12 +26,12 @@
 //
 // Frozen and scored before it was written here (#978): the producer-warp tile 128x64, Q4_K and
 // Q6_K, 23 of 24 cells within 5 % on the RTX 4060 Ti (sm_89) and RTX 3060 (sm_86) at T 64..1024;
-// refuted on the RTX 4090 at T >= 256 (+7 .. +22 %, an L2 term of the 128-SM board, not counted
-// yet). The classic tile's frozen table was refuted on the RTX 3060 (17 of 60 cells within 5 %, a
-// per-tile error of -18 .. +6 %; its loop has one global wait, so the miss is not the loads: the
-// candidate is its two CTA-wide bar.sync a K tile), so only the producer-warp tile has a counted
-// price; the classic tile keeps the fitted step (#978).
-// Host code over embedded facts only (ninferno_ops_host), no launch code.
+// refuted on the RTX 4090 at T >= 256 (+7 .. +22 %; not the L2, which ncu shows at 58-61 % of
+// its measured rate: a launch / wave term is the open hypothesis, #978). The classic tile's frozen
+// table was refuted on the RTX 3060 (17 of 60 cells within 5 %, a per-tile error of -18 .. +6 %;
+// its loop has one global wait, so the miss is not the loads: the candidate is its two CTA-wide
+// bar.sync a K tile), so only the producer-warp tile has a counted price; the classic tile keeps
+// the fitted step (#978). Host code over embedded facts only (ninferno_ops_host), no launch code.
 
 #include "core/format_facts.h"
 #include "core/isa_facts.h"
