@@ -460,9 +460,12 @@ cached_artifact(const std::filesystem::path& path,
         // An existing lock file opens in a directory this user cannot write (O_CREAT needs no
         // directory write for a file that exists), so a new entry is made and removed too: the
         // conversion writes its temporary file and the artifact there (#975 review).
-        const fs::path probe = dir / ".convert.probe";
-        const int pfd        = sys::open(probe, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-        const int perr       = errno;
+        // Per process and created exclusively: no other converter's probe, or one a crash left,
+        // is ever opened in its place.
+        const fs::path probe = dir / (".convert.probe." + std::to_string(sys::pid()));
+        fs::remove(probe, ec); // a crashed run of this pid's
+        const int pfd  = sys::open(probe, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+        const int perr = errno;
         std::error_code rm;
         if (pfd >= 0) {
             sys::close(pfd);

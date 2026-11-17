@@ -261,6 +261,10 @@ int main() {
         std::string upper = (root / "a").string();
         for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         check(artifact_cache_dirs(fs::path(upper)).own == one.own, "one key for any casing");
+        // A tail that does not exist yet keeps the caller's casing in weakly_canonical.
+        check(artifact_cache_dirs(fs::path(upper) / "MISSING").own ==
+                  artifact_cache_dirs(root / "a" / "missing").own,
+              "one key for any casing of a missing tail");
 #else
         // A symlink to the directory resolves to it: one key for both spellings (#975 review).
         std::error_code link_ec;
