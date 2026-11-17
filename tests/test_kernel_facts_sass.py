@@ -879,6 +879,15 @@ class Sections(unittest.TestCase):
         self.assertIsNone(kernel_facts.r8_key(classic))
         self.assertIsNone(kernel_facts.w4a8_key(r8))
         self.assertIsNone(kernel_facts.rmma_key(self.MMQ_NAME))
+        # The I8 tile sits in generic_i8.cu's anonymous namespace; the quantizer is not keyed.
+        i8 = (f"void {ns}(anonymous namespace)::i8_kernel<(int)4, (int)2, (int)3, (int)4, "
+              f"({ns}Epilogue)0>({ns}GemmArgs, const signed char *, const float *, const int *, int)")
+        self.assertEqual(kernel_facts.i8_key(i8), (4, 2, 3, 4, 0))
+        self.assertEqual(kernel_facts.i8_key(i8.replace("(anonymous namespace)", "<unnamed>")),
+                         (4, 2, 3, 4, 0))
+        self.assertIsNone(kernel_facts.i8_key(
+            f"void {ns}(anonymous namespace)::i8_quantize_kernel(const float *, int)"))
+        self.assertIsNone(kernel_facts.i8_key(r8))
 
     def test_pipe_counts(self):
         c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=1)
