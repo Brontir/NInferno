@@ -161,7 +161,7 @@ inline constexpr bool kCompletenessTerms = false;
 // and the fitted slice where one is missing. One switch a binary, as kRmmaCountedLaw; a test flips
 // it for its process (mmq_unit::counted_for_test, mmq_unit.h). It ships false until the A/B on
 // the RTX 3060 and 4090 (#613 PR-5).
-inline constexpr bool kMmqCountedUnit = false;
+inline constexpr bool kMmqCountedUnit = true;
 // The activation quantizers' DRAM bytes per value, counted from their kernels and static_asserted
 // there against the block each thread writes:
 //   W4A8 (generic_w4a8.cu w4a8_quantize_kernel): a thread a 32-value block reads 64 B of BF16 and
