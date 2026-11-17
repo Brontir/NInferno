@@ -25,6 +25,13 @@ def test_occupancy_takes_the_tightest_limit():
     assert law.occupancy(16, 0, 512, 32, 1536) == 3          # threads
 
 
+def test_r8_token_limit_follows_the_regime_rules():
+    assert law.r8_token_limit("rtx5090", "q4_k") == 8 and law.r8_token_limit("rtx3090", "q4_k") == 4
+    assert law.r8_token_limit("rtx4090", "q6_k") == 4
+    assert not law.admitted("rtx5090", "q6_k", "r8.w4r1|rmma.m1.n1.w1x4", 5)
+    assert law.admitted("rtx5090", "q6_k", "rmma.m1.n1.w1x8|rmma.m1.n1.w1x4", 8)
+
+
 def test_every_plan_is_priced_and_one_pick_a_cell(tmp_path):
     plans = tmp_path / "plans.csv"
     with open(plans, "w", newline="") as f:
@@ -37,7 +44,9 @@ def test_every_plan_is_priced_and_one_pick_a_cell(tmp_path):
     law.BOARD_NAME = "rtx5090"
     law.predict(FACTS, str(plans), (256, 8, 2048, 512), str(out))
     rows = list(csv.DictReader(open(out)))
-    assert len(rows) == 4 * 8 * 4  # formats x T x plans
+    # Every plan in every cell, except the R8 stages past the R8 token limit (Q6_K: four, moe_regime_rules.h).
+    assert len(rows) == 4 * 8 * 4 - 4 * 3
+    assert not [r for r in rows if r["format"] == "q6_k" and int(r["T"]) > 4 and "r8." in r["plan"]]
     for fmt in law.BPW:
         for t in range(1, 9):
             cell = [r for r in rows if r["format"] == fmt and int(r["T"]) == t]

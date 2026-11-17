@@ -39,6 +39,21 @@ BPW = {"q3_k": 3.4375, "q4_k": 4.5, "q5_k": 5.5, "q6_k": 6.5625}
 GEMM_DEC = {"q3_k": "GgmlQ3KDecoder", "q4_k": "GgmlQ45KDecoder<4>", "q5_k": "GgmlQ45KDecoder<5>", "q6_k": "GgmlQ6KDecoder"}
 R8_CODEC = {"q3_k": "W4a8Q3K", "q4_k": "W4a8Q45K<4>", "q5_k": "W4a8Q45K<5>", "q6_k": "W4a8Q6K"}
 R8_PER_LOAD = {"q3_k": 4, "q4_k": 2, "q5_k": 2, "q6_k": 4}
+# The candidates are the plans the call may run (moe.cpp r8_admits): an R8 stage only up to the R8 token limit,
+# moe_regime_rules.h's records (the generation's: eight on Ada and consumer Blackwell, four elsewhere; a non-frag
+# Q6_K bank four everywhere). The law prices the admitted plans; admission itself is the runtime's.
+GENERATION = {"rtx4090": "ada", "rtx4060ti": "ada", "rtx5090": "gb20x", "rtx5070ti": "gb20x",
+              "rtx3090": "ga10x", "rtx3060": "ga10x", "rtx2080ti": "turing"}
+
+
+def r8_token_limit(board_name, fmt):
+    if fmt == "q6_k":
+        return 4
+    return 8 if GENERATION[board_name] in ("ada", "gb20x") else 4
+
+
+def admitted(board_name, fmt, plan, tokens):
+    return all(not s.startswith("r8") or tokens <= r8_token_limit(board_name, fmt) for s in plan.split("|"))
 
 
 def r8_lanes(fmt, k):
@@ -188,6 +203,7 @@ def main():
             jobs = round(E * (1 - (1 - K / E) ** T))
             pred = {}
             for pl in plans:
+                if not admitted(BOARD_NAME, fmt, pl, T): continue
                 gu, dn = pl.split("|")
                 a, _ = stage_time(facts, board, fmt, gu, 1, T, jobs, H, F)
                 b, _ = stage_time(facts, board, fmt, dn, 2, T, jobs, H, F)
@@ -218,6 +234,7 @@ def predict(facts_path, plans_from, geo, out_path):
             for T in range(1, 9):
                 jobs = round(E * (1 - (1 - K / E) ** T)); pred = {}
                 for pl in plans:
+                    if not admitted(BOARD_NAME, fmt, pl, T): continue
                     gu, dn = pl.split("|")
                     a, _ = stage_time(facts, board, fmt, gu, 1, T, jobs, H, F)
                     b, _ = stage_time(facts, board, fmt, dn, 2, T, jobs, H, F)
