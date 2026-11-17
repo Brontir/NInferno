@@ -83,8 +83,9 @@ def chip_of(repo, name):
 def l1_latency_of(repo, cc):
     arches = json.load(open(os.path.join(repo, "src/core/data/isa_facts.json")))["arches"]
     for row in arches.values():
-        if row.get("cc") == cc and "l1_latency_w1" in row:
-            return float(row["l1_latency_w1"]["value"])
+        facts = row.get("facts", {})
+        if row.get("cc") == cc and "l1_latency_w1" in facts:
+            return float(facts["l1_latency_w1"]["value"])
     return K["l1_hit_latency_cycles"]
 
 

@@ -90,7 +90,7 @@ struct ChipFacts {
 
 // The constants the price does not derive yet, with their tags in route_cost_constants.h. The
 // defaults are today's values, so a client that passes calibration_of(major, minor) prices as it
-// did; a replica may move one and read the terms it moves. Two defaults are not what
+// did; a replica may move one and read the terms it moves. Two defaults may differ from what
 // calibration_of returns for an arch: the L2 rate and the L1 hit latency, which it reads from
 // the arch's facts.
 struct Calibration {

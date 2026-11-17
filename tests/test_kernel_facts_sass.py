@@ -508,6 +508,16 @@ class Snapshot(unittest.TestCase):
         self.assertIn("columns " + kernel_facts.COLUMNS, text)
         self.assertEqual(sum(1 for l in text.splitlines() if not l.startswith("#")), 6 + 1)
 
+    def test_replica_l1_latency_per_arch(self):
+        # The replica prices a spill at the arch's isa_probe L1 hit latency, as the engine's
+        # calibration_of does; an arch with no ISA row (sm_80) takes kL1HitLatencyCycles (32).
+        repo = Path(__file__).resolve().parents[1]
+        sys.path.insert(0, str(repo / "tools" / "bench"))
+        import rmma_counted_replica as replica
+        self.assertAlmostEqual(replica.l1_latency_of(str(repo), 86), 33.034, places=3)
+        self.assertAlmostEqual(replica.l1_latency_of(str(repo), 120), 38.01, places=3)
+        self.assertEqual(replica.l1_latency_of(str(repo), 80), 32.0)
+
     def test_replica_keeps_both_local_columns(self):
         # A snapshot names two fields `local`: the kernel's local memory in bytes and the K
         # loop's local-memory instructions. The replica matches a sweep's kernel by its stack and
