@@ -12,12 +12,12 @@
 # A second run with the same pin, script, options, compiler and C library keeps PREFIX as it is.
 # PREFIX may not contain white space (FFmpeg's configure and Makefiles do not quote paths).
 #
-# A build needs a C compiler ($CC, default cc), make, pkg-config, xz, python3, nasm, meson and ninja
-# for dav1d, and curl for the downloads. NINFERNO_FFMPEG_ARCHIVE and NINFERNO_DAV1D_ARCHIVE name
-# local copies of the tarballs (an offline build: no curl). NINFERNO_DAV1D_PREFIX links an installed
-# dav1d (its lib/pkgconfig/dav1d.pc) instead of building one, and NINFERNO_FFMPEG_NO_ASM=1 builds
-# without nasm, with slow decoders: both for tests only, package.sh refuses them. NINFERNO_JOBS
-# caps the compile jobs.
+# A build needs a C compiler ($CC, default cc), make, pkg-config, xz, python3, zlib's header and
+# library, nasm, meson and ninja for dav1d, and curl for the downloads. NINFERNO_FFMPEG_ARCHIVE
+# and NINFERNO_DAV1D_ARCHIVE name local copies of the tarballs (an offline build: no curl).
+# NINFERNO_DAV1D_PREFIX links an installed dav1d (its lib/pkgconfig/dav1d.pc) instead of building
+# one, and NINFERNO_FFMPEG_NO_ASM=1 builds without nasm, with slow decoders: both for tests only,
+# package.sh refuses them. NINFERNO_JOBS caps the compile jobs.
 set -euo pipefail
 PREFIX=$(realpath -m "${1:?usage: ffmpeg.sh PREFIX}")
 case $PREFIX in
@@ -86,6 +86,16 @@ fi
 if [ -z "$DAV1D_PREFIX" ]; then
   need meson "the dav1d build"
   need ninja "the dav1d build"
+fi
+# zlib's header and library (zlib1g-dev on Debian and Ubuntu, zlib-devel on Fedora): configure
+# asks for zlib by name below and stops late, after the dav1d build, when it is missing.
+# shellcheck disable=SC2086 # CC may carry its own flags
+if ! zlib_out=$(printf '#include <zlib.h>\nint main(void) { return zlibVersion() == 0; }\n' |
+  $CC -x c -o /dev/null - -lz 2>&1); then
+  echo "ffmpeg.sh: zlib is needed (PNG, compressed MP4 headers and Matroska tracks):" \
+    "install zlib1g-dev or zlib-devel; the compiler said:" >&2
+  printf '%s\n' "$zlib_out" | tail -n 5 >&2
+  exit 1
 fi
 
 tmp=$(mktemp -d)
