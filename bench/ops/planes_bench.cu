@@ -10,6 +10,8 @@
 //
 // Prediction (#616, written before the first run): the planes are >= 15 % slower at work 0 on the
 // RTX 4090. If they are not, layout locality is refuted as the cause of R8's Q6_K/Q3_K losses.
+// (The first runs, 17.11, used one 32-value group a lane, kb = lane + 32 i, which is not R8's
+// mapping, and a memset-only flush; the #979 review found both, and the runs were redone.)
 #include <cuda_runtime.h>
 
 #include <algorithm>
@@ -40,9 +42,10 @@ struct Planes {
 
 __device__ __forceinline__ unsigned fold(const uint4& v) { return v.x ^ v.y ^ v.z ^ v.w; }
 
-// One warp a row (as R8's one-row schedules), each lane a 32-value group kb = lane + 32 i; the
-// group's loads are W4a8Q6K::load's: ql (two 16-byte loads), qh (two), the sub-block scales (8
-// bytes) and d (2 bytes).
+// One warp a row (as R8's one-row schedules). A lane owns R8's group g = lane + 32 i, 128 values,
+// and loads it as R8's fetch does (generic_r8.cuh: C::load at kb = 4 g + q for q < kStride = 2):
+// W4a8Q6K::load's ql (two 16-byte loads at 64 h + 32 u), qh (two at 128 + 32 h), the sub-block
+// scales (8 bytes at 8 h) and d (2 bytes), with u = kb & 3 (0 or 1) and h = (kb >> 2) & 1.
 template <bool Interleaved>
 __global__ void loads_kernel(Planes p, const std::uint8_t* inter, int rows, int groups_per_row,
                              unsigned* out) {
@@ -50,30 +53,44 @@ __global__ void loads_kernel(Planes p, const std::uint8_t* inter, int rows, int 
     const int row  = static_cast<int>(blockIdx.x) * (blockDim.x / 32) + (threadIdx.x >> 5);
     if (row >= rows) return;
     unsigned acc = 0;
-    for (int kb = lane; kb < groups_per_row; kb += 32) {
-        const std::int64_t blk = static_cast<std::int64_t>(row) * (groups_per_row / 8) + (kb >> 3);
-        const int h            = (kb >> 2) & 1;
-        const int u            = kb & 3;
-        const std::uint8_t* cb;
-        const std::uint8_t* hb;
-        unsigned d;
-        if constexpr (Interleaved) {
-            const std::uint8_t* b = inter + blk * kInterleavedBlockBytes;
-            cb                    = b;
-            hb                    = b + 192;
-            d                     = *reinterpret_cast<const unsigned short*>(b + 208);
-        } else {
-            cb = p.codes + blk * 192;
-            hb = p.high + blk * 16;
-            d  = p.scales[blk];
+    for (int g = lane; g < groups_per_row / 4; g += 32)
+#pragma unroll
+        for (int q = 0; q < 2; ++q) {
+            const int kb = 4 * g + q;
+            const std::int64_t blk =
+                static_cast<std::int64_t>(row) * (groups_per_row / 8) + (kb >> 3);
+            const int h = (kb >> 2) & 1;
+            const int u = kb & 3; // 0 or 1
+            const std::uint8_t* cb;
+            const std::uint8_t* hb;
+            unsigned d;
+            if constexpr (Interleaved) {
+                const std::uint8_t* b = inter + blk * kInterleavedBlockBytes;
+                cb                    = b;
+                hb                    = b + 192;
+                d                     = *reinterpret_cast<const unsigned short*>(b + 208);
+            } else {
+                cb = p.codes + blk * 192;
+                hb = p.high + blk * 16;
+                d  = p.scales[blk];
+            }
+            const auto* ql = reinterpret_cast<const uint4*>(cb + 64 * h + 32 * u);
+            const auto* qh = reinterpret_cast<const uint4*>(cb + 128 + 32 * h);
+            const uint4 la = ql[0], lb = ql[1], ha = qh[0], hb4 = qh[1];
+            const uint2 sc = *reinterpret_cast<const uint2*>(hb + 8 * h);
+            acc ^= fold(la) ^ fold(lb) ^ fold(ha) ^ fold(hb4) ^ sc.x ^ sc.y ^ d;
         }
-        const auto* ql = reinterpret_cast<const uint4*>(cb + 64 * h + 32 * (u & 1));
-        const auto* qh = reinterpret_cast<const uint4*>(cb + 128 + 32 * h);
-        const uint4 la = __ldg(ql), lb = __ldg(ql + 1), ha = __ldg(qh), hb4 = __ldg(qh + 1);
-        const uint2 sc = __ldg(reinterpret_cast<const uint2*>(hb + 8 * h));
-        acc ^= fold(la) ^ fold(lb) ^ fold(ha) ^ fold(hb4) ^ sc.x ^ sc.y ^ d;
-    }
     if (acc == 0x9e3779b9U) out[row] = acc; // keeps the loads; never true for the fill below
+}
+
+// Reads the flush buffer, so the L2 holds clean lines of it and nothing of the layouts: a memset
+// alone would leave up to an L2 of dirty lines written back during the timed kernel.
+__global__ void read_kernel(const uint4* p, std::size_t n, unsigned* out) {
+    unsigned acc = 0;
+    for (std::size_t i = blockIdx.x * static_cast<std::size_t>(blockDim.x) + threadIdx.x; i < n;
+         i += static_cast<std::size_t>(gridDim.x) * blockDim.x)
+        acc ^= fold(p[i]);
+    if (acc == 0x9e3779b9U) out[0] = acc;
 }
 
 int arg(int argc, char** argv, const char* name, int fallback) {
@@ -85,10 +102,15 @@ int arg(int argc, char** argv, const char* name, int fallback) {
 } // namespace
 
 int main(int argc, char** argv) {
-    const int rows            = arg(argc, argv, "--rows", 65536);
-    const int k               = arg(argc, argv, "--k", 4096);
-    const int warps           = arg(argc, argv, "--warps", 4);
-    const int repeat          = arg(argc, argv, "--repeat", 20);
+    const int rows   = arg(argc, argv, "--rows", 65536);
+    const int k      = arg(argc, argv, "--k", 4096);
+    const int warps  = arg(argc, argv, "--warps", 4);
+    const int repeat = arg(argc, argv, "--repeat", 20);
+    if (k % 256 != 0 || rows < 1 || warps < 1 || warps > 32 || repeat < 1) {
+        std::fprintf(stderr, "--k must be a multiple of 256; rows, repeat >= 1; warps 1..32
+");
+        return 1;
+    }
     const int groups          = k / 32;
     const std::int64_t blocks = static_cast<std::int64_t>(rows) * (k / 256);
     cudaDeviceProp prop{};
@@ -123,11 +145,14 @@ int main(int argc, char** argv) {
         std::vector<float> ms;
         for (int r = 0; r < repeat + 2; ++r) {
             CHECK(cudaMemset(flush, r, flush_bytes));
+            read_kernel<<<4 * prop.multiProcessorCount, 256>>>(
+                reinterpret_cast<const uint4*>(flush), flush_bytes / 16, out);
             CHECK(cudaEventRecord(a));
             if (interleaved)
                 loads_kernel<true><<<grid, block>>>(p, inter, rows, groups, out);
             else
                 loads_kernel<false><<<grid, block>>>(p, inter, rows, groups, out);
+            CHECK(cudaGetLastError());
             CHECK(cudaEventRecord(b));
             CHECK(cudaEventSynchronize(b));
             float t = 0;
