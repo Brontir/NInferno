@@ -1403,26 +1403,45 @@ void check_l1_latency() {
     if (rows < 5) fail("fewer than five ISA rows with an L1 latency");
 }
 
-// The price tool's K-loop counts under the counted law (#613 PR-7a review): rmma_loop_query reads
-// what price_routes hands the law, so on a board whose release snapshot holds the Q4_K register-MMA
-// instances some schedule has its loop counted.
-void check_rmma_loop_query() {
-    const g::FactsBoard* board = facts_board("rtx4090");
+// The price tool under the counted law (#613 PR-7a review): on a board where the heavy form is
+// priced (the RTX 3090, sm_86), `price --rmma-counted-law on` prints every register-MMA row equal
+// to the selector's price under the same law, and some Q4_K schedule has its K loop counted.
+void check_price_counted_law() {
+    const g::FactsBoard* board = facts_board("rtx3090");
     if (!board) {
-        std::fprintf(stderr, "FAIL: no rtx4090 board\n");
+        std::fprintf(stderr, "FAIL: no rtx3090 board\n");
         ++failures;
         return;
     }
     const DeviceClass d = g::board_device_class(*board);
     int counted         = 0;
     for (int i = 0; i < g::rmma_schedule_count(); ++i) {
-        const auto loop =
-            g::rmma_loop_query(d, i, QType::GGML_Q4_K, g::Epilogue::Store, 4096, 4096, 64);
-        if (loop && loop->loops >= 1) ++counted;
+        const auto res =
+            g::rmma_resources_query(d, i, QType::GGML_Q4_K, g::Epilogue::Store, 4096, 4096, 64);
+        if (res && res->loop && res->loop->loops >= 1) ++counted;
     }
-    std::printf("rmma loop query: %d of %d Q4_K schedules counted on the rtx4090\n", counted,
-                g::rmma_schedule_count());
-    if (counted == 0) ++failures;
+    int rc = -1;
+    const std::string text =
+        price_stdout({"--board", board_id(*board), "--format", "q4_k", "--n", "4096", "--k", "4096",
+                      "--t", "64", "--rmma-counted-law", "on"},
+                     rc);
+    long rows = 0, differ = 0;
+    for (std::size_t at = text.find("\nrmma:"); at != std::string::npos;
+         at             = text.find("\nrmma:", at + 1)) {
+        const std::size_t end  = text.find("\n", at + 1);
+        const std::string line = text.substr(at + 1, end - at - 1);
+        ++rows;
+        if (line.find(" != ") != std::string::npos || line.find(" !=") == line.size() - 3) {
+            std::fprintf(stderr, "FAIL: price --rmma-counted-law on: %s\n", line.c_str());
+            ++differ;
+        }
+    }
+    std::printf("price counted law: %d of %d Q4_K schedules counted, %ld rmma rows, %ld differ, "
+                "rc %d\n",
+                counted, g::rmma_schedule_count(), rows, differ, rc);
+    if (counted == 0) std::fprintf(stderr, "FAIL: no Q4_K schedule has its loop counted\n");
+    if (rows == 0) std::fprintf(stderr, "FAIL: price printed no rmma row\n");
+    if (counted == 0 || rows == 0 || differ > 0 || rc != 0) ++failures;
 }
 
 int main() {
@@ -1438,7 +1457,7 @@ int main() {
     check_price_admitted();
     check_price_arguments();
     check_price_a8_rows();
-    check_rmma_loop_query();
+    check_price_counted_law();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

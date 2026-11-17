@@ -377,6 +377,17 @@ int run(const Options& o) {
     // The A8 MMQ slice by the counted unit or the fitted one (#613 PR-5), for this process.
     if (o.mmq_counted_unit) mmq_unit::counted_for_test(*o.mmq_counted_unit);
     if (o.rmma_counted_law) generic::rmma_counted_law_for_test(*o.rmma_counted_law);
+
+    // The switches hold for this run only: a later run in the same process (the tests call
+    // price_main many times) prices by the binary's own.
+    struct Restore {
+        bool mmq, rmma;
+
+        ~Restore() {
+            if (mmq) mmq_unit::counted_for_test(std::nullopt);
+            if (rmma) generic::rmma_counted_law_for_test(std::nullopt);
+        }
+    } const restore{o.mmq_counted_unit.has_value(), o.rmma_counted_law.has_value()};
     const DeviceClass d    = price_board_class(row);
     if (d.sms <= 0 || d.registers_per_sm <= 0 || !d.facts.has_roofline()) {
         std::fprintf(stderr, "price: %s has no roofline in its facts\n", row.name.c_str());
@@ -477,6 +488,8 @@ int run(const Options& o) {
     } else if (o.registers || o.local_bytes > 0) {
         std::printf("kernel facts given: %s registers, %.0f local bytes per thread\n",
                     o.registers ? std::to_string(*o.registers).c_str() : "unset", o.local_bytes);
+    } else if (heavy && cal.rmma_counted_law) {
+        std::printf("kernel facts: the snapshot's, as the selector reads them (the counted law)\n");
     } else if (heavy) {
         std::printf("kernel facts: none given (priced by threads alone; the selector may have read "
                     "its own)\n");
@@ -578,9 +591,19 @@ int run(const Options& o) {
         if (heavy) { // the price reads compiled facts only in the heavy form, as price_routes does
             kernel.registers   = o.registers;
             kernel.local_bytes = o.local_bytes;
-            // Under the counted law, the K loop's counts the selector reads (#613 PR-7a review).
-            if (cal.rmma_counted_law)
-                kernel.loop = generic::rmma_loop_query(d, i, qtype, o.epilogue, o.n, o.k, o.t);
+            // Under the counted law, the compiled facts the selector reads (registers, local and
+            // static shared bytes, the K loop, #613 PR-7a review); --registers / --local-bytes
+            // still override.
+            if (cal.rmma_counted_law) {
+                if (auto res =
+                        generic::rmma_resources_query(d, i, qtype, o.epilogue, o.n, o.k, o.t)) {
+                    if (!o.registers) kernel.registers = res->registers;
+                    if (o.local_bytes <= 0)
+                        kernel.local_bytes = static_cast<double>(res->local_bytes);
+                    kernel.shared_bytes = static_cast<double>(res->static_smem);
+                    kernel.loop         = std::move(res->loop);
+                }
+            }
         }
         const auto t                = kr::price_register_mma(chip, cal, call, kernel);
         const auto sel              = selector_time(priced, r);

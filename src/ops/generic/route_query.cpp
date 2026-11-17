@@ -314,22 +314,19 @@ std::vector<PricedRouteQuery> priced_routes_query(const DeviceClass& device, QTy
     return out;
 }
 
-std::optional<kernel_facts::LoopCounts> rmma_loop_query(const DeviceClass& device, int schedule,
-                                                        QType qtype, Epilogue epilogue,
-                                                        std::int32_t n, std::int32_t k,
-                                                        std::int32_t tokens) {
+std::optional<KernelResources> rmma_resources_query(const DeviceClass& device, int schedule,
+                                                    QType qtype, Epilogue epilogue, std::int32_t n,
+                                                    std::int32_t k, std::int32_t tokens) {
     if (n <= 0 || k <= 0 || tokens <= 0) return std::nullopt;
     const ScopedDeviceClass scoped(device);
     DescribedWeight described;
     describe_weight(described, qtype, epilogue, n, k, 0);
     if (!supports(described.weight)) return std::nullopt;
-    std::optional<KernelResources> r;
     try {
-        r = rmma_resources(schedule, described.weight, epilogue, tokens, n);
+        return rmma_resources(schedule, described.weight, epilogue, tokens, n);
     } catch (const std::exception&) {
-        return std::nullopt; // as price_routes' rmma_kept: no facts, priced without the loop
+        return std::nullopt; // as price_routes' rmma_kept: no facts, priced by threads alone
     }
-    return r ? std::move(r->loop) : std::nullopt;
 }
 
 bool route_admitted_query(const DeviceClass& device, Route route, QType qtype, LinearPolicy policy,
