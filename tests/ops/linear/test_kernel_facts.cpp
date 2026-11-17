@@ -471,7 +471,7 @@ void sections_read() {
         for (const auto& [key, f] : kf::section_rows(arch, "i8")) {
             const bool looped = f.loop && f.loop->loops == 1 && f.loop->mma > 0 &&
                                 f.loop->mma_shape.rfind("IMMA.", 0) == 0;
-            const bool ok     = i8_built ? looped : !f.loop || f.loop->loops == 0;
+            const bool ok = i8_built ? looped : !f.loop || f.loop->loops == 0;
             if (!ok && i8_bad++ == 0) i8_first = key;
         }
         expect(i8_bad == 0, name + " i8: " + std::to_string(i8_bad) +
