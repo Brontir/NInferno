@@ -32,6 +32,7 @@ BOARDS = {  # sms, DRAM GB/s (published), reference clock MHz, fetch latency ns 
     "rtx5090": (170, 1792, 2407, None, 32, 1536),
     "rtx3090": (82, 936, 1695, None, 16, 1536),
     "rtx5070ti": (70, 896, 2452, None, 32, 1536),
+    "rtx4070ti": (60, 504, 2610, None, 24, 1536),
     "rtx3060": (28, 360, 1777, None, 16, 1536),
     "rtx2080ti": (68, 616, 1545, None, 16, 1024),
 }
@@ -42,7 +43,7 @@ R8_PER_LOAD = {"q3_k": 4, "q4_k": 2, "q5_k": 2, "q6_k": 4}
 # The candidates are the plans the call may run (moe.cpp r8_admits): an R8 stage only up to the R8 token limit,
 # moe_regime_rules.h's records (the generation's: eight on Ada and consumer Blackwell, four elsewhere; a non-frag
 # Q6_K bank four everywhere). The law prices the admitted plans; admission itself is the runtime's.
-GENERATION = {"rtx4090": "ada", "rtx4060ti": "ada", "rtx5090": "gb20x", "rtx5070ti": "gb20x",
+GENERATION = {"rtx4090": "ada", "rtx4060ti": "ada", "rtx4070ti": "ada", "rtx5090": "gb20x", "rtx5070ti": "gb20x",
               "rtx3090": "ga10x", "rtx3060": "ga10x", "rtx2080ti": "turing"}
 
 
@@ -86,7 +87,7 @@ def load_facts(path):
 PROBE = {"rtx4090": "warp_inflight_89.txt", "rtx4060ti": "warp_inflight_89_rtx4060ti.txt",
          "rtx5090": "warp_inflight_120a.txt", "rtx3090": "warp_inflight_86.txt",
          "rtx5070ti": "warp_inflight_120a_rtx5070ti.txt", "rtx3060": "warp_inflight_86_rtx3060.txt",
-         "rtx2080ti": "warp_inflight_75.txt"}
+         "rtx2080ti": "warp_inflight_75.txt", "rtx4070ti": "warp_inflight_89_rtx4070ti.txt"}
 _curves = {}
 
 
