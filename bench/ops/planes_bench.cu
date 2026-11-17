@@ -11,7 +11,9 @@
 // Prediction (#616, written before the first run): the planes are >= 15 % slower at work 0 on the
 // RTX 4090. If they are not, layout locality is refuted as the cause of R8's Q6_K/Q3_K losses.
 // (The first runs, 17.11, used one 32-value group a lane, kb = lane + 32 i, which is not R8's
-// mapping, and a memset-only flush; the #979 review found both, and the runs were redone.)
+// mapping, and a memset-only flush; the #979 review found both, and the runs were redone. The
+// second runs used all 32 lanes on one row and a fixed planes-then-interleaved order; codex found
+// both (R8 puts 16 lanes on a row at K 4096), and the runs were redone with ABBA rounds.)
 #include <cuda_runtime.h>
 
 #include <algorithm>
@@ -42,18 +44,23 @@ struct Planes {
 
 __device__ __forceinline__ unsigned fold(const uint4& v) { return v.x ^ v.y ^ v.z ^ v.w; }
 
-// One warp a row (as R8's one-row schedules). A lane owns R8's group g = lane + 32 i, 128 values,
+// A warp splits into 32 / lanes rows as R8's does (moe_r8.cuh, moe.cpp r8_lanes: the fewest of 8,
+// 16, 32 lanes that cover the row's K / 128 Q6_K loads at three a lane; 16 at K 4096, 8 at K
+// 2048). A lane owns R8's group g = sl + lanes i (sl its lane in the row group), 128 values,
 // and loads it as R8's fetch does (generic_r8.cuh: C::load at kb = 4 g + q for q < kStride = 2):
 // W4a8Q6K::load's ql (two 16-byte loads at 64 h + 32 u), qh (two at 128 + 32 h), the sub-block
 // scales (8 bytes at 8 h) and d (2 bytes), with u = kb & 3 (0 or 1) and h = (kb >> 2) & 1.
 template <bool Interleaved>
 __global__ void loads_kernel(Planes p, const std::uint8_t* inter, int rows, int groups_per_row,
-                             unsigned* out) {
+                             int lanes, unsigned* out) {
     const int lane = static_cast<int>(threadIdx.x) & 31;
-    const int row  = static_cast<int>(blockIdx.x) * (blockDim.x / 32) + (threadIdx.x >> 5);
+    const int sl   = lane & (lanes - 1);
+    const int row =
+        (static_cast<int>(blockIdx.x) * (blockDim.x / 32) + (threadIdx.x >> 5)) * (32 / lanes) +
+        lane / lanes;
     if (row >= rows) return;
     unsigned acc = 0;
-    for (int g = lane; g < groups_per_row / 4; g += 32)
+    for (int g = sl; g < groups_per_row / 4; g += lanes)
 #pragma unroll
         for (int q = 0; q < 2; ++q) {
             const int kb = 4 * g + q;
@@ -111,14 +118,16 @@ int main(int argc, char** argv) {
         return 1;
     }
     const int groups          = k / 32;
+    const int loads           = k / 128; // R8's Q6_K loads a row (moe.cpp r8_lanes)
+    const int lanes           = loads <= 24 ? 8 : loads <= 48 ? 16 : 32;
     const std::int64_t blocks = static_cast<std::int64_t>(rows) * (k / 256);
     cudaDeviceProp prop{};
     CHECK(cudaGetDeviceProperties(&prop, 0));
     std::printf(
         "device %s, %d SMs, L2 %d MB; rows %d, k %d, blocks %lld (%.1f MB payload), %d warps "
-        "a CTA, %d repeats\n",
+        "a CTA, %d lanes a row, %d repeats\n",
         prop.name, prop.multiProcessorCount, prop.l2CacheSize >> 20, rows, k,
-        static_cast<long long>(blocks), blocks * 210.0 / 1e6, warps, repeat);
+        static_cast<long long>(blocks), blocks * 210.0 / 1e6, warps, lanes, repeat);
     std::uint8_t *codes, *high, *inter;
     std::uint16_t* scales;
     unsigned* out;
@@ -137,7 +146,8 @@ int main(int argc, char** argv) {
     std::uint8_t* flush;
     CHECK(cudaMalloc(&flush, flush_bytes));
     const Planes p{codes, high, scales};
-    const dim3 grid((rows + warps - 1) / warps), block(32 * warps);
+    const int rows_per_cta = warps * (32 / lanes);
+    const dim3 grid((rows + rows_per_cta - 1) / rows_per_cta), block(32 * warps);
     cudaEvent_t a, b;
     CHECK(cudaEventCreate(&a));
     CHECK(cudaEventCreate(&b));
@@ -149,9 +159,9 @@ int main(int argc, char** argv) {
                 reinterpret_cast<const uint4*>(flush), flush_bytes / 16, out);
             CHECK(cudaEventRecord(a));
             if (interleaved)
-                loads_kernel<true><<<grid, block>>>(p, inter, rows, groups, out);
+                loads_kernel<true><<<grid, block>>>(p, inter, rows, groups, lanes, out);
             else
-                loads_kernel<false><<<grid, block>>>(p, inter, rows, groups, out);
+                loads_kernel<false><<<grid, block>>>(p, inter, rows, groups, lanes, out);
             CHECK(cudaGetLastError());
             CHECK(cudaEventRecord(b));
             CHECK(cudaEventSynchronize(b));
@@ -162,20 +172,23 @@ int main(int argc, char** argv) {
         std::sort(ms.begin(), ms.end());
         return ms[ms.size() / 2];
     };
-    // Interleaved order, so drift hits both layouts alike.
+    // ABBA rounds (planes first, then interleaved first, ...), so a drift of clocks or heat over
+    // the run falls on both layouts alike; the median of four rounds is the mean of the middle two.
     std::vector<float> planes_ms, inter_ms;
-    for (int round = 0; round < 3; ++round) {
-        planes_ms.push_back(run(false));
-        inter_ms.push_back(run(true));
+    for (int round = 0; round < 4; ++round) {
+        const bool planes_first = round % 2 == 0;
+        (planes_first ? planes_ms : inter_ms).push_back(run(!planes_first));
+        (planes_first ? inter_ms : planes_ms).push_back(run(planes_first));
     }
     std::sort(planes_ms.begin(), planes_ms.end());
     std::sort(inter_ms.begin(), inter_ms.end());
-    const double tp = planes_ms[1], ti = inter_ms[1];
-    std::printf("planes      %.4f ms  %.1f GB/s payload (rounds %.4f %.4f %.4f)\n", tp,
-                blocks * 210.0 / tp / 1e6, planes_ms[0], planes_ms[1], planes_ms[2]);
-    std::printf("interleaved %.4f ms  %.1f GB/s payload (rounds %.4f %.4f %.4f; %.1f MB read)\n",
-                ti, blocks * 210.0 / ti / 1e6, inter_ms[0], inter_ms[1], inter_ms[2],
-                blocks * double(kInterleavedBlockBytes) / 1e6);
+    const double tp = (planes_ms[1] + planes_ms[2]) / 2, ti = (inter_ms[1] + inter_ms[2]) / 2;
+    std::printf("planes      %.4f ms  %.1f GB/s payload (rounds %.4f %.4f %.4f %.4f)\n", tp,
+                blocks * 210.0 / tp / 1e6, planes_ms[0], planes_ms[1], planes_ms[2], planes_ms[3]);
+    std::printf(
+        "interleaved %.4f ms  %.1f GB/s payload (rounds %.4f %.4f %.4f %.4f; %.1f MB read)\n", ti,
+        blocks * 210.0 / ti / 1e6, inter_ms[0], inter_ms[1], inter_ms[2], inter_ms[3],
+        blocks * double(kInterleavedBlockBytes) / 1e6);
     std::printf("planes / interleaved %.3f\n", tp / ti);
     return 0;
 }
