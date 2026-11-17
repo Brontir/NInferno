@@ -890,6 +890,8 @@ const std::vector<NotRule>& not_rules() {
          "the length of the resources-only column header (a file format)"},
         {"kernel_facts.cpp", "kWaitColumns", 1,
          "the mmq and w4a8 sections' wait-class columns (a file format)"},
+        {"kernel_facts.cpp", "kProducerColumns", 1,
+         "the w4a8 section's producer-loop columns (a file format)"},
         {"mmq_unit.cpp", "kActivationBytes", 1,
          "two q8_1 MMQ blocks a column per 256 values (a layout fact)"},
         {"mmq_unit.cpp", "kTileRows", 1, "the MMQ kernel's tile rows (a tile shape, counted)"},
