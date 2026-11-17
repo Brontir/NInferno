@@ -372,8 +372,9 @@ class Family:
                  marker=None, prologue=None, waits=False, producer=None):
         self.name = name
         # (marker, excluded) of the producer warps' loop, written as the PRODUCER_FIELDS after
-        # the wait classes (sass_counts.loop_counts): (BAR, IMMA), the w4a8 producer-warp tile's
-        # loop (#613 PR-6); the classic tile's rows carry it as zeros.
+        # the wait classes (sass_counts.loop_counts): BAR, and no MMA or dp4a in the loop, the
+        # w4a8 producer-warp tile's loop (#613 PR-6); the classic tile's rows carry it as zeros.
+        # A tile with producer warps (the key's last field) must have exactly one such loop.
         self.producer = producer
         # Whether its rows carry the iteration's wait classes (sass_counts.WAIT_FIELDS) after the
         # pipe counts: the mmq and w4a8 sections (#613 PR-5).
@@ -421,7 +422,8 @@ FAMILIES = {
                   lambda key: 1, True, False, waits=True),
     "w4a8": Family("w4a8", ("codec", "block_m", "block_n", "warps_m", "warps_n", "epilogue",
                             "flavor", "stages", "producers"), lambda d: w4a8_key(d), "w4a8_",
-                   lambda key: 1, True, True, waits=True, producer=("BAR", "IMMA")),
+                   lambda key: 1, True, True, waits=True,
+                   producer=("BAR", sass_counts.MMA_OPCODES + ("IDP",))),
     "gemma4": Family("gemma4", ("kernel", "D", "G", "slice", "rows", "Bc", "partial", "fp8",
                                 "chain"), lambda d: gemma4_key(d), "gemma4_", lambda key: 1,
                      False, True, loop=False),
@@ -532,6 +534,8 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
         c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker, family.prologue,
                                     family.producer).with_pipes(
             family.pipes, family.prologue is not None, family.waits, family.producer is not None)
+        if family.producer is not None and fk[1][-1] > 0 and c.prod_loops != 1:
+            fail(f"{name}: {c.prod_loops} producer loops in a tile with {fk[1][-1]} producer warps")
         if fk in counts and counts[fk] != c:
             fail(f"{name} is disassembled twice in {arch} with different loops {counts[fk]} "
                  f"and {c}")
