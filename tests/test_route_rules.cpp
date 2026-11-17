@@ -893,6 +893,9 @@ const std::vector<NotRule>& not_rules() {
         {"mmq_unit.cpp", "kTileRows", 1, "the MMQ kernel's tile rows (a tile shape, counted)"},
         {"mmq_unit.cpp", "kValuesPerIteration", 1,
          "the values of one MMQ K iteration, one superblock (a layout fact)"},
+        {"r8_law.h", "kValuesPerTask", 1,
+         "the K values one quantizer task covers, a 32-value block (generic_r8.cuh, a layout "
+         "fact)"},
         {"rmma_geometry.h", "kTileBytes", 1,
          "the bytes of one accumulator tile, 4 floats a lane (a layout fact)"},
         {"scratch_lifetime.h", "kMaxScratchUses", 1, "scratch lifetime bookkeeping"},

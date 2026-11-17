@@ -153,8 +153,23 @@ PIPE_FIELDS = tuple(PIPE_OPCODES)
 # on; the iteration walked twice as for sb_waits_local. The chain law prices the first at the
 # DRAM's latency inside the load phase and the second at the shared latency inside the chain.
 WAIT_FIELDS = ("sb_waits_global", "sb_waits_shared")
-# A section's columns after the schedule where its family carries them (Family.pipes).
+# The mmq and w4a8 sections' columns after the schedule (Family.pipes and Family.waits).
 SECTION_FIELDS = PIPE_FIELDS + WAIT_FIELDS
+# A second counted loop (#613 PR-10): the R8 decode kernels quantize the activation into shared
+# memory in a loop of their own before the dp4a loop, one 32-value block per thread and pass. Its
+# counts follow the pipe counts, prefixed pro_: the loops found (0 where the kernel reads a
+# quantized activation), and of one iteration the instructions, the integer and float ALU work,
+# the global bytes it loads and the shared bytes it stores (per warp), and its stall sum.
+# After them, the waits that expose a global load's latency (#613 PR-10, the law's latency term):
+# an instruction whose wait mask names a scoreboard with a global load (LDG, LD) pending since
+# that scoreboard's last wait, in the dp4a loop's iteration (walked twice, the second counted, as
+# the local waits), outside it, and in one iteration of the quantizer's loop.
+PROLOGUE_FIELDS = ("pro_loops", "pro_total", "pro_int", "pro_fp", "pro_ldg_bytes",
+                   "pro_sts_bytes", "pro_stall", "glb_waits", "outside_glb_waits", "pro_glb_waits")
+PROLOGUE_OF = {"pro_loops": "loops", "pro_total": "total", "pro_int": "int", "pro_fp": "fp",
+               "pro_ldg_bytes": "ldg_bytes", "pro_sts_bytes": "sts_bytes",
+               "pro_stall": "stall_sum", "pro_glb_waits": "glb_waits"}
+GLOBAL_LOADS = ("LDG", "LD")
 PIPE_OF = {opcode: field for field, opcodes in PIPE_OPCODES.items() for opcode in opcodes}
 NO_BARRIER = 7
 
@@ -591,15 +606,20 @@ class LoopCounts:
         self.loops = 0
         self.k_iter = 0
         self.mma_shape = "-"
-        for f in COUNT_FIELDS + SCHEDULE_FIELDS + SECTION_FIELDS:
+        for f in COUNT_FIELDS + SCHEDULE_FIELDS + PIPE_FIELDS + WAIT_FIELDS + PROLOGUE_FIELDS:
             setattr(self, f, 0)
         self.scheduled = False
         self.pipes = False
+        self.waits = False
+        self.prologue = False
 
     def columns(self):
         if not self.scheduled:
             return LOOP_COLUMNS
-        return COLUMNS + SECTION_FIELDS if self.pipes else COLUMNS
+        if not self.pipes:
+            return COLUMNS
+        return (COLUMNS + PIPE_FIELDS + (WAIT_FIELDS if self.waits else ()) +
+                (PROLOGUE_FIELDS if self.prologue else ()))
 
     def row(self):
         """The snapshot's columns (COLUMNS, LOOP_COLUMNS without the schedule, COLUMNS and
@@ -613,9 +633,14 @@ class LoopCounts:
             setattr(c, name, getattr(self, name))
         return c
 
-    def with_pipes(self, pipes=True):
-        """This row's columns with (or without) the pipe counts, the counts unchanged."""
+    def with_pipes(self, pipes=True, prologue=False, waits=False):
+        """This row's columns with (or without) the pipe counts, and after them the wait classes
+        (WAIT_FIELDS, the mmq and w4a8 sections) or the prologue loop's (PROLOGUE_FIELDS, the r8
+        section), each only with the pipes, the counts unchanged."""
+        assert not (waits and prologue)
         self.pipes = pipes
+        self.waits = waits and pipes
+        self.prologue = prologue and pipes
         return self
 
     @classmethod
@@ -623,13 +648,18 @@ class LoopCounts:
         """The counts of a snapshot row's loop columns, with the schedule (COLUMNS), without it
         (LOOP_COLUMNS) or with the schedule and the pipes (COLUMNS + SECTION_FIELDS); ValueError on
         a field that is no count."""
-        widths = (len(COLUMNS), len(LOOP_COLUMNS), len(COLUMNS) + len(SECTION_FIELDS))
+        piped = len(COLUMNS) + len(PIPE_FIELDS)
+        widths = (len(COLUMNS), len(LOOP_COLUMNS), piped, piped + len(WAIT_FIELDS),
+                  piped + len(PROLOGUE_FIELDS))
         if len(fields) not in widths:
             raise ValueError(f"{len(fields)} loop fields, {' or '.join(map(str, widths))} columns")
         c = cls()
         c.scheduled = len(fields) != len(LOOP_COLUMNS)
-        c.pipes = len(fields) == len(COLUMNS) + len(SECTION_FIELDS)
-        for name, value in zip(COLUMNS + SECTION_FIELDS, fields):
+        c.pipes = len(fields) >= piped
+        c.waits = len(fields) == piped + len(WAIT_FIELDS)
+        c.prologue = len(fields) == piped + len(PROLOGUE_FIELDS)
+        extra = WAIT_FIELDS if c.waits else PROLOGUE_FIELDS
+        for name, value in zip(COLUMNS + PIPE_FIELDS + extra, fields):
             setattr(c, name, value if name == "mma_shape" else int(value))
         return c
 
@@ -704,6 +734,38 @@ def schedule_counts(body, control, iteration, outside):
                     glob[c.write_barrier] = True
                 elif op in ("LDS", "LDSM"):
                     shared[c.write_barrier] = True
+    outside_counts(body, control, outside, out)
+    out["glb_waits"] = global_waits(body, control, iteration, 2)
+    out["outside_glb_waits"] = global_waits(body, control, outside, 1)
+    return out
+
+
+def global_waits(body, control, indices, walks):
+    """The waits of `indices` (in order, walked `walks` times, the last one counted) that expose a
+    global load's latency, one per generation of loads: a wait counts where a scoreboard of its
+    mask holds a global load (GLOBAL_LOADS) issued after the last counted wait. Loads issued in
+    one burst return together, so the waits on the rest of the burst expose nothing more. The
+    static stalls between a load and its wait are not taken off (the law adds both)."""
+    pending = [None] * 6  # per scoreboard: the generation of its newest pending global load
+    generation, count = 0, 0
+    for walk in range(walks):
+        for i in indices:
+            c = control[i]
+            if c.wait_mask:
+                waited = [b for b in range(6) if (c.wait_mask >> b) & 1]
+                if any(pending[b] == generation for b in waited):
+                    if walk == walks - 1:
+                        count += 1
+                    generation += 1
+                for b in waited:
+                    pending[b] = None
+            if c.write_barrier != NO_BARRIER and base_opcode(body[i][2]) in GLOBAL_LOADS:
+                pending[c.write_barrier] = generation
+    return count
+
+
+def outside_counts(body, control, outside, out):
+    """Adds the outside fields of SCHEDULE_FIELDS over `outside` to `out`."""
     for i in outside:
         out["outside_total"] += 1
         out["outside_stall"] += control[i].stall
@@ -712,10 +774,26 @@ def schedule_counts(body, control, iteration, outside):
     return out
 
 
-def loop_counts(body, tiles=1):
+def loop_counts(body, tiles=1, marker=None, prologue_marker=None):
+    """loop_counts_of (below), and where `prologue_marker` names an opcode (F2I), the counts of
+    the loop that opcode marks in the same body as the PROLOGUE_FIELDS (the R8 kernels'
+    activation quantizer). A row writes them only under with_pipes(prologue=True)."""
+    out = loop_counts_of(body, tiles, marker)
+    if prologue_marker is not None:
+        # The quantizer's loop holds no dp4a: a codec whose weight decode converts with F2I
+        # (NVFP4's) has F2I in the dp4a loop too, which is not the prologue.
+        pro = loop_counts_of(body, 1, prologue_marker, exclude=marker)
+        for field, source in PROLOGUE_OF.items():
+            setattr(out, field, getattr(pro, source))
+    return out
+
+
+def loop_counts_of(body, tiles=1, marker=None, exclude=None):
     """The K loop's LoopCounts of a function body (iter_functions); `tiles` the m16n8 tiles one
     warp accumulates (m_tiles * n_tiles * row sets), for k_iter. The schedule fields where every
-    instruction carries its control code."""
+    instruction carries its control code. `marker`, an opcode (IDP), marks the loop of a kernel
+    without tensor-core MMAs (the R8 decode kernels' dp4a); otherwise the MMAs mark it, or FFMA
+    where the body has none (Volta's emulated MMA)."""
     out = LoopCounts()
     if not body:
         return out
@@ -736,8 +814,10 @@ def loop_counts(body, tiles=1):
     dom, preds = dominators(edges, live)
     loops = natural_loops(edges, dom, preds, live)
     has_mma = any(base_opcode(op) in MMA_OPCODES for _, _, op, *_ in body)
-    marker = (lambda op: base_opcode(op) in MMA_OPCODES) if has_mma else \
-        (lambda op: base_opcode(op) == "FFMA")
+    marked_opcodes = (marker,) if marker is not None else MMA_OPCODES if has_mma else ("FFMA",)
+
+    def marker(op):
+        return base_opcode(op) in marked_opcodes
 
     def indices(members):
         for b in sorted(members):
@@ -755,6 +835,9 @@ def loop_counts(body, tiles=1):
 
     marked = {h: sum(weight(b)[0] for b in m) for h, m in loops.items()}
     candidates = [h for h, n in marked.items() if n > 0]
+    if exclude is not None:  # a loop holding the excluded opcode is no candidate
+        candidates = [h for h in candidates
+                      if not any(base_opcode(body[i][2]) == exclude for i in indices(loops[h]))]
     innermost = [h for h in candidates
                  if not any(o != h and loops[o] < loops[h] for o in candidates)]
     iterations = {h: longest_iteration(edges, dom, h, loops[h], weight) for h in innermost}
@@ -799,6 +882,13 @@ def loop_counts(body, tiles=1):
         per_tile = 16 * 8 * tiles
         if mnk_sum and not unknown_shape and mnk_sum % per_tile == 0:
             out.k_iter = mnk_sum // per_tile
+    elif marked_opcodes == ("IDP",):
+        # A dp4a loop (the R8 kernels): each IDP is 4 int8 products of one lane, so a warp's 32
+        # lanes cover 128 K values per IDP and (row, token) product; `tiles` is the products one
+        # warp accumulates (rows x row sets x token slots).
+        idp = sum(1 for i in indices(path) if base_opcode(body[i][2]) == "IDP")
+        if idp and (128 * idp) % tiles == 0:
+            out.k_iter = 128 * idp // tiles
     # Outside: what the entry reaches beyond the blocks of the loop whose iteration was counted
     # (its header is the path's first block).
     return scheduled(list(in_order(path)), list(indices(live - loops[path[0]])))

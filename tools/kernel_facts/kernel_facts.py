@@ -41,7 +41,9 @@ After the register-MMA rows a snapshot holds one section per further kernel fami
 #785): ggml's matrix kernel `mul_mat_q<type, J, fallback, prec>` (mmq) and the W4A8 tiles
 (w4a8), each with its own nvcc, kernel count and columns (`family_nvcc`, `family_kernels`,
 `family_columns` after its `family <name>` line), and the pipe counts of the loop
-(sass_counts.PIPE_FIELDS) and the wait classes (sass_counts.WAIT_FIELDS) besides schema 4's. `extract --families mmq,w4a8 --update FILE`
+(sass_counts.PIPE_FIELDS) besides schema 4's, then the wait classes (sass_counts.WAIT_FIELDS,
+mmq and w4a8); the R8 decode kernels (r8, #613 PR-10) the same way, their loop marked by the
+dp4a and the quantizer's loop after the pipe counts. `extract --families mmq,w4a8 --update FILE`
 rewrites those sections alone and keeps the rest of FILE byte for byte. `check` compares every
 section the snapshot has: in full where the build's nvcc is the one the section records, its
 kernel set alone otherwise (the exit code then follows the register-MMA rows); a family the
@@ -296,6 +298,38 @@ def w4a8_key(demangled):
     return None
 
 
+R8_SCHEDULE = re.compile(r"R8Schedule<(\d+),(\d+)>")
+
+
+def r8_key(demangled):
+    """The key of an R8 decode kernel (generic_r8.cuh, #613 PR-10): r8_kernel<C, R8Schedule<Warps,
+    Rows>, NT, E, kPre>, keyed as the codec, the warps and rows per warp, the token slots NT, the
+    epilogue and kPre (1: the activation arrives quantized). None for other symbols."""
+    args = template_args(demangled, "void " + NAMESPACE + "r8_kernel<")
+    if args is None:
+        return None
+    m = R8_SCHEDULE.fullmatch(args[1]) if len(args) == 5 else None
+    if not m or not all(re.fullmatch(r"\d+", a) for a in args[2:4]):
+        fail(f"unexpected r8_kernel arguments in {demangled}")
+    return (args[0], *(int(v) for v in m.groups()), int(args[2]), int(args[3]), as_bool(args[4]))
+
+
+
+# The R8 codecs with kHalfMin (codec_traits.h half_min: Q2_K): per block and token slot the loop
+# also takes the code sums of values 0..15 and 16..31 by dp4a against ones (generic_r8.cuh), the
+# same eight dp4a a block as one row's product.
+R8_HALF_MIN_CODECS = ("W4a8Q2K",)
+
+
+def r8_products(key):
+    """The dp4a products one warp of an R8 kernel issues per block: rows x row sets (two under
+    SwiGLU) x token slots, plus one per token slot for a kHalfMin codec's ones sums; what the dp4a
+    count is divided by for k_iter."""
+    nt = key[3]
+    return key[2] * nt * (2 if key[4] == EPILOGUE_SWIGLU else 1) + (
+        nt if key[0] in R8_HALF_MIN_CODECS else 0)
+
+
 GEMMA4_NAMESPACE = "ninferno::ops::"
 GEMMA4_GEOMETRY = re.compile(r"(?:ninferno::ops::)?Gemma4Geometry<(\d+),(-?\d+),(\d+)>")
 
@@ -334,8 +368,18 @@ class Family:
     of its key (the first spelled as text where `text_key`, the others integers), the m16n8 tiles
     k_iter divides a warp's MMA work by, and whether its rows carry the pipe counts."""
 
-    def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True):
+    def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True,
+                 marker=None, prologue=None, waits=False):
         self.name = name
+        # Whether its rows carry the iteration's wait classes (sass_counts.WAIT_FIELDS) after the
+        # pipe counts: the mmq and w4a8 sections (#613 PR-5).
+        self.waits = waits
+        # The opcode that marks the counted loop where the kernel has no tensor-core MMA
+        # (sass_counts.loop_counts): IDP, the dp4a of the R8 kernels.
+        self.marker = marker
+        # The opcode that marks a second counted loop, written as the PROLOGUE_FIELDS after the
+        # pipe counts: F2I, the R8 kernels' activation quantizer.
+        self.prologue = prologue
         # Whether the SASS pass counts its loop: a family whose price reads its resources alone
         # (the CTAs an SM holds) is a resources-only section, schema 1's columns.
         self.loop = loop
@@ -350,7 +394,9 @@ class Family:
     def schema_columns(self):
         """{schema: (columns, loop fields)}: the resources alone (1), and the loop (4; with the
         pipe counts for a family that carries them)."""
-        loop = sass_counts.COLUMNS + (sass_counts.SECTION_FIELDS if self.pipes else ())
+        loop = sass_counts.COLUMNS + (sass_counts.PIPE_FIELDS if self.pipes else ()) + (
+            sass_counts.WAIT_FIELDS if self.pipes and self.waits else ()) + (
+            sass_counts.PROLOGUE_FIELDS if self.pipes and self.prologue else ())
         return {1: (self.row_head, 0), 4: (self.row_head + loop, len(loop))}
 
     def parse_key(self, fields):
@@ -367,13 +413,16 @@ FAMILIES = {
     FAMILY: Family(FAMILY, KEY_COLUMNS, lambda d: rmma_key(d), "rmma_kernel", key_tiles, False,
                    True),
     "mmq": Family("mmq", ("type", "J", "fallback", "prec"), lambda d: mmq_key(d), "mul_mat_q",
-                  lambda key: 1, True, False),
+                  lambda key: 1, True, False, waits=True),
     "w4a8": Family("w4a8", ("codec", "block_m", "block_n", "warps_m", "warps_n", "epilogue",
                             "flavor", "stages", "producers"), lambda d: w4a8_key(d), "w4a8_",
-                   lambda key: 1, True, True),
+                   lambda key: 1, True, True, waits=True),
     "gemma4": Family("gemma4", ("kernel", "D", "G", "slice", "rows", "Bc", "partial", "fp8",
                                 "chain"), lambda d: gemma4_key(d), "gemma4_", lambda key: 1,
                      False, True, loop=False),
+    "r8": Family("r8", ("codec", "warps", "rows", "nt", "epilogue", "pre"), lambda d: r8_key(d),
+                 "r8_kernel", lambda key: r8_products(key), True, True, marker="IDP",
+                 prologue="F2I"),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -475,7 +524,10 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
     for name, body in sass_counts.iter_functions(lines, lambda n: n in keys):
         fk = keys[name]
         family = FAMILIES[fk[0]]
-        c = sass_counts.loop_counts(body, family.tiles(fk[1])).with_pipes(family.pipes)
+        c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker,
+                                    family.prologue).with_pipes(family.pipes,
+                                                                family.prologue is not None,
+                                                                family.waits)
         if fk in counts and counts[fk] != c:
             fail(f"{name} is disassembled twice in {arch} with different loops {counts[fk]} "
                  f"and {c}")
@@ -561,7 +613,9 @@ def family_audit(family, rows):
     producer-warp tile's consumers wait on a full stage and mark it empty). Q2_K's k_iter is
     above its unit's in both families (5 / 4 of it: its min term, a scale and a min per 16
     values, takes MMAs of its own that advance no K, which the ones-register search of
-    sass_counts.py does not tell apart)."""
+    sass_counts.py does not tell apart). The R8 decode kernels: one loop marked by its dp4a,
+    no CTA barrier and no MMA in it, and one F2I-marked quantizer loop where pre is 0, none
+    where it is 1."""
     out = []
     for k, v in sorted(rows.items()):
         c = v[4]
@@ -599,9 +653,34 @@ def family_audit(family, rows):
                 problems.append(f"k_iter {c.k_iter}, not {want}")
             if c.bar != 2:
                 problems.append(f"{c.bar} barriers in the iteration")
+        elif family == "r8":
+            # One loop of dp4a per lane and group, no CTA barrier in it (the activation is in
+            # shared memory before the loop starts) and no MMA.
+            if c.loops != 1:
+                problems.append(f"{c.loops} candidate loops")
+            if c.bar != 0:
+                problems.append(f"{c.bar} barriers in the iteration")
+            if c.mma != 0:
+                problems.append(f"{c.mma} MMAs in the iteration")
+            if c.k_iter <= 0:
+                problems.append("no K count from the dp4a")
+            # The activation quantizer: one F2I loop where the kernel quantizes (pre 0), none
+            # where it reads a quantized activation (pre 1).
+            if c.pro_loops != (0 if k[5] else 1):
+                problems.append(f"{c.pro_loops} quantizer loops (pre {k[5]})")
         problems += c.schedule_problems()
         if problems:
             out.append(f"{family} {row_key(k)}: {'; '.join(problems)}")
+    if family == "r8":
+        # One codec's loop covers the same K an iteration in every schedule, epilogue and token
+        # width (its group and ring are the codec's and the architecture's, not the schedule's).
+        per_codec = {}
+        for k, v in rows.items():
+            if v[4] is not None and v[4].k_iter > 0:
+                per_codec.setdefault(k[0], set()).add(v[4].k_iter)
+        for codec, values in sorted(per_codec.items()):
+            if len(values) != 1:
+                out.append(f"r8 {codec}: k_iter differs between its rows: {sorted(values)}")
     return out
 
 
@@ -703,6 +782,20 @@ SECTION_NOTES = {
         "# the other columns 0). Resources alone: the decode plan reads the CTAs an SM holds",
         "# (core/kernel_occupancy.h), never the host's kernels.",
     ),
+    "r8": (
+        "# The R8 decode kernels (src/ops/generic/generic_r8.cuh, #613 PR-10): r8_kernel<codec,",
+        "# R8Schedule<warps, rows>, NT, epilogue, kPre> (pre 1: the activation arrives quantized;",
+        "# otherwise each CTA quantizes the [NT, K] activation into shared memory first). No",
+        "# tensor-core MMA: the counted loop is the one holding the dp4a (IDP), one iteration a",
+        "# group of 32-value blocks per lane and row; k_iter the K values one iteration covers per",
+        "# row and token (128 per dp4a over rows x sets x token slots), the MMA columns 0. After the",
+        "# pipe counts, the pro_ columns: the activation quantizer's loop (marked by F2I; pro_loops",
+        "# 0 where pre is 1), one iteration's instructions, integer and float work, global bytes",
+        "# loaded and shared bytes stored per warp, and its stall sum. Then the waits that expose a",
+        "# global load's latency (a wait on a scoreboard with an LDG pending): glb_waits in one",
+        "# dp4a iteration, outside_glb_waits outside both loops, pro_glb_waits in one quantizer",
+        "# iteration.",
+    ),
 }
 
 
@@ -774,7 +867,7 @@ def parse_rows(family, lines, columns, what):
             key = f.parse_key(fields[1:1 + keys])
             loop = fields[head:head + loop_width]
             counts = sass_counts.LoopCounts.from_row(loop) if loop_width else None
-            if counts is not None and counts.pipes != f.pipes:
+            if counts is not None and (counts.pipes != f.pipes or counts.waits != f.waits):
                 raise ValueError("pipe columns of another family")
             rows[key] = (*(int(v) for v in fields[1 + keys:head]), counts)
         except ValueError as error:
@@ -881,8 +974,10 @@ def cmd_extract(args):
     if args.update:
         with open(args.update) as f:
             old = f.read()
-        parse_sections(old)
         top, sections = split_sections(old)
+        # What is kept must parse; a family replaced may be in an earlier column layout.
+        parse_sections(top + "".join(sections[f] for f in SECTION_FAMILIES
+                                     if f in sections and f not in families))
     if FAMILY in families:
         source = args.source or (source_hash(args.source_root) if args.source_root else "unknown")
         top = render(args.arch, extracted[FAMILY], nvcc, args.flags or "unknown", source)
@@ -1100,6 +1195,20 @@ def list_differences(args, differ, missing, extra, expected, got, line):
         print(f"  ... {shown - args.show} more")
 
 
+# Section rows whose SASS ptxas does not reproduce from the same source (#968): built twice clean
+# from one tree (sm_89, nvcc 13.4.92, no ccache, the five R8 translation units), 2 of 2019
+# functions came out with another schedule (3540 against 3556 SASS lines), and a third after a
+# comment line elsewhere in a header they include, all pre-quantized nt = 8 instances; on sm_75
+# and sm_86 other rows of the same kind moved between trees (sm_75: W4a8Ggml32<2> at both
+# epilogues). check holds every pre-quantized nt = 8 R8 row to its resources (the registers,
+# stack, local and shared bytes, which never moved) and reports its loop counts beside, never
+# failing on them: the R8 law prices T = 1 only and reads no nt = 8 row (#966). extract still
+# writes the build's counts. `key` is the row's key fields (FAMILIES["r8"].key: codec, warps,
+# rows, nt, epilogue, pre).
+def sass_unstable(family, key):
+    return family == "r8" and int(key[3]) == 8 and int(key[5]) == 1
+
+
 def section_line(family):
     """A section row's text, as render_section writes it."""
     return lambda k, v: " ".join(str(x) for x in [family, *k, *v[:4]] +
@@ -1118,6 +1227,12 @@ def check_section(args, family, section, got, other_nvcc, with_sass, arch):
     extra = sorted(k for k in got if k not in expected)
     differ = [] if other_nvcc else sorted(
         k for k in expected if k in got and expected[k] != got[k])
+    # #968: a row ptxas does not reproduce is held to its resources alone.
+    unstable = [k for k in differ if sass_unstable(family, k) and expected[k][:4] == got[k][:4]]
+    differ = [k for k in differ if k not in unstable]
+    for k in unstable:
+        print(f"kernel_facts: {family} {row_key(k)}: loop counts differ from the section, a row "
+              f"ptxas does not reproduce (#968), resources equal: not a failure")
     if not (missing or extra or differ):
         if other_nvcc:
             print(f"kernel_facts: {len(got)} {family} kernels of sm_{arch}: the set equals "

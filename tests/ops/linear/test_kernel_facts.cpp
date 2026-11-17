@@ -369,13 +369,14 @@ void sections_read() {
     // the generation has (Turing's m8n8k16, m16n8k32 from sm_80 on); and the W4A8 32 x 128 tile
     // (Q4_K, Q6_K) with one loop, two barriers per 128-value K tile and k_iter 16 x 32.
     // sm_70 has no mmq or w4a8 section: its snapshot is made with CUDA 12.8 (#762), and Volta takes
-    // no MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts.
+    // no MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts,
+    // and the r8 one (#613 PR-10): the R8 law reads the one-slot ring's.
     constexpr std::string_view kWithoutSections[] = {"70"};
     int with_sections                             = 0;
     for (const auto arch : kf::snapshot_archs()) {
         const std::string name = "sm_" + std::string(arch);
         for (const auto family : kf::kSectionFamilies) {
-            const bool waived = family != "gemma4" &&
+            const bool waived = family != "gemma4" && family != "r8" &&
                                 std::find(std::begin(kWithoutSections), std::end(kWithoutSections),
                                           arch) != std::end(kWithoutSections);
             const auto header = kf::section_header(arch, family);
@@ -442,6 +443,25 @@ void sections_read() {
             }
             expect(found, name + " w4a8: no " + codec + " 32 x 128 store row with a loop");
         }
+        // The R8 decode kernels (#613 PR-10): one loop marked by the dp4a, no MMA and no CTA
+        // barrier in it, and one quantizer loop where the kernel quantizes (pre 0), none where it
+        // reads a quantized activation; the Q4_K four-warp single-row decode kernel is among them.
+        if (!kf::section_header(arch, "r8")) continue;
+        int r8_bad = 0;
+        std::string r8_first;
+        for (const auto& [key, f] : kf::section_rows(arch, "r8")) {
+            const bool pre = key.size() >= 2 && key.compare(key.size() - 2, 2, " 1") == 0;
+            const bool ok  = f.loop && f.loop->loops == 1 && f.loop->mma == 0 && f.loop->pipes &&
+                            f.loop->pipes->bar == 0 && f.loop->k_iter > 0 && f.prologue &&
+                            f.prologue->loops == (pre ? 0 : 1);
+            if (!ok && r8_bad++ == 0) r8_first = key;
+        }
+        expect(r8_bad == 0,
+               name + " r8: " + std::to_string(r8_bad) +
+                   " rows without one barrier-free dp4a loop and its quantizer loop, first " +
+                   r8_first);
+        expect(kf::r8_facts(arch, {"W4a8Q45K<4>", 4, 1, 1, 0, false}).has_value(),
+               name + " r8: no W4a8Q45K<4> 4 1 1 0 0 row");
     }
     std::cout << "sections: " << with_sections << " snapshots with the mmq section\n";
     // The reader takes a section after the rows and refuses one that breaks its form.

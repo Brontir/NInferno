@@ -796,7 +796,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the half-L2 line; the layout is a fact of the format, no timing places it",
      ""},
     {"r8_schedule: the decode table's width", Basis::Structural, "route_authorities.cpp",
-     "const auto hit = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;", 1, kUnknown, kUnknown,
+     "auto hit = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;", 1, kUnknown, kUnknown,
      "the nearest measured board's decode table is consulted at one token only: its entries are "
      "T = 1 timings (r8_decode_table.h, written by tools/bench/r8_decode_table.py) and none exist "
      "for other widths; the gate follows from the table's layout, and no board places it (the "
@@ -804,10 +804,46 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the same bare 1 is written in heuristic_r8 (generic_select.cpp, the next descriptor)",
      ""},
     {"heuristic_r8: the decode table's width", Basis::Structural, "generic_select.cpp",
-     "if (tokens == 1) { if (const auto tuned = tuned_r8(p)) return tuned->schedule; }", 1,
-     kUnknown, kUnknown,
+     "if (tokens == 1) { const auto tuned = tuned_r8(p); if (tuned && r8_hit_here(*tuned)) return "
+     "tuned->schedule; const auto carried = tuned ? std::optional<int>(tuned->schedule) : "
+     "std::nullopt; if (const auto law = law_r8_before(p, carried)) return *law; if (tuned) "
+     "return tuned->schedule; }",
+     1, kUnknown, kUnknown,
      "the same one-token gate as r8_schedule's, written again in the heuristic's own path; the "
-     "table (r8_decode_table.h) has T = 1 entries only; no board places the gate",
+     "table (r8_decode_table.h) has T = 1 entries only, and the schedule law (law_r8_before) is "
+     "taken at one token only, where its frozen predictions were scored; no board places the gate",
+     ""},
+    {"r8_schedule: the law's width", Basis::Structural, "route_authorities.cpp",
+     "const auto law = ask.tokens == 1 && !here ? law_r8_before(problem, hit ? "
+     "std::optional<int>(hit->schedule) : std::nullopt) : std::nullopt;",
+     1, kUnknown, kUnknown,
+     "the R8 schedule law is asked at one token only, and only where this board's own table "
+     "entry did not answer (here): its predictions were frozen and scored at T = 1 (#613 PR-10, "
+     "holdout grids at T 1, 2, 4, 8; it beat the rules at T = 1 on the boards of "
+     "r8_law_generation and not at every T); no board places the 1",
+     ""},
+    {"r8_law_generation: the law's generations", Basis::Measured, "generic_select.cpp",
+     "return (d.major == 8 && d.minor == 9) || (d.major == 7 && (d.minor == 0 || d.minor == 5));",
+     0, "ad102:128sm, ad104:60sm, ad106:34sm, gv100:80sm, tu102:68sm",
+     "RTX 4090, RTX 4070 Ti, RTX 4060 Ti, GV100, RTX 2080 Ti",
+     "the generations whose holdout grids (192 problems no law version was shaped on, predictions "
+     "frozen at 9bdd25031 before the grids were read) the R8 schedule law beat the rules on at "
+     "T = 1: mean regret 0.90 / 0.92 / 0.71 / 2.16 / 3.84 % against the rules' 4.04 / 2.76 / "
+     "2.27 / 5.37 / 6.10 % (#613 PR-10); GA10x is left out (its issue floor overcounts, #960), "
+     "GB20x has no SM-rate row the law can read",
+     ""},
+    {"r8_law_format: the law's formats", Basis::Measured, "generic_select.cpp",
+     "case QType::GGML_IQ2_S: case QType::GGML_IQ2_XS: case QType::GGML_IQ2_XXS: case "
+     "QType::GGML_IQ3_S: case QType::GGML_IQ3_XXS: case QType::GGML_Q3_K: case "
+     "QType::GGML_Q6_K: return true;",
+     0, "ad102:128sm, ad104:60sm, ad106:34sm, gv100:80sm, tu102:68sm",
+     "RTX 4090, RTX 4070 Ti, RTX 4060 Ti, GV100, RTX 2080 Ti",
+     "the formats of the same T = 1 holdout grids (24 calls a format and board) on which the law's "
+     "mean regret was below the rules' on most boards: IQ2_S 5 of 5 (1.69 against 7.96 % pooled), "
+     "IQ2_XS 4 (2.03 / 5.10), IQ2_XXS 4 (1.75 / 2.86), IQ3_S 5 (2.24 / 5.17), IQ3_XXS 3 (2.08 / "
+     "2.81), Q3_K 3 (1.61 / 6.75), Q6_K 4 (1.03 / 6.27); Q4_K 2 of 5 (1.08 / 1.20) is left out, "
+     "and Qwen3.5-9B Q4_K_M's decode step lost 0.35 % (RTX 4070 Ti) to its picks there (#966); "
+     "formats the grids did not hold are not taken",
      ""},
     {"rmma_narrow_fallback: narrow tiles", Basis::Unknown, "route_authorities.cpp",
      "for (const int n_tiles : {2, 1}) { const int index = rmma_index(4, 1, 1, n_tiles); const "
@@ -824,7 +860,10 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the one measured distance is the 4090's 80 entries on the 4080 SUPER (distance 1.2; 3 "
      "sweeps): won 41, lost 30 (to -22 %), +0.1 % in the mean; the comment names a 4090 D and a "
      "3090 Ti (0.17, 0.14) as boards that take their tables, as a consequence of the bound, with "
-     "no timing; nothing places the 0.5",
+     "no timing (on sm_89, sm_70 and sm_75 a carried entry of a format the R8 law is taken on, "
+     "r8_law_format, now yields to it, law_r8_before, except where it names a schedule the law "
+     "could not price); nothing places "
+     "the 0.5",
      ""},
     {"kCarryDistance", Basis::Unknown, "../../core/measured_boards.h",
      "inline constexpr double kCarryDistance = 1.0;", 1.0, "ad102:128sm, ad103:80sm",

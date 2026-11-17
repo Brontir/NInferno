@@ -3,6 +3,7 @@
 // route_resources; generic_gemm.h).
 
 #include "core/device_class.h"
+#include "core/format_facts.h"
 #include "core/tensor.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm.h"
@@ -18,7 +19,8 @@
 namespace ninferno::ops::detail::generic {
 
 namespace {
-thread_local KernelResources* t_describe = nullptr;
+thread_local KernelResources* t_describe     = nullptr;
+thread_local kernel_facts::R8KernelKey* t_r8 = nullptr;
 } // namespace
 
 KernelResources* kernel_describe_target() noexcept { return t_describe; }
@@ -27,6 +29,35 @@ ScopedKernelDescribe::ScopedKernelDescribe(KernelResources& out) noexcept : prev
     t_describe = &out;
 }
 ScopedKernelDescribe::~ScopedKernelDescribe() { t_describe = previous_; }
+
+kernel_facts::R8KernelKey* r8_key_target() noexcept { return t_r8; }
+
+ScopedR8Key::ScopedR8Key(kernel_facts::R8KernelKey& out) noexcept : previous_(t_r8) { t_r8 = &out; }
+
+ScopedR8Key::~ScopedR8Key() { t_r8 = previous_; }
+
+std::optional<kernel_facts::R8KernelKey> r8_launch_key(int schedule, QType qtype, Epilogue epilogue,
+                                                       std::int32_t tokens, bool prequantized) {
+    const auto codec = format_facts(qtype).codec;
+    if (!codec || schedule < 0 || schedule >= r8_schedule_count() || tokens < 1) {
+        return std::nullopt;
+    }
+    GemmArgs args;
+    args.tokens = tokens;
+    // Never read: the named launch takes only their presence (the pre-quantized form).
+    static const std::int8_t codes = 0;
+    static const float planes      = 0.0F;
+    const W4a8Activation pre =
+        prequantized ? W4a8Activation{&codes, &planes, &planes} : W4a8Activation{};
+    kernel_facts::R8KernelKey key;
+    try {
+        const ScopedR8Key named(key);
+        launch_r8(schedule, *codec, epilogue, args, nullptr, pre);
+    } catch (const std::invalid_argument&) { return std::nullopt; }
+    // A codec without the pre-quantized form runs the in-kernel quantizer's instead: not asked for.
+    if (key.codec.empty() || key.pre != prequantized) return std::nullopt;
+    return key;
+}
 
 namespace {
 
