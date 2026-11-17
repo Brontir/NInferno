@@ -267,10 +267,11 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         // Under the completeness terms the quantizer is counted (a CTA a column and 512 values of
         // K), and the output write and residual read are added once for the call; the tile
         // kernel's launch and its stream-k fixup stay inside the fitted slice (kMmqSliceSeconds)
-        // where the counted unit does not price them (a format not mmq_unit::scored; #613 PR-5),
-        // as does the FP32 plane its tiles write and its epilogue reads.
-        // Counted, each slice's quantizer at its own width: the runtime loop (generic_gemm.cpp)
-        // gives the last slice the remaining tokens, so 513 tokens quantize 512 and then 1.
+        // where the counted unit does not price them (a format not mmq_unit::scored, or an arch not
+        // mmq_unit::scored_arch; #613 PR-5), as does the FP32 plane its tiles write and its
+        // epilogue reads. Counted, each slice's quantizer at its own width: the runtime loop
+        // (generic_gemm.cpp) gives the last slice the remaining tokens, so 513 tokens quantize 512
+        // and then 1.
         const auto quant_mmq_counted = [&](double width) {
             return quant_counted(width * k * route_cost::kQuantMmqBytesPerValue.value(),
                                  width * cdiv(k, route_cost::kQuantMmqValuesPerCta.value()),

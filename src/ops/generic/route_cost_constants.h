@@ -159,16 +159,17 @@ inline constexpr bool kCompletenessTerms = false;
 // goldens hold); true, the counted unit of ops/generic/mmq_unit.h (the kernel's SASS counts, the
 // arch's isa_probe facts, the board's facts) times the launch's units, where every input is known,
 // and the fitted slice where one is missing (every format but Q4_K, Q5_K and Q6_K:
-// mmq_unit::scored). One switch a binary, as kRmmaCountedLaw; a test flips it for its process
-// (mmq_unit::counted_for_test, mmq_unit.h). Off (#613 PR-5, 17.11): the sealed grids score the
-// counted unit's launch times 10.5 % (RTX 5070 Ti) / 14.3 % (RTX 4070 Ti) against the fitted
-// slice's 15.4 % / 12.0 %, but the selector's picks on the sealed route_tune grids (Q4_K/Q5_K/Q6_K,
-// A8) regress on all four boards: mean regret 24.8 -> 31.5 % (RTX 3060), 10.7 -> 14.3 % (4090),
-// 12.6 -> 13.0 % (4070 Ti), 9.4 -> 14.7 % (5070 Ti). The cause is in the prices the counted unit
-// is compared with: w4a8ws prices Q6_K at 0.75-0.84 of its measured time on every board, which the
-// fitted MMQ slice's own low price (0.85 on the RTX 3060) offset; and the counted unit prices Q4_K
-// and Q5_K at 0.80-0.83 on the RTX 4090. It turns on when those two are counted and the pick
-// regret falls (#973).
+// mmq_unit::scored; and an arch it was scored on: mmq_unit::scored_arch). One switch a binary,
+// as kRmmaCountedLaw; the host price tool flips it for its process (--mmq-counted-unit,
+// mmq_unit::counted_for_test), which the pick-regret check runs with. Off (#613 PR-5, 17.11): the
+// sealed grids score the counted unit's launch times 10.5 % (RTX 5070 Ti) / 14.3 % (RTX 4070 Ti)
+// against the fitted slice's 15.4 % / 12.0 %, but the selector's picks on the sealed route_tune
+// grids (Q4_K/Q5_K/Q6_K, A8) regress on all four boards: mean regret 24.8 -> 31.5 % (RTX
+// 3060), 10.7 -> 14.3 % (4090), 12.6 -> 13.0 % (4070 Ti), 9.4 -> 14.7 % (5070 Ti). The cause is in
+// the prices the counted unit is compared with: w4a8ws prices Q6_K at 0.75-0.84 of its measured
+// time on every board, which the fitted MMQ slice's own low price (0.85 on the RTX 3060) offset;
+// and the counted unit prices Q4_K and Q5_K at 0.80-0.83 on the RTX 4090. It turns on when those
+// two are counted and the pick regret falls (#978 for both, #973 for the switch).
 inline constexpr bool kMmqCountedUnit = false;
 // The activation quantizers' DRAM bytes per value, counted from their kernels and static_asserted
 // there against the block each thread writes:
