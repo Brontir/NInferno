@@ -941,7 +941,7 @@ int run_resources(bool detail) {
     // R8 (r8_resources): nothing where route_admits refuses R8 under AllowA8; where described, the
     // schedule's threads, one CTA per warps x rows of output rows, a one-dimensional grid, no
     // pre-quantized form for one token, and registers the SM holds.
-    int r8_described = 0, r8_pre = 0, r8_admitted = 0;
+    int r8_described = 0, r8_pre = 0, r8_admitted = 0, r8_looped = 0;
     for (const QType qtype : kFormats) {
         const Shape shape{4096, 4096};
         quantized_weight::PatternedWeightOptions options;
@@ -990,6 +990,7 @@ int run_resources(bool detail) {
                     fail(at + ": pre-quantized variant asked for, not described");
                 }
                 const auto& k = r->kernel;
+                r8_looped += k.loop ? 1 : 0;
                 const unsigned ctas = static_cast<unsigned>(
                     (shape.n + info.warps * info.rows - 1) / (info.warps * info.rows));
                 if (k.threads != 32 * info.warps || k.grid_x != ctas || k.grid_y != 1 ||
@@ -1014,8 +1015,17 @@ int run_resources(bool detail) {
     if (r8_described == 0 && r8_admitted > 0) fail("no R8 kernel described");
     // The verify widths run the pre-quantized form (T = 2..kR8VerifyTokens) where a format has it.
     if (r8_admitted > 0 && r8_pre == 0) fail("no pre-quantized R8 kernel described");
-    std::cout << "resources R8: " << r8_described << " described (" << r8_pre
-              << " pre-quantized)\n";
+    // A described launch carries its K loop where the snapshot of the SASS this board runs holds
+    // the family's section (snapshot_loop: the kernel atlas, #613).
+    const auto sass        = generic::kernel_facts::sass_arch();
+    const auto has_section = [&](std::string_view family) {
+        return sass && generic::kernel_facts::section_header(*sass, family).has_value();
+    };
+    if (r8_described > 0 && has_section("r8") && r8_looped == 0) {
+        fail("no described R8 kernel carries its snapshot's K loop");
+    }
+    std::cout << "resources R8: " << r8_described << " described (" << r8_pre << " pre-quantized, "
+              << r8_looped << " with the snapshot's K loop)\n";
     // The other families (route_resources): nothing where route_admits refuses the route under
     // AllowA8 (W4A4: AllowA4); where described, threads and registers the SM holds, a grid that
     // covers the call, dynamic shared memory one block takes, and the I8 and staged tiles at their
@@ -1032,7 +1042,7 @@ int run_resources(bool detail) {
         const char* name;
         std::vector<std::int32_t> widths;
         LinearPolicy policy = LinearPolicy::AllowA8;
-        int admitted = 0, described = 0;
+        int admitted = 0, described = 0, looped = 0;
     };
     const auto one = +[] { return 1; };
     FamilyCount families[] = {
@@ -1084,6 +1094,7 @@ int run_resources(bool detail) {
                     }
                     if (!r) continue;
                     ++f.described;
+                    f.looped += r->loop ? 1 : 0;
                     if (r->family != generic::family_facts(route.family)) {
                         fail(at + ": described without its family's record (family_facts)");
                     }
@@ -1146,6 +1157,10 @@ int run_resources(bool detail) {
     std::cout << "resources tiles:";
     for (const FamilyCount& f : families) {
         const std::string family = f.name;
+        if (f.family == generic::Family::W4a8Mma && f.described > 0 && has_section("w4a8") &&
+            f.looped == 0) {
+            fail("no described W4A8 tile carries its snapshot's K loop");
+        }
         // Volta's tiled calls of these widths run its CUTLASS copy: no tile kernel to describe.
         if (f.admitted > 0 && f.described == 0 &&
             (tensor_mma || f.family != generic::Family::TiledMma)) {

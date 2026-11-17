@@ -719,8 +719,9 @@ struct KernelResources {
     // The min-term sums the register-MMA instance takes (RmmaSums, generic_gemm.cuh: 0 the MMA
     // with ones, 1 the FP32 adds, 2 the group-sums plane).
     int sums = 0;
-    // The register-MMA kernel's K loop counted off its SASS (kernel_facts::LoopCounts, #613): the
-    // snapshot's, where it carries them; nullopt for the other families and a schema 1 snapshot.
+    // The kernel's K loop counted off its SASS (kernel_facts::LoopCounts, #613): the snapshot's,
+    // where it carries them, for the register MMA, R8 and the W4A8 tiles (snapshot_loop); nullopt
+    // for the other families and a schema 1 snapshot.
     std::optional<kernel_facts::LoopCounts> loop;
     // The tile, step and stage facts of the kernel's family (family_facts): route_resources sets
     // them; rmma_resources and r8_resources leave them empty.

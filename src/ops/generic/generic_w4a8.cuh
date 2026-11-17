@@ -1962,6 +1962,11 @@ void w4a8_launch_schedule(const GemmArgs& args, W4a8Activation act, cudaStream_t
             cudaFuncAttributes attributes{};
             CUDA_CHECK(cudaFuncGetAttributes(&attributes, (w4a8_kernel<C, S, E, Flavor>)));
             describe_kernel(*described, attributes, grid, S::kThreads, kSmem, false);
+            described->loop = snapshot_loop([](std::string_view arch) {
+                return kernel_facts::w4a8_facts(arch, {kernel_facts::decoder_name<C>(), S::kBlockM,
+                                                       S::kBlockN, S::kWarpsM, S::kWarpsN,
+                                                       static_cast<int>(E), Flavor, 0, 0});
+            });
             return;
         }
         CUDA_CHECK(cudaFuncSetAttribute(w4a8_kernel<C, S, E, Flavor>,
@@ -1994,6 +1999,11 @@ void w4a8_ws_launch_schedule(const GemmArgs& args, W4a8Activation act, cudaStrea
             cudaFuncAttributes attributes{};
             CUDA_CHECK(cudaFuncGetAttributes(&attributes, kernel));
             describe_kernel(*described, attributes, grid, S::kThreads + 32 * Producers, kSmem, false);
+            described->loop = snapshot_loop([](std::string_view arch) {
+                return kernel_facts::w4a8_facts(arch, {kernel_facts::decoder_name<C>(), S::kBlockM,
+                                                       S::kBlockN, S::kWarpsM, S::kWarpsN,
+                                                       static_cast<int>(E), 0, kStages, Producers});
+            });
             return;
         }
         CUDA_CHECK(

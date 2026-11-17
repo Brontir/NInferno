@@ -70,6 +70,18 @@ inline void describe_from_facts(KernelResources& out, const kernel_facts::Kernel
     out.loop                  = f.loop;
 }
 
+// The K loop a described launch adds to its resources (KernelResources::loop, the kernel atlas,
+// #613) for a family whose kernels the snapshot keys by their template arguments: `facts` looks
+// the kernel up in the snapshot of the SASS this board runs (kernel_facts::sass_arch). nullopt
+// where no snapshot holds the kernel or its row carries no loop. The price never reads it.
+template <class Facts>
+[[nodiscard]] std::optional<kernel_facts::LoopCounts> snapshot_loop(Facts&& facts) {
+    const auto arch = kernel_facts::sass_arch();
+    if (!arch) return std::nullopt;
+    const std::optional<kernel_facts::KernelFacts> f = facts(*arch);
+    return f ? f->loop : std::nullopt;
+}
+
 #ifndef NINFERNO_HOST_ONLY // the launch describes a kernel; the selector does not
 inline void describe_kernel(KernelResources& out, const cudaFuncAttributes& a, dim3 grid,
                             int threads, std::size_t dynamic_smem, bool latency) noexcept {

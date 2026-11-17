@@ -354,6 +354,10 @@ void r8_launch_tokens(const GemmArgs& args, cudaStream_t stream, W4a8Activation 
         cudaFuncAttributes attributes{};
         CUDA_CHECK(cudaFuncGetAttributes(&attributes, r8_kernel<C, S, NT, E, kPre>));
         describe_kernel(*described, attributes, grid, S::kThreads, smem, false);
+        described->loop = snapshot_loop([](std::string_view arch) {
+            return kernel_facts::r8_facts(arch, {kernel_facts::decoder_name<C>(), S::kWarps,
+                                                 S::kRows, NT, static_cast<int>(E), kPre});
+        });
         return;
     }
     // kPre launches in stream order: the quantizer it reads is the kernel right before it.
