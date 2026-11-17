@@ -544,9 +544,21 @@ RouteAnswer heuristic_answer(const Ask& ask, const Problem& problem, const Weigh
     return under_policy(by_rule(Route{Family::Scalar, 0}, "scalar-fallback"), ask, nullptr);
 }
 
+// Whether a demoted table answer keeps the call over the ranker's anyway (#614 F2): ggml's matrix
+// kernel against the register MMA at 9 to 16 tokens, the one boundary the cost model does not price
+// (the per-SM DRAM law of #785). F1's A/B on four boards (evidence over legacy, 190 cells each)
+// lost only there: q4k a8 swiglu 12288x4096 at T 12 / 16, ggml_mmq -> rmma.m1.n2.w1x4, RTX 5070 Ti
+// +45..+75 %, RTX 3060 +35 %, RTX 4060 Ti +4 %; every other moved cell was within 1.1 % or gained.
+[[nodiscard]] static bool keeps_mmq_boundary(const Ask& ask, const RouteAnswer& demoted,
+                                             const RouteAnswer& ranked) noexcept {
+    return demoted.route.family == Family::GgmlMmq && ranked.route.family == Family::RegisterMma &&
+           ask.tokens >= 9 && ask.tokens <= 16;
+}
+
 // The one place the precedence over evidence applies (route_authorities.h): under Legacy the first
 // answer wins; under Evidence a Borrowed or Transferred answer of the auto list yields to what
-// follows it, and stands only where the ranker has no candidate (the scalar fallback).
+// follows it, and stands only where the ranker has no candidate (the scalar fallback) or at the
+// MMQ boundary the ranker cannot price (keeps_mmq_boundary).
 RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& weight) {
     const Ask asked = nvfp4_promoted(ask, problem, weight);
     std::optional<RouteAnswer> demoted;
@@ -562,7 +574,8 @@ RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& we
     if (auto band = dense_tune_prefill_band(asked, problem, weight, answer.route)) {
         return under_policy(std::move(*band), asked, demoted ? &*demoted : nullptr);
     }
-    if (demoted && answer.evidence.source == "scalar-fallback") {
+    if (demoted && (answer.evidence.source == "scalar-fallback" ||
+                    keeps_mmq_boundary(asked, *demoted, answer))) {
         return under_policy(std::move(*demoted), asked, nullptr);
     }
     return under_policy(std::move(answer), asked, demoted ? &*demoted : nullptr);

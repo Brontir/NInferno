@@ -98,11 +98,11 @@ void engine_flags() {
         check(std::string_view(product::kEngineFlagsUsage).find(flag) != std::string_view::npos,
               std::string("the engine usage omits ") + flag);
     }
-    // --route-policy (#614 F1): legacy by default, parsed into the maintainer options, which the
-    // process-options lease compares; a scoring program takes it too.
+    // --route-policy (#614 F1, F2): evidence by default, parsed into the maintainer options, which
+    // the process-options lease compares; a scoring program takes it too.
     {
         MaintainerOptions p;
-        check(p.route_policy == RoutePolicy::Legacy, "--route-policy is not legacy by default");
+        check(p.route_policy == RoutePolicy::Evidence, "--route-policy is not evidence by default");
         check(product::parse_engine_flag(
                   "--route-policy", [] { return std::string("evidence"); }, pacing, p,
                   product::TunerFlags::Refused) &&

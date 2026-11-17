@@ -373,11 +373,11 @@ BoardTally run_board(const RegretBoard& b, const std::vector<SweepShape>& shapes
             legacy   = ask(d, c, RoutePolicy::Legacy);
             evidence = ask(d, c, RoutePolicy::Evidence);
         } catch (const std::exception& error) {
-            ops::set_route_policy(RoutePolicy::Legacy);
+            ops::set_route_policy(RoutePolicy::Evidence);
             fail(at + ": threw " + error.what());
             continue;
         }
-        ops::set_route_policy(RoutePolicy::Legacy);
+        ops::set_route_policy(RoutePolicy::Evidence);
         if (legacy.has_value() != evidence.has_value()) {
             fail(at + ": one policy routes the call, the other does not");
             continue;
@@ -449,7 +449,7 @@ void check_transferred_claim() {
         const bool legacy_claims = generic::table_claims(claimed, t, false);
         ops::set_route_policy(RoutePolicy::Evidence);
         const bool evidence_claims = generic::table_claims(claimed, t, false);
-        ops::set_route_policy(RoutePolicy::Legacy);
+        ops::set_route_policy(RoutePolicy::Evidence);
         if (!legacy_claims) fail(at + ": the Transferred claim does not claim under legacy");
         if (evidence_claims) fail(at + ": the Transferred claim still claims under evidence");
     }
@@ -463,7 +463,7 @@ void check_transferred_claim() {
     const ScopedDeviceClass scoped(generic::board_device_class(own));
     ops::set_route_policy(RoutePolicy::Evidence);
     const bool kept = generic::table_claims(claimed, 64, false);
-    ops::set_route_policy(RoutePolicy::Legacy);
+    ops::set_route_policy(RoutePolicy::Evidence);
     if (!kept) fail("claim: the RTX 5080's own claim is refused under evidence");
 }
 
@@ -562,7 +562,8 @@ void write_moves(const std::string& path, const std::map<std::string, Json>& wri
 }
 
 void check_policy_words() {
-    if (ops::route_policy() != RoutePolicy::Legacy) fail("the default route policy");
+    if (ops::route_policy() != RoutePolicy::Evidence)
+        fail("the default route policy (evidence, #614 F2)");
     for (const Kind k : {Kind::Pin, Kind::Measured, Kind::Ranker, Kind::Carried, Kind::Transferred,
                          Kind::Borrowed}) {
         const bool demoted = k == Kind::Borrowed || k == Kind::Transferred;
@@ -631,7 +632,7 @@ int main(int argc, char** argv) {
         if (only.empty() && measured == 0) {
             fail("no measured answer in the grid: the never-demoted check is idle");
         }
-        ops::set_route_policy(RoutePolicy::Legacy);
+        ops::set_route_policy(RoutePolicy::Evidence);
         if (!write.empty()) write_moves(write, written);
     } catch (const std::exception& error) {
         std::cerr << "route policy: " << error.what() << '\n';

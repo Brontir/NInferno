@@ -152,15 +152,18 @@ record.
 
 ### Route policy
 
-`--route-policy legacy|evidence` (`ninferno`, `ninferno-serve`, `ninferno-perplexity` and
+`--route-policy evidence|legacy` (`ninferno`, `ninferno-serve`, `ninferno-perplexity` and
 `ninferno-serve route-tune`) sets the generic selector's precedence over evidence (#614 F1,
-`src/ops/generic/route_authorities.h`). `legacy`, the default, is the release's selection: the first
-authority that answers decides (`ninferno_selector_golden_test` holds it). `evidence` demotes
-route-table entries only: a route-table answer whose evidence is `borrowed` (an entry lent by a
+`src/ops/generic/route_authorities.h`). `evidence`, the default since #614 F2, is the release's
+selection (`ninferno_selector_golden_test` holds it); `legacy` is the selection before F2: the
+first authority that answers decides. `evidence` demotes route-table entries only: a route-table answer whose evidence is `borrowed` (an entry lent by a
 farther board's table) or `transferred` (the nearest table lies past the carry distance) goes
 below the ranker. The walk goes on to the dense tuner's entry, then the cost model where it prices
 the call, else the rules. Where the ranker has no candidate (only the scalar fallback answers) the
-demoted entry stands. `pin`, `measured`, `carried` and `ranker` answers are never demoted.
+demoted entry stands. So does a demoted `ggml_mmq` entry at 9 to 16 tokens where the ranker would
+answer `rmma` (`keeps_mmq_boundary`): F1's end-to-end A/B lost there on the RTX 5070 Ti, 3060 and
+4060 Ti (q4_K A8 SwiGLU 12288x4096 at T 12 and 16, 4 to 75 % slower), the one cell family of the
+moved set that lost; the ranker's price of the MMA kernels at those widths is the open term. `pin`, `measured`, `carried` and `ranker` answers are never demoted.
 
 The one other authority that can answer `transferred`, the MMQ prefill gate (`mmq-prefill-gate`,
 a measured board's gate carried to every board of its instruction set), keeps its answer: it is a
@@ -174,7 +177,7 @@ table onto the generic path, `table_claims`) is refused under `evidence` when it
 with that kernel on another board only. A board's own and carried claims stand.
 
 It is an A/B setting, not a pin of a family: nothing is refused, the startup log prints a
-`routes | pinned |` line for it, and the manifest's `route_evidence` lines end in
+`routes | pinned |` line for `legacy`, and the manifest's `route_evidence` lines end in
 ` policy=evidence` and, where an answer was demoted, ` demoted=<authority>:<kind>`. A manifest's
 replay asks the selector under the policy its options section records
 (`options.maintainer.route_policy`, `route_policy_of`). The moved decisions of the lab boards, read

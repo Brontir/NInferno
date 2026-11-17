@@ -257,7 +257,7 @@ int main() {
                 if (found->second.find(" donor=") != std::string::npos) ++lines_with_donor;
             }
             // Replayed from the text alone on the board's class, and the order is not an input.
-            check(rt::replay_route_evidence(d, evidence, RoutePolicy::Legacy) == evidence,
+            check(rt::replay_route_evidence(d, evidence, RoutePolicy::Evidence) == evidence,
                   at + ": the evidence lines replay to themselves");
             // The replay asks the selector again: it keeps the key and the prefill chunk of a
             // recorded line and nothing else. A section whose runs were edited (another route, an
@@ -268,7 +268,7 @@ int main() {
                 value = "1-16 edited authority=nobody evidence=pin; prefill " +
                         std::to_string(chunk) + " edited";
             }
-            check(rt::replay_route_evidence(d, edited, RoutePolicy::Legacy) == evidence,
+            check(rt::replay_route_evidence(d, edited, RoutePolicy::Evidence) == evidence,
                   at + ": an edited evidence section replays to the selector's lines");
             auto reversed = list;
             std::reverse(reversed.begin(), reversed.end());
@@ -297,10 +297,11 @@ int main() {
         check(fb != std::end(generic::kFactsBoards), "no facts board rtx4090");
         if (fb != std::end(generic::kFactsBoards)) {
             const DeviceClass d4090 = generic::board_device_class(*fb);
-            const auto legacy       = rt::route_evidence_of(d4090, list, chunk, false);
+            const auto legacy =
+                rt::route_evidence_of(d4090, list, chunk, false, RoutePolicy::Legacy);
             const auto evidence =
                 rt::route_evidence_of(d4090, list, chunk, false, RoutePolicy::Evidence);
-            check(ops::route_policy() == RoutePolicy::Legacy,
+            check(ops::route_policy() == RoutePolicy::Evidence,
                   "evidence policy: the section's scope left the process's policy as it was");
             int demoted = 0;
             for (const auto& [key, value] : evidence) {
@@ -317,9 +318,11 @@ int main() {
                 rt::route_policy_of(rt::options_of(options, "id", "s", ""));
             check(recorded == RoutePolicy::Evidence &&
                       rt::route_policy_of(rt::options_of(EngineOptions{}, "id", "s", "")) ==
-                          RoutePolicy::Legacy &&
+                          RoutePolicy::Evidence &&
                       rt::route_policy_of(rt::DecisionSection{}) == RoutePolicy::Legacy,
-                  "route_policy_of: the options' policy, legacy where none is recorded");
+                  "route_policy_of: the options' policy (evidence by default since F2), legacy "
+                  "where none "
+                  "is recorded");
             check(rt::replay_route_evidence(d4090, evidence, recorded) == evidence,
                   "evidence policy: the lines replay to themselves under the recorded policy");
             check(rt::replay_route_evidence(d4090, evidence, RoutePolicy::Legacy) == legacy,
@@ -328,7 +331,7 @@ int main() {
                 rt::routes_of(d4090, list, chunk, false, RoutePolicy::Evidence);
             check(rt::replay_routes(d4090, routes_evidence, recorded) == routes_evidence,
                   "evidence policy: the routes lines replay to themselves under the policy");
-            check(routes_evidence != rt::routes_of(d4090, list, chunk, false),
+            check(routes_evidence != rt::routes_of(d4090, list, chunk, false, RoutePolicy::Legacy),
                   "evidence policy: no routes line of the RTX 4090 moved");
             for (const auto& [key, value] : legacy) {
                 check(value.find("policy=") == std::string::npos &&

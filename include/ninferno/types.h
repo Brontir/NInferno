@@ -451,9 +451,10 @@ struct MaintainerOptions {
     DecodeRoute decode_route   = DecodeRoute::Auto;
     MoePath moe_path           = MoePath::Auto;
     // --route-policy legacy|evidence: the generic selector's precedence over evidence
-    // (option_enums.h RoutePolicy, #614 F1). Legacy is the release's selection; Evidence demotes
-    // the route-table entries measured on another board below the ranker, for an A/B.
-    RoutePolicy route_policy = RoutePolicy::Legacy;
+    // (option_enums.h RoutePolicy, #614). Evidence is the release's selection (F2): it demotes the
+    // route-table entries measured on another board below the ranker; Legacy keeps them, for an
+    // A/B.
+    RoutePolicy route_policy = RoutePolicy::Evidence;
     // --artifact-io auto|direct|buffered: how the weights are read at load (O_DIRECT or the page
     // cache). An I/O mode, not a decision: the bytes read are the same.
     ArtifactIo artifact_io = ArtifactIo::Auto;

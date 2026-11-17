@@ -156,17 +156,17 @@ int route_tune_main(int argc, char** argv) {
         }
 
         // The arm's policy and table directory, for this run alone (the process's are back to
-        // legacy and the shipped tables on return).
+        // the release's, evidence, and the shipped tables on return).
         struct PolicyReset {
             ~PolicyReset() {
-                ops::set_route_policy(RoutePolicy::Legacy);
+                ops::set_route_policy(RoutePolicy::Evidence);
                 ops::set_route_table_dir({});
             }
         } policy_reset;
 
         const RoutePolicy policy = opt.count("--route-policy")
                                        ? parse_route_policy(opt["--route-policy"])
-                                       : RoutePolicy::Legacy;
+                                       : RoutePolicy::Evidence;
         ops::set_route_policy(policy);
         if (opt.count("--route-dir")) ops::set_route_table_dir(opt["--route-dir"]);
         std::cerr << "route-tune: --route-policy " << route_policy_name(policy) << ", tables "
@@ -207,7 +207,7 @@ int route_tune_main(int argc, char** argv) {
             char hex[17];
             std::snprintf(hex, sizeof(hex), "%08x%08x", entropy(), entropy());
             std::string arm;
-            if (policy != RoutePolicy::Legacy)
+            if (policy != RoutePolicy::Evidence)
                 arm += std::string("-policy.") + route_policy_name(policy);
             if (opt.count("--route-dir")) {
                 std::string name = std::filesystem::path(opt["--route-dir"]).filename().string();

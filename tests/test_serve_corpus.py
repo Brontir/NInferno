@@ -275,13 +275,13 @@ def test_route_pins_reach_server_and_bind_the_campaign(tmp_path, concurrent):
         )
     pins = corpus.route_pins_of(args)
     assert pins == {"prefill_route": "mmq", "decode_route": "vec", "moe_path": "auto",
-                    "route_policy": "legacy"}
+                    "route_policy": "evidence"}
     assert command[command.index("--prefill-route") + 1] == "mmq"
     assert command[command.index("--decode-route") + 1] == "vec"
     assert "--moe-path" not in command
-    assert "--route-policy" not in command  # legacy, the release's, is never passed
+    assert "--route-policy" not in command  # evidence, the release's (#614 F2), is never passed
     event = {"engine": {"maintainer": {"prefill_route": "mmq", "decode_route": "vec",
-                                       "moe_path": "auto"}}}
+                                       "moe_path": "auto", "route_policy": "evidence"}}}
     corpus.require_route_pins(event, pins)
     event["engine"]["maintainer"]["decode_route"] = "auto"
     with pytest.raises(corpus.CampaignError, match="route pins"):
@@ -296,19 +296,23 @@ def test_route_pins_reach_server_and_bind_the_campaign(tmp_path, concurrent):
     (legacy / "run.jsonl").write_text("{}\n", encoding="utf-8")
     with pytest.raises(corpus.CampaignError, match="before route pins were recorded"):
         corpus.bind_route_pins(legacy, pins)
-    corpus.bind_route_pins(legacy, {})
-    assert json.loads((legacy / "route_pins.json").read_text(encoding="utf-8")) == {}
-    # --route-policy evidence (#614 F1) is passed, checked in server_start (a server that reports
-    # no route_policy is legacy), and keeps its campaign apart.
-    evidence = {**pins, "route_policy": "evidence"}
-    assert corpus.route_pin_flags(evidence)[-2:] == ["--route-policy", "evidence"]
+    # It measured the route policy of its day, legacy: the release's evidence (#614 F2) is
+    # another campaign.
+    with pytest.raises(corpus.CampaignError, match="before route pins were recorded"):
+        corpus.bind_route_pins(legacy, {})
+    corpus.bind_route_pins(legacy, {"route_policy": "legacy"})
+    assert json.loads((legacy / "route_pins.json").read_text(encoding="utf-8")) == {
+        "route_policy": "legacy"}
+    # --route-policy legacy (#614 F1, F2) is passed, checked in server_start (a server that
+    # reports no route_policy predates F1: legacy), and keeps its campaign apart.
+    old = {**pins, "route_policy": "legacy"}
+    assert corpus.route_pin_flags(old)[-2:] == ["--route-policy", "legacy"]
+    unreported = {"engine": {"maintainer": {"prefill_route": "mmq", "decode_route": "vec"}}}
     with pytest.raises(corpus.CampaignError, match="route pins"):
-        corpus.require_route_pins({"engine": {"maintainer": {"prefill_route": "mmq",
-                                                             "decode_route": "vec"}}}, evidence)
-    corpus.require_route_pins({"engine": {"maintainer": {"prefill_route": "mmq",
-                                                         "decode_route": "vec"}}}, pins)
+        corpus.require_route_pins(unreported, pins)
+    corpus.require_route_pins(unreported, old)
     with pytest.raises(corpus.CampaignError, match="another --output"):
-        corpus.bind_route_pins(tmp_path, evidence)
+        corpus.bind_route_pins(tmp_path, old)
 
 
 def test_server_log_schema_matches_the_server() -> None:
