@@ -655,8 +655,16 @@ void check_price_arguments() {
     expect(call({"--local-bytes", "inf"}), 2, "--local-bytes inf");
     expect(call({"--local-bytes", "-4"}), 2, "--local-bytes -4");
     expect(call({"--local-bytes", "8x"}), 2, "--local-bytes 8x");
-    // The board spellings the usage text prints.
+    expect(call({"--rmma-counted-law", "maybe"}), 2, "--rmma-counted-law maybe");
+    expect(call({"--w4a8-counted", "maybe"}), 2, "--w4a8-counted maybe");
+    // The board spellings and the switches the usage text prints.
     const std::string usage = ninferno::tools::price_usage_text();
+    for (const char* option : {"--mmq-counted-unit", "--rmma-counted-law", "--w4a8-counted"}) {
+        if (usage.find(option) == std::string::npos) {
+            std::fprintf(stderr, "FAIL: the usage text no longer prints %s\n", option);
+            ++bad;
+        }
+    }
     for (const char* board : {"rtx4090", "l4", "a100pcie40gb", "0x2684"}) {
         if (usage.find(board) == std::string::npos) {
             std::fprintf(stderr, "FAIL: the usage text no longer prints %s\n", board);

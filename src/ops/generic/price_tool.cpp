@@ -67,10 +67,8 @@ std::string usage_text() {
     return "usage: ninferno-serve price --board BOARD --format FORMAT --n N --k K --t T\n"
            "                            [--epilogue store|add|swiglu] [--policy a16|a8]\n"
            "                            [--registers R] [--local-bytes B] [--route FAMILY:INDEX]\n"
-           "                            [--mmq-counted-unit on|off] [--rmma-counted-law on|off]
-           "
-           "                            [--w4a8-counted on|off]
-           "
+           "                            [--mmq-counted-unit on|off] [--rmma-counted-law on|off]\n"
+           "                            [--w4a8-counted on|off]\n"
            "       ninferno-serve price --list-boards\n"
            "BOARD: a facts-table name without spaces (rtx4090, l4, a100pcie40gb; see "
            "--list-boards) or\n"
