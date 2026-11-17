@@ -262,9 +262,11 @@ def read_retired(path):
 
 
 def retire(tables, retired):
-    """The tables without the retired entries. A retired entry no table holds stops the tool, and
-    so does one whose schedule is not the listed one (a new sweep measured another best there: the
-    list no longer names what the law reproduces, so the entry is not dropped silently)."""
+    """The tables without the retired entries. An entry whose schedule is not the listed one stops
+    the tool (a new sweep measured another best there: the list no longer names what the law
+    reproduces, so the entry is not dropped silently), and so does one of a GPU no table is for (a
+    misspelt board). An entry its GPU's table does not hold is already retired: a --merge of the
+    committed header, or sweeps that no longer reach it (#974 review)."""
     found, out = set(), []
     for gpu, sweeps, rows, board in tables:
         kept = []
@@ -278,9 +280,14 @@ def retire(tables, retired):
             else:
                 kept.append((key, line))
         out.append((gpu, sweeps, kept, board))
-    missing = sorted(set(retired) - found)
-    if missing:
-        sys.exit("--retire lists entries no table holds: " + "; ".join(f"{g} {k}" for g, k in missing))
+    gpus = {gpu for gpu, _, _, _ in tables}
+    unknown = sorted((g, k) for g, k in retired if g not in gpus)
+    if unknown:
+        sys.exit("--retire lists entries of GPUs no table is for: " +
+                 "; ".join(f"{g} {k}" for g, k in unknown))
+    absent = len(retired) - len(found)
+    if absent:
+        print(f"--retire: {len(found)} entries dropped, {absent} already absent", file=sys.stderr)
     return out
 
 

@@ -217,7 +217,7 @@ class StepAB(unittest.TestCase):
 
 class Retire(unittest.TestCase):
     """--retire drops the entries the R8 law reproduces (#613 PR-10) from a --merge header with no
-    sweeps; an entry the tables do not hold stops the tool."""
+    sweeps; an entry the tables no longer hold is already retired, one of an unknown GPU stops."""
 
     HEADER = Path(__file__).resolve().parents[1] / "src" / "ops" / "generic" / "r8_decode_table.h"
 
@@ -246,10 +246,18 @@ class Retire(unittest.TestCase):
             if gpu != "gb202:170sm":
                 self.assertEqual(after[gpu], (rows, board))
 
-    def test_an_entry_no_table_holds_stops(self):
+    def test_an_entry_the_table_no_longer_holds_is_already_retired(self):
+        # The committed list over the committed header (the documented regeneration): every
+        # entry is already out, and the tables come back unchanged.
+        listing = self.HEADER.parents[3] / "tools" / "bench" / "data" / "r8_law_retired.txt"
+        with contextlib.redirect_stderr(io.StringIO()):
+            after = self.run_tool(listing.read_text())
+        self.assertEqual(after, tool.read_header(str(self.HEADER)))
+
+    def test_an_entry_of_a_gpu_no_table_is_for_stops(self):
         with self.assertRaises(SystemExit) as raised:
-            self.run_tool("gb202:170sm GGML_Q6_K Store 7 7 4 1\n")
-        self.assertIn("no table holds", str(raised.exception))
+            self.run_tool("gb999:170sm GGML_Q6_K Store 7 7 4 1\n")
+        self.assertIn("GPUs no table is for", str(raised.exception))
 
     def test_a_listed_schedule_the_table_does_not_hold_stops(self):
         entries, _ = tool.read_header(str(self.HEADER))["gb202:170sm"]
