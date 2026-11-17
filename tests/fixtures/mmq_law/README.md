@@ -22,7 +22,7 @@ its stall sum (equal to the snapshot's `stall_sum`) and its instructions.
 board's `gpu_facts.json` row and the arch's isa_probe facts, plus one per-card fact measured
 before any of these predictions: the L2's bytes per SM clock per SM, the floor of a coalesced
 32-bit `ld.cg` stream over an L2-resident buffer, 32 warps on every SM (RTX 4090 15.2, RTX 4060 Ti
-17.2, RTX 3090 16.2, RTX 3060 17.75, RTX 5070 Ti 18.1). It predicts the launch law's unit (one
+17.2, RTX 3090 16.2, RTX 3060 17.75, RTX 5070 Ti 18.1; waits_sm_120a.csv from a sm_120a build of the same commit). It predicts the launch law's unit (one
 256-K iteration on the `law` grid) as the load phase (the weight tiles over DRAM, every tile and
 activation tile through the L2, the larger of the two, plus one DRAM latency) followed by the
 warp's chain (the stall sum plus one shared latency per wait on a shared load). The cards' launch
