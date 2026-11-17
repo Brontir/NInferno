@@ -799,8 +799,8 @@ def loop_counts(body, tiles=1, marker=None, prologue_marker=None, producer=None)
     """loop_counts_of (below), and where `prologue_marker` names an opcode (F2I), the counts of
     the loop that opcode marks in the same body as the PROLOGUE_FIELDS (the R8 kernels'
     activation quantizer). A row writes them only under with_pipes(prologue=True). Where
-    `producer` is (marker, excluded) (BAR, IMMA), the counts of the loop the marker marks that
-    holds no excluded opcode as the PRODUCER_FIELDS (the w4a8 producer warps' loop), written
+    `producer` is (marker, excluded) (BAR, every MMA opcode and the dp4a), the counts of the loop
+    the marker marks that holds no excluded opcode as the PRODUCER_FIELDS (the w4a8 producer warps' loop), written
     under with_pipes(producer=True)."""
     out = loop_counts_of(body, tiles, marker)
     if producer is not None:
@@ -863,9 +863,10 @@ def loop_counts_of(body, tiles=1, marker=None, exclude=None):
 
     marked = {h: sum(weight(b)[0] for b in m) for h, m in loops.items()}
     candidates = [h for h, n in marked.items() if n > 0]
-    if exclude is not None:  # a loop holding the excluded opcode is no candidate
+    if exclude is not None:  # a loop holding an excluded opcode (one, or a tuple) is no candidate
+        excluded = (exclude,) if isinstance(exclude, str) else tuple(exclude)
         candidates = [h for h in candidates
-                      if not any(base_opcode(body[i][2]) == exclude for i in indices(loops[h]))]
+                      if not any(base_opcode(body[i][2]) in excluded for i in indices(loops[h]))]
     innermost = [h for h in candidates
                  if not any(o != h and loops[o] < loops[h] for o in candidates)]
     iterations = {h: longest_iteration(edges, dom, h, loops[h], weight) for h in innermost}
