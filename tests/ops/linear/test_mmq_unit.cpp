@@ -1,6 +1,6 @@
 // The counted MMQ unit (ops/generic/mmq_unit.h, #613 PR-5) equals the chain law's frozen
 // predictions: tools/dev/mmq_chain_law.py's unit() for the RTX 4090 (gpu_facts.json: 128 SMs,
-// 2520 MHz, 384 bits x 21 Gbps), arch 89's isa_probe facts (isa_probe 18 row) and an L2 floor
+// 2520 MHz, 384 bits x 21 Gbps), arch 89's isa_probe facts (isa_probe 19 row) and an L2 floor
 // of 15.2 B/clk/SM, on the launch law's grid (64 weight tiles on 128 CTAs). The expected seconds
 // were printed by that script (python: m.unit(m.board("RTX 4090"), m.isa_facts("89"),
 // m.waits("89"), 15.2, fmt, J)); they move only when it is run again. No GPU.
@@ -35,9 +35,9 @@ struct Case {
 };
 
 constexpr Case kCases[] = {
-    {QType::GGML_Q4_K, 16, 2.0962357142857145e-06}, {QType::GGML_Q4_K, 128, 4.272595530492899e-06},
-    {QType::GGML_Q5_K, 16, 2.4575904761904763e-06}, {QType::GGML_Q5_K, 128, 4.453635087719299e-06},
-    {QType::GGML_Q6_K, 16, 3.044779761904762e-06},  {QType::GGML_Q6_K, 128, 5.488620238095238e-06},
+    {QType::GGML_Q4_K, 16, 2.095977380952381e-06},  {QType::GGML_Q4_K, 128, 4.272487990810359e-06},
+    {QType::GGML_Q5_K, 16, 2.4573361111111112e-06}, {QType::GGML_Q5_K, 128, 4.4535235797827905e-06},
+    {QType::GGML_Q6_K, 16, 3.0445472222222223e-06}, {QType::GGML_Q6_K, 128, 5.488613888888889e-06},
 };
 
 } // namespace

@@ -172,6 +172,13 @@ inline constexpr bool kCompletenessTerms = false;
 // and the counted unit prices Q4_K and Q5_K at 0.80-0.83 on the RTX 4090. It turns on when those
 // two are counted and the pick regret falls (#978 for both, #973 for the switch).
 inline constexpr bool kMmqCountedUnit = false;
+// Which K step the W4A8 tiles' price takes (#613 PR-6, #978): false, the fitted efficiency and
+// chain (kW4a8Efficiency, kW4a8StepCycles, kW4a8ProducerStepCycles below; what the selector
+// goldens hold); true, the counted K tile of ops/generic/w4a8_unit.h (the snapshot's MMA-warp and
+// producer loops, isa_probe's shared latency) for Q4_K and Q6_K on sm_86 and sm_89, where every
+// input is known. Off until the sealed route_tune grids' w4a8 cells and the pick regret are
+// scored with it; the host price tool flips it (--w4a8-counted).
+inline constexpr bool kW4a8CountedStep = false;
 // The activation quantizers' DRAM bytes per value, counted from their kernels and static_asserted
 // there against the block each thread writes:
 //   W4A8 (generic_w4a8.cu w4a8_quantize_kernel): a thread a 32-value block reads 64 B of BF16 and
