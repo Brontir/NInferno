@@ -74,6 +74,8 @@ fact int32_cycles_per_warp_instruction 2.01 clk
     for w in (1, 2, 4, 8)) + \
     "fact sm_clock_mhz_chase 2520.0 mhz\nfact sm_clock_mhz_chase_held 1890.0 mhz\n" + \
     "fact sm_clock_mhz_mma 1900.0 mhz\nfact shared_latency 29.5 clk\n" + \
+    "fact l1_ldg32_cycles_per_sm 2.0 clk\nfact l2_ldg32_cycles_per_sm 8.4 clk\n" + \
+    "fact l2_bytes_per_sm_clock 15.2 byte\n" + \
     "".join(f"fact lat_{op} {v:.1f} clk\n" for op, v in (
         ("imad", 4.5), ("add_chain", 4.0), ("lop3", 4.2), ("prmt", 4.4), ("shf", 4.5),
         ("hfma2", 5.0), ("ffma", 4.1), ("shfl", 24.0), ("cvt_i2f", 4.5), ("cvt_f2i", 12.0),

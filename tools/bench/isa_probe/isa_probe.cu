@@ -288,6 +288,38 @@ __global__ void int32_throughput(Span* spans, float* sink, unsigned m, unsigned 
     if (s == 12345u) sink[0] = 1.f;
 }
 
+// Probe 18 (#613 PR-5): global loads, one coalesced 32-bit load a lane, kUnroll of them a step at
+// immediate offsets one 128-byte line apart (a warp instruction moves one line), consumed at the
+// step's end; then every warp's base moves by `step`, masked into the buffer. `Ca`: ld.ca over a
+// buffer the SM's L1 holds; otherwise ld.cg (the L1 passed by) over a buffer the L2 holds. The
+// span holds the base's add and mask beside the loads (2 of 10 instructions a step).
+template <bool Ca>
+__global__ void ldg32_throughput(Span* spans, float* sink, const char* buf, unsigned mask,
+                                 unsigned step) {
+    const unsigned warp = blockIdx.x * (blockDim.x / 32) + threadIdx.x / 32;
+    unsigned off        = (warp * kUnroll * 128u + (threadIdx.x % 32) * 4u) & mask;
+    unsigned acc        = 0;
+    __syncthreads();
+    const long long t0 = clock64();
+#pragma unroll 1
+    for (int i = 0; i < kThroughputN; ++i) {
+        const char* p = buf + off;
+        unsigned v[kUnroll];
+#pragma unroll
+        for (int u = 0; u < kUnroll; ++u) {
+            const unsigned* a = reinterpret_cast<const unsigned*>(p + u * 128);
+            v[u]              = Ca ? __ldca(a) : __ldcg(a);
+        }
+#pragma unroll
+        for (int u = 0; u < kUnroll; ++u) acc ^= v[u];
+        off = (off + step) & mask;
+    }
+    __syncthreads();
+    const long long t1 = clock64();
+    if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1, smid()};
+    if (acc == 0x12345678u) sink[0] = 1.f;
+}
+
 // ---- Dependent latencies of the ALU ops the decode chains use ----
 // One warp per SM runs a chain of kLatencyLinks dependent ops of one kind (each written in PTX
 // so ptxas keeps the op: IMAD, the add chain, LOP3, PRMT, SHF, HFMA2, FFMA, SHFL, and each of the
@@ -662,7 +694,7 @@ int main() {
     CHECK(cudaDeviceGetAttribute(&mem_khz, cudaDevAttrMemoryClockRate, 0));
     char pci[32] = {};
     CHECK(cudaDeviceGetPCIBusId(pci, sizeof pci, 0));
-    std::printf("probe isa_probe 17\n");
+    std::printf("probe isa_probe 18\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -770,6 +802,36 @@ int main() {
     const double fp32_floor = cc >= 80 ? 1.0 : 2.0;
     check(fp32 >= 0.97 * fp32_floor, "FP32 cycles per warp instruction under the lane floor");
     check(i32 >= 0.97 * 2.0, "INT32 cycles per warp instruction under the lane floor");
+
+    // Global loads (probe 18): cycles per warp instruction per SM of 32-bit loads that hit the L1
+    // (a 16 KiB buffer, every CTA of an SM inside it) and that hit the L2 (the largest power of
+    // two up to 4 MiB within half the L2, ld.cg), and the L2's bytes per SM clock per SM that the
+    // second gives (128 bytes a warp instruction). Saturated: 4 CTAs of 4 warps an SM, 8 loads in
+    // flight a warp.
+    {
+        size_t l2_buf = 4u << 20;
+        while (l2_buf > static_cast<size_t>(p.l2CacheSize) / 2) l2_buf /= 2;
+        char* gbuf = nullptr;
+        CHECK(cudaMalloc(&gbuf, l2_buf));
+        CHECK(cudaMemset(gbuf, 1, l2_buf));
+        const unsigned l1_mask = (16u << 10) - 1;
+        const unsigned l1_step = kUnroll * 128u * kWarpsPerCta * kCtasPerSm;
+        const auto l2_mask     = static_cast<unsigned>(l2_buf - 1);
+        const unsigned l2_step =
+            static_cast<unsigned>(kUnroll * 128ull * kWarpsPerCta * kCtasPerSm * pr.sms) & l2_mask;
+        const double l1 =
+            pr.per_sm("l1_ldg32_cycles_per_sm", true, kCtasPerSm, kWarpsPerCta,
+                      ldg32_throughput<true>, static_cast<const char*>(gbuf), l1_mask, l1_step);
+        const double l2 =
+            pr.per_sm("l2_ldg32_cycles_per_sm", true, kCtasPerSm, kWarpsPerCta,
+                      ldg32_throughput<false>, static_cast<const char*>(gbuf), l2_mask, l2_step);
+        fact("l1_ldg32_cycles_per_sm", l1, "clk");
+        fact("l2_ldg32_cycles_per_sm", l2, "clk");
+        fact("l2_bytes_per_sm_clock", 128.0 / l2, "byte");
+        check(l2 > l1, "L2 loads not slower than L1 loads");
+        check(l1 >= 0.9, "L1 loads faster than one warp instruction a clock");
+        CHECK(cudaFree(gbuf));
+    }
 
     // Dependent latencies of the decode chain's ops, one warp per SM, one op a link.
     const auto dep = [&](auto launch, const char* name, double lo, double hi) {
