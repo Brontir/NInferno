@@ -1585,7 +1585,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     // +1.3 %, C=4 +2.1 %, Qwen3.6-35B and Nemotron C=1 +1.2 / +1.4 %), with it the separate
     // launch already overlaps and the last CTA's serial work costs more (RTX 5090:
     // Qwen3.6-35B C=4 -3.3 %, Nemotron -2.3 %).
-    const bool route_in_router = router_simt && t <= kRouterSimtWarps && a <= 32 && !pdl;
+    const bool route_in_router =
+        router_simt && t <= kRouterSimtWarps && a <= 32; // exp/617k-fused: under PDL too
     // 1. Router logits.
     {
         GemmArgs args;
