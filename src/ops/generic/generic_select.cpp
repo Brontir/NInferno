@@ -996,6 +996,11 @@ LawR8 law_r8_memo(const Problem& p) {
 LawR8 law_r8_uncached(const Problem& p, const DeviceClass& device) {
     const auto arch = kernel_facts::sass_arch();
     if (!arch) return {};
+    // The law was scored on each generation's own code (the holdout grids ran sm_89 code on Ada,
+    // sm_75 on Turing, sm_70 on Volta). A board running another generation's SASS (an Ada board on
+    // an sm_80 or sm_86 tree, a Turing board on an sm_70 tree: development builds; a release runs
+    // its own label) is a pair no holdout read: the law abstains there.
+    if (r8_law::label_number(*arch) != device.major * 10 + device.minor) return {};
     const kernel_roofline::ChipFacts chip = kernel_roofline::chip_facts_of(device);
     const CodecTraits traits              = codec_traits(p.qtype);
     r8_law::Call call;

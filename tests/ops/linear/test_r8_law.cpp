@@ -144,6 +144,9 @@ void check_terms() {
     const auto t1  = rl::terms(chip, *device, f, volta, {4, 1});
     expect(t1 && t1->iterations == 2, "one slot: K 5120 at 4096 an iteration takes two");
     expect(rl::slots_of("89") == 2, "two slots on Ada");
+    expect(rl::label_number("120a") == 120 && rl::label_number("89") == 89 &&
+               rl::label_number("") == 0,
+           "a SASS label's compute capability");
     expect(rl::slots_of("70") == 1 && rl::slots_of("120a") == 2 && rl::slots_of("75") == 2,
            "one slot below sm_75 only, read from the SASS label");
     // The DRAM term is the DRAM law's, on the CTA's bytes.
@@ -490,6 +493,36 @@ void check_evidence_paths() {
     }
 }
 
+// law_r8_before: where the law decides (an RTX 4090 D: Ada, no table of its own), an entry carried
+// from another board that names a schedule the law could not price (a spilling instance: Q6_K
+// SwiGLU's w4r2 and w8r2 on sm_89) stands, and one naming the law's own pick yields to it; without
+// a carried entry it is law_r8.
+void check_law_before() {
+    const ninferno::DeviceClass d =
+        g::board_device_class(g::registry_facts_board("rtx4090d", 0x2685));
+    const ninferno::ScopedDeviceClass scoped(d);
+    const g::Problem p{ninferno::QType::GGML_Q6_K, ninferno::ops::LinearPolicy::AllowA8, 12288,
+                       4096, g::Epilogue::SwiGlu};
+    const auto law = g::law_r8(p);
+    expect(law.has_value(), "rtx4090d Q6_K SwiGLU 12288x4096: the law does not answer");
+    if (!law) return;
+    expect(g::law_r8_before(p, std::nullopt) == law, "law_r8_before without a carried entry");
+    expect(g::law_r8_before(p, *law) == law,
+           "a carried entry naming the law's pick does not yield");
+    int spilling = 0;
+    for (int i = 0; i < g::r8_schedule_count(); ++i) {
+        const auto key   = g::r8_kernel_key(i, p.qtype, p.epilogue, 1, false);
+        const auto facts = key ? g::kernel_facts::r8_facts("89", *key) : std::nullopt;
+        if (!facts || facts->spill_bytes() == 0) continue;
+        ++spilling;
+        expect(!g::law_r8_before(p, i),
+               "a carried " + schedule_name(i) +
+                   " the law could not price (it spills) yields to the law");
+    }
+    expect(spilling > 0,
+           "no spilling Q6_K SwiGLU R8 instance on sm_89: the case this checks is gone");
+}
+
 } // namespace
 
 int main() {
@@ -499,6 +532,7 @@ int main() {
     count_reproduced_entries();
     check_table_here();
     check_evidence_paths();
+    check_law_before();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

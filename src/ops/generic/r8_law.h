@@ -70,16 +70,23 @@ struct Call {
     bool pre = false;
 };
 
-// The R8 kernel's ring slots, from the SASS the board runs (kernel_facts::sass_arch: "70",
-// "89", "120a"), not the board: the kernel takes one slot when its code is compiled below sm_75
-// (generic_r8.cuh NINFERNO_R8_ONE_SLOT), so a Turing board on an sm_70 tree runs one, two
-// elsewhere.
-[[nodiscard]] inline int slots_of(std::string_view sass_arch) {
+// A SASS label's compute capability: "89" -> 89, "120a" -> 120; 0 for none.
+[[nodiscard]] inline int label_number(std::string_view sass_arch) {
     int number = 0;
     for (const char c : sass_arch) {
         if (c < '0' || c > '9') break;
         number = number * 10 + (c - '0');
     }
+    return number;
+}
+
+// The R8 kernel's ring slots, from the SASS the board runs (kernel_facts::sass_arch: "70",
+// "89", "120a"), not the board: the kernel takes one slot when its code is compiled below sm_75
+// (generic_r8.cuh NINFERNO_R8_ONE_SLOT), so a Turing board on an sm_70 tree runs one, two
+// elsewhere.
+// (generic_r8.cuh's `__CUDA_ARCH__ < 750` is this 75 in the label's units.)
+[[nodiscard]] inline int slots_of(std::string_view sass_arch) {
+    const int number = label_number(sass_arch);
     return number > 0 && number < 75 ? 1 : 2;
 }
 
