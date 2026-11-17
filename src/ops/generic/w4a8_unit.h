@@ -27,7 +27,10 @@
 // Frozen and scored before it was written here (#978): the producer-warp tile 128x64, Q4_K and
 // Q6_K, 23 of 24 cells within 5 % on the RTX 4060 Ti (sm_89) and RTX 3060 (sm_86) at T 64..1024;
 // refuted on the RTX 4090 at T >= 256 (+7 .. +22 %, an L2 term of the 128-SM board, not counted
-// yet). Host code over embedded facts only (ninferno_ops_host), no launch code.
+// yet). The classic tile's frozen table was refuted on the RTX 3060 (17 of 60 cells within 5 %, a
+// per-tile error of -18 .. +6 %: its MMA warps wait on their own global loads), so only the
+// producer-warp tile has a counted price; the classic tile keeps the fitted step (#978).
+// Host code over embedded facts only (ninferno_ops_host), no launch code.
 
 #include "core/format_facts.h"
 #include "core/isa_facts.h"
@@ -56,8 +59,9 @@ void counted_for_test(std::optional<bool> on) noexcept;
 kernel_key(int schedule, QType q, ops::detail::generic::Epilogue epilogue, std::string_view arch);
 
 // The clocks one K tile of the kernel `key` takes on `arch`, with `ctas_per_sm` CTAs resident and
-// `k_tiles` K tiles a CTA; nullopt where the snapshot has no such kernel or no counted loop, the
-// producer-warp tile has no counted producer loop, or the arch has no shared latency.
+// `k_tiles` K tiles a CTA; nullopt for a classic tile (no producer warps: the law does not hold
+// there), where the snapshot has no such kernel or no counted loop, the producer-warp tile has no
+// counted producer loop, or the arch has no shared latency.
 [[nodiscard]] std::optional<double>
 tile_cycles(std::string_view arch, const ops::detail::generic::kernel_facts::W4a8KernelKey& key,
             const IsaRow& isa, int ctas_per_sm, int k_tiles);
