@@ -10,8 +10,8 @@
 //   load  = max(B_dram / BW_dram, B_l2 / BW_l2) + L_dram / f
 //   chain = (stall_sum + sb_waits_shared x L_shared) / f
 //
-//   B_dram  the distinct weight tiles the launch's CTAs read in one iteration, 128 rows x the
-//           format's bytes per 256 values each, from DRAM once;
+//   B_dram  the weight tiles the launch reads from DRAM in one iteration (unit_facts_of), 128
+//           rows x the format's bytes per 256 values each;
 //   B_l2    what every resident CTA reads through the L2: its weight tile and its activation
 //           tile (two block_q8_1_mmq of 144 bytes per column and 256 values);
 //   BW_dram the board's DRAM rate; BW_l2 the L2's bytes per SM clock per SM (isa_probe 18) x the
@@ -70,12 +70,12 @@ struct UnitFacts {
 [[nodiscard]] std::optional<MmqLaunchLaw> law(std::string_view arch, QType q, const IsaRow& isa,
                                               const UnitFacts& f);
 
-// The resident CTAs and the distinct weight tiles they read in one iteration of a launch of
-// `rows` x `k` x `columns` at the tile `j` on `sms` SMs (core/mmq_columns.h launch_of). A tile
-// launch runs a tile a CTA up to the SMs; ggml's index takes the column tile fastest (mmq.cuh:
-// jt = tile % ntx, it = tile / ntx), so its CTAs share each weight tile among the column tiles.
-// A stream-k launch runs launch_of's CTAs, CTA b from unit b W / B: each reads the (row tile,
-// K step) of its own unit, so CTAs share a weight tile only where they stand on the same one.
+// The resident CTAs and the weight tiles they read from DRAM in one iteration of a launch of
+// `rows` x `k` x `columns` at the tile `j` on `sms` SMs (core/mmq_columns.h launch_of): a tile
+// launch runs a tile a CTA up to the SMs, a stream-k launch launch_of's CTAs. The weights come
+// from DRAM once over the launch (CTAs on one row tile in the same or the next iteration share it
+// through the L2: ggml takes the column tile fastest, mmq.cuh jt = tile % ntx), so an iteration
+// reads the row tiles' K steps over the launch's units, at most one weight tile a CTA.
 [[nodiscard]] UnitFacts unit_facts_of(int rows, int k, int columns, int j, int sms, double clock_hz,
                                       double dram_bytes_per_s) noexcept;
 

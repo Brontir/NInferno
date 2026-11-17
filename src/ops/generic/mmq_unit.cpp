@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
-#include <vector>
 
 namespace ninferno::mmq_unit {
 namespace {
@@ -82,22 +81,17 @@ std::optional<MmqLaunchLaw> law(std::string_view arch, QType q, const IsaRow& is
 UnitFacts unit_facts_of(int rows, int k, int columns, int j, int sms, double clock_hz,
                         double dram_bytes_per_s) noexcept {
     const mmq_columns::ColumnLaunch l = mmq_columns::launch_of(rows, k, columns, j, sms);
-    const int column_tiles            = std::max(1, mmq_columns::tile_count(columns, j));
+    const int row_tiles               = mmq_columns::tile_count(rows, mmq_columns::kTile);
     const int steps = std::max(1, (k + mmq_columns::kUnitK - 1) / mmq_columns::kUnitK);
-    // The resident CTAs: a tile each up to the SMs, or under stream-k the launch's CTAs, each from
-    // its own first unit (ggml: CTA b from unit b W / B).
-    const int ctas       = std::max(1, l.split ? l.blocks : std::min(l.tiles, sms));
-    const long long work = static_cast<long long>(std::max(1, l.tiles)) * steps;
-    // The weight tile a CTA reads in its first iteration: (row tile, K step) of its first unit.
-    std::vector<long long> reads;
-    reads.reserve(static_cast<std::size_t>(ctas));
-    for (long long b = 0; b < ctas; ++b) {
-        const long long unit = l.split ? b * work / ctas : b * steps;
-        reads.push_back((unit / steps / column_tiles) * steps + unit % steps);
-    }
-    std::sort(reads.begin(), reads.end());
+    // The resident CTAs: a tile each up to the SMs, or under stream-k the launch's CTAs.
+    const int ctas = std::max(1, l.split ? l.blocks : std::min(l.tiles, sms));
+    // The weights come from DRAM once over the launch, whichever CTAs share a tile in the same
+    // iteration or the next (an L2 hit): the row tiles' K steps spread over the launch's units,
+    // at most one weight tile a CTA an iteration.
+    const long long reads = static_cast<long long>(std::max(1, row_tiles)) * steps;
+    const long long units = std::max(1, l.units);
     const int weight_tiles =
-        static_cast<int>(std::unique(reads.begin(), reads.end()) - reads.begin());
+        static_cast<int>(std::min<long long>(ctas, (reads + units - 1) / units));
     return UnitFacts{std::max(1, weight_tiles), ctas, clock_hz, dram_bytes_per_s};
 }
 

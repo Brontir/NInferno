@@ -80,14 +80,20 @@ int main() {
     // over the 4 units (#613 PR-5 review: a tile a CTA would price 32 CTAs and a quarter of it).
     const auto split = mmq_unit::unit_facts_of(32 * 128, 4096, 64, 64, 128, 2520e6, 1008e9);
     expect(split.weight_tiles == 128 && split.ctas == 128, "stream-k: a weight tile a CTA");
-    // 200 row tiles of one column tile: stream-k over 128 CTAs, 25 units apart, all distinct.
+    // Starts that do not fall on a tile's K step: 40 tiles of 16 steps on 128 CTAs of 5 units.
+    // The 20 row tiles' 320 weight tiles over 5 units: 64 an iteration, not one a CTA (the
+    // neighbouring column tile reads the same weights an iteration later, from the L2).
+    const auto skew = mmq_unit::unit_facts_of(20 * 128, 4096, 32, 16, 128, 2520e6, 1008e9);
+    expect(skew.weight_tiles == 64 && skew.ctas == 128, "stream-k: the weights once a launch");
+    // 200 row tiles of one column tile: stream-k over 128 CTAs of 25 units: 3200 / 25 = 128.
     const auto one = mmq_unit::unit_facts_of(200 * 128, 4096, 16, 16, 128, 2520e6, 1008e9);
     expect(one.weight_tiles == 128 && one.ctas == 128, "one column tile: a weight tile a CTA");
-    // A launch is its longest CTA's units at its own CTAs' unit, plus, where the CTAs do not
+    // A launch is its longest CTA's units (stream-k: 32 tiles on 128 SMs; a tile launch: 128
+    // tiles, one full wave) at its own CTAs' unit, plus, where the CTAs do not
     // divide the tiles, the fixup's bytes at the DRAM rate and the fixup's graph node.
     {
         const double bw = 384 / 8.0 * 21e9, node = 3e-6;
-        for (const int rows : {32 * 128, 64 * 128}) {
+        for (const int rows : {32 * 128, 128 * 128}) {
             const int k = 4096, columns = 64, j = 64;
             const mmq_columns::ColumnLaunch l = mmq_columns::launch_of(rows, k, columns, j, 128);
             const auto u                      = mmq_unit::unit_seconds(
