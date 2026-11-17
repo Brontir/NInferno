@@ -3309,6 +3309,10 @@ __device__ __forceinline__ void load_group_sums(float* dst, const GemmArgs& a, i
         }
 }
 
+#ifndef NINFERNO_RMMA_RING3
+#    define NINFERNO_RMMA_RING3 0 // #619 step 12 prototype: a three-slot weight ring (rmma_kernel)
+#endif
+
 template <class Decoder, class Schedule, Epilogue E, bool Latency = false,
           RmmaSums Sums = RmmaSums::OnesMma>
 __global__
@@ -3390,8 +3394,6 @@ __launch_bounds__(Schedule::kThreads,
     const bool local       = kLocal && local_tokens <= 4 && a.lane_local != 0;
 #endif
 
-    Run ring[2][kSets][MT][2];
-
     // A K-quant SwiGLU step of one token tile (the verify widths, T <= 8) also copies its
     // activations ahead, with cp.async into shared memory, each lane the 8-byte chunks its own
     // MMAs read (mma_step, Staged), so no lane reads another's and the wait is the lane's own.
@@ -3431,6 +3433,15 @@ __launch_bounds__(Schedule::kThreads,
     constexpr bool kPlaneGroups = kPlane && !kPlaneRing && kSets * MT * NT >= 8;
     constexpr int kPlaneForm    = !kPlane ? 0 : kPlaneGroups ? 2 : 1;
     float plane_ring[kPlaneRing ? 2 : 1][kPlaneRing ? 2 * NT * kSumGroups : 1];
+    // #619 step 12 prototype, behind the build flag NINFERNO_RMMA_RING3 (off): the weight ring of
+    // m2.n4.w4x1 and m1.n4.w1x4 at three slots, two steps' weights in flight while one computes,
+    // where nothing else rides the ring (no staged or ahead activations, no plane ring, no
+    // cluster).
+    constexpr bool kRing3 = NINFERNO_RMMA_RING3 != 0 && !kStaged && !kAhead && !kPlaneRing &&
+                            C == 1 && NT == 4 &&
+                            ((MT == 2 && Schedule::kWarpsM == 4 && WK == 1) ||
+                             (MT == 1 && Schedule::kWarpsM == 1 && WK == 4));
+    Run ring[kRing3 ? 3 : 2][kSets][MT][2];
     __shared__ uint2 act_stage[kStaged ? 2 : 1][kStaged ? Schedule::kWarpsM * WK : 1]
                               [kStaged ? J : 1][32];
     static_assert(!kStaged ||
@@ -3597,7 +3608,12 @@ __launch_bounds__(Schedule::kThreads,
 
     using Slot0 = std::integral_constant<int, 0>;
     using Slot1 = std::integral_constant<int, 1>;
+    using Slot2 = std::integral_constant<int, 2>;
     if (s_begin + warp_k < steps) fetch(Slot0{}, s_begin + warp_k, false);
+    // The ring of three: the second step's weights go out before the wait too (no x in them).
+    if constexpr (kRing3) {
+        if (s_begin + warp_k + WK < steps) fetch(Slot1{}, s_begin + warp_k + WK, false);
+    }
     // GemmArgs::pdl_prefetch: the first step's weights are in flight; x and the output are the
     // previous kernel's to finish. Then the next launch may start: it waits for this one before
     // it reads what this one writes, and a joined call (which reads x without waiting) starts
@@ -3608,13 +3624,27 @@ __launch_bounds__(Schedule::kThreads,
     }
     // The first step's staged activations: x copied only after that wait.
     if (s_begin + warp_k < steps) stage_act(Slot0{}, s_begin + warp_k);
+    if constexpr (kRing3) {
 #pragma unroll 1
-    for (int step = s_begin + warp_k; step < steps; step += 2 * WK) {
-        if (step + WK < steps) fetch(Slot1{}, step + WK);
-        compute(Slot0{}, step, step + WK < steps);
-        if (step + WK >= steps) break;
-        if (step + 2 * WK < steps) fetch(Slot0{}, step + 2 * WK);
-        compute(Slot1{}, step + WK, step + 2 * WK < steps);
+        for (int step = s_begin + warp_k; step < steps; step += 3 * WK) {
+            if (step + 2 * WK < steps) fetch(Slot2{}, step + 2 * WK);
+            compute(Slot0{}, step, false);
+            if (step + WK >= steps) break;
+            if (step + 3 * WK < steps) fetch(Slot0{}, step + 3 * WK);
+            compute(Slot1{}, step + WK, false);
+            if (step + 2 * WK >= steps) break;
+            if (step + 4 * WK < steps) fetch(Slot1{}, step + 4 * WK);
+            compute(Slot2{}, step + 2 * WK, false);
+        }
+    } else {
+#pragma unroll 1
+        for (int step = s_begin + warp_k; step < steps; step += 2 * WK) {
+            if (step + WK < steps) fetch(Slot1{}, step + WK);
+            compute(Slot0{}, step, step + WK < steps);
+            if (step + WK >= steps) break;
+            if (step + 2 * WK < steps) fetch(Slot0{}, step + 2 * WK);
+            compute(Slot1{}, step + WK, step + 2 * WK < steps);
+        }
     }
 #if NINFERNO_FMA_MMA
     if constexpr (kLocal) {
