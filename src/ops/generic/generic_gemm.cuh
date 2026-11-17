@@ -3310,7 +3310,7 @@ __device__ __forceinline__ void load_group_sums(float* dst, const GemmArgs& a, i
 }
 
 #ifndef NINFERNO_RMMA_RING3
-#    define NINFERNO_RMMA_RING3 0 // #619 step 12 prototype: a three-slot weight ring (rmma_kernel)
+#    define NINFERNO_RMMA_RING3 1 // #619 step 12 prototype: a three-slot weight ring (rmma_kernel)
 #endif
 
 template <class Decoder, class Schedule, Epilogue E, bool Latency = false,
