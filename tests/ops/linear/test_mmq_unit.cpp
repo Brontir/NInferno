@@ -68,6 +68,14 @@ int main() {
                    "units grow with the column tile");
         }
     }
+    // The launch law's grid as a launch: 64 row tiles x 2 column tiles on 128 SMs read 64 weight
+    // tiles on 128 CTAs; one column tile on 128 SMs, 128 of each; 4 column tiles, 32 of 128.
+    const auto g = mmq_unit::unit_facts_of(64 * 128, 2 * 16, 16, 128, 2520e6, 1008e9);
+    expect(g.weight_tiles == 64 && g.ctas == 128, "the law grid: 64 weight tiles on 128 CTAs");
+    const auto one = mmq_unit::unit_facts_of(200 * 128, 16, 16, 128, 2520e6, 1008e9);
+    expect(one.weight_tiles == 128 && one.ctas == 128, "one column tile: a weight tile a CTA");
+    const auto four = mmq_unit::unit_facts_of(200 * 128, 4 * 64, 64, 128, 2520e6, 1008e9);
+    expect(four.weight_tiles == 32 && four.ctas == 128, "four column tiles share each weight tile");
     IsaRow old = *isa;
     old.l2_bytes_per_sm_clock.reset();
     expect(!mmq_unit::unit_seconds("89", QType::GGML_Q4_K, 16, old, f),

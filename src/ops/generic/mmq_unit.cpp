@@ -55,4 +55,24 @@ std::optional<MmqLaunchLaw> law(std::string_view arch, QType q, const IsaRow& is
     return out;
 }
 
+UnitFacts unit_facts_of(int rows, int columns, int j, int sms, double clock_hz,
+                        double dram_bytes_per_s) noexcept {
+    const int row_tiles    = mmq_columns::tile_count(rows, mmq_columns::kTile);
+    const int column_tiles = std::max(1, mmq_columns::tile_count(columns, j));
+    const int ctas         = std::max(1, std::min(row_tiles * column_tiles, sms));
+    const int shared_by    = (ctas + column_tiles - 1) / column_tiles;
+    return UnitFacts{std::max(1, std::min(row_tiles, shared_by)), ctas, clock_hz, dram_bytes_per_s};
+}
+
+std::optional<double> launch_seconds(std::string_view arch, QType q, const IsaRow& isa, int rows,
+                                     int k, int columns, int j, int sms, double clock_hz,
+                                     double dram_bytes_per_s, double fixup_launch_seconds) {
+    const auto u = unit_seconds(arch, q, j, isa,
+                                unit_facts_of(rows, columns, j, sms, clock_hz, dram_bytes_per_s));
+    if (!u) return std::nullopt;
+    const mmq_columns::ColumnLaunch l = mmq_columns::launch_of(rows, k, columns, j, sms);
+    return l.units * *u +
+           (l.fixup ? mmq_columns::fixup_bytes(l) / dram_bytes_per_s + fixup_launch_seconds : 0.0);
+}
+
 } // namespace ninferno::mmq_unit

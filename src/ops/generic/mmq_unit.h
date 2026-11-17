@@ -56,4 +56,22 @@ struct UnitFacts {
 [[nodiscard]] std::optional<MmqLaunchLaw> law(std::string_view arch, QType q, const IsaRow& isa,
                                               const UnitFacts& f);
 
+// The resident CTAs and the distinct weight tiles they read in one launch of `rows` x `columns`
+// at the tile `j` on `sms` SMs: one CTA an SM (the launch law counts one). ggml's stream-k index
+// takes the column tile fastest (mmq.cuh: jt = tile % ntx, it = tile / ntx), so the resident CTAs
+// share each weight tile among the column tiles: ceil(CTAs / column tiles) of them, up to the row
+// tiles.
+[[nodiscard]] UnitFacts unit_facts_of(int rows, int columns, int j, int sms, double clock_hz,
+                                      double dram_bytes_per_s) noexcept;
+
+// One mul_mat_q launch: the longest CTA's units (core/mmq_columns.h launch_of) at the unit its own
+// resident CTAs give, and where the CTAs do not divide the tiles, the fixup's bytes at the DRAM
+// rate and `fixup_launch_seconds` (its graph node). A stream-k CTA's unit is the tile CTA's (not
+// yet counted apart). nullopt where the unit is not priced.
+[[nodiscard]] std::optional<double> launch_seconds(std::string_view arch, QType q,
+                                                   const IsaRow& isa, int rows, int k, int columns,
+                                                   int j, int sms, double clock_hz,
+                                                   double dram_bytes_per_s,
+                                                   double fixup_launch_seconds);
+
 } // namespace ninferno::mmq_unit
