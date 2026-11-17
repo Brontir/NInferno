@@ -101,21 +101,15 @@ int main() {
                 "89", QType::GGML_Q4_K, j, row,
                 mmq_unit::unit_facts_of(rows, k, columns, j, 128, 2520e6, bw));
             const auto s = mmq_unit::launch_seconds("89", QType::GGML_Q4_K, row, rows, k, columns,
-                                                    j, 128, 2520e6, bw, 0.0, node);
-            // With a 72 MB L2 the partial tiles move at the L2's rate.
-            const auto in_l2 = mmq_unit::launch_seconds("89", QType::GGML_Q4_K, row, rows, k,
-                                                        columns, j, 128, 2520e6, bw, 72e6, node);
-            if (u && in_l2 && l.fixup) {
-                const double l2_rate =
-                    *row.l2_bytes_per_sm_clock * std::min(l.blocks, 128) * 2520e6;
-                const double want = l.units * *u + mmq_columns::fixup_bytes(l) / l2_rate + node;
-                expect(std::fabs(*in_l2 / want - 1) < 1e-12, "the fixup through the L2");
-            }
+                                                    j, 128, 2520e6, bw, node);
             const std::string what = "launch of " + std::to_string(rows) + " rows";
             expect(u && s, what + ": priced");
             if (u && s) {
+                // The partial tiles move through the L2 at its rate over the fixing SMs.
+                const double l2_rate =
+                    *row.l2_bytes_per_sm_clock * std::min(l.blocks, 128) * 2520e6;
                 const double want =
-                    l.units * *u + (l.fixup ? mmq_columns::fixup_bytes(l) / bw + node : 0.0);
+                    l.units * *u + (l.fixup ? mmq_columns::fixup_bytes(l) / l2_rate + node : 0.0);
                 expect(std::fabs(*s / want - 1) < 1e-12, what + ": units x unit + fixup");
             }
             expect(l.split == (rows == 32 * 128), what + ": stream-k only for 32 tiles");

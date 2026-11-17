@@ -1107,7 +1107,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                 counted_isa
                     ? mmq_unit::launch_seconds(counted_arch, q, *counted_isa, facts.rows, facts.k,
                                                static_cast<int>(t), width, card.sms, card.clock_hz,
-                                               card.dram_bytes_per_s, card.l2_bytes, counted_node)
+                                               card.dram_bytes_per_s, counted_node)
                     : std::nullopt;
             if (counted) {
                 // The launch's units at the counted unit, its fixup and graph node inside.

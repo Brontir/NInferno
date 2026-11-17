@@ -89,15 +89,14 @@ struct UnitFacts {
 // One mul_mat_q launch: the longest CTA's units (core/mmq_columns.h launch_of) at the unit its own
 // resident CTAs give, and where the CTAs do not divide the tiles, the fixup's bytes and
 // `fixup_launch_seconds` (its graph node). The partial tiles are written and read back through the
-// L2: where they fit in half of it (`l2_bytes`, 0 unknown) they move at the L2's rate (isa_probe
-// 18's bytes per SM clock x the fixing SMs x the clock), else at the DRAM rate. Priced at the DRAM
-// rate always, a board with more SMs went from a tile launch to a stream-k one and its price rose
-// with the SM count (decision property P1, #613 PR-5). A stream-k CTA's unit is the tile CTA's
-// (not yet counted apart). nullopt where the unit is not priced.
+// L2, at its rate (isa_probe 18's bytes per SM clock x the fixing SMs x the clock): their bytes
+// grow with the CTAs as that rate does. At the DRAM rate (or at the L2's only where they fit in
+// part of it) a board with more SMs priced higher (decision property P1, #613 PR-5). A stream-k
+// CTA's unit is the tile CTA's (not yet counted apart). nullopt where the unit is not priced.
 [[nodiscard]] std::optional<double> launch_seconds(std::string_view arch, QType q,
                                                    const IsaRow& isa, int rows, int k, int columns,
                                                    int j, int sms, double clock_hz,
-                                                   double dram_bytes_per_s, double l2_bytes,
+                                                   double dram_bytes_per_s,
                                                    double fixup_launch_seconds);
 
 } // namespace ninferno::mmq_unit

@@ -101,18 +101,15 @@ UnitFacts unit_facts_of(int rows, int k, int columns, int j, int sms, double clo
 
 std::optional<double> launch_seconds(std::string_view arch, QType q, const IsaRow& isa, int rows,
                                      int k, int columns, int j, int sms, double clock_hz,
-                                     double dram_bytes_per_s, double l2_bytes,
-                                     double fixup_launch_seconds) {
+                                     double dram_bytes_per_s, double fixup_launch_seconds) {
     const auto u = unit_seconds(
         arch, q, j, isa, unit_facts_of(rows, k, columns, j, sms, clock_hz, dram_bytes_per_s));
     if (!u) return std::nullopt;
     const mmq_columns::ColumnLaunch l = mmq_columns::launch_of(rows, k, columns, j, sms);
     if (!l.fixup) return l.units * *u;
-    const double bytes = mmq_columns::fixup_bytes(l);
-    const bool in_l2   = l2_bytes > 0 && bytes <= 0.5 * l2_bytes && isa.l2_bytes_per_sm_clock;
-    const double rate =
-        in_l2 ? *isa.l2_bytes_per_sm_clock * std::min(l.blocks, sms) * clock_hz : dram_bytes_per_s;
-    return l.units * *u + bytes / rate + fixup_launch_seconds;
+    // unit_seconds read the L2 rate, so it is there.
+    const double rate = *isa.l2_bytes_per_sm_clock * std::min(l.blocks, sms) * clock_hz;
+    return l.units * *u + mmq_columns::fixup_bytes(l) / rate + fixup_launch_seconds;
 }
 
 } // namespace ninferno::mmq_unit
