@@ -75,6 +75,7 @@ constexpr SectionFamily kSections[] = {
     {"r8", "family codec warps rows nt epilogue pre registers stack local shared", 1, 5, false,
      " pro_loops pro_total pro_int pro_fp pro_ldg_bytes pro_sts_bytes pro_stall glb_waits"
      " outside_glb_waits pro_glb_waits"},
+    {"i8", "family WT WN stages bits epilogue registers stack local shared", 0, 5, true},
 };
 static_assert(std::size(kSections) == std::size(kSectionFamilies));
 
@@ -412,6 +413,15 @@ std::optional<KernelFacts> r8_facts(std::string_view arch, const R8KernelKey& ke
         k += std::to_string(v);
     }
     return section_facts(arch, "r8", k);
+}
+
+std::optional<KernelFacts> i8_facts(std::string_view arch, const I8KernelKey& key) {
+    std::string k;
+    for (const int v : {key.WT, key.WN, key.stages, key.bits, key.epilogue}) {
+        if (!k.empty()) k += ' ';
+        k += std::to_string(v);
+    }
+    return section_facts(arch, "i8", k);
 }
 
 std::optional<KernelFacts> rmma_facts(std::string_view arch, const RmmaKernelKey& key) {

@@ -298,6 +298,20 @@ def w4a8_key(demangled):
     return None
 
 
+def i8_key(demangled):
+    """The key of an I8 tile (generic_i8.cu, #613 PR-6): i8_kernel<WT, WN, Stages, Bits, E> in the
+    file's anonymous namespace, keyed as its warps along the tokens and the rows, its cp.async
+    stages, the code width and the epilogue. None for other symbols (the activation quantizer)."""
+    head = "void " + NAMESPACE + "(anonymousnamespace)::i8_kernel<"
+    unnamed = demangled.replace("(anonymous namespace)", "(anonymousnamespace)")
+    args = template_args(unnamed.replace("<unnamed>", "(anonymousnamespace)"), head)
+    if args is None:
+        return None
+    if len(args) != 5 or not all(re.fullmatch(r"\d+", a) for a in args):
+        fail(f"unexpected i8_kernel arguments in {demangled}")
+    return tuple(int(a) for a in args)
+
+
 R8_SCHEDULE = re.compile(r"R8Schedule<(\d+),(\d+)>")
 
 
@@ -423,6 +437,8 @@ FAMILIES = {
     "r8": Family("r8", ("codec", "warps", "rows", "nt", "epilogue", "pre"), lambda d: r8_key(d),
                  "r8_kernel", lambda key: r8_products(key), True, True, marker="IDP",
                  prologue="F2I"),
+    "i8": Family("i8", ("WT", "WN", "stages", "bits", "epilogue"), lambda d: i8_key(d),
+                 "i8_kernel", lambda key: 1, True, False, waits=True),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -795,6 +811,14 @@ SECTION_NOTES = {
         "# global load's latency (a wait on a scoreboard with an LDG pending): glb_waits in one",
         "# dp4a iteration, outside_glb_waits outside both loops, pro_glb_waits in one quantizer",
         "# iteration.",
+    ),
+    "i8": (
+        "# The I8 tiles (src/ops/generic/generic_i8.cu, #613 PR-6): i8_kernel<WT, WN, Stages, Bits,",
+        "# epilogue> (I8Tile: a CTA of WT x WN warps over 64 WT tokens x 64 WN weight rows, the",
+        "# weight codes as the int8 MMA's unsigned operand, the activation quantized by",
+        "# i8_quantize_kernel first). Compiled from sm_80 on (NINFERNO_I8_KERNELS); below, empty",
+        "# bodies (loops 0). One iteration of the counted loop is one cp.async stage: one group of",
+        "# 64 K values.",
     ),
 }
 
