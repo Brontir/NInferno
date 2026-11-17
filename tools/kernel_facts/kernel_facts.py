@@ -1192,20 +1192,15 @@ def list_differences(args, differ, missing, extra, expected, got, line):
 # Section rows whose SASS ptxas does not reproduce from the same source (#968): built twice clean
 # from one tree (sm_89, nvcc 13.4.92, no ccache, the five R8 translation units), 2 of 2019
 # functions came out with another schedule (3540 against 3556 SASS lines), and a third after a
-# comment line elsewhere in a header they include: these three pre-quantized nt = 8 instances. The
-# same rows moved on sm_75 and sm_86 between trees. check holds them to their resources (the
-# registers, stack, local and shared bytes, which never moved) and reports their loop counts
-# beside, never failing on them: the R8 law prices T = 1 only and reads no nt = 8 row (#966).
-# extract still writes the build's counts. A key is the family and the row's key fields as written.
-SASS_UNSTABLE = frozenset({
-    "r8 W4a8Ggml32<2> 4 2 8 0 1",
-    "r8 W4a8U4ZpG<128> 4 2 8 1 1",
-    "r8 W4a8U4ZpG<64> 4 2 8 1 1",
-})
-
-
+# comment line elsewhere in a header they include, all pre-quantized nt = 8 instances; on sm_75
+# and sm_86 other rows of the same kind moved between trees (sm_75: W4a8Ggml32<2> at both
+# epilogues). check holds every pre-quantized nt = 8 R8 row to its resources (the registers,
+# stack, local and shared bytes, which never moved) and reports its loop counts beside, never
+# failing on them: the R8 law prices T = 1 only and reads no nt = 8 row (#966). extract still
+# writes the build's counts. `key` is the row's key fields (FAMILIES["r8"].key: codec, warps,
+# rows, nt, epilogue, pre).
 def sass_unstable(family, key):
-    return f"{family} {row_key(key)}" in SASS_UNSTABLE
+    return family == "r8" and int(key[3]) == 8 and int(key[5]) == 1
 
 
 def section_line(family):

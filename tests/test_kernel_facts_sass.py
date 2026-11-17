@@ -1000,12 +1000,14 @@ class Sections(unittest.TestCase):
 
 
 class SassUnstable(unittest.TestCase):
-    # #968: the three R8 rows ptxas does not reproduce are named by family and key; a neighbour
-    # row of the same kernel is not.
-    def test_named_rows_only(self):
+    # #968: every pre-quantized nt = 8 R8 row is held to its resources; another nt, a row that is
+    # not pre-quantized, or another family is not.
+    def test_pre_quantized_nt8_r8_rows_only(self):
         self.assertTrue(kernel_facts.sass_unstable("r8", ("W4a8Ggml32<2>", 4, 2, 8, 0, 1)))
+        self.assertTrue(kernel_facts.sass_unstable("r8", ("W4a8Ggml32<2>", 4, 2, 8, 1, 1)))
         self.assertTrue(kernel_facts.sass_unstable("r8", ("W4a8U4ZpG<64>", 4, 2, 8, 1, 1)))
         self.assertFalse(kernel_facts.sass_unstable("r8", ("W4a8U4ZpG<64>", 4, 2, 4, 1, 1)))
+        self.assertFalse(kernel_facts.sass_unstable("r8", ("W4a8U4ZpG<64>", 4, 2, 8, 1, 0)))
         self.assertFalse(kernel_facts.sass_unstable("mmq", ("W4a8Ggml32<2>", 4, 2, 8, 0, 1)))
 
 
