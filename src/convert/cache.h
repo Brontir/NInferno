@@ -94,6 +94,20 @@ void remove_artifact(const std::filesystem::path& artifact);
 [[nodiscard]] std::set<std::filesystem::path>
 manifest_drafter_files(const std::filesystem::path& artifact);
 
+// Where the converted artifacts of the models in `dir` (a checkpoint directory, or the directory of
+// a GGUF file) are kept: `beside`, <dir>/.ninferno-cache, where that directory can be written, else
+// `own`, NInferno's cache (sys::cache_dir()/converted/<16 hex digits of the FNV-1a of dir's
+// canonical path, the current directory for "">), so a model on a read-only disk or share still
+// converts once (#691). `own` is
+// empty where no cache directory is known. An artifact already in either place is served from it,
+// `beside` first.
+struct ArtifactCacheDirs {
+    std::filesystem::path beside;
+    std::filesystem::path own;
+};
+
+[[nodiscard]] ArtifactCacheDirs artifact_cache_dirs(const std::filesystem::path& dir);
+
 struct CachedArtifact {
     std::filesystem::path path; // the artifact to load
     std::string recipe;         // empty for an artifact path
@@ -103,7 +117,9 @@ struct CachedArtifact {
 
 // An artifact path is returned unchanged. A checkpoint directory maps to
 // <dir>/.ninferno-cache/<recipe>.ninferno (a GGUF file to <its
-// dir>/.ninferno-cache/<stem>.<recipe>.ninferno) under the official recipe for its architecture
+// dir>/.ninferno-cache/<stem>.<recipe>.ninferno; NInferno's own cache in place of
+// <dir>/.ninferno-cache where that cannot be written, artifact_cache_dirs) under the official
+// recipe for its architecture
 // (choose_recipe), converted in-process first when missing; one converter at a time holds the cache
 // directory's lock and the next one finds the artifact. `resources` supplies frontend files the
 // checkpoint lacks (a drafter's tokenizer comes from its target); a file present in the checkpoint

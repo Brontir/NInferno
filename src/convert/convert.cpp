@@ -1,6 +1,7 @@
 #include "convert/convert.h"
 #include "core/ascii.h"
 
+#include "convert/cache.h"
 #include "convert/files.h"
 #include "core/clock.h"
 #include "core/hex.h"
@@ -2302,18 +2303,24 @@ bool records_component(const std::filesystem::path& artifact, const std::string&
 }
 
 // Whether an artifact of `recipe` was converted from a checkpoint directory: cache.cpp's
-// <dir>/.ninferno-cache/[vision.]<recipe>.ninferno, or acquire.cpp's beside a hub snapshot,
+// <dir>/.ninferno-cache/[vision.]<recipe>.ninferno (or the same names in NInferno's own cache where
+// the directory cannot be written, artifact_cache_dirs), or acquire.cpp's beside a hub snapshot,
 // <repo>/ninferno/<commit>/model[.vision].<recipe>.ninferno; with `mtp`, one whose report
 // records the checkpoint's MTP layers among its components.
 bool converted(const std::filesystem::path& checkpoint, const std::string& recipe,
                bool mtp = false) {
     namespace fs = std::filesystem;
     std::error_code ec;
-    const auto cache = checkpoint / ".ninferno-cache";
-    const auto hub   = checkpoint.parent_path().parent_path() / "ninferno" / checkpoint.filename();
-    for (const auto& path : {cache / (recipe + ".ninferno"), cache / ("vision." + recipe + ".ninferno"),
-                             hub / ("model." + recipe + ".ninferno"),
-                             hub / ("model.vision." + recipe + ".ninferno")}) {
+    const ArtifactCacheDirs dirs = artifact_cache_dirs(checkpoint);
+    const auto hub = checkpoint.parent_path().parent_path() / "ninferno" / checkpoint.filename();
+    std::vector<fs::path> paths = {hub / ("model." + recipe + ".ninferno"),
+                                   hub / ("model.vision." + recipe + ".ninferno")};
+    for (const fs::path& cache : {dirs.beside, dirs.own}) {
+        if (cache.empty()) { continue; }
+        paths.push_back(cache / (recipe + ".ninferno"));
+        paths.push_back(cache / ("vision." + recipe + ".ninferno"));
+    }
+    for (const auto& path : paths) {
         if (fs::exists(path, ec) && (!mtp || records_component(path, "mtp"))) { return true; }
     }
     return false;

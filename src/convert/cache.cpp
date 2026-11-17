@@ -8,19 +8,56 @@
 #include "convert/safetensors.h"
 
 #include "core/cache_file.h"
+#include "core/fnv.h"
 #include "core/sys.h"
 #include "spec/manifest.h"
 
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cstdio>
 #include <fstream>
 #include <iterator>
 #include <map>
 #include <optional>
 #include <stdexcept>
+#include <system_error>
 
 namespace ninferno::convert {
+
+ArtifactCacheDirs artifact_cache_dirs(const std::filesystem::path& dir) {
+    namespace fs = std::filesystem;
+    ArtifactCacheDirs out;
+    out.beside = dir / ".ninferno-cache";
+    // A bare file name's directory is "": the current one. The key is the directory's canonical
+    // path (symlinks resolved where the path exists), so one directory has one key however spelled.
+    const fs::path where = dir.empty() ? fs::path(".") : dir;
+    std::error_code ec;
+    fs::path normal = fs::weakly_canonical(where, ec);
+    if (ec) {
+        std::error_code absolute_ec;
+        normal = fs::absolute(where, absolute_ec);
+        if (absolute_ec) { normal = where; }
+    }
+    normal = normal.lexically_normal();
+    if (normal.has_relative_path() && normal.filename().empty()) { normal = normal.parent_path(); }
+    std::u8string text = normal.generic_u8string();
+#ifdef _WIN32
+    // Windows' file names are case-insensitive and weakly_canonical keeps the caller's casing: the
+    // key is the path's ASCII lower case, so C:/Models/Foo and c:/models/foo share one (#975).
+    for (char8_t& c : text) {
+        if (c >= u8'A' && c <= u8'Z') c = static_cast<char8_t>(c - u8'A' + u8'a');
+    }
+#endif
+    const std::uint64_t key =
+        fnv::bytes(std::string_view(reinterpret_cast<const char*>(text.data()), text.size()));
+    char hex[17];
+    std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(key));
+    if (const fs::path root = sys::cache_dir(); !root.empty()) {
+        out.own = root / "converted" / hex;
+    }
+    return out;
+}
 
 bool is_checkpoint_directory(const std::filesystem::path& path) {
     namespace fs = std::filesystem;
@@ -373,8 +410,9 @@ cached_artifact(const std::filesystem::path& path,
     out.recipe        = choice.recipe;
     // A GGUF file caches beside itself, named after it (a directory may hold several models'
     // files); a directory caches inside.
-    const bool file  = fs::is_regular_file(path);
-    const auto cache = (file ? path.parent_path() : path) / ".ninferno-cache";
+    const bool file              = fs::is_regular_file(path);
+    const ArtifactCacheDirs dirs = artifact_cache_dirs(file ? path.parent_path() : path);
+    fs::path cache               = dirs.beside;
     std::optional<fs::path> projector;
     if (vision && recipe_has_vision(out.recipe)) {
         if (file) {
@@ -391,16 +429,82 @@ cached_artifact(const std::filesystem::path& path,
     } else {
         vision = false;
     }
-    out.path = cache / ((file ? path.stem().string() + "." : std::string()) +
-                        (vision ? "vision." : "") + out.recipe + ".ninferno");
+    const std::string name = (file ? path.stem().string() + "." : std::string()) +
+                             (vision ? "vision." : "") + out.recipe + ".ninferno";
+    std::error_code exists_ec;
+    if (!fs::exists(dirs.beside / name, exists_ec) && !dirs.own.empty() &&
+        fs::exists(dirs.own / name, exists_ec)) {
+        cache = dirs.own; // converted there before: its directory could not be written
+    }
+    out.path = cache / name;
     // Taken before the conversion: --consume-source removes the weights it stamps.
     const auto stamp =
         source_stamp(file ? path.parent_path() : path, source_files(path, projector, resources));
     if (serve_cached(out.path, path, stamp)) { return out; }
-    fs::create_directories(cache);
+    // The lock file is the write test: a directory on a read-only disk or share (or one this user
+    // cannot write) converts into NInferno's own cache instead (artifact_cache_dirs, #691).
+    std::string why; // the last write test's failure, for the error
+    const auto open_lock = [&why](const fs::path& dir) {
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        if (ec) {
+            why = dir.string() + ": " + ec.message();
+            return -1;
+        }
+        const int fd  = sys::open(dir / ".convert.lock", O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+        const int err = errno;
+        if (fd < 0) {
+            why = (dir / ".convert.lock").string() + ": " + std::generic_category().message(err);
+            return fd;
+        }
+        // An existing lock file opens in a directory this user cannot write (O_CREAT needs no
+        // directory write for a file that exists), so a new entry is made and removed too: the
+        // conversion writes its temporary file and the artifact there (#975 review).
+        // Per process and created exclusively: no other converter's probe, or one a crash left,
+        // is ever opened in its place.
+        const fs::path probe = dir / (".convert.probe." + std::to_string(sys::pid()));
+        fs::remove(probe, ec); // a crashed run of this pid's
+        const int pfd  = sys::open(probe, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+        const int perr = errno;
+        std::error_code rm;
+        if (pfd >= 0) {
+            sys::close(pfd);
+            fs::remove(probe, rm);
+        }
+        if (pfd < 0 || rm) {
+            why = probe.string() + ": " +
+                  (pfd < 0 ? std::generic_category().message(perr) : rm.message());
+            sys::close(fd);
+            return -1;
+        }
+        return fd;
+    };
+    // Consuming punches the source's shards, which a directory this user cannot write does not
+    // allow either: an artifact that goes to the own cache (or was converted there before) refuses
+    // --consume-source before converting rather than failing inside it.
+    const auto refuse_consume = [&](const std::string& reason) {
+        if (consume_source) {
+            throw std::runtime_error("cannot write beside " + path.string() + " (" + reason +
+                                     "): --consume-source needs a writable model directory");
+        }
+    };
+    if (cache == dirs.own) { refuse_consume("its artifact is in " + dirs.own.string()); }
+    int lock = open_lock(cache);
+    if (lock < 0 && cache == dirs.beside && !dirs.own.empty()) {
+        const std::string beside_why = why;
+        cache                        = dirs.own;
+        out.path                     = cache / name;
+        if (serve_cached(out.path, path, stamp)) { return out; }
+        refuse_consume(beside_why);
+        if (log) {
+            log("cannot write " + dirs.beside.string() + " (" + beside_why + "): converting into " +
+                dirs.own.string());
+        }
+        lock = open_lock(cache);
+        if (lock < 0) { why = beside_why + "; " + why; }
+    }
     const auto lock_path = cache / ".convert.lock";
-    const int lock       = sys::open(lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-    if (lock < 0) { throw std::runtime_error("cannot open " + lock_path.string()); }
+    if (lock < 0) { throw std::runtime_error("no writable conversion cache: " + why); }
 
     struct Close {
         int fd;

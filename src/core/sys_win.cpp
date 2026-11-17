@@ -41,6 +41,9 @@ int set_errno_from(DWORD error) {
     case ERROR_NOT_SUPPORTED:
     case ERROR_INVALID_PARAMETER: errno = EINVAL; break;
     case ERROR_FILENAME_EXCED_RANGE: errno = ENAMETOOLONG; break;
+    case ERROR_WRITE_PROTECT:
+        errno = EROFS;
+        break; // a write-protected or read-only volume
     default: errno = EIO; break;
     }
     return -1;
