@@ -295,6 +295,7 @@ column where the source fixes them.
 | `ninferno_mtp_pack_bench` | Bit-exact MTP pack or attention-split | `--op pack\|split`, `--d 2048\|5120`, `--tokens` | n/a |
 | `ninferno_proposal_remap_bench` | Proposal token-id remap | `--tokens` | n/a |
 | `ninferno_argmax_bench` | Public `argmax` on the full vocabulary and the 131072-row shortlist | `--shape full\|shortlist`, `--cols` | n/a |
+| `ninferno_planes_bench` | #616 step 6: R8's Q6_K group loads over the three-plane layout against an interleaved block, work 0, cold L2 | `--rows`, `--k`, `--warps`, `--repeat` | n/a |
 | `ninferno_sampling_select_bench` | Sampling, MTP window selection and DFlash2 sparse-q acceptance | `--matrix`, `--sample`, `--mtp`, `--dflash2`, `--mode greedy\|stochastic`, `--batch`, `--top-k`, `--mtp-k`, `--drafts`, `--extent`, `--mixed`, `--general`, `--no-counts`, `--reject-at`, `--graph-calls` | 8 / 60 |
 | `ninferno_candidate_selector_bench` | Conditional candidate selector, `K=1..15`, `B=1..8`, 16 candidates, rank 256, BF16 codebooks `[256,248320]`; greedy, stochastic and mixed | `--steps`, `--batch`, `--flush-mib` | 8 / 50 |
 | `ninferno_sparse_moe_bench` | 35B routed-plus-shared post-mixer Op | `--codec q4-q5\|q4-q6\|q8-q8\|nvfp4\|all`, `--distribution trace-like\|independent\|same`, `--seed`, `--sweep` | 5 / 50 |
