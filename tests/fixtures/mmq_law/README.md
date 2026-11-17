@@ -21,7 +21,7 @@ its stall sum (equal to the snapshot's `stall_sum`) and its instructions.
 `predicted_chain_<card>.csv` is written by `tools/dev/mmq_chain_law.py` from those counts, the
 board's `gpu_facts.json` row and the arch's isa_probe facts, plus one per-card fact measured
 before any of these predictions: the L2's bytes per SM clock per SM, the floor of a coalesced
-32-bit `ld.cg` stream over an L2-resident buffer, 32 warps on every SM (RTX 4090 15.2, RTX 4060 Ti
+32-bit `ld.cg` stream over an L2-resident buffer, one CTA of 32 warps on every SM, 8 loads in flight a warp, from a scratch microbench of the same loop isa_probe 18 now runs at 16 warps (RTX 4090 15.2, RTX 4060 Ti
 17.2, RTX 3090 16.2, RTX 3060 17.75, RTX 5070 Ti 18.1; waits_sm_120a.csv from a sm_120a build of the same commit). It predicts the launch law's unit (one
 256-K iteration on the `law` grid) as the load phase (the weight tiles over DRAM, every tile and
 activation tile through the L2, the larger of the two, plus one DRAM latency) followed by the

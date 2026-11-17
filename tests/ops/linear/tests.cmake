@@ -368,3 +368,10 @@ target_sources(ninferno_route_price_sweep PRIVATE
   ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
 target_compile_definitions(ninferno_route_price_sweep PRIVATE NINFERNO_HOST_ONLY)
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_route_price_sweep)
+
+# The counted MMQ unit (ops/generic/mmq_unit.h, #613 PR-5) against the chain law's script: the
+# committed snapshot's counts and the isa_probe facts give the seconds tools/dev/mmq_chain_law.py
+# printed for the RTX 4090. No GPU.
+ninferno_add_op_test(ninferno_mmq_unit_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_mmq_unit.cpp"
+  LIBRARIES ninferno_linear_test_support)
