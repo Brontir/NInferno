@@ -60,6 +60,7 @@ const std::vector<Field>& fields() {
         by_warps("dram_latency", "clk", &IsaRow::dram_latency);
         by_warps("dram_tlbwarm_latency", "clk", &IsaRow::dram_tlbwarm_latency);
         by_warps("dram_tlbwarm_latency_ns", "ns", &IsaRow::dram_tlbwarm_latency_ns);
+        one("l2_bytes_per_sm_clock", "byte", &IsaRow::l2_bytes_per_sm_clock);
         return v;
     }();
     return all;

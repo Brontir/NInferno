@@ -154,6 +154,12 @@ _BEYOND_L1 = ("l2", "dram_tlbwarm", "dram", "dram_lanes", "dram_lanes_half")
 FACTS += tuple(f"{lv}_held_latency_w{w}" for lv in ("l1",) + _BEYOND_L1 for w in _WARPS)
 FACTS += tuple(f"{lv}_held_latency_ns_w{w}" for lv in _BEYOND_L1 for w in _WARPS)
 FACTS += ("sm_clock_mhz_chase_held",)
+# Global loads (probe 18): a coalesced 32-bit load a lane (one 128-byte line a warp instruction),
+# 4 CTAs of 4 warps an SM, 8 loads in flight a warp: SM clocks per warp instruction per SM from
+# the L1 (ld.ca, 16 KiB) and from the L2 (ld.cg, up to 4 MiB within half the L2), and the L2's
+# bytes per SM clock per SM the second gives.
+PROBE_18_FACTS = ("l1_ldg32_cycles_per_sm", "l2_ldg32_cycles_per_sm", "l2_bytes_per_sm_clock")
+FACTS += PROBE_18_FACTS
 
 
 # The facts probe 17 split or renamed: the four conversions alone (until then two pairs, each the
@@ -168,6 +174,8 @@ def first_probe(name):
     earlier probe still parses and a run that lost a fact of its own version does not. An earlier
     row is stale all the same: test_isa_facts fails while a row's probe is not the checked-in
     one."""
+    if name in PROBE_18_FACTS:
+        return 18
     if name in PROBE_17_FACTS:
         return 17
     if name.startswith("dram_lanes_half"):
@@ -188,7 +196,7 @@ def first_probe(name):
 # lat_cvt_f32_f16 (up to 16) were each the mean of two conversions on different pipes.
 LEGACY_FACTS = {"resident_ctas_per_sm": 13, "lat_iadd": 16, "lat_cvt_i2f_f2i": 16,
                 "lat_cvt_f32_f16": 16}
-UNITS = {"tensor_flops_per_sm_clock": "flop"}
+UNITS = {"tensor_flops_per_sm_clock": "flop", "l2_bytes_per_sm_clock": "byte"}
 
 
 def unit_of(name):

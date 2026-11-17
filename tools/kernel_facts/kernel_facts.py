@@ -41,8 +41,9 @@ After the register-MMA rows a snapshot holds one section per further kernel fami
 #785): ggml's matrix kernel `mul_mat_q<type, J, fallback, prec>` (mmq) and the W4A8 tiles
 (w4a8), each with its own nvcc, kernel count and columns (`family_nvcc`, `family_kernels`,
 `family_columns` after its `family <name>` line), and the pipe counts of the loop
-(sass_counts.PIPE_FIELDS) besides schema 4's; the R8 decode kernels (r8, #613 PR-10) the
-same way, their loop marked by the dp4a. `extract --families mmq,w4a8 --update FILE`
+(sass_counts.PIPE_FIELDS) besides schema 4's, then the wait classes (sass_counts.WAIT_FIELDS,
+mmq and w4a8); the R8 decode kernels (r8, #613 PR-10) the same way, their loop marked by the
+dp4a and the quantizer's loop after the pipe counts. `extract --families mmq,w4a8 --update FILE`
 rewrites those sections alone and keeps the rest of FILE byte for byte. `check` compares every
 section the snapshot has: in full where the build's nvcc is the one the section records, its
 kernel set alone otherwise (the exit code then follows the register-MMA rows); a family the
@@ -368,8 +369,11 @@ class Family:
     k_iter divides a warp's MMA work by, and whether its rows carry the pipe counts."""
 
     def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True,
-                 marker=None, prologue=None):
+                 marker=None, prologue=None, waits=False):
         self.name = name
+        # Whether its rows carry the iteration's wait classes (sass_counts.WAIT_FIELDS) after the
+        # pipe counts: the mmq and w4a8 sections (#613 PR-5).
+        self.waits = waits
         # The opcode that marks the counted loop where the kernel has no tensor-core MMA
         # (sass_counts.loop_counts): IDP, the dp4a of the R8 kernels.
         self.marker = marker
@@ -391,6 +395,7 @@ class Family:
         """{schema: (columns, loop fields)}: the resources alone (1), and the loop (4; with the
         pipe counts for a family that carries them)."""
         loop = sass_counts.COLUMNS + (sass_counts.PIPE_FIELDS if self.pipes else ()) + (
+            sass_counts.WAIT_FIELDS if self.pipes and self.waits else ()) + (
             sass_counts.PROLOGUE_FIELDS if self.pipes and self.prologue else ())
         return {1: (self.row_head, 0), 4: (self.row_head + loop, len(loop))}
 
@@ -408,10 +413,10 @@ FAMILIES = {
     FAMILY: Family(FAMILY, KEY_COLUMNS, lambda d: rmma_key(d), "rmma_kernel", key_tiles, False,
                    True),
     "mmq": Family("mmq", ("type", "J", "fallback", "prec"), lambda d: mmq_key(d), "mul_mat_q",
-                  lambda key: 1, True, False),
+                  lambda key: 1, True, False, waits=True),
     "w4a8": Family("w4a8", ("codec", "block_m", "block_n", "warps_m", "warps_n", "epilogue",
                             "flavor", "stages", "producers"), lambda d: w4a8_key(d), "w4a8_",
-                   lambda key: 1, True, True),
+                   lambda key: 1, True, True, waits=True),
     "gemma4": Family("gemma4", ("kernel", "D", "G", "slice", "rows", "Bc", "partial", "fp8",
                                 "chain"), lambda d: gemma4_key(d), "gemma4_", lambda key: 1,
                      False, True, loop=False),
@@ -521,7 +526,8 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
         family = FAMILIES[fk[0]]
         c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker,
                                     family.prologue).with_pipes(family.pipes,
-                                                                family.prologue is not None)
+                                                                family.prologue is not None,
+                                                                family.waits)
         if fk in counts and counts[fk] != c:
             fail(f"{name} is disassembled twice in {arch} with different loops {counts[fk]} "
                  f"and {c}")
@@ -798,7 +804,7 @@ def render_section(family, rows, nvcc):
     `family <name>` line, its own nvcc, kernel count and columns (family_nvcc, family_kernels,
     family_columns: so the file's own nvcc, kernels and columns lines stay the register-MMA ones
     every reader and script takes), the rows. The loop columns are schema 4's and the pipe counts
-    (sass_counts.PIPE_FIELDS), or the resources alone where no row has a loop."""
+    (sass_counts.SECTION_FIELDS), or the resources alone where no row has a loop."""
     f = FAMILIES[family]
     loops = [v[4] for v in rows.values() if v[4] is not None]
     if loops and not all(c.scheduled for c in loops):
@@ -861,7 +867,7 @@ def parse_rows(family, lines, columns, what):
             key = f.parse_key(fields[1:1 + keys])
             loop = fields[head:head + loop_width]
             counts = sass_counts.LoopCounts.from_row(loop) if loop_width else None
-            if counts is not None and counts.pipes != f.pipes:
+            if counts is not None and (counts.pipes != f.pipes or counts.waits != f.waits):
                 raise ValueError("pipe columns of another family")
             rows[key] = (*(int(v) for v in fields[1 + keys:head]), counts)
         except ValueError as error:

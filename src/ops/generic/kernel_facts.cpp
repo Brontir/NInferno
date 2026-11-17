@@ -43,10 +43,12 @@ constexpr std::string_view kColumns =
 // The length of the one shorter columns line kColumns begins with: the resources alone (schema 1,
 // up to "shared"). The older loop-without-schedule columns (schema 2) are refused.
 constexpr std::size_t kResourceColumnsLength = kColumns.find(" loops ");
-// The loop's columns of every schema 4 row (from "loops" on), and the pipe counts a section's
-// rows carry after them (kernel_facts.py Family.schema_columns, sass_counts.py PIPE_FIELDS).
+// The loop's columns of every schema 4 row (from "loops" on), the pipe counts a section's rows
+// carry after them, and the wait classes after those in the mmq and w4a8 sections
+// (kernel_facts.py Family.schema_columns, sass_counts.py PIPE_FIELDS and WAIT_FIELDS).
 constexpr std::string_view kLoopColumns = kColumns.substr(kResourceColumnsLength);
 constexpr std::string_view kPipeColumns = " i2f i2fp ffma fmul fadd imad bar";
+constexpr std::string_view kWaitColumns = " sb_waits_global sb_waits_shared";
 
 // A section family's columns up to the resources (kernel_facts.py FAMILIES: "family", the key,
 // the resources), and how many key fields lead as text (the codec) before the integers.
@@ -55,20 +57,22 @@ struct SectionFamily {
     std::string_view head_columns;
     int text_keys = 0;
     int int_keys  = 0;
+    // Whether its rows carry the wait classes after the pipe counts (kernel_facts.py Family.waits).
+    bool waits = false;
     // Columns past the pipe counts (kernel_facts.py Family.prologue): the r8 rows' quantizer
     // loop, sass_counts.py PROLOGUE_FIELDS.
     std::string_view extra_columns = {};
 };
 
 constexpr SectionFamily kSections[] = {
-    {"mmq", "family type J fallback prec registers stack local shared", 0, 4},
+    {"mmq", "family type J fallback prec registers stack local shared", 0, 4, true},
     {"w4a8",
      "family codec block_m block_n warps_m warps_n epilogue flavor stages producers registers "
      "stack local shared",
-     1, 8},
+     1, 8, true},
     {"gemma4", "family kernel D G slice rows Bc partial fp8 chain registers stack local shared", 1,
      8},
-    {"r8", "family codec warps rows nt epilogue pre registers stack local shared", 1, 5,
+    {"r8", "family codec warps rows nt epilogue pre registers stack local shared", 1, 5, false,
      " pro_loops pro_total pro_int pro_fp pro_ldg_bytes pro_sts_bytes pro_stall glb_waits"
      " outside_glb_waits pro_glb_waits"},
 };
@@ -85,8 +89,8 @@ const SectionFamily* section_family(std::string_view name) {
 enum class Columns { Resources, Schedule };
 
 // The K loop's counts and the static schedule (schema 4) of a row, from `fields` at the loop's
-// first column; the pipe counts after them where `pipes`.
-LoopCounts read_loop(std::istringstream& fields, bool pipes, const std::string& line) {
+// first column; the pipe counts after them where `pipes`, and the wait classes where `waits`.
+LoopCounts read_loop(std::istringstream& fields, bool pipes, bool waits, const std::string& line) {
     LoopCounts l;
     fields >> l.loops >> l.k_iter >> l.mma >> l.mma_ones >> l.mma_shape >> l.ldg >> l.ldg_bytes >>
         l.ld >> l.ld_bytes >> l.ldgsts >> l.ldgsts_bytes >> l.lds >> l.lds_bytes >> l.sts >>
@@ -101,6 +105,7 @@ LoopCounts read_loop(std::istringstream& fields, bool pipes, const std::string& 
     if (pipes) {
         PipeCounts p;
         fields >> p.i2f >> p.i2fp >> p.ffma >> p.fmul >> p.fadd >> p.imad >> p.bar;
+        if (waits) fields >> p.sb_waits_global >> p.sb_waits_shared;
         if (!fields) throw std::runtime_error("kernel facts: malformed pipe counts: " + line);
         l.pipes = p;
     }
@@ -129,7 +134,7 @@ void read_section_row(Section& s, const SectionFamily& f, Columns columns,
     fields >> k.registers >> k.stack_bytes >> k.local_bytes >> k.static_shared_bytes;
     if (!fields) throw std::runtime_error("kernel facts: malformed row: " + line);
     if (columns != Columns::Resources) {
-        k.loop = read_loop(fields, true, line);
+        k.loop = read_loop(fields, true, f.waits, line);
         if (!f.extra_columns.empty()) {
             PrologueCounts p;
             fields >> p.loops >> p.total >> p.int_alu >> p.fp_alu >> p.ldg_bytes >> p.sts_bytes >>
@@ -204,9 +209,11 @@ Snapshot parse(std::string_view text) {
                 section->header.kernels = std::stoul(rest);
                 section->has_kernels    = true;
             } else if (first == "family_columns") {
-                const std::string loop = std::string(family->head_columns) +
-                                         std::string(kLoopColumns) + std::string(kPipeColumns) +
-                                         std::string(family->extra_columns);
+                const std::string loop =
+                    std::string(family->head_columns) + std::string(kLoopColumns) +
+                    std::string(kPipeColumns) +
+                    std::string(family->waits ? kWaitColumns : std::string_view{}) +
+                    std::string(family->extra_columns);
                 if (rest == loop)
                     section_columns = Columns::Schedule;
                 else if (rest == family->head_columns)
@@ -232,7 +239,7 @@ Snapshot parse(std::string_view text) {
             // Schema 4: the K loop's counts follow (tools/kernel_facts/sass_counts.py COLUMNS),
             // then the static schedule, on every row of a file whose columns line names them and
             // on none of a resources-only one's.
-            if (*columns != Columns::Resources) f.loop = read_loop(fields, false, line);
+            if (*columns != Columns::Resources) f.loop = read_loop(fields, false, false, line);
             if (fields >> std::ws; !fields.eof()) {
                 throw std::runtime_error("kernel facts: fields past the columns': " + line);
             }

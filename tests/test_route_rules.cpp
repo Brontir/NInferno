@@ -888,6 +888,13 @@ const std::vector<NotRule>& not_rules() {
          "a family section's per-pipe count columns (a file format)"},
         {"kernel_facts.cpp", "kResourceColumnsLength", 1,
          "the length of the resources-only column header (a file format)"},
+        {"kernel_facts.cpp", "kWaitColumns", 1,
+         "the mmq and w4a8 sections' wait-class columns (a file format)"},
+        {"mmq_unit.cpp", "kActivationBytes", 1,
+         "two q8_1 MMQ blocks a column per 256 values (a layout fact)"},
+        {"mmq_unit.cpp", "kTileRows", 1, "the MMQ kernel's tile rows (a tile shape, counted)"},
+        {"mmq_unit.cpp", "kValuesPerIteration", 1,
+         "the values of one MMQ K iteration, one superblock (a layout fact)"},
         {"r8_law.h", "kValuesPerTask", 1,
          "the K values one quantizer task covers, a 32-value block (generic_r8.cuh, a layout "
          "fact)"},

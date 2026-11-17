@@ -147,6 +147,14 @@ PIPE_OPCODES = {
     "bar": ("BAR",),
 }
 PIPE_FIELDS = tuple(PIPE_OPCODES)
+# The iteration's scoreboard waits by what they wait for (#613 PR-5), written beside the pipe
+# counts: a wait on a scoreboard a global load (LDG, LD) set since its last wait, and a wait on
+# one a shared load (LDS, LDSM) set where no global load is pending on the scoreboards it waits
+# on; the iteration walked twice as for sb_waits_local. The chain law prices the first at the
+# DRAM's latency inside the load phase and the second at the shared latency inside the chain.
+WAIT_FIELDS = ("sb_waits_global", "sb_waits_shared")
+# The mmq and w4a8 sections' columns after the schedule (Family.pipes and Family.waits).
+SECTION_FIELDS = PIPE_FIELDS + WAIT_FIELDS
 # A second counted loop (#613 PR-10): the R8 decode kernels quantize the activation into shared
 # memory in a loop of their own before the dp4a loop, one 32-value block per thread and pass. Its
 # counts follow the pipe counts, prefixed pro_: the loops found (0 where the kernel reads a
@@ -591,16 +599,18 @@ class LoopCounts:
     without one, `a:n+b:m` where shapes mix. `scheduled`: the static-schedule fields
     (SCHEDULE_FIELDS) are known, from the control codes of every instruction; a schema 2 row and
     a text without control codes leave them out. `pipes`: the row carries the pipe counts
-    (PIPE_FIELDS) after the schedule; they are counted either way, written only where set."""
+    and the wait classes (SECTION_FIELDS) after the schedule; they are counted either way,
+    written only where set."""
 
     def __init__(self):
         self.loops = 0
         self.k_iter = 0
         self.mma_shape = "-"
-        for f in COUNT_FIELDS + SCHEDULE_FIELDS + PIPE_FIELDS + PROLOGUE_FIELDS:
+        for f in COUNT_FIELDS + SCHEDULE_FIELDS + PIPE_FIELDS + WAIT_FIELDS + PROLOGUE_FIELDS:
             setattr(self, f, 0)
         self.scheduled = False
         self.pipes = False
+        self.waits = False
         self.prologue = False
 
     def columns(self):
@@ -608,11 +618,12 @@ class LoopCounts:
             return LOOP_COLUMNS
         if not self.pipes:
             return COLUMNS
-        return COLUMNS + PIPE_FIELDS + (PROLOGUE_FIELDS if self.prologue else ())
+        return (COLUMNS + PIPE_FIELDS + (WAIT_FIELDS if self.waits else ()) +
+                (PROLOGUE_FIELDS if self.prologue else ()))
 
     def row(self):
         """The snapshot's columns (COLUMNS, LOOP_COLUMNS without the schedule, COLUMNS and
-        PIPE_FIELDS with the pipes), as strings."""
+        SECTION_FIELDS with the pipes), as strings."""
         return [str(getattr(self, c)) for c in self.columns()]
 
     def without_schedule(self):
@@ -622,27 +633,33 @@ class LoopCounts:
             setattr(c, name, getattr(self, name))
         return c
 
-    def with_pipes(self, pipes=True, prologue=False):
-        """This row's columns with (or without) the pipe counts, and after them the prologue
-        loop's (PROLOGUE_FIELDS, only with the pipes), the counts unchanged."""
+    def with_pipes(self, pipes=True, prologue=False, waits=False):
+        """This row's columns with (or without) the pipe counts, and after them the wait classes
+        (WAIT_FIELDS, the mmq and w4a8 sections) or the prologue loop's (PROLOGUE_FIELDS, the r8
+        section), each only with the pipes, the counts unchanged."""
+        assert not (waits and prologue)
         self.pipes = pipes
+        self.waits = waits and pipes
         self.prologue = prologue and pipes
         return self
 
     @classmethod
     def from_row(cls, fields):
         """The counts of a snapshot row's loop columns, with the schedule (COLUMNS), without it
-        (LOOP_COLUMNS) or with the schedule and the pipes (COLUMNS + PIPE_FIELDS); ValueError on
+        (LOOP_COLUMNS) or with the schedule and the pipes (COLUMNS + SECTION_FIELDS); ValueError on
         a field that is no count."""
         piped = len(COLUMNS) + len(PIPE_FIELDS)
-        widths = (len(COLUMNS), len(LOOP_COLUMNS), piped, piped + len(PROLOGUE_FIELDS))
+        widths = (len(COLUMNS), len(LOOP_COLUMNS), piped, piped + len(WAIT_FIELDS),
+                  piped + len(PROLOGUE_FIELDS))
         if len(fields) not in widths:
             raise ValueError(f"{len(fields)} loop fields, {' or '.join(map(str, widths))} columns")
         c = cls()
         c.scheduled = len(fields) != len(LOOP_COLUMNS)
         c.pipes = len(fields) >= piped
+        c.waits = len(fields) == piped + len(WAIT_FIELDS)
         c.prologue = len(fields) == piped + len(PROLOGUE_FIELDS)
-        for name, value in zip(COLUMNS + PIPE_FIELDS + PROLOGUE_FIELDS, fields):
+        extra = WAIT_FIELDS if c.waits else PROLOGUE_FIELDS
+        for name, value in zip(COLUMNS + PIPE_FIELDS + extra, fields):
             setattr(c, name, value if name == "mma_shape" else int(value))
         return c
 
@@ -689,11 +706,13 @@ def schedule_counts(body, control, iteration, outside):
     loop. The local waits follow the scoreboards along the iteration walked twice, the second
     walk counted: a wait clears the scoreboards of its mask, a write barrier set by an LDL makes
     its scoreboard local until then."""
-    out = dict.fromkeys(SCHEDULE_FIELDS, 0)
+    out = dict.fromkeys(SCHEDULE_FIELDS + WAIT_FIELDS, 0)
     for i in iteration:
         out["stall_sum"] += control[i].stall
         out["sb_waits"] += control[i].wait_mask != 0
     local = [False] * 6
+    glob = [False] * 6
+    shared = [False] * 6
     for walk in (0, 1):
         for i in iteration:
             c = control[i]
@@ -701,10 +720,20 @@ def schedule_counts(body, control, iteration, outside):
                 waited = [b for b in range(6) if (c.wait_mask >> b) & 1]
                 if walk and any(local[b] for b in waited):
                     out["sb_waits_local"] += 1
+                if walk and any(glob[b] for b in waited):
+                    out["sb_waits_global"] += 1
+                elif walk and any(shared[b] for b in waited):
+                    out["sb_waits_shared"] += 1
                 for b in waited:
-                    local[b] = False
-            if c.write_barrier != NO_BARRIER and base_opcode(body[i][2]) == "LDL":
-                local[c.write_barrier] = True
+                    local[b] = glob[b] = shared[b] = False
+            if c.write_barrier != NO_BARRIER:
+                op = base_opcode(body[i][2])
+                if op == "LDL":
+                    local[c.write_barrier] = True
+                elif op in GLOBAL_LOADS:
+                    glob[c.write_barrier] = True
+                elif op in ("LDS", "LDSM"):
+                    shared[c.write_barrier] = True
     outside_counts(body, control, outside, out)
     out["glb_waits"] = global_waits(body, control, iteration, 2)
     out["outside_glb_waits"] = global_waits(body, control, outside, 1)

@@ -399,7 +399,8 @@ void sections_read() {
                     l.schedule->sb_waits <= l.total && l.pipes->bar <= l.total &&
                     l.pipes->i2f + l.pipes->i2fp + l.pipes->ffma + l.pipes->fmul + l.pipes->fadd <=
                         l.fp_alu &&
-                    l.pipes->imad <= l.int_alu;
+                    l.pipes->imad <= l.int_alu &&
+                    l.pipes->sb_waits_global + l.pipes->sb_waits_shared <= l.schedule->sb_waits;
                 if (!ok && bad++ == 0) first = key;
             }
             expect(bad == 0, name + " " + std::string(family) + ": " + std::to_string(bad) +
@@ -484,6 +485,45 @@ void sections_read() {
     expect(!kf::snapshot_text_accepted(base + head), "a section without its rows is refused");
 }
 
+void section_wait_columns() {
+    // The wait classes (sb_waits_global, sb_waits_shared) follow the pipe counts in the mmq and
+    // w4a8 sections only; the r8 section has its quantizer loop there instead (#613 PR-5, PR-10).
+    // A header with the other family's columns is refused.
+    const std::string base = "arch 89\nkernels 0\ncolumns family decoder warps_m warps_k m_tiles "
+                             "n_tiles cluster epilogue latency sums registers stack local shared\n";
+    const std::string loop =
+        " loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds "
+        "lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total stall_sum "
+        "sb_waits sb_waits_local outside_total outside_stall outside_waits outside_bar";
+    const std::string pipes    = " i2f i2fp ffma fmul fadd imad bar";
+    const std::string waits    = " sb_waits_global sb_waits_shared";
+    const std::string prologue = " pro_loops pro_total pro_int pro_fp pro_ldg_bytes pro_sts_bytes "
+                                 "pro_stall glb_waits outside_glb_waits pro_glb_waits";
+    // A row's values past the resources: the loop (mma_shape is text), the schedule, the pipes.
+    const auto values = [](int n) {
+        std::string s;
+        for (int i = 0; i < n; ++i) s += i == 4 ? " -" : " 1";
+        return s;
+    };
+    const auto mmq = [&](const std::string& extra, int fields) {
+        return base +
+               "family mmq\nfamily_nvcc 13.0\nfamily_kernels 1\nfamily_columns family type "
+               "J fallback prec registers stack local shared" +
+               loop + pipes + extra + "\nmmq 12 32 0 30 128 0 0 0" + values(fields) + "\n";
+    };
+    const auto r8 = [&](const std::string& extra, int fields) {
+        return base +
+               "family r8\nfamily_nvcc 13.0\nfamily_kernels 1\nfamily_columns family codec "
+               "warps rows nt epilogue pre registers stack local shared" +
+               loop + pipes + extra + "\nr8 W4a8Q8 4 1 1 0 0 64 0 0 0" + values(fields) + "\n";
+    };
+    expect(kf::snapshot_text_accepted(mmq(waits, 30 + 7 + 2)), "an mmq section with its waits");
+    expect(!kf::snapshot_text_accepted(mmq("", 30 + 7)), "an mmq section without the waits");
+    expect(kf::snapshot_text_accepted(r8(prologue, 30 + 7 + 10)), "an r8 section, its prologue");
+    expect(!kf::snapshot_text_accepted(r8(waits + prologue, 30 + 7 + 2 + 10)),
+           "an r8 section with the mmq waits");
+}
+
 void old_columns_refused() {
     // The reader takes the full (schema 4) columns line and the resources-only one, and refuses
     // the schema 2 line (the loop's counts without the schedule): its rows would carry no
@@ -517,6 +557,7 @@ int main() {
         loop_counts_read();
         schedules_read();
         sections_read();
+        section_wait_columns();
         old_columns_refused();
         occupancy_from_facts();
         boards_read_facts();
