@@ -9,7 +9,8 @@
 //
 // Route (moe.cpp route_in_router): the CTA that finishes last (a ticket) then selects every token's
 // experts and plans the slots, select_plan_warp_kernel's arithmetic on the logits the grid just
-// wrote: one launch and one dependent round trip fewer per MoE layer.
+// wrote: one launch and one dependent round trip fewer per MoE layer. A routing router triggers no
+// dependents: the expert kernel starts when the grid has exited.
 #include "core/device.h"
 #include "core/pdl.cuh"
 #include "ops/common/arch_limits.h"
@@ -54,7 +55,11 @@ __global__ __launch_bounds__(kRouterSimtWarps *
                                       : make_uint4(0, 0, 0, 0);
     }
     pdl::wait_for_dependencies();
-    if (threadIdx.x == 0) pdl::trigger_dependents();
+    // Routing, the next launch is the expert kernel, which waits for the route: no trigger, so it
+    // launches as the last CTA exits after the plan. Triggered early, its CTAs sat resident on the
+    // SMs through the router and the shared expert's kernels on the branch stream waited behind
+    // them (RTX 5090, Qwen3.6-35B C=4: the layer 80.5 -> 87.3 us; #617 K).
+    if (!Route && threadIdx.x == 0) pdl::trigger_dependents();
     if (a.xq != nullptr) {
         const std::int64_t tasks  = static_cast<std::int64_t>(a.tokens) * (a.xq_ld / 32);
         const std::int64_t stride = static_cast<std::int64_t>(gridDim.x) * kRouterSimtWarps * 32;

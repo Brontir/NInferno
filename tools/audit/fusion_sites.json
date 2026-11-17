@@ -525,7 +525,7 @@
                     "function": "run"
                 },
                 "rule_today":
-                    "route_in_router = router_simt && t <= kRouterSimtWarps && a <= 32 && !pdl: the SIMT router last CTA also selects and plans. Without PDL each launch is a gap (RTX 3090: Gemma 4 26B C=1 +1.3 %, C=4 +2.1 %, Qwen3.6-35B and Nemotron C=1 +1.2 / +1.4 %); with PDL the separate launch overlaps (RTX 5090: Qwen3.6-35B C=4 -3.3 %, Nemotron -2.3 %). router_simt is off under the invariant profile.",
+                    "route_in_router = router_simt && t <= kRouterSimtWarps && a <= 32: the SIMT router last CTA also selects and plans, and a routing router triggers no dependents (the expert kernel starts as its grid exits). Without PDL each launch is a gap (RTX 3090: Gemma 4 26B C=1 +1.3 %, C=4 +2.1 %, Qwen3.6-35B and Nemotron C=1 +1.2 / +1.4 %; RTX 4090 +2.0 %, GV100 +3.0 %); under PDL an early trigger let the routed experts' CTAs sit resident and lost 6.1 % (RTX 5090 Qwen3.6-35B C=4), the exit trigger gains 1.1 % (#617 K). router_simt is off under the invariant profile.",
                 "alternatives": [
                     "router launch with select+plan in its last CTA",
                     "router + select_plan / select + plan launches"
@@ -533,7 +533,7 @@
                 "priced": {
                     "status": "literal",
                     "by":
-                        "two cards, RTX 3090 (gains) and RTX 5090 (losses), measured end to end per model (comment above route_in_router in moe.cpp); the PDL flag and the 32-assignment bound are the rule",
+                        "measured end to end on four generations (RTX 3090, RTX 4090, GV100 without PDL; RTX 5090 under PDL, C=1/2/4; #617 K census); the 32-assignment bound is the rule",
                     "unpriced": "the launch saving per generation"
                 },
                 "byte_promise": "Equal",
