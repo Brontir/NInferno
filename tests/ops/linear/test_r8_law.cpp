@@ -143,7 +143,9 @@ void check_terms() {
     volta.slots    = 1;
     const auto t1  = rl::terms(chip, *device, f, volta, {4, 1});
     expect(t1 && t1->iterations == 2, "one slot: K 5120 at 4096 an iteration takes two");
-    expect(rl::slots_of(*device) == 2, "two slots on Ada");
+    expect(rl::slots_of("89") == 2, "two slots on Ada");
+    expect(rl::slots_of("70") == 1 && rl::slots_of("120a") == 2 && rl::slots_of("75") == 2,
+           "one slot below sm_75 only, read from the SASS label");
     // The DRAM term is the DRAM law's, on the CTA's bytes.
     const double cta_bytes = 4 * 4096 * 144.0 / 256.0;
     expect(near(t->cta_bytes, cta_bytes), "a CTA's bytes: rows x K x bytes per value");

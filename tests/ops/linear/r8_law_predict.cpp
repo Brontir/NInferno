@@ -118,7 +118,7 @@ int main(int argc, char** argv) {
         call.n                      = n;
         call.k                      = k;
         call.nt                     = nt;
-        call.slots                  = rl::slots_of(device);
+        call.slots                  = rl::slots_of(arch);
         call.swiglu                 = swiglu;
         call.sums                   = traits.min;
         call.weight_bytes_per_value = ninferno::ggml_bits_per_value(f->q) / 8.0;

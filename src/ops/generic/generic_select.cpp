@@ -982,7 +982,7 @@ std::optional<int> law_r8_uncached(const Problem& p, const DeviceClass& device) 
     call.n                      = p.n;
     call.k                      = p.k;
     call.nt                     = 1;
-    call.slots                  = r8_law::slots_of(device);
+    call.slots                  = r8_law::slots_of(*arch);
     call.swiglu                 = p.epilogue == Epilogue::SwiGlu;
     call.sums                   = traits.min;
     call.weight_bytes_per_value = ggml_bits_per_value(p.qtype) / 8.0;
