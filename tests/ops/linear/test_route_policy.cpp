@@ -211,6 +211,7 @@ bool in_auto_list(std::string_view source) {
 struct BoardTally {
     int cells = 0, borrowed = 0, transferred = 0, measured = 0, moved = 0, demoted_same_route = 0;
     int kept_rules = 0; // Borrowed or Transferred answers of the rules list, kept by design
+    int kept_mmq_boundary = 0; // demoted ggml_mmq entries kept at T 9..16 (keeps_mmq_boundary)
     std::map<std::string, int> moved_by_regime;
     Json moves = Json::array();
     std::set<std::string> moved_problems; // "<format>|<epilogue>|n<N>|k<K>"
@@ -301,9 +302,21 @@ void check_cell(const DeviceClass& d, const Cell& c, const std::string& at,
     const bool auto_list = in_auto_list(le.source);
     if (le.kind == Kind::Borrowed) ++(auto_list ? tally.borrowed : tally.kept_rules);
     if (le.kind == Kind::Transferred) ++(auto_list ? tally.transferred : tally.kept_rules);
+    // The MMQ boundary (#614 F2, route_authorities.cpp keeps_mmq_boundary): a demoted ggml_mmq
+    // entry at 9 to 16 tokens keeps the call where the ranker would take the register MMA; the
+    // answer is then legacy's, with nothing named demoted.
+    const bool mmq_boundary = legacy.route.family == generic::Family::GgmlMmq && c.tokens >= 9 &&
+                              c.tokens <= 16 && evidence.route == legacy.route &&
+                              ee.source == le.source && ee.kind == le.kind &&
+                              ee.demoted_source.empty();
+    if (auto_list && generic::policy_demotes(RoutePolicy::Evidence, le.kind) && mmq_boundary) {
+        ++tally.kept_mmq_boundary;
+        return;
+    }
     if (auto_list && generic::policy_demotes(RoutePolicy::Evidence, le.kind)) {
         // Under legacy the entry won; under evidence it yields to the ranker. It would stand only
-        // where the ranker has no candidate (the scalar fallback), which no cell of this grid is.
+        // where the ranker has no candidate (the scalar fallback), which no cell of this grid is,
+        // or at the MMQ boundary above.
         if (ee.kind == Kind::Borrowed || ee.kind == Kind::Transferred || in_auto_list(ee.source)) {
             fail(at + ": the " + generic::evidence_kind_name(le.kind) + " entry did not yield: '" +
                  evidence_text + "'");
@@ -619,7 +632,8 @@ int main(int argc, char** argv) {
                 for (const auto& [regime, n] : t.moved_by_regime) {
                     std::cout << " [" << regime << ": " << n << ']';
                 }
-                std::cout << ", " << t.demoted_same_route << " demoted to the same route\n";
+                std::cout << ", " << t.demoted_same_route << " demoted to the same route, "
+                          << t.kept_mmq_boundary << " kept at the MMQ boundary\n";
                 if (std::string_view(b.own_build_set) == kBuildSet) {
                     written[std::string(b.name) + "/" + tables] = board_json(b, tables, t);
                 }
