@@ -740,17 +740,18 @@ void check_price_a8_rows() {
     if (bad > 0 || a8 == 0) ++failures;
 }
 
-// An explicit --local-bytes 0 is a given fact, not the absence of one (#983 codex): the tool says
-// so, and under the counted law it prices the kernel without spills instead of the snapshot's.
+// An explicit --local-bytes 0 is a given fact, not the absence of one (#983 codex): on a board
+// whose price reads compiled facts (the heavy form: the RTX 3090, sm_86, as
+// check_price_counted_law) the tool prints it as given, and under the counted law the snapshot's
+// local bytes no longer replace it.
 void check_price_explicit_zero_local_bytes() {
     int rc = -1;
     const std::string text =
-        price_stdout({"--board", "rtx4090", "--format", "q4_k", "--n", "4096", "--k", "4096", "--t",
+        price_stdout({"--board", "rtx3090", "--format", "q4_k", "--n", "4096", "--k", "4096", "--t",
                       "64", "--local-bytes", "0", "--rmma-counted-law", "on"},
                      rc);
     const bool given = text.find("kernel facts given") != std::string::npos;
-    const bool zero  = text.find("given: unset registers, 0 local bytes") != std::string::npos ||
-                      text.find("given but not read") != std::string::npos;
+    const bool zero  = text.find("given: unset registers, 0 local bytes") != std::string::npos;
     if (rc != 0 || !given || !zero) {
         std::fprintf(stderr, "FAIL: price --local-bytes 0 exits %d, given %d, zero %d\n", rc,
                      given ? 1 : 0, zero ? 1 : 0);

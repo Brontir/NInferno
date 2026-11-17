@@ -495,10 +495,10 @@ int run(const Options& o) {
     if ((o.registers || o.local_bytes) && !heavy) {
         std::printf("kernel facts given but not read: the plain form prices by threads alone\n");
     } else if (o.registers || o.local_bytes) {
-        const std::string local =
-            o.local_bytes ? std::to_string(static_cast<long>(*o.local_bytes)) : "unset";
+        char local[32] = "unset";
+        if (o.local_bytes) std::snprintf(local, sizeof local, "%.0f", *o.local_bytes);
         std::printf("kernel facts given: %s registers, %s local bytes per thread%s\n",
-                    o.registers ? std::to_string(*o.registers).c_str() : "unset", local.c_str(),
+                    o.registers ? std::to_string(*o.registers).c_str() : "unset", local,
                     cal.rmma_counted_law ? " (the snapshot's for the rest, the counted law)" : "");
     } else if (heavy && cal.rmma_counted_law) {
         std::printf("kernel facts: the snapshot's, as the selector reads them (the counted law)\n");
