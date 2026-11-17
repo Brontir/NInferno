@@ -7,6 +7,7 @@
 
 #include "core/format_facts.h"
 #include "core/isa_facts.h"
+#include "core/mmq_columns.h"
 #include "ops/generic/mmq_unit.h"
 
 #include <cmath>
@@ -82,6 +83,28 @@ int main() {
     // 200 row tiles of one column tile: stream-k over 128 CTAs, 25 units apart, all distinct.
     const auto one = mmq_unit::unit_facts_of(200 * 128, 4096, 16, 16, 128, 2520e6, 1008e9);
     expect(one.weight_tiles == 128 && one.ctas == 128, "one column tile: a weight tile a CTA");
+    // A launch is its longest CTA's units at its own CTAs' unit, plus, where the CTAs do not
+    // divide the tiles, the fixup's bytes at the DRAM rate and the fixup's graph node.
+    {
+        const double bw = 384 / 8.0 * 21e9, node = 3e-6;
+        for (const int rows : {32 * 128, 64 * 128}) {
+            const int k = 4096, columns = 64, j = 64;
+            const mmq_columns::ColumnLaunch l = mmq_columns::launch_of(rows, k, columns, j, 128);
+            const auto u                      = mmq_unit::unit_seconds(
+                "89", QType::GGML_Q4_K, j, row,
+                mmq_unit::unit_facts_of(rows, k, columns, j, 128, 2520e6, bw));
+            const auto s = mmq_unit::launch_seconds("89", QType::GGML_Q4_K, row, rows, k, columns,
+                                                    j, 128, 2520e6, bw, node);
+            const std::string what = "launch of " + std::to_string(rows) + " rows";
+            expect(u && s, what + ": priced");
+            if (u && s) {
+                const double want =
+                    l.units * *u + (l.fixup ? mmq_columns::fixup_bytes(l) / bw + node : 0.0);
+                expect(std::fabs(*s / want - 1) < 1e-12, what + ": units x unit + fixup");
+            }
+            expect(l.split == (rows == 32 * 128), what + ": stream-k only for 32 tiles");
+        }
+    }
     IsaRow old = *isa;
     old.l2_bytes_per_sm_clock.reset();
     expect(!mmq_unit::unit_seconds("89", QType::GGML_Q4_K, 16, old, f),
