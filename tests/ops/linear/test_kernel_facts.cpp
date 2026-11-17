@@ -370,7 +370,9 @@ void sections_read() {
     // (Q4_K, Q6_K) with one loop, two barriers per 128-value K tile and k_iter 16 x 32.
     // sm_70 has no mmq or w4a8 section: its snapshot is made with CUDA 12.8 (#762), and Volta takes
     // no MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts,
-    // and the r8 one (#613 PR-10): the R8 law reads the one-slot ring's.
+    // and the r8 one (#613 PR-10): the R8 law reads the one-slot ring's. The routed-expert
+    // families (moer8, moegemm, #619 step 11) are not in it: the MoE law reads the boards it was
+    // measured on (Turing and newer).
     constexpr std::string_view kWithoutSections[] = {"70"};
     int with_sections                             = 0;
     for (const auto arch : kf::snapshot_archs()) {
@@ -446,20 +448,39 @@ void sections_read() {
         // The R8 decode kernels (#613 PR-10): one loop marked by the dp4a, no MMA and no CTA
         // barrier in it, and one quantizer loop where the kernel quantizes (pre 0), none where it
         // reads a quantized activation; the Q4_K four-warp single-row decode kernel is among them.
+        // The routed-expert R8 kernels (moer8, #619 step 11) are counted as the r8 rows; their
+        // Down stage (key "... 2 0") quantizes in two loops.
         if (!kf::section_header(arch, "r8")) continue;
-        int r8_bad = 0;
-        std::string r8_first;
-        for (const auto& [key, f] : kf::section_rows(arch, "r8")) {
-            const bool pre = key.size() >= 2 && key.compare(key.size() - 2, 2, " 1") == 0;
-            const bool ok  = f.loop && f.loop->loops == 1 && f.loop->mma == 0 && f.loop->pipes &&
-                            f.loop->pipes->bar == 0 && f.loop->k_iter > 0 && f.prologue &&
-                            f.prologue->loops == (pre ? 0 : 1);
-            if (!ok && r8_bad++ == 0) r8_first = key;
+        for (const std::string_view family : {"r8", "moer8"}) {
+            if (!kf::section_header(arch, family)) continue;
+            int r8_bad = 0;
+            std::string r8_first;
+            for (const auto& [key, f] : kf::section_rows(arch, family)) {
+                const bool pre  = key.size() >= 2 && key.compare(key.size() - 2, 2, " 1") == 0;
+                const bool down = family == "moer8" && key.size() >= 4 &&
+                                  key.compare(key.size() - 4, 4, " 2 0") == 0;
+                const bool ok = f.loop && f.loop->loops == 1 && f.loop->mma == 0 && f.loop->pipes &&
+                                f.loop->pipes->bar == 0 && f.loop->k_iter > 0 && f.prologue &&
+                                f.prologue->loops == (pre    ? 0
+                                                      : down ? 2
+                                                             : 1);
+                if (!ok && r8_bad++ == 0) r8_first = key;
+            }
+            expect(r8_bad == 0,
+                   name + " " + std::string(family) + ": " + std::to_string(r8_bad) +
+                       " rows without one barrier-free dp4a loop and its quantizer loop, first " +
+                       r8_first);
         }
-        expect(r8_bad == 0,
-               name + " r8: " + std::to_string(r8_bad) +
-                   " rows without one barrier-free dp4a loop and its quantizer loop, first " +
-                   r8_first);
+        // The routed-expert register-MMA kernels (moegemm): one K loop of MMAs, no CTA barrier.
+        int gemm_bad = 0;
+        std::string gemm_first;
+        for (const auto& [key, f] : kf::section_rows(arch, "moegemm")) {
+            const bool ok = f.loop && f.loop->loops == 1 && f.loop->mma > 0 && f.loop->pipes &&
+                            f.loop->pipes->bar == 0 && f.loop->k_iter > 0;
+            if (!ok && gemm_bad++ == 0) gemm_first = key;
+        }
+        expect(gemm_bad == 0, name + " moegemm: " + std::to_string(gemm_bad) +
+                                  " rows without one barrier-free MMA loop, first " + gemm_first);
         expect(kf::r8_facts(arch, {"W4a8Q45K<4>", 4, 1, 1, 0, false}).has_value(),
                name + " r8: no W4a8Q45K<4> 4 1 1 0 0 row");
     }

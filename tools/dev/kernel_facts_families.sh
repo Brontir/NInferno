@@ -43,7 +43,8 @@ ROOT=$(realpath -m "${KFF_ROOT:-$HOME/kff}"); mkdir -p "$ROOT"
 JOBS=${KFF_JOBS:-8}; NVCC=${CUDACXX:-/usr/local/cuda-13.4/bin/nvcc}
 FAMS=${KFF_FAMILIES:-mmq,w4a8,gemma4,r8,moer8,moegemm}; IFS=, read -r -a FAM_LIST <<< "$FAMS"
 # The binary read (KFF_TARGET): the selector golden test by default. Its sm_120a link holds no
-# Gemma 4 kernel (libninferno_ops.a does, 232), so that family is read there from ninferno-serve.
+# Gemma 4 kernel (libninferno_ops.a does, 232) and no routed-expert one (moer8, moegemm), so those
+# families are read there from ninferno-serve (KFF_TARGET=ninferno-serve KFF_FAMILIES=...).
 TARGET=${KFF_TARGET:-ninferno_selector_golden_test}
 case "$TARGET" in
   ninferno-serve) BIN_REL=apps/ninferno-serve ;;
