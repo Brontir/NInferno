@@ -1956,7 +1956,7 @@ int check_concurrent_streams() {
                                                         side.t) == mo::MoeRouterKernel::Simt;
                 std::cout << label << ": plan " << mo::plan_name(plan) << ", SIMT router "
                           << (simt ? "yes" : "no") << ", routes in the router "
-                          << (simt && side.t * side.c.top_k <= 32 && !device_class().features.pdl
+                          << (simt && side.t <= mo::kRouterSimtWarps && side.t * side.c.top_k <= 32
                                   ? "yes"
                                   : "no")
                           << ", fused combine "
