@@ -5,7 +5,7 @@
 # notes below that use the RTX 2080 Ti's 68 SMs then do not apply; the result is that board's.
 #
 # BENCH-ONLY HOOK. The widths are forced by tools/bench/524_grid_hook.patch, a patch of
-# src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh (the width choice) and ggml_mmq_host.cpp (the stream-k fixup
+# src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh (the width choice) and src/ops/generic/ggml_mmq_host.cpp (the stream-k fixup
 # buffer is sized for J 128, so a forced wide tile on a narrow call cannot write past it) that this
 # script applies to the tree for the build and reverts straight after. It is never merged into the kernel and is not an engine option. The
 # script checks that the patch applies at the current tree (and that the tree is clean) BEFORE it
@@ -174,7 +174,7 @@ check_hook() {
   fi
   if ! git apply --check "$PATCH"; then
     echo "$PATCH does not apply at $(git rev-parse --short HEAD): a file it patches"
-    echo "(src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh, ggml_mmq_host.cpp) changed since the patch was made."
+    echo "(src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh and src/ops/generic/ggml_mmq_host.cpp) changed since the patch was made."
     echo "Regenerate the patch (same content, current lines); do not build without it."
     exit 1
   fi
