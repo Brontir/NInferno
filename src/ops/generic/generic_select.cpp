@@ -32,6 +32,7 @@
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/r8_decode_table.h"
+#include "ops/generic/r8_law.h"
 #include "ops/generic/route_cost_constants.h"
 #include "ops/generic/route_table.h"
 #include "ops/linear/nvfp4/nvfp4_a4_plan.h"
@@ -46,6 +47,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -820,6 +823,203 @@ std::optional<R8TableHit> tuned_r8(const Problem& p) {
     return std::nullopt;
 }
 
+namespace {
+
+// The canonical name (kernel_facts.h decoder_name) of the type each R8 codec instantiates
+// (compiled_codecs.h's NINFERNO_R8_CODECS): "" for a codec without an R8 launch. The enum
+// argument of W4a8Ggml32 is spelled by value, as the snapshot keeps it. ninferno_r8_law_test
+// compares every key built from this table with the one the launch names (r8_launch_key).
+std::string_view r8_decoder_name(WeightCodec codec) {
+    switch (codec) {
+    case WeightCodec::Q8:
+        return "W4a8Q8";
+    case WeightCodec::Q4:
+        return "W4a8G64<4>";
+    case WeightCodec::Q5:
+        return "W4a8G64<5>";
+    case WeightCodec::Q6:
+        return "W4a8G64<6>";
+    case WeightCodec::U4Zp:
+        return "W4a8U4ZpG<128>";
+    case WeightCodec::U4ZpG32:
+        return "W4a8U4ZpG<32>";
+    case WeightCodec::U4ZpG64:
+        return "W4a8U4ZpG<64>";
+    case WeightCodec::Q3G128:
+        return "W4a8Q3<128>";
+    case WeightCodec::Q3G64:
+        return "W4a8Q3<64>";
+    case WeightCodec::GgmlIq3Xxs:
+        return "W4a8Iq3Xxs";
+    case WeightCodec::GgmlIq3S:
+        return "W4a8Iq3S";
+    case WeightCodec::GgmlIq2Xxs:
+        return "W4a8Iq2Xxs";
+    case WeightCodec::GgmlIq2Xs:
+        return "W4a8Iq2Xs";
+    case WeightCodec::GgmlIq2S:
+        return "W4a8Iq2S";
+    case WeightCodec::GgmlIq1S:
+        return "W4a8Iq1S";
+    case WeightCodec::GgmlIq1M:
+        return "W4a8Iq1M";
+    case WeightCodec::GgmlQ40:
+        return "W4a8Ggml32<0>";
+    case WeightCodec::GgmlQ41:
+        return "W4a8Ggml32<1>";
+    case WeightCodec::GgmlQ50:
+        return "W4a8Ggml32<2>";
+    case WeightCodec::GgmlQ51:
+        return "W4a8Ggml32<3>";
+    case WeightCodec::GgmlIq4Nl:
+        return "W4a8Ggml32<4>";
+    case WeightCodec::GgmlIq4Xs:
+        return "W4a8Iq4Xs";
+    case WeightCodec::Mxfp4:
+        return "W4a8Mxfp4";
+    case WeightCodec::Nvfp4:
+        return "W4a8Nvfp4";
+    case WeightCodec::GgmlQ4K:
+        return "W4a8Q45K<4>";
+    case WeightCodec::GgmlQ5K:
+        return "W4a8Q45K<5>";
+    case WeightCodec::GgmlQ6K:
+        return "W4a8Q6K";
+    case WeightCodec::GgmlQ3K:
+        return "W4a8Q3K";
+    case WeightCodec::GgmlQ2K:
+        return "W4a8Q2K";
+    default:
+        return "";
+    }
+}
+
+} // namespace
+
+// The launch's token slots (generic_r8.cuh r8_launch_schedule): 1, 2 or 4 with the in-kernel
+// quantizer; 2, 4 or 8 in the pre-quantized form, where the codec compiles it.
+std::optional<kernel_facts::R8KernelKey> r8_kernel_key(int schedule, QType qtype, Epilogue epilogue,
+                                                       std::int32_t tokens, bool prequantized) {
+    const auto codec = format_facts(qtype).codec;
+    if (!codec || !r8_supports(qtype) || schedule < 0 || schedule >= r8_schedule_count() ||
+        tokens < 1) {
+        return std::nullopt;
+    }
+    const std::string_view name = r8_decoder_name(*codec);
+    if (name.empty()) return std::nullopt;
+    int nt = 0;
+    if (prequantized) {
+        if (!r8_verify_compiled(qtype)) return std::nullopt;
+        nt = tokens <= 2 ? 2 : tokens <= 4 ? 4 : tokens <= 8 ? 8 : 0;
+    } else {
+        nt = tokens <= 1 ? 1 : tokens <= 2 ? 2 : tokens <= 4 ? 4 : 0;
+    }
+    if (nt == 0) return std::nullopt;
+    const R8ScheduleInfo s = r8_schedule_info(schedule);
+    return kernel_facts::R8KernelKey{std::string(name),          s.warps,     s.rows, nt,
+                                     static_cast<int>(epilogue), prequantized};
+}
+
+bool r8_hit_here(const R8TableHit& hit) {
+    if (hit.distance == 0) return true;
+    try {
+        return hit.gpu == device_class().id();
+    } catch (const std::exception&) { return false; }
+}
+
+bool r8_law_generation(const DeviceClass& d) noexcept {
+    return (d.major == 8 && d.minor == 9) || (d.major == 7 && d.minor == 0);
+}
+
+namespace {
+
+std::optional<int> law_r8_uncached(const Problem& p, const DeviceClass& device);
+
+} // namespace
+
+// The law's answer depends only on the device class and the call's format, epilogue and extents
+// (no policy: the law ranks schedules, route_admits judges the route), so it is computed once per
+// device and call and kept: select_route asks it on every linear call. PerDevice keeps a
+// substituted board's answers apart by the substitute's whole content (device_class_key).
+std::optional<int> law_r8(const Problem& p) {
+    DeviceClass device;
+    try {
+        device = device_class();
+    } catch (const std::exception&) { return std::nullopt; } // a host build with no device
+    if (!r8_law_generation(device)) return std::nullopt;
+
+    struct Memo {
+        std::mutex mutex;
+        std::map<std::tuple<int, int, std::int32_t, std::int32_t>, std::optional<int>> answers;
+    };
+
+    static PerDevice<std::shared_ptr<Memo>> memos;
+    std::shared_ptr<Memo> held;
+    try {
+        held = memos.get([](int) { return std::make_shared<Memo>(); });
+    } catch (const std::exception&) { return law_r8_uncached(p, device); }
+    Memo& memo = *held;
+    const std::tuple<int, int, std::int32_t, std::int32_t> key{
+        static_cast<int>(p.qtype), static_cast<int>(p.epilogue), p.n, p.k};
+    {
+        const std::lock_guard<std::mutex> lock(memo.mutex);
+        if (const auto it = memo.answers.find(key); it != memo.answers.end()) return it->second;
+    }
+    const auto answer = law_r8_uncached(p, device);
+    const std::lock_guard<std::mutex> lock(memo.mutex);
+    memo.answers.emplace(key, answer);
+    return answer;
+}
+
+namespace {
+
+std::optional<int> law_r8_uncached(const Problem& p, const DeviceClass& device) {
+    const auto arch = kernel_facts::sass_arch();
+    if (!arch) return std::nullopt;
+    const kernel_roofline::ChipFacts chip = kernel_roofline::chip_facts_of(device);
+    const CodecTraits traits              = codec_traits(p.qtype);
+    r8_law::Call call;
+    call.n                      = p.n;
+    call.k                      = p.k;
+    call.nt                     = 1;
+    call.slots                  = r8_law::slots_of(device);
+    call.swiglu                 = p.epilogue == Epilogue::SwiGlu;
+    call.sums                   = traits.min;
+    call.weight_bytes_per_value = ggml_bits_per_value(p.qtype) / 8.0;
+    // Below sm_80 a codebook grid is staged in shared memory after the activation.
+    call.grid_bytes = device.major < 8 && traits.grid_words > 0
+                          ? static_cast<std::int64_t>(traits.grid_words) * 4 +
+                                static_cast<std::int64_t>(r8_grid_pad)
+                          : 0;
+    // The add epilogue is priced as the store, as the decode tables carry it (tuned_r8) and as the
+    // holdout grids scored it: its residual read is N values against the weight's N x K.
+    const Epilogue epilogue = p.epilogue == Epilogue::AddResidual ? Epilogue::Store : p.epilogue;
+    std::optional<int> best;
+    double best_rank = 0;
+    for (int i = 0; i < r8_schedule_count(); ++i) {
+        const auto key = r8_kernel_key(i, p.qtype, epilogue, 1, false);
+        if (!key) continue;
+        const auto facts = kernel_facts::r8_facts(*arch, *key);
+        if (!facts) continue;
+        const R8ScheduleInfo s = r8_schedule_info(i);
+        const auto t           = r8_law::terms(chip, device, *facts, call, {s.warps, s.rows});
+        // Equal ranks are a tie the law does not break: the fewer warps, then the fewer rows,
+        // keep it (the frozen predictor's order, w4r1 w4r2 w8r1 w8r2, not the table's).
+        const auto order = [](int j) {
+            const R8ScheduleInfo x = r8_schedule_info(j);
+            return std::pair{x.warps, x.rows};
+        };
+        if (t &&
+            (!best || t->rank < best_rank || (t->rank == best_rank && order(i) < order(*best)))) {
+            best      = i;
+            best_rank = t->rank;
+        }
+    }
+    return best;
+}
+
+} // namespace
+
 bool w4a8_ws_supports(QType q) { return compiled(Variant::W4a8Ws, q); }
 
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
@@ -998,8 +1198,13 @@ int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t to
 }
 
 int heuristic_r8(const Problem& p, std::int32_t tokens) {
+    // At one token: measured on this board first, then the law, then a table carried from a
+    // nearby board (#622: measured here, the ranker, then carried).
     if (tokens == 1) {
-        if (const auto tuned = tuned_r8(p)) return tuned->schedule;
+        const auto tuned = tuned_r8(p);
+        if (tuned && r8_hit_here(*tuned)) return tuned->schedule;
+        if (const auto law = law_r8(p)) return *law;
+        if (tuned) return tuned->schedule;
     }
     return rules_r8(p, tokens);
 }

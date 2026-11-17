@@ -210,6 +210,58 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual((c.loops, c.mma, c.k_iter, c.mma_shape), (1, 0, 0, "-"))
         self.assertEqual(c.fp, 7)
 
+    def test_idp_marked_loop(self):
+        # The R8 decode kernels (#613 PR-10): no tensor-core MMA, the dp4a marks the loop. An FFMA
+        # loop beside it (the activation's quantizer) is not a candidate under the IDP marker.
+        lines = [(o, t.replace("HMMA.16816.F32.BF16", "IDP.4A.S8.S8").replace(", RZ ;", ", R0 ;"))
+                 for o, t in KERNEL]
+        c = sc.loop_counts(body_of(lines), tiles=1, marker="IDP")
+        # Six dp4a a lane: 6 x 4 x 32 = 768 K values per product; over three products, 256.
+        self.assertEqual((c.loops, c.mma, c.k_iter, c.mma_shape), (1, 0, 768, "-"))
+        self.assertEqual(sc.loop_counts(body_of(lines), tiles=3, marker="IDP").k_iter, 256)
+        self.assertEqual(sc.loop_counts(body_of(lines), tiles=5, marker="IDP").k_iter, 0)
+        self.assertEqual(c.int, sc.loop_counts(body_of(KERNEL), tiles=1).int + 6)
+        ffma = [(o, t.replace("HMMA.16816.F32.BF16", "FFMA").replace(", RZ ;", ", R0 ;"))
+                for o, t in KERNEL]
+        self.assertEqual(sc.loop_counts(body_of(ffma), tiles=1, marker="IDP").loops, 0)
+
+    def test_prologue_loop(self):
+        # The R8 kernels' quantizer loop (#613 PR-10): a second loop, marked by F2I, counted into
+        # the pro_ columns beside the dp4a loop; none where the body has no F2I loop.
+        quantizer = [(0x600 + i * 0x10, t) for i, t in enumerate([
+            "LDG.E.128 R4, [R2.64] ;",
+            "F2I.NTZ R8, R5 ;",
+            "IADD3 R10, R10, 0x1, RZ ;",
+            "STS.128 [R12], R4 ;",
+            "ISETP.GE.AND P0, PT, R10, R11, PT ;",
+            "@!P0 BRA 0x600 ;",
+            "BRA 0x430 ;",
+        ])]
+        lines = [(o, t.replace("HMMA.16816.F32.BF16", "IDP.4A.S8.S8").replace(", RZ ;", ", R0 ;"))
+                 for o, t in KERNEL]
+        lines = [(o, t) if o != 0x430 else (o, "BRA 0x600 ;") for o, t in lines]
+        c = sc.loop_counts(body_of(lines + quantizer), tiles=1, marker="IDP",
+                           prologue_marker="F2I")
+        self.assertEqual(c.loops, 1)
+        self.assertEqual((c.pro_loops, c.pro_total, c.pro_ldg_bytes, c.pro_sts_bytes),
+                         (1, 6, 512, 512))
+        self.assertEqual(sc.loop_counts(body_of(lines), tiles=1, marker="IDP",
+                                        prologue_marker="F2I").pro_loops, 0)
+        # An F2I in the dp4a loop (NVFP4's weight decode) does not make it the prologue.
+        first = next(o for o, t in lines if t.startswith("IDP"))
+        mixed = [(o, "F2I.NTZ R8, R5 ;") if o == first else (o, t) for o, t in lines]
+        m = sc.loop_counts(body_of(mixed + quantizer), tiles=1, marker="IDP",
+                           prologue_marker="F2I")
+        self.assertEqual((m.loops, m.pro_loops, m.pro_total), (1, 1, 6))
+        self.assertEqual(sc.loop_counts(body_of(mixed), tiles=1, marker="IDP",
+                                        prologue_marker="F2I").pro_loops, 0)
+        # The columns follow the pipe counts only where asked, and the row reads back.
+        piped = c.with_pipes(True, prologue=True)
+        self.assertEqual(len(piped.row()),
+                         len(sc.COLUMNS) + len(sc.PIPE_FIELDS) + len(sc.PROLOGUE_FIELDS))
+        self.assertEqual(sc.LoopCounts.from_row(piped.row()), piped)
+        self.assertEqual(len(c.with_pipes(True).row()), len(sc.COLUMNS) + len(sc.PIPE_FIELDS))
+
     def test_mixed_shapes_and_odd_k(self):
         lines = [(o, t.replace("HMMA.16816.F32.BF16 R40", "HMMA.1688.F32 R40")) for o, t in KERNEL]
         c = sc.loop_counts(body_of(lines), tiles=2)
@@ -367,6 +419,26 @@ class StaticSchedule(unittest.TestCase):
         self.assertEqual((c.outside_waits, c.outside_bar), (1, 1))
         self.assertEqual(c.schedule_problems(), [])
         self.assertGreaterEqual(c.stall_sum, c.total)
+
+    def test_global_waits(self):
+        # One wait a iteration exposes the LDG's latency: 0x1a0 on its scoreboard (#613 PR-10).
+        c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=2)
+        self.assertEqual(c.glb_waits, 1)
+        # The same scoreboard set by a shared load exposes no global latency.
+        ldg = [o for o, t in SCHEDULED if t.startswith("LDG")]
+        lds = [(o, t.replace("LDG.E", "LDS", 1) if o in ldg else t) for o, t in SCHEDULED]
+        self.assertEqual(sc.loop_counts(body_of(lds, SCHEDULED_WORDS), tiles=2).glb_waits, 0)
+
+    def test_global_waits_one_per_burst(self):
+        # Two loads issued before any wait return together: the second wait exposes nothing more.
+        C = sc.Control
+        body = [(0, False, "LDG.E", "R1, [R2]", None), (16, False, "LDG.E", "R3, [R4]", None),
+                (32, False, "IADD3", "R5, R1", None), (48, False, "IADD3", "R6, R3", None),
+                (64, False, "LDG.E", "R7, [R2]", None), (80, False, "IADD3", "R8, R7", None)]
+        words = [high_word(1, write=0), high_word(1, write=1), high_word(1, wait=1 << 0),
+                 high_word(1, wait=1 << 1), high_word(1, write=2), high_word(1, wait=1 << 2)]
+        control = [C(w) for w in words]
+        self.assertEqual(sc.global_waits(body, control, range(6), 1), 2)
 
     def test_local_wait_needs_the_ldl(self):
         # The same scoreboard set by a shared load is no local wait; a wait in between clears it.
@@ -784,6 +856,13 @@ class Sections(unittest.TestCase):
               f"({ns}Epilogue)0, 3, 4>({ns}GemmArgs, {ns}W4a8Activation)")
         self.assertEqual(kernel_facts.w4a8_key(ws), ("W4a8Q6K", 128, 64, 4, 2, 0, 0, 3, 4))
         self.assertIsNone(kernel_facts.w4a8_key(f"void {ns}w4a8_quantize_kernel(float *)"))
+        r8 = (f"void {ns}r8_kernel<{ns}W4a8Q45K<(int)4>, {ns}R8Schedule<(int)4, (int)1>, (int)1, "
+              f"({ns}Epilogue)0, (bool)0>({ns}GemmArgs, {ns}W4a8Activation)")
+        self.assertEqual(kernel_facts.r8_key(r8), ("W4a8Q45K<4>", 4, 1, 1, 0, 0))
+        pre = r8.replace("(int)1, ", "(int)8, ", 1).replace("(bool)0", "true")
+        self.assertEqual(kernel_facts.r8_key(pre)[3:], (8, 0, 1))
+        self.assertIsNone(kernel_facts.r8_key(classic))
+        self.assertIsNone(kernel_facts.w4a8_key(r8))
         self.assertIsNone(kernel_facts.rmma_key(self.MMQ_NAME))
 
     def test_pipe_counts(self):

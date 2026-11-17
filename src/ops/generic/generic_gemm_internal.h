@@ -29,6 +29,24 @@ private:
     KernelResources* previous_;
 };
 
+// A launch named instead of run (#613 PR-10): while an R8KernelKey is installed on this thread,
+// the R8 launch (r8_launch_tokens) writes there the snapshot key of the kernel instance it would
+// run (kernel_facts.h: its codec's decoder_name, schedule, token slots, epilogue, pre-quantized
+// form) and launches nothing. It reads no GPU. r8_launch_key names a launch so; the selector reads
+// the host's own key (r8_kernel_key), which ninferno_r8_law_test holds to the launch's.
+kernel_facts::R8KernelKey* r8_key_target() noexcept;
+
+class ScopedR8Key {
+public:
+    explicit ScopedR8Key(kernel_facts::R8KernelKey& out) noexcept;
+    ~ScopedR8Key();
+    ScopedR8Key(const ScopedR8Key&)            = delete;
+    ScopedR8Key& operator=(const ScopedR8Key&) = delete;
+
+private:
+    kernel_facts::R8KernelKey* previous_;
+};
+
 // A kernel's committed facts (kernel_facts.h, #612) as the register-MMA launch describes it. The
 // block limit is the launch bounds' (Schedule::kThreads); the versions are the build's
 // architecture. Host code (rmma_resources, generic_rmma_describe.cpp) describes from the facts the
@@ -257,6 +275,16 @@ void launch_rmma_group_sums(const GemmArgs& args, float* out, cudaStream_t strea
 // other codecs.
 void launch_r8(int schedule, WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                cudaStream_t stream, W4a8Activation pre = {});
+// The snapshot key of the R8 kernel instance a launch of `schedule` takes for `qtype`, `epilogue`
+// and `tokens` (the in-kernel quantizer, or the pre-quantized verify form with `prequantized`):
+// r8_kernel_key from the host's table of the R8 codecs (no CUDA: the selector's host build reads
+// it), r8_launch_key named by the launch itself (ScopedR8Key, generic_describe.cpp). nullopt where
+// the launch has no such instance (a codec R8 does not run, a form it does not compile, a width
+// beyond the form's).
+[[nodiscard]] std::optional<kernel_facts::R8KernelKey>
+r8_kernel_key(int schedule, QType qtype, Epilogue epilogue, std::int32_t tokens, bool prequantized);
+[[nodiscard]] std::optional<kernel_facts::R8KernelKey>
+r8_launch_key(int schedule, QType qtype, Epilogue epilogue, std::int32_t tokens, bool prequantized);
 bool launch_r8_iq3(int schedule, WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                    cudaStream_t stream, W4a8Activation pre);
 bool launch_r8_iq2(int schedule, WeightCodec codec, Epilogue epilogue, const GemmArgs& args,

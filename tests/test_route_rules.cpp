@@ -888,6 +888,9 @@ const std::vector<NotRule>& not_rules() {
          "a family section's per-pipe count columns (a file format)"},
         {"kernel_facts.cpp", "kResourceColumnsLength", 1,
          "the length of the resources-only column header (a file format)"},
+        {"r8_law.h", "kValuesPerTask", 1,
+         "the K values one quantizer task covers, a 32-value block (generic_r8.cuh, a layout "
+         "fact)"},
         {"rmma_geometry.h", "kTileBytes", 1,
          "the bytes of one accumulator tile, 4 floats a lane (a layout fact)"},
         {"scratch_lifetime.h", "kMaxScratchUses", 1, "scratch lifetime bookkeeping"},
