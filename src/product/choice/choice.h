@@ -1000,7 +1000,26 @@ struct QuantAxis {
     RanksAbove ranks_above;
 };
 
+// Why a row of the axis is or is not the pick (the axis' explain, #618 step 5), in the order the
+// axis settles it.
+enum class QuantAxisWhy : std::uint8_t {
+    NotWeighed,  // the axis does not weigh (QuantAxisPick::weighs false) or the rule's pick is
+                 // withheld
+    Unsupported, // the start does not run it
+    OffTier,     // another side of the quality floor than the rule's pick
+    Estimate,    // its accuracy is only an estimate (quant_authority): shown, never decisive
+    Unmeasured, // its routes are not measured on two cards here while a measured row is in the tier
+    NoChoice,   // no configuration fits at its weights
+    OutOfReach, // its bound cannot land within the band of the best worth served
+    ShortContext, // its choice falls short of the target context
+    OutOfBand,    // served, its worth outside the band of the best anchor
+    Ranked,       // served and within the band, another row won on KLD, worth or the rule's order
+    Chosen,       // the pick
+};
+[[nodiscard]] std::string_view quant_axis_why_name(QuantAxisWhy w) noexcept;
+
 struct QuantAxisPick {
+    std::vector<QuantAxisWhy> why; // one a row, in the rows' order
     // Whether the worth weighs the rows at all: every supported row's bits known, a generation and
     // family the curve decides on (weighs_quantizations), the rule's pick in an own-context tier.
     bool weighs = false;

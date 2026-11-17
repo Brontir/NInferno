@@ -2951,10 +2951,39 @@ RowRank rank_rows(const std::vector<ServedRow>& rows, double band, const RanksAb
     return out;
 }
 
+std::string_view quant_axis_why_name(QuantAxisWhy w) noexcept {
+    switch (w) {
+    case QuantAxisWhy::NotWeighed:
+        return "not_weighed";
+    case QuantAxisWhy::Unsupported:
+        return "unsupported";
+    case QuantAxisWhy::OffTier:
+        return "off_tier";
+    case QuantAxisWhy::Estimate:
+        return "estimate";
+    case QuantAxisWhy::Unmeasured:
+        return "unmeasured";
+    case QuantAxisWhy::NoChoice:
+        return "no_choice";
+    case QuantAxisWhy::OutOfReach:
+        return "out_of_reach";
+    case QuantAxisWhy::ShortContext:
+        return "short_context";
+    case QuantAxisWhy::OutOfBand:
+        return "out_of_band";
+    case QuantAxisWhy::Ranked:
+        return "ranked";
+    case QuantAxisWhy::Chosen:
+        return "chosen";
+    }
+    return "not_weighed";
+}
+
 QuantAxisPick choose_quants(const ModelFacts& quality_model, const CardFacts& card,
                             const QuantAxis& axis) {
     const std::vector<QuantAxisRow>& rows = axis.rows;
     QuantAxisPick out;
+    out.why.assign(rows.size(), QuantAxisWhy::NotWeighed);
     // Only a measurement of a row's own files, or a transfer of the family curve (#618 step 9: the
     // curve within the answer noise of every measured size), decides on its accuracy (#368,
     // quant_authority): the trade weighs the rows that have one, against the rule's pick only
@@ -2976,6 +3005,9 @@ QuantAxisPick choose_quants(const ModelFacts& quality_model, const CardFacts& ca
     }
     out.withheld = !authorized(rows[axis.rule_pick]);
     if (out.withheld) { return out; }
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        out.why[i] = !rows[i].supported ? QuantAxisWhy::Unsupported : QuantAxisWhy::OffTier;
+    }
     // Two rows' worths within the generation's measured decode error are a tie: the lower KLD wins
     // (DECISIONS 60), then the rule's order.
     const double band = std::max(kWorthTie, worth_band(card));
@@ -2991,12 +3023,22 @@ QuantAxisPick choose_quants(const ModelFacts& quality_model, const CardFacts& ca
     std::vector<RowBound> bounds;
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const QuantAxisRow& row = rows[i];
-        if (!row.on_tier || !row.choose_at || (any_measured && !measured(row)) ||
-            !authorized(row)) {
+        if (!row.on_tier || !row.choose_at) { continue; }
+        if (!authorized(row)) {
+            out.why[i] = QuantAxisWhy::Estimate;
+            continue;
+        }
+        if (any_measured && !measured(row)) {
+            out.why[i] = QuantAxisWhy::Unmeasured;
             continue;
         }
         const auto bound = row.choose_at(false);
-        if (bound && bound->chosen) { bounds.push_back({i, bound->anchor_worth}); }
+        if (bound && bound->chosen) {
+            bounds.push_back({i, bound->anchor_worth});
+            out.why[i] = QuantAxisWhy::OutOfReach; // until it is served
+        } else {
+            out.why[i] = QuantAxisWhy::NoChoice;
+        }
     }
     bounds = order_bounds(std::move(bounds));
     std::vector<Scored> served_scored;
@@ -3005,7 +3047,14 @@ QuantAxisPick choose_quants(const ModelFacts& quality_model, const CardFacts& ca
     for (const auto& [i, bound] : bounds) {
         if (!bound_in_reach(bound, top, band)) { break; }
         const auto at = rows[i].choose_at(true);
-        if (!at || !at->chosen || at->context < axis.target_context) { continue; }
+        if (!at || !at->chosen) {
+            out.why[i] = QuantAxisWhy::NoChoice;
+            continue;
+        }
+        if (at->context < axis.target_context) {
+            out.why[i] = QuantAxisWhy::ShortContext;
+            continue;
+        }
         const Scored& sc = at->scored[*at->chosen];
         served_scored.push_back(sc);
         served.push_back({i, at->context, sc.worth, sc.accuracy.kld, at->anchor_worth});
@@ -3015,10 +3064,15 @@ QuantAxisPick choose_quants(const ModelFacts& quality_model, const CardFacts& ca
     // worth of the configuration it would serve, so a row whose choice already moved inside its
     // own resolution cannot trail the top by more than one band in all.
     const RowRank ranking = rank_rows(served, band, axis.ranks_above);
+    for (const ServedRow& r : served) {
+        out.why[r.index] =
+            r.worth < ranking.top - band ? QuantAxisWhy::OutOfBand : QuantAxisWhy::Ranked;
+    }
     if (ranking.best) {
-        out.row     = served[*ranking.best].index;
-        out.context = served[*ranking.best].context;
-        out.scored  = served_scored[*ranking.best];
+        out.row           = served[*ranking.best].index;
+        out.context       = served[*ranking.best].context;
+        out.scored        = served_scored[*ranking.best];
+        out.why[*out.row] = QuantAxisWhy::Chosen;
     }
     return out;
 }

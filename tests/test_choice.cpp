@@ -1220,6 +1220,10 @@ void quant_axis_decides(const json& fixture) {
           "quant axis: an estimate and an off-tier row are not served");
     check(served[4] == 1, "quant axis: the short row is served, then passed over");
     check(served[5] == 0, "quant axis: a bound out of reach is not served");
+    using W = ch::QuantAxisWhy;
+    check(pick.why == std::vector<W>{W::Ranked, W::Estimate, W::Chosen, W::OffTier, W::ShortContext,
+                                     W::OutOfReach},
+          "quant axis: each row's why");
     // Worth and KLD tied: the rule's order decides, both ways.
     const std::vector<Row> tied = {{direct, true, 1.0, 0.01, 32768},
                                    {direct, true, 1.0, 0.01, 32768}};
