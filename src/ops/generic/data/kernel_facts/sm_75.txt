@@ -5482,3 +5482,43 @@ r8 W4a8U4ZpG<64> 8 2 4 2 1 153 0 0 0 1 2048 0 0 - 48 14080 0 0 0 0 0 0 0 0 0 0 0
 r8 W4a8U4ZpG<64> 8 2 8 0 1 183 0 0 0 1 2048 0 0 - 60 20864 0 0 0 0 0 0 0 0 0 0 0 588 100 6 97 851 1570 23 0 1059 2945 130 0 0 0 32 32 32 52 0 0 0 0 0 0 0 0 2 1 0
 r8 W4a8U4ZpG<64> 8 2 8 1 1 183 0 0 0 1 2048 0 0 - 60 20864 0 0 0 0 0 0 0 0 0 0 0 588 100 6 97 851 1570 23 0 1045 3298 146 0 0 0 32 32 32 52 0 0 0 0 0 0 0 0 2 17 0
 r8 W4a8U4ZpG<64> 8 2 8 2 1 224 0 0 0 1 2048 0 0 - 72 23296 0 0 0 0 0 0 0 0 0 0 0 1101 200 6 112 1491 2802 32 0 1763 5094 235 0 0 0 64 64 64 75 0 0 0 0 0 0 0 0 2 1 0
+family i8
+# The I8 tiles (src/ops/generic/generic_i8.cu, #613 PR-6): i8_kernel<WT, WN, Stages, Bits,
+# epilogue> (I8Tile: a CTA of WT x WN warps over 64 WT tokens x 64 WN weight rows, the
+# weight codes as the int8 MMA's unsigned operand, the activation quantized by
+# i8_quantize_kernel first). Compiled from sm_80 on (NINFERNO_I8_KERNELS); below, empty
+# bodies (loops 0). One iteration of the counted loop is one cp.async stage: one group of
+# 64 K values.
+# The columns: the key, the resources, the loop's counts and schedule as above, then the
+# pipe counts of the same iteration: I2F, I2FP, FFMA, FMUL, FADD, IMAD, BAR (sass_counts.py).
+# k_iter is the warp's MMA work per iteration over one m16n8 tile (m x n x k / 128).
+family_nvcc 13.4.92
+family_kernels 27
+family_columns family WT WN stages bits epilogue registers stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total stall_sum sb_waits sb_waits_local outside_total outside_stall outside_waits outside_bar i2f i2fp ffma fmul fadd imad bar sb_waits_global sb_waits_shared
+i8 2 1 4 4 0 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 1 4 4 1 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 1 4 4 2 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 1 4 5 0 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 1 4 5 1 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 1 4 5 2 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 1 4 6 0 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 1 4 6 1 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 1 4 6 2 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 2 4 4 0 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 2 4 4 1 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 2 4 4 2 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 2 4 5 0 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 2 4 5 1 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 2 4 5 2 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 2 4 6 0 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 2 4 6 1 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 2 2 4 6 2 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 4 2 3 4 0 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 4 2 3 4 1 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 4 2 3 4 2 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 4 2 3 5 0 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 4 2 3 5 1 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 4 2 3 5 2 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 4 2 3 6 0 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 4 2 3 6 1 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
+i8 4 2 3 6 2 4 0 0 0 0 0 0 0 - 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2 8 0 0 0 0 0 0 0 0 0 0 0
