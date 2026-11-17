@@ -87,7 +87,9 @@ __global__ void loads_kernel(Planes p, const std::uint8_t* inter, int rows, int 
             const auto* qh = reinterpret_cast<const uint4*>(cb + 128 + 32 * h);
             const uint4 la = ql[0], lb = ql[1], ha = qh[0], hb4 = qh[1];
             const uint2 sc = *reinterpret_cast<const uint2*>(hb + 8 * h);
-            acc ^= fold(la) ^ fold(lb) ^ fold(ha) ^ fold(hb4) ^ sc.x ^ sc.y ^ d;
+            // A sum, not an XOR: q 0 and 1 read the same qh, scale and d words, which an XOR of
+            // both would cancel and let the compiler drop (#979 codex).
+            acc += fold(la) + fold(lb) + fold(ha) + fold(hb4) + sc.x + sc.y + d + q;
         }
     if (acc == 0x9e3779b9U) out[row] = acc; // keeps the loads; never true for the fill below
 }
