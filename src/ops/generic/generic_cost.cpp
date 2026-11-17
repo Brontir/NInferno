@@ -282,6 +282,9 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         // The slice's launch and fixup: the fitted kMmqSliceSeconds, or under the counted unit
         // the kernel's own graph node (its fixup is inside the counted seconds).
         double slice_fixed = route_cost::kMmqSliceSeconds.value();
+        // The counted unit prices the last slice at its own width (generic_gemm.cpp gives it the
+        // remaining tokens: 513 tokens run 512, then 1); the fitted slice prices every slice alike.
+        std::optional<double> last_body;
         // The counted slice (#613 PR-5, mmq_unit::counted): the launch's units at the unit its
         // own resident CTAs give, with the fixup's bytes and graph node; the fitted slice where
         // the kernel's counts, the arch's facts or the width's unit are missing.
@@ -294,24 +297,40 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             if (mmq_unit::scored_arch(arch) && isa) {
                 const double node =
                     ninferno::launch_seconds(d.major, d.minor, LaunchKind::GraphNode).value_or(0.0);
-                // The column tile the kernel's own table picks (core/mmq_columns.h), as the
-                // choice prices it, not the fitted price's 8-column step.
-                const int j = mmq_columns::pick(static_cast<int>(tt), d.major, d.minor, format,
-                                                widest, facts);
+                // The column tile the kernel's own table picks for each slice's width
+                // (core/mmq_columns.h), as the choice prices it, not the fitted price's 8-column
+                // step.
                 // A gated call runs one product a set (generic_gemm.cpp: gate, then up), each of
                 // n rows with its own graph node.
-                if (const auto counted = mmq_unit::launch_seconds(
-                        arch, problem.qtype, *isa, static_cast<int>(n), static_cast<int>(k),
-                        static_cast<int>(tt), j, d.sms, clk, bw, node)) {
+                const auto counted_at = [&](double width) {
+                    return mmq_unit::launch_seconds(arch, problem.qtype, *isa, static_cast<int>(n),
+                                                    static_cast<int>(k), static_cast<int>(width),
+                                                    mmq_columns::pick(static_cast<int>(width),
+                                                                      d.major, d.minor, format,
+                                                                      widest, facts),
+                                                    d.sms, clk, bw, node);
+                };
+                const double rest       = t - (slices - 1) * tt;
+                const auto counted      = counted_at(tt);
+                const auto counted_last = rest == tt ? counted : counted_at(rest);
+                if (counted && counted_last) {
                     slice_body  = sets * *counted;
+                    last_body   = sets * *counted_last;
                     slice_fixed = sets * node;
                 }
             }
         }
-        const double price = complete ? slices * (slice_body + slice_fixed) +
-                                            (slices - 1) * quant_mmq_counted(tt) +
-                                            quant_mmq_counted(t - (slices - 1) * tt)
-                                      : slices * (slice_body + quant(tt) + slice_fixed);
+        const double price =
+            last_body ? (complete ? (slices - 1) * (slice_body + slice_fixed) +
+                                        (*last_body + slice_fixed) +
+                                        (slices - 1) * quant_mmq_counted(tt) +
+                                        quant_mmq_counted(t - (slices - 1) * tt)
+                                  : (slices - 1) * (slice_body + quant(tt) + slice_fixed) +
+                                        (*last_body + quant(tt) + slice_fixed))
+            : complete
+                ? slices * (slice_body + slice_fixed) + (slices - 1) * quant_mmq_counted(tt) +
+                      quant_mmq_counted(t - (slices - 1) * tt)
+                : slices * (slice_body + quant(tt) + slice_fixed);
         if (complete) {
             const kr::Completeness c = kr::completeness(chip, call, 1.0);
             offer(Route{Family::GgmlMmq, 0}, price + c.output + c.residual);
