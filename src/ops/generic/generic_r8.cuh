@@ -339,6 +339,11 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
 
 template <class C, class S, int NT, Epilogue E, bool kPre = false>
 void r8_launch_tokens(const GemmArgs& args, cudaStream_t stream, W4a8Activation act = {}) {
+    if (kernel_facts::R8KernelKey* key = r8_key_target()) {
+        *key = {
+            kernel_facts::decoder_name<C>(), S::kWarps, S::kRows, NT, static_cast<int>(E), kPre};
+        return;
+    }
     const dim3 grid((args.rows + S::kRowsPerCta - 1) / S::kRowsPerCta);
     const auto smem = (kPre ? std::size_t{0}
                             : static_cast<std::size_t>(r8_smem_bytes(NT, args.k, C::kMin))) +

@@ -55,6 +55,9 @@ struct SectionFamily {
     std::string_view head_columns;
     int text_keys = 0;
     int int_keys  = 0;
+    // Columns past the pipe counts (kernel_facts.py Family.prologue): the r8 rows' quantizer
+    // loop, sass_counts.py PROLOGUE_FIELDS.
+    std::string_view extra_columns = {};
 };
 
 constexpr SectionFamily kSections[] = {
@@ -65,6 +68,9 @@ constexpr SectionFamily kSections[] = {
      1, 8},
     {"gemma4", "family kernel D G slice rows Bc partial fp8 chain registers stack local shared", 1,
      8},
+    {"r8", "family codec warps rows nt epilogue pre registers stack local shared", 1, 5,
+     " pro_loops pro_total pro_int pro_fp pro_ldg_bytes pro_sts_bytes pro_stall glb_waits"
+     " outside_glb_waits pro_glb_waits"},
 };
 static_assert(std::size(kSections) == std::size(kSectionFamilies));
 
@@ -122,7 +128,16 @@ void read_section_row(Section& s, const SectionFamily& f, Columns columns,
     KernelFacts k;
     fields >> k.registers >> k.stack_bytes >> k.local_bytes >> k.static_shared_bytes;
     if (!fields) throw std::runtime_error("kernel facts: malformed row: " + line);
-    if (columns != Columns::Resources) k.loop = read_loop(fields, true, line);
+    if (columns != Columns::Resources) {
+        k.loop = read_loop(fields, true, line);
+        if (!f.extra_columns.empty()) {
+            PrologueCounts p;
+            fields >> p.loops >> p.total >> p.int_alu >> p.fp_alu >> p.ldg_bytes >> p.sts_bytes >>
+                p.stall_sum >> p.loop_global_waits >> p.outside_global_waits >> p.global_waits;
+            if (!fields) throw std::runtime_error("kernel facts: malformed prologue: " + line);
+            k.prologue = p;
+        }
+    }
     if (fields >> std::ws; !fields.eof()) {
         throw std::runtime_error("kernel facts: fields past the columns': " + line);
     }
@@ -149,7 +164,7 @@ std::string row_key(const RmmaKernelKey& k) {
 // family_nvcc, family_kernels and family_columns lines and rows of that family alone.
 Snapshot parse(std::string_view text) {
     Snapshot s;
-    std::optional<Columns> columns; // what the columns line, read before any row, promises
+    std::optional<Columns> columns;        // what the columns line, read before any row, promises
     Section* section            = nullptr; // the section being read, after its `family` line
     const SectionFamily* family = nullptr;
     std::optional<Columns> section_columns;
@@ -190,7 +205,8 @@ Snapshot parse(std::string_view text) {
                 section->has_kernels    = true;
             } else if (first == "family_columns") {
                 const std::string loop = std::string(family->head_columns) +
-                                         std::string(kLoopColumns) + std::string(kPipeColumns);
+                                         std::string(kLoopColumns) + std::string(kPipeColumns) +
+                                         std::string(family->extra_columns);
                 if (rest == loop)
                     section_columns = Columns::Schedule;
                 else if (rest == family->head_columns)
@@ -380,6 +396,15 @@ std::optional<KernelFacts> gemma4_facts(std::string_view arch, const Gemma4Kerne
         k += std::to_string(v);
     }
     return section_facts(arch, "gemma4", k);
+}
+
+std::optional<KernelFacts> r8_facts(std::string_view arch, const R8KernelKey& key) {
+    std::string k = key.codec;
+    for (const int v : {key.warps, key.rows, key.nt, key.epilogue, key.pre ? 1 : 0}) {
+        k += ' ';
+        k += std::to_string(v);
+    }
+    return section_facts(arch, "r8", k);
 }
 
 std::optional<KernelFacts> rmma_facts(std::string_view arch, const RmmaKernelKey& key) {

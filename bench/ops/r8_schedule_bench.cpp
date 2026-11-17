@@ -24,7 +24,7 @@
 // where same=1 means the output bytes equal the first schedule's, decode=1 that the first token's
 // bytes equal the decode route's, "picked" marks the dispatcher's choice (select_route at T,
 // AllowA8: with this GPU's r8_decode_table.h entries), "rules" the shape-class rules' choice
-// without them (r8_rules_route at T = 1, what tools/bench/r8_decode_table.py measures entries
+// without them (r8_rules_route at T, what tools/bench/r8_decode_table.py measures entries
 // against), "a16pick" the dispatcher's A16Only choice and h the FNV-1a hash of the whole output;
 // then
 //   pick <format> <epilogue> n=<n> k=<k> t=<T> picked=<route> <us> best=<route> <us>
@@ -303,7 +303,7 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         }
     }
 
-    const generic::Route rules = generic::r8_rules_route(problem, 1);
+    const generic::Route rules = generic::r8_rules_route(problem, tokens);
     int best = 0, at_picked = 0;
     std::vector<double> med(schedules);
     for (int i = 0; i < schedules; ++i) {

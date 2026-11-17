@@ -32,8 +32,8 @@ namespace ninferno::ops::detail::generic::kernel_facts {
 struct RmmaKernelKey {
     std::string decoder; // canonical type name: "GgmlQ45KQuadDecoder<4>", "Bf16Decoder"
     int warps_m = 0, warps_k = 0, m_tiles = 0, n_tiles = 0, cluster = 1;
-    int epilogue  = 0; // Epilogue as an integer
-    bool latency  = false;
+    int epilogue = 0; // Epilogue as an integer
+    bool latency = false;
     // Where a min-term kernel's group sums come from (rmma_kernel's RmmaSums): 0 the MMA with
     // ones (every other decoder's kernels too), 1 FP32 adds, 2 the call's pre-summed plane.
     int sums = 0;
@@ -81,6 +81,25 @@ struct PipeCounts {
     int bar  = 0; // CTA barriers: BAR.SYNC, BAR.ARV, BAR.RED
 };
 
+// A second counted loop of a section row (#613 PR-10): the R8 decode kernels' activation
+// quantizer, the F2I-marked loop before the dp4a loop (sass_counts.py PROLOGUE_FIELDS). One
+// iteration's counts; loops 0 where the kernel reads a quantized activation (kPre).
+struct PrologueCounts {
+    int loops     = 0;
+    int total     = 0; // instructions of one iteration
+    int int_alu   = 0;
+    int fp_alu    = 0;
+    int ldg_bytes = 0; // global bytes one iteration loads, per warp
+    int sts_bytes = 0; // shared bytes one iteration stores, per warp
+    int stall_sum = 0; // the static schedule's clocks for one warp alone
+    // The waits that expose a global load's latency (sass_counts.py global_waits): in one
+    // iteration of this loop, in one iteration of the dp4a loop and outside both (the r8 row's
+    // glb_waits columns, kept here beside the quantizer's: only the r8 section has them).
+    int global_waits         = 0;
+    int loop_global_waits    = 0;
+    int outside_global_waits = 0;
+};
+
 struct LoopCounts {
     int loops  = 0; // candidate K loops found: 1 normally; 0 none (every count is 0); 2+ ambiguous
     int k_iter = 0; // K values per warp per iteration from the weight MMAs; 0 unknown
@@ -110,11 +129,12 @@ struct LoopCounts {
 };
 
 struct KernelFacts {
-    int registers                   = 0; // per thread
-    std::size_t stack_bytes         = 0; // per thread: the stack frame (spills and stack arrays)
-    std::size_t local_bytes         = 0; // per thread: other local memory
-    std::size_t static_shared_bytes = 0; // per CTA
-    std::optional<LoopCounts> loop;      // schema 4 snapshots; nullopt in a resources-only one
+    int registers                   = 0;    // per thread
+    std::size_t stack_bytes         = 0;    // per thread: the stack frame (spills and stack arrays)
+    std::size_t local_bytes         = 0;    // per thread: other local memory
+    std::size_t static_shared_bytes = 0;    // per CTA
+    std::optional<LoopCounts> loop;         // schema 4 snapshots; nullopt in a resources-only one
+    std::optional<PrologueCounts> prologue; // the r8 section's pro_ columns (#613 PR-10)
 
     // Per thread: every local-memory byte (the driver's localSizeBytes), the one spill measure
     // the price, the wide rule and the live check all read.
@@ -151,7 +171,11 @@ struct SnapshotHeader {
 //           256 8 256 2 64 1 0 0") or `volta` / `volta_tiled` (the Volta decode kernels <D,
 //           MaxRows = rows>, the other fields 0). The decode plan reads the CTAs an SM holds from
 //           them (#830), never the host's kernels.
-inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8", "gemma4"};
+//   "r8"    the R8 decode kernels r8_kernel<codec, R8Schedule<warps, rows>, NT, epilogue, kPre>
+//           (#613 PR-10): one iteration of the loop holding the dp4a is a group of 32-value
+//           blocks per lane and row (no MMA: k_iter 0); key "codec warps rows nt epilogue pre"
+//           ("W4a8Q45K<4> 4 1 1 0 0").
+inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8", "gemma4", "r8"};
 
 struct MmqKernelKey {
     int type      = 0; // the ggml_type value: 12 Q4_K, 13 Q5_K, 14 Q6_K
@@ -177,6 +201,14 @@ struct Gemma4KernelKey {
     bool partial = false, fp8 = false, chain = false;
 };
 
+struct R8KernelKey {
+    std::string codec; // canonical type name: "W4a8Q45K<4>", "W4a8Q6K"
+    int warps = 0, rows = 0;
+    int nt       = 0;     // the token slots the kernel is compiled for
+    int epilogue = 0;     // Epilogue as an integer
+    bool pre     = false; // the activation arrives quantized (kPre)
+};
+
 // One section of a label's snapshot: the nvcc its rows were read under and their count; nullopt
 // where the label has no snapshot or the snapshot no such section.
 struct SectionHeader {
@@ -194,6 +226,7 @@ section_rows(std::string_view arch, std::string_view family);
                                                     const W4a8KernelKey& key);
 [[nodiscard]] std::optional<KernelFacts> gemma4_facts(std::string_view arch,
                                                       const Gemma4KernelKey& key);
+[[nodiscard]] std::optional<KernelFacts> r8_facts(std::string_view arch, const R8KernelKey& key);
 
 // The build architecture labels with a committed snapshot, in file order.
 [[nodiscard]] std::vector<std::string_view> snapshot_archs();
