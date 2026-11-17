@@ -91,6 +91,11 @@ struct IsaRow {
     IsaByWarps dram_tlbwarm_latency;    // each warp in a 512 KB range whose pages are walked
     IsaByWarps dram_tlbwarm_latency_ns; // the same in wall nanoseconds
 
+    // The L2's bytes per SM clock per SM: coalesced 32-bit ld.cg loads over an L2-resident
+    // buffer, 4 CTAs of 4 warps an SM, 8 in flight a warp (isa_probe 18 on; unknown on a row an
+    // older probe measured).
+    std::optional<double> l2_bytes_per_sm_clock;
+
     // The launch facts, nullopt where the architecture has no launch run (core/launch_facts.h
     // reads them as seconds).
     std::optional<IsaLaunch> launch;
