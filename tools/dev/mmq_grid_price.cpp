@@ -38,6 +38,7 @@ int main(int argc, char** argv) {
     const double node = launch_seconds(d.major, d.minor, LaunchKind::GraphNode).value_or(0.0);
     const double clk  = d.facts.reference_clock_hz();
     const double bw   = d.facts.dram_bytes_per_s();
+    const double l2   = static_cast<double>(d.l2_bytes);
     const std::map<std::string, QType> formats{
         {"q4_K", QType::GGML_Q4_K}, {"q5_K", QType::GGML_Q5_K}, {"q6_K", QType::GGML_Q6_K}};
 
@@ -73,7 +74,7 @@ int main(int argc, char** argv) {
             bool ok  = true;
             for (const Launch& l : launches) {
                 const auto t = mmq_unit::launch_seconds(arch, l.q, *isa, l.rows, l.k, columns, j,
-                                                        d.sms, clk, bw, node);
+                                                        d.sms, clk, bw, l2, node);
                 if (!t) {
                     ok = false;
                     break;

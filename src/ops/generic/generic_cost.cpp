@@ -301,7 +301,8 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
                 // n rows with its own graph node.
                 if (const auto counted = mmq_unit::launch_seconds(
                         arch, problem.qtype, *isa, static_cast<int>(n), static_cast<int>(k),
-                        static_cast<int>(tt), j, d.sms, clk, bw, node)) {
+                        static_cast<int>(tt), j, d.sms, clk, bw, static_cast<double>(d.l2_bytes),
+                        node)) {
                     slice_body  = sets * *counted;
                     slice_fixed = sets * node;
                 }
