@@ -144,8 +144,9 @@ __global__ __launch_bounds__(kRouterSimtWarps *
             last = atomicAdd(ticket, 1) == static_cast<int>(gridDim.x) - 1;
             if (last) *ticket = 0;
         }
+        // No trigger: the expert kernel launches as this CTA exits, after the plan (#617 K end
+        // trigger), so its CTAs never sit resident waiting for the route.
         if (!__syncthreads_or(last)) return;
-        if (threadIdx.x == 0) pdl::trigger_dependents();
         __threadfence();
         int* ids     = reinterpret_cast<int*>(router_smem);
         int* jobs_at = ids + 32;
