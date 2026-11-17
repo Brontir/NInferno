@@ -389,3 +389,9 @@ cmake_language(DEFER CALL ninferno_assert_host_only ninferno_route_price_sweep)
 ninferno_add_op_test(ninferno_mmq_unit_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_mmq_unit.cpp"
   LIBRARIES ninferno_linear_test_support)
+
+# The counted W4A8 K tile (ops/generic/w4a8_unit.h, #613 PR-6): the snapshot keys of every schedule
+# and the law's arithmetic against the frozen figure on #978. No GPU.
+ninferno_add_op_test(ninferno_w4a8_unit_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_w4a8_unit.cpp"
+  LIBRARIES ninferno_linear_test_support)

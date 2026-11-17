@@ -51,6 +51,7 @@ add_library(ninferno_ops_host_objects OBJECT
   "${CMAKE_CURRENT_LIST_DIR}/generic_ggml_host.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/ggml_mmq_host.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/mmq_unit.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/w4a8_unit.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/../moe/moe_plan.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/selector_facts_host.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_facts_sink.cpp"
@@ -78,6 +79,7 @@ endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/generic_cost.cpp"
                       "${CMAKE_CURRENT_LIST_DIR}/mmq_unit.cpp"
+                      "${CMAKE_CURRENT_LIST_DIR}/w4a8_unit.cpp"
                       "${CMAKE_CURRENT_LIST_DIR}/price_tool.cpp"
     TARGET_DIRECTORY ninferno_ops_host_objects
     APPEND PROPERTY COMPILE_OPTIONS "-ffp-contract=off")
