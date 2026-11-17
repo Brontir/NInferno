@@ -287,9 +287,10 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         if (mmq_unit::counted()) {
             // The release engine's kernels for the board (release_arch), the same answer on
             // every machine whatever its build, as the register MMA's facts are (#556).
+            // On the architectures it was scored on alone (mmq_unit::scored_arch).
             const std::string arch          = kernel_facts::release_arch(d.major, d.minor);
             const std::optional<IsaRow> isa = isa_row(d.major, d.minor);
-            if (!arch.empty() && isa) {
+            if (mmq_unit::scored_arch(arch) && isa) {
                 const double node =
                     ninferno::launch_seconds(d.major, d.minor, LaunchKind::GraphNode).value_or(0.0);
                 // The column tile the kernel's own table picks (core/mmq_columns.h), as the

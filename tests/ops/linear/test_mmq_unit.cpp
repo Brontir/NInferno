@@ -125,7 +125,6 @@ int main() {
                !mmq_unit::scored_arch("80") && !mmq_unit::scored_arch("90") &&
                !mmq_unit::scored_arch("100"),
            "the fitted price where the unit is not scored");
-    expect(!mmq_unit::unit_seconds("75", QType::GGML_Q4_K, 64, row, f), "no unit on sm_75");
     if (failures == 0) std::cout << "mmq_unit: ok\n";
     return failures == 0 ? 0 : 1;
 }

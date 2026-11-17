@@ -58,8 +58,9 @@ struct UnitFacts {
 // The release architectures it was scored on (sm_86, sm_89, sm_120a: the sealed grids of the RTX
 // 3060, 3090, 4060 Ti, 4070 Ti, 4090 and 5070 Ti, and the choice's prefill fixtures). sm_75 is
 // refuted there: the RTX 2080 Ti's prefill fixtures read +17..+39 % over against -2..+16 % for the
-// fitted slice (#613 PR-5, 17.11); sm_70, sm_80, sm_90 and sm_100 have no lab card that checks it.
-// Elsewhere the fitted price stays.
+// fitted slice (#613 PR-5, 17.11); sm_80, sm_90 and sm_100 have no lab card that checks it, and
+// sm_70's snapshot holds no mmq loop counts (resources only). The selector and the choice price
+// the fitted slice elsewhere; unit_seconds itself is not gated (the price tools read it anywhere).
 [[nodiscard]] bool scored_arch(std::string_view arch) noexcept;
 
 // The format's bytes per 256 values (Q4_K 144, Q5_K 176, Q6_K 210); 0 for a non-ggml format.

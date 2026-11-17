@@ -47,8 +47,8 @@ std::optional<double> unit_seconds(std::string_view arch, QType q, int j, const 
                                    const UnitFacts& f) {
     const int type = format_facts(q).ggml_type;
     const double b = bytes_per_256(q);
-    if (!scored(q) || !scored_arch(arch) || type < 0 || !(b > 0) || f.weight_tiles <= 0 ||
-        f.ctas <= 0 || !(f.clock_hz > 0) || !(f.dram_bytes_per_s > 0) || !isa.dram_latency.w1 ||
+    if (!scored(q) || type < 0 || !(b > 0) || f.weight_tiles <= 0 || f.ctas <= 0 ||
+        !(f.clock_hz > 0) || !(f.dram_bytes_per_s > 0) || !isa.dram_latency.w1 ||
         !isa.shared_latency || !isa.l2_bytes_per_sm_clock) {
         return std::nullopt;
     }

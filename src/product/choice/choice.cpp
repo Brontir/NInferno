@@ -1087,10 +1087,12 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         // The counted unit (ops/generic/mmq_unit.h, #613 PR-5), the selector's switch
         // (mmq_unit::counted): the release engine's mul_mat_q counts for the card's arch and its
         // isa_probe facts; the fixup's graph node from the launch facts.
-        const std::string counted_arch =
+        // On the architectures it was scored on alone (mmq_unit::scored_arch).
+        std::string counted_arch =
             mmq_unit::counted()
                 ? ops::detail::generic::kernel_facts::release_arch(card.major, card.minor)
                 : std::string();
+        if (!mmq_unit::scored_arch(counted_arch)) counted_arch.clear();
         const std::optional<IsaRow> counted_isa =
             counted_arch.empty() ? std::nullopt : isa_row(card.major, card.minor);
         const double counted_node =
