@@ -281,10 +281,10 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         // The slice's launch and fixup: the fitted kMmqSliceSeconds, or under the counted unit
         // the kernel's own graph node (its fixup is inside the counted seconds).
         double slice_fixed = route_cost::kMmqSliceSeconds.value();
-        // The counted slice (#613 PR-5, mmq_counted_unit): the launch's units at the unit its
+        // The counted slice (#613 PR-5, mmq_unit::counted): the launch's units at the unit its
         // own resident CTAs give, with the fixup's bytes and graph node; the fitted slice where
         // the kernel's counts, the arch's facts or the width's unit are missing.
-        if (mmq_counted_unit()) {
+        if (mmq_unit::counted()) {
             // The release engine's kernels for the board (release_arch), the same answer on
             // every machine whatever its build, as the register MMA's facts are (#556).
             const std::string arch          = kernel_facts::release_arch(d.major, d.minor);
@@ -365,10 +365,6 @@ std::optional<bool> g_rmma_counted_law_override;
 // to a8_candidates.
 std::optional<bool> g_completeness_terms_override;
 
-// The counted MMQ unit (mmq_unit.h, #613 PR-5): route_cost::kMmqCountedUnit says whether this
-// binary prices it (false: golden-equal), a test overrides it for its process.
-std::optional<bool> g_mmq_counted_unit_override;
-
 } // namespace
 
 bool rmma_counted_law() noexcept {
@@ -385,14 +381,6 @@ bool completeness_terms() noexcept {
 
 void completeness_terms_for_test(std::optional<bool> on) noexcept {
     g_completeness_terms_override = on;
-}
-
-bool mmq_counted_unit() noexcept {
-    return g_mmq_counted_unit_override.value_or(route_cost::kMmqCountedUnit);
-}
-
-void mmq_counted_unit_for_test(std::optional<bool> on) noexcept {
-    g_mmq_counted_unit_override = on;
 }
 
 bool a16_route_priced(Route route, bool bf16_mma_native) {

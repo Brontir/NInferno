@@ -2,6 +2,7 @@
 
 #include "core/mmq_columns.h"
 #include "ops/generic/kernel_facts.h"
+#include "ops/generic/route_cost_constants.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -15,7 +16,15 @@ constexpr double kTileRows           = 128;
 constexpr double kActivationBytes    = 2 * 144; // two block_q8_1_mmq a column per 256 values
 constexpr double kValuesPerIteration = 256;
 
+std::optional<bool> g_counted_override;
+
 } // namespace
+
+bool counted() noexcept {
+    return g_counted_override.value_or(ops::detail::generic::route_cost::kMmqCountedUnit);
+}
+
+void counted_for_test(std::optional<bool> on) noexcept { g_counted_override = on; }
 
 double bytes_per_256(QType q) noexcept {
     return ggml_bits_per_value(q) * kValuesPerIteration / 8.0;

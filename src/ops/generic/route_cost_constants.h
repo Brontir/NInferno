@@ -159,7 +159,7 @@ inline constexpr bool kCompletenessTerms = false;
 // goldens hold); true, the counted unit of ops/generic/mmq_unit.h (the kernel's SASS counts, the
 // arch's isa_probe facts, the board's facts) times the launch's units, where every input is known,
 // and the fitted slice where one is missing. One switch a binary, as kRmmaCountedLaw; a test flips
-// it for its process (mmq_counted_unit_for_test, generic_gemm.h). It ships false until the A/B on
+// it for its process (mmq_unit::counted_for_test, mmq_unit.h). It ships false until the A/B on
 // the RTX 3060 and 4090 (#613 PR-5).
 inline constexpr bool kMmqCountedUnit = false;
 // The activation quantizers' DRAM bytes per value, counted from their kernels and static_asserted

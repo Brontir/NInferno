@@ -1,4 +1,5 @@
 #include "ops/generic/price_tool.h"
+#include "ops/generic/mmq_unit.h"
 
 #include "core/device_class.h"
 #include "core/generation.h"
@@ -370,7 +371,7 @@ int run(const Options& o) {
     const GpuFactsRow& row = *o.board;
     const QType qtype      = *o.format;
     // The A8 MMQ slice by the counted unit or the fitted one (#613 PR-5), for this process.
-    if (o.mmq_counted_unit) generic::mmq_counted_unit_for_test(*o.mmq_counted_unit);
+    if (o.mmq_counted_unit) mmq_unit::counted_for_test(*o.mmq_counted_unit);
     const DeviceClass d    = price_board_class(row);
     if (d.sms <= 0 || d.registers_per_sm <= 0 || !d.facts.has_roofline()) {
         std::fprintf(stderr, "price: %s has no roofline in its facts\n", row.name.c_str());

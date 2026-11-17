@@ -35,6 +35,12 @@
 
 namespace ninferno::mmq_unit {
 
+// Whether the selector's A8 candidate and the choice price ggml MMQ by the counted unit:
+// route_cost::kMmqCountedUnit (ops/generic/route_cost_constants.h) unless a test or the price tool
+// set an override for its process (nullopt clears it). Off, every price is the one before.
+[[nodiscard]] bool counted() noexcept;
+void counted_for_test(std::optional<bool> on) noexcept;
+
 // The launch a unit is priced in, and the board it runs on.
 struct UnitFacts {
     int weight_tiles        = 0; // distinct weight tiles the resident CTAs read an iteration
