@@ -90,12 +90,13 @@ fi
 # zlib's header and library (zlib1g-dev on Debian and Ubuntu, zlib-devel on Fedora): configure
 # asks for zlib by name below and stops late, after the dav1d build, when it is missing.
 # shellcheck disable=SC2086 # CC may carry its own flags
-printf '#include <zlib.h>\nint main(void) { return zlibVersion() == 0; }\n' |
-  $CC -x c -o /dev/null - -lz > /dev/null 2>&1 || {
-  echo "ffmpeg.sh: zlib is needed (FFmpeg's PNG decoder, compressed MP4 and Matroska headers):" \
-    "install zlib1g-dev or zlib-devel" >&2
+if ! zlib_out=$(printf '#include <zlib.h>\nint main(void) { return zlibVersion() == 0; }\n' |
+  $CC -x c -o /dev/null - -lz 2>&1); then
+  echo "ffmpeg.sh: zlib is needed (PNG, compressed MP4 headers and Matroska tracks):" \
+    "install zlib1g-dev or zlib-devel; the compiler said:" >&2
+  printf '%s\n' "$zlib_out" | tail -n 5 >&2
   exit 1
-}
+fi
 
 tmp=$(mktemp -d)
 partial=$PREFIX.partial.$$
