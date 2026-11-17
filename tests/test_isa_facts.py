@@ -76,6 +76,11 @@ fact int32_cycles_per_warp_instruction 2.01 clk
     "fact sm_clock_mhz_mma 1900.0 mhz\nfact shared_latency 29.5 clk\n" + \
     "fact l1_ldg32_cycles_per_sm 2.0 clk\nfact l2_ldg32_cycles_per_sm 8.4 clk\n" + \
     "fact l2_bytes_per_sm_clock 15.2 byte\n" + \
+    "".join(f"fact imma_{role}_{what} {v:.1f} clk\n"
+            for role, base in (("wide", 32.0), ("narrow", 16.0))
+            for what, v in (("cycles_per_partition", base), ("cycles_per_partition_w4", base * 1.4),
+                            ("cycles_per_partition_w8", base * 1.1),
+                            ("dependent_latency", base + 2.0))) + \
     "".join(f"fact lat_{op} {v:.1f} clk\n" for op, v in (
         ("imad", 4.5), ("add_chain", 4.0), ("lop3", 4.2), ("prmt", 4.4), ("shf", 4.5),
         ("hfma2", 5.0), ("ffma", 4.1), ("shfl", 24.0), ("cvt_i2f", 4.5), ("cvt_f2i", 12.0),
@@ -146,6 +151,23 @@ SASS_70 = """
 
 
 class IsaFacts(unittest.TestCase):
+    def test_imma_facts_owed_from_sm_75(self):
+        # Probe 19's int8 MMA facts: owed by a run on sm_75 and later, not on sm_70 (no int8
+        # MMA), and by no run of an earlier probe; a fact of an earlier probe stays owed on sm_70.
+        for name in ip.PROBE_19_FACTS:
+            self.assertTrue(ip.owed_fact(name, 19, 75), name)
+            self.assertTrue(ip.owed_fact(name, 19, 120), name)
+            self.assertFalse(ip.owed_fact(name, 19, 70), name)
+            self.assertFalse(ip.owed_fact(name, 18, 89), name)
+            self.assertTrue(ip.owed_fact(name, 19, None), name)
+        self.assertTrue(ip.owed_fact("shared_latency", 19, 70))
+
+    def test_imma_facts_refused_on_sm_70(self):
+        # A probe-19 sm_70 file with int8 MMA lines (stale or edited) is refused, not merged.
+        text = SAMPLE.replace("cc 89", "cc 70").replace("arch sm_89", "arch sm_70")
+        with self.assertRaisesRegex(ValueError, "cannot have"):
+            ip.parse_run(text)
+
     def test_parse_and_row(self):
         head, facts = ip.parse_run(SAMPLE)
         self.assertEqual(head["card"], "NVIDIA GeForce RTX 4090")
@@ -175,6 +197,8 @@ class IsaFacts(unittest.TestCase):
             .replace("fact mma_cycles_per_partition 32.048", "fact mma_cycles_per_partition 8.056") \
             .replace("fact tensor_flops_per_sm_clock 511.233", "fact tensor_flops_per_sm_clock 254.220") \
             .replace("arch sm_89", "arch sm_70").replace("sass_per_mma 1", "sass_per_mma 4")
+        # sm_70 has no int8 MMA: its run prints no imma facts.
+        volta = "\n".join(l for l in volta.split("\n") if not l.startswith("fact imma_"))
         head, facts = ip.parse_run(volta)
         row = ip.row_of(head, facts, "isa_probe_70.txt")
         self.assertEqual(row["mma_flops"], 2048)
@@ -754,7 +778,7 @@ class IsaFacts(unittest.TestCase):
             # of a later one: a row keeps lacking those until its card is probed again.
             probe = int(row["tool"]["probe"].split()[1])
             self.assertEqual(set(row["facts"]),
-                             {f for f in ip.FACTS if ip.first_probe(f) <= probe}, key)
+                             {f for f in ip.FACTS if ip.owed_fact(f, probe, row["cc"])}, key)
             for field in ("sms", "l2_bytes"):
                 self.assertGreater(row[field], 0, f"{key} {field}")
             for field in ("driver", "runtime"):

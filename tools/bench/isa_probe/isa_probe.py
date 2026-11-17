@@ -160,6 +160,23 @@ FACTS += ("sm_clock_mhz_chase_held",)
 # bytes per SM clock per SM the second gives.
 PROBE_18_FACTS = ("l1_ldg32_cycles_per_sm", "l2_ldg32_cycles_per_sm", "l2_bytes_per_sm_clock")
 FACTS += PROBE_18_FACTS
+# The int8 tensor shapes the W4A8 tiles run, by role (probe 19, #978): `wide` the shape of a
+# 32-value K group (IMMA.16832 from sm_80, IMMA.8816 on sm_75), `narrow` the shape of a codec with
+# 16-value sub-block scales (IMMA.16816; IMMA.8816 on sm_75; per SASS IMMA, so on sm_75 a wide
+# mma_s8 call is four of them and a narrow one two). Per MMA a partition: saturated, with
+# one CTA of 4 and 8 warps, and the dependent latency. sm_70 has no int8 MMA and owes none.
+PROBE_19_FACTS = tuple(f"imma_{role}_{what}" for role in ("wide", "narrow") for what in (
+    "cycles_per_partition", "cycles_per_partition_w4", "cycles_per_partition_w8",
+    "dependent_latency"))
+FACTS += PROBE_19_FACTS
+IMMA_SINCE_CC = 75
+
+
+def owed_fact(name, probe, cc):
+    """Whether a run of `probe` on a card of compute capability `cc` (None: unknown) prints the
+    fact: every fact of its version or an earlier one, the int8 MMA facts only from sm_75 on."""
+    return first_probe(name) <= probe and not (
+        name in PROBE_19_FACTS and cc is not None and cc < IMMA_SINCE_CC)
 
 
 # The facts probe 17 split or renamed: the four conversions alone (until then two pairs, each the
@@ -174,6 +191,8 @@ def first_probe(name):
     earlier probe still parses and a run that lost a fact of its own version does not. An earlier
     row is stale all the same: test_isa_facts fails while a row's probe is not the checked-in
     one."""
+    if name in PROBE_19_FACTS:
+        return 19
     if name in PROBE_18_FACTS:
         return 18
     if name in PROBE_17_FACTS:
@@ -300,9 +319,16 @@ def parse_run(text):
     # The version decides which facts the run owes; a run without its probe line owes them all.
     version = PROBE_VALUE.fullmatch(head.get("probe", ""))
     owed = int(version.group(1)) if version else max(first_probe(f) for f in FACTS)
-    missing = [f for f in FACTS if f not in facts and first_probe(f) <= owed]
+    cc = int(head["cc"]) if head.get("cc", "").isdigit() else None
+    missing = [f for f in FACTS if f not in facts and owed_fact(f, owed, cc)]
     if missing or not ended or not checked:
         raise ValueError(f"incomplete run: missing {missing}, ended={ended}, selfcheck={checked}")
+    # An int8 MMA fact on a card without int8 MMA (sm_70) is impossible: a stale or edited file.
+    unowed = [f for f in PROBE_19_FACTS
+              if f in facts and cc is not None and cc < IMMA_SINCE_CC]
+    if unowed:
+        raise ValueError(f"facts this card cannot have (cc {cc}: no int8 MMA before cc "
+                         f"{IMMA_SINCE_CC}): {unowed}")
     if failures:
         raise ValueError("the probe's self-check failed: " + "; ".join(failures))
     for k in HEADER + tuple(k for k, since in HEADER_SINCE.items() if since <= owed):

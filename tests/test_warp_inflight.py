@@ -751,10 +751,10 @@ class WarpInflight(unittest.TestCase):
         # chain16's margin is thin on sm_75 and sm_86 (inside the latency's own w1 / w2 spread:
         # the verdict there is formal, see #765) and wide on sm_89.
         want = {  # file: (latency is the card's own, chain8 reading / bound, chain16 the same)
-            "warp_inflight_75_rtx2080ti_probe5.txt": (True, 1.348, 1.025),
+            "warp_inflight_75_rtx2080ti_probe5.txt": (True, 1.348, 1.024),
             "warp_inflight_86_rtx3090_probe5.txt": (True, 1.303, 1.016),
-            "warp_inflight_89_rtx4090_probe5.txt": (True, 1.422, 1.141),
-            "warp_inflight_89_rtx4070ti_probe5.txt": (False, 1.410, 1.141),
+            "warp_inflight_89_rtx4090_probe5.txt": (True, 1.435, 1.151),
+            "warp_inflight_89_rtx4070ti_probe5.txt": (False, 1.422, 1.151),
         }
         runs = os.path.join(os.path.dirname(wi.SOURCE), "runs")
         for name, (mine, m8, m16) in want.items():
