@@ -16,6 +16,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -28,11 +29,21 @@ ArtifactCacheDirs artifact_cache_dirs(const std::filesystem::path& dir) {
     namespace fs = std::filesystem;
     ArtifactCacheDirs out;
     out.beside = dir / ".ninferno-cache";
+    // A bare file name's directory is "": the current one. The key is the directory's canonical
+    // path (symlinks resolved where the path exists), so one directory has one key however spelled.
+    const fs::path where = dir.empty() ? fs::path(".") : dir;
     std::error_code ec;
-    const fs::path absolute = fs::absolute(dir, ec);
-    fs::path normal         = (ec ? dir : absolute).lexically_normal();
+    fs::path normal = fs::weakly_canonical(where, ec);
+    if (ec) {
+        std::error_code absolute_ec;
+        normal = fs::absolute(where, absolute_ec);
+        if (absolute_ec) { normal = where; }
+    }
+    normal = normal.lexically_normal();
     if (normal.has_relative_path() && normal.filename().empty()) { normal = normal.parent_path(); }
-    const std::uint64_t key = fnv::bytes(normal.generic_string());
+    const std::u8string text = normal.generic_u8string();
+    const std::uint64_t key =
+        fnv::bytes(std::string_view(reinterpret_cast<const char*>(text.data()), text.size()));
     char hex[17];
     std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(key));
     if (const fs::path root = sys::cache_dir(); !root.empty()) {
@@ -425,23 +436,39 @@ cached_artifact(const std::filesystem::path& path,
     if (serve_cached(out.path, path, stamp)) { return out; }
     // The lock file is the write test: a directory on a read-only disk or share (or one this user
     // cannot write) converts into NInferno's own cache instead (artifact_cache_dirs, #691).
-    const auto open_lock = [](const fs::path& dir) {
+    std::string why; // the last write test's failure, for the error
+    const auto open_lock = [&why](const fs::path& dir) {
         std::error_code ec;
         fs::create_directories(dir, ec);
-        return ec ? -1 : sys::open(dir / ".convert.lock", O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+        if (ec) {
+            why = dir.string() + ": " + ec.message();
+            return -1;
+        }
+        const int fd = sys::open(dir / ".convert.lock", O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+        if (fd < 0) { why = (dir / ".convert.lock").string() + ": " + std::strerror(errno); }
+        return fd;
     };
     int lock = open_lock(cache);
     if (lock < 0 && cache == dirs.beside && !dirs.own.empty()) {
-        if (log) {
-            log("cannot write " + dirs.beside.string() + ": converting into " + dirs.own.string());
-        }
-        cache    = dirs.own;
-        out.path = cache / name;
+        const std::string beside_why = why;
+        cache                        = dirs.own;
+        out.path                     = cache / name;
         if (serve_cached(out.path, path, stamp)) { return out; }
+        if (consume_source) {
+            // Consuming punches the source's shards, which a directory this user cannot write
+            // does not allow either: refuse before converting rather than fail inside it.
+            throw std::runtime_error("cannot write beside " + path.string() + " (" + beside_why +
+                                     "): --consume-source needs a writable model directory");
+        }
+        if (log) {
+            log("cannot write " + dirs.beside.string() + " (" + beside_why + "): converting into " +
+                dirs.own.string());
+        }
         lock = open_lock(cache);
+        if (lock < 0) { why = beside_why + "; " + why; }
     }
     const auto lock_path = cache / ".convert.lock";
-    if (lock < 0) { throw std::runtime_error("cannot open " + lock_path.string()); }
+    if (lock < 0) { throw std::runtime_error("no writable conversion cache: " + why); }
 
     struct Close {
         int fd;

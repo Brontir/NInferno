@@ -228,10 +228,20 @@ int main() {
         fs::create_directories(root / "a" / "b");
         fs::create_directories(root / "xdg");
 #ifdef _WIN32
-        const bool set = _putenv_s("LOCALAPPDATA", (root / "xdg").string().c_str()) == 0;
+        const char* variable = "LOCALAPPDATA";
 #else
-        const bool set = setenv("XDG_CACHE_HOME", (root / "xdg").c_str(), 1) == 0;
+        const char* variable = "XDG_CACHE_HOME";
 #endif
+        const std::string saved = ninferno::sys::env(variable);
+        const auto put          = [&](const std::string& value) {
+#ifdef _WIN32
+            return _putenv_s(variable, value.c_str()) == 0;
+#else
+            return value.empty() ? unsetenv(variable) == 0
+                                 : setenv(variable, value.c_str(), 1) == 0;
+#endif
+        };
+        const bool set   = put((root / "xdg").string());
         const auto one   = artifact_cache_dirs(root / "a");
         const auto again = artifact_cache_dirs(root / "a" / "b" / "..");
         const auto other = artifact_cache_dirs(root / "a" / "b");
@@ -241,6 +251,11 @@ int main() {
               "own: <cache_dir>/converted/<16 hex digits>");
         check(one.own == again.own, "one directory, one key, however spelled");
         check(one.own != other.own, "another directory, another key");
+        // A bare GGUF name's directory is "": the current directory's key, not a shared constant.
+        const auto bare = artifact_cache_dirs(fs::path());
+        check(!bare.own.empty() && bare.own == artifact_cache_dirs(fs::current_path()).own,
+              "a bare file name keys the current directory");
+        put(saved);
         fs::remove_all(root);
     }
     if (failures == 0) { std::cout << "cache revision: all checks passed\n"; }

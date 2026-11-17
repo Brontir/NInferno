@@ -97,7 +97,8 @@ manifest_drafter_files(const std::filesystem::path& artifact);
 // Where the converted artifacts of the models in `dir` (a checkpoint directory, or the directory of
 // a GGUF file) are kept: `beside`, <dir>/.ninferno-cache, where that directory can be written, else
 // `own`, NInferno's cache (sys::cache_dir()/converted/<16 hex digits of the FNV-1a of dir's
-// absolute path>), so a model on a read-only disk or share still converts once (#691). `own` is
+// canonical path, the current directory for "">), so a model on a read-only disk or share still
+// converts once (#691). `own` is
 // empty where no cache directory is known. An artifact already in either place is served from it,
 // `beside` first.
 struct ArtifactCacheDirs {
