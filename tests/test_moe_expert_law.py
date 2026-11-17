@@ -20,9 +20,13 @@ def test_r8_lanes_follow_moe_cpp():
 
 
 def test_occupancy_takes_the_tightest_limit():
-    assert law.occupancy(128, 0, 128, 32, 1536) == 4       # registers: 64 Ki / (128 x 128)
-    assert law.occupancy(32, 60 * 1024, 128, 32, 1536) == 1  # shared memory
-    assert law.occupancy(16, 0, 512, 32, 1536) == 3          # threads
+    assert law.occupancy(128, 0, 128, 32, 1536, 89) == 4       # registers: 64 Ki / (128 x 128)
+    assert law.occupancy(32, 60 * 1024, 128, 32, 1536, 89) == 1  # shared memory
+    assert law.occupancy(16, 0, 512, 32, 1536, 89) == 3          # threads
+    # The SM's shared memory and the per-block reserve are the arch's (gpu_facts.json): 100 KiB and
+    # 1 KiB a block on Ada, 64 KiB and none on Turing.
+    assert law.occupancy(16, 24 * 1024, 128, 32, 1536, 89) == 4  # 100 Ki / (24 Ki + 1 Ki)
+    assert law.occupancy(16, 24 * 1024, 128, 16, 1024, 75) == 2  # 64 Ki / 24 Ki
 
 
 def test_r8_token_limit_follows_the_regime_rules():

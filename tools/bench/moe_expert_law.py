@@ -21,21 +21,29 @@ r8_lanes, jobs as the touched experts at T <= 8).
     moe_expert_law.py predict FACTS BOARD PLANS_CSV E,K,H,F OUT.csv
                                                            every plan's price and the pick, for a sealed grid
 """
-import collections, csv, math, os, statistics as st, sys
+import collections, csv, json, math, os, statistics as st, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PROBE_DIR = os.path.join(ROOT, 'src', 'core', 'data', 'warp_inflight')
 NT_OF = [1]
-BOARDS = {  # sms, DRAM GB/s (published), reference clock MHz, fetch latency ns (warp_inflight chain1 w1), max CTAs/SM, threads/SM
-    "rtx4090": (128, 1008, 2520, 253, 24, 1536),
-    "rtx4060ti": (34, 288, 2535, None, 24, 1536),
-    "rtx5090": (170, 1792, 2407, None, 32, 1536),
-    "rtx3090": (82, 936, 1695, None, 16, 1536),
-    "rtx5070ti": (70, 896, 2452, None, 32, 1536),
-    "rtx4070ti": (60, 504, 2610, None, 24, 1536),
-    "rtx3060": (28, 360, 1777, None, 16, 1536),
-    "rtx2080ti": (68, 616, 1545, None, 16, 1024),
+BOARDS = {  # sms, DRAM GB/s (published), reference clock MHz, max CTAs/SM, threads/SM, compute capability
+    "rtx4090": (128, 1008, 2520, 24, 1536, 89),
+    "rtx4060ti": (34, 288, 2535, 24, 1536, 89),
+    "rtx5090": (170, 1792, 2407, 32, 1536, 120),
+    "rtx3090": (82, 936, 1695, 16, 1536, 86),
+    "rtx5070ti": (70, 896, 2452, 32, 1536, 120),
+    "rtx4070ti": (60, 504, 2610, 24, 1536, 89),
+    "rtx3060": (28, 360, 1777, 16, 1536, 86),
+    "rtx2080ti": (68, 616, 1545, 16, 1024, 75),
 }
+# Shared memory an SM holds and the driver's reserve per block, per compute capability: the arch rows of
+# src/core/data/gpu_facts.json (64 KiB and no reserve on Turing, 100 KiB and 1 KiB a block from sm_80 on).
+_ARCHS = {a["cc"]: a for a in json.load(open(os.path.join(ROOT, "src", "core", "data", "gpu_facts.json")))["archs"]}
+
+
+def smem_facts(cc):
+    a = _ARCHS[cc]
+    return a["smem_per_sm_kib"] * 1024, a["smem_reserved_per_block"]
 BPW = {"q3_k": 3.4375, "q4_k": 4.5, "q5_k": 5.5, "q6_k": 6.5625}
 GEMM_DEC = {"q3_k": "GgmlQ3KDecoder", "q4_k": "GgmlQ45KDecoder<4>", "q5_k": "GgmlQ45KDecoder<5>", "q6_k": "GgmlQ6KDecoder"}
 R8_CODEC = {"q3_k": "W4a8Q3K", "q4_k": "W4a8Q45K<4>", "q5_k": "W4a8Q45K<5>", "q6_k": "W4a8Q6K"}
@@ -119,14 +127,15 @@ def probe_latency(board_name):
     raise SystemExit("no latency row")
 
 
-def occupancy(regs, smem, threads, max_ctas, max_threads):
+def occupancy(regs, smem, threads, max_ctas, max_threads, cc):
     by_regs = (64 * 1024) // max(1, regs * threads) if regs else max_ctas
-    by_smem = (100 * 1024) // smem if smem else max_ctas
+    smem_sm, reserved = smem_facts(cc)
+    by_smem = smem_sm // (smem + reserved) if smem else max_ctas
     return max(0, min(max_ctas, by_regs, by_smem, max_threads // threads))
 
 
 def stage_time(facts, board, fmt, sched, stage, T, jobs, H, F):
-    sms, gbs, mhz, lat_ns, max_ctas, max_thr = board
+    sms, gbs, mhz, max_ctas, max_thr, cc = board
     lat = probe_latency(BOARD_NAME)
     clock = mhz * 1e6
     rows_out = 2 * F if stage == 1 else H  # gate/up: the gate and up rows of the touched experts
@@ -157,7 +166,7 @@ def stage_time(facts, board, fmt, sched, stage, T, jobs, H, F):
         ctas = math.ceil((F if stage == 1 else H) / rows_cta) * jobs
         iters = k / max(1, int(f["k_iter"]))
     threads = warps * 32
-    res = occupancy(int(f["registers"]), int(f["shared"]), threads, max_ctas, max_thr)
+    res = occupancy(int(f["registers"]), int(f["shared"]), threads, max_ctas, max_thr, cc)
     if res == 0: return None, "occupancy"
     conc = min(res, math.ceil(ctas / sms))
     active = min(sms, ctas)
