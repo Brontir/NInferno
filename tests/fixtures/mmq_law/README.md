@@ -55,3 +55,7 @@ The grid prices only the MMQ launches, so a size's other work cancels: what is s
 width's difference to the size's J 128 cell, and the width the price picks of the six production
 widths (16, 32, 64, 80, 96, 128). It was committed before the grid's next run on the card was read.
 The run of 10.11 (#607, f046b590) was read before; the unit was not fitted to it.
+
+`predicted_launch_rtx3060.csv` and `predicted_launch_rtx4090.csv` are the same prediction for the
+grids kept sealed for the end-to-end A/B (the price tool at 01436ff66; the counted unit's code is
+eecbcfd23's), committed after that A/B and before the two grids are read.
