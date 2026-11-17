@@ -13,7 +13,8 @@
 // (The first runs, 17.11, used one 32-value group a lane, kb = lane + 32 i, which is not R8's
 // mapping, and a memset-only flush; the #979 review found both, and the runs were redone. The
 // second runs used all 32 lanes on one row and a fixed planes-then-interleaved order; codex found
-// both (R8 puts 16 lanes on a row at K 4096), and the runs were redone with ABBA rounds.)
+// both (R8 puts 16 lanes on a row at K 4096), and the runs were redone with ABBA rounds; the
+// fourth runs write the eviction buffer once, not before every sample.)
 #include <cuda_runtime.h>
 
 #include <algorithm>
@@ -140,11 +141,14 @@ int main(int argc, char** argv) {
     CHECK(cudaMemset(high, 0x22, blocks * 16));
     CHECK(cudaMemset(scales, 0x33, blocks * 2));
     CHECK(cudaMemset(inter, 0x44, blocks * kInterleavedBlockBytes));
-    // A buffer of four L2s, written then read between repeats: every repeat starts cold, with clean
-    // lines.
+    // A buffer of four L2s, read between repeats: every repeat starts cold, with clean lines.
     const std::size_t flush_bytes = std::max<std::size_t>(prop.l2CacheSize, 1 << 20) * 4;
     std::uint8_t* flush;
     CHECK(cudaMalloc(&flush, flush_bytes));
+    // Written once: a memset before every sample would leave the buffer's last L2 of lines dirty
+    // after the read, to be written back during the timed kernel.
+    CHECK(cudaMemset(flush, 0x55, flush_bytes));
+    CHECK(cudaDeviceSynchronize());
     const Planes p{codes, high, scales};
     const int rows_per_cta = warps * (32 / lanes);
     const dim3 grid((rows + rows_per_cta - 1) / rows_per_cta), block(32 * warps);
@@ -154,7 +158,6 @@ int main(int argc, char** argv) {
     const auto run = [&](bool interleaved) {
         std::vector<float> ms;
         for (int r = 0; r < repeat + 2; ++r) {
-            CHECK(cudaMemset(flush, r, flush_bytes));
             read_kernel<<<4 * prop.multiProcessorCount, 256>>>(
                 reinterpret_cast<const uint4*>(flush), flush_bytes / 16, out);
             CHECK(cudaEventRecord(a));
