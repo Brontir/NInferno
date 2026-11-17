@@ -141,7 +141,7 @@ struct Options {
     Epilogue epilogue   = Epilogue::Store;
     LinearPolicy policy = LinearPolicy::A16Only;
     std::optional<int> registers;
-    double local_bytes = 0;
+    std::optional<double> local_bytes; // --local-bytes; an explicit 0 overrides the snapshot too
     std::optional<Route> only;
     std::optional<bool> mmq_counted_unit; // --mmq-counted-unit on|off: the selector's switch
     std::optional<bool> rmma_counted_law; // --rmma-counted-law on|off: route_cost::kRmmaCountedLaw
@@ -492,11 +492,13 @@ int run(const Options& o) {
         generic::route_cost::kQuantMmqBytesPerValue.value(),
         generic::route_cost::kQuantBytesPerValue.value(),
         us(generic::route_cost::kQuantLaunchSeconds.value()));
-    if ((o.registers || o.local_bytes > 0) && !heavy) {
+    if ((o.registers || o.local_bytes) && !heavy) {
         std::printf("kernel facts given but not read: the plain form prices by threads alone\n");
-    } else if (o.registers || o.local_bytes > 0) {
-        std::printf("kernel facts given: %s registers, %.0f local bytes per thread%s\n",
-                    o.registers ? std::to_string(*o.registers).c_str() : "unset", o.local_bytes,
+    } else if (o.registers || o.local_bytes) {
+        const std::string local =
+            o.local_bytes ? std::to_string(static_cast<long>(*o.local_bytes)) : "unset";
+        std::printf("kernel facts given: %s registers, %s local bytes per thread%s\n",
+                    o.registers ? std::to_string(*o.registers).c_str() : "unset", local.c_str(),
                     cal.rmma_counted_law ? " (the snapshot's for the rest, the counted law)" : "");
     } else if (heavy && cal.rmma_counted_law) {
         std::printf("kernel facts: the snapshot's, as the selector reads them (the counted law)\n");
@@ -600,7 +602,7 @@ int run(const Options& o) {
             s.cluster, o.epilogue == Epilogue::SwiGlu, d.major * 10 + d.minor);
         if (heavy) { // the price reads compiled facts only in the heavy form, as price_routes does
             kernel.registers   = o.registers;
-            kernel.local_bytes = o.local_bytes;
+            kernel.local_bytes = o.local_bytes.value_or(0.0);
             // Under the counted law, the compiled facts the selector reads (registers, local and
             // static shared bytes, the K loop, #613 PR-7a review); --registers / --local-bytes
             // still override.
@@ -608,8 +610,7 @@ int run(const Options& o) {
                 if (auto res =
                         generic::rmma_resources_query(d, i, qtype, o.epilogue, o.n, o.k, o.t)) {
                     if (!o.registers) kernel.registers = res->registers;
-                    if (o.local_bytes <= 0)
-                        kernel.local_bytes = static_cast<double>(res->local_bytes);
+                    if (!o.local_bytes) kernel.local_bytes = static_cast<double>(res->local_bytes);
                     kernel.shared_bytes = static_cast<double>(res->static_smem);
                     kernel.loop         = std::move(res->loop);
                 }

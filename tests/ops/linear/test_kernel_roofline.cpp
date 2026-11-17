@@ -740,6 +740,25 @@ void check_price_a8_rows() {
     if (bad > 0 || a8 == 0) ++failures;
 }
 
+// An explicit --local-bytes 0 is a given fact, not the absence of one (#983 codex): the tool says
+// so, and under the counted law it prices the kernel without spills instead of the snapshot's.
+void check_price_explicit_zero_local_bytes() {
+    int rc = -1;
+    const std::string text =
+        price_stdout({"--board", "rtx4090", "--format", "q4_k", "--n", "4096", "--k", "4096", "--t",
+                      "64", "--local-bytes", "0", "--rmma-counted-law", "on"},
+                     rc);
+    const bool given = text.find("kernel facts given") != std::string::npos;
+    const bool zero  = text.find("given: unset registers, 0 local bytes") != std::string::npos ||
+                      text.find("given but not read") != std::string::npos;
+    if (rc != 0 || !given || !zero) {
+        std::fprintf(stderr, "FAIL: price --local-bytes 0 exits %d, given %d, zero %d\n", rc,
+                     given ? 1 : 0, zero ? 1 : 0);
+        ++failures;
+    }
+    std::printf("price explicit zero local bytes: rc %d, given %d\n", rc, given ? 1 : 0);
+}
+
 // The bytes a warp of the probe's two-slot rings keeps in flight by count: 2 slots x 2 (ring2) or
 // 4 (ring4) 16-byte loads a lane x 32 lanes.
 constexpr double kRing2Bytes = 2 * 2 * 32 * 16, kRing4Bytes = 2 * 4 * 32 * 16;
@@ -1466,6 +1485,7 @@ int main() {
     check_price_admitted();
     check_price_arguments();
     check_price_a8_rows();
+    check_price_explicit_zero_local_bytes();
     check_price_counted_law();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
