@@ -5,6 +5,7 @@
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/softmax_attention/gemma4/kv_address.h"
 #include "ops/softmax_attention/gemma4/launch.h"
+#include "ops/softmax_attention/gemma4/row_codec.h"
 
 #include <algorithm>
 #include <cmath>
@@ -135,11 +136,15 @@ Gemma4KvBinding gemma4_kv_binding(const Gemma4KvLayer& cache, std::int32_t head_
                                   std::int32_t kv_heads, const char* op) {
     const Tensor& k = cache.k;
     const Tensor& v = cache.v;
-    const bool fp8  = k.dtype == DType::FP8_E4M3FN;
+    // One-byte rows in the build's codec (row_codec.h: FP8_E4M3FN, I8 on sm_75 to sm_86).
+    const bool fp8 = k.dtype == kGemma4RowDtype;
     for (const Tensor* plane : {&k, &v}) {
-        if (plane->dtype != (fp8 ? DType::FP8_E4M3FN : DType::BF16) || !plane->is_contiguous() ||
+        if (plane->dtype != (fp8 ? kGemma4RowDtype : DType::BF16) || !plane->is_contiguous() ||
             plane->data == nullptr) {
-            fail(op, "cache planes must be contiguous non-null BF16, or both FP8_E4M3FN");
+            fail(op, kGemma4RowInt8
+                         ? "cache planes must be contiguous non-null BF16, or both I8 (this "
+                           "build's row codec)"
+                         : "cache planes must be contiguous non-null BF16, or both FP8_E4M3FN");
         }
     }
     for (int i = 0; i < 4; ++i) {

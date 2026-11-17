@@ -1,6 +1,7 @@
 #include "core/arena.h"
 #include "core/device.h"
 #include "models/qwen3_5/state/state_image.h"
+#include "ops/softmax_attention/gemma4/row_codec.h"
 #include "support/cuda.h"
 
 #include <cuda_runtime.h>
@@ -308,7 +309,8 @@ void test_fp8_rings(ninferno::DeviceContext& device) {
     ninferno::DeviceArena arena(planned.bytes);
     q36::StateImageDevicePool pool({arena.base(), arena.capacity()}, planned.layout);
     const auto planes = pool.ring_planes(0, 2);
-    expect(planes.k.dtype == ninferno::DType::FP8_E4M3FN && planes.k.ne[0] == 8 &&
+    // The one-byte row codec is the build's (row_codec.h: I8 on sm_75 to sm_86).
+    expect(planes.k.dtype == ninferno::ops::kGemma4RowDtype && planes.k.ne[0] == 8 &&
                planes.k.ne[1] == 19 && planes.k.ne[2] == 2 && planes.k.ne[3] == 3,
            "FP8 ring planes are E4M3 [head_dim, capacity, kv_heads, slots]");
     expect(planes.k_scale.dtype == ninferno::DType::FP32 && planes.k_scale.ne[0] == 1 &&

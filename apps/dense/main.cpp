@@ -53,6 +53,7 @@
 #include "product/numeric_options.h"
 #include "product/tool_args.h"
 #include "product/tool_maintainer.h"
+#include "ops/softmax_attention/gemma4/row_codec.h"
 
 #include <algorithm>
 #include <chrono>
@@ -153,10 +154,15 @@ int main(int argc, char** argv) {
         options.prefill_chunk = static_cast<std::int32_t>(args.number("chunk", 2048));
         options.eager_decode  = args.flag("eager-decode");
         const std::string kv_dtype = args.text("kv-dtype", "bf16");
-        if (kv_dtype != "bf16" && kv_dtype != "fp8") {
-            throw std::invalid_argument("--kv-dtype must be bf16 or fp8");
+        // fp8 names the one-byte row codec, whose codes are the build's (row_codec.h): E4M3, or
+        // int8 on sm_75 to sm_86 builds, where int8 is accepted as its name too.
+        const bool int8_name = ops::kGemma4RowInt8 && kv_dtype == "int8";
+        if (kv_dtype != "bf16" && kv_dtype != "fp8" && !int8_name) {
+            throw std::invalid_argument(ops::kGemma4RowInt8
+                                            ? "--kv-dtype must be bf16 or fp8 (int8)"
+                                            : "--kv-dtype must be bf16 or fp8");
         }
-        options.kv_fp8 = kv_dtype == "fp8";
+        options.kv_fp8 = kv_dtype == "fp8" || int8_name;
         std::unique_ptr<models::speculation::DFlashDrafter> dflash;
         if (args.flag("dflash")) {
             dflash = models::speculation::DFlashDrafter::load(args.text("dflash"), device,

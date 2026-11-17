@@ -1,10 +1,12 @@
-// gemma4_attention and gemma4_kv_append over FP8 planes (Gemma4KvLayer's FP8 storage: E4M3 codes
-// with an FP32 scale per row).
+// gemma4_attention and gemma4_kv_append over one-byte row planes (Gemma4KvLayer's row storage:
+// a code a value with an FP32 scale per row; the codes are the build's, row_codec.h: E4M3, or
+// int8 on sm_75 to sm_86 builds, #619 steps 9-10).
 //
 // Every call appends its history and its own rows through gemma4_kv_append, attends, and reads
 // the planes back. Two checks:
 //   - the codec: every stored row against the BF16 row it came from (scale = absmax / 448 and
-//     each value within half an E4M3 step of the code times the scale);
+//     each value within half an E4M3 step of the code times the scale; int8: absmax / 127 and
+//     within half a step, scale / 2);
 //   - the attention: against the FP64 formula of include/ninferno/ops/gemma4_attention.h over the
 //     values the kernel stages, BF16(FP32(code) * scale) from the codes and scales read back,
 //     under the BF16 op criterion (a BF16 cache is checked over its BF16 rows the same way).
@@ -15,6 +17,7 @@
 #include "core/device.h"
 #include "ninferno/ops/gemma4_attention.h"
 #include "ops/op_tester.h"
+#include "ops/softmax_attention/gemma4/row_codec.h"
 
 #include <cuda_fp16.h>
 #include <cuda_fp8.h>
@@ -65,11 +68,17 @@ constexpr Call kCalls[] = {{1, 0}, {1, 777}, {5, 1234}, {16, 2000}, {37, 0}, {30
 
 float bf16_round(float value) { return bf16_to_f32(f32_to_bf16(value)); }
 
+// One stored code's value before the row scale, in the build's codec.
 double e4m3_value(std::uint8_t code) {
+    if constexpr (ops::kGemma4RowInt8) {
+        return static_cast<double>(static_cast<std::int8_t>(code));
+    }
     __nv_fp8_e4m3 v;
     v.__x = code;
     return static_cast<double>(static_cast<float>(v));
 }
+
+constexpr double kRowMax = ops::kGemma4RowCodeMax;
 
 int run(const Geometry& g, const Call& call) {
     const int D = g.head_dim, Hq = g.q_heads, Hkv = g.kv_heads, W = g.window, T = call.tokens;
@@ -104,8 +113,8 @@ int run(const Geometry& g, const Call& call) {
     CUDA_CHECK(cudaMemset(ks.p, 0, ks.bytes));
     CUDA_CHECK(cudaMemset(vs.p, 0, vs.bytes));
     const ops::Gemma4KvLayer layer{
-        .k       = Tensor(ck.p, DType::FP8_E4M3FN, {D, capacity, Hkv}),
-        .v       = Tensor(cv.p, DType::FP8_E4M3FN, {D, capacity, Hkv}),
+        .k       = Tensor(ck.p, ops::kGemma4RowDtype, {D, capacity, Hkv}),
+        .v       = Tensor(cv.p, ops::kGemma4RowDtype, {D, capacity, Hkv}),
         .window  = W,
         .k_scale = Tensor(ks.p, DType::FP32, {capacity, Hkv}),
         .v_scale = Tensor(vs.p, DType::FP32, {capacity, Hkv}),
@@ -167,10 +176,10 @@ int run(const Geometry& g, const Call& call) {
                 auto& represented  = plane == 0 ? rk : rv;
                 double absmax      = 0.0;
                 for (int d = 0; d < D; ++d) { absmax = std::max(absmax, std::abs(double(orig[src + d]))); }
-                if (std::abs(double(scale) - absmax / 448.0) > 1e-6 * absmax / 448.0 + 1e-30) {
+                if (std::abs(double(scale) - absmax / kRowMax) > 1e-6 * absmax / kRowMax + 1e-30) {
                     if (codec_bad++ < 4) {
                         std::printf("    scale of p=%d h=%d plane %d: %.9g, expected %.9g\n", p, h,
-                                    plane, double(scale), absmax / 448.0);
+                                    plane, double(scale), absmax / kRowMax);
                     }
                 }
                 for (int d = 0; d < D; ++d) {
@@ -181,7 +190,12 @@ int run(const Geometry& g, const Call& call) {
                     represented[src + d] =
                         bf16_round(static_cast<float>(e4m3_value(codes[row * D + d])) * scale);
                     const double x       = orig[src + d];
-                    const double limit   = std::max(std::abs(x) * 0x1p-4, double(scale) * 0x1p-9) * 1.0001;
+                    // E4M3: half a step (3 mantissa bits) of x, or of the smallest normal; int8:
+                    // half a code step, scale / 2.
+                    const double limit =
+                        ops::kGemma4RowInt8
+                            ? double(scale) * 0.5 * 1.0001 + 1e-30
+                            : std::max(std::abs(x) * 0x1p-4, double(scale) * 0x1p-9) * 1.0001;
                     if (!(std::abs(value - x) <= limit)) {
                         if (codec_bad++ < 4) {
                             std::printf("    code of p=%d h=%d d=%d plane %d: %.6g for %.6g\n", p,
