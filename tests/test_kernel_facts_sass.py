@@ -359,6 +359,8 @@ class StaticSchedule(unittest.TestCase):
         # Waits: 0x1a0 on the LDG's scoreboard, 0x2c0 on the LDL at 0x1c0, 0x160 on the LDL at
         # 0x2d0 of the previous iteration; the two last are local.
         self.assertEqual((c.sb_waits, c.sb_waits_local), (3, 2))
+        # By what they wait for: 0x1a0 on a global load; the LDL waits on neither class.
+        self.assertEqual((c.sb_waits_global, c.sb_waits_shared), (1, 0))
         # Outside: the prologue (0x000-0x070) and the epilogue (0x400-0x430); not the loop's
         # plain version of step two (0x280-0x2b0, a member of the loop off the counted path),
         # not the callee or the self-branch after EXIT.
@@ -373,6 +375,7 @@ class StaticSchedule(unittest.TestCase):
         lds = [(o, "LDS R26, [R1] ;" if o == 0x1c0 else t) for o, t in SCHEDULED]
         c = sc.loop_counts(body_of(lds, SCHEDULED_WORDS), tiles=2)
         self.assertEqual((c.sb_waits, c.sb_waits_local), (3, 1))
+        self.assertEqual((c.sb_waits_global, c.sb_waits_shared), (1, 1))  # 0x2c0 on the LDS
         words = dict(SCHEDULED_WORDS)
         words[0x200] = high_word(2, wait=1 << 4)  # waits on the bottom LDL's scoreboard first
         c = sc.loop_counts(body_of(SCHEDULED, words), tiles=2)
@@ -793,7 +796,7 @@ class Sections(unittest.TestCase):
                          (1, 0, 0, 0, 0, 0, 0))
         self.assertEqual(len(c.row()), len(sc.COLUMNS))  # no pipe columns unless asked
         piped = c.with_pipes()
-        self.assertEqual(len(piped.row()), len(sc.COLUMNS) + len(sc.PIPE_FIELDS))
+        self.assertEqual(len(piped.row()), len(sc.COLUMNS) + len(sc.SECTION_FIELDS))
         self.assertEqual(sc.LoopCounts.from_row(piped.row()), piped)
         lines = [(o, {0x170: "I2F.F32.S32 R25, R24 ;", 0x1d0: "IMAD R9, R9, R10, RZ ;",
                       0x210: "BAR.SYNC.DEFER_BLOCKING 0x0 ;"}.get(o, t)) for o, t in KERNEL]

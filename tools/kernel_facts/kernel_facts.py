@@ -41,7 +41,7 @@ After the register-MMA rows a snapshot holds one section per further kernel fami
 #785): ggml's matrix kernel `mul_mat_q<type, J, fallback, prec>` (mmq) and the W4A8 tiles
 (w4a8), each with its own nvcc, kernel count and columns (`family_nvcc`, `family_kernels`,
 `family_columns` after its `family <name>` line), and the pipe counts of the loop
-(sass_counts.PIPE_FIELDS) besides schema 4's. `extract --families mmq,w4a8 --update FILE`
+(sass_counts.PIPE_FIELDS) and the wait classes (sass_counts.WAIT_FIELDS) besides schema 4's. `extract --families mmq,w4a8 --update FILE`
 rewrites those sections alone and keeps the rest of FILE byte for byte. `check` compares every
 section the snapshot has: in full where the build's nvcc is the one the section records, its
 kernel set alone otherwise (the exit code then follows the register-MMA rows); a family the
@@ -350,7 +350,7 @@ class Family:
     def schema_columns(self):
         """{schema: (columns, loop fields)}: the resources alone (1), and the loop (4; with the
         pipe counts for a family that carries them)."""
-        loop = sass_counts.COLUMNS + (sass_counts.PIPE_FIELDS if self.pipes else ())
+        loop = sass_counts.COLUMNS + (sass_counts.SECTION_FIELDS if self.pipes else ())
         return {1: (self.row_head, 0), 4: (self.row_head + loop, len(loop))}
 
     def parse_key(self, fields):
@@ -711,7 +711,7 @@ def render_section(family, rows, nvcc):
     `family <name>` line, its own nvcc, kernel count and columns (family_nvcc, family_kernels,
     family_columns: so the file's own nvcc, kernels and columns lines stay the register-MMA ones
     every reader and script takes), the rows. The loop columns are schema 4's and the pipe counts
-    (sass_counts.PIPE_FIELDS), or the resources alone where no row has a loop."""
+    (sass_counts.SECTION_FIELDS), or the resources alone where no row has a loop."""
     f = FAMILIES[family]
     loops = [v[4] for v in rows.values() if v[4] is not None]
     if loops and not all(c.scheduled for c in loops):

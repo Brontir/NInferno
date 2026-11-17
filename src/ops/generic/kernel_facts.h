@@ -79,6 +79,10 @@ struct PipeCounts {
     int fadd = 0; // FADD, FADD32I
     int imad = 0; // every IMAD form (IMAD.MOV, IMAD.WIDE ...)
     int bar  = 0; // CTA barriers: BAR.SYNC, BAR.ARV, BAR.RED
+    // The iteration's scoreboard waits by what they wait for (sass_counts.py WAIT_FIELDS, #613
+    // PR-5): on a global load's result, and on a shared load's where no global load is waited.
+    int sb_waits_global = 0;
+    int sb_waits_shared = 0;
 };
 
 struct LoopCounts {

@@ -44,9 +44,10 @@ constexpr std::string_view kColumns =
 // up to "shared"). The older loop-without-schedule columns (schema 2) are refused.
 constexpr std::size_t kResourceColumnsLength = kColumns.find(" loops ");
 // The loop's columns of every schema 4 row (from "loops" on), and the pipe counts a section's
-// rows carry after them (kernel_facts.py Family.schema_columns, sass_counts.py PIPE_FIELDS).
+// rows carry after them (kernel_facts.py Family.schema_columns, sass_counts.py SECTION_FIELDS).
 constexpr std::string_view kLoopColumns = kColumns.substr(kResourceColumnsLength);
-constexpr std::string_view kPipeColumns = " i2f i2fp ffma fmul fadd imad bar";
+constexpr std::string_view kPipeColumns =
+    " i2f i2fp ffma fmul fadd imad bar sb_waits_global sb_waits_shared";
 
 // A section family's columns up to the resources (kernel_facts.py FAMILIES: "family", the key,
 // the resources), and how many key fields lead as text (the codec) before the integers.
@@ -94,7 +95,8 @@ LoopCounts read_loop(std::istringstream& fields, bool pipes, const std::string& 
     l.schedule = d;
     if (pipes) {
         PipeCounts p;
-        fields >> p.i2f >> p.i2fp >> p.ffma >> p.fmul >> p.fadd >> p.imad >> p.bar;
+        fields >> p.i2f >> p.i2fp >> p.ffma >> p.fmul >> p.fadd >> p.imad >> p.bar >>
+            p.sb_waits_global >> p.sb_waits_shared;
         if (!fields) throw std::runtime_error("kernel facts: malformed pipe counts: " + line);
         l.pipes = p;
     }

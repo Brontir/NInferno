@@ -398,7 +398,8 @@ void sections_read() {
                     l.schedule->sb_waits <= l.total && l.pipes->bar <= l.total &&
                     l.pipes->i2f + l.pipes->i2fp + l.pipes->ffma + l.pipes->fmul + l.pipes->fadd <=
                         l.fp_alu &&
-                    l.pipes->imad <= l.int_alu;
+                    l.pipes->imad <= l.int_alu &&
+                    l.pipes->sb_waits_global + l.pipes->sb_waits_shared <= l.schedule->sb_waits;
                 if (!ok && bad++ == 0) first = key;
             }
             expect(bad == 0, name + " " + std::string(family) + ": " + std::to_string(bad) +
