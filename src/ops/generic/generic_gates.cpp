@@ -114,7 +114,7 @@ bool rmma_add_sums() {
 namespace {
 // The group-sums plane is off by default (#709's A/B, docs/maintainer/kernel-proposals.md entry
 // A): only the plane's tests and route-tune's --group-sums-plane 1 turn it on.
-std::atomic<bool> g_group_sums_plane{false};
+std::atomic<bool> g_group_sums_plane{true}; // exp/619-plane-on (A/B only, never merged)
 } // namespace
 
 bool group_sums_plane_enabled() noexcept {
