@@ -327,7 +327,8 @@ def parse_run(text):
     unowed = [f for f in PROBE_19_FACTS
               if f in facts and cc is not None and cc < IMMA_SINCE_CC]
     if unowed:
-        raise ValueError(f"facts this card cannot have (cc {cc}): {unowed}")
+        raise ValueError(f"facts this card cannot have (cc {cc}: no int8 MMA before cc "
+                         f"{IMMA_SINCE_CC}): {unowed}")
     if failures:
         raise ValueError("the probe's self-check failed: " + "; ".join(failures))
     for k in HEADER + tuple(k for k, since in HEADER_SINCE.items() if since <= owed):

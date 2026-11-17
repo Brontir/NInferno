@@ -164,9 +164,7 @@ class IsaFacts(unittest.TestCase):
 
     def test_imma_facts_refused_on_sm_70(self):
         # A probe-19 sm_70 file with int8 MMA lines (stale or edited) is refused, not merged.
-        text = SAMPLE.replace("cc 89", "cc 70")
-        if "cc 70" not in text:
-            self.skipTest("the sample names no cc line")
+        text = SAMPLE.replace("cc 89", "cc 70").replace("arch sm_89", "arch sm_70")
         with self.assertRaisesRegex(ValueError, "cannot have"):
             ip.parse_run(text)
 
