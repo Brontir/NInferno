@@ -54,7 +54,12 @@ __global__ __launch_bounds__(kRouterSimtWarps *
                                       : make_uint4(0, 0, 0, 0);
     }
     pdl::wait_for_dependencies();
-    if (threadIdx.x == 0) pdl::trigger_dependents();
+    // Routing, the next launch is the expert kernel, which waits for the route: started early, its
+    // CTAs sat resident on the SMs through the whole router and the shared expert's kernels on the
+    // branch stream waited behind them (RTX 5090, Qwen3.6-35B C=4: the shared r8 call moved from
+    // 8.9 to 25.8 us into the layer, the layer 80.5 -> 87.3 us; #617 K). The last CTA lets it
+    // start once it holds the ticket, so it waits only through the select and the plan.
+    if (!Route && threadIdx.x == 0) pdl::trigger_dependents();
     if (a.xq != nullptr) {
         const std::int64_t tasks  = static_cast<std::int64_t>(a.tokens) * (a.xq_ld / 32);
         const std::int64_t stride = static_cast<std::int64_t>(gridDim.x) * kRouterSimtWarps * 32;
@@ -140,6 +145,7 @@ __global__ __launch_bounds__(kRouterSimtWarps *
             if (last) *ticket = 0;
         }
         if (!__syncthreads_or(last)) return;
+        if (threadIdx.x == 0) pdl::trigger_dependents();
         __threadfence();
         int* ids     = reinterpret_cast<int*>(router_smem);
         int* jobs_at = ids + 32;
