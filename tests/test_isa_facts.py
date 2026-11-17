@@ -759,7 +759,7 @@ class IsaFacts(unittest.TestCase):
             # of a later one: a row keeps lacking those until its card is probed again.
             probe = int(row["tool"]["probe"].split()[1])
             self.assertEqual(set(row["facts"]),
-                             {f for f in ip.FACTS if ip.first_probe(f) <= probe}, key)
+                             {f for f in ip.FACTS if ip.owed_fact(f, probe, row["cc"])}, key)
             for field in ("sms", "l2_bytes"):
                 self.assertGreater(row[field], 0, f"{key} {field}")
             for field in ("driver", "runtime"):
