@@ -27,6 +27,7 @@ ninferno_add_op_bench(ninferno_prepare_ragged_prefix_bench
 ninferno_add_op_bench(ninferno_embedding_bench SOURCES "${CMAKE_CURRENT_LIST_DIR}/embedding_bench.cu")
 ninferno_add_op_bench(ninferno_position_bench SOURCES "${CMAKE_CURRENT_LIST_DIR}/position_bench.cu")
 ninferno_add_op_bench(ninferno_argmax_bench SOURCES "${CMAKE_CURRENT_LIST_DIR}/argmax_bench.cu")
+ninferno_add_op_bench(ninferno_planes_bench SOURCES "${CMAKE_CURRENT_LIST_DIR}/planes_bench.cu")
 ninferno_add_op_bench(ninferno_causal_conv1d_silu_bench SOURCES "${CMAKE_CURRENT_LIST_DIR}/causal_conv1d_silu_bench.cu")
 ninferno_add_op_bench(ninferno_linear_bench SOURCES "${CMAKE_CURRENT_LIST_DIR}/linear_bench.cu")
 ninferno_add_op_bench(ninferno_linear_route_sweep_bench

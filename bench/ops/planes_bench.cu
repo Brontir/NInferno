@@ -1,0 +1,156 @@
+// #616 step 6: the layout-locality test. R8's Q6_K expert banks are stored as three planes (the
+// codes, 192 bytes a 256-value block; the high plane of sub-block scales, 16 bytes; the scale plane
+// of binary16 d, 2 bytes), so a lane's load of one 32-value group touches three arrays
+// (generic_w4a8.cuh W4a8Q6K::load). The interleaved layout keeps a block's bytes together (192 + 16
+// + 2, padded to 224 for the 16-byte loads). This bench runs R8's exact per-lane loads over both,
+// with no arithmetic past folding the words (work 0), on a buffer far past the L2, and prints each
+// layout's time and payload rate (210 bytes a block).
+//
+//   ./ninferno_planes_bench [--rows 65536] [--k 4096] [--warps 4] [--repeat 20]
+//
+// Prediction (#616, written before the first run): the planes are >= 15 % slower at work 0 on the
+// RTX 4090. If they are not, layout locality is refuted as the cause of R8's Q6_K/Q3_K losses.
+#include <cuda_runtime.h>
+
+#include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <vector>
+
+namespace {
+
+#define CHECK(x)                                                                                   \
+    do {                                                                                           \
+        const cudaError_t e = (x);                                                                 \
+        if (e != cudaSuccess) {                                                                    \
+            std::fprintf(stderr, "%s: %s\n", #x, cudaGetErrorString(e));                           \
+            std::exit(1);                                                                          \
+        }                                                                                          \
+    } while (0)
+
+constexpr int kInterleavedBlockBytes = 224; // 192 codes + 16 sub-block scales + 2 d, padded to 16
+
+struct Planes {
+    const std::uint8_t* codes;   // 192 bytes a block
+    const std::uint8_t* high;    // 16 bytes a block
+    const std::uint16_t* scales; // 2 bytes a block
+};
+
+__device__ __forceinline__ unsigned fold(const uint4& v) { return v.x ^ v.y ^ v.z ^ v.w; }
+
+// One warp a row (as R8's one-row schedules), each lane a 32-value group kb = lane + 32 i; the
+// group's loads are W4a8Q6K::load's: ql (two 16-byte loads), qh (two), the sub-block scales (8
+// bytes) and d (2 bytes).
+template <bool Interleaved>
+__global__ void loads_kernel(Planes p, const std::uint8_t* inter, int rows, int groups_per_row,
+                             unsigned* out) {
+    const int lane = static_cast<int>(threadIdx.x) & 31;
+    const int row  = static_cast<int>(blockIdx.x) * (blockDim.x / 32) + (threadIdx.x >> 5);
+    if (row >= rows) return;
+    unsigned acc = 0;
+    for (int kb = lane; kb < groups_per_row; kb += 32) {
+        const std::int64_t blk = static_cast<std::int64_t>(row) * (groups_per_row / 8) + (kb >> 3);
+        const int h            = (kb >> 2) & 1;
+        const int u            = kb & 3;
+        const std::uint8_t* cb;
+        const std::uint8_t* hb;
+        unsigned d;
+        if constexpr (Interleaved) {
+            const std::uint8_t* b = inter + blk * kInterleavedBlockBytes;
+            cb                    = b;
+            hb                    = b + 192;
+            d                     = *reinterpret_cast<const unsigned short*>(b + 208);
+        } else {
+            cb = p.codes + blk * 192;
+            hb = p.high + blk * 16;
+            d  = p.scales[blk];
+        }
+        const auto* ql = reinterpret_cast<const uint4*>(cb + 64 * h + 32 * (u & 1));
+        const auto* qh = reinterpret_cast<const uint4*>(cb + 128 + 32 * h);
+        const uint4 la = __ldg(ql), lb = __ldg(ql + 1), ha = __ldg(qh), hb4 = __ldg(qh + 1);
+        const uint2 sc = __ldg(reinterpret_cast<const uint2*>(hb + 8 * h));
+        acc ^= fold(la) ^ fold(lb) ^ fold(ha) ^ fold(hb4) ^ sc.x ^ sc.y ^ d;
+    }
+    if (acc == 0x9e3779b9U) out[row] = acc; // keeps the loads; never true for the fill below
+}
+
+int arg(int argc, char** argv, const char* name, int fallback) {
+    for (int i = 1; i + 1 < argc; ++i)
+        if (std::string(argv[i]) == name) return std::atoi(argv[i + 1]);
+    return fallback;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    const int rows            = arg(argc, argv, "--rows", 65536);
+    const int k               = arg(argc, argv, "--k", 4096);
+    const int warps           = arg(argc, argv, "--warps", 4);
+    const int repeat          = arg(argc, argv, "--repeat", 20);
+    const int groups          = k / 32;
+    const std::int64_t blocks = static_cast<std::int64_t>(rows) * (k / 256);
+    cudaDeviceProp prop{};
+    CHECK(cudaGetDeviceProperties(&prop, 0));
+    std::printf(
+        "device %s, %d SMs, L2 %d MB; rows %d, k %d, blocks %lld (%.1f MB payload), %d warps "
+        "a CTA, %d repeats\n",
+        prop.name, prop.multiProcessorCount, prop.l2CacheSize >> 20, rows, k,
+        static_cast<long long>(blocks), blocks * 210.0 / 1e6, warps, repeat);
+    std::uint8_t *codes, *high, *inter;
+    std::uint16_t* scales;
+    unsigned* out;
+    CHECK(cudaMalloc(&codes, blocks * 192));
+    CHECK(cudaMalloc(&high, blocks * 16));
+    CHECK(cudaMalloc(&scales, blocks * 2));
+    CHECK(cudaMalloc(&inter, blocks * kInterleavedBlockBytes));
+    CHECK(cudaMalloc(&out, rows * sizeof(unsigned)));
+    CHECK(cudaMemset(codes, 0x11, blocks * 192));
+    CHECK(cudaMemset(high, 0x22, blocks * 16));
+    CHECK(cudaMemset(scales, 0x33, blocks * 2));
+    CHECK(cudaMemset(inter, 0x44, blocks * kInterleavedBlockBytes));
+    // An L2-sized buffer read between repeats: every repeat starts cold.
+    const std::size_t flush_bytes = std::max<std::size_t>(prop.l2CacheSize, 1 << 20) * 4;
+    std::uint8_t* flush;
+    CHECK(cudaMalloc(&flush, flush_bytes));
+    const Planes p{codes, high, scales};
+    const dim3 grid((rows + warps - 1) / warps), block(32 * warps);
+    cudaEvent_t a, b;
+    CHECK(cudaEventCreate(&a));
+    CHECK(cudaEventCreate(&b));
+    const auto run = [&](bool interleaved) {
+        std::vector<float> ms;
+        for (int r = 0; r < repeat + 2; ++r) {
+            CHECK(cudaMemset(flush, r, flush_bytes));
+            CHECK(cudaEventRecord(a));
+            if (interleaved)
+                loads_kernel<true><<<grid, block>>>(p, inter, rows, groups, out);
+            else
+                loads_kernel<false><<<grid, block>>>(p, inter, rows, groups, out);
+            CHECK(cudaEventRecord(b));
+            CHECK(cudaEventSynchronize(b));
+            float t = 0;
+            CHECK(cudaEventElapsedTime(&t, a, b));
+            if (r >= 2) ms.push_back(t);
+        }
+        std::sort(ms.begin(), ms.end());
+        return ms[ms.size() / 2];
+    };
+    // Interleaved order, so drift hits both layouts alike.
+    std::vector<float> planes_ms, inter_ms;
+    for (int round = 0; round < 3; ++round) {
+        planes_ms.push_back(run(false));
+        inter_ms.push_back(run(true));
+    }
+    std::sort(planes_ms.begin(), planes_ms.end());
+    std::sort(inter_ms.begin(), inter_ms.end());
+    const double tp = planes_ms[1], ti = inter_ms[1];
+    std::printf("planes      %.4f ms  %.1f GB/s payload (rounds %.4f %.4f %.4f)\n", tp,
+                blocks * 210.0 / tp / 1e6, planes_ms[0], planes_ms[1], planes_ms[2]);
+    std::printf("interleaved %.4f ms  %.1f GB/s payload (rounds %.4f %.4f %.4f; %.1f MB read)\n",
+                ti, blocks * 210.0 / ti / 1e6, inter_ms[0], inter_ms[1], inter_ms[2],
+                blocks * double(kInterleavedBlockBytes) / 1e6);
+    std::printf("planes / interleaved %.3f\n", tp / ti);
+    return 0;
+}
