@@ -297,7 +297,7 @@ int main(int argc, char** argv) {
                      static_cast<int>(s.name.size()), s.name.data());
         ++failures;
     }
-    constexpr std::size_t kExpectedFitted = 26;
+    constexpr std::size_t kExpectedFitted = 27;
     if (fitted != kExpectedFitted) {
         std::fprintf(stderr,
                      "%zu Fitted constants found, expected %zu: if one was added or retagged, give "

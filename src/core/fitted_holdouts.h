@@ -162,6 +162,13 @@ inline constexpr Holdout h_l2_ga10x = Holdout::none(
     "#499 Constants table and gate; core/generation.h rmma_terms_measured",
     "the RTX 3090 was out of sample only for the first version of the terms: production geomean "
     "1.136 -> 1.091 (90 cases, 2 passes x 7 samples, worst 1.83 -> 1.83)");
+inline constexpr Holdout h_l1_hit_latency =
+    Holdout::none("Turing's published L1 hit latency (32 clk), not a fit to data; an architecture "
+                  "with an ISA row prices by its own measured isa_probe l1_latency_w1 (28 / 32 / "
+                  "33 / 34 / 38 clk on sm_70 / 75 / 86 / 89 / 120a)",
+                  "a transfer to sm_80, sm_90 and sm_100, which have no lab card and no ISA row",
+                  "#613 PR-7a review (12.11); kernel_roofline.h calibration_of",
+                  "no price reads it while route_cost::kRmmaCountedLaw is off");
 inline constexpr Holdout h_l2_gb20x = Holdout::none(
     "RTX 5090 + RTX 5070 Ti together (replica geomean regret 5090 1.047, 5070 Ti 1.041; master "
     "1.135, 1.080; 16 gives 1.048 / 1.043, 32 gives 1.064 / 1.050)",
@@ -204,6 +211,7 @@ inline constexpr FittedHoldout kRouteCostHoldouts[] = {
     {kRouteCost, "kRmmaSaturatingWarps", h_a16_refit},
     {kRouteCost, "kRmmaHeavySaturatingWarps", h_rmma_heavy_warps},
     {kRouteCost, "kL2BytesPerSmClockGa10x", h_l2_ga10x},
+    {kRouteCost, "kL1HitLatencyCycles", h_l1_hit_latency},
     {kRouteCost, "kL2BytesPerSmClockGb20x", h_l2_gb20x},
     {kRouteCost, "kSpillAccessesPerStep", h_spill_accesses},
     {kRouteCost, "kClusterReduceCycles", h_a16_refit},

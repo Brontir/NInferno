@@ -13,7 +13,8 @@
 //     of it: the ones MMAs cost tensor time like any other;
 //   - the spill term from the loop's LDL / STL count in place of kSpillAccessesPerStep (2 accesses
 //     of the whole stack frame per 128-K step, Fitted). A spilled register is reloaded right before
-//     its use at 255 registers, so the warp waits the L1 hit latency (kL1HitLatencyCycles), hidden
+//     its use at 255 registers, so the warp waits the L1 hit latency (the arch's isa_probe
+//     l1_latency_w1, kL1HitLatencyCycles where it has no ISA row), hidden
 //     only by the other warps its scheduler holds (resident warps / 4): local x latency / warps per
 //     scheduler, not bytes over the L1 data path, which is 10-15x too small (3090, Q4_K SwiGLU
 //     15360x3840 at 96 tokens: m2.n4 spills 114 LDL/STL an iteration and measures 290 us over

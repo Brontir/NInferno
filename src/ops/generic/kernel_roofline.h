@@ -90,7 +90,9 @@ struct ChipFacts {
 
 // The constants the price does not derive yet, with their tags in route_cost_constants.h. The
 // defaults are today's values, so a client that passes calibration_of(major, minor) prices as it
-// did; a replica may move one and read the terms it moves.
+// did; a replica may move one and read the terms it moves. Two defaults may differ from what
+// calibration_of returns for an arch: the L2 rate and the L1 hit latency, which it reads from
+// the arch's facts.
 struct Calibration {
     // Register MMA.
     double rmma_step_cycles            = route_cost::kRmmaStepCycles.value();
@@ -720,12 +722,19 @@ inline void fill_isa_facts(ChipFacts& c, int major, int minor) {
 }
 
 // Today's calibration of compute capability major.minor: the constants above, the L2 rate the
-// generation was fitted with (gb20x its own, every other part GA10x's).
+// generation was fitted with (gb20x its own, every other part GA10x's), and the architecture's
+// measured L1 hit latency (isa_probe l1_latency_w1, #613 PR-7a review) where its ISA row has one.
 [[nodiscard]] inline Calibration calibration_of(int major, int minor) {
     Calibration cal;
     cal.l2_bytes_per_sm_clock = (gb20x_cc(major, minor) ? route_cost::kL2BytesPerSmClockGb20x
                                                         : route_cost::kL2BytesPerSmClockGa10x)
                                     .value();
+    for (const IsaRow& row : isa_facts_table()) {
+        if (row.major == major && row.minor == minor && row.l1_latency.w1) {
+            cal.l1_hit_latency_cycles = *row.l1_latency.w1;
+            break;
+        }
+    }
     return cal;
 }
 
