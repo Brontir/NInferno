@@ -205,7 +205,7 @@ void check_answers() {
              b.wide > 4 ? "r8_frag_q4_0_narrow" : ""},
             {QType::GGML_Q4_K, QuantLayout::GgmlFrag, b.wide, ""},
             {QType::GGML_IQ3_XXS, QuantLayout::GgmlBlocks, b.wide, ""},
-            {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, b.wide, ""},
+            {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, narrow, b.wide > 4 ? "r8_q6k_narrow" : ""},
             {QType::GGML_Q3_K, QuantLayout::GgmlBlocks, b.wide, ""},
             {QType::MXFP4, QuantLayout::BlockScaleK32E8M0, narrow,
              b.wide > 4 ? "r8_fp4_elements" : ""},

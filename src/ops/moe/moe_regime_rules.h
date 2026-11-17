@@ -224,7 +224,8 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      kR8Tokens,
      Label::Measured,
      {kRtx5090, kRtx5070Ti},
-     "R8 against the register MMA at T = 5..8, every K-quant and IQ3_XXS: RTX 5070 Ti -7..-14 %, "
+     "R8 against the register MMA at T = 5..8, every K-quant and IQ3_XXS (A16 baseline; against "
+     "the A8 register MMA Q6_K loses, so r8_q6k_narrow holds it to four): RTX 5070 Ti -7..-14 %, "
      "RTX 5090 -5..-15 %; end to end C8 Qwen3.6-35B 180.8 -> 189.0 tok/s, Gemma 4 26B 161.0 -> "
      "167.4 (RTX 5090)",
      kR8T8Sweep},
@@ -252,6 +253,26 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      "gpt-oss-20b MXFP4 C8 RTX 5070 Ti 109.4 -> 97.1 tok/s, RTX 4060 Ti 39.5 -> 38.7 at eight "
      "tokens; NVFP4 decodes the same elements (not timed)",
      "moe_bench --plans auto; moe.cpp r8_token_limit(bank)"},
+    // Q6_K's 6-bit planes: R8's per-token unpack loses to the register MMA's once-per-weight
+    // decode above four tokens on GB20x, and is level on Ada; GA10x and Turing already stop at
+    // four (#860). Measured on the gate/up bank; a down bank is held the same way (its R8 at
+    // T = 5..8 loses more in the same sweeps: the R8 gate/up and down plan against R8 gate/up
+    // alone, RTX 5070 Ti +17..+18 %). The RTX 4070 Ti, also level, has no Card constant here.
+    {"r8_q6k_narrow",
+     Regime::BankLimit,
+     {},
+     +[](const BankFacts& b) {
+         return b.format == QType::GGML_Q6_K && b.layout != QuantLayout::GgmlFrag;
+     },
+     kR8NarrowTokens,
+     Label::Measured,
+     {kRtx5070Ti, kRtx5090, kRtx4090, kRtx4060Ti},
+     "Q6_K gate/up, R8 against the register MMA at T = 5..8: RTX 5070 Ti +4.9..+6.0 % (the route's "
+     "own R8 plan, 145.4 against 137.2 us at T = 5), RTX 5090 +6.5..+9.8 % (the best R8 gate/up "
+     "plan, 84.0 against 77.8 us at T = 5); Ada level: RTX 4090 0.0..+0.8 %, 4070 Ti +0.3..+1.2 %, "
+     "4060 Ti +0.4..+0.8 %",
+     "moe_bench H 2048 F 512 E 128 k 8, published layout, --plans auto and --plans sweep --a8 1, "
+     "T = 1..8, two passes (2026-11-16, master a8c09e817 and 782b5c6db; #860)"},
     {"r8_frag_q4k_wide",
      Regime::BankLimit,
      {},

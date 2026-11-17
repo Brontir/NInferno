@@ -16,6 +16,7 @@
 #include "ops/generic/route_cost_constants.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -25,6 +26,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace g  = ninferno::ops::detail::generic;
 namespace rc = ninferno::ops::detail::generic::route_cost;
@@ -81,14 +83,38 @@ constexpr KernelChecked kCheckedInKernel[] = {
     {"quant_mmq_values_per_cta", "kQuantMmqValuesPerCta", "ggml_mmq/ggml_mmq.cu"},
 };
 
-// Whether `file` (under src/ops/generic) static_asserts route_cost::`constant`.
+// A source text without its comments (block comments, then line comments), so a commented-out
+// declaration or static_assert counts as absent.
+std::string without_comments(std::string text) {
+    text = std::regex_replace(text, std::regex(R"(/\*[\s\S]*?\*/)"), "");
+    return std::regex_replace(text, std::regex(R"(//[^\n]*)"), "");
+}
+
+// Whether `file` (under src/ops/generic) static_asserts route_cost::`constant` outside a comment.
 bool kernel_asserts(std::string_view file, std::string_view constant) {
     const std::filesystem::path path =
         std::filesystem::path(NINFERNO_SOURCE_DIR) / "src/ops/generic" / std::string(file);
     std::ifstream in(path);
-    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::string text = without_comments(
+        std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()));
     return text.find("static_assert(route_cost::" + std::string(constant) + ".value() ==") !=
            std::string::npos;
+}
+
+// The C++ name a descriptor's name spells (route_cost_constants.h): "quant_w4a8_bytes_per_value"
+// is kQuantW4a8BytesPerValue, each underscore-separated word capitalised after a k.
+std::string constant_of(std::string_view name) {
+    std::string out = "k";
+    bool start      = true;
+    for (const char ch : name) {
+        if (ch == '_') {
+            start = true;
+            continue;
+        }
+        out += start ? static_cast<char>(std::toupper(static_cast<unsigned char>(ch))) : ch;
+        start = false;
+    }
+    return out;
 }
 
 const char* provenance_name(rc::Provenance p) {
@@ -124,9 +150,8 @@ HeaderNames header_names() {
         return out;
     }
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    // Comments may name constants too; drop them first (block comments, then line comments).
-    text = std::regex_replace(text, std::regex(R"(/\*[\s\S]*?\*/)"), "");
-    text = std::regex_replace(text, std::regex(R"(//[^\n]*)"), "");
+    // Comments may name constants too; drop them first.
+    text = without_comments(std::move(text));
     const std::regex definition(
         R"(\b(?:constexpr|const)\b(?![^;{}=()]*\bbool\b)[^;{}=()]*?\b(k[A-Z]\w*)\s*[{(=\[])");
     for (std::sregex_iterator it(text.begin(), text.end(), definition), end; it != end; ++it) {
@@ -219,6 +244,21 @@ int main(int argc, char** argv) {
         const KernelChecked* checked = nullptr;
         for (const auto& k : kCheckedInKernel) {
             if (k.name == c.name) checked = &k;
+        }
+        if (source != nullptr && checked != nullptr) {
+            std::fprintf(stderr,
+                         "%.*s is in both kCountedSources and kCheckedInKernel: name one source\n",
+                         static_cast<int>(c.name.size()), c.name.data());
+            ++failures;
+            continue;
+        }
+        if (checked != nullptr && checked->constant != constant_of(c.name)) {
+            std::fprintf(stderr, "kCheckedInKernel spells %.*s as %.*s; its name says %s\n",
+                         static_cast<int>(c.name.size()), c.name.data(),
+                         static_cast<int>(checked->constant.size()), checked->constant.data(),
+                         constant_of(c.name).c_str());
+            ++failures;
+            continue;
         }
         if (source == nullptr && checked != nullptr) {
             if (!kernel_asserts(checked->file, checked->constant)) {
