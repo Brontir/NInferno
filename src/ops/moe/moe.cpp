@@ -1580,12 +1580,13 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     // before its first load; a copy or a quantizer between two stages keeps the plain launch.
     const bool pdl = device_class().features.pdl && c.pdl;
     // The SIMT router's last CTA selects and plans (one launch fewer) when the warp plan covers
-    // the call (at most 32 assignments, on the device) and the chain has no programmatic
-    // dependent launches: without PDL each launch is a gap (RTX 3090: Gemma 4 26B C=1
-    // +1.3 %, C=4 +2.1 %, Qwen3.6-35B and Nemotron C=1 +1.2 / +1.4 %), with it the separate
-    // launch already overlaps and the last CTA's serial work costs more (RTX 5090:
-    // Qwen3.6-35B C=4 -3.3 %, Nemotron -2.3 %).
-    const bool route_in_router = router_simt && t <= kRouterSimtWarps && a <= 32 && !pdl;
+    // the call (at most 32 assignments, on the device). Without PDL each launch is a gap (RTX
+    // 3090: Gemma 4 26B C=1 +1.3 %, C=4 +2.1 %, Qwen3.6-35B and Nemotron C=1 +1.2 / +1.4 %; RTX
+    // 4090 +2.0 %, GV100 +3.0 %). Under PDL it wins too now that the routing router triggers no
+    // dependents (moe_router_simt.cu): an early trigger let the routed experts' CTAs sit resident
+    // through the router and the shared expert's branch stream waited behind them (RTX 5090,
+    // Qwen3.6-35B C=4 -6.1 %); triggering at exit it is +1.1 % (#617 K).
+    const bool route_in_router = router_simt && t <= kRouterSimtWarps && a <= 32;
     // 1. Router logits.
     {
         GemmArgs args;

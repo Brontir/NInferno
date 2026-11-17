@@ -1,9 +1,8 @@
-{
-    "schema": 1,
-    "about":
-        "Registry of the fusion sites found so far (#617 step A; the markers in the code enumerate it, and a site not yet found is not in it): places where two or more ops can run as one fused kernel or as separate launches, where it is decided today, the alternatives, and what prices it. Data only; nothing reads it at run time. Each site's deciding function carries a `// FUSION-SITE: <id>` line above its signature, and tests/test_fusion_sites.py fails when the code and this file disagree. byte_promise: Equal (every alternative gives the same bytes), OwnOrder (the alternatives sum in different orders, so the invariant profile must pin one), NotApplicable, Unreviewed. priced.status: priced (the generic route cost model prices the alternatives), partial (some alternative or term), fact (a hardware or format predicate decides, no price), literal (a constant measured on the cards named in the evidence), none (one form only, or a rule with no price). invariant_pin: which alternative the invariant route profile runs (unreviewed: not yet read from the code). parity_test: a test that runs the alternatives against each other (null: none known). oracle_test: a test that runs the whole production site (the public op or function that makes the decision, every alternative it can choose) against an independent oracle or a tolerance (null: none known; a test that exercises only one component or one alternative, or only restates the rule, does not qualify). The JSON is the source; a generated constexpr header is intended for steps B and D, as gpu_facts.json becomes board_registry.h.",
-    "sites":
-        [
+    {
+        "schema": 1,
+        "about":
+            "Registry of the fusion sites found so far (#617 step A; the markers in the code enumerate it, and a site not yet found is not in it): places where two or more ops can run as one fused kernel or as separate launches, where it is decided today, the alternatives, and what prices it. Data only; nothing reads it at run time. Each site's deciding function carries a `// FUSION-SITE: <id>` line above its signature, and tests/test_fusion_sites.py fails when the code and this file disagree. byte_promise: Equal (every alternative gives the same bytes), OwnOrder (the alternatives sum in different orders, so the invariant profile must pin one), NotApplicable, Unreviewed. priced.status: priced (the generic route cost model prices the alternatives), partial (some alternative or term), fact (a hardware or format predicate decides, no price), literal (a constant measured on the cards named in the evidence), none (one form only, or a rule with no price). invariant_pin: which alternative the invariant route profile runs (unreviewed: not yet read from the code). parity_test: a test that runs the alternatives against each other (null: none known). oracle_test: a test that runs the whole production site (the public op or function that makes the decision, every alternative it can choose) against an independent oracle or a tolerance (null: none known; a test that exercises only one component or one alternative, or only restates the rule, does not qualify). The JSON is the source; a generated constexpr header is intended for steps B and D, as gpu_facts.json becomes board_registry.h.",
+        "sites": [
             {
                 "id": "q8_pair",
                 "name": "Q8 K/V pair (drafter)",
@@ -525,7 +524,7 @@
                     "function": "run"
                 },
                 "rule_today":
-                    "route_in_router = router_simt && t <= kRouterSimtWarps && a <= 32 && !pdl: the SIMT router last CTA also selects and plans. Without PDL each launch is a gap (RTX 3090: Gemma 4 26B C=1 +1.3 %, C=4 +2.1 %, Qwen3.6-35B and Nemotron C=1 +1.2 / +1.4 %); with PDL the separate launch overlaps (RTX 5090: Qwen3.6-35B C=4 -3.3 %, Nemotron -2.3 %). router_simt is off under the invariant profile.",
+                    "route_in_router = router_simt && t <= kRouterSimtWarps && a <= 32: the SIMT router last CTA also selects and plans, and a routing router triggers no dependents (the expert kernel starts as its grid exits). Without PDL each launch is a gap (RTX 3090: Gemma 4 26B C=1 +1.3 %, C=4 +2.1 %, Qwen3.6-35B and Nemotron C=1 +1.2 / +1.4 %; RTX 4090 +2.0 %, GV100 +3.0 %); under PDL an early trigger let the routed experts' CTAs sit resident and lost 6.1 % (RTX 5090 Qwen3.6-35B C=4), the exit trigger gains 1.1 % (#617 K). router_simt is off under the invariant profile.",
                 "alternatives": [
                     "router launch with select+plan in its last CTA",
                     "router + select_plan / select + plan launches"
@@ -533,7 +532,7 @@
                 "priced": {
                     "status": "literal",
                     "by":
-                        "two cards, RTX 3090 (gains) and RTX 5090 (losses), measured end to end per model (comment above route_in_router in moe.cpp); the PDL flag and the 32-assignment bound are the rule",
+                        "measured end to end on four generations (RTX 3090, RTX 4090, GV100 without PDL; RTX 5090 under PDL, C=1/2/4; #617 K census); the 32-assignment bound is the rule",
                     "unpriced": "the launch saving per generation"
                 },
                 "byte_promise": "Equal",
@@ -634,7 +633,8 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "token bound 16 is a rule (the decode/verify widths) and a format predicate; the fused kernel's gain was timed in commit a1c5371f5 (#167): Qwen3.5-9B Q4_K_M plain decode at T = 1, nsys node trace, median of 255 steps, predicted against measured per GDN layer, RTX 4090 (+3.6 %), RTX 4070 Ti (+1.8 %), RTX 4060 Ti (+1.0 %)",
+                    "by":
+                        "token bound 16 is a rule (the decode/verify widths) and a format predicate; the fused kernel's gain was timed in commit a1c5371f5 (#167): Qwen3.5-9B Q4_K_M plain decode at T = 1, nsys node trace, median of 255 steps, predicted against measured per GDN layer, RTX 4090 (+3.6 %), RTX 4070 Ti (+1.8 %), RTX 4060 Ti (+1.0 %)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -702,7 +702,8 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "column bounds in the plan (not priced); the >= 17 A8 bound is the A8 quantization rule from facts (segmented_projection.h:11), not a run; card: not recorded, method: not recorded (origin commit 935c44a5b, subject only)",
+                    "by":
+                        "column bounds in the plan (not priced); the >= 17 A8 bound is the A8 quantization rule from facts (segmented_projection.h:11), not a run; card: not recorded, method: not recorded (origin commit 935c44a5b, subject only)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -735,7 +736,8 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "column bounds in the plan (not priced); card: not recorded, method: not recorded (no comment in the plan file names a run)",
+                    "by":
+                        "column bounds in the plan (not priced); card: not recorded, method: not recorded (no comment in the plan file names a run)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -769,7 +771,8 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "column bounds in the plan (not priced); card: not recorded, method: not recorded (origin commit 0ba16ed9c, subject only)",
+                    "by":
+                        "column bounds in the plan (not priced); card: not recorded, method: not recorded (origin commit 0ba16ed9c, subject only)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -803,7 +806,8 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "column bounds in the plan (not priced); the 2..32 materialize rule and the per-chip small-T MMA bands are recorded in q4_q5_gdn_input_plan.cpp: per-layer timing (27B DFlash2 verify at T = 6 on an RTX 5090: 56.8 + 22.0 us a layer; a Volta build, which the plan writes as the V100 (gv100): 864 + 217 us a layer at T = 5; lines 79-83) and ninferno_gdn_input_proj_bench, 27B form, warm graph, on RTX 5090, RTX 4090 and RTX 3090 (lines 89-94, table kMmaMeasured); the one-token rule comes from the RTX 3090 decode census at 19.5K (59.1 + 24.6 us a layer against 55.0 + 17.1) and RTX 4080 SUPER 81.1 against 85.0 us (lines 102-107); the fused case 1, 2, 3, 5, 6 list itself has no recorded source (pre-public commit bdb0b27d6, no body)",
+                    "by":
+                        "column bounds in the plan (not priced); the 2..32 materialize rule and the per-chip small-T MMA bands are recorded in q4_q5_gdn_input_plan.cpp: per-layer timing (27B DFlash2 verify at T = 6 on an RTX 5090: 56.8 + 22.0 us a layer; a Volta build, which the plan writes as the V100 (gv100): 864 + 217 us a layer at T = 5; lines 79-83) and ninferno_gdn_input_proj_bench, 27B form, warm graph, on RTX 5090, RTX 4090 and RTX 3090 (lines 89-94, table kMmaMeasured); the one-token rule comes from the RTX 3090 decode census at 19.5K (59.1 + 24.6 us a layer against 55.0 + 17.1) and RTX 4080 SUPER 81.1 against 85.0 us (lines 102-107); the fused case 1, 2, 3, 5, 6 list itself has no recorded source (pre-public commit bdb0b27d6, no body)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -1301,8 +1305,7 @@
                     "file": "src/ops/sparse_moe/prefill/sparse_moe_prefill_kernels.cu",
                     "function": "sparse_moe_prefill_launch"
                 },
-                "rule_today":
-                    "fused_route = nvfp4 && tokens <= kSparseMoeRouteTileTokens, where tokens is the slice's (plan.slice_tokens), not the whole call's: one block carries selection, scan and index (the small route kernel, two graph nodes fewer per layer); otherwise the select/count, scan and index kernels run separately. Restricted to the NVFP4 profile on purpose (the Q4 route would take it on the ragged tail of a sliced call, a separate claim).",
+                "rule_today": "fused_route = nvfp4 && tokens <= kSparseMoeRouteTileTokens, where tokens is the slice's (plan.slice_tokens), not the whole call's: one block carries selection, scan and index (the small route kernel, two graph nodes fewer per layer); otherwise the select/count, scan and index kernels run separately. Restricted to the NVFP4 profile on purpose (the Q4 route would take it on the ragged tail of a sliced call, a separate claim).",
                 "alternatives": [
                     "small_route kernel (one block)",
                     "select_count + scan + index kernels"
@@ -1322,18 +1325,18 @@
                 ]
             }
         ],
-    "pending": [],
-    "excluded": [
-        {
-            "what":
-                "context_kv_materialize Fused64 route (src/ops/context_kv_materialize/launch.h: context_kv_materialize_route)",
-            "reason":
-                "a column-count table over the materialize schedules of one op, not a choice between fused and separate ops; revisit when step H adds regret lines per site"
-        },
-        {
-            "what": "linear_topk (src/ops/linear_topk/linear_topk.cpp)",
-            "reason":
-                "the fused LM head + top-16 op itself, which the drafter always calls; there is no decision between alternatives, and its test checks a tolerance, not bytes"
-        }
-    ]
-}
+        "pending": [],
+        "excluded": [
+            {
+                "what":
+                    "context_kv_materialize Fused64 route (src/ops/context_kv_materialize/launch.h: context_kv_materialize_route)",
+                "reason":
+                    "a column-count table over the materialize schedules of one op, not a choice between fused and separate ops; revisit when step H adds regret lines per site"
+            },
+            {
+                "what": "linear_topk (src/ops/linear_topk/linear_topk.cpp)",
+                "reason":
+                    "the fused LM head + top-16 op itself, which the drafter always calls; there is no decision between alternatives, and its test checks a tolerance, not bytes"
+            }
+        ]
+    }
