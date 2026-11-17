@@ -250,9 +250,12 @@ class Retire(unittest.TestCase):
         # The committed list over the committed header (the documented regeneration): every
         # entry is already out, and the tables come back unchanged.
         listing = self.HEADER.parents[3] / "tools" / "bench" / "data" / "r8_law_retired.txt"
-        with contextlib.redirect_stderr(io.StringIO()):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
             after = self.run_tool(listing.read_text())
         self.assertEqual(after, tool.read_header(str(self.HEADER)))
+        retired = len(tool.read_retired(str(listing)))
+        self.assertIn(f"0 entries dropped, {retired} already absent", err.getvalue())
 
     def test_an_entry_of_a_gpu_no_table_is_for_stops(self):
         with self.assertRaises(SystemExit) as raised:

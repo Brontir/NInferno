@@ -22,8 +22,9 @@ problem the given sweeps of that GPU did not measure; a measured problem takes t
 --retire FILE drops the entries FILE lists ("GPU QTYPE EPILOGUE N K WARPS ROWS" a line, the header's
 spelling and the entry's schedule, # comments): the entries the R8 schedule law reproduces on their own board (#613 PR-10,
 tools/bench/data/r8_law_retired.txt), which the law answers before any carried entry. With
---merge and no sweeps it rewrites the merged header without them. A listed entry the tables do not
-hold stops the tool.
+--merge and no sweeps it rewrites the merged header without them. A listed entry the tables no
+longer hold is already retired; one whose schedule differs, or of a GPU no table is for, stops the
+tool.
 
 Each table names the board its sweeps ran on by PCI id, which the bench's "board" line prints
 (`pci 0x2684`), and the header reads its facts from the registry
