@@ -94,7 +94,7 @@ q4k p0 swiglu 512x4096 speed T=2048 rmma.m1.n4.w4x1 ws=0
 q4k p0 swiglu 512x4096 prefill T=17..2048 tiled.128x128 ws=0
 q4k p0 swiglu 512x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p0 swiglu 512x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 store 1024x4096 speed T=1 r8.w8r1 ws=0
+q4k p1 store 1024x4096 speed T=1 r8.w4r1 ws=0
 q4k p1 store 1024x4096 speed T=2 ggml_vec ws=9216
 q4k p1 store 1024x4096 speed T=3 ggml_vec ws=13824
 q4k p1 store 1024x4096 speed T=4 ggml_vec ws=18432
@@ -109,7 +109,7 @@ q4k p1 store 1024x4096 speed T=2048 w4a8ws.128x64.p4 ws=10485760
 q4k p1 store 1024x4096 prefill T=17..2048 ggml_mmq ws=0
 q4k p1 store 1024x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p1 store 1024x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 add 1024x4096 speed T=1 r8.w8r1 ws=0
+q4k p1 add 1024x4096 speed T=1 r8.w4r1 ws=0
 q4k p1 add 1024x4096 speed T=2 ggml_vec ws=9216
 q4k p1 add 1024x4096 speed T=3 ggml_vec ws=13824
 q4k p1 add 1024x4096 speed T=4 ggml_vec ws=18432
@@ -163,7 +163,7 @@ q4k p0 swiglu 1024x1024 speed T=2048 rmma.m2.n4.w4x1 ws=0
 q4k p0 swiglu 1024x1024 prefill T=17..2048 tiled.128x128 ws=0
 q4k p0 swiglu 1024x1024 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p0 swiglu 1024x1024 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 store 2048x1024 speed T=1 r8.w8r2 ws=0
+q4k p1 store 2048x1024 speed T=1 r8.w4r1 ws=0
 q4k p1 store 2048x1024 speed T=2 ggml_vec ws=2304
 q4k p1 store 2048x1024 speed T=3 ggml_vec ws=3456
 q4k p1 store 2048x1024 speed T=4 ggml_vec ws=4608
@@ -181,7 +181,7 @@ q4k p1 store 2048x1024 speed T=2048 w4a8ws.128x64.p4 ws=2621440
 q4k p1 store 2048x1024 prefill T=17..2048 ggml_mmq ws=0
 q4k p1 store 2048x1024 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p1 store 2048x1024 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 add 2048x1024 speed T=1 r8.w8r2 ws=0
+q4k p1 add 2048x1024 speed T=1 r8.w4r1 ws=0
 q4k p1 add 2048x1024 speed T=2 ggml_vec ws=2304
 q4k p1 add 2048x1024 speed T=3 ggml_vec ws=3456
 q4k p1 add 2048x1024 speed T=4 ggml_vec ws=4608
@@ -252,7 +252,7 @@ q4k p0 swiglu 2048x4096 speed T=1024..2048 rmma.m2.n4.w4x1 ws=0
 q4k p0 swiglu 2048x4096 prefill T=17..2048 tiled.128x128 ws=0
 q4k p0 swiglu 2048x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p0 swiglu 2048x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 store 4096x4096 speed T=1 r8.w8r2 ws=0
+q4k p1 store 4096x4096 speed T=1 r8.w4r1 ws=0
 q4k p1 store 4096x4096 speed T=2 ggml_vec ws=9216
 q4k p1 store 4096x4096 speed T=3 ggml_vec ws=13824
 q4k p1 store 4096x4096 speed T=4 ggml_vec ws=18432
@@ -266,7 +266,7 @@ q4k p1 store 4096x4096 speed T=512..2048 ggml_mmq ws=0
 q4k p1 store 4096x4096 prefill T=17..2048 ggml_mmq ws=0
 q4k p1 store 4096x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p1 store 4096x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 add 4096x4096 speed T=1 r8.w8r2 ws=0
+q4k p1 add 4096x4096 speed T=1 r8.w4r1 ws=0
 q4k p1 add 4096x4096 speed T=2 ggml_vec ws=9216
 q4k p1 add 4096x4096 speed T=3 ggml_vec ws=13824
 q4k p1 add 4096x4096 speed T=4 ggml_vec ws=18432
@@ -280,7 +280,7 @@ q4k p1 add 4096x4096 speed T=512..2048 ggml_mmq ws=0
 q4k p1 add 4096x4096 prefill T=17..2048 ggml_mmq ws=0
 q4k p1 add 4096x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p1 add 4096x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 swiglu 2048x4096 speed T=1 r8.w8r1 ws=0
+q4k p1 swiglu 2048x4096 speed T=1 r8.w4r1 ws=0
 q4k p1 swiglu 2048x4096 speed T=2 ggml_vec ws=9216
 q4k p1 swiglu 2048x4096 speed T=3 ggml_vec ws=13824
 q4k p1 swiglu 2048x4096 speed T=4 ggml_vec ws=18432
@@ -317,7 +317,7 @@ q4k p0 swiglu 3072x5120 speed T=2048 rmma.m2.n4.w4x1 ws=0
 q4k p0 swiglu 3072x5120 prefill T=17..2048 tiled.128x128 ws=0
 q4k p0 swiglu 3072x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p0 swiglu 3072x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 store 6144x5120 speed T=1 r8.w8r2 ws=0
+q4k p1 store 6144x5120 speed T=1 r8.w4r1 ws=0
 q4k p1 store 6144x5120 speed T=2 ggml_vec ws=11520
 q4k p1 store 6144x5120 speed T=3 ggml_vec ws=17280
 q4k p1 store 6144x5120 speed T=4 ggml_vec ws=23040
@@ -328,7 +328,7 @@ q4k p1 store 6144x5120 speed T=512..2048 ggml_mmq ws=0
 q4k p1 store 6144x5120 prefill T=17..2048 ggml_mmq ws=0
 q4k p1 store 6144x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p1 store 6144x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 add 6144x5120 speed T=1 r8.w8r2 ws=0
+q4k p1 add 6144x5120 speed T=1 r8.w4r1 ws=0
 q4k p1 add 6144x5120 speed T=2 ggml_vec ws=11520
 q4k p1 add 6144x5120 speed T=3 ggml_vec ws=17280
 q4k p1 add 6144x5120 speed T=4 ggml_vec ws=23040
@@ -339,7 +339,7 @@ q4k p1 add 6144x5120 speed T=512..2048 ggml_mmq ws=0
 q4k p1 add 6144x5120 prefill T=17..2048 ggml_mmq ws=0
 q4k p1 add 6144x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p1 add 6144x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 swiglu 3072x5120 speed T=1 r8.w8r1 ws=0
+q4k p1 swiglu 3072x5120 speed T=1 r8.w4r1 ws=0
 q4k p1 swiglu 3072x5120 speed T=2 ggml_vec ws=11520
 q4k p1 swiglu 3072x5120 speed T=3 ggml_vec ws=17280
 q4k p1 swiglu 3072x5120 speed T=4 ggml_vec ws=23040
@@ -375,7 +375,7 @@ q4k p0 swiglu 8704x5120 speed T=192..2048 rmma.m2.n4.w4x1 ws=0
 q4k p0 swiglu 8704x5120 prefill T=17..2048 tiled.128x128 ws=0
 q4k p0 swiglu 8704x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p0 swiglu 8704x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 store 17408x5120 speed T=1 r8.w8r2 ws=0
+q4k p1 store 17408x5120 speed T=1 r8.w4r1 ws=0
 q4k p1 store 17408x5120 speed T=2 ggml_vec ws=11520
 q4k p1 store 17408x5120 speed T=3 ggml_vec ws=17280
 q4k p1 store 17408x5120 speed T=4 ggml_vec ws=23040
@@ -386,7 +386,7 @@ q4k p1 store 17408x5120 speed T=192..2048 ggml_mmq ws=0
 q4k p1 store 17408x5120 prefill T=17..2048 ggml_mmq ws=0
 q4k p1 store 17408x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p1 store 17408x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 add 17408x5120 speed T=1 r8.w8r2 ws=0
+q4k p1 add 17408x5120 speed T=1 r8.w4r1 ws=0
 q4k p1 add 17408x5120 speed T=2 ggml_vec ws=11520
 q4k p1 add 17408x5120 speed T=3 ggml_vec ws=17280
 q4k p1 add 17408x5120 speed T=4 ggml_vec ws=23040
@@ -397,7 +397,7 @@ q4k p1 add 17408x5120 speed T=192..2048 ggml_mmq ws=0
 q4k p1 add 17408x5120 prefill T=17..2048 ggml_mmq ws=0
 q4k p1 add 17408x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p1 add 17408x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 swiglu 8704x5120 speed T=1 r8.w8r1 ws=0
+q4k p1 swiglu 8704x5120 speed T=1 r8.w4r1 ws=0
 q4k p1 swiglu 8704x5120 speed T=2 ggml_vec ws=11520
 q4k p1 swiglu 8704x5120 speed T=3 ggml_vec ws=17280
 q4k p1 swiglu 8704x5120 speed T=4 ggml_vec ws=23040
@@ -455,7 +455,7 @@ q4k p1 add 5120x17408 speed T=2048 w4a8ws.128x64.p4 ws=44564480
 q4k p1 add 5120x17408 prefill T=17..2048 ggml_mmq ws=0
 q4k p1 add 5120x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p1 add 5120x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 swiglu 2560x17408 speed T=1 r8.w8r1 ws=0
+q4k p1 swiglu 2560x17408 speed T=1 r8.w8r2 ws=0
 q4k p1 swiglu 2560x17408 speed T=2 ggml_vec ws=39168
 q4k p1 swiglu 2560x17408 speed T=3 ggml_vec ws=58752
 q4k p1 swiglu 2560x17408 speed T=4 ggml_vec ws=78336
@@ -508,7 +508,7 @@ q4k p1 add 28672x8192 speed T=192..2048 ggml_mmq ws=0
 q4k p1 add 28672x8192 prefill T=17..2048 ggml_mmq ws=0
 q4k p1 add 28672x8192 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p1 add 28672x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 swiglu 14336x8192 speed T=1 r8.w8r1 ws=0
+q4k p1 swiglu 14336x8192 speed T=1 r8.w8r2 ws=0
 q4k p1 swiglu 14336x8192 speed T=2 ggml_vec ws=18432
 q4k p1 swiglu 14336x8192 speed T=3 ggml_vec ws=27648
 q4k p1 swiglu 14336x8192 speed T=4 ggml_vec ws=36864
