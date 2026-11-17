@@ -16,12 +16,12 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
-#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <map>
 #include <optional>
 #include <stdexcept>
+#include <system_error>
 
 namespace ninferno::convert {
 
@@ -444,22 +444,30 @@ cached_artifact(const std::filesystem::path& path,
             why = dir.string() + ": " + ec.message();
             return -1;
         }
-        const int fd = sys::open(dir / ".convert.lock", O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-        if (fd < 0) { why = (dir / ".convert.lock").string() + ": " + std::strerror(errno); }
+        const int fd  = sys::open(dir / ".convert.lock", O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+        const int err = errno;
+        if (fd < 0) {
+            why = (dir / ".convert.lock").string() + ": " + std::generic_category().message(err);
+        }
         return fd;
     };
+    // Consuming punches the source's shards, which a directory this user cannot write does not
+    // allow either: an artifact that goes to the own cache (or was converted there before) refuses
+    // --consume-source before converting rather than failing inside it.
+    const auto refuse_consume = [&](const std::string& reason) {
+        if (consume_source) {
+            throw std::runtime_error("cannot write beside " + path.string() + " (" + reason +
+                                     "): --consume-source needs a writable model directory");
+        }
+    };
+    if (cache == dirs.own) { refuse_consume("its artifact is in " + dirs.own.string()); }
     int lock = open_lock(cache);
     if (lock < 0 && cache == dirs.beside && !dirs.own.empty()) {
         const std::string beside_why = why;
         cache                        = dirs.own;
         out.path                     = cache / name;
         if (serve_cached(out.path, path, stamp)) { return out; }
-        if (consume_source) {
-            // Consuming punches the source's shards, which a directory this user cannot write
-            // does not allow either: refuse before converting rather than fail inside it.
-            throw std::runtime_error("cannot write beside " + path.string() + " (" + beside_why +
-                                     "): --consume-source needs a writable model directory");
-        }
+        refuse_consume(beside_why);
         if (log) {
             log("cannot write " + dirs.beside.string() + " (" + beside_why + "): converting into " +
                 dirs.own.string());
