@@ -162,7 +162,8 @@ PROBE_18_FACTS = ("l1_ldg32_cycles_per_sm", "l2_ldg32_cycles_per_sm", "l2_bytes_
 FACTS += PROBE_18_FACTS
 # The int8 tensor shapes the W4A8 tiles run, by role (probe 19, #978): `wide` the shape of a
 # 32-value K group (IMMA.16832 from sm_80, IMMA.8816 on sm_75), `narrow` the shape of a codec with
-# 16-value sub-block scales (IMMA.16816; IMMA.8816 on sm_75). Per MMA a partition: saturated, with
+# 16-value sub-block scales (IMMA.16816; IMMA.8816 on sm_75; per SASS IMMA, so on sm_75 a wide
+# mma_s8 call is four of them and a narrow one two). Per MMA a partition: saturated, with
 # one CTA of 4 and 8 warps, and the dependent latency. sm_70 has no int8 MMA and owes none.
 PROBE_19_FACTS = tuple(f"imma_{role}_{what}" for role in ("wide", "narrow") for what in (
     "cycles_per_partition", "cycles_per_partition_w4", "cycles_per_partition_w8",

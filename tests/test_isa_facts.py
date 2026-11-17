@@ -151,6 +151,17 @@ SASS_70 = """
 
 
 class IsaFacts(unittest.TestCase):
+    def test_imma_facts_owed_from_sm_75(self):
+        # Probe 19's int8 MMA facts: owed by a run on sm_75 and later, not on sm_70 (no int8
+        # MMA), and by no run of an earlier probe; a fact of an earlier probe stays owed on sm_70.
+        for name in ip.PROBE_19_FACTS:
+            self.assertTrue(ip.owed_fact(name, 19, 75), name)
+            self.assertTrue(ip.owed_fact(name, 19, 120), name)
+            self.assertFalse(ip.owed_fact(name, 19, 70), name)
+            self.assertFalse(ip.owed_fact(name, 18, 89), name)
+            self.assertTrue(ip.owed_fact(name, 19, None), name)
+        self.assertTrue(ip.owed_fact("shared_latency", 19, 70))
+
     def test_parse_and_row(self):
         head, facts = ip.parse_run(SAMPLE)
         self.assertEqual(head["card"], "NVIDIA GeForce RTX 4090")
