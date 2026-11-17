@@ -204,6 +204,25 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual(sc.loop_counts(body_of(indirect), tiles=2).loops, 0)
         self.assertEqual(sc.loop_counts([], tiles=2).loops, 0)
 
+    def test_switch_after_the_loop(self):
+        # A compiled switch in the epilogue (sm_100 / sm_120a: BSSY, then BRXU through a jump
+        # table): its targets are the instructions up to the BSSY's reconvergence point, all
+        # forward, so the K loop is counted as without it.
+        switch = {0x400: "BSSY.RECONVERGENT B0, 0x420 ;", 0x410: "BRXU UR4 -0x420 ;"}
+        lines = [(o, switch.get(o, t)) for o, t in KERNEL]
+        body = body_of(lines)
+        i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
+        self.assertEqual([body[k][0] for k in sc.switch_targets(body, i)], [0x420])
+        plain, counted = sc.loop_counts(body_of(KERNEL), tiles=2), sc.loop_counts(body, tiles=2)
+        self.assertEqual((counted.loops, counted.k_iter, counted.mma, counted.total),
+                         (plain.loops, plain.k_iter, plain.mma, plain.total))
+        self.assertGreater(counted.outside_total, 0)
+        # Without the BSSY the targets run to the function's end.
+        lines = [(o, "FMUL R36, R36, R30 ;" if o == 0x400 else t) for o, t in lines]
+        body = body_of(lines)
+        i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
+        self.assertEqual(body[sc.switch_targets(body, i)[-1]][0], body[-1][0])
+
     def test_ffma_loop_without_tensor_mma(self):
         # Volta's build: the loop with the FFMAs stands in; no shape, no k_iter.
         lines = [(o, t.replace("HMMA.16816.F32.BF16", "FFMA").replace(", RZ ;", ", R0 ;"))

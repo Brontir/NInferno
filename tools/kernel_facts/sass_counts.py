@@ -274,16 +274,40 @@ def branch_edges(guarded, opcode, operands):
     return True, conditional
 
 
+def switch_targets(body, i):
+    """The possible targets of the indirect branch at `i`, a compiled switch (sm_100 / sm_120a
+    compile one so, e.g. the routed expert kernels' epilogue): the jump table is in a constant
+    bank, so its entries are not read, and the targets are over-approximated by every instruction
+    after the branch, up to the reconvergence point R of the BSSY that opens its region where one
+    stands just before it (BSSY Bn, R), else to the function's end. All forward: no edge back, so
+    no loop is made, and a loop the branch sits outside of is counted as before. None where no
+    instruction follows (unknown flow)."""
+    offset, end = body[i][0], None
+    for j in range(i - 1, max(i - 4, -1), -1):
+        if base_opcode(body[j][2]) == "BSSY":
+            m = TARGET.search(body[j][3])
+            if m and int(m.group(1), 16) > offset:
+                end = int(m.group(1), 16)
+            break
+    targets = [k for k in range(i + 1, len(body)) if end is None or body[k][0] <= end]
+    return targets or None
+
+
 def successors(body):
     """The control-flow successors of every instruction (indices into `body`), or None where the
-    flow is unknown (an indirect branch, a branch to an offset outside the function)."""
+    flow is unknown (an indirect branch outside a BSSY region (switch_targets), a branch to an
+    offset outside the function)."""
     at = {offset: i for i, (offset, *_) in enumerate(body)}
     out = []
     for i, (_, guarded, opcode, operands, *_) in enumerate(body):
         nexts = []
         base = base_opcode(opcode)
         if base.startswith(("BRX", "JMX")):
-            return None
+            targets = switch_targets(body, i)
+            if targets is None:
+                return None
+            out.append(targets)
+            continue
         if base in ("BRA", "JMP"):
             m = TARGET.search(operands)
             if not m or int(m.group(1), 16) not in at:
@@ -306,7 +330,8 @@ def basic_blocks(body, succ):
     A leader is the entry, a successor of a branch, or the instruction after a block ender."""
     leaders = {0}
     for i, nexts in enumerate(succ):
-        if base_opcode(body[i][2]) in ("BRA", "JMP", "EXIT", "RET", "KILL"):
+        if base_opcode(body[i][2]) in ("BRA", "JMP", "EXIT", "RET", "KILL") or base_opcode(
+                body[i][2]).startswith(("BRX", "JMX")):
             leaders.add(i + 1)
             leaders.update(nexts)
     starts = sorted(l for l in leaders if l < len(body))
