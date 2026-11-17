@@ -131,7 +131,8 @@ int main(int argc, char** argv) {
     CHECK(cudaMemset(high, 0x22, blocks * 16));
     CHECK(cudaMemset(scales, 0x33, blocks * 2));
     CHECK(cudaMemset(inter, 0x44, blocks * kInterleavedBlockBytes));
-    // An L2-sized buffer read between repeats: every repeat starts cold.
+    // A buffer of four L2s, written then read between repeats: every repeat starts cold, with clean
+    // lines.
     const std::size_t flush_bytes = std::max<std::size_t>(prop.l2CacheSize, 1 << 20) * 4;
     std::uint8_t* flush;
     CHECK(cudaMalloc(&flush, flush_bytes));
