@@ -138,56 +138,56 @@ inline constexpr R8DecodeEntry kR8DecodeAd102_128sm[] = {
 
 // ad103:80sm: 50 entries (median us: rules -> entry).
 inline constexpr R8DecodeEntry kR8DecodeAd103_80sm[] = {
-    {QType::GGML_IQ2_S, Epilogue::Store, 12288, 2048, 4, 1}, // w8r2 17.92 -> 16.66
-    {QType::GGML_IQ2_S, Epilogue::Store, 6656, 4096, 4, 1}, // w4r2 19.02 -> 16.78
-    {QType::GGML_IQ2_S, Epilogue::Store, 12288, 5120, 4, 1}, // w8r2 38.08 -> 35.55
-    {QType::GGML_IQ2_S, Epilogue::Store, 14336, 5120, 4, 1}, // w8r2 44.97 -> 41.23
-    {QType::GGML_IQ2_S, Epilogue::Store, 16384, 5120, 4, 1}, // w8r2 51.56 -> 46.03
-    {QType::GGML_IQ2_S, Epilogue::Store, 34816, 5120, 4, 1}, // w8r2 102.74 -> 94.40
-    {QType::GGML_IQ2_S, Epilogue::Store, 4096, 5376, 4, 1}, // w4r2 18.76 -> 16.11
-    {QType::GGML_IQ2_S, Epilogue::Store, 8192, 5376, 4, 1}, // w4r2 29.00 -> 28.26
-    {QType::GGML_IQ2_S, Epilogue::Store, 16384, 5376, 4, 1}, // w8r2 57.34 -> 51.30
-    {QType::GGML_IQ2_S, Epilogue::Store, 18432, 5376, 4, 1}, // w8r2 63.80 -> 57.68
-    {QType::GGML_IQ2_S, Epilogue::Store, 43008, 5376, 4, 1}, // w8r2 140.13 -> 128.94
-    {QType::GGML_IQ2_S, Epilogue::Store, 4096, 6656, 8, 2}, // w4r2 21.59 -> 19.97
-    {QType::GGML_IQ2_S, Epilogue::Store, 19968, 6656, 4, 2}, // w8r2 78.11 -> 76.80
-    {QType::GGML_IQ2_S, Epilogue::Store, 39936, 6656, 4, 2}, // w8r2 153.36 -> 144.67
-    {QType::GGML_IQ2_S, Epilogue::Store, 5376, 8192, 4, 2}, // w8r2 32.31 -> 27.80
-    {QType::GGML_IQ2_S, Epilogue::SwiGlu, 17408, 5120, 4, 1}, // w8r2 103.94 -> 88.71
-    {QType::GGML_IQ2_S, Epilogue::SwiGlu, 19968, 6656, 4, 1}, // w8r2 153.24 -> 132.51
-    {QType::GGML_IQ2_XS, Epilogue::Store, 4096, 2048, 4, 1}, // w4r2 6.31 -> 6.24
-    {QType::GGML_IQ2_XS, Epilogue::Store, 8192, 2048, 4, 1}, // w4r2 10.02 -> 9.80
-    {QType::GGML_IQ2_XS, Epilogue::Store, 9216, 2048, 4, 1}, // w4r2 11.06 -> 10.66
-    {QType::GGML_IQ2_XS, Epilogue::Store, 12288, 2048, 4, 1}, // w8r2 14.06 -> 13.67
-    {QType::GGML_IQ2_XS, Epilogue::Store, 6144, 5120, 4, 1}, // w4r2 18.11 -> 16.32
-    {QType::GGML_IQ2_XS, Epilogue::Store, 12288, 5120, 4, 1}, // w8r2 33.77 -> 29.51
-    {QType::GGML_IQ2_XS, Epilogue::Store, 14336, 5120, 4, 1}, // w8r2 37.56 -> 34.81
-    {QType::GGML_IQ2_XS, Epilogue::Store, 16384, 5120, 4, 1}, // w8r2 43.88 -> 39.44
-    {QType::GGML_IQ2_XS, Epilogue::Store, 34816, 5120, 4, 1}, // w8r2 87.94 -> 82.33
-    {QType::GGML_IQ2_XS, Epilogue::Store, 4096, 5376, 4, 1}, // w4r2 14.17 -> 13.57
-    {QType::GGML_IQ2_XS, Epilogue::Store, 8192, 5376, 4, 1}, // w4r2 24.68 -> 24.06
-    {QType::GGML_IQ2_XS, Epilogue::Store, 16384, 5376, 4, 1}, // w8r2 47.92 -> 45.33
-    {QType::GGML_IQ2_XS, Epilogue::Store, 18432, 5376, 4, 1}, // w8r2 51.99 -> 50.35
-    {QType::GGML_IQ2_XS, Epilogue::Store, 43008, 5376, 4, 2}, // w8r2 115.88 -> 114.52
-    {QType::GGML_IQ2_XS, Epilogue::Store, 19968, 6656, 4, 2}, // w8r2 66.59 -> 65.62
-    {QType::GGML_IQ2_XS, Epilogue::SwiGlu, 17408, 5120, 4, 1}, // w8r2 81.94 -> 80.86
-    {QType::GGML_IQ2_XS, Epilogue::SwiGlu, 19968, 6656, 4, 1}, // w8r2 125.15 -> 123.51
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 4096, 2048, 4, 1}, // w4r2 5.65 -> 5.43
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 8192, 2048, 4, 1}, // w4r2 9.02 -> 8.89
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 9216, 2048, 4, 1}, // w4r2 10.24 -> 9.95
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 12288, 2048, 4, 2}, // w8r2 12.71 -> 12.34
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 6656, 4096, 4, 1}, // w4r2 13.58 -> 12.39
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 6144, 5120, 4, 1}, // w4r2 15.53 -> 14.57
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 12288, 5120, 4, 1}, // w8r2 28.31 -> 26.64
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 16384, 5120, 4, 2}, // w8r2 37.10 -> 35.51
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 34816, 5120, 4, 2}, // w8r2 73.06 -> 71.68
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 16384, 5376, 4, 2}, // w8r2 41.95 -> 40.77
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 5120, 6144, 4, 1}, // w4r2 16.62 -> 14.54
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 19968, 6656, 4, 2}, // w8r2 58.50 -> 57.22
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 39936, 6656, 4, 2}, // w8r2 111.34 -> 109.82
+    {QType::GGML_IQ2_S, Epilogue::Store, 12288, 2048, 4, 1},    // w8r2 17.92 -> 16.66
+    {QType::GGML_IQ2_S, Epilogue::Store, 6656, 4096, 4, 1},     // w4r2 19.02 -> 16.78
+    {QType::GGML_IQ2_S, Epilogue::Store, 12288, 5120, 4, 1},    // w8r2 38.08 -> 35.55
+    {QType::GGML_IQ2_S, Epilogue::Store, 14336, 5120, 4, 1},    // w8r2 44.97 -> 41.23
+    {QType::GGML_IQ2_S, Epilogue::Store, 16384, 5120, 4, 1},    // w8r2 51.56 -> 46.03
+    {QType::GGML_IQ2_S, Epilogue::Store, 34816, 5120, 4, 1},    // w8r2 102.74 -> 94.40
+    {QType::GGML_IQ2_S, Epilogue::Store, 4096, 5376, 4, 1},     // w4r2 18.76 -> 16.11
+    {QType::GGML_IQ2_S, Epilogue::Store, 8192, 5376, 4, 1},     // w4r2 29.00 -> 28.26
+    {QType::GGML_IQ2_S, Epilogue::Store, 16384, 5376, 4, 1},    // w8r2 57.34 -> 51.30
+    {QType::GGML_IQ2_S, Epilogue::Store, 18432, 5376, 4, 1},    // w8r2 63.80 -> 57.68
+    {QType::GGML_IQ2_S, Epilogue::Store, 43008, 5376, 4, 1},    // w8r2 140.13 -> 128.94
+    {QType::GGML_IQ2_S, Epilogue::Store, 4096, 6656, 8, 2},     // w4r2 21.59 -> 19.97
+    {QType::GGML_IQ2_S, Epilogue::Store, 19968, 6656, 4, 2},    // w8r2 78.11 -> 76.80
+    {QType::GGML_IQ2_S, Epilogue::Store, 39936, 6656, 4, 2},    // w8r2 153.36 -> 144.67
+    {QType::GGML_IQ2_S, Epilogue::Store, 5376, 8192, 4, 2},     // w8r2 32.31 -> 27.80
+    {QType::GGML_IQ2_S, Epilogue::SwiGlu, 17408, 5120, 4, 1},   // w8r2 103.94 -> 88.71
+    {QType::GGML_IQ2_S, Epilogue::SwiGlu, 19968, 6656, 4, 1},   // w8r2 153.24 -> 132.51
+    {QType::GGML_IQ2_XS, Epilogue::Store, 4096, 2048, 4, 1},    // w4r2 6.31 -> 6.24
+    {QType::GGML_IQ2_XS, Epilogue::Store, 8192, 2048, 4, 1},    // w4r2 10.02 -> 9.80
+    {QType::GGML_IQ2_XS, Epilogue::Store, 9216, 2048, 4, 1},    // w4r2 11.06 -> 10.66
+    {QType::GGML_IQ2_XS, Epilogue::Store, 12288, 2048, 4, 1},   // w8r2 14.06 -> 13.67
+    {QType::GGML_IQ2_XS, Epilogue::Store, 6144, 5120, 4, 1},    // w4r2 18.11 -> 16.32
+    {QType::GGML_IQ2_XS, Epilogue::Store, 12288, 5120, 4, 1},   // w8r2 33.77 -> 29.51
+    {QType::GGML_IQ2_XS, Epilogue::Store, 14336, 5120, 4, 1},   // w8r2 37.56 -> 34.81
+    {QType::GGML_IQ2_XS, Epilogue::Store, 16384, 5120, 4, 1},   // w8r2 43.88 -> 39.44
+    {QType::GGML_IQ2_XS, Epilogue::Store, 34816, 5120, 4, 1},   // w8r2 87.94 -> 82.33
+    {QType::GGML_IQ2_XS, Epilogue::Store, 4096, 5376, 4, 1},    // w4r2 14.17 -> 13.57
+    {QType::GGML_IQ2_XS, Epilogue::Store, 8192, 5376, 4, 1},    // w4r2 24.68 -> 24.06
+    {QType::GGML_IQ2_XS, Epilogue::Store, 16384, 5376, 4, 1},   // w8r2 47.92 -> 45.33
+    {QType::GGML_IQ2_XS, Epilogue::Store, 18432, 5376, 4, 1},   // w8r2 51.99 -> 50.35
+    {QType::GGML_IQ2_XS, Epilogue::Store, 43008, 5376, 4, 2},   // w8r2 115.88 -> 114.52
+    {QType::GGML_IQ2_XS, Epilogue::Store, 19968, 6656, 4, 2},   // w8r2 66.59 -> 65.62
+    {QType::GGML_IQ2_XS, Epilogue::SwiGlu, 17408, 5120, 4, 1},  // w8r2 81.94 -> 80.86
+    {QType::GGML_IQ2_XS, Epilogue::SwiGlu, 19968, 6656, 4, 1},  // w8r2 125.15 -> 123.51
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 4096, 2048, 4, 1},   // w4r2 5.65 -> 5.43
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 8192, 2048, 4, 1},   // w4r2 9.02 -> 8.89
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 9216, 2048, 4, 1},   // w4r2 10.24 -> 9.95
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 12288, 2048, 4, 2},  // w8r2 12.71 -> 12.34
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 6656, 4096, 4, 1},   // w4r2 13.58 -> 12.39
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 6144, 5120, 4, 1},   // w4r2 15.53 -> 14.57
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 12288, 5120, 4, 1},  // w8r2 28.31 -> 26.64
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 16384, 5120, 4, 2},  // w8r2 37.10 -> 35.51
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 34816, 5120, 4, 2},  // w8r2 73.06 -> 71.68
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 16384, 5376, 4, 2},  // w8r2 41.95 -> 40.77
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 5120, 6144, 4, 1},   // w4r2 16.62 -> 14.54
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 19968, 6656, 4, 2},  // w8r2 58.50 -> 57.22
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 39936, 6656, 4, 2},  // w8r2 111.34 -> 109.82
     {QType::GGML_IQ2_XXS, Epilogue::SwiGlu, 17408, 5120, 4, 1}, // w8r2 73.02 -> 70.50
     {QType::GGML_IQ2_XXS, Epilogue::SwiGlu, 19968, 6656, 4, 1}, // w8r2 111.84 -> 107.43
-    {QType::GGML_IQ3_S, Epilogue::Store, 5376, 8192, 4, 2}, // w8r2 35.75 -> 32.22
+    {QType::GGML_IQ3_S, Epilogue::Store, 5376, 8192, 4, 2},     // w8r2 35.75 -> 32.22
 };
 
 // ad104:60sm: 2 entries (median us: rules -> entry).
@@ -198,21 +198,21 @@ inline constexpr R8DecodeEntry kR8DecodeAd104_60sm[] = {
 
 // ad106:34sm: 15 entries (median us: rules -> entry).
 inline constexpr R8DecodeEntry kR8DecodeAd106_34sm[] = {
-    {QType::GGML_IQ2_S, Epilogue::Store, 6144, 5120, 4, 1}, // w4r2 45.47 -> 40.47
-    {QType::GGML_IQ2_S, Epilogue::Store, 10240, 5120, 4, 1}, // w4r2 72.70 -> 64.34
-    {QType::GGML_IQ2_S, Epilogue::Store, 17408, 5120, 4, 1}, // w8r2 121.44 -> 106.79
-    {QType::GGML_IQ2_S, Epilogue::SwiGlu, 17408, 5120, 4, 1}, // w8r2 244.32 -> 208.96
-    {QType::GGML_IQ2_XS, Epilogue::Store, 6144, 5120, 8, 1}, // w4r2 39.56 -> 34.90
-    {QType::GGML_IQ2_XS, Epilogue::Store, 17408, 5120, 8, 1}, // w8r2 105.47 -> 93.93
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 6144, 5120, 8, 1}, // w4r2 32.69 -> 31.13
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 10240, 5120, 8, 1}, // w4r2 51.98 -> 50.33
-    {QType::GGML_IQ2_XXS, Epilogue::Store, 17408, 5120, 8, 1}, // w8r2 85.69 -> 83.86
+    {QType::GGML_IQ2_S, Epilogue::Store, 6144, 5120, 4, 1},     // w4r2 45.47 -> 40.47
+    {QType::GGML_IQ2_S, Epilogue::Store, 10240, 5120, 4, 1},    // w4r2 72.70 -> 64.34
+    {QType::GGML_IQ2_S, Epilogue::Store, 17408, 5120, 4, 1},    // w8r2 121.44 -> 106.79
+    {QType::GGML_IQ2_S, Epilogue::SwiGlu, 17408, 5120, 4, 1},   // w8r2 244.32 -> 208.96
+    {QType::GGML_IQ2_XS, Epilogue::Store, 6144, 5120, 8, 1},    // w4r2 39.56 -> 34.90
+    {QType::GGML_IQ2_XS, Epilogue::Store, 17408, 5120, 8, 1},   // w8r2 105.47 -> 93.93
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 6144, 5120, 8, 1},   // w4r2 32.69 -> 31.13
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 10240, 5120, 8, 1},  // w4r2 51.98 -> 50.33
+    {QType::GGML_IQ2_XXS, Epilogue::Store, 17408, 5120, 8, 1},  // w8r2 85.69 -> 83.86
     {QType::GGML_IQ2_XXS, Epilogue::SwiGlu, 17408, 5120, 4, 1}, // w8r2 168.87 -> 166.74
-    {QType::GGML_IQ3_XXS, Epilogue::Store, 5120, 17408, 8, 1}, // w8r2 130.94 -> 125.91
-    {QType::GGML_IQ4_XS, Epilogue::Store, 1024, 5120, 8, 1}, // w4r1 10.78 -> 10.70
-    {QType::GGML_IQ4_XS, Epilogue::Store, 5120, 17408, 8, 1}, // w8r2 173.59 -> 171.52
-    {QType::GGML_Q3_K, Epilogue::Store, 5120, 17408, 8, 1}, // w4r1 141.59 -> 140.73
-    {QType::Q8_G32_FP16, Epilogue::Store, 48, 5120, 8, 1}, // w4r1 2.37 -> 2.18
+    {QType::GGML_IQ3_XXS, Epilogue::Store, 5120, 17408, 8, 1},  // w8r2 130.94 -> 125.91
+    {QType::GGML_IQ4_XS, Epilogue::Store, 1024, 5120, 8, 1},    // w4r1 10.78 -> 10.70
+    {QType::GGML_IQ4_XS, Epilogue::Store, 5120, 17408, 8, 1},   // w8r2 173.59 -> 171.52
+    {QType::GGML_Q3_K, Epilogue::Store, 5120, 17408, 8, 1},     // w4r1 141.59 -> 140.73
+    {QType::Q8_G32_FP16, Epilogue::Store, 48, 5120, 8, 1},      // w4r1 2.37 -> 2.18
 };
 
 // ga100:108sm: 53 entries (median us: rules -> entry).
@@ -502,16 +502,16 @@ inline constexpr R8DecodeEntry kR8DecodeGb206_36sm[] = {
 
 // tu102:68sm: 10 entries (median us: rules -> entry).
 inline constexpr R8DecodeEntry kR8DecodeTu102_68sm[] = {
-    {QType::GGML_IQ2_S, Epilogue::Store, 5120, 6144, 8, 1}, // w8r2 37.22 -> 35.00
-    {QType::GGML_IQ2_XS, Epilogue::Store, 4096, 5120, 8, 1}, // w8r2 22.53 -> 22.10
-    {QType::GGML_IQ4_XS, Epilogue::Store, 1024, 5120, 8, 1}, // w4r1 9.73 -> 8.94
+    {QType::GGML_IQ2_S, Epilogue::Store, 5120, 6144, 8, 1},   // w8r2 37.22 -> 35.00
+    {QType::GGML_IQ2_XS, Epilogue::Store, 4096, 5120, 8, 1},  // w8r2 22.53 -> 22.10
+    {QType::GGML_IQ4_XS, Epilogue::Store, 1024, 5120, 8, 1},  // w4r1 9.73 -> 8.94
     {QType::GGML_IQ4_XS, Epilogue::Store, 17408, 5120, 8, 1}, // w4r1 87.28 -> 86.26
-    {QType::GGML_Q4_K, Epilogue::Store, 5120, 2560, 8, 1}, // w4r1 17.87 -> 17.55
-    {QType::GGML_Q4_K, Epilogue::Store, 2560, 4096, 8, 1}, // w4r1 14.86 -> 13.95
-    {QType::GGML_Q4_K, Epilogue::Store, 1024, 5120, 8, 1}, // w4r1 9.44 -> 8.66
-    {QType::GGML_Q4_K, Epilogue::Store, 2560, 9216, 4, 2}, // w8r2 32.33 -> 29.63
-    {QType::GGML_Q6_K, Epilogue::Store, 1024, 2560, 4, 2}, // w4r1 8.63 -> 8.40
-    {QType::GGML_Q6_K, Epilogue::Store, 2560, 9216, 4, 1}, // w4r2 47.41 -> 45.42
+    {QType::GGML_Q4_K, Epilogue::Store, 5120, 2560, 8, 1},    // w4r1 17.87 -> 17.55
+    {QType::GGML_Q4_K, Epilogue::Store, 2560, 4096, 8, 1},    // w4r1 14.86 -> 13.95
+    {QType::GGML_Q4_K, Epilogue::Store, 1024, 5120, 8, 1},    // w4r1 9.44 -> 8.66
+    {QType::GGML_Q4_K, Epilogue::Store, 2560, 9216, 4, 2},    // w8r2 32.33 -> 29.63
+    {QType::GGML_Q6_K, Epilogue::Store, 1024, 2560, 4, 2},    // w4r1 8.63 -> 8.40
+    {QType::GGML_Q6_K, Epilogue::Store, 2560, 9216, 4, 1},    // w4r2 47.41 -> 45.42
 };
 
 inline constexpr std::array<R8DecodeTable, 12> kR8DecodeTables{{
