@@ -295,7 +295,8 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
                 if (const auto counted = mmq_unit::launch_seconds(
                         arch, problem.qtype, *isa, static_cast<int>(n * sets), static_cast<int>(k),
                         static_cast<int>(tt), static_cast<int>(cols), d.sms, clk, bw, node)) {
-                    slice_body = *counted;
+                    slice_body  = *counted;
+                    slice_fixed = node;
                 }
             }
         }
