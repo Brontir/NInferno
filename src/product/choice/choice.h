@@ -924,4 +924,78 @@ struct Alternative {
                                                     const std::vector<std::size_t>& eligible,
                                                     std::size_t anchor, double resolution) noexcept;
 
+// ---- The quantization axis (#618 step 5) ----
+// The choice weighs a listing's quantizations against each other, each at its own configuration
+// choice (choose at that row's weights): the rows that keep the rule pick's tier and side of the
+// quality floor, whose accuracy rests on a measurement or a transfer (quant_authority), and, while
+// any such row's weights take routes this generation measured on two cards (class_measured), only
+// those. Rows go in the order of the best worth their weights could reach (an upper bound, no
+// memory planned); a row is served (its memory planned, one plan a step) only while its bound can
+// still land within `band` of the best worth served. Among the rows served at or above the
+// target context: within `band` of the best anchor worth, the lower KLD, then the higher worth,
+// then the rule's order. The caller (product/plan/plan_quants.cpp) supplies the facts and the
+// plans; this decides.
+//
+// Pure ranking parts, plain values (tests/test_rank_rows.cpp):
+// a row's best worth its weights could reach.
+struct RowBound {
+    std::size_t index = 0; // the row's place in the caller's rows
+    double worth      = 0;
+};
+
+// A row served at its own choice.
+struct ServedRow {
+    std::size_t index     = 0;
+    std::uint32_t context = 0;
+    double worth          = 0; // the served configuration's
+    double kld            = 0;
+    double anchor_worth   = 0; // the best worth its choice settled around (#301): sets the top
+};
+// What settled the winner against the rows seen before it: depends on the order by design, and
+// never read for the pick (only `best` is); tests and diagnostics only.
+enum class RankReason : std::uint8_t {
+    Only,        // the first row inside the band
+    LowerKld,    // the lower KLD (DECISIONS 60)
+    HigherWorth, // the same KLD, the higher worth
+    RuleOrder,   // worth and KLD tied: the rule's order
+};
+
+struct RowRank {
+    std::optional<std::size_t> best; // position in the rows handed over
+    double top        = 0;           // the best worth among them
+    RankReason reason = RankReason::Only;
+};
+
+// The rule's order between two rows of the caller (runtime::quant_ranks_above on their
+// candidates): whether row `a` ranks above row `b`.
+using RanksAbove = std::function<bool(std::size_t a, std::size_t b)>;
+// The bounds from the highest worth down; equal bounds keep their order.
+[[nodiscard]] std::vector<RowBound> order_bounds(std::vector<RowBound> bounds);
+// Whether a row with this bound can still land inside `band` of the best worth served so far.
+[[nodiscard]] bool bound_in_reach(double bound, double top, double band) noexcept;
+// Among the rows whose worth is within `band` of the best anchor worth: the lower KLD, then the
+// higher worth, then the rule's order.
+[[nodiscard]] RowRank rank_rows(const std::vector<ServedRow>& rows, double band,
+                                const RanksAbove& ranks_above);
+
+// One listing row as the axis sees it. `choose_at(steps)` is the row's configuration choice at its
+// weights: steps false, its own context unbounded (no memory planned: the bound); true, the
+// context in the ladder's steps (its memory planned). nullopt: no choice there.
+struct QuantAxisRow {
+    QuantOption quant;    // as the choice prices it (product::quant_option_of)
+    bool on_tier = false; // supported, and on the rule pick's side of the quality floor
+    std::function<std::optional<Choice>(bool steps)> choose_at;
+};
+
+struct QuantAxisPick {
+    std::optional<std::size_t> row; // the winner's place in the rows; nullopt: none served
+    std::uint32_t context = 0;      // the context its choice reached
+    Scored scored;                  // its chosen configuration
+};
+
+[[nodiscard]] QuantAxisPick choose_quants(const ModelFacts& quality_model, const CardFacts& card,
+                                          const std::vector<QuantAxisRow>& rows, double band,
+                                          std::uint32_t target_context,
+                                          const RanksAbove& ranks_above);
+
 } // namespace ninferno::product::choice

@@ -2910,4 +2910,96 @@ std::vector<Alternative> explain(const Choice& choice) {
     return out;
 }
 
+std::vector<RowBound> order_bounds(std::vector<RowBound> bounds) {
+    std::stable_sort(bounds.begin(), bounds.end(),
+                     [](const RowBound& a, const RowBound& b) { return a.worth > b.worth; });
+    return bounds;
+}
+
+bool bound_in_reach(double bound, double top, double band) noexcept {
+    return !(bound < top - band);
+}
+
+RowRank rank_rows(const std::vector<ServedRow>& rows, double band, const RanksAbove& ranks_above) {
+    RowRank out;
+    out.top = -INFINITY;
+    for (const ServedRow& r : rows) { out.top = std::max(out.top, r.anchor_worth); }
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const ServedRow& s = rows[i];
+        if (s.worth < out.top - band) { continue; }
+        if (!out.best) {
+            out.best   = i;
+            out.reason = RankReason::Only;
+            continue;
+        }
+        const ServedRow& b = rows[*out.best];
+        std::optional<RankReason> why;
+        if (s.kld < b.kld - kWorthTie) {
+            why = RankReason::LowerKld;
+        } else if (std::abs(s.kld - b.kld) <= kWorthTie) {
+            if (s.worth > b.worth + kWorthTie) {
+                why = RankReason::HigherWorth;
+            } else if (std::abs(s.worth - b.worth) <= kWorthTie && ranks_above(s.index, b.index)) {
+                why = RankReason::RuleOrder;
+            }
+        }
+        if (why) {
+            out.best   = i;
+            out.reason = *why;
+        }
+    }
+    return out;
+}
+
+QuantAxisPick choose_quants(const ModelFacts& quality_model, const CardFacts& card,
+                            const std::vector<QuantAxisRow>& rows, double band,
+                            std::uint32_t target_context, const RanksAbove& ranks_above) {
+    // Only a measurement of a row's own files, or a transfer of the family curve, decides on its
+    // accuracy (#368, quant_authority).
+    const auto authorized = [&](const QuantAxisRow& row) {
+        const QualityAuthority a = quant_authority(quality_model, row.quant);
+        return a == QualityAuthority::Direct || a == QualityAuthority::Transfer;
+    };
+    // A row whose weights take routes this generation did not measure on two cards
+    // (class_measured: Other's codebook IQ*, Q4_0/1, FP4 anywhere; IQ4 off Ada) has a transferred
+    // speed: it wins no decision while a measured row is in the tier.
+    const auto measured = [&](const QuantAxisRow& row) {
+        return class_measured(card, row.quant.weights);
+    };
+    const bool any_measured = std::any_of(rows.begin(), rows.end(), [&](const QuantAxisRow& row) {
+        return row.on_tier && measured(row) && authorized(row);
+    });
+    std::vector<RowBound> bounds;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const QuantAxisRow& row = rows[i];
+        if (!row.on_tier || (any_measured && !measured(row)) || !authorized(row)) { continue; }
+        const auto bound = row.choose_at(false);
+        if (bound && bound->chosen) { bounds.push_back({i, bound->anchor_worth}); }
+    }
+    bounds = order_bounds(std::move(bounds));
+    std::vector<Scored> served_scored;
+    std::vector<ServedRow> served;
+    double top = -INFINITY; // the best worth served
+    for (const auto& [i, bound] : bounds) {
+        if (!bound_in_reach(bound, top, band)) { break; }
+        const auto at = rows[i].choose_at(true);
+        if (!at || !at->chosen || at->context < target_context) { continue; }
+        const Scored& sc = at->scored[*at->chosen];
+        served_scored.push_back(sc);
+        served.push_back({i, at->context, sc.worth, sc.accuracy.kld, at->anchor_worth});
+        top = std::max(top, at->anchor_worth);
+    }
+    // Within the band of the best worth served (the rows' anchors, #301): a row is eligible by the
+    // worth of the configuration it would serve, so a row whose choice already moved inside its
+    // own resolution cannot trail the top by more than one band in all.
+    const RowRank ranking = rank_rows(served, band, ranks_above);
+    QuantAxisPick out;
+    if (ranking.best) {
+        out.row     = served[*ranking.best].index;
+        out.context = served[*ranking.best].context;
+        out.scored  = served_scored[*ranking.best];
+    }
+    return out;
+}
+
 } // namespace ninferno::product::choice

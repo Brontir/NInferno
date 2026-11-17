@@ -698,46 +698,16 @@ bool holds_own_context(const PlanSourceFacts& facts, const DryRunInputs& inputs,
     return own_plan(plan_model(facts, at_context(inputs, context)).plan);
 }
 
-std::vector<RowBound> order_bounds(std::vector<RowBound> bounds) {
-    std::stable_sort(bounds.begin(), bounds.end(),
-                     [](const RowBound& a, const RowBound& b) { return a.worth > b.worth; });
-    return bounds;
-}
-
-bool bound_in_reach(double bound, double top, double band) noexcept {
-    return !(bound < top - band);
-}
-
 RowRank rank_rows(const std::vector<RankedRow>& rows, double band) {
-    RowRank out;
-    out.top = -INFINITY;
-    for (const RankedRow& r : rows) { out.top = std::max(out.top, r.anchor_worth); }
+    std::vector<choice::ServedRow> served;
+    served.reserve(rows.size());
     for (std::size_t i = 0; i < rows.size(); ++i) {
-        const RankedRow& s = rows[i];
-        if (s.worth < out.top - band) { continue; }
-        if (!out.best) {
-            out.best   = i;
-            out.reason = RankReason::Only;
-            continue;
-        }
-        const RankedRow& b = rows[*out.best];
-        std::optional<RankReason> why;
-        if (s.kld < b.kld - choice::kWorthTie) {
-            why = RankReason::LowerKld;
-        } else if (std::abs(s.kld - b.kld) <= choice::kWorthTie) {
-            if (s.worth > b.worth + choice::kWorthTie) {
-                why = RankReason::HigherWorth;
-            } else if (std::abs(s.worth - b.worth) <= choice::kWorthTie &&
-                       runtime::quant_ranks_above(s.candidate, b.candidate)) {
-                why = RankReason::RuleOrder;
-            }
-        }
-        if (why) {
-            out.best   = i;
-            out.reason = *why;
-        }
+        const RankedRow& r = rows[i];
+        served.push_back({i, r.context, r.worth, r.kld, r.anchor_worth});
     }
-    return out;
+    return choice::rank_rows(served, band, [&](std::size_t a, std::size_t b) {
+        return runtime::quant_ranks_above(rows[a].candidate, rows[b].candidate);
+    });
 }
 
 QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListing>& listing,
@@ -921,79 +891,38 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
     }
     if (weighs && !out.quality_withheld) {
         const ChoicePins& pins = inputs.pins;
-        // Every supported row on the tier's side of the floor, scored at its own choice: a narrower
-        // KV codec may bring a row the rule's resolved options left short to the target. Rows go in
-        // the order of the best worth their weights could reach (no memory planned: a bound); the
-        // memory is planned (one plan a step) only while a row's bound can still beat the best.
-        // A row whose weights take routes this generation did not measure on two cards
-        // (choice::class_measured: Other's codebook IQ*, Q4_0/1, FP4 anywhere; IQ4 off Ada) has a
-        // transferred speed: it wins no decision while a measured row is in the tier.
-        const choice::CardFacts measured_card = choice_card_of(inputs.gpu);
-        const auto measured = [&](const QuantRow& row) {
-            return choice::class_measured(measured_card,
-                                          quant_option_of(row_facts(shape, row), row.listing.quant).weights);
-        };
-        const bool any_measured = std::any_of(out.rows.begin(), out.rows.end(), [&](const QuantRow& row) {
-            return row.candidate.supported && measured(row) && authorized(row) &&
-                   out.pick->below_floor == runtime::below_quality_floor(row.candidate);
-        });
-        // Two rows' worths within the generation's measured decode error are a tie: the lower KLD
-        // wins (DECISIONS 60), then the rule's order.
+        // Every supported row on the tier's side of the floor, scored at its own choice (a narrower
+        // KV codec may bring a row the rule's resolved options left short to the target), weighed
+        // by the choice's quantization axis (choice::choose_quants: the authority and
+        // measured-class gates, the bound order, the band, the KLD, the rule's order). This hands
+        // it the rows' facts and their choices at their weights; the plans stay here. Two rows'
+        // worths within the generation's measured decode error are a tie: the lower KLD wins
+        // (DECISIONS 60), then the rule's order.
         const double band = std::max(choice::kWorthTie, choice::worth_band(choice_card_of(inputs.gpu)));
-        std::vector<RowBound> bounds;
-        for (std::size_t i = 0; i < out.rows.size(); ++i) {
-            const QuantRow& row = out.rows[i];
-            if (!row.candidate.supported ||
-                out.pick->below_floor != runtime::below_quality_floor(row.candidate) ||
-                (any_measured && !measured(row)) || !authorized(row)) {
-                continue;
-            }
-            const auto bound = choose_at_weights(row_facts(shape, row),
-                                                 inputs_for(inputs, row.listing), pins,
-                                                 row.listing.quant, OwnContext::Unbounded);
-            if (bound && bound->choice.chosen) {
-                bounds.push_back({i, bound->choice.anchor_worth});
-            }
+        std::vector<choice::QuantAxisRow> axis;
+        axis.reserve(out.rows.size());
+        for (const QuantRow& row : out.rows) {
+            choice::QuantAxisRow a;
+            a.quant   = quant_option_of(row_facts(shape, row), row.listing.quant);
+            a.on_tier = row.candidate.supported &&
+                        out.pick->below_floor == runtime::below_quality_floor(row.candidate);
+            a.choose_at = [&, &row = row](bool steps) -> std::optional<choice::Choice> {
+                const auto at = choose_at_weights(
+                    row_facts(shape, row), inputs_for(inputs, row.listing), pins, row.listing.quant,
+                    steps ? OwnContext::Steps : OwnContext::Unbounded);
+                if (!at) { return std::nullopt; }
+                return at->choice;
+            };
+            axis.push_back(std::move(a));
         }
-        bounds = order_bounds(std::move(bounds));
-        struct Served {
-            std::size_t index;
-            std::uint32_t context;
-            choice::Scored scored;
-            double anchor_worth; // the best worth the row's choice settled around (one allowance)
-        };
-        std::vector<Served> served_rows;
-        std::vector<RankedRow> ranked;
-        double top = -INFINITY; // the best worth served
-        for (const auto& [i, bound] : bounds) {
-            if (!bound_in_reach(bound, top, band)) { break; }
-            const QuantRow& row = out.rows[i];
-            const auto served = choose_at_weights(row_facts(shape, row),
-                                                  inputs_for(inputs, row.listing), pins,
-                                                  row.listing.quant, OwnContext::Steps);
-            if (!served || !served->choice.chosen ||
-                served->choice.context < out.pick->target_context) {
-                continue;
-            }
-            const choice::Scored& sc = served->choice.scored[*served->choice.chosen];
-            served_rows.push_back({i, served->choice.context, sc, served->choice.anchor_worth});
-            ranked.push_back({i, served->choice.context, sc.worth, sc.accuracy.kld,
-                              served->choice.anchor_worth, out.rows[i].candidate});
-            top = std::max(top, served->choice.anchor_worth);
-        }
-        // Within the band of the best worth served (the rows' anchors, #301): a row is eligible by
-        // the worth of the configuration it would serve, so a row whose choice already moved inside
-        // its own resolution cannot trail the top by more than one band in all. Then the lower KLD,
-        // then the higher worth, then the rule's order (rank_rows).
-        const RowRank ranking = rank_rows(ranked, band);
-        std::optional<std::size_t> best;
-        std::uint32_t best_context = 0;
-        choice::Scored best_scored;
-        if (ranking.best) {
-            best         = ranked[*ranking.best].index;
-            best_context = ranked[*ranking.best].context;
-            best_scored  = served_rows[*ranking.best].scored;
-        }
+        const choice::QuantAxisPick ranking = choice::choose_quants(
+            quality_model, choice_card_of(inputs.gpu), axis, band, out.pick->target_context,
+            [&](std::size_t a, std::size_t b) {
+                return runtime::quant_ranks_above(out.rows[a].candidate, out.rows[b].candidate);
+            });
+        const std::optional<std::size_t> best = ranking.row;
+        const std::uint32_t best_context      = ranking.context;
+        const choice::Scored best_scored      = ranking.scored;
         if (best && *best != out.pick->index) {
             // The largest at its own choice: what the trade was against.
             const QuantRow& largest = out.rows[out.pick->index];
