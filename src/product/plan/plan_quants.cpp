@@ -18,6 +18,7 @@
 #include "runtime/engine/kv_capacity.h"
 
 #include <algorithm>
+#include <map>
 #include <cmath>
 #include <cstdio>
 #include <iomanip>
@@ -901,15 +902,29 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         const double band = std::max(choice::kWorthTie, choice::worth_band(choice_card_of(inputs.gpu)));
         std::vector<choice::QuantAxisRow> axis;
         axis.reserve(out.rows.size());
-        for (const QuantRow& row : out.rows) {
+        // Each row's choice at its weights, once per context mode (the axis asks the stepped one of
+        // a row it serves; the trade below asks it of the largest again).
+        std::map<std::pair<std::size_t, bool>, std::optional<ServedChoice>> chosen_at;
+        const auto served_at = [&](std::size_t i,
+                                   bool steps) -> const std::optional<ServedChoice>& {
+            const auto key = std::make_pair(i, steps);
+            if (const auto it = chosen_at.find(key); it != chosen_at.end()) { return it->second; }
+            const QuantRow& row = out.rows[i];
+            return chosen_at
+                .emplace(key,
+                         choose_at_weights(row_facts(shape, row), inputs_for(inputs, row.listing),
+                                           pins, row.listing.quant,
+                                           steps ? OwnContext::Steps : OwnContext::Unbounded))
+                .first->second;
+        };
+        for (std::size_t i = 0; i < out.rows.size(); ++i) {
+            const QuantRow& row = out.rows[i];
             choice::QuantAxisRow a;
             a.quant   = quant_option_of(row_facts(shape, row), row.listing.quant);
             a.on_tier = row.candidate.supported &&
                         out.pick->below_floor == runtime::below_quality_floor(row.candidate);
-            a.choose_at = [&, &row = row](bool steps) -> std::optional<choice::Choice> {
-                const auto at = choose_at_weights(
-                    row_facts(shape, row), inputs_for(inputs, row.listing), pins, row.listing.quant,
-                    steps ? OwnContext::Steps : OwnContext::Unbounded);
+            a.choose_at = [&served_at, i](bool steps) -> std::optional<choice::Choice> {
+                const auto& at = served_at(i, steps);
                 if (!at) { return std::nullopt; }
                 return at->choice;
             };
@@ -925,10 +940,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         const choice::Scored best_scored      = ranking.scored;
         if (best && *best != out.pick->index) {
             // The largest at its own choice: what the trade was against.
-            const QuantRow& largest = out.rows[out.pick->index];
-            if (const auto at = choose_at_weights(row_facts(shape, largest),
-                                                  inputs_for(inputs, largest.listing), pins,
-                                                  largest.listing.quant, OwnContext::Steps);
+            if (const auto& at = served_at(out.pick->index, true);
                 at && at->choice.chosen && best_scored.decision_seconds > 0) {
                 const choice::Scored& l = at->choice.scored[*at->choice.chosen];
                 out.trade = QuantPlan::Trade{.time_ratio = l.decision_seconds / best_scored.decision_seconds,
