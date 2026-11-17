@@ -301,8 +301,10 @@ def test_route_pins_reach_server_and_bind_the_campaign(tmp_path, concurrent):
     with pytest.raises(corpus.CampaignError, match="before route pins were recorded"):
         corpus.bind_route_pins(legacy, {})
     corpus.bind_route_pins(legacy, {"route_policy": "legacy"})
+    # The marker holds every pin (absent ones at the release's value), so it reads back as written.
     assert json.loads((legacy / "route_pins.json").read_text(encoding="utf-8")) == {
-        "route_policy": "legacy"}
+        "prefill_route": "auto", "decode_route": "auto", "moe_path": "auto", "route_policy": "legacy"}
+    corpus.bind_route_pins(legacy, {"route_policy": "legacy"})
     # --route-policy legacy (#614 F1, F2) is passed, checked in server_start (a server that
     # reports no route_policy predates F1: legacy), and keeps its campaign apart.
     old = {**pins, "route_policy": "legacy"}

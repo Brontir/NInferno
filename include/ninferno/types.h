@@ -1966,7 +1966,7 @@ struct LoadSummary {
     std::vector<std::string> moe_tune;
     // The route pins given (--prefill-route, --decode-route, --moe-path): one line per pin, with
     // what the startup's calls in its band took (ops/route_pins.h), and a line for a
-    // --route-policy other than legacy. Empty without either.
+    // --route-policy other than evidence (legacy). Empty without either.
     std::vector<std::string> route_pins;
     // A speculative drafter's load notes (the dense decoder's DFlash feature projection: split by
     // tap, or whole and why); empty without one.

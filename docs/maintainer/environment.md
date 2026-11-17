@@ -47,7 +47,7 @@ while a tuner is on (it is read only then), and a `--drafter-registry` file in p
 (`drafter_registry`). The route pins enter as `options.maintainer.prefill_route`,
 `options.maintainer.decode_route` and `options.maintainer.moe_path` by their spelling, and each one
 not `auto` is taint by name; `--route-policy` enters as `options.maintainer.route_policy` and is
-taint when not `legacy`. The request log's `server_start` record carries them
+taint when not `evidence` (the default since #614 F2). The request log's `server_start` record carries them
 (`engine.decode_pacing`, `engine.maintainer` with `drafter_registry`, the three pins and
 `route_policy`; `--decode-steps` as `auto` or its integer).
 

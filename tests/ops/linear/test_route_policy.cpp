@@ -608,7 +608,7 @@ int main(int argc, char** argv) {
             throw std::runtime_error("no shipped route-table directory");
         }
         std::map<std::string, Json> written;
-        int borrowed = 0, transferred = 0, measured = 0;
+        int borrowed = 0, transferred = 0, measured = 0, kept_boundary = 0;
         for (const RegretBoard& b : kRegretBoards) {
             if (!only.empty() && only != b.name) continue;
             const auto own = own_table(shipped, b);
@@ -623,6 +623,7 @@ int main(int argc, char** argv) {
                 if (dir) std::filesystem::remove_all(*dir);
                 check_dense_tune_free(board_class(b), b, tables, t.moved_problems);
                 borrowed += t.borrowed;
+                kept_boundary += t.kept_mmq_boundary;
                 transferred += t.transferred;
                 measured += t.measured;
                 std::cout << b.name << " " << tables << " (" << kBuildSet << "): " << t.cells
@@ -645,6 +646,11 @@ int main(int argc, char** argv) {
         }
         if (only.empty() && measured == 0) {
             fail("no measured answer in the grid: the never-demoted check is idle");
+        }
+        // The grid holds the shape F1's A/B lost on (q4k swiglu 12288x4096 at T 12, 16): the MMQ
+        // boundary must keep some demoted entry, or its exception above is idle.
+        if (only.empty() && kept_boundary == 0) {
+            fail("no cell kept at the MMQ boundary: keeps_mmq_boundary is idle in the grid");
         }
         ops::set_route_policy(RoutePolicy::Evidence);
         if (!write.empty()) write_moves(write, written);

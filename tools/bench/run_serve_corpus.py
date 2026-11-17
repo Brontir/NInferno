@@ -367,7 +367,7 @@ def bind_route_pins(output_dir: Path, pins: dict[str, str]) -> None:
             )
         return
     output_dir.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(pins, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(full, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def filename_label(label: str) -> str:
