@@ -39,3 +39,19 @@ Q4_K, Q5_K and Q6_K have a counted price (`mmq_unit::scored`); the other formats
 the fitted price. These grids (route_tune of master, three passes, on the RTX 4070 Ti and the RTX
 5070 Ti) ran before this file and are read only after it is committed; the RTX 3060 and RTX 4090
 grids stay sealed for the end-to-end A/B.
+
+## The Turing grid prediction (#607 forced-width grid, #613 PR-5)
+
+`predicted_grid_rtx2080ti.csv` is the counted MMQ price of one Qwen3-8B Q4_K_M prefill's
+mul_mat_q launches on the RTX 2080 Ti, for each prompt size N of `tools/bench/run_524_turing_grid.sh`
+and each forced column tile J (`N,columns,J,ms`; columns = N - 7, the probe's k). Each launch is
+`mmq_unit::launch_seconds` plus the kernel's graph node, as the selector's counted slice prices it
+(generic_cost.cpp). The launches are `qwen3_8b_q4km_launches.txt`, from the GGUF header and the
+dense loader's packing. `tools/dev/mmq_grid_price.cpp` printed it at 01436ff66, built host-only
+like the price tool (the decisions tree's archives and the device-seam stubs). J 48 and 112 have
+no counted unit (no snapshot row), so their cells are empty.
+
+The grid prices only the MMQ launches, so a size's other work cancels: what is scored is each
+width's difference to the size's J 128 cell, and the width the price picks of the six production
+widths (16, 32, 64, 80, 96, 128). It was committed before the grid's next run on the card was read.
+The run of 10.11 (#607, f046b590) was read before; the unit was not fitted to it.
