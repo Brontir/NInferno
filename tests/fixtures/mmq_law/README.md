@@ -28,3 +28,14 @@ activation tile through the L2, the larger of the two, plus one DRAM latency) fo
 warp's chain (the stall sum plus one shared latency per wait on a shared load). The cards' launch
 law runs (`mmq_launch_law.py derive`, master c6a1b7d50) were made before this commit and are
 read only after it.
+
+## The production-launch prediction (sealed grids, #613 PR-5)
+
+`predicted_launch_rtx4070ti.csv` and `predicted_launch_rtx5070ti.csv` are the selector's ggml MMQ
+price with the counted unit on and off (`counted_us`, `fitted_us`; the A8 policy), from the price
+tool of eecbcfd23 built host-only, for the k-quant A8 shapes of the sealed route_tune grids
+(`fmt epilogue n k`) at T = 17, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 1024 and 2048. Only
+Q4_K, Q5_K and Q6_K have a counted price (`mmq_unit::scored`); the other formats' `counted_us` is
+the fitted price. These grids (route_tune of master, three passes, on the RTX 4070 Ti and the RTX
+5070 Ti) ran before this file and are read only after it is committed; the RTX 3060 and RTX 4090
+grids stay sealed for the end-to-end A/B.
