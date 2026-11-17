@@ -171,6 +171,13 @@ FACTS += PROBE_19_FACTS
 IMMA_SINCE_CC = 75
 
 
+def owed_fact(name, probe, cc):
+    """Whether a run of `probe` on a card of compute capability `cc` (None: unknown) prints the
+    fact: every fact of its version or an earlier one, the int8 MMA facts only from sm_75 on."""
+    return first_probe(name) <= probe and not (
+        name in PROBE_19_FACTS and cc is not None and cc < IMMA_SINCE_CC)
+
+
 # The facts probe 17 split or renamed: the four conversions alone (until then two pairs, each the
 # mean of two ops on different pipes) and the add chain under a name that is not IADD's.
 PROBE_17_FACTS = frozenset({"lat_add_chain", "lat_cvt_i2f", "lat_cvt_f2i", "lat_cvt_f32_to_f16",
@@ -312,8 +319,7 @@ def parse_run(text):
     version = PROBE_VALUE.fullmatch(head.get("probe", ""))
     owed = int(version.group(1)) if version else max(first_probe(f) for f in FACTS)
     cc = int(head["cc"]) if head.get("cc", "").isdigit() else None
-    missing = [f for f in FACTS if f not in facts and first_probe(f) <= owed and
-               not (f in PROBE_19_FACTS and cc is not None and cc < IMMA_SINCE_CC)]
+    missing = [f for f in FACTS if f not in facts and owed_fact(f, owed, cc)]
     if missing or not ended or not checked:
         raise ValueError(f"incomplete run: missing {missing}, ended={ended}, selfcheck={checked}")
     if failures:
