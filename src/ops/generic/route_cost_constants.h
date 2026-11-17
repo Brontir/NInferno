@@ -177,7 +177,7 @@ inline constexpr bool kMmqCountedUnit = false;
 // producer loops, isa_probe's shared latency) for Q4_K and Q6_K on sm_86 and sm_89, where every
 // input is known. Off until the sealed route_tune grids' w4a8 cells and the pick regret are
 // scored with it; the host price tool flips it (--w4a8-counted).
-inline constexpr bool kW4a8CountedStep = false;
+inline constexpr bool kW4a8CountedStep = true;
 // The activation quantizers' DRAM bytes per value, counted from their kernels and static_asserted
 // there against the block each thread writes:
 //   W4A8 (generic_w4a8.cu w4a8_quantize_kernel): a thread a 32-value block reads 64 B of BF16 and
