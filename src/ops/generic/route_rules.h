@@ -860,8 +860,9 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the one measured distance is the 4090's 80 entries on the 4080 SUPER (distance 1.2; 3 "
      "sweeps): won 41, lost 30 (to -22 %), +0.1 % in the mean; the comment names a 4090 D and a "
      "3090 Ti (0.17, 0.14) as boards that take their tables, as a consequence of the bound, with "
-     "no timing (on sm_89, sm_70 and sm_75 a carried entry now yields to the R8 law, "
-     "law_r8_before, except where it names a schedule the law could not price); nothing places "
+     "no timing (on sm_89, sm_70 and sm_75 a carried entry of a format the R8 law is taken on, "
+     "r8_law_format, now yields to it, law_r8_before, except where it names a schedule the law "
+     "could not price); nothing places "
      "the 0.5",
      ""},
     {"kCarryDistance", Basis::Unknown, "../../core/measured_boards.h",

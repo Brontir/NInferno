@@ -785,8 +785,9 @@ namespace {
 
 // Before the rules, a decode call takes the entry for the exact problem in the table of the
 // nearest measured board (r8_decode_table.h), when that board is a variant of this one and the
-// R8 law does not answer for it (law_r8_before: on sm_89, sm_70 and sm_75 a carried entry yields
-// to the law, except where it names a schedule the law could not price): the
+// R8 law does not answer for it (law_r8_before: on sm_89, sm_70 and sm_75 a carried entry of a
+// format the law is taken on, r8_law_format, yields to the law, except where it names a schedule
+// the law could not price): the
 // codebook problems of Gemma 4 31B, Muse Glimmer 30B, Qwen3.6-35B-A3B and Qwen3.8-27B, and the
 // K-quant down projection of Qwen3.5-9B (4096x12288), where another schedule measured faster on
 // that board. A table carries to boards within kR8CarryDistance of it

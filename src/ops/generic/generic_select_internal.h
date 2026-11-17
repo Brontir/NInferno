@@ -120,7 +120,7 @@ std::optional<int> law_r8_before(const Problem& p, std::optional<int> carried);
 // boards) it beat the rules on, on most of the boards: IQ2_S, IQ2_XS, IQ2_XXS, IQ3_S, IQ3_XXS,
 // Q3_K and Q6_K. Q4_K keeps the tables and the rules (the law beat them on two boards of five:
 // it takes eight warps where four are as fast or faster, #966), and a format the holdout did not
-// hold (Q5_K, the 32-value codecs, IQ4) is one no grid verified.
+// hold (Q2_K, Q5_K, the 32-value codecs, IQ4) is one no grid verified.
 [[nodiscard]] bool r8_law_format(QType q) noexcept;
 
 // The R8 decode table's entry for the exact problem (r8_decode_table.h), from the table of the
