@@ -52,7 +52,7 @@ namespace {
 
 namespace fit = ninferno::fitted;
 
-constexpr std::size_t kExpectedRecords = 152;
+constexpr std::size_t kExpectedRecords = 153;
 
 int failures = 0;
 

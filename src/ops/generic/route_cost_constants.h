@@ -87,12 +87,13 @@ inline constexpr Scalar kL1BytesPerSmClock{{128.0}, Provenance::Fact, "l1_bytes_
 // rmma_counted_law_for_test (generic_gemm.h). It ships false until the A/B of the counted law.
 inline constexpr bool kRmmaCountedLaw = false;
 // The L1 hit latency a warp waits on a spilled register's reload (LDL); the counted law divides it
-// by the warps a scheduler holds, which overlap each other's waits. One value for every
-// architecture: 32 clocks, Turing's in the published microbenchmarks (33 on Ampere, 34 on Ada and
-// Blackwell there, 3-6 % of this term). It stands in for the per-architecture measured latency (the
-// ISA probe's row, #613), which the counted law is to read before it prices anything: the law is
-// off (kRmmaCountedLaw), so no price depends on this value. A fact of the SM, not of our sweeps.
-inline constexpr Scalar kL1HitLatencyCycles{{32.0}, Provenance::Fact, "l1_hit_latency_cycles"};
+// by the warps a scheduler holds, which overlap each other's waits. The counted law reads the
+// architecture's measured latency (isa_probe l1_latency_w1: sm_70 28, sm_75 32, sm_86 33, sm_89
+// 34, sm_120a 38 clk; kernel_roofline.h calibration_of); this value, 32 clocks (Turing's in the
+// published microbenchmarks), stands in only for an architecture without an ISA row (sm_80,
+// sm_90, sm_100), where it is a transfer, not a fact of that SM. The law is off
+// (kRmmaCountedLaw), so no price depends on it today.
+inline constexpr Scalar kL1HitLatencyCycles{{32.0}, Provenance::Fitted, "l1_hit_latency_cycles"};
 // The register file's allocation unit per warp (256 registers): a CUDA fact of every part the
 // model names.
 inline constexpr Scalar kRegAllocPerWarp{{256.0}, Provenance::Fact, "reg_alloc_per_warp"};
