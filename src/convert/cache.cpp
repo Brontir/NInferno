@@ -41,7 +41,14 @@ ArtifactCacheDirs artifact_cache_dirs(const std::filesystem::path& dir) {
     }
     normal = normal.lexically_normal();
     if (normal.has_relative_path() && normal.filename().empty()) { normal = normal.parent_path(); }
-    const std::u8string text = normal.generic_u8string();
+    std::u8string text = normal.generic_u8string();
+#ifdef _WIN32
+    // Windows' file names are case-insensitive and weakly_canonical keeps the caller's casing: the
+    // key is the path's ASCII lower case, so C:/Models/Foo and c:/models/foo share one (#975).
+    for (char8_t& c : text) {
+        if (c >= u8'A' && c <= u8'Z') c = static_cast<char8_t>(c - u8'A' + u8'a');
+    }
+#endif
     const std::uint64_t key =
         fnv::bytes(std::string_view(reinterpret_cast<const char*>(text.data()), text.size()));
     char hex[17];
@@ -448,6 +455,24 @@ cached_artifact(const std::filesystem::path& path,
         const int err = errno;
         if (fd < 0) {
             why = (dir / ".convert.lock").string() + ": " + std::generic_category().message(err);
+            return fd;
+        }
+        // An existing lock file opens in a directory this user cannot write (O_CREAT needs no
+        // directory write for a file that exists), so a new entry is made and removed too: the
+        // conversion writes its temporary file and the artifact there (#975 review).
+        const fs::path probe = dir / ".convert.probe";
+        const int pfd        = sys::open(probe, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+        const int perr       = errno;
+        std::error_code rm;
+        if (pfd >= 0) {
+            sys::close(pfd);
+            fs::remove(probe, rm);
+        }
+        if (pfd < 0 || rm) {
+            why = probe.string() + ": " +
+                  (pfd < 0 ? std::generic_category().message(perr) : rm.message());
+            sys::close(fd);
+            return -1;
         }
         return fd;
     };

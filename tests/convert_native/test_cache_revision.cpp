@@ -14,6 +14,7 @@
 #include "core/sys.h"
 
 #include <cstdlib>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -255,6 +256,18 @@ int main() {
         const auto bare = artifact_cache_dirs(fs::path());
         check(!bare.own.empty() && bare.own == artifact_cache_dirs(fs::current_path()).own,
               "a bare file name keys the current directory");
+#ifdef _WIN32
+        // Case-insensitive names: one key for any casing of the path (#975 review).
+        std::string upper = (root / "a").string();
+        for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        check(artifact_cache_dirs(fs::path(upper)).own == one.own, "one key for any casing");
+#else
+        // A symlink to the directory resolves to it: one key for both spellings (#975 review).
+        std::error_code link_ec;
+        fs::create_directory_symlink(root / "a", root / "link", link_ec);
+        check(link_ec || artifact_cache_dirs(root / "link").own == one.own,
+              "one key through a symlink");
+#endif
         put(saved);
         fs::remove_all(root);
     }
