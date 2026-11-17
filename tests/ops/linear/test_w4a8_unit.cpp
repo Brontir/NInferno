@@ -41,9 +41,12 @@ void keys_are_snapshot_rows() {
                     const auto key = w4a8_unit::kernel_key(s, q, e, arch);
                     expect(key.has_value(), "a key for schedule " + std::to_string(s));
                     if (!key) continue;
-                    // sm_75 has no producer-warp tile (no snapshot row for any codec).
-                    const bool absent_ok = key->producers > 0 && std::string(arch) == "75";
-                    const auto facts     = kf::w4a8_facts(arch, *key);
+                    // sm_75 has no producer-warp tile and no 128x128 classic tile (its snapshot
+                    // holds no row of either for any codec).
+                    const bool absent_ok =
+                        std::string(arch) == "75" &&
+                        (key->producers > 0 || (key->block_m == 128 && key->block_n == 128));
+                    const auto facts = kf::w4a8_facts(arch, *key);
                     expect(facts.has_value() || absent_ok,
                            std::string("sm_") + arch + " has the row " + key->codec + " " +
                                std::to_string(key->block_m) + "x" + std::to_string(key->block_n) +
