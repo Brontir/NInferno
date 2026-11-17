@@ -5,7 +5,9 @@
 #include "ops/generic/route_cost_constants.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
+#include <vector>
 
 namespace ninferno::mmq_unit {
 namespace {
@@ -16,15 +18,23 @@ constexpr double kTileRows           = 128;
 constexpr double kActivationBytes    = 2 * 144; // two block_q8_1_mmq a column per 256 values
 constexpr double kValuesPerIteration = 256;
 
-std::optional<bool> g_counted_override;
+// -1 no override, 0 off, 1 on.
+std::atomic<int> g_counted_override{-1};
 
 } // namespace
 
 bool counted() noexcept {
-    return g_counted_override.value_or(ops::detail::generic::route_cost::kMmqCountedUnit);
+    const int o = g_counted_override.load(std::memory_order_relaxed);
+    return o < 0 ? ops::detail::generic::route_cost::kMmqCountedUnit : o == 1;
 }
 
-void counted_for_test(std::optional<bool> on) noexcept { g_counted_override = on; }
+void counted_for_test(std::optional<bool> on) noexcept {
+    g_counted_override.store(on ? (*on ? 1 : 0) : -1, std::memory_order_relaxed);
+}
+
+bool scored(QType q) noexcept {
+    return q == QType::GGML_Q4_K || q == QType::GGML_Q5_K || q == QType::GGML_Q6_K;
+}
 
 double bytes_per_256(QType q) noexcept {
     return ggml_bits_per_value(q) * kValuesPerIteration / 8.0;
@@ -34,12 +44,17 @@ std::optional<double> unit_seconds(std::string_view arch, QType q, int j, const 
                                    const UnitFacts& f) {
     const int type = format_facts(q).ggml_type;
     const double b = bytes_per_256(q);
-    if (type < 0 || !(b > 0) || f.weight_tiles <= 0 || f.ctas <= 0 || !(f.clock_hz > 0) ||
-        !(f.dram_bytes_per_s > 0) || !isa.dram_latency.w1 || !isa.shared_latency ||
-        !isa.l2_bytes_per_sm_clock) {
+    if (!scored(q) || type < 0 || !(b > 0) || f.weight_tiles <= 0 || f.ctas <= 0 ||
+        !(f.clock_hz > 0) || !(f.dram_bytes_per_s > 0) || !isa.dram_latency.w1 ||
+        !isa.shared_latency || !isa.l2_bytes_per_sm_clock) {
         return std::nullopt;
     }
-    const auto facts = kernel_facts::mmq_facts(arch, {type, j, false, 30});
+    std::optional<kernel_facts::KernelFacts> facts;
+    try {
+        facts = kernel_facts::mmq_facts(arch, {type, j, false, 30});
+    } catch (...) {
+        return std::nullopt; // a snapshot that does not read: the fitted price
+    }
     if (!facts || !facts->loop || !facts->loop->schedule || !facts->loop->pipes)
         return std::nullopt;
     const double b_dram = f.weight_tiles * kTileRows * b;
@@ -64,20 +79,33 @@ std::optional<MmqLaunchLaw> law(std::string_view arch, QType q, const IsaRow& is
     return out;
 }
 
-UnitFacts unit_facts_of(int rows, int columns, int j, int sms, double clock_hz,
+UnitFacts unit_facts_of(int rows, int k, int columns, int j, int sms, double clock_hz,
                         double dram_bytes_per_s) noexcept {
-    const int row_tiles    = mmq_columns::tile_count(rows, mmq_columns::kTile);
-    const int column_tiles = std::max(1, mmq_columns::tile_count(columns, j));
-    const int ctas         = std::max(1, std::min(row_tiles * column_tiles, sms));
-    const int shared_by    = (ctas + column_tiles - 1) / column_tiles;
-    return UnitFacts{std::max(1, std::min(row_tiles, shared_by)), ctas, clock_hz, dram_bytes_per_s};
+    const mmq_columns::ColumnLaunch l = mmq_columns::launch_of(rows, k, columns, j, sms);
+    const int column_tiles            = std::max(1, mmq_columns::tile_count(columns, j));
+    const int steps = std::max(1, (k + mmq_columns::kUnitK - 1) / mmq_columns::kUnitK);
+    // The resident CTAs: a tile each up to the SMs, or under stream-k the launch's CTAs, each from
+    // its own first unit (ggml: CTA b from unit b W / B).
+    const int ctas       = std::max(1, l.split ? l.blocks : std::min(l.tiles, sms));
+    const long long work = static_cast<long long>(std::max(1, l.tiles)) * steps;
+    // The weight tile a CTA reads in its first iteration: (row tile, K step) of its first unit.
+    std::vector<long long> reads;
+    reads.reserve(static_cast<std::size_t>(ctas));
+    for (long long b = 0; b < ctas; ++b) {
+        const long long unit = l.split ? b * work / ctas : b * steps;
+        reads.push_back((unit / steps / column_tiles) * steps + unit % steps);
+    }
+    std::sort(reads.begin(), reads.end());
+    const int weight_tiles =
+        static_cast<int>(std::unique(reads.begin(), reads.end()) - reads.begin());
+    return UnitFacts{std::max(1, weight_tiles), ctas, clock_hz, dram_bytes_per_s};
 }
 
 std::optional<double> launch_seconds(std::string_view arch, QType q, const IsaRow& isa, int rows,
                                      int k, int columns, int j, int sms, double clock_hz,
                                      double dram_bytes_per_s, double fixup_launch_seconds) {
-    const auto u = unit_seconds(arch, q, j, isa,
-                                unit_facts_of(rows, columns, j, sms, clock_hz, dram_bytes_per_s));
+    const auto u = unit_seconds(
+        arch, q, j, isa, unit_facts_of(rows, k, columns, j, sms, clock_hz, dram_bytes_per_s));
     if (!u) return std::nullopt;
     const mmq_columns::ColumnLaunch l = mmq_columns::launch_of(rows, k, columns, j, sms);
     return l.units * *u +

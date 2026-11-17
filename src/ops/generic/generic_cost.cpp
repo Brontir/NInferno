@@ -292,9 +292,13 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             if (!arch.empty() && isa) {
                 const double node =
                     ninferno::launch_seconds(d.major, d.minor, LaunchKind::GraphNode).value_or(0.0);
+                // The column tile the kernel's own table picks (core/mmq_columns.h), as the
+                // choice prices it, not the fitted price's 8-column step.
+                const int j = mmq_columns::pick(static_cast<int>(tt), d.major, d.minor, format,
+                                                widest, facts);
                 if (const auto counted = mmq_unit::launch_seconds(
                         arch, problem.qtype, *isa, static_cast<int>(n * sets), static_cast<int>(k),
-                        static_cast<int>(tt), static_cast<int>(cols), d.sms, clk, bw, node)) {
+                        static_cast<int>(tt), j, d.sms, clk, bw, node)) {
                     slice_body  = *counted;
                     slice_fixed = node;
                 }

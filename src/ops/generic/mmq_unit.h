@@ -21,7 +21,11 @@
 //
 // Scored before it was written here, frozen first (tests/fixtures/mmq_law/README.md): mean |err|
 // 4.4 % (RTX 3090) to 9.5 % (RTX 4060 Ti) over q4_K, q5_K, q6_K and J 16..128 on the launch
-// law's grid; J 16-32 over by up to 28 %, J >= 80 under by up to 12 %.
+// law's grid; J 16-32 over by up to 28 %, J >= 80 under by up to 12 %. That score took each card's
+// own L2 rate (a 32-warp probe); here the rate is the arch's isa_probe 18 row, measured on one
+// card of the arch (the L2 rate is a card's, not an arch's: RTX 4060 Ti 17.2 against the RTX
+// 4090's 15.1), so a card other than the row's carries that difference. Only the scored formats
+// are priced (scored()); every other format keeps the fitted price.
 //
 // Host code over embedded facts only: the selector (ninferno_ops_host) and the choice call it,
 // no launch code.
@@ -49,11 +53,15 @@ struct UnitFacts {
     double dram_bytes_per_s = 0;
 };
 
+// The formats the law was scored on: Q4_K, Q5_K, Q6_K.
+[[nodiscard]] bool scored(QType q) noexcept;
+
 // The format's bytes per 256 values (Q4_K 144, Q5_K 176, Q6_K 210); 0 for a non-ggml format.
 [[nodiscard]] double bytes_per_256(QType q) noexcept;
 
 // One unit's seconds at the column tile `j`, from the counts of `arch`'s snapshot (the kernel's
-// stall sum and shared waits) and `isa`'s facts; nullopt where a count or a fact is missing.
+// stall sum and shared waits) and `isa`'s facts; nullopt for a format not scored(), and where a
+// count or a fact is missing or the snapshot does not read.
 [[nodiscard]] std::optional<double> unit_seconds(std::string_view arch, QType q, int j,
                                                  const IsaRow& isa, const UnitFacts& f);
 
@@ -62,12 +70,13 @@ struct UnitFacts {
 [[nodiscard]] std::optional<MmqLaunchLaw> law(std::string_view arch, QType q, const IsaRow& isa,
                                               const UnitFacts& f);
 
-// The resident CTAs and the distinct weight tiles they read in one launch of `rows` x `columns`
-// at the tile `j` on `sms` SMs: one CTA an SM (the launch law counts one). ggml's stream-k index
-// takes the column tile fastest (mmq.cuh: jt = tile % ntx, it = tile / ntx), so the resident CTAs
-// share each weight tile among the column tiles: ceil(CTAs / column tiles) of them, up to the row
-// tiles.
-[[nodiscard]] UnitFacts unit_facts_of(int rows, int columns, int j, int sms, double clock_hz,
+// The resident CTAs and the distinct weight tiles they read in one iteration of a launch of
+// `rows` x `k` x `columns` at the tile `j` on `sms` SMs (core/mmq_columns.h launch_of). A tile
+// launch runs a tile a CTA up to the SMs; ggml's index takes the column tile fastest (mmq.cuh:
+// jt = tile % ntx, it = tile / ntx), so its CTAs share each weight tile among the column tiles.
+// A stream-k launch runs launch_of's CTAs, CTA b from unit b W / B: each reads the (row tile,
+// K step) of its own unit, so CTAs share a weight tile only where they stand on the same one.
+[[nodiscard]] UnitFacts unit_facts_of(int rows, int k, int columns, int j, int sms, double clock_hz,
                                       double dram_bytes_per_s) noexcept;
 
 // One mul_mat_q launch: the longest CTA's units (core/mmq_columns.h launch_of) at the unit its own
