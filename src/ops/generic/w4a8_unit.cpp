@@ -26,8 +26,8 @@ constexpr std::array kSchedules{NINFERNO_GENERIC_W4A8_SCHEDULES(NINFERNO_W4A8_UN
 #undef NINFERNO_W4A8_UNIT_INFO
 
 // generic_w4a8.cuh w4a8_classic_flavor: float4 scales (1), mid-tile decode (2); a build without
-// NVFP4 (NINFERNO_WITHOUT_NVFP4: every release arch before sm_100, whose labels do not start with
-// "1") takes its own on 64x64 and 128x128.
+// NVFP4 (NINFERNO_WITHOUT_NVFP4: every release arch but the sm_12x ones, CMakeLists.txt) takes its
+// own on 64x64 and 128x128.
 int classic_flavor(int bm, int bn, bool without_nvfp4) {
     if (bm == 32) return 1;
     if (bm == 64 && bn == 64) return without_nvfp4 ? 1 : 3;
@@ -66,7 +66,7 @@ kernel_key(int schedule, QType q, ops::detail::generic::Epilogue epilogue, std::
         k.stages    = ops::detail::generic::kW4a8MmaFacts.producer_stages;
         k.producers = s.producers;
     } else {
-        k.flavor = classic_flavor(s.block_m, s.block_n, arch.empty() || arch.front() != '1');
+        k.flavor = classic_flavor(s.block_m, s.block_n, arch.substr(0, 2) != "12");
     }
     return k;
 }
@@ -97,7 +97,7 @@ std::optional<double> tile_cycles_of(const kernel_facts::KernelFacts& facts,
 
 std::optional<double> tile_cycles(std::string_view arch, const kernel_facts::W4a8KernelKey& key,
                                   const IsaRow& isa, int ctas_per_sm, int k_tiles) {
-    if (!isa.shared_latency) return std::nullopt;
+    if (key.producers <= 0 || !isa.shared_latency) return std::nullopt;
     std::optional<kernel_facts::KernelFacts> facts;
     try {
         facts = kernel_facts::w4a8_facts(arch, key);
