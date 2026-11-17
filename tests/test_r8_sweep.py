@@ -239,7 +239,7 @@ class Retire(unittest.TestCase):
         before = tool.read_header(str(self.HEADER))
         entries, _ = before["gb202:170sm"]
         key = sorted(entries)[0]
-        after = self.run_tool(f"gb202:170sm {key[0]} {key[1]} {key[2]} {key[3]}\n")
+        after = self.run_tool(f"gb202:170sm {key[0]} {key[1]} {key[2]} {key[3]} 4 1\n")
         self.assertNotIn(key, after["gb202:170sm"][0])
         self.assertEqual(len(after["gb202:170sm"][0]), len(entries) - 1)
         for gpu, (rows, board) in before.items():
@@ -248,7 +248,7 @@ class Retire(unittest.TestCase):
 
     def test_an_entry_no_table_holds_stops(self):
         with self.assertRaises(SystemExit) as raised:
-            self.run_tool("gb202:170sm GGML_Q6_K Store 7 7\n")
+            self.run_tool("gb202:170sm GGML_Q6_K Store 7 7 4 1\n")
         self.assertIn("no table holds", str(raised.exception))
 
     def test_the_committed_table_holds_no_retired_entry(self):

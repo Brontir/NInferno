@@ -445,7 +445,7 @@ device takes the table of the nearest board within a variant's distance of it (`
 | `--out FILE` | required | Header to write. |
 | `--min-gain F` | 0.005 | Minimum relative gain over the rules' choice. |
 | `--merge HEADER` | none | Keep this header's entries for problems the given sweeps did not measure (another GPU or format family). |
-| `--retire FILE` | none | Drop the entries FILE lists (`GPU QTYPE EPILOGUE N K` a line): the ones the R8 schedule law reproduces on their own board, `tools/bench/data/r8_law_retired.txt` (#613 PR-10). With `--merge` and no sweeps it rewrites the header without them. |
+| `--retire FILE` | none | Drop the entries FILE lists (`GPU QTYPE EPILOGUE N K WARPS ROWS` a line, the entry's schedule last): the ones the R8 schedule law reproduces on their own board, `tools/bench/data/r8_law_retired.txt` (#613 PR-10). With `--merge` and no sweeps it rewrites the header without them. |
 
 ```bash
 python3 tools/bench/r8_decode_table.py --out src/ops/generic/r8_decode_table.h \

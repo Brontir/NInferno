@@ -408,7 +408,14 @@ void count_reproduced_entries() {
     for (const g::R8DecodeTable& t : g::kR8DecodeTables) {
         const auto* b = std::find_if(std::begin(kTableBoards), std::end(kTableBoards),
                                      [&](const auto& x) { return x.first == t.gpu; });
-        if (b == std::end(kTableBoards)) continue;
+        if (b == std::end(kTableBoards)) {
+            // Only a table this map names can be held; a law generation's table must be named.
+            const bool law_chip = t.gpu.rfind("ad10", 0) == 0 || t.gpu.rfind("tu10", 0) == 0 ||
+                                  t.gpu.rfind("gv10", 0) == 0;
+            expect(!law_chip,
+                   std::string(t.gpu) + ": a law generation's table the test does not map");
+            continue;
+        }
         const ninferno::DeviceClass d =
             g::board_device_class(g::registry_facts_board(std::string(t.gpu).c_str(), b->second));
         if (!g::r8_law_generation(d)) continue;
@@ -435,6 +442,60 @@ void count_reproduced_entries() {
                   << t.entries.size() << " decode table entries otherwise (" << none
                   << " unanswered)\n";
     }
+}
+
+// Every retired entry (tools/bench/data/r8_law_retired.txt) is still the law's answer on its
+// table's board: the schedule the entry measured. A law change that moves a retired call fails
+// here, where the table would have kept it (#613 PR-10, #974 review).
+void check_retired_entries() {
+    constexpr std::pair<std::string_view, std::uint32_t> kBoards[]    = {{"ad102:128sm", 0x2684},
+                                                                         {"ad103:80sm", 0x2702},
+                                                                         {"ad104:60sm", 0x2782},
+                                                                         {"ad106:34sm", 0x2805},
+                                                                         {"tu102:68sm", 0x1E07}};
+    constexpr std::pair<std::string_view, ninferno::QType> kFormats[] = {
+        {"GGML_IQ2_S", ninferno::QType::GGML_IQ2_S},
+        {"GGML_IQ2_XS", ninferno::QType::GGML_IQ2_XS},
+        {"GGML_IQ2_XXS", ninferno::QType::GGML_IQ2_XXS},
+        {"GGML_IQ3_S", ninferno::QType::GGML_IQ3_S},
+        {"GGML_IQ3_XXS", ninferno::QType::GGML_IQ3_XXS},
+        {"GGML_Q3_K", ninferno::QType::GGML_Q3_K},
+        {"GGML_Q6_K", ninferno::QType::GGML_Q6_K}};
+    std::ifstream in(std::filesystem::path(NINFERNO_SOURCE_DIR) /
+                     "tools/bench/data/r8_law_retired.txt");
+    expect(in.good(), "tools/bench/data/r8_law_retired.txt reads");
+    std::string line;
+    int checked = 0;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream fields(line);
+        std::string gpu, qtype, epilogue;
+        std::int32_t n = 0, k = 0;
+        int warps = 0, rows = 0;
+        fields >> gpu >> qtype >> epilogue >> n >> k >> warps >> rows;
+        const auto* b = std::find_if(std::begin(kBoards), std::end(kBoards),
+                                     [&](const auto& x) { return x.first == gpu; });
+        const auto* q = std::find_if(std::begin(kFormats), std::end(kFormats),
+                                     [&](const auto& x) { return x.first == qtype; });
+        if (fields.fail() || b == std::end(kBoards) || q == std::end(kFormats) ||
+            epilogue != "Store") {
+            expect(false, "r8_law_retired.txt: a line this test cannot read: " + line);
+            continue;
+        }
+        const ninferno::DeviceClass d =
+            g::board_device_class(g::registry_facts_board(gpu.c_str(), b->second));
+        const ninferno::ScopedDeviceClass scoped(d);
+        const g::Problem p{q->second, ninferno::ops::LinearPolicy::AllowA8, n, k,
+                           g::Epilogue::Store};
+        const auto law  = g::law_r8(p);
+        const bool same = law && g::r8_schedule_info(*law).warps == warps &&
+                          g::r8_schedule_info(*law).rows == rows;
+        expect(same, "retired " + line + ": the law no longer gives its measured schedule");
+        ++checked;
+    }
+    expect(checked == 27, "27 retired entries checked, not " + std::to_string(checked));
+    std::cout << "retired R8 table entries: the law gives all " << checked
+              << " their measured schedule\n";
 }
 
 // A board whose class id is a decode table's but whose facts differ a little (a driver's clocks,
@@ -542,6 +603,7 @@ int main() {
     check_kernel_keys();
     check_selector_is_the_prediction();
     count_reproduced_entries();
+    check_retired_entries();
     check_table_here();
     check_evidence_paths();
     check_law_before();

@@ -19,8 +19,8 @@ projection as an add call); r8_sweep_summary.py reports the same check.
 --merge HEADER keeps HEADER's entries (another format family's sweeps, another GPU's) for every
 problem the given sweeps of that GPU did not measure; a measured problem takes the new verdict.
 
---retire FILE drops the entries FILE lists ("GPU QTYPE EPILOGUE N K" a line, the header's spelling,
-# comments): the entries the R8 schedule law reproduces on their own board (#613 PR-10,
+--retire FILE drops the entries FILE lists ("GPU QTYPE EPILOGUE N K WARPS ROWS" a line, the header's
+spelling and the entry's schedule, # comments): the entries the R8 schedule law reproduces on their own board (#613 PR-10,
 tools/bench/data/r8_law_retired.txt), which the law answers before any carried entry. With
 --merge and no sweeps it rewrites the merged header without them. A listed entry the tables do not
 hold stops the tool.
@@ -251,9 +251,9 @@ def read_retired(path):
         if not line:
             continue
         fields = line.split()
-        if len(fields) != 5:
-            sys.exit(f"{path}:{number}: not GPU QTYPE EPILOGUE N K: {line}")
-        gpu, qtype, epilogue, n, k = fields
+        if len(fields) != 7:
+            sys.exit(f"{path}:{number}: not GPU QTYPE EPILOGUE N K WARPS ROWS: {line}")
+        gpu, qtype, epilogue, n, k = fields[:5]
         out.add((gpu, (qtype, epilogue, int(n), int(k))))
     return out
 
