@@ -5,7 +5,8 @@
 // - the law's arithmetic on one row: stall sum + non-global waits x L_sh + the other warps'
 //   issue a scheduler + the code outside the loop over the K tiles, which the frozen prediction
 //   on #978 printed for the producer-warp tile 128x64 Q4_K on sm_89 (3082 clk);
-// - no price without the counted producer loop, and none for a format the law was not scored on.
+// - no price without the counted producer loop, none for a classic tile (refuted on the RTX 3060,
+//   #978), and none for a format the law was not scored on.
 // No GPU.
 
 #include "core/format_facts.h"
@@ -103,6 +104,12 @@ void law_arithmetic() {
     const auto two = w4a8_unit::tile_cycles_of(f, key, l_sh, 2, 32);
     expect(two && std::abs(*two - (expect_cycles + 8.0 / 4 * 662 + 4.0 / 4 * 379)) < 1e-9,
            "a second CTA's warps add their issue");
+    // A classic tile (no producer warps) has no counted price: the law was refuted there.
+    kf::W4a8KernelKey classic = key;
+    classic.producers         = 0;
+    classic.stages            = 0;
+    classic.flavor            = 3;
+    expect(!w4a8_unit::tile_cycles_of(f, classic, l_sh, 1, 32), "no price for a classic tile");
     // The producer-warp tile without its counted producer loop has no counted price.
     f.producer.reset();
     expect(!w4a8_unit::tile_cycles_of(f, key, l_sh, 1, 32), "no producer loop, no price");

@@ -74,6 +74,8 @@ kernel_key(int schedule, QType q, ops::detail::generic::Epilogue epilogue, std::
 std::optional<double> tile_cycles_of(const kernel_facts::KernelFacts& facts,
                                      const kernel_facts::W4a8KernelKey& key, double shared_latency,
                                      int ctas_per_sm, int k_tiles) {
+    // The classic tile: refuted (#978, RTX 3060), the fitted step prices it.
+    if (key.producers <= 0) return std::nullopt;
     if (!facts.loop || !facts.loop->schedule || !facts.loop->pipes || facts.loop->loops != 1 ||
         ctas_per_sm < 1 || k_tiles < 1 || !(shared_latency > 0)) {
         return std::nullopt;
@@ -84,11 +86,8 @@ std::optional<double> tile_cycles_of(const kernel_facts::KernelFacts& facts,
     // The other warps on the critical warp's scheduler, from the CTAs resident on the SM.
     const double mma_per_scheduler = static_cast<double>(mma_warps) * ctas_per_sm / kSchedulers;
     double other                   = (mma_per_scheduler - 1.0) * loop.total;
-    if (key.producers > 0) {
-        if (!facts.producer || facts.producer->loops != 1) return std::nullopt;
-        other +=
-            static_cast<double>(key.producers) * ctas_per_sm / kSchedulers * facts.producer->total;
-    }
+    if (!facts.producer || facts.producer->loops != 1) return std::nullopt;
+    other += static_cast<double>(key.producers) * ctas_per_sm / kSchedulers * facts.producer->total;
     const double waits =
         static_cast<double>(sched.sb_waits - loop.pipes->sb_waits_global) * shared_latency;
     const double outside =
