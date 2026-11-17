@@ -49,6 +49,10 @@ constexpr std::size_t kResourceColumnsLength = kColumns.find(" loops ");
 constexpr std::string_view kLoopColumns = kColumns.substr(kResourceColumnsLength);
 constexpr std::string_view kPipeColumns = " i2f i2fp ffma fmul fadd imad bar";
 constexpr std::string_view kWaitColumns = " sb_waits_global sb_waits_shared";
+// The w4a8 section's producer warps' loop after the wait classes (kernel_facts.py
+// Family.producer, sass_counts.py PRODUCER_FIELDS; #613 PR-6).
+constexpr std::string_view kProducerColumns =
+    " prod_loops prod_total prod_stall prod_sb_waits prod_glb_waits prod_shd_waits prod_int";
 
 // A section family's columns up to the resources (kernel_facts.py FAMILIES: "family", the key,
 // the resources), and how many key fields lead as text (the codec) before the integers.
@@ -59,6 +63,8 @@ struct SectionFamily {
     int int_keys  = 0;
     // Whether its rows carry the wait classes after the pipe counts (kernel_facts.py Family.waits).
     bool waits = false;
+    // Whether its rows carry the producer warps' loop after the wait classes (Family.producer).
+    bool producer = false;
     // Columns past the pipe counts (kernel_facts.py Family.prologue): the r8 rows' quantizer
     // loop, sass_counts.py PROLOGUE_FIELDS.
     std::string_view extra_columns = {};
@@ -69,10 +75,11 @@ constexpr SectionFamily kSections[] = {
     {"w4a8",
      "family codec block_m block_n warps_m warps_n epilogue flavor stages producers registers "
      "stack local shared",
-     1, 8, true},
+     1, 8, true, true},
     {"gemma4", "family kernel D G slice rows Bc partial fp8 chain registers stack local shared", 1,
      8},
     {"r8", "family codec warps rows nt epilogue pre registers stack local shared", 1, 5, false,
+     false,
      " pro_loops pro_total pro_int pro_fp pro_ldg_bytes pro_sts_bytes pro_stall glb_waits"
      " outside_glb_waits pro_glb_waits"},
 };
@@ -135,6 +142,13 @@ void read_section_row(Section& s, const SectionFamily& f, Columns columns,
     if (!fields) throw std::runtime_error("kernel facts: malformed row: " + line);
     if (columns != Columns::Resources) {
         k.loop = read_loop(fields, true, f.waits, line);
+        if (f.producer) {
+            ProducerCounts p;
+            fields >> p.loops >> p.total >> p.stall_sum >> p.sb_waits >> p.sb_waits_global >>
+                p.sb_waits_shared >> p.int_alu;
+            if (!fields) throw std::runtime_error("kernel facts: malformed producer loop: " + line);
+            k.producer = p;
+        }
         if (!f.extra_columns.empty()) {
             PrologueCounts p;
             fields >> p.loops >> p.total >> p.int_alu >> p.fp_alu >> p.ldg_bytes >> p.sts_bytes >>
@@ -213,6 +227,7 @@ Snapshot parse(std::string_view text) {
                     std::string(family->head_columns) + std::string(kLoopColumns) +
                     std::string(kPipeColumns) +
                     std::string(family->waits ? kWaitColumns : std::string_view{}) +
+                    std::string(family->producer ? kProducerColumns : std::string_view{}) +
                     std::string(family->extra_columns);
                 if (rest == loop)
                     section_columns = Columns::Schedule;

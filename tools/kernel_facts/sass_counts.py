@@ -169,6 +169,18 @@ PROLOGUE_FIELDS = ("pro_loops", "pro_total", "pro_int", "pro_fp", "pro_ldg_bytes
 PROLOGUE_OF = {"pro_loops": "loops", "pro_total": "total", "pro_int": "int", "pro_fp": "fp",
                "pro_ldg_bytes": "ldg_bytes", "pro_sts_bytes": "sts_bytes",
                "pro_stall": "stall_sum", "pro_glb_waits": "glb_waits"}
+# The producer warps' loop of the w4a8 producer-warp tile (#613 PR-6, #978): w4a8_ws_kernel's
+# MMA warps' K loop is the counted loop; its producer warps run a loop of their own (copy the
+# activation tile, decode the weight tile into the ring, arrive at the stage's barrier) that
+# holds a CTA barrier (BAR) and no MMA. Its counts follow the wait classes, prefixed prod_: the
+# loops found (0 on the classic tile, whose only BAR loop holds the MMAs), and of one iteration
+# the instructions, the stall sum, the scoreboard waits and of them those on a global and on a
+# shared load (WAIT_FIELDS' rule), and the integer ALU work.
+PRODUCER_FIELDS = ("prod_loops", "prod_total", "prod_stall", "prod_sb_waits", "prod_glb_waits",
+                   "prod_shd_waits", "prod_int")
+PRODUCER_OF = {"prod_loops": "loops", "prod_total": "total", "prod_stall": "stall_sum",
+               "prod_sb_waits": "sb_waits", "prod_glb_waits": "sb_waits_global",
+               "prod_shd_waits": "sb_waits_shared", "prod_int": "int"}
 GLOBAL_LOADS = ("LDG", "LD")
 PIPE_OF = {opcode: field for field, opcodes in PIPE_OPCODES.items() for opcode in opcodes}
 NO_BARRIER = 7
@@ -606,12 +618,14 @@ class LoopCounts:
         self.loops = 0
         self.k_iter = 0
         self.mma_shape = "-"
-        for f in COUNT_FIELDS + SCHEDULE_FIELDS + PIPE_FIELDS + WAIT_FIELDS + PROLOGUE_FIELDS:
+        for f in (COUNT_FIELDS + SCHEDULE_FIELDS + PIPE_FIELDS + WAIT_FIELDS + PROLOGUE_FIELDS +
+                  PRODUCER_FIELDS):
             setattr(self, f, 0)
         self.scheduled = False
         self.pipes = False
         self.waits = False
         self.prologue = False
+        self.producer = False
 
     def columns(self):
         if not self.scheduled:
@@ -619,6 +633,7 @@ class LoopCounts:
         if not self.pipes:
             return COLUMNS
         return (COLUMNS + PIPE_FIELDS + (WAIT_FIELDS if self.waits else ()) +
+                (PRODUCER_FIELDS if self.producer else ()) +
                 (PROLOGUE_FIELDS if self.prologue else ()))
 
     def row(self):
@@ -633,13 +648,16 @@ class LoopCounts:
             setattr(c, name, getattr(self, name))
         return c
 
-    def with_pipes(self, pipes=True, prologue=False, waits=False):
+    def with_pipes(self, pipes=True, prologue=False, waits=False, producer=False):
         """This row's columns with (or without) the pipe counts, and after them the wait classes
-        (WAIT_FIELDS, the mmq and w4a8 sections) or the prologue loop's (PROLOGUE_FIELDS, the r8
-        section), each only with the pipes, the counts unchanged."""
+        (WAIT_FIELDS, the mmq and w4a8 sections) and the producer loop's (PRODUCER_FIELDS, the
+        w4a8 section), or the prologue loop's (PROLOGUE_FIELDS, the r8 section), each only with
+        the pipes, the counts unchanged."""
         assert not (waits and prologue)
+        assert not producer or waits
         self.pipes = pipes
         self.waits = waits and pipes
+        self.producer = producer and self.waits
         self.prologue = prologue and pipes
         return self
 
@@ -650,15 +668,18 @@ class LoopCounts:
         a field that is no count."""
         piped = len(COLUMNS) + len(PIPE_FIELDS)
         widths = (len(COLUMNS), len(LOOP_COLUMNS), piped, piped + len(WAIT_FIELDS),
-                  piped + len(PROLOGUE_FIELDS))
+                  piped + len(WAIT_FIELDS) + len(PRODUCER_FIELDS), piped + len(PROLOGUE_FIELDS))
+        assert len(set(widths)) == len(widths)
         if len(fields) not in widths:
             raise ValueError(f"{len(fields)} loop fields, {' or '.join(map(str, widths))} columns")
         c = cls()
         c.scheduled = len(fields) != len(LOOP_COLUMNS)
         c.pipes = len(fields) >= piped
-        c.waits = len(fields) == piped + len(WAIT_FIELDS)
+        c.producer = len(fields) == piped + len(WAIT_FIELDS) + len(PRODUCER_FIELDS)
+        c.waits = len(fields) == piped + len(WAIT_FIELDS) or c.producer
         c.prologue = len(fields) == piped + len(PROLOGUE_FIELDS)
-        extra = WAIT_FIELDS if c.waits else PROLOGUE_FIELDS
+        extra = (WAIT_FIELDS + (PRODUCER_FIELDS if c.producer else ()) if c.waits
+                 else PROLOGUE_FIELDS)
         for name, value in zip(COLUMNS + PIPE_FIELDS + extra, fields):
             setattr(c, name, value if name == "mma_shape" else int(value))
         return c
@@ -774,11 +795,18 @@ def outside_counts(body, control, outside, out):
     return out
 
 
-def loop_counts(body, tiles=1, marker=None, prologue_marker=None):
+def loop_counts(body, tiles=1, marker=None, prologue_marker=None, producer=None):
     """loop_counts_of (below), and where `prologue_marker` names an opcode (F2I), the counts of
     the loop that opcode marks in the same body as the PROLOGUE_FIELDS (the R8 kernels'
-    activation quantizer). A row writes them only under with_pipes(prologue=True)."""
+    activation quantizer). A row writes them only under with_pipes(prologue=True). Where
+    `producer` is (marker, excluded) (BAR, IMMA), the counts of the loop the marker marks that
+    holds no excluded opcode as the PRODUCER_FIELDS (the w4a8 producer warps' loop), written
+    under with_pipes(producer=True)."""
     out = loop_counts_of(body, tiles, marker)
+    if producer is not None:
+        prod = loop_counts_of(body, 1, producer[0], exclude=producer[1])
+        for field, source in PRODUCER_OF.items():
+            setattr(out, field, getattr(prod, source))
     if prologue_marker is not None:
         # The quantizer's loop holds no dp4a: a codec whose weight decode converts with F2I
         # (NVFP4's) has F2I in the dp4a loop too, which is not the prologue.

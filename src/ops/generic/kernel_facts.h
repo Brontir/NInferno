@@ -104,6 +104,19 @@ struct PrologueCounts {
     int outside_global_waits = 0;
 };
 
+// The producer warps' loop of the w4a8 producer-warp tile (#613 PR-6; sass_counts.py
+// PRODUCER_FIELDS): the BAR-marked loop without an MMA, one iteration a K tile; loops 0 on the
+// classic tile.
+struct ProducerCounts {
+    int loops           = 0;
+    int total           = 0; // instructions of one iteration
+    int stall_sum       = 0; // the static schedule's clocks for one warp alone
+    int sb_waits        = 0;
+    int sb_waits_global = 0; // of them on a global load (sass_counts.py WAIT_FIELDS' rule)
+    int sb_waits_shared = 0; // of them on a shared load
+    int int_alu         = 0;
+};
+
 struct LoopCounts {
     int loops  = 0; // candidate K loops found: 1 normally; 0 none (every count is 0); 2+ ambiguous
     int k_iter = 0; // K values per warp per iteration from the weight MMAs; 0 unknown
@@ -139,6 +152,7 @@ struct KernelFacts {
     std::size_t static_shared_bytes = 0;    // per CTA
     std::optional<LoopCounts> loop;         // schema 4 snapshots; nullopt in a resources-only one
     std::optional<PrologueCounts> prologue; // the r8 section's pro_ columns (#613 PR-10)
+    std::optional<ProducerCounts> producer; // the w4a8 section's prod_ columns (#613 PR-6)
 
     // Per thread: every local-memory byte (the driver's localSizeBytes), the one spill measure
     // the price, the wide rule and the live check all read.
