@@ -247,15 +247,20 @@ void every_board(const json& fixture) {
 
 // #847: a final rest under 17 tokens. A request's prompt runs as whole chunks and a partial one,
 // each priced at its own route (single_request_seconds); at an 8-token rest the selector may take
-// R8 or the vector kernel (the int8 share) where the chunks run on the W4A8 tiles. A 1032-token
-// prompt in 1024-token chunks: the 8-token answer for a Q8_0 linear on every fixture board, the
-// requests that move with the routes (listed), and none on a quantization without a Q8_0 linear.
+// R8 or the vector kernel (the int8 share) where the chunks run on the W4A8 tiles. The rest alone
+// is a 1032-token request less a 1024-token one in 1024-token chunks: attention, the tail calls
+// and decode read no prefill route, so the difference is the rest's linears. Per fixture board:
+// the selector's answer for a Q8_0 linear at 8 and at 1024 tokens (printed), the rests that move
+// once the routes are asked (listed), none on a quantization without a Q8_0 linear, none on Volta
+// (its prefill is its CUTLASS route's, which the choice does not ask: selected_kernel), and at
+// least one move over the boards, so the check is not vacuous.
 void short_rest(const json& fixture) {
     const auto& query = rt::plan_prefill_route_query();
     const auto fast   = ninferno::ActivationMode::Fast;
-    int requests = 0, moves = 0;
+    int rests = 0, moves = 0;
     for (const auto& [card_name, id] : kFixtureBoards) {
         const rt::PlanDeviceFacts device = device_of(ninferno::board_registry::row(id));
+        const bool volta                 = device.compute_capability == 70;
         const rt::PlanPrefillKernel rest_kernel =
             query(device, "q8_g32_fp16", 4096, 4096, false, 8, fast);
         const rt::PlanPrefillKernel chunk_kernel =
@@ -264,8 +269,7 @@ void short_rest(const json& fixture) {
                   << static_cast<int>(rest_kernel) << " at 8 tokens, "
                   << static_cast<int>(chunk_kernel)
                   << " at 1024 (0 unknown, 1 MMQ, 2 W4A8, 3 other A8, 4 A16)\n";
-        // Volta's prefill is its CUTLASS route's, which the choice does not ask (selected_kernel).
-        check(device.compute_capability == 70 || rest_kernel != rt::PlanPrefillKernel::Unknown,
+        check(volta || rest_kernel != rt::PlanPrefillKernel::Unknown,
               card_name + ": the selector answers an 8-token Q8_0 call");
         const ch::CardFacts card = card_of(fixture.at("cards").at(card_name));
         for (const auto& [model_name, m] : fixture.at("models").items()) {
@@ -276,22 +280,30 @@ void short_rest(const json& fixture) {
                 c.kv    = KvCacheStorage::Int8Group64;
                 c.chunk = 1024;
                 ch::Task task;
-                task.answer         = 64;
-                const double before = ch::single_request_seconds(model, card, quant, c, task, 1032);
+                task.answer     = 64;
+                const auto rest = [&] {
+                    return ch::single_request_seconds(model, card, quant, c, task, 1032) -
+                           ch::single_request_seconds(model, card, quant, c, task, 1024);
+                };
+                const double before = rest();
                 pr::with_prefill_routes(model, device);
-                const double after = ch::single_request_seconds(model, card, quant, c, task, 1032);
-                ++requests;
-                if (!(std::abs(after - before) > 1e-12 * std::abs(before))) { continue; }
+                const double after = rest();
+                ++rests;
+                if (!(std::abs(after - before) > 1e-9 * std::abs(before))) { continue; }
                 ++moves;
                 std::cout << "  rest moved: " << card_name << ' ' << model_name << ' ' << q << ": "
-                          << before << " -> " << after << " s\n";
+                          << before * 1e3 << " -> " << after * 1e3 << " ms\n";
+                check(!volta, card_name +
+                                  ": a Volta rest moves (the choice asks no route there): " +
+                                  model_name + ' ' + q);
                 check(names_q8_linear(m, q), "an 8-token rest moves only where a Q8_0 linear "
                                              "changes kernel: " +
                                                  card_name + ' ' + model_name + ' ' + q);
             }
         }
     }
-    std::cout << "short rest: " << requests << " requests of 1032 tokens, " << moves << " moved\n";
+    std::cout << "short rest: " << rests << " 8-token rests, " << moves << " moved\n";
+    check(moves > 0, "some 8-token rest moves with the selector's routes");
 }
 
 // #930: a real board's selector is useful for the displayed estimate, but it is not the
