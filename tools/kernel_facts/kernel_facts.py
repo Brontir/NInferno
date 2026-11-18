@@ -623,13 +623,16 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
     for name, body in sass_counts.iter_functions(lines, lambda n: n in keys):
         fk = keys[name]
         family = FAMILIES[fk[0]]
+        # A tile without producer warps (the key's last field 0) has no producer loop: its
+        # producer fields are zeros. Its staging may still be a loop of its own that holds a BAR and
+        # no MMA (the sm_70 tile, built from dp4a on every warp, stages its operands that way, #787),
+        # which is not a producer warps' loop and is not looked for.
+        producer = family.producer if family.producer is not None and fk[1][-1] > 0 else None
         c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker, family.prologue,
-                                    family.producer).with_pipes(
+                                    producer).with_pipes(
             family.pipes, family.prologue is not None, family.waits, family.producer is not None)
-        if family.producer is not None and fk[1][-1] > 0 and c.prod_loops != 1:
+        if producer is not None and c.prod_loops != 1:
             fail(f"{name}: {c.prod_loops} producer loops in a tile with {fk[1][-1]} producer warps")
-        if family.producer is not None and fk[1][-1] == 0 and c.prod_loops != 0:
-            fail(f"{name}: {c.prod_loops} producer loops in a tile without producer warps")
         if fk in counts and counts[fk] != c:
             fail(f"{name} is disassembled twice in {arch} with different loops {counts[fk]} "
                  f"and {c}")
