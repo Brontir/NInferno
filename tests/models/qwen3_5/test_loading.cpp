@@ -251,11 +251,14 @@ void logical_data_and_instances() {
         const auto elsewhere = entry.parent_path() / "kept_link_dir";
         std::filesystem::create_directories(elsewhere);
         const auto link = elsewhere / entry.filename();
-        std::filesystem::remove(link);
-        std::filesystem::create_symlink(entry, link);
-        require(product::plan_facts_of_artifact(link).model.artifact_directory !=
-                    later.artifact_directory,
-                "a symlink in another directory shared the canonical file's kept directory");
+        std::error_code link_error;
+        std::filesystem::create_symlink(entry, link, link_error);
+        // A host that cannot make a symlink (Windows without the privilege) skips the check.
+        if (!link_error) {
+            require(product::plan_facts_of_artifact(link).model.artifact_directory !=
+                        later.artifact_directory,
+                    "a symlink in another directory shared the canonical file's kept directory");
+        }
     }
     const auto& attention = std::get<qwen::AttentionWeights>(plan.weights().text.layers[0].mixer);
     const auto& query     = plan.parameter(attention.query);

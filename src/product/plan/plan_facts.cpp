@@ -1446,7 +1446,8 @@ bool binds_directory(const runtime::PlanModelFacts& model) {
 }
 
 // What the workspace query reads of an artifact beside its facts (#615): its directory and its
-// tokenizer's public ids, kept per path, write time, size and the file's own identity. A start
+// tokenizer's public ids, kept per path, write time, size, the file's own identity and the
+// directory its parts resolve in. A start
 // reads its artifact's facts up to three times and a --plan more; the copy of a 35B-A3B's
 // ~30,000-object directory and the tokenizer (a ~10 MB tokenizer.json) are made once, and the facts
 // share one directory, which the query's described start is kept by.
