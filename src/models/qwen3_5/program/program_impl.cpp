@@ -2,6 +2,7 @@
 #include "models/qwen3_5/program/context_work.h"
 #include "models/qwen3_5/program/context.h"
 #include "models/qwen3_5/execution/linear.h"
+#include "models/qwen3_5/program/planning/sequence_bytes.h"
 #include "core/debug_poison.h"
 #include "core/startup.h"
 #include "core/device.h"
@@ -58,7 +59,8 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
       prefill_chunk(plan.prefill_chunk), kv_lease_window(plan.kv_lease_window),
       draft_window(plan.draft_window), default_draft_depth(plan.default_draft_depth),
       speculative_backend(plan.speculative_backend), kv_storage(plan.kv_storage),
-      proposal_head(plan.proposal_head), draft_width(plan.draft_width),
+      kv_rows_int8(plan_kv_rows_int8(plan)), proposal_head(plan.proposal_head),
+      draft_width(plan.draft_width),
       watchdog_policy{plan.acceptance_floor, plan.watchdog_window, plan.watchdog_min_rounds},
       shared_trip_floor(plan.shared_trip_floor), copy_window_drafts(plan.ngram_draft_tokens),
       copy_min_match(plan.ngram_min_match), default_step_down(plan.step_down),
@@ -750,6 +752,7 @@ MemorySummary ProgramImpl::memory_summary() const noexcept {
     out.max_context     = capacity;
     out.kv_capacity     = kv_capacity;
     out.kv_cache        = kv_storage;
+    out.kv_rows_int8          = kv_rows_int8;
     const std::size_t weights = model.traits().weight_bytes;
     out.weights               = ArenaMemorySummary{weights, weights, weights};
     out.sequence =

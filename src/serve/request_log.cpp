@@ -535,9 +535,10 @@ std::string format_server_start_json(
              {"pending_timeout_ms", engine_options.pending_timeout_ms},
              {"prefill_chunk", engine_options.prefill_chunk},
              {"log_stats_interval_ms", options.log_stats_interval_ms},
-             {"kv_cache", std::string(ninferno::kv_cache_storage_layout(engine_options.kv_cache))},
-             {"sliding_kv_cache",
-              std::string(ninferno::kv_cache_storage_layout(engine_options.sliding_kv_cache))},
+             {"kv_cache", std::string(ninferno::kv_cache_storage_layout(engine_options.kv_cache,
+                                                                        memory.kv_rows_int8))},
+             {"sliding_kv_cache", std::string(ninferno::kv_cache_storage_layout(
+                                      engine_options.sliding_kv_cache, memory.kv_rows_int8))},
              {"activations", product::activation_mode_name(engine_options.activations)},
              {"vision", engine_options.enable_vision},
              {"cuda_graph", engine_options.use_cuda_graph},

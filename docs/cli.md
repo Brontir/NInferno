@@ -339,9 +339,18 @@ Outputs at most 512 tokens, context 4,096. Fastest settings:
     convert FP8 in hardware (`sm_89` and up: Ada, Hopper, Blackwell); `bf16` below that;
   - `fp8` for Gemma 4's full-attention layers on `sm_89` and up, `bf16` below that;
   - `bf16` for Nemotron-H.
-- Gemma 4 takes `bf16` or `fp8`. With `fp8`, the full-attention layers' page pool holds E4M3 codes
+- Gemma 4 takes `bf16` or `fp8`. With `fp8`, the full-attention layers' page pool holds one-byte codes
+  (E4M3; int8 on `sm_75` to `sm_88`, below)
   with an FP32 scale per position and KV head (any head size). The sliding-window rings follow the
   KV cache: FP8 under `fp8` (`--sliding-kv-dtype bf16` keeps them BF16).
+- On `sm_75` to `sm_88` (Turing, Ampere), which have no FP8 conversion in hardware, `fp8` stores the
+  Gemma 4 and dense decoders' rows as int8 codes in the same layout (one byte per value and an FP32
+  scale per row; reports name it `int8-row256`). It halves their KV bytes, so a longer context or
+  more slots fit, and its speed depends on the card: on an RTX 3090, gpt-oss-20b decodes 6-16 %
+  faster at 32K-88K and prefills 1-2 % slower, Gemma 4 12B decodes 0-2 % faster and prefills
+  2.5-4.6 % slower; on an RTX 2080 Ti, Gemma 4 12B decodes 1.7-4.5 % and prefills 3.5-6.8 % slower.
+  So `auto` keeps `bf16` there: choose `fp8` for the memory. The Qwen models' `fp8` pool keeps E4M3
+  codes on every GPU (converted in software below `sm_89`).
 - Accuracy of `fp8` on the full layers alone against BF16 keys and values, on chat answers: top-1
   agreement 0.98-0.99, ΔNLL within 0.004 (Gemma 4 12B QAT, and 26B-A4B with BF16 activations). With
   the rings in FP8 too, the default, NLL stays within noise and top-1 agreement is 75-97 % on

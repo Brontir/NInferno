@@ -489,6 +489,12 @@ void plan_program_buffers(LayoutBuilder& builder, const SequencePlanImpl& plan,
     out.bytes = builder.finish(kArenaAlign, "persistent layout");
 }
 
+bool plan_kv_rows_int8(const SequencePlanImpl& plan) noexcept {
+    return (plan.kv_storage == KvCacheStorage::Fp8E4M3Row256 &&
+            plan.persistent.decoder.text_kv.layer_storage.key.data_dtype == DType::I8) ||
+           (plan.ring_storage == KvCacheStorage::Fp8E4M3Row256 && ops::kGemma4RowInt8);
+}
+
 PersistentLayout plan_persistent_layout(const StateShape& shape, const SequencePlanImpl& plan) {
     switch (shape.family) {
     case StateFamily::Qwen35:

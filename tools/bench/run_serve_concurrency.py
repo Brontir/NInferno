@@ -368,6 +368,8 @@ def validate_server_start(
         "proposal_head": "optimized" if point.draft_tokens else "full",
     }
     actual = {name: engine.get(name) for name in expected}
+    if actual.get("kv_cache") in corpus.KV_CACHE_LABELS[point.kv_dtype]:
+        expected["kv_cache"] = actual["kv_cache"]
     if actual != expected:
         raise corpus.CampaignError(f"server_start Engine configuration mismatch: {actual!r}")
     if event.get("sampling_defaults", {}).get("greedy") != (

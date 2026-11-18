@@ -130,7 +130,8 @@ def test_arbitrary_artifact_labels_reach_the_requested_backend(tmp_path: Path) -
 
 
 @pytest.mark.parametrize(
-    "kv_dtype,cache_name", [("int8", "int8-group64"), ("fp8", "fp8-e4m3-row256")]
+    "kv_dtype,cache_name",
+    [("int8", "int8-group64"), ("fp8", "fp8-e4m3-row256"), ("fp8", "int8-row256")],
 )
 @pytest.mark.parametrize("concurrent", [False, True])
 def test_selected_kv_reaches_server_and_is_verified(
@@ -209,6 +210,10 @@ def test_selected_kv_reaches_server_and_is_verified(
     engine["kv_cache"] = "bf16"
     with pytest.raises(corpus.CampaignError, match="configuration mismatch"):
         validate()
+    if kv_dtype == "int8":  # int8-row256 is fp8's label (the int8-coded rows), never int8's
+        engine["kv_cache"] = "int8-row256"
+        with pytest.raises(corpus.CampaignError, match="configuration mismatch"):
+            validate()
 
 
 def test_resume_rejects_different_kv_dtype(tmp_path):
