@@ -14,6 +14,7 @@
 #include "core/machine_facts.h"
 #include "core/measured_boards.h"
 #include "core/generation.h"
+#include "core/launch_facts.h"
 #include "core/mmq_columns.h"
 #include "product/choice/choice_replay.h"
 
@@ -4638,7 +4639,22 @@ void reports_gates_and_bands(const json& fixture) {
     }
 }
 
+// #613 PR-8e: every kKernelCost row names its census cards' architecture, which belongs to the
+// row's generation and has launch facts; else kernel_cost_seconds would rebase the row's own boards
+// from the wrong architecture's launch share.
+void kernel_cost_rows_name_their_architecture() {
+    for (const ch::KernelCost& row : ch::kKernelCost) {
+        const std::string what = std::string(row.generation) + " (sm_" + std::to_string(row.major) +
+                                 std::to_string(row.minor) + ")";
+        check(ninferno::generation_row(row.major, row.minor).name == row.generation,
+              "kKernelCost " + what + ": its architecture is of its generation");
+        check(ninferno::launch_row(row.major, row.minor).has_value(),
+              "kKernelCost " + what + ": its architecture has launch facts");
+    }
+}
+
 int main() {
+    kernel_cost_rows_name_their_architecture();
     for (const char* name : {"speed_measured", "decode_measured", "prefill_measured"}) {
         std::ifstream cards(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/" + name +
                             ".json");
