@@ -233,17 +233,17 @@ int main() {
                       "schema 32: server answer_room missing");
     failures += check(server.at("engine").at("kv_cache") == "fp8-e4m3-row256", "KV type missing");
     // The Gemma 4 / dense rows of an sm_75..88 build hold int8 codes in the same layout (#991).
-    memory.kv_rows_int8         = true;
-    const Json int8_rows_server = Json::parse(format_server_start_json(
+    memory.kv_rows_int8             = true;
+    engine_options.sliding_kv_cache = ninferno::KvCacheStorage::Fp8E4M3Row256;
+    const Json int8_rows_server     = Json::parse(format_server_start_json(
         "serve-test", 1000, options, engine_options, sampling_defaults, "deployment-alias", load,
         memory, environment, std::uint64_t{123456}));
     failures += check(int8_rows_server.at("engine").at("kv_cache") == "int8-row256",
                       "int8 one-byte rows not named");
-    failures += check(
-        int8_rows_server.at("engine").at("sliding_kv_cache") ==
-            std::string(ninferno::kv_cache_storage_layout(engine_options.sliding_kv_cache, true)),
-        "the sliding rings' label does not follow the flag");
-    memory.kv_rows_int8     = false;
+    failures += check(int8_rows_server.at("engine").at("sliding_kv_cache") == "int8-row256",
+                      "the sliding rings' int8 one-byte rows not named");
+    memory.kv_rows_int8             = false;
+    engine_options.sliding_kv_cache = ninferno::KvCacheStorage::BFloat16;
     options.kv_cache        = ninferno::KvCacheStorage::Nvfp4Group16;
     engine_options.kv_cache = *options.kv_cache;
     memory.kv_cache         = *options.kv_cache;
