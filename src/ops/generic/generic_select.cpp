@@ -265,6 +265,13 @@ std::int32_t vec_rule_max_tokens() {
 } // namespace
 
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
+    // Lab switch (#788 A/B): NINFERNO_LAB_NO_VEC_RULE=1 holds the rule off for the process, so the
+    // next authority (route table, dense tuner, R8) answers T = 2..4 as it would without it.
+    static const bool off = [] {
+        const char* v = std::getenv("NINFERNO_LAB_NO_VEC_RULE");
+        return v != nullptr && v[0] == '1';
+    }();
+    if (off) return false;
     return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);
 }
 
