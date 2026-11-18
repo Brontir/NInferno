@@ -23,16 +23,9 @@ struct Bf16KvPartition {
     // 2^CausalKvPartition::aligned_key_shift(v) keys from position 0, as
     // CausalKvPartition::aligned_to_positions does (the kernels' Aligned instances, aligned_live).
     // Otherwise the window is spread over the targets (live).
-    // Always 0: the fixed split of the row-aligned partition this replaced. It stays, with its
-    // branch in live(), so that the fast instances keep their former code: without it, ptxas -v
-    // on sm_89 moved a register in the merge and in the GroupedDecode instances, which spilled
-    // then. They no longer spill (#856); nothing has rechecked the branch since. Nothing sets it;
-    // the aligned instances use aligned_live.
-    int aligned_keys = 0;
     bool aligned     = false;
 
     __host__ __device__ Bf16KvLivePartition live(int visible) const {
-        if (aligned_keys > 0) return {div_up(visible, aligned_keys), aligned_keys};
         const int target  = visible >= 32768 ? long_target : normal_target;
         const int rounded = round_up(div_up(visible, target), key_rows);
         const int keys    = rounded < 64 ? 64 : rounded;

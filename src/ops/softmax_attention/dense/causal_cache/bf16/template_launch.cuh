@@ -89,7 +89,7 @@ void launch_bf16_kv_key_major_volta(const CausalAttentionOperands& p,
                                     cudaStream_t stream) {
     static_assert(Writable == Input::writes_cache && kBf16KvVoltaKeyMajor<G>);
     validate_bf16_kv_operands<G>(p, cache);
-    if (p.width != 1 || partition.aligned || partition.aligned_keys != 0 ||
+    if (p.width != 1 || partition.aligned ||
         partition.key_rows != kBf16KvVoltaStepKeys || partition.capacity < 1 ||
         partition.capacity > 256 || partition.normal_target < 1 || partition.long_target < 1 ||
         partition.live(p.visible_capacity).splits > partition.capacity || !partials.acc ||
