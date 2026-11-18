@@ -3063,30 +3063,42 @@ warp_inflight probe, and gpu_facts.json. #619 step 11 also asks per format: R8 o
 
 Only the plans the bank admits are priced (`r8_admits`' token limit). Each board's picks were
 frozen in a CSV (`tools/bench/data/moe_law/frozen_<board>_*.csv`) before its sealed moe11 /
-moe11b grids (E256 F512 and E128 F768, Q3_K..Q6_K, T 1..8) were read.
+moe11b grids (E256 F512 and E128 F768, Q3_K..Q6_K, T 1..8; the grids stay on the stands, their
+scores are #619's comments of 17-18.11) were read. The 5070 Ti's files predate the admission filter,
+which its Q6_K miss led to (022bc4e33): its Q6_K cells were scored again after that change, not
+frozen.
 
-**Score.** A pass is a pick within 12 % of the grid's best at every T, per format and grid:
+**Score.** A pass is a pick at most 12 % slower than the grid's best at every T, per format and
+grid (max regret <= 12 %):
 
 | board (facts) | law passes | against the route the bank runs today |
 |---|---|---|
-| RTX 5070 Ti (sm_120a) | 4 of 8 (Q4_K E128 at the bound, 12.0 %) | better on E256 Q3/Q4 (Q4_K mean 0.6 % against 6.6 %), equal on E128 |
+| RTX 5070 Ti (sm_120a) | 5 of 8 (Q4_K E128 at the bound, 12.0 %; Q6_K missed as frozen) | better on E256 Q3/Q4 (Q4_K mean 0.6 % against 6.6 %), equal on E128 |
 | RTX 4070 Ti (sm_89) | 8 of 8 | the route closer still on E256 (its tables were tuned on Ada), equal on E128 |
 | RTX 3060 (sm_86) | 5 of 8 | better on E256 Q3/Q4/Q5 (means 5.7-7.6 % against 12.5-15.4 %), equal on E128 |
 | RTX 2080 Ti (sm_75) | 3 of 8 | about equal |
 
 **Reading.**
-- The law is never worse than today's route on a whole grid. It beats it on the 512-expert
-  geometry (the shipped Qwen3.6-35B layer) on the 5070 Ti and the 3060, and is behind it on the Ada
-  board whose tables were tuned on its own generation.
+- It beats today's route on the E256 F512 grid (256 experts of 512 rows) on the 5070 Ti and the
+  3060, is behind it on the 4070 Ti's E256 grid (whose tables were tuned on its own generation),
+  and equals it on the E128 grids.
 - **The misses are one term.** On the 3060 E128 grid and the 2080 Ti, the grids' best down plan is
   rmma w4x1 at every T, which the law ranks below w1x4 / w2x2 (#987: why is not read yet).
 - On the 5070 Ti's E128 Q3/Q4 the law and the route pick the same plans, and both sit at 12-14 %.
-- R8 against the register MMA, per format: R8 gate/up up to the bank's token limit (T 2..4 by
-  format and card), rmma above, as the law picks. The grids' best plans in #619's tables keep
-  that split; the open choice is the down stage's tile.
+- R8 against the register MMA, per format: the law takes R8 for gate/up wherever the bank
+  admits it (up to T 8 on Ada and GB20x, T 2..4 on GA10x and Turing, Q6_K the shortest), so its
+  answer there is the admission filter's, not a price's (below).
+- **Known defects of the tool** (Opus review of #988, found after the scores; the frozen files
+  record the law as it was): it prices the R8 kernel of the mean tokens per job, where the runtime
+  takes the next power of two at or above T; its R8 iterations assume 32 lanes a row (`r8_lanes`
+  steps by fewer); the occupancy leaves out R8's dynamic shared memory; the quantizer's global
+  waits are counted once, not per iteration. All four make R8 look cheaper. They are #987's,
+  fixed with fresh holdouts.
 
 **Decision.** The law does not replace the bank's expert-plan selection for v0.1.0: it beats it on
 too few grids, and it misses the same term on two generations. It ships as the estimating tool,
-with the frozen predictions and the moer8 / moegemm facts for sm_75, 80, 86, 89, 90, 100 and 120a,
-so a new card's MoE plans can be priced before a grid is measured. The down-stage term is #987,
-part of the block-ranking work after the release. #619 step 11 closes on this entry.
+with the frozen predictions and the moer8 / moegemm facts for sm_75, 80, 86, 89, 90 and 120a
+(sm_100's six W4a8Nvfp4 GateUp rows read as unknown flow, so it has none yet). Its estimates carry
+the defects above until #987, part of the block-ranking work after the release. #619 step 11
+closes on this entry as a negative result for the selection: the counted law does not yet rank
+the expert plans better than the bank.
