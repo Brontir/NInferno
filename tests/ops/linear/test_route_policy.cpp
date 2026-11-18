@@ -465,6 +465,14 @@ void check_transferred_claim() {
         ops::set_route_policy(RoutePolicy::Evidence);
         if (!legacy_claims) fail(at + ": the Transferred claim does not claim under legacy");
         if (evidence_claims) fail(at + ": the Transferred claim still claims under evidence");
+        // The dense tuner's skip (#808): legacy keeps the table's answer (the width is not timed),
+        // evidence demotes it (the width is timed).
+        ops::set_route_policy(RoutePolicy::Legacy);
+        const bool legacy_kept = generic::table_route_kept(claimed, t, false);
+        ops::set_route_policy(RoutePolicy::Evidence);
+        const bool evidence_kept = generic::table_route_kept(claimed, t, false);
+        if (!legacy_kept) fail(at + ": legacy does not keep the Transferred answer for the tuner");
+        if (evidence_kept) fail(at + ": evidence keeps the Transferred answer for the tuner");
     }
     // The board's own (measured) claims are kept under evidence: the RTX 5080 itself.
     const GpuFactsRow* r5080 = find_gpu_facts(0x2C02);

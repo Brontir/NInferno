@@ -963,6 +963,12 @@ bool table_claims(const Problem& problem, std::int32_t tokens, bool prefill) {
                            table_evidence_kind(!answer->lender.empty(), answer->distance));
 }
 
+bool table_route_kept(const Problem& problem, std::int32_t tokens, bool prefill) {
+    const auto answer = table_route_answer(problem, tokens, prefill);
+    return answer && !policy_demotes(route_policy(), table_evidence_kind(!answer->lender.empty(),
+                                                                         answer->distance));
+}
+
 std::optional<Board> route_table_board(const std::string& path) { return parse_table(path)->board; }
 
 std::string write_route_table(const std::string& gpu_class, const std::string& gpu_name,
