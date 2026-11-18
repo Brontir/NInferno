@@ -370,15 +370,23 @@ void sections_read() {
     // (Q4_K, Q6_K) with one loop, two barriers per 128-value K tile and k_iter 16 x 32.
     // sm_70 has no mmq or w4a8 section: its snapshot is made with CUDA 12.8 (#762), and Volta takes
     // no MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts,
-    // and the r8 one (#613 PR-10): the R8 law reads the one-slot ring's.
+    // and the r8 one (#613 PR-10): the R8 law reads the one-slot ring's. The routed-expert
+    // families (moer8, moegemm, #619 step 11) are not in it: the MoE law reads the boards it was
+    // measured on (Turing and newer), and sm_100 has none yet (six of its W4a8Nvfp4 GateUp rows
+    // read as unknown flow; no lab board is an sm_100 part).
     constexpr std::string_view kWithoutSections[] = {"70"};
+    constexpr std::string_view kWithoutMoe[]      = {"70", "100"};
     int with_sections                             = 0;
     for (const auto arch : kf::snapshot_archs()) {
         const std::string name = "sm_" + std::string(arch);
         for (const auto family : kf::kSectionFamilies) {
-            const bool waived = family != "gemma4" && family != "r8" &&
-                                std::find(std::begin(kWithoutSections), std::end(kWithoutSections),
-                                          arch) != std::end(kWithoutSections);
+            const bool moe = family == "moer8" || family == "moegemm";
+            const bool waived =
+                moe ? std::find(std::begin(kWithoutMoe), std::end(kWithoutMoe), arch) !=
+                          std::end(kWithoutMoe)
+                    : family != "gemma4" && family != "r8" &&
+                          std::find(std::begin(kWithoutSections), std::end(kWithoutSections),
+                                    arch) != std::end(kWithoutSections);
             const auto header = kf::section_header(arch, family);
             expect(header.has_value() != waived,
                    name + (waived ? ": has a " : ": no ") + std::string(family) + " section");
@@ -446,20 +454,46 @@ void sections_read() {
         // The R8 decode kernels (#613 PR-10): one loop marked by the dp4a, no MMA and no CTA
         // barrier in it, and one quantizer loop where the kernel quantizes (pre 0), none where it
         // reads a quantized activation; the Q4_K four-warp single-row decode kernel is among them.
+        // The routed-expert R8 kernels (moer8, #619 step 11) are counted as the r8 rows, but for
+        // what the compiler splits: their Down stage (key "... 2 0") quantizes in two loops (four
+        // or five on sm_120a, nvcc 13), and sm_120a peels the dp4a loop of 72 of its pre-quantized
+        // Up rows into two.
         if (!kf::section_header(arch, "r8")) continue;
-        int r8_bad = 0;
-        std::string r8_first;
-        for (const auto& [key, f] : kf::section_rows(arch, "r8")) {
-            const bool pre = key.size() >= 2 && key.compare(key.size() - 2, 2, " 1") == 0;
-            const bool ok  = f.loop && f.loop->loops == 1 && f.loop->mma == 0 && f.loop->pipes &&
-                            f.loop->pipes->bar == 0 && f.loop->k_iter > 0 && f.prologue &&
-                            f.prologue->loops == (pre ? 0 : 1);
-            if (!ok && r8_bad++ == 0) r8_first = key;
+        for (const std::string_view family : {"r8", "moer8"}) {
+            if (!kf::section_header(arch, family)) continue;
+            int r8_bad = 0;
+            std::string r8_first;
+            for (const auto& [key, f] : kf::section_rows(arch, family)) {
+                const bool pre  = key.size() >= 2 && key.compare(key.size() - 2, 2, " 1") == 0;
+                const bool down = family == "moer8" && key.size() >= 4 &&
+                                  key.compare(key.size() - 4, 4, " 2 0") == 0;
+                const int loops  = f.loop ? f.loop->loops : 0;
+                const int quant  = f.prologue ? f.prologue->loops : -1;
+                const bool split = family == "moer8" && arch == "120a";
+                const bool up    = key.size() >= 4 && key.compare(key.size() - 4, 4, " 3 1") == 0;
+                const bool ok    = f.loop && (loops == 1 || (split && up && loops == 2)) &&
+                                f.loop->mma == 0 && f.loop->pipes && f.loop->pipes->bar == 0 &&
+                                f.loop->k_iter > 0 && f.prologue &&
+                                (pre    ? quant == 0
+                                 : down ? (quant == 2 || (split && (quant == 4 || quant == 5)))
+                                        : quant == 1);
+                if (!ok && r8_bad++ == 0) r8_first = key;
+            }
+            expect(r8_bad == 0,
+                   name + " " + std::string(family) + ": " + std::to_string(r8_bad) +
+                       " rows without one barrier-free dp4a loop and its quantizer loop, first " +
+                       r8_first);
         }
-        expect(r8_bad == 0,
-               name + " r8: " + std::to_string(r8_bad) +
-                   " rows without one barrier-free dp4a loop and its quantizer loop, first " +
-                   r8_first);
+        // The routed-expert register-MMA kernels (moegemm): one K loop of MMAs, no CTA barrier.
+        int gemm_bad = 0;
+        std::string gemm_first;
+        for (const auto& [key, f] : kf::section_rows(arch, "moegemm")) {
+            const bool ok = f.loop && f.loop->loops == 1 && f.loop->mma > 0 && f.loop->pipes &&
+                            f.loop->pipes->bar == 0 && f.loop->k_iter > 0;
+            if (!ok && gemm_bad++ == 0) gemm_first = key;
+        }
+        expect(gemm_bad == 0, name + " moegemm: " + std::to_string(gemm_bad) +
+                                  " rows without one barrier-free MMA loop, first " + gemm_first);
         expect(kf::r8_facts(arch, {"W4a8Q45K<4>", 4, 1, 1, 0, false}).has_value(),
                name + " r8: no W4a8Q45K<4> 4 1 1 0 0 row");
         // The I8 tiles (#613 PR-6): from sm_80 on every row has one K loop of int8 MMAs (one

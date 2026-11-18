@@ -310,6 +310,75 @@ def i8_key(demangled):
     if len(args) != 5 or not all(re.fullmatch(r"\d+", a) for a in args):
         fail(f"unexpected i8_kernel arguments in {demangled}")
     return tuple(int(a) for a in args)
+MOE_NAMESPACE = "ninferno::ops::detail::moe::"
+# moe_internal.h Stage: Router 0, GateUp 1, Down 2, Up 3.
+MOE_STAGE = re.compile(r"\(" + re.escape(MOE_NAMESPACE) + r"Stage\)(\d+)")
+MOE_GATE_UP = 1
+
+
+def moe_stage(arg):
+    """A moe Stage template argument as its integer, `(ninferno::ops::detail::moe::Stage)1` -> 1."""
+    m = MOE_STAGE.fullmatch(arg.strip())
+    return int(m.group(1)) if m else None
+
+
+def moe_args(demangled, name):
+    """The raw template arguments of a moe kernel, the Stage cast kept for moe_stage, or None."""
+    head = "void " + MOE_NAMESPACE + name + "<"
+    if not demangled.startswith(head):
+        return None
+    depth, end = 1, len(head)
+    while end < len(demangled) and depth > 0:
+        if demangled[end] == "<":
+            depth += 1
+        elif demangled[end] == ">":
+            depth -= 1
+        end += 1
+    return split_top_level(demangled[len(head):end - 1])
+
+
+def moe_r8_key(demangled):
+    """The key of a routed-expert R8 kernel (src/ops/moe/moe_r8.cuh, #619 step 11):
+    moe_r8_kernel<C, R8Schedule<Warps, Rows>, NT, Stage, kPre>, keyed as the codec, the warps and
+    rows per warp, the token slots, the stage and kPre. None for other symbols."""
+    raw = moe_args(demangled, "moe_r8_kernel")
+    if raw is None:
+        return None
+    stage = moe_stage(raw[3]) if len(raw) == 5 else None
+    args = [canonical(a) for a in raw]
+    m = R8_SCHEDULE.fullmatch(args[1]) if len(args) == 5 else None
+    if not m or stage is None or not re.fullmatch(r"\d+", args[2]):
+        fail(f"unexpected moe_r8_kernel arguments in {demangled}")
+    return (args[0], *(int(v) for v in m.groups()), int(args[2]), stage, as_bool(args[4]))
+
+
+def moe_gemm_key(demangled):
+    """The key of a routed-expert register-MMA kernel (src/ops/moe/moe_gemm.cuh, #619 step 11):
+    moe_gemm_kernel<Decoder, RmmaSchedule<warps_m, warps_k, m_tiles, n_tiles, cluster>, Stage>,
+    keyed as the decoder, the schedule's five fields and the stage. None for other symbols."""
+    raw = moe_args(demangled, "moe_gemm_kernel")
+    if raw is None:
+        return None
+    stage = moe_stage(raw[2]) if len(raw) == 3 else None
+    args = [canonical(a) for a in raw]
+    m = re.fullmatch(r"RmmaSchedule<(\d+),(\d+),(\d+),(\d+),(\d+)>", args[1]) if len(args) == 3 else None
+    if not m or stage is None:
+        fail(f"unexpected moe_gemm_kernel arguments in {demangled}")
+    return (args[0], *(int(v) for v in m.groups()), stage)
+
+
+def moe_r8_products(key):
+    """The dp4a products one warp of a routed R8 kernel issues per block, as r8_products: rows x
+    row sets (two in the GateUp stage) x token slots, plus the half-min codec's ones sums."""
+    nt = key[3]
+    return key[2] * nt * (2 if key[4] == MOE_GATE_UP else 1) + (
+        nt if key[0] in R8_HALF_MIN_CODECS else 0)
+
+
+def moe_gemm_tiles(key):
+    """The m16n8 tiles one warp of a routed register-MMA kernel accumulates: m_tiles x n_tiles,
+    twice in the GateUp stage (gate and up)."""
+    return key[3] * key[4] * (2 if key[6] == MOE_GATE_UP else 1)
 
 
 R8_SCHEDULE = re.compile(r"R8Schedule<(\d+),(\d+)>")
@@ -446,6 +515,13 @@ FAMILIES = {
                  prologue="F2I"),
     "i8": Family("i8", ("WT", "WN", "stages", "bits", "epilogue"), lambda d: i8_key(d),
                  "i8_kernel", lambda key: 1, True, False, waits=True),
+    "moer8": Family("moer8", ("codec", "warps", "rows", "nt", "stage", "pre"),
+                    lambda d: moe_r8_key(d), "moe_r8_kernel", lambda key: moe_r8_products(key),
+                    True, True, marker="IDP", prologue="F2I"),
+    "moegemm": Family("moegemm", ("decoder", "warps_m", "warps_k", "m_tiles", "n_tiles",
+                                  "cluster", "stage"), lambda d: moe_gemm_key(d),
+                      "moe_gemm_kernel", lambda key: moe_gemm_tiles(key), True, True,
+                      waits=True),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -853,6 +929,17 @@ SECTION_NOTES = {
         "# bodies (loops 0). One iteration of the counted loop is one cp.async stage: one group of",
         "# 64 K values.",
     ),
+    "moer8": (
+        "# The routed-expert R8 kernels (src/ops/moe/moe_r8.cuh, #619 step 11): moe_r8_kernel<codec,",
+        "# R8Schedule<warps, rows>, NT, stage, kPre>, stage as moe_internal.h's Stage (0 Router,",
+        "# 1 GateUp, 2 Down, 3 Up). Counted as the r8 rows: the dp4a loop (IDP), the pro_ columns",
+        "# the activation quantizer's loop (F2I), the global-load waits after them.",
+    ),
+    "moegemm": (
+        "# The routed-expert register-MMA kernels (src/ops/moe/moe_gemm.cuh, #619 step 11):",
+        "# moe_gemm_kernel<decoder, RmmaSchedule<warps_m, warps_k, m_tiles, n_tiles, cluster>,",
+        "# stage>; k_iter as the rmma rows' (m16n8 tiles a warp, twice in the GateUp stage).",
+    ),
 }
 
 
@@ -957,27 +1044,31 @@ def parse_sections(text):
         fail(f"snapshot says {header['kernels']} kernels, holds {len(rows)}")
     sections = {FAMILY: {"nvcc": header["nvcc"], "kernels": len(rows), "rows": rows}}
     for family, section in section_texts.items():
-        own, row_lines = {}, []
-        for line in section.splitlines()[1:]:
-            if not line or line.startswith("#"):
-                continue
-            fields = line.split()
-            if fields[0] == family:
-                row_lines.append(line)
-            elif fields[0] in ("family_nvcc", "family_kernels", "family_columns"):
-                own[fields[0]] = line[len(fields[0]) + 1:] if len(fields) > 1 else ""
-            else:
-                fail(f"unexpected line in the {family} section: {line}")
-        for want in ("family_nvcc", "family_kernels", "family_columns"):
-            if want not in own:
-                fail(f"the {family} section has no '{want}' line")
-        family_rows = parse_rows(family, row_lines, own["family_columns"], "family_columns")
-        if int(own["family_kernels"]) != len(family_rows):
-            fail(f"the {family} section says {own['family_kernels']} kernels, holds "
-                 f"{len(family_rows)}")
-        sections[family] = {"nvcc": own["family_nvcc"], "kernels": len(family_rows),
-                            "rows": family_rows}
+        sections[family] = parse_section(family, section)
     return header, sections
+
+
+def parse_section(family, section):
+    """{"nvcc", "kernels", "rows"} of one section family's text (split_sections)."""
+    own, row_lines = {}, []
+    for line in section.splitlines()[1:]:
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if fields[0] == family:
+            row_lines.append(line)
+        elif fields[0] in ("family_nvcc", "family_kernels", "family_columns"):
+            own[fields[0]] = line[len(fields[0]) + 1:] if len(fields) > 1 else ""
+        else:
+            fail(f"unexpected line in the {family} section: {line}")
+    for want in ("family_nvcc", "family_kernels", "family_columns"):
+        if want not in own:
+            fail(f"the {family} section has no '{want}' line")
+    family_rows = parse_rows(family, row_lines, own["family_columns"], "family_columns")
+    if int(own["family_kernels"]) != len(family_rows):
+        fail(f"the {family} section says {own['family_kernels']} kernels, holds "
+             f"{len(family_rows)}")
+    return {"nvcc": own["family_nvcc"], "kernels": len(family_rows), "rows": family_rows}
 
 
 def parse_snapshot(text):
@@ -1042,7 +1133,10 @@ def cmd_extract(args):
         fail("without the rmma family, extract writes into a snapshot: pass --update FILE")
     for f in families:
         if f != FAMILY:
-            sections[f] = render_section(f, extracted[f], nvcc)
+            rows = extracted[f]
+            if f in REGISTER_ALLOCATIONS and f in sections:
+                rows = keep_allocations(f, args.arch, section_rows_to_keep(f, sections[f]), rows)
+            sections[f] = render_section(f, rows, nvcc)
     text = top + "".join(sections[f] for f in SECTION_FAMILIES if f in sections)
     if args.update:
         header, _ = parse_sections(text)
@@ -1266,6 +1360,93 @@ def sass_unstable(family, key):
     return family == "r8" and int(key[3]) == 8 and int(key[5]) == 1
 
 
+# Section rows whose registers ptxas does not reproduce from one source (#968). One translation
+# unit, one path, no ccache, compiled 9 to 13 times with other compiles beside it, the two units
+# below 41 times an arch (one alone, then ten rounds of four at once; tools as in #968's comments,
+# nvcc 13.4.92; 13.5.37 the same): every moe and r8 unit gave one resource set except moe_gemm_q5.cu
+# / moe_gemm_q6.cu, whose GroupwiseG64Decoder<5> / <6> kernels at RmmaSchedule<4, 1, 1, 1, 1>, the
+# Down (2) and Up (3) stages, came out with the register counts below from the same PTX. Each arch's
+# set is counted on that arch alone: its census and the rows its full builds wrote (sm_89 also the
+# two trees of #968's ptx968 run). sm_75 and sm_120a gave one count in 41. Neither threads, cores,
+# ASLR nor --allow-expensive-optimizations reproduce one allocation, and the loop counts move with
+# the allocation. No price reads these rows: the MoE expert law prices the ggml K-quant decoders
+# (tools/bench/moe_expert_law.py GEMM_DEC; a test keeps it so). check holds such a row to its stack,
+# local and shared bytes and to another register count among the ones counted here (at one count the
+# row is held exact), prints both counts and never fails on the loop counts; extract --update keeps
+# the section's row where the build's is another counted allocation (keep_allocations). A new count
+# seen in a build is a new allocation of the same source: count it here (the census, #968) and rerun
+# the check; no rebuild. Key: FAMILIES["moegemm"].key (decoder, warps_m, warps_k, m_tiles, n_tiles,
+# cluster, stage); per architecture label.
+REGISTER_ALLOCATIONS = {
+    "moegemm": {
+        "80": {
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 78),
+        },
+        "86": {
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 78),
+        },
+        "89": {
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 78),
+        },
+        "90": {
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2): (72, 78),
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): (72, 78),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 77),
+        },
+    },
+}
+
+
+def keep_allocations(family, arch, old, new):
+    """`new`, the rows of a build, with each row that differs from the section's (`old`) only by
+    an allocation ptxas makes either way (register_unstable) taken from the section as it is: a
+    re-extract does not flip such rows, nor the engine's embedded snapshot with them (#968)."""
+    def keep(k, v):
+        # Both rows carry their loop or neither (extract --no-sass writes the resources alone).
+        return (k in old and (old[k][4] is None) == (v[4] is None) and
+                register_unstable(family, arch, k, old[k], v))
+    return {k: old[k] if keep(k, v) else v for k, v in new.items()}
+
+
+def section_rows_to_keep(family, section):
+    """The rows of a committed section that extract --update may keep (keep_allocations): its
+    rows where its columns are today's, else none (a section in an earlier column layout is
+    replaced whole, as before #968)."""
+    columns = next((line.split()[1:] for line in section.splitlines()
+                    if line.startswith("family_columns ")), None)
+    today = [c for c, _ in FAMILIES[family].schema_columns().values()]
+    if columns not in [list(c) for c in today]:
+        return {}
+    try:
+        return parse_section(family, section)["rows"]
+    except SystemExit:
+        # A section that no longer parses (a stale kernel count, a schedule a newer rule refuses)
+        # is replaced whole, as before #968: extract is its fix.
+        print(f"kernel_facts: the committed {family} section does not parse: none of its rows "
+              "kept", file=sys.stderr)
+        return {}
+
+
+def register_unstable(family, arch, key, expected, got):
+    """Whether a row's build values differ from the section's only by an allocation ptxas makes
+    either way (REGISTER_ALLOCATIONS): registers both among the counted ones, the other resources
+    equal."""
+    allowed = REGISTER_ALLOCATIONS.get(family, {}).get(arch, {}).get(tuple(key))
+    # Another allocation only: at one register count the row is held exact, loop counts too.
+    return (allowed is not None and expected[0] != got[0] and expected[0] in allowed and
+            got[0] in allowed and expected[1:4] == got[1:4])
+
+
 def section_line(family):
     """A section row's text, as render_section writes it."""
     return lambda k, v: " ".join(str(x) for x in [family, *k, *v[:4]] +
@@ -1286,10 +1467,16 @@ def check_section(args, family, section, got, other_nvcc, with_sass, arch):
         k for k in expected if k in got and expected[k] != got[k])
     # #968: a row ptxas does not reproduce is held to its resources alone.
     unstable = [k for k in differ if sass_unstable(family, k) and expected[k][:4] == got[k][:4]]
-    differ = [k for k in differ if k not in unstable]
+    allocated = [k for k in differ if k not in unstable and
+                 register_unstable(family, arch, k, expected[k], got[k])]
+    differ = [k for k in differ if k not in unstable and k not in allocated]
     for k in unstable:
         print(f"kernel_facts: {family} {row_key(k)}: loop counts differ from the section, a row "
               f"ptxas does not reproduce (#968), resources equal: not a failure")
+    for k in allocated:
+        print(f"kernel_facts: {family} {row_key(k)}: {got[k][0]} registers against the section's "
+              f"{expected[k][0]}, both allocations ptxas makes of this source (#968, "
+              f"REGISTER_ALLOCATIONS): not a failure")
     if not (missing or extra or differ):
         if other_nvcc:
             print(f"kernel_facts: {len(got)} {family} kernels of sm_{arch}: the set equals "

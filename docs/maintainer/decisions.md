@@ -3069,3 +3069,61 @@ a measured boundary, not a fact-derived rule. It goes when that term is priced.
 (`route_policy_of` throws; `replay-routes` reports it and exits 2). The serve corpus runner refuses a
 `server_start` record, a `route_pins.json` marker or a campaign directory without every route pin in
 the same way: project-owned formats keep no fallback.
+
+## 94. The MoE expert-call law ships as an estimating tool, not as the expert-plan authority (#619 step 11, 17-18.11, sealed grids on four boards)
+
+**Question.** Can a grouped MoE layer's expert plan be ranked from facts alone? The plan is a
+gate/up schedule and a down schedule, the 12 x 12 plans of `ninferno_moe_bench --plans sweep`. The
+facts are the kernels' counted SASS (the kernel-facts `moer8` and `moegemm` sections), the
+warp_inflight probe, and gpu_facts.json. #619 step 11 also asks per format: R8 or the register MMA?
+
+**The law** (`tools/bench/moe_expert_law.py`, no GPU and no fitted constant). A stage takes
+`max(t_dram, waves x c, t_issue) + c`:
+- `t_dram`: the touched experts' weight bytes over the lesser of the bus and the SMs' rate at the
+  bytes their warps keep in flight;
+- `c`: one CTA's chain of K-loop iterations, each its static stalls plus one fetch latency;
+- `waves`: the grid over the CTAs the SMs hold (registers, shared memory, threads, the CTA limit);
+- `t_issue`: the busiest SM's warp instructions over four schedulers.
+
+Only the plans the bank admits are priced (`r8_admits`' token limit). Each board's picks were
+frozen in a CSV (`tools/bench/data/moe_law/frozen_<board>_*.csv`) before its sealed moe11 /
+moe11b grids (E256 F512 and E128 F768, Q3_K..Q6_K, T 1..8; the grids stay on the stands, their
+scores are #619's comments of 17-18.11) were read. The 5070 Ti's files predate the admission filter,
+which its Q6_K miss led to (022bc4e33): its Q6_K cells were scored again after that change, not
+frozen.
+
+**Score.** A pass is a pick at most 12 % slower than the grid's best at every T, per format and
+grid (max regret <= 12 %):
+
+| board (facts) | law passes | against the route the bank runs today |
+|---|---|---|
+| RTX 5070 Ti (sm_120a) | 5 of 8 as frozen (both Q6_K grids missed; Q4_K E128 at exactly 12.0 %) | better on E256 Q3/Q4 (Q4_K mean 0.6 % against 6.6 %), equal on E128 |
+| RTX 4070 Ti (sm_89) | 8 of 8 | the route closer still on E256 (its tables were tuned on Ada), equal on E128 |
+| RTX 3060 (sm_86) | 5 of 8 | better on E256 Q3/Q4/Q5 (means 5.7-7.6 % against 12.5-15.4 %), equal on E128 |
+| RTX 2080 Ti (sm_75) | 3 of 8 | about equal |
+
+**Reading.**
+- It beats today's route on the E256 F512 grid (256 experts, F 512) on the 5070 Ti and the
+  3060, is behind it on the 4070 Ti's E256 grid (whose tables were tuned on its own generation),
+  and equals it on the E128 grids.
+- **The misses are one term.** On the 3060 E128 grid and the 2080 Ti, the grids' best down plan is
+  rmma w4x1 at every T, which the law ranks below w1x4 / w2x2 (#987: why is not read yet).
+- On the 5070 Ti's E128 Q3/Q4 the law and the route pick the same plans, and both sit at 12-14 %.
+- R8 against the register MMA, per format: the law takes R8 for gate/up up to T 8 on Ada and
+  GB20x and T 1..4 on GA10x and Turing, wherever the bank admits it, but for Q6_K on the 4070 Ti
+  and the 3060, where it switches to rmma at T 3..4 though R8 is admitted. With the defects below
+  pricing R8 low, its R8 picks are mostly the admission filter's.
+- **Known defects of the tool** (Opus review of #988, found after the scores; the frozen files
+  record the law as it was): it prices the R8 kernel of the mean tokens per job, where the runtime
+  takes the next power of two at or above T; its R8 iterations assume 32 lanes a row (`r8_lanes`
+  steps by fewer); the occupancy leaves out R8's dynamic shared memory; the quantizer's global
+  waits are counted once, not per iteration. All four make R8 look cheaper. They are #987's,
+  fixed with fresh holdouts.
+
+**Decision.** The law does not replace the bank's expert-plan selection for v0.1.0: it beats it on
+too few grids, and it misses the same term on two generations. It ships as the estimating tool,
+with the frozen predictions and the moer8 / moegemm facts for sm_75, 80, 86, 89, 90 and 120a
+(sm_100's six W4a8Nvfp4 GateUp rows read as unknown flow, so it has none yet). Its estimates carry
+the defects above until #987, part of the block-ranking work after the release. #619 step 11
+closes on this entry as a negative result for the selection: the counted law does not yet rank
+the expert plans better than the bank.

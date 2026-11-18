@@ -198,7 +198,14 @@ struct SnapshotHeader {
 //           32 m16n8 tiles x 64 K); key "WT WN stages bits epilogue" ("4 2 4 4 0"). The stages
 //           are the build's (generic_i8_schedules.h i8_stages: 3 for 6-bit codes on sm_86 / 89 /
 //           120a); empty bodies (no loop) below sm_80.
-inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8", "gemma4", "r8", "i8"};
+//   "moer8"   the routed-expert R8 kernels moe_r8_kernel<codec, R8Schedule<warps, rows>, NT,
+//             stage, kPre> (#619 step 11), counted as the r8 rows; key "codec warps rows nt stage
+//             pre", stage as moe_internal.h's Stage (0 Router, 1 GateUp, 2 Down, 3 Up).
+//   "moegemm" the routed-expert register-MMA kernels moe_gemm_kernel<decoder, RmmaSchedule<warps_m,
+//             warps_k, m_tiles, n_tiles, cluster>, stage> (#619 step 11): key "decoder warps_m
+//             warps_k m_tiles n_tiles cluster stage".
+inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8",  "gemma4", "r8",
+                                                        "i8",  "moer8", "moegemm"};
 
 struct MmqKernelKey {
     int type      = 0; // the ggml_type value: 12 Q4_K, 13 Q5_K, 14 Q6_K

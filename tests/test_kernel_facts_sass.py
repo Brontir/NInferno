@@ -204,6 +204,31 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual(sc.loop_counts(body_of(indirect), tiles=2).loops, 0)
         self.assertEqual(sc.loop_counts([], tiles=2).loops, 0)
 
+    def test_switch_after_the_loop(self):
+        # A compiled switch in the epilogue (sm_100 / sm_120a: BSSY, then BRXU through a jump
+        # table): its targets are the instructions up to the BSSY's reconvergence point, all
+        # forward, so the K loop is counted as without it.
+        switch = {0x400: "BSSY.RECONVERGENT B0, 0x420 ;", 0x410: "BRXU UR4 -0x420 ;"}
+        lines = [(o, switch.get(o, t)) for o, t in KERNEL]
+        body = body_of(lines)
+        i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
+        self.assertEqual([body[k][0] for k in sc.switch_targets(body, i)], [0x420])
+        plain, counted = sc.loop_counts(body_of(KERNEL), tiles=2), sc.loop_counts(body, tiles=2)
+        self.assertEqual((counted.loops, counted.k_iter, counted.mma, counted.total),
+                         (plain.loops, plain.k_iter, plain.mma, plain.total))
+        self.assertGreater(counted.outside_total, 0)
+        # Without the BSSY the targets run to the function's end.
+        lines = [(o, "FMUL R36, R36, R30 ;" if o == 0x400 else t) for o, t in lines]
+        body = body_of(lines)
+        i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
+        self.assertEqual(body[sc.switch_targets(body, i)[-1]][0], body[-1][0])
+        # A switch before the K loop (the loop's back edge among its targets): unknown flow.
+        early = [(o, {0x010: "BRXU UR4 -0x20 ;"}.get(o, t)) for o, t in KERNEL]
+        body = body_of(early)
+        i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
+        self.assertIsNone(sc.switch_targets(body, i))
+        self.assertEqual(sc.loop_counts(body, tiles=2).loops, 0)
+
     def test_ffma_loop_without_tensor_mma(self):
         # Volta's build: the loop with the FFMAs stands in; no shape, no k_iter.
         lines = [(o, t.replace("HMMA.16816.F32.BF16", "FFMA").replace(", RZ ;", ", R0 ;"))
@@ -907,6 +932,19 @@ class Sections(unittest.TestCase):
         self.assertIsNone(kernel_facts.i8_key(
             f"void {ns}(anonymous namespace)::i8_quantize_kernel(const float *, int)"))
         self.assertIsNone(kernel_facts.i8_key(r8))
+        # The routed-expert kernels (#619 step 11): their Stage cast is moe's, not generic's.
+        moe = "ninferno::ops::detail::moe::"
+        moe_r8 = (f"void {moe}moe_r8_kernel<{ns}W4a8Ggml32<({ns}Ggml32)0>, {ns}R8Schedule<(int)2, "
+                  f"(int)1>, (int)1, ({moe}Stage)1, (bool)0>({moe}GemmArgs)")
+        self.assertEqual(kernel_facts.moe_r8_key(moe_r8), ("W4a8Ggml32<0>", 2, 1, 1, 1, 0))
+        self.assertEqual(kernel_facts.moe_r8_products(("W4a8Q45K<4>", 4, 2, 4, 1, 0)), 16)
+        moe_gemm = (f"void {moe}moe_gemm_kernel<{ns}Fp8Decoder, {ns}RmmaSchedule<(int)1, (int)4, "
+                    f"(int)1, (int)2, (int)1>, ({moe}Stage)1>({moe}GemmArgs)")
+        self.assertEqual(kernel_facts.moe_gemm_key(moe_gemm), ("Fp8Decoder", 1, 4, 1, 2, 1, 1))
+        self.assertEqual(kernel_facts.moe_gemm_tiles(kernel_facts.moe_gemm_key(moe_gemm)), 4)
+        self.assertIsNone(kernel_facts.moe_r8_key(moe_gemm))
+        self.assertIsNone(kernel_facts.moe_gemm_key(moe_r8))
+        self.assertIsNone(kernel_facts.r8_key(moe_r8))
 
     def test_pipe_counts(self):
         c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=1)
@@ -1082,6 +1120,110 @@ class SassUnstable(unittest.TestCase):
         self.assertEqual(check(held, (158, 0, 0, 0, before), (158, 0, 0, 0, after)), 0)
         self.assertEqual(check(held, (158, 0, 0, 0, before), (159, 0, 0, 0, after)), 1)
         self.assertEqual(check(read, (158, 0, 0, 0, before), (158, 0, 0, 0, after)), 1)
+
+
+
+class RegisterAllocations(unittest.TestCase):
+    # #968: a moegemm row ptxas allocates either way from one source passes at any counted register
+    # count, with its loop counts moved; an uncounted count, another resource moved, another arch
+    # or a row not listed fails.
+    def test_check_section_accepts_the_counted_allocations_only(self):
+        import types
+        args = types.SimpleNamespace(expected="sm_89.txt", nvcc="13.4.92", binary="serve",
+                                     dump=None, show=10)
+        table = kernel_facts.REGISTER_ALLOCATIONS["moegemm"]
+        self.assertTrue(table, "no counted allocation")
+        arch = sorted(table)[0]
+        key, counts = sorted(table[arch].items())[0]
+        self.assertGreaterEqual(len(counts), 2)
+        lo, hi = min(counts), max(counts)
+        before, after = sc.LoopCounts(), sc.LoopCounts()
+        before.total, after.total = 1200, 1212
+
+        def check(k, expected, got, at=arch):
+            section = {"rows": {k: expected}, "nvcc": "13.4.92"}
+            with contextlib.redirect_stdout(io.StringIO()):
+                return kernel_facts.check_section(args, "moegemm", section, {k: got}, False,
+                                                  True, at)
+
+        self.assertEqual(check(key, (lo, 0, 0, 0, before), (hi, 0, 0, 0, after)), 0)
+        self.assertEqual(check(key, (hi, 0, 0, 0, before), (lo, 0, 0, 0, before)), 0)
+        uncounted = next(r for r in range(hi + 1, 256) if r not in counts)
+        self.assertEqual(check(key, (lo, 0, 0, 0, before), (uncounted, 0, 0, 0, before)), 1)
+        self.assertEqual(check(key, (lo, 0, 0, 0, before), (hi, 0, 0, 16, before)), 1)
+        self.assertEqual(check(key, (lo, 0, 0, 0, before), (hi, 0, 0, 0, before), "999"), 1)
+        listed = {k for rows in table.values() for k in rows}
+        unlisted = next(("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, s) for s in range(4)
+                        if ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, s) not in listed)
+        self.assertEqual(check(unlisted, (lo, 0, 0, 0, before), (hi, 0, 0, 0, before)), 1)
+
+    def test_extract_keeps_the_sections_allocation(self):
+        table = kernel_facts.REGISTER_ALLOCATIONS["moegemm"]
+        arch = sorted(table)[0]
+        key, counts = sorted(table[arch].items())[0]
+        lo, hi = min(counts), max(counts)
+        a, b = sc.LoopCounts(), sc.LoopCounts()
+        a.total, b.total = 1200, 1212
+        other = ("Bf16Decoder", 1, 4, 1, 1, 1, 0)
+        old = {key: (lo, 0, 0, 0, a), other: (90, 0, 0, 0, a)}
+        new = {key: (hi, 0, 0, 0, b), other: (91, 0, 0, 0, b)}
+        kept = kernel_facts.keep_allocations("moegemm", arch, old, new)
+        self.assertEqual(kept[key], old[key])
+        self.assertEqual(kept[other], new[other])
+        moved = {key: (hi, 0, 0, 16, b)}
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, moved), moved)
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", "999", old, new), new)
+        # One register count, other loop counts: a real loop change, written.
+        same = {key: (lo, 0, 0, 0, b)}
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, same), same)
+        # extract --no-sass: the build's rows carry no loop; none is kept, so none mixes schemas.
+        bare = {key: (hi, 0, 0, 0, None), other: (91, 0, 0, 0, None)}
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, bare), bare)
+        kernel_facts.render_section("moegemm", bare, "13.4.92")
+
+    def test_check_section_holds_one_allocation_exact(self):
+        import types
+        args = types.SimpleNamespace(expected="sm_89.txt", nvcc="13.4.92", binary="serve",
+                                     dump=None, show=10)
+        table = kernel_facts.REGISTER_ALLOCATIONS["moegemm"]
+        arch = sorted(table)[0]
+        key, counts = sorted(table[arch].items())[0]
+        lo = min(counts)
+        a, b = sc.LoopCounts(), sc.LoopCounts()
+        a.total, b.total = 1200, 1212
+        for with_sass, want in ((True, 1), (False, 0)):
+            with contextlib.redirect_stdout(io.StringIO()):
+                got = kernel_facts.check_section(
+                    args, "moegemm", {"rows": {key: (lo, 0, 0, 0, a)}, "nvcc": "13.4.92"},
+                    {key: (lo, 0, 0, 0, b)}, False, with_sass, arch)
+            self.assertEqual(got, want, with_sass)
+
+    def test_a_section_of_other_columns_keeps_nothing(self):
+        data = (Path(__file__).resolve().parents[1] / "src" / "ops" / "generic" / "data" /
+                "kernel_facts")
+        arch = sorted(kernel_facts.REGISTER_ALLOCATIONS["moegemm"])[0]
+        _, sections = kernel_facts.split_sections((data / f"sm_{arch}.txt").read_text())
+        section = sections["moegemm"]
+        self.assertTrue(kernel_facts.section_rows_to_keep("moegemm", section))
+        old = "\n".join(line + " 0" if line.startswith(("family_columns", "moegemm ")) else line
+                        for line in section.splitlines()) + "\n"
+        self.assertEqual(kernel_facts.section_rows_to_keep("moegemm", old), {})
+        stale = section.replace("family_kernels ", "family_kernels 1", 1)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(kernel_facts.section_rows_to_keep("moegemm", stale), {})
+
+    def test_every_counted_row_is_a_committed_row(self):
+        # The table's keys spell the parsed keys (FAMILIES["moegemm"].parse_key): each names a row
+        # of its arch's committed snapshot, whose registers are among the counted ones.
+        data = os.path.join(Path(__file__).resolve().parents[1], "src", "ops", "generic", "data", "kernel_facts")
+        for arch, rows in kernel_facts.REGISTER_ALLOCATIONS["moegemm"].items():
+            with open(os.path.join(data, f"sm_{arch}.txt")) as f:
+                _, sections = kernel_facts.parse_sections(f.read())
+            committed = sections["moegemm"]["rows"]
+            for key, counts in rows.items():
+                self.assertTrue(counts, (arch, key))
+                self.assertIn(key, committed, (arch, key))
+                self.assertIn(committed[key][0], counts, (arch, key))
 
 
 if __name__ == "__main__":
