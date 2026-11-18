@@ -57078,7 +57078,6 @@
         "drafters": [
           {
             "acceptance": 0.6694555546486001,
-            "artifact": "/root/.cache/huggingface/hub/models--google--gemma-4-12B-it-assistant/ninferno/46d4c6f13f0ac0ad827b915669b8df9b81c64c51/gemma-4-12B-it-assistant.gemma4_assistant_published.q8_sl98304.ninferno",
             "artifact_id": "f7631ea20eec4a23af4d45522971aef4",
             "best_speedup": 2.778173743650045,
             "kind": "gemma4_assistant",

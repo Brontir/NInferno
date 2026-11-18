@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import struct
 import sys
 import tempfile
@@ -191,6 +192,27 @@ class Stamps(unittest.TestCase):
                                  f"{m['id']} {p['gpu_class']}: edited without the tool "
                                  "(python tools/spec/registry_add.py --restamp)")
                 self.assertRegex(p.get("measured_at", ""), r"^\d{4}-\d{2}-\d{2}$")
+
+    def test_the_compiled_in_registry_names_no_local_path(self):
+        # The registry ships in the engine: a lab path (an artifact under the stand's cache, #999's
+        # codex review) is meaningless elsewhere and leaks the lab's layout. pair_of drops them;
+        # this holds for entries written any other way too.
+        path = Path(__file__).resolve().parents[1] / "src/spec/data/drafter_registry.json"
+        local = re.compile(r"^(/|~|[A-Za-z]:[\\/])|/\.cache/|huggingface/hub")
+
+        def strings(node, where):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    yield from strings(v, f"{where}.{k}")
+            elif isinstance(node, list):
+                for i, v in enumerate(node):
+                    yield from strings(v, f"{where}[{i}]")
+            elif isinstance(node, str):
+                yield where, node
+
+        found = [f"{w}: {v}" for w, v in strings(json.loads(path.read_text(encoding="utf-8")), "")
+                 if local.search(v)]
+        self.assertEqual(found, [])
 
 
 class PairTest(unittest.TestCase):
