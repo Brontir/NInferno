@@ -139,7 +139,7 @@ def occupancy(regs, smem, threads, max_ctas, max_threads, cc):
     return max(0, min(max_ctas, by_regs, by_smem, max_threads // threads))
 
 
-def stage_time(facts, board, fmt, sched, stage, T, jobs, H, F):
+def stage_time(facts, board, fmt, sched, stage, T, jobs, H, F, K=8):
     sms, gbs, mhz, max_ctas, max_thr, cc = board
     lat = probe_latency(BOARD_NAME)
     clock = mhz * 1e6
@@ -156,7 +156,7 @@ def stage_time(facts, board, fmt, sched, stage, T, jobs, H, F):
         iters = (k / wk) / max(1, int(f["k_iter"])); NT_OF[0] = 0
     else:
         w = int(sched.split(".w")[1].split("r")[0]); r = int(sched.split("r")[-1])
-        nt = min(8, max(1, math.ceil(T * 8 / 256 * 256 / max(1, jobs))))  # tokens a job holds (moe11: T x 8 / jobs)
+        nt = min(8, max(1, math.ceil(T * K / max(1, jobs))))  # tokens a job holds (T x top-k / jobs; #987: the runtime's NT differs)
         cand = [kk for kk in facts if kk[0] == "moer8" and kk[1] == R8_CODEC[fmt] and kk[2] == str(w) and kk[3] == str(r)
                 and kk[5] == str(stage)]
         # pre 1: the kernel reads codes the router's CTAs wrote (gate/up of an unpadded x); pre 0: it quantizes its
@@ -220,8 +220,8 @@ def main():
             for pl in plans:
                 if not admitted(BOARD_NAME, fmt, pl, T): continue
                 gu, dn = pl.split("|")
-                a, _ = stage_time(facts, board, fmt, gu, 1, T, jobs, H, F)
-                b, _ = stage_time(facts, board, fmt, dn, 2, T, jobs, H, F)
+                a, _ = stage_time(facts, board, fmt, gu, 1, T, jobs, H, F, K)
+                b, _ = stage_time(facts, board, fmt, dn, 2, T, jobs, H, F, K)
                 if a is None or b is None: miss += 1; continue
                 pred[pl] = a + b
             if not pred: continue
@@ -251,9 +251,11 @@ def predict(facts_path, plans_from, geo, out_path):
                 for pl in plans:
                     if not admitted(BOARD_NAME, fmt, pl, T): continue
                     gu, dn = pl.split("|")
-                    a, _ = stage_time(facts, board, fmt, gu, 1, T, jobs, H, F)
-                    b, _ = stage_time(facts, board, fmt, dn, 2, T, jobs, H, F)
+                    a, _ = stage_time(facts, board, fmt, gu, 1, T, jobs, H, F, K)
+                    b, _ = stage_time(facts, board, fmt, dn, 2, T, jobs, H, F, K)
                     if a is not None and b is not None: pred[pl] = a + b
+                if not pred:
+                    raise SystemExit(f"{facts_path}: no plan of {fmt} T={T} is priced (no moer8 / moegemm section?)")
                 pick = min(pred, key=pred.get)
                 for pl in plans:
                     if pl in pred:
