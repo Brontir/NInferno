@@ -277,17 +277,20 @@ class LoopFinder(unittest.TestCase):
         body = sc.parse_functions(sass(plain).splitlines(), calls=calls)["_Z6kernelv"]
         c = sc.loop_counts(body, tiles=2)
         self.assertEqual((c.mma, c.k_iter), (hmma, hmma * 32 // 2))
-        # #1006 review: a second function's section after a non-rel one is read apart, a <4>
+        # #1006 review: a second function's section after a non-rel one is read apart (a
+        # relocation-shaped line inside the non-rel section is not recorded, #1014), a <4>
         # relocation counts as the m16n8k16, a call relocated to another symbol stays a call, and an
         # emulated MMA of an unknown width is refused.
         def rel(fn, chunks, symbol=None):
             name = symbol or f"_ZN61_INTERNAL_x_ninferno3ops16mma_s8_dp4a_callILi{chunks}EEE4int4"
             return [f".section .rel.text.{fn}\tREL"] + [
                 f"0x{o:x}    {name}    R_CUDA_ABS47_34" for o, t in KERNEL if t.startswith("HMMA")]
-        two = (rel("_Z6kernelv", 8) + ["", ".section .nv.info._Z6kernelv", "\t.attr 0x1"] +
+        two = (rel("_Z6kernelv", 8) +
+               ["", ".section .nv.info._Z6kernelv", "\t.attr 0x1", "0x10    foo    R_CUDA_ABS32_32"] +
                rel("_Z7kernel2v", 4) + ["", ".section .symtab"])
         calls = sc.relocation_calls(two)
         self.assertEqual(sorted(calls), ["_Z6kernelv", "_Z7kernel2v"])
+        self.assertFalse(any("foo" in c.values() for c in calls.values()))
         both = sass(plain) + "\n" + sass(plain).replace("_Z6kernelv", "_Z7kernel2v")
         bodies = sc.parse_functions(both.splitlines(), calls=calls)
         c4 = sc.loop_counts(bodies["_Z7kernel2v"], tiles=2)
