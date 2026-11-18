@@ -3158,4 +3158,8 @@ leave them out.
 pool rule's priced branch now decides on Ampere. Its first case, Qwen3.8 27B at 32K and C = 8
 (MTP 3 in 4 contexts measured 51.1 tok/s a request against plain decode's 38.3 in 5), is the
 check frozen on #794 before the plan priced it: the priced branch keeps the head
-(`test_plan_drafter_kinds`, `test_pool_rule_lab_runs`).
+(`test_plan_drafter_kinds`, `test_pool_rule_lab_runs`). Held on the stand run: the priced
+branch keeps the head with the mix at x1.443 (the chats on 8 streams either way x1.556; the long
+requests on 5 against 6 x1.123), measured x1.334 a request. `test_spec_round_cost`'s pairs held
+out of their own card: the RTX 3060's Qwen3.5-9B MTP pair predicted x2.138 against x2.242 measured
+(-4.7 %), the RTX 3090's x2.292 against x2.169 (+5.7 %), each picking its card's measured best.
