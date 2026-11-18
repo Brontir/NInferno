@@ -4673,6 +4673,11 @@ void kernel_cost_rebases_the_launch_share() {
         check(ch::kernel_cost_seconds(row, 9, 0, false) == row.small,
               std::string(row.generation) +
                   ": sm_90 has no launch facts, so a small kernel's row is as measured");
+        // As measured, the row is not rebased, so it marks nothing transferred (#997).
+        bool rebased = false;
+        (void)ch::kernel_cost_seconds(row, row.major, row.minor, true, &rebased);
+        (void)ch::kernel_cost_seconds(row, 9, 0, false, &rebased);
+        check(!rebased, std::string(row.generation) + ": a row as measured is not marked rebased");
     }
     check(volta != nullptr, "kKernelCost has the volta row");
     if (volta == nullptr) return;
@@ -4696,10 +4701,13 @@ void kernel_cost_rebases_the_launch_share() {
               "sm_70 and sm_75 launch shares differ, so the rebase is exercised (" + kind + ")");
         const double measured = gemv ? volta->gemv : volta->small;
         const double want     = measured - *census + *own;
-        const double got      = ch::kernel_cost_seconds(*volta, 7, 5, gemv);
+        bool rebased          = false;
+        const double got      = ch::kernel_cost_seconds(*volta, 7, 5, gemv, &rebased);
         check(std::abs(got - want) <= 1e-12 * measured,
               "volta row on sm_75 (" + kind + "): " + std::to_string(got) + " s, want " +
                   std::to_string(want) + " s");
+        check(rebased,
+              "volta row on sm_75 (" + kind + ") is marked rebased, so transferred (#997)");
     }
 }
 
