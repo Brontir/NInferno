@@ -838,11 +838,33 @@ void launch_rmma_codec(WeightCodec codec, int schedule, Epilogue epilogue, const
     }
 }
 
+// LAB ONLY (analyzer round 3, not for master): NINFERNO_LAB_CALL_LOG=<file> appends one line a
+// linear call, in launch order: "<capturing> <format> <epilogue> n=<rows> k=<k> t=<tokens>
+// <route>". Under a graph capture the lines are the graph's linear nodes in order, so a trace's
+// linear kernels of a step line up with the capture of that step's token count.
+static std::FILE* lab_call_log() {
+    static std::FILE* const file = [] {
+        const char* path = std::getenv("NINFERNO_LAB_CALL_LOG");
+        return path != nullptr && path[0] != 0 ? std::fopen(path, "a") : nullptr;
+    }();
+    return file;
+}
+
 void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cudaStream_t stream,
                bool* released) {
     if (released != nullptr) *released = false;
     validate_call(ordered);
     const Weight& w = *ordered.weight;
+    if (std::FILE* log = lab_call_log()) {
+        cudaStreamCaptureStatus capture = cudaStreamCaptureStatusNone;
+        (void)cudaStreamIsCapturing(stream, &capture);
+        std::fprintf(log, "%d %s %s n=%d k=%d t=%lld %s\n",
+                     capture == cudaStreamCaptureStatusActive ? 1 : 0, qtype_name(w.qtype),
+                     epilogue_name(ordered.epilogue), static_cast<int>(ordered.rows),
+                     static_cast<int>(w.k), static_cast<long long>(ordered.x->ne[1]),
+                     route_name(route).c_str());
+        std::fflush(log);
+    }
     if (!supports(w)) throw std::invalid_argument("generic linear: unsupported weight layout");
     // An explicit route parses on every build; one whose kernels this build lacks is refused as
     // route_admits refuses it (the Ada build's W4A4).
