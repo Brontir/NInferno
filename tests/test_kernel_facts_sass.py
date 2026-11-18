@@ -252,6 +252,22 @@ class LoopFinder(unittest.TestCase):
                 for o, t in KERNEL]
         self.assertEqual(sc.loop_counts(body_of(ffma), tiles=1, marker="IDP").loops, 0)
 
+    def test_dp4a_matrix_tile(self):
+        # The sm_70 W4A8 tile (#787): no tensor-core MMA, dp4a builds the matrix product. Under
+        # dp4a_tile its IDPs mark the K loop, and k_iter is counted in the MMA branch's units:
+        # 128 multiply-adds an IDP over m16n8 units of K 1 a tile (16 x 8 x tiles).
+        lines = [(o, t.replace("HMMA.16816.F32.BF16", "IDP.4A.S8.S8").replace(", RZ ;", ", R0 ;"))
+                 for o, t in KERNEL]
+        c = sc.loop_counts(body_of(lines), tiles=1, dp4a_tile=True)
+        self.assertEqual((c.loops, c.mma, c.k_iter, c.mma_shape), (1, 0, 6, "-"))
+        self.assertEqual(sc.loop_counts(body_of(lines), tiles=3, dp4a_tile=True).k_iter, 2)
+        self.assertEqual(sc.loop_counts(body_of(lines), tiles=5, dp4a_tile=True).k_iter, 0)
+        # Without the flag the same body is a plain loop with no K shape (the FFMA marker finds none).
+        self.assertEqual(sc.loop_counts(body_of(lines), tiles=1).k_iter, 0)
+        # A body with tensor-core MMAs keeps the MMA count whatever the flag.
+        self.assertEqual(sc.loop_counts(body_of(KERNEL), tiles=2, dp4a_tile=True).k_iter,
+                         sc.loop_counts(body_of(KERNEL), tiles=2).k_iter)
+
     def test_prologue_loop(self):
         # The R8 kernels' quantizer loop (#613 PR-10): a second loop, marked by F2I, counted into
         # the pro_ columns beside the dp4a loop; none where the body has no F2I loop.
