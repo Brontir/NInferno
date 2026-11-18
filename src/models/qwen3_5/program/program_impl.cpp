@@ -10,7 +10,6 @@
 #include "ninferno/ops/argmax.h"
 #include "ninferno/ops/target_logprobs.h"
 #include "ninferno/ops/token_distribution.h"
-#include "ops/softmax_attention/gemma4/row_codec.h"
 #include "structured/vocabulary.h"
 
 #include <algorithm>
@@ -59,13 +58,8 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
       prefill_chunk(plan.prefill_chunk), kv_lease_window(plan.kv_lease_window),
       draft_window(plan.draft_window), default_draft_depth(plan.default_draft_depth),
       speculative_backend(plan.speculative_backend), kv_storage(plan.kv_storage),
-      // The ring clause needs no family test: only a model with sliding rings, all of them the
-      // head-major one-byte rows, takes a ring storage other than BF16 (sequence_bytes.cpp
-      // refuses --sliding-kv-dtype fp8 for Qwen 3.5 and for any model without sliding layers).
-      kv_rows_int8((plan.kv_storage == KvCacheStorage::Fp8E4M3Row256 &&
-                    plan.persistent.decoder.text_kv.layer_storage.key.data_dtype == DType::I8) ||
-                   (plan.ring_storage == KvCacheStorage::Fp8E4M3Row256 && ops::kGemma4RowInt8)),
-      proposal_head(plan.proposal_head), draft_width(plan.draft_width),
+      kv_rows_int8(plan_kv_rows_int8(plan)), proposal_head(plan.proposal_head),
+      draft_width(plan.draft_width),
       watchdog_policy{plan.acceptance_floor, plan.watchdog_window, plan.watchdog_min_rounds},
       shared_trip_floor(plan.shared_trip_floor), copy_window_drafts(plan.ngram_draft_tokens),
       copy_min_match(plan.ngram_min_match), default_step_down(plan.step_down),

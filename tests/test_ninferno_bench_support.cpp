@@ -177,6 +177,13 @@ int test_cli_contract() {
                        "benchmark help omits new KV modes");
     failures += expect_string(qb::kv_cache_name(ninferno::KvCacheStorage::Nvfp4Group16), "nvfp4",
                               "NVFP4 report name");
+    // #991: the int8-coded one-byte rows of an sm_75..88 build, and the E4M3 ones elsewhere.
+    failures += expect_string(qb::kv_cache_name(ninferno::KvCacheStorage::Fp8E4M3Row256, true),
+                              "int8-row256", "int8 one-byte rows report name");
+    failures += expect_string(qb::kv_cache_name(ninferno::KvCacheStorage::Fp8E4M3Row256),
+                              "fp8-e4m3-row256", "E4M3 one-byte rows report name");
+    failures += expect_string(qb::kv_cache_name(ninferno::KvCacheStorage::Int8Group64, true),
+                              "int8-group64", "the flag names one-byte rows only");
     failures += expect_string(qb::kv_cache_name(ninferno::KvCacheStorage::Fp8KeyNvfp4Value), "k8v4",
                               "K8V4 report name");
     failures += expect_throws<std::invalid_argument>(

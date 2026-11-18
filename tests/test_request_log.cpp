@@ -239,6 +239,10 @@ int main() {
         memory, environment, std::uint64_t{123456}));
     failures += check(int8_rows_server.at("engine").at("kv_cache") == "int8-row256",
                       "int8 one-byte rows not named");
+    failures += check(
+        int8_rows_server.at("engine").at("sliding_kv_cache") ==
+            std::string(ninferno::kv_cache_storage_layout(engine_options.sliding_kv_cache, true)),
+        "the sliding rings' label does not follow the flag");
     memory.kv_rows_int8     = false;
     options.kv_cache        = ninferno::KvCacheStorage::Nvfp4Group16;
     engine_options.kv_cache = *options.kv_cache;

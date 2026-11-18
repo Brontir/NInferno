@@ -339,7 +339,8 @@ Outputs at most 512 tokens, context 4,096. Fastest settings:
     convert FP8 in hardware (`sm_89` and up: Ada, Hopper, Blackwell); `bf16` below that;
   - `fp8` for Gemma 4's full-attention layers on `sm_89` and up, `bf16` below that;
   - `bf16` for Nemotron-H.
-- Gemma 4 takes `bf16` or `fp8`. With `fp8`, the full-attention layers' page pool holds E4M3 codes
+- Gemma 4 takes `bf16` or `fp8`. With `fp8`, the full-attention layers' page pool holds one-byte codes
+  (E4M3; int8 on `sm_75` to `sm_88`, below)
   with an FP32 scale per position and KV head (any head size). The sliding-window rings follow the
   KV cache: FP8 under `fp8` (`--sliding-kv-dtype bf16` keeps them BF16).
 - On `sm_75` to `sm_88` (Turing, Ampere), which have no FP8 conversion in hardware, `fp8` stores the

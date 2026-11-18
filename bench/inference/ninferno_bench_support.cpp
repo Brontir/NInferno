@@ -601,7 +601,7 @@ std::string format_table(const BenchEnvironment& env, const std::vector<TestResu
         << format_bytes(env.memory.kv_payload_bytes) << '\n'
         << "  corpus:     " << env.corpus_path << " (" << env.corpus_tokens << " tokens)\n"
         << "  config:     max_context=" << env.max_context << " prefill_chunk=" << env.prefill_chunk
-        << " kv_cache=" << kv_cache_name(env.kv_cache)
+        << " kv_cache=" << kv_cache_name(env.kv_cache, env.memory.kv_rows_int8)
         << " activations=" << product::activation_mode_name(env.activations)
         << " spec=" << product::speculative_backend_name(env.speculative.backend)
         << " draft_tokens=" << env.speculative.draft_tokens
