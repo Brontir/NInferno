@@ -3137,7 +3137,7 @@ DFlash, Qwen3.5-9B MTP GGUF Q4_K_M, Gemma 4 12B Q4_K_M with its assistant). Each
 spec-tune at master 2c544e2ad, and the round facts of the 3060 pair with the same target and
 drafters.
 
-**Prediction, frozen on #794 before the 3090's rounds were read.** Its Qwen rounds (k 1..7) priced
+**Prediction, frozen on #794 before the 3090's rounds were read.** Its Qwen rounds (k ≤ 7, fit_eta.py's hold-out) priced
 at the 3060's one-card fit (0.269): mean of R measured / R facts within ±5 %, rms at most 7 %, the
 bands of the Ada hold-outs. Result: **+4.4 %, rms 6.1 %: held.** The other direction, the 3060 at
 the 3090's fit (0.248): +1.7 %, rms 5.9 %. On the other card's pairs, the plan picks that card's
@@ -3151,4 +3151,11 @@ DECISIONS 54), recorded in `fitted_holdouts.h` with the hold-out above. The regi
 
 What moves: Ampere boards' speculation plans are now priced from facts. Before, they took the lab
 card's measured profile or a transfer. The deep Qwen rounds (k 8-16) run about +25 % over their
-facts on both cards, as on every other generation; the k ≤ 7 fit leaves them out.
+facts on both cards, as on every other generation; the eta fit (k 4..7) and the hold-out (k ≤ 7)
+leave them out.
+
+**Supersedes** the RTX 3090 rows of DECISIONS 80 that say "unpriced (no facts for ampere)": the
+pool rule's priced branch now decides on Ampere. Its first case, Qwen3.8 27B at 32K and C = 8
+(MTP 3 in 4 contexts measured 51.1 tok/s a request against plain decode's 38.3 in 5), is the
+check frozen on #794 before the plan priced it: the priced branch keeps the head
+(`test_plan_drafter_kinds`, `test_pool_rule_lab_runs`).

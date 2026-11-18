@@ -1509,9 +1509,11 @@ int main() {
             const char* gpu;
             sp::GpuKey key;
         };
+
         const Removed removed[] = {
             {"ad102:128sm", card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008)},
             {"ga106:28sm", card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 360)},
+            {"ga102:82sm", card("ga102:82sm", "ga102", "sm86", 86, 82, 1695, 936)},
             {"gb202:170sm", card("gb202:170sm", "gb202", "sm120", 120, 170, 2407, 1792)},
             {"gb203:70sm", card("gb203:70sm", "gb203", "sm120", 120, 70, 2452, 896)},
         };
