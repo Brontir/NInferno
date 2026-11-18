@@ -577,7 +577,11 @@ std::uint64_t ggml_mmq_fallback_count() noexcept {
 }
 
 namespace {
-std::atomic<bool> mmq_fused_epilogue{true};
+// NINFERNO_MMQ_FUSED_EPILOGUE=0 starts the process with it off: the A/B of one binary (#617 I).
+std::atomic<bool> mmq_fused_epilogue{[] {
+    const char* v = std::getenv("NINFERNO_MMQ_FUSED_EPILOGUE");
+    return v == nullptr || v[0] != '0';
+}()};
 std::atomic<std::uint64_t> mmq_fused_products{0};
 } // namespace
 
