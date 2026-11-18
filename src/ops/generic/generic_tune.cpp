@@ -73,6 +73,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <set>
 #include <sstream>
@@ -708,6 +709,10 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream) {
         Tuned tuned;
         bool complete     = true;
         const auto& entry = problems[key];
+        // The decode widths under the speed profile, as time_problem times them (timed_width's
+        // heuristic route must be the one the timing loop compared against).
+        std::optional<ScopedPrefillRoutes> speed_profile;
+        speed_profile.emplace(false);
         for (std::int32_t t = 1; t <= kDenseTuneMaxTokens && complete; ++t) {
             const auto name = std::to_string(t);
             if (!entry.contains("routes") || !entry["routes"].contains(name)) {
@@ -740,6 +745,7 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream) {
                 tuned.routes[static_cast<std::size_t>(t)] = *r;
             }
         }
+        speed_profile.reset();
         const bool bands = complete && read_prefill_bands(problem, *call.weight, entry, tuned);
         if (bands) {
             g_tuned[id] = tuned;
