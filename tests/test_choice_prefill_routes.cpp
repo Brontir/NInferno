@@ -322,7 +322,8 @@ void short_rest(const json& fixture) {
                 // takes the 16-bit register MMA for K-quants at 8 tokens).
                 check(names_q8_linear(m, q) || q == "Q8_0" || rest_changes_kernel(model, quant),
                       "an 8-token rest moves only where a Q8_0 linear or a linear's kernel "
-                      "changes: " + card_name + ' ' + model_name + ' ' + q);
+                      "changes: " +
+                          card_name + ' ' + model_name + ' ' + q);
             }
         }
     }
