@@ -74,12 +74,14 @@ const Row* measured_row_of(const Row (&rows)[N], std::string_view generation, bo
 }
 
 // The launch share of one kernel's residual on compute capability major.minor
-// (core/launch_facts.h): the graph node (with PDL from sm_90 on, as the engine launches a decode
-// chain there) and, for a weight-reading kernel, the dispatch ramp of a ~1024-CTA grid, the decode
-// GEMV's (#613 PR-8c's decomposition). nullopt where the architecture has no launch facts.
+// (core/launch_facts.h), as #613 PR-8c decomposed the census: a weight-reading kernel's graph node
+// (the PDL node from sm_90 on, where the engine joins a decode GEMV to its producer) and the
+// dispatch ramp of its ~1024-CTA grid; a small kernel's plain graph node (PR-8c: PDL does not hide
+// the epilogues' and the small kernels' launch). nullopt where the architecture has no launch
+// facts.
 std::optional<double> launch_share(int major, int minor, bool gemv) {
-    const std::optional<double> node =
-        launch_seconds(major, minor, major >= 9 ? LaunchKind::GraphNodePdl : LaunchKind::GraphNode);
+    const LaunchKind kind = gemv && major >= 9 ? LaunchKind::GraphNodePdl : LaunchKind::GraphNode;
+    const std::optional<double> node = launch_seconds(major, minor, kind);
     if (!node) return std::nullopt;
     if (!gemv) return node;
     const std::optional<Ramp> ramp = ramp_seconds(major, minor, 1024.0);
@@ -93,9 +95,11 @@ std::optional<double> launch_share(int major, int minor, bool gemv) {
 double kernel_cost_seconds(const KernelCost& row, const CardFacts& card, bool gemv) {
     const double measured = gemv ? row.gemv : row.small;
     if (card.major == row.major && card.minor == row.minor) return measured;
+    // The card's own first: most boards off the census architectures have no launch facts.
+    const std::optional<double> own = launch_share(card.major, card.minor, gemv);
+    if (!own) return measured;
     const std::optional<double> census = launch_share(row.major, row.minor, gemv);
-    const std::optional<double> own    = launch_share(card.major, card.minor, gemv);
-    if (!census || !own) return measured;
+    if (!census) return measured;
     return measured - *census + *own;
 }
 
