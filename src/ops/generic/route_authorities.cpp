@@ -9,6 +9,7 @@
 #include "ops/generic/route_table.h"
 #include "ops/route_pins.h"
 
+#include <cstdlib>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -189,7 +190,15 @@ bool a8_call(const Ask& ask, const Problem& problem, const Weight& weight) {
 // codec keeps its tiled route: the tiled and register-MMA families sum in different orders.
 std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& problem,
                                              const Weight& weight) {
-    if (a8_call(ask, problem, weight)) return std::nullopt;
+    // Lab (analyzer pinned twin, not for master): NINFERNO_LAB_TABLE_OVER_R8=1 lets a route table
+    // answer an R8 decode call too (the int8 calls the tables otherwise stand aside for), so T 1
+    // can be pinned.
+    static const bool lab_over_r8 = std::getenv("NINFERNO_LAB_TABLE_OVER_R8") != nullptr;
+    if (lab_over_r8
+            ? (a8_wide_call(ask, problem, weight) || vec_rule(weight, problem.policy, ask.tokens))
+            : a8_call(ask, problem, weight)) {
+        return std::nullopt;
+    }
     const auto hit = table_route_answer(problem, ask.tokens, ask.prefill());
     if (!hit) return std::nullopt;
     if (!route_admits(hit->route, weight, problem.policy) ||
