@@ -171,14 +171,42 @@ class Prune(unittest.TestCase):
                        id="q4k.a8.store.n1024.k4096.T1", selected="r8.w4r1")
         fast_table = dict(case(8, 0.0), id="q4k.a8.store.n1024.k4096.T8")
         plan = self.plan_table(report(*exact, fast_r8, fast_table, both_policies=False), t, 0.05)
-        self.assertTrue(plan[0][2], plan[0][3])
+        # one width of 1..4 elsewhere says nothing of 2..4: the segment keeps the entry
+        self.assertEqual(plan[0][3], ["policy a8 (AllowA8, the fast mode): T 1..4: no case"])
         # with no a8 case at all in 1..4, the segment is unknown and keeps the entry
         plan = self.plan_table(report(*exact, fast_table, both_policies=False), t, 0.05)
         self.assertEqual(plan[0][3], ["policy a8 (AllowA8, the fast mode): T 1..4: no case"])
-        # a policy whose every case went elsewhere asks nothing of the entry
-        fast_r8_8 = dict(fast_r8, id="q4k.a8.store.n1024.k4096.T8", t=8)
-        plan = self.plan_table(report(*exact, fast_r8, fast_r8_8, both_policies=False), t, 0.05)
+        # a segment is skipped only when every width of it went elsewhere: T 1..4 needs all four
+        t2 = table(self.entry(bands=((1, 4, "vec"), (5, 16, "rmma.a"))))
+        fast_at = [dict(fast_r8, id=f"q4k.a8.store.n1024.k4096.T{w}", t=w) for w in (1, 2, 3)]
+        plan = self.plan_table(report(*exact, *fast_at, fast_table, both_policies=False), t2, 0.05)
+        self.assertEqual(plan[0][3], ["policy a8 (AllowA8, the fast mode): T 1..4: no case"])
+        fast_at.append(dict(fast_r8, id="q4k.a8.store.n1024.k4096.T4", t=4))
+        plan = self.plan_table(report(*exact, *fast_at, fast_table, both_policies=False), t2, 0.05)
         self.assertTrue(plan[0][2], plan[0][3])
+
+    def test_a_mixed_segment_is_judged_by_its_route_table_cases(self):
+        # the Opus review's repro: a8 cases at T 1 (R8) and 12 (verify) only; AllowA8 calls at
+        # 5..8 still reach the table, so the a8 policy must not clear 1..16
+        t = table(self.entry(bands=((1, 16, "rmma.a"),)))
+        exact = [case(1, 0.0), case(8, 0.0)]
+        away = [dict(case(w, None, authority=a, evidence="ranker"), selected="x",
+                     id=f"q4k.a8.store.n1024.k4096.T{w}")
+                for w, a in ((1, "r8-rules"), (12, "mmq-verify-rule"))]
+        plan = self.plan_table(report(*exact, *away, both_policies=False), t, 0.05)
+        self.assertFalse(plan[0][2], plan[0][3])
+
+    def test_a_report_without_a_route_table_case_of_the_entry_proves_nothing(self):
+        # every case of the problem answered elsewhere (a report taken before the entry existed),
+        # or of an unknown authority (a collection without the columns): the entry is kept
+        t = table(self.entry(bands=((1, 4, "vec"),)))
+        for authority in ("cost-model", "unknown"):
+            with self.subTest(authority=authority):
+                cases = [dict(case(w, None, authority=authority, evidence="ranker"), selected="x",
+                              id=f"q4k.{c}.store.n1024.k4096.T{w}")
+                         for w in (1, 2, 3, 4) for c in ("a16", "a8")]
+                plan = self.plan_table(report(*cases, both_policies=False), t, 0.05)
+                self.assertFalse(plan[0][2], plan[0][3])
 
     def test_a_dense_entry_of_either_policy_keeps_the_table_entry(self):
         t = table(self.entry(bands=((1, 16, "a"),)))

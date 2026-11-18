@@ -103,9 +103,12 @@ TABLE_AUTHORITIES = {"route-table": "route-table", "dense-tune": "dense-tune",
 # calls reach the table (route_authorities.cpp route_table_entry: an AllowA8 call that takes R8,
 # the vector kernel, ggml's verify kernel or W4A8 never does, and route_admits refuses an int8
 # route to an A16Only call), so a segment where that policy's cases were all answered by another
-# authority needs no route-table case of it. route_tune sweeps the fast mode only for the
-# ggml_mmq formats (route_tune_tool.cpp a8_sweep): q8, q4, q5, q6 and iq1m entries get no a8
-# cases, and so are kept.
+# authority at every one of its widths needs no route-table case of it (a segment where only some
+# widths went elsewhere is judged by its route-table cases as before), and only when the report
+# holds a measured route-table case of the entry at all: that proves the table held it when the
+# report was collected (a report taken before the entry existed answers every width elsewhere).
+# route_tune sweeps the fast mode only for the ggml_mmq formats (route_tune_tool.cpp a8_sweep):
+# q8, q4, q5, q6, iq1m and nvfp4 a16 entries get no a8 cases, and so are kept.
 SINGLE_POLICY_FORMATS = ("bf16", "fp8", "fp8r32")
 
 
@@ -206,7 +209,9 @@ def elsewhere_by_key(report):
     answered by an authority other than the route table (the table was not asked there)."""
     out = {}
     for case in report["cases"]:
-        if case.get("authority") in TABLE_AUTHORITIES or not case.get("authority"):
+        # an unknown authority (a collection without the columns) is no proof of anything
+        if case.get("authority") in TABLE_AUTHORITIES or case.get("authority") in ("", None,
+                                                                                     "unknown"):
             continue
         parsed = case_key(case)
         if parsed is None:
@@ -239,7 +244,8 @@ def cover(cases, ranges, ridge, resolution, elsewhere=()):
     overlap (an r8 band inside a band) a case of one says nothing of the other. A case whose route
     is none of those the override names at its width was collected against another version of the
     entry, and keeps it. `elsewhere`: the widths at which this policy's calls were answered by
-    another authority; a segment with no route-table case but one of those is not asked."""
+    another authority; a segment with no route-table case whose every width is one of those is
+    not asked."""
     reasons = []
     for t, _, selected, *_ in sorted(cases, key=lambda c: c[0]):
         named = [route for lo, hi, route in ranges if lo <= t <= hi]
@@ -252,8 +258,8 @@ def cover(cases, ranges, ridge, resolution, elsewhere=()):
                            "cannot be split")
         for a, b in segments(lo, hi, ridge):
             inside = [c for c in cases if a <= c[0] <= b and c[2] == route]
-            if not inside and any(a <= t <= b for t in elsewhere):
-                continue  # the policy's calls there take another authority: the table is not asked
+            if not inside and b != INF and set(range(a, b + 1)) <= set(elsewhere):
+                continue  # every width there takes another authority: the table is not asked
             reasons += judge(inside, f"T {a}..{b}", resolution)
     return reasons
 
@@ -329,7 +335,9 @@ def plan_table(report, table, resolution, others=None, allow_borrowers=False, tu
         for policy in policies:
             own = {profile: [c for c in evidence[profile] if c[3] == policy]
                    for profile in ("speed", "prefill")}
-            gone = {profile: away.get((key, policy, profile), [])
+            # without a measured route-table case of the entry the report may predate it
+            held = any(evidence["speed"]) or any(evidence["prefill"])
+            gone = {profile: away.get((key, policy, profile), []) if held else []
                     for profile in ("speed", "prefill")}
             tag = f"policy {policy} ({regret_policy(policy)}): " if len(policies) > 1 else ""
             if not any(own.values()) and not any(gone.values()):
