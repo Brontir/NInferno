@@ -104,10 +104,15 @@ void engine_flags() {
         MaintainerOptions p;
         check(p.route_policy == RoutePolicy::Evidence, "--route-policy is not evidence by default");
         check(product::parse_engine_flag(
+                  "--route-policy", [] { return std::string("legacy"); }, pacing, p,
+                  product::TunerFlags::Refused) &&
+                  p.route_policy == RoutePolicy::Legacy && !(p == MaintainerOptions{}),
+              "--route-policy legacy was not parsed into MaintainerOptions");
+        check(product::parse_engine_flag(
                   "--route-policy", [] { return std::string("evidence"); }, pacing, p,
                   product::TunerFlags::Refused) &&
-                  p.route_policy == RoutePolicy::Evidence && !(p == MaintainerOptions{}),
-              "--route-policy evidence was not parsed into MaintainerOptions");
+                  p.route_policy == RoutePolicy::Evidence && p == MaintainerOptions{},
+              "--route-policy evidence did not restore the default");
         check(std::string_view(product::kScoringEngineFlagsUsage).find("--route-policy") !=
                       std::string_view::npos &&
                   !product::is_decode_only_flag("--route-policy"),

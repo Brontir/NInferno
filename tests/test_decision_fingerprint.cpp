@@ -245,7 +245,7 @@ int options_reach_their_section() {
         {"maintainer.moe_path",
          [](EngineOptions& o) { o.maintainer.moe_path = ninferno::MoePath::Generic; }},
         {"maintainer.route_policy",
-         [](EngineOptions& o) { o.maintainer.route_policy = ninferno::RoutePolicy::Evidence; }},
+         [](EngineOptions& o) { o.maintainer.route_policy = ninferno::RoutePolicy::Legacy; }},
     };
     int failures = each_field_reaches("options", EngineOptions{}, collect, edits);
     // The artifact, its prefill signature and a separate drafter enter by source identity.

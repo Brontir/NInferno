@@ -476,6 +476,7 @@ std::string known_source(const KnownCase& c) {
 
 void check_known() {
     constexpr Shape big{4096, 4096};
+    constexpr Shape own{4096, 5120};
     constexpr QType q8         = QType::Q8_G32_FP16;
     constexpr QType q4k        = QType::GGML_Q4_K;
     constexpr QType q6k        = QType::GGML_Q6_K;
@@ -486,9 +487,11 @@ void check_known() {
         {"rtx4090", q8, big, a16, 4, false, 2, "route-probe"},
         {"rtx4090", q8, big, a16, 4, false, 3, "route-pin"},
         {"rtx4090", q8, big, a16, 512, true, 4, "route-pin"},
-        // the route table, the cost model, the rules, the MMQ gate
-        {"rtx4090", q4k, big, a16, 512, true, 0, "route-table"},
-        {"rtx4090", q4k, big, a16, 1, false, 0, "route-table"},
+        // the route table (an entry of ad102.json itself: under --route-policy evidence, the
+        // default, the 4096x4096 one ad102 borrows is demoted), the cost model, the rules, the
+        // MMQ gate
+        {"rtx4090", q4k, own, a16, 512, true, 0, "route-table"},
+        {"rtx4090", q4k, own, a16, 1, false, 0, "route-table"},
         {"rtx4090", q8, big, a16, 64, false, 0, "cost-model"},
         {"rtx4090", q8, big, a16, 1, false, 0, "rmma-rule"},
         {"rtx4090", q6k, big, a16, 24, true, 0, "rmma-rule"},
