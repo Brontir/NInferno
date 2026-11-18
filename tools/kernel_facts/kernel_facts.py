@@ -635,7 +635,7 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
         producer = (family.producer
                     if family.producer is not None and fk[1][-1] > 0 and has_mma else None)
         c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker, family.prologue,
-                                    producer, dp4a_tile=fk[0] == "w4a8").with_pipes(
+                                    producer).with_pipes(
             family.pipes, family.prologue is not None, family.waits, family.producer is not None)
         if producer is not None and c.prod_loops != 1:
             fail(f"{name}: {c.prod_loops} producer loops in a tile with {fk[1][-1]} producer warps")

@@ -828,14 +828,14 @@ def outside_counts(body, control, outside, out):
     return out
 
 
-def loop_counts(body, tiles=1, marker=None, prologue_marker=None, producer=None, dp4a_tile=False):
+def loop_counts(body, tiles=1, marker=None, prologue_marker=None, producer=None):
     """loop_counts_of (below), and where `prologue_marker` names an opcode (F2I), the counts of
     the loop that opcode marks in the same body as the PROLOGUE_FIELDS (the R8 kernels'
     activation quantizer). A row writes them only under with_pipes(prologue=True). Where
     `producer` is (marker, excluded) (BAR, every MMA opcode and the dp4a), the counts of the loop
     the marker marks that holds no excluded opcode as the PRODUCER_FIELDS (the w4a8 producer warps' loop), written
     under with_pipes(producer=True)."""
-    out = loop_counts_of(body, tiles, marker, dp4a_tile=dp4a_tile)
+    out = loop_counts_of(body, tiles, marker)
     if producer is not None:
         prod = loop_counts_of(body, 1, producer[0], exclude=producer[1])
         for field, source in PRODUCER_OF.items():
@@ -849,7 +849,7 @@ def loop_counts(body, tiles=1, marker=None, prologue_marker=None, producer=None,
     return out
 
 
-def loop_counts_of(body, tiles=1, marker=None, exclude=None, dp4a_tile=False):
+def loop_counts_of(body, tiles=1, marker=None, exclude=None):
     """The K loop's LoopCounts of a function body (iter_functions); `tiles` the m16n8 tiles one
     warp accumulates (m_tiles * n_tiles * row sets), for k_iter. The schedule fields where every
     instruction carries its control code. `marker`, an opcode (IDP), marks the loop of a kernel
@@ -875,12 +875,7 @@ def loop_counts_of(body, tiles=1, marker=None, exclude=None, dp4a_tile=False):
     dom, preds = dominators(edges, live)
     loops = natural_loops(edges, dom, preds, live)
     has_mma = any(base_opcode(op) in MMA_OPCODES for _, _, op, *_ in body)
-    # dp4a_tile: a matrix tile built from dp4a where the body has no MMA (the sm_70 W4A8 tile, #787):
-    # its IDPs mark the K loop, and k_iter is counted in the MMA's units below.
-    dp4a = dp4a_tile and marker is None and not has_mma and any(
-        base_opcode(op) == "IDP" for _, _, op, *_ in body)
-    marked_opcodes = ((marker,) if marker is not None else MMA_OPCODES if has_mma else
-                      ("IDP",) if dp4a else ("FFMA",))
+    marked_opcodes = (marker,) if marker is not None else MMA_OPCODES if has_mma else ("FFMA",)
 
     def marker(op):
         return base_opcode(op) in marked_opcodes
@@ -949,13 +944,6 @@ def loop_counts_of(body, tiles=1, marker=None, exclude=None, dp4a_tile=False):
         per_tile = 16 * 8 * tiles
         if mnk_sum and not unknown_shape and mnk_sum % per_tile == 0:
             out.k_iter = mnk_sum // per_tile
-    elif dp4a:
-        # A dp4a matrix tile: each IDP is 4 int8 products of each of a warp's 32 lanes, 128
-        # multiply-adds, so the iteration's IDPs are its MMA work in m16n8 units of K 1, as the
-        # MMA branch counts it (mnk / (16 x 8 x tiles)).
-        idp = sum(1 for i in indices(path) if base_opcode(body[i][2]) == "IDP")
-        if idp and (128 * idp) % (16 * 8 * tiles) == 0:
-            out.k_iter = 128 * idp // (16 * 8 * tiles)
     elif marked_opcodes == ("IDP",):
         # A dp4a loop (the R8 kernels): each IDP is 4 int8 products of one lane, so a warp's 32
         # lanes cover 128 K values per IDP and (row, token) product; `tiles` is the products one
