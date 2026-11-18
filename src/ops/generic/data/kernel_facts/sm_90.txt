@@ -3561,7 +3561,7 @@ gemma4 volta 512 0 0 4 0 0 0 0 82 0 0 8752
 gemma4 volta 512 0 0 8 0 0 0 0 100 0 0 17504
 gemma4 volta_tiled 64 0 0 4 0 0 0 0 81 0 0 18608
 gemma4 volta_tiled 64 0 0 8 0 0 0 0 100 0 0 20192
-gemma4 volta_tiled 64 0 0 16 0 0 0 0 138 0 0 23360
+gemma4 volta_tiled 64 0 0 16 0 0 0 0 137 0 0 23360
 gemma4 volta_tiled 64 0 0 32 0 0 0 0 142 0 0 29696
 gemma4 volta_tiled 64 0 0 64 0 0 0 0 176 0 0 42368
 gemma4 volta_tiled 128 0 0 4 0 0 0 0 83 0 0 19056

@@ -2,6 +2,7 @@
 
 #include "core/checked.h"
 #include "core/device.h"
+#include "ops/softmax_attention/gemma4/row_codec.h"
 
 #include <cstddef>
 #include <limits>
@@ -93,7 +94,7 @@ bool same_host_layout(const StateImageHostLayout& left,
 
 // One slot of a ring layer: its K (or V) plane [head_dim, capacity, kv_heads].
 Tensor ring_slot_shape(const KvRingSpec& ring) {
-    return Tensor(nullptr, ring.fp8 ? DType::FP8_E4M3FN : DType::BF16,
+    return Tensor(nullptr, ring.fp8 ? ops::kGemma4RowDtype : DType::BF16,
                   {ring.head_dim, static_cast<std::int32_t>(ring.capacity), ring.kv_heads});
 }
 
@@ -265,7 +266,7 @@ StateImageDeviceLayout plan_state_image_device_pool(LayoutBuilder& builder,
         for (std::uint32_t layer = 0; layer < ring.layers; ++layer) {
             for (auto* plane : {&group.k, &group.v}) {
                 plane->push_back(
-                    builder.add_tensor(ring.fp8 ? DType::FP8_E4M3FN : DType::BF16,
+                    builder.add_tensor(ring.fp8 ? ops::kGemma4RowDtype : DType::BF16,
                                        {ring.head_dim, static_cast<std::int32_t>(ring.capacity),
                                         ring.kv_heads, spec.linear.slot_count},
                                        kStateImageAlignment, "StateImage ring plane"));

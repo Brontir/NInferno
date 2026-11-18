@@ -2554,7 +2554,7 @@ gemma4 attention 256 2 128 1 32 1 0 0 255 16 0 0
 gemma4 attention 256 2 128 1 32 1 1 0 255 0 0 0
 gemma4 attention 256 2 128 2 32 0 0 0 255 0 0 0
 gemma4 attention 256 2 128 2 32 0 0 1 255 40 0 16
-gemma4 attention 256 2 128 2 32 0 1 0 247 0 0 0
+gemma4 attention 256 2 128 2 32 0 1 0 249 0 0 0
 gemma4 attention 256 2 128 2 32 0 1 1 255 0 0 16
 gemma4 attention 256 2 128 2 32 1 0 0 255 0 0 0
 gemma4 attention 256 2 128 2 32 1 1 0 247 0 0 0
@@ -2562,7 +2562,7 @@ gemma4 attention 256 4 128 1 32 1 0 0 255 16 0 0
 gemma4 attention 256 4 128 1 32 1 1 0 255 0 0 0
 gemma4 attention 256 4 128 2 32 0 0 0 255 0 0 0
 gemma4 attention 256 4 128 2 32 0 0 1 255 40 0 16
-gemma4 attention 256 4 128 2 32 0 1 0 247 0 0 0
+gemma4 attention 256 4 128 2 32 0 1 0 249 0 0 0
 gemma4 attention 256 4 128 2 32 0 1 1 255 0 0 16
 gemma4 attention 256 4 128 2 32 1 0 0 255 0 0 0
 gemma4 attention 256 4 128 2 32 1 1 0 247 0 0 0
@@ -2570,7 +2570,7 @@ gemma4 attention 256 8 128 1 32 1 0 0 255 16 0 0
 gemma4 attention 256 8 128 1 32 1 1 0 255 0 0 0
 gemma4 attention 256 8 128 2 32 0 0 0 255 0 0 0
 gemma4 attention 256 8 128 2 32 0 0 1 255 40 0 16
-gemma4 attention 256 8 128 2 32 0 1 0 247 0 0 0
+gemma4 attention 256 8 128 2 32 0 1 0 249 0 0 0
 gemma4 attention 256 8 128 2 32 0 1 1 255 0 0 16
 gemma4 attention 256 8 128 2 32 1 0 0 255 0 0 0
 gemma4 attention 256 8 128 2 32 1 1 0 247 0 0 0
@@ -2578,7 +2578,7 @@ gemma4 attention 256 16 128 1 32 1 0 0 255 16 0 0
 gemma4 attention 256 16 128 1 32 1 1 0 255 0 0 0
 gemma4 attention 256 16 128 2 32 0 0 0 255 0 0 0
 gemma4 attention 256 16 128 2 32 0 0 1 255 40 0 16
-gemma4 attention 256 16 128 2 32 0 1 0 247 0 0 0
+gemma4 attention 256 16 128 2 32 0 1 0 249 0 0 0
 gemma4 attention 256 16 128 2 32 0 1 1 255 0 0 16
 gemma4 attention 256 16 128 2 32 1 0 0 255 0 0 0
 gemma4 attention 256 16 128 2 32 1 1 0 247 0 0 0
@@ -2636,14 +2636,14 @@ gemma4 volta 256 0 0 4 0 0 0 0 66 0 0 4656
 gemma4 volta 256 0 0 8 0 0 0 0 74 0 0 9312
 gemma4 volta 256 0 0 16 0 0 0 0 90 0 0 18624
 gemma4 volta 512 0 0 4 0 0 0 0 84 0 0 8752
-gemma4 volta 512 0 0 8 0 0 0 0 98 0 0 17504
-gemma4 volta_tiled 64 0 0 4 0 0 0 0 83 0 0 18608
+gemma4 volta 512 0 0 8 0 0 0 0 99 0 0 17504
+gemma4 volta_tiled 64 0 0 4 0 0 0 0 82 0 0 18608
 gemma4 volta_tiled 64 0 0 8 0 0 0 0 100 0 0 20192
-gemma4 volta_tiled 64 0 0 16 0 0 0 0 138 0 0 23360
+gemma4 volta_tiled 64 0 0 16 0 0 0 0 140 0 0 23360
 gemma4 volta_tiled 64 0 0 32 0 0 0 0 142 0 0 29696
 gemma4 volta_tiled 64 0 0 64 0 0 0 0 174 0 0 42368
 gemma4 volta_tiled 128 0 0 4 0 0 0 0 84 0 0 19056
-gemma4 volta_tiled 128 0 0 8 0 0 0 0 100 0 0 21408
+gemma4 volta_tiled 128 0 0 8 0 0 0 0 96 0 0 21408
 gemma4 volta_tiled 128 0 0 16 0 0 0 0 122 0 0 26112
 gemma4 volta_tiled 128 0 0 32 0 0 0 0 169 0 0 35520
 family r8

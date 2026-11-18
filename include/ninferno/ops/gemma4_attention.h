@@ -37,11 +37,13 @@ namespace ninferno::ops {
  * rows is contiguous device I32 [B]; empty means one batch row bound to image 0. Every binding
  * of one call is distinct, so no two batch rows write the same bytes.
  *
- * FP8 storage: k and v may instead be FP8_E4M3FN planes of the same shape, each row (one position
+ * One-byte storage: k and v may instead be planes of one-byte codes of the same shape (the build's
+ * row codec, row_codec.h: FP8_E4M3FN, or I8 on sm_75 to sm_88 builds), each row (one position
  * of one head) with its own scale in k_scale / v_scale, contiguous FP32 planes shaped like k and v
  * without the D axis ([capacity, Hkv(, images)] or [64, pages, Hkv]). The row represents
- * scale * code: the writers take scale = absmax(row) / 448 (0 for a zero row) and
- * code = E4M3(x / scale), saturating (src/ops/softmax_attention/gemma4/fp8_row.cuh). BF16 planes
+ * scale * code: the writers take scale = absmax(row) / 448 (E4M3) or / 127 (I8), 0 for a zero
+ * row, and code = E4M3(x / scale) saturating, or round(x / scale) held to +-127
+ * (src/ops/softmax_attention/gemma4/fp8_row.cuh). BF16 planes
  * leave the scale tensors empty.
  *
  * stored is empty, or contiguous device I32 [B]: batch row b writes the keys and values of its
