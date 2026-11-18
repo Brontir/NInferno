@@ -63,7 +63,10 @@ NVCC_VERSION = re.compile(r"\d+(\.\d+)+\Z")
 # PATH, which need not be the one the build used.
 NVCC_SOURCES = ("CMAKE_CUDA_COMPILER", "none")
 # What a delta needs equal between two runs for the selector to be all that changed.
-SWEEP_KEYS = ("shapes_sha256", "samples", "passes", "route_policy")
+SWEEP_KEYS = ("shapes_sha256", "samples", "passes", "route_policy", "a8_candidates")
+# A key a report written before it existed holds at this value (every earlier job swept with
+# --a8-candidates 1, the fast mode's calls).
+SWEEP_DEFAULTS = {"a8_candidates": 1}
 GPU_KEYS = ("name", "power_limit_w", "max_sm_mhz", "applications_graphics_mhz", "persistence_mode",
             "sm_mhz_during_sweep")
 
@@ -188,7 +191,8 @@ def sweep_matches(previous, current):
     summary). A delta across different sweeps is not a comparison of the selector alone."""
     if previous is None:
         return "unknown"
-    return all(previous.get(k) == current.get(k) for k in SWEEP_KEYS)
+    return all(previous.get(k, SWEEP_DEFAULTS.get(k)) == current.get(k, SWEEP_DEFAULTS.get(k))
+               for k in SWEEP_KEYS)
 
 
 def compare(current, previous, threshold):
@@ -363,6 +367,8 @@ def check(doc):
         need(isinstance(sweep.get("shapes"), str) and sweep["shapes"], "sweep.shapes: expected a path")
         need(isinstance(sweep.get("route_policy"), str) and sweep["route_policy"],
              "sweep.route_policy: expected a nonempty string")
+        need(sweep.get("a8_candidates", 1) in (0, 1) and type(sweep.get("a8_candidates", 1)) is int,
+             "sweep.a8_candidates: expected 0 (the exact mode's calls) or 1 (the fast mode's)")
     gpu = doc.get("gpu")
     if gpu is not None and need(isinstance(gpu, dict) and set(gpu) == set(GPU_KEYS),
                                 f"gpu: expected an object of {', '.join(GPU_KEYS)}"):
@@ -576,6 +582,8 @@ def main(argv=None):
     b.add_argument("--shapes", type=Path, required=True)
     b.add_argument("--passes", type=int, required=True)
     b.add_argument("--samples", type=int, required=True)
+    b.add_argument("--a8-candidates", type=int, choices=(0, 1), default=1,
+                   help="route_tune's --a8-candidates: 1 the fast mode's calls, 0 the exact mode's")
     b.add_argument("--route-policy", default="")
     b.add_argument("--previous", default="auto", help="a report file, auto or none")
     b.add_argument("--repo", type=Path, default=ROOT, help="where --previous auto looks (git)")
@@ -601,7 +609,7 @@ def main(argv=None):
                     print(f"{path}: {p}", file=sys.stderr)
                 failed |= bool(problems)
             return 2 if failed else 0
-        sweep = {"passes": args.passes, "samples": args.samples,
+        sweep = {"passes": args.passes, "samples": args.samples, "a8_candidates": args.a8_candidates,
                  "route_policy": args.route_policy or "the build's default"}
         try:  # a path in the repository, not the stand's checkout directory
             sweep["shapes"] = args.shapes.resolve().relative_to(args.repo.resolve()).as_posix()

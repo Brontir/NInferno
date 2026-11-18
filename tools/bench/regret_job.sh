@@ -13,7 +13,10 @@
 #      formats of the shapes file) and ninferno_route_classes_test; both must pass, none skipped.
 #      Their names are the --qualified statement of the collection.
 #   2. sweep: PASSES (3) runs of `ninferno-serve route-tune --shapes SHAPES --samples SAMPLES
-#      --a8-candidates 1 [--route-policy ROUTE_POLICY]`, each writing --routes-out and --selected-out.
+#      --a8-candidates A8_CANDIDATES [--route-policy ROUTE_POLICY]`, each writing --routes-out and
+#      --selected-out. A8_CANDIDATES 1 (the default) times the fast mode's calls (AllowA8: a8
+#      cases), 0 the exact mode's (A16Only: a16 cases). A route table entry of a k-quant answers
+#      both (route_table_prune.py asking_policies), so pruning one needs a job of each.
 #   3. score: regret_collect.py, selection_regret.py and regret_bands.py --doc.
 #   4. report: regret_report.py build, with the previous committed report of the board (--previous
 #      auto: the newest tools/bench/data/route_regret/runs/<board>/*.json at HEAD, else the A5
@@ -21,7 +24,8 @@
 #      and .md; committing it to tools/bench/data/route_regret/runs/<board>/ is a maintainer's step.
 #   The card's clocks and persistence mode are recorded, and its SM clock is sampled once a second
 #   during the sweep (min and max in the report).
-# Environment: SHAPES, PASSES, SAMPLES, ROUTE_POLICY, THRESHOLD, PREVIOUS (a file, auto, none),
+# Environment: SHAPES, PASSES, SAMPLES, A8_CANDIDATES (1 or 0), ROUTE_POLICY, THRESHOLD,
+# PREVIOUS (a file, auto, none),
 # BOARD (from the card's PCI id and gpu_facts.json; a different value is refused), MODEL (the label of the shapes' source).
 # One card: with several, select it (CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=<i>).
 # The job refuses to start when a compute process is on the card, but that is a snapshot at the
@@ -35,8 +39,11 @@ ROOT=$(cd "$HERE/../.." && pwd)
 SHAPES=${SHAPES:-$ROOT/tools/bench/data/route_regret/shapes.txt}
 PASSES=${PASSES:-3}
 SAMPLES=${SAMPLES:-7}
+A8_CANDIDATES=${A8_CANDIDATES:-1}
 THRESHOLD=${THRESHOLD:-0.05}
 PREVIOUS=${PREVIOUS:-auto}
+# The committed reports are the fast mode's: an exact-mode job (A8_CANDIDATES=0) has no previous one.
+if [ "$A8_CANDIDATES" = 0 ] && [ "$PREVIOUS" = auto ]; then PREVIOUS=none; fi
 MODEL=${MODEL:-qwen3.5-9b+gemma4-12b-dense}
 PY=${PYTHON:-python3}
 
@@ -46,6 +53,7 @@ BUILD=$(cd "$1" && pwd) || exit 2
 [ -f "$BUILD/CMakeCache.txt" ] || { echo "regret_job: $BUILD is not a build tree" >&2; exit 2; }
 case $PASSES in ''|*[!0-9]*|0) echo "regret_job: PASSES must be a positive integer" >&2; exit 2;; esac
 case $SAMPLES in ''|*[!0-9]*|0) echo "regret_job: SAMPLES must be a positive integer" >&2; exit 2;; esac
+case $A8_CANDIDATES in 0|1) ;; *) echo "regret_job: A8_CANDIDATES must be 0 or 1" >&2; exit 2;; esac
 
 SERVE=$(find "$BUILD" -maxdepth 3 -type f -name ninferno-serve -perm -u+x | head -n 1)
 [ -n "$SERVE" ] || die "no ninferno-serve under $BUILD"
@@ -150,7 +158,7 @@ SAMPLER=$!
 trap 'kill "$SAMPLER" 2>/dev/null || true' EXIT
 for p in $(seq 1 "$PASSES"); do
   echo "regret_job: pass $p of $PASSES"
-  "$SERVE" route-tune --shapes "$SHAPES" --samples "$SAMPLES" --a8-candidates 1 \
+  "$SERVE" route-tune --shapes "$SHAPES" --samples "$SAMPLES" --a8-candidates "$A8_CANDIDATES" \
     ${POLICY_ARGS[@]+"${POLICY_ARGS[@]}"} \
     --out /dev/null --routes-out "$OUT/routes_p$p.csv" --selected-out "$OUT/sel_p$p.csv" \
     > "$OUT/tune_p$p.log" 2>&1 || die "route-tune pass $p failed ($OUT/tune_p$p.log)"
@@ -178,8 +186,12 @@ NAME=$STAMP-${REV:0:12}
   --nvcc "$NVCC" --nvcc-source "$NVCC_SOURCE" --driver "$DRIVER" --gpu "$GPU_FIELDS" \
   --sm-clock-log "$OUT/sm_clock.log" --pci-id "$PCI" \
   --qualification "$QUALIFIED" --shapes "$SHAPES" --passes "$PASSES" --samples "$SAMPLES" \
+  --a8-candidates "$A8_CANDIDATES" \
   --route-policy "${ROUTE_POLICY:-}" --previous "$PREVIOUS" --repo "$ROOT" \
   --threshold "$THRESHOLD" --out "$OUT/$NAME.json" --md "$OUT/$NAME.md" ||
   die "regret_report.py failed"
 cat "$OUT/$NAME.md"
-echo "regret_job: to commit: tools/bench/data/route_regret/runs/$BOARD/$NAME.json (from $OUT)"
+# The committed reports are the fast mode's: an exact-mode report feeds route_table_prune.py only.
+if [ "$A8_CANDIDATES" = 1 ]; then
+  echo "regret_job: to commit: tools/bench/data/route_regret/runs/$BOARD/$NAME.json (from $OUT)"
+fi
