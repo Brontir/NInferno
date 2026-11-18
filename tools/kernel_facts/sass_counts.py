@@ -22,16 +22,18 @@ How the loop is found (`loop_counts`):
 4. The K loop is the innermost loop holding tensor-core MMAs (HMMA, IMMA, QMMA, ...): the one
    whose body holds MMAs and no MMA-bearing loop inside it. Where the build has no MMA at all
    (the sm_70 build multiplies with FFMAs, NINFERNO_FMA_MMA) the innermost loop holding FFMAs
-   stands in. Several such loops (the compiler kept two versions of the body) are reported by
+   stands in. A CALL to the sm_70 build's emulated int8 MMA (mma_s8_dp4a_call<N>, EMULATED_MMA
+   below) is that MMA. Several such loops (the compiler kept two versions of the body) are reported by
    their number, and the one whose iteration is heaviest (step 5) is counted.
 5. One iteration executes one path through the body, from the header to a block that branches
    back to it. The counts are those of the heaviest path (the most MMAs, then the most
    instructions; `longest_iteration`): the full iteration, which fetches both slots and loads
    every row (the guards skip only rows past the call's end and the last fetches), with the
    longest of the compiler's alternative versions of a step where it kept several (the
-   group-tail path of the 32-value formats: the same MMAs and loads, a few more checks; Volta's
-   emulated MMA over its lane-local path). Predicated instructions count: they issue. A CALL's
-   callee (a slow path) is not counted; an MMA-free loop nested in the body counts once.
+   group-tail path of the 32-value formats: the same MMAs and loads, a few more checks; on Volta
+   the path whose calls to the emulated MMA are the most, as item 4 counts them). Predicated
+   instructions count: they issue. A CALL's callee (a slow path) is not counted; an MMA-free loop
+   nested in the body counts once.
 
 What is counted per iteration (`LoopCounts`): the MMAs and their shape; of them the min-term
 MMAs, whose A operand is a register holding the 1.0 pair (0x3f803f80 BF16, 0x3c003c00 F16: the
@@ -79,6 +81,14 @@ from collections import Counter
 
 INSTRUCTION = re.compile(r"/\*([0-9a-f]{4,})\*/\s+(@!?U?P\w+\s+)?([A-Z][A-Z0-9_.]*)\s*([^;]*);")
 FUNCTION = re.compile(r"Function : (\S+)")
+# sm_70 builds the int8 MMA from dp4a in a __noinline__ function (src/ops/common/mma.cuh,
+# mma_s8_dp4a_call<kChunks>: <8> stands for one m16n8k32, <4> for one m16n8k16), so the kernel's
+# loop holds a CALL to it, not an IMMA (#787). Such a call is counted as that IMMA. cuobjdump
+# -sass prints the call unresolved (CALL.ABS.NOINC 0x0, a relocation): its target is read from the
+# image's relocations (`cuobjdump -elf`, relocation_calls), or from the operand where the
+# disassembly names it (nvdisasm).
+EMULATED_MMA = re.compile(r"mma_s8_dp4a_callILi(\d+)E")
+EMULATED_SHAPES = {"8": "IMMA.16832.S8.S8.EMU", "4": "IMMA.16816.S8.S8.EMU"}
 TARGET = re.compile(r"0x([0-9a-f]+)\s*$")
 # The second line of a 128-bit instruction: its high 64-bit word alone in a comment.
 HIGH_WORD = re.compile(r"^\s*/\*\s*0x([0-9a-f]{16})\s*\*/\s*$")
@@ -205,12 +215,30 @@ class Control:
                 self.wait_mask, self.reuse)
 
 
-def iter_functions(lines, wanted=None):
+def relocation_calls(lines):
+    """{function: {offset: symbol}} from `cuobjdump -elf` text: the relocations of each
+    `.rel.text.<function>` section (offset, symbol, type), where a call's target is recorded in a
+    linked image whose SASS prints it as 0x0."""
+    out, current = {}, None
+    for line in lines:
+        if line.startswith(".section"):
+            m = re.match(r"\.section\s+\.rel\.text\.(\S+)", line)
+            current = out.setdefault(m.group(1), {}) if m else None
+            continue
+        if current is None:
+            continue
+        m = re.match(r"\s*0x([0-9a-f]+)\s+(\S+)\s+R_CUDA_", line)
+        if m:
+            current[int(m.group(1), 16)] = m.group(2)
+    return out
+
+
+def iter_functions(lines, wanted=None, calls=None):
     """(mangled name, [(offset, guarded, opcode, operands, high word)]) for each Function block
     of `cuobjdump -sass` text (an iterable of lines), as the text is read; the high word is the
     128-bit instruction's upper half printed on the next line (the control code), None where the
     text has none. `wanted(name)` selects the functions parsed, the others are skipped line by
-    line."""
+    line. `calls` (relocation_calls) names the target of a call the text prints as an address."""
     name, body = None, None
     for line in lines:
         if "Function" in line:
@@ -226,7 +254,17 @@ def iter_functions(lines, wanted=None):
         m = INSTRUCTION.search(line)
         if m:
             guard = (m.group(2) or "").strip()
-            body.append((int(m.group(1), 16), guard not in ("", "@PT"), m.group(3),
+            opcode = m.group(3)
+            if opcode.startswith("CALL"):
+                target = m.group(4)
+                if calls is not None and not EMULATED_MMA.search(target):
+                    target = calls.get(name, {}).get(int(m.group(1), 16), target)
+                e = EMULATED_MMA.search(target)
+                if e and e.group(1) not in EMULATED_SHAPES:
+                    raise ValueError(f"{name}: an emulated MMA of {e.group(1)} chunks has no shape")
+                if e:
+                    opcode = EMULATED_SHAPES[e.group(1)]
+            body.append((int(m.group(1), 16), guard not in ("", "@PT"), opcode,
                          m.group(4).strip(), None))
             continue
         m = HIGH_WORD.match(line)
@@ -236,9 +274,9 @@ def iter_functions(lines, wanted=None):
         yield name, body
 
 
-def parse_functions(lines, wanted=None):
+def parse_functions(lines, wanted=None, calls=None):
     """{mangled name: body} of every function iter_functions yields."""
-    return dict(iter_functions(lines, wanted))
+    return dict(iter_functions(lines, wanted, calls))
 
 
 def base_opcode(opcode):

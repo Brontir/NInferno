@@ -862,7 +862,12 @@ std::string text_of_command(const std::string& command) {
 // process's cache history (P1, P3 and P6 ran first; the child starts cold): either is a leak.
 // Without a GPU in this process the two runs are alike and the property is vacuous (printed).
 void property_cpu_equals_gpu(const std::vector<Row>& rows, const std::string& here) {
-#ifdef _WIN32
+#if defined(NINFERNO_HOST_ONLY)
+    // The host twin (#962) has no device: the child would only compute the atlas a second time.
+    (void)rows;
+    (void)here;
+    std::cout << "P4: host-only build, vacuous (the device build runs it)\n";
+#elif defined(_WIN32)
     (void)rows;
     (void)here;
     std::cout << "P4: not run on Windows (no CUDA_VISIBLE_DEVICES child)\n";

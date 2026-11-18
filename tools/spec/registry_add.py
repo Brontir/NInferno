@@ -301,6 +301,7 @@ LAB_BOARDS = {
     "gb203:70sm": "0x2C05",   # GeForce RTX 5070 Ti
     "gb202:170sm": "0x2B85",  # GeForce RTX 5090
     "ga106:28sm": "0x2504",   # GeForce RTX 3060 Lite Hash Rate
+    "ga102:82sm": "0x2204",   # GeForce RTX 3090
     "tu102:68sm": "0x1E07",   # GeForce RTX 2080 Ti Rev. A
     "gv100:80sm": "0x1DBA",   # Quadro GV100
 }

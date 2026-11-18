@@ -1501,16 +1501,20 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
     // label). The parsed part read them before too (with_weights kept the shape's at equal bytes).
     // Not its banks' and head's formats (#834): the workspace takes the widest over every pair
     // of bank formats, and a sample that misses a later part's would size it short; none, and
-    // the formula stands.
+    // the formula stands. A sample can only lower the row's route claim (a route read off it is an
+    // assumed one), and its formats are a subset of the file's. Where the part read no route the
+    // facts' own mark stays (#835): the same rule as plan_facts, assumed() or any route read off a
+    // split part.
     const auto& shape = facts.shape;
     if (facts.model.weight_basis == runtime::WeightBasis::FileSize &&
         facts.model.gguf_data_offset != 0 && (route || !shape.weight_formats.empty())) {
-        return GgufTensorTable{.expert_prefill         = facts.model.expert_prefill,
-                               .expert_prefill_int8    = facts.model.expert_prefill_int8,
-                               .expert_prefill_assumed = route,
-                               .weight_formats         = shape.weight_formats,
-                               .layer_formats          = shape.layer_formats,
-                               .rest_layer_formats     = shape.rest_layer_formats};
+        return GgufTensorTable{.expert_prefill      = facts.model.expert_prefill,
+                               .expert_prefill_int8 = facts.model.expert_prefill_int8,
+                               .expert_prefill_assumed =
+                                   route || facts.model.expert_prefill_assumed,
+                               .weight_formats     = shape.weight_formats,
+                               .layer_formats      = shape.layer_formats,
+                               .rest_layer_formats = shape.rest_layer_formats};
     }
     if (facts.model.weight_basis != runtime::WeightBasis::GgufTensors ||
         facts.model.weight_bytes == 0) {

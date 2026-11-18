@@ -3127,3 +3127,39 @@ with the frozen predictions and the moer8 / moegemm facts for sm_75, 80, 86, 89,
 the defects above until #987, part of the block-ranking work after the release. #619 step 11
 closes on this entry as a negative result for the selection: the counted law does not yet rank
 the expert plans better than the bank.
+
+## 95. Ampere's small-T eta from two lab cards: ga10x 0.258 (#794, 18.11, fitted)
+
+Until now Ampere had one lab card (RTX 3060; its two board names are one ga106 chip). So it had no
+`kSmallTEta` row: its round costs were not priced from facts, and #791's pool rule could not decide
+on an Ampere board (#794). The RTX 3090 now has the 3060's three pairs (Qwen3.5-9B GGUF Q4_K_M with
+DFlash, Qwen3.5-9B MTP GGUF Q4_K_M, Gemma 4 12B Q4_K_M with its assistant). Each has its own
+spec-tune at master 2c544e2ad, and the round facts of the 3060 pair with the same target and
+drafters.
+
+**Prediction, frozen on #794 before the 3090's rounds were read.** Its Qwen rounds (k ≤ 7,
+fit_eta.py's hold-out) priced at the 3060's one-card fit (0.269): mean of R measured / R facts
+within ±5 %, rms at most 7 %, the bands of the Ada hold-outs. Result: **+4.4 %, rms 6.1 %: held.**
+The other direction, the 3060 at the 3090's fit (0.248): +1.7 %, rms 5.9 %. On the other card's
+pairs, the plan picks that card's measured best or a configuration within 2.7 % of it (the 3090:
+Qwen MTP its best, Gemma 12B 1.6 % short).
+
+**Decision.** `kSmallTEta` gets `{"ga10x", 0.258, 2}`: `fit_eta.py`'s fit over both cards, at 3
+decimals, like the ada and gb20x rows. It is a **fitted constant** (no fact derivation exists,
+DECISIONS 54), recorded in `fitted_holdouts.h` with the hold-out above. The registry carries the
+3090's pairs (version 205), so `tests/test_round_cost_eta_fit.py` reads the row from them.
+
+What moves: Ampere boards' speculation plans are now priced from facts. Before, they took the lab
+card's measured profile or a transfer. The deep Qwen rounds (k 8-16) run about +25 % over their
+facts on both cards, as on every other generation; the eta fit (k 4..7) and the hold-out (k ≤ 7)
+leave them out.
+
+**Supersedes** the RTX 3090 rows of DECISIONS 80 that say "unpriced (no facts for ampere)": the
+pool rule's priced branch now decides on Ampere. Its first case, Qwen3.8 27B at 32K and C = 8
+(MTP 3 in 4 contexts measured 51.1 tok/s a request against plain decode's 38.3 in 5), is the
+check frozen on #794 before the plan priced it: the priced branch keeps the head
+(`test_plan_drafter_kinds`, `test_pool_rule_lab_runs`). Held on the stand run: the priced
+branch keeps the head with the mix at x1.443 (the chats on 8 streams either way x1.556; the long
+requests on 5 against 6 x1.123), measured x1.334 a request. `test_spec_round_cost`'s pairs held
+out of their own card: the RTX 3060's Qwen3.5-9B MTP pair predicted x2.138 against x2.242 measured
+(-4.7 %), the RTX 3090's x2.292 against x2.169 (+5.7 %), each picking its card's measured best.
