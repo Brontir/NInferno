@@ -243,6 +243,16 @@ std::string save_cache_locked() {
 // The heuristic's route at T is one the tuner may replace: an A16 family that needs no workspace,
 // or R8 (another R8 schedule needs the workspace this one was sized for: the pre-quantized
 // activation at verify widths, none at T = 1).
+bool replaceable(Route r, std::int32_t k, std::int32_t tokens);
+
+// Whether the tuner times decode width t of the problem: a replaceable heuristic route, no table
+// answer the route policy keeps (#808: a demoted one is timed) and no Volta rule that routes the
+// width before any tuned route.
+bool timed_width(const Problem& problem, const Weight& weight, std::int32_t t) {
+    return replaceable(heuristic_route(problem, weight, t, false), weight.k, t) &&
+           !table_route_kept(problem, t, false) && !volta_fixed_route(problem, weight, t);
+}
+
 bool replaceable(Route r, std::int32_t k, std::int32_t tokens) {
     if (r.family == Family::R8Mma) return true;
     // The vector kernel's rule: R8, ggml's matrix kernel and the A16 schedules time against it.
@@ -705,7 +715,15 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream) {
                 break;
             }
             const auto& v = entry["routes"][name];
-            if (v.is_null()) continue;
+            if (v.is_null()) {
+                // A width an older tune left untimed because a table answered it, which this
+                // route policy demotes (#808, codex): the entry is not complete, time it now.
+                if (table_route(problem, t, false) && timed_width(problem, *call.weight, t)) {
+                    complete = false;
+                    break;
+                }
+                continue;
+            }
             if (!v.is_string()) {
                 complete = false;
                 break;
