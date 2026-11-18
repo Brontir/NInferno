@@ -278,12 +278,12 @@ def switch_targets(body, i):
     """The possible targets of the indirect branch at `i`, a compiled switch (sm_100 / sm_120a
     compile one so, e.g. the routed expert kernels' epilogue): the jump table is in a constant
     bank, so its entries are not read, and the targets are over-approximated by every instruction
-    after the branch, up to the reconvergence point R of the BSSY that opens its region where one
-    stands within eight instructions before it (BSSY Bn, R), else to the function's end. All
-    forward: no edge back, so no loop is made, and a loop the branch sits outside of is counted as
-    before. None (unknown flow, the counts left empty) where no instruction follows, or where a
-    branch among the targets jumps back (a loop entered from the switch could lose its header's
-    dominance and vanish silently)."""
+    after the branch, up to the reconvergence point R of the BSSY that opens its region, which
+    must stand within eight instructions before it (BSSY Bn, R). All forward: no edge back, so no
+    loop is made, and a loop the branch sits outside of is counted as before. None (unknown flow,
+    the counts left empty) without such a BSSY (nothing bounds the table's targets to forward
+    ones), where no instruction follows, or where a branch among the targets jumps back (a loop
+    entered from the switch could lose its header's dominance and vanish silently)."""
     offset, end = body[i][0], None
     for j in range(i - 1, max(i - 9, -1), -1):
         if base_opcode(body[j][2]) == "BSSY":
@@ -291,7 +291,9 @@ def switch_targets(body, i):
             if m and int(m.group(1), 16) > offset:
                 end = int(m.group(1), 16)
             break
-    targets = [k for k in range(i + 1, len(body)) if end is None or body[k][0] <= end]
+    if end is None:
+        return None
+    targets = [k for k in range(i + 1, len(body)) if body[k][0] <= end]
     for k in targets:
         if base_opcode(body[k][2]) in ("BRA", "JMP"):
             m = TARGET.search(body[k][3])
