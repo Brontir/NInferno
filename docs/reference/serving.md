@@ -2694,8 +2694,8 @@ SPEC:
 
 - **Dense decoders** (dense_decoder and moe_decoder artifacts: gpt-oss, Llama, Muse Glimmer, ...)
   keep their full layers' keys and values in FP8 rows by default on sm_89 and newer
-  (`--kv-dtype auto`). `--kv-dtype bf16` restores BF16. Below sm_89 the software conversion makes
-  FP8 slower (RTX 3090 gpt-oss at 88K: 136 -> 91 t/s), so `auto` stays BF16 there. A dense_decoder's
+  (`--kv-dtype auto`). `--kv-dtype bf16` restores BF16. Below sm_89 `auto` stays BF16; there
+  `--kv-dtype fp8` stores the rows as int8 codes (see the sm_75 to sm_88 item below). A dense_decoder's
   sliding rings follow its KV cache (FP8 under FP8 KV); a moe_decoder's (gpt-oss) stay BF16 unless
   `--sliding-kv-dtype fp8`.
 - gpt-oss-20b at about 88K context decodes 157 -> 185 t/s (RTX 4090), 159 -> 192 (RTX 5080), and 316
@@ -2706,6 +2706,17 @@ SPEC:
   (`--kv-dtype bf16` restores BF16), and its sliding rings follow: FP8 under FP8 KV, BF16 with
   `--sliding-kv-dtype bf16` or under BF16 KV. The rings grow with every slot and cached state (31B: 0.78 MiB per ring row in BF16, window
   1024 + chunk - 1 rows each).
+- **sm_75 to sm_88** (Turing, Ampere) convert no FP8 in hardware, so there `--kv-dtype fp8` stores
+  the dense decoders' and Gemma 4's rows (full layers and rings) as int8 codes in the same layout:
+  one byte per value and an FP32 scale per row, which the kernels widen natively. server_start
+  records and the CLI metrics name it `int8-row256` (`fp8-e4m3-row256` where the codes are E4M3).
+  The rows halve the KV bytes; their speed against BF16 depends on the card and the context:
+  RTX 3090 gpt-oss-20b decode +6.5 / +12.6 / +16.1 % at 32K / 65K / 88K, prefill -1..-2 %;
+  RTX 3090 Gemma 4 12B decode +0..+1.6 %, prefill -2.5..-4.6 %; RTX 2080 Ti Gemma 4 12B decode
+  -1.7..-4.5 %, prefill -3.5..-6.8 % (the prefill attention runs about 19 % more instructions to
+  widen the codes). `auto` keeps BF16 below sm_89; `fp8` there buys context and slots, not speed,
+  except the long-context decode of the dense decoders on Ampere. The Qwen paged pool's `fp8` stays E4M3
+  codes on every build (software conversion below sm_89).
 - Measured with every layer in FP8 against BF16 (`ninferno-gemma4 score`, 32 chat windows of 2,047
   scored tokens, 65,504 in all): mean next-token NLL moves by -0.002 +- 0.018 and +0.007 +- 0.014
   (26B-A4B NVFP4, artifact / BF16-activation profile) and +0.009 +- 0.012 and +0.006 +- 0.007 (31B

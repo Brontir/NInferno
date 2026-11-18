@@ -174,7 +174,8 @@ void print_generation_summary(const ninferno::GenerationResult& result,
                                        std::to_string(memory.kv_capacity_max_page_groups));
     print_metric("gpu weights used", format_arena_used(memory.weights));
     print_metric("gpu sequence used", format_arena_used(memory.sequence));
-    print_metric("kv cache dtype", std::string(ninferno::kv_cache_storage_layout(memory.kv_cache)));
+    print_metric("kv cache dtype", std::string(ninferno::kv_cache_storage_layout(
+                                       memory.kv_cache, memory.kv_rows_int8)));
     print_metric("kv cache payload", format_bytes(memory.kv_payload_bytes));
     print_metric("gpu workspace peak", format_arena_peak(memory.workspace));
     print_metric("runtime reservation", format_bytes(memory.runtime_reservation_bytes));

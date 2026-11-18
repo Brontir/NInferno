@@ -232,6 +232,14 @@ int main() {
     failures += check(server.at("server").at("answer_room").is_boolean(),
                       "schema 32: server answer_room missing");
     failures += check(server.at("engine").at("kv_cache") == "fp8-e4m3-row256", "KV type missing");
+    // The Gemma 4 / dense rows of an sm_75..88 build hold int8 codes in the same layout (#991).
+    memory.kv_rows_int8         = true;
+    const Json int8_rows_server = Json::parse(format_server_start_json(
+        "serve-test", 1000, options, engine_options, sampling_defaults, "deployment-alias", load,
+        memory, environment, std::uint64_t{123456}));
+    failures += check(int8_rows_server.at("engine").at("kv_cache") == "int8-row256",
+                      "int8 one-byte rows not named");
+    memory.kv_rows_int8     = false;
     options.kv_cache        = ninferno::KvCacheStorage::Nvfp4Group16;
     engine_options.kv_cache = *options.kv_cache;
     memory.kv_cache         = *options.kv_cache;

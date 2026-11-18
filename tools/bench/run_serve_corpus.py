@@ -42,6 +42,10 @@ KV_CACHE_NAMES = {
     "nvfp4": "nvfp4",
     "k8v4": "k8v4",
 }
+# The labels server_start may log for a --kv-dtype: fp8's one-byte rows are "int8-row256" where
+# the build writes them as int8 codes (Gemma 4 / dense rows on sm_75..88, kv_cache_storage_layout).
+KV_CACHE_LABELS = {**{k: (v,) for k, v in KV_CACHE_NAMES.items()},
+                   "fp8": ("fp8-e4m3-row256", "int8-row256")}
 
 SEEDS = (
     7632647173703958409,
@@ -564,6 +568,8 @@ def validate_server_start(event: dict[str, Any], spec: RunSpec, device: int) -> 
         "speculative_draft_window": spec.draft_tokens,
         "proposal_head": "optimized" if spec.draft_tokens else "full",
     }
+    if actual.get("kv_cache") in KV_CACHE_LABELS[spec.kv_dtype]:
+        expected["kv_cache"] = actual["kv_cache"]
     if actual != expected:
         raise CampaignError(f"server_start Engine configuration mismatch: {actual!r}")
     if event.get("sampling_defaults", {}).get("greedy") != (

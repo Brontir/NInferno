@@ -10,6 +10,7 @@
 #include "ninferno/ops/argmax.h"
 #include "ninferno/ops/target_logprobs.h"
 #include "ninferno/ops/token_distribution.h"
+#include "ops/softmax_attention/gemma4/row_codec.h"
 #include "structured/vocabulary.h"
 
 #include <algorithm>
@@ -58,6 +59,9 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
       prefill_chunk(plan.prefill_chunk), kv_lease_window(plan.kv_lease_window),
       draft_window(plan.draft_window), default_draft_depth(plan.default_draft_depth),
       speculative_backend(plan.speculative_backend), kv_storage(plan.kv_storage),
+      kv_rows_int8((plan.kv_storage == KvCacheStorage::Fp8E4M3Row256 &&
+                    plan.persistent.decoder.text_kv.layer_storage.key.data_dtype == DType::I8) ||
+                   (plan.ring_storage == KvCacheStorage::Fp8E4M3Row256 && ops::kGemma4RowInt8)),
       proposal_head(plan.proposal_head), draft_width(plan.draft_width),
       watchdog_policy{plan.acceptance_floor, plan.watchdog_window, plan.watchdog_min_rounds},
       shared_trip_floor(plan.shared_trip_floor), copy_window_drafts(plan.ngram_draft_tokens),
@@ -750,6 +754,7 @@ MemorySummary ProgramImpl::memory_summary() const noexcept {
     out.max_context     = capacity;
     out.kv_capacity     = kv_capacity;
     out.kv_cache        = kv_storage;
+    out.kv_rows_int8          = kv_rows_int8;
     const std::size_t weights = model.traits().weight_bytes;
     out.weights               = ArenaMemorySummary{weights, weights, weights};
     out.sequence =
