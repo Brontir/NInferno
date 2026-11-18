@@ -4653,8 +4653,59 @@ void kernel_cost_rows_name_their_architecture() {
     }
 }
 
+// #997: the rebase of a row's launch share. On its own architecture, or on one without launch
+// facts, a row is priced as measured. Elsewhere it moves by the two architectures' launch shares,
+// the GEMV's node plus the dispatch ramp of its ~1024-CTA grid and the small kernel's node.
+// Volta's row on a Turing card is the case: both have launch facts and differ.
+void kernel_cost_rebases_the_launch_share() {
+    const ch::KernelCost* volta = nullptr;
+    for (const ch::KernelCost& row : ch::kKernelCost) {
+        if (row.generation == "volta") volta = &row;
+        check(ch::kernel_cost_seconds(row, row.major, row.minor, true) == row.gemv,
+              std::string(row.generation) +
+                  ": the row's own architecture prices the GEMV as measured");
+        check(ch::kernel_cost_seconds(row, row.major, row.minor, false) == row.small,
+              std::string(row.generation) +
+                  ": the row's own architecture prices a small kernel as measured");
+        check(ch::kernel_cost_seconds(row, 9, 0, true) == row.gemv,
+              std::string(row.generation) +
+                  ": sm_90 has no launch facts, so the row is as measured");
+        check(ch::kernel_cost_seconds(row, 9, 0, false) == row.small,
+              std::string(row.generation) +
+                  ": sm_90 has no launch facts, so a small kernel's row is as measured");
+    }
+    check(volta != nullptr, "kKernelCost has the volta row");
+    if (volta == nullptr) return;
+    // Below sm_90 a GEMV's node is the plain graph node too (choice.cpp launch_share).
+    const auto share = [](int major, int minor, bool gemv) -> std::optional<double> {
+        const std::optional<double> node =
+            ninferno::launch_seconds(major, minor, ninferno::LaunchKind::GraphNode);
+        if (!node || !gemv) return node;
+        const std::optional<ninferno::Ramp> ramp = ninferno::ramp_seconds(major, minor, 1024.0);
+        if (!ramp) return std::nullopt;
+        return *node + ramp->seconds;
+    };
+    for (const bool gemv : {true, false}) {
+        const std::string kind             = gemv ? "GEMV" : "small";
+        const std::optional<double> census = share(7, 0, gemv);
+        const std::optional<double> own    = share(7, 5, gemv);
+        check(census.has_value() && own.has_value(),
+              "sm_70 and sm_75 have launch shares (" + kind + ")");
+        if (!census || !own) continue;
+        check(*census != *own,
+              "sm_70 and sm_75 launch shares differ, so the rebase is exercised (" + kind + ")");
+        const double measured = gemv ? volta->gemv : volta->small;
+        const double want     = measured - *census + *own;
+        const double got      = ch::kernel_cost_seconds(*volta, 7, 5, gemv);
+        check(std::abs(got - want) <= 1e-12 * measured,
+              "volta row on sm_75 (" + kind + "): " + std::to_string(got) + " s, want " +
+                  std::to_string(want) + " s");
+    }
+}
+
 int main() {
     kernel_cost_rows_name_their_architecture();
+    kernel_cost_rebases_the_launch_share();
     for (const char* name : {"speed_measured", "decode_measured", "prefill_measured"}) {
         std::ifstream cards(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/" + name +
                             ".json");
