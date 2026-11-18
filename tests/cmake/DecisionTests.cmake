@@ -39,6 +39,24 @@ cmake_language(DEFER CALL ninferno_assert_host_only ninferno_selector_golden_hos
 # It dumps every board twice over (once a process per board, then all in one): minutes of CPU.
 set_tests_properties(ninferno_selector_golden_host_test PROPERTIES TIMEOUT 1800)
 
+# The decision atlas's host twin (#962): the same properties and committed atlas as
+# ninferno_decision_properties_test (tests/cmake/RuntimeTests.cmake), linked with no CUDA runtime
+# like the selector golden's twin, so a decision-facts change (src/core/data/gpu_facts.json, say)
+# with a stale tests/data/decision_atlas/<set>.txt fails the decisions workflow too. With no device
+# in the process, P4 (CPU == GPU) is vacuous here and runs in the device build.
+ninferno_add_test(ninferno_decision_properties_host_test LABELS host golden slow
+  SOURCES "${PROJECT_SOURCE_DIR}/tests/test_decision_properties.cpp"
+  LIBRARIES ninferno_ops_host)
+target_sources(ninferno_decision_properties_host_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
+target_compile_definitions(ninferno_decision_properties_host_test PRIVATE
+  NINFERNO_HOST_ONLY
+  NINFERNO_DECISION_ATLAS_DIR="${PROJECT_SOURCE_DIR}/tests/data/decision_atlas")
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_decision_properties_host_test)
+set_tests_properties(ninferno_decision_properties_host_test PROPERTIES TIMEOUT 1800)
+
 # The route policy (#614 F1, --route-policy): on the A5 regret sweep's boards and shapes, legacy is
 # unchanged, a borrowed or transferred route-table answer yields to the ranker under evidence, and
 # an answer of any other evidence is never demoted. `--write FILE` writes the moved decisions
