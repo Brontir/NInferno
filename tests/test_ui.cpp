@@ -1113,6 +1113,7 @@ void test_artifact_plan_via_serve() {
         for (std::string line; std::getline(file, line);) { out.push_back(line); }
         return out;
     };
+    fs::remove(args); // a stale file would read as this call's
     std::tie(status, body) = plan(root / "serve-plan", "&kv=int8&act=fast&spec=none");
     const std::vector<std::string> pinned = {artifact.string(),
                                              "--plan",
@@ -1134,6 +1135,7 @@ void test_artifact_plan_via_serve() {
                                              "gpu=0"};
     check(status == 200 && args_of() == pinned,
           "kv=int8, act=fast and spec=none reach serve as asked: " + body);
+    fs::remove(args); // a stale file would read as this call's
     std::tie(status, body)                  = plan(root / "serve-plan", "&kv=auto&act=auto");
     const std::vector<std::string> unpinned = {artifact.string(),
                                                "--plan",
