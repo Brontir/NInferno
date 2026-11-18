@@ -615,11 +615,14 @@ def sass_lines(binary, cuda_bin, arch, sass_dump=None, names=None, batch=SASS_BA
                 fail(f"cuobjdump -sass failed on {binary}: {errors.read().strip()[:400]}")
 
 
-def emulated_calls(binary, cuda_bin, arch, sass_dump=None):
+def emulated_calls(binary, cuda_bin, arch, keys, sass_dump=None):
     """relocation_calls of the image where its kernels call the emulated int8 MMA (sm_70,
-    NINFERNO_FMA_MMA, #787): its SASS prints those calls unresolved. None elsewhere, and for a
-    saved dump (its relocations are not in it)."""
+    NINFERNO_FMA_MMA, #787): its SASS prints those calls unresolved. None elsewhere, for a saved
+    dump (its relocations are not in it), and where `keys` holds no w4a8 kernel (the only family
+    whose loop makes those calls, #1006 review)."""
     if sass_dump or not str(arch).endswith("70"):
+        return None
+    if not any(fk[0] == "w4a8" for fk in keys.values()):
         return None
     command = [cuda_tool("cuobjdump", cuda_bin), "-elf", "-arch", arch, binary]
     with tempfile.TemporaryFile(mode="w+", errors="replace") as errors:
@@ -641,7 +644,7 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
     from its SASS. A kernel disassembled twice in the image (two units) must agree."""
     counts = {}
     lines = sass_lines(binary, cuda_bin, arch, sass_dump, sorted(keys), batch)
-    calls = emulated_calls(binary, cuda_bin, arch, sass_dump)
+    calls = emulated_calls(binary, cuda_bin, arch, keys, sass_dump)
     if sass_dump and str(arch).endswith("70") and any(fk[0] == "w4a8" for fk in keys.values()):
         fail("an sm_70 w4a8 extraction needs the binary: a saved SASS dump has no relocations, "
              "so its emulated MMA calls would count as no MMA")

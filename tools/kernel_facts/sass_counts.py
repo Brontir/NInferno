@@ -30,8 +30,8 @@ How the loop is found (`loop_counts`):
    instructions; `longest_iteration`): the full iteration, which fetches both slots and loads
    every row (the guards skip only rows past the call's end and the last fetches), with the
    longest of the compiler's alternative versions of a step where it kept several (the
-   group-tail path of the 32-value formats: the same MMAs and loads, a few more checks; Volta's
-   emulated MMA over its lane-local path). Predicated instructions count: they issue. A CALL's
+   group-tail path of the 32-value formats: the same MMAs and loads, a few more checks; on Volta
+   the path whose calls to the emulated MMA are the most, as item 4 counts them). Predicated instructions count: they issue. A CALL's
    callee (a slow path) is not counted; an MMA-free loop nested in the body counts once.
 
 What is counted per iteration (`LoopCounts`): the MMAs and their shape; of them the min-term
