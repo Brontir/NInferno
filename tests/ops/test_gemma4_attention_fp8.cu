@@ -1,6 +1,6 @@
 // gemma4_attention and gemma4_kv_append over one-byte row planes (Gemma4KvLayer's row storage:
 // a code a value with an FP32 scale per row; the codes are the build's, row_codec.h: E4M3, or
-// int8 on sm_75 to sm_86 builds, #619 steps 9-10).
+// int8 on sm_75 to sm_88 builds, #619 steps 9-10).
 //
 // Every call appends its history and its own rows through gemma4_kv_append, attends, and reads
 // the planes back. Two checks:

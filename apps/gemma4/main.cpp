@@ -91,7 +91,6 @@
 #include "product/tool_args.h"
 #include "product/route_labels.h"
 #include "product/tool_maintainer.h"
-#include "ops/softmax_attention/gemma4/row_codec.h"
 
 #include <cuda_runtime.h>
 
@@ -896,17 +895,11 @@ int main(int argc, char** argv) {
         options.max_context   = static_cast<std::int32_t>(args.number("context", tuning ? 4096 : 32768));
         options.prefill_chunk = static_cast<std::int32_t>(args.number("chunk", 2048));
         const std::string kv_dtype = args.text("kv-dtype", "bf16");
-        // fp8 names the one-byte row codec, whose codes are the build's (row_codec.h): E4M3, or
-        // int8 on sm_75 to sm_86 builds, where int8 / int8-full are accepted as its names too.
-        const bool int8_name =
-            ops::kGemma4RowInt8 && (kv_dtype == "int8" || kv_dtype == "int8-full");
-        if (kv_dtype != "bf16" && kv_dtype != "fp8" && kv_dtype != "fp8-full" && !int8_name) {
-            throw std::invalid_argument(
-                ops::kGemma4RowInt8 ? "--kv-dtype must be bf16, fp8 (int8) or fp8-full (int8-full)"
-                                    : "--kv-dtype must be bf16, fp8 or fp8-full");
+        if (kv_dtype != "bf16" && kv_dtype != "fp8" && kv_dtype != "fp8-full") {
+            throw std::invalid_argument("--kv-dtype must be bf16, fp8 or fp8-full");
         }
-        options.kv_fp8      = kv_dtype == "fp8" || kv_dtype == "int8";
-        options.kv_fp8_full = kv_dtype == "fp8-full" || kv_dtype == "int8-full";
+        options.kv_fp8      = kv_dtype == "fp8";
+        options.kv_fp8_full = kv_dtype == "fp8-full";
         Drafters drafters;
         if (args.flag("drafter")) {
             drafters.load_mtp(drafter_artifact, device, model->config());

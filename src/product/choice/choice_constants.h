@@ -929,7 +929,8 @@ inline constexpr KvReadFactor kKvReadFactor[] = {
 //          re-census or a third card brings the two inside it
 // Gemma 4 12B's 8-bit rows on sm_75..88 (the int8 row kernel, #619 steps 9-10; g4cen.sh, the nsys
 // census of one stream's decode at 8K and 32K, the full layer's per-call time between them over the
-// 24576 tokens' rows, 2 x (512 + 2) = 1028 B a token, 2026-11-18):
+// 24576 tokens' rows, 2 x (512 + 2) = 1028 B a token (the planner's vector bytes, as the row is
+// priced; the FP32 scale makes it 1032 in memory), 2026-11-18):
 //   turing  RTX 2080 Ti: 256.1 us for 25.3 MB, 98.7 GB/s (16 % of 616), 0.94 a reference
 //           SM-clock; its BF16 full layer in the same census 185.8 us for 50.3 MB, 271 GB/s (2.58,
 //           3.4 % under the 2.67 row above)

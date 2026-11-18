@@ -6,11 +6,11 @@
 // kernels' widening go through these helpers, so the stored and the read values agree.
 //   - FP8 (sm_89 and newer): E4M3FN codes, scale = absmax(row) / 448 (0 for a zero row), code =
 //     E4M3(x / scale), saturating; the conversion is in hardware.
-//   - INT8 (sm_75 to sm_86, kGemma4RowInt8, #619 steps 9-10): cuda_fp8.h widens E4M3 in software
+//   - INT8 (sm_75 to sm_88, kGemma4RowInt8, #619 steps 9-10): cuda_fp8.h widens E4M3 in software
 //     there, so the same layout holds int8 codes instead: scale = absmax(row) / 127, code =
 //     round(x / scale) (|code| <= 127), read back as code x scale (one I2F and one FMUL a value).
 // One tree builds one architecture (NINFERNO_BUILD_ARCH), so the writer and the reader of a build
-// use one codec, and the host allocates its planes in the codec's dtype (gemma4_row_codec_dtype).
+// use one codec, and the host allocates its planes in the codec's dtype (kGemma4RowDtype).
 
 #include "ops/common/fp8_e4m3.cuh"
 #include "ops/common/warp.cuh"

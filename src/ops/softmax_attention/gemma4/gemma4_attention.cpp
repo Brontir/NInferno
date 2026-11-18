@@ -136,7 +136,7 @@ Gemma4KvBinding gemma4_kv_binding(const Gemma4KvLayer& cache, std::int32_t head_
                                   std::int32_t kv_heads, const char* op) {
     const Tensor& k = cache.k;
     const Tensor& v = cache.v;
-    // One-byte rows in the build's codec (row_codec.h: FP8_E4M3FN, I8 on sm_75 to sm_86).
+    // One-byte rows in the build's codec (row_codec.h: FP8_E4M3FN, I8 on sm_75 to sm_88).
     const bool fp8 = k.dtype == kGemma4RowDtype;
     for (const Tensor* plane : {&k, &v}) {
         if (plane->dtype != (fp8 ? kGemma4RowDtype : DType::BF16) || !plane->is_contiguous() ||

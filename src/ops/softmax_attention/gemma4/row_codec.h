@@ -4,9 +4,11 @@
 // tree builds one architecture (NINFERNO_BUILD_ARCH), so the planes the host allocates and checks
 // hold the codes its kernels write and read.
 //   - E4M3FN (DType::FP8_E4M3FN) on sm_89 and newer, where the conversion is in hardware, and on
-//     Volta, whose decode kernels (volta_decode.cu) read E4M3 themselves;
-//   - INT8 (DType::I8) on sm_75 to sm_86 (#619 steps 9-10): there cuda_fp8.h widens E4M3 in
+//     Volta;
+//   - INT8 (DType::I8) on sm_75 to sm_88 (#619 steps 9-10): there cuda_fp8.h widens E4M3 in
 //     software, while an int8 code widens with one I2F and one FMUL.
+// Every reader and writer takes the build's codec, the small-row decode of volta_decode.cu
+// included (Turing runs it too: gemma4_volta_decode_takes).
 
 #include "core/dtype.h"
 

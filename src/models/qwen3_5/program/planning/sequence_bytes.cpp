@@ -141,7 +141,7 @@ DFlashPersistentLayout plan_drafter_state(LayoutBuilder& builder, const DrafterS
 }
 
 // The paged pool of a ring decoder, Gemma 4 and NemotronH: head-major planes the gemma4 attention
-// reads, BF16 or one-byte rows (E4M3 codes, or int8 on the sm_75 to sm_86 builds: the build's row
+// reads, BF16 or one-byte rows (E4M3 codes, or int8 on the sm_75 to sm_88 builds: the build's row
 // codec, ops/softmax_attention/gemma4/row_codec.h; and an FP32 scale per row).
 struct HeadMajorPool {
     KvCacheStorage storage = KvCacheStorage::BFloat16;

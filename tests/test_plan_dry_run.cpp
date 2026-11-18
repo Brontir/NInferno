@@ -1892,6 +1892,10 @@ void test_kv_options() {
                   "Gemma 4 refuses " + std::string(kv_cache_storage_name(kv)));
         }
     }
+    // Volta keeps E4M3 rows (row_codec.h), widened in software: slow there.
+    check(pr::kv_options(gemma, 70).size() > 0 &&
+              find(pr::kv_options(gemma, 70), KvCacheStorage::Fp8E4M3Row256).slow_on_card,
+          "Gemma 4's one-byte rows are slow on Volta (software E4M3)");
     // A Qwen pool of 128-wide heads: the target's append and attention are 256-wide only, so no
     // compact codec (the layout's 128-wide INT8 is the DFlash drafter pool's).
     pr::PlanSourceFacts narrow = qwen;

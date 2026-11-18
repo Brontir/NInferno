@@ -309,10 +309,10 @@ void test_fp8_rings(ninferno::DeviceContext& device) {
     ninferno::DeviceArena arena(planned.bytes);
     q36::StateImageDevicePool pool({arena.base(), arena.capacity()}, planned.layout);
     const auto planes = pool.ring_planes(0, 2);
-    // The one-byte row codec is the build's (row_codec.h: I8 on sm_75 to sm_86).
+    // The one-byte row codec is the build's (row_codec.h: I8 on sm_75 to sm_88).
     expect(planes.k.dtype == ninferno::ops::kGemma4RowDtype && planes.k.ne[0] == 8 &&
                planes.k.ne[1] == 19 && planes.k.ne[2] == 2 && planes.k.ne[3] == 3,
-           "FP8 ring planes are E4M3 [head_dim, capacity, kv_heads, slots]");
+           "FP8 ring planes are in the build's row codec [head_dim, capacity, kv_heads, slots]");
     expect(planes.k_scale.dtype == ninferno::DType::FP32 && planes.k_scale.ne[0] == 1 &&
                planes.k_scale.ne[1] == 19 && planes.k_scale.ne[2] == 2 &&
                planes.k_scale.ne[3] == 3 && planes.v_scale.ne[1] == 19,

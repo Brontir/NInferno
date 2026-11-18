@@ -30,7 +30,26 @@ constexpr int kVoltaThreads = 128;
 constexpr int kVoltaTile    = 32; // keys a CTA folds per step
 constexpr int kVoltaQFloats = 4096;
 
-__device__ __forceinline__ float fp8_value(unsigned code) { return e4m3_to_float(code); }
+// One-byte codes in the build's row codec (row_codec.h): int8 on sm_75..88 builds, E4M3 on
+// Volta. Turing takes this kernel too (gemma4_volta_decode_takes: no native BF16 MMA), so the
+// codec is the build's, never assumed E4M3.
+__device__ __forceinline__ float fp8_value(unsigned code) {
+    if constexpr (kGemma4RowInt8) {
+        return static_cast<float>(static_cast<signed char>(code & 0xffU));
+    } else {
+        return e4m3_to_float(code);
+    }
+}
+
+// The two codes in the low 16 bits of `w`, unscaled.
+__device__ __forceinline__ float2 codes2(unsigned w) {
+    if constexpr (kGemma4RowInt8) {
+        return make_float2(static_cast<float>(static_cast<signed char>(w & 0xffU)),
+                           static_cast<float>(static_cast<signed char>((w >> 8) & 0xffU)));
+    } else {
+        return __half22float2(e4m3x2_to_half2(w & 0xffffU));
+    }
+}
 
 // D / 32 values of a row at element offset `at` (lane's dims) as FP32: BF16, or FP8 codes times
 // the row scale.
@@ -65,8 +84,8 @@ __device__ __forceinline__ void load_dims(const void* plane, const float* scales
 #pragma unroll
             for (int i = 0; i < E; i += 4) {
                 const unsigned w = *reinterpret_cast<const unsigned*>(p + i);
-                const float2 lo  = __half22float2(e4m3x2_to_half2(w & 0xffffU));
-                const float2 hi  = __half22float2(e4m3x2_to_half2(w >> 16));
+                const float2 lo  = codes2(w & 0xffffU);
+                const float2 hi  = codes2(w >> 16);
                 out[i]           = scale * lo.x;
                 out[i + 1]       = scale * lo.y;
                 out[i + 2]       = scale * hi.x;
@@ -242,7 +261,7 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
                 if constexpr (J >= 2) {
 #pragma unroll
                     for (int j = 0; j < J; j += 2) {
-                        const float2 v = __half22float2(e4m3x2_to_half2((w >> (8 * j)) & 0xffffU));
+                        const float2 v = codes2((w >> (8 * j)) & 0xffffU);
                         vf[j]          = scale * v.x;
                         vf[j + 1]      = scale * v.y;
                     }
@@ -376,10 +395,10 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_tiled_kernel(
                 const unsigned vw = *reinterpret_cast<const unsigned*>(
                     static_cast<const std::uint8_t*>(args.cache_v) + at);
                 const float ks = k_scales[slot], vs = v_scales[slot];
-                const float2 k01 = __half22float2(e4m3x2_to_half2(kw & 0xffffU));
-                const float2 k23 = __half22float2(e4m3x2_to_half2(kw >> 16));
-                const float2 v01 = __half22float2(e4m3x2_to_half2(vw & 0xffffU));
-                const float2 v23 = __half22float2(e4m3x2_to_half2(vw >> 16));
+                const float2 k01 = codes2(kw & 0xffffU);
+                const float2 k23 = codes2(kw >> 16);
+                const float2 v01 = codes2(vw & 0xffffU);
+                const float2 v23 = codes2(vw >> 16);
                 kf = make_float4(ks * k01.x, ks * k01.y, ks * k23.x, ks * k23.y);
                 vf = make_float4(vs * v01.x, vs * v01.y, vs * v23.x, vs * v23.y);
             } else {
