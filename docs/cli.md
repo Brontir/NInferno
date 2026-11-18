@@ -521,7 +521,7 @@ version, the commit and the runtime).
 |---|---|
 | `0` | no route line moved: the registry row gives the start's routes |
 | `1` | some lines moved: each is printed with the start's and the replay's value |
-| `2` | a usage or input error, or a refusal: a start whose selection a maintainer overrode (taint `maintainer`, `user_tune_cache`), a start of another build, a start on another PCI id than `BOARD` |
+| `2` | a usage or input error, or a refusal: a start whose selection a maintainer overrode (taint `maintainer`, `user_tune_cache`), a start of another build, a start on another PCI id than `BOARD`, a start whose options record no route policy (before #614 F1) |
 
 Other taints (`foreign_route_table`: the nearest board's table where the board has none,
 `borrowed_routes`, `clocks`, `carried_context_cost`, the speculation ones) belong to the release

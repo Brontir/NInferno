@@ -183,6 +183,17 @@ int replay_routes_main(int argc, char** argv) {
     // A loaded model's selection reads the release's dense tuner entries (routes/tuner/
     // dense_tune.json; the start records their hash as sources.dense_tune.shipped): the replay
     // reads them too, read only, or every band they decide is reported moved (#935).
+    // The start's route policy first: a start from before F1 records none and is refused before
+    // anything is printed.
+    RoutePolicy policy{};
+    try {
+        policy = runtime::route_policy_of(options);
+    } catch (const std::exception& error) {
+        std::cerr << "replay-routes: " << error.what()
+                  << "
+                     ";
+            return 2;
+    }
     if (dense_tune) {
         ops::detail::generic::set_dense_tune(TuneMode::Off, {});
         ops::detail::generic::enable_dense_tune(true);
@@ -192,7 +203,7 @@ int replay_routes_main(int argc, char** argv) {
     }
     runtime::DecisionSection replayed;
     try {
-        replayed = runtime::replay_routes(device, recorded, runtime::route_policy_of(options));
+        replayed = runtime::replay_routes(device, recorded, policy);
     } catch (const std::exception& error) {
         std::cerr << "replay-routes: " << error.what() << "\n";
         return 2;
