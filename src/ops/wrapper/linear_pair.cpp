@@ -193,8 +193,11 @@ bool chain_prefers_fused(std::int32_t n, std::int32_t k, std::int32_t tokens) {
         // separate_chain priced means a device answered (a host without one prices nothing).
         const auto fw = fused_price(n, k, tokens, device_class());
         const auto sw = detail::linear_q8_residency_price(pair_row_weight(n, k), tokens);
-        if (!fw || !sw) { return true; }
-        return *fw <= 2.0 * *sw;
+        // #617 E A/B arm only (never merged): the one-launch schedule always keeps the call, as
+        // before #948's residency price.
+        (void)fw;
+        (void)sw;
+        return true;
     }
     return fused->requested_bytes <= separate->requested_bytes;
 }
