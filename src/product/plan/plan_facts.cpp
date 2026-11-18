@@ -1452,6 +1452,10 @@ bool binds_directory(const runtime::PlanModelFacts& model) {
 // share one directory, which the query's described start is kept by.
 struct KeptArtifact {
     std::filesystem::path path; // canonical where it resolves
+    // Where the reader resolves a multipart file's continuations: the directory of the path as
+    // given (artifact::Reader opens each part beside it), canonical where it resolves. An entry
+    // reached through a symlink in another directory reads other parts, so it is another key.
+    std::filesystem::path parts;
     std::filesystem::file_time_type written;
     std::uintmax_t size = 0;
     // The reader's id: a new conversion written over the file within the clock's resolution
@@ -1474,13 +1478,18 @@ KeptArtifact kept_artifact(const std::filesystem::path& artifact, const artifact
     const auto size                   = std::filesystem::file_size(artifact, size_error);
     const auto canonical              = std::filesystem::weakly_canonical(artifact, path_error);
     const std::filesystem::path& path = path_error ? artifact : canonical;
+    std::error_code parts_error;
+    const auto parts_canonical = std::filesystem::weakly_canonical(
+        artifact.parent_path().empty() ? std::filesystem::path(".") : artifact.parent_path(),
+        parts_error);
+    const std::filesystem::path parts = parts_error ? artifact.parent_path() : parts_canonical;
     const artifact::ArtifactId& id    = reader.artifact_id();
     const bool keyed                  = !time_error && !size_error;
+    const auto same_key = [&](const KeptArtifact& k) { return k.path == path && k.parts == parts; };
     std::shared_ptr<const artifact::Directory> directory;
     {
         std::lock_guard lock(mutex);
-        const auto it = std::find_if(kept.begin(), kept.end(),
-                                     [&](const KeptArtifact& k) { return k.path == path; });
+        const auto it = std::find_if(kept.begin(), kept.end(), same_key);
         if (keyed && it != kept.end() && it->written == written && it->size == size &&
             it->id == id) {
             kept.splice(kept.begin(), kept, it);
@@ -1491,6 +1500,7 @@ KeptArtifact kept_artifact(const std::filesystem::path& artifact, const artifact
     }
     if (!directory) { directory = std::make_shared<const artifact::Directory>(reader.directory()); }
     KeptArtifact out{path,
+                     parts,
                      written,
                      size,
                      id,
@@ -1498,7 +1508,7 @@ KeptArtifact kept_artifact(const std::filesystem::path& artifact, const artifact
                      runtime::plan_tokenizer_tokens(reader).value_or(0)};
     if (keyed) {
         std::lock_guard lock(mutex);
-        kept.remove_if([&](const KeptArtifact& k) { return k.path == path; });
+        kept.remove_if(same_key);
         kept.push_front(out);
         while (kept.size() > kKeptArtifacts) { kept.pop_back(); }
     }

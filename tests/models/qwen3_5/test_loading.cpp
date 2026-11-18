@@ -245,6 +245,17 @@ void logical_data_and_instances() {
         require(later.artifact_directory != facts.artifact_directory &&
                     later.tokenizer_tokens == 265,
                 "the kept artifacts are not bounded: the first file outlived four others");
+        // A symlink to the file in another directory (codex on #1011): the reader resolves a
+        // multipart file's continuations beside the path it is given, so the entry is another
+        // key, never the canonical file's kept directory.
+        const auto elsewhere = entry.parent_path() / "kept_link_dir";
+        std::filesystem::create_directories(elsewhere);
+        const auto link = elsewhere / entry.filename();
+        std::filesystem::remove(link);
+        std::filesystem::create_symlink(entry, link);
+        require(product::plan_facts_of_artifact(link).model.artifact_directory !=
+                    later.artifact_directory,
+                "a symlink in another directory shared the canonical file's kept directory");
     }
     const auto& attention = std::get<qwen::AttentionWeights>(plan.weights().text.layers[0].mixer);
     const auto& query     = plan.parameter(attention.query);
