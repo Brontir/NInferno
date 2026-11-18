@@ -18,6 +18,16 @@ inline constexpr bool kGemma4RowInt8 = NINFERNO_BUILD_ARCH >= 75 && NINFERNO_BUI
 inline constexpr bool kGemma4RowInt8 = false;
 #endif
 
+// Whether the release engine a card of compute capability `cc` runs (one tree per architecture,
+// apps/dispatch) writes int8 row codes: sm_75 to sm_88, the INT8 trees above. A card property for
+// the planner, which may run in a tree other than the card's (a host plan for another board);
+// the tree's own codec is the same rule at its architecture (the static_assert).
+[[nodiscard]] constexpr bool gemma4_rows_int8_on(int cc) noexcept { return cc >= 75 && cc < 89; }
+#if defined(NINFERNO_BUILD_ARCH)
+static_assert(kGemma4RowInt8 == gemma4_rows_int8_on(NINFERNO_BUILD_ARCH),
+              "the build's row codec must be the card rule at its own architecture");
+#endif
+
 // The dtype of a one-byte row plane in this build.
 inline constexpr DType kGemma4RowDtype = kGemma4RowInt8 ? DType::I8 : DType::FP8_E4M3FN;
 
