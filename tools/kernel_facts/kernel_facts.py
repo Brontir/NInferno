@@ -1360,24 +1360,28 @@ def sass_unstable(family, key):
     return family == "r8" and int(key[3]) == 8 and int(key[5]) == 1
 
 
-# Section rows whose registers ptxas does not reproduce from one source (#968). One translation unit,
-# one path, no ccache, compiled 9 to 13 times with other compiles beside it (tools as in #968's
-# comments, nvcc 13.4.92; 13.5.37 the same): every moe and r8 unit gave one resource set except
-# moe_gemm_q5.cu / moe_gemm_q6.cu, whose GroupwiseG64Decoder<5> / <6> kernels at RmmaSchedule<4, 1,
-# 1, 1, 1>, the Down (2) and Up (3) stages, came out with the register counts below, from the same
-# PTX: each arch's set counted on that arch alone (its census, the rows its full builds wrote; sm_89
-# also the two trees of #968's ptx968 run), sm_120a none. Neither threads, cores, ASLR nor
-# --allow-expensive-optimizations reproduce one allocation (#968). Their loop counts move with the allocation. No price reads these rows: the MoE expert law
-# prices the ggml K-quant decoders (tools/bench/moe_expert_law.py GEMM_DEC; a test keeps it so). check
-# holds such a row to its stack, local and shared bytes and to a register count among the ones
-# counted here, prints both register counts and never fails on its loop counts; extract --update
-# keeps the section's row where the build's is another counted allocation (keep_allocations). A new count seen in a build is a new allocation of the same source: count it here
-# (the census, #968) and rerun the check; no rebuild. Key: FAMILIES["moegemm"].key (decoder,
-# warps_m, warps_k, m_tiles, n_tiles, cluster, stage); per architecture label.
+# Section rows whose registers ptxas does not reproduce from one source (#968). One translation
+# unit, one path, no ccache, compiled 9 to 13 times with other compiles beside it, the two units
+# below 41 times an arch (one alone, then ten rounds of four at once; tools as in #968's comments,
+# nvcc 13.4.92; 13.5.37 the same): every moe and r8 unit gave one resource set except moe_gemm_q5.cu
+# / moe_gemm_q6.cu, whose GroupwiseG64Decoder<5> / <6> kernels at RmmaSchedule<4, 1, 1, 1, 1>, the
+# Down (2) and Up (3) stages, came out with the register counts below from the same PTX. Each arch's
+# set is counted on that arch alone: its census and the rows its full builds wrote (sm_89 also the
+# two trees of #968's ptx968 run). sm_75 and sm_120a gave one count in 41. Neither threads, cores,
+# ASLR nor --allow-expensive-optimizations reproduce one allocation, and the loop counts move with
+# the allocation. No price reads these rows: the MoE expert law prices the ggml K-quant decoders
+# (tools/bench/moe_expert_law.py GEMM_DEC; a test keeps it so). check holds such a row to its stack,
+# local and shared bytes and to another register count among the ones counted here (at one count the
+# row is held exact), prints both counts and never fails on the loop counts; extract --update keeps
+# the section's row where the build's is another counted allocation (keep_allocations). A new count
+# seen in a build is a new allocation of the same source: count it here (the census, #968) and rerun
+# the check; no rebuild. Key: FAMILIES["moegemm"].key (decoder, warps_m, warps_k, m_tiles, n_tiles,
+# cluster, stage); per architecture label.
 REGISTER_ALLOCATIONS = {
     "moegemm": {
         "80": {
             ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): (72, 77),
             ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
             ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 78),
         },
