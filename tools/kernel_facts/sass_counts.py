@@ -227,8 +227,8 @@ def relocation_calls(lines):
     ValueError; where they agree, the first spelling is kept. The merge is not keyed by image: the
     SASS is read in batches of `-fun` calls, each printing every image's header, so an image's
     ordinal there does not line up with its ordinal here. An offset relocated in one section only
-    applies to every copy of the function; copies of different layouts are caught by
-    extract_counts' check that a kernel disassembled twice agrees."""
+    applies to every copy of the function; copies of different layouts show up as extract_counts'
+    "disassembled twice ... different loops" failure when that changes a copy's counts."""
     def meaning(symbol):
         m = EMULATED_MMA.search(symbol)
         return m.group(1) if m else None
