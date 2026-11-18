@@ -41,15 +41,11 @@ __device__ __forceinline__ float fp8_value(unsigned code) {
     }
 }
 
-// A widened row value as the other Gemma 4 kernels stage it on an int8 build: BF16(FP32(code) *
-// scale) (gemma4_fp8x4_to_bf16), so every route of one build attends over the same values and the
-// op's oracle holds for this one too. Volta's E4M3 rows keep the FP32 product.
+// A widened row value as the other Gemma 4 kernels stage it: BF16(FP32(code) * scale)
+// (gemma4_fp8x4_to_bf16), on both codecs, so every route of one build attends over the same
+// values and the op's oracle holds for this one too.
 __device__ __forceinline__ float staged(float x) {
-    if constexpr (kGemma4RowInt8) {
-        return __bfloat162float(__float2bfloat16_rn(x));
-    } else {
-        return x;
-    }
+    return __bfloat162float(__float2bfloat16_rn(x));
 }
 
 // The two codes in the low 16 bits of `w`, unscaled.
