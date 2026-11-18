@@ -22,6 +22,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -316,13 +317,16 @@ int main() {
             options.maintainer.route_policy = RoutePolicy::Evidence;
             const RoutePolicy recorded =
                 rt::route_policy_of(rt::options_of(options, "id", "s", ""));
+            bool refused = false;
+            try {
+                (void)rt::route_policy_of(rt::DecisionSection{});
+            } catch (const std::invalid_argument&) { refused = true; }
             check(recorded == RoutePolicy::Evidence &&
                       rt::route_policy_of(rt::options_of(EngineOptions{}, "id", "s", "")) ==
                           RoutePolicy::Evidence &&
-                      rt::route_policy_of(rt::DecisionSection{}) == RoutePolicy::Legacy,
-                  "route_policy_of: the options' policy (evidence by default since F2), legacy "
-                  "where none "
-                  "is recorded");
+                      refused,
+                  "route_policy_of: the options' policy (evidence by default since F2); a section "
+                  "that records none is refused");
             check(rt::replay_route_evidence(d4090, evidence, recorded) == evidence,
                   "evidence policy: the lines replay to themselves under the recorded policy");
             check(rt::replay_route_evidence(d4090, evidence, RoutePolicy::Legacy) == legacy,

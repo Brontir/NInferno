@@ -300,6 +300,8 @@ ROUTE_PINS = {
     "moe_path": ("--moe-path", ("auto", "fused", "generic")),
     "route_policy": ("--route-policy", ("evidence", "legacy")),
 }
+
+
 def pin_default(name: str) -> str:
     """The release's value of a pin: auto, evidence for the route policy."""
     return ROUTE_PINS[name][1][0]
