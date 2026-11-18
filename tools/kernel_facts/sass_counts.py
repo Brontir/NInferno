@@ -22,7 +22,8 @@ How the loop is found (`loop_counts`):
 4. The K loop is the innermost loop holding tensor-core MMAs (HMMA, IMMA, QMMA, ...): the one
    whose body holds MMAs and no MMA-bearing loop inside it. Where the build has no MMA at all
    (the sm_70 build multiplies with FFMAs, NINFERNO_FMA_MMA) the innermost loop holding FFMAs
-   stands in. Several such loops (the compiler kept two versions of the body) are reported by
+   stands in. A CALL to the sm_70 build's emulated int8 MMA (mma_s8_dp4a_call<N>, EMULATED_MMA
+   below) is that MMA. Several such loops (the compiler kept two versions of the body) are reported by
    their number, and the one whose iteration is heaviest (step 5) is counted.
 5. One iteration executes one path through the body, from the header to a block that branches
    back to it. The counts are those of the heaviest path (the most MMAs, then the most
@@ -79,6 +80,12 @@ from collections import Counter
 
 INSTRUCTION = re.compile(r"/\*([0-9a-f]{4,})\*/\s+(@!?U?P\w+\s+)?([A-Z][A-Z0-9_.]*)\s*([^;]*);")
 FUNCTION = re.compile(r"Function : (\S+)")
+# sm_70 builds the int8 MMA from dp4a in a __noinline__ function (src/ops/common/mma.cuh,
+# mma_s8_dp4a_call<kChunks>: <8> stands for one m16n8k32, <4> for one m16n8k16), so the kernel's
+# loop holds a CALL to it, not an IMMA (#787). A disassembly that names the callee (nvdisasm, or
+# cuobjdump on a linked binary) gives the call the MMA's shape: it is counted as that IMMA.
+EMULATED_MMA = re.compile(r"mma_s8_dp4a_callILi(\d+)E")
+EMULATED_SHAPES = {"8": "IMMA.16832.S8.S8.EMU", "4": "IMMA.16816.S8.S8.EMU"}
 TARGET = re.compile(r"0x([0-9a-f]+)\s*$")
 # The second line of a 128-bit instruction: its high 64-bit word alone in a comment.
 HIGH_WORD = re.compile(r"^\s*/\*\s*0x([0-9a-f]{16})\s*\*/\s*$")
@@ -226,7 +233,12 @@ def iter_functions(lines, wanted=None):
         m = INSTRUCTION.search(line)
         if m:
             guard = (m.group(2) or "").strip()
-            body.append((int(m.group(1), 16), guard not in ("", "@PT"), m.group(3),
+            opcode = m.group(3)
+            if opcode.startswith("CALL"):
+                e = EMULATED_MMA.search(m.group(4))
+                if e and e.group(1) in EMULATED_SHAPES:
+                    opcode = EMULATED_SHAPES[e.group(1)]
+            body.append((int(m.group(1), 16), guard not in ("", "@PT"), opcode,
                          m.group(4).strip(), None))
             continue
         m = HIGH_WORD.match(line)

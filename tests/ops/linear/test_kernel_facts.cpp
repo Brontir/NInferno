@@ -368,9 +368,10 @@ void sections_read() {
     // k_iter 32 J (a 128-row x J-column tile over 256 K on 8 warps, per m16n8 tile); the int8 MMA
     // the generation has (Turing's m8n8k16, m16n8k32 from sm_80 on); and the W4A8 32 x 128 tile
     // (Q4_K, Q6_K) with one loop, two barriers per 128-value K tile and k_iter 16 x 32.
-    // sm_70 has no mmq or w4a8 section: its snapshot is made with CUDA 12.8 (#762), and Volta takes
-    // no MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts,
-    // and the r8 one (#613 PR-10): the R8 law reads the one-slot ring's. The routed-expert
+    // sm_70 has no mmq section: its snapshot is made with CUDA 12.8 (#762), and Volta takes no
+    // MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts, the
+    // r8 one (#613 PR-10): the R8 law reads the one-slot ring's, and the w4a8 one (#787): its
+    // int8 MMA is a call to the dp4a emulation, counted as the MMA it stands for. The routed-expert
     // families (moer8, moegemm, #619 step 11) are not in it: the MoE law reads the boards it was
     // measured on (Turing and newer), and sm_100 has none yet (six of its W4a8Nvfp4 GateUp rows
     // read as unknown flow; no lab board is an sm_100 part).
@@ -384,7 +385,7 @@ void sections_read() {
             const bool waived =
                 moe ? std::find(std::begin(kWithoutMoe), std::end(kWithoutMoe), arch) !=
                           std::end(kWithoutMoe)
-                    : family != "gemma4" && family != "r8" &&
+                    : family != "gemma4" && family != "r8" && family != "w4a8" &&
                           std::find(std::begin(kWithoutSections), std::end(kWithoutSections),
                                     arch) != std::end(kWithoutSections);
             const auto header = kf::section_header(arch, family);
@@ -416,9 +417,11 @@ void sections_read() {
             std::cout << name << ' ' << family << ": " << rows.size() << " rows, nvcc "
                       << header->nvcc << '\n';
         }
-        if (!kf::section_header(arch, "mmq")) continue;
-        ++with_sections;
+        // The mmq rows where the arch has them; the w4a8 and r8 checks below run either way.
+        const bool mmq_section = kf::section_header(arch, "mmq").has_value();
+        if (mmq_section) ++with_sections;
         for (const int type : {12, 13, 14}) {
+            if (!mmq_section) break;
             for (const int J : {32, 128}) {
                 const auto f = kf::mmq_facts(arch, {type, J, false, 30});
                 const std::string what =
