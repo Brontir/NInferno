@@ -609,9 +609,9 @@ void declines(const std::string& name, const rt::PlanModelFacts& facts,
         EngineOptions routed           = options;
         routed.maintainer.decode_route = DecodeRoute::A16;
         refuses(basis_of(facts, routed, device), "route is pinned", "a pinned decode route");
-        EngineOptions evidence           = options;
-        evidence.maintainer.route_policy = RoutePolicy::Evidence;
-        refuses(basis_of(facts, evidence, device), "--route-policy", "the evidence policy");
+        EngineOptions legacy           = options;
+        legacy.maintainer.route_policy = RoutePolicy::Legacy;
+        refuses(basis_of(facts, legacy, device), "--route-policy legacy", "the legacy policy");
         ops::RoutePins stale;
         stale.moe = MoePath::Generic;
         ops::set_route_pins(stale);

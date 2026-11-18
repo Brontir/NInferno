@@ -432,13 +432,13 @@
    "legacy_transferred": 0,
    "legacy_measured": 10,
    "legacy_transferred_rules_kept": 0,
-   "moved": 75,
+   "moved": 69,
    "demoted_same_route": 49,
    "moved_by_regime": {
     "T>=17": 25,
     "decode T<=4": 15,
     "prefill": 1,
-    "verify T5-16": 34
+    "verify T5-16": 28
    },
    "moves": [
     {
@@ -1153,52 +1153,6 @@
      },
      "model_ratio": 0.9074733096085408,
      "a5_ratio": null
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 12288,
-     "k": 4096,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "gb203:70sm"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.3940072448053098,
-     "a5_ratio": 1.3294062935978919
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 12288,
-     "k": 4096,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "gb203:70sm"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.4237739694741642,
-     "a5_ratio": 1.3366336633663367
     },
     {
      "format": "q6k",
@@ -1984,52 +1938,6 @@
     },
     {
      "format": "q4k",
-     "policy": "a8",
-     "epilogue": "store",
-     "n": 3840,
-     "k": 15360,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "gb203:70sm"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.4493106489142258,
-     "a5_ratio": 1.668082870233622
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "store",
-     "n": 3840,
-     "k": 15360,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "gb203:70sm"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.4972642492742603,
-     "a5_ratio": 1.6930417119372667
-    },
-    {
-     "format": "q4k",
      "policy": "a16",
      "epilogue": "swiglu",
      "n": 15360,
@@ -2119,52 +2027,6 @@
      },
      "model_ratio": 0.8835875469431667,
      "a5_ratio": null
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 15360,
-     "k": 3840,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "gb203:70sm"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.353631708553561,
-     "a5_ratio": 1.2221286155574278
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 15360,
-     "k": 3840,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "gb203:70sm"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.37841973023619,
-     "a5_ratio": 1.2218191964285712
     }
    ]
   },
@@ -2176,7 +2038,7 @@
    "cells": 400,
    "legacy_borrowed": 0,
    "legacy_transferred": 0,
-   "legacy_measured": 124,
+   "legacy_measured": 125,
    "legacy_transferred_rules_kept": 0,
    "moved": 0,
    "demoted_same_route": 0,
@@ -2191,14 +2053,14 @@
    "cells": 400,
    "legacy_borrowed": 98,
    "legacy_transferred": 0,
-   "legacy_measured": 0,
+   "legacy_measured": 1,
    "legacy_transferred_rules_kept": 0,
-   "moved": 64,
+   "moved": 58,
    "demoted_same_route": 34,
    "moved_by_regime": {
     "T>=17": 29,
     "decode T<=4": 9,
-    "verify T5-16": 26
+    "verify T5-16": 20
    },
    "moves": [
     {
@@ -2939,52 +2801,6 @@
     },
     {
      "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 12288,
-     "k": 4096,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "gb202"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.6419957162952197,
-     "a5_ratio": 1.4494292160838183
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 12288,
-     "k": 4096,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "gb202"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.6755724604395017,
-     "a5_ratio": 1.4513709041928833
-    },
-    {
-     "format": "q4k",
      "policy": "a16",
      "epilogue": "store",
      "n": 3840,
@@ -3445,52 +3261,6 @@
     },
     {
      "format": "q4k",
-     "policy": "a8",
-     "epilogue": "store",
-     "n": 3840,
-     "k": 15360,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "gb202"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.7985544966085476,
-     "a5_ratio": 1.736
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "store",
-     "n": 3840,
-     "k": 15360,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "gb202"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.8561086261194195,
-     "a5_ratio": 1.7594621513944222
-    },
-    {
-     "format": "q4k",
      "policy": "a16",
      "epilogue": "swiglu",
      "n": 15360,
@@ -3626,52 +3396,6 @@
      },
      "model_ratio": 0.9087521603530123,
      "a5_ratio": null
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 15360,
-     "k": 3840,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "gb202"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.651137888630685,
-     "a5_ratio": 1.47480728629646
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 15360,
-     "k": 3840,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "gb202"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.6830880713313028,
-     "a5_ratio": 1.4715376418718777
     }
    ]
   },
@@ -3685,12 +3409,12 @@
    "legacy_transferred": 0,
    "legacy_measured": 88,
    "legacy_transferred_rules_kept": 0,
-   "moved": 31,
+   "moved": 29,
    "demoted_same_route": 19,
    "moved_by_regime": {
     "T>=17": 13,
     "decode T<=4": 4,
-    "verify T5-16": 14
+    "verify T5-16": 12
    },
    "moves": [
     {
@@ -4359,52 +4083,6 @@
      },
      "model_ratio": 0.8167259786476868,
      "a5_ratio": null
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 12288,
-     "k": 4096,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "ad104:60sm"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.0144225318219937,
-     "a5_ratio": 0.9793831636573184
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 12288,
-     "k": 4096,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "ad104:60sm"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.0136248374034533,
-     "a5_ratio": 0.9795914462725421
     }
    ]
   },
@@ -4418,12 +4096,12 @@
    "legacy_transferred": 128,
    "legacy_measured": 10,
    "legacy_transferred_rules_kept": 0,
-   "moved": 61,
+   "moved": 59,
    "demoted_same_route": 67,
    "moved_by_regime": {
     "T>=17": 25,
     "decode T<=4": 8,
-    "verify T5-16": 28
+    "verify T5-16": 26
    },
    "moves": [
     {
@@ -5092,52 +4770,6 @@
      },
      "model_ratio": 0.8167259786476868,
      "a5_ratio": null
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 12288,
-     "k": 4096,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "transferred",
-      "donor": "ad104:60sm"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.0144225318219937,
-     "a5_ratio": 0.9793831636573184
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 12288,
-     "k": 4096,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "transferred",
-      "donor": "ad104:60sm"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.0136248374034533,
-     "a5_ratio": 0.9795914462725421
     },
     {
      "format": "q6k",
@@ -5856,12 +5488,12 @@
    "legacy_transferred": 0,
    "legacy_measured": 0,
    "legacy_transferred_rules_kept": 0,
-   "moved": 32,
+   "moved": 30,
    "demoted_same_route": 18,
    "moved_by_regime": {
     "T>=17": 14,
     "decode T<=4": 4,
-    "verify T5-16": 14
+    "verify T5-16": 12
    },
    "moves": [
     {
@@ -6553,52 +6185,6 @@
      },
      "model_ratio": 0.8669116575739425,
      "a5_ratio": null
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 15360,
-     "k": 3840,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "ad106"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.1420139417413266,
-     "a5_ratio": 0.9625180297759567
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 15360,
-     "k": 3840,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "ad106"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.1411992863785225,
-     "a5_ratio": 0.9619687467413488
     }
    ]
   },
@@ -7506,12 +7092,12 @@
    "legacy_transferred": 76,
    "legacy_measured": 10,
    "legacy_transferred_rules_kept": 0,
-   "moved": 66,
+   "moved": 64,
    "demoted_same_route": 62,
    "moved_by_regime": {
     "T>=17": 18,
     "decode T<=4": 12,
-    "verify T5-16": 36
+    "verify T5-16": 34
    },
    "moves": [
     {
@@ -8088,52 +7674,6 @@
      },
      "model_ratio": 0.8034203022308971,
      "a5_ratio": null
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 12288,
-     "k": 4096,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "transferred",
-      "donor": "ad104"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.189380791732913,
-     "a5_ratio": 1.0613916234007603
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 12288,
-     "k": 4096,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "transferred",
-      "donor": "ad104"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.188275675671706,
-     "a5_ratio": 1.0235911180055062
     },
     {
      "format": "q6k",
@@ -9042,13 +8582,12 @@
    "cells": 400,
    "legacy_borrowed": 48,
    "legacy_transferred": 0,
-   "legacy_measured": 50,
+   "legacy_measured": 51,
    "legacy_transferred_rules_kept": 0,
-   "moved": 18,
+   "moved": 14,
    "demoted_same_route": 30,
    "moved_by_regime": {
-    "T>=17": 14,
-    "verify T5-16": 4
+    "T>=17": 14
    },
    "moves": [
     {
@@ -9234,52 +8773,6 @@
      },
      "model_ratio": 0.9574898615636885,
      "a5_ratio": null
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "store",
-     "n": 4096,
-     "k": 4096,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "ga106"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.2550300291947696,
-     "a5_ratio": 1.0696606503899115
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "store",
-     "n": 4096,
-     "k": 4096,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "ga106"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.2902730252602466,
-     "a5_ratio": 1.0665187749892004
     },
     {
      "format": "q4k",
@@ -9418,52 +8911,6 @@
      },
      "model_ratio": 1.0,
      "a5_ratio": null
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 15360,
-     "k": 3840,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "ga106"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.7323591092202286,
-     "a5_ratio": 1.1833051083624515
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 15360,
-     "k": 3840,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "borrowed",
-      "donor": "ga106"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.7611754749561563,
-     "a5_ratio": 1.1859926970108694
     }
    ]
   },
@@ -9475,13 +8922,13 @@
    "cells": 400,
    "legacy_borrowed": 0,
    "legacy_transferred": 100,
-   "legacy_measured": 0,
+   "legacy_measured": 1,
    "legacy_transferred_rules_kept": 0,
-   "moved": 36,
+   "moved": 32,
    "demoted_same_route": 64,
    "moved_by_regime": {
     "T>=17": 24,
-    "verify T5-16": 12
+    "verify T5-16": 8
    },
    "moves": [
     {
@@ -9667,52 +9114,6 @@
      },
      "model_ratio": 0.9574898615636885,
      "a5_ratio": null
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "store",
-     "n": 4096,
-     "k": 4096,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "transferred",
-      "donor": "ga106"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.2550300291947696,
-     "a5_ratio": 1.0696606503899115
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "store",
-     "n": 4096,
-     "k": 4096,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "transferred",
-      "donor": "ga106"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.2902730252602466,
-     "a5_ratio": 1.0665187749892004
     },
     {
      "format": "q4k",
@@ -10265,52 +9666,6 @@
      },
      "model_ratio": 1.0,
      "a5_ratio": null
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 15360,
-     "k": 3840,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "transferred",
-      "donor": "ga106"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.7323591092202286,
-     "a5_ratio": 1.1833051083624515
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 15360,
-     "k": 3840,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "transferred",
-      "donor": "ga106"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.7611754749561563,
-     "a5_ratio": 1.1859926970108694
     }
    ]
   },
@@ -10322,7 +9677,7 @@
    "cells": 400,
    "legacy_borrowed": 0,
    "legacy_transferred": 0,
-   "legacy_measured": 100,
+   "legacy_measured": 101,
    "legacy_transferred_rules_kept": 10,
    "moved": 0,
    "demoted_same_route": 0,
@@ -10337,14 +9692,14 @@
    "cells": 400,
    "legacy_borrowed": 0,
    "legacy_transferred": 50,
-   "legacy_measured": 0,
+   "legacy_measured": 1,
    "legacy_transferred_rules_kept": 10,
-   "moved": 27,
+   "moved": 25,
    "demoted_same_route": 23,
    "moved_by_regime": {
     "T>=17": 13,
     "decode T<=4": 4,
-    "verify T5-16": 10
+    "verify T5-16": 8
    },
    "moves": [
     {
@@ -10808,52 +10163,6 @@
      "a5_ratio": 0.9819459648120826
     },
     {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 12288,
-     "k": 4096,
-     "T": 12,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "transferred",
-      "donor": "ga102"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 1.970120343488863,
-     "a5_ratio": 1.3452018025812473
-    },
-    {
-     "format": "q4k",
-     "policy": "a8",
-     "epilogue": "swiglu",
-     "n": 12288,
-     "k": 4096,
-     "T": 16,
-     "profile": "speed",
-     "regime": "verify T5-16",
-     "legacy": {
-      "route": "ggml_mmq",
-      "authority": "route-table",
-      "evidence": "transferred",
-      "donor": "ga102"
-     },
-     "evidence": {
-      "route": "rmma.m1.n2.w1x4",
-      "authority": "rmma-rule",
-      "evidence": "ranker"
-     },
-     "model_ratio": 2.0034652742823633,
-     "a5_ratio": 1.358384165444551
-    },
-    {
      "format": "q6k",
      "policy": "a16",
      "epilogue": "store",
@@ -10994,6 +10303,21 @@
    "legacy_borrowed": 0,
    "legacy_transferred": 0,
    "legacy_measured": 10,
+   "legacy_transferred_rules_kept": 0,
+   "moved": 0,
+   "demoted_same_route": 0,
+   "moved_by_regime": {},
+   "moves": []
+  },
+  {
+   "board": "gv100",
+   "card": "Quadro GV100",
+   "tables": "own",
+   "build_set": "sm70",
+   "cells": 400,
+   "legacy_borrowed": 0,
+   "legacy_transferred": 0,
+   "legacy_measured": 0,
    "legacy_transferred_rules_kept": 0,
    "moved": 0,
    "demoted_same_route": 0,

@@ -267,11 +267,15 @@ class SweepTest(unittest.TestCase):
                         previous_path="a")
         self.assertIs(same["delta"]["sweep_matches"], True)
         for change in ({"samples": 15}, {"passes": 2}, {"shapes_sha256": "cd" * 32},
-                       {"route_policy": "evidence"}):
+                       {"route_policy": "evidence"}, {"a8_candidates": 0}):
             with self.subTest(change=change):
                 other = rr.build(selection_report(document()), BOARD, meta(**change),
                                  previous=before, previous_path="a")
                 self.assertIs(other["delta"]["sweep_matches"], False)
+        # a report written before a8_candidates existed swept the fast mode's calls
+        fast = rr.build(selection_report(document()), BOARD, meta(a8_candidates=1),
+                        previous=before, previous_path="a")
+        self.assertIs(fast["delta"]["sweep_matches"], True)
         a5 = rr.build(selection_report(document()), BOARD, META,
                       previous=a5_summary(selection_report(document()), 0.1), previous_path="a")
         self.assertEqual(a5["delta"]["sweep_matches"], "unknown")

@@ -10,9 +10,9 @@
 // new is that every answer names its authority and its evidence.
 //
 // The precedence over evidence (#614 F1, the Ask's RoutePolicy: --route-policy, ops/route_pins.h).
-// Legacy, the default, is the order alone: the first answer wins, as above. Evidence demotes, in
-// the auto list (auto_answer), an answer whose evidence is Borrowed or Transferred (a route-table
-// entry measured on another board: lent by a farther table, or the nearest table past
+// Legacy is the order alone: the first answer wins, as above. Evidence, the default since F2,
+// demotes, in the auto list (auto_answer), an answer whose evidence is Borrowed or Transferred (a
+// route-table entry measured on another board: lent by a farther table, or the nearest table past
 // kCarryDistance) below the ranker: the walk goes on past it (the dense tuner's entry, measured
 // here, may still answer), then the ranker answers (the cost model where it prices the call, else
 // the rules) and the dense tuner's prefill band may refine that answer as usual. Where the ranker

@@ -122,9 +122,10 @@ choice. `ninferno`, `ninferno-serve` and the serve bench tools (`tools/bench/run
 `--moe-path`. Details, and what each pin does not reach:
 [route pins](maintainer/environment.md#route-pins).
 
-`--route-policy legacy|evidence` is an A/B setting of the same kind: `legacy` (the default) is the
-release's selection, and `evidence` lets the cost model or the rules decide where the route table's
-entry for the call was measured on another board. `ninferno`, `ninferno-serve`,
+`--route-policy evidence|legacy` is an A/B setting of the same kind: `evidence` (the default, the
+release's selection since #614 F2) lets the cost model or the rules decide where the route table's
+entry for the call was measured on another board, and `legacy` keeps the first answering authority
+(the selection before F2). `ninferno`, `ninferno-serve`,
 `ninferno-perplexity` and `ninferno-serve route-tune` take it:
 [route policy](maintainer/environment.md#route-policy).
 
@@ -520,7 +521,7 @@ version, the commit and the runtime).
 |---|---|
 | `0` | no route line moved: the registry row gives the start's routes |
 | `1` | some lines moved: each is printed with the start's and the replay's value |
-| `2` | a usage or input error, or a refusal: a start whose selection a maintainer overrode (taint `maintainer`, `user_tune_cache`), a start of another build, a start on another PCI id than `BOARD` |
+| `2` | a usage or input error, or a refusal: a start whose selection a maintainer overrode (taint `maintainer`, `user_tune_cache`), a start of another build, a start on another PCI id than `BOARD`, a start whose options record no route policy (before #614 F1) |
 
 Other taints (`foreign_route_table`: the nearest board's table where the board has none,
 `borrowed_routes`, `clocks`, `carried_context_cost`, the speculation ones) belong to the release
