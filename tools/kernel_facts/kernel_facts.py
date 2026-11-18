@@ -615,12 +615,28 @@ def sass_lines(binary, cuda_bin, arch, sass_dump=None, names=None, batch=SASS_BA
                 fail(f"cuobjdump -sass failed on {binary}: {errors.read().strip()[:400]}")
 
 
+def emulated_calls(binary, cuda_bin, arch, sass_dump=None):
+    """relocation_calls of the image where its kernels call the emulated int8 MMA (sm_70,
+    NINFERNO_FMA_MMA, #787): its SASS prints those calls unresolved. None elsewhere, and for a
+    saved dump (its relocations are not in it)."""
+    if sass_dump or not str(arch).endswith("70"):
+        return None
+    command = [cuda_tool("cuobjdump", cuda_bin), "-elf", "-arch", arch, binary]
+    with tempfile.TemporaryFile(mode="w+", errors="replace") as errors:
+        proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True,
+                                errors="replace", bufsize=1 << 20)
+        calls = sass_counts.relocation_calls(proc.stdout)
+        proc.wait()
+    return calls
+
+
 def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATCH):
     """{(family, key): LoopCounts} of the kernels `keys` ({mangled: (family, key)}) of one image,
     from its SASS. A kernel disassembled twice in the image (two units) must agree."""
     counts = {}
     lines = sass_lines(binary, cuda_bin, arch, sass_dump, sorted(keys), batch)
-    for name, body in sass_counts.iter_functions(lines, lambda n: n in keys):
+    for name, body in sass_counts.iter_functions(lines, lambda n: n in keys,
+                                                 emulated_calls(binary, cuda_bin, arch, sass_dump)):
         fk = keys[name]
         family = FAMILIES[fk[0]]
         # A tile without producer warps (the key's last field 0) has no producer loop: its

@@ -269,6 +269,14 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual((c4.mma, c4.k_iter), (hmma, hmma * 16 // 2))
         plain = [(o, "CALL.ABS.NOINC 0x0 ;" if t.startswith("HMMA") else t) for o, t in KERNEL]
         self.assertEqual(sc.loop_counts(body_of(plain), tiles=2).mma, 0)
+        # cuobjdump -sass prints the linked image's call as 0x0; its relocation names the target.
+        elf = [".section .rel.text._Z6kernelv\tREL"] + [
+            f"0x{o:x}    _ZN61_INTERNAL_x_ninferno3ops16mma_s8_dp4a_callILi8EEE4int4    R_CUDA_ABS47_34"
+            for o, t in KERNEL if t.startswith("HMMA")] + ["", ".section .symtab"]
+        calls = sc.relocation_calls(elf)
+        body = sc.parse_functions(sass(plain).splitlines(), calls=calls)["_Z6kernelv"]
+        c = sc.loop_counts(body, tiles=2)
+        self.assertEqual((c.mma, c.k_iter), (hmma, hmma * 32 // 2))
 
     def test_prologue_loop(self):
         # The R8 kernels' quantizer loop (#613 PR-10): a second loop, marked by F2I, counted into
