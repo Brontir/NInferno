@@ -3440,13 +3440,13 @@ gemma4 volta 256 0 0 8 0 0 0 0 111 0 0 9312
 gemma4 volta 256 0 0 16 0 0 0 0 138 0 0 18624
 gemma4 volta 512 0 0 4 0 0 0 0 128 0 0 8752
 gemma4 volta 512 0 0 8 0 0 0 0 159 0 0 17504
-gemma4 volta_tiled 64 0 0 4 0 0 0 0 98 0 0 18608
+gemma4 volta_tiled 64 0 0 4 0 0 0 0 97 0 0 18608
 gemma4 volta_tiled 64 0 0 8 0 0 0 0 128 0 0 20192
 gemma4 volta_tiled 64 0 0 16 0 0 0 0 160 0 0 23360
 gemma4 volta_tiled 64 0 0 32 0 0 0 0 162 0 0 29696
 gemma4 volta_tiled 64 0 0 64 0 0 0 0 184 0 0 42368
 gemma4 volta_tiled 128 0 0 4 0 0 0 0 103 0 0 19056
-gemma4 volta_tiled 128 0 0 8 0 0 0 0 121 0 0 21408
+gemma4 volta_tiled 128 0 0 8 0 0 0 0 119 0 0 21408
 gemma4 volta_tiled 128 0 0 16 0 0 0 0 138 0 0 26112
 gemma4 volta_tiled 128 0 0 32 0 0 0 0 200 0 0 35520
 family r8
