@@ -474,6 +474,16 @@ void check_transferred_claim() {
         if (!legacy_kept) fail(at + ": legacy does not keep the Transferred answer for the tuner");
         if (evidence_kept) fail(at + ": evidence keeps the Transferred answer for the tuner");
     }
+    {
+        // A prefill band's answer likewise (the tuner's prefill skip), where the table has one.
+        const ScopedDeviceClass scoped(d);
+        ops::set_route_policy(RoutePolicy::Evidence);
+        if (generic::table_route(claimed, 512, true) &&
+            generic::table_route_kept(claimed, 512, true)) {
+            fail("claim fp8 14336x5120 prefill: evidence keeps the Transferred answer for the "
+                 "tuner");
+        }
+    }
     // The board's own (measured) claims are kept under evidence: the RTX 5080 itself.
     const GpuFactsRow* r5080 = find_gpu_facts(0x2C02);
     if (r5080 == nullptr) {
@@ -486,6 +496,14 @@ void check_transferred_claim() {
     const bool kept = generic::table_claims(claimed, 64, false);
     ops::set_route_policy(RoutePolicy::Evidence);
     if (!kept) fail("claim: the RTX 5080's own claim is refused under evidence");
+    // Its own (measured) answer is kept for the tuner too: that width is not timed again.
+    if (!generic::table_route_kept(claimed, 64, false)) {
+        fail("claim: the RTX 5080's own answer is not kept for the tuner under evidence");
+    }
+    if (generic::table_route(claimed, 512, true) &&
+        !generic::table_route_kept(claimed, 512, true)) {
+        fail("claim: the RTX 5080's own prefill answer is not kept for the tuner under evidence");
+    }
 }
 
 Json board_json(const RegretBoard& b, const char* tables, const BoardTally& t) {

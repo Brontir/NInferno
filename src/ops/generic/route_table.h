@@ -86,7 +86,9 @@ struct TableAnswer {
 // Whether a loaded table answers this call and the process's --route-policy keeps the answer
 // (#808): under evidence a Borrowed or Transferred answer is demoted to the ranker at dispatch
 // (route_authorities auto_answer), so the dense tuner times that width as if no table held it.
-// Legacy keeps every answer.
+// Legacy keeps every answer. It reads the table's answer as table_route does: the admission
+// checks dispatch makes after it (route_table_entry: an A8 call, the route and profile admits)
+// are not repeated here.
 [[nodiscard]] bool table_route_kept(const Problem& problem, std::int32_t tokens, bool prefill);
 
 // The board a table file was measured on as the default lookup reads it (gpu.pci_id's registry
