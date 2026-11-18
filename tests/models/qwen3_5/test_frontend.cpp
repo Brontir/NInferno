@@ -4038,8 +4038,6 @@ int test_media_preparation_cancellation() {
     return check(false, "cancelled media preparation completed successfully");
 }
 
-} // namespace
-
 // #839: the plan's count and the load share one built tokenizer for the same files; other
 // bytes build their own.
 int test_tokenizer_shared_for_the_same_files(const FrontendResources& owned) {
@@ -4064,6 +4062,8 @@ int test_tokenizer_shared_for_the_same_files(const FrontendResources& owned) {
                       "other bytes build their own tokenizer");
     return failures;
 }
+
+} // namespace
 
 int main() {
     const FrontendResources owned = resources();

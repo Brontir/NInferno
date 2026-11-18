@@ -4,6 +4,7 @@
 
 #include <mutex>
 #include <string>
+#include <utility>
 
 namespace ninferno::models::qwen3_5 {
 namespace {
@@ -13,7 +14,9 @@ namespace {
 // public_token_count) and then the load builds it, about 1.3 s each on a 12.8 MB tokenizer.json.
 // The Tokenizer owns everything it decoded (no view into these bytes), so the load can share the
 // one the choice built. Keyed by the bytes themselves, compared whole, so another file with the
-// same size is never mistaken for it; one entry, replaced by the next distinct tokenizer.
+// same size is never mistaken for it; one entry, replaced by the next distinct tokenizer. Its
+// cost: the three files' bytes (about 13 MB) and one tokenizer stay for the process, also after
+// their model unloads (ninferno-ui), until another tokenizer replaces them.
 std::shared_ptr<const frontend::Tokenizer>
 shared_tokenizer(const frontend::TokenizerResources& files) {
     struct Kept {
@@ -32,9 +35,10 @@ shared_tokenizer(const frontend::TokenizerResources& files) {
         }
     }
     auto built = std::make_shared<const frontend::Tokenizer>(files);
+    Kept next{std::string(files.tokenizer_json), std::string(files.tokenizer_config_json),
+              std::string(files.generation_config_json), built};
     const std::lock_guard lock(mutex);
-    kept = Kept{std::string(files.tokenizer_json), std::string(files.tokenizer_config_json),
-                std::string(files.generation_config_json), built};
+    kept = std::move(next);
     return built;
 }
 
