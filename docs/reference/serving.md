@@ -730,7 +730,8 @@ llama.cpp-style base URLs.
 
 **Output control and sampling**
 
-- `max_completion_tokens` and the legacy `max_tokens` spelling. Zero performs prompt processing
+- `max_completion_tokens`, the legacy `max_tokens` spelling, and llama.cpp's `n_predict` (read only
+  when neither OpenAI name is sent). Zero performs prompt processing
   without generation; a negative value (`-1`, how llama.cpp-style clients say "no limit") is the
   server's `--default-max-tokens`, as when the field is absent.
 - `temperature`, `top_p`, presence/frequency penalties, and integer `seed`; a negative seed (`-1`)
