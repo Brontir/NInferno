@@ -437,6 +437,20 @@ std::filesystem::path tables_without(const std::filesystem::path& dir,
     return out;
 }
 
+// The ranker's route the tuner checks a table answer against (table_route_kept): the FP8 claims
+// below are no ggml_mmq answer, so the MMQ boundary never keeps them, whatever the ranker says.
+constexpr generic::Route kRanked{generic::Family::RegisterMma, 0};
+
+// The MMQ boundary dispatch and the tuner share (#808, codex on #1008): a demoted ggml_mmq answer
+// stands against the register MMA at 9..16 tokens only.
+static_assert(generic::keeps_mmq_boundary({generic::Family::GgmlMmq, 0}, kRanked, 9) &&
+              generic::keeps_mmq_boundary({generic::Family::GgmlMmq, 0}, kRanked, 16) &&
+              !generic::keeps_mmq_boundary({generic::Family::GgmlMmq, 0}, kRanked, 8) &&
+              !generic::keeps_mmq_boundary({generic::Family::GgmlMmq, 0}, kRanked, 17) &&
+              !generic::keeps_mmq_boundary({generic::Family::GgmlMmq, 0},
+                                           {generic::Family::R8Mma, 0}, 12) &&
+              !generic::keeps_mmq_boundary(kRanked, kRanked, 12));
+
 // --route-policy evidence and a claiming entry (RouteEntry::claim; table_claims): on a board whose
 // nearest table is another board's past kCarryDistance, the claim moves the call off its shape's
 // own kernel under legacy and does not under evidence. The board: sm_120, the RTX 5080's 84 SMs and
@@ -468,9 +482,9 @@ void check_transferred_claim() {
         // The dense tuner's skip (#808): legacy keeps the table's answer (the width is not timed),
         // evidence demotes it (the width is timed).
         ops::set_route_policy(RoutePolicy::Legacy);
-        const bool legacy_kept = generic::table_route_kept(claimed, t, false);
+        const bool legacy_kept = generic::table_route_kept(claimed, t, false, kRanked);
         ops::set_route_policy(RoutePolicy::Evidence);
-        const bool evidence_kept = generic::table_route_kept(claimed, t, false);
+        const bool evidence_kept = generic::table_route_kept(claimed, t, false, kRanked);
         if (!legacy_kept) fail(at + ": legacy does not keep the Transferred answer for the tuner");
         if (evidence_kept) fail(at + ": evidence keeps the Transferred answer for the tuner");
     }
@@ -479,7 +493,7 @@ void check_transferred_claim() {
         const ScopedDeviceClass scoped(d);
         ops::set_route_policy(RoutePolicy::Evidence);
         if (generic::table_route(claimed, 512, true) &&
-            generic::table_route_kept(claimed, 512, true)) {
+            generic::table_route_kept(claimed, 512, true, kRanked)) {
             fail("claim fp8 14336x5120 prefill: evidence keeps the Transferred answer for the "
                  "tuner");
         }
@@ -497,11 +511,11 @@ void check_transferred_claim() {
     ops::set_route_policy(RoutePolicy::Evidence);
     if (!kept) fail("claim: the RTX 5080's own claim is refused under evidence");
     // Its own (measured) answer is kept for the tuner too: that width is not timed again.
-    if (!generic::table_route_kept(claimed, 64, false)) {
+    if (!generic::table_route_kept(claimed, 64, false, kRanked)) {
         fail("claim: the RTX 5080's own answer is not kept for the tuner under evidence");
     }
     if (generic::table_route(claimed, 512, true) &&
-        !generic::table_route_kept(claimed, 512, true)) {
+        !generic::table_route_kept(claimed, 512, true, kRanked)) {
         fail("claim: the RTX 5080's own prefill answer is not kept for the tuner under evidence");
     }
 }

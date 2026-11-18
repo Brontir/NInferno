@@ -129,6 +129,18 @@ struct Evidence {
            (kind == Evidence::Kind::Borrowed || kind == Evidence::Kind::Transferred);
 }
 
+// Whether a demoted table answer keeps the call over the ranker's anyway (#614 F2): ggml's matrix
+// kernel against the register MMA at 9 to 16 tokens, the one boundary the cost model does not price
+// (the per-SM DRAM law of #785). F1's A/B on four boards (evidence over legacy, 190 cells each)
+// lost only there: q4k a8 swiglu 12288x4096 at T 12 / 16, ggml_mmq -> rmma.m1.n2.w1x4, RTX 5070 Ti
+// +45..+75 %, RTX 3060 +35 %, RTX 4060 Ti +4 %; every other moved cell was within 1.1 % or gained.
+// Dispatch (auto_answer) and the dense tuner's skip (route_table.h table_route_kept, #808) read it.
+[[nodiscard]] constexpr bool keeps_mmq_boundary(Route demoted, Route ranked,
+                                                std::int32_t tokens) noexcept {
+    return demoted.family == Family::GgmlMmq && ranked.family == Family::RegisterMma &&
+           tokens >= 9 && tokens <= 16;
+}
+
 // The evidence kind of a route-table answer (route_table.h TableAnswer): Borrowed where a farther
 // table lent the entry (`lent`), else Measured at distance 0, Carried within kCarryDistance and
 // Transferred past it. The one classification route_table_entry prints and table_claims gates

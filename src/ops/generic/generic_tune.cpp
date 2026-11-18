@@ -250,8 +250,9 @@ bool replaceable(Route r, std::int32_t k, std::int32_t tokens);
 // answer the route policy keeps (#808: a demoted one is timed) and no Volta rule that routes the
 // width before any tuned route.
 bool timed_width(const Problem& problem, const Weight& weight, std::int32_t t) {
-    return replaceable(heuristic_route(problem, weight, t, false), weight.k, t) &&
-           !table_route_kept(problem, t, false) && !volta_fixed_route(problem, weight, t);
+    const Route base = heuristic_route(problem, weight, t, false);
+    return replaceable(base, weight.k, t) && !table_route_kept(problem, t, false, base) &&
+           !volta_fixed_route(problem, weight, t);
 }
 
 bool replaceable(Route r, std::int32_t k, std::int32_t tokens) {
@@ -425,7 +426,7 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
         // one: timing it would record a choice the dispatch never reads.
         // A table answer the route policy demotes falls to the ranker at dispatch: that width is
         // timed (#808), as a width no table holds.
-        if (replaceable(base, k, t) && !table_route_kept(problem, t, false) &&
+        if (replaceable(base, k, t) && !table_route_kept(problem, t, false, base) &&
             !volta_fixed_route(problem, weight, t)) {
             const double base_us = bench.median_us(base, t);
             double best_us       = base_us;
@@ -533,7 +534,7 @@ void time_prefill_bands(const Problem& problem, const Call& model_call, cudaStre
         // What the band is timed against: a later heuristic that picks another route there
         // makes the band stale (tune_dense times the bands again).
         entry["prefill_base"][std::to_string(t)] = route_name(base);
-        if (base.family != Family::W4a8Mma && table_route_kept(problem, t, true)) continue;
+        if (base.family != Family::W4a8Mma && table_route_kept(problem, t, true, base)) continue;
         if (nvfp4 && base.family != Family::W4a8Mma) continue;
         // Without tensor mma.sync (Volta) the tiled kernel takes the width before any band
         // (volta_tiled_route): a band timed there is never dispatched.
