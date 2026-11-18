@@ -615,21 +615,62 @@ def sass_lines(binary, cuda_bin, arch, sass_dump=None, names=None, batch=SASS_BA
                 fail(f"cuobjdump -sass failed on {binary}: {errors.read().strip()[:400]}")
 
 
+def emulated_calls(binary, cuda_bin, arch, keys, sass_dump=None):
+    """relocation_calls of the image where its kernels call the emulated int8 MMA (sm_70,
+    NINFERNO_FMA_MMA, #787): its SASS prints those calls unresolved. None elsewhere, for a saved
+    dump (its relocations are not in it), and where `keys` holds no w4a8 kernel (the only family
+    whose loop makes those calls, #1006 review)."""
+    if sass_dump or not str(arch).endswith("70"):
+        return None
+    if not any(fk[0] == "w4a8" for fk in keys.values()):
+        return None
+    command = [cuda_tool("cuobjdump", cuda_bin), "-elf", "-arch", arch, binary]
+    with tempfile.TemporaryFile(mode="w+", errors="replace") as errors:
+        proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True,
+                                errors="replace", bufsize=1 << 20)
+        calls = sass_counts.relocation_calls(proc.stdout)
+        if proc.wait() != 0:
+            errors.seek(0)
+            fail(f"cuobjdump -elf failed on {binary}: {errors.read().strip()[:400]}")
+    # A build whose relocations name no emulated MMA would give every w4a8 row k_iter 0 again
+    # (#1006's first data): refuse it rather than write it.
+    if not any(sass_counts.EMULATED_MMA.search(sym) for per in calls.values() for sym in per.values()):
+        fail(f"no call to the emulated int8 MMA in the {arch} image's relocations of {binary}")
+    return calls
+
+
 def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATCH):
     """{(family, key): LoopCounts} of the kernels `keys` ({mangled: (family, key)}) of one image,
     from its SASS. A kernel disassembled twice in the image (two units) must agree."""
     counts = {}
     lines = sass_lines(binary, cuda_bin, arch, sass_dump, sorted(keys), batch)
-    for name, body in sass_counts.iter_functions(lines, lambda n: n in keys):
+    calls = emulated_calls(binary, cuda_bin, arch, keys, sass_dump)
+    if sass_dump and str(arch).endswith("70") and any(fk[0] == "w4a8" for fk in keys.values()):
+        fail("an sm_70 w4a8 extraction needs the binary: a saved SASS dump has no relocations, "
+             "so its emulated MMA calls would count as no MMA")
+    for name, body in sass_counts.iter_functions(lines, lambda n: n in keys, calls):
         fk = keys[name]
         family = FAMILIES[fk[0]]
+        # A tile without producer warps (the key's last field 0) has no producer loop: its
+        # producer fields are zeros. Its staging may still be a loop of its own that holds a BAR and
+        # no MMA (the sm_70 tile, built from dp4a on every warp, stages its operands that way, #787),
+        # which is not a producer warps' loop and is not looked for. Nor is one in a producer-warp
+        # tile whose body holds no tensor-core MMA: on sm_70 that tile's int8 MMA is emulated by
+        # calls, so its MMA warps' loop holds no MMA either and cannot be told from the producers'
+        # (#787). With the image's relocations the calls count as the MMA (EMULATED_MMA, #1006),
+        # so on sm_70 the MMA warps' loop holds MMAs and the producer loop is looked for as on the
+        # other archs; without an MMA in the body the producer fields stay zeros. The tile is never
+        # selected on sm_70 (format_requires.h kW4a8WsTunedArch: sm_89 and sm_120).
+        has_mma = any(sass_counts.base_opcode(line[2]) in sass_counts.MMA_OPCODES for line in body)
+        producer = (family.producer
+                    if family.producer is not None and fk[1][-1] > 0 and has_mma else None)
         c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker, family.prologue,
-                                    family.producer).with_pipes(
+                                    producer).with_pipes(
             family.pipes, family.prologue is not None, family.waits, family.producer is not None)
-        if family.producer is not None and fk[1][-1] > 0 and c.prod_loops != 1:
+        if calls is not None and fk[0] == "w4a8" and c.mma == 0:
+            fail(f"{name}: an sm_70 w4a8 loop with no MMA (no emulated call resolved)")
+        if producer is not None and c.prod_loops != 1:
             fail(f"{name}: {c.prod_loops} producer loops in a tile with {fk[1][-1]} producer warps")
-        if family.producer is not None and fk[1][-1] == 0 and c.prod_loops != 0:
-            fail(f"{name}: {c.prod_loops} producer loops in a tile without producer warps")
         if fk in counts and counts[fk] != c:
             fail(f"{name} is disassembled twice in {arch} with different loops {counts[fk]} "
                  f"and {c}")
