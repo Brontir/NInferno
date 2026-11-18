@@ -31,7 +31,7 @@ struct ggml_planes {
 
 // NInferno: where a tile's sum is stored (the includer may route it through its epilogue).
 #ifndef NINFERNO_MMQ_STORE
-#    define NINFERNO_MMQ_STORE(planes, p, v) (*(p) = (v))
+#    define NINFERNO_MMQ_STORE(planes, dst, j, i, stride, v) ((dst)[(j)*(stride) + (i)] = (v))
 #endif
 
 typedef void (*ggml_cuda_mmq_load_tiles_t)(const char * __restrict__ x, int * x_tile, const int kbx0, const int i_max, const int stride, const ggml_planes & planes);
@@ -490,12 +490,12 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 
             if constexpr (type == GGML_TYPE_NVFP4) {
                 if (y_scale_used) {
-                    NINFERNO_MMQ_STORE(planes, &dst[ids_dst[j]*stride + i], y_scale[j] * sum[(j0/nwarps) * (I/warp_size) + i0/warp_size]);
+                    NINFERNO_MMQ_STORE(planes, dst, ids_dst[j], i, stride, y_scale[j] * sum[(j0/nwarps) * (I/warp_size) + i0/warp_size]);
                 } else {
-                    NINFERNO_MMQ_STORE(planes, &dst[ids_dst[j]*stride + i], sum[(j0/nwarps) * (I/warp_size) + i0/warp_size]);
+                    NINFERNO_MMQ_STORE(planes, dst, ids_dst[j], i, stride, sum[(j0/nwarps) * (I/warp_size) + i0/warp_size]);
                 }
             } else {
-                NINFERNO_MMQ_STORE(planes, &dst[ids_dst[j]*stride + i], sum[(j0/nwarps) * (I/warp_size) + i0/warp_size]);
+                NINFERNO_MMQ_STORE(planes, dst, ids_dst[j], i, stride, sum[(j0/nwarps) * (I/warp_size) + i0/warp_size]);
                 GGML_UNUSED(y_scale_used);
             }
         }
@@ -541,12 +541,12 @@ static __device__ __forceinline__ void ggml_cuda_mmq_write_back_mma(
 
                 if constexpr (type == GGML_TYPE_NVFP4) {
                     if (y_scale_used) {
-                        NINFERNO_MMQ_STORE(planes, &dst[ids_dst[j]*stride + i], y_scale[j] * sum[(j0/tile_C::J + n)*tile_C::ne + l]);
+                        NINFERNO_MMQ_STORE(planes, dst, ids_dst[j], i, stride, y_scale[j] * sum[(j0/tile_C::J + n)*tile_C::ne + l]);
                     } else {
-                        NINFERNO_MMQ_STORE(planes, &dst[ids_dst[j]*stride + i], sum[(j0/tile_C::J + n)*tile_C::ne + l]);
+                        NINFERNO_MMQ_STORE(planes, dst, ids_dst[j], i, stride, sum[(j0/tile_C::J + n)*tile_C::ne + l]);
                     }
                 } else {
-                    NINFERNO_MMQ_STORE(planes, &dst[ids_dst[j]*stride + i], sum[(j0/tile_C::J + n)*tile_C::ne + l]);
+                    NINFERNO_MMQ_STORE(planes, dst, ids_dst[j], i, stride, sum[(j0/tile_C::J + n)*tile_C::ne + l]);
                     GGML_UNUSED(y_scale_used);
                 }
             }

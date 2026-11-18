@@ -50,7 +50,8 @@ static_assert(work_tiles_arch_matches_table());
 
 #include "ops/generic/ggml_mmq/mmq_epilogue_math.cuh"
 // The tile's store takes the call's fused epilogue (#617 I; ggml_planes::epi_kind 0: as upstream).
-#define NINFERNO_MMQ_STORE(planes, p, v) ::ninferno::ops::mmq_epilogue::store((planes), (p), (v))
+#define NINFERNO_MMQ_STORE(planes, dst, j, i, stride, v)                                           \
+    ::ninferno::ops::mmq_epilogue::store((planes), (dst), (j), (i), (stride), (v))
 #include "ggml-cuda/common.cuh"
 #include "ggml-cuda/mmq.cuh"
 

@@ -27,18 +27,23 @@ __device__ __forceinline__ float value(bool gated, bool gelu, bool relu2, float 
     return v;
 }
 
-// The tile kernel's store of one sum at dst, a slot of the call's FP32 plane: as is without an
-// epilogue (kind 0), else the element (row, token) of the BF16 output, the gated product reading
-// the up half the up product left in the plane.
+// The tile kernel's store of one sum: element (j, i) of the tile whose FP32 slot is dst[j * stride
+// + i]. Without an epilogue (kind 0) the slot is written as is; else the element (row, token) of
+// the BF16 output, the gated product reading the up half the up product left in the plane. The
+// tile's origin in the plane is the one division here, the same for every element of the tile (the
+// compiler hoists it out of the write-back's loops); a division per element made the tile kernel
+// 21 % slower on the RTX 3060 (#617 I A/B).
 template <class Planes>
-__device__ __forceinline__ void store(const Planes& p, float* dst, float v) {
+__device__ __forceinline__ void store(const Planes& p, float* dst, int j, int i, int stride,
+                                      float v) {
     if (p.epi_kind == 0) {
-        *dst = v;
+        dst[j * stride + i] = v;
         return;
     }
-    const std::ptrdiff_t at = dst - p.epi_plane;
-    const int col           = static_cast<int>(at / p.epi_stride);
-    const int row = static_cast<int>(at - static_cast<std::ptrdiff_t>(col) * p.epi_stride);
+    const int at   = static_cast<int>(dst - p.epi_plane);
+    const int col0 = at / p.epi_stride;
+    const int col  = col0 + j;
+    const int row  = at - col0 * p.epi_stride + i;
     auto* out =
         static_cast<__nv_bfloat16*>(p.epi_out) + static_cast<std::size_t>(col) * p.epi_ld + row;
     const bool gated = p.epi_kind == 3;
