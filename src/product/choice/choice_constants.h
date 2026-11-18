@@ -927,6 +927,14 @@ inline constexpr KvReadFactor kKvReadFactor[] = {
 //          clock the row prices at (the two hold 1.08 and 1.10 of it): past the two-card tolerance
 //          of 6 %, so the row is one card's (it prices the estimate, never a decision) until a
 //          re-census or a third card brings the two inside it
+// Gemma 4 12B's 8-bit rows on sm_75..88 (the int8 row kernel, #619 steps 9-10; g4cen.sh, the nsys
+// census of one stream's decode at 8K and 32K, the full layer's per-call time between them over the
+// 24576 tokens' rows, 2 x (512 + 2) = 1028 B a token, 2026-11-18):
+//   turing  RTX 2080 Ti: 256.1 us for 25.3 MB, 98.7 GB/s (16 % of 616), 0.94 a reference
+//           SM-clock; its BF16 full layer in the same census 185.8 us for 50.3 MB, 271 GB/s (2.58,
+//           3.4 % under the 2.67 row above)
+//   ga10x   RTX 3090: 615 GB/s (66 % of 936), 4.43; its BF16 read is DRAM-bound (858 GB/s, 92 %),
+//           so it has no row
 // On Ampere every codec but INT8 (91-92 % of the DRAM rate) is SM-bound. Its BF16 row is today's
 // kernel (bf16_kv_grouped_mma_kernel, which reads at 92 % of the DRAM rate on the RTX 4090): a
 // kernel finding is open (#856), and the row is measured again when that kernel changes.
@@ -940,8 +948,9 @@ struct KvSmRate {
 };
 
 inline constexpr KvSmRate kKvSmRate[] = {
-    {"turing", "qwen3_5_text", KvCacheStorage::Int8Group64, 256, 16, 4, 3.58, 1}, // Qwen3.5 9B
-    {"turing", "gemma4_text", KvCacheStorage::BFloat16, 512, 16, 1, 2.67, 1},     // Gemma 4 12B
+    {"turing", "qwen3_5_text", KvCacheStorage::Int8Group64, 256, 16, 4, 3.58, 1},  // Qwen3.5 9B
+    {"turing", "gemma4_text", KvCacheStorage::BFloat16, 512, 16, 1, 2.67, 1},      // Gemma 4 12B
+    {"turing", "gemma4_text", KvCacheStorage::Fp8E4M3Row256, 512, 16, 1, 0.94, 1}, // its int8 rows
     // The Quadro GV100 (80 SMs, 1627 MHz reference; mdcenv.sh, the census at 7K and 82K): Gemma 4
     // 12B's BF16 full layer 707 us a call for 153 MB, 216 GB/s, 25 % of its 870 (Qwen3.5's int8
     // kernel, int8_kv_key_major_kt, reaches 643 GB/s, 97 % of the 660 its HBM2 holds: no row).
@@ -951,6 +960,7 @@ inline constexpr KvSmRate kKvSmRate[] = {
     {"ga10x", "qwen3_5_text", KvCacheStorage::Fp8E4M3Row256, 256, 16, 4, 4.51, 2},
     {"ga10x", "qwen3_5_text", KvCacheStorage::Fp8KeyNvfp4Value, 256, 16, 4, 3.45, 2},
     {"ga10x", "qwen3_5_text", KvCacheStorage::Nvfp4Group16, 256, 16, 4, 2.48, 2},
+    {"ga10x", "gemma4_text", KvCacheStorage::Fp8E4M3Row256, 512, 16, 1, 4.43, 1}, // the 3090's
     {"ada", "qwen3_5_text", KvCacheStorage::Nvfp4Group16, 256, 16, 4, 2.56, 2},
     {"gb20x", "qwen3_5_text", KvCacheStorage::Nvfp4Group16, 256, 16, 4, 2.91, 1}, // 6.4 % apart
 };

@@ -428,7 +428,9 @@ inline constexpr FittedHoldout kChoiceHoldouts[] = {
          "none left out", "choice_constants.h at KvReadFactor")},
     {kChoice, "kKvSmRate",
      Holdout::none(
-         "Turing: Qwen3.5 9B's int8 kernel and Gemma 4 12B's BF16 one on the RTX 2080 Ti; Volta: "
+         "Turing: Qwen3.5 9B's int8 kernel and Gemma 4 12B's BF16 one on the RTX 2080 Ti; Gemma "
+         "4 12B's int8 rows on the RTX 2080 Ti and 3090 (g4cen.sh at 8K and 32K, one card each); "
+         "Volta: "
          "the Quadro GV100's census at 7K and 82K (Gemma 4 12B's BF16 full layer 707 us a call for "
          "153 MB); Ampere, Ada and Blackwell: the census of #618 step 1 (Qwen3.5-9B, the RTX 3090 "
          "and 3060, 4070 Ti and 4090, 5070 Ti and 5090: the mean of two cards, within 2.7 %; "
