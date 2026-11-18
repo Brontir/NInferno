@@ -64,7 +64,10 @@ struct DrafterAxis {
 // engine's own rules: the family's codecs (choice::allowed_axes; the ring decoders, Gemma 4 and
 // Nemotron-H keep BF16 or FP8: validate_state_storage) and, for the Qwen paged pool, the head
 // width its layout takes (core/paged_kv_storage.h paged_kv_storage_layout). `slow_on_card`: the
-// codec runs, but this card widens FP8 codes in software (no E4M3 instructions below sm_89).
+// codec runs, but this card widens FP8 codes in software (no E4M3 instructions below sm_89). The
+// Gemma 4 / dense one-byte rows on sm_75..88 hold int8 codes (gemma4_rows_int8_on) and are not
+// widened in software, so they are not slow_on_card; their measured trade (slower prefill, and
+// on Turing a slower decode) is the plan's estimate, not this flag.
 struct KvOption {
     KvCacheStorage codec = KvCacheStorage::BFloat16;
     bool allowed         = true;

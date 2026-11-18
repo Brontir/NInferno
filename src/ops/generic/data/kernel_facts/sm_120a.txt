@@ -3554,7 +3554,7 @@ gemma4 attention 512 16 128 2 32 0 1 0 219 0 0 0
 gemma4 attention 512 16 128 2 32 0 1 1 232 0 0 128
 gemma4 attention 512 16 128 2 32 1 0 0 241 0 0 0
 gemma4 attention 512 16 128 2 32 1 1 0 225 0 0 0
-gemma4 volta 256 0 0 4 0 0 0 0 56 16 0 4656
+gemma4 volta 256 0 0 4 0 0 0 0 56 0 0 4656
 gemma4 volta 256 0 0 8 0 0 0 0 56 0 0 9312
 gemma4 volta 256 0 0 16 0 0 0 0 96 0 0 18624
 gemma4 volta 512 0 0 4 0 0 0 0 64 0 0 8752

@@ -8,6 +8,7 @@
 #include "ops/common/warp.cuh"
 #include "ops/softmax_attention/gemma4/fp8_row.cuh"
 #include "ops/softmax_attention/gemma4/kv_address.h"
+#include "ops/softmax_attention/gemma4/row_codec.h"
 
 #include <cuda_bf16.h>
 
@@ -469,8 +470,9 @@ void dense_qkv_prepare(const DenseQkvPrepare& a, cudaStream_t stream) {
     const Tensor& cv          = a.cache.v;
     // Without cache planes the keys and values go to k_out / v_out, columns [D, Hkv, T].
     const bool columns = ck.data == nullptr && cv.data == nullptr;
-    // Plane dtypes (BF16, or both FP8_E4M3FN with FP32 row scales) are checked by the binding.
-    const bool fp8 = !columns && ck.dtype == DType::FP8_E4M3FN;
+    // Plane dtypes (BF16, or both one-byte rows in the build's codec, row_codec.h, with FP32 row
+    // scales) are checked by the binding.
+    const bool fp8        = !columns && ck.dtype == kGemma4RowDtype;
     std::int32_t d        = 0;
     std::int32_t kv_heads = 0;
     detail::Gemma4KvBinding binding{};
@@ -495,7 +497,7 @@ void dense_qkv_prepare(const DenseQkvPrepare& a, cudaStream_t stream) {
         require(ck.is_contiguous() && ck.data != nullptr && aligned16(ck.data) &&
                     cv.is_contiguous() && cv.data != nullptr && aligned16(cv.data),
                 "dense_qkv_prepare: cache planes must be 16-byte aligned contiguous BF16 (or both "
-                "FP8_E4M3FN)");
+                "one-byte row planes, FP8_E4M3FN or I8 by the build)");
         d = ck.ne[0];
         // A page pool is [D, 64, pages, Hkv]; slot storage and ring images are
         // [D, C, Hkv(, images)].

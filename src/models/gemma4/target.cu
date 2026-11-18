@@ -12,6 +12,7 @@
 #include "ninferno/ops/sampling.h"
 #include "ninferno/ops/segmented_projection.h"
 #include "ops/linear/linear_registry.h"
+#include "ops/softmax_attention/gemma4/row_codec.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -62,7 +63,7 @@ KvPlanes allocate_kv_planes(std::int32_t head_dim, std::int32_t capacity, std::i
                             std::int32_t window, bool fp8) {
     const std::int64_t values = std::int64_t(head_dim) * capacity * kv_heads;
     const auto bytes          = fp8 ? static_cast<std::size_t>(values) : bf16_bytes(values);
-    const DType dtype         = fp8 ? DType::FP8_E4M3FN : DType::BF16;
+    const DType dtype         = fp8 ? ops::kGemma4RowDtype : DType::BF16;
     KvPlanes planes;
     planes.k           = DeviceBuffer(bytes);
     planes.v           = DeviceBuffer(bytes);

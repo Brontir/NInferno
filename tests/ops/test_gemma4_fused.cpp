@@ -2,6 +2,7 @@
 #include "ninferno/ops/gemma4_fused.h"
 #include "ops/op_tester.h"
 #include "ops/oracle.h"
+#include "ops/softmax_attention/gemma4/row_codec.h"
 
 #include <algorithm>
 #include <cmath>
@@ -103,6 +104,134 @@ int verify_cached_prepare(const std::string& label, int d, int q_heads, int kv_h
     }
     for (auto* buffer : {&d_ck, &d_cv, &d_q2}) {
         failures += buffer->verify_guards(label + " cached guards");
+    }
+    return failures;
+}
+
+// One code of the build's one-byte row codec (row_codec.h), unscaled: int8 on sm_75..88 builds,
+// E4M3FN elsewhere.
+double row_code_value(std::uint8_t code) {
+    if constexpr (ops::kGemma4RowInt8) {
+        return static_cast<double>(static_cast<std::int8_t>(code));
+    }
+    const int sign = code >> 7, exponent = (code >> 3) & 15, mantissa = code & 7;
+    if (exponent == 15 && mantissa == 7) { return std::nan(""); }
+    const double m = exponent == 0 ? mantissa / 8.0 : 1.0 + mantissa / 8.0;
+    const double v = std::ldexp(m, exponent == 0 ? -6 : exponent - 7);
+    return sign ? -v : v;
+}
+
+// The cache-writing form into one-byte rows (the build's codec, a row scale each) against the
+// dense form on the same positions: every slot a token addresses holds that token's dense K/V row
+// as scale * code, the scale its row's absolute maximum over the codec's largest code, each value
+// within half a code step (int8) or the E4M3 rounding; every other slot keeps its prior bytes.
+template <class Dense, class Cached>
+int verify_cached_rows(const std::string& label, int d, int q_heads, int kv_heads, int t_count,
+                       Dense dense, Cached cached) {
+    const int capacity = t_count + 3;
+    std::vector<std::int32_t> ring(t_count);
+    for (int t = 0; t < t_count; ++t) { ring[t] = capacity - 2 + t; }
+    auto d_ring      = upload(ring);
+    const auto rows  = std::size_t(capacity) * kv_heads;
+    const auto plane = std::size_t(d) * rows;
+    std::vector<std::uint8_t> fill_k(plane), fill_v(plane);
+    std::mt19937 rng(79);
+    for (auto& b : fill_k) { b = static_cast<std::uint8_t>(rng() & 0x77U); }
+    for (auto& b : fill_v) { b = static_cast<std::uint8_t>(rng() & 0x77U); }
+    const std::vector<float> fill_scale(rows, 0.5f);
+    auto d_ck         = upload(fill_k);
+    auto d_cv         = upload(fill_v);
+    auto d_sk         = upload(fill_scale);
+    auto d_sv         = upload(fill_scale);
+    const int q_shape = std::max(q_heads, 1);
+    GuardedDeviceBuffer d_q1(std::size_t(q_shape) * d * t_count * 2);
+    GuardedDeviceBuffer d_q2(std::size_t(q_shape) * d * t_count * 2);
+    GuardedDeviceBuffer d_k(std::size_t(kv_heads) * d * t_count * 2);
+    GuardedDeviceBuffer d_v(std::size_t(kv_heads) * d * t_count * 2);
+    Tensor pos(d_ring.data(), DType::I32, {t_count});
+    Tensor q1(d_q1.data(), DType::BF16, {d, q_shape, t_count});
+    Tensor q2(d_q2.data(), DType::BF16, {d, q_shape, t_count});
+    Tensor k(d_k.data(), DType::BF16, {d, kv_heads, t_count});
+    Tensor v(d_v.data(), DType::BF16, {d, kv_heads, t_count});
+    ops::Gemma4KvLayer cache;
+    cache.k       = Tensor(d_ck.data(), ops::kGemma4RowDtype, {d, capacity, kv_heads});
+    cache.v       = Tensor(d_cv.data(), ops::kGemma4RowDtype, {d, capacity, kv_heads});
+    cache.k_scale = Tensor(d_sk.data(), DType::FP32, {capacity, kv_heads});
+    cache.v_scale = Tensor(d_sv.data(), DType::FP32, {capacity, kv_heads});
+    dense(pos, q1, k, v);
+    cached(pos, q2, cache);
+    cuda_synchronize();
+    int failures       = 0;
+    const auto q_count = std::size_t(q_heads) * d * t_count;
+    if (q_heads > 0 && from_device<std::uint16_t>(d_q1.data(), q_count) !=
+                           from_device<std::uint16_t>(d_q2.data(), q_count)) {
+        std::cerr << label << " rows: queries differ from the dense form\n";
+        ++failures;
+    }
+    const auto dk = download_bf16(d_k, std::size_t(kv_heads) * d * t_count);
+    const auto dv = download_bf16(d_v, std::size_t(kv_heads) * d * t_count);
+    const auto ck = from_device<std::uint8_t>(d_ck.data(), plane);
+    const auto cv = from_device<std::uint8_t>(d_cv.data(), plane);
+    const auto sk = from_device<float>(d_sk.data(), rows);
+    const auto sv = from_device<float>(d_sv.data(), rows);
+    std::vector<char> written(rows, 0);
+    double worst         = 0.0;
+    const auto check_row = [&](const std::vector<double>& dense_rows, std::size_t src,
+                               const std::vector<std::uint8_t>& codes,
+                               const std::vector<float>& scales, std::size_t row,
+                               const char* what) {
+        double absmax = 0.0;
+        for (int i = 0; i < d; ++i) { absmax = std::max(absmax, std::fabs(dense_rows[src + i])); }
+        const double scale = scales[row];
+        const double want  = absmax / static_cast<double>(ops::kGemma4RowCodeMax);
+        if (std::fabs(scale - want) > 0.01 * want + 1e-30) {
+            std::cerr << label << " rows: " << what << " scale " << scale << ", want " << want
+                      << '\n';
+            ++failures;
+            return;
+        }
+        for (int i = 0; i < d; ++i) {
+            const double x   = dense_rows[src + i];
+            const double got = scale * row_code_value(codes[row * d + i]);
+            // Half a code step, the dense row's BF16 rounding, and for E4M3 its relative rounding.
+            const double bound =
+                (ops::kGemma4RowInt8 ? 0.5 * scale : std::fabs(x) / 16.0 + scale / 512.0) +
+                std::fabs(x) / 128.0 + 1e-6;
+            worst = std::max(worst, std::fabs(got - x) / (bound > 0 ? bound : 1.0));
+            if (!(std::fabs(got - x) <= bound)) {
+                std::cerr << label << " rows: " << what << " row " << row << " dim " << i << " got "
+                          << got << ", dense " << x << '\n';
+                ++failures;
+                return;
+            }
+        }
+    };
+    for (int t = 0; t < t_count && failures == 0; ++t) {
+        const int slot = ring[t] % capacity;
+        for (int g = 0; g < kv_heads; ++g) {
+            const auto src = (std::size_t(t) * kv_heads + g) * d;
+            const auto row = std::size_t(g) * capacity + slot;
+            written[row]   = 1;
+            check_row(dk, src, ck, sk, row, "k");
+            check_row(dv, src, cv, sv, row, "v");
+        }
+    }
+    for (std::size_t row = 0; row < rows; ++row) {
+        if (written[row]) { continue; }
+        if (!std::equal(ck.begin() + row * d, ck.begin() + (row + 1) * d,
+                        fill_k.begin() + row * d) ||
+            !std::equal(cv.begin() + row * d, cv.begin() + (row + 1) * d,
+                        fill_v.begin() + row * d) ||
+            sk[row] != fill_scale[row] || sv[row] != fill_scale[row]) {
+            std::cerr << label << " rows: slot row " << row << " not addressed but changed\n";
+            ++failures;
+            break;
+        }
+    }
+    std::cout << label << " one-byte rows (" << (ops::kGemma4RowInt8 ? "int8" : "e4m3")
+              << "): worst error " << worst << " of the bound\n";
+    for (auto* buffer : {&d_ck, &d_cv, &d_sk, &d_sv, &d_q2}) {
+        failures += buffer->verify_guards(label + " rows guards");
     }
     return failures;
 }
@@ -233,6 +362,17 @@ int run_qkv(const QkvCase& c, bool report_controls) {
         },
         [&](const Tensor& p, Tensor& q, const ops::Gemma4KvLayer& cache) {
             // Joined (a programmatic dependent of the kernel before): the bytes of the plain form.
+            ops::gemma4_qkv_prepare(q_src, k_src, v_src, d, q_w, k_w, float(eps), p, float(c.theta),
+                                    c.rotary_pairs, q, cache, nullptr, true);
+        });
+    // The same writer into one-byte rows, in the build's codec (#619 steps 9-10, #991).
+    failures += verify_cached_rows(
+        c.label, d, c.q_heads, c.kv_heads, t_count,
+        [&](const Tensor& p, Tensor& q, Tensor& k, Tensor& v) {
+            ops::gemma4_qkv_prepare(q_src, k_src, v_src, d, q_w, k_w, float(eps), p, float(c.theta),
+                                    c.rotary_pairs, q, k, v, nullptr);
+        },
+        [&](const Tensor& p, Tensor& q, const ops::Gemma4KvLayer& cache) {
             ops::gemma4_qkv_prepare(q_src, k_src, v_src, d, q_w, k_w, float(eps), p, float(c.theta),
                                     c.rotary_pairs, q, cache, nullptr, true);
         });
