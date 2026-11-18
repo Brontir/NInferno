@@ -577,16 +577,18 @@ std::uint64_t ggml_mmq_fallback_count() noexcept {
 }
 
 namespace {
-// NINFERNO_MMQ_FUSED_EPILOGUE=0 starts the process with it off: the A/B of one binary (#617 I).
-std::atomic<bool> mmq_fused_epilogue{[] {
+// NINFERNO_MMQ_FUSED_EPILOGUE sets the process's mode at start (the A/B of one binary): 0 off, 1
+// every epilogue, 2 only the epilogues that read nothing (Store, relu^2): the fused store's reads
+// (the up half, the residual) wait in turn behind its writes (#617 I A/B).
+std::atomic<int> mmq_fused_epilogue{[] {
     const char* v = std::getenv("NINFERNO_MMQ_FUSED_EPILOGUE");
-    return v == nullptr || v[0] != '0';
+    return v == nullptr ? 1 : v[0] == '0' ? 0 : v[0] == '2' ? 2 : 1;
 }()};
 std::atomic<std::uint64_t> mmq_fused_products{0};
 } // namespace
 
 void set_mmq_fused_epilogue(bool on) noexcept {
-    mmq_fused_epilogue.store(on, std::memory_order_relaxed);
+    mmq_fused_epilogue.store(on ? 1 : 0, std::memory_order_relaxed);
 }
 
 std::uint64_t ggml_mmq_fused_count() noexcept {
@@ -955,7 +957,9 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             // upper half, which the gate product's store reads. Else the plane and the separate
             // kernel, the same arithmetic (mmq_epilogue_math.cuh).
             ggml_mmq::FusedEpilogue fused_epilogue;
-            if (part.segments == 1 && mmq_fused_epilogue.load(std::memory_order_relaxed)) {
+            const int fuse_mode = mmq_fused_epilogue.load(std::memory_order_relaxed);
+            if (part.segments == 1 &&
+                (fuse_mode == 1 || (fuse_mode == 2 && call.epilogue == Epilogue::Store))) {
                 fused_epilogue.kind       = call.epilogue == Epilogue::Store         ? 1
                                             : call.epilogue == Epilogue::AddResidual ? 2
                                                                                      : 3;
