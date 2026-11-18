@@ -7,7 +7,7 @@
 //                     [--samples 15] [--prefill-chunk 1024] [--prefill-only 1]
 //                     [--points T,T,...] [--rotate 0|1] [--routes-out FILE.csv]
 //                     [--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1]
-//                     [--group-sums-plane 1] [--route-policy legacy|evidence] [--route-dir DIR]
+//                     [--group-sums-plane 1] [--route-policy evidence|legacy] [--route-dir DIR]
 //
 // FILE holds one problem per line, "<format> <compute> <epilogue> <n> <k>", for example
 // "nvfp4 a4 store 3584 1024" (format bf16|fp8|nvfp4|q4|q5|q6|q8, compute a16|a8|a4, epilogue
@@ -61,11 +61,12 @@
 // route_authorities.h): a route-table entry measured on another board (borrowed, transferred)
 // yields to the ranker. It moves what --selected-out and --describe report as the production pick
 // (the evidence columns then name the authority that answered under it), never what is timed or
-// written to the table: the two arms of an A/B are one sweep each, legacy (the default) and
-// evidence. --route-dir DIR selects with the default lookup in DIR instead of the shipped routes/
-// (the engine's --route-dir): a copy of routes/ without the board's own table runs the board as a
-// card the tables do not hold, its nearest table another board's. Both settings are in every
-// row's run id ("-policy.evidence", "-routedir.<name>"), so a CSV says which arm wrote it.
+// written to the table: the two arms of an A/B are one sweep each, evidence (the default since
+// #614 F2) and legacy. --route-dir DIR selects with the default lookup in DIR instead of the
+// shipped routes/ (the engine's --route-dir): a copy of routes/ without the board's own table runs
+// the board as a card the tables do not hold, its nearest table another board's. Both settings are
+// in every row's run id ("-policy.legacy" off the default, "-routedir.<name>"), so a CSV says which
+// arm wrote it.
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/device_class.h"
@@ -151,22 +152,22 @@ int route_tune_main(int argc, char** argv) {
                          "[--prefill-only 1] [--points T,...] [--routes-out FILE.csv] "
                          "[--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1] "
                          "[--rotate 0|1] [--describe 1] [--group-sums-plane 1] "
-                         "[--route-policy legacy|evidence] [--route-dir DIR]\n";
+                         "[--route-policy evidence|legacy] [--route-dir DIR]\n";
             return 2;
         }
 
         // The arm's policy and table directory, for this run alone (the process's are back to
-        // legacy and the shipped tables on return).
+        // the release's, evidence, and the shipped tables on return).
         struct PolicyReset {
             ~PolicyReset() {
-                ops::set_route_policy(RoutePolicy::Legacy);
+                ops::set_route_policy(RoutePolicy::Evidence);
                 ops::set_route_table_dir({});
             }
         } policy_reset;
 
         const RoutePolicy policy = opt.count("--route-policy")
                                        ? parse_route_policy(opt["--route-policy"])
-                                       : RoutePolicy::Legacy;
+                                       : RoutePolicy::Evidence;
         ops::set_route_policy(policy);
         if (opt.count("--route-dir")) ops::set_route_table_dir(opt["--route-dir"]);
         std::cerr << "route-tune: --route-policy " << route_policy_name(policy) << ", tables "
@@ -200,14 +201,16 @@ int route_tune_main(int argc, char** argv) {
         // Every row names the run that wrote it and the board it ran on, so a collector pairs a
         // pass's --routes-out with its own --selected-out and never mixes boards (#518). An A/B
         // arm's settings are in it too (#614 F1), so its rows say which arm they are:
-        // "-policy.evidence" under --route-policy evidence, "-routedir.<name>" under --route-dir
+        // "-policy.legacy" under --route-policy legacy (before #614 F2, when legacy was the
+        // default,
+        // "-policy.evidence" under evidence), "-routedir.<name>" under --route-dir
         // (the directory's last component, characters outside [A-Za-z0-9._] as '_').
         const std::string run_id = [&] {
             std::random_device entropy;
             char hex[17];
             std::snprintf(hex, sizeof(hex), "%08x%08x", entropy(), entropy());
             std::string arm;
-            if (policy != RoutePolicy::Legacy)
+            if (policy != RoutePolicy::Evidence)
                 arm += std::string("-policy.") + route_policy_name(policy);
             if (opt.count("--route-dir")) {
                 std::string name = std::filesystem::path(opt["--route-dir"]).filename().string();

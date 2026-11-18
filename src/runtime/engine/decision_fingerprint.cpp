@@ -79,7 +79,7 @@ constexpr std::array<std::pair<std::string_view, std::string_view>, 12> kMaintai
     {"prefill_route", "auto"},
     {"decode_route", "auto"},
     {"moe_path", "auto"},
-    {"route_policy", "legacy"},
+    {"route_policy", "evidence"},
 }};
 
 std::string number(std::uint64_t value) { return std::to_string(value); }

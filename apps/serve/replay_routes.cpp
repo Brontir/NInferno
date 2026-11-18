@@ -89,6 +89,15 @@ int replay_routes_main(int argc, char** argv) {
     const runtime::DecisionSection taint   = runtime::section_of_text(canonical, "taint");
     const runtime::DecisionSection build   = runtime::section_of_text(canonical, "build");
     const runtime::DecisionSection facts   = runtime::section_of_text(canonical, "facts");
+    // The start's route policy first: a start from before F1 records none and is refused before
+    // anything is printed.
+    RoutePolicy policy{};
+    try {
+        policy = runtime::route_policy_of(options);
+    } catch (const std::exception& error) {
+        std::cerr << "replay-routes: " << error.what() << '\n';
+        return 2;
+    }
     if (recorded.empty()) {
         std::cerr << "replay-routes: the record holds no route lines\n";
         return 2;
@@ -192,7 +201,7 @@ int replay_routes_main(int argc, char** argv) {
     }
     runtime::DecisionSection replayed;
     try {
-        replayed = runtime::replay_routes(device, recorded, runtime::route_policy_of(options));
+        replayed = runtime::replay_routes(device, recorded, policy);
     } catch (const std::exception& error) {
         std::cerr << "replay-routes: " << error.what() << "\n";
         return 2;

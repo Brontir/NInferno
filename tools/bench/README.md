@@ -350,7 +350,7 @@ python3 tools/bench/run_serve_corpus.py \
 | `--output DIR` | required | Campaign directory. |
 | `--port N` | 8080 | Loopback port. |
 | `--device N` | 0 | CUDA device. |
-| `--prefill-route F`, `--decode-route F`, `--moe-path P` | `auto` | Maintainer route pins passed to `ninferno-serve` ([route pins](../../docs/maintainer/environment.md#route-pins)), for an A/B of the automatic kernel family against one family. The runner checks them in the `server_start` record and binds a campaign directory to its pins (`route_pins.json`): measure each pin into its own `--output`. |
+| `--prefill-route F`, `--decode-route F`, `--moe-path P` | `auto` | Maintainer route pins passed to `ninferno-serve` ([route pins](../../docs/maintainer/environment.md#route-pins)), for an A/B of the automatic kernel family against one family. The runner checks them in the `server_start` record and binds a campaign directory to its pins (`route_pins.json`): measure each pin into its own `--output`. A directory from before the pins (`run.jsonl` without `route_pins.json`, or a marker without every pin) is refused. |
 
 Output: `run.jsonl` (completed requests and responses), `summary.csv`, `summary.md` (fixture and
 category summaries) and per-server logs under `server/`. Results (schema 8) retain the KV dtype,

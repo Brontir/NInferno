@@ -105,7 +105,7 @@ inline constexpr const char* kEngineFlagsUsage =
     "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n"
     "       [--artifact-io auto|direct|buffered]\n"
     "       [--prefill-route auto|a16|w4a8|i8|mmq|w4a4] [--decode-route auto|a16|r8|vec|mmq]\n"
-    "       [--moe-path auto|fused|generic] [--route-policy legacy|evidence]\n";
+    "       [--moe-path auto|fused|generic] [--route-policy evidence|legacy]\n";
 
 // Without the decode pacing and the decode route pin, and with the tuners, for a program that
 // only scores (ninferno-perplexity, a tuner host).
@@ -117,7 +117,7 @@ inline constexpr const char* kScoringEngineFlagsUsage =
     "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n"
     "       [--artifact-io auto|direct|buffered]\n"
     "       [--prefill-route auto|a16|w4a8|i8|mmq|w4a4] [--moe-path auto|fused|generic]\n"
-    "       [--route-policy legacy|evidence]\n";
+    "       [--route-policy evidence|legacy]\n";
 
 // The decode pacing flags, which a scoring program refuses.
 [[nodiscard]] inline bool is_decode_pacing_flag(std::string_view arg) noexcept {

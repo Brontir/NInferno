@@ -40,11 +40,11 @@ enum class DecodeRoute : std::uint8_t { Auto, A16, R8, Vec, Mmq };
 enum class MoePath : std::uint8_t { Auto, Fused, Generic };
 
 // A maintainer's pin of the generic selector's precedence over evidence (--route-policy; #614 F1,
-// ops/generic/route_authorities.h). Legacy is the release's selection: the first authority that
-// answers decides, whatever its evidence. Evidence demotes a route-table answer whose entry was
-// measured on another board (Borrowed: lent by a farther table; Transferred: the nearest table is
-// past the carry distance) below the ranker (the cost model, else the rules), for the A/B that
-// checks whether such entries should decide.
+// ops/generic/route_authorities.h). Evidence, the release's selection since #614 F2, demotes a
+// route-table answer whose entry was measured on another board (Borrowed: lent by a farther table;
+// Transferred: the nearest table is past the carry distance) below the ranker (the cost model, else
+// the rules). Legacy, the selection before F2 and an A/B arm now: the first authority that answers
+// decides, whatever its evidence.
 enum class RoutePolicy : std::uint8_t { Legacy, Evidence };
 
 // How artifact payloads (the weights) are read at load (--artifact-io): Auto reads local disks with

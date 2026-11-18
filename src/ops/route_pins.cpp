@@ -11,7 +11,7 @@ namespace {
 std::atomic<std::uint8_t> g_prefill{static_cast<std::uint8_t>(PrefillRoute::Auto)};
 std::atomic<std::uint8_t> g_decode{static_cast<std::uint8_t>(DecodeRoute::Auto)};
 std::atomic<std::uint8_t> g_moe{static_cast<std::uint8_t>(MoePath::Auto)};
-std::atomic<std::uint8_t> g_policy{static_cast<std::uint8_t>(RoutePolicy::Legacy)};
+std::atomic<std::uint8_t> g_policy{static_cast<std::uint8_t>(RoutePolicy::Evidence)};
 
 struct AtomicBand {
     std::atomic<bool> seen{false};
