@@ -365,7 +365,7 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
         return;
     }
     if (Schedule::kCluster == 1 &&
-        ((args.join_previous == 0 && args.pdl_prefetch == 0) || !pdl::supported())) {
+        ((args.join_previous == 0 && args.pdl_prefetch == 0) || !pdl::launch_attribute())) {
         rmma_kernel<Decoder, Schedule, E, Latency, Sums>
             <<<grid, Schedule::kThreads, smem, stream>>>(args);
     } else {
@@ -378,7 +378,7 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
             attributes[count].val.clusterDim.z = Schedule::kCluster;
             ++count;
         }
-        if ((args.join_previous != 0 || args.pdl_prefetch != 0) && pdl::supported()) {
+        if ((args.join_previous != 0 || args.pdl_prefetch != 0) && pdl::launch_attribute()) {
             attributes[count].id = cudaLaunchAttributeProgrammaticStreamSerialization;
             attributes[count].val.programmaticStreamSerializationAllowed = 1;
             ++count;

@@ -5,6 +5,7 @@
 #include <cuda_runtime.h>
 
 #include <cstddef>
+#include <cstdlib>
 #include <utility>
 
 namespace ninferno::pdl {
@@ -45,6 +46,19 @@ struct LaunchConfig {
 // where it overlaps anything, and the launch is otherwise an ordinary stream-ordered one.
 [[nodiscard]] inline bool supported() { return device_class().features.pdl; }
 
+// Whether a launch may carry the programmatic serialization attribute: supported(), unless the
+// lab switch NINFERNO_LAB_NO_PDL=1 holds it off for the process. With the switch every kernel and
+// every choice stays the same (the selector reads features.pdl, not this), the waits and triggers
+// still run and are no-ops without the attribute, and each launch is plain stream order: the
+// no-PDL twin of a model step's trace, for the analyzer's junction law (what an overlap saves).
+[[nodiscard]] inline bool launch_attribute() {
+    static const bool off = [] {
+        const char* v = std::getenv("NINFERNO_LAB_NO_PDL");
+        return v != nullptr && v[0] == '1';
+    }();
+    return supported() && !off;
+}
+
 // Launches a kernel, as a programmatic dependent of the immediately preceding producer kernel in
 // the same stream when `dependent` (every consumer control path that reads producer output must
 // first call wait_for_dependencies()), at the device's greatest priority when `urgent`: its CTAs
@@ -55,7 +69,7 @@ template <class... KernelArgs, class... CallArgs>
                                         void (*kernel)(KernelArgs...), CallArgs&&... args) {
     cudaLaunchAttribute attributes[2]{};
     unsigned count = 0;
-    if (dependent && supported()) {
+    if (dependent && launch_attribute()) {
         attributes[count].id = cudaLaunchAttributeProgrammaticStreamSerialization;
         attributes[count].val.programmaticStreamSerializationAllowed = 1;
         ++count;

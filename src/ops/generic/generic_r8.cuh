@@ -357,7 +357,7 @@ void r8_launch_tokens(const GemmArgs& args, cudaStream_t stream, W4a8Activation 
         return;
     }
     // kPre launches in stream order: the quantizer it reads is the kernel right before it.
-    if (kPre || (args.join_previous == 0 && args.pdl_prefetch == 0) || !pdl::supported()) {
+    if (kPre || (args.join_previous == 0 && args.pdl_prefetch == 0) || !pdl::launch_attribute()) {
         r8_kernel<C, S, NT, E, kPre><<<grid, S::kThreads, smem, stream>>>(args, act);
     } else {
         cudaLaunchAttribute attribute{};
