@@ -23,7 +23,8 @@ struct FrontendResources {
 
 // The Qwen 3.5 family's tokenizer over the resources' tokenizer files: sets resources.tokenizer
 // and resources.public_token_count (its whole vocabulary). parse_resources calls it, then checks
-// the vocabulary against the model; the chat-template parity test calls it alone.
+// the vocabulary against the model; the chat-template parity test calls it alone. The last one
+// built is shared by a call over the same file bytes (#839: the plan's count, then the load).
 void attach_qwen3_5_tokenizer(FrontendResources& resources);
 
 void parse_resources(FrontendResources& resources, const Config& config);
