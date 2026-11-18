@@ -1122,5 +1122,71 @@ class SassUnstable(unittest.TestCase):
         self.assertEqual(check(read, (158, 0, 0, 0, before), (158, 0, 0, 0, after)), 1)
 
 
+
+class RegisterAllocations(unittest.TestCase):
+    # #968: a moegemm row ptxas allocates either way from one source passes at any counted register
+    # count, with its loop counts moved; an uncounted count, another resource moved, another arch
+    # or a row not listed fails.
+    def test_check_section_accepts_the_counted_allocations_only(self):
+        import types
+        args = types.SimpleNamespace(expected="sm_89.txt", nvcc="13.4.92", binary="serve",
+                                     dump=None, show=10)
+        table = kernel_facts.REGISTER_ALLOCATIONS["moegemm"]
+        self.assertTrue(table, "no counted allocation")
+        arch = sorted(table)[0]
+        key, counts = sorted(table[arch].items())[0]
+        self.assertGreaterEqual(len(counts), 2)
+        lo, hi = min(counts), max(counts)
+        before, after = sc.LoopCounts(), sc.LoopCounts()
+        before.total, after.total = 1200, 1212
+
+        def check(k, expected, got, at=arch):
+            section = {"rows": {k: expected}, "nvcc": "13.4.92"}
+            with contextlib.redirect_stdout(io.StringIO()):
+                return kernel_facts.check_section(args, "moegemm", section, {k: got}, False,
+                                                  True, at)
+
+        self.assertEqual(check(key, (lo, 0, 0, 0, before), (hi, 0, 0, 0, after)), 0)
+        self.assertEqual(check(key, (hi, 0, 0, 0, before), (lo, 0, 0, 0, before)), 0)
+        uncounted = next(r for r in range(hi + 1, 256) if r not in counts)
+        self.assertEqual(check(key, (lo, 0, 0, 0, before), (uncounted, 0, 0, 0, before)), 1)
+        self.assertEqual(check(key, (lo, 0, 0, 0, before), (hi, 0, 0, 16, before)), 1)
+        self.assertEqual(check(key, (lo, 0, 0, 0, before), (hi, 0, 0, 0, before), "999"), 1)
+        listed = {k for rows in table.values() for k in rows}
+        unlisted = next(("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, s) for s in range(4)
+                        if ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, s) not in listed)
+        self.assertEqual(check(unlisted, (lo, 0, 0, 0, before), (hi, 0, 0, 0, before)), 1)
+
+    def test_extract_keeps_the_sections_allocation(self):
+        table = kernel_facts.REGISTER_ALLOCATIONS["moegemm"]
+        arch = sorted(table)[0]
+        key, counts = sorted(table[arch].items())[0]
+        lo, hi = min(counts), max(counts)
+        a, b = sc.LoopCounts(), sc.LoopCounts()
+        a.total, b.total = 1200, 1212
+        other = ("Bf16Decoder", 1, 4, 1, 1, 1, 0)
+        old = {key: (lo, 0, 0, 0, a), other: (90, 0, 0, 0, a)}
+        new = {key: (hi, 0, 0, 0, b), other: (91, 0, 0, 0, b)}
+        kept = kernel_facts.keep_allocations("moegemm", arch, old, new)
+        self.assertEqual(kept[key], old[key])
+        self.assertEqual(kept[other], new[other])
+        moved = {key: (hi, 0, 0, 16, b)}
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, moved), moved)
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", "999", old, new), new)
+
+    def test_every_counted_row_is_a_committed_row(self):
+        # The table's keys spell the parsed keys (FAMILIES["moegemm"].parse_key): each names a row
+        # of its arch's committed snapshot, whose registers are among the counted ones.
+        data = os.path.join(Path(__file__).resolve().parents[1], "src", "ops", "generic", "data", "kernel_facts")
+        for arch, rows in kernel_facts.REGISTER_ALLOCATIONS["moegemm"].items():
+            with open(os.path.join(data, f"sm_{arch}.txt")) as f:
+                _, sections = kernel_facts.parse_sections(f.read())
+            committed = sections["moegemm"]["rows"]
+            for key, counts in rows.items():
+                self.assertTrue(counts, (arch, key))
+                self.assertIn(key, committed, (arch, key))
+                self.assertIn(committed[key][0], counts, (arch, key))
+
+
 if __name__ == "__main__":
     unittest.main()

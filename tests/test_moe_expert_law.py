@@ -8,6 +8,9 @@ sys.path.insert(0, os.path.join(ROOT, "tools", "bench"))
 
 import moe_expert_law as law  # noqa: E402
 
+sys.path.insert(0, os.path.join(ROOT, "tools", "kernel_facts"))
+import kernel_facts  # noqa: E402
+
 FACTS = os.path.join(ROOT, "src", "ops", "generic", "data", "kernel_facts", "sm_120a.txt")
 
 
@@ -56,3 +59,12 @@ def test_every_plan_is_priced_and_one_pick_a_cell(tmp_path):
             cell = [r for r in rows if r["format"] == fmt and int(r["T"]) == t]
             assert sum(int(r["pick"]) for r in cell) == 1
             assert all(float(r["pred_us"]) > 0 for r in cell)
+
+
+def test_no_price_reads_a_row_ptxas_allocates_either_way():
+    # #968: the moegemm rows whose registers ptxas does not reproduce (kernel_facts
+    # REGISTER_ALLOCATIONS) are held to a counted set, not one value; a price that read them would
+    # rank on the build's allocation. The law prices the GEMM_DEC decoders alone.
+    for arch, rows in kernel_facts.REGISTER_ALLOCATIONS["moegemm"].items():
+        for key in rows:
+            assert key[0] not in law.GEMM_DEC.values(), (arch, key)

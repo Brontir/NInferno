@@ -1044,27 +1044,31 @@ def parse_sections(text):
         fail(f"snapshot says {header['kernels']} kernels, holds {len(rows)}")
     sections = {FAMILY: {"nvcc": header["nvcc"], "kernels": len(rows), "rows": rows}}
     for family, section in section_texts.items():
-        own, row_lines = {}, []
-        for line in section.splitlines()[1:]:
-            if not line or line.startswith("#"):
-                continue
-            fields = line.split()
-            if fields[0] == family:
-                row_lines.append(line)
-            elif fields[0] in ("family_nvcc", "family_kernels", "family_columns"):
-                own[fields[0]] = line[len(fields[0]) + 1:] if len(fields) > 1 else ""
-            else:
-                fail(f"unexpected line in the {family} section: {line}")
-        for want in ("family_nvcc", "family_kernels", "family_columns"):
-            if want not in own:
-                fail(f"the {family} section has no '{want}' line")
-        family_rows = parse_rows(family, row_lines, own["family_columns"], "family_columns")
-        if int(own["family_kernels"]) != len(family_rows):
-            fail(f"the {family} section says {own['family_kernels']} kernels, holds "
-                 f"{len(family_rows)}")
-        sections[family] = {"nvcc": own["family_nvcc"], "kernels": len(family_rows),
-                            "rows": family_rows}
+        sections[family] = parse_section(family, section)
     return header, sections
+
+
+def parse_section(family, section):
+    """{"nvcc", "kernels", "rows"} of one section family's text (split_sections)."""
+    own, row_lines = {}, []
+    for line in section.splitlines()[1:]:
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if fields[0] == family:
+            row_lines.append(line)
+        elif fields[0] in ("family_nvcc", "family_kernels", "family_columns"):
+            own[fields[0]] = line[len(fields[0]) + 1:] if len(fields) > 1 else ""
+        else:
+            fail(f"unexpected line in the {family} section: {line}")
+    for want in ("family_nvcc", "family_kernels", "family_columns"):
+        if want not in own:
+            fail(f"the {family} section has no '{want}' line")
+    family_rows = parse_rows(family, row_lines, own["family_columns"], "family_columns")
+    if int(own["family_kernels"]) != len(family_rows):
+        fail(f"the {family} section says {own['family_kernels']} kernels, holds "
+             f"{len(family_rows)}")
+    return {"nvcc": own["family_nvcc"], "kernels": len(family_rows), "rows": family_rows}
 
 
 def parse_snapshot(text):
@@ -1129,7 +1133,11 @@ def cmd_extract(args):
         fail("without the rmma family, extract writes into a snapshot: pass --update FILE")
     for f in families:
         if f != FAMILY:
-            sections[f] = render_section(f, extracted[f], nvcc)
+            rows = extracted[f]
+            if f in REGISTER_ALLOCATIONS and f in sections:
+                rows = keep_allocations(f, args.arch, parse_section(f, sections[f])["rows"],
+                                        rows)
+            sections[f] = render_section(f, rows, nvcc)
     text = top + "".join(sections[f] for f in SECTION_FAMILIES if f in sections)
     if args.update:
         header, _ = parse_sections(text)
@@ -1353,6 +1361,66 @@ def sass_unstable(family, key):
     return family == "r8" and int(key[3]) == 8 and int(key[5]) == 1
 
 
+# Section rows whose registers ptxas does not reproduce from one source (#968). One translation unit,
+# one path, no ccache, compiled 9 to 13 times with other compiles beside it (tools as in #968's
+# comments, nvcc 13.4.92; 13.5.37 the same): every moe and r8 unit gave one resource set except
+# moe_gemm_q5.cu / moe_gemm_q6.cu, whose GroupwiseG64Decoder<5> / <6> kernels at RmmaSchedule<4, 1,
+# 1, 1, 1>, the Down (2) and Up (3) stages, came out with the register counts below, from the same
+# PTX: each arch's set counted on that arch alone (its census, the rows its full builds wrote; sm_89
+# also the two trees of #968's ptx968 run), sm_120a none. Neither threads, cores, ASLR nor
+# --allow-expensive-optimizations reproduce one allocation (#968). Their loop counts move with the allocation. No price reads these rows: the MoE expert law
+# prices the ggml K-quant decoders (tools/bench/moe_expert_law.py GEMM_DEC; a test keeps it so). check
+# holds such a row to its stack, local and shared bytes and to a register count among the ones
+# counted here, prints both register counts and never fails on its loop counts; extract --update
+# keeps the section's row where the build's is another counted allocation (keep_allocations). A new count seen in a build is a new allocation of the same source: count it here
+# (the census, #968) and rerun the check; no rebuild. Key: FAMILIES["moegemm"].key (decoder,
+# warps_m, warps_k, m_tiles, n_tiles, cluster, stage); per architecture label.
+REGISTER_ALLOCATIONS = {
+    "moegemm": {
+        "80": {
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 78),
+        },
+        "86": {
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 78),
+        },
+        "89": {
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 78),
+        },
+        "90": {
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2): (72, 78),
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): (72, 78),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 77),
+        },
+    },
+}
+
+
+def keep_allocations(family, arch, old, new):
+    """`new`, the rows of a build, with each row that differs from the section's (`old`) only by
+    an allocation ptxas makes either way (register_unstable) taken from the section as it is: a
+    re-extract does not flip such rows, nor the engine's embedded snapshot with them (#968)."""
+    return {k: old[k] if k in old and old[k] != v and register_unstable(family, arch, k, old[k], v)
+            else v for k, v in new.items()}
+
+
+def register_unstable(family, arch, key, expected, got):
+    """Whether a row's build values differ from the section's only by an allocation ptxas makes
+    either way (REGISTER_ALLOCATIONS): registers both among the counted ones, the other resources
+    equal."""
+    allowed = REGISTER_ALLOCATIONS.get(family, {}).get(arch, {}).get(tuple(key))
+    return (allowed is not None and expected[0] in allowed and got[0] in allowed and
+            expected[1:4] == got[1:4])
+
+
 def section_line(family):
     """A section row's text, as render_section writes it."""
     return lambda k, v: " ".join(str(x) for x in [family, *k, *v[:4]] +
@@ -1373,10 +1441,16 @@ def check_section(args, family, section, got, other_nvcc, with_sass, arch):
         k for k in expected if k in got and expected[k] != got[k])
     # #968: a row ptxas does not reproduce is held to its resources alone.
     unstable = [k for k in differ if sass_unstable(family, k) and expected[k][:4] == got[k][:4]]
-    differ = [k for k in differ if k not in unstable]
+    allocated = [k for k in differ if k not in unstable and
+                 register_unstable(family, arch, k, expected[k], got[k])]
+    differ = [k for k in differ if k not in unstable and k not in allocated]
     for k in unstable:
         print(f"kernel_facts: {family} {row_key(k)}: loop counts differ from the section, a row "
               f"ptxas does not reproduce (#968), resources equal: not a failure")
+    for k in allocated:
+        print(f"kernel_facts: {family} {row_key(k)}: {got[k][0]} registers against the section's "
+              f"{expected[k][0]}, both allocations ptxas makes of this source (#968, "
+              f"REGISTER_ALLOCATIONS): not a failure")
     if not (missing or extra or differ):
         if other_nvcc:
             print(f"kernel_facts: {len(got)} {family} kernels of sm_{arch}: the set equals "
