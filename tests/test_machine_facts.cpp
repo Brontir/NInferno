@@ -56,7 +56,8 @@ void table_well_formed() {
                where + ": a spec source and the pci-ids entry of its id");
         // The unresolved targets (gpu-facts.md): the TU106 1660 SUPER, whose published cache
         // belongs to TU116, and the two rows #958 found the chip structure contradicts (the TU106
-        // GTX 1650's 1 MiB is TU117's, the RTX 4000 Ada's 48 MiB exceeds five controllers' 40).
+        // GTX 1650's 1 MiB is TU117's and unsourced for it, the RTX 4000 Ada's 48 MiB exceeds five
+        // controllers' 40 at most).
         // Do not borrow a value just to make coverage complete.
         const bool unresolved =
             r.pci_device_id == 0x1F09 || r.pci_device_id == 0x1F0A || r.pci_device_id == 0x27B2;
