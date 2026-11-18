@@ -41,6 +41,17 @@ __device__ __forceinline__ float fp8_value(unsigned code) {
     }
 }
 
+// A widened row value as the other Gemma 4 kernels stage it on an int8 build: BF16(FP32(code) *
+// scale) (gemma4_fp8x4_to_bf16), so every route of one build attends over the same values and the
+// op's oracle holds for this one too. Volta's E4M3 rows keep the FP32 product.
+__device__ __forceinline__ float staged(float x) {
+    if constexpr (kGemma4RowInt8) {
+        return __bfloat162float(__float2bfloat16_rn(x));
+    } else {
+        return x;
+    }
+}
+
 // The two codes in the low 16 bits of `w`, unscaled.
 __device__ __forceinline__ float2 codes2(unsigned w) {
     if constexpr (kGemma4RowInt8) {
@@ -86,14 +97,14 @@ __device__ __forceinline__ void load_dims(const void* plane, const float* scales
                 const unsigned w = *reinterpret_cast<const unsigned*>(p + i);
                 const float2 lo  = codes2(w & 0xffffU);
                 const float2 hi  = codes2(w >> 16);
-                out[i]           = scale * lo.x;
-                out[i + 1]       = scale * lo.y;
-                out[i + 2]       = scale * hi.x;
-                out[i + 3]       = scale * hi.y;
+                out[i]           = staged(scale * lo.x);
+                out[i + 1]       = staged(scale * lo.y);
+                out[i + 2]       = staged(scale * hi.x);
+                out[i + 3]       = staged(scale * hi.y);
             }
         } else {
 #pragma unroll
-            for (int i = 0; i < E; ++i) out[i] = scale * fp8_value(p[i]);
+            for (int i = 0; i < E; ++i) out[i] = staged(scale * fp8_value(p[i]));
         }
     }
 }
@@ -262,11 +273,11 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
 #pragma unroll
                     for (int j = 0; j < J; j += 2) {
                         const float2 v = codes2((w >> (8 * j)) & 0xffffU);
-                        vf[j]          = scale * v.x;
-                        vf[j + 1]      = scale * v.y;
+                        vf[j]          = staged(scale * v.x);
+                        vf[j + 1]      = staged(scale * v.y);
                     }
                 } else {
-                    vf[0] = scale * fp8_value(w);
+                    vf[0] = staged(scale * fp8_value(w));
                 }
             } else {
                 const auto* p = static_cast<const __nv_bfloat16*>(v_plane) +
@@ -399,8 +410,10 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_tiled_kernel(
                 const float2 k23 = codes2(kw >> 16);
                 const float2 v01 = codes2(vw & 0xffffU);
                 const float2 v23 = codes2(vw >> 16);
-                kf = make_float4(ks * k01.x, ks * k01.y, ks * k23.x, ks * k23.y);
-                vf = make_float4(vs * v01.x, vs * v01.y, vs * v23.x, vs * v23.y);
+                kf = make_float4(staged(ks * k01.x), staged(ks * k01.y), staged(ks * k23.x),
+                                 staged(ks * k23.y));
+                vf = make_float4(staged(vs * v01.x), staged(vs * v01.y), staged(vs * v23.x),
+                                 staged(vs * v23.y));
             } else {
                 const uint2 kw = *reinterpret_cast<const uint2*>(
                     static_cast<const __nv_bfloat16*>(args.cache_k) + at);
