@@ -541,6 +541,18 @@ inline constexpr FittedHoldout kSmallTEtaHoldouts[] = {
          "the shipped row",
          "tools/fits/round_cost/fit_eta.py; tests/test_round_cost_eta_fit.py"),
      "gb20x"},
+    {kRoundCost, "kSmallTEta",
+     Holdout::none(
+         "registry spec-tune rounds of Qwen targets, k 4..7, RTX 3060 and RTX 3090",
+         "the shipped 0.258 is fit_eta.py's fit over both cards (#794), so no card is held out of "
+         "it; the RTX 3090's rounds were predicted at the RTX 3060's one-card fit (0.269) with the "
+         "band frozen before they were read (mean within 5 %, rms at most 7 %): +4.4 % (rms 6.1 "
+         "%); "
+         "item 3 holds the 3060 out of a refit: +1.7 % (5.9 %), a hold-out of the procedure, not "
+         "of "
+         "the shipped row",
+         "tools/fits/round_cost/fit_eta.py; tests/test_round_cost_eta_fit.py"),
+     "ga10x"},
 };
 
 inline constexpr FittedHoldout kSpecHoldouts[] = {
