@@ -717,8 +717,13 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream) {
             const auto& v = entry["routes"][name];
             if (v.is_null()) {
                 // A width an older tune left untimed because a table answered it, which this
-                // route policy demotes (#808, codex): the entry is not complete, time it now.
-                if (table_route(problem, t, false) && timed_width(problem, *call.weight, t)) {
+                // route policy demotes (#808, codex): the entry is not complete, time it now. Only
+                // a width never timed ("us" absent: a timed width where the heuristic stays is null
+                // with its time), and never in a read-only process (the release's file is read as
+                // it is, the user's dispatch never retimes).
+                const bool timed = entry.contains("us") && entry["us"].contains(name);
+                if (!read_only && !timed && table_route(problem, t, false) &&
+                    timed_width(problem, *call.weight, t)) {
                     complete = false;
                     break;
                 }
