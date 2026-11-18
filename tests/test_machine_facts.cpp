@@ -54,9 +54,13 @@ void table_well_formed() {
         for (const auto& s : r.sources) pci_ids |= s.rfind("https://pci-ids.ucw.cz/", 0) == 0;
         expect(r.sources.size() >= 2 && pci_ids,
                where + ": a spec source and the pci-ids entry of its id");
-        // The one unresolved target is the TU106 1660 SUPER: the published 1660 SUPER
-        // cache belongs to TU116. Do not borrow it just to make coverage complete.
-        expect(!r.target || r.l2_mib > 0 || r.pci_device_id == 0x1F09,
+        // The unresolved targets (gpu-facts.md): the TU106 1660 SUPER, whose published cache
+        // belongs to TU116, and the two rows #958 found the chip structure contradicts (the TU106
+        // GTX 1650's 1 MiB is TU117's, the RTX 4000 Ada's 48 MiB exceeds five controllers' 40).
+        // Do not borrow a value just to make coverage complete.
+        const bool unresolved =
+            r.pci_device_id == 0x1F09 || r.pci_device_id == 0x1F0A || r.pci_device_id == 0x27B2;
+        expect(!r.target || r.l2_mib > 0 || unresolved,
                where + ": a target needs a sourced L2 capacity (see gpu-facts.md)");
         expect(find_gpu_facts(r.pci_device_id) == &r, where + ": found by its id");
         // The chip names the same chip gpu_chip finds by the id's block, where it knows the chip.
