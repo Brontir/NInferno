@@ -245,6 +245,55 @@ void every_board(const json& fixture) {
     std::cout << '\n';
 }
 
+// #847: a final rest under 17 tokens. A request's prompt runs as whole chunks and a partial one,
+// each priced at its own route (single_request_seconds); at an 8-token rest the selector may take
+// R8 or the vector kernel (the int8 share) where the chunks run on the W4A8 tiles. A 1032-token
+// prompt in 1024-token chunks: the 8-token answer for a Q8_0 linear on every fixture board, the
+// requests that move with the routes (listed), and none on a quantization without a Q8_0 linear.
+void short_rest(const json& fixture) {
+    const auto& query = rt::plan_prefill_route_query();
+    const auto fast   = ninferno::ActivationMode::Fast;
+    int requests = 0, moves = 0;
+    for (const auto& [card_name, id] : kFixtureBoards) {
+        const rt::PlanDeviceFacts device = device_of(ninferno::board_registry::row(id));
+        const rt::PlanPrefillKernel rest_kernel =
+            query(device, "q8_g32_fp16", 4096, 4096, false, 8, fast);
+        const rt::PlanPrefillKernel chunk_kernel =
+            query(device, "q8_g32_fp16", 4096, 4096, false, 1024, fast);
+        std::cout << "  " << card_name << ": a Q8_0 4096 x 4096 call on kernel "
+                  << static_cast<int>(rest_kernel) << " at 8 tokens, "
+                  << static_cast<int>(chunk_kernel)
+                  << " at 1024 (0 unknown, 1 MMQ, 2 W4A8, 3 other A8, 4 A16)\n";
+        // Volta's prefill is its CUTLASS route's, which the choice does not ask (selected_kernel).
+        check(device.compute_capability == 70 || rest_kernel != rt::PlanPrefillKernel::Unknown,
+              card_name + ": the selector answers an 8-token Q8_0 call");
+        const ch::CardFacts card = card_of(fixture.at("cards").at(card_name));
+        for (const auto& [model_name, m] : fixture.at("models").items()) {
+            for (const auto& [q, qj] : m.at("quants").items()) {
+                const ch::QuantOption quant = quant_of(q, qj);
+                ch::ModelFacts model        = model_at(m, q);
+                ch::Candidate c;
+                c.kv    = KvCacheStorage::Int8Group64;
+                c.chunk = 1024;
+                ch::Task task;
+                task.answer         = 64;
+                const double before = ch::single_request_seconds(model, card, quant, c, task, 1032);
+                pr::with_prefill_routes(model, device);
+                const double after = ch::single_request_seconds(model, card, quant, c, task, 1032);
+                ++requests;
+                if (!(std::abs(after - before) > 1e-12 * std::abs(before))) { continue; }
+                ++moves;
+                std::cout << "  rest moved: " << card_name << ' ' << model_name << ' ' << q << ": "
+                          << before << " -> " << after << " s\n";
+                check(names_q8_linear(m, q), "an 8-token rest moves only where a Q8_0 linear "
+                                             "changes kernel: " +
+                                                 card_name + ' ' + model_name + ' ' + q);
+            }
+        }
+    }
+    std::cout << "short rest: " << requests << " requests of 1032 tokens, " << moves << " moved\n";
+}
+
 // #930: a real board's selector is useful for the displayed estimate, but it is not the
 // synthetic generation reference's selector. In particular, the 4B/22K case used to choose
 // INT8 KV on the 5090 and FP8 on the 5070 Ti with identical capacity.
@@ -344,6 +393,7 @@ int main() {
     production_choices_replay(fixture);
     measured_points(fixture);
     every_board(fixture);
+    short_rest(fixture);
     reference_prices(fixture);
     if (failures == 0) { std::cout << "choice prefill routes: OK\n"; }
     return failures == 0 ? 0 : 1;
