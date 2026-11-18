@@ -62,6 +62,7 @@
 #include "ninferno/ops/gemma4_attention.h"
 #include "ninferno/ops/gemma4_moe.h"
 #include "ninferno/ops/linear.h"
+#include "ninferno/ops/prefill_routes.h"
 #include "ninferno/ops/linear_swiglu.h"
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/sampling.h"
@@ -456,8 +457,15 @@ std::string gemma_pieces(const NamedBoard& b, const Subject& s) {
     const Projection head{head_q, static_cast<std::int32_t>(m.head_rows),
                           static_cast<std::int32_t>(m.hidden), policy_of(head_q)};
     const auto vocab = static_cast<std::int32_t>(m.vocab);
+    std::size_t column_index = 0;
     for (const std::int32_t c : columns) {
         const std::string at = " at " + std::to_string(c);
+        // The chunk (columns[2]) is sized under the prefill routes, as plan_workspace.cpp asks it
+        // (ScopedPrefillRoutes around target(chunk, 1)): an escape confined to a prefill route is
+        // then caught too (#841). By position, so a chunk equal to another column leaves that
+        // column's decode answer checked.
+        std::optional<ops::ScopedPrefillRoutes> prefill;
+        if (column_index++ == 2) { prefill.emplace(true); }
         for (const Projection& p : trunk) {
             const std::string name = std::to_string(p.n) + "x" + std::to_string(p.k);
             piece("linear " + name + at, [&] {
