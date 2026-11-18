@@ -1173,6 +1173,41 @@ class RegisterAllocations(unittest.TestCase):
         moved = {key: (hi, 0, 0, 16, b)}
         self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, moved), moved)
         self.assertEqual(kernel_facts.keep_allocations("moegemm", "999", old, new), new)
+        # One register count, other loop counts: a real loop change, written.
+        same = {key: (lo, 0, 0, 0, b)}
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, same), same)
+        # extract --no-sass: the build's rows carry no loop; none is kept, so none mixes schemas.
+        bare = {key: (hi, 0, 0, 0, None), other: (91, 0, 0, 0, None)}
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, bare), bare)
+        kernel_facts.render_section("moegemm", bare, "13.4.92")
+
+    def test_check_section_holds_one_allocation_exact(self):
+        import types
+        args = types.SimpleNamespace(expected="sm_89.txt", nvcc="13.4.92", binary="serve",
+                                     dump=None, show=10)
+        table = kernel_facts.REGISTER_ALLOCATIONS["moegemm"]
+        arch = sorted(table)[0]
+        key, counts = sorted(table[arch].items())[0]
+        lo = min(counts)
+        a, b = sc.LoopCounts(), sc.LoopCounts()
+        a.total, b.total = 1200, 1212
+        for with_sass, want in ((True, 1), (False, 0)):
+            with contextlib.redirect_stdout(io.StringIO()):
+                got = kernel_facts.check_section(
+                    args, "moegemm", {"rows": {key: (lo, 0, 0, 0, a)}, "nvcc": "13.4.92"},
+                    {key: (lo, 0, 0, 0, b)}, False, with_sass, arch)
+            self.assertEqual(got, want, with_sass)
+
+    def test_a_section_of_other_columns_keeps_nothing(self):
+        data = (Path(__file__).resolve().parents[1] / "src" / "ops" / "generic" / "data" /
+                "kernel_facts")
+        arch = sorted(kernel_facts.REGISTER_ALLOCATIONS["moegemm"])[0]
+        _, sections = kernel_facts.split_sections((data / f"sm_{arch}.txt").read_text())
+        section = sections["moegemm"]
+        self.assertTrue(kernel_facts.section_rows_to_keep("moegemm", section))
+        old = "\n".join(line + " 0" if line.startswith(("family_columns", "moegemm ")) else line
+                        for line in section.splitlines()) + "\n"
+        self.assertEqual(kernel_facts.section_rows_to_keep("moegemm", old), {})
 
     def test_every_counted_row_is_a_committed_row(self):
         # The table's keys spell the parsed keys (FAMILIES["moegemm"].parse_key): each names a row

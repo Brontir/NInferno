@@ -1135,8 +1135,7 @@ def cmd_extract(args):
         if f != FAMILY:
             rows = extracted[f]
             if f in REGISTER_ALLOCATIONS and f in sections:
-                rows = keep_allocations(f, args.arch, parse_section(f, sections[f])["rows"],
-                                        rows)
+                rows = keep_allocations(f, args.arch, section_rows_to_keep(f, sections[f]), rows)
             sections[f] = render_section(f, rows, nvcc)
     text = top + "".join(sections[f] for f in SECTION_FAMILIES if f in sections)
     if args.update:
@@ -1408,8 +1407,21 @@ def keep_allocations(family, arch, old, new):
     """`new`, the rows of a build, with each row that differs from the section's (`old`) only by
     an allocation ptxas makes either way (register_unstable) taken from the section as it is: a
     re-extract does not flip such rows, nor the engine's embedded snapshot with them (#968)."""
-    return {k: old[k] if k in old and old[k] != v and register_unstable(family, arch, k, old[k], v)
-            else v for k, v in new.items()}
+    def keep(k, v):
+        # Both rows carry their loop or neither (extract --no-sass writes the resources alone).
+        return (k in old and (old[k][4] is None) == (v[4] is None) and
+                register_unstable(family, arch, k, old[k], v))
+    return {k: old[k] if keep(k, v) else v for k, v in new.items()}
+
+
+def section_rows_to_keep(family, section):
+    """The rows of a committed section that extract --update may keep (keep_allocations): its
+    rows where its columns are today's, else none (a section in an earlier column layout is
+    replaced whole, as before #968)."""
+    columns = next((line.split()[1:] for line in section.splitlines()
+                    if line.startswith("family_columns ")), None)
+    today = [c for c, _ in FAMILIES[family].schema_columns().values()]
+    return parse_section(family, section)["rows"] if columns in [list(c) for c in today] else {}
 
 
 def register_unstable(family, arch, key, expected, got):
@@ -1417,8 +1429,9 @@ def register_unstable(family, arch, key, expected, got):
     either way (REGISTER_ALLOCATIONS): registers both among the counted ones, the other resources
     equal."""
     allowed = REGISTER_ALLOCATIONS.get(family, {}).get(arch, {}).get(tuple(key))
-    return (allowed is not None and expected[0] in allowed and got[0] in allowed and
-            expected[1:4] == got[1:4])
+    # Another allocation only: at one register count the row is held exact, loop counts too.
+    return (allowed is not None and expected[0] != got[0] and expected[0] in allowed and
+            got[0] in allowed and expected[1:4] == got[1:4])
 
 
 def section_line(family):
