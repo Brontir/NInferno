@@ -258,8 +258,11 @@ def cover(cases, ranges, ridge, resolution, elsewhere=()):
                            "cannot be split")
         for a, b in segments(lo, hi, ridge):
             inside = [c for c in cases if a <= c[0] <= b and c[2] == route]
-            if not inside and b != INF and set(range(a, b + 1)) <= set(elsewhere):
-                continue  # every width there takes another authority: the table is not asked
+            # every width there takes another authority: the table is not asked (sweeps time
+            # discrete widths, so only a short, fully timed segment such as T 1..4 qualifies;
+            # a wide one, the W4A8 widths from 17 under AllowA8, keeps the entry)
+            if not inside and b != INF and len({t for t in elsewhere if a <= t <= b}) == b - a + 1:
+                continue
             reasons += judge(inside, f"T {a}..{b}", resolution)
     return reasons
 
