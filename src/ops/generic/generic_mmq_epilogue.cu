@@ -1,6 +1,7 @@
 // The epilogue of the ggml matrix kernel's route (Family::GgmlMmq): its FP32 plane [T][plane_rows]
 // to the call's BF16 segments, with the residual add, the gated product or relu^2 of the call.
 #include "ops/generic/generic_gemm_internal.h"
+#include "ops/generic/ggml_mmq/mmq_epilogue_math.cuh"
 #include "ops/common/arch_limits.h"
 
 #include "core/device.h"
@@ -14,23 +15,10 @@
 namespace ninferno::ops::detail::generic {
 namespace {
 
-// GELU's tanh form through the logistic, as the generic route computes it (generic_gelu_tanh): the
-// sum 0.5 * (1 + tanh(u)) cancels to 0 for a gate below about -5.
-__device__ __forceinline__ float gelu_tanh(float g) {
-    constexpr float kTwoSqrt2Pi = 1.59576912160573071176F; // 2 * sqrt(2 / pi)
-    return g / (1.0F + expf(-kTwoSqrt2Pi * (g + 0.044715F * g * g * g)));
-}
-
+// The arithmetic is mmq_epilogue_math.cuh's, which the tile kernel's fused store shares (#617 I).
 __device__ __forceinline__ float epilogue_value(const GemmArgs& a, Epilogue epilogue, float v,
                                                 float up) {
-    if (epilogue == Epilogue::SwiGlu) {
-        return (a.gelu_gate != 0 ? gelu_tanh(v) : v / (1.0F + __expf(-v))) * up;
-    }
-    if (a.relu2 != 0) {
-        v = fmaxf(v, 0.0F);
-        return v * v;
-    }
-    return v;
+    return mmq_epilogue::value(epilogue == Epilogue::SwiGlu, a.gelu_gate != 0, a.relu2 != 0, v, up);
 }
 
 // V consecutive rows per thread (V = 4: one 16-byte plane load and one 8-byte BF16 store per token,

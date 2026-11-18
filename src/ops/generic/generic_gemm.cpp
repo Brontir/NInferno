@@ -576,6 +576,19 @@ std::uint64_t ggml_mmq_fallback_count() noexcept {
     return mmq_fallbacks.load(std::memory_order_relaxed);
 }
 
+namespace {
+std::atomic<bool> mmq_fused_epilogue{true};
+std::atomic<std::uint64_t> mmq_fused_products{0};
+} // namespace
+
+void set_mmq_fused_epilogue(bool on) noexcept {
+    mmq_fused_epilogue.store(on, std::memory_order_relaxed);
+}
+
+std::uint64_t ggml_mmq_fused_count() noexcept {
+    return mmq_fused_products.load(std::memory_order_relaxed);
+}
+
 std::uint64_t instrumentation_joined_launches() noexcept {
     return joined_launches.load(std::memory_order_relaxed);
 }
@@ -924,14 +937,38 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             }
             ggml_mmq::quantize_activation(type, static_cast<const __nv_bfloat16*>(part.x),
                                           args.ldx, w.k, part.tokens, activation, stream);
-            ggml_mmq::product(type, rows_at(call.row_begin), bpr, call.rows, w.k, activation,
-                              part.tokens, plane, plane_rows, fixup, stream);
+            // The epilogue in the tile kernel's store where its launch has no stream-k fixup
+            // (#617 I): one output segment; a gated call's up product first, into the plane's
+            // upper half, which the gate product's store reads. Else the plane and the separate
+            // kernel, the same arithmetic (mmq_epilogue_math.cuh).
+            ggml_mmq::FusedEpilogue fused_epilogue;
+            if (part.segments == 1 && mmq_fused_epilogue.load(std::memory_order_relaxed)) {
+                fused_epilogue.kind       = call.epilogue == Epilogue::Store         ? 1
+                                            : call.epilogue == Epilogue::AddResidual ? 2
+                                                                                     : 3;
+                fused_epilogue.gelu       = part.gelu_gate != 0;
+                fused_epilogue.relu2      = part.relu2 != 0;
+                fused_epilogue.plane      = plane;
+                fused_epilogue.plane_rows = plane_rows;
+                fused_epilogue.up         = call.rows;
+                fused_epilogue.out        = part.out[0];
+                fused_epilogue.ld         = static_cast<int>(part.ld[0]);
+            }
+            const ggml_mmq::FusedEpilogue* epilogue =
+                fused_epilogue.kind != 0 ? &fused_epilogue : nullptr;
             if (gated) {
                 ggml_mmq::product(type, rows_at(call.row_begin + call.up_offset), bpr, call.rows,
                                   w.k, activation, part.tokens, plane + call.rows, plane_rows,
                                   fixup, stream);
             }
-            launch_mmq_epilogue(call.epilogue, part, plane, plane_rows, stream);
+            const bool fused =
+                ggml_mmq::product(type, rows_at(call.row_begin), bpr, call.rows, w.k, activation,
+                                  part.tokens, plane, plane_rows, fixup, stream, epilogue);
+            if (fused) {
+                mmq_fused_products.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                launch_mmq_epilogue(call.epilogue, part, plane, plane_rows, stream);
+            }
         }
         return;
     }

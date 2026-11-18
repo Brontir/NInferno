@@ -48,6 +48,9 @@ static_assert(work_tiles_arch_matches_table());
          !::ninferno::ops::ggml_mmq::detail::work_tiles_arch(__CUDA_ARCH__))
 #endif
 
+#include "ops/generic/ggml_mmq/mmq_epilogue_math.cuh"
+// The tile's store takes the call's fused epilogue (#617 I; ggml_planes::epi_kind 0: as upstream).
+#define NINFERNO_MMQ_STORE(planes, p, v) ::ninferno::ops::mmq_epilogue::store((planes), (p), (v))
 #include "ggml-cuda/common.cuh"
 #include "ggml-cuda/mmq.cuh"
 
@@ -207,9 +210,10 @@ std::size_t fixup_bytes_impl(int rows, int columns, int k) {
 }
 
 template <ggml_type type, int J>
-void launch(const Launch& l, const char* codes, const ggml_planes& planes, int stride_row_blocks,
-            int rows, int k, const int* activation, int columns, float* out,
-            std::int64_t out_column_stride, float* fixup, cudaStream_t stream) {
+bool launch(const Launch& l, const char* codes, const ggml_planes& weight_planes,
+            int stride_row_blocks, int rows, int k, const int* activation, int columns, float* out,
+            std::int64_t out_column_stride, float* fixup, cudaStream_t stream,
+            const FusedEpilogue* epilogue) {
     const dim3 block_dims(WARP_SIZE, l.threads / WARP_SIZE, 1);
     // A description launches nothing, so it needs no opt-in shared memory on this GPU: under a
     // substituted board its tile is the substitute's, which this GPU may not hold.
@@ -217,7 +221,21 @@ void launch(const Launch& l, const char* codes, const ggml_planes& planes, int s
         describe_launch(*described, reinterpret_cast<const void*>(mul_mat_q<type, J, false>),
                         l.stream_k ? dim3(l.blocks, 1, 1) : dim3(l.row_tiles, l.column_tiles, 1),
                         block_dims, l.shared);
-        return;
+        return false;
+    }
+    // The call's epilogue in the tile's own store, where every tile's sums are final in one CTA
+    // (no stream-k fixup adds partials after it; #617 I).
+    ggml_planes planes = weight_planes;
+    const bool fused   = epilogue != nullptr && epilogue->kind != 0 && !l.fixup;
+    if (fused) {
+        planes.epi_kind   = epilogue->kind;
+        planes.epi_gelu   = epilogue->gelu ? 1 : 0;
+        planes.epi_relu2  = epilogue->relu2 ? 1 : 0;
+        planes.epi_plane  = epilogue->plane;
+        planes.epi_stride = epilogue->plane_rows;
+        planes.epi_up     = epilogue->up;
+        planes.epi_out    = epilogue->out;
+        planes.epi_ld     = epilogue->ld;
     }
     refuse_substituted_launch();
     static PerDevice<bool> raised;
@@ -234,7 +252,7 @@ void launch(const Launch& l, const char* codes, const ggml_planes& planes, int s
                   nullptr, blocks_fd, rows, columns, stride_row_blocks, columns, stride, one_fd,
                   one_fd, 0, 0, 0, one_fd, one_fd, 0, 0, 0, ntx_fd, planes),
               "launch");
-        return;
+        return fused;
     }
     if (l.fixup && fixup == nullptr) throw std::invalid_argument("ggml mmq: needs a fixup plane");
     check(::ninferno::pdl::launch_dependent(
@@ -243,7 +261,7 @@ void launch(const Launch& l, const char* codes, const ggml_planes& planes, int s
               blocks_fd, rows, columns, stride_row_blocks, columns, stride, one_fd, one_fd, 0, 0, 0,
               one_fd, one_fd, 0, 0, 0, ntx_fd, planes),
           "launch");
-    if (!l.fixup) return;
+    if (!l.fixup) return fused;
     const dim3 fixup_blocks(l.blocks, l.I / WARP_SIZE, 1);
     const dim3 fixup_dims(block_dims.x, block_dims.y / 2, 1);
     check(::ninferno::pdl::launch_dependent({fixup_blocks, fixup_dims, 0, stream},
@@ -251,12 +269,13 @@ void launch(const Launch& l, const char* codes, const ggml_planes& planes, int s
                                           nullptr, out, fixup, blocks_fd, rows, columns, stride,
                                           one_fd, 0, one_fd, 0, ntx_fd),
           "fixup launch");
+    return false;
 }
 
 template <ggml_type type>
-void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const void* activation,
+bool product_impl(const Planes& w, int blocks_per_row, int rows, int k, const void* activation,
                   int columns, float* out, std::int64_t out_column_stride, void* fixup,
-                  cudaStream_t stream) {
+                  cudaStream_t stream, const FusedEpilogue* epilogue) {
     constexpr int qk = ggml_cuda_type_traits<type>::qk;
     if (k % 256 != 0 || rows % kRowMultiple != 0 || blocks_per_row < k / qk) {
         throw std::invalid_argument("ggml mmq: unsupported geometry");
@@ -269,22 +288,22 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
     switch (l.J) {
     case 16:
         return launch<type, 16>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
-                                out_column_stride, f, stream);
+                                out_column_stride, f, stream, epilogue);
     case 32:
         return launch<type, 32>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
-                                out_column_stride, f, stream);
+                                out_column_stride, f, stream, epilogue);
     case 64:
         return launch<type, 64>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
-                                out_column_stride, f, stream);
+                                out_column_stride, f, stream, epilogue);
     case 80:
         return launch<type, 80>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
-                                out_column_stride, f, stream);
+                                out_column_stride, f, stream, epilogue);
     case 96:
         return launch<type, 96>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
-                                out_column_stride, f, stream);
+                                out_column_stride, f, stream, epilogue);
     case 128:
         return launch<type, 128>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
-                                 out_column_stride, f, stream);
+                                 out_column_stride, f, stream, epilogue);
     default: break;
     }
     throw std::invalid_argument("ggml mmq: unexpected column tile");
@@ -296,6 +315,6 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
     template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int, int);   \
     template int ninferno::ops::ggml_mmq::detail::column_tile_impl<TYPE>(int, int, int);           \
     template std::size_t ninferno::ops::ggml_mmq::detail::tile_shared_bytes_impl<TYPE>(int);       \
-    template void ninferno::ops::ggml_mmq::detail::product_impl<TYPE>(                             \
+    template bool ninferno::ops::ggml_mmq::detail::product_impl<TYPE>(                             \
         const ninferno::ops::ggml_mmq::Planes&, int, int, int, const void*, int, float*,           \
-        std::int64_t, void*, cudaStream_t)
+        std::int64_t, void*, cudaStream_t, const ninferno::ops::ggml_mmq::FusedEpilogue*)

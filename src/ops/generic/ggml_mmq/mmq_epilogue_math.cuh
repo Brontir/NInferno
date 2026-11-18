@@ -1,0 +1,52 @@
+#pragma once
+
+// The ggml matrix route's epilogue arithmetic (#617 I), one definition for the separate epilogue
+// kernel (generic_mmq_epilogue.cu) and the tile kernel's own store (ggml_mmq_internal.cuh's
+// NINFERNO_MMQ_STORE): the same operations in the same order, so a fused call writes the bytes the
+// separate kernel would.
+#include <cuda_bf16.h>
+
+#include <cstddef>
+
+namespace ninferno::ops::mmq_epilogue {
+
+// GELU's tanh form through the logistic, as the generic route computes it (generic_gelu_tanh): the
+// sum 0.5 * (1 + tanh(u)) cancels to 0 for a gate below about -5.
+__device__ __forceinline__ float gelu_tanh(float g) {
+    constexpr float kTwoSqrt2Pi = 1.59576912160573071176F; // 2 * sqrt(2 / pi)
+    return g / (1.0F + expf(-kTwoSqrt2Pi * (g + 0.044715F * g * g * g)));
+}
+
+// The value an output element takes before the residual add and the BF16 rounding.
+__device__ __forceinline__ float value(bool gated, bool gelu, bool relu2, float v, float up) {
+    if (gated) return (gelu ? gelu_tanh(v) : v / (1.0F + __expf(-v))) * up;
+    if (relu2) {
+        v = fmaxf(v, 0.0F);
+        return v * v;
+    }
+    return v;
+}
+
+// The tile kernel's store of one sum at dst, a slot of the call's FP32 plane: as is without an
+// epilogue (kind 0), else the element (row, token) of the BF16 output, the gated product reading
+// the up half the up product left in the plane.
+template <class Planes>
+__device__ __forceinline__ void store(const Planes& p, float* dst, float v) {
+    if (p.epi_kind == 0) {
+        *dst = v;
+        return;
+    }
+    const std::ptrdiff_t at = dst - p.epi_plane;
+    const int col           = static_cast<int>(at / p.epi_stride);
+    const int row = static_cast<int>(at - static_cast<std::ptrdiff_t>(col) * p.epi_stride);
+    auto* out =
+        static_cast<__nv_bfloat16*>(p.epi_out) + static_cast<std::size_t>(col) * p.epi_ld + row;
+    const bool gated = p.epi_kind == 3;
+    const float up =
+        gated ? p.epi_plane[static_cast<std::size_t>(col) * p.epi_stride + p.epi_up + row] : 0.0F;
+    float r = value(gated, p.epi_gelu != 0, p.epi_relu2 != 0, v, up);
+    if (p.epi_kind == 2) r += __bfloat162float(*out);
+    *out = __float2bfloat16(r);
+}
+
+} // namespace ninferno::ops::mmq_epilogue

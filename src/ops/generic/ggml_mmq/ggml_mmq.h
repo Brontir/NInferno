@@ -105,10 +105,28 @@ void quantize_activation(Type type, const __nv_bfloat16* x, int ldx, int k, int 
 // computes the same from the format's layout, and test_route_classes holds the two together.
 [[nodiscard]] std::size_t tile_shared_bytes(Type type, int columns_per_tile);
 
-// out[c * out_column_stride + r] = sum_k W[r, k] x[k, c] in FP32 for rows [0, rows).
-void product(Type type, const Planes& weight, int blocks_per_row, int rows, int k,
+// A call's BF16 epilogue that the tile kernel stores itself (#617 I), in place of the FP32 plane
+// and the separate epilogue kernel: kind 1 out = sum (relu2: relu(sum)^2), 2 out += sum (the
+// residual), 3 out = act(sum) * up with up = plane[c * plane_rows + up + r], the up product's half
+// of the plane (gelu: GELU's tanh form, else SiLU). out[c * ld + r] in BF16 for row r of token c.
+struct FusedEpilogue {
+    int kind           = 0;
+    bool gelu          = false;
+    bool relu2         = false;
+    const float* plane = nullptr;
+    int plane_rows     = 0;
+    int up             = 0;
+    void* out          = nullptr;
+    int ld             = 0;
+};
+
+// out[c * out_column_stride + r] = sum_k W[r, k] x[k, c] in FP32 for rows [0, rows). With an
+// epilogue, true where the launch stored it (a launch without a stream-k fixup: a whole tile's sums
+// are final in one CTA); false where it wrote the plane as without one, and the caller runs the
+// separate epilogue. The arithmetic is the same either way (mmq_epilogue_math.cuh).
+bool product(Type type, const Planes& weight, int blocks_per_row, int rows, int k,
              const void* activation, int columns, float* out, std::int64_t out_column_stride,
-             void* fixup, cudaStream_t stream);
+             void* fixup, cudaStream_t stream, const FusedEpilogue* epilogue = nullptr);
 
 // ggml's vector kernel (ggml_vec.cu, after ninfer-all's): 1..kVecMaxColumns tokens with dp4a on
 // a planar q8_1 activation, two output rows a warp, the epilogue in the kernel. A token's sums do

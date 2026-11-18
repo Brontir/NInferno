@@ -1614,6 +1614,93 @@ int check_mmq_code_sums(const Format& f) {
     return 0;
 }
 
+// #617 I: ggml's matrix kernel storing the call's epilogue itself (no stream-k fixup) writes the
+// bytes the FP32 plane and the separate epilogue kernel write: Store, relu^2, the residual add, and
+// the gated products (SiLU, GELU), at a slice and a half of tokens (the second slice partial) and
+// over rows that take launches with and without the fixup. At least one product must have fused.
+int check_mmq_fused_epilogue(const Format& f) {
+    const std::int32_t k = 2048;
+    const generic::Route mmq{generic::Family::GgmlMmq, 0};
+    const std::int32_t t = generic::ggml_mmq_slice_tokens(f.qtype) * 3 / 2;
+    const auto policy    = ops::LinearPolicy::AllowA8;
+    int failures         = 0;
+    std::uint64_t fused  = 0;
+    for (const std::int32_t n : {512, 4096}) {
+        for (int op = 0; op < 5; ++op) { // store, relu^2, add, SwiGLU, GeGLU
+            const bool gated       = op >= 3;
+            const std::int32_t w_n = gated ? 2 * n : n;
+            HostWeight host        = make_weight(f.qtype, w_n, k, 71U + static_cast<unsigned>(op));
+            DeviceWeight device    = upload_weight(host);
+            const Weight& weight   = device.weight;
+            if (!generic::route_admits(mmq, weight, policy)) {
+                std::cout << f.name << " ggml_mmq fused epilogue: not admitted on this device\n";
+                return 0;
+            }
+            std::vector<std::uint16_t> activation(static_cast<std::size_t>(k) * t);
+            std::vector<std::uint16_t> residual(static_cast<std::size_t>(n) * t);
+            std::mt19937 rng(73U + static_cast<unsigned>(op));
+            std::uniform_real_distribution<float> u(-1.0F, 1.0F);
+            for (auto& v : activation) v = f32_to_bf16(u(rng));
+            for (auto& v : residual) v = f32_to_bf16(4.0F * u(rng));
+            DeviceBuffer x(activation.size() * 2);
+            x.copy_from_host(activation.data(), x.bytes);
+            DeviceArena workspace(
+                std::max<std::size_t>({generic::route_workspace_bytes(mmq, k, t),
+                                       generic::ggml_mmq_workspace_bytes(k, w_n, t), 256}));
+            const auto run = [&](bool on) {
+                generic::set_mmq_fused_epilogue(on);
+                DeviceBuffer out(static_cast<std::size_t>(n) * t * 2);
+                out.copy_from_host(residual.data(), out.bytes);
+                Tensor tx(x.p, DType::BF16, {k, t});
+                Tensor tout(out.p, DType::BF16, {n, t});
+                generic::Call call;
+                call.x               = &tx;
+                call.weight          = &weight;
+                call.rows            = n;
+                call.up_offset       = gated ? n : 0;
+                call.gelu_gate       = op == 4;
+                call.relu2           = op == 1;
+                call.epilogue        = gated     ? generic::Epilogue::SwiGlu
+                                       : op == 2 ? generic::Epilogue::AddResidual
+                                                 : generic::Epilogue::Store;
+                call.out[0]          = &tout;
+                call.segment_rows[0] = n;
+                workspace.reset();
+                generic::run_route(mmq, call, &workspace, nullptr);
+                cuda_check(cudaDeviceSynchronize(), "fused epilogue run");
+                generic::set_mmq_fused_epilogue(true);
+                return download_bf16(out.p, static_cast<std::size_t>(n) * t);
+            };
+            const std::uint64_t before = generic::ggml_mmq_fused_count();
+            const auto separate        = run(false);
+            const std::uint64_t mid    = generic::ggml_mmq_fused_count();
+            const auto together        = run(true);
+            fused += generic::ggml_mmq_fused_count() - mid;
+            if (mid != before) {
+                std::cerr << f.name << " ggml_mmq fused epilogue: fused with the switch off\n";
+                ++failures;
+            }
+            std::size_t differ = 0;
+            for (std::size_t i = 0; i < separate.size(); ++i) differ += separate[i] != together[i];
+            if (differ != 0) {
+                std::cerr << f.name << " ggml_mmq fused epilogue: n " << n << " op " << op << ": "
+                          << differ << " of " << separate.size()
+                          << " outputs differ from the separate epilogue's bytes\n";
+                ++failures;
+            }
+        }
+    }
+    std::cout << f.name << " ggml_mmq fused epilogue: " << fused
+              << " products stored their epilogue, bytes equal to the separate kernel's\n";
+    if (fused == 0) {
+        std::cerr << f.name
+                  << " ggml_mmq fused epilogue: no product fused (every launch took the "
+                     "stream-k fixup)\n";
+        ++failures;
+    }
+    return failures;
+}
+
 // NVFP4 under a policy that allows A8 but not A4 (a W4A16 checkpoint under --activations int8):
 // the generic W4A8 from 17 tokens on every build, the tiled route there without tensor mma.sync
 // (Volta: volta_tiled_route), decode and verify widths unchanged; the same
@@ -2302,6 +2389,12 @@ int main() {
         const bool k_quant = f.qtype == QType::GGML_Q4_K || f.qtype == QType::GGML_Q5_K;
         if (!on_build(f) || !k_quant || !generic::ggml_mmq_format(f.qtype)) continue;
         failures += check_mmq_code_sums(f);
+    }
+    // 2g. #617 I: the epilogue in the tile kernel's store, byte-equal to the separate kernel.
+    for (const Format& f : kFormats) {
+        const bool picked = f.qtype == QType::GGML_Q4_K || f.qtype == QType::GGML_Q6_K;
+        if (!on_build(f) || !picked || !generic::ggml_mmq_format(f.qtype)) continue;
+        failures += check_mmq_fused_epilogue(f);
     }
 
     // 3. Every compiled route qualified on one awkward shape per format and epilogue.
