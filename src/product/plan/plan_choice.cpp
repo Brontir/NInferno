@@ -674,10 +674,9 @@ std::vector<KvOption> kv_options(const PlanSourceFacts& facts, int compute_capab
         // steps 9-10): widened natively, not slow. They trade prefill for half the KV bytes
         // (RTX 3090: gpt-oss-20b decode +6.5 / +12.6 / +16.1 % at 32K / 65K / 88K, prefill -1..-2
         // %; Gemma 4 12B decode +0..+1.6 %, prefill -2.5..-4.6 %; RTX 2080 Ti Gemma 4 decode
-        // -0.7..-2.4
-        // %, prefill -5 %), so they are an option, not the automatic KV (kv_storage_on keeps BF16
-        // below sm_89). The Qwen paged pool's E4M3 rows are another kernel
-        // (causal_softmax_attention) and stay software E4M3 below sm_89.
+        // -1.7..-4.5 %, prefill -3.5..-6.8 %), so they are an option, not the automatic KV
+        // (kv_storage_on keeps BF16 below sm_89). The Qwen paged pool's E4M3 rows are another
+        // kernel (causal_softmax_attention) and stay software E4M3 below sm_89.
         const bool int8_rows = !paged && ops::gemma4_rows_int8_on(compute_capability);
         o.slow_on_card       = !e4m3 && ((kv == KvCacheStorage::Fp8E4M3Row256 && !int8_rows) ||
                                    kv == KvCacheStorage::Fp8KeyNvfp4Value);
