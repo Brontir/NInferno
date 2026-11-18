@@ -935,7 +935,11 @@ inline constexpr KvReadFactor kKvReadFactor[] = {
 //           SM-clock; its BF16 full layer in the same census 185.8 us for 50.3 MB, 271 GB/s (2.58,
 //           3.4 % under the 2.67 row above)
 //   ga10x   RTX 3090: 615 GB/s (66 % of 936), 4.43; its BF16 read is DRAM-bound (858 GB/s, 92 %),
-//           so it has no row
+//           so it has no row. The RTX 3060 (28 SMs, 1777 MHz reference) confirms it: 117.4 us for
+//           25.3 MB, 215 GB/s, 4.33 (2.3 % apart; its BF16 read 340 GB/s, 94 %, DRAM-bound too).
+//           The row stays one card's on purpose: two cards would let the choice decide the KV
+//           codec on ga10x (kv_decides), and the choice has no term for the rows' prefill cost
+//           (+14 % a full-layer call, #989), so it would flip the default by decode alone
 // On Ampere every codec but INT8 (91-92 % of the DRAM rate) is SM-bound. Its BF16 row is today's
 // kernel (bf16_kv_grouped_mma_kernel, which reads at 92 % of the DRAM rate on the RTX 4090): a
 // kernel finding is open (#856), and the row is measured again when that kernel changes.
