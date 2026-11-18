@@ -470,7 +470,8 @@ void sections_read() {
                 const int loops  = f.loop ? f.loop->loops : 0;
                 const int quant  = f.prologue ? f.prologue->loops : -1;
                 const bool split = family == "moer8" && arch == "120a";
-                const bool ok    = f.loop && (loops == 1 || (split && pre && loops == 2)) &&
+                const bool up    = key.size() >= 4 && key.compare(key.size() - 4, 4, " 3 1") == 0;
+                const bool ok    = f.loop && (loops == 1 || (split && up && loops == 2)) &&
                                 f.loop->mma == 0 && f.loop->pipes && f.loop->pipes->bar == 0 &&
                                 f.loop->k_iter > 0 && f.prologue &&
                                 (pre    ? quant == 0

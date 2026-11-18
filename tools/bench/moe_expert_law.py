@@ -17,6 +17,11 @@ The trailing c is the fill and drain no bus hides. The counted facts are the ker
 sections (src/ops/generic/data/kernel_facts/sm_<arch>.txt). The grid geometry follows moe.cpp (rows a CTA,
 r8_lanes, jobs as the touched experts at T <= 8).
 
+Known defects (#987, DECISIONS 93), all pricing R8 low: the R8 kernel of the mean tokens a job
+(the runtime takes the next power of two at or above T); 32 lanes a row assumed (the loop steps by
+r8_lanes); R8's dynamic shared memory left out of the occupancy; the quantizer's global waits
+counted once, not per iteration. The frozen CSVs record the law with them.
+
     moe_expert_law.py score FACTS GRID_DIR BOARD           the law's pick against a measured moe11 grid
     moe_expert_law.py predict FACTS BOARD PLANS_CSV E,K,H,F OUT.csv
                                                            every plan's price and the pick, for a sealed grid

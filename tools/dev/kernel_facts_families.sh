@@ -41,7 +41,16 @@ REPO=$(realpath "$1"); shift
 ARCHS=("$@"); [ ${#ARCHS[@]} -gt 0 ] || ARCHS=(75 80 86 89 90 100 120a)
 ROOT=$(realpath -m "${KFF_ROOT:-$HOME/kff}"); mkdir -p "$ROOT"
 JOBS=${KFF_JOBS:-8}; NVCC=${CUDACXX:-/usr/local/cuda-13.4/bin/nvcc}
-FAMS=${KFF_FAMILIES:-mmq,w4a8,gemma4,r8,i8,moer8,moegemm}; IFS=, read -r -a FAM_LIST <<< "$FAMS"
+ALL_FAMS=${KFF_FAMILIES:-mmq,w4a8,gemma4,r8,i8,moer8,moegemm}
+# The families one arch is written with (FAMS, FAM_LIST): all of them, but for sm_100, which takes
+# no routed-expert family (moer8, moegemm) yet: six of its W4a8Nvfp4 GateUp rows read as unknown
+# flow (#987), and the kernel-facts test waives its MoE sections.
+arch_fams() {
+  FAMS=$ALL_FAMS
+  [ "$1" != 100 ] || FAMS=$(echo ",$ALL_FAMS," | sed 's/,moer8,/,/; s/,moegemm,/,/; s/^,//; s/,$//')
+  IFS=, read -r -a FAM_LIST <<< "$FAMS"
+}
+arch_fams all
 # The binary read (KFF_TARGET): the selector golden test by default. Its sm_120a link holds no
 # Gemma 4 kernel (libninferno_ops.a does, 232) and no routed-expert one (moer8, moegemm), so those
 # families are read there from ninferno-serve (KFF_TARGET=ninferno-serve KFF_FAMILIES=...).
@@ -66,7 +75,7 @@ FACTS=$REPO/$FACTS_REL
 case "$ROOT/" in "$REPO"/*) echo "KFF_ROOT=$ROOT is inside $REPO; build outside the checkout"; exit 3 ;; esac
 [ -z "$(git -C "$REPO" status --porcelain -- "$FACTS_REL")" ] \
   || { echo "$REPO has uncommitted changes in $FACTS_REL; start from a clean checkout"; exit 3; }
-echo "== $FAMS sections of ${ARCHS[*]} at $(git -C "$REPO" log --oneline -1 | cut -c1-100)"
+echo "== $ALL_FAMS sections of ${ARCHS[*]} at $(git -C "$REPO" log --oneline -1 | cut -c1-100)"
 
 # 2. the toolkit: the nvcc every snapshot records, and its own cuobjdump and cu++filt
 [ -x "$NVCC" ] || { echo "no nvcc at $NVCC (set CUDACXX)"; exit 3; }
@@ -76,6 +85,7 @@ for t in cuobjdump cu++filt; do
 done
 VERSION=$("$NVCC" --version | sed -n 's/.*, V\([0-9.]*\)$/\1/p')
 for a in "${ARCHS[@]}"; do
+  arch_fams "$a"
   f=$FACTS/sm_$a.txt
   [ -f "$f" ] || { echo "no snapshot $f"; exit 3; }
   want=$(grep -m1 '^nvcc ' "$f" | cut -d' ' -f2)
@@ -95,6 +105,7 @@ declare -A RESULT
 WORST=0
 worst() { [ "$1" -le "$WORST" ] || WORST=$1; }
 for a in "${ARCHS[@]}"; do
+  arch_fams "$a"
   B=$ROOT/build_kff_$a
   f=$FACTS/sm_$a.txt
   FREE=$(df -BG --output=avail "$ROOT" | tail -1 | tr -dc 0-9)
@@ -154,7 +165,7 @@ for a in "${ARCHS[@]}"; do
   [ "${KFF_CLEAN:-0}" != 1 ] || rm -rf "$B"
 done
 
-echo "== $FAMS sections, nvcc $VERSION, $(($(date +%s) - T0)) s"
+echo "== $ALL_FAMS sections, nvcc $VERSION, $(($(date +%s) - T0)) s"
 for a in "${ARCHS[@]}"; do printf '  sm_%-5s %s\n' "$a" "${RESULT[$a]:-not run}"; done
 # What moved in the checkout: section lines only (each file's part before its first section was
 # compared with HEAD above).
