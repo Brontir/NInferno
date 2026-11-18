@@ -73,6 +73,32 @@ const Row* measured_row_of(const Row (&rows)[N], std::string_view generation, bo
     return row;
 }
 
+// The launch share of one kernel's residual on compute capability major.minor
+// (core/launch_facts.h): the graph node (with PDL from sm_90 on, as the engine launches a decode
+// chain there) and, for a weight-reading kernel, the dispatch ramp of a ~1024-CTA grid, the decode
+// GEMV's (#613 PR-8c's decomposition). nullopt where the architecture has no launch facts.
+std::optional<double> launch_share(int major, int minor, bool gemv) {
+    const std::optional<double> node =
+        launch_seconds(major, minor, major >= 9 ? LaunchKind::GraphNodePdl : LaunchKind::GraphNode);
+    if (!node) return std::nullopt;
+    if (!gemv) return node;
+    const std::optional<Ramp> ramp = ramp_seconds(major, minor, 1024.0);
+    if (!ramp) return std::nullopt;
+    return *node + ramp->seconds;
+}
+
+// What a kernel costs a step beyond its bytes on `card` (kKernelCost, #613 PR-8e): the row as
+// measured on its census cards' architecture; elsewhere the row less those cards' launch share plus
+// the card's own, where both architectures have launch facts.
+double kernel_cost_seconds(const KernelCost& row, const CardFacts& card, bool gemv) {
+    const double measured = gemv ? row.gemv : row.small;
+    if (card.major == row.major && card.minor == row.minor) return measured;
+    const std::optional<double> census = launch_share(row.major, row.minor, gemv);
+    const std::optional<double> own    = launch_share(card.major, card.minor, gemv);
+    if (!census || !own) return measured;
+    return measured - *census + *own;
+}
+
 double dram_eta(std::string_view generation) noexcept {
     for (const DramEta& row : kDramEtaOf) {
         if (row.generation == generation) { return row.eta; }
@@ -1607,7 +1633,10 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
                                          [&](const MoeRoutedEta& r) { return r.generation == gen; });
     const WeightClass rest = !model.moe() ? quant.weights : moe_row ? WeightClass::KQuant : quant.rest_weights;
     const StepKernels kernels = step_kernels(model, quant.weights, rows, transferred);
-    const double launches = cost != nullptr ? kernels.gemv * cost->gemv + kernels.small * cost->small : 0;
+    const double launches     = cost != nullptr
+                                    ? kernels.gemv * kernel_cost_seconds(*cost, card, true) +
+                                      kernels.small * kernel_cost_seconds(*cost, card, false)
+                                    : 0;
     // A class the SMs bound (kWeightSmRate): its reads at the longer of the DRAM rate and the SMs'.
     // An MoE's rest by its own linears' class (rest_weights), its routed banks by the file's.
     const auto sm_share = [&](WeightClass w) {

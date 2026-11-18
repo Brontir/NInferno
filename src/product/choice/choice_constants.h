@@ -182,21 +182,28 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
 // The launch is half the residual on Ada, a third on gb20x, a quarter on GA10x and under a fifth on
 // Turing: beyond Ada the rest, not the launch, is the term to count (L0 x rounds + drain, from the
 // kernels' facts).
+// The launch share is priced from the launch facts of the card's own architecture (#613 PR-8e,
+// choice.cpp kernel_cost_seconds): the row's census residual less its census cards' launch share
+// (node, and for a weight-reading kernel the dispatch ramp of its ~1024-CTA grid) plus the card's.
+// A card of the census cards' architecture (major.minor below), or of one without launch facts,
+// takes the row as measured.
 struct KernelCost {
     std::string_view generation;
     double gemv;  // seconds a weight-reading kernel beyond its bytes
     double small; // seconds a small kernel beyond its bytes
     int cards;
+    int major = 0, minor = 0; // the census cards' architecture
 };
+
 inline constexpr KernelCost kKernelCost[] = {
-    {"ada", 2.35e-6, 1.94e-6, 3},    // RTX 4060 Ti, 4070 Ti (its census of 28.10), 4090
-    {"gb20x", 1.90e-6, 2.29e-6, 2},  // RTX 5070 Ti, 5090
-    {"ga10x", 4.72e-6, 2.55e-6, 1},  // RTX 3060
-    {"turing", 8.56e-6, 4.30e-6, 1}, // RTX 2080 Ti
+    {"ada", 2.35e-6, 1.94e-6, 3, 8, 9},    // RTX 4060 Ti, 4070 Ti (its census of 28.10), 4090
+    {"gb20x", 1.90e-6, 2.29e-6, 2, 12, 0}, // RTX 5070 Ti, 5090
+    {"ga10x", 4.72e-6, 2.55e-6, 1, 8, 6},  // RTX 3060
+    {"turing", 8.56e-6, 4.30e-6, 1, 7, 5}, // RTX 2080 Ti
     // Quadro GV100 (thchk.sh, a cool board; its census less the node trace's 2.7-3.7 us a kernel):
     // a weight-reading kernel from Q8_0 alone (its K-quants' residual is their SM-bound decode,
     // kWeightSmRate), a small one from the three models.
-    {"volta", 6.37e-6, 5.06e-6, 1},
+    {"volta", 6.37e-6, 5.06e-6, 1, 7, 0},
 };
 
 // The share of the DRAM rate C rows' weight reads reach on a weight class's routes (C = 1: kDramEta;
