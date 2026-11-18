@@ -1454,8 +1454,9 @@ struct KeptArtifact {
     std::filesystem::path path; // canonical where it resolves
     std::filesystem::file_time_type written;
     std::uintmax_t size = 0;
-    artifact::ArtifactId
-        id{}; // the reader's: a same-size rewrite that keeps the write time differs
+    // The reader's id: a new conversion written over the file within the clock's resolution
+    // differs (an in-place relayout keeps it; its write time tells it apart).
+    artifact::ArtifactId id{};
     std::shared_ptr<const artifact::Directory> directory;
     std::uint32_t tokenizer_tokens = 0;
 };

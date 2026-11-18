@@ -214,15 +214,16 @@ void logical_data_and_instances() {
         require(again.artifact_directory == facts.artifact_directory &&
                     again.tokenizer_tokens == 265,
                 "a second read of the artifact's facts did not share the kept directory");
-        // #837: kept by the canonical path, and a bounded number of files: a read through another
-        // spelling of the path shares the directory; after reads of four other files the first is
-        // read anew (dropped, the least recently read first).
+        // #837: kept by the canonical path, and a bounded number of files, the least recently read
+        // dropped first: a read through another spelling of the path shares the directory; the
+        // entry read again after three other files outlives a fourth (first-in-first-out would
+        // drop it); after four more it is read anew.
         const auto& entry = fixture.file.entry;
         const auto dotted = entry.parent_path() / "." / entry.filename();
         require(product::plan_facts_of_artifact(dotted).model.artifact_directory ==
                     facts.artifact_directory,
                 "a read through another spelling of the path did not share the kept directory");
-        for (int i = 0; i < 4; ++i) {
+        const auto read_copy = [&](int i) {
             const auto copy =
                 entry.parent_path() / ("kept_copy_" + std::to_string(i) + ".ninferno");
             std::filesystem::copy_file(entry, copy,
@@ -230,7 +231,16 @@ void logical_data_and_instances() {
             require(product::plan_facts_of_artifact(copy).model.artifact_directory !=
                         facts.artifact_directory,
                     "a copy at another path shared the first file's kept directory");
-        }
+        };
+        for (int i = 0; i < 3; ++i) { read_copy(i); }
+        require(product::plan_facts_of_artifact(entry).model.artifact_directory ==
+                    facts.artifact_directory,
+                "the file was dropped after three other files (the bound is four)");
+        read_copy(3);
+        require(product::plan_facts_of_artifact(entry).model.artifact_directory ==
+                    facts.artifact_directory,
+                "the file read most recently was dropped before the least recently read one");
+        for (int i = 4; i < 8; ++i) { read_copy(i); }
         const auto later = product::plan_facts_of_artifact(entry).model;
         require(later.artifact_directory != facts.artifact_directory &&
                     later.tokenizer_tokens == 265,
