@@ -178,7 +178,15 @@ whether the measured tables are still needed.
 
 As the cost model improves, `exit_share` rises toward 1. `route_table_prune.py` may then delete
 an entry whose cases all caught up; it keeps one for its other reasons too (a claim, a borrower,
-a prefill range, an uncovered segment). A board whose `table` share stays high while its `exit_share` is low still
+a prefill range, an uncovered segment). A route table keys its entries by compute class, not by
+policy (`route_table.cpp` `compute_class`): a k-quant's `a16` entry answers both the fast mode's
+calls (AllowA8, the `a8` cases of `regret_job.sh`'s default `A8_CANDIDATES=1`) and the exact
+mode's (A16Only, `a16` cases, `A8_CANDIDATES=0`). The tool reads a case against the entry of its
+class and prunes the entry only when the cases of both policies clear it, so it takes the two
+jobs' reports of one build together (`route_table_prune.py fast.json exact.json --table ...`).
+Every entry of the board's own table is a measured override, with `tuned_on` (a dense tuner
+cache's) or without it (a `route_tune` sweep on that board): the selector reports both as
+measured evidence. A board whose `table` share stays high while its `exit_share` is low still
 rests on its own measurements. The committed reports above were collected before the metric
 existed. They carry no per-case rows, so the first numbers come with the next regret run (#620
 step 10).
@@ -306,7 +314,9 @@ on PATH, which can be another toolkit than the build's (a 13.x on PATH beside a 
    candidates are qualified at the measured build itself.
 2. **Sweep.** Three passes of `ninferno-serve route-tune --shapes
    tools/bench/data/route_regret/shapes.txt --samples 7 --a8-candidates 1`, plus `--route-policy`
-   when `ROUTE_POLICY` is set.
+   when `ROUTE_POLICY` is set. `A8_CANDIDATES=0` sweeps the exact mode's calls instead (a16 cases);
+   its report has no previous one (`PREVIOUS=auto` becomes `none`: the committed reports are the
+   fast mode's).
 3. **Score.** `regret_collect.py --pci-id` (the board label and card name come from the card's PCI id
    in `gpu_facts.json`), then `selection_regret.py` and `regret_bands.py --doc`.
 4. **Report.** `regret_report.py build` writes `OUT_DIR/<stamp>-<rev12>.json` and a `.md` summary.

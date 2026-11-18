@@ -62,8 +62,11 @@ def measured_against(rep, entries=(), dense=None):
         if "selected" in c:
             continue
         t = c["t"]
+        # A case reads the entry of its compute class (an a8 case a k-quant's a16 entry).
+        fmt, compute = c["id"].split(".")[:2]
+        table_id = c["id"].replace(f".{compute}.", f".{prune.table_compute(fmt, compute)}.", 1)
         for e in entries:
-            if c["id"].startswith(prune.label(prune.entry_key(e)) + ".T"):
+            if table_id.startswith(prune.label(prune.entry_key(e)) + ".T"):
                 if c.get("profile") == "prefill":
                     route = named_route(e.get("prefill_bands", []), t) or e.get("prefill")
                 else:
@@ -75,8 +78,25 @@ def measured_against(rep, entries=(), dense=None):
     return rep
 
 
-def report(*cases):
-    return {"schema": "ninferno-selection-regret-report/1", "cases": list(cases)}
+def bare(reasons):
+    """`reasons` without the policy tag a two-policy entry's reasons carry ("policy a16 (...): ")."""
+    return [re.sub(r"^policy a(16|8|4) \([^)]*\): ", "", r) for r in reasons]
+
+
+def report(*cases, both_policies=True):
+    """A report of `cases`. A route-table entry of a k-quant answers the exact mode's and the fast
+    mode's calls (route_table_prune.asking_policies), so by default every route-table a16 case of
+    such a format comes with its a8 twin (the same width, slowdown and route): the evidence then
+    covers both policies, as the tests below mean it to. both_policies=False keeps the cases as
+    given."""
+    out = list(cases)
+    if both_policies:
+        for c in cases:
+            fmt = c["id"].split(".")[0]
+            if (c.get("authority") == "route-table" and ".a16." in c["id"]
+                    and fmt not in prune.SINGLE_POLICY_FORMATS):
+                out.append(dict(c, id=c["id"].replace(".a16.", ".a8.", 1)))
+    return {"schema": "ninferno-selection-regret-report/1", "cases": out}
 
 
 def table(*entries):
@@ -110,6 +130,45 @@ class Prune(unittest.TestCase):
     def plan_dense(self, rep, dense, *args, **kw):
         return prune.plan_dense(measured_against(rep, dense=dense), dense, *args, **kw)
 
+    def test_a_k_quant_entry_needs_the_cases_of_both_policies_that_ask_it(self):
+        # route_table.cpp keys the entry by compute class (A16 for a k-quant under any policy):
+        # the fast mode's a8 cases speak for it, and so must the exact mode's a16 cases.
+        t = table(self.entry(bands=((1, 4, "vec"), (5, 16, "rmma.a"))))
+        fast = [dict(c, id=c["id"].replace(".a16.", ".a8.")) for c in (case(1, 0.0), case(8, 0.0))]
+        plan = self.plan_table(report(*fast, both_policies=False), t, 0.05)
+        self.assertFalse(plan[0][2])
+        self.assertIn("policy a16 (A16Only, the exact mode): no case", plan[0][3])
+        self.assertFalse(any(r.startswith("policy a8") for r in plan[0][3]), plan[0][3])
+        exact = [case(1, 0.0), case(8, 0.0)]
+        self.assertTrue(self.plan_table(report(*fast, *exact, both_policies=False), t, 0.05)[0][2])
+        slow_fast = [dict(c, id=c["id"].replace(".a16.", ".a8."))
+                     for c in (case(1, 0.0), case(8, 0.2))]
+        plan = self.plan_table(report(*slow_fast, *exact, both_policies=False), t, 0.05)
+        self.assertFalse(plan[0][2])
+        self.assertEqual(plan[0][3], ["policy a8 (AllowA8, the fast mode): T 5..16: ranker 20.0 "
+                                      "% slower somewhere"])
+
+    def test_a_bf16_entry_is_asked_by_one_policy(self):
+        t = table(self.entry(fmt="bf16", bands=((1, 4, "vec"), (5, 16, "rmma.a"))))
+        cases = [case(1, 0.0, fmt="bf16"), case(8, 0.0, fmt="bf16")]
+        self.assertTrue(self.plan_table(report(*cases), t, 0.05)[0][2])
+        self.assertEqual(prune.asking_policies(("bf16", "a16", "store", 1, 1)), ("a16",))
+        self.assertEqual(prune.asking_policies(("nvfp4", "a4", "store", 1, 1)), ("a4",))
+        self.assertEqual(prune.asking_policies(("q6k", "a16", "store", 1, 1)), ("a16", "a8"))
+        self.assertEqual(prune.table_compute("nvfp4", "a4"), "a4")
+        self.assertEqual(prune.table_compute("q4k", "a8"), "a16")
+
+    def test_the_policies_sweeps_merge_only_from_one_build(self):
+        a = {"schema": "ninferno-selection-regret-report/1", "device": "ad102:128sm",
+             "selector_revision": "r1", "build_id": "b1", "cases": [case(1, 0.0)]}
+        b = dict(a, cases=[dict(case(1, 0.0), id="q4k.a8.store.n1024.k4096.T1")],
+                 by_board_regime_authority=RIDGE)
+        merged = prune.merged_reports([a, b])
+        self.assertEqual(len(merged["cases"]), 2)
+        self.assertEqual(prune.ridge_of(merged), 131.5)
+        with self.assertRaises(ValueError):
+            prune.merged_reports([a, dict(b, selector_revision="r2")])
+
     def test_pruned_only_when_every_band_is_within_the_resolution(self):
         t = table(self.entry(bands=((1, 4, "vec"), (5, 16, "rmma.a"))))
         within = report(case(1, 0.02), case(4, 0.0), case(8, 0.049))
@@ -117,7 +176,7 @@ class Prune(unittest.TestCase):
         worse = report(case(1, 0.02), case(4, 0.0), case(8, 0.2))
         plan = self.plan_table(worse, t, 0.05)
         self.assertFalse(decided(plan)[self.KEY])
-        self.assertIn("T 5..16: ranker 20.0 % slower somewhere", plan[0][3])
+        self.assertIn("T 5..16: ranker 20.0 % slower somewhere", bare(plan[0][3]))
         self.assertTrue(decided(self.plan_table(worse, t, 0.25))[self.KEY])
 
     def test_a_prefill_override_is_kept_on_speed_evidence_alone(self):
@@ -129,7 +188,7 @@ class Prune(unittest.TestCase):
         plan = self.plan_table(with_ridge(report(case(1, 0.0), case(8, 0.0), case(17, 0.0))),
                                 table(e), 0.05)
         self.assertFalse(plan[0][2])
-        self.assertTrue(any("prefill" in why for why in plan[0][3]), plan[0][3])
+        self.assertTrue(any("prefill" in why for why in bare(plan[0][3])), plan[0][3])
         speed = [case(1, 0.0), case(8, 0.0), case(17, 0.0), case(512, 0.0)]
         # prefill-profile cases (none are written yet) clear it, in every prefill range: the band
         # 17..128 and the route past it (129.., cut at the ridge: 129..131 and 132..)
@@ -138,7 +197,7 @@ class Prune(unittest.TestCase):
         lone = [dict(case(64, 0.01), profile="prefill")]
         plan = self.plan_table(with_ridge(report(*speed, *lone)), table(e), 0.05)
         self.assertFalse(plan[0][2])
-        self.assertTrue(any(why.startswith("prefill T ") for why in plan[0][3]), plan[0][3])
+        self.assertTrue(any(why.startswith("prefill T ") for why in bare(plan[0][3])), plan[0][3])
         slow = [dict(case(t, 0.3 if t == 512 else 0.0), profile="prefill")
                 for t in (64, 17, 130, 200, 512)]
         self.assertFalse(self.plan_table(with_ridge(report(*speed, *slow)), table(e), 0.05)[0][2])
@@ -149,7 +208,7 @@ class Prune(unittest.TestCase):
         sparse = with_ridge(report(case(1, 0.0), case(5, 0.0), case(17, 0.0), case(512, 0.0)))
         plan = self.plan_table(sparse, t, 0.05)
         self.assertFalse(plan[0][2])
-        self.assertIn("T 2..4: no case", plan[0][3])
+        self.assertIn("T 2..4: no case", bare(plan[0][3]))
         full = with_ridge(report(case(1, 0.0), case(3, 0.0), case(5, 0.0), case(17, 0.0),
                                  case(512, 0.0)))
         self.assertTrue(self.plan_table(full, t, 0.05)[0][2])
@@ -159,12 +218,12 @@ class Prune(unittest.TestCase):
         cases = [case(1, 0.0), case(5, 0.0), case(17, 0.0)]
         plan = self.plan_table(with_ridge(report(*cases)), t, 0.05)
         self.assertFalse(plan[0][2])
-        self.assertIn("T 132..16777216: no case", plan[0][3])
+        self.assertIn("T 132..16777216: no case", bare(plan[0][3]))
         self.assertTrue(self.plan_table(with_ridge(report(*cases, case(512, 0.0))), t, 0.05)[0][2])
         # without a ridge in the report a wide band cannot be split: kept
         plan = self.plan_table(report(*cases, case(512, 0.0)), t, 0.05)
         self.assertFalse(plan[0][2])
-        self.assertTrue(any("no ridge" in why for why in plan[0][3]), plan[0][3])
+        self.assertTrue(any("no ridge" in why for why in bare(plan[0][3])), plan[0][3])
         # a decode-only entry needs none
         self.assertTrue(self.plan_table(report(case(1, 0.0), case(5, 0.0)),
                                          table(self.entry(bands=((1, 16, "a"),))), 0.05)[0][2])
@@ -178,8 +237,8 @@ class Prune(unittest.TestCase):
         sparse = report(case(8, 0.0))
         plan = self.plan_table(sparse, table(e), 0.05)
         self.assertFalse(plan[0][2])
-        self.assertIn("T 1..1: no case", plan[0][3])
-        self.assertIn("T 3..4: no case", plan[0][3])
+        self.assertIn("T 1..1: no case", bare(plan[0][3]))
+        self.assertIn("T 3..4: no case", bare(plan[0][3]))
         self.assertTrue(self.plan_table(report(case(8, 0.0), case(1, 0.0), case(3, 0.0)), table(e),
                                          0.05)[0][2])
         only_r8 = self.entry(bands=())
@@ -192,7 +251,7 @@ class Prune(unittest.TestCase):
         ran_a = report(*[case(t, 0.0, selected="a") for t in (1, 3, 8)])
         plan = prune.plan_table(ran_a, table(overlap), 0.05)
         self.assertFalse(plan[0][2])
-        self.assertIn("T 3..4: no case", plan[0][3])
+        self.assertIn("T 3..4: no case", bare(plan[0][3]))
         both = report(*[case(t, 0.0, selected="a") for t in (1, 3, 8)],
                       case(4, 0.0, selected="r8.w4r2"))
         self.assertTrue(prune.plan_table(both, table(overlap), 0.05)[0][2])
@@ -208,7 +267,7 @@ class Prune(unittest.TestCase):
         plan = prune.plan_table(with_ridge(report(*pre)), table(e), 0.05)
         self.assertFalse(plan[0][2])
         self.assertTrue(any(why.startswith("prefill T 1001..") and why.endswith("no case")
-                            for why in plan[0][3]), plan[0][3])
+                            for why in bare(plan[0][3])), plan[0][3])
         self.assertEqual(prune.entry_ranges(e)[1], [(17, 1000, "A"), (1001, prune.INF, "B")])
         past = dict(case(2000, 0.0, selected="B"), profile="prefill")
         self.assertTrue(prune.plan_table(with_ridge(report(*pre, past)), table(e), 0.05)[0][2])
@@ -222,7 +281,7 @@ class Prune(unittest.TestCase):
         e["claim"] = True
         plan = self.plan_table(report(case(1, 0.0), case(8, 0.0)), table(e), 0.05)
         self.assertFalse(plan[0][2])
-        self.assertTrue(any("claims" in why for why in plan[0][3]), plan[0][3])
+        self.assertTrue(any("claims" in why for why in bare(plan[0][3])), plan[0][3])
 
     def test_a_case_without_a_finite_ranker_time_keeps_the_entry(self):
         t = table(self.entry(bands=((1, 16, "a"),)))
@@ -231,7 +290,7 @@ class Prune(unittest.TestCase):
             c["ranker_vs_selected"] = bad
             plan = self.plan_table(report(c, case(8, 0.0)), t, 0.05)
             self.assertFalse(plan[0][2], bad)
-            self.assertTrue(any("without a ranker time" in why for why in plan[0][3]), bad)
+            self.assertTrue(any("without a ranker time" in why for why in bare(plan[0][3])), bad)
         incomplete = report(case(1, 0.0, status="incomplete"), case(8, 0.0))
         self.assertFalse(self.plan_table(incomplete, t, 0.05)[0][2])
 
@@ -247,7 +306,9 @@ class Prune(unittest.TestCase):
                    case(8, 0.0, evidence="borrowed"))
         self.assertFalse(self.plan_table(r, t, 0.05)[0][2])
         self.assertEqual(self.plan_table(report(case(1, 0.0, n=7)), t, 0.05)[0][3], ["no case"])
-        self.assertEqual(self.plan_table(report(), table(entry(measured=False)), 0.05), [])
+        # an entry without tuned_on (a route_tune sweep's) is the board's measured override too
+        self.assertEqual(self.plan_table(report(), table(entry(measured=False)), 0.05),
+                         [(0, self.KEY, False, ["no case"])])
 
     def test_a_key_another_table_holds_or_may_borrow_is_kept(self):
         e = self.entry(bands=((1, 16, "a"),))
@@ -258,11 +319,11 @@ class Prune(unittest.TestCase):
         # a table that holds the key: the board would borrow its override
         plan = self.plan_table(r, t, 0.05, {"gb206": lender})
         self.assertFalse(plan[0][2])
-        self.assertTrue(any("holds this key (gb206)" in why for why in plan[0][3]), plan[0][3])
+        self.assertTrue(any("holds this key (gb206)" in why for why in bare(plan[0][3])), plan[0][3])
         # a table that lacks it may borrow ours
         plan = self.plan_table(r, t, 0.05, {"ga106": lacker})
         self.assertFalse(plan[0][2])
-        self.assertTrue(any("may borrow it (ga106)" in why for why in plan[0][3]), plan[0][3])
+        self.assertTrue(any("may borrow it (ga106)" in why for why in bare(plan[0][3])), plan[0][3])
         self.assertTrue(self.plan_table(r, t, 0.05, {"ga106": lacker}, allow_borrowers=True)[0][2])
         # allowing borrowers does not allow a lender
         self.assertFalse(self.plan_table(r, t, 0.05, {"gb206": lender}, allow_borrowers=True)[0][2])
@@ -283,7 +344,7 @@ class Prune(unittest.TestCase):
         # nothing of the T = 4 route, though both are decode widths
         plan = self.plan_dense(report(cases[0], cases[2]), dense, "ad102:128sm", 0.05)
         self.assertFalse(plan[0][2])
-        self.assertIn("T 4..4: no case", plan[0][3])
+        self.assertIn("T 4..4: no case", bare(plan[0][3]))
         # a case at the unrouted T = 2 (the heuristic's width) does not stand in for T = 4 either
         plan = self.plan_dense(report(cases[0], case(2, 0.0, authority="dense-tune"), cases[2]),
                                dense, "ad102:128sm", 0.05)
@@ -310,7 +371,7 @@ class Prune(unittest.TestCase):
                                profile="prefill")
         plan = prune.plan_dense(rep, dense, "ad102:128sm", 0.05)
         self.assertFalse(plan[0][2])
-        self.assertIn("prefill T 33..64: no case", plan[0][3])
+        self.assertIn("prefill T 33..64: no case", bare(plan[0][3]))
         # the selector names a dense prefill band's answer dense-tune-prefill-band
         # (route_authorities.cpp): those cases speak for the problem too
         named = with_ridge(report(*[dict(case(t, 0.0, authority="dense-tune-prefill-band",
@@ -338,7 +399,7 @@ class Prune(unittest.TestCase):
         old = report(case(1, 0.0, selected="b"), case(8, 0.0, selected="b"))
         plan = prune.plan_table(old, t, 0.05)
         self.assertFalse(plan[0][2])
-        self.assertIn("T 1: the case measured b, the entry routes a there", plan[0][3])
+        self.assertIn("T 1: the case measured b, the entry routes a there", bare(plan[0][3]))
         self.assertTrue(prune.plan_table(report(case(1, 0.0, selected="a"),
                                                 case(8, 0.0, selected="a")), t, 0.05)[0][2])
         # one stale case is enough to keep it, whatever the others measured
@@ -353,7 +414,7 @@ class Prune(unittest.TestCase):
         stale = report(case(1, 0.0, authority="dense-tune", selected="rmma.a"))
         plan = prune.plan_dense(stale, dense, "ad102:128sm", 0.05)
         self.assertFalse(plan[0][2])
-        self.assertIn("T 1: the case measured rmma.a, the entry routes vec there", plan[0][3])
+        self.assertIn("T 1: the case measured rmma.a, the entry routes vec there", bare(plan[0][3]))
         fresh = report(case(1, 0.0, authority="dense-tune", selected="vec"))
         self.assertTrue(prune.plan_dense(fresh, dense, "ad102:128sm", 0.05)[0][2])
 
@@ -369,7 +430,7 @@ class Prune(unittest.TestCase):
         self.assertEqual(tuned, {self.KEY})
         plan = self.plan_table(r, t, 0.05, tuned=tuned)
         self.assertFalse(plan[0][2])
-        self.assertTrue(any("dense tuner routes this problem" in why for why in plan[0][3]))
+        self.assertTrue(any("dense tuner routes this problem" in why for why in bare(plan[0][3])))
         self.assertTrue(self.plan_table(r, t, 0.05, tuned=prune.dense_routed(dense, "x:1sm"))[0][2])
 
     def test_apply_keeps_a_dense_problem_whose_t4_route_was_never_measured(self):
@@ -433,7 +494,7 @@ class Prune(unittest.TestCase):
             code, out, _ = self.run_cli([str(report_path), "--table", str(path)])
             self.assertEqual(code, 0)
             self.assertIn("board ad102:128sm, device ad102:128sm, table class ad102", out)
-            self.assertIn("1 of 2 measured entries", out)
+            self.assertIn("1 of 3 measured entries", out)
             self.assertIn("dry run", out)
             self.assertEqual(path.read_bytes(), before)
             code, out, _ = self.run_cli([str(report_path), "--table", str(path), "--apply",
