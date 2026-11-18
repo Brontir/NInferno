@@ -64,6 +64,9 @@ struct QkvCase {
     // The cache in one-byte rows of the build's codec (row_codec.h: int8 on sm_75..88, E4M3FN
     // elsewhere) with an FP32 scale per row, as --kv-dtype fp8 stores it (#991).
     bool rows = false;
+    // Zero keys and values in the source (no bias): rows whose absolute maximum is 0, a scale of
+    // 0 the codec must not divide by.
+    bool zero_kv = false;
 };
 
 // One code of the build's one-byte row codec, unscaled.
@@ -154,7 +157,12 @@ int run_qkv(const QkvCase& c) {
     const int d = c.d, t_count = c.tokens;
     const int qw = c.q_heads * d, kw = c.kv_heads * d;
     const int stride = qw + 2 * kw + 64; // a padded token stride, as a row slice has
-    const auto source = random_bf16_values(std::size_t(stride) * t_count, 11 + d, -3.0f, 3.0f);
+    auto source      = random_bf16_values(std::size_t(stride) * t_count, 11 + d, -3.0f, 3.0f);
+    if (c.zero_kv) {
+        for (int t = 0; t < t_count; ++t) {
+            std::fill_n(source.begin() + std::size_t(t) * stride + qw, 2 * kw, 0.0f);
+        }
+    }
     const auto bq     = random_bf16_values(qw, 13, -1.0f, 1.0f);
     const auto bk     = random_bf16_values(kw, 17, -1.0f, 1.0f);
     const auto bv     = random_bf16_values(kw, 19, -1.0f, 1.0f);
@@ -734,70 +742,26 @@ int main() {
         failures += run_qkv(gemma);
     }
     // The one-byte rows --kv-dtype fp8 stores (int8 codes on sm_75..88, E4M3 elsewhere, #991):
-    // gpt-oss decode and prefill widths, Llama D128 GQA, Gemma 3 D256 with its unit-offset norm.
-    {
-        QkvCase rows{"gpt-oss D64 64/8 rows",
-                     64,
-                     64,
-                     8,
-                     1,
-                     131000,
-                     ops::QkNorm::None,
-                     64,
-                     1.5e5,
-                     1.3466f,
-                     true,
-                     0.0f,
-                     0};
-        rows.rows = true;
-        failures += run_qkv(rows);
-        rows      = {"gpt-oss D64 64/8 prefill rows",
-                     64,
-                     64,
-                     8,
-                     33,
-                     70,
-                     ops::QkNorm::None,
-                     64,
-                     1.5e5,
-                     1.3466f,
-                     true,
-                     0.0f,
-                     0};
-        rows.rows = true;
-        failures += run_qkv(rows);
-        rows      = {"llama D128 32/8 rows",
-                     128,
-                     32,
-                     8,
-                     5,
-                     0,
-                     ops::QkNorm::None,
-                     128,
-                     5e5,
-                     1.0f,
-                     false,
-                     0.0f,
-                     0};
-        rows.rows = true;
-        failures += run_qkv(rows);
-        rows             = {"gemma3 D256 8/4 prefill rows 1+w",
-                            256,
-                            8,
-                            4,
-                            40,
-                            3000,
-                            ops::QkNorm::Head,
-                            256,
-                            1e6,
-                            1.0f,
-                            false,
-                            0.0f,
-                            0};
-        rows.unit_offset = true;
-        rows.rows        = true;
-        failures += run_qkv(rows);
-    }
+    // gpt-oss decode and prefill widths, rows whose keys and values are all zero (scale 0),
+    // Llama D128 GQA, Gemma 3 D256 with its unit-offset norm.
+    const auto rows = [](QkvCase c, bool zero_kv = false, bool unit_offset = false) {
+        c.rows        = true;
+        c.zero_kv     = zero_kv;
+        c.unit_offset = unit_offset;
+        return c;
+    };
+    failures += run_qkv(rows({"gpt-oss D64 64/8 rows", 64, 64, 8, 1, 131000, ops::QkNorm::None, 64,
+                              1.5e5, 1.3466f, true, 0.0f, 0}));
+    failures += run_qkv(rows({"gpt-oss D64 64/8 prefill rows", 64, 64, 8, 33, 70, ops::QkNorm::None,
+                              64, 1.5e5, 1.3466f, true, 0.0f, 0}));
+    failures += run_qkv(rows({"gpt-oss D64 64/8 zero rows", 64, 64, 8, 3, 500, ops::QkNorm::None,
+                              64, 1.5e5, 1.3466f, false, 0.0f, 0},
+                             true));
+    failures += run_qkv(rows({"llama D128 32/8 rows", 128, 32, 8, 5, 0, ops::QkNorm::None, 128, 5e5,
+                              1.0f, false, 0.0f, 0}));
+    failures += run_qkv(rows({"gemma3 D256 8/4 prefill rows 1+w", 256, 8, 4, 40, 3000,
+                              ops::QkNorm::Head, 256, 1e6, 1.0f, false, 0.0f, 0},
+                             false, true));
     failures += run_norm_scope_control();
     failures += run_qkv_bound("bound images, head norm + bias", ops::QkNorm::Head, true, false);
     failures += run_qkv_bound("bound pages, head norm", ops::QkNorm::Head, false, true);
