@@ -14,6 +14,7 @@
 #include "choice_fixture.h"
 #include "core/board_registry.h"
 #include "core/device_class.h"
+#include "core/format_facts.h"
 #include "product/choice/choice.h"
 #include "product/choice/choice_replay.h"
 #include "product/plan/plan_choice.h"
@@ -287,6 +288,25 @@ void short_rest(const json& fixture) {
                 };
                 const double before = rest();
                 pr::with_prefill_routes(model, device);
+                // Whether a trunk linear the choice asks a route for (selected_kernel's terms: no
+                // expert, an int8 route, the format the file or a one-format label names) runs on
+                // another kernel at the rest's 8 tokens than at a chunk's 1024.
+                const auto rest_changes_kernel = [&](const ch::ModelFacts& f,
+                                                     const ch::QuantOption& o) {
+                    if (!o.int8_route || o.nvfp4) { return false; }
+                    for (ch::LinearShape l : f.linears) {
+                        if (l.expert) { continue; }
+                        if (l.format.empty()) {
+                            const auto label = ch::label_formats(o.label);
+                            if (!label || label->size() != 1) { continue; }
+                            l.format = std::string(ninferno::format_facts(*label->begin()).name);
+                        }
+                        if (f.prefill_routes(l, 8, fast) != f.prefill_routes(l, 1024, fast)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
                 const double after = rest();
                 ++rests;
                 if (!(std::abs(after - before) > 1e-9 * std::abs(before))) { continue; }
@@ -298,9 +318,11 @@ void short_rest(const json& fixture) {
                                   model_name + ' ' + q);
                 // A Q8_0 file names no role formats: its linears take the format from the label
                 // (selected_kernel), and on the int8 tiles any 8-token answer but W4A8 moves them.
-                check(names_q8_linear(m, q) || q == "Q8_0",
-                      "an 8-token rest moves only where a Q8_0 linear changes kernel: " +
-                          card_name + ' ' + model_name + ' ' + q);
+                // Elsewhere a rest moves where a linear's 8-token kernel is not its chunk's (Turing
+                // takes the 16-bit register MMA for K-quants at 8 tokens).
+                check(names_q8_linear(m, q) || q == "Q8_0" || rest_changes_kernel(model, quant),
+                      "an 8-token rest moves only where a Q8_0 linear or a linear's kernel "
+                      "changes: " + card_name + ' ' + model_name + ' ' + q);
             }
         }
     }
