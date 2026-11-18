@@ -907,14 +907,14 @@ void run(const Case& k) {
           k.name + ": only the workspace differs");
 }
 
-// The start's plan of a case on `device` (substituted): its forms prepared and planned there. With
-// `plan_sms`, the sequence plan is made for that SM count instead of the board's, so whatever then
-// differs between boards was read from the substituted class itself (#1009, codex).
-std::string plan_on(const Case& k, const DeviceClass& device,
-                    std::optional<std::int32_t> plan_sms = std::nullopt) {
+// The start's plan of a case on `device` (substituted): its forms prepared and planned there. The
+// sequence plan takes its multiprocessors from the substituted class, as the dry run's planner does
+// (plan_workspace.cpp: device_class().sms), not from the test's own copy of the board: the plans
+// then differ between boards only through what the plan reads of the substitute (#1009, codex).
+std::string plan_on(const Case& k, const DeviceClass& device) {
     const ScopedDeviceClass substitute(device);
     const qwen::Config config = k.config();
-    const auto plan           = plan_of(config, k.options, plan_sms.value_or(device.sms));
+    const auto plan           = plan_of(config, k.options, device_class().sms);
     const bool mtp            = plan.features.mtp();
     Forms prepared(config, k.layout, std::uintptr_t{1} << 40);
     const ex::TextParameters text = prepared.text();
@@ -963,19 +963,13 @@ void every_board(const std::vector<Case>& cases) {
     for (const DeviceClass& d : boards) { forward.push_back(plans(d)); }
     // The substitute is read (#841): the board-sensitive cases take more than one plan over the
     // boards, as the Gemma 4 loop checks; a planner that stopped reading the substituted class
-    // would give one plan everywhere and still pass the order check below. The sequence plan is
-    // made for one SM count on every board here, so the boards' own SM counts (plan_of's) cannot
-    // make the difference: only what the workspace selectors read from the class can (#1009).
+    // would give one plan everywhere and still pass the order check below. What a Qwen 3.5 plan
+    // reads of the board is its multiprocessors (plan_on: device_class().sms); with them held at
+    // one count no case's plan differs between boards (measured on #1009's first fix).
     std::size_t varying = 0;
     for (std::size_t j = 0; j < cases.size(); ++j) {
         std::set<std::string> answers;
-        for (const DeviceClass& d : boards) {
-            try {
-                answers.insert(plan_on(cases[j], d, 80));
-            } catch (const std::exception& error) {
-                answers.insert(std::string("threw: ") + error.what());
-            }
-        }
+        for (const auto& per_board : forward) { answers.insert(per_board[j]); }
         std::cout << "  " << answers.size() << " distinct plans over the boards: " << cases[j].name
                   << '\n';
         varying += answers.size() > 1 ? 1 : 0;
