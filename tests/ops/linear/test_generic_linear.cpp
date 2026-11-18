@@ -1621,11 +1621,30 @@ int check_mmq_code_sums(const Format& f) {
 int check_mmq_fused_epilogue(const Format& f) {
     const std::int32_t k = 2048;
     const generic::Route mmq{generic::Family::GgmlMmq, 0};
-    const std::int32_t t = generic::ggml_mmq_slice_tokens(f.qtype) * 3 / 2;
-    const auto policy    = ops::LinearPolicy::AllowA8;
-    int failures         = 0;
-    std::uint64_t fused  = 0;
-    for (const std::int32_t n : {512, 4096}) {
+    const std::int32_t slice = generic::ggml_mmq_slice_tokens(f.qtype);
+    const std::int32_t t     = slice * 3 / 2;
+    const auto policy        = ops::LinearPolicy::AllowA8;
+    int failures             = 0;
+    std::uint64_t fused      = 0;
+    // The launches a call of n rows stores its epilogue in: one a slice (the second partial)
+    // without the stream-k fixup, which depends on the device's SM count.
+    const auto expected = [&](std::int32_t n) {
+        std::uint64_t e = 0;
+        for (std::int32_t t0 = 0; t0 < t; t0 += slice) {
+            e += generic::ggml_mmq_takes_fixup(f.qtype, n, std::min(slice, t - t0), k) ? 0 : 1;
+        }
+        return e;
+    };
+    std::vector<std::int32_t> shapes{512, 4096};
+    if (expected(512) == 0 && expected(4096) == 0) { // a shape that fuses on this device
+        for (std::int32_t n = 128; n <= 16384; n += 128) {
+            if (expected(n) != 0) {
+                shapes.push_back(n);
+                break;
+            }
+        }
+    }
+    for (const std::int32_t n : shapes) {
         for (int op = 0; op < 5; ++op) { // store, relu^2, add, SwiGLU, GeGLU
             const bool gated       = op >= 3;
             const std::int32_t w_n = gated ? 2 * n : n;
@@ -1675,9 +1694,16 @@ int check_mmq_fused_epilogue(const Format& f) {
             const auto separate        = run(false);
             const std::uint64_t mid    = generic::ggml_mmq_fused_count();
             const auto together        = run(true);
-            fused += generic::ggml_mmq_fused_count() - mid;
+            const std::uint64_t got    = generic::ggml_mmq_fused_count() - mid;
+            fused += got;
             if (mid != before) {
                 std::cerr << f.name << " ggml_mmq fused epilogue: fused with the switch off\n";
+                ++failures;
+            }
+            if (got != expected(n)) {
+                std::cerr << f.name << " ggml_mmq fused epilogue: n " << n << " op " << op << ": "
+                          << got << " launches stored the epilogue, " << expected(n)
+                          << " have no stream-k fixup\n";
                 ++failures;
             }
             std::size_t differ = 0;
@@ -1694,8 +1720,8 @@ int check_mmq_fused_epilogue(const Format& f) {
               << " products stored their epilogue, bytes equal to the separate kernel's\n";
     if (fused == 0) {
         std::cerr << f.name
-                  << " ggml_mmq fused epilogue: no product fused (every launch took the "
-                     "stream-k fixup)\n";
+                  << " ggml_mmq fused epilogue: no product fused (no shape of 128..16384 rows "
+                     "launches without the stream-k fixup)\n";
         ++failures;
     }
     return failures;

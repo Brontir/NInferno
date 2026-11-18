@@ -88,8 +88,9 @@ void product(const ggml_mmq::Planes& w, int blocks_per_row, const Forced& f, con
     switch (l.J) {
 #define NINFERNO_MMQ_BENCH_CASE(J)                                                                 \
     case J:                                                                                        \
-        return detail::launch<type, J>(l, x, planes, blocks_per_row, f.rows, f.k, y, f.columns,    \
-                                       out, f.rows, fx, stream);
+        (void)detail::launch<type, J>(l, x, planes, blocks_per_row, f.rows, f.k, y, f.columns,     \
+                                      out, f.rows, fx, stream, nullptr);                           \
+        return;
         NINFERNO_MMQ_BENCH_WIDTHS(NINFERNO_MMQ_BENCH_CASE)
 #undef NINFERNO_MMQ_BENCH_CASE
     default:

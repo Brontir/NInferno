@@ -1161,6 +1161,11 @@ bool ggml_mmq_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& 
 // The count is of the products whose launch stored the epilogue, since the process started.
 void set_mmq_fused_epilogue(bool on) noexcept;
 [[nodiscard]] std::uint64_t ggml_mmq_fused_count() noexcept;
+// Whether ggml's matrix kernel launches a product of `rows` x `k` at `tokens` tokens of a
+// ggml_mmq_format with the stream-k fixup on this device: such a launch keeps the separate
+// epilogue.
+[[nodiscard]] bool ggml_mmq_takes_fixup(QType qtype, std::int32_t rows, std::int32_t tokens,
+                                        std::int32_t k);
 // Instrumentation (tests; one relaxed fetch_add per joined launch): launches that ran joined to the
 // call before them (launch_overlap's join), since the process
 // started: the segmented chain's and the tests' view of what the rule granted.

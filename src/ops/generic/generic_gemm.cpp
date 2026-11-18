@@ -593,6 +593,15 @@ std::uint64_t ggml_mmq_fused_count() noexcept {
     return mmq_fused_products.load(std::memory_order_relaxed);
 }
 
+bool ggml_mmq_takes_fixup(QType qtype, std::int32_t rows, std::int32_t tokens, std::int32_t k) {
+    Weight w;
+    w.qtype         = qtype;
+    const auto type = mmq_type(w);
+    if (!type)
+        throw std::invalid_argument("ggml_mmq_takes_fixup: not a format of ggml's matrix kernel");
+    return ggml_mmq::takes_fixup(*type, rows, tokens, k);
+}
+
 std::uint64_t instrumentation_joined_launches() noexcept {
     return joined_launches.load(std::memory_order_relaxed);
 }

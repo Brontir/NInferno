@@ -322,6 +322,13 @@ int column_tile(Type type, int rows, int columns, int k) {
     throw std::invalid_argument("ggml mmq: unknown block format");
 }
 
+bool takes_fixup(Type type, int rows, int columns, int k) {
+#define NINFERNO_FIXUP(T) detail::fixup_bytes_impl<T>(rows, columns, k) != 0
+    switch (type) { NINFERNO_GGML_MMQ_CASES(NINFERNO_FIXUP) }
+#undef NINFERNO_FIXUP
+    throw std::invalid_argument("ggml mmq: unknown block format");
+}
+
 std::size_t tile_shared_bytes(Type type, int columns_per_tile) {
 #define NINFERNO_BYTES(T) detail::tile_shared_bytes_impl<T>(columns_per_tile)
     switch (type) { NINFERNO_GGML_MMQ_CASES(NINFERNO_BYTES) }

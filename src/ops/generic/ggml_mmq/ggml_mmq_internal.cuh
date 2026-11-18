@@ -224,7 +224,12 @@ bool launch(const Launch& l, const char* codes, const ggml_planes& weight_planes
         return false;
     }
     // The call's epilogue in the tile's own store, where every tile's sums are final in one CTA
-    // (no stream-k fixup adds partials after it; #617 I).
+    // (no stream-k fixup adds partials after it; #617 I). Such a call ends with the tile kernel,
+    // which releases its dependents at its entry (NINFERNO_MMQ_PDL_ENTRY): what follows the call
+    // and launches as a programmatic dependent must not write this call's workspace or output
+    // before its own wait (today none does: the quantizer waits before it writes, the register
+    // MMA's prefetch reads only weights, and GgmlMmq never reports a release, so nothing joins
+    // after it).
     ggml_planes planes = weight_planes;
     const bool fused   = epilogue != nullptr && epilogue->kind != 0 && !l.fixup;
     if (fused) {
