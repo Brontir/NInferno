@@ -296,9 +296,11 @@ void short_rest(const json& fixture) {
                 check(!volta, card_name +
                                   ": a Volta rest moves (the choice asks no route there): " +
                                   model_name + ' ' + q);
-                check(names_q8_linear(m, q), "an 8-token rest moves only where a Q8_0 linear "
-                                             "changes kernel: " +
-                                                 card_name + ' ' + model_name + ' ' + q);
+                // A Q8_0 file names no role formats: its linears take the format from the label
+                // (selected_kernel), and on the int8 tiles any 8-token answer but W4A8 moves them.
+                check(names_q8_linear(m, q) || q == "Q8_0",
+                      "an 8-token rest moves only where a Q8_0 linear changes kernel: " +
+                          card_name + ' ' + model_name + ' ' + q);
             }
         }
     }
