@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
+#include <list>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -1445,40 +1446,60 @@ bool binds_directory(const runtime::PlanModelFacts& model) {
 }
 
 // What the workspace query reads of an artifact beside its facts (#615): its directory and its
-// tokenizer's public ids, kept per path, write time and size. A start reads its artifact's facts
-// up to three times and a --plan more; the copy of a 35B-A3B's ~30,000-object directory and the
-// tokenizer (a ~10 MB tokenizer.json) are made once, and the facts share one directory, which
-// the query's described start is kept by.
+// tokenizer's public ids, kept per path, write time, size and the file's own identity. A start
+// reads its artifact's facts up to three times and a --plan more; the copy of a 35B-A3B's
+// ~30,000-object directory and the tokenizer (a ~10 MB tokenizer.json) are made once, and the facts
+// share one directory, which the query's described start is kept by.
 struct KeptArtifact {
+    std::filesystem::path path; // canonical where it resolves
     std::filesystem::file_time_type written;
     std::uintmax_t size = 0;
+    artifact::ArtifactId
+        id{}; // the reader's: a same-size rewrite that keeps the write time differs
     std::shared_ptr<const artifact::Directory> directory;
     std::uint32_t tokenizer_tokens = 0;
 };
 
+// The artifacts kept at once (#837): a serve plans with a few distinct sets of load options of one
+// file, a hub listing reads each row's file once; the least recently read is dropped first, so a
+// long-lived process holds at most this many directories (and the described starts they keep).
+constexpr std::size_t kKeptArtifacts = 4;
+
 KeptArtifact kept_artifact(const std::filesystem::path& artifact, const artifact::Reader& reader) {
     static std::mutex mutex;
-    static std::map<std::filesystem::path, KeptArtifact> kept;
-    std::error_code time_error, size_error;
-    const auto written = std::filesystem::last_write_time(artifact, time_error);
-    const auto size    = std::filesystem::file_size(artifact, size_error);
-    const bool keyed   = !time_error && !size_error;
+    static std::list<KeptArtifact> kept; // the most recently read first
+    std::error_code time_error, size_error, path_error;
+    const auto written                = std::filesystem::last_write_time(artifact, time_error);
+    const auto size                   = std::filesystem::file_size(artifact, size_error);
+    const auto canonical              = std::filesystem::weakly_canonical(artifact, path_error);
+    const std::filesystem::path& path = path_error ? artifact : canonical;
+    const artifact::ArtifactId& id    = reader.artifact_id();
+    const bool keyed                  = !time_error && !size_error;
     std::shared_ptr<const artifact::Directory> directory;
     {
         std::lock_guard lock(mutex);
-        if (const auto it = kept.find(artifact);
-            keyed && it != kept.end() && it->second.written == written && it->second.size == size) {
+        const auto it = std::find_if(kept.begin(), kept.end(),
+                                     [&](const KeptArtifact& k) { return k.path == path; });
+        if (keyed && it != kept.end() && it->written == written && it->size == size &&
+            it->id == id) {
+            kept.splice(kept.begin(), kept, it);
             // A count not read (no query registered yet, a tokenizer that failed) is asked again.
-            if (it->second.tokenizer_tokens != 0) { return it->second; }
-            directory = it->second.directory;
+            if (it->tokenizer_tokens != 0) { return *it; }
+            directory = it->directory;
         }
     }
     if (!directory) { directory = std::make_shared<const artifact::Directory>(reader.directory()); }
-    KeptArtifact out{written, size, std::move(directory),
+    KeptArtifact out{path,
+                     written,
+                     size,
+                     id,
+                     std::move(directory),
                      runtime::plan_tokenizer_tokens(reader).value_or(0)};
     if (keyed) {
         std::lock_guard lock(mutex);
-        kept[artifact] = out;
+        kept.remove_if([&](const KeptArtifact& k) { return k.path == path; });
+        kept.push_front(out);
+        while (kept.size() > kKeptArtifacts) { kept.pop_back(); }
     }
     return out;
 }

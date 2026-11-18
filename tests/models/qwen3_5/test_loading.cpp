@@ -9,7 +9,9 @@
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <iostream>
+#include <string>
 #include <limits>
 
 namespace {
@@ -212,6 +214,27 @@ void logical_data_and_instances() {
         require(again.artifact_directory == facts.artifact_directory &&
                     again.tokenizer_tokens == 265,
                 "a second read of the artifact's facts did not share the kept directory");
+        // #837: kept by the canonical path, and a bounded number of files: a read through another
+        // spelling of the path shares the directory; after reads of four other files the first is
+        // read anew (dropped, the least recently read first).
+        const auto& entry = fixture.file.entry;
+        const auto dotted = entry.parent_path() / "." / entry.filename();
+        require(product::plan_facts_of_artifact(dotted).model.artifact_directory ==
+                    facts.artifact_directory,
+                "a read through another spelling of the path did not share the kept directory");
+        for (int i = 0; i < 4; ++i) {
+            const auto copy =
+                entry.parent_path() / ("kept_copy_" + std::to_string(i) + ".ninferno");
+            std::filesystem::copy_file(entry, copy,
+                                       std::filesystem::copy_options::overwrite_existing);
+            require(product::plan_facts_of_artifact(copy).model.artifact_directory !=
+                        facts.artifact_directory,
+                    "a copy at another path shared the first file's kept directory");
+        }
+        const auto later = product::plan_facts_of_artifact(entry).model;
+        require(later.artifact_directory != facts.artifact_directory &&
+                    later.tokenizer_tokens == 265,
+                "the kept artifacts are not bounded: the first file outlived four others");
     }
     const auto& attention = std::get<qwen::AttentionWeights>(plan.weights().text.layers[0].mixer);
     const auto& query     = plan.parameter(attention.query);
