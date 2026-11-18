@@ -57,6 +57,7 @@
 #include <functional>
 #include <iostream>
 #include <optional>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -957,6 +958,18 @@ void every_board(const std::vector<Case>& cases) {
     };
     std::vector<std::vector<std::string>> forward;
     for (const DeviceClass& d : boards) { forward.push_back(plans(d)); }
+    // The substitute is read (#841): the board-sensitive cases take more than one plan over the
+    // boards, as the Gemma 4 loop checks; a planner that stopped reading the substituted class
+    // would give one plan everywhere and still pass the order check below.
+    std::size_t varying = 0;
+    for (std::size_t j = 0; j < cases.size(); ++j) {
+        std::set<std::string> answers;
+        for (const auto& per_board : forward) { answers.insert(per_board[j]); }
+        std::cout << "  " << answers.size() << " distinct plans over the boards: " << cases[j].name
+                  << '\n';
+        varying += answers.size() > 1 ? 1 : 0;
+    }
+    check(varying > 0, "a Qwen 3.5 case's plan differs between boards (the substitute is read)");
     for (std::size_t i = boards.size(); i-- > 0;) {
         check(plans(boards[i]) == forward[i],
               boards[i].name + ": the same plans after the other boards");
