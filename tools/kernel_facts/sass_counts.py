@@ -218,18 +218,29 @@ class Control:
 def relocation_calls(lines):
     """{function: {offset: symbol}} from `cuobjdump -elf` text: the relocations of each
     `.rel.text.<function>` section (offset, symbol, type), where a call's target is recorded in a
-    linked image whose SASS prints it as 0x0."""
-    out, current = {}, None
+    linked image whose SASS prints it as 0x0.
+
+    A function built in several units has a section in each image (#1014). The images are merged
+    per function: the same offset must name the same symbol in every image, else the call's
+    target depends on the image and ValueError is raised. The merge is not keyed by image: the SASS
+    is read in batches of `-fun` calls, each printing every image's header, so an image's ordinal
+    in the SASS does not line up with its ordinal here."""
+    out, current, name = {}, None, None
     for line in lines:
         if line.startswith(".section"):
             m = re.match(r"\.section\s+\.rel\.text\.(\S+)", line)
-            current = out.setdefault(m.group(1), {}) if m else None
+            name = m.group(1) if m else None
+            current = out.setdefault(name, {}) if m else None
             continue
         if current is None:
             continue
         m = re.match(r"\s*0x([0-9a-f]+)\s+(\S+)\s+R_CUDA_", line)
         if m:
-            current[int(m.group(1), 16)] = m.group(2)
+            offset, symbol = int(m.group(1), 16), m.group(2)
+            if current.get(offset, symbol) != symbol:
+                raise ValueError(f"{name}: offset 0x{offset:x} relocates to {current[offset]} "
+                                 f"in one image and to {symbol} in another")
+            current[offset] = symbol
     return out
 
 

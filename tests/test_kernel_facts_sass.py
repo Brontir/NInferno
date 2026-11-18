@@ -302,6 +302,12 @@ class LoopFinder(unittest.TestCase):
         with self.assertRaises(ValueError):
             sc.parse_functions(sass(plain).splitlines(),
                                calls=sc.relocation_calls(rel("_Z6kernelv", 2) + [""]))
+        # #1014: a function built in two units has a section in each image. The same symbols at the
+        # same offsets merge; another symbol at a coinciding offset is refused, not overwritten.
+        twice = sc.relocation_calls(rel("_Z6kernelv", 8) + [""] + rel("_Z6kernelv", 8) + [""])
+        self.assertEqual(twice, sc.relocation_calls(rel("_Z6kernelv", 8) + [""]))
+        with self.assertRaises(ValueError):
+            sc.relocation_calls(rel("_Z6kernelv", 8) + [""] + rel("_Z6kernelv", 4) + [""])
 
     def test_prologue_loop(self):
         # The R8 kernels' quantizer loop (#613 PR-10): a second loop, marked by F2I, counted into
