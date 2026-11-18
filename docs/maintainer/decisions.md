@@ -3137,12 +3137,12 @@ DFlash, Qwen3.5-9B MTP GGUF Q4_K_M, Gemma 4 12B Q4_K_M with its assistant). Each
 spec-tune at master 2c544e2ad, and the round facts of the 3060 pair with the same target and
 drafters.
 
-**Prediction, frozen on #794 before the 3090's rounds were read.** Its Qwen rounds (k ≤ 7, fit_eta.py's hold-out) priced
-at the 3060's one-card fit (0.269): mean of R measured / R facts within ±5 %, rms at most 7 %, the
-bands of the Ada hold-outs. Result: **+4.4 %, rms 6.1 %: held.** The other direction, the 3060 at
-the 3090's fit (0.248): +1.7 %, rms 5.9 %. On the other card's pairs, the plan picks that card's
-measured best or a configuration within 2.7 % of it (the 3090: Qwen MTP its best, Gemma 12B 1.6 %
-short).
+**Prediction, frozen on #794 before the 3090's rounds were read.** Its Qwen rounds (k ≤ 7,
+fit_eta.py's hold-out) priced at the 3060's one-card fit (0.269): mean of R measured / R facts
+within ±5 %, rms at most 7 %, the bands of the Ada hold-outs. Result: **+4.4 %, rms 6.1 %: held.**
+The other direction, the 3060 at the 3090's fit (0.248): +1.7 %, rms 5.9 %. On the other card's
+pairs, the plan picks that card's measured best or a configuration within 2.7 % of it (the 3090:
+Qwen MTP its best, Gemma 12B 1.6 % short).
 
 **Decision.** `kSmallTEta` gets `{"ga10x", 0.258, 2}`: `fit_eta.py`'s fit over both cards, at 3
 decimals, like the ada and gb20x rows. It is a **fitted constant** (no fact derivation exists,
