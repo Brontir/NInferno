@@ -446,13 +446,14 @@ int run_clock_invariance(const GoldenBoard& b) {
 
 int main(int argc, char** argv) {
     try {
-        // The goldens are the legacy route policy's (#614 F1: --route-policy legacy, the release's
-        // default), pinned here rather than assumed: a default that moved would fail first.
-        if (ops::route_policy() != RoutePolicy::Legacy) {
-            std::cerr << "selector golden: the default route policy is not legacy\n";
+        // The goldens are the evidence route policy's (#614 F2: --route-policy evidence, the
+        // release's default), pinned here rather than assumed: a default that moved would fail
+        // first.
+        if (ops::route_policy() != RoutePolicy::Evidence) {
+            std::cerr << "selector golden: the default route policy is not evidence\n";
             return 1;
         }
-        ops::set_route_policy(RoutePolicy::Legacy);
+        ops::set_route_policy(RoutePolicy::Evidence);
         bool update = false;
         std::string board;
         for (int i = 1; i < argc; ++i) {

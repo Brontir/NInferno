@@ -211,6 +211,7 @@ bool in_auto_list(std::string_view source) {
 struct BoardTally {
     int cells = 0, borrowed = 0, transferred = 0, measured = 0, moved = 0, demoted_same_route = 0;
     int kept_rules = 0; // Borrowed or Transferred answers of the rules list, kept by design
+    int kept_mmq_boundary = 0; // demoted ggml_mmq entries kept at T 9..16 (keeps_mmq_boundary)
     std::map<std::string, int> moved_by_regime;
     Json moves = Json::array();
     std::set<std::string> moved_problems; // "<format>|<epilogue>|n<N>|k<K>"
@@ -301,9 +302,21 @@ void check_cell(const DeviceClass& d, const Cell& c, const std::string& at,
     const bool auto_list = in_auto_list(le.source);
     if (le.kind == Kind::Borrowed) ++(auto_list ? tally.borrowed : tally.kept_rules);
     if (le.kind == Kind::Transferred) ++(auto_list ? tally.transferred : tally.kept_rules);
+    // The MMQ boundary (#614 F2, route_authorities.cpp keeps_mmq_boundary): a demoted ggml_mmq
+    // entry at 9 to 16 tokens keeps the call where the ranker would take the register MMA; the
+    // answer is then legacy's, with nothing named demoted.
+    const bool mmq_boundary = legacy.route.family == generic::Family::GgmlMmq && c.tokens >= 9 &&
+                              c.tokens <= 16 && evidence.route == legacy.route &&
+                              ee.source == le.source && ee.kind == le.kind &&
+                              ee.demoted_source.empty();
+    if (auto_list && generic::policy_demotes(RoutePolicy::Evidence, le.kind) && mmq_boundary) {
+        ++tally.kept_mmq_boundary;
+        return;
+    }
     if (auto_list && generic::policy_demotes(RoutePolicy::Evidence, le.kind)) {
         // Under legacy the entry won; under evidence it yields to the ranker. It would stand only
-        // where the ranker has no candidate (the scalar fallback), which no cell of this grid is.
+        // where the ranker has no candidate (the scalar fallback), which no cell of this grid is,
+        // or at the MMQ boundary above.
         if (ee.kind == Kind::Borrowed || ee.kind == Kind::Transferred || in_auto_list(ee.source)) {
             fail(at + ": the " + generic::evidence_kind_name(le.kind) + " entry did not yield: '" +
                  evidence_text + "'");
@@ -373,11 +386,11 @@ BoardTally run_board(const RegretBoard& b, const std::vector<SweepShape>& shapes
             legacy   = ask(d, c, RoutePolicy::Legacy);
             evidence = ask(d, c, RoutePolicy::Evidence);
         } catch (const std::exception& error) {
-            ops::set_route_policy(RoutePolicy::Legacy);
+            ops::set_route_policy(RoutePolicy::Evidence);
             fail(at + ": threw " + error.what());
             continue;
         }
-        ops::set_route_policy(RoutePolicy::Legacy);
+        ops::set_route_policy(RoutePolicy::Evidence);
         if (legacy.has_value() != evidence.has_value()) {
             fail(at + ": one policy routes the call, the other does not");
             continue;
@@ -449,7 +462,7 @@ void check_transferred_claim() {
         const bool legacy_claims = generic::table_claims(claimed, t, false);
         ops::set_route_policy(RoutePolicy::Evidence);
         const bool evidence_claims = generic::table_claims(claimed, t, false);
-        ops::set_route_policy(RoutePolicy::Legacy);
+        ops::set_route_policy(RoutePolicy::Evidence);
         if (!legacy_claims) fail(at + ": the Transferred claim does not claim under legacy");
         if (evidence_claims) fail(at + ": the Transferred claim still claims under evidence");
     }
@@ -463,7 +476,7 @@ void check_transferred_claim() {
     const ScopedDeviceClass scoped(generic::board_device_class(own));
     ops::set_route_policy(RoutePolicy::Evidence);
     const bool kept = generic::table_claims(claimed, 64, false);
-    ops::set_route_policy(RoutePolicy::Legacy);
+    ops::set_route_policy(RoutePolicy::Evidence);
     if (!kept) fail("claim: the RTX 5080's own claim is refused under evidence");
 }
 
@@ -562,7 +575,8 @@ void write_moves(const std::string& path, const std::map<std::string, Json>& wri
 }
 
 void check_policy_words() {
-    if (ops::route_policy() != RoutePolicy::Legacy) fail("the default route policy");
+    if (ops::route_policy() != RoutePolicy::Evidence)
+        fail("the default route policy (evidence, #614 F2)");
     for (const Kind k : {Kind::Pin, Kind::Measured, Kind::Ranker, Kind::Carried, Kind::Transferred,
                          Kind::Borrowed}) {
         const bool demoted = k == Kind::Borrowed || k == Kind::Transferred;
@@ -594,7 +608,7 @@ int main(int argc, char** argv) {
             throw std::runtime_error("no shipped route-table directory");
         }
         std::map<std::string, Json> written;
-        int borrowed = 0, transferred = 0, measured = 0;
+        int borrowed = 0, transferred = 0, measured = 0, kept_boundary = 0;
         for (const RegretBoard& b : kRegretBoards) {
             if (!only.empty() && only != b.name) continue;
             const auto own = own_table(shipped, b);
@@ -609,6 +623,7 @@ int main(int argc, char** argv) {
                 if (dir) std::filesystem::remove_all(*dir);
                 check_dense_tune_free(board_class(b), b, tables, t.moved_problems);
                 borrowed += t.borrowed;
+                kept_boundary += t.kept_mmq_boundary;
                 transferred += t.transferred;
                 measured += t.measured;
                 std::cout << b.name << " " << tables << " (" << kBuildSet << "): " << t.cells
@@ -618,7 +633,8 @@ int main(int argc, char** argv) {
                 for (const auto& [regime, n] : t.moved_by_regime) {
                     std::cout << " [" << regime << ": " << n << ']';
                 }
-                std::cout << ", " << t.demoted_same_route << " demoted to the same route\n";
+                std::cout << ", " << t.demoted_same_route << " demoted to the same route, "
+                          << t.kept_mmq_boundary << " kept at the MMQ boundary\n";
                 if (std::string_view(b.own_build_set) == kBuildSet) {
                     written[std::string(b.name) + "/" + tables] = board_json(b, tables, t);
                 }
@@ -631,7 +647,12 @@ int main(int argc, char** argv) {
         if (only.empty() && measured == 0) {
             fail("no measured answer in the grid: the never-demoted check is idle");
         }
-        ops::set_route_policy(RoutePolicy::Legacy);
+        // The grid holds the shape F1's A/B lost on (q4k swiglu 12288x4096 at T 12, 16): the MMQ
+        // boundary must keep some demoted entry, or its exception above is idle.
+        if (only.empty() && kept_boundary == 0) {
+            fail("no cell kept at the MMQ boundary: keeps_mmq_boundary is idle in the grid");
+        }
+        ops::set_route_policy(RoutePolicy::Evidence);
         if (!write.empty()) write_moves(write, written);
     } catch (const std::exception& error) {
         std::cerr << "route policy: " << error.what() << '\n';

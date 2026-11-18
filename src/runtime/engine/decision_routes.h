@@ -57,16 +57,16 @@ inline constexpr int kDecisionRouteSeveralLanes    = 4;          // "several lan
 [[nodiscard]] DecisionSection routes_of(const DeviceClass& device,
                                         std::span<const ops::detail::generic::SeenProblem> problems,
                                         std::int32_t prefill_chunk, bool invariant,
-                                        RoutePolicy policy = RoutePolicy::Legacy);
+                                        RoutePolicy policy = RoutePolicy::Evidence);
 
 // The route_evidence lines of `problems`, as routes_of's with the evidence of each answer.
 [[nodiscard]] DecisionSection route_evidence_of(
     const DeviceClass& device, std::span<const ops::detail::generic::SeenProblem> problems,
-    std::int32_t prefill_chunk, bool invariant, RoutePolicy policy = RoutePolicy::Legacy);
+    std::int32_t prefill_chunk, bool invariant, RoutePolicy policy = RoutePolicy::Evidence);
 
-// The route policy a manifest's options section records (maintainer.route_policy); legacy where
-// the key is absent (a manifest from before F1). A value that is no policy is
-// std::invalid_argument.
+// The route policy a manifest's options section records (maintainer.route_policy). A section
+// without the key (a manifest from before F1) or a value that is no policy is
+// std::invalid_argument: project-owned formats keep no fallback (AGENTS.md).
 [[nodiscard]] RoutePolicy route_policy_of(const DecisionSection& options);
 
 // The lines `recorded` asked again on `device` under `policy` (route_policy_of the manifest's

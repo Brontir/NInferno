@@ -125,7 +125,7 @@ int main() {
                   found->first + " prefill: " + found->second);
         }
         // Replayed from the text alone.
-        check(rt::replay_routes(d, lines, RoutePolicy::Legacy) == lines,
+        check(rt::replay_routes(d, lines, RoutePolicy::Evidence) == lines,
               "the lines replay to themselves");
         // The problems' order is not an input.
         auto reversed = list;
@@ -133,7 +133,7 @@ int main() {
         check(rt::routes_of(d, reversed, chunk, false) == lines, "the problems' order changes nothing");
         // An exact start's lines are its invariant routes, and say so.
         const auto exact = rt::routes_of(d, list, chunk, true);
-        check(rt::replay_routes(d, exact, RoutePolicy::Legacy) == exact,
+        check(rt::replay_routes(d, exact, RoutePolicy::Evidence) == exact,
               "the invariant lines replay to themselves");
         for (const auto& s : list) {
             const auto& p    = s.problem;
@@ -180,7 +180,7 @@ int main() {
         "epilogue": "store", "n": 1024, "k": 4096, "bands": [[1, 16, ")"
                         << moved << R"("]]}]})";
     (void)ops::load_route_table(path.string());
-    const auto after = rt::replay_routes(device_class(), before, RoutePolicy::Legacy);
+    const auto after = rt::replay_routes(device_class(), before, RoutePolicy::Evidence);
     const auto fresh = rt::routes_of(device_class(), list, chunk, false);
     ops::clear_route_table();
     // Without tensor mma.sync (Volta) the HMMA route takes Q8's decode widths before a table.

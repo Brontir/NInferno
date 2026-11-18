@@ -3045,3 +3045,27 @@ predictions were posted in #619 before each run (f 0.20, range 0.11..0.33, bound
 No size is more than 0.9 % slower in the three GA10x and Ada A/Bs. IQ3_XXS waits too: its grids pass on four
 cards, but its A/Bs miss at single sizes (5090 448 +5.5 %, 4070 Ti 320 +1.4 % on a repeat). A
 term for those tiles comes first.
+
+## 93. The route policy is evidence by default (#614 F2, 17.11, rule from an A/B)
+
+**Decision.** `--route-policy evidence` (#614 F1, `docs/maintainer/environment.md#route-policy`)
+is the release's selection: a route-table answer that is `borrowed` or `transferred` (measured on
+another board) yields to the ranker, which prices the call from the board's facts. `legacy`, the
+first answering authority, stays an A/B setting and is taint by name.
+
+**Evidence.** F1's predictions were posted in #614 before each run. Under evidence over legacy, the
+RTX 5090 (the #502 shape), 4070 Ti and 3090 came out within τ of every prediction. The end-to-end
+A/B on the RTX 5070 Ti, 3060 and 4060 Ti lost in one cell family only: q4_K A8 SwiGLU 12288x4096
+at T 12 and 16, where the table's `ggml_mmq` went to the register MMA. Time went up 45 to 75 % on
+the 5070 Ti, 35 % on the 3060 and 4 % on the 4060 Ti. Every other moved cell was within 1.1 % or
+gained.
+
+**The guard.** At 9 to 16 tokens a demoted `ggml_mmq` answer keeps the call when the ranker would
+answer `rmma` (`keeps_mmq_boundary`, `src/ops/generic/route_authorities.cpp`). The cost model does
+not price the MMA kernels at those widths: that is the missing term the loss names. This guard is
+a measured boundary, not a fact-derived rule. It goes when that term is priced.
+
+**Replay.** A manifest whose options record no policy predates F1 and is refused
+(`route_policy_of` throws; `replay-routes` reports it and exits 2). The serve corpus runner refuses a
+`server_start` record, a `route_pins.json` marker or a campaign directory without every route pin in
+the same way: project-owned formats keep no fallback.

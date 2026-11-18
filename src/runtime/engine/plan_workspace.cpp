@@ -54,8 +54,8 @@ const char* route_override(const EngineOptions& options, bool routes_experts) {
         return "a route is pinned (--prefill-route, --decode-route): the plan sizes the release's "
                "selection";
     }
-    if (m.route_policy != RoutePolicy::Legacy) {
-        return "--route-policy evidence: the plan sizes the release's selection";
+    if (m.route_policy != RoutePolicy::Evidence) {
+        return "--route-policy legacy: the plan sizes the release's selection";
     }
     if (!m.route_table.empty() || !m.route_dir.empty()) {
         return "a route table is named (--route-table, --route-dir): the plan sizes the release's";

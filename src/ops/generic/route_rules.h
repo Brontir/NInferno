@@ -233,8 +233,9 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     {"Ask: route policy at the builders", Basis::Structural, "route_authorities.cpp",
      "ops::route_policy()};", 0, kUnknown, kUnknown,
      "resolve_ask and ask_below_profiles read the precedence over evidence from "
-     "ops::route_policy() (--route-policy: legacy, the release's, or evidence, which demotes "
-     "borrowed and transferred route-table answers below the ranker), so the tuner's ranker and "
+     "ops::route_policy() (--route-policy: evidence, the release's since #614 F2, which demotes "
+     "borrowed and transferred route-table answers below the ranker, or legacy), so the tuner's "
+     "ranker and "
      "the A16 heuristic's walks run under the policy of the selection they stand beside: a "
      "contract of where the value comes from, an A/B setting with no timing of its own",
      "", 2},
