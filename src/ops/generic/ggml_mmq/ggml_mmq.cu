@@ -308,8 +308,8 @@ bool product(Type type, const Planes& weight, int blocks_per_row, int rows, int 
              const void* activation, int columns, float* out, std::int64_t out_column_stride,
              void* fixup, cudaStream_t stream, const FusedEpilogue* epilogue) {
 #define NINFERNO_PRODUCT(T)                                                                        \
-    return detail::product_impl<T>(weight, blocks_per_row, rows, k, activation, columns, out,      \
-                                   out_column_stride, fixup, stream, epilogue)
+    detail::product_impl<T>(weight, blocks_per_row, rows, k, activation, columns, out,             \
+                            out_column_stride, fixup, stream, epilogue)
     switch (type) { NINFERNO_GGML_MMQ_CASES(NINFERNO_PRODUCT) }
 #undef NINFERNO_PRODUCT
     throw std::invalid_argument("ggml mmq: unknown block format");
