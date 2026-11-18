@@ -4088,7 +4088,7 @@ int test_tokenizer_shared_for_the_same_files(const FrontendResources& owned) {
 // the Qwen fixture's added tokens are numbered for the Qwen tokenizer, which the HF codec refuses.
 int test_hf_tokenizer_shared_for_the_same_files() {
     FrontendResources hf;
-    hf.tokenizer_json = R"({
+    hf.tokenizer_json         = R"({
   "model": {"type": "BPE", "vocab": {"a": 0, "b": 1, "ab": 2, " ": 3, "<": 4, "T": 5, ">": 6,
             "<0x41>": 7, "<0xE2>": 8}, "merges": ["a b"], "byte_fallback": true},
   "added_tokens": [{"id": 9, "content": "<T>", "special": true}],
