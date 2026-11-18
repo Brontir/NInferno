@@ -62,7 +62,11 @@ inline constexpr std::string_view kKvCacheStorageNames = "bf16|int8|fp8|nvfp4|k8
 }
 
 // The storage's layout for reports: the int8 and fp8 storages with their scale grouping, the
-// others as their --kv-dtype spelling.
+// others as their --kv-dtype spelling. "fp8-e4m3-row256" names the storage (Fp8E4M3Row256): its
+// codes are E4M3 for the Qwen paged pool on every build, and for the Gemma 4 / dense rows on
+// sm_89+ and Volta builds; the Gemma 4 / dense rows of sm_75..88 builds hold int8 codes in the
+// same layout (src/ops/softmax_attention/gemma4/row_codec.h, #619 steps 9-10). A report label
+// that names the build's codec is #991.
 [[nodiscard]] constexpr std::string_view kv_cache_storage_layout(KvCacheStorage storage) noexcept {
     switch (storage) {
     case KvCacheStorage::Int8Group64:
@@ -514,8 +518,9 @@ struct EngineOptions {
     // true: recurrent_state is ignored; FP32 under --activations exact, else the family's choice
     // (FamilyEntry::recurrent_state: FP16 for Qwen 3.5). Engine::options() reports the choice.
     bool recurrent_state_automatic = false;
-    // The sliding-window layers' rings (a sequence's StateImage): BFloat16, or Fp8E4M3Row256 (E4M3
-    // codes with an FP32 scale per row, about half the bytes; Gemma 4 and dense decoders with
+    // The sliding-window layers' rings (a sequence's StateImage): BFloat16, or Fp8E4M3Row256 (one-
+    // byte codes with an FP32 scale per row, about half the bytes: E4M3, or int8 on sm_75..88
+    // builds, row_codec.h; Gemma 4 and dense decoders with
     // sliding-window layers, refused elsewhere). BFloat16 for a bare Engine; ninferno-serve and
     // ninferno choose FP8 rings for Gemma 4 and dense decoders whenever their KV is FP8
     // (choice::coupled_storages). Gemma 4 26B/31B next-token NLL moves by less than its standard
