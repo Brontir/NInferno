@@ -4084,10 +4084,20 @@ int test_tokenizer_shared_for_the_same_files(const FrontendResources& owned) {
         "built tokenizer");
 }
 
-// #1005: the HF text tokenizer likewise (the dense decoders' frontend).
-int test_hf_tokenizer_shared_for_the_same_files(const FrontendResources& owned) {
+// #1005: the HF text tokenizer likewise (the dense decoders' frontend), on HF files of its own:
+// the Qwen fixture's added tokens are numbered for the Qwen tokenizer, which the HF codec refuses.
+int test_hf_tokenizer_shared_for_the_same_files() {
+    FrontendResources hf;
+    hf.tokenizer_json = R"({
+  "model": {"type": "BPE", "vocab": {"a": 0, "b": 1, "ab": 2, " ": 3, "<": 4, "T": 5, ">": 6,
+            "<0x41>": 7, "<0xE2>": 8}, "merges": ["a b"], "byte_fallback": true},
+  "added_tokens": [{"id": 9, "content": "<T>", "special": true}],
+  "decoder": {"type": "Sequence", "decoders": [{"type": "ByteFallback"}, {"type": "Fuse"}]}
+})";
+    hf.tokenizer_config_json  = "{}";
+    hf.generation_config_json = R"({"eos_token_id": 9})";
     return shared_for_the_same_files(
-        owned, attach_with([](auto& r) { ninferno::models::qwen3_5::attach_hf_text_tokenizer(r); }),
+        hf, attach_with([](auto& r) { ninferno::models::qwen3_5::attach_hf_text_tokenizer(r); }),
         "HF text tokenizer");
 }
 
@@ -4099,7 +4109,7 @@ int main() {
     int failures                  = 0;
     failures += test_generation_config_sampling();
     failures += test_tokenizer_shared_for_the_same_files(owned);
-    failures += test_hf_tokenizer_shared_for_the_same_files(owned);
+    failures += test_hf_tokenizer_shared_for_the_same_files();
     failures += test_declared_frontend_semantics();
     failures += test_tokenizer_config_merge();
     failures += test_transformers5_tokenizer_layout();
