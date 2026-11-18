@@ -2,6 +2,7 @@
 #include "models/qwen3_5/program/context_work.h"
 #include "models/qwen3_5/program/context.h"
 #include "models/qwen3_5/execution/linear.h"
+#include "models/qwen3_5/program/planning/sequence_bytes.h"
 #include "core/debug_poison.h"
 #include "core/startup.h"
 #include "core/device.h"
