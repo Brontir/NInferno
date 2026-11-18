@@ -11,7 +11,8 @@
 // refused the attribute or kept the host until earlier work had ended), stand aside. Readers: the
 // choice's decode step takes a kernel's launch share from the card's own row where its generation's
 // census ran on another architecture (product/choice/choice.cpp kernel_cost_seconds, #613 PR-8e;
-// no board is priced differently while the rows hold the census architectures only); other speed
+// no board is priced differently while the rows hold the census architectures only; a rebased
+// price marks the estimate transferred, #997); other speed
 // models keep core/cost_constants.h's kLaunchNode (the Ada census record),
 // tests/test_launch_node.cpp checks the Ada row against that census, and the selector's
 // completeness terms (kernel_roofline.h, #613 PR-8a) read the node and the ramp below with their

@@ -4653,6 +4653,26 @@ void kernel_cost_rows_name_their_architecture() {
     }
 }
 
+// #997: no card's price is rebased while every architecture with launch facts is its generation's
+// kKernelCost census architecture (or its generation has no row of its own). A new launch row of
+// another architecture (sm_121, sm_80, sm_61) fails here: it turns that board's basis transferred,
+// so the change is seen, not silent.
+void launch_rows_are_their_generations_census() {
+    for (int major = 1; major <= 15; ++major) {
+        for (int minor = 0; minor <= 9; ++minor) {
+            if (!ninferno::launch_row(major, minor).has_value()) continue;
+            const std::string_view gen = ninferno::generation_row(major, minor).name;
+            for (const ch::KernelCost& row : ch::kKernelCost) {
+                if (row.generation != gen) continue;
+                check(row.major == major && row.minor == minor,
+                      "sm_" + std::to_string(major) + std::to_string(minor) +
+                          " has launch facts and is not its generation's (" + std::string(gen) +
+                          ") kKernelCost census architecture: its boards' price is rebased");
+            }
+        }
+    }
+}
+
 // #997: the rebase of a row's launch share. On its own architecture, or on one without launch
 // facts, a row is priced as measured. Elsewhere it moves by the two architectures' launch shares,
 // the GEMV's node plus the dispatch ramp of its ~1024-CTA grid and the small kernel's node.
@@ -4714,6 +4734,7 @@ void kernel_cost_rebases_the_launch_share() {
 int main() {
     kernel_cost_rows_name_their_architecture();
     kernel_cost_rebases_the_launch_share();
+    launch_rows_are_their_generations_census();
     for (const char* name : {"speed_measured", "decode_measured", "prefill_measured"}) {
         std::ifstream cards(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/" + name +
                             ".json");

@@ -1636,8 +1636,8 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const WeightClass rest = !model.moe() ? quant.weights : moe_row ? WeightClass::KQuant : quant.rest_weights;
     const StepKernels kernels = step_kernels(model, quant.weights, rows, transferred);
     // A row rebased to the card's own launch share (another architecture's census) was not measured
-    // on this card's architecture: the estimate is transferred (#997), as measured_row_of marks a
-    // row of another generation.
+    // on this card's architecture: the estimate is transferred (#997), as a row of another
+    // generation is marked.
     bool rebased = false;
     const double launches =
         cost != nullptr
