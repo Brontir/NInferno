@@ -158,6 +158,15 @@ struct PricedRouteQuery {
 priced_routes_query(const DeviceClass& device, QType qtype, LinearPolicy policy, Epilogue epilogue,
                     std::int32_t n, std::int32_t k, std::int32_t tokens);
 
+// The compiled facts of register-MMA schedule `schedule` for such a call on `device`: what
+// price_routes reads in the heavy form (rmma_resources over the committed kernel-facts snapshot:
+// registers, local bytes, static shared memory, the K loop's counts, #613 PR-7a); nullopt where
+// the instance has none or the weight is not read by the generic path. The price tool reads it so
+// that its register-MMA price under the counted law is the selector's.
+[[nodiscard]] std::optional<KernelResources>
+rmma_resources_query(const DeviceClass& device, int schedule, QType qtype, Epilogue epilogue,
+                     std::int32_t n, std::int32_t k, std::int32_t tokens);
+
 // Whether the selector admits `route` for such a call on `device`: route_admits on the described
 // weight (every refusal of the family's rule: not compiled, format, codec tile, resource,
 // instruction, alignment, extent), as describe_route decides before it describes. The one rule
