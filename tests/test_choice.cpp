@@ -4653,22 +4653,35 @@ void kernel_cost_rows_name_their_architecture() {
     }
 }
 
-// #997: no card's price is rebased while every architecture with launch facts is its generation's
-// kKernelCost census architecture (or its generation has no row of its own). A new launch row of
-// another architecture (sm_121, sm_80, sm_61) fails here: it turns that board's basis transferred,
-// so the change is seen, not silent.
+// #997: no card's price is rebased while every architecture with launch facts is the census
+// architecture of the kKernelCost row its boards are priced from: its generation's own, else
+// kTransferGeneration's (choice.cpp generation_row_of). A new launch row of another architecture
+// (sm_121 on gb20x's row, sm_80 or sm_90 on Ada's, sm_61 on Volta's) fails here: it moves those
+// boards' price, and on a generation of its own turns their basis transferred, so the change is
+// seen, not silent.
 void launch_rows_are_their_generations_census() {
+    const auto row_of = [](std::string_view gen) -> const ch::KernelCost* {
+        for (const std::string_view g : {gen, ch::kTransferGeneration}) {
+            for (const ch::KernelCost& row : ch::kKernelCost) {
+                if (row.generation == g) return &row;
+            }
+        }
+        return nullptr;
+    };
     for (int major = 1; major <= 15; ++major) {
         for (int minor = 0; minor <= 9; ++minor) {
             if (!ninferno::launch_row(major, minor).has_value()) continue;
             const std::string_view gen = ninferno::generation_row(major, minor).name;
-            for (const ch::KernelCost& row : ch::kKernelCost) {
-                if (row.generation != gen) continue;
-                check(row.major == major && row.minor == minor,
-                      "sm_" + std::to_string(major) + std::to_string(minor) +
-                          " has launch facts and is not its generation's (" + std::string(gen) +
-                          ") kKernelCost census architecture: its boards' price is rebased");
-            }
+            const ch::KernelCost* row  = row_of(gen);
+            const std::string cc       = "sm_" + std::to_string(major) + std::to_string(minor);
+            check(row != nullptr, cc + ": a kKernelCost row prices its boards");
+            if (row == nullptr) continue;
+            check(
+                row->major == major && row->minor == minor,
+                cc +
+                    " has launch facts and is not the census architecture of the kKernelCost row " +
+                    "its boards (" + std::string(gen) + ") are priced from (" +
+                    std::string(row->generation) + "): their price is rebased");
         }
     }
 }
