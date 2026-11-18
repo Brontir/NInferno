@@ -252,7 +252,8 @@ void every_board(const json& fixture) {
 // is a 1032-token request less a 1024-token one in 1024-token chunks: attention, the tail calls
 // and decode read no prefill route, so the difference is the rest's linears. Per fixture board:
 // the selector's answer for a Q8_0 linear at 8 and at 1024 tokens (printed), the rests that move
-// once the routes are asked (listed), none on a quantization without a Q8_0 linear, none on Volta
+// once the routes are asked (listed), none on a quantization without a Q8_0 linear except a
+// slower one where a linear takes the 16-bit route at 8 tokens (Turing's K-quants), none on Volta
 // (its prefill is its CUTLASS route's, which the choice does not ask: selected_kernel), and at
 // least one move over the boards, so the check is not vacuous.
 void short_rest(const json& fixture) {
@@ -288,12 +289,12 @@ void short_rest(const json& fixture) {
                 };
                 const double before = rest();
                 pr::with_prefill_routes(model, device);
-                // Whether a trunk linear the choice asks a route for (selected_kernel's terms: no
-                // expert, an int8 route, the format the file or a one-format label names) runs on
-                // another kernel at the rest's 8 tokens than at a chunk's 1024.
-                const auto rest_changes_kernel = [&](const ch::ModelFacts& f,
-                                                     const ch::QuantOption& o) {
-                    if (!o.int8_route || o.nvfp4) { return false; }
+                // The first trunk linear the choice asks a route for (selected_kernel's terms: no
+                // expert, an int8 route, the format the file or a one-format label names) that the
+                // selector runs on the 16-bit register MMA at the rest's 8 tokens: priced at the
+                // BF16 share (a16_weight_share), off the int8 tile law. "" where none.
+                const auto a16_at_rest = [&](const ch::ModelFacts& f, const ch::QuantOption& o) {
+                    if (!f.prefill_routes || !o.int8_route || o.nvfp4) { return std::string(); }
                     for (ch::LinearShape l : f.linears) {
                         if (l.expert) { continue; }
                         if (l.format.empty()) {
@@ -301,11 +302,12 @@ void short_rest(const json& fixture) {
                             if (!label || label->size() != 1) { continue; }
                             l.format = std::string(ninferno::format_facts(*label->begin()).name);
                         }
-                        if (f.prefill_routes(l, 8, fast) != f.prefill_routes(l, 1024, fast)) {
-                            return true;
+                        if (f.prefill_routes(l, 8, c.activations) == ch::PrefillKernel::A16) {
+                            return l.format + ' ' + std::to_string(static_cast<long>(l.n)) + " x " +
+                                   std::to_string(static_cast<long>(l.k));
                         }
                     }
-                    return false;
+                    return std::string();
                 };
                 const double after = rest();
                 ++rests;
@@ -318,11 +320,14 @@ void short_rest(const json& fixture) {
                                   model_name + ' ' + q);
                 // A Q8_0 file names no role formats: its linears take the format from the label
                 // (selected_kernel), and on the int8 tiles any 8-token answer but W4A8 moves them.
-                // Elsewhere a rest moves where a linear's 8-token kernel is not its chunk's (Turing
-                // takes the 16-bit register MMA for K-quants at 8 tokens).
-                check(names_q8_linear(m, q) || q == "Q8_0" || rest_changes_kernel(model, quant),
-                      "an 8-token rest moves only where a Q8_0 linear or a linear's kernel "
-                      "changes: " +
+                // Elsewhere a rest moves only where a linear runs on the 16-bit register MMA at 8
+                // tokens (Turing's K-quants), and then only slower: the BF16 share's price.
+                const bool q8         = names_q8_linear(m, q) || q == "Q8_0";
+                const std::string a16 = q8 ? std::string() : a16_at_rest(model, quant);
+                if (!a16.empty()) { std::cout << "    (16-bit at 8 tokens: " << a16 << ")\n"; }
+                check(q8 || (!a16.empty() && after > before),
+                      "an 8-token rest moves only where a Q8_0 linear changes kernel, or slower "
+                      "where a linear takes the 16-bit route: " +
                           card_name + ' ' + model_name + ' ' + q);
             }
         }
