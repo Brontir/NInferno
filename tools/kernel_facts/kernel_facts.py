@@ -626,8 +626,14 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
         # A tile without producer warps (the key's last field 0) has no producer loop: its
         # producer fields are zeros. Its staging may still be a loop of its own that holds a BAR and
         # no MMA (the sm_70 tile, built from dp4a on every warp, stages its operands that way, #787),
-        # which is not a producer warps' loop and is not looked for.
-        producer = family.producer if family.producer is not None and fk[1][-1] > 0 else None
+        # which is not a producer warps' loop and is not looked for. Nor is one in a producer-warp
+        # tile whose body holds no tensor-core MMA: on sm_70 that tile's int8 MMA is emulated by
+        # calls, so its MMA warps' loop holds no MMA either and cannot be told from the producers'
+        # (#787); the tile is never selected there (format_requires.h kW4a8WsTunedArch: sm_89 and
+        # sm_120), and its producer fields are zeros.
+        has_mma = any(sass_counts.base_opcode(line[2]) in sass_counts.MMA_OPCODES for line in body)
+        producer = (family.producer
+                    if family.producer is not None and fk[1][-1] > 0 and has_mma else None)
         c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker, family.prologue,
                                     producer).with_pipes(
             family.pipes, family.prologue is not None, family.waits, family.producer is not None)
