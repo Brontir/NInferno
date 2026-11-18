@@ -635,7 +635,7 @@ Scored score(const ModelFacts& model, const ModelFacts& reference_model, const C
 
 } // namespace
 
-double kernel_cost_seconds(const KernelCost& row, int major, int minor, bool gemv) {
+double kernel_cost_seconds(const KernelCost& row, int major, int minor, bool gemv, bool* rebased) {
     const double measured = gemv ? row.gemv : row.small;
     if (major == row.major && minor == row.minor) return measured;
     // The card's own first: most boards off the census architectures have no launch facts.
@@ -643,6 +643,7 @@ double kernel_cost_seconds(const KernelCost& row, int major, int minor, bool gem
     if (!own) return measured;
     const std::optional<double> census = launch_share(row.major, row.minor, gemv);
     if (!census) return measured;
+    if (rebased != nullptr) { *rebased = true; }
     return measured - *census + *own;
 }
 
@@ -1634,11 +1635,17 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
                                          [&](const MoeRoutedEta& r) { return r.generation == gen; });
     const WeightClass rest = !model.moe() ? quant.weights : moe_row ? WeightClass::KQuant : quant.rest_weights;
     const StepKernels kernels = step_kernels(model, quant.weights, rows, transferred);
+    // A row rebased to the card's own launch share (another architecture's census) was not measured
+    // on this card's architecture: the estimate is transferred (#997), as a row of another
+    // generation is marked.
+    bool rebased = false;
     const double launches =
         cost != nullptr
-            ? kernels.gemv * kernel_cost_seconds(*cost, card.major, card.minor, true) +
-                  kernels.small * kernel_cost_seconds(*cost, card.major, card.minor, false)
+            ? kernels.gemv * kernel_cost_seconds(*cost, card.major, card.minor, true, &rebased) +
+                  kernels.small *
+                      kernel_cost_seconds(*cost, card.major, card.minor, false, &rebased)
             : 0;
+    if (rebased) { transferred = true; }
     // A class the SMs bound (kWeightSmRate): its reads at the longer of the DRAM rate and the SMs'.
     // An MoE's rest by its own linears' class (rest_weights), its routed banks by the file's.
     const auto sm_share = [&](WeightClass w) {

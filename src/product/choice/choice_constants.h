@@ -209,8 +209,10 @@ inline constexpr KernelCost kKernelCost[] = {
 // What a kernel costs a step beyond its bytes on a card of compute capability major.minor
 // (choice.cpp, #613 PR-8e): `row` as measured on its census cards' architecture, or where either
 // architecture has no launch facts; elsewhere the row less its census cards' launch share plus the
-// card's own.
-[[nodiscard]] double kernel_cost_seconds(const KernelCost& row, int major, int minor, bool gemv);
+// card's own, and `*rebased` (when given) is set true: the price was not measured on this
+// architecture, so the caller marks its estimate transferred (#997).
+[[nodiscard]] double kernel_cost_seconds(const KernelCost& row, int major, int minor, bool gemv,
+                                         bool* rebased = nullptr);
 
 // The share of the DRAM rate C rows' weight reads reach on a weight class's routes (C = 1: kDramEta;
 // linear in log2 C between points; beyond the last, the last's): measured, the mean over the class's
