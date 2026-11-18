@@ -1425,7 +1425,16 @@ def section_rows_to_keep(family, section):
     columns = next((line.split()[1:] for line in section.splitlines()
                     if line.startswith("family_columns ")), None)
     today = [c for c, _ in FAMILIES[family].schema_columns().values()]
-    return parse_section(family, section)["rows"] if columns in [list(c) for c in today] else {}
+    if columns not in [list(c) for c in today]:
+        return {}
+    try:
+        return parse_section(family, section)["rows"]
+    except SystemExit:
+        # A section that no longer parses (a stale kernel count, a schedule a newer rule refuses)
+        # is replaced whole, as before #968: extract is its fix.
+        print(f"kernel_facts: the committed {family} section does not parse: none of its rows "
+              "kept", file=sys.stderr)
+        return {}
 
 
 def register_unstable(family, arch, key, expected, got):

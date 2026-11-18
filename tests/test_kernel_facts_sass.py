@@ -1208,6 +1208,9 @@ class RegisterAllocations(unittest.TestCase):
         old = "\n".join(line + " 0" if line.startswith(("family_columns", "moegemm ")) else line
                         for line in section.splitlines()) + "\n"
         self.assertEqual(kernel_facts.section_rows_to_keep("moegemm", old), {})
+        stale = section.replace("family_kernels ", "family_kernels 1", 1)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(kernel_facts.section_rows_to_keep("moegemm", stale), {})
 
     def test_every_counted_row_is_a_committed_row(self):
         # The table's keys spell the parsed keys (FAMILIES["moegemm"].parse_key): each names a row
