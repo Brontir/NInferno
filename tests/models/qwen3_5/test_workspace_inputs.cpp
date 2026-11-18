@@ -908,8 +908,9 @@ void run(const Case& k) {
 }
 
 // The start's plan of a case on `device` (substituted): its forms prepared and planned there, the
-// sequence plan for the board's multiprocessors (the caller supplies them, as run() does: the start
-// from its DeviceContext, the dry run from device_class().sms, plan_workspace.cpp).
+// sequence plan for the board's multiprocessors (device.sms, as run() does; in production the
+// caller supplies them: the start from its DeviceContext, the dry run from device_class().sms,
+// plan_workspace.cpp).
 std::string plan_on(const Case& k, const DeviceClass& device) {
     const ScopedDeviceClass substitute(device);
     const qwen::Config config = k.config();
@@ -962,11 +963,12 @@ void every_board(const std::vector<Case>& cases) {
     for (const DeviceClass& d : boards) { forward.push_back(plans(d)); }
     // The board reaches the plan (#841): some case takes more than one plan over the boards, so the
     // workspace sizing reads the multiprocessors each board's plan carries (a sizing that stopped
-    // reading them would give one plan everywhere and still pass the order check below). That count
-    // is the only board fact a Qwen 3.5 plan depends on: with it held at one value, no target
-    // board changes a case's forms or arenas (#1009, codex). Its supply is the caller's; the dry
-    // run's read of the substitute (device_class().sms) is checked by run()'s
-    // dry.workspace == start.capacity.
+    // reading them would give one plan everywhere and still pass the order check below). For these
+    // cases that count is the only board fact the plan depends on: with it held at one value, no
+    // target board changes a case's forms or arenas (#1009, codex). Its supply is the caller's; the
+    // dry run's own read of the substitute (device_class().sms, plan_workspace.cpp) is checked by
+    // run()'s dry.workspace == start.capacity, on the named cases whose workspace depends on the
+    // count (those printed with more than one plan below).
     std::size_t varying = 0;
     for (std::size_t j = 0; j < cases.size(); ++j) {
         std::set<std::string> answers;
