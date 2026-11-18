@@ -4049,7 +4049,7 @@ int shared_for_the_same_files(const FrontendResources& owned, Attach attach,
     const FrontendResources copy = owned;
     const auto again             = attach(copy);
     int failures                 = 0;
-    failures += check(first && first == again, "the same files share one " + what);
+    failures += check(first && first == again, ("the same files share one " + what).c_str());
     const auto rebuilt_by = [&](std::string FrontendResources::* file, const char* name) {
         const auto base         = attach(owned);
         FrontendResources other = owned;
@@ -4057,7 +4057,7 @@ int shared_for_the_same_files(const FrontendResources& owned, Attach attach,
         const auto rebuilt = attach(other);
         failures +=
             check(base && rebuilt && rebuilt != base && rebuilt->vocab_size() == base->vocab_size(),
-                  std::string("other bytes in ") + name + " build their own " + what);
+                  (std::string("other bytes in ") + name + " build their own " + what).c_str());
     };
     rebuilt_by(&FrontendResources::tokenizer_json, "tokenizer.json");
     rebuilt_by(&FrontendResources::tokenizer_config_json, "tokenizer_config.json");
