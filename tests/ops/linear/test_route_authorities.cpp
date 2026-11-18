@@ -431,6 +431,9 @@ struct KnownCase {
     bool prefill;
     int profile; // 0 speed, 1 invariant, 2 probe (A16 forced), 3 decode pin A16, 4 prefill pin A16
     std::string_view source;
+    // When given: the evidence's kind ("measured"), or the answer it demoted under the route
+    // policy ("demoted=route-table:borrowed"), checked besides the source.
+    std::string_view evidence = {};
 };
 
 std::string known_source(const KnownCase& c) {
@@ -470,7 +473,14 @@ std::string known_source(const KnownCase& c) {
                      std::string(c.board) + " " + generic::qtype_name(c.qtype) +
                          " known case, profile " + std::to_string(c.profile) +
                          " T=" + std::to_string(c.tokens));
-        return std::string(e.source);
+        std::string got(e.source);
+        if (c.evidence.starts_with("demoted=")) {
+            got += " demoted=" + std::string(e.demoted_source) + ":" +
+                   generic::evidence_kind_name(e.demoted_kind);
+        } else if (!c.evidence.empty()) {
+            got += std::string(" ") + generic::evidence_kind_name(e.kind);
+        }
+        return got;
     } catch (const std::exception& error) { return std::string("threw ") + error.what(); }
 }
 
@@ -487,11 +497,14 @@ void check_known() {
         {"rtx4090", q8, big, a16, 4, false, 2, "route-probe"},
         {"rtx4090", q8, big, a16, 4, false, 3, "route-pin"},
         {"rtx4090", q8, big, a16, 512, true, 4, "route-pin"},
-        // the route table (an entry of ad102.json itself: under --route-policy evidence, the
-        // default, the 4096x4096 one ad102 borrows is demoted), the cost model, the rules, the
-        // MMQ gate
-        {"rtx4090", q4k, own, a16, 512, true, 0, "route-table"},
-        {"rtx4090", q4k, own, a16, 1, false, 0, "route-table"},
+        // the route table (an entry of ad102.json itself, measured on the board), the cost model,
+        // the rules, the MMQ gate
+        {"rtx4090", q4k, own, a16, 512, true, 0, "route-table", "measured"},
+        {"rtx4090", q4k, own, a16, 1, false, 0, "route-table", "measured"},
+        // the 4096x4096 store entry ad102.json lacks: borrowed, and under --route-policy evidence
+        // (the default, #614 F2) demoted to the rules, the borrowed answer named
+        {"rtx4090", q4k, big, a16, 512, true, 0, "tiled-rule", "demoted=route-table:borrowed"},
+        {"rtx4090", q4k, big, a16, 1, false, 0, "rmma-rule", "demoted=route-table:borrowed"},
         {"rtx4090", q8, big, a16, 64, false, 0, "cost-model"},
         {"rtx4090", q8, big, a16, 1, false, 0, "rmma-rule"},
         {"rtx4090", q6k, big, a16, 24, true, 0, "rmma-rule"},
@@ -500,12 +513,15 @@ void check_known() {
             "mmq-prefill-gate"},
     };
     for (const KnownCase& c : cases) {
-        const std::string got = known_source(c);
-        if (got != c.source) {
+        const std::string got  = known_source(c);
+        const std::string want = c.evidence.empty()
+                                     ? std::string(c.source)
+                                     : std::string(c.source) + " " + std::string(c.evidence);
+        if (got != want) {
             fail(std::string(c.board) + " " + generic::qtype_name(c.qtype) + " " +
                  std::to_string(c.shape.n) + "x" + std::to_string(c.shape.k) +
                  " T=" + std::to_string(c.tokens) + " profile " + std::to_string(c.profile) +
-                 ": answered by '" + got + "', expected '" + std::string(c.source) + "'");
+                 ": answered by '" + got + "', expected '" + want + "'");
         }
     }
 }
