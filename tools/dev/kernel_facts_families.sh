@@ -48,6 +48,13 @@ ALL_FAMS=${KFF_FAMILIES:-mmq,w4a8,gemma4,r8,i8,moer8,moegemm}
 arch_fams() {
   FAMS=$ALL_FAMS
   [ "$1" != 100 ] || FAMS=$(echo ",$ALL_FAMS," | sed 's/,moer8,/,/; s/,moegemm,/,/; s/^,//; s/,$//')
+  # The selector golden test's sm_120a link holds none of these families' kernels (below): they
+  # are read there from ninferno-serve, so a run on the golden test leaves them out and says so.
+  if [ "$1" = 120a ] && [ "${TARGET:-}" = ninferno_selector_golden_test ]; then
+    local kept; kept=$(echo ",$FAMS," | sed 's/,gemma4,/,/; s/,moer8,/,/; s/,moegemm,/,/; s/^,//; s/,$//')
+    [ "$kept" = "$FAMS" ] || echo "sm_120a: ${FAMS} less gemma4, moer8, moegemm on $TARGET (read them with KFF_TARGET=ninferno-serve)"
+    FAMS=$kept
+  fi
   IFS=, read -r -a FAM_LIST <<< "$FAMS"
 }
 arch_fams all
