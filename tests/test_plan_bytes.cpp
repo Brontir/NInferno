@@ -1289,6 +1289,10 @@ void test_proposal_bytes_per_quant() {
         check(marked_table && marked_table->expert_prefill == rt::ExpertPrefill::Unknown &&
                   marked_table->expert_prefill_assumed,
               "a split part with no route keeps the facts' assumed mark");
+        pr::QuantRow marked_row  = part_row;
+        marked_row.listing.table = marked_table;
+        check(pr::row_facts(routed, marked_row).model.expert_prefill_assumed,
+              "a split row with no route: the mark reaches its facts (Transferred)");
         pr::QuantRow dense_row  = part_row;
         dense_row.listing.table = dense_table;
         check(pr::row_facts(routed, dense_row).shape.layer_formats == formatted.shape.layer_formats,
