@@ -109,6 +109,8 @@ def decided(plan):
 
 
 RIDGE = [{"ridge_t": 131.5}]
+NO_CASE = ["policy a16 (A16Only, the exact mode): no case",
+           "policy a8 (AllowA8, the fast mode): no case"]
 
 
 def with_ridge(r):
@@ -154,9 +156,43 @@ class Prune(unittest.TestCase):
         self.assertTrue(self.plan_table(report(*cases), t, 0.05)[0][2])
         self.assertEqual(prune.asking_policies(("bf16", "a16", "store", 1, 1)), ("a16",))
         self.assertEqual(prune.asking_policies(("nvfp4", "a4", "store", 1, 1)), ("a4",))
+        # verify_linear_policy caps a verify call's AllowA4 at AllowA8: both read the a16 entry
+        self.assertEqual(prune.asking_policies(("nvfp4", "a16", "store", 1, 1)), ("a16", "a8"))
         self.assertEqual(prune.asking_policies(("q6k", "a16", "store", 1, 1)), ("a16", "a8"))
         self.assertEqual(prune.table_compute("nvfp4", "a4"), "a4")
         self.assertEqual(prune.table_compute("q4k", "a8"), "a16")
+
+    def test_a_policy_answered_elsewhere_does_not_ask_the_entry(self):
+        # AllowA8 at T 1..4 takes R8 (route_table_entry declines an a8_call): its cases there carry
+        # another authority, so the a8 policy needs no route-table case in that segment
+        t = table(self.entry(bands=((1, 4, "vec"), (5, 16, "rmma.a"))))
+        exact = [case(1, 0.0), case(8, 0.0)]
+        fast_r8 = dict(case(1, None, authority="r8-rules", evidence="ranker"),
+                       id="q4k.a8.store.n1024.k4096.T1", selected="r8.w4r1")
+        fast_table = dict(case(8, 0.0), id="q4k.a8.store.n1024.k4096.T8")
+        plan = self.plan_table(report(*exact, fast_r8, fast_table, both_policies=False), t, 0.05)
+        self.assertTrue(plan[0][2], plan[0][3])
+        # with no a8 case at all in 1..4, the segment is unknown and keeps the entry
+        plan = self.plan_table(report(*exact, fast_table, both_policies=False), t, 0.05)
+        self.assertEqual(plan[0][3], ["policy a8 (AllowA8, the fast mode): T 1..4: no case"])
+        # a policy whose every case went elsewhere asks nothing of the entry
+        fast_r8_8 = dict(fast_r8, id="q4k.a8.store.n1024.k4096.T8", t=8)
+        plan = self.plan_table(report(*exact, fast_r8, fast_r8_8, both_policies=False), t, 0.05)
+        self.assertTrue(plan[0][2], plan[0][3])
+
+    def test_a_dense_entry_of_either_policy_keeps_the_table_entry(self):
+        t = table(self.entry(bands=((1, 16, "a"),)))
+        rep = report(case(1, 0.0), case(8, 0.0))
+        for compute in ("a16", "a8"):
+            tuned = {("q4k", compute, "store", 1024, 4096)}
+            plan = self.plan_table(rep, t, 0.05, tuned=tuned)
+            self.assertFalse(plan[0][2])
+            self.assertIn("the dense tuner routes this problem too", plan[0][3][-1])
+
+    def test_a_route_as_only_entry_is_not_counted(self):
+        e = self.entry(bands=())
+        e["route_as"] = [[1, 16, 8]]
+        self.assertEqual(self.plan_table(report(), table(e), 0.05), [])
 
     def test_the_policies_sweeps_merge_only_from_one_build(self):
         a = {"schema": "ninferno-selection-regret-report/1", "device": "ad102:128sm",
@@ -166,8 +202,14 @@ class Prune(unittest.TestCase):
         merged = prune.merged_reports([a, b])
         self.assertEqual(len(merged["cases"]), 2)
         self.assertEqual(prune.ridge_of(merged), 131.5)
+        for field, value in (("selector_revision", "r2"), ("device", "ga102:82sm"),
+                             ("build_id", "b2")):
+            with self.assertRaises(ValueError):
+                prune.merged_reports([a, dict(b, **{field: value})])
+        with self.assertRaises(ValueError):  # two ridges: not one board's facts
+            prune.merged_reports([dict(a, by_board_regime_authority=[{"ridge_t": 90.0}]), b])
         with self.assertRaises(ValueError):
-            prune.merged_reports([a, dict(b, selector_revision="r2")])
+            prune.merged_reports([a, dict(b, schema="other")])
 
     def test_pruned_only_when_every_band_is_within_the_resolution(self):
         t = table(self.entry(bands=((1, 4, "vec"), (5, 16, "rmma.a"))))
@@ -305,10 +347,10 @@ class Prune(unittest.TestCase):
         r = report(case(1, 0.0, authority="cost-model", evidence="ranker"),
                    case(8, 0.0, evidence="borrowed"))
         self.assertFalse(self.plan_table(r, t, 0.05)[0][2])
-        self.assertEqual(self.plan_table(report(case(1, 0.0, n=7)), t, 0.05)[0][3], ["no case"])
+        self.assertEqual(self.plan_table(report(case(1, 0.0, n=7)), t, 0.05)[0][3], NO_CASE)
         # an entry without tuned_on (a route_tune sweep's) is the board's measured override too
         self.assertEqual(self.plan_table(report(), table(entry(measured=False)), 0.05),
-                         [(0, self.KEY, False, ["no case"])])
+                         [(0, self.KEY, False, NO_CASE)])
 
     def test_a_key_another_table_holds_or_may_borrow_is_kept(self):
         e = self.entry(bands=((1, 16, "a"),))

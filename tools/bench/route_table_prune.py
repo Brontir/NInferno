@@ -95,11 +95,18 @@ TABLE_AUTHORITIES = {"route-table": "route-table", "dense-tune": "dense-tune",
 # A route table keys its entries by compute class, not by policy (route_table.cpp compute_class):
 # A4 for an NVFP4 weight under a policy that allows A4, A16 for every other call. So an a16 entry
 # of a k-quant answers both the exact mode's A16Only calls (a16 cases) and the fast mode's AllowA8
-# calls (a8 cases, regret_collect.py POLICY), and a case speaks for the entry of its class. The
-# formats without int8 activations (and NVFP4, whose fast mode asks the a4 entry) are asked by one
-# policy. An entry is pruned only when the cases of every policy that asks it clear it: the ranker
-# picks per policy, so one policy's cases say nothing of the other's calls.
-SINGLE_POLICY_FORMATS = ("bf16", "fp8", "fp8r32", "nvfp4")
+# calls (a8 cases, regret_collect.py POLICY), and a case speaks for the entry of its class. An
+# NVFP4 a16 entry is asked by both too: verify_linear_policy caps a verify call's AllowA4 at
+# AllowA8. Only the formats no generic A8 route admits (BF16, FP8) are asked by one policy. An entry
+# is pruned only when the cases of every policy that asks it clear it: the ranker picks per policy,
+# so one policy's cases say nothing of the other's calls. A policy asks the entry only where its
+# calls reach the table (route_authorities.cpp route_table_entry: an AllowA8 call that takes R8,
+# the vector kernel, ggml's verify kernel or W4A8 never does, and route_admits refuses an int8
+# route to an A16Only call), so a segment where that policy's cases were all answered by another
+# authority needs no route-table case of it. route_tune sweeps the fast mode only for the
+# ggml_mmq formats (route_tune_tool.cpp a8_sweep): q8, q4, q5, q6 and iq1m entries get no a8
+# cases, and so are kept.
+SINGLE_POLICY_FORMATS = ("bf16", "fp8", "fp8r32")
 
 
 def table_compute(fmt, compute):
@@ -194,6 +201,25 @@ def evidence_by_entry(report):
     return out
 
 
+def elsewhere_by_key(report):
+    """{(route-table class key, policy, profile): [T]}: the widths at which a policy's calls were
+    answered by an authority other than the route table (the table was not asked there)."""
+    out = {}
+    for case in report["cases"]:
+        if case.get("authority") in TABLE_AUTHORITIES or not case.get("authority"):
+            continue
+        parsed = case_key(case)
+        if parsed is None:
+            continue
+        key, from_id = parsed
+        policy = key[1]
+        key = (key[0], table_compute(key[0], key[1])) + key[2:]
+        t = case["t"] if type(case.get("t")) is int else from_id
+        profile = "prefill" if case.get("profile") == PREFILL_PROFILE else "speed"
+        out.setdefault((key, policy, profile), []).append(t)
+    return out
+
+
 def judge(cases, label, resolution):
     """Reasons a set of (T, slowdown, selected) cases does not clear `label`'s range; empty:
     cleared."""
@@ -207,12 +233,13 @@ def judge(cases, label, resolution):
     return []
 
 
-def cover(cases, ranges, ridge, resolution):
+def cover(cases, ranges, ridge, resolution, elsewhere=()):
     """Reasons the cases of one profile do not clear every segment of `ranges` [(lo, hi, route)].
     Each range is judged only by the cases that measured its own route (`selected`): where ranges
     overlap (an r8 band inside a band) a case of one says nothing of the other. A case whose route
     is none of those the override names at its width was collected against another version of the
-    entry, and keeps it."""
+    entry, and keeps it. `elsewhere`: the widths at which this policy's calls were answered by
+    another authority; a segment with no route-table case but one of those is not asked."""
     reasons = []
     for t, _, selected, *_ in sorted(cases, key=lambda c: c[0]):
         named = [route for lo, hi, route in ranges if lo <= t <= hi]
@@ -225,22 +252,26 @@ def cover(cases, ranges, ridge, resolution):
                            "cannot be split")
         for a, b in segments(lo, hi, ridge):
             inside = [c for c in cases if a <= c[0] <= b and c[2] == route]
+            if not inside and any(a <= t <= b for t in elsewhere):
+                continue  # the policy's calls there take another authority: the table is not asked
             reasons += judge(inside, f"T {a}..{b}", resolution)
     return reasons
 
 
-def verdict(evidence, ranges, prefill_ranges, ridge, resolution):
+def verdict(evidence, ranges, prefill_ranges, ridge, resolution, elsewhere=None):
     """(prune, reasons) of an entry: `ranges` its speed ranges [(lo, hi, route)] (bands and
     r8_bands), `prefill_ranges` those of its prefill override, `evidence` its cases (speed and
-    prefill)."""
+    prefill), `elsewhere` {profile: [T]} the widths another authority answered."""
+    elsewhere = elsewhere or {}
     reasons = []
     if not ranges and not prefill_ranges:
         reasons.append("no band")
-    reasons += cover(evidence["speed"], ranges, ridge, resolution)
+    reasons += cover(evidence["speed"], ranges, ridge, resolution, elsewhere.get("speed", ()))
     if prefill_ranges:
-        if evidence["prefill"]:
+        if evidence["prefill"] or elsewhere.get("prefill"):
             reasons += ["prefill " + why for why in
-                        cover(evidence["prefill"], prefill_ranges, ridge, resolution)]
+                        cover(evidence["prefill"], prefill_ranges, ridge, resolution,
+                              elsewhere.get("prefill", ()))]
         else:
             reasons.append("prefill override: no prefill-profile case (the campaign runs the "
                            "speed profile)")
@@ -280,6 +311,7 @@ def plan_table(report, table, resolution, others=None, allow_borrowers=False, tu
     tables of the routes directory {name: doc}, for the lending rules; `tuned`: the keys the dense
     tuner routes for the board (dense_routed), which take the call once the entry is gone."""
     seen = evidence_by_entry(report)
+    away = elsewhere_by_key(report)
     ridge = ridge_of(report)
     out = []
     for i, entry in enumerate(table["entries"]):
@@ -287,25 +319,28 @@ def plan_table(report, table, resolution, others=None, allow_borrowers=False, tu
         # measured evidence (table_evidence_kind: no lender, distance 0), with `tuned_on` (a dense
         # tuner cache's entries) or without it (a route_tune sweep on that board, the table's
         # note). A table exists only for a board that measured it; another board borrows.
-        key = entry_key(entry)
-        evidence = seen.get(("route-table", key))
-        if evidence is None:
-            out.append((i, key, False, ["no case"]))
-            continue
         speed, prefill = entry_ranges(entry)
+        if not speed and not prefill:
+            continue  # a route_as or claim-only entry: no band of the ranker's to give back
+        key = entry_key(entry)
+        evidence = seen.get(("route-table", key), {"speed": [], "prefill": []})
         reasons = []
         policies = asking_policies(key)
         for policy in policies:
             own = {profile: [c for c in evidence[profile] if c[3] == policy]
                    for profile in ("speed", "prefill")}
+            gone = {profile: away.get((key, policy, profile), [])
+                    for profile in ("speed", "prefill")}
             tag = f"policy {policy} ({regret_policy(policy)}): " if len(policies) > 1 else ""
-            if not own["speed"] and not own["prefill"]:
+            if not any(own.values()) and not any(gone.values()):
                 reasons.append(f"{tag}no case")
                 continue
-            reasons += [tag + why for why in verdict(own, speed, prefill, ridge, resolution)[1]]
+            reasons += [tag + why
+                        for why in verdict(own, speed, prefill, ridge, resolution, gone)[1]]
         if entry.get("claim"):
             reasons.append("the entry claims its problem (a measured claim the ranker does not make)")
-        if key in tuned:
+        # dense_tune.json is keyed per policy, and its entry answers right after the table's
+        if any((key[0], p) + key[2:] in tuned for p in policies):
             reasons.append("the dense tuner routes this problem too: pruning hands the call to it, "
                            "not the ranker")
         if others:
@@ -514,6 +549,8 @@ def merged_reports(reports):
     out = dict(reports[0])
     out["cases"] = [c for r in reports for c in r["cases"]]
     ridged = [r for r in reports if ridge_of(r) is not None]
+    if len({ridge_of(r) for r in ridged}) > 1:
+        raise ValueError("the reports name different ridges: not one board's facts")
     if ridged:
         out["by_board_regime_authority"] = ridged[0]["by_board_regime_authority"]
     return out

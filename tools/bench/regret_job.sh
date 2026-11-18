@@ -24,8 +24,8 @@
 #      and .md; committing it to tools/bench/data/route_regret/runs/<board>/ is a maintainer's step.
 #   The card's clocks and persistence mode are recorded, and its SM clock is sampled once a second
 #   during the sweep (min and max in the report).
-# Environment: SHAPES, PASSES, SAMPLES, A8_CANDIDATES (1 or 0), ROUTE_POLICY, THRESHOLD, PREVIOUS
-# (a file, auto, none),
+# Environment: SHAPES, PASSES, SAMPLES, A8_CANDIDATES (1 or 0), ROUTE_POLICY, THRESHOLD,
+# PREVIOUS (a file, auto, none),
 # BOARD (from the card's PCI id and gpu_facts.json; a different value is refused), MODEL (the label of the shapes' source).
 # One card: with several, select it (CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=<i>).
 # The job refuses to start when a compute process is on the card, but that is a snapshot at the
@@ -186,8 +186,12 @@ NAME=$STAMP-${REV:0:12}
   --nvcc "$NVCC" --nvcc-source "$NVCC_SOURCE" --driver "$DRIVER" --gpu "$GPU_FIELDS" \
   --sm-clock-log "$OUT/sm_clock.log" --pci-id "$PCI" \
   --qualification "$QUALIFIED" --shapes "$SHAPES" --passes "$PASSES" --samples "$SAMPLES" \
+  --a8-candidates "$A8_CANDIDATES" \
   --route-policy "${ROUTE_POLICY:-}" --previous "$PREVIOUS" --repo "$ROOT" \
   --threshold "$THRESHOLD" --out "$OUT/$NAME.json" --md "$OUT/$NAME.md" ||
   die "regret_report.py failed"
 cat "$OUT/$NAME.md"
-echo "regret_job: to commit: tools/bench/data/route_regret/runs/$BOARD/$NAME.json (from $OUT)"
+# The committed reports are the fast mode's: an exact-mode report feeds route_table_prune.py only.
+if [ "$A8_CANDIDATES" = 1 ]; then
+  echo "regret_job: to commit: tools/bench/data/route_regret/runs/$BOARD/$NAME.json (from $OUT)"
+fi
