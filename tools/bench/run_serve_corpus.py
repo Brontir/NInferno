@@ -292,25 +292,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 # kernel family choice against one family runs the same campaign with and without a pin. The
 # route policy (--route-policy, #614 F1: legacy or evidence) rides along: the first value of each
 # is the release's (auto; evidence since F2), which is never passed. A record or a server_start
-# without the key means pin_absent's value: auto, and legacy for the route policy (it predates F1,
-# when legacy was the release's).
+# without every key is refused: it predates the pins (or F1's route policy), and project-owned
+# formats keep no fallback (AGENTS.md).
 ROUTE_PINS = {
     "prefill_route": ("--prefill-route", ("auto", "a16", "w4a8", "i8", "mmq", "w4a4")),
     "decode_route": ("--decode-route", ("auto", "a16", "r8", "vec", "mmq")),
     "moe_path": ("--moe-path", ("auto", "fused", "generic")),
     "route_policy": ("--route-policy", ("evidence", "legacy")),
 }
-ROUTE_PIN_ABSENT = {"route_policy": "legacy"}
-
-
 def pin_default(name: str) -> str:
     """The release's value of a pin: auto, evidence for the route policy."""
     return ROUTE_PINS[name][1][0]
-
-
-def pin_absent(name: str) -> str:
-    """The value a record without the pin measured: auto, legacy for the route policy."""
-    return ROUTE_PIN_ABSENT.get(name, "auto")
 
 
 def add_route_pin_arguments(parser: argparse.ArgumentParser) -> None:
@@ -339,7 +331,11 @@ def route_pin_flags(pins: dict[str, str]) -> list[str]:
 def require_route_pins(event: dict[str, Any], pins: dict[str, str]) -> None:
     """The server must report the pins it was asked for (server_start engine.maintainer)."""
     maintainer = event.get("engine", {}).get("maintainer", {})
-    actual = {name: maintainer.get(name, pin_absent(name)) for name in ROUTE_PINS}
+    missing = [name for name in ROUTE_PINS if name not in maintainer]
+    if missing:
+        raise CampaignError(f"server_start reports no route pins {missing!r}: a server from before "
+                            "them is not supported")
+    actual = {name: maintainer[name] for name in ROUTE_PINS}
     if actual != {name: pins.get(name, pin_default(name)) for name in ROUTE_PINS}:
         raise CampaignError(f"server_start route pins {actual!r} do not match {pins!r}")
 
@@ -350,16 +346,17 @@ def bind_route_pins(output_dir: Path, pins: dict[str, str]) -> None:
     full = {name: pins.get(name, pin_default(name)) for name in ROUTE_PINS}
     runs = output_dir / "run.jsonl"
     if not path.exists() and runs.exists() and runs.stat().st_size > 0:
-        # A campaign from before the marker measured the automatic routes only.
-        if any(value != pin_absent(name) for name, value in full.items()):
-            raise CampaignError(
-                f"{output_dir} holds results measured before route pins were recorded (all auto, "
-                f"route policy legacy), "
-                f"not {pins!r}; use another --output"
-            )
+        raise CampaignError(
+            f"{output_dir} holds results measured before route pins were recorded; use another "
+            "--output"
+        )
     if path.exists():
         stored = json.loads(path.read_text(encoding="utf-8"))
-        recorded = {name: stored.get(name, pin_absent(name)) for name in ROUTE_PINS}
+        missing = [name for name in ROUTE_PINS if name not in stored]
+        if missing:
+            raise CampaignError(f"{path} records no {missing!r} (written before them); use another "
+                                "--output")
+        recorded = {name: stored[name] for name in ROUTE_PINS}
         if recorded != full:
             raise CampaignError(
                 f"{output_dir} holds results measured with route pins {recorded!r}, not {pins!r}; "
