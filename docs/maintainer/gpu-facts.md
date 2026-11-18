@@ -107,8 +107,8 @@ Four rows remain unknown after that audit and #958:
   gives 50 MB. Resolve this with an unambiguous NVIDIA SKU specification or a whole-device
   `deviceQuery` report in bytes, not the GH100 full-chip figure or a two-GPU aggregate.
 - `0x1F0A`, GTX 1650 on **TU106** (target, #958): the aggregator's 1 MiB is TU117's GTX 1650.
-  TU106 carries 512 KiB per 32-bit controller, 2 MiB at 128 bits, but no SKU page or
-  `deviceQuery` of this board says so.
+  TU106 carries at most 512 KiB per 32-bit controller (at most 2 MiB at 128 bits; a board may
+  disable some), and no SKU page or `deviceQuery` of this board gives its value.
 - `0x27B2`, RTX 4000 Ada Generation (target, #958): the aggregator's 48 MiB exceeds what five
   32-bit controllers carry on Ada (8 MiB each, at most 40 MiB at 160 bits).
 

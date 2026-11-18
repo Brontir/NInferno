@@ -56,13 +56,32 @@ void table_well_formed() {
                where + ": a spec source and the pci-ids entry of its id");
         // The unresolved targets (gpu-facts.md): the TU106 1660 SUPER, whose published cache
         // belongs to TU116, and the two rows #958 found the chip structure contradicts (the TU106
-        // GTX 1650's 1 MiB is TU117's, the RTX 4000 Ada's 48 MiB exceeds five controllers' 40).
+        // GTX 1650's 1 MiB is TU117's and unsourced for it, the RTX 4000 Ada's 48 MiB exceeds five
+        // controllers' 40 at most).
         // Do not borrow a value just to make coverage complete.
         const bool unresolved =
             r.pci_device_id == 0x1F09 || r.pci_device_id == 0x1F0A || r.pci_device_id == 0x27B2;
         expect(!r.target || r.l2_mib > 0 || unresolved,
                where + ": a target needs a sourced L2 capacity (see gpu-facts.md)");
         expect(find_gpu_facts(r.pci_device_id) == &r, where + ": found by its id");
+        // The chip's structure bounds the L2 (#958 review): each 32-bit memory controller carries
+        // at most 8 MiB on Ada and GB20x, 512 KiB on TU10x and GA10x, 256 KiB on TU116/TU117
+        // (a board may carry less, with slices disabled). HBM chips (GV100, GA100, GH100, GB100)
+        // are not bounded this way and are skipped. It caught the RTX 4000 Ada's 48 MiB at 160
+        // bits.
+        if (r.l2_mib > 0 && r.bus_bits > 0) {
+            const auto starts = [&](std::string_view p) { return r.chip.rfind(p, 0) == 0; };
+            const double per  = starts("ad10") || starts("gb20")                     ? 8.0
+                                : starts("tu116") || starts("tu117")                 ? 0.25
+                                : starts("tu10") || starts("ga10") || starts("tu11") ? 0.5
+                                                                                     : 0.0;
+            if (per > 0) {
+                expect(r.l2_mib <= per * r.bus_bits / 32.0 + 1e-9,
+                       where + ": L2 " + std::to_string(r.l2_mib) + " MiB exceeds " +
+                           std::to_string(per) + " MiB a 32-bit controller at " +
+                           std::to_string(r.bus_bits) + " bits");
+            }
+        }
         // The chip names the same chip gpu_chip finds by the id's block, where it knows the chip.
         const std::string chip = gpu_chip(r.pci_device_id, r.major, r.minor, r.sms);
         if (chip != gpu_arch_id(r.major, r.minor)) {
