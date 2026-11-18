@@ -71,10 +71,13 @@ void table_well_formed() {
         // bits.
         if (r.l2_mib > 0 && r.bus_bits > 0) {
             const auto starts = [&](std::string_view p) { return r.chip.rfind(p, 0) == 0; };
-            const double per  = starts("ad10") || starts("gb20")                     ? 8.0
-                                : starts("tu116") || starts("tu117")                 ? 0.25
-                                : starts("tu10") || starts("ga10") || starts("tu11") ? 0.5
-                                                                                     : 0.0;
+            const bool hbm =
+                r.chip == "gv100" || r.chip == "ga100" || r.chip == "gh100" || r.chip == "gb100";
+            const double per = hbm                                  ? 0.0
+                               : starts("ad10") || starts("gb20")   ? 8.0
+                               : starts("tu116") || starts("tu117") ? 0.25
+                               : starts("tu1") || starts("ga10")    ? 0.5
+                                                                    : 0.0;
             if (per > 0) {
                 expect(r.l2_mib <= per * r.bus_bits / 32.0 + 1e-9,
                        where + ": L2 " + std::to_string(r.l2_mib) + " MiB exceeds " +
