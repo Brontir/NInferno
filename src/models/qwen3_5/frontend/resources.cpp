@@ -2,10 +2,46 @@
 
 #include "artifact/schema.h"
 
+#include <mutex>
+#include <string>
+
 namespace ninferno::models::qwen3_5 {
+namespace {
+
+// The last tokenizer built, kept for the same three files (#839). A start reads the tokenizer
+// twice: the plan's choice counts its public ids (runtime::plan_tokenizer_tokens, through
+// public_token_count) and then the load builds it, about 1.3 s each on a 12.8 MB tokenizer.json.
+// The Tokenizer owns everything it decoded (no view into these bytes), so the load can share the
+// one the choice built. Keyed by the bytes themselves, compared whole, so another file with the
+// same size is never mistaken for it; one entry, replaced by the next distinct tokenizer.
+std::shared_ptr<const frontend::Tokenizer>
+shared_tokenizer(const frontend::TokenizerResources& files) {
+    struct Kept {
+        std::string json, config, generation;
+        std::shared_ptr<const frontend::Tokenizer> tokenizer;
+    };
+
+    static std::mutex mutex;
+    static Kept kept;
+    {
+        const std::lock_guard lock(mutex);
+        if (kept.tokenizer && kept.json == files.tokenizer_json &&
+            kept.config == files.tokenizer_config_json &&
+            kept.generation == files.generation_config_json) {
+            return kept.tokenizer;
+        }
+    }
+    auto built = std::make_shared<const frontend::Tokenizer>(files);
+    const std::lock_guard lock(mutex);
+    kept = Kept{std::string(files.tokenizer_json), std::string(files.tokenizer_config_json),
+                std::string(files.generation_config_json), built};
+    return built;
+}
+
+} // namespace
 
 void attach_qwen3_5_tokenizer(FrontendResources& resources) {
-    resources.tokenizer = std::make_shared<const frontend::Tokenizer>(
+    resources.tokenizer = shared_tokenizer(
         frontend::TokenizerResources{resources.tokenizer_json, resources.tokenizer_config_json,
                                      resources.generation_config_json});
     resources.public_token_count = static_cast<std::uint32_t>(resources.tokenizer->vocab_size());

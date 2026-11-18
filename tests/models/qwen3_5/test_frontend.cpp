@@ -4040,11 +4040,37 @@ int test_media_preparation_cancellation() {
 
 } // namespace
 
+// #839: the plan's count and the load share one built tokenizer for the same files; other
+// bytes build their own.
+int test_tokenizer_shared_for_the_same_files(const FrontendResources& owned) {
+    namespace qwen    = ninferno::models::qwen3_5;
+    const auto attach = [](const FrontendResources& files) {
+        qwen::FrontendResources r;
+        r.tokenizer_json         = files.tokenizer_json;
+        r.tokenizer_config_json  = files.tokenizer_config_json;
+        r.generation_config_json = files.generation_config_json;
+        qwen::attach_qwen3_5_tokenizer(r);
+        return r.tokenizer;
+    };
+    const auto first             = attach(owned);
+    const FrontendResources copy = owned; // other buffers, the same bytes
+    const auto again             = attach(copy);
+    FrontendResources other      = owned;
+    other.tokenizer_json += "\n"; // other bytes, the same vocabulary
+    const auto rebuilt = attach(other);
+    int failures       = 0;
+    failures += check(first && first == again, "the same files share one built tokenizer");
+    failures += check(rebuilt && rebuilt != first && rebuilt->vocab_size() == first->vocab_size(),
+                      "other bytes build their own tokenizer");
+    return failures;
+}
+
 int main() {
     const FrontendResources owned = resources();
     const Frontend frontend       = make_frontend(owned);
     int failures                  = 0;
     failures += test_generation_config_sampling();
+    failures += test_tokenizer_shared_for_the_same_files(owned);
     failures += test_declared_frontend_semantics();
     failures += test_tokenizer_config_merge();
     failures += test_transformers5_tokenizer_layout();
