@@ -4040,6 +4040,30 @@ int test_media_preparation_cancellation() {
 
 // #839: the plan's count and the load share one built tokenizer for the same files; other
 // bytes build their own.
+// #1005: the HF text tokenizer likewise (the dense decoders' frontend).
+int test_hf_tokenizer_shared_for_the_same_files(const FrontendResources& owned) {
+    namespace qwen    = ninferno::models::qwen3_5;
+    const auto attach = [](const FrontendResources& files) {
+        qwen::FrontendResources r;
+        r.tokenizer_json         = files.tokenizer_json;
+        r.tokenizer_config_json  = files.tokenizer_config_json;
+        r.generation_config_json = files.generation_config_json;
+        qwen::attach_hf_text_tokenizer(r);
+        return r.tokenizer;
+    };
+    const auto first             = attach(owned);
+    const FrontendResources copy = owned;
+    const auto again             = attach(copy);
+    FrontendResources other      = owned;
+    other.tokenizer_json += "\n";
+    const auto rebuilt = attach(other);
+    int failures       = 0;
+    failures += check(first && first == again, "the same files share one HF text tokenizer");
+    failures += check(rebuilt && rebuilt != first && rebuilt->vocab_size() == first->vocab_size(),
+                      "other bytes build their own HF text tokenizer");
+    return failures;
+}
+
 int test_tokenizer_shared_for_the_same_files(const FrontendResources& owned) {
     namespace qwen    = ninferno::models::qwen3_5;
     const auto attach = [](const FrontendResources& files) {
@@ -4071,6 +4095,7 @@ int main() {
     int failures                  = 0;
     failures += test_generation_config_sampling();
     failures += test_tokenizer_shared_for_the_same_files(owned);
+    failures += test_hf_tokenizer_shared_for_the_same_files(owned);
     failures += test_declared_frontend_semantics();
     failures += test_tokenizer_config_merge();
     failures += test_transformers5_tokenizer_layout();
