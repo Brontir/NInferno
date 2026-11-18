@@ -371,14 +371,15 @@ void test_head_resolution() {
         bare.resolved->other_kinds.clear();
         const auto head      = pr::served_head_fallback(dflash2, false);
         const auto bare_head = pr::served_head_fallback(bare, false);
-        check(head && bare_head && bare_head->load_basis == "literal" &&
-                  (priced_here ? (std::string(board) == "4090" ? table(*head) == "2:3,5:2,9:0/facts"
-                                                               : table(*head).ends_with("/facts"))
-                               : table(*head) == table(*bare_head)),
-              std::string(board) +
-                  ": the head fallback's table from the model's MTP measurement (" +
-                  (head ? table(*head) : std::string("none")) + " against " +
-                  (bare_head ? table(*bare_head) : std::string("none")) + ")");
+        check(
+            head && bare_head && bare_head->load_basis == "literal" &&
+                (priced_here ? (std::string(board) == "4090" ? table(*head) == "2:3,5:2,9:0/facts"
+                                                             : !head->engine.load.empty() &&
+                                                                   table(*head).ends_with("/facts"))
+                             : table(*head) == table(*bare_head)),
+            std::string(board) + ": the head fallback's table from the model's MTP measurement (" +
+                (head ? table(*head) : std::string("none")) + " against " +
+                (bare_head ? table(*bare_head) : std::string("none")) + ")");
 
         // A kind resolved only to price the head beside a published profile (pricing_only, as
         // spec::resolve_other_kinds marks the same-model pair it finds there) offers no drafter
