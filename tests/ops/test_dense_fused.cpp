@@ -2,10 +2,12 @@
 #include "ninferno/ops/dense_fused.h"
 #include "ops/op_tester.h"
 #include "ops/oracle.h"
+#include "ops/softmax_attention/gemma4/row_codec.h"
 
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <random>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -59,7 +61,22 @@ struct QkvCase {
     // drafter's block), and a call without queries (its committed context).
     bool columns    = false;
     bool no_queries = false;
+    // The cache in one-byte rows of the build's codec (row_codec.h: int8 on sm_75..88, E4M3FN
+    // elsewhere) with an FP32 scale per row, as --kv-dtype fp8 stores it (#991).
+    bool rows = false;
 };
+
+// One code of the build's one-byte row codec, unscaled.
+double row_code_value(std::uint8_t code) {
+    if constexpr (ops::kGemma4RowInt8) {
+        return static_cast<double>(static_cast<std::int8_t>(code));
+    }
+    const int sign = code >> 7, exponent = (code >> 3) & 15, mantissa = code & 7;
+    if (exponent == 15 && mantissa == 7) { return std::nan(""); }
+    const double m = exponent == 0 ? mantissa / 8.0 : 1.0 + mantissa / 8.0;
+    const double v = std::ldexp(m, exponent == 0 ? -6 : exponent - 7);
+    return sign ? -v : v;
+}
 
 // The rotation convention a naive port of Gemma's rope would carry over: pair i with i + D/2
 // whatever the rotated width. Only a partial rotary width tells the two apart.
@@ -166,6 +183,17 @@ int run_qkv(const QkvCase& c) {
     const auto fill_v = bits(random_bf16_values(plane, 73, -1.0f, 1.0f));
     auto d_ck        = upload(fill_k);
     auto d_cv        = upload(fill_v);
+    // One-byte rows (QkvCase::rows): arbitrary prior codes and scales, which unaddressed rows keep.
+    const auto row_count = std::size_t(capacity) * c.kv_heads;
+    std::vector<std::uint8_t> fill_rk(plane), fill_rv(plane);
+    std::mt19937 rng(83);
+    for (auto& b : fill_rk) { b = static_cast<std::uint8_t>(rng() & 0x77U); }
+    for (auto& b : fill_rv) { b = static_cast<std::uint8_t>(rng() & 0x77U); }
+    const std::vector<float> fill_scale(row_count, 0.5f);
+    auto d_rk  = upload(fill_rk);
+    auto d_rv  = upload(fill_rv);
+    auto d_rsk = upload(fill_scale);
+    auto d_rsv = upload(fill_scale);
     GuardedDeviceBuffer d_q(std::size_t(qw) * t_count * 2);
     const auto column_plane = std::size_t(kw) * t_count;
     GuardedDeviceBuffer d_k_out(column_plane * 2);
@@ -205,6 +233,11 @@ int run_qkv(const QkvCase& c) {
     if (c.columns) {
         a.k_out = Tensor(d_k_out.data(), DType::BF16, {d, c.kv_heads, t_count});
         a.v_out = Tensor(d_v_out.data(), DType::BF16, {d, c.kv_heads, t_count});
+    } else if (c.rows) {
+        a.cache.k       = Tensor(d_rk.data(), ops::kGemma4RowDtype, {d, capacity, c.kv_heads});
+        a.cache.v       = Tensor(d_rv.data(), ops::kGemma4RowDtype, {d, capacity, c.kv_heads});
+        a.cache.k_scale = Tensor(d_rsk.data(), DType::FP32, {capacity, c.kv_heads});
+        a.cache.v_scale = Tensor(d_rsv.data(), DType::FP32, {capacity, c.kv_heads});
     } else {
         a.cache.k = Tensor(d_ck.data(), DType::BF16, {d, capacity, c.kv_heads});
         a.cache.v = Tensor(d_cv.data(), DType::BF16, {d, capacity, c.kv_heads});
@@ -256,6 +289,74 @@ int run_qkv(const QkvCase& c) {
         failures += d_k_out.verify_guards(c.label + " k columns guards");
         failures += d_v_out.verify_guards(c.label + " v columns guards");
         failures += d_q.verify_guards(c.label + " q guards");
+        return failures;
+    }
+    if (c.rows) {
+        // Every addressed row holds the reference K/V row as scale * code, the scale its absolute
+        // maximum over the codec's largest code, each value within half a code step (int8) or the
+        // E4M3 rounding, plus the BF16 rounding of the kernel's own row; other rows keep their
+        // prior codes and scales.
+        std::vector<char> written(row_count, 0);
+        for (int t = 0; t < t_count; ++t) {
+            for (int g = 0; g < c.kv_heads; ++g) {
+                written[std::size_t(g) * capacity + positions[t] % capacity] = 1;
+            }
+        }
+        const auto check_plane = [&](const char* what, const std::vector<double>& want,
+                                     const GuardedDeviceBuffer& codes_buffer,
+                                     const GuardedDeviceBuffer& scale_buffer,
+                                     const std::vector<std::uint8_t>& fill_codes) {
+            const auto codes  = from_device<std::uint8_t>(codes_buffer.data(), plane);
+            const auto scales = from_device<float>(scale_buffer.data(), row_count);
+            for (std::size_t row = 0; row < row_count; ++row) {
+                const auto first = row * d;
+                if (!written[row]) {
+                    if (scales[row] != 0.5f ||
+                        !std::equal(codes.begin() + first, codes.begin() + first + d,
+                                    fill_codes.begin() + first)) {
+                        std::cerr << c.label << " rows: " << what << " row " << row
+                                  << " not addressed but written\n";
+                        return 1;
+                    }
+                    continue;
+                }
+                double absmax = 0.0;
+                for (int i = 0; i < d; ++i) {
+                    absmax = std::max(absmax, std::fabs(want[first + i]));
+                }
+                const double scale      = scales[row];
+                const double scale_want = absmax / static_cast<double>(ops::kGemma4RowCodeMax);
+                if (std::fabs(scale - scale_want) > 0.01 * scale_want + 1e-30) {
+                    std::cerr << c.label << " rows: " << what << " row " << row << " scale "
+                              << scale << ", want " << scale_want << '\n';
+                    return 1;
+                }
+                for (int i = 0; i < d; ++i) {
+                    const double x   = want[first + i];
+                    const double got = scale * row_code_value(codes[first + i]);
+                    const double bound =
+                        (ops::kGemma4RowInt8 ? 0.5 * scale : std::fabs(x) / 16.0 + scale / 512.0) +
+                        std::fabs(x) / 128.0 + 1e-6;
+                    if (!(std::fabs(got - x) <= bound)) {
+                        std::cerr << c.label << " rows: " << what << " row " << row << " dim " << i
+                                  << " got " << got << ", reference " << x << '\n';
+                        return 1;
+                    }
+                }
+            }
+            return 0;
+        };
+        failures += check_plane("k", want_k, d_rk, d_rsk, fill_rk);
+        failures += check_plane("v", want_v, d_rv, d_rsv, fill_rv);
+        // The BF16 planes were not handed to the call and stay as they were.
+        if (from_device<std::uint16_t>(d_ck.data(), plane) != fill_k ||
+            from_device<std::uint16_t>(d_cv.data(), plane) != fill_v) {
+            std::cerr << c.label << ": a rows call wrote the BF16 planes\n";
+            ++failures;
+        }
+        for (auto* buffer : {&d_rk, &d_rv, &d_rsk, &d_rsv, &d_q}) {
+            failures += buffer->verify_guards(c.label + " rows guards");
+        }
         return failures;
     }
     failures += verify_pointwise(c.label + " cache k", download_bf16(d_ck.data(), plane), want_k,
@@ -631,6 +732,71 @@ int main() {
                  1.0f, false, 0.0f, 0};
         gemma.unit_offset = true;
         failures += run_qkv(gemma);
+    }
+    // The one-byte rows --kv-dtype fp8 stores (int8 codes on sm_75..88, E4M3 elsewhere, #991):
+    // gpt-oss decode and prefill widths, Llama D128 GQA, Gemma 3 D256 with its unit-offset norm.
+    {
+        QkvCase rows{"gpt-oss D64 64/8 rows",
+                     64,
+                     64,
+                     8,
+                     1,
+                     131000,
+                     ops::QkNorm::None,
+                     64,
+                     1.5e5,
+                     1.3466f,
+                     true,
+                     0.0f,
+                     0};
+        rows.rows = true;
+        failures += run_qkv(rows);
+        rows      = {"gpt-oss D64 64/8 prefill rows",
+                     64,
+                     64,
+                     8,
+                     33,
+                     70,
+                     ops::QkNorm::None,
+                     64,
+                     1.5e5,
+                     1.3466f,
+                     true,
+                     0.0f,
+                     0};
+        rows.rows = true;
+        failures += run_qkv(rows);
+        rows      = {"llama D128 32/8 rows",
+                     128,
+                     32,
+                     8,
+                     5,
+                     0,
+                     ops::QkNorm::None,
+                     128,
+                     5e5,
+                     1.0f,
+                     false,
+                     0.0f,
+                     0};
+        rows.rows = true;
+        failures += run_qkv(rows);
+        rows             = {"gemma3 D256 8/4 prefill rows 1+w",
+                            256,
+                            8,
+                            4,
+                            40,
+                            3000,
+                            ops::QkNorm::Head,
+                            256,
+                            1e6,
+                            1.0f,
+                            false,
+                            0.0f,
+                            0};
+        rows.unit_offset = true;
+        rows.rows        = true;
+        failures += run_qkv(rows);
     }
     failures += run_norm_scope_control();
     failures += run_qkv_bound("bound images, head norm + bias", ops::QkNorm::Head, true, false);
