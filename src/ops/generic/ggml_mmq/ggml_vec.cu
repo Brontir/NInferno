@@ -764,36 +764,73 @@ __launch_bounds__(kVecWarps * 32, Bounded ? kVecBoundedBlocks : 0) __global__
         } else {
             for (int it = 0; lane + 32 * it < slices; ++it) slice(it);
         }
-        // The 2T sums of the row pair (index r * T + j) reduced in one transposed butterfly
-        // (#1044, vec_transpose_reduce): against 5 shuffles a value, and one store a lane, not 2T
-        // inlined predicated ones. The first halving splits the rows: lanes with bit 16 hold r 1.
-        constexpr int kValues = kRows * T;
-        float val[kValues];
+        if constexpr (kRows * T % 8 != 0) {
+            // T = 2 / 3 (#1044): five shuffles a value and 2T predicated stores, as before. The
+            // transposed reduction below gave Q3_K at T = 2 104 registers, not 96 (sm_86: 4 CTAs
+            // a SM, not 5; RTX 3060 Q3_K_M C2 -2.2 %), and IQ4_XS at T = 3 lost (RTX 3090 C3
+            // -3.6 %); it pays where the 2T values are eight or more.
 #pragma unroll
-        for (int r = 0; r < kRows; ++r) {
+            for (int r = 0; r < kRows; ++r) {
 #pragma unroll
-            for (int j = 0; j < T; ++j) val[r * T + j] = acc[r][j];
-        }
-        const float mine = vec_transpose_reduce<kValues>(val, lane);
-        constexpr int kH = vec_halvings(kValues);
-        constexpr int kN = kValues >> kH;
-        const int sel    = lane & ((32 >> kH) - 1);
-        const int idx    = (lane >> (5 - kH)) * kN + sel;
-        const int r      = idx / T;
-        const int j      = idx % T;
-        const bool owner = sel < kN;
-        if constexpr (gated) {
-            // The gate (r 0) and up (r 1) sums of column j sit in lanes that differ in bit 16
-            // only: the up lane takes the gate's.
-            const float gate = __shfl_xor_sync(0xFFFFFFFFu, mine, 16);
-            if (owner && r == 1) store(p.out, row0, j, gate_of(p.out, gate) * mine);
-        } else if (owner && row0 + r < p.rows) {
-            float v = mine;
-            if (p.out.relu2 != 0) {
-                v = fmaxf(v, 0.0F);
-                v *= v;
+                for (int j = 0; j < T; ++j) {
+#pragma unroll
+                    for (int o = 16; o > 0; o >>= 1)
+                        acc[r][j] += __shfl_xor_sync(0xFFFFFFFFu, acc[r][j], o);
+                }
             }
-            store(p.out, row0 + r, j, v);
+            // Every lane holds the sums: lane j stores column j (row pair: lanes T..2T-1 the
+            // second).
+#pragma unroll
+            for (int j = 0; j < T; ++j) {
+                if constexpr (gated) {
+                    if (lane == j) store(p.out, row0, j, gate_of(p.out, acc[0][j]) * acc[1][j]);
+                } else {
+#pragma unroll
+                    for (int r = 0; r < kRows; ++r) {
+                        if (lane == r * T + j && row0 + r < p.rows) {
+                            float v = acc[r][j];
+                            if (p.out.relu2 != 0) {
+                                v = fmaxf(v, 0.0F);
+                                v *= v;
+                            }
+                            store(p.out, row0 + r, j, v);
+                        }
+                    }
+                }
+            }
+        } else {
+            // The 2T sums of the row pair (index r * T + j) reduced in one transposed butterfly
+            // (#1044, vec_transpose_reduce): against 5 shuffles a value, and one store a lane, not
+            // 2T inlined predicated ones. The first halving splits the rows: lanes with bit 16 hold
+            // r 1.
+            constexpr int kValues = kRows * T;
+            float val[kValues];
+#pragma unroll
+            for (int r = 0; r < kRows; ++r) {
+#pragma unroll
+                for (int j = 0; j < T; ++j) val[r * T + j] = acc[r][j];
+            }
+            const float mine = vec_transpose_reduce<kValues>(val, lane);
+            constexpr int kH = vec_halvings(kValues);
+            constexpr int kN = kValues >> kH;
+            const int sel    = lane & ((32 >> kH) - 1);
+            const int idx    = (lane >> (5 - kH)) * kN + sel;
+            const int r      = idx / T;
+            const int j      = idx % T;
+            const bool owner = sel < kN;
+            if constexpr (gated) {
+                // The gate (r 0) and up (r 1) sums of column j sit in lanes that differ in bit 16
+                // only: the up lane takes the gate's.
+                const float gate = __shfl_xor_sync(0xFFFFFFFFu, mine, 16);
+                if (owner && r == 1) store(p.out, row0, j, gate_of(p.out, gate) * mine);
+            } else if (owner && row0 + r < p.rows) {
+                float v = mine;
+                if (p.out.relu2 != 0) {
+                    v = fmaxf(v, 0.0F);
+                    v *= v;
+                }
+                store(p.out, row0 + r, j, v);
+            }
         }
     }
 }
