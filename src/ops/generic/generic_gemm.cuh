@@ -530,12 +530,12 @@ struct GroupwiseQ3Decoder {
 
 // Q8 G32: a K step of 32 values is exactly one group.
 //
-// NINFERNO-SPECIAL(arch:sm75): FP16 codes on Turing (kF16Operands, #1050). Flipping a signed
-// byte's top bit gives s + 128 in 0 .. 255, and byte_codes' FP16 form (1024 + c, minus 1024 + 128)
-// returns s exactly; without it every MMA rounded the BF16 codes to FP16 (ops/common/mma.cuh) and
-// the K loop issued 5.3x the integer instructions of sm_86+ (sm_75 kernel facts: 571 against
-// 108-124 for 64 K values), SM-bound on the RTX 2080 Ti. Every other build keeps the BF16
-// conversion: BF16 has no exact form of 128 + c for c >= 128.
+// NINFERNO-SPECIAL(arch:sm75): FP16 codes on Turing (kF16Operands, #1050). Flipping a signed byte's
+// top bit gives s + 128 in 0 .. 255, and byte_codes' FP16 form (1024 + c, minus 1024 + 128) returns
+// s exactly; without it every MMA rounded the BF16 codes to FP16 (ops/common/mma.cuh) and the K
+// loop issued 5.3x the integer instructions of sm_86+ (sm_75 kernel facts before this: 571 against
+// 108-124 for 64 K values, 130 after), SM-bound on the RTX 2080 Ti. Every other build keeps the
+// BF16 conversion: BF16 has no exact form of 128 + c for c >= 128.
 struct Q8Decoder {
     static constexpr bool kF16       = kF16Operands;
     static constexpr int kRun        = 8;
