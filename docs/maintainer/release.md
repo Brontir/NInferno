@@ -67,7 +67,11 @@ for Volta: `-Cuda70`), CMake, Ninja and vcpkg; `package-native.ps1`'s header has
    tree as it is. It builds sm_80, sm_90 and sm_100 with the release flags
    and checks each against its snapshot, without a GPU. Run it nightly too, and on a PR that
    changes `src/ops/**/*.cu*`, so that a stale snapshot shows before `package.sh` stops on it
-   (#758).
+   (#758). On that stand, also run the read-only cache test with a small dense GGUF:
+   `NINFERNO_TEST_GGUF=<file> ctest -R ninferno_readonly_cache_test` (it is skipped without one).
+   As root it runs the start as `nobody` against a model directory made unwritable, and checks
+   that the conversion lands in NInferno's own cache and that a second start reuses it (#975,
+   #1047). The Windows path (`%LOCALAPPDATA%\NInferno\converted`) has no such test yet.
 2. **Release notes.** Write `docs/release-notes/v<VERSION>.md` and merge it.
 3. **Tag.** Push the tag: `git tag -a v<VERSION> -m "NInferno <VERSION>" && git push origin v<VERSION>`.
    Everything below is built from a checkout of that tag.
