@@ -578,11 +578,16 @@ bool answered_before_tuner(const Problem& problem, const Weight& weight, std::in
     const Ask asked = nvfp4_promoted(ask_below_profiles(tokens, prefill), problem, weight);
     // auto_answer's order: the half-L2 rule, then the table, then the tuner's entry.
     if (nvfp4_half_l2(asked, problem, weight)) return true;
-    // The MMQ verify rule is measured end to end at rounds of several sequences, where an isolated
-    // timing favours the register MMA; the dispatch reads the tuner's entry before the rule and the
-    // entry has no lanes key, so a width the rule holds for such a round stays untimed whatever the
-    // lanes of the call that tunes (none outside a round, ops::round_lanes).
-    if (mmq_verify_rule(weight, problem.policy, problem.n, tokens, kSeveralLanes)) return true;
+    // With a native BF16 MMA the MMQ verify rule is measured end to end at rounds of several
+    // sequences, where an isolated timing favours the register MMA; the dispatch reads the tuner's
+    // entry before the rule and the entry has no lanes key, so a width the rule holds for such a
+    // round stays untimed whatever the lanes of the call that tunes (none outside a round,
+    // ops::round_lanes). A round of one sequence then loses the tuning of those widths. Where the
+    // MMA is emulated (Turing) the rule reads no lanes and the tuner times against it (replaceable).
+    if (bf16_mma_native() &&
+        mmq_verify_rule(weight, problem.policy, problem.n, tokens, kSeveralLanes)) {
+        return true;
+    }
     const auto table = route_table_entry(asked, problem, weight);
     if (!table) return false;
     return !policy_demotes(asked.policy, table->evidence.kind) || ranked.family == Family::Scalar ||
