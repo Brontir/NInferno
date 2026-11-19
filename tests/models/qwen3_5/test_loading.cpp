@@ -212,8 +212,14 @@ void logical_data_and_instances() {
         require(text != extra.bindings.end(), "the fixture binds a text weight");
         const auto copy = text->second;
         extra.bindings.emplace("text/unused_extra", copy);
-        rejects([&] { (void)qwen::describe_model(extra, {}, 265); },
-                "the directory-only binding accepted a text binding the model never binds");
+        std::string refused;
+        try {
+            (void)qwen::describe_model(extra, {}, 265);
+        } catch (const artifact::ArtifactError& e) { refused = e.what(); }
+        require(refused.find("never binds") != std::string::npos &&
+                    refused.find("text/unused_extra") != std::string::npos,
+                "the directory-only binding accepted a text binding the model never binds (" +
+                    refused + ")");
     }
     {
         // --plan's facts of the artifact file, the queries registered as ninferno-serve registers
