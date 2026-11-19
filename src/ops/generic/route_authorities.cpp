@@ -200,8 +200,11 @@ std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& prob
     e.ranker   = Evidence::Ranker::None;
     e.source   = "route-table";
     e.distance = hit->distance;
-    e.kind     = table_evidence_kind(!hit->lender.empty(), hit->distance);
-    if (e.kind == Evidence::Kind::Borrowed) {
+    e.kind     = hit->predicted ? Evidence::Kind::Predicted
+                                : table_evidence_kind(!hit->lender.empty(), hit->distance);
+    if (e.kind == Evidence::Kind::Predicted) {
+        e.donor = "route-pick";
+    } else if (e.kind == Evidence::Kind::Borrowed) {
         e.donor    = hit->lender;
         e.distance = hit->lender_distance;
     } else if (e.kind != Evidence::Kind::Measured) {

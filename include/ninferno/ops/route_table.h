@@ -65,6 +65,13 @@ struct RouteTableStatus {
     // fingerprint (runtime/engine/decision_fingerprint.h) names the route data by.
     std::string content_sha256;
     std::string lender_sha256;
+    // The analyzer's predicted bands (routes/pick/<class>.json, written by
+    // tools/route_pick/gen.py): read only where the nearest measured table is past
+    // measured::kCarryDistance, whose answers would be Transferred. Their answers are Predicted
+    // (route_authorities.h). Empty path: none read.
+    std::size_t predicted_entries = 0;
+    std::string predicted_path; // UTF-8
+    std::string predicted_sha256;
     std::string message;              // why nothing is loaded, or what was loaded
 };
 

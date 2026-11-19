@@ -90,6 +90,8 @@ struct Table {
     std::unordered_set<std::uint64_t> problems;                           // every entry's key
     std::unordered_map<std::uint64_t, RouteEntry> generic;                // bands / prefill
     std::unordered_map<std::uint64_t, std::vector<RouteAsBand>> route_as; // shape-owned tables
+    // The analyzer's predicted bands (routes/pick/<class>.json; read_predicted), per problem.
+    std::unordered_map<std::uint64_t, std::vector<RouteBand>> predicted;
     RouteTableStatus status;
     // The board it was measured on (gpu.pci_id's registry row, else gpu.board), when recorded.
     std::optional<Board> board;
@@ -373,6 +375,71 @@ std::shared_ptr<Table> parse_table(const std::string& path) {
     return table;
 }
 
+// The widths an overlay band may hold: the T 9-16 calls the analyzer's pick was scored on (the
+// left-out cards' decode and verify widths, tools/route_pick/README.md).
+constexpr std::int32_t kPredictedMinTokens = 9;
+constexpr std::int32_t kPredictedMaxTokens = 16;
+
+// A ninferno-route-pick/1 file (tools/route_pick/gen.py) into `table.predicted`: its class must
+// be this device's own (gpu.class), each entry an A16 problem of the generic path with bands inside
+// T 9-16 only (no prefill route, no claim, no route_as), routes this build names. A refused file
+// is an error: it is this device's own file.
+void read_predicted(const std::string& path, Table& table) {
+    std::ifstream in(path_from_utf8(path), std::ios::binary);
+    if (!in) throw std::runtime_error("route pick: cannot open " + path);
+    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (in.bad()) throw std::runtime_error("route pick: cannot read " + path);
+    try {
+        const Json root = Json::parse(bytes);
+        if (!root.is_object() || root.value("schema", std::string{}) != "ninferno-route-pick/1") {
+            throw std::runtime_error("route pick: " + path + " is not ninferno-route-pick/1");
+        }
+        const std::string cls = root.at("gpu").at("class").get<std::string>();
+        if (cls != route_gpu_class()) {
+            throw std::runtime_error("route pick: " + path + " is for " + cls +
+                                     ", this device is " + route_gpu_class());
+        }
+        std::size_t entries = 0;
+        for (const Json& e : root.at("entries")) {
+            const std::string where = path + " entry " + e.dump();
+            const auto q            = parse_qtype(e.at("format").get<std::string>());
+            const auto compute      = parse_compute(e.at("compute").get<std::string>());
+            const auto epi          = parse_epilogue(e.value("epilogue", std::string("store")));
+            const auto n            = e.at("n").get<std::int32_t>();
+            const auto k            = e.at("k").get<std::int32_t>();
+            if (!q || !compute || !epi || n < 1 || k < 1) refuse("a bad key", where);
+            if (*compute != RouteCompute::A16) refuse("a predicted entry that is not a16", where);
+            if (e.contains("prefill") || e.contains("prefill_bands") || e.contains("claim") ||
+                e.contains("route_as")) {
+                refuse("a predicted entry holds bands only", where);
+            }
+            std::vector<RouteBand> bands;
+            for (const Json& b : e.at("bands")) {
+                bands.push_back({b.at(0).get<std::int32_t>(), b.at(1).get<std::int32_t>(),
+                                 require_route(b.at(2), where)});
+            }
+            check_bands(bands, where);
+            for (const RouteBand& b : bands) {
+                if (b.t_min < kPredictedMinTokens || b.t_max > kPredictedMaxTokens) {
+                    refuse("a predicted band outside T " + std::to_string(kPredictedMinTokens) +
+                               "-" + std::to_string(kPredictedMaxTokens),
+                           where);
+                }
+            }
+            if (!table.predicted.emplace(key_of(*q, *compute, *epi, n, k), std::move(bands))
+                     .second) {
+                refuse("a duplicate problem", where);
+            }
+            ++entries;
+        }
+        table.status.predicted_entries = entries;
+        table.status.predicted_path    = path;
+        table.status.predicted_sha256  = sha256_hex(std::string_view(bytes));
+    } catch (const nlohmann::json::exception& e) {
+        throw std::runtime_error("route pick: " + path + ": " + e.what());
+    }
+}
+
 std::string summary(const RouteTableStatus& s) {
     return std::to_string(s.entries) + " problems (" + std::to_string(s.generic_entries) +
            " generic-path, " + std::to_string(s.route_as_entries) + " route_as) from " + s.path;
@@ -562,7 +629,8 @@ DeviceTables& here() {
 void publish_locked(DeviceTables& d, std::shared_ptr<const Table> table) {
     d.table = std::move(table);
     d.has_route_as.store(d.table && !d.table->route_as.empty(), std::memory_order_release);
-    d.has_generic.store(d.table && !d.table->generic.empty(), std::memory_order_release);
+    d.has_generic.store(d.table && (!d.table->generic.empty() || !d.table->predicted.empty()),
+                        std::memory_order_release);
     d.has_moe.store(d.table && !d.table->moe.empty(), std::memory_order_release);
     d.settled.store(true, std::memory_order_release);
 }
@@ -573,17 +641,23 @@ RouteTableStatus publish_loaded_locked(DeviceTables& d, std::shared_ptr<Table> t
     const bool elsewhere = std::find(own.begin(), own.end(), key) == own.end();
     table->distance       = table_distance(*table);
     table->status.loaded  = true;
-    table->status.message = "loaded " + summary(table->status) +
-                            (elsewhere ? " (measured on " + key + ", the nearest measured board; " +
-                                             "this device is " + route_gpu_class() + ")"
-                                       : "") +
-                            (table->status.borrowed_from.empty()
-                                 ? ""
-                                 : "; " + std::to_string(table->status.borrowed_entries) +
-                                       " problems and " +
-                                       std::to_string(table->status.borrowed_moe_layers) +
-                                       " MoE layers it lacks from the next nearest (" +
-                                       table->status.borrowed_from + ")");
+    table->status.message =
+        "loaded " + summary(table->status) +
+        (elsewhere ? " (measured on " + key + ", the nearest measured board; " + "this device is " +
+                         route_gpu_class() + ")"
+                   : "") +
+        (table->status.borrowed_from.empty()
+             ? ""
+             : "; " + std::to_string(table->status.borrowed_entries) + " problems and " +
+                   std::to_string(table->status.borrowed_moe_layers) +
+                   " MoE layers it lacks from the next nearest (" + table->status.borrowed_from +
+                   ")") +
+        (table->status.predicted_path.empty()
+             ? ""
+             : "; " + std::to_string(table->status.predicted_entries) + " problems' T " +
+                   std::to_string(kPredictedMinTokens) + "-" + std::to_string(kPredictedMaxTokens) +
+                   " bands predicted from this board's facts (" + table->status.predicted_path +
+                   ")");
     const RouteTableStatus status = table->status;
     publish_locked(d, std::move(table));
     return status;
@@ -623,6 +697,17 @@ void ensure_default_locked(DeviceTables& d) {
                 auto nearest = std::move(tables.front());
                 tables.erase(tables.begin());
                 fill_from(*nearest, tables);
+                // No table measured within kCarryDistance (every answer would be Transferred or
+                // Borrowed, demoted to the ranker): the analyzer's bands for this board class,
+                // where tools/route_pick wrote them (routes/pick/<class>.json).
+                if (table_distance(*nearest) > measured::kCarryDistance) {
+                    const auto pick = path_from_utf8(dir) / "pick" /
+                                      path_from_utf8(route_table_file_name(route_gpu_class()));
+                    std::error_code missing;
+                    if (std::filesystem::is_regular_file(pick, missing)) {
+                        read_predicted(utf8_path(pick), *nearest);
+                    }
+                }
                 (void)publish_loaded_locked(d, std::move(nearest));
             }
         }
@@ -754,6 +839,12 @@ std::vector<std::int32_t> route_table_breakpoints(std::int32_t from) {
             add(static_cast<std::int64_t>(band.t_max) + 1);
         }
         for (const RouteBand& band : entry.prefill_bands) {
+            add(band.t_min);
+            add(static_cast<std::int64_t>(band.t_max) + 1);
+        }
+    }
+    for (const auto& bands : table->predicted | std::views::values) {
+        for (const RouteBand& band : bands) {
             add(band.t_min);
             add(static_cast<std::int64_t>(band.t_max) + 1);
         }
@@ -904,6 +995,21 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
     const auto table = active_table(d);
     if (!table) return std::nullopt;
     const auto compute = compute_class(problem.qtype, problem.policy);
+    // The analyzer's predicted band, where the overlay holds one for this problem and width (its
+    // bands lie inside T 9-16, below every prefill band): ahead of the nearest table's entry,
+    // which is Transferred or Borrowed wherever an overlay was read.
+    if (!(prefill && tokens >= kPrefillMinTokens)) {
+        const auto p = table->predicted.find(
+            key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
+        if (p != table->predicted.end()) {
+            for (const auto& band : p->second) {
+                if (tokens >= band.t_min && tokens <= band.t_max) {
+                    return TableAnswer{band.route, table->distance, table->status.gpu_class, {}, 0,
+                                       true};
+                }
+            }
+        }
+    }
     auto it =
         table->generic.find(key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
     // fp8_e4m3fn_row_f32 (an FP8 checkpoint's binary32 row scales, kept as published) runs the
@@ -953,7 +1059,8 @@ bool table_claims(const Problem& problem, std::int32_t tokens, bool prefill) {
         table->generic.find(key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
     if (it == table->generic.end() || !it->second.claim) return false;
     const auto answer = table_route_answer(problem, tokens, prefill);
-    if (!answer) return false;
+    // A predicted band never claims: it was not compared with the shape's own kernel anywhere.
+    if (!answer || answer->predicted) return false;
     // --route-policy evidence (#614 F1): a claim measured on another board (a Transferred nearest
     // table; a Borrowed entry, which fill_from never lets claim) does not move the call off its
     // shape's own kernel. Its route was compared with that kernel on the other board only, and
@@ -966,6 +1073,7 @@ bool table_claims(const Problem& problem, std::int32_t tokens, bool prefill) {
 bool table_route_kept(const Problem& problem, std::int32_t tokens, bool prefill, Route ranked) {
     const auto answer = table_route_answer(problem, tokens, prefill);
     if (!answer) return false;
+    if (answer->predicted) return true; // Predicted is never demoted
     return !policy_demotes(route_policy(),
                            table_evidence_kind(!answer->lender.empty(), answer->distance)) ||
            keeps_mmq_boundary(answer->route, ranked, tokens);

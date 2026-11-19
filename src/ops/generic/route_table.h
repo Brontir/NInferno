@@ -71,6 +71,9 @@ struct TableAnswer {
     std::string gpu_class;
     std::string lender;
     double lender_distance = 0;
+    // A band of the analyzer's predicted overlay (RouteTableStatus::predicted_path), not a
+    // measured table's: its evidence kind is Predicted.
+    bool predicted = false;
 };
 
 [[nodiscard]] std::optional<TableAnswer> table_route_answer(const Problem& problem,

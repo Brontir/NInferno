@@ -139,9 +139,13 @@ void check_words() {
         const char* word;
     };
 
-    constexpr Word words[] = {
-        {K::Pin, "pin"},         {K::Measured, "measured"},       {K::Ranker, "ranker"},
-        {K::Carried, "carried"}, {K::Transferred, "transferred"}, {K::Borrowed, "borrowed"}};
+    constexpr Word words[] = {{K::Pin, "pin"},
+                              {K::Measured, "measured"},
+                              {K::Ranker, "ranker"},
+                              {K::Carried, "carried"},
+                              {K::Transferred, "transferred"},
+                              {K::Borrowed, "borrowed"},
+                              {K::Predicted, "predicted"}};
     std::set<std::string> distinct;
     for (const Word& w : words) {
         distinct.insert(w.word);

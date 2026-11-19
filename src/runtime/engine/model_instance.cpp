@@ -171,7 +171,11 @@ std::string warm_up_key_text(const EngineOptions& probe, std::uint32_t round_tok
     line("warm_up.widths", list);
     const ops::RouteTableStatus routes = ops::route_table_status();
     line("sources.route_table",
-         routes.loaded ? routes.content_sha256 + " + " + routes.lender_sha256 : "none");
+         routes.loaded
+             ? routes.content_sha256 + " + " + routes.lender_sha256 +
+                   (routes.predicted_sha256.empty() ? std::string()
+                                                    : " + pick " + routes.predicted_sha256)
+             : "none");
     add("sources", ops::detail::generic::dense_tune_sources());
     return text;
 }
