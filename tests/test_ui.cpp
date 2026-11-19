@@ -1104,6 +1104,55 @@ void test_artifact_plan_via_serve() {
                                            "auto",
                                            "gpu=0"};
     check(argv == want, "serve plans the ask a start passes, on the GPU asked for");
+    // #891 item 2: the other flags of the ask. int8 KV without exact precision, fast activations
+    // and no speculation pass as asked; an ask that pins neither the KV nor the activations
+    // passes neither flag (serve decides them as a start does).
+    const auto args_of = [&] {
+        std::ifstream file(args);
+        std::vector<std::string> out;
+        for (std::string line; std::getline(file, line);) { out.push_back(line); }
+        return out;
+    };
+    fs::remove(args); // a stale file would read as this call's
+    std::tie(status, body) = plan(root / "serve-plan", "&kv=int8&act=fast&spec=none");
+    const std::vector<std::string> pinned = {artifact.string(),
+                                             "--plan",
+                                             "--no-load",
+                                             "--plan-idle",
+                                             "--json",
+                                             "--log-level",
+                                             "critical",
+                                             "--max-concurrency",
+                                             "2",
+                                             "--max-context",
+                                             "8192",
+                                             "--kv-dtype",
+                                             "int8",
+                                             "--activations",
+                                             "fast",
+                                             "--spec",
+                                             "none",
+                                             "gpu=0"};
+    check(status == 200 && args_of() == pinned,
+          "kv=int8, act=fast and spec=none reach serve as asked: " + body);
+    fs::remove(args); // a stale file would read as this call's
+    std::tie(status, body)                  = plan(root / "serve-plan", "&kv=auto&act=auto");
+    const std::vector<std::string> unpinned = {artifact.string(),
+                                               "--plan",
+                                               "--no-load",
+                                               "--plan-idle",
+                                               "--json",
+                                               "--log-level",
+                                               "critical",
+                                               "--max-concurrency",
+                                               "2",
+                                               "--max-context",
+                                               "8192",
+                                               "--spec",
+                                               "auto",
+                                               "gpu=0"};
+    check(status == 200 && args_of() == unpinned,
+          "an ask that pins neither the KV nor the activations passes neither flag: " + body);
 
     // serve refuses: its refusal is the answer, with its last line, never the formula's plan.
     std::tie(status, body) = plan(root / "serve-refuses", "");
