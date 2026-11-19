@@ -20,6 +20,7 @@
 #include <iostream>
 #include <iterator>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -372,10 +373,10 @@ void sections_read() {
     // MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts, the
     // r8 one (#613 PR-10): the R8 law reads the one-slot ring's, and the w4a8 one (#787): its
     // int8 MMA is a call to the dp4a emulation, counted as the MMA it stands for, and the vec one
-    // (#763): the vector kernels' launch reads their CTAs per SM from it. The routed-expert
-    // families (moer8, moegemm, #619 step 11) are not in it: the MoE law reads the boards it was
-    // measured on (Turing and newer), and sm_100 has none yet (six of its W4a8Nvfp4 GateUp rows
-    // read as unknown flow; no lab board is an sm_100 part).
+    // (#763): a substituted board's vector-kernel launch reads its CTAs per SM from it. The
+    // routed-expert families (moer8, moegemm, #619 step 11) are not in it: the MoE law reads the
+    // boards it was measured on (Turing and newer), and sm_100 has none yet (six of its W4a8Nvfp4
+    // GateUp rows read as unknown flow; no lab board is an sm_100 part).
     constexpr std::string_view kWithoutSections[] = {"70"};
     constexpr std::string_view kWithoutMoe[]      = {"70", "100"};
     int with_sections                             = 0;
@@ -624,6 +625,45 @@ void old_columns_refused() {
 
 } // namespace
 
+// The vector kernels' rows through vec_facts (#1033): every arch has one row per launchable
+// instance (18 formats x 8 token counts x 6 forms, 4 ungated K and 2 gated, plus the 18 bounded
+// twins at T 4, the runtime K, ungated: 882), and each row of the section, looked up by its key's
+// fields through VecKernelKey, gives that row's resources. A swapped field in vec_facts' key, or a
+// form the snapshot lacks, fails here and not at describe time.
+void vec_rows_look_up() {
+    constexpr std::size_t kVecInstances = 18 * 8 * 6 + 18;
+    for (const auto arch : kf::snapshot_archs()) {
+        const std::string name = "sm_" + std::string(arch);
+        const auto rows        = kf::section_rows(arch, "vec");
+        expect(rows.size() == kVecInstances, name + " vec: " + std::to_string(rows.size()) +
+                                                 " rows, " + std::to_string(kVecInstances) +
+                                                 " launchable instances");
+        int looked = 0, twins = 0;
+        for (const auto& [key, f] : rows) {
+            std::istringstream in(key);
+            int type = -1, t = -1, ks = -1, gated = -1, bounded = -1;
+            in >> type >> t >> ks >> gated >> bounded;
+            if (!in || (gated != 0 && gated != 1) || (bounded != 0 && bounded != 1)) {
+                fail(name + " vec: the key \"" + key + "\" is not type T KS gated bounded");
+                continue;
+            }
+            expect(ks == 0 || ks == 5120 || ks == 6144 || ks == 17408,
+                   name + " vec " + key + ": a static K no instance has");
+            expect(bounded == 0 || (t == 4 && ks == 0 && gated == 0),
+                   name + " vec " + key + ": a bounded twin no launch takes");
+            twins += bounded;
+            const auto found = kf::vec_facts(arch, {type, t, ks, gated == 1, bounded == 1});
+            expect(found && found->registers == f.registers &&
+                       found->static_shared_bytes == f.static_shared_bytes &&
+                       found->spill_bytes() == f.spill_bytes(),
+                   name + " vec " + key + ": vec_facts gives another row");
+            ++looked;
+        }
+        expect(twins == 18, name + " vec: " + std::to_string(twins) + " bounded twins, not 18");
+        std::cout << name << " vec: " << looked << " rows looked up by key\n";
+    }
+}
+
 int main() {
     try {
         snapshots_parse();
@@ -632,6 +672,7 @@ int main() {
         loop_counts_read();
         schedules_read();
         sections_read();
+        vec_rows_look_up();
         section_wait_columns();
         old_columns_refused();
         occupancy_from_facts();
