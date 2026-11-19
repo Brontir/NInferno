@@ -104,7 +104,8 @@ The guard is a text scan, and the list is not every literal comparison in `gener
 - the format membership of the measured rules: `heuristic_w4a8: 65..127 formats` holds the
   `tokens < kW4a8WideMinTokens` edge, not the `wide_format` switch in `generic_select.cpp` that says
   which formats take the wider tile. The format sets of the measured per-format rules
-  (`light_step`, `tall_tile`, `mmq_verify`, `w4a8_ws_tuned`, `r8_verify`) are not this record's:
+  (`light_step`, `tall_tile`, `mmq_verify`, `w4a8_ws_tuned`, `r8_verify`, `vec_cap_ga10x_gb20x`) are
+  not this record's:
   they are `format_rules.h`'s rows (below), held by `ninferno_format_rules_test` and
   `ninferno_format_traits_test`;
 - the bare kernel counts of the cost model in `generic_cost.cpp` (the 384, 128 and 256 threads a
@@ -212,7 +213,8 @@ SMs). The history before the 0.1.0 squash is not in the repository.
 The measured per-format rules of the selection are rows of `src/ops/generic/format_rules.h`
 (#615 F6): `light_step` (`light_ggml_step`), `tall_tile` (`tall_tile_format`), `mmq_verify`
 (`mmq_verify_format`), `w4a8_ws_tuned` (`w4a8_ws_extra`'s formats), `r8_verify`
-(`r8_verify_supports`), and the two thresholds `kR8VerifyQ40MinValues` and `kMmqVerifyMinTokens`,
+(`r8_verify_supports`), `vec_cap_ga10x_gb20x` (the formats whose vector band stops at three tokens
+on GA10x and consumer Blackwell), and the two thresholds `kR8VerifyQ40MinValues` and `kMmqVerifyMinTokens`,
 which are defined there. The code reads the rows (`format_rules::holds`) and the two constants;
 nothing else holds these format sets. A rule has one row per group of formats whose evidence
 differs, each with its formats, a basis, the boards and cards, an evidence tag, the source and a

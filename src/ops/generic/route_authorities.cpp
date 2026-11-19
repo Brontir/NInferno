@@ -263,7 +263,7 @@ std::optional<RouteAnswer> w4a4_rule(const Ask& ask, const Problem& problem, con
     return std::nullopt;
 }
 
-// ggml's vector kernel for speculative verify (2..4 tokens; 2..3 for some formats on GA10x and
+// ggml's vector kernel for speculative verify (2..4 tokens; 2..3 for the K-quants on GA10x and
 // consumer Blackwell, vec_rule_max_tokens) of the ggml block formats it decodes (vec_rule). It
 // streams each weight row once for every token of the call and runs the epilogue in place: on the
 // RTX 5090 ISTA IQ3_S MTP3 it beat the R8 and A16 schedules the dense tuner picked there (C1 166 ->
