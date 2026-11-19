@@ -577,8 +577,8 @@ bool answered_before_tuner(const Problem& problem, const Weight& weight, std::in
     if (nvfp4_half_l2(asked, problem, weight)) return true;
     const auto table = route_table_entry(asked, problem, weight);
     if (!table) return false;
-    return !policy_demotes(asked.policy, table->evidence.kind) ||
-           ranked.family == Family::Scalar || keeps_mmq_boundary(table->route, ranked, tokens);
+    return !policy_demotes(asked.policy, table->evidence.kind) || ranked.family == Family::Scalar ||
+           keeps_mmq_boundary(table->route, ranked, tokens);
 }
 
 RouteAnswer ranker_answer(const Ask& ask, const Problem& problem, const Weight& weight) {

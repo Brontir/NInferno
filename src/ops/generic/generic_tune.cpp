@@ -247,13 +247,14 @@ std::string save_cache_locked() {
 bool replaceable(Route r, std::int32_t k, std::int32_t tokens);
 
 // Whether the tuner times decode width t of the problem: a replaceable heuristic route, no answer
-// the dispatch takes before the tuner's entry (answered_before_tuner: a table answer the route-table
-// authority gives and the policy keeps; #808: a demoted one is timed; #1018: none for a call the
-// tables stand aside for, an R8 or vector-rule width) and no Volta rule that routes the width
-// before any tuned route.
+// the dispatch takes before the tuner's entry (answered_before_tuner: a table answer the
+// route-table authority gives and the policy keeps; #808: a demoted one is timed; #1018: none for a
+// call the tables stand aside for, an R8 or vector-rule width) and no Volta rule that routes the
+// width before any tuned route.
 bool timed_width(const Problem& problem, const Weight& weight, std::int32_t t) {
     const Route base = heuristic_route(problem, weight, t, false);
-    return replaceable(base, weight.k, t) && !answered_before_tuner(problem, weight, t, false, base) &&
+    return replaceable(base, weight.k, t) &&
+           !answered_before_tuner(problem, weight, t, false, base) &&
            !volta_fixed_route(problem, weight, t);
 }
 
@@ -500,7 +501,8 @@ void time_prefill_bands_guarded(const Problem& problem, const Call& model_call, 
 // keeps it; select_route never takes one for W4A8; #808: a demoted answer is timed), and a
 // candidate beside the base.
 bool timed_band(const Problem& problem, const Weight& weight, std::int32_t t, Route base) {
-    if (base.family != Family::W4a8Mma && answered_before_tuner(problem, weight, t, true, base)) return false;
+    if (base.family != Family::W4a8Mma && answered_before_tuner(problem, weight, t, true, base))
+        return false;
     // NVFP4 prefill takes its own invariant routes (A16) or W4A4 before any band, but for W4A8: the
     // A8 prefill of a weight W4A4 does not take (every NVFP4 weight without the native NVFP4
     // kernels; with them, a policy that allows A8 but not A4). Only those bands are timed.
@@ -689,7 +691,8 @@ bool read_prefill_bands(const Problem& problem, const Weight& weight, const Json
             const auto us     = entry.find("prefill_us");
             const bool has_us = us != entry.end() && us->is_object() && us->contains(name);
             if (writable && !has_us && base.family != Family::W4a8Mma &&
-                table_route(problem, t, true) && !answered_before_tuner(problem, weight, t, true, base) &&
+                table_route(problem, t, true) &&
+                !answered_before_tuner(problem, weight, t, true, base) &&
                 timed_band(problem, weight, t, base)) {
                 return false;
             }
