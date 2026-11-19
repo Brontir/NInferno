@@ -252,7 +252,7 @@ struct I8KernelKey {
 struct VecKernelKey {
     int type     = 0; // the ggml_type value
     int T        = 0; // the tokens the instance is compiled for
-    int KS       = 0; // the K split
+    int KS       = 0; // the static K the slice loop unrolls over, 0 for the runtime K
     bool gated   = false;
     bool bounded = false; // the __launch_bounds__ twin
 };

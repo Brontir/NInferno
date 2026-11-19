@@ -283,7 +283,7 @@ VEC_NAMESPACE = "ninferno::ops::ggml_mmq::detail::(anonymousnamespace)::"
 def vec_key(demangled):
     """The key of a vector kernel instance (src/ops/generic/ggml_mmq/ggml_vec.cu, #763):
     vec_kernel<type, T, KS, Gated, Bounded> in the file's anonymous namespace, keyed as the
-    ggml_type value, the tokens T, the K split KS and the Gated and Bounded flags. None for other
+    ggml_type value, the tokens T, the static K KS (0: the runtime K) and the Gated and Bounded flags. None for other
     symbols."""
     unnamed = demangled.replace("(anonymous namespace)", "(anonymousnamespace)")
     args = template_args(unnamed.replace("<unnamed>", "(anonymousnamespace)"),
@@ -1007,9 +1007,10 @@ SECTION_NOTES = {
     ),
     "vec": (
         "# ggml's vector kernels (src/ops/generic/ggml_mmq/ggml_vec.cu, #763): vec_kernel<type, T,",
-        "# KS, Gated, Bounded>, keyed as the ggml_type value, the tokens, the K split and the two",
-        "# flags. Resources alone: the launch reads the CTAs an SM holds (core/kernel_occupancy.h)",
-        "# and a bounded twin's local bytes, never the host's kernels.",
+        "# KS, Gated, Bounded>, keyed as the ggml_type value, the tokens, the static K the slice loop",
+        "# unrolls over (0: the runtime K) and the two flags. Resources alone: the launch reads the",
+        "# CTAs an SM holds (core/kernel_occupancy.h) and a bounded twin's local bytes, never the",
+        "# host's kernels.",
     ),
 }
 
