@@ -1138,6 +1138,17 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             for (std::size_t index = 0; index < served.rungs.size(); ++index) {
                 out.ladder.push_back(rung_summary(index, cost));
             }
+            // The chosen rung's prefill arena as its planner lays it out (#940): the loaded --plan
+            // starts no Program, so the regions are the planner's, which the start would keep.
+            try {
+                const models::qwen3_5::SequencePlanner planner =
+                    planner_at(served, served.rungs.at(chosen.rung), false);
+                for (const WorkspaceRegion& r : planner.text_prefill_regions()) {
+                    out.workspace_regions.push_back(
+                        {.op = r.op, .offset = r.offset, .bytes = r.bytes, .scratch = r.scratch});
+                }
+            } catch (const std::invalid_argument&) { // a rung its family refuses: no regions
+            }
         }
         return out;
     };
