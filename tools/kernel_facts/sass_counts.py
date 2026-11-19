@@ -161,8 +161,9 @@ PIPE_FIELDS = tuple(PIPE_OPCODES)
 # counts: a wait on a scoreboard a global load (LDG, LD) set since its last wait, and a wait on
 # one a shared load (LDS, LDSM) set where no global load is pending on the scoreboards it waits
 # on; the iteration walked twice as for sb_waits_local. Recorded for the chain law's overlap form
-# (#973, v2 a): the counted unit today (src/ops/generic/mmq_unit.cpp) reads neither, its load phase
-# pricing one dram_latency.w1 whatever the count.
+# (#973, v2 a): the counted unit today (src/ops/generic/mmq_unit.cpp) reads sb_waits_shared (its
+# chain, at the shared latency) but not sb_waits_global: its load phase prices one dram_latency.w1
+# whatever that count.
 WAIT_FIELDS = ("sb_waits_global", "sb_waits_shared")
 # The mmq and w4a8 sections' columns after the schedule (Family.pipes and Family.waits).
 SECTION_FIELDS = PIPE_FIELDS + WAIT_FIELDS
