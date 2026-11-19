@@ -1586,8 +1586,8 @@ int test_argument_key_order() {
     return failures;
 }
 
-// The tiny BPE of support/tiny_hf_tokenizer.h: "a"+"b" merge, one special added token, byte-fallback
-// decoding.
+// The tiny BPE of support/tiny_hf_tokenizer.h: "a"+"b" merge, one special added token,
+// byte-fallback decoding.
 int test_codec() {
     int failures = 0;
     const ninferno::text::HfTokenCodec codec(kTinyHfTokenizer, "", R"({"eos_token_id": 9})");
