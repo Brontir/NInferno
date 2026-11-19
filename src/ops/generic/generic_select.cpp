@@ -304,6 +304,10 @@ bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, st
     if (!bf16_mma_native())
         return mmq_call(w, policy, rows, tokens) &&
                (tokens >= kMmqVerifyMinTokens || mmq_verify_format(w.qtype));
+    // LAB ONLY (lab/mmqv-ab, never merged): NINFERNO_LAB_NO_MMQ_VERIFY=1 turns the native rule off
+    // for the end-to-end A/B of #1028.
+    static const bool lab_off = std::getenv("NINFERNO_LAB_NO_MMQ_VERIFY") != nullptr;
+    if (lab_off) return false;
     return mmq_call(w, policy, rows, tokens) && tokens >= kMmqVerifyMinTokens && lanes != 1 &&
            mmq_verify_format(w.qtype);
 }
