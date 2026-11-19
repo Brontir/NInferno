@@ -2469,8 +2469,8 @@ int main() {
     // The min-term formats' register MMA in the prefill profile sums one way at every width (the
     // group-sums plane where the device's facts admit it, #619, else the MMA with ones), so a call
     // below 17 tokens (a whole segment that short: prefill_call_end and ungridded_call_tokens leave
-    // no last chunk of 1..16) gives a token the wide call's bytes on every admitted route, except on
-    // Volta (below); outside the profiles each route still gives a token the same bytes at every
+    // no last chunk of 1..16) gives a token the wide call's bytes on every admitted route, except
+    // on Volta (below); outside the profiles each route still gives a token the same bytes at every
     // call size and start in each width band (the MMA with ones, or the adds in a tile of four or
     // more token tiles, rmma_add_sums), as route_is_token_invariant claims.
     const auto min_term = [](const Format& f) {
