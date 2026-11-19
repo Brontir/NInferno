@@ -269,7 +269,7 @@ bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     // LAB ONLY (lab/mmqv-ab, never merged): NINFERNO_LAB_NO_VEC_RULE=1 turns the vector-kernel
     // rule off, for the end-to-end A/B of its T 2..4 calls without speculation.
     static const bool lab_no_vec = std::getenv("NINFERNO_LAB_NO_VEC_RULE") != nullptr;
-    if (lab_no_vec) return false;
+    if (lab_no_vec || std::getenv("NINFERNO_LAB_RMMA_SMALLT") != nullptr) return false;
     // LAB ONLY (lab/vec-minn): NINFERNO_LAB_VEC_MIN_N=N turns the rule off for weights of fewer
     // than N rows only (#1041: at small n the vec grid fills a fraction of a wave).
     static const int lab_min_n = [] {
@@ -1588,6 +1588,10 @@ R8CallRefusal r8_call_refusal(const Problem& problem, const Weight& w, std::int3
     if (tokens <= kR8DecodeTokens) {
         return r8_fits(w.qtype, w.k, tokens) ? R8CallRefusal::None : R8CallRefusal::DecodeFit;
     }
+    // LAB ONLY (lab/vec-minn): NINFERNO_LAB_RMMA_SMALLT=1 keeps R8 off the verify widths and the
+    // vec rule off (vec_rule), so T 2..4 takes the register MMA (#1038, Turing).
+    static const bool lab_rmma_smallt = std::getenv("NINFERNO_LAB_RMMA_SMALLT") != nullptr;
+    if (lab_rmma_smallt) return R8CallRefusal::VerifyWidth;
     if (tokens > r8_verify_widest(w.qtype)) return R8CallRefusal::VerifyWidth;
     // The matrix the call reads: a slice of a fused parent is its own rows, not the parent's.
     return r8_verify_takes_shape(w.qtype, call_weight_rows(problem), w.k)
