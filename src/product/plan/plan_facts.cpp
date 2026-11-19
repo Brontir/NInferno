@@ -1172,7 +1172,10 @@ ArtifactFormats artifact_formats(const artifact::Directory& dir) {
             if (name == "text/output_head") {
                 out.head_format = tensor->format;
                 out.head_elements += piece.end - piece.begin;
-            } else if (name.starts_with("text/") && name.find("/moe/experts/") != std::string::npos) {
+            } else if (name.starts_with("text/") && artifact::routed_expert_layer(name) &&
+                       !name.ends_with("_bias")) {
+                // A routed bank by the artifact's naming of routed experts in every MoE family
+                // (moe/experts, gpt-oss's mlp/experts/<x>; #1059), not its stacked biases.
                 (name.ends_with("/down") ? out.expert_down : out.expert_up).insert(tensor->format);
             } else if (const auto role = artifact_role(name); role != runtime::LinearRole::Other) {
                 out.roles[role][tensor->format] += elements;
