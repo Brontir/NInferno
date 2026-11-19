@@ -16,6 +16,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <optional>
 #include <stdexcept>
 
@@ -261,8 +262,9 @@ bool rmma_plane_keeps() {
 // in its plain and (kRmmaLatencyVariant) latency form, keeps its twin's resources. One answer for
 // all schedules and widths: the prefill profile, the only one that reads the plane, gives a token
 // the same bytes whatever the call's size, so its route tables' tiles must all sum the same way
-// (summation_order), all from the plane or all with the MMA with ones. Read once per device; a
-// read that fails admits none.
+// (summation_order), all from the plane or all with the MMA with ones. Read once per device for
+// each (decoder, epilogue) instance; a read that fails admits none until the process restarts and
+// prints one line on stderr for that instance.
 template <class Decoder, Epilogue E>
 bool rmma_plane_admitted() {
     if constexpr (!kRmmaPlaneVariant<Decoder>) {
@@ -283,7 +285,13 @@ bool rmma_plane_admitted() {
                 NINFERNO_GENERIC_RMMA_SCHEDULES(NINFERNO_GENERIC_CASE)
 #undef NINFERNO_GENERIC_CASE
                 return keeps;
-            } catch (const std::exception&) { return false; }
+            } catch (const std::exception& e) {
+                std::fprintf(stderr,
+                             "ninferno: the group-sums plane is off for this process: its kernel "
+                             "facts could not be read (%s)\n",
+                             e.what());
+                return false;
+            }
         });
     }
 }

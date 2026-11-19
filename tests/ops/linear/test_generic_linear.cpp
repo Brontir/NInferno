@@ -2467,8 +2467,9 @@ int main() {
     }
     // The min-term formats' register MMA in the prefill profile sums one way at every width (the
     // group-sums plane where the device's facts admit it, #619, else the MMA with ones), so a call
-    // below 17 tokens (a prefill's last chunk) gives a token the wide call's bytes on every
-    // admitted route; outside the profiles each route still gives a token the same bytes at every
+    // below 17 tokens (a whole prompt that short: prefill_call_end leaves no last chunk of 1..16)
+    // gives a token the wide call's bytes on every admitted route, except on Volta (below); outside
+    // the profiles each route still gives a token the same bytes at every
     // call size and start in each width band (the MMA with ones, or the adds in a tile of four or
     // more token tiles, rmma_add_sums), as route_is_token_invariant claims.
     const auto min_term = [](const Format& f) {
@@ -2489,14 +2490,20 @@ int main() {
             }
         }
         // Without tensor-core MMA (Volta) the formats of its verify kernels (volta_hmma_codec: the
-        // HMMA kernel and the FP32 GEMV take a call of 1..16 tokens in place of the register
-        // MMA's tiles) keep the profile's promise from 17 tokens only, as prefill_routes.h states;
+        // HMMA kernel takes a call of 1..16 tokens and the FP32 GEMV one of 1..4, volta_gemv_takes,
+        // in place of the register MMA's tiles) keep the profile's promise from 17 tokens only, as prefill_routes.h states;
         // there the windows below 17 are not checked, and every other format keeps them.
-        const WeightCodec codec = f.qtype == QType::GGML_Q4_K   ? WeightCodec::GgmlQ4K
-                                  : f.qtype == QType::GGML_Q5_K ? WeightCodec::GgmlQ5K
-                                  : f.qtype == QType::GGML_Q2_K ? WeightCodec::GgmlQ2K
-                                  : f.qtype == QType::GGML_Q4_1 ? WeightCodec::GgmlQ41
-                                                                : WeightCodec::GgmlQ51;
+        const WeightCodec codec = [&] {
+            switch (f.qtype) {
+            case QType::GGML_Q4_K: return WeightCodec::GgmlQ4K;
+            case QType::GGML_Q5_K: return WeightCodec::GgmlQ5K;
+            case QType::GGML_Q2_K: return WeightCodec::GgmlQ2K;
+            case QType::GGML_Q4_1: return WeightCodec::GgmlQ41;
+            case QType::GGML_Q5_1: return WeightCodec::GgmlQ51;
+            default: break;
+            }
+            throw std::logic_error("min_term lists a format this test maps to no codec");
+        }();
         const bool volta_verify =
             !device_class().features.mma_tensor && generic::volta_hmma_codec(codec);
         const Windows narrow =

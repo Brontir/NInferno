@@ -213,8 +213,12 @@ void host_rules(const std::string& board) {
     // plane where the call's workspace holds it, else the MMA with ones said as a demotion; the
     // plan's capacity holds it.
     const std::string arch = kf::sass_arch().value_or("");
-    check(kf::snapshot_header(kf::build_arch()).has_value(),
-          "this build's architecture has a kernel-facts snapshot");
+    // Without this build's own snapshot (a 121a or 120f build), plane_in_build reads no rows and
+    // every cell below would report a plane mismatch beside this one real failure (#722).
+    if (!kf::snapshot_header(kf::build_arch()).has_value()) {
+        check(false, "this build's architecture has a kernel-facts snapshot");
+        return;
+    }
     void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
     std::string admitted_list;
     for (const QType q : {QType::GGML_Q4_K, QType::GGML_Q5_K, QType::GGML_Q2_K, QType::GGML_Q4_1,
