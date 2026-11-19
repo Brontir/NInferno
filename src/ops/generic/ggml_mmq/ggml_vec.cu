@@ -764,23 +764,27 @@ __launch_bounds__(kVecWarps * 32, Bounded ? kVecBoundedBlocks : 0) __global__
         } else {
             for (int it = 0; lane + 32 * it < slices; ++it) slice(it);
         }
-        // The 2T sums of the row pair (index r * T + j) reduced in one transposed butterfly
-        // (#1044, vec_transpose_reduce): against 5 shuffles a value, and one store a lane, not 2T
-        // inlined predicated ones. The first halving splits the rows: lanes with bit 16 hold r 1.
+        // The 2T sums of the row pair reduced in one transposed butterfly (#1044,
+        // vec_transpose_reduce): against 5 shuffles a value, and one store a lane, not 2T inlined
+        // predicated ones. The gated pair orders them r * T + j, so the first halving splits the
+        // rows (lanes with bit 16 hold r 1, the up sums whose gate is the partner's). The plain
+        // product keeps the token-major order j * 2 + r of the earlier reduction: in the row-major
+        // order ptxas gave Q3_K at T = 2 104 registers, not 96 (sm_86: 4 CTAs a SM, not 5; RTX
+        // 3060 Q3_K_M C2 -2.2 %).
         constexpr int kValues = kRows * T;
         float val[kValues];
 #pragma unroll
         for (int r = 0; r < kRows; ++r) {
 #pragma unroll
-            for (int j = 0; j < T; ++j) val[r * T + j] = acc[r][j];
+            for (int j = 0; j < T; ++j) val[gated ? r * T + j : j * kRows + r] = acc[r][j];
         }
         const float mine = vec_transpose_reduce<kValues>(val, lane);
         constexpr int kH = vec_halvings(kValues);
         constexpr int kN = kValues >> kH;
         const int sel    = lane & ((32 >> kH) - 1);
         const int idx    = (lane >> (5 - kH)) * kN + sel;
-        const int r      = idx / T;
-        const int j      = idx % T;
+        const int r      = gated ? idx / T : idx % kRows;
+        const int j      = gated ? idx % T : idx / kRows;
         const bool owner = sel < kN;
         if constexpr (gated) {
             // The gate (r 0) and up (r 1) sums of column j sit in lanes that differ in bit 16
