@@ -3164,7 +3164,7 @@ requests on 5 against 6 x1.123), measured x1.334 a request. `test_spec_round_cos
 out of their own card: the RTX 3060's Qwen3.5-9B MTP pair predicted x2.138 against x2.242 measured
 (-4.7 %), the RTX 3090's x2.292 against x2.169 (+5.7 %), each picking its card's measured best.
 
-## 96. The vec rule stops at three tokens on GA10x and consumer Blackwell; Ada and Turing keep four (#998, 19.11, measured)
+## 96. The vec rule stops at three tokens on GA10x and consumer Blackwell; Ada keeps four (#998, 19.11, measured)
 
 **The question.** `vec_rule` sends T 2..4 calls of the ggml block formats to ggml's vector kernel
 on every board (`kVecRuleMaxTokens = 4`). In isolated route_tune grids, vec at T 4 lost on Ada in
@@ -3192,7 +3192,8 @@ the cap never lost more than 1.3 % (4090 C1) and gained up to +5.3 % (5090 C1).
 (`ga10x_cc`; not the A100, sm_87 or sm_88, none measured) and on consumer Blackwell (`gb20x_cc`) for
 the K-quants (`format_rules.h` `vec_cap_ga10x_gb20x`: Q4_K on four cards; Q6_K on the RTX 5090, 5070
 Ti and 3060, +7.27 / +4.52 / +15.3 %; Q3_K / Q5_K on the RTX 5070 Ti, +15.7 / +6.74 %, and the RTX
-3060, +0.63 / +10.76 %; Q2_K carried), 4 elsewhere; boards whose vec kernel reaches past eight
+3060, +0.63 / +10.76 %; Q2_K carried), 2 on Turing for the K-quants (decision 97), 4 elsewhere;
+boards whose vec kernel reaches past eight
 columns keep their widest. This is a **measured constant** keyed by generation (`route_rules.h`
 records it, `Basis::Measured`, with the four boards). It is not derived from chip facts: the
 cycles-a-byte column above does not split the boards by itself (the 4060 Ti gains at 0.299 while the
@@ -3202,8 +3203,8 @@ analyzer's next round.
 
 **What moves.** The goldens move only T = 4 ggml_vec rows of the K-quants on the GA10x and GB20x
 boards, to the register MMA: in most rows the T = 5.. range's tile, in 40 of 13,460 keys (a few
-p1 shapes) the T = 1 range's rmma tile. Ada, Turing and Volta keep their
-selections.
+p1 shapes) the T = 1 range's rmma tile. Ada and Volta keep their selections; Turing's
+move in decision 97.
 
 **Not moved: every other format.** The formats R8 verifies (the codebook formats, Q4_0) would send T
 4 to R8 (IQ2 r8.w4r2, IQ3 and large Q4_0 r8.w4r1). The vector rule's first case was one of them: the
@@ -3222,6 +3223,53 @@ register MMA without the activation quantize, a small error on the transferred s
 (RTX 5090 Q6_K +1.7 / +3.6 / +5.5 %) and loses others (RTX 5090 Q4_K_M T 2 -5.9 %, RTX 3090 T 2
 -5.8 %, RTX 4090 -1.0 .. -2.1 %): its edge depends on the board and the format. It needs the
 counted bound above, not another per-generation constant.
+
+## 97. Turing's verify widths: the K-quants keep the register MMA, vec stops at two tokens, four codebook formats take two R8 rows a warp (#1038, 19.11, measured on one card)
+
+**The question.** On Turing (RTX 2080 Ti, sm_75 build) the BF16 MMA is emulated, so R8 takes the
+verify widths (T 2..4) of every compiled format, and vec takes T 2..4 of the ggml block formats
+first. Are those the fastest routes at T 3..4 there?
+
+**Measurement.** route_tune on the RTX 2080 Ti with the vec rule off (`selcheck.sh`), then
+end-to-end A/Bs (Qwen3.5-9B, `--spec off`, 8 alternating starts):
+
+- R8 against the register MMA (rmma n1) at T = 3 / 4: Q4_K 4096x4096 30.7 / 33.3 against 23.2 /
+  23.5 us, Q6_K 12288x4096 126.1 / 150.5 against 87.0 / 88.1, Q3_K 4096x4096 41.9 / 43.8 against
+  23.9 / 24.8. R8's time grows with T; the register MMA's does not.
+- vec at T = 2 and the register MMA at T = 3..4 against vec at T = 2..4, end to end, the branch
+  against master: Q4_K_M C2 +0.08 %, C3 +2.57 %, C4 +3.44 %; Q6_K +0.05 %, +28.5 %, +33.4 % (the lab
+  switches gave Q6_K C2 -2.35 %, a cell both arms run the same: noise). IQ4_XS capped at T = 2:
+  -0.05 / +0.93 / -0.74 % (not moved).
+- R8 one row a warp against two at T = 3 / 4: IQ3_S 12288x4096 83.1 / 93.9 against 67.5 / 72.9 us,
+  IQ3_XXS 4096x4096 30.8 / 34.5 against 25.5 / 27.4, IQ4_XS 24.6 / 27.0 against 24.5 / 25.3, Q4_0
+  12288x4096 60.2 / 68.6 against 57.9 / 59.9; at T = 2 within 1 %.
+
+**Decision.** Three format rules (`format_rules.h`), all keyed on one declared requirement,
+`format_requires::kR8VerifyTuring` (compute capability 7.5 and tensor mma.sync in the build: an
+sm_75 tree on a Turing board; Volta, and an sm_70 tree on a Turing board, were not timed and keep
+their routes):
+
+- `r8_verify_emulated_off`: `r8_verify_takes` refuses R8 at the verify widths for Q3_K, Q4_K,
+  Q6_K (Q5_K carried); the register MMA takes them.
+- `vec_cap_turing`: `kVecRuleMaxTokensTuring = 2` for Q4_K and Q6_K (end to end), Q3_K and Q5_K
+  carried.
+- `r8_verify_two_rows_turing`: `rules_r8` takes r8.w4r2 at T = 3..4 for IQ3_S, IQ3_XXS, IQ4_XS, Q4_0.
+  The shipped picks do not move: vec takes these formats' T 2..4 calls. The rule decides where vec
+  declines a call and in the dense tuner's R8 candidate.
+
+These are **measured rules on one card** (`Evidence::SingleCard`, tu102:68sm), not counted from
+chip facts: a known gap of the deterministic-decisions page until a second Turing card (TU104 / TU106
+or a T4) times them. The R8 rules compare the same compiled code on every sm_75 board with large
+margins (R8 1.3-1.8x behind rmma at T 3-4). The vec cap is the weak part: the vec-against-rmma edge
+split two GA10x cards (cap at T = 2: RTX 3090 C3 -2.0 %, RTX 3060 +1.5 %), so its Q4_K row, and the
+carried Q3_K / Q5_K, may differ on a TU104 / TU106. Q6_K's +28.5 / +33.4 % is not near an edge.
+
+**What moves.** The selector goldens move only the 2080 Ti board's Q3_K..Q6_K rows at T = 3..4,
+from ggml_vec to the register MMA, in every build set: the sm70 set moves too, because its
+substituted boards carry their architecture's features, while a real sm_70 tree on a Turing card
+lacks tensor mma.sync and does not meet `kR8VerifyTuring`. The atlas sets move the Turing
+tensor-core boards (RTX 2060 / 2070 / 2080, TITAN RTX, T4). The V100 boards, the GTX 16 boards
+(slow tensor cores, `mma_slow`) and every other card keep their selections.
 
 ## 98. The vec rule declines a grid under one resident wave on boards with a native BF16 MMA (#1041, 19.11, counted)
 

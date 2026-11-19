@@ -266,11 +266,16 @@ constexpr std::int32_t kVecRuleMaxTokens = 4;
 // formats R8 verifies would send T = 4 to R8, which no A/B here isolated (the vector kernel's own
 // first case was one of them, the IQ3_S verify above), and the others are not measured.
 // Ada keeps four: the RTX 4070 Ti (-2.0 %) and 4090 (-1.4 %) lose with the cap, the 4060 Ti gains
-// 2.5 %. Turing keeps four: a T = 4 call the vector kernel declines falls to R8 at its verify
-// widths, 1.7-2.8x the register MMA there (#1038). The A100 (sm_80) is not measured. The edge in
+// 2.5 %. The A100 (sm_80) is not measured. The edge in
 // T differs by card (capped at T = 2 the RTX 3090 lost 2.0 % at C = 3, the RTX 3060 gained 1.5 %):
 // a counted bound from the cards' integer issue per DRAM byte replaces this (#998).
 constexpr std::int32_t kVecRuleMaxTokensGa10xGb20x = 3;
+// On Turing (an sm_75 build: format_requires::kR8VerifyTuring) it stops at two (#1038) for the
+// K-quants that keep the register MMA at the verify widths (format_rules.h VecCapTuring: Q4_K and
+// Q6_K timed end to end, Q3_K and Q5_K carried). RTX 2080 Ti, Qwen3.5-9B, --spec off, vec
+// at T = 2 and the register MMA at T = 3..4 against vec at T = 2..4 (the branch against master):
+// Q4_K_M C = 2 +0.08 %, C = 3 +2.57 %, C = 4 +3.44 %; Q6_K +0.05 %, +28.5 %, +33.4 %.
+constexpr std::int32_t kVecRuleMaxTokensTuring = 2;
 
 std::int32_t vec_rule_max_tokens(QType qtype) {
     // vec_max_tokens() reaches past eight columns only without tensor mma.sync.
@@ -281,6 +286,10 @@ std::int32_t vec_rule_max_tokens(QType qtype) {
         if ((ga10x_cc(d.major, d.minor) || gb20x_cc(d.major, d.minor)) &&
             format_rules::holds(format_rules::Rule::VecCapGa10xGb20x, qtype)) {
             return kVecRuleMaxTokensGa10xGb20x;
+        }
+        if (format_rules::holds(format_rules::Rule::VecCapTuring, qtype) &&
+            satisfied(format_requires::kR8VerifyTuring, current_arch_facts())) {
+            return kVecRuleMaxTokensTuring;
         }
     } catch (const std::exception&) {}
     return kVecRuleMaxTokens;
@@ -795,7 +804,20 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
     if (p.qtype == QType::Q8_G32_FP16) return r8_index(4, 1);
     // IQ1_S / IQ1_M: grid-lookup decoders of IQ2's weight, scheduled with them (sched_iq2).
     const bool iq2 = format_traits(p.qtype).sched_iq2;
-    if (tokens >= 2) return iq2 && (tokens >= 4 || p.n >= 34816) ? r8_index(4, 2) : r8_index(4, 1);
+    if (tokens >= 2) {
+        // Turing at the verify widths T = 3..4 (#1038): two rows a warp for the formats timed
+        // there (format_rules.h R8VerifyTwoRowsTuring; RTX 2080 Ti, w4r2 13-31 % ahead of w4r1 at
+        // T = 3 / 4, within 1 % at T = 2). An sm_75 board in an sm_75 build only
+        // (format_requires::kR8VerifyTuring): Volta was not timed. The format and the width first,
+        // so the other verify calls query no device. T 3-4 only (r8_verify_widest of these
+        // formats): a dense-tuner or lab R8 candidate at wider T was not timed.
+        if (tokens >= 3 && tokens <= 4 &&
+            format_rules::holds(format_rules::Rule::R8VerifyTwoRowsTuring, p.qtype) &&
+            satisfied(format_requires::kR8VerifyTuring, current_arch_facts())) {
+            return r8_index(4, 2);
+        }
+        return iq2 && (tokens >= 4 || p.n >= 34816) ? r8_index(4, 2) : r8_index(4, 1);
+    }
     // Turing (the RTX 2080 Ti, tu102:68sm, ninferno_r8_schedule_bench on the IQ3 16 GB
     // artifacts' 63 problems: picks +6.25 % above the best schedules in sum) decodes the codebook
     // formats and Q3_K slower per word, and from K = 5120 eight warps of two rows win at every N
@@ -1406,8 +1428,8 @@ bool r8_verify_takes_shape(QType qtype, std::int64_t n, std::int64_t k) {
         n * k >= kR8VerifyQ40MinValues) {
         return r8_verify_takes(qtype);
     }
-    // A small Q4_0 matrix keeps the A16 register MMA where it is native (Turing: R8, as for
-    // every compiled format).
+    // A small Q4_0 matrix keeps the A16 register MMA where it is native; where it is emulated
+    // (Turing, Volta) R8 takes it, Q4_0 not being a format R8VerifyEmulatedOff leaves.
     try {
         return !device_class().features.mma_bf16_native && r8_verify_compiled(qtype);
     } catch (const std::exception&) { return false; }
@@ -1424,7 +1446,13 @@ bool bf16_mma_native() {
 bool r8_verify_takes(QType qtype) {
     if (r8_verify_supports(qtype)) return true;
     try {
-        return !device_class().features.mma_bf16_native && r8_verify_compiled(qtype);
+        // Where the BF16 MMA is emulated R8 takes the verify widths of every compiled format; on
+        // Turing in an sm_75 build the K-quants keep the register MMA there (format_rules.h
+        // R8VerifyEmulatedOff, format_requires::kR8VerifyTuring; #1038: timed on the RTX 2080 Ti
+        // only, so Volta keeps R8).
+        return !device_class().features.mma_bf16_native && r8_verify_compiled(qtype) &&
+               !(format_rules::holds(format_rules::Rule::R8VerifyEmulatedOff, qtype) &&
+                 satisfied(format_requires::kR8VerifyTuring, current_arch_facts()));
     } catch (const std::exception&) { return false; }
 }
 
