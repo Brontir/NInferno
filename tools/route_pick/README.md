@@ -1,7 +1,8 @@
 # route_pick: the analyzer's predicted route bands
 
 `gen.py` writes `routes/pick/<chip>-<sms>sm.json` for every board class of `src/core/data/gpu_facts.json` whose chip
-has no route table in `routes/`. Each file holds the T 9-16 band of every A16 generic-path problem that the route
+has no route table in `routes/` and whose board is past `kCarryDistance` from every table's board (nearer, the table's
+answers carry and the engine reads no file: the RTX 4070 Ti SUPER, the RTX 4060 and the RTX 5070 today). Each file holds the T 9-16 band of every A16 generic-path problem that the route
 tables of the same compute capability list (the release models' shapes), as `pick.py` prices it from repo facts.
 Nothing is measured on the card.
 
