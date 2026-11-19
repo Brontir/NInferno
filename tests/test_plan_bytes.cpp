@@ -589,8 +589,6 @@ StartPlan start_plan(const m::StateShape& shape, const EngineOptions& planned,
 
 // The loaded --plan's prefill regions (#940): the planner hands out the regions its workspace
 // plan laid out, which model_instance's dry run prints for the chosen rung.
-bool g_regions_checked = false;
-
 void planner_regions(const m::StateShape& shape, const EngineOptions& planned) {
     detail::WorkspacePlan laid;
     laid.text_prefill_regions = {
@@ -797,10 +795,6 @@ void test_default_copy_window(const std::vector<Subject>& all) {
                     EngineOptions planned_off                  = planned;
                     planned_off.speculative.ngram_draft_tokens = 0;
                     const StartPlan start                      = start_plan(s.family, planned, low);
-                    if (!g_regions_checked) {
-                        g_regions_checked = true;
-                        planner_regions(s.family, planned);
-                    }
                     const StartPlan start_off = start_plan(s.family, planned_off, low);
                     const rt::PlanRungBytes dry =
                         rt::plan_rung_bytes(s.facts, rung, o, concurrency, false);
@@ -1708,6 +1702,15 @@ int main() {
     test_bytes(all);
     test_kv_rows_int8(all);
     test_default_copy_window(all);
+    for (const Subject& s : all) {
+        if (!s.facts.offline_bytes) { continue; }
+        EngineOptions o =
+            pr::launch_options({.max_context = 32768, .max_concurrency = 1, .spec = "none"})
+                .options;
+        o.prefill_chunk = 1024;
+        planner_regions(s.family, o);
+        break;
+    }
     test_what_the_estimate_missed();
     test_dry_run_basis();
     test_fits_instead();

@@ -1140,6 +1140,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             }
             // The chosen rung's prefill arena as its planner lays it out (#940): the loaded --plan
             // starts no Program, so the regions are the planner's, which the start would keep.
+            // Only Qwen 3.5's workspace plan records them: the other families print none.
             try {
                 const models::qwen3_5::SequencePlanner planner =
                     planner_at(served, served.rungs.at(chosen.rung), false);
@@ -1183,6 +1184,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             dry_run->rung          = 0; // nothing fits
             dry_run->selected_rung = 0;
             dry_run->reserve.clear();
+            dry_run->workspace_regions.clear(); // nothing fits: no rung's arena
             // The refusal alone: no reserve advice for a plan that is not served.
             dry_run->advice.clear();
             try {
