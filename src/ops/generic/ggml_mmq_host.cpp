@@ -62,8 +62,8 @@ std::size_t fixup_bound(int columns) {
     int j = 16;
     while (j < columns && j < 128) j *= 2;
     // Lab A/B only (#1039): NINFERNO_LAB_MMQ_SK_PER_SM CTAs an SM, as select_launch reads it.
-    const char* e      = std::getenv("NINFERNO_LAB_MMQ_SK_PER_SM");
-    const int per_sm   = e != nullptr && std::atoi(e) > 1 ? std::atoi(e) : 1;
+    const char* e    = std::getenv("NINFERNO_LAB_MMQ_SK_PER_SM");
+    const int per_sm = e != nullptr && std::atoi(e) > 1 ? std::atoi(e) : 1;
     return std::size_t(device_class().sms) * per_sm * j * 128 * sizeof(float);
 }
 
