@@ -318,7 +318,9 @@ void check_answered_before_tuner() {
     // The R8 call: the table holds T = 1, the dispatch does not take it there.
     const ScopedDeviceClass scoped(d);
     const auto r8 = generic::route_answer_query(d, a8.qtype, a8.policy, a8.epilogue, a8.n, a8.k, 1);
-    if (r8 && r8->route.family == generic::Family::R8Mma && !generic::table_route(a8, 1, false)) {
+    if (!r8 || r8->route.family != generic::Family::R8Mma) {
+        fail("q4k 4096x6656 a8 T=1: the dispatch takes no R8 schedule: the R8 case is not met");
+    } else if (!generic::table_route(a8, 1, false)) {
         fail("q4k 4096x6656: the RTX 5090 table no longer holds T = 1: the R8 case is not met");
     }
     const auto r8_answered =
@@ -346,6 +348,36 @@ void check_answered_before_tuner() {
             if (!answered || !*answered) {
                 fail(at + " lanes " + std::to_string(lanes) +
                      ": the tuner times a width the MMQ verify rule holds");
+            }
+        }
+    }
+    // Where the BF16 MMA is emulated (the RTX 2080 Ti) the rule reads no lanes, and the tuner
+    // times the A16 schedules and R8 against ggml's matrix kernel at those widths (replaceable).
+    const RegretBoard* turing = nullptr;
+    for (const RegretBoard& b : kRegretBoards) {
+        if (std::string_view(b.name) == "rtx2080ti") turing = &b;
+    }
+    if (!turing) {
+        fail("answered_before_tuner: kRegretBoards has no rtx2080ti");
+        return;
+    }
+    const DeviceClass tu = board_class(*turing);
+    for (const std::int32_t t : {9, 12, 16}) {
+        const std::string at = "rtx2080ti iq4_xs 4096x4096 a8 T=" + std::to_string(t);
+        for (const int lanes : {0, 1, 4}) {
+            const ops::ScopedRoundLanes round(lanes);
+            const auto answer =
+                generic::route_answer_query(tu, iq.qtype, iq.policy, iq.epilogue, iq.n, iq.k, t);
+            if (!answer || answer->evidence.source != "mmq-verify-rule") {
+                fail(at + " lanes " + std::to_string(lanes) +
+                     ": not the MMQ verify rule's: the case is not met");
+                continue;
+            }
+            const auto answered = generic::answered_before_tuner_query(tu, iq.qtype, iq.policy,
+                                                                       iq.epilogue, iq.n, iq.k, t);
+            if (!answered || *answered) {
+                fail(at + " lanes " + std::to_string(lanes) +
+                     ": the tuner skips a width it times against the MMQ verify rule");
             }
         }
     }
