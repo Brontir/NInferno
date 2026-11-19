@@ -29,7 +29,9 @@
     X(16, 1, 8, 1, 1, 8)                                                                           \
     X(17, 1, 4, 1, 2, 1)                                                                           \
     X(18, 1, 8, 1, 1, 2)                                                                           \
-    X(19, 1, 16, 1, 1, 1)
+    X(19, 1, 16, 1, 1, 1)                                                                          \
+    X(20, 1, 4, 1, 2, 2)                                                                           \
+    X(21, 1, 4, 1, 2, 4)
 
 // W4A4 (generic_w4a4.cu): index, block_m, block_n, warps_m, warps_n, stages.
 #define NINFERNO_GENERIC_W4A4_SCHEDULES(X)                                                         \

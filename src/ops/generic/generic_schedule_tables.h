@@ -63,7 +63,7 @@ inline constexpr std::array kTiledSchedules{NINFERNO_GENERIC_TILED_SCHEDULES(NIN
 inline constexpr std::array kStagedSchedules{
     NINFERNO_GENERIC_STAGED_SCHEDULES(NINFERNO_STAGED_INFO)};
 #undef NINFERNO_STAGED_INFO
-static_assert(kRmmaSchedules.size() == 20 && kW4a4Schedules.size() == 4 &&
+static_assert(kRmmaSchedules.size() == 22 && kW4a4Schedules.size() == 4 &&
               kW4a8Schedules.size() == 6 && kR8Schedules.size() == 4 &&
               kTiledSchedules.size() == 3 && kStagedSchedules.size() == 13);
 
