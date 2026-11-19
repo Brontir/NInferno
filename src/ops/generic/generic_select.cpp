@@ -270,6 +270,13 @@ bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     // rule off, for the end-to-end A/B of its T 2..4 calls without speculation.
     static const bool lab_no_vec = std::getenv("NINFERNO_LAB_NO_VEC_RULE") != nullptr;
     if (lab_no_vec) return false;
+    // LAB ONLY (lab/vec-minn): NINFERNO_LAB_VEC_MIN_N=N turns the rule off for weights of fewer
+    // than N rows only (#1041: at small n the vec grid fills a fraction of a wave).
+    static const int lab_min_n = [] {
+        const char* v = std::getenv("NINFERNO_LAB_VEC_MIN_N");
+        return v != nullptr ? std::atoi(v) : 0;
+    }();
+    if (w.n < lab_min_n) return false;
     return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);
 }
 
