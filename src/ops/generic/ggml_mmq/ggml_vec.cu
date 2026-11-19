@@ -652,7 +652,7 @@ __device__ __forceinline__ void store(const VecOut& o, int row, int column, floa
 // each adds its partner's; after log2(V) such steps every lane keeps one value, which the remaining
 // steps sum across the other lanes. Lane L ends with the whole warp's sum of the value whose index
 // vec_reduce_index<V>(L) gives: its bits are lane bits 4, 3, ... from the top.
-constexpr int vec_reduce_values(int n) {
+__host__ __device__ constexpr int vec_reduce_values(int n) {
     int v = 2;
     while (v < n) v *= 2;
     return v;
