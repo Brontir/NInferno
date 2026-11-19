@@ -3222,3 +3222,19 @@ register MMA without the activation quantize, a small error on the transferred s
 (RTX 5090 Q6_K +1.7 / +3.6 / +5.5 %) and loses others (RTX 5090 Q4_K_M T 2 -5.9 %, RTX 3090 T 2
 -5.8 %, RTX 4090 -1.0 .. -2.1 %): its edge depends on the board and the format. It needs the
 counted bound above, not another per-generation constant.
+
+## 98. The vec rule declines a grid under one resident wave on boards with a native BF16 MMA (#1041, 19.11, counted)
+
+**What.** `vec_rule` (generic_select.cpp) declines a T 2-4 call whose vector-kernel grid, the
+rows over eight (four warps of two rows, `kVecCtaWarps` x `kVecRowsPerWarp`), is smaller than
+the SMs times the CTAs one SM holds of the instance (`resident_ctas_per_sm` of its committed
+kernel facts, as `vec_slots` counts them). The call takes the register MMA. Boards without a
+native BF16 MMA keep the vector kernel: Turing's declined verify widths go to R8 (#1038).
+
+**Why.** A narrow output is a few small CTAs; under one wave they keep too few bytes in flight,
+and the register MMA's K split fills the SMs. RTX 3090, isolated, T 2-4: q6_K 512-2048 x
+2560-4096 x1.26-1.99 the best register MMA, q4_K / q5_K 512-1024 x 4096 x1.25-1.70, iq4_xs
+1024 x 4096 x1.13-1.28; the 3060, 4070 Ti and 4060 Ti x1.14-1.39 at q6_K 1024 x 4096.
+
+**Basis.** Counted (kernel facts, SM count); no fitted constant. The end-to-end A/B and the
+moved goldens are in the PR.

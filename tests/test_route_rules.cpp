@@ -927,7 +927,8 @@ const std::map<std::string_view, std::string_view>& structural_roots() {
          "a byte-consistency contract: a one-token call must run the kernel a wider call runs "
          "(test_moe)"},
         {"kSlotWarps", "the register file in warps of 128 registers a thread: 65536 / (32 * 128)"},
-        {"kVecWarps", "the vector kernel's CTA size in warps, a count of the kernel"},
+        {"kVecCtaWarps", "the vector kernel's CTA size in warps, a count of the kernel"},
+        {"kVecRowsPerWarp", "the vector kernel's output rows a warp, a count of the kernel"},
         {"kVecBoundedBlocks",
          "resident CTAs the 72-register instance holds on a 64K-register SM: 65536 / (128 * 72)"},
     };

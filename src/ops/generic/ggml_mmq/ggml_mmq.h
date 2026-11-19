@@ -115,6 +115,54 @@ void product(Type type, const Planes& weight, int blocks_per_row, int rows, int 
 // not depend on the other tokens of the call.
 inline constexpr int kVecMaxColumns  = 8;
 inline constexpr int kVecMaxSegments = 4;
+// Its CTA (ggml_vec.cu): kVecCtaWarps warps, two rows a warp for a plain product, one for a gated
+// pair. The host reads them to count the vector kernel's grid (generic_select.cpp, #1041).
+inline constexpr int kVecCtaWarps    = 4;
+inline constexpr int kVecRowsPerWarp = 2;
+
+// A matrix-kernel type's ggml_type number, as the kernel-facts snapshot keys its instances
+// (ggml_vec.cu holds it to ggml's own enum).
+constexpr int ggml_type_number(Type type) {
+    switch (type) {
+    case Type::Q4_0:
+        return 2;
+    case Type::Q4_1:
+        return 3;
+    case Type::Q5_0:
+        return 6;
+    case Type::Q5_1:
+        return 7;
+    case Type::Q2_K:
+        return 10;
+    case Type::Q3_K:
+        return 11;
+    case Type::Q4_K:
+        return 12;
+    case Type::Q5_K:
+        return 13;
+    case Type::Q6_K:
+        return 14;
+    case Type::IQ2_XXS:
+        return 16;
+    case Type::IQ2_XS:
+        return 17;
+    case Type::IQ3_XXS:
+        return 18;
+    case Type::IQ1_S:
+        return 19;
+    case Type::IQ4_NL:
+        return 20;
+    case Type::IQ3_S:
+        return 21;
+    case Type::IQ2_S:
+        return 22;
+    case Type::IQ4_XS:
+        return 23;
+    case Type::IQ1_M:
+        return 29;
+    }
+    return -1;
+}
 
 // The output of a vector product: local row r goes to the segment s holding it (rows
 // [segment_end[s-1], segment_end[s])), token c at out[s] + c * ld[s] (BF16).

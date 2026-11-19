@@ -27,7 +27,26 @@ static_assert(kHalf2Bytes == sizeof(half2)); // vec_activation_bytes (ggml_mmq_h
 namespace detail {
 namespace {
 
-constexpr int kVecWarps = 4;
+constexpr int kVecWarps = kVecCtaWarps;
+static_assert(ggml_type_number(Type::Q4_0) == GGML_TYPE_Q4_0 &&
+                  ggml_type_number(Type::Q4_1) == GGML_TYPE_Q4_1 &&
+                  ggml_type_number(Type::Q5_0) == GGML_TYPE_Q5_0 &&
+                  ggml_type_number(Type::Q5_1) == GGML_TYPE_Q5_1 &&
+                  ggml_type_number(Type::Q2_K) == GGML_TYPE_Q2_K &&
+                  ggml_type_number(Type::Q3_K) == GGML_TYPE_Q3_K &&
+                  ggml_type_number(Type::Q4_K) == GGML_TYPE_Q4_K &&
+                  ggml_type_number(Type::Q5_K) == GGML_TYPE_Q5_K &&
+                  ggml_type_number(Type::Q6_K) == GGML_TYPE_Q6_K &&
+                  ggml_type_number(Type::IQ2_XXS) == GGML_TYPE_IQ2_XXS &&
+                  ggml_type_number(Type::IQ2_XS) == GGML_TYPE_IQ2_XS &&
+                  ggml_type_number(Type::IQ3_XXS) == GGML_TYPE_IQ3_XXS &&
+                  ggml_type_number(Type::IQ1_S) == GGML_TYPE_IQ1_S &&
+                  ggml_type_number(Type::IQ4_NL) == GGML_TYPE_IQ4_NL &&
+                  ggml_type_number(Type::IQ3_S) == GGML_TYPE_IQ3_S &&
+                  ggml_type_number(Type::IQ2_S) == GGML_TYPE_IQ2_S &&
+                  ggml_type_number(Type::IQ4_XS) == GGML_TYPE_IQ4_XS &&
+                  ggml_type_number(Type::IQ1_M) == GGML_TYPE_IQ1_M,
+              "ggml_mmq.h ggml_type_number differs from ggml's enum");
 
 // The runtime-K plain instance of 4 columns has a twin bounded to 7 resident CTAs per SM
 // (__launch_bounds__' minimum), the registers of 3 columns: unbounded it takes 85 registers where 3
@@ -845,7 +864,7 @@ void vec_launch_grid(const VecArgs& args, int groups, int slots, cudaStream_t st
 
 template <ggml_type type, int T, int KS, bool Gated>
 void vec_launch_ks(const VecArgs& args, cudaStream_t stream) {
-    const int per_block = kVecWarps * (Gated ? 1 : 2);
+    const int per_block = kVecWarps * (Gated ? 1 : kVecRowsPerWarp);
     const int groups    = (args.rows + per_block - 1) / per_block;
     const int slots     = vec_slots<type, T, KS, Gated, false>();
     if constexpr (kVecHasBoundedTwin(T, KS, Gated)) {

@@ -10,6 +10,7 @@
 #include "core/device_class.h"
 #include "core/format_facts.h"
 #include "core/generation.h"
+#include "core/kernel_occupancy.h"
 #include "core/layout.h"
 #include "core/measured_boards.h"
 #include "core/per_device.h"
@@ -31,6 +32,7 @@
 #include "ops/generic/generic_select_detail.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
+#include "ops/generic/kernel_facts.h"
 #include "ops/generic/r8_decode_table.h"
 #include "ops/generic/r8_law.h"
 #include "ops/generic/route_cost_constants.h"
@@ -284,11 +286,44 @@ std::int32_t vec_rule_max_tokens(QType qtype) {
     return kVecRuleMaxTokens;
 }
 
+// The vector kernel puts kVecCtaWarps x kVecRowsPerWarp rows on a CTA (ggml_vec.cu
+// vec_launch_ks, a plain product), so a narrow output is a grid of a few small CTAs. Under one
+// resident wave they keep too few bytes in flight, and the register MMA's K split fills the SMs
+// (#1041; RTX 3090 at T 2-4, the vector kernel against the best register MMA: q6_K 512-2048 x
+// 2560-4096 x1.26-1.99, q4_K / q5_K 512-1024 x 4096 x1.25-1.70, iq4_xs 1024 x 4096 x1.13-1.28; the
+// 3060, 4070 Ti and 4060 Ti x1.14-1.39 at q6_K 1024 x 4096). A counted condition: its CTAs fewer
+// than the SMs times the CTAs one SM holds of its instance, from the instance's committed kernel
+// facts (registers, shared memory), as vec_slots counts them. Only where a declined call goes to
+// the register MMA, which the measurements are: a native BF16 MMA (Turing sends its verify widths
+// to R8, #1038). No snapshot for the build's code, or no row: the call stays the vector kernel's.
+bool vec_grid_under_one_wave(const Weight& w, std::int32_t tokens) {
+    try {
+        const DeviceClass& d = device_class();
+        if (!d.features.mma_bf16_native || d.sms <= 0) return false;
+        const auto type = mmq_type(w);
+        const auto arch = kernel_facts::sass_arch();
+        if (!type || !arch) return false;
+        // ggml_vec.cu vec_launch_k: a plain product unrolls K 5120, 6144 and 17408.
+        const int ks     = (w.k == 5120 || w.k == 6144 || w.k == 17408) ? w.k : 0;
+        const auto facts = kernel_facts::vec_facts(
+            *arch, kernel_facts::VecKernelKey{ggml_mmq::ggml_type_number(*type), tokens, ks, false,
+                                              false});
+        if (!facts) return false;
+        const int per_sm =
+            resident_ctas_per_sm(d, KernelShape{facts->registers, facts->static_shared_bytes,
+                                                ggml_mmq::kVecCtaWarps * 32, 0});
+        const std::int64_t rows_per_cta = ggml_mmq::kVecCtaWarps * ggml_mmq::kVecRowsPerWarp;
+        const std::int64_t ctas =
+            (static_cast<std::int64_t>(w.n) + rows_per_cta - 1) / rows_per_cta;
+        return ctas < static_cast<std::int64_t>(std::max(per_sm, 1)) * d.sms;
+    } catch (const std::exception&) { return false; }
+}
 
 } // namespace
 
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
-    return tokens >= 2 && tokens <= vec_rule_max_tokens(w.qtype) && vec_call(w, policy, tokens);
+    return tokens >= 2 && tokens <= vec_rule_max_tokens(w.qtype) && vec_call(w, policy, tokens) &&
+           !vec_grid_under_one_wave(w, tokens);
 }
 
 // Speculative verify (T 9..16) of the codebook formats takes ggml's matrix kernel on

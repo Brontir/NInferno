@@ -432,10 +432,20 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      ""},
     // The rule's lower edge, from two tokens: T = 1 keeps R8 and the dense tuner.
     {"vec_rule lower edge", Basis::Measured, "generic_select.cpp",
-     "return tokens >= 2 && tokens <= vec_rule_max_tokens(w.qtype) && vec_call(w, policy, tokens);",
+     "return tokens >= 2 && tokens <= vec_rule_max_tokens(w.qtype) && vec_call(w, policy, tokens) "
+     "&& !vec_grid_under_one_wave(w, tokens);",
      2, "tu102:68sm", "RTX 2080 Ti",
      "decode (T = 1) keeps R8 and the dense tuner: on the RTX 2080 Ti the vector kernel lost "
      "decode by 10 % (9B Q4_K_M C1 88 -> 79 tok/s) and won C4 by 10 %",
+     ""},
+    // The vector kernel's grid under one resident wave declines it (#1041): a counted bound, the
+    // CTAs (rows / 8) against the SMs times the CTAs one SM holds of the instance (kernel facts).
+    {"vec_rule: one resident wave", Basis::Structural, "generic_select.cpp",
+     "return ctas < static_cast<std::int64_t>(std::max(per_sm, 1)) * d.sms;", 1, "ga102:82sm",
+     "RTX 3090",
+     "native BF16 MMA boards only (a declined call takes the register MMA); RTX 3090 T 2-4 at n "
+     "512-2048: the vector kernel x1.13-1.99 the best register MMA; the 3060, 4070 Ti and 4060 Ti "
+     "x1.14-1.39 at q6_K 1024 x 4096",
      ""},
     // The widest call the vector kernel reads: eight columns, sixteen tokens (two passes) where the
     // BF16 MMA is emulated.
@@ -1065,10 +1075,15 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "r8_index(4, 1); }",
      4096, "gb203:84sm", "RTX 5080", "IQ2_XS 9216x2560 14.1 -> 12.8 us", ""},
     // --- ggml's vector kernel's launch (ggml_mmq/ggml_vec.cu) ---
-    {"kVecWarps", Basis::Structural, "ggml_mmq/ggml_vec.cu", "constexpr int kVecWarps = 4;", 4,
-     kUnknown, kUnknown,
+    {"kVecCtaWarps", Basis::Structural, "ggml_mmq/ggml_mmq.h",
+     "inline constexpr int kVecCtaWarps = 4;", 4, kUnknown, kUnknown,
      "the vector kernel's warps a CTA: 128 threads, the CTA size the resident-CTA count of "
      "kVecBoundedBlocks is counted for; a count of the kernel, no margin",
+     ""},
+    {"kVecRowsPerWarp", Basis::Structural, "ggml_mmq/ggml_mmq.h",
+     "inline constexpr int kVecRowsPerWarp = 2;", 2, kUnknown, kUnknown,
+     "the vector kernel's output rows a warp in a plain product (one in a gated pair): the grid "
+     "the vec rule's one-wave bound counts; a count of the kernel, no margin",
      ""},
     {"kVecBoundedBlocks", Basis::Structural, "ggml_mmq/ggml_vec.cu",
      "constexpr int kVecBoundedBlocks = 7;", 7, "tu102:68sm, ad102:128sm",
