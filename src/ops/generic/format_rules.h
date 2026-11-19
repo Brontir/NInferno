@@ -8,10 +8,10 @@
 // cards, which must be re-checked when a kernel it was timed on changes.
 //
 // The code reads these rows: `holds(rule, q)` is the format set of a rule (mmq_verify_format,
-// light_ggml_step, tall_tile_format, w4a8_ws_extra, r8_verify_supports and the Q4_0 matrix-size
-// gate read it), and the two thresholds below are the constants the selection compares a call
-// against. Nothing here was re-measured: the rows restate what the comments at the rules' uses
-// say, and the selector goldens are unchanged by them.
+// light_ggml_step, tall_tile_format, w4a8_ws_extra, r8_verify_supports, vec_rule_max_tokens and the
+// Q4_0 matrix-size gate read it), and the two thresholds below are the constants the selection
+// compares a call against. The rows up to #615 F6 restate what the comments at the rules' uses
+// say; vec_cap_ga10x_gb20x is new with its own end-to-end A/Bs (#998, DECISIONS 96).
 //
 // A rule may have several rows: one per group of formats whose evidence differs (other cards,
 // another run). Each row says how many cards stand behind it (principle 4 of

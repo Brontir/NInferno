@@ -261,7 +261,7 @@ constexpr std::int32_t kVecRuleMaxTokens = 4;
 // and 3 within 0.1 %; under MTP the cap never lost in rounds a second (RTX 3090, 5070 Ti, 5090).
 // There T = 4 goes to the register MMA. The cap holds for the K-quants only (format_rules.h
 // VecCapGa10xGb20x): IQ4_XS split the two GB20x cards (RTX 5070 Ti +4.45 %, RTX 5090 -3.27 %), the
-// formats R8 verifies would send T = 4 to R8, which no A/B here measured (the vector kernel's own
+// formats R8 verifies would send T = 4 to R8, which no A/B here isolated (the vector kernel's own
 // first case was one of them, the IQ3_S verify above), and the others are not measured.
 // Ada keeps four: the RTX 4070 Ti (-2.0 %) and 4090 (-1.4 %) lose with the cap, the 4060 Ti gains
 // 2.5 %. Turing keeps four: a T = 4 call the vector kernel declines falls to R8 at its verify
