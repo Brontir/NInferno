@@ -1405,8 +1405,8 @@ int artifact_tensor_table() {
     const std::string mx =
         std::string(art::layout_name(ninferno::default_weight_layout(ninferno::QType::MXFP4)));
     for (const auto& [name, rows] :
-         {std::pair<std::string, std::uint64_t>{"text/layers/0/experts/gate_up", 5760},
-          {"text/layers/0/experts/down", 2880}}) {
+         {std::pair<std::string, std::uint64_t>{"text/layers/0/moe/experts/gate_up", 5760},
+          {"text/layers/0/moe/experts/down", 2880}}) {
         art::TensorObject t;
         t.id     = name;
         t.shape  = {32, rows, 2880};
@@ -1477,8 +1477,12 @@ int table_counting() {
     failures +=
         check(pr::table_prices_row(formats), "table counting: a split part's formats alone");
     pr::GgufTensorTable route;
-    route.expert_prefill_int8 = rt::ExpertPrefill::A16;
+    route.expert_prefill = rt::ExpertPrefill::A16;
     failures += check(pr::table_prices_row(route), "table counting: a split part's banks' route");
+    pr::GgufTensorTable int8_route;
+    int8_route.expert_prefill_int8 = rt::ExpertPrefill::A16;
+    failures +=
+        check(pr::table_prices_row(int8_route), "table counting: a split part's banks' int8 route");
     pr::GgufTensorTable bytes;
     bytes.tensor_bytes = 1;
     failures += check(pr::table_prices_row(bytes), "table counting: a whole table's bytes");
