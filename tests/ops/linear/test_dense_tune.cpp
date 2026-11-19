@@ -492,6 +492,20 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
         }
         if (held_bands.empty()) fail("legacy: the lent prefill route holds no band");
     }
+    // Where the tuner skips, the dispatch takes the lent route itself (#1018: one fixture for the
+    // tuner's skip and the dispatch's answer).
+    for (const std::int32_t t : held_widths) {
+        const auto lent = generic::table_route(pdec, t, false);
+        if (!lent || !(generic::select_route(pdec, ddec.weight, t, false) == *lent)) {
+            fail("legacy: the dispatch does not take lent width T=" + std::to_string(t));
+        }
+    }
+    for (const std::int32_t t : held_bands) {
+        const auto lent = generic::table_route(ppre, t, true);
+        if (!lent || !(generic::select_route(ppre, dpre.weight, t, true) == *lent)) {
+            fail("legacy: the dispatch does not take lent band T=" + std::to_string(t));
+        }
+    }
 
     // Evidence demotes them. A read-only process times nothing and leaves the file as it is.
     ops::set_route_policy(RoutePolicy::Evidence);
@@ -530,6 +544,24 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
         for (const std::int32_t t : held_bands) {
             if (!timed_in(p, "prefill_us", t))
                 fail("evidence: demoted band T=" + std::to_string(t) + " still untimed");
+        }
+    }
+    // And the dispatch answers what the tuner timed there, the heuristic's route where it stays,
+    // never the demoted lent route (#1018).
+    for (const std::int32_t t : held_widths) {
+        const auto expected = generic::tuned_dense_route(pdec, t).value_or(
+            generic::heuristic_route(pdec, ddec.weight, t, false));
+        if (!(generic::select_route(pdec, ddec.weight, t, false) == expected)) {
+            fail("evidence: the dispatch at demoted width T=" + std::to_string(t) + " is not " +
+                 generic::route_name(expected));
+        }
+    }
+    for (const std::int32_t t : held_bands) {
+        const auto heuristic = generic::heuristic_route(ppre, dpre.weight, t, true);
+        const auto expected  = generic::tuned_prefill_route(ppre, t, heuristic).value_or(heuristic);
+        if (!(generic::select_route(ppre, dpre.weight, t, true) == expected)) {
+            fail("evidence: the dispatch at demoted band T=" + std::to_string(t) + " is not " +
+                 generic::route_name(expected));
         }
     }
     // Saved: the next process times nothing (no retime loop).
