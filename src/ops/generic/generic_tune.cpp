@@ -9,7 +9,9 @@
 // those families, and every R8 schedule where the heuristic takes R8 (decode and verify widths),
 // each call after an L2 flush, the median of its repetitions. Where the policy allows A8, ggml's
 // matrix kernel (Family::GgmlMmq, verify widths 5..16) competes with the A16 schedules: it wins on
-// one card and format and loses on another (generic_gemm.h, kMmqMinTokens); so does R8 at the
+// one card and format and loses on another (generic_gemm.h, kMmqMinTokens), except at the widths a
+// native BF16 MMA's MMQ verify rule holds (answered_before_tuner: measured end to end at rounds of
+// several sequences, which the tuner's entry cannot tell apart); so does R8 at the
 // verify widths 2..4 of a format that does not take it there by rule (r8_verify_tunable). A
 // schedule replaces the heuristic's only where it is kMargin faster, so noise keeps the heuristic.
 //
@@ -246,12 +248,15 @@ std::string save_cache_locked() {
 // activation at verify widths, none at T = 1).
 bool replaceable(Route r, std::int32_t k, std::int32_t tokens);
 
-// Whether the tuner times decode width t of the problem: a replaceable heuristic route, no table
-// answer the route policy keeps (#808: a demoted one is timed) and no Volta rule that routes the
+// Whether the tuner times decode width t of the problem: a replaceable heuristic route, no answer
+// the dispatch takes before the tuner's entry (answered_before_tuner: a table answer the
+// route-table authority gives and the policy keeps; #808: a demoted one is timed; #1018: none for a
+// call the tables stand aside for, an R8 or vector-rule width) and no Volta rule that routes the
 // width before any tuned route.
 bool timed_width(const Problem& problem, const Weight& weight, std::int32_t t) {
     const Route base = heuristic_route(problem, weight, t, false);
-    return replaceable(base, weight.k, t) && !table_route_kept(problem, t, false, base) &&
+    return replaceable(base, weight.k, t) &&
+           !answered_before_tuner(problem, weight, t, false, base) &&
            !volta_fixed_route(problem, weight, t);
 }
 
@@ -424,9 +429,10 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
         entry["routes"][name] = nullptr;
         // A width Volta's own rule routes (volta_fixed_route) takes that route before any tuned
         // one: timing it would record a choice the dispatch never reads.
-        // A table answer the route policy demotes falls to the ranker at dispatch: that width is
-        // timed (#808), as a width no table holds.
-        if (replaceable(base, k, t) && !table_route_kept(problem, t, false, base) &&
+        // A table answer the dispatch does not take (the route policy demotes it, #808, or the
+        // route-table authority stands aside for the call, #1018) falls to the tuner's entry or the
+        // ranker: that width is timed, as a width no table holds (answered_before_tuner).
+        if (replaceable(base, k, t) && !answered_before_tuner(problem, weight, t, false, base) &&
             !volta_fixed_route(problem, weight, t)) {
             const double base_us = bench.median_us(base, t);
             double best_us       = base_us;
@@ -492,11 +498,13 @@ void time_prefill_bands_guarded(const Problem& problem, const Call& model_call, 
     }
 }
 
-// Whether the tuner times prefill band t against the heuristic's route `base`: no route table
-// answer the route policy keeps (a table that measured an A16 width keeps it; select_route never
-// takes one for W4A8; #808: a demoted answer is timed), and a candidate beside the base.
+// Whether the tuner times prefill band t against the heuristic's route `base`: no answer the
+// dispatch takes before the tuner's (answered_before_tuner: a table that measured an A16 width
+// keeps it; select_route never takes one for W4A8; #808: a demoted answer is timed), and a
+// candidate beside the base.
 bool timed_band(const Problem& problem, const Weight& weight, std::int32_t t, Route base) {
-    if (base.family != Family::W4a8Mma && table_route_kept(problem, t, true, base)) return false;
+    if (base.family != Family::W4a8Mma && answered_before_tuner(problem, weight, t, true, base))
+        return false;
     // NVFP4 prefill takes its own invariant routes (A16) or W4A4 before any band, but for W4A8: the
     // A8 prefill of a weight W4A4 does not take (every NVFP4 weight without the native NVFP4
     // kernels; with them, a policy that allows A8 but not A4). Only those bands are timed.
@@ -685,7 +693,8 @@ bool read_prefill_bands(const Problem& problem, const Weight& weight, const Json
             const auto us     = entry.find("prefill_us");
             const bool has_us = us != entry.end() && us->is_object() && us->contains(name);
             if (writable && !has_us && base.family != Family::W4a8Mma &&
-                table_route(problem, t, true) && !table_route_kept(problem, t, true, base) &&
+                table_route(problem, t, true) &&
+                !answered_before_tuner(problem, weight, t, true, base) &&
                 timed_band(problem, weight, t, base)) {
                 return false;
             }

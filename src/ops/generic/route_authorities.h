@@ -223,6 +223,20 @@ struct NamedAuthority {
 [[nodiscard]] RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& weight);
 [[nodiscard]] RouteAnswer heuristic_answer(const Ask& ask, const Problem& problem,
                                            const Weight& weight);
+// Whether auto_answer answers a call of `tokens` before the dense tuner's entry could (#1018): the
+// NVFP4 half-L2 rule, or the route table's answer as the route-table authority gives it (after the
+// NVFP4 promotion; none for the int8 calls the tables stand aside for, or a route that
+// route_admits or profile_admits refuses) and the route policy keeps (not demoted; or demoted where
+// the ranker's route `ranked` is the scalar fallback, or at the MMQ boundary, keeps_mmq_boundary).
+// Two kept cases are not answered before the entry; the tuner leaves them untimed so that the
+// dispatch's measured answer stands: a demoted table answer the policy keeps (the dispatch reads
+// the entry first there; table_route_kept's rule), and, with a native BF16 MMA, a width the MMQ
+// verify rule holds for a round of several sequences (measured end to end; the entry has no lanes
+// key).
+// The dense tuner leaves such a width or band untimed; elsewhere the dispatch reads the tuner's
+// entry, so it is timed (#808). It reads no tuner entry (the tuner asks it under its own lock).
+[[nodiscard]] bool answered_before_tuner(const Problem& problem, const Weight& weight,
+                                         std::int32_t tokens, bool prefill, Route ranked);
 // The ranker's answer: what auto_answer gives where neither the route table nor the dense tuner
 // answers (the NVFP4 half-L2 rule, then the rules), under the Ask the call's rules see (an NVFP4
 // A16 call of 17 tokens or more as the prefill profile's, nvfp4_promoted). The route a measured
