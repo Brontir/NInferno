@@ -3190,7 +3190,7 @@ the cap never lost more than 1.3 % (4090 C1) and gained up to +5.3 % (5090 C1).
 
 **Decision.** `kVecRuleMaxTokensGa10xGb20x = 3`: `vec_rule_max_tokens(qtype)` returns 3 on sm_86
 (`ga10x_cc`; not the A100, sm_87 or sm_88, none measured) and on consumer Blackwell (`gb20x_cc`)
-for the K-quants (`format_rules.h` `vec_cap_ga10x_gb20x`: Q4_K on four cards, Q6_K on the RTX 5090,
+for the K-quants (`format_rules.h` `vec_cap_ga10x_gb20x`: Q4_K on four cards, Q6_K on the RTX 5090 and 5070 Ti (+7.27 / +4.52 %),
 Q2_K / Q3_K / Q5_K carried), 4 elsewhere; boards whose vec kernel reaches past eight
 columns keep their widest. This is a **measured constant** keyed by generation (`route_rules.h`
 records it, `Basis::Measured`, with the four boards). It is not derived from chip facts: the
