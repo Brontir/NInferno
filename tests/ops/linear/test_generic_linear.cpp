@@ -2491,16 +2491,23 @@ int main() {
         }
         // Without tensor-core MMA (Volta) the formats of its verify kernels (volta_hmma_codec: the
         // HMMA kernel takes a call of 1..16 tokens and the FP32 GEMV one of 1..4, volta_gemv_takes,
-        // in place of the register MMA's tiles) keep the profile's promise from 17 tokens only, as prefill_routes.h states;
-        // there the windows below 17 are not checked, and every other format keeps them.
+        // in place of the register MMA's tiles) keep the profile's promise from 17 tokens only, as
+        // prefill_routes.h states; there the windows below 17 are not checked, and every other
+        // format keeps them.
         const WeightCodec codec = [&] {
             switch (f.qtype) {
-            case QType::GGML_Q4_K: return WeightCodec::GgmlQ4K;
-            case QType::GGML_Q5_K: return WeightCodec::GgmlQ5K;
-            case QType::GGML_Q2_K: return WeightCodec::GgmlQ2K;
-            case QType::GGML_Q4_1: return WeightCodec::GgmlQ41;
-            case QType::GGML_Q5_1: return WeightCodec::GgmlQ51;
-            default: break;
+            case QType::GGML_Q4_K:
+                return WeightCodec::GgmlQ4K;
+            case QType::GGML_Q5_K:
+                return WeightCodec::GgmlQ5K;
+            case QType::GGML_Q2_K:
+                return WeightCodec::GgmlQ2K;
+            case QType::GGML_Q4_1:
+                return WeightCodec::GgmlQ41;
+            case QType::GGML_Q5_1:
+                return WeightCodec::GgmlQ51;
+            default:
+                break;
             }
             throw std::logic_error("min_term lists a format this test maps to no codec");
         }();
