@@ -15,8 +15,8 @@
 #include <cmath>
 #include <cstddef>
 #include <iterator>
-#include <optional>
 #include <iostream>
+#include <optional>
 #include <string>
 
 namespace {
@@ -81,7 +81,7 @@ int main() {
         const auto board = mmq_unit::counted_board(8, 9);
         expect(board && board->arch == "89" && board->isa.dram_latency.w1 == isa->dram_latency.w1,
                "the counted board of cc 8.9: arch 89 and its isa row");
-        expect(board &&
+        expect(board && board->node_seconds > 0 &&
                    board->node_seconds == launch_seconds(8, 9, LaunchKind::GraphNode).value_or(0.0),
                "the counted board of cc 8.9: its graph node");
         expect(!mmq_unit::counted_board(7, 5), "cc 7.5 is not scored: no counted board");
