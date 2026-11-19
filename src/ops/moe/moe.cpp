@@ -1319,8 +1319,6 @@ const char* evidence_kind_name(Evidence::Kind k) {
         return "transferred";
     case Evidence::Kind::Borrowed:
         return "borrowed";
-    case Evidence::Kind::Predicted:
-        return "predicted";
     }
     return "ranker";
 }
