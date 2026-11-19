@@ -755,7 +755,19 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
     if (p.qtype == QType::Q8_G32_FP16) return r8_index(4, 1);
     // IQ1_S / IQ1_M: grid-lookup decoders of IQ2's weight, scheduled with them (sched_iq2).
     const bool iq2 = format_traits(p.qtype).sched_iq2;
-    if (tokens >= 2) return iq2 && (tokens >= 4 || p.n >= 34816) ? r8_index(4, 2) : r8_index(4, 1);
+    if (tokens >= 2) {
+        // Turing at the verify widths (#1038): two rows a warp. RTX 2080 Ti, T = 3 / 4, w4r1
+        // against w4r2: IQ3_S 12288x4096 83.1 / 93.9 against 67.5 / 72.9 us, IQ3_XXS 4096x4096 30.8
+        // / 34.5 against 25.5 / 27.4, IQ4_XS 4096x4096 24.6 / 27.0 against 24.5 / 25.3, Q4_0
+        // 12288x4096 60.2 / 68.6 against 57.9 / 59.9; at T = 2 within 1 % where w4r1 is ahead
+        // (IQ4_XS, Q4_0). Not Volta: its one-slot form loses with a second row (below).
+        const ArchFacts arch = current_arch_facts();
+        if (satisfied(format_requires::kR8WithoutNativeBf16, arch) &&
+            !satisfied(format_requires::kR8OneSlot, arch)) {
+            return r8_index(4, 2);
+        }
+        return iq2 && (tokens >= 4 || p.n >= 34816) ? r8_index(4, 2) : r8_index(4, 1);
+    }
     // Turing (the RTX 2080 Ti, tu102:68sm, ninferno_r8_schedule_bench on the IQ3 16 GB
     // artifacts' 63 problems: picks +6.25 % above the best schedules in sum) decodes the codebook
     // formats and Q3_K slower per word, and from K = 5120 eight warps of two rows win at every N
@@ -1384,7 +1396,11 @@ bool bf16_mma_native() {
 bool r8_verify_takes(QType qtype) {
     if (r8_verify_supports(qtype)) return true;
     try {
-        return !device_class().features.mma_bf16_native && r8_verify_compiled(qtype);
+        // Where the BF16 MMA is emulated R8 takes the verify widths of every compiled format but
+        // the K-quants, which keep the register MMA there (format_rules.h R8VerifyEmulatedOff,
+        // #1038).
+        return !device_class().features.mma_bf16_native && r8_verify_compiled(qtype) &&
+               !format_rules::holds(format_rules::Rule::R8VerifyEmulatedOff, qtype);
     } catch (const std::exception&) { return false; }
 }
 

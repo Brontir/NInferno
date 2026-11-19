@@ -67,12 +67,14 @@ enum class Rule : std::uint8_t {
     R8Verify,             // r8_verify_supports: R8 at verify widths
     R8VerifyQ40MinValues, // kR8VerifyQ40MinValues: Q4_0's verify R8 on a large matrix only
     MmqVerifyMinTokens,   // kMmqVerifyMinTokens: the first width of the mmq verify band
+    R8VerifyEmulatedOff,  // r8_verify_takes: formats R8 leaves at verify widths where BF16 is
+                          // emulated
 };
 
-inline constexpr std::array kAllRules = {Rule::LightStep,         Rule::TallTile,
-                                         Rule::MmqVerify,         Rule::W4a8WsTuned,
-                                         Rule::R8Verify,          Rule::R8VerifyQ40MinValues,
-                                         Rule::MmqVerifyMinTokens};
+inline constexpr std::array kAllRules = {Rule::LightStep,          Rule::TallTile,
+                                         Rule::MmqVerify,          Rule::W4a8WsTuned,
+                                         Rule::R8Verify,           Rule::R8VerifyQ40MinValues,
+                                         Rule::MmqVerifyMinTokens, Rule::R8VerifyEmulatedOff};
 
 constexpr std::string_view rule_name(Rule rule) {
     switch (rule) {
@@ -86,6 +88,8 @@ constexpr std::string_view rule_name(Rule rule) {
         return "w4a8_ws_tuned";
     case Rule::R8Verify:
         return "r8_verify";
+    case Rule::R8VerifyEmulatedOff:
+        return "r8_verify_emulated_off";
     case Rule::R8VerifyQ40MinValues:
         return "kR8VerifyQ40MinValues";
     case Rule::MmqVerifyMinTokens:
@@ -318,6 +322,18 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "too; the record names no timing that places the edge at 9 rather than at 5..8 on a "
      "native-MMA "
      "board"},
+
+    // --- r8_verify_emulated_off: K-quants keep the register MMA at verify widths on Turing ---
+    {Rule::R8VerifyEmulatedOff, Basis::Measured,
+     FormatSet{Q::GGML_Q3_K, Q::GGML_Q4_K, Q::GGML_Q6_K}, 0, "tu102:68sm", "RTX 2080 Ti",
+     Evidence::SingleCard, "#1038: selcheck.sh 75 1038off / 1038fmt (route_tune, vec rule off)",
+     "2026-11-19",
+     "T = 3 / 4, the best R8 schedule against rmma n1: Q4_K 4096x4096 30.7 / 33.3 against 23.2 / "
+     "23.5 us, Q6_K 12288x4096 126.1 / 150.5 against 87.0 / 88.1, Q3_K 4096x4096 41.9 / 43.8 "
+     "against 23.9 / 24.8; R8's time grows with T, the register MMA's does not"},
+    {Rule::R8VerifyEmulatedOff, Basis::Unknown, FormatSet{Q::GGML_Q5_K}, 0, kNone, kNone,
+     Evidence::Carried, "#1038", "2026-11-19",
+     "Q5_K follows Q4_K, whose decoder it shares: not timed on its own"},
 });
 } // namespace rows
 
