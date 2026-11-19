@@ -399,8 +399,11 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "RTX 2080 Ti", Evidence::SingleCard, "#1038: abvecn.sh on the RTX 2080 Ti (lab/vec-minn)",
      "2026-11-19",
      "Qwen3.5-9B, --spec off, vec at T = 2 and the register MMA at T = 3..4 against vec at "
-     "T = 2..4: Q4_K_M C = 2 -0.01 %, C = 3 +2.45 %, C = 4 +3.45 %; Q6_K -2.35 %, +25.8 %, "
-     "+30.8 %"},
+     "T = 2..4, the real branch against master (abref, 8 alternating starts): Q4_K_M C = 2 +0.08 "
+     "%, "
+     "C = 3 +2.57 %, C = 4 +3.44 %; Q6_K +0.05 %, +28.5 %, +33.4 %. The vec-against-rmma edge "
+     "split cards of one generation on GA10x (cap at T = 2: RTX 3090 C3 -2.0 %, RTX 3060 +1.5 %), "
+     "so on another Turing board this row is the weak one"},
     {Rule::VecCapTuring, Basis::Unknown, FormatSet{Q::GGML_Q3_K, Q::GGML_Q5_K}, 0, kNone, kNone,
      Evidence::Carried, "#1038", "2026-11-19",
      "Q3_K and Q5_K follow Q4_K / Q6_K, whose register-MMA verify they share (R8VerifyEmulatedOff: "

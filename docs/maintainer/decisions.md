@@ -3236,8 +3236,9 @@ end-to-end A/Bs (Qwen3.5-9B, `--spec off`, 8 alternating starts):
 - R8 against the register MMA (rmma n1) at T = 3 / 4: Q4_K 4096x4096 30.7 / 33.3 against 23.2 /
   23.5 us, Q6_K 12288x4096 126.1 / 150.5 against 87.0 / 88.1, Q3_K 4096x4096 41.9 / 43.8 against
   23.9 / 24.8. R8's time grows with T; the register MMA's does not.
-- vec at T = 2 and the register MMA at T = 3..4 against vec at T = 2..4, end to end: Q4_K_M C2
-  -0.01 %, C3 +2.45 %, C4 +3.45 %; Q6_K -2.35 %, +25.8 %, +30.8 %. IQ4_XS capped at T = 2:
+- vec at T = 2 and the register MMA at T = 3..4 against vec at T = 2..4, end to end, the branch
+  against master: Q4_K_M C2 +0.08 %, C3 +2.57 %, C4 +3.44 %; Q6_K +0.05 %, +28.5 %, +33.4 % (the lab
+  switches gave Q6_K C2 -2.35 %, a cell both arms run the same: noise). IQ4_XS capped at T = 2:
   -0.05 / +0.93 / -0.74 % (not moved).
 - R8 one row a warp against two at T = 3 / 4: IQ3_S 12288x4096 83.1 / 93.9 against 67.5 / 72.9 us,
   IQ3_XXS 4096x4096 30.8 / 34.5 against 25.5 / 27.4, IQ4_XS 24.6 / 27.0 against 24.5 / 25.3, Q4_0
@@ -3258,8 +3259,10 @@ their routes):
 
 These are **measured rules on one card** (`Evidence::SingleCard`, tu102:68sm), not counted from
 chip facts: a known gap of the deterministic-decisions page until a second Turing card (TU104 / TU106
-or a T4) times them. The kernels they compare are the same compiled code on every sm_75 board, and
-the margins are large (R8 1.3-1.8x behind rmma at T 3-4; Q6_K end to end +25.8 / +30.8 %).
+or a T4) times them. The R8 rules compare the same compiled code on every sm_75 board with large
+margins (R8 1.3-1.8x behind rmma at T 3-4). The vec cap is the weak part: the vec-against-rmma edge
+split two GA10x cards (cap at T = 2: RTX 3090 C3 -2.0 %, RTX 3060 +1.5 %), so its Q4_K row, and the
+carried Q3_K / Q5_K, may differ on a TU104 / TU106. Q6_K's +28.5 / +33.4 % is not near an edge.
 
 **What moves.** The selector goldens move only the 2080 Ti board's Q3_K..Q6_K rows at T = 3..4,
 from ggml_vec to the register MMA, in every build set: the sm70 set moves too, because its

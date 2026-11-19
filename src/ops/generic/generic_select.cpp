@@ -271,8 +271,8 @@ constexpr std::int32_t kVecRuleMaxTokensGa10xGb20x = 3;
 // On Turing (an sm_75 build: format_requires::kR8VerifyTuring) it stops at two (#1038) for the
 // K-quants that keep the register MMA at the verify widths (format_rules.h VecCapTuring: Q4_K and
 // Q6_K timed end to end, Q3_K and Q5_K carried). RTX 2080 Ti, Qwen3.5-9B, --spec off, vec
-// at T = 2 and the register MMA at T = 3..4 against vec at T = 2..4: Q4_K_M C = 2 -0.01 %, C = 3
-// +2.45 %, C = 4 +3.45 %; Q6_K -2.35 %, +25.8 %, +30.8 %.
+// at T = 2 and the register MMA at T = 3..4 against vec at T = 2..4 (the branch against master):
+// Q4_K_M C = 2 +0.08 %, C = 3 +2.57 %, C = 4 +3.44 %; Q6_K +0.05 %, +28.5 %, +33.4 %.
 constexpr std::int32_t kVecRuleMaxTokensTuring = 2;
 
 std::int32_t vec_rule_max_tokens(QType qtype) {
@@ -774,8 +774,9 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
         // there (format_rules.h R8VerifyTwoRowsTuring; RTX 2080 Ti, w4r2 13-31 % ahead of w4r1 at
         // T = 3 / 4, within 1 % at T = 2). An sm_75 board in an sm_75 build only
         // (format_requires::kR8VerifyTuring): Volta was not timed. The format and the width first,
-        // so the other verify calls query no device.
-        if (tokens >= 3 &&
+        // so the other verify calls query no device. T 3-4 only (r8_verify_widest of these
+        // formats): a dense-tuner or lab R8 candidate at wider T was not timed.
+        if (tokens >= 3 && tokens <= 4 &&
             format_rules::holds(format_rules::Rule::R8VerifyTwoRowsTuring, p.qtype) &&
             satisfied(format_requires::kR8VerifyTuring, current_arch_facts())) {
             return r8_index(4, 2);

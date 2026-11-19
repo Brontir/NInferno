@@ -434,8 +434,9 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     {"kVecRuleMaxTokensTuring", Basis::Measured, "generic_select.cpp",
      "constexpr std::int32_t kVecRuleMaxTokensTuring = 2;", 2, "tu102:68sm", "RTX 2080 Ti",
      "end to end, Qwen3.5-9B, --spec off, vec at T = 2 and the register MMA at T = 3..4 against "
-     "vec at T = 2..4: Q4_K_M C = 2 -0.01 %, C = 3 +2.45 %, C = 4 +3.45 %; Q6_K C = 2 -2.35 %, "
-     "C = 3 +25.8 %, C = 4 +30.8 % (the K-quants keep the register MMA at the verify widths, "
+     "vec at T = 2..4, the real branch against master: Q4_K_M C = 2 +0.08 %, C = 3 +2.57 %, "
+     "C = 4 +3.44 %; Q6_K C = 2 +0.05 %, C = 3 +28.5 %, C = 4 +33.4 % (the K-quants keep the "
+     "register MMA at the verify widths, "
      "R8VerifyEmulatedOff; the cap's formats are format_rules.h VecCapTuring, Q3_K and Q5_K "
      "carried; the others keep kVecRuleMaxTokens; IQ4_XS capped at T = 2: -0.05 / +0.93 / "
      "-0.74 %; an sm_75 build only, format_requires::kR8VerifyTuring)",
@@ -992,8 +993,9 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "margin for the two-token edge",
      ""},
     {"rules_r8: Turing verify two rows from three tokens", Basis::Measured, "generic_select.cpp",
-     "if (tokens >= 3 && format_rules::holds(format_rules::Rule::R8VerifyTwoRowsTuring, p.qtype) "
-     "&&",
+     "if (tokens >= 3 && tokens <= 4 && "
+     "format_rules::holds(format_rules::Rule::R8VerifyTwoRowsTuring, "
+     "p.qtype) &&",
      3, "tu102:68sm", "RTX 2080 Ti",
      "#1038, route_tune on the RTX 2080 Ti (sm_75 build), r8.w4r1 against r8.w4r2: w4r2 13-31 % "
      "ahead at T = 3 / 4 (IQ3_S 12288x4096 83.1 / 93.9 against 67.5 / 72.9 us), within 1 % at "
