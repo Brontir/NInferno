@@ -433,15 +433,16 @@ class Csv(unittest.TestCase):
             self.assertEqual(excluded, [], pick)
 
     def test_speed_loop_widths_of_each_family(self):
-        # route_tune_tool.cpp: R8 to kR8MaxTokens (4), w4a4 / staged / nvfp4t / tiled from 17.
+        # route_tune_tool.cpp: R8 to kR8VerifyTokens (8), w4a4 / staged / nvfp4t / tiled from 17.
         got = {(route, t): bands.speed_loop_times(route, t, None)
                for route in ("r8.w4r1", "tiled.64x64", "staged.64x32.w4x1.s2", "nvfp4t.c1.64x64",
                              "w4a4.64x64", "rmma.m1.n1.w1x8", "ggml_mmq")
-               for t in (4, 5, 16, 17)}
+               for t in (4, 5, 8, 9, 16, 17)}
         self.assertEqual({k for k, v in got.items() if not v},
-                         {("r8.w4r1", 5), ("r8.w4r1", 16), ("r8.w4r1", 17)}
+                         {("r8.w4r1", 9), ("r8.w4r1", 16), ("r8.w4r1", 17)}
                          | {(r, t) for r in ("tiled.64x64", "staged.64x32.w4x1.s2",
-                                             "nvfp4t.c1.64x64", "w4a4.64x64") for t in (4, 5, 16)})
+                                             "nvfp4t.c1.64x64", "w4a4.64x64")
+                            for t in (4, 5, 8, 9, 16)})
         self.assertTrue(bands.speed_loop_times("tiled.64x64", 16, "tiled.64x64"))
 
     def test_w4a8ws_is_one_family_with_w4a8(self):

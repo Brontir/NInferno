@@ -433,7 +433,8 @@ int route_tune_main(int argc, char** argv) {
                  generic::route_workspace_bytes({generic::Family::W4a8Mma, 0}, p.k, t_max),
                  generic::route_workspace_bytes({generic::Family::R8Mma, 0}, p.k,
                                                 generic::kR8VerifyTokens),
-                 // R8's verify form reads the activation pre-quantized into the W4A8 planes.
+                 // R8's verify form reads the activation pre-quantized into the workspace (its
+                 // planes are within the W4A8 ones at that width, as the dense tuner sizes it).
                  generic::route_workspace_bytes({generic::Family::W4a8Mma, 0}, p.k,
                                                 generic::kR8VerifyTokens),
                  generic::ggml_mmq_workspace_bytes(
@@ -562,8 +563,9 @@ int route_tune_main(int argc, char** argv) {
                                << ',' << (rotated ? 1 + spare.size() : std::size_t{1}) << ','
                                << samples << ',' << pci_id << ',';
                     // The launch the route makes for this call: its CTAs and threads per CTA
-                    // (ggml's vector kernel: its first kVecMaxColumns tokens; R8 in the form the
-                    // call takes, pre-quantized where this workspace admits it).
+                    // (ggml's vector kernel: its first kVecMaxColumns tokens, its matrix kernel one
+                    // prefill slice; R8 in the form the call takes, pre-quantized where this
+                    // workspace admits it).
                     const std::optional<bool> pre =
                         r.family == generic::Family::R8Mma
                             ? std::optional<bool>(generic::r8_prequantized_takes(
