@@ -37,6 +37,11 @@ cached_quants(const std::filesystem::path& hub_root, const std::string& hub,
 // header; a converted artifact's from its tensors with its own drafter and MTP layers. Read once
 // per file as it is (path, size, time).
 [[nodiscard]] std::optional<GgufTensorTable> local_tensor_table(const std::filesystem::path& path);
+// A converted artifact's tensor table from its facts (plan_facts_of_artifact; local_tensor_table
+// reads an artifact's this way): its bytes with its own drafter and MTP layers, its routed layers
+// and routes, and every format the facts read (the trunk's, the layers', the banks', the head's).
+// nullopt where the facts are not an artifact's tensors or hold none.
+[[nodiscard]] std::optional<GgufTensorTable> tensor_table_of_artifact(const PlanSourceFacts& facts);
 // The listing's quantizations that are here priced by their own files (over a hub header's).
 void tables_of_cached(std::vector<QuantListing>& listing,
                       const std::map<std::string, std::filesystem::path>& cached);

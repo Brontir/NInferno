@@ -69,6 +69,14 @@ struct GgufTensorTable {
     std::string head_format;
 };
 
+// Whether a read table prices its row (ninferno-ui counts it, and plans its repository again):
+// its tensors, or a split part's banks' prefill route (#775) or tensors' formats (#811).
+[[nodiscard]] inline bool table_prices_row(const GgufTensorTable& table) noexcept {
+    return table.tensor_bytes > 0 || table.expert_prefill != runtime::ExpertPrefill::Unknown ||
+           table.expert_prefill_int8 != runtime::ExpertPrefill::Unknown ||
+           !table.weight_formats.empty();
+}
+
 // The table from the facts of a head read (nullopt: no tensor table). A split part's: no tensor
 // bytes (its file size stands), only the prefill route and the formats of the tensors it lists (a
 // sample of the file's); nullopt without either.

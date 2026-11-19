@@ -5,6 +5,7 @@
 // named boards of gpu_facts.json. Synthetic headers and configs shaped like the published models.
 // CPU.
 
+#include "product/plan/plan_cached.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_quants.h"
@@ -1392,11 +1393,106 @@ int gguf_linear_formats() {
     return failures;
 }
 
+// A converted artifact's tensor table (#835 item 3, product::tensor_table_of_artifact: what
+// local_tensor_table gives a cached artifact): every field its facts read, the banks' formats
+// among them, so a plan of the kept artifact prices its own formats; none for facts that are not
+// an artifact's tensors or hold no bytes.
+int artifact_tensor_table() {
+    namespace art = ninferno::artifact;
+    int failures  = 0;
+    art::Directory dir;
+    dir.components["text"].config = gpt_oss_text_config();
+    const std::string mx =
+        std::string(art::layout_name(ninferno::default_weight_layout(ninferno::QType::MXFP4)));
+    for (const auto& [name, rows] :
+         {std::pair<std::string, std::uint64_t>{"text/layers/0/experts/gate_up", 5760},
+          {"text/layers/0/experts/down", 2880}}) {
+        art::TensorObject t;
+        t.id     = name;
+        t.shape  = {32, rows, 2880};
+        t.format = "mxfp4";
+        t.layout = mx;
+        t.bytes  = rows;
+        const art::ObjectHandle handle{dir.objects.size()};
+        dir.objects.emplace_back(t);
+        dir.object_index[name] = handle;
+        art::Binding b;
+        b.whole_object     = true;
+        b.elements         = 32 * rows * 2880;
+        b.parts            = {art::Part{handle, 0, b.elements}};
+        dir.bindings[name] = b;
+        art::Use use;
+        use.parameter         = name;
+        use.input             = "x";
+        use.activation_policy = art::ActivationPolicy::AllowA8;
+        dir.uses[{name, "x"}] = use;
+    }
+    const pr::PlanSourceFacts facts = pr::plan_facts_of_directory(dir, "a test directory");
+    const auto table                = pr::tensor_table_of_artifact(facts);
+    failures += check(table.has_value(), "artifact table: an artifact's facts give a table");
+    if (table) {
+        const rt::PlanModelFacts& m = facts.model;
+        failures += check(table->basis == rt::WeightBasis::Artifact &&
+                              table->tensor_bytes == m.weight_bytes && table->tensor_bytes > 0 &&
+                              table->mtp_bytes == m.mtp_bytes &&
+                              table->own_drafter_bytes == m.own_drafter_bytes,
+                          "artifact table: the artifact's bytes, its basis Artifact");
+        failures += check(table->expert_layers.size() == m.expert_layers.size() &&
+                              table->expert_prefill == m.expert_prefill &&
+                              table->expert_prefill_int8 == m.expert_prefill_int8 &&
+                              table->expert_prefill_assumed == m.expert_prefill_assumed,
+                          "artifact table: the routed layers and routes of the facts");
+        failures += check(table->weight_formats == facts.shape.weight_formats &&
+                              table->layer_formats == facts.shape.layer_formats &&
+                              table->rest_layer_formats == facts.shape.rest_layer_formats &&
+                              table->head_format == m.head_format,
+                          "artifact table: the trunk's, the layers' and the head's formats");
+        const auto mxfp4 = [](const std::vector<std::string>& formats) {
+            return std::find(formats.begin(), formats.end(), "mxfp4") != formats.end();
+        };
+        failures += check(table->expert_up_formats == m.expert_up_formats &&
+                              table->expert_down_formats == m.expert_down_formats &&
+                              mxfp4(table->expert_up_formats) && mxfp4(table->expert_down_formats),
+                          "artifact table: the banks' formats (mxfp4), as the facts read them");
+    }
+    pr::PlanSourceFacts gguf = facts;
+    gguf.model.weight_basis  = rt::WeightBasis::GgufTensors;
+    failures += check(!pr::tensor_table_of_artifact(gguf).has_value(),
+                      "artifact table: none from facts that are not an artifact's");
+    pr::PlanSourceFacts empty = facts;
+    empty.model.weight_bytes  = 0;
+    failures += check(!pr::tensor_table_of_artifact(empty).has_value(),
+                      "artifact table: none from an artifact of no bytes");
+    return failures;
+}
+
+// Which read tables price their rows (#835 item 3, product::table_prices_row: ninferno-ui counts
+// those in its tables generation and plans their repository again): a split part's formats alone
+// do (#811), as do its banks' route (#775) and a whole table's bytes; an engaged empty table (a
+// failed or past-128-MiB read) does not.
+int table_counting() {
+    int failures = 0;
+    pr::GgufTensorTable formats;
+    formats.weight_formats = {"q4_k"};
+    failures +=
+        check(pr::table_prices_row(formats), "table counting: a split part's formats alone");
+    pr::GgufTensorTable route;
+    route.expert_prefill_int8 = rt::ExpertPrefill::A16;
+    failures += check(pr::table_prices_row(route), "table counting: a split part's banks' route");
+    pr::GgufTensorTable bytes;
+    bytes.tensor_bytes = 1;
+    failures += check(pr::table_prices_row(bytes), "table counting: a whole table's bytes");
+    const pr::GgufTensorTable empty;
+    failures +=
+        check(!pr::table_prices_row(empty), "table counting: an empty table is not counted");
+    return failures;
+}
+
 int main() {
     const int failures = gguf_qwen35() + config_qwen35() + qwen35_moe() + gemma4() + gpt_oss() +
                          nemotron_h() + llama() + model_types() + boards() + artifact_errors() +
                          artifact_expert_layers() + artifact_prefill_policy() +
-                         gguf_linear_formats();
+                         gguf_linear_formats() + artifact_tensor_table() + table_counting();
     if (failures == 0) { std::cout << "plan facts OK\n"; }
     return failures == 0 ? 0 : 1;
 }
