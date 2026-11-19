@@ -39,9 +39,8 @@
 // series the host had not finished queuing when the hold ended is refused (self-check). A longer
 // hold (200 ms) comes before the first kind's first series, once its graphs are captured,
 // instantiated and uploaded, so the GPU does not idle in between. That the chip runs the series
-// at its working clock
-// is the intent of the holds, not a reading: the clocks are what `isa_probe.py run`'s nvidia-smi
-// note saw over the run. The repeats alternate the series, so a drift of the clock over the run
+// at its working clock is the intent of the holds, not a reading: the clocks are what
+// `isa_probe.py run`'s nvidia-smi note saw over the run. The repeats alternate the series, so a drift of the clock over the run
 // reaches all of them alike.
 //
 // Build (CUDA 13.x; sm_70 needs CUDA 12.8's nvcc), as `isa_probe.py run --section launch` does:

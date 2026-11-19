@@ -1117,15 +1117,16 @@ def cmd_merge(a):
     dest = os.path.join(a.inputs, name)
     # A row's card changes only on purpose: a run of another card does not replace the row's
     # run under its architecture's name unless --other-card says so (a check is named after its
-    # card, so it never replaces another card's). The card names compare as the parser joins
-    # them (single spaces). A launch row's old run of another card stays, as that card's check.
+    # card, so it never replaces another card's). Cards compare by their file label (card_label:
+    # spacing and the vendor words aside), as build_table's own-card check does. A launch row's
+    # old run of another card stays, as that card's check.
     writes = [(dest, text)]
     if os.path.exists(dest):
         with open(dest) as f:
             old = f.read()
         m = re.search(r"^card (.+)$", old, re.M)
         old_card = " ".join(m.group(1).split()) if m else None
-        if old_card and old_card != " ".join(head["card"].split()):
+        if old_card and card_label(old_card) != card_label(head["card"]):
             if not getattr(a, "other_card", False):
                 print(f"isa_probe: {dest} is a run of {old_card}, {a.input} of "
                       f"{head['card']}: the row's card changes only with --other-card; nothing "
@@ -1138,6 +1139,12 @@ def cmd_merge(a):
                           "replace it; nothing merged", file=sys.stderr)
                     return 1
                 writes.append((kept, old))
+                m = re.search(r"^probe (.+)$", old, re.M)
+                if not m or m.group(1).strip() != checked_in_launch_probe():
+                    print(f"isa_probe: warning: the kept run {kept} is "
+                          f"{m.group(1).strip() if m else 'of no probe version'}, not the "
+                          f"checked-in {checked_in_launch_probe()}: re-take it on its card",
+                          file=sys.stderr)
     # The table the merge makes is built first, with the runs read in place of their files: a
     # table that cannot be built writes nothing.
     try:
@@ -1156,15 +1163,24 @@ def cmd_merge(a):
                 out.write(body)
         save_table(a.table, table)
     except (OSError, ValueError) as e:
-        # The files are put back (save_table leaves the table as it was).
+        # The files are put back (save_table leaves the table as it was); a file that cannot be
+        # put back is named, the others are restored all the same.
+        unrestored = []
         for path, _ in writes:
-            if path not in before:
-                if os.path.exists(path):
-                    os.remove(path)
-            else:
-                with open(path, "wb") as out:
-                    out.write(before[path])
-        print(f"isa_probe: {e}; nothing merged ({dest} is as it was)", file=sys.stderr)
+            try:
+                if path not in before:
+                    if os.path.exists(path):
+                        os.remove(path)
+                else:
+                    with open(path, "wb") as out:
+                        out.write(before[path])
+            except OSError:
+                unrestored.append(path)
+        if unrestored:
+            print(f"isa_probe: {e}; nothing merged, but {', '.join(unrestored)} could not be put "
+                  "back: restore it from git", file=sys.stderr)
+        else:
+            print(f"isa_probe: {e}; nothing merged ({dest} is as it was)", file=sys.stderr)
         return 1
     print(f"isa_probe: {a.input} -> {dest}")
     for path, _ in writes[1:]:
