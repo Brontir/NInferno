@@ -1426,8 +1426,8 @@ def list_differences(args, differ, missing, extra, expected, got, line):
 # epilogues). check holds every pre-quantized nt = 8 R8 row to its resources (the registers,
 # stack, local and shared bytes, which never moved) and reports its loop counts beside, never
 # failing on them: the R8 law prices T = 1 only and reads no nt = 8 row (#966). extract still
-# writes the build's counts. `key` is the row's key fields (FAMILIES["r8"].key: codec, warps,
-# rows, nt, epilogue, pre).
+# writes the build's counts. `key` is the row's key fields (FAMILIES["r8"].key_columns:
+# codec, warps, rows, nt, epilogue, pre).
 def sass_unstable(family, key):
     return family == "r8" and int(key[3]) == 8 and int(key[5]) == 1
 
@@ -1447,8 +1447,16 @@ def sass_unstable(family, key):
 # row is held exact), prints both counts and never fails on the loop counts; extract --update keeps
 # the section's row where the build's is another counted allocation (keep_allocations). A new count
 # seen in a build is a new allocation of the same source: count it here (the census, #968) and rerun
-# the check; no rebuild. Key: FAMILIES["moegemm"].key (decoder, warps_m, warps_k, m_tiles, n_tiles,
-# cluster, stage); per architecture label.
+# the check; no rebuild. Key: FAMILIES["moegemm"].key_columns (decoder, warps_m, warps_k, m_tiles,
+# n_tiles, cluster, stage); per architecture label.
+# r8 (key FAMILIES["r8"].key_columns: codec, warps, rows, nt, epilogue, pre): sm_80's
+# W4a8U4ZpG<64> 4 2 8 1 1, a pre-quantized nt = 8 row (sass_unstable), with the stack, local and
+# shared bytes equal throughout: 160 registers in full ninferno-serve builds on an RTX 3060 stand at
+# master 5c10b6c8d (twice) and in a full build of 139136c74; 162, the committed count, in a
+# kernel_facts_families.sh build of the r8 units (KFF_FAMILIES=r8) at 714a05ced on another stand's
+# CPU; the r8 kernel files are unchanged between those trees, a few headers they include changed.
+# Host, build kind and tree all differ between the two counts, so this is a counted pair, not a
+# cause. No price reads the row (the R8 law prices T = 1 only, #966).
 REGISTER_ALLOCATIONS = {
     "moegemm": {
         "80": {
@@ -1474,6 +1482,11 @@ REGISTER_ALLOCATIONS = {
             ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): (72, 78),
             ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
             ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 77),
+        },
+    },
+    "r8": {
+        "80": {
+            ("W4a8U4ZpG<64>", 4, 2, 8, 1, 1): (160, 162),
         },
     },
 }

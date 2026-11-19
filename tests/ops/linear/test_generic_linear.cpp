@@ -10,6 +10,7 @@
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/device_class.h"
+#include "core/format_facts.h"
 #include "core/weight.h"
 #include "ninferno/ops/linear.h"
 #include "ninferno/ops/linear_add.h"
@@ -2467,8 +2468,9 @@ int main() {
     }
     // The min-term formats' register MMA in the prefill profile sums one way at every width (the
     // group-sums plane where the device's facts admit it, #619, else the MMA with ones), so a call
-    // below 17 tokens (a prefill's last chunk) gives a token the wide call's bytes on every
-    // admitted route; outside the profiles each route still gives a token the same bytes at every
+    // below 17 tokens (a whole segment that short: prefill_call_end and ungridded_call_tokens leave
+    // no last chunk of 1..16) gives a token the wide call's bytes on every admitted route, except
+    // on Volta (below); outside the profiles each route still gives a token the same bytes at every
     // call size and start in each width band (the MMA with ones, or the adds in a tile of four or
     // more token tiles, rmma_add_sums), as route_is_token_invariant claims.
     const auto min_term = [](const Format& f) {
@@ -2489,14 +2491,12 @@ int main() {
             }
         }
         // Without tensor-core MMA (Volta) the formats of its verify kernels (volta_hmma_codec: the
-        // HMMA kernel and the FP32 GEMV take a call of 1..16 tokens in place of the register
-        // MMA's tiles) keep the profile's promise from 17 tokens only, as prefill_routes.h states;
-        // there the windows below 17 are not checked, and every other format keeps them.
-        const WeightCodec codec = f.qtype == QType::GGML_Q4_K   ? WeightCodec::GgmlQ4K
-                                  : f.qtype == QType::GGML_Q5_K ? WeightCodec::GgmlQ5K
-                                  : f.qtype == QType::GGML_Q2_K ? WeightCodec::GgmlQ2K
-                                  : f.qtype == QType::GGML_Q4_1 ? WeightCodec::GgmlQ41
-                                                                : WeightCodec::GgmlQ51;
+        // HMMA kernel takes a call of 1..16 tokens and the FP32 GEMV one of 1..4, volta_gemv_takes,
+        // in place of the register MMA's tiles) keep the profile's promise from 17 tokens only, as
+        // prefill_routes.h states; there the windows below 17 are not checked, and every other
+        // format keeps them.
+        // The format's codec from its facts row (format_facts), never a mapping of the test's own.
+        const WeightCodec codec = format_facts(f.qtype).codec.value();
         const bool volta_verify =
             !device_class().features.mma_tensor && generic::volta_hmma_codec(codec);
         const Windows narrow =
