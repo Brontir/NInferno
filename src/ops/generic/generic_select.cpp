@@ -254,32 +254,35 @@ namespace {
 // T = 5..16 about 0.5 ms a call against 0.08 for the vector kernel at T = 4; C8 aggregate 37.3
 // tok/s against C4 86.3, DFlash2 (verify 6) C1 15.7 against plain 30.1.
 constexpr std::int32_t kVecRuleMaxTokens = 4;
-// On GA10x (sm_86..88) and consumer Blackwell (sm_120) the vector kernel stops at three tokens
+// On GA10x (sm_86) and consumer Blackwell (sm_120) the vector kernel stops at three tokens
 // (#998, DECISIONS 96), the two generations whose two lab cards both lose T = 4 to it end to end.
 // Qwen3.5-9B Q4_K_M, --spec off, C = 4 (every trunk linear a T = 4 call), the rule capped at T = 3
 // against T = 4: RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 5070 Ti +11.1 %, RTX 5090 +5.3 %, with C = 2
-// and 3 within 0.05 %; under MTP the cap never lost in rounds a second (RTX 3090, 5070 Ti, 5090).
+// and 3 within 0.1 %; under MTP the cap never lost in rounds a second (RTX 3090, 5070 Ti, 5090).
+// There T = 4 goes to the register MMA. The formats R8 takes at the verify widths (r8_verify_takes:
+// the codebook formats, Q4_0) keep four: their T = 4 would go to R8, which no A/B here measured,
+// and the vector kernel's own first case was one of them (the IQ3_S verify above).
 // Ada keeps four: the RTX 4070 Ti (-2.0 %) and 4090 (-1.4 %) lose with the cap, the 4060 Ti gains
 // 2.5 %. The A100 (sm_80) is not measured. The edge in
 // T differs by card (capped at T = 2 the RTX 3090 lost 2.0 % at C = 3, the RTX 3060 gained 1.5 %):
 // a counted bound from the cards' integer issue per DRAM byte replaces this (#998).
 constexpr std::int32_t kVecRuleMaxTokensGa10xGb20x = 3;
-// On Turing (sm_75) it stops at two (#1038), now that the K-quants keep the register MMA at the
-// verify widths (R8VerifyEmulatedOff). RTX 2080 Ti, Qwen3.5-9B Q4_K_M, --spec off, vec at T = 2
-// and the register MMA at T = 3..4 against vec at T = 2..4: C = 2 -0.01 %, C = 3 +2.45 %, C = 4
-// +3.45 %.
+// On Turing (sm_75) it stops at two (#1038) for the same formats, now that the K-quants keep the
+// register MMA at the verify widths (R8VerifyEmulatedOff). RTX 2080 Ti, Qwen3.5-9B, --spec off, vec
+// at T = 2 and the register MMA at T = 3..4 against vec at T = 2..4: Q4_K_M C = 2 -0.01 %, C = 3
+// +2.45 %, C = 4 +3.45 %; Q6_K -2.35 %, +25.8 %, +30.8 %.
 constexpr std::int32_t kVecRuleMaxTokensTuring = 2;
 
-std::int32_t vec_rule_max_tokens() {
+std::int32_t vec_rule_max_tokens(QType qtype) {
     // vec_max_tokens() reaches past eight columns only without tensor mma.sync.
     const std::int32_t widest = vec_max_tokens();
     if (widest > ggml_mmq::kVecMaxColumns) return widest;
     try {
         const auto& d = device_class();
-        if ((d.major == 8 && d.minor >= 6 && d.minor < 9) || gb20x_cc(d.major, d.minor)) {
+        if ((ga10x_cc(d.major, d.minor) || gb20x_cc(d.major, d.minor)) && !r8_verify_takes(qtype)) {
             return kVecRuleMaxTokensGa10xGb20x;
         }
-        if (turing_cc(d.major, d.minor)) return kVecRuleMaxTokensTuring;
+        if (turing_cc(d.major, d.minor) && !r8_verify_takes(qtype)) return kVecRuleMaxTokensTuring;
     } catch (const std::exception&) {}
     return kVecRuleMaxTokens;
 }
@@ -288,7 +291,7 @@ std::int32_t vec_rule_max_tokens() {
 } // namespace
 
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
-    return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);
+    return tokens >= 2 && tokens <= vec_rule_max_tokens(w.qtype) && vec_call(w, policy, tokens);
 }
 
 // Speculative verify (T 9..16) of the codebook formats takes ggml's matrix kernel on

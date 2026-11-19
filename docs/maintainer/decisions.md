@@ -3188,17 +3188,29 @@ takes the next authority's route. Lab / shipped, C4 (C2 and C3 tie within 0.1 % 
 Under MTP (Qwen3.5-9B-MTP, rounds/s, which a greedy route change cannot move through the text),
 the cap never lost more than 1.3 % (4090 C1) and gained up to +5.3 % (5090 C1).
 
-**Decision.** `kVecRuleMaxTokensGa10xGb20x = 3`: `vec_rule_max_tokens()` returns 3 on sm_86..88
-and on consumer Blackwell (`gb20x_cc`), 4 elsewhere; boards whose vec kernel reaches past eight
+**Decision.** `kVecRuleMaxTokensGa10xGb20x = 3`: `vec_rule_max_tokens(qtype)` returns 3 on sm_86
+(`ga10x_cc`; not the A100, sm_87 or sm_88, none measured) and on consumer Blackwell (`gb20x_cc`)
+for the formats R8 does not take at the verify widths, 4 elsewhere; boards whose vec kernel reaches past eight
 columns keep their widest. This is a **measured constant** keyed by generation (`route_rules.h`
 records it, `Basis::Measured`, with the four boards). It is not derived from chip facts: the
 cycles-a-byte column above does not split the boards by itself (the 4060 Ti gains at 0.299 while
-the 4070 Ti loses at 0.311, and the 3060 keeps vec at T 3 where the 3090 does not). A counted bound
+the 4070 Ti loses at 0.311, and the 3090 keeps vec at T 3 where the 3060 does not: capped at T 2
+the 3090 lost 2.0 % at C3, the 3060 gained 1.5 %). A counted bound
 needs the integer issue rate of a vec token per arch (isa_probe rows), the analyzer's next round.
 
 **What moves.** The goldens move only T = 4 ggml_vec rows on the GA10x and GB20x boards, merging
-into the next range's route. The R8 verify formats (IQ2 / IQ3) at T 4 now take r8.w4r2.
-Ada, Turing and Volta keep their selections.
+into the next range's route (the register MMA for the K-quants). Ada, Turing and Volta keep their
+selections.
+
+**Not moved: the formats R8 verifies** (`r8_verify_takes`: the codebook formats, Q4_0). Capped,
+their T 4 would go to R8 (IQ2 r8.w4r2, IQ3 and large Q4_0 r8.w4r1), which none of the A/Bs above
+measured. The vector rule's first case was one of them: the RTX 5090's ISTA IQ3_S MTP3 4-token
+verify, where vec beat the tuner's R8 and A16 schedules (C1 166 -> 174 tok/s). They keep four
+until an A/B of their own.
+
+The product estimate's launch counts for 2-4 rows (`choice_constants.h`, `format_facts.h`) stay
+Ada's routes (vec at 2-4, labelled transferred): on GA10x and GB20x a K-quant T 4 now launches the
+register MMA without the activation quantize, a small error on the transferred side.
 
 **Not taken.** The register MMA at T 2..4 (`NINFERNO_LAB_RMMA_SMALLT`) wins some of the same cells
 (RTX 5090 Q6_K +1.7 / +3.6 / +5.5 %) and loses others (RTX 5090 Q4_K_M T 2 -5.9 %, RTX 3090 T 2
