@@ -269,7 +269,12 @@ bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     // LAB ONLY (lab/mmqv-ab, never merged): NINFERNO_LAB_NO_VEC_RULE=1 turns the vector-kernel
     // rule off, for the end-to-end A/B of its T 2..4 calls without speculation.
     static const bool lab_no_vec = std::getenv("NINFERNO_LAB_NO_VEC_RULE") != nullptr;
-    if (lab_no_vec || std::getenv("NINFERNO_LAB_RMMA_SMALLT") != nullptr) return false;
+    // NINFERNO_LAB_RMMA_SMALLT turns the vector kernel off too, unless NINFERNO_LAB_VEC_MAX_T says
+    // how far it stays (then only R8's verify widths are off).
+    if (lab_no_vec || (std::getenv("NINFERNO_LAB_RMMA_SMALLT") != nullptr &&
+                       std::getenv("NINFERNO_LAB_VEC_MAX_T") == nullptr)) {
+        return false;
+    }
     // LAB ONLY (lab/vec-minn): NINFERNO_LAB_VEC_MIN_N=N turns the rule off for weights of fewer
     // than N rows only (#1041: at small n the vec grid fills a fraction of a wave).
     static const int lab_min_n = [] {
