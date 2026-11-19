@@ -769,14 +769,14 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
     // IQ1_S / IQ1_M: grid-lookup decoders of IQ2's weight, scheduled with them (sched_iq2).
     const bool iq2 = format_traits(p.qtype).sched_iq2;
     if (tokens >= 2) {
-        // Turing at the verify widths (#1038): two rows a warp. RTX 2080 Ti, T = 3 / 4, w4r1
-        // against w4r2: IQ3_S 12288x4096 83.1 / 93.9 against 67.5 / 72.9 us, IQ3_XXS 4096x4096 30.8
-        // / 34.5 against 25.5 / 27.4, IQ4_XS 4096x4096 24.6 / 27.0 against 24.5 / 25.3, Q4_0
-        // 12288x4096 60.2 / 68.6 against 57.9 / 59.9; at T = 2 within 1 % where w4r1 is ahead
-        // (IQ4_XS, Q4_0). Not Volta: its one-slot form loses with a second row (below).
+        // Turing at the verify widths from T = 3 (#1038): two rows a warp for the formats timed
+        // there (format_rules.h R8VerifyTwoRowsTuring; RTX 2080 Ti, w4r2 13-31 % ahead of w4r1 at
+        // T = 3 / 4, within 1 % at T = 2). Keyed like the Turing rule below (an emulated BF16 MMA
+        // without Volta's one-slot form): Volta's one-slot form loses with a second row.
         const ArchFacts arch = current_arch_facts();
-        if (satisfied(format_requires::kR8WithoutNativeBf16, arch) &&
-            !satisfied(format_requires::kR8OneSlot, arch)) {
+        if (tokens >= 3 && satisfied(format_requires::kR8WithoutNativeBf16, arch) &&
+            !satisfied(format_requires::kR8OneSlot, arch) &&
+            format_rules::holds(format_rules::Rule::R8VerifyTwoRowsTuring, p.qtype)) {
             return r8_index(4, 2);
         }
         return iq2 && (tokens >= 4 || p.n >= 34816) ? r8_index(4, 2) : r8_index(4, 1);
@@ -1409,11 +1409,13 @@ bool bf16_mma_native() {
 bool r8_verify_takes(QType qtype) {
     if (r8_verify_supports(qtype)) return true;
     try {
-        // Where the BF16 MMA is emulated R8 takes the verify widths of every compiled format but
-        // the K-quants, which keep the register MMA there (format_rules.h R8VerifyEmulatedOff,
-        // #1038).
-        return !device_class().features.mma_bf16_native && r8_verify_compiled(qtype) &&
-               !format_rules::holds(format_rules::Rule::R8VerifyEmulatedOff, qtype);
+        // Where the BF16 MMA is emulated R8 takes the verify widths of every compiled format; on
+        // Turing the K-quants keep the register MMA there (format_rules.h R8VerifyEmulatedOff,
+        // #1038: timed on the RTX 2080 Ti only, so Volta keeps R8).
+        const auto& d = device_class();
+        return !d.features.mma_bf16_native && r8_verify_compiled(qtype) &&
+               !(turing_cc(d.major, d.minor) &&
+                 format_rules::holds(format_rules::Rule::R8VerifyEmulatedOff, qtype));
     } catch (const std::exception&) { return false; }
 }
 

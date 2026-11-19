@@ -60,23 +60,29 @@ namespace ninferno::ops::detail::generic::format_rules {
 using route_rules::Basis;
 
 enum class Rule : std::uint8_t {
-    LightStep,            // light_ggml_step: the four-warp decode step past two CTAs a SM
-    TallTile,             // tall_tile_format: the 128x32 register-MMA tile from 97 tokens
-    MmqVerify,            // mmq_verify_format: ggml's matrix kernel at verify widths
-    W4a8WsTuned,          // w4a8_ws_extra: the producer-warp W4A8 tile on sm_89 / sm_120
-    R8Verify,             // r8_verify_supports: R8 at verify widths
-    R8VerifyQ40MinValues, // kR8VerifyQ40MinValues: Q4_0's verify R8 on a large matrix only
-    MmqVerifyMinTokens,   // kMmqVerifyMinTokens: the first width of the mmq verify band
-    VecCapGa10xGb20x,     // vec_rule_max_tokens: the formats whose vec band stops at three tokens
-                          // on GA10x and consumer Blackwell
-    R8VerifyEmulatedOff,  // r8_verify_takes: formats R8 leaves at verify widths where BF16 is
-                          // emulated
+    LightStep,             // light_ggml_step: the four-warp decode step past two CTAs a SM
+    TallTile,              // tall_tile_format: the 128x32 register-MMA tile from 97 tokens
+    MmqVerify,             // mmq_verify_format: ggml's matrix kernel at verify widths
+    W4a8WsTuned,           // w4a8_ws_extra: the producer-warp W4A8 tile on sm_89 / sm_120
+    R8Verify,              // r8_verify_supports: R8 at verify widths
+    R8VerifyQ40MinValues,  // kR8VerifyQ40MinValues: Q4_0's verify R8 on a large matrix only
+    MmqVerifyMinTokens,    // kMmqVerifyMinTokens: the first width of the mmq verify band
+    VecCapGa10xGb20x,      // vec_rule_max_tokens: the formats whose vec band stops at three tokens
+                           // on GA10x and consumer Blackwell
+    R8VerifyEmulatedOff,   // r8_verify_takes: formats R8 leaves at verify widths on Turing
+    R8VerifyTwoRowsTuring, // rules_r8: formats whose Turing verify R8 takes two rows a warp
 };
 
-inline constexpr std::array kAllRules = {
-    Rule::LightStep,          Rule::TallTile,         Rule::MmqVerify,
-    Rule::W4a8WsTuned,        Rule::R8Verify,         Rule::R8VerifyQ40MinValues,
-    Rule::MmqVerifyMinTokens, Rule::VecCapGa10xGb20x, Rule::R8VerifyEmulatedOff};
+inline constexpr std::array kAllRules = {Rule::LightStep,
+                                         Rule::TallTile,
+                                         Rule::MmqVerify,
+                                         Rule::W4a8WsTuned,
+                                         Rule::R8Verify,
+                                         Rule::R8VerifyQ40MinValues,
+                                         Rule::MmqVerifyMinTokens,
+                                         Rule::VecCapGa10xGb20x,
+                                         Rule::R8VerifyEmulatedOff,
+                                         Rule::R8VerifyTwoRowsTuring};
 
 constexpr std::string_view rule_name(Rule rule) {
     switch (rule) {
@@ -92,6 +98,8 @@ constexpr std::string_view rule_name(Rule rule) {
         return "r8_verify";
     case Rule::R8VerifyEmulatedOff:
         return "r8_verify_emulated_off";
+    case Rule::R8VerifyTwoRowsTuring:
+        return "r8_verify_two_rows_turing";
     case Rule::R8VerifyQ40MinValues:
         return "kR8VerifyQ40MinValues";
     case Rule::MmqVerifyMinTokens:
@@ -362,6 +370,17 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
     {Rule::R8VerifyEmulatedOff, Basis::Unknown, FormatSet{Q::GGML_Q5_K}, 0, kNone, kNone,
      Evidence::Carried, "#1038", "2026-11-19",
      "Q5_K follows Q4_K, whose decoder it shares: not timed on its own"},
+
+    // --- r8_verify_two_rows_turing: two rows a warp at Turing's verify widths from T = 3 ---
+    {Rule::R8VerifyTwoRowsTuring, Basis::Measured,
+     FormatSet{Q::GGML_IQ3_S, Q::GGML_IQ3_XXS, Q::GGML_IQ4_XS, Q::GGML_Q4_0}, 0, "tu102:68sm",
+     "RTX 2080 Ti", Evidence::SingleCard, "#1038: selcheck.sh 75 1038fmt (route_tune)",
+     "2026-11-19",
+     "T = 3 / 4, r8.w4r1 against r8.w4r2: IQ3_S 12288x4096 83.1 / 93.9 against 67.5 / 72.9 us, "
+     "IQ3_XXS 4096x4096 30.8 / 34.5 against 25.5 / 27.4, IQ4_XS 4096x4096 24.6 / 27.0 against "
+     "24.5 / 25.3, Q4_0 12288x4096 60.2 / 68.6 against 57.9 / 59.9; at T = 2 within 1 %, where "
+     "w4r1 is ahead for IQ4_XS and Q4_0. Not timed: the other R8 formats (NVFP4, MXFP4, U4 "
+     "zero-point, the native Q3-Q6 groups), which keep w4r1"},
 });
 } // namespace rows
 
