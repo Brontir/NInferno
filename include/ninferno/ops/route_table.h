@@ -71,6 +71,8 @@ struct RouteTableStatus {
     // (route_authorities.h). Empty path: none read.
     std::size_t predicted_entries = 0;
     std::string predicted_path; // UTF-8
+    // A pick file of this class read for another board (its gpu.pci_id): not read, and why.
+    std::string predicted_skipped;
     std::string predicted_sha256;
     std::string message;              // why nothing is loaded, or what was loaded
 };

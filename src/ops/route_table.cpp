@@ -405,6 +405,26 @@ void read_predicted(const std::string& path, Table& table) {
             throw std::runtime_error("route pick: " + path + " is for " + cls +
                                      ", this device is " + route_gpu_class());
         }
+        // The board the bands were priced for (gpu.pci_id's registry row). A class holds boards of
+        // other memory too (the RTX A4000 beside the 3070 Ti, the Tesla T4 beside the 2070 SUPER):
+        // those read none of the bands, which pick.py priced over another board's facts.
+        const std::string id = root.at("gpu").at("pci_id").get<std::string>();
+        const auto pci       = parse_pci_id(id);
+        if (!pci) {
+            throw std::runtime_error("route pick: " + path + ": gpu.pci_id \"" + id +
+                                     "\" is not a PCI product id");
+        }
+        const auto priced = measured::find_board_of_pci(*pci);
+        if (!priced) {
+            throw std::runtime_error("route pick: " + path + ": gpu.pci_id " + id +
+                                     " is no board of the registry");
+        }
+        const Board here = board_of(device_class());
+        if (!(here.dram_gbps > 0) || !(priced->dram_gbps > 0) ||
+            board_distance(here, *priced) != 0.0) {
+            table.status.predicted_skipped = path + " (priced for " + id + ", another board)";
+            return;
+        }
         std::size_t entries = 0;
         for (const Json& e : root.at("entries")) {
             const std::string where = path + " entry " + e.dump();
@@ -658,6 +678,9 @@ RouteTableStatus publish_loaded_locked(DeviceTables& d, std::shared_ptr<Table> t
                    std::to_string(table->status.borrowed_moe_layers) +
                    " MoE layers it lacks from the next nearest (" + table->status.borrowed_from +
                    ")") +
+        (table->status.predicted_skipped.empty()
+             ? ""
+             : "; no predicted bands: " + table->status.predicted_skipped) +
         (table->status.predicted_path.empty()
              ? ""
              : "; " + std::to_string(table->status.predicted_entries) + " problems' T " +
