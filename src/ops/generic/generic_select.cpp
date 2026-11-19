@@ -304,11 +304,18 @@ std::int32_t vec_rule_max_tokens(QType qtype) {
 // than the SMs times the CTAs one SM holds of its instance, from the instance's committed kernel
 // facts (registers, shared memory), as vec_slots counts them. Only where a declined call goes to
 // the register MMA, which the measurements are: a native BF16 MMA (Turing sends its verify widths
-// to R8, #1038). No snapshot for the build's code, or no row: the call stays the vector kernel's.
+// to R8, #1038), and only for formats R8 does not verify (the declined call of those would go to
+// R8). The key is the plain product's: a gated SwiGLU pair (KS 5120 or the runtime K, its own
+// registers) and a segment of a larger parent (w.n counts the parent) are counted as the plain
+// product of w.n rows, which can only keep the vector kernel where its own grid is under a wave.
+// No snapshot for the build's code, or no row: the call stays the vector kernel's.
 bool vec_grid_under_one_wave(const Weight& w, std::int32_t tokens) {
     try {
         const DeviceClass& d = device_class();
         if (!d.features.mma_bf16_native || d.sms <= 0) return false;
+        // A format R8 verifies (IQ2_*, IQ3_*: r8_verify_supports) would send the declined call to
+        // R8, not to the register MMA: no measurement covers that, so it keeps the vector kernel.
+        if (r8_verify_takes_shape(w.qtype, w.n, w.k)) return false;
         const auto type = mmq_type(w);
         const auto arch = kernel_facts::sass_arch();
         if (!type || !arch) return false;

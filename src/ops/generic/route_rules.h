@@ -454,7 +454,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     {"vec_rule: one resident wave", Basis::Structural, "generic_select.cpp",
      "return ctas < static_cast<std::int64_t>(std::max(per_sm, 1)) * d.sms;", 1, "ga102:82sm",
      "RTX 3090",
-     "native BF16 MMA boards only (a declined call takes the register MMA); RTX 3090 T 2-4 at n "
+     "native BF16 MMA boards and formats R8 does not verify only (a declined call takes the "
+     "register MMA); RTX 3090 T 2-4 at n "
      "512-2048: the vector kernel x1.13-1.99 the best register MMA; the 3060, 4070 Ti and 4060 Ti "
      "x1.14-1.39 at q6_K 1024 x 4096",
      ""},

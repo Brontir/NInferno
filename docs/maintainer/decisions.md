@@ -3277,7 +3277,10 @@ tensor-core boards (RTX 2060 / 2070 / 2080, TITAN RTX, T4). The V100 boards, the
 rows over eight (four warps of two rows, `kVecCtaWarps` x `kVecRowsPerWarp`), is smaller than
 the SMs times the CTAs one SM holds of the instance (`resident_ctas_per_sm` of its committed
 kernel facts, as `vec_slots` counts them). The call takes the register MMA. Boards without a
-native BF16 MMA keep the vector kernel: Turing's declined verify widths go to R8 (#1038).
+native BF16 MMA keep the vector kernel: Turing's declined verify widths go to R8 (#1038). So do
+the formats R8 verifies on every board (`r8_verify_takes_shape`: IQ2_*, IQ3_*), whose declined
+call would go to R8, which no measurement here covers. The key is the plain product's (a gated
+pair and a segment of a larger parent are counted as w.n plain rows: they can only keep vec).
 
 **Why.** A narrow output is a few small CTAs; under one wave they keep too few bytes in flight,
 and the register MMA's K split fills the SMs. RTX 3090, isolated, T 2-4: q6_K 512-2048 x
