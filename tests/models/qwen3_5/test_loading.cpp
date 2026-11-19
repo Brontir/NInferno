@@ -218,8 +218,9 @@ void logical_data_and_instances() {
         } catch (const artifact::ArtifactError& e) { refused = e.what(); }
         require(refused.find("never binds") != std::string::npos &&
                     refused.find("text/unused_extra") != std::string::npos,
-                "the directory-only binding accepted a text binding the model never binds (" +
-                    refused + ")");
+                ("the directory-only binding accepted a text binding the model never binds (" +
+                 refused + ")")
+                    .c_str());
     }
     {
         // --plan's facts of the artifact file, the queries registered as ninferno-serve registers
