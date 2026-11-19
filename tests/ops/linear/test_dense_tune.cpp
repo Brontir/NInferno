@@ -390,11 +390,10 @@ bool timed_in(const Json* entry, const char* field, std::int32_t t) {
 
 // A decode width (#1008) or a prefill band (#1023) an older tune left untimed because a table
 // answered it is timed once --route-policy evidence demotes that answer, by a process that times
-// (TuneMode::On), and only once; a read-only process (TuneMode::Off) times and writes nothing
-// (#1024; Off reads only the release file, so this does not reach the cache reader's writable
-// guard). The answers are lent: the similar chip's table fills problems the device's own table
-// lacks, and an entry with a lender is Borrowed whatever the board distance, so evidence demotes
-// it.
+// (TuneMode::On), and only once; a read-only process (TuneMode::Off) reads the release's entry with
+// the demoted widths and bands whole, and times and writes nothing (#1024). The answers are lent:
+// the similar chip's table fills problems the device's own table lacks, and an entry with a lender
+// is Borrowed whatever the board distance, so evidence demotes it.
 int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scratch) {
     const auto similar = device_class().similar_chips();
     if (similar.empty()) {
