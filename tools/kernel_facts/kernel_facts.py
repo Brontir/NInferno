@@ -277,6 +277,28 @@ def mmq_key(demangled):
         fail(f"unexpected mul_mat_q arguments in {demangled}")
 
 
+VEC_NAMESPACE = "ninferno::ops::ggml_mmq::detail::(anonymousnamespace)::"
+
+
+def vec_key(demangled):
+    """The key of a vector kernel instance (src/ops/generic/ggml_mmq/ggml_vec.cu, #763):
+    vec_kernel<type, T, KS, Gated, Bounded> in the file's anonymous namespace, keyed as the
+    ggml_type value, the tokens T, the static K KS (0: the runtime K) and the Gated and Bounded flags. None for other
+    symbols."""
+    unnamed = demangled.replace("(anonymous namespace)", "(anonymousnamespace)")
+    args = template_args(unnamed.replace("<unnamed>", "(anonymousnamespace)"),
+                         "void " + VEC_NAMESPACE + "vec_kernel<")
+    if args is None:
+        return None
+    if len(args) != 5:
+        fail(f"unexpected vec_kernel arguments in {demangled}")
+    try:
+        key = tuple(ggml_int(a) for a in args)
+    except ValueError:
+        fail(f"unexpected vec_kernel arguments in {demangled}")
+    return key[:3] + tuple(int(v) for v in key[3:])
+
+
 W4A8_SCHEDULE = re.compile(r"W4a8Schedule<(\d+),(\d+),(\d+),(\d+)>")
 
 
@@ -522,6 +544,8 @@ FAMILIES = {
                                   "cluster", "stage"), lambda d: moe_gemm_key(d),
                       "moe_gemm_kernel", lambda key: moe_gemm_tiles(key), True, True,
                       waits=True),
+    "vec": Family("vec", ("type", "T", "KS", "gated", "bounded"), lambda d: vec_key(d),
+                  "vec_kernel", lambda key: 1, False, False, loop=False),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -980,6 +1004,13 @@ SECTION_NOTES = {
         "# The routed-expert register-MMA kernels (src/ops/moe/moe_gemm.cuh, #619 step 11):",
         "# moe_gemm_kernel<decoder, RmmaSchedule<warps_m, warps_k, m_tiles, n_tiles, cluster>,",
         "# stage>; k_iter as the rmma rows' (m16n8 tiles a warp, twice in the GateUp stage).",
+    ),
+    "vec": (
+        "# ggml's vector kernels (src/ops/generic/ggml_mmq/ggml_vec.cu, #763): vec_kernel<type, T,",
+        "# KS, Gated, Bounded>, keyed as the ggml_type value, the tokens, the static K the slice loop",
+        "# unrolls over (0: the runtime K) and the two flags. Resources alone: the launch reads the",
+        "# CTAs an SM holds (core/kernel_occupancy.h) and a bounded twin's local bytes, never the",
+        "# host's kernels.",
     ),
 }
 

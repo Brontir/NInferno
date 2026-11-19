@@ -371,7 +371,8 @@ void sections_read() {
     // sm_70 has no mmq section: its snapshot is made with CUDA 12.8 (#762), and Volta takes no
     // MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts, the
     // r8 one (#613 PR-10): the R8 law reads the one-slot ring's, and the w4a8 one (#787): its
-    // int8 MMA is a call to the dp4a emulation, counted as the MMA it stands for. The routed-expert
+    // int8 MMA is a call to the dp4a emulation, counted as the MMA it stands for, and the vec one
+    // (#763): the vector kernels' launch reads their CTAs per SM from it. The routed-expert
     // families (moer8, moegemm, #619 step 11) are not in it: the MoE law reads the boards it was
     // measured on (Turing and newer), and sm_100 has none yet (six of its W4a8Nvfp4 GateUp rows
     // read as unknown flow; no lab board is an sm_100 part).
@@ -385,7 +386,7 @@ void sections_read() {
             const bool waived =
                 moe ? std::find(std::begin(kWithoutMoe), std::end(kWithoutMoe), arch) !=
                           std::end(kWithoutMoe)
-                    : family != "gemma4" && family != "r8" && family != "w4a8" &&
+                    : family != "gemma4" && family != "r8" && family != "w4a8" && family != "vec" &&
                           std::find(std::begin(kWithoutSections), std::end(kWithoutSections),
                                     arch) != std::end(kWithoutSections);
             const auto header = kf::section_header(arch, family);

@@ -204,8 +204,11 @@ struct SnapshotHeader {
 //   "moegemm" the routed-expert register-MMA kernels moe_gemm_kernel<decoder, RmmaSchedule<warps_m,
 //             warps_k, m_tiles, n_tiles, cluster>, stage> (#619 step 11): key "decoder warps_m
 //             warps_k m_tiles n_tiles cluster stage".
-inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8",  "gemma4", "r8",
-                                                        "i8",  "moer8", "moegemm"};
+//   "vec"     ggml's vector kernels vec_kernel<type, T, KS, Gated, Bounded> (ggml_vec.cu, #763),
+//             resources alone: key "type T KS gated bounded" ("13 2 1 0 0"). The launch reads the
+//             CTAs an SM holds and a bounded twin's local bytes from them, never the host's.
+inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8",  "gemma4",  "r8",
+                                                        "i8",  "moer8", "moegemm", "vec"};
 
 struct MmqKernelKey {
     int type      = 0; // the ggml_type value: 12 Q4_K, 13 Q5_K, 14 Q6_K
@@ -246,6 +249,14 @@ struct I8KernelKey {
     int epilogue = 0;   // Epilogue as an integer
 };
 
+struct VecKernelKey {
+    int type     = 0; // the ggml_type value
+    int T        = 0; // the tokens the instance is compiled for
+    int KS       = 0; // the static K the slice loop unrolls over, 0 for the runtime K
+    bool gated   = false;
+    bool bounded = false; // the __launch_bounds__ twin
+};
+
 // One section of a label's snapshot: the nvcc its rows were read under and their count; nullopt
 // where the label has no snapshot or the snapshot no such section.
 struct SectionHeader {
@@ -265,6 +276,7 @@ section_rows(std::string_view arch, std::string_view family);
                                                       const Gemma4KernelKey& key);
 [[nodiscard]] std::optional<KernelFacts> r8_facts(std::string_view arch, const R8KernelKey& key);
 [[nodiscard]] std::optional<KernelFacts> i8_facts(std::string_view arch, const I8KernelKey& key);
+[[nodiscard]] std::optional<KernelFacts> vec_facts(std::string_view arch, const VecKernelKey& key);
 
 // The build architecture labels with a committed snapshot, in file order.
 [[nodiscard]] std::vector<std::string_view> snapshot_archs();
