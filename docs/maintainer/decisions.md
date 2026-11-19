@@ -3260,5 +3260,8 @@ These are **measured rules on one card** (`Evidence::SingleCard`, tu102:68sm), n
 chip facts.
 
 **What moves.** The selector goldens move only the 2080 Ti board's Q3_K..Q6_K rows at T = 3..4,
-from ggml_vec to the register MMA (in every build set). The V100 boards and every other card keep
-their selections.
+from ggml_vec to the register MMA, in every build set: the sm70 set moves too, because its
+substituted boards carry their architecture's features, while a real sm_70 tree on a Turing card
+lacks tensor mma.sync and does not meet `kR8VerifyTuring`. The atlas sets move the Turing
+tensor-core boards (RTX 2060 / 2070 / 2080, TITAN RTX, T4). The V100 boards, the GTX 16 boards
+(slow tensor cores, `mma_slow`) and every other card keep their selections.

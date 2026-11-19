@@ -41,7 +41,9 @@ inline constexpr ArchRequires kR8OneSlot{.mma_tensor = Need::No, .build_arch_bel
 // 2080 Ti with an sm_75 build (format_rules.h R8VerifyEmulatedOff, VecCapTuring,
 // R8VerifyTwoRowsTuring). Volta, and an sm_70 tree on a Turing board (its register MMA on FP32
 // FMAs), keep the emulated-MMA rules.
-inline constexpr ArchRequires kR8VerifyTuring{.mma_tensor = Need::Yes, .cc_any_of = {{{7, 5}}}};
+// The slow-tensor sm_75 parts (GTX 16, T400 .. T1000: mma_slow) were not timed either.
+inline constexpr ArchRequires kR8VerifyTuring{
+    .mma_tensor = Need::Yes, .mma_slow = Need::No, .cc_any_of = {{{7, 5}}}};
 
 struct NamedRequires {
     std::string_view name;

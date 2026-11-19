@@ -73,10 +73,11 @@ bool r8_one_slot(const DeviceClass& d, int build_arch) {
     return one_slot_build && !d.features.mma_tensor;
 }
 
-// generic_select.cpp r8_verify_takes / vec_rule_max_tokens / rules_r8 (#1038): a Turing device
-// whose build carries tensor mma.sync (the sm_75 build the rules were timed on).
+// generic_select.cpp r8_verify_takes / vec_rule_max_tokens / rules_r8 (#1038). Not replaced code
+// (that was turing_cc alone): the rule as DECISIONS 97 states it, a Turing device with full-rate
+// tensor mma.sync in its build (the RTX 2080 Ti in the sm_75 build the rules were timed on).
 bool r8_verify_turing(const DeviceClass& d) {
-    return turing_cc(d.major, d.minor) && d.features.mma_tensor;
+    return turing_cc(d.major, d.minor) && d.features.mma_tensor && !d.features.mma_slow;
 }
 
 } // namespace legacy
@@ -192,7 +193,10 @@ void requirements_equal_the_code_they_replaced() {
 // - rules_r8 takes two rows a warp at T = 3 and 4, one at T = 2, for R8VerifyTwoRowsTuring's
 //   formats on a board meeting kR8VerifyTuring (the RTX 2080 Ti in an sm_75 build); one row a warp
 //   at every verify width elsewhere (a 4096x4096 store: no iq2 class, below the N edge);
-// - r8_verify_takes refuses R8VerifyEmulatedOff's formats on such a board.
+// - r8_verify_takes refuses R8VerifyEmulatedOff's formats on such a board, and elsewhere takes them
+//   wherever the BF16 MMA is emulated and the verify form is compiled (Volta keeps R8).
+// The scoped boards carry their architecture's features, not those shared with this build, so this
+// cannot see the sm_70-tree exclusion (mma_tensor); requirements_equal_the_code_they_replaced does.
 void turing_verify_rules(const std::string& board, const DeviceClass& d, QType q) {
     namespace frule        = generic::format_rules;
     const bool turing      = legacy::r8_verify_turing(d);
@@ -209,8 +213,10 @@ void turing_verify_rules(const std::string& board, const DeviceClass& d, QType q
                                                        std::to_string(rows));
         }
     }
-    if (turing && frule::holds(frule::Rule::R8VerifyEmulatedOff, q)) {
-        expect(!generic::r8_verify_takes(q), what + ": r8_verify_takes on Turing");
+    if (frule::holds(frule::Rule::R8VerifyEmulatedOff, q)) {
+        const bool takes = !turing && !d.features.mma_bf16_native && generic::r8_verify_compiled(q);
+        expect(generic::r8_verify_takes(q) == takes,
+               what + ": r8_verify_takes " + (takes ? "expected" : "refused"));
     }
 }
 
