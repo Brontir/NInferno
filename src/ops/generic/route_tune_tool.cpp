@@ -22,9 +22,9 @@
 // total time over the prefill widths (T = chunk/2 .. 8*chunk). The table is keyed by the current
 // device's chip ("gb202", the default), its SM variant ("gb202:170sm", --key variant: only where
 // boards of one chip tune apart) or its architecture ("sm120", --key arch). --prefill-only 1 skips
-// the band sweep and writes only prefill routes: decode keeps whatever it takes today; --decode-only 1
-// skips the prefill route and bands (a lab sweep of the band points whose decode samples are not
-// interleaved with wide prefill calls; its table holds no prefill route). Prefill
+// the band sweep and writes only prefill routes: decode keeps whatever it takes today;
+// --decode-only 1 skips the prefill route and bands (a lab sweep of the band points whose decode
+// samples are not interleaved with wide prefill calls; its table holds no prefill route). Prefill
 // bands (T = 32 .. 8*chunk, doubling) narrow the prefill route by width with routes that sum in its
 // order (generic::same_summation), where one beats it by more than 2 %. A GGUF block format keys
 // a16 under every policy, while the default policy (AllowA8) also runs ggml's matrix kernel at
@@ -571,9 +571,9 @@ int route_tune_main(int argc, char** argv) {
                             : std::nullopt;
                     if (const auto kr =
                             generic::route_resources(r, w.weight, p.epilogue, t, p.n, pre)) {
-                        routes_csv << static_cast<std::uint64_t>(kr->grid_x) * kr->grid_y *
-                                          kr->grid_z
-                                   << ',' << kr->threads;
+                        routes_csv
+                            << static_cast<std::uint64_t>(kr->grid_x) * kr->grid_y * kr->grid_z
+                            << ',' << kr->threads;
                     } else {
                         routes_csv << ',';
                     }
@@ -621,10 +621,9 @@ int route_tune_main(int argc, char** argv) {
                     // (the activation pre-quantized into the workspace), timed and never tabled.
                     const bool r8_verify =
                         r.family == generic::Family::R8Mma && t > generic::kR8MaxTokens;
-                    if (r8_verify &&
-                        (t > generic::kR8VerifyTokens ||
-                         !generic::r8_prequantized_takes(r, p.qtype, p.k, t,
-                                                         workspace.capacity()))) {
+                    if (r8_verify && (t > generic::kR8VerifyTokens ||
+                                      !generic::r8_prequantized_takes(r, p.qtype, p.k, t,
+                                                                      workspace.capacity()))) {
                         continue;
                     }
                     const double us = time_route(r, t);
