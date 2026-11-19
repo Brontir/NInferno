@@ -758,23 +758,23 @@ int vec_slots() {
     // Per device: a process may drive GPUs of different chips.
     static PerDevice<int> per_device;
     return per_device.get([](int) {
-        namespace kf = ninferno::ops::detail::generic::kernel_facts;
+        namespace kf                          = ninferno::ops::detail::generic::kernel_facts;
         const std::optional<std::string> arch = kf::sass_arch();
         const kf::VecKernelKey key{static_cast<int>(type), T, KS, Gated, Bounded};
         if (const std::optional<kf::KernelFacts> facts =
                 arch ? kf::vec_facts(*arch, key) : std::nullopt) {
             if (Bounded && facts->spill_bytes() != 0) return 0;
             const int per_sm = resident_ctas_per_sm(
-                device_class(), KernelShape{facts->registers, facts->static_shared_bytes,
-                                            kVecWarps * 32, 0});
+                device_class(),
+                KernelShape{facts->registers, facts->static_shared_bytes, kVecWarps * 32, 0});
             return std::max(per_sm, 1) * device_facts().sm_count;
         }
         if (substituted_device_class() != nullptr) {
-            throw std::runtime_error(
-                "ggml vector kernel: no kernel facts of vec_kernel<" + std::to_string(key.type) +
-                ", " + std::to_string(T) + ", " + std::to_string(KS) + ", " +
-                std::to_string(Gated) + ", " + std::to_string(Bounded) +
-                "> for the substituted board" + (arch ? " (sm_" + *arch + ")" : std::string()));
+            throw std::runtime_error("ggml vector kernel: no kernel facts of vec_kernel<" +
+                                     std::to_string(key.type) + ", " + std::to_string(T) + ", " +
+                                     std::to_string(KS) + ", " + std::to_string(Gated) + ", " +
+                                     std::to_string(Bounded) + "> for the substituted board" +
+                                     (arch ? " (sm_" + *arch + ")" : std::string()));
         }
         const auto kernel = vec_kernel<type, T, KS, Gated, Bounded>;
         if constexpr (Bounded) {
