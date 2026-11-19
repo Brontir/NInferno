@@ -1,5 +1,6 @@
 #include "ops/generic/mmq_unit.h"
 
+#include "core/launch_facts.h"
 #include "core/mmq_columns.h"
 #include "ops/generic/kernel_facts.h"
 #include "ops/generic/route_cost_constants.h"
@@ -7,6 +8,10 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <cstdio>
+#include <exception>
+#include <mutex>
+#include <utility>
 
 namespace ninferno::mmq_unit {
 namespace {
@@ -55,8 +60,17 @@ std::optional<double> unit_seconds(std::string_view arch, QType q, int j, const 
     std::optional<kernel_facts::KernelFacts> facts;
     try {
         facts = kernel_facts::mmq_facts(arch, {type, j, false, 30});
-    } catch (...) {
-        return std::nullopt; // a snapshot that does not read: the fitted price
+    } catch (const std::exception& e) {
+        // A snapshot that does not read: the fitted price, but never silently (#973: a broken
+        // merge of a snapshot passed unnoticed outside test_kernel_facts). Said once a process.
+        static std::once_flag said;
+        std::call_once(said, [&] {
+            std::fprintf(stderr,
+                         "ninferno: the kernel facts of sm_%.*s do not read (%s); the MMQ unit "
+                         "falls back to the fitted price\n",
+                         static_cast<int>(arch.size()), arch.data(), e.what());
+        });
+        return std::nullopt;
     }
     if (!facts || !facts->loop || !facts->loop->schedule || !facts->loop->pipes)
         return std::nullopt;
@@ -71,15 +85,15 @@ std::optional<double> unit_seconds(std::string_view arch, QType q, int j, const 
     return load + chain;
 }
 
-std::optional<MmqLaunchLaw> law(std::string_view arch, QType q, const IsaRow& isa,
-                                const UnitFacts& f) {
-    MmqLaunchLaw out;
-    for (std::size_t i = 0; i < std::size(mmq_columns::kTilesWork); ++i) {
-        const auto u = unit_seconds(arch, q, mmq_columns::kTilesWork[i], isa, f);
-        if (!u) return std::nullopt;
-        out.unit_clocks[i] = *u * f.clock_hz;
-    }
-    return out;
+std::optional<CountedBoard> counted_board(int major, int minor) {
+    if (!counted()) return std::nullopt;
+    std::string arch = kernel_facts::release_arch(major, minor);
+    if (!scored_arch(arch)) return std::nullopt;
+    std::optional<IsaRow> isa = isa_row(major, minor);
+    if (!isa) return std::nullopt;
+    return CountedBoard{
+        std::move(arch), *isa,
+        ninferno::launch_seconds(major, minor, LaunchKind::GraphNode).value_or(0.0)};
 }
 
 UnitFacts unit_facts_of(int rows, int k, int columns, int j, int sms, double clock_hz,
