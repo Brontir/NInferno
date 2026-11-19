@@ -1024,6 +1024,8 @@ class LaunchFacts(unittest.TestCase):
                  "which has no launch row"),
                 ({"isa_probe_89.txt": SAMPLE, "launch_probe_89.txt": LAUNCH_SAMPLE,
                   "launch_probe_89_other.txt": check}, "named after its card"),
+                ({"isa_probe_89.txt": SAMPLE, "launch_probe_89.txt": LAUNCH_SAMPLE,
+                  "launch_probe_89_rtx4090.txt": LAUNCH_SAMPLE}, "the row's own card"),
                 ({"isa_probe_89.txt": SAMPLE, "launch_probe_86.txt": LAUNCH_SAMPLE},
                  "a run of sm_89, not of sm_86"),
                 ({"isa_probe_89.txt": SAMPLE, "launch_probe_89.txt": "garbage line\n"},
@@ -1076,11 +1078,33 @@ class LaunchFacts(unittest.TestCase):
             other_isa = SAMPLE.replace("card NVIDIA GeForce RTX 4090",
                                        "card NVIDIA GeForce RTX 4070 Ti")
             self.assertEqual(merge(other_isa), 1)
+            # The card names compare as the parser joins them: a row file whose card line has a
+            # double space is the same card's.
+            with open(dest, "w", newline="\n") as f:
+                f.write(before.replace("card NVIDIA GeForce RTX 4090",
+                                       "card NVIDIA GeForce  RTX 4090"))
             self.assertEqual(merge(LAUNCH_SAMPLE), 0)
+            # --other-card: the check of the new row's own card is left over, so nothing merges
+            # until it is removed; then the row's old run stays as its card's transfer check.
+            self.assertEqual(merge(check, other_card=True), 1)
+            with open(dest) as f:
+                self.assertEqual(f.read(), before)
+            os.remove(os.path.join(inputs, "launch_probe_89_rtx4070ti.txt"))
             self.assertEqual(merge(check, other_card=True), 0)
             with open(table) as f:
-                self.assertEqual(json.load(f)["arches"]["89"]["launch"]["card"],
-                                 "NVIDIA GeForce RTX 4070 Ti")
+                launch = json.load(f)["arches"]["89"]["launch"]
+            self.assertEqual(launch["card"], "NVIDIA GeForce RTX 4070 Ti")
+            self.assertEqual([c["card"] for c in launch["checks"]], ["NVIDIA GeForce RTX 4090"])
+            with open(os.path.join(inputs, "launch_probe_89_rtx4090.txt")) as f:
+                self.assertEqual(f.read(), before)
+            # Back to the RTX 4090: its kept check is that card's own now, so nothing merges.
+            self.assertEqual(merge(LAUNCH_SAMPLE, other_card=True), 1)
+            # A kept run never replaces a check file already there.
+            with open(os.path.join(inputs, "launch_probe_89_rtx4070ti.txt"), "w") as f:
+                f.write(check)
+            os.remove(os.path.join(inputs, "launch_probe_89_rtx4090.txt"))
+            self.assertEqual(merge(LAUNCH_SAMPLE, other_card=True), 1)
+            self.assertFalse(os.path.exists(os.path.join(inputs, "launch_probe_89_rtx4090.txt")))
 
     def test_run(self):
         # `run --section launch` builds launch_probe.cu (no SASS read) and writes the row's file,

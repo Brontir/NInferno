@@ -37,7 +37,9 @@
 // starts (20 ms), the first event recorded after it, the series queued while it runs. So the
 // series starts with the whole series already queued, and the timing is the GPU's alone; a
 // series the host had not finished queuing when the hold ended is refused (self-check). A longer
-// hold (200 ms) comes before the first kind. That the chip runs the series at its working clock
+// hold (200 ms) comes before the first kind's first series, once its graphs are captured,
+// instantiated and uploaded, so the GPU does not idle in between. That the chip runs the series
+// at its working clock
 // is the intent of the holds, not a reading: the clocks are what `isa_probe.py run`'s nvidia-smi
 // note saw over the run. The repeats alternate the series, so a drift of the clock over the run
 // reaches all of them alike.
@@ -48,6 +50,10 @@
 // `selfcheck ok`, 3 when a result fails the self-check (its reasons printed), 2 on a CUDA error.
 
 #include <cuda_runtime.h>
+
+#if CUDART_VERSION < 12030
+#error "launch_probe needs CUDA 12.3 or newer: graph edge data (cudaGraphGetEdges_v2) came in 12.3"
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -137,11 +143,20 @@ struct Probe {
     cudaStream_t stream = nullptr;
     cudaEvent_t e0 = nullptr, e1 = nullptr;
     float* sink    = nullptr;
-    double host_us = 0; // host time of the last enqueue
+    double host_us = 0;     // host time of the last enqueue
+    bool warmed    = false; // the first kind's longer hold was issued
 
     void hold_for(long long ns) {
         hold<<<sms, kFloorThreads, 0, stream>>>(ns, sink);
         LAUNCHED();
+    }
+
+    // The longer hold, once, right before the first kind's first series (after its capture).
+    void warm_once() {
+        if (warmed) return;
+        warmed = true;
+        hold_for(kWarmNs);
+        CHECK(cudaStreamSynchronize(stream));
     }
 
     // One timing of a series (us): the hold, the first event, the series, the second event; false
@@ -174,6 +189,7 @@ struct Slope {
 // The slope of a kind over its series. `series[i]` launches each, `enqueue[i]` queues them.
 Slope slope(Probe& pr, const char* name, const int (&series)[3],
             const std::vector<Enqueue>& enqueue) {
+    pr.warm_once();
     for (int i = 0; i < 3; ++i) { // warm: the code, the graph's upload, the clocks
         enqueue[i]();
         CHECK(cudaStreamSynchronize(pr.stream));
@@ -292,6 +308,7 @@ Slope graph_slope(Probe& pr, const char* name, const std::function<cudaError_t()
         }
         execs.push_back(e);
     }
+    pr.warm_once();
     host_note(pr, name, execs.back(), kGraphSeries[2]);
     std::vector<Enqueue> enqueue;
     for (cudaGraphExec_t e : execs)
@@ -328,7 +345,7 @@ int main() {
     const int cc = p.major * 10 + p.minor;
     char pci[32] = {};
     CHECK(cudaDeviceGetPCIBusId(pci, sizeof pci, 0));
-    std::printf("probe launch_probe 2\n");
+    std::printf("probe launch_probe 3\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -350,8 +367,6 @@ int main() {
     CHECK(cudaEventCreate(&pr.e0));
     CHECK(cudaEventCreate(&pr.e1));
     CHECK(cudaMalloc(&pr.sink, sizeof(float)));
-    pr.hold_for(kWarmNs);
-    CHECK(cudaStreamSynchronize(pr.stream));
 
     // node_ns: one warp's empty kernel a node.
     owed("node_ns", graph_slope(pr, "node_ns", [&] {
@@ -410,8 +425,9 @@ int main() {
     } else {
         pdl = graph_slope(pr, "node_pdl_ns", pdl_launch, edges);
         if (cc >= 90 && !edge_fault.empty()) {
+            // Appended: the slope's own reason, where it has one, stays.
             pdl.per = -1.0;
-            pdl.why = edge_fault;
+            pdl.why = pdl.why.empty() ? edge_fault : pdl.why + "; " + edge_fault;
         }
     }
     if (pdl.per > 0) {
