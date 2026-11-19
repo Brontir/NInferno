@@ -205,8 +205,10 @@ struct SnapshotHeader {
 //             warps_k, m_tiles, n_tiles, cluster>, stage> (#619 step 11): key "decoder warps_m
 //             warps_k m_tiles n_tiles cluster stage".
 //   "vec"     ggml's vector kernels vec_kernel<type, T, KS, Gated, Bounded> (ggml_vec.cu, #763),
-//             resources alone: key "type T KS gated bounded" ("13 2 1 0 0"). The launch reads the
-//             CTAs an SM holds and a bounded twin's local bytes from them, never the host's.
+//             resources alone: key "type T KS gated bounded" ("13 2 0 0 0"; KS is 0, the runtime
+//             K, or a static K of 5120, 6144 or 17408). A substituted board's launch reads the
+//             CTAs an SM holds and a bounded twin's local bytes from them; a real device asks its
+//             own kernel.
 inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8",  "gemma4",  "r8",
                                                         "i8",  "moer8", "moegemm", "vec"};
 

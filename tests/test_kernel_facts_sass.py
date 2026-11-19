@@ -1156,17 +1156,17 @@ class Sections(unittest.TestCase):
         (self.root / "moved.txt").write_text(text.replace(" 168 0 0 16\n", " 167 0 0 16\n"))
         self.assertEqual(self.check(self.root / "moved.txt"), 1)
 
-    VEC = ("_ZN8ninferno3ops8ggml_mmq6detail12_GLOBAL__N_110vec_kernelIL9ggml_type13ELi2ELi1ELb0ELb1EEEv"
+    VEC = ("_ZN8ninferno3ops8ggml_mmq6detail12_GLOBAL__N_110vec_kernelIL9ggml_type13ELi4ELi0ELb0ELb1EEEv"
            "NS2_7VecArgsE")
-    VEC_NAME = ("void ninferno::ops::ggml_mmq::detail::<unnamed>::vec_kernel<(ggml_type)13, 2, 1, false, "
+    VEC_NAME = ("void ninferno::ops::ggml_mmq::detail::<unnamed>::vec_kernel<(ggml_type)13, 4, 0, false, "
                 "true>(ninferno::ops::ggml_mmq::detail::<unnamed>::VecArgs)")
-    VEC_KEY = (13, 2, 1, 0, 1)
+    VEC_KEY = (13, 4, 0, 0, 1)  # the bounded twin: T 4, the runtime K, ungated
 
     def test_vec_keys(self):
         self.assertEqual(kernel_facts.vec_key(self.VEC_NAME), self.VEC_KEY)
         other = self.VEC_NAME.replace("<unnamed>", "(anonymous namespace)").replace(
-            "(ggml_type)13, 2, 1, false, true", "(ggml_type)12, 8, 2, true, false")
-        self.assertEqual(kernel_facts.vec_key(other), (12, 8, 2, 1, 0))
+            "(ggml_type)13, 4, 0, false, true", "(ggml_type)12, 8, 5120, true, false")
+        self.assertEqual(kernel_facts.vec_key(other), (12, 8, 5120, 1, 0))
         self.assertIsNone(kernel_facts.vec_key(self.MMQ_NAME))
         with self.assertRaises(SystemExit):
             kernel_facts.vec_key(self.VEC_NAME.replace(", true>", ">"))
@@ -1184,7 +1184,7 @@ class Sections(unittest.TestCase):
         self.assertIn("family vec", text)
         self.assertIn("family_columns family type T KS gated bounded registers stack local shared\n",
                       text)
-        self.assertIn("vec 13 2 1 0 1 72 0 0 1024\n", text)
+        self.assertIn("vec 13 4 0 0 1 72 0 0 1024\n", text)
         _, sections = kernel_facts.parse_sections(text)
         self.assertEqual(sections["vec"]["rows"][self.VEC_KEY], (72, 0, 0, 1024, None))
         self.assertEqual(self.check(out), 0)

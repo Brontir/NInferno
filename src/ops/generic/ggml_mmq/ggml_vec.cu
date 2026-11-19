@@ -752,7 +752,12 @@ __launch_bounds__(kVecWarps * 32, Bounded ? kVecBoundedBlocks : 0) __global__
 // build's registers, whatever tree or nvcc made it). A substituted board (ScopedDeviceClass) has
 // no kernel of its own here: its instance's committed kernel facts (the "vec" section, #763) for
 // its code (kernel_facts::sass_arch), registers and static shared memory through the occupancy
-// calculator, times its SMs; never the host GPU's kernels. Without a row it refuses by name.
+// calculator, times its SMs; never the host GPU's kernels. That holds for every substitute, the
+// host's own class included (#1033): a substituted answer is the release's, the same on any host
+// and any build, which the selector goldens rely on. A board whose code has no release snapshot
+// (sass_arch nullopt: the driver would compile the PTX, as the GB10's sm_121) is priced by threads
+// alone, as the register MMA is there: the CTAs its thread and block limits allow, no bounded
+// twin. A snapshot without the instance's row refuses by name.
 template <ggml_type type, int T, int KS, bool Gated, bool Bounded>
 int vec_slots() {
     // Per device: a process may drive GPUs of different chips.
@@ -762,8 +767,17 @@ int vec_slots() {
             namespace kf                          = ninferno::ops::detail::generic::kernel_facts;
             const std::optional<std::string> arch = kf::sass_arch();
             const kf::VecKernelKey key{static_cast<int>(type), T, KS, Gated, Bounded};
-            if (const std::optional<kf::KernelFacts> facts =
-                    arch ? kf::vec_facts(*arch, key) : std::nullopt) {
+            if (!arch) {
+                if (Bounded) return 0;
+                const DeviceClass& d = device_class();
+                const int by_threads =
+                    d.max_threads_per_sm > 0 ? d.max_threads_per_sm / (kVecWarps * 32) : 1;
+                const int per_sm = d.max_blocks_per_sm > 0
+                                       ? std::min(by_threads, d.max_blocks_per_sm)
+                                       : by_threads;
+                return std::max(per_sm, 1) * device_facts().sm_count;
+            }
+            if (const std::optional<kf::KernelFacts> facts = kf::vec_facts(*arch, key)) {
                 if (Bounded && facts->spill_bytes() != 0) return 0;
                 const int per_sm = resident_ctas_per_sm(
                     device_class(),
@@ -773,8 +787,8 @@ int vec_slots() {
             throw std::runtime_error("ggml vector kernel: no kernel facts of vec_kernel<" +
                                      std::to_string(key.type) + ", " + std::to_string(T) + ", " +
                                      std::to_string(KS) + ", " + std::to_string(Gated) + ", " +
-                                     std::to_string(Bounded) + "> for the substituted board" +
-                                     (arch ? " (sm_" + *arch + ")" : std::string()));
+                                     std::to_string(Bounded) + "> for the substituted board (sm_" +
+                                     *arch + ")");
         }
         const auto kernel = vec_kernel<type, T, KS, Gated, Bounded>;
         if constexpr (Bounded) {
@@ -793,6 +807,31 @@ template <ggml_type type, int T, int KS, bool Gated, bool Bounded>
 void vec_launch_grid(const VecArgs& args, int groups, int slots, cudaStream_t stream) {
     const int blocks = std::min(groups, slots);
     if (LaunchShape* described = describe_target()) {
+        if (substituted_device_class() != nullptr) {
+            // A substituted board is described as vec_slots prices it (#1033): its instance's
+            // committed facts, never this build's kernel on the host GPU (which, with no device,
+            // throws). The versions are the build's architecture, as the register MMA's
+            // describe_from_facts. With no release snapshot for its code the resources stay 0:
+            // the threads-only price has no registers to show.
+            namespace kf = ninferno::ops::detail::generic::kernel_facts;
+            *described   = LaunchShape{};
+            if (const std::optional<std::string> arch = kf::sass_arch()) {
+                if (const std::optional<kf::KernelFacts> facts = kf::vec_facts(
+                        *arch, kf::VecKernelKey{static_cast<int>(type), T, KS, Gated, Bounded})) {
+                    described->registers   = facts->registers;
+                    described->local_bytes = facts->spill_bytes();
+                    described->static_smem = facts->static_shared_bytes;
+                }
+            }
+            described->threads               = kVecWarps * 32;
+            described->max_threads_per_block = kVecWarps * 32;
+            described->ptx_version           = NINFERNO_BUILD_ARCH;
+            described->binary_version        = NINFERNO_BUILD_ARCH;
+            described->grid_x                = static_cast<unsigned>(blocks);
+            described->grid_y                = 1;
+            described->grid_z                = 1;
+            return;
+        }
         describe_launch(*described,
                         reinterpret_cast<const void*>(vec_kernel<type, T, KS, Gated, Bounded>),
                         dim3(blocks), dim3(kVecWarps * 32), 0);
