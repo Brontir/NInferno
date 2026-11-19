@@ -288,7 +288,14 @@ std::int32_t vec_rule_max_tokens(QType qtype) {
 } // namespace
 
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
-    return tokens >= 2 && tokens <= vec_rule_max_tokens(w.qtype) && vec_call(w, policy, tokens);
+    // LAB ONLY (lab/vec-t4-cap, never merged): NINFERNO_LAB_VEC_CAP_T=T replaces the rule's widest
+    // width on every board (#1044 / #998: cap 3 against 4 with the T = 4 transposed reduction).
+    static const int lab_cap = [] {
+        const char* v = std::getenv("NINFERNO_LAB_VEC_CAP_T");
+        return v != nullptr ? std::atoi(v) : 0;
+    }();
+    const std::int32_t widest = lab_cap > 0 ? lab_cap : vec_rule_max_tokens(w.qtype);
+    return tokens >= 2 && tokens <= widest && vec_call(w, policy, tokens);
 }
 
 // Speculative verify (T 9..16) of the codebook formats takes ggml's matrix kernel on
