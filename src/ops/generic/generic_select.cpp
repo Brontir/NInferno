@@ -308,8 +308,19 @@ bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, st
     // for the end-to-end A/B of #1028.
     static const bool lab_off = std::getenv("NINFERNO_LAB_NO_MMQ_VERIFY") != nullptr;
     if (lab_off) return false;
-    return mmq_call(w, policy, rows, tokens) && tokens >= kMmqVerifyMinTokens && lanes != 1 &&
-           mmq_verify_format(w.qtype);
+    const bool lab_result = mmq_call(w, policy, rows, tokens) && tokens >= kMmqVerifyMinTokens &&
+                            lanes != 1 && mmq_verify_format(w.qtype);
+    // LAB ONLY: NINFERNO_LAB_MMQV_LOG=1 prints each distinct (tokens, lanes, rows) the rule takes.
+    static const bool lab_log = std::getenv("NINFERNO_LAB_MMQV_LOG") != nullptr;
+    if (lab_log && lab_result) {
+        static std::mutex lab_mutex;
+        static std::set<std::tuple<int, int, int>> lab_seen;
+        const std::lock_guard<std::mutex> lab_lock(lab_mutex);
+        if (lab_seen.insert({tokens, lanes, rows}).second)
+            std::fprintf(stderr, "LABMMQV tokens=%d lanes=%d rows=%d
+", tokens, lanes, rows);
+    }
+    return lab_result;
 }
 
 bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, std::int32_t tokens) {
