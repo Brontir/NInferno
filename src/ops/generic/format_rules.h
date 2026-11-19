@@ -380,7 +380,7 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "r8_verify_takes keys on the format, so R8 also leaves T = 2, where vec takes the call "
      "(VecCapTuring) unless vec declines it"},
 
-    // --- r8_verify_two_rows_turing: two rows a warp at Turing's verify widths from T = 3 ---
+    // --- r8_verify_two_rows_turing: two rows a warp at Turing's verify widths T = 3..4 ---
     {Rule::R8VerifyTwoRowsTuring, Basis::Measured,
      FormatSet{Q::GGML_IQ3_S, Q::GGML_IQ3_XXS, Q::GGML_IQ4_XS, Q::GGML_Q4_0}, 0, "tu102:68sm",
      "RTX 2080 Ti", Evidence::SingleCard, "#1038: selcheck.sh 75 1038fmt (route_tune)",

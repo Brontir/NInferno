@@ -770,7 +770,7 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
     // IQ1_S / IQ1_M: grid-lookup decoders of IQ2's weight, scheduled with them (sched_iq2).
     const bool iq2 = format_traits(p.qtype).sched_iq2;
     if (tokens >= 2) {
-        // Turing at the verify widths from T = 3 (#1038): two rows a warp for the formats timed
+        // Turing at the verify widths T = 3..4 (#1038): two rows a warp for the formats timed
         // there (format_rules.h R8VerifyTwoRowsTuring; RTX 2080 Ti, w4r2 13-31 % ahead of w4r1 at
         // T = 3 / 4, within 1 % at T = 2). An sm_75 board in an sm_75 build only
         // (format_requires::kR8VerifyTuring): Volta was not timed. The format and the width first,

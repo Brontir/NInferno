@@ -3253,7 +3253,7 @@ their routes):
   Q6_K (Q5_K carried); the register MMA takes them.
 - `vec_cap_turing`: `kVecRuleMaxTokensTuring = 2` for Q4_K and Q6_K (end to end), Q3_K and Q5_K
   carried.
-- `r8_verify_two_rows_turing`: `rules_r8` takes r8.w4r2 from T = 3 for IQ3_S, IQ3_XXS, IQ4_XS, Q4_0.
+- `r8_verify_two_rows_turing`: `rules_r8` takes r8.w4r2 at T = 3..4 for IQ3_S, IQ3_XXS, IQ4_XS, Q4_0.
   The shipped picks do not move: vec takes these formats' T 2..4 calls. The rule decides where vec
   declines a call and in the dense tuner's R8 candidate.
 
