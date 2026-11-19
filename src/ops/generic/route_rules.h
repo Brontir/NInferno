@@ -427,7 +427,14 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "(every trunk linear a T = 4 call) RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 5070 Ti +11.1 %, "
      "RTX 5090 +5.3 %; C = 2 and 3 within 0.05 %; under MTP the cap never lost in rounds a second "
      "(RTX 3090, 5070 Ti, 5090). Ada keeps kVecRuleMaxTokens (RTX 4070 Ti -2.0 %, 4090 -1.4 % with "
-     "the cap, 4060 Ti +2.5 %), Turing too (its declined T = 4 call falls to R8, #1038)",
+     "the cap, 4060 Ti +2.5 %); Turing has its own (kVecRuleMaxTokensTuring)",
+     ""},
+    // Turing: the vector kernel stops at two tokens (#1038).
+    {"kVecRuleMaxTokensTuring", Basis::Measured, "generic_select.cpp",
+     "constexpr std::int32_t kVecRuleMaxTokensTuring = 2;", 2, "tu102:68sm", "RTX 2080 Ti",
+     "end to end, Qwen3.5-9B Q4_K_M, --spec off, vec at T = 2 and the register MMA at T = 3..4 "
+     "against vec at T = 2..4: C = 2 -0.01 %, C = 3 +2.45 %, C = 4 +3.45 % (the K-quants keep the "
+     "register MMA at the verify widths, R8VerifyEmulatedOff)",
      ""},
     // The rule's lower edge, from two tokens: T = 1 keeps R8 and the dense tuner.
     {"vec_rule lower edge", Basis::Measured, "generic_select.cpp",

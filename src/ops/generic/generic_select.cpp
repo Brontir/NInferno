@@ -260,11 +260,15 @@ constexpr std::int32_t kVecRuleMaxTokens = 4;
 // against T = 4: RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 5070 Ti +11.1 %, RTX 5090 +5.3 %, with C = 2
 // and 3 within 0.05 %; under MTP the cap never lost in rounds a second (RTX 3090, 5070 Ti, 5090).
 // Ada keeps four: the RTX 4070 Ti (-2.0 %) and 4090 (-1.4 %) lose with the cap, the 4060 Ti gains
-// 2.5 %. Turing keeps four: a T = 4 call the vector kernel declines falls to R8 at its verify
-// widths, 1.7-2.8x the register MMA there (#1038). The A100 (sm_80) is not measured. The edge in
+// 2.5 %. The A100 (sm_80) is not measured. The edge in
 // T differs by card (capped at T = 2 the RTX 3090 lost 2.0 % at C = 3, the RTX 3060 gained 1.5 %):
 // a counted bound from the cards' integer issue per DRAM byte replaces this (#998).
 constexpr std::int32_t kVecRuleMaxTokensGa10xGb20x = 3;
+// On Turing (sm_75) it stops at two (#1038), now that the K-quants keep the register MMA at the
+// verify widths (R8VerifyEmulatedOff). RTX 2080 Ti, Qwen3.5-9B Q4_K_M, --spec off, vec at T = 2
+// and the register MMA at T = 3..4 against vec at T = 2..4: C = 2 -0.01 %, C = 3 +2.45 %, C = 4
+// +3.45 %.
+constexpr std::int32_t kVecRuleMaxTokensTuring = 2;
 
 std::int32_t vec_rule_max_tokens() {
     // vec_max_tokens() reaches past eight columns only without tensor mma.sync.
@@ -275,6 +279,7 @@ std::int32_t vec_rule_max_tokens() {
         if ((d.major == 8 && d.minor >= 6 && d.minor < 9) || gb20x_cc(d.major, d.minor)) {
             return kVecRuleMaxTokensGa10xGb20x;
         }
+        if (turing_cc(d.major, d.minor)) return kVecRuleMaxTokensTuring;
     } catch (const std::exception&) {}
     return kVecRuleMaxTokens;
 }
