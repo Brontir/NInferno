@@ -15,6 +15,7 @@
 #include "structured/request_constraint.h"
 #include "text/unicode.h"
 #include "support/files.h"
+#include "support/tiny_hf_tokenizer.h"
 #include "core/sha256.h"
 
 #include <nlohmann/json.hpp>
@@ -4088,12 +4089,7 @@ int test_tokenizer_shared_for_the_same_files(const FrontendResources& owned) {
 // the Qwen fixture's added tokens are numbered for the Qwen tokenizer, which the HF codec refuses.
 int test_hf_tokenizer_shared_for_the_same_files() {
     FrontendResources hf;
-    hf.tokenizer_json         = R"({
-  "model": {"type": "BPE", "vocab": {"a": 0, "b": 1, "ab": 2, " ": 3, "<": 4, "T": 5, ">": 6,
-            "<0x41>": 7, "<0xE2>": 8}, "merges": ["a b"], "byte_fallback": true},
-  "added_tokens": [{"id": 9, "content": "<T>", "special": true}],
-  "decoder": {"type": "Sequence", "decoders": [{"type": "ByteFallback"}, {"type": "Fuse"}]}
-})";
+    hf.tokenizer_json         = std::string(kTinyHfTokenizer);
     hf.tokenizer_config_json  = "{}";
     hf.generation_config_json = R"({"eos_token_id": 9})";
     return shared_for_the_same_files(

@@ -4,7 +4,7 @@
 // release, through the dispatcher's engine for the GPU) and as the bench's ninferno_route_tune.
 //
 //   ninferno-serve route-tune --shapes FILE [--out routes/<key>.json] [--key chip|variant|arch]
-//                     [--samples 15] [--prefill-chunk 1024] [--prefill-only 1]
+//                     [--samples 15] [--prefill-chunk 1024] [--prefill-only 1] [--decode-only 1]
 //                     [--points T,T,...] [--rotate 0|1] [--routes-out FILE.csv]
 //                     [--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1]
 //                     [--group-sums-plane 1] [--route-policy evidence|legacy] [--route-dir DIR]
@@ -22,7 +22,9 @@
 // total time over the prefill widths (T = chunk/2 .. 8*chunk). The table is keyed by the current
 // device's chip ("gb202", the default), its SM variant ("gb202:170sm", --key variant: only where
 // boards of one chip tune apart) or its architecture ("sm120", --key arch). --prefill-only 1 skips
-// the band sweep and writes only prefill routes: decode keeps whatever it takes today. Prefill
+// the band sweep and writes only prefill routes: decode keeps whatever it takes today;
+// --decode-only 1 skips the prefill route and bands (a lab sweep of the band points whose decode
+// samples are not interleaved with wide prefill calls; its table holds no prefill route). Prefill
 // bands (T = 32 .. 8*chunk, doubling) narrow the prefill route by width with routes that sum in its
 // order (generic::same_summation), where one beats it by more than 2 %. A GGUF block format keys
 // a16 under every policy, while the default policy (AllowA8) also runs ggml's matrix kernel at
@@ -31,7 +33,10 @@
 // band sweep's token counts; --routes-out writes every timed (problem, T, route) as CSV, with the
 // cost model's price of the route (route_cost_seconds: the model the selector ranks by at T >= 17
 // outside the prefill profile, applied here at every T) and a register-MMA kernel's registers and
-// local memory (spills or stack arrays) beside the timing.
+// local memory (spills or stack arrays) beside the timing, and the launch the route makes there
+// (ctas: the grid's CTA count, threads: per CTA; route_resources, empty where it describes none).
+// R8 is timed up to its verify form's widest call (kR8VerifyTokens) where the pre-quantized form
+// takes the call (r8_prequantized_takes); past kR8MaxTokens its rows are timed, never tabled.
 // --selected-out writes, per problem and band point, the route the production path runs there
 // (select_route resolved for the call), which is timed too: tools/bench/regret_collect.py. Its
 // rows also name the authority that answered and its evidence (select_answer, #614) and `ranker`,
@@ -96,6 +101,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <random>
 #include <set>
 #include <sstream>
@@ -149,7 +155,8 @@ int route_tune_main(int argc, char** argv) {
         if (!opt.count("--shapes")) {
             std::cerr << "usage: ninferno-serve route-tune --shapes FILE [--out FILE] "
                          "[--key chip|variant|arch] [--samples N] [--prefill-chunk C] "
-                         "[--prefill-only 1] [--points T,...] [--routes-out FILE.csv] "
+                         "[--prefill-only 1] [--decode-only 1] [--points T,...] "
+                         "[--routes-out FILE.csv] "
                          "[--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1] "
                          "[--rotate 0|1] [--describe 1] [--group-sums-plane 1] "
                          "[--route-policy evidence|legacy] [--route-dir DIR]\n";
@@ -175,6 +182,10 @@ int route_tune_main(int argc, char** argv) {
         const int samples       = opt.count("--samples") ? std::stoi(opt["--samples"]) : 15;
         const int chunk         = opt.count("--prefill-chunk") ? std::stoi(opt["--prefill-chunk"]) : 1024;
         const bool prefill_only = opt.count("--prefill-only") && opt["--prefill-only"] == "1";
+        const bool decode_only  = opt.count("--decode-only") && opt["--decode-only"] == "1";
+        if (prefill_only && decode_only) {
+            throw std::invalid_argument("--prefill-only 1 and --decode-only 1 exclude each other");
+        }
         const bool rotate       = !(opt.count("--rotate") && opt["--rotate"] == "0");
         if (opt.count("--group-sums-plane") && opt["--group-sums-plane"] == "1") {
             generic::set_group_sums_plane_enabled(true);
@@ -251,7 +262,7 @@ int route_tune_main(int argc, char** argv) {
             if (!routes_csv) throw std::runtime_error("cannot open " + opt["--routes-out"]);
             routes_csv << "format,compute,epilogue,n,k,T,route,median_us,model_us,registers,"
                           "local_bytes,weight_bytes,activation_bytes,output_bytes,run,device,"
-                          "protocol,calls,samples,pci_device_id\n";
+                          "protocol,calls,samples,pci_device_id,ctas,threads\n";
         }
         // The route the production path runs at each band point (#301): select_route's choice
         // with the tables this device loads, resolved for the contiguous call and this workspace,
@@ -346,8 +357,14 @@ int route_tune_main(int argc, char** argv) {
         // Widths of the prefill bands: 32 .. 8 * chunk, doubling.
         std::vector<std::int32_t> band_points;
         for (int t = 32; t <= 8 * chunk; t *= 2) band_points.push_back(t);
-        std::int32_t t_max = *std::max_element(prefill_points.begin(), prefill_points.end());
+        // A decode-only run allocates for its band points alone.
+        std::int32_t t_max =
+            decode_only ? 1 : *std::max_element(prefill_points.begin(), prefill_points.end());
         for (const auto t : custom_points) t_max = std::max(t_max, t);
+        if (decode_only && custom_points.empty()) {
+            for (const auto t : decode_points()) t_max = std::max(t_max, t);
+            for (const auto t : wide_points()) t_max = std::max(t_max, t);
+        }
 
         TuneTimer timer(nullptr, 1, samples);
         // Whether the run times a decode or verify width (T <= 16): the band sweep's points, or
@@ -415,7 +432,11 @@ int route_tune_main(int argc, char** argv) {
                 {generic::route_workspace_bytes({generic::Family::W4a4Mma, 0}, p.k, t_max),
                  generic::route_workspace_bytes({generic::Family::W4a8Mma, 0}, p.k, t_max),
                  generic::route_workspace_bytes({generic::Family::R8Mma, 0}, p.k,
-                                                generic::kR8MaxTokens),
+                                                generic::kR8VerifyTokens),
+                 // R8's verify form reads the activation pre-quantized into the workspace (its
+                 // planes are within the W4A8 ones at that width, as the dense tuner sizes it).
+                 generic::route_workspace_bytes({generic::Family::W4a8Mma, 0}, p.k,
+                                                generic::kR8VerifyTokens),
                  generic::ggml_mmq_workspace_bytes(
                      p.k, rows, a8_sweep ? std::min(t_max, generic::kMmqPrefillSlice) : 16) +
                      256,
@@ -540,7 +561,25 @@ int route_tune_main(int argc, char** argv) {
                                    : timer.flushes() ? "flushed"
                                                      : "warm")
                                << ',' << (rotated ? 1 + spare.size() : std::size_t{1}) << ','
-                               << samples << ',' << pci_id << '\n';
+                               << samples << ',' << pci_id << ',';
+                    // The launch the route makes for this call: its CTAs and threads per CTA
+                    // (ggml's vector kernel: its first kVecMaxColumns tokens, its matrix kernel one
+                    // prefill slice; R8 in the form the call takes, pre-quantized where this
+                    // workspace admits it).
+                    const std::optional<bool> pre =
+                        r.family == generic::Family::R8Mma
+                            ? std::optional<bool>(generic::r8_prequantized_takes(
+                                  r, p.qtype, p.k, t, workspace.capacity()))
+                            : std::nullopt;
+                    if (const auto kr =
+                            generic::route_resources(r, w.weight, p.epilogue, t, p.n, pre)) {
+                        routes_csv
+                            << static_cast<std::uint64_t>(kr->grid_x) * kr->grid_y * kr->grid_z
+                            << ',' << kr->threads;
+                    } else {
+                        routes_csv << ',';
+                    }
+                    routes_csv << '\n';
                 }
                 return us; // microseconds
             };
@@ -580,10 +619,17 @@ int route_tune_main(int argc, char** argv) {
                         t < generic::kPrefillBandMinTokens) {
                         continue;
                     }
-                    // R8 serves decode and verify widths only.
-                    if (r.family == generic::Family::R8Mma && t > generic::kR8MaxTokens) continue;
+                    // R8 serves decode and verify widths only: past kR8MaxTokens its verify form
+                    // (the activation pre-quantized into the workspace), timed and never tabled.
+                    const bool r8_verify =
+                        r.family == generic::Family::R8Mma && t > generic::kR8MaxTokens;
+                    if (r8_verify && (t > generic::kR8VerifyTokens ||
+                                      !generic::r8_prequantized_takes(r, p.qtype, p.k, t,
+                                                                      workspace.capacity()))) {
+                        continue;
+                    }
                     const double us = time_route(r, t);
-                    if (!tabled(r)) continue;
+                    if (!tabled(r) || r8_verify) continue;
                     if (us < best) {
                         best       = us;
                         best_route = r;
@@ -682,7 +728,13 @@ int route_tune_main(int argc, char** argv) {
                 }
             }
             // The prefill candidates and bands are timed as the prefill profile runs them (a
-            // register-MMA tile there keeps the MMA with ones for its min-term sums).
+            // register-MMA tile there keeps the MMA with ones for its min-term sums); none in a
+            // decode-only run.
+            if (decode_only) {
+                entries.push_back(std::move(entry));
+                std::fflush(stdout);
+                continue;
+            }
             const ops::ScopedPrefillRoutes prefill_profile(true);
             const generic::Ask prefill_ask = generic::ask_below_profiles(17, true);
             double best_total = 1e30;

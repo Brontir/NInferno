@@ -370,7 +370,7 @@ class Csv(unittest.TestCase):
     def test_prefill_profile_rows_are_neither_cases_nor_candidates(self):
         # route_tune's prefill loop writes after its speed loop, into the same CSV with no profile
         # column: a width the selection does not list (1024) and, at a listed width, a route the
-        # speed loop does not time there (R8 above 4 tokens) are prefill-profile rows.
+        # speed loop does not time there (R8 above 8 tokens) are prefill-profile rows.
         p1 = self.write("p1.csv", ROUTES + "q4k,a8,store,64,64,40,w4a8.a,20,30\n"
                         "q4k,a8,store,64,64,40,w4a8.b,10,40\n"
                         "q4k,a8,store,64,64,40,r8.w4r1,5,1\n"
@@ -390,12 +390,21 @@ class Csv(unittest.TestCase):
         self.assertEqual(bands.main(["--routes", str(p1), "--selected", str(sel), "--board", "b",
                                      "--qualified", "q", "--json", str(out)]), 0)
         self.assertEqual(json.loads(out.read_text())["prefill_profile_rows_excluded"], 3)
-        # The executed selection is a speed-loop row at any width (R8 runs verify widths).
-        p2 = self.write("p2.csv", ROUTES + "q4k,a8,store,64,64,8,r8.w4r1,5,\n"
-                        "q4k,a8,store,64,64,8,w4a8.a,20,\n")
-        sel2 = self.write("s2.csv", SELECTED + "q4k,a8,store,64,64,8,r8.w4r1,r8.w4r1\n")
+        # The executed selection is a speed-loop row at any width, past the R8 limit too.
+        p2 = self.write("p2.csv", ROUTES + "q4k,a8,store,64,64,12,r8.w4r1,5,\n"
+                        "q4k,a8,store,64,64,12,w4a8.a,20,\n")
+        sel2 = self.write("s2.csv", SELECTED + "q4k,a8,store,64,64,12,r8.w4r1,r8.w4r1\n")
         rows, skipped = bands.rows_from_csv([p2], sel2, "b")
         self.assertEqual([(r["selected"], r["best"]) for r in rows], [("r8.w4r1", "r8.w4r1")])
+        # A non-executed R8 row at a verify width (route_tune times R8's verify form to 8 tokens)
+        # is a candidate.
+        p3 = self.write("p3.csv", ROUTES + "q4k,a8,store,64,64,6,r8.w4r1,5,\n"
+                        "q4k,a8,store,64,64,6,rmma.a,20,\n")
+        sel3 = self.write("s3.csv", SELECTED + "q4k,a8,store,64,64,6,rmma.a,rmma.a\n")
+        excluded = []
+        rows, skipped = bands.rows_from_csv([p3], sel3, "b", excluded=excluded)
+        self.assertEqual([(r["selected"], r["best"]) for r in rows], [("rmma.a", "r8.w4r1")])
+        self.assertEqual(excluded, [])
 
     def test_prefill_profile_pairs_are_counted_once_over_passes(self):
         # Every pass writes the prefill loop's rows again: a (case, route) is one excluded pair.
@@ -433,15 +442,16 @@ class Csv(unittest.TestCase):
             self.assertEqual(excluded, [], pick)
 
     def test_speed_loop_widths_of_each_family(self):
-        # route_tune_tool.cpp: R8 to kR8MaxTokens (4), w4a4 / staged / nvfp4t / tiled from 17.
+        # route_tune_tool.cpp: R8 to kR8VerifyTokens (8), w4a4 / staged / nvfp4t / tiled from 17.
         got = {(route, t): bands.speed_loop_times(route, t, None)
                for route in ("r8.w4r1", "tiled.64x64", "staged.64x32.w4x1.s2", "nvfp4t.c1.64x64",
                              "w4a4.64x64", "rmma.m1.n1.w1x8", "ggml_mmq")
-               for t in (4, 5, 16, 17)}
+               for t in (4, 5, 8, 9, 16, 17)}
         self.assertEqual({k for k, v in got.items() if not v},
-                         {("r8.w4r1", 5), ("r8.w4r1", 16), ("r8.w4r1", 17)}
+                         {("r8.w4r1", 9), ("r8.w4r1", 16), ("r8.w4r1", 17)}
                          | {(r, t) for r in ("tiled.64x64", "staged.64x32.w4x1.s2",
-                                             "nvfp4t.c1.64x64", "w4a4.64x64") for t in (4, 5, 16)})
+                                             "nvfp4t.c1.64x64", "w4a4.64x64")
+                            for t in (4, 5, 8, 9, 16)})
         self.assertTrue(bands.speed_loop_times("tiled.64x64", 16, "tiled.64x64"))
 
     def test_w4a8ws_is_one_family_with_w4a8(self):
