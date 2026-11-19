@@ -20,6 +20,7 @@
 #include "ops/generic/format_requires.h"
 #include "ops/generic/format_rules.h"
 #include "ops/generic/format_traits.h"
+#include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_select_detail.h"
 
 #include <cstddef>
@@ -72,6 +73,12 @@ bool r8_one_slot(const DeviceClass& d, int build_arch) {
     return one_slot_build && !d.features.mma_tensor;
 }
 
+// generic_select.cpp r8_verify_takes / vec_rule_max_tokens / rules_r8 (#1038): a Turing device
+// whose build carries tensor mma.sync (the sm_75 build the rules were timed on).
+bool r8_verify_turing(const DeviceClass& d) {
+    return turing_cc(d.major, d.minor) && d.features.mma_tensor;
+}
+
 } // namespace legacy
 
 bool legacy_answer(std::string_view name, const DeviceClass& d, int build_arch) {
@@ -79,6 +86,7 @@ bool legacy_answer(std::string_view name, const DeviceClass& d, int build_arch) 
     if (name == "qx_prefill_a8_pays") return legacy::qx_prefill_a8_pays(d);
     if (name == "r8_without_native_bf16") return legacy::r8_without_native_bf16(d);
     if (name == "r8_one_slot") return legacy::r8_one_slot(d, build_arch);
+    if (name == "r8_verify_turing") return legacy::r8_verify_turing(d);
     expect(false, std::string(name) + ": a declared requirement with no legacy answer");
     return false;
 }
@@ -180,6 +188,32 @@ void requirements_equal_the_code_they_replaced() {
     }
 }
 
+// #1038's Turing verify rules under the scoped board (DECISIONS 97), against what they say:
+// - rules_r8 takes two rows a warp at T = 3 and 4, one at T = 2, for R8VerifyTwoRowsTuring's
+//   formats on a board meeting kR8VerifyTuring (the RTX 2080 Ti in an sm_75 build); one row a warp
+//   at every verify width elsewhere (a 4096x4096 store: no iq2 class, below the N edge);
+// - r8_verify_takes refuses R8VerifyEmulatedOff's formats on such a board.
+void turing_verify_rules(const std::string& board, const DeviceClass& d, QType q) {
+    namespace frule        = generic::format_rules;
+    const bool turing      = legacy::r8_verify_turing(d);
+    const std::string what = board + " format " + std::to_string(static_cast<int>(q));
+    if (frule::holds(frule::Rule::R8VerifyTwoRowsTuring, q)) {
+        const generic::Problem p{q, ops::LinearPolicy::A16Only, 4096, 4096,
+                                 generic::Epilogue::Store};
+        for (std::int32_t t = 2; t <= 4; ++t) {
+            const generic::R8ScheduleInfo s = generic::r8_schedule_info(generic::rules_r8(p, t));
+            const int rows                  = turing && t >= 3 ? 2 : 1;
+            expect(s.warps == 4 && s.rows == rows, what + ": rules_r8 at T = " + std::to_string(t) +
+                                                       " w" + std::to_string(s.warps) + "r" +
+                                                       std::to_string(s.rows) + ", expected w4r" +
+                                                       std::to_string(rows));
+        }
+    }
+    if (turing && frule::holds(frule::Rule::R8VerifyEmulatedOff, q)) {
+        expect(!generic::r8_verify_takes(q), what + ": r8_verify_takes on Turing");
+    }
+}
+
 // The selector's predicates under each board as this thread's device, in this tree's build.
 void selector_reads_the_requirements() {
 #if defined(NINFERNO_BUILD_ARCH)
@@ -201,6 +235,7 @@ void selector_reads_the_requirements() {
                 legacy::w4a8_ws_tuned_arch(d);
             expect(generic::w4a8_ws_extra(t.q) == old_answer,
                    board + ": w4a8_ws_extra(" + std::to_string(static_cast<int>(t.q)) + ")");
+            turing_verify_rules(board, d, t.q);
         }
     }
 }

@@ -4,10 +4,10 @@
 path's route selection that this list covers (the next section says what it does not): the
 thresholds `rules_r8` compares a call against (the verify branch's two-token edge, the Blackwell
 branch's gate and its rules, the Turing and Volta rules), `w4a8_ws_wins` and its neighbour,
-`kVecRuleMaxTokens` and `kVecRuleMaxTokensGa10xGb20x` and the R8 and vector verify edges, the speed
-profile's width bands (`kRmmaMidMinTokens`, `kTiledSpeedMinTokens`, `kStagedSpeedMinTokens`,
-`kW4a8WideMinTokens`, `kSpeedFill`), the literals inside `heuristic_rmma` (its speed ladder included),
-`rmma_k_split_fit`, `rmma_wide_rule`, `heuristic_w4a8`, `heuristic_w4a4`, `staged_speed_route`,
+`kVecRuleMaxTokens`, `kVecRuleMaxTokensGa10xGb20x` and `kVecRuleMaxTokensTuring` and the R8 and
+vector verify edges, the speed profile's width bands (`kRmmaMidMinTokens`, `kTiledSpeedMinTokens`,
+`kStagedSpeedMinTokens`, `kW4a8WideMinTokens`, `kSpeedFill`), the literals inside
+`heuristic_rmma` (its speed ladder included), `rmma_k_split_fit`, `rmma_wide_rule`, `heuristic_w4a8`, `heuristic_w4a4`, `staged_speed_route`,
 `tiled_speed_pays`, `nvfp4_tiled_route`, the half-the-L2 rule for NVFP4 (`nvfp4_half_l2` in
 `route_authorities.cpp`, with its weight-bytes factor) and, in the same file, the R8 table's
 one-token gate, the narrow register-MMA fallback tiles and the source of the lane count,

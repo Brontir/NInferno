@@ -268,8 +268,9 @@ constexpr std::int32_t kVecRuleMaxTokens = 4;
 // T differs by card (capped at T = 2 the RTX 3090 lost 2.0 % at C = 3, the RTX 3060 gained 1.5 %):
 // a counted bound from the cards' integer issue per DRAM byte replaces this (#998).
 constexpr std::int32_t kVecRuleMaxTokensGa10xGb20x = 3;
-// On Turing (sm_75) it stops at two (#1038) for the K-quants that keep the register MMA at the
-// verify widths (format_rules.h R8VerifyEmulatedOff). RTX 2080 Ti, Qwen3.5-9B, --spec off, vec
+// On Turing (an sm_75 build: format_requires::kR8VerifyTuring) it stops at two (#1038) for the
+// K-quants that keep the register MMA at the verify widths (format_rules.h VecCapTuring: Q4_K and
+// Q6_K timed end to end, Q3_K and Q5_K carried). RTX 2080 Ti, Qwen3.5-9B, --spec off, vec
 // at T = 2 and the register MMA at T = 3..4 against vec at T = 2..4: Q4_K_M C = 2 -0.01 %, C = 3
 // +2.45 %, C = 4 +3.45 %; Q6_K -2.35 %, +25.8 %, +30.8 %.
 constexpr std::int32_t kVecRuleMaxTokensTuring = 2;
@@ -284,8 +285,8 @@ std::int32_t vec_rule_max_tokens(QType qtype) {
             format_rules::holds(format_rules::Rule::VecCapGa10xGb20x, qtype)) {
             return kVecRuleMaxTokensGa10xGb20x;
         }
-        if (turing_cc(d.major, d.minor) &&
-            format_rules::holds(format_rules::Rule::R8VerifyEmulatedOff, qtype)) {
+        if (format_rules::holds(format_rules::Rule::VecCapTuring, qtype) &&
+            satisfied(format_requires::kR8VerifyTuring, current_arch_facts())) {
             return kVecRuleMaxTokensTuring;
         }
     } catch (const std::exception&) {}
@@ -771,12 +772,12 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
     if (tokens >= 2) {
         // Turing at the verify widths from T = 3 (#1038): two rows a warp for the formats timed
         // there (format_rules.h R8VerifyTwoRowsTuring; RTX 2080 Ti, w4r2 13-31 % ahead of w4r1 at
-        // T = 3 / 4, within 1 % at T = 2). Keyed like the Turing rule below (an emulated BF16 MMA
-        // without Volta's one-slot form): Volta's one-slot form loses with a second row.
-        const ArchFacts arch = current_arch_facts();
-        if (tokens >= 3 && satisfied(format_requires::kR8WithoutNativeBf16, arch) &&
-            !satisfied(format_requires::kR8OneSlot, arch) &&
-            format_rules::holds(format_rules::Rule::R8VerifyTwoRowsTuring, p.qtype)) {
+        // T = 3 / 4, within 1 % at T = 2). An sm_75 board in an sm_75 build only
+        // (format_requires::kR8VerifyTuring): Volta was not timed. The format and the width first,
+        // so the other verify calls query no device.
+        if (tokens >= 3 &&
+            format_rules::holds(format_rules::Rule::R8VerifyTwoRowsTuring, p.qtype) &&
+            satisfied(format_requires::kR8VerifyTuring, current_arch_facts())) {
             return r8_index(4, 2);
         }
         return iq2 && (tokens >= 4 || p.n >= 34816) ? r8_index(4, 2) : r8_index(4, 1);
@@ -1391,8 +1392,8 @@ bool r8_verify_takes_shape(QType qtype, std::int64_t n, std::int64_t k) {
         n * k >= kR8VerifyQ40MinValues) {
         return r8_verify_takes(qtype);
     }
-    // A small Q4_0 matrix keeps the A16 register MMA where it is native (Turing: R8, as for
-    // every compiled format).
+    // A small Q4_0 matrix keeps the A16 register MMA where it is native; where it is emulated
+    // (Turing, Volta) R8 takes it, Q4_0 not being a format R8VerifyEmulatedOff leaves.
     try {
         return !device_class().features.mma_bf16_native && r8_verify_compiled(qtype);
     } catch (const std::exception&) { return false; }
@@ -1410,12 +1411,12 @@ bool r8_verify_takes(QType qtype) {
     if (r8_verify_supports(qtype)) return true;
     try {
         // Where the BF16 MMA is emulated R8 takes the verify widths of every compiled format; on
-        // Turing the K-quants keep the register MMA there (format_rules.h R8VerifyEmulatedOff,
-        // #1038: timed on the RTX 2080 Ti only, so Volta keeps R8).
-        const auto& d = device_class();
-        return !d.features.mma_bf16_native && r8_verify_compiled(qtype) &&
-               !(turing_cc(d.major, d.minor) &&
-                 format_rules::holds(format_rules::Rule::R8VerifyEmulatedOff, qtype));
+        // Turing in an sm_75 build the K-quants keep the register MMA there (format_rules.h
+        // R8VerifyEmulatedOff, format_requires::kR8VerifyTuring; #1038: timed on the RTX 2080 Ti
+        // only, so Volta keeps R8).
+        return !device_class().features.mma_bf16_native && r8_verify_compiled(qtype) &&
+               !(format_rules::holds(format_rules::Rule::R8VerifyEmulatedOff, qtype) &&
+                 satisfied(format_requires::kR8VerifyTuring, current_arch_facts()));
     } catch (const std::exception&) { return false; }
 }
 

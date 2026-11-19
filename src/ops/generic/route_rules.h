@@ -436,8 +436,9 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "end to end, Qwen3.5-9B, --spec off, vec at T = 2 and the register MMA at T = 3..4 against "
      "vec at T = 2..4: Q4_K_M C = 2 -0.01 %, C = 3 +2.45 %, C = 4 +3.45 %; Q6_K C = 2 -2.35 %, "
      "C = 3 +25.8 %, C = 4 +30.8 % (the K-quants keep the register MMA at the verify widths, "
-     "R8VerifyEmulatedOff, whose formats the cap takes; the others keep kVecRuleMaxTokens; IQ4_XS "
-     "capped at T = 2: -0.05 / +0.93 / -0.74 %)",
+     "R8VerifyEmulatedOff; the cap's formats are format_rules.h VecCapTuring, Q3_K and Q5_K "
+     "carried; the others keep kVecRuleMaxTokens; IQ4_XS capped at T = 2: -0.05 / +0.93 / "
+     "-0.74 %; an sm_75 build only, format_requires::kR8VerifyTuring)",
      ""},
     // The rule's lower edge, from two tokens: T = 1 keeps R8 and the dense tuner.
     {"vec_rule lower edge", Basis::Measured, "generic_select.cpp",
@@ -985,10 +986,19 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      ""},
     // --- rules_r8's thresholds ---
     {"rules_r8: verify branch from two tokens", Basis::Structural, "generic_select.cpp",
-     "if (tokens >= 2) return iq2 &&", 2, kUnknown, kUnknown,
+     "const bool iq2 = format_traits(p.qtype).sched_iq2; if (tokens >= 2) {", 2, kUnknown, kUnknown,
      "calls of two tokens or more (the verify widths) take this branch and none of the "
      "architecture rules below it; T = 1 (decode) takes the rules; the record names no board or "
      "margin for the two-token edge",
+     ""},
+    {"rules_r8: Turing verify two rows from three tokens", Basis::Measured, "generic_select.cpp",
+     "if (tokens >= 3 && format_rules::holds(format_rules::Rule::R8VerifyTwoRowsTuring, p.qtype) "
+     "&&",
+     3, "tu102:68sm", "RTX 2080 Ti",
+     "#1038, route_tune on the RTX 2080 Ti (sm_75 build), r8.w4r1 against r8.w4r2: w4r2 13-31 % "
+     "ahead at T = 3 / 4 (IQ3_S 12288x4096 83.1 / 93.9 against 67.5 / 72.9 us), within 1 % at "
+     "T = 2, where w4r1 is ahead for IQ4_XS and Q4_0; for the formats of format_rules.h "
+     "R8VerifyTwoRowsTuring, on boards meeting format_requires::kR8VerifyTuring",
      ""},
     {"rules_r8: iq2 two rows", Basis::Unknown, "generic_select.cpp",
      "iq2 && (tokens >= 4 || p.n >= 34816) ? r8_index(4, 2) : r8_index(4, 1);", 0, kUnknown,
