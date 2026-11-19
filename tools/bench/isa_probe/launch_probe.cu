@@ -52,7 +52,8 @@
 #include <cuda_runtime.h>
 
 #if CUDART_VERSION < 12030
-#error "launch_probe needs CUDA 12.3 or newer: graph edge data (cudaGraphGetEdges_v2) came in 12.3"
+#    error                                                                                         \
+        "launch_probe needs CUDA 12.3 or newer: graph edge data (cudaGraphGetEdges_v2) came in 12.3"
 #endif
 
 #include <algorithm>
