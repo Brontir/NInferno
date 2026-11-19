@@ -3257,7 +3257,9 @@ their routes):
   declines a call and in the dense tuner's R8 candidate.
 
 These are **measured rules on one card** (`Evidence::SingleCard`, tu102:68sm), not counted from
-chip facts.
+chip facts: a known gap of the deterministic-decisions page until a second Turing card (TU104 / TU106
+or a T4) times them. The kernels they compare are the same compiled code on every sm_75 board, and
+the margins are large (R8 1.3-1.8x behind rmma at T 3-4; Q6_K end to end +25.8 / +30.8 %).
 
 **What moves.** The selector goldens move only the 2080 Ti board's Q3_K..Q6_K rows at T = 3..4,
 from ggml_vec to the register MMA, in every build set: the sm70 set moves too, because its
