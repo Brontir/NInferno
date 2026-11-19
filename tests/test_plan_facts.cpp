@@ -1557,9 +1557,8 @@ int main() {
     const int failures = gguf_qwen35() + config_qwen35() + qwen35_moe() + gemma4() + gpt_oss() +
                          nemotron_h() + llama() + model_types() + boards() + artifact_errors() +
                          artifact_expert_layers() + artifact_prefill_policy() +
-                         gguf_linear_formats() + artifact_bank_formats() +
-                         artifact_tensor_table() + table_counting() +
-                         plan_device_error();
+                         gguf_linear_formats() + artifact_bank_formats() + artifact_tensor_table() +
+                         table_counting() + plan_device_error();
     if (failures == 0) { std::cout << "plan facts OK\n"; }
     return failures == 0 ? 0 : 1;
 }
