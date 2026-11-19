@@ -1586,13 +1586,11 @@ int test_argument_key_order() {
     return failures;
 }
 
-// A tiny BPE: "a"+"b" merge, one special added token, byte-fallback decoding
-// (support/tiny_hf_tokenizer.h).
-constexpr std::string_view kTinyTokenizer = kTinyHfTokenizer;
-
+// The tiny BPE of support/tiny_hf_tokenizer.h: "a"+"b" merge, one special added token, byte-fallback
+// decoding.
 int test_codec() {
     int failures = 0;
-    const ninferno::text::HfTokenCodec codec(kTinyTokenizer, "", R"({"eos_token_id": 9})");
+    const ninferno::text::HfTokenCodec codec(kTinyHfTokenizer, "", R"({"eos_token_id": 9})");
     const std::string text = "ab<T>ab a";
     const std::vector<std::size_t> boundaries = {0, 1, 2, 5, 8, 9};
     const auto encoded = codec.encode_with_boundaries(text, boundaries);
