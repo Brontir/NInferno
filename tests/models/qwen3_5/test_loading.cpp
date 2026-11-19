@@ -9,7 +9,9 @@
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <iostream>
+#include <string>
 #include <limits>
 
 namespace {
@@ -212,6 +214,51 @@ void logical_data_and_instances() {
         require(again.artifact_directory == facts.artifact_directory &&
                     again.tokenizer_tokens == 265,
                 "a second read of the artifact's facts did not share the kept directory");
+        // #837: kept by the canonical path, and a bounded number of files, the least recently read
+        // dropped first: a read through another spelling of the path shares the directory; the
+        // entry read again after three other files outlives a fourth (first-in-first-out would
+        // drop it); after four more it is read anew.
+        const auto& entry = fixture.file.entry;
+        const auto dotted = entry.parent_path() / "." / entry.filename();
+        require(product::plan_facts_of_artifact(dotted).model.artifact_directory ==
+                    facts.artifact_directory,
+                "a read through another spelling of the path did not share the kept directory");
+        const auto read_copy = [&](int i) {
+            const auto copy =
+                entry.parent_path() / ("kept_copy_" + std::to_string(i) + ".ninferno");
+            std::filesystem::copy_file(entry, copy,
+                                       std::filesystem::copy_options::overwrite_existing);
+            require(product::plan_facts_of_artifact(copy).model.artifact_directory !=
+                        facts.artifact_directory,
+                    "a copy at another path shared the first file's kept directory");
+        };
+        for (int i = 0; i < 3; ++i) { read_copy(i); }
+        require(product::plan_facts_of_artifact(entry).model.artifact_directory ==
+                    facts.artifact_directory,
+                "the file was dropped after three other files (the bound is four)");
+        read_copy(3);
+        require(product::plan_facts_of_artifact(entry).model.artifact_directory ==
+                    facts.artifact_directory,
+                "the file read most recently was dropped before the least recently read one");
+        for (int i = 4; i < 8; ++i) { read_copy(i); }
+        const auto later = product::plan_facts_of_artifact(entry).model;
+        require(later.artifact_directory != facts.artifact_directory &&
+                    later.tokenizer_tokens == 265,
+                "the kept artifacts are not bounded: the first file outlived four others");
+        // A symlink to the file in another directory (codex on #1011): the reader resolves a
+        // multipart file's continuations beside the path it is given, so the entry is another
+        // key, never the canonical file's kept directory.
+        const auto elsewhere = entry.parent_path() / "kept_link_dir";
+        std::filesystem::create_directories(elsewhere);
+        const auto link = elsewhere / entry.filename();
+        std::error_code link_error;
+        std::filesystem::create_symlink(entry, link, link_error);
+        // A host that cannot make a symlink (Windows without the privilege) skips the check.
+        if (!link_error) {
+            require(product::plan_facts_of_artifact(link).model.artifact_directory !=
+                        later.artifact_directory,
+                    "a symlink in another directory shared the canonical file's kept directory");
+        }
     }
     const auto& attention = std::get<qwen::AttentionWeights>(plan.weights().text.layers[0].mixer);
     const auto& query     = plan.parameter(attention.query);
