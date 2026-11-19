@@ -341,10 +341,11 @@ ninferno_add_op_test(ninferno_route_catalogue_test LABELS host NEEDS_SOURCE_DIR
   LIBRARIES ninferno_linear_test_support ninferno::json)
 
 # The generic path's dense tuner: tuned at the first eager call, within the activation class, R8
-# decode bytes kept, the cache file read back, nothing timed inside a graph capture.
+# decode bytes kept, the cache file read back, a demoted table answer timed once (#1024), nothing
+# timed inside a graph capture.
 ninferno_add_op_test(ninferno_dense_tune_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_dense_tune.cpp"
-  LIBRARIES ninferno_linear_test_support)
+  LIBRARIES ninferno_linear_test_support ninferno::json)
 
 # The SwiGLU / GeGLU of a gate and an up weight of one or two formats (segmented_swiglu).
 ninferno_add_op_test(ninferno_segmented_swiglu_test
