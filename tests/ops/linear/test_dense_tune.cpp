@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <iostream>
 #include <sstream>
 #include <optional>
@@ -522,16 +523,46 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
         if (answered(ppre, t, true)) fail("evidence keeps lent band T=" + std::to_string(t));
     }
     // A read-only process reads the release's file alone (<route dir>/tuner/dense_tune.json), as it
-    // is: the legacy entries go there, with one lent band of the prefill problem set to a candidate
-    // route and the others left null and never timed. The writable guard keeps those from making
-    // the entry incomplete, so the process reads it whole, the candidate band included, and times
-    // and writes nothing. A reader that took the demoted bands for missing would drop the entry.
+    // is: the legacy entries go there, with one lent width of the decode problem and one lent band
+    // of the prefill problem set to another admitted route and the others left null and never
+    // timed. The writable guards keep those from making the entries incomplete, so the process
+    // reads them whole, the set width and band included, and times and writes nothing (neither
+    // file). A reader that took the demoted widths or bands for missing would drop the entry.
     const auto release      = dir / "tuner" / "dense_tune.json";
-    std::int32_t probe_band = 0;
-    std::optional<generic::Route> probe_route;
+    std::int32_t probe_band = 0, probe_width = 0;
+    std::optional<generic::Route> probe_route, probe_width_route;
     {
         Json file = read_cache();
         for (auto& [key, entry] : file["problems"].items()) {
+            // The decode problem likewise: one lent width set to an admitted route other than the
+            // heuristic's, the other lent widths left null (#1034 review: a reader that dropped the
+            // writable guard of the decode widths would find the entry incomplete and read none).
+            if (key.find("|n" + std::to_string(pdec.n) + "|k" + std::to_string(pdec.k) + "|") !=
+                    std::string::npos &&
+                !probe_width_route) {
+                for (const std::int32_t t : held_widths) {
+                    const auto heuristic = generic::heuristic_route(pdec, ddec.weight, t, false);
+                    std::vector<generic::Route> options;
+                    if (const auto lent = generic::table_route(pdec, t, false)) {
+                        options.push_back(*lent);
+                    }
+                    for (const auto r :
+                         generic::prefill_band_candidates(heuristic, ddec.weight, dec.policy)) {
+                        options.push_back(r);
+                    }
+                    for (const auto r : options) {
+                        if (r == heuristic || !generic::route_admits(r, ddec.weight, dec.policy)) {
+                            continue;
+                        }
+                        entry["routes"][std::to_string(t)] = generic::route_name(r);
+                        probe_width                        = t;
+                        probe_width_route                  = r;
+                        break;
+                    }
+                    if (probe_width_route) break;
+                }
+                continue;
+            }
             if (key.find("|n" + std::to_string(ppre.n) + "|k" + std::to_string(ppre.k) + "|") ==
                 std::string::npos) {
                 continue;
@@ -553,13 +584,30 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
         if (!probe_route || held_bands.size() < 2) {
             fail("read-only: no lent band to set beside a null one, the case is not met");
         }
+        if (!probe_width_route || held_widths.size() < 2) {
+            fail("read-only: no lent width to set beside a null one, the case is not met");
+        }
         std::filesystem::create_directories(release.parent_path());
         std::ofstream(release) << file.dump(2);
     }
-    const std::string before = read_cache_text();
+    const auto text_of = [](const std::filesystem::path& path) {
+        std::ifstream in(path);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    const std::string before         = read_cache_text();
+    const std::string release_before = text_of(release);
     generic::set_dense_tune(ninferno::TuneMode::Off, g_cache_file.parent_path());
     if (!run_both().empty()) fail("a read-only process retimed a demoted answer");
     if (read_cache_text() != before) fail("a read-only process wrote the tuner's file");
+    if (text_of(release) != release_before) fail("a read-only process wrote the release's file");
+    if (probe_width_route) {
+        const auto read = generic::tuned_dense_route(pdec, probe_width);
+        if (!read || !(*read == *probe_width_route)) {
+            fail("read-only: the release entry with demoted widths was not read (width T=" +
+                 std::to_string(probe_width) + " is not " +
+                 generic::route_name(*probe_width_route) + ")");
+        }
+    }
     if (probe_route) {
         const auto read = generic::tuned_prefill_route(
             ppre, probe_band, generic::heuristic_route(ppre, dpre.weight, probe_band, true));
