@@ -2025,6 +2025,17 @@ std::optional<Route> volta_tiled_route(const Weight& weight, LinearPolicy policy
         return std::nullopt;
     }
     if (!tiled_takes(codec_of(weight))) return std::nullopt;
+    // LAB ONLY (lab/787-volta-a8-narrow, never merged): NINFERNO_LAB_VOLTA_A8_NARROW=1 leaves a
+    // speed-profile call of 17-32 tokens that may run int8 activations to the W4A8 heuristic
+    // (#787: dp4a W4A8 1.2-1.55x faster than tiled on the large q4_K matrices, isolated).
+    static const bool lab_narrow = [] {
+        const char* v = std::getenv("NINFERNO_LAB_VOLTA_A8_NARROW");
+        return v != nullptr && *v == '1';
+    }();
+    if (lab_narrow && tokens <= 32 && !ninferno::ops::prefill_routes_active() &&
+        allows_w4a8(weight, policy)) {
+        return std::nullopt;
+    }
     for (int i = 0; i < tiled_schedule_count(); ++i) {
         const Route r{Family::TiledMma, static_cast<std::uint8_t>(i)};
         if (route_admits(r, weight, policy)) return r;
