@@ -254,11 +254,20 @@ namespace {
 // T = 5..16 about 0.5 ms a call against 0.08 for the vector kernel at T = 4; C8 aggregate 37.3
 // tok/s against C4 86.3, DFlash2 (verify 6) C1 15.7 against plain 30.1.
 constexpr std::int32_t kVecRuleMaxTokens = 4;
+// Where the BF16 MMA is native (sm_80 and up) the vector kernel stops at three tokens (#998):
+// end to end with the rule capped at T = 3 (Qwen3.5-9B Q4_K_M, --spec off, C = 4, so every
+// trunk linear is a T = 4 call) RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 4060 Ti +2.5 %,
+// RTX 5070 Ti +11.1 %, RTX 5090 +5.3 %, while C = 2 and 3 stayed within 0.05 %; capped at
+// T = 2 the RTX 3090 lost 2.0 % at C = 3, so three is the edge. Under MTP the cap never lost in
+// rounds a second (RTX 3090, 5070 Ti, 5090). Turing keeps four: there a T = 4 call the vector
+// kernel declines falls to R8 at its verify widths, 1.7-2.8x the register MMA (#1038).
+constexpr std::int32_t kVecRuleMaxTokensNativeBf16 = 3;
 
 std::int32_t vec_rule_max_tokens() {
     // vec_max_tokens() reaches past eight columns only without tensor mma.sync.
     const std::int32_t widest = vec_max_tokens();
-    return widest > ggml_mmq::kVecMaxColumns ? widest : kVecRuleMaxTokens;
+    if (widest > ggml_mmq::kVecMaxColumns) return widest;
+    return bf16_mma_native() ? kVecRuleMaxTokensNativeBf16 : kVecRuleMaxTokens;
 }
 
 
