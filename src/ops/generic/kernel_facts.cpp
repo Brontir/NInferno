@@ -90,6 +90,7 @@ constexpr SectionFamily kSections[] = {
     {"moegemm",
      "family decoder warps_m warps_k m_tiles n_tiles cluster stage registers stack local shared", 1,
      6, true},
+    {"vec", "family type T KS gated bounded registers stack local shared", 0, 5},
 };
 static_assert(std::size(kSections) == std::size(kSectionFamilies));
 
@@ -444,6 +445,15 @@ std::optional<KernelFacts> i8_facts(std::string_view arch, const I8KernelKey& ke
         k += std::to_string(v);
     }
     return section_facts(arch, "i8", k);
+}
+
+std::optional<KernelFacts> vec_facts(std::string_view arch, const VecKernelKey& key) {
+    std::string k;
+    for (const int v : {key.type, key.T, key.KS, key.gated ? 1 : 0, key.bounded ? 1 : 0}) {
+        if (!k.empty()) k += ' ';
+        k += std::to_string(v);
+    }
+    return section_facts(arch, "vec", k);
 }
 
 std::optional<KernelFacts> rmma_facts(std::string_view arch, const RmmaKernelKey& key) {
