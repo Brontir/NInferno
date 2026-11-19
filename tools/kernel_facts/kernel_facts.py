@@ -1425,8 +1425,7 @@ def sass_unstable(family, key):
 # kernel_facts_families.sh build of the r8 units (KFF_FAMILIES=r8) at 714a05ced on another stand's
 # CPU; the r8 kernel files are unchanged between those trees, a few headers they include changed.
 # Host, build kind and tree all differ between the two counts, so this is a counted pair, not a
-# cause. No price reads the row (the R8 law prices T = 1
-# only, #966).
+# cause. No price reads the row (the R8 law prices T = 1 only, #966).
 REGISTER_ALLOCATIONS = {
     "moegemm": {
         "80": {
