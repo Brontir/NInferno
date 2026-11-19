@@ -212,10 +212,15 @@ std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& prob
 
 // The dense tuner's choice at decode widths (generic_tune.cpp): an A16 schedule for an A16 call,
 // an R8 schedule for an R8 decode call; never a W4A8 call. Under the vector kernel's rule any
-// timed route that beat it may stand in.
+// timed route that beat it may stand in. A round of several sequences under the MMQ verify rule
+// is the rule's, as the route table's is (a8_call): an entry holds no lane count, and its isolated
+// timing favours the register MMA where the rule measured MMQ ahead end to end at C4 (#1028; the
+// release file held 114 such A8 widths at T 9..16 on ad104 / ad106 / gb206).
 std::optional<RouteAnswer> dense_tune_entry(const Ask& ask, const Problem& problem,
                                             const Weight& weight) {
     if (a8_wide_call(ask, problem, weight)) return std::nullopt;
+    if (mmq_verify_rule(weight, problem.policy, problem.n, ask.tokens, ask.lanes))
+        return std::nullopt;
     auto dense = tuned_dense_route(problem, ask.tokens);
     if (!dense) dense = release_dense_route(problem, weight, ask.tokens);
     if (!dense || !route_admits(*dense, weight, problem.policy)) return std::nullopt;

@@ -19,6 +19,7 @@
 #include "core/measured_boards.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_select_internal.h"
 #include "ops/generic/route_authorities.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
@@ -226,6 +227,12 @@ void check_direct(const generic::Ask& ask, const generic::Problem& problem, cons
                 const auto answer = a.answer(ask, problem, w);
                 if (!answer) continue;
                 ++g_direct_answers;
+                // A round under the MMQ verify rule is the rule's: no tuned entry answers it
+                // (#1028).
+                if (a.name == "dense-tune" &&
+                    generic::mmq_verify_rule(w, problem.policy, problem.n, ask.tokens, ask.lanes)) {
+                    fail(where + ": dense-tune answered a round the MMQ verify rule holds");
+                }
                 const std::string_view source = answer->evidence.source;
                 // r8-rules answers as r8-table only where the decode table gave the entry (a
                 // measured or carried answer), as r8-law where the schedule law ranked (a cost
