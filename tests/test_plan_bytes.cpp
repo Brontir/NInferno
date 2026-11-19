@@ -749,6 +749,7 @@ void test_bytes(const std::vector<Subject>& all) {
 // Under none and DFlash, and with the window off, no copy window.
 void test_default_copy_window(const std::vector<Subject>& all) {
     std::size_t windows = 0;
+    bool regions        = false; // the planner's prefill regions, checked on the first start
     for (const Subject& s : all) {
         if (!s.facts.offline_bytes) { continue; }
         for (const SpeculativeBackend spec : s.spec) {
@@ -795,6 +796,10 @@ void test_default_copy_window(const std::vector<Subject>& all) {
                     EngineOptions planned_off                  = planned;
                     planned_off.speculative.ngram_draft_tokens = 0;
                     const StartPlan start                      = start_plan(s.family, planned, low);
+                    if (!regions) {
+                        regions = true;
+                        planner_regions(s.family, planned); // options the start normalized
+                    }
                     const StartPlan start_off = start_plan(s.family, planned_off, low);
                     const rt::PlanRungBytes dry =
                         rt::plan_rung_bytes(s.facts, rung, o, concurrency, false);
@@ -1702,15 +1707,6 @@ int main() {
     test_bytes(all);
     test_kv_rows_int8(all);
     test_default_copy_window(all);
-    for (const Subject& s : all) {
-        if (!s.facts.offline_bytes) { continue; }
-        EngineOptions o =
-            pr::launch_options({.max_context = 32768, .max_concurrency = 1, .spec = "none"})
-                .options;
-        o.prefill_chunk = 1024;
-        planner_regions(s.family, o);
-        break;
-    }
     test_what_the_estimate_missed();
     test_dry_run_basis();
     test_fits_instead();
