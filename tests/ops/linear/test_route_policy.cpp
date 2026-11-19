@@ -39,6 +39,7 @@
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
+#include "ninferno/ops/prefill_routes.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/route_pins.h"
 
@@ -269,14 +270,19 @@ void check_dense_tune_reader() {
 
 // The dense tuner leaves a width untimed exactly where the dispatch answers it before the tuner's
 // entry (#1018, answered_before_tuner): on the RTX 5090, whose own table holds q4_K 4096 x 6656
-// store, every decode and wide width under both policies agrees with the dispatch's authority (a
-// width the tuner's own release entry answered says nothing and is skipped). The R8 call at T = 1
-// under AllowA8 is the case the table-only skip got wrong: the table holds the width, the
-// dispatch's route-table authority stands aside for the call, so the tuner times it.
+// store, every decode and wide width under both policies agrees with the dispatch's authority. The
+// R8 call at T = 1 under AllowA8 is the case the table-only skip got wrong: the table holds the
+// width, the dispatch's route-table authority stands aside for the call, so the tuner times it.
+// The MMQ verify rule's widths (IQ4_XS, T 9..16, a C4 verify) stay untimed at every lane count:
+// the entry has no lanes key and would overrule the rule the dispatch reads after it.
 void check_answered_before_tuner() {
     const RegretBoard* board = nullptr;
     for (const RegretBoard& b : kRegretBoards) {
         if (std::string_view(b.name) == "rtx5090") board = &b;
+    }
+    if (!board) {
+        fail("answered_before_tuner: kRegretBoards has no rtx5090");
+        return;
     }
     const DeviceClass d = board_class(*board);
     const generic::Problem a8{QType::GGML_Q4_K, LinearPolicy::AllowA8, 4096, 6656,
@@ -296,7 +302,6 @@ void check_answered_before_tuner() {
                 continue;
             }
             const std::string_view source = answer->evidence.source;
-            if (source.starts_with("dense-tune")) continue;
             const bool dispatch = source == "route-table" || source == "nvfp4-half-l2";
             ++compared;
             from_table += source == "route-table" ? 1 : 0;
@@ -315,6 +320,34 @@ void check_answered_before_tuner() {
     const auto r8 = generic::route_answer_query(d, a8.qtype, a8.policy, a8.epilogue, a8.n, a8.k, 1);
     if (r8 && r8->route.family == generic::Family::R8Mma && !generic::table_route(a8, 1, false)) {
         fail("q4k 4096x6656: the RTX 5090 table no longer holds T = 1: the R8 case is not met");
+    }
+    const auto r8_answered =
+        generic::answered_before_tuner_query(d, a8.qtype, a8.policy, a8.epilogue, a8.n, a8.k, 1);
+    if (!r8_answered || *r8_answered) fail("q4k 4096x6656 a8 T=1: the tuner skips the R8 call");
+    // The MMQ verify rule: a C4 verify takes mmq by the rule; the tuner times none of its widths,
+    // outside a round (lanes 0, where tune_dense runs) or in a round of one sequence.
+    const generic::Problem iq{QType::GGML_IQ4_XS, LinearPolicy::AllowA8, 4096, 4096,
+                              generic::Epilogue::Store};
+    for (const std::int32_t t : {9, 12, 16}) {
+        const std::string at = "iq4_xs 4096x4096 a8 T=" + std::to_string(t);
+        {
+            const ops::ScopedRoundLanes c4(4);
+            const auto answer =
+                generic::route_answer_query(d, iq.qtype, iq.policy, iq.epilogue, iq.n, iq.k, t);
+            if (!answer || answer->evidence.source != "mmq-verify-rule") {
+                fail(at + ": a C4 verify is not the MMQ verify rule's: the case is not met");
+                continue;
+            }
+        }
+        for (const int lanes : {0, 1, 4}) {
+            const ops::ScopedRoundLanes round(lanes);
+            const auto answered = generic::answered_before_tuner_query(d, iq.qtype, iq.policy,
+                                                                       iq.epilogue, iq.n, iq.k, t);
+            if (!answered || !*answered) {
+                fail(at + " lanes " + std::to_string(lanes) +
+                     ": the tuner times a width the MMQ verify rule holds");
+            }
+        }
     }
 }
 

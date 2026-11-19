@@ -228,6 +228,10 @@ struct NamedAuthority {
 // NVFP4 promotion; none for the int8 calls the tables stand aside for, or a route that
 // route_admits or profile_admits refuses) and the route policy keeps (not demoted; or demoted where
 // the ranker's route `ranked` is the scalar fallback, or at the MMQ boundary, keeps_mmq_boundary).
+// Two kept cases are not answered before the entry; the tuner leaves them untimed so that the
+// dispatch's measured answer stands: a demoted table answer the policy keeps (the dispatch reads
+// the entry first there; table_route_kept's rule), and a width the MMQ verify rule holds for a
+// round of several sequences (measured end to end; the entry has no lanes key).
 // The dense tuner leaves such a width or band untimed; elsewhere the dispatch reads the tuner's
 // entry, so it is timed (#808). It reads no tuner entry (the tuner asks it under its own lock).
 [[nodiscard]] bool answered_before_tuner(const Problem& problem, const Weight& weight,
