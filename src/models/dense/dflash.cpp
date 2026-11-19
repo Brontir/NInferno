@@ -724,6 +724,10 @@ void DenseExecution::dflash_append_context(
     ops::KVCacheAppendPrefixExecutionEnvelope envelope) const {
     if (drafter_ == nullptr) { throw std::logic_error("dense DFlash append without a drafter"); }
     const ops::ScopedInvariantRoutes routes(invariant_);
+    // A decode round's append is of the round's sequences (features: rows x width x batch), as the
+    // round itself (dflash_decode_batch): outside any scope the MMQ verify rule reads 0 lanes as
+    // several (#1028).
+    const ops::ScopedRoundLanes round(features.ne[2]);
     append_context(state.execution, state.dflash, features, positions, commit_counts, lanes,
                    table_rows, envelope);
 }

@@ -266,6 +266,10 @@ void Qwen35Execution::dflash_append_context(
     const Tensor& commit_counts, const Tensor& lanes, const Tensor& table_rows,
     ops::KVCacheAppendPrefixExecutionEnvelope envelope) const {
     const ops::ScopedInvariantRoutes routes(invariant_);
+    // A decode round's append is of the round's sequences (features: rows x width x batch), as the
+    // round itself (dflash_decode_batch): outside any scope the MMQ verify rule reads 0 lanes as
+    // several and moves a one-sequence round's append projections onto mmq (#1028).
+    const ops::ScopedRoundLanes round(features.ne[2]);
     execution::dflash_append_context(state, features, positions, commit_counts, lanes, table_rows,
                                      envelope);
 }
