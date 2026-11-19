@@ -98,7 +98,8 @@ int spread_smem(Route route, WeightCodec codec, Epilogue epilogue, const GemmArg
         const char* v = std::getenv("NINFERNO_LAB_RMMA_CAP");
         return v != nullptr ? std::atoi(v) : 0;
     }();
-    if (lab_cap > 0 && route.family == Family::RegisterMma && codec == WeightCodec::Q8 &&
+    if (lab_cap > 0 && route.family == Family::RegisterMma &&
+        route.schedule == rmma_index(1, 4, 1, 2, 1) && codec == WeightCodec::Q8 &&
         args.tokens >= 9 && args.tokens <= 16) {
         try {
             const std::size_t per = device_class().smem_per_sm;
