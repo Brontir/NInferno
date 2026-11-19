@@ -101,11 +101,12 @@ int spread_smem(Route route, WeightCodec codec, Epilogue epilogue, const GemmArg
     if (lab_cap > 0 && route.family == Family::RegisterMma && codec == WeightCodec::Q8 &&
         args.tokens >= 9 && args.tokens <= 16) {
         try {
-            const auto per = device_class().smem_per_sm;
+            const std::size_t per = device_class().smem_per_sm;
+            const auto cap        = static_cast<std::size_t>(lab_cap);
             // C CTAs fit (each with the 1 KiB the hardware reserves), C + 1 do not.
-            std::size_t pad = (per / lab_cap - 1024) / 1024 * 1024;
-            pad = std::min<std::size_t>(pad, kStaticSharedBytesPerBlock);
-            if ((lab_cap + 1) * (pad + 1024) > per) { return static_cast<int>(pad); }
+            std::size_t pad = (per / cap - 1024) / 1024 * 1024;
+            pad             = std::min<std::size_t>(pad, kStaticSharedBytesPerBlock);
+            if ((cap + 1) * (pad + 1024) > per) { return static_cast<int>(pad); }
         } catch (const std::exception&) {}
         return 0;
     }
