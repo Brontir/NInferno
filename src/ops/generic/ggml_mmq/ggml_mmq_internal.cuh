@@ -52,6 +52,7 @@ static_assert(work_tiles_arch_matches_table());
 #include "ggml-cuda/mmq.cuh"
 
 #include <climits>
+#include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -179,8 +180,14 @@ Launch select_launch(int rows, int columns, int k) {
     // min(SMs, units) CTAs over the units (a block beyond the call's units has nothing to do and
     // lengthens the fixup's scan, llama.cpp #30553), and the fixup where they do not divide the
     // tiles.
+    // Lab A/B only (#1039, never merged): NINFERNO_LAB_MMQ_SK_PER_SM=N spreads the partition over
+    // N CTAs an SM (the occupancy calculator's limit is 2 on GA106 at q4_K J 16), not one.
+    static const int lab_per_sm = [] {
+        const char* e = std::getenv("NINFERNO_LAB_MMQ_SK_PER_SM");
+        return e != nullptr && std::atoi(e) > 1 ? std::atoi(e) : 1;
+    }();
     const mmq_columns::ColumnLaunch l = mmq_columns::launch_of(
-        rows, k, columns, best.J, device.sm_count, best.stream_k, best.k_vram, best.I);
+        rows, k, columns, best.J, device.sm_count * lab_per_sm, best.stream_k, best.k_vram, best.I);
     best.blocks = l.blocks;
     best.fixup  = l.fixup;
     return best;
