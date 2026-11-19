@@ -4,10 +4,10 @@
 path's route selection that this list covers (the next section says what it does not): the
 thresholds `rules_r8` compares a call against (the verify branch's two-token edge, the Blackwell
 branch's gate and its rules, the Turing and Volta rules), `w4a8_ws_wins` and its neighbour,
-`kVecRuleMaxTokens` and `kVecRuleMaxTokensGa10xGb20x` and the R8 and vector verify edges, the speed
-profile's width bands (`kRmmaMidMinTokens`, `kTiledSpeedMinTokens`, `kStagedSpeedMinTokens`,
-`kW4a8WideMinTokens`, `kSpeedFill`), the literals inside `heuristic_rmma` (its speed ladder included),
-`rmma_k_split_fit`, `rmma_wide_rule`, `heuristic_w4a8`, `heuristic_w4a4`, `staged_speed_route`,
+`kVecRuleMaxTokens`, `kVecRuleMaxTokensGa10xGb20x` and `kVecRuleMaxTokensTuring` and the R8 and
+vector verify edges, the speed profile's width bands (`kRmmaMidMinTokens`, `kTiledSpeedMinTokens`,
+`kStagedSpeedMinTokens`, `kW4a8WideMinTokens`, `kSpeedFill`), the literals inside
+`heuristic_rmma` (its speed ladder included), `rmma_k_split_fit`, `rmma_wide_rule`, `heuristic_w4a8`, `heuristic_w4a4`, `staged_speed_route`,
 `tiled_speed_pays`, `nvfp4_tiled_route`, the half-the-L2 rule for NVFP4 (`nvfp4_half_l2` in
 `route_authorities.cpp`, with its weight-bytes factor) and, in the same file, the R8 table's
 one-token gate, the narrow register-MMA fallback tiles and the source of the lane count,
@@ -104,8 +104,8 @@ The guard is a text scan, and the list is not every literal comparison in `gener
 - the format membership of the measured rules: `heuristic_w4a8: 65..127 formats` holds the
   `tokens < kW4a8WideMinTokens` edge, not the `wide_format` switch in `generic_select.cpp` that says
   which formats take the wider tile. The format sets of the measured per-format rules
-  (`light_step`, `tall_tile`, `mmq_verify`, `w4a8_ws_tuned`, `r8_verify`, `vec_cap_ga10x_gb20x`) are
-  not this record's:
+  (`light_step`, `tall_tile`, `mmq_verify`, `w4a8_ws_tuned`, `r8_verify`, `vec_cap_ga10x_gb20x`,
+  `r8_verify_emulated_off`, `r8_verify_two_rows_turing`, `vec_cap_turing`) are not this record's:
   they are `format_rules.h`'s rows (below), held by `ninferno_format_rules_test` and
   `ninferno_format_traits_test`;
 - the bare kernel counts of the cost model in `generic_cost.cpp` (the 384, 128 and 256 threads a
@@ -214,7 +214,10 @@ The measured per-format rules of the selection are rows of `src/ops/generic/form
 (#615 F6): `light_step` (`light_ggml_step`), `tall_tile` (`tall_tile_format`), `mmq_verify`
 (`mmq_verify_format`), `w4a8_ws_tuned` (`w4a8_ws_extra`'s formats), `r8_verify`
 (`r8_verify_supports`), `vec_cap_ga10x_gb20x` (the formats whose vector band stops at three tokens
-on GA10x and consumer Blackwell), and the two thresholds `kR8VerifyQ40MinValues` and `kMmqVerifyMinTokens`,
+on GA10x and consumer Blackwell), `r8_verify_emulated_off` (the K-quants `r8_verify_takes` leaves to
+the register MMA on Turing), `r8_verify_two_rows_turing` (the formats whose Turing verify R8 takes two
+rows a warp from T = 3), `vec_cap_turing` (the formats whose vector band stops at two tokens on
+Turing), and the two thresholds `kR8VerifyQ40MinValues` and `kMmqVerifyMinTokens`,
 which are defined there. The code reads the rows (`format_rules::holds`) and the two constants;
 nothing else holds these format sets. A rule has one row per group of formats whose evidence
 differs, each with its formats, a basis, the boards and cards, an evidence tag, the source and a
