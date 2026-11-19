@@ -36,6 +36,15 @@ inline constexpr ArchRequires kR8WithoutNativeBf16{.mma_bf16_native = Need::No};
 // Q6_K rule (rules_r8) is measured on the GV100.
 inline constexpr ArchRequires kR8OneSlot{.mma_tensor = Need::No, .build_arch_below = 75};
 
+// [measured rule] Turing with tensor mma.sync in this build (an sm_75 tree on an sm_75 board): the
+// verify-width rules of #1038 (r8_verify_takes, vec_rule_max_tokens, rules_r8), timed on the RTX
+// 2080 Ti with an sm_75 build (format_rules.h R8VerifyEmulatedOff, VecCapTuring,
+// R8VerifyTwoRowsTuring). Volta, and an sm_70 tree on a Turing board (its register MMA on FP32
+// FMAs), keep the emulated-MMA rules.
+// The slow-tensor sm_75 parts (GTX 16, T400 .. T1000: mma_slow) were not timed either.
+inline constexpr ArchRequires kR8VerifyTuring{
+    .mma_tensor = Need::Yes, .mma_slow = Need::No, .cc_any_of = {{{7, 5}}}};
+
 struct NamedRequires {
     std::string_view name;
     const ArchRequires* arch;
@@ -47,6 +56,7 @@ inline constexpr std::array kDeclared{
     NamedRequires{"qx_prefill_a8_pays", &kQxPrefillA8Pays},
     NamedRequires{"r8_without_native_bf16", &kR8WithoutNativeBf16},
     NamedRequires{"r8_one_slot", &kR8OneSlot},
+    NamedRequires{"r8_verify_turing", &kR8VerifyTuring},
 };
 
 } // namespace ninferno::ops::detail::generic::format_requires
