@@ -419,17 +419,15 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "them (decisions.md 58 has one T = 5 call, the 4070 Ti's Q6_K down projection, on which the "
      "vector kernel was ahead of the rule's register MMA)",
      ""},
-    // Where the BF16 MMA is native the vector kernel stops at three tokens (#998).
-    {"kVecRuleMaxTokensNativeBf16", Basis::Measured, "generic_select.cpp",
-     "constexpr std::int32_t kVecRuleMaxTokensNativeBf16 = 3;", 3,
-     "ga106:28sm, ga102:82sm, ad106:34sm, gb203:70sm, gb202:170sm",
-     "RTX 3060, RTX 3090, RTX 4060 Ti, RTX 5070 Ti, RTX 5090",
+    // GA10x and consumer Blackwell: the vector kernel stops at three tokens (#998).
+    {"kVecRuleMaxTokensGa10xGb20x", Basis::Measured, "generic_select.cpp",
+     "constexpr std::int32_t kVecRuleMaxTokensGa10xGb20x = 3;", 3,
+     "ga106:28sm, ga102:82sm, gb203:70sm, gb202:170sm", "RTX 3060, RTX 3090, RTX 5070 Ti, RTX 5090",
      "end to end, Qwen3.5-9B Q4_K_M, --spec off, the rule capped at T = 3 against T = 4: C = 4 "
-     "(every trunk linear a T = 4 call) RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 4060 Ti +2.5 %, "
-     "RTX 5070 Ti +11.1 %, RTX 5090 +5.3 %; C = 2 and 3 within 0.05 %; capped at T = 2 the RTX "
-     "3090 lost 2.0 % at C = 3, so three is the edge; under MTP the cap never lost in rounds a "
-     "second (RTX 3090, 5070 Ti, 5090). Turing keeps kVecRuleMaxTokens: its declined T = 4 call "
-     "falls to R8 at the verify widths, 1.7-2.8x the register MMA (#1038)",
+     "(every trunk linear a T = 4 call) RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 5070 Ti +11.1 %, "
+     "RTX 5090 +5.3 %; C = 2 and 3 within 0.05 %; under MTP the cap never lost in rounds a second "
+     "(RTX 3090, 5070 Ti, 5090). Ada keeps kVecRuleMaxTokens (RTX 4070 Ti -2.0 %, 4090 -1.4 % with "
+     "the cap, 4060 Ti +2.5 %), Turing too (its declined T = 4 call falls to R8, #1038)",
      ""},
     // The rule's lower edge, from two tokens: T = 1 keeps R8 and the dense tuner.
     {"vec_rule lower edge", Basis::Measured, "generic_select.cpp",
