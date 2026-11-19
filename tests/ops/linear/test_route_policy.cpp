@@ -287,8 +287,8 @@ void check_answered_before_tuner() {
             const std::string at = std::string("q4k 4096x6656 ") +
                                    (policy == LinearPolicy::AllowA8 ? "a8" : "a16") +
                                    " T=" + std::to_string(t);
-            const auto answer = generic::route_answer_query(d, a8.qtype, policy, a8.epilogue, a8.n,
-                                                            a8.k, t);
+            const auto answer =
+                generic::route_answer_query(d, a8.qtype, policy, a8.epilogue, a8.n, a8.k, t);
             const auto answered = generic::answered_before_tuner_query(d, a8.qtype, policy,
                                                                        a8.epilogue, a8.n, a8.k, t);
             if (!answer || !answered) {
@@ -312,8 +312,7 @@ void check_answered_before_tuner() {
     }
     // The R8 call: the table holds T = 1, the dispatch does not take it there.
     const ScopedDeviceClass scoped(d);
-    const auto r8 =
-        generic::route_answer_query(d, a8.qtype, a8.policy, a8.epilogue, a8.n, a8.k, 1);
+    const auto r8 = generic::route_answer_query(d, a8.qtype, a8.policy, a8.epilogue, a8.n, a8.k, 1);
     if (r8 && r8->route.family == generic::Family::R8Mma && !generic::table_route(a8, 1, false)) {
         fail("q4k 4096x6656: the RTX 5090 table no longer holds T = 1: the R8 case is not met");
     }

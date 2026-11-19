@@ -99,8 +99,8 @@ std::optional<RouteAnswer> route_answer_query(const DeviceClass& device, QType q
 
 std::optional<bool> answered_before_tuner_query(const DeviceClass& device, QType qtype,
                                                 LinearPolicy policy, Epilogue epilogue,
-                                                std::int32_t n, std::int32_t k,
-                                                std::int32_t tokens, bool prefill) {
+                                                std::int32_t n, std::int32_t k, std::int32_t tokens,
+                                                bool prefill) {
     if (n <= 0 || k <= 0 || tokens <= 0) return std::nullopt;
     const ScopedDeviceClass scoped(device);
     const ops::ScopedPrefillRoutes profile(prefill);

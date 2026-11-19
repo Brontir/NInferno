@@ -56,10 +56,11 @@ route_answer_query(const DeviceClass& device, QType qtype, LinearPolicy policy, 
 // answered_before_tuner (route_authorities.h) for the call route_answer_query describes, against
 // the heuristic's route at that width: whether the dense tuner leaves the width untimed (#1018).
 // nullopt where route_answer_query gives none.
-[[nodiscard]] std::optional<bool>
-answered_before_tuner_query(const DeviceClass& device, QType qtype, LinearPolicy policy,
-                            Epilogue epilogue, std::int32_t n, std::int32_t k,
-                            std::int32_t tokens, bool prefill = false);
+[[nodiscard]] std::optional<bool> answered_before_tuner_query(const DeviceClass& device,
+                                                              QType qtype, LinearPolicy policy,
+                                                              Epilogue epilogue, std::int32_t n,
+                                                              std::int32_t k, std::int32_t tokens,
+                                                              bool prefill = false);
 
 // The bytes a weight value of such a call takes (bytes_per_weight) on the weight route_query
 // describes for it: what the decision manifest's replay of a recorded call prices (#704). A row
