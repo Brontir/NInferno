@@ -310,14 +310,17 @@ bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, st
     if (lab_off) return false;
     const bool lab_result = mmq_call(w, policy, rows, tokens) && tokens >= kMmqVerifyMinTokens &&
                             lanes != 1 && mmq_verify_format(w.qtype);
-    // LAB ONLY: NINFERNO_LAB_MMQV_LOG=1 prints each distinct (tokens, lanes, rows) the rule takes.
+    // LAB ONLY: NINFERNO_LAB_MMQV_LOG=1 prints each (tokens, lanes, rows) the rule takes, with its
+    // call count, at counts 1, 2, 4, 8, ... (so the calls of a live round show as a growing count).
     static const bool lab_log = std::getenv("NINFERNO_LAB_MMQV_LOG") != nullptr;
     if (lab_log && lab_result) {
         static std::mutex lab_mutex;
-        static std::set<std::tuple<int, int, int>> lab_seen;
+        static std::map<std::tuple<int, int, int>, long> lab_count;
         const std::lock_guard<std::mutex> lab_lock(lab_mutex);
-        if (lab_seen.insert({tokens, lanes, rows}).second)
-            std::fprintf(stderr, "LABMMQV tokens=%d lanes=%d rows=%d\n", tokens, lanes, rows);
+        const long c = ++lab_count[{tokens, lanes, rows}];
+        if ((c & (c - 1)) == 0)
+            std::fprintf(stderr, "LABMMQV tokens=%d lanes=%d rows=%d count=%ld\n", tokens, lanes,
+                         rows, c);
     }
     return lab_result;
 }
