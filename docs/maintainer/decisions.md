@@ -3163,3 +3163,62 @@ branch keeps the head with the mix at x1.443 (the chats on 8 streams either way 
 requests on 5 against 6 x1.123), measured x1.334 a request. `test_spec_round_cost`'s pairs held
 out of their own card: the RTX 3060's Qwen3.5-9B MTP pair predicted x2.138 against x2.242 measured
 (-4.7 %), the RTX 3090's x2.292 against x2.169 (+5.7 %), each picking its card's measured best.
+
+## 96. The vec rule stops at three tokens on GA10x and consumer Blackwell; Ada and Turing keep four (#998, 19.11, measured)
+
+**The question.** `vec_rule` sends T 2..4 calls of the ggml block formats to ggml's vector kernel
+on every board (`kVecRuleMaxTokens = 4`). In isolated route_tune grids, vec at T 4 lost on Ada in
+3 of 21 cells only. End to end, does T 4 on vec cost decode throughput, and on which boards?
+
+**Measurement.** End-to-end A/B, Qwen3.5-9B Q4_K_M (Q6_K where named), `--spec off`, so T = C;
+8 alternating server starts, warm-up cache off (`NINFERNO_WARMUP_CACHE=0`: the cache is keyed
+without the lab switches). Lab switch `NINFERNO_LAB_VEC_MAX_T=3` (lab/vec-minn): T 4 leaves vec and
+takes the next authority's route. Lab / shipped, C4 (C2 and C3 tie within 0.1 % everywhere):
+
+| board | SMs x ref clock / bus (cycles a byte) | C4 |
+|---|---|---|
+| RTX 3060 (ga106) | 0.138 | +6.5 % |
+| RTX 3090 (ga102) | 0.149 | +3.6 % |
+| RTX 5070 Ti (gb203) | 0.191 | +11.1 % |
+| RTX 5090 (gb202), Q4_K_M / Q6_K | 0.228 | +5.3 % / +7.3 % |
+| RTX 4060 Ti (ad106) | 0.299 | +2.5 % |
+| RTX 4070 Ti (ad104) | 0.311 | -2.0 % |
+| RTX 4090 (ad102) | 0.320 | -1.4 % |
+
+Under MTP (Qwen3.5-9B-MTP, rounds/s, which a greedy route change cannot move through the text),
+the cap never lost more than 1.3 % (4090 C1) and gained up to +5.3 % (5090 C1).
+
+**Decision.** `kVecRuleMaxTokensGa10xGb20x = 3`: `vec_rule_max_tokens(qtype)` returns 3 on sm_86
+(`ga10x_cc`; not the A100, sm_87 or sm_88, none measured) and on consumer Blackwell (`gb20x_cc`) for
+the K-quants (`format_rules.h` `vec_cap_ga10x_gb20x`: Q4_K on four cards; Q6_K on the RTX 5090, 5070
+Ti and 3060, +7.27 / +4.52 / +15.3 %; Q3_K / Q5_K on the RTX 5070 Ti, +15.7 / +6.74 %, and the RTX
+3060, +0.63 / +10.76 %; Q2_K carried), 4 elsewhere; boards whose vec kernel reaches past eight
+columns keep their widest. This is a **measured constant** keyed by generation (`route_rules.h`
+records it, `Basis::Measured`, with the four boards). It is not derived from chip facts: the
+cycles-a-byte column above does not split the boards by itself (the 4060 Ti gains at 0.299 while the
+4070 Ti loses at 0.311, and a cap at T 2 would cost the 3090 2.0 % at C3 where it gains the 3060 1.5
+%). A counted bound needs the integer issue rate of a vec token per arch (isa_probe rows), the
+analyzer's next round.
+
+**What moves.** The goldens move only T = 4 ggml_vec rows of the K-quants on the GA10x and GB20x
+boards, to the register MMA: in most rows the T = 5.. range's tile, in 40 of 13,460 keys (a few
+p1 shapes) the T = 1 range's rmma tile. Ada, Turing and Volta keep their
+selections.
+
+**Not moved: every other format.** The formats R8 verifies (the codebook formats, Q4_0) would send T
+4 to R8 (IQ2 r8.w4r2, IQ3 and large Q4_0 r8.w4r1). The vector rule's first case was one of them: the
+RTX 5090's ISTA IQ3_S MTP3 4-token verify, where vec beat the tuner's R8 and A16 schedules (C1 166
+-> 174 tok/s). With the cap on all formats, a 9B UD-IQ3_XXS on the RTX 5070 Ti gained 2.7 % at C4
+and UD-IQ2_M under MTP did not move (rounds a second within 0.7 %), but its UD mix holds K-quant
+tensors too, so that is no IQ evidence. IQ4_XS, which goes to the register MMA, split the two GB20x
+cards: RTX 5070 Ti +4.45 %, RTX 5090 -3.27 % at C4; the RTX 3060 lost 11.3 %. IQ1 and the legacy
+formats (Q4_1, Q5_0, Q5_1) are not measured. All of them keep four.
+
+The product estimate's launch counts for 2-4 rows (`choice_constants.h`, `format_facts.h`) stay
+Ada's routes (vec at 2-4, labelled transferred): on GA10x and GB20x a K-quant T 4 now launches the
+register MMA without the activation quantize, a small error on the transferred side.
+
+**Not taken.** The register MMA at T 2..4 (`NINFERNO_LAB_RMMA_SMALLT`) wins some of the same cells
+(RTX 5090 Q6_K +1.7 / +3.6 / +5.5 %) and loses others (RTX 5090 Q4_K_M T 2 -5.9 %, RTX 3090 T 2
+-5.8 %, RTX 4090 -1.0 .. -2.1 %): its edge depends on the board and the format. It needs the
+counted bound above, not another per-generation constant.

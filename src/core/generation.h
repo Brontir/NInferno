@@ -263,6 +263,12 @@ struct FittedRouteScales {
 [[nodiscard]] constexpr bool ampere_cc(int major, int minor) noexcept {
     return major == 8 && minor < 9;
 }
+
+// sm_86: the GA10x boards (the RTX 30 cards, the A10), not the A100 nor sm_87 / sm_88 (vec_rule's
+// cap).
+[[nodiscard]] constexpr bool ga10x_cc(int major, int minor) noexcept {
+    return major == 8 && minor == 6;
+}
 // sm_89: the RTX 40 boards (w4a8_ws_extra, w4a8_ws_wins, w4a8_wide_q4k).
 [[nodiscard]] constexpr bool ada_cc(int major, int minor) noexcept {
     return major == 8 && minor == 9;
