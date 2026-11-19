@@ -59,6 +59,8 @@ MODEL_MIN_T = 17  # the cost model ranks routes only from this many tokens
 # w4a4, staged, NVFP4 tiled and tiled families below 17 tokens, plus the executed selection. Its
 # prefill loop runs after it and writes a (route, T) pair the speed loop did not; the routes CSV
 # has no profile column, so a row outside this is the prefill profile's, never a speed candidate.
+# (With --prefill-chunk 16 or less the prefill loop starts below 8 tokens and can time an R8 row the
+# speed loop skipped; this mirror then counts it a speed row. The default chunk, 1024, starts at 512.)
 R8_SPEED_MAX_TOKENS = 8
 WIDE_ONLY_FAMILIES = ("w4a4", "staged", "nvfp4t", "tiled")
 WIDE_FROM_T = 17
