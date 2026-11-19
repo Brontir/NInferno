@@ -228,7 +228,8 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      Label::Measured,
      {kRtx5090, kRtx5070Ti},
      "R8 against the register MMA at T = 5..8, every K-quant and IQ3_XXS (A16 baseline; against "
-     "the A8 register MMA Q6_K loses, so r8_q6k_narrow holds it to four): RTX 5070 Ti -7..-14 %, "
+     "the A8 register MMA Q6_K loses, so r8_q6k_narrow holds it to four on tensor mma.sync "
+     "builds): RTX 5070 Ti -7..-14 %, "
      "RTX 5090 -5..-15 %; end to end C8 Qwen3.6-35B 180.8 -> 189.0 tok/s, Gemma 4 26B 161.0 -> "
      "167.4 (RTX 5090)",
      kR8T8Sweep},
