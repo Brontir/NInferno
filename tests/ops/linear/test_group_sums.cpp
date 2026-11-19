@@ -127,9 +127,15 @@ bool admitted_by_rows(const std::string& arch, const std::string& decoder, int e
 // (kernel_facts::build_arch, the rows ninferno_kernel_facts_test checks against the binary). A
 // substituted board's rows say what its release engine would launch; this binary can launch the
 // plane only where it compiled one (the sm_70 build has none: kRmmaPlaneVariant), so a board
-// substituted on it never reads the plane, whatever its own rows admit.
+// substituted on it never reads the plane, whatever its own rows admit. A build with no snapshot
+// of its own (121a, 120f; host_rules reports that) answers as kRmmaPlaneVariant compiles:
+// every min-term decoder has a plane instance from sm_75, so the cells below still check (#722).
 bool plane_in_build(const std::string& decoder) {
     const std::string build(kf::build_arch());
+    if (!kf::snapshot_header(build).has_value()) {
+        return !build.empty() && build.front() >= '0' && build.front() <= '9' &&
+               std::stoi(build) >= 75;
+    }
     for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
         const auto s = generic::rmma_schedule_info(i);
         for (const bool latency : {false, true}) {
@@ -213,12 +219,8 @@ void host_rules(const std::string& board) {
     // plane where the call's workspace holds it, else the MMA with ones said as a demotion; the
     // plan's capacity holds it.
     const std::string arch = kf::sass_arch().value_or("");
-    // Without this build's own snapshot (a 121a or 120f build), plane_in_build reads no rows and
-    // every cell below would report a plane mismatch beside this one real failure (#722).
-    if (!kf::snapshot_header(kf::build_arch()).has_value()) {
-        check(false, "this build's architecture has a kernel-facts snapshot");
-        return;
-    }
+    check(kf::snapshot_header(kf::build_arch()).has_value(),
+          "this build's architecture has a kernel-facts snapshot");
     void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
     std::string admitted_list;
     for (const QType q : {QType::GGML_Q4_K, QType::GGML_Q5_K, QType::GGML_Q2_K, QType::GGML_Q4_1,

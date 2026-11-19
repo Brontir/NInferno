@@ -264,7 +264,7 @@ bool rmma_plane_keeps() {
 // the same bytes whatever the call's size, so its route tables' tiles must all sum the same way
 // (summation_order), all from the plane or all with the MMA with ones. Read once per device for
 // each (decoder, epilogue) instance; a read that fails admits none until the process restarts and
-// prints one line on stderr for that instance.
+// prints one warning line on stderr for that instance and device.
 template <class Decoder, Epilogue E>
 bool rmma_plane_admitted() {
     if constexpr (!kRmmaPlaneVariant<Decoder>) {
@@ -287,8 +287,10 @@ bool rmma_plane_admitted() {
                 return keeps;
             } catch (const std::exception& e) {
                 std::fprintf(stderr,
-                             "ninferno: the group-sums plane is off for this process: its kernel "
-                             "facts could not be read (%s)\n",
+                             "ninferno: warning: the group-sums plane is off for %s epilogue %d on "
+                             "this device until a restart: its kernel facts could not be read "
+                             "(%s)\n",
+                             kernel_facts::decoder_name<Decoder>().c_str(), static_cast<int>(E),
                              e.what());
                 return false;
             }
