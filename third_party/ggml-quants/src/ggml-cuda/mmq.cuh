@@ -978,8 +978,21 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 #    define NINFERNO_MMQ_SKIP_SPECIALIZATION(J) false
 #endif
 
+// LAB ONLY (lab/mmq-occ2, #1043): on sm_120a, two CTAs an SM for the 256-thread non-FP4 kernels
+// (128 registers a thread), where ptxas otherwise takes 162-240.
+static constexpr __device__ int ninferno_lab_mmq_occupancy(ggml_type type, int J, bool fallback, ggml_prec prec_src1) {
+#if defined(BLACKWELL_MMA_AVAILABLE)
+    if (type != GGML_TYPE_NVFP4 && type != GGML_TYPE_MXFP4 &&
+        ggml_cuda_mmq_get_nthreads(type, J, fallback, prec_src1) == 256 &&
+        ggml_cuda_mmq_get_occupancy(type, J, fallback, prec_src1) < 2) {
+        return 2;
+    }
+#endif
+    return ggml_cuda_mmq_get_occupancy(type, J, fallback, prec_src1);
+}
+
 template <ggml_type type, int J, bool fallback, ggml_prec prec_src1 = GGML_PREC_Q8>
-__launch_bounds__(ggml_cuda_mmq_get_nthreads(type, J, fallback, prec_src1), ggml_cuda_mmq_get_occupancy(type, J, fallback, prec_src1))
+__launch_bounds__(ggml_cuda_mmq_get_nthreads(type, J, fallback, prec_src1), ninferno_lab_mmq_occupancy(type, J, fallback, prec_src1))
 static __global__ void mul_mat_q(
         const char * __restrict__ x, const int * __restrict__ y, const int32_t * __restrict__ ids_dst,
         const int32_t * __restrict__ expert_bounds, float * __restrict__ dst, float * __restrict__ tmp_fixup,
