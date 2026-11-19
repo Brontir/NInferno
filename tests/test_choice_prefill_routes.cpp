@@ -283,10 +283,11 @@ void short_rest(const json& fixture) {
                 c.chunk = 1024;
                 ch::Task task;
                 task.answer     = 64;
-                const auto rest = [&] {
-                    return ch::single_request_seconds(model, card, quant, c, task, 1032) -
-                           ch::single_request_seconds(model, card, quant, c, task, 1024);
+                const auto rest_of = [&](const ch::ModelFacts& f) {
+                    return ch::single_request_seconds(f, card, quant, c, task, 1032) -
+                           ch::single_request_seconds(f, card, quant, c, task, 1024);
                 };
+                const auto rest     = [&] { return rest_of(model); };
                 const double before = rest();
                 pr::with_prefill_routes(model, device);
                 // The first trunk linear the choice asks a route for (selected_kernel's terms: no
