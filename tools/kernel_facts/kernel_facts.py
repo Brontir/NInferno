@@ -1423,8 +1423,9 @@ def sass_unstable(family, key):
 # shared bytes equal throughout: 160 registers in full ninferno-serve builds on an RTX 3060 stand at
 # master 5c10b6c8d (twice) and in a full build of 139136c74; 162, the committed count, in a
 # kernel_facts_families.sh build of the r8 units (KFF_FAMILIES=r8) at 714a05ced on another stand's
-# CPU, whose source of those units is the same. Host and build kind both differ between the two
-# counts, so this is a counted pair, not a cause. No price reads the row (the R8 law prices T = 1
+# CPU; the r8 kernel files are unchanged between those trees, a few headers they include changed.
+# Host, build kind and tree all differ between the two counts, so this is a counted pair, not a
+# cause. No price reads the row (the R8 law prices T = 1
 # only, #966).
 REGISTER_ALLOCATIONS = {
     "moegemm": {

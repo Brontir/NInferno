@@ -1294,8 +1294,9 @@ class RegisterAllocations(unittest.TestCase):
                     self.assertIn(committed[key][0], counts, (family, arch, key))
 
     def test_r8_allocation_passes_check(self):
-        # #968: sm_80's r8 W4a8U4ZpG<64> 4 2 8 1 1 built with 160 registers on one host and 162 on
-        # another from one tree; the committed row (162) and a build at 160 pass, 158 fails.
+        # #968: sm_80's r8 W4a8U4ZpG<64> 4 2 8 1 1 came out with 160 registers in full builds and 162
+        # in a KFF_FAMILIES=r8 build (REGISTER_ALLOCATIONS' comment); the committed row (162) and a
+        # build at 160 pass, 158 fails.
         import types
         args = types.SimpleNamespace(expected="sm_80.txt", nvcc="13.4.92", binary="serve",
                                      dump=None, show=10)
