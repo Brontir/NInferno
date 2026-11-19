@@ -4,8 +4,8 @@
 // band's route gives a token the heuristic's bytes (a W4A8 schedule for W4A8, the prefill route's
 // summation order for A16), the cache file gives a second process the same routes without timing
 // (and times again only the bands a failure skipped), a width or band a lent table answered is
-// timed once --route-policy evidence demotes that answer (never by a read-only process), and a
-// call inside a CUDA graph capture times nothing.
+// timed once --route-policy evidence demotes that answer (a read-only process times and writes
+// nothing), and a call inside a CUDA graph capture times nothing.
 #include "ops/linear/linear_test_common.h"
 
 #include "core/arena.h"
@@ -390,9 +390,11 @@ bool timed_in(const Json* entry, const char* field, std::int32_t t) {
 
 // A decode width (#1008) or a prefill band (#1023) an older tune left untimed because a table
 // answered it is timed once --route-policy evidence demotes that answer, by a process that times
-// (TuneMode::On), and only once; a read-only process (TuneMode::Off) times nothing (#1024). The
-// answers are lent: the similar chip's table fills problems the device's own table lacks, and an
-// entry with a lender is Borrowed whatever the board distance, so evidence demotes it.
+// (TuneMode::On), and only once; a read-only process (TuneMode::Off) times and writes nothing
+// (#1024; Off reads only the release file, so this does not reach the cache reader's writable
+// guard). The answers are lent: the similar chip's table fills problems the device's own table
+// lacks, and an entry with a lender is Borrowed whatever the board distance, so evidence demotes
+// it.
 int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scratch) {
     const auto similar = device_class().similar_chips();
     if (similar.empty()) {
@@ -429,13 +431,17 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
     std::ofstream(dir / (similar.front() + ".json")) << table(
         similar.front(), entry(dec.n, dec.k, R"("bands": [[1, 16, "rmma.m1.n1.w1x8"]])") + ", " +
                              entry(pre.n, pre.k, R"("prefill": "rmma.m1.n8.w4x1")"));
+    // Restored before return: the scratch directory is removed after the test.
+    const std::string previous_dir = ops::route_table_dir();
     ops::set_route_table_dir(dir);
     const generic::Problem pdec{dec.qtype, dec.policy, dec.n, dec.k, generic::Epilogue::Store};
     const generic::Problem ppre{pre.qtype, pre.policy, pre.n, pre.k, generic::Epilogue::Store};
     const auto status = ops::route_table_status();
     if (!generic::table_route(pdec, 4, false) || !generic::table_route(ppre, 64, true) ||
         status.borrowed_entries < 2) {
-        fail("the similar chip's table lends nothing, the case is not met: " + status.message);
+        fail("the table of " + similar.front() +
+             " lends nothing here, the fixture is not met: " + status.message);
+        ops::set_route_table_dir(previous_dir);
         ops::clear_route_table();
         return failures;
     }
@@ -478,6 +484,7 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
         const Json* p   = cached_entry(file, ppre.n, ppre.k);
         if (e == nullptr || p == nullptr || !p->contains("prefill")) {
             fail("legacy: no cache entry for the two problems");
+            ops::set_route_table_dir(previous_dir);
             ops::clear_route_table();
             return failures;
         }
@@ -507,7 +514,8 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
         }
     }
 
-    // Evidence demotes them. A read-only process times nothing and leaves the file as it is.
+    // Evidence demotes them. A read-only process times and writes nothing (it reads the release
+    // file only, so the cache reader's writable guard is not exercised here).
     ops::set_route_policy(RoutePolicy::Evidence);
     for (const std::int32_t t : held_widths) {
         if (answered(pdec, t, false)) fail("evidence keeps lent width T=" + std::to_string(t));
@@ -566,6 +574,7 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
     }
     // Saved: the next process times nothing (no retime loop).
     if (!run_both().empty()) fail("evidence: the retimed entries were timed again");
+    ops::set_route_table_dir(previous_dir);
     ops::clear_route_table();
     if (failures == 0) {
         std::cout << "demoted retime: " << held_widths.size() << " decode widths and "
