@@ -21,7 +21,7 @@
 arch 75
 nvcc 13.4.92
 flags -O3 -DNDEBUG rdc=ON lineinfo=OFF ptx=OFF
-source 8b9c05efea4ed62f52428c0fad53d617874e4938b9e5bd96e0270f660d83d8b2
+source a687b2a917bccca50f2f7b0bb467e64a8c23839a26a8a872759a8a45a24e03d4
 kernels 2696
 columns family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency sums registers stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total stall_sum sb_waits sb_waits_local outside_total outside_stall outside_waits outside_bar
 rmma Bf16Decoder 1 4 1 1 1 0 0 0 67 0 0 1536 1 64 8 0 HMMA.1688.F32 6 3072 0 0 0 0 0 0 0 0 0 0 0 124 192 0 24 354 754 34 0 322 894 32 1
