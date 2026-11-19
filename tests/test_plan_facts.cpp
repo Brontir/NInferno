@@ -5,6 +5,7 @@
 // named boards of gpu_facts.json. Synthetic headers and configs shaped like the published models.
 // CPU.
 
+#include "product/plan/plan_cached.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_quants.h"

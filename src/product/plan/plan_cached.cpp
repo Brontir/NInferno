@@ -187,29 +187,32 @@ std::optional<GgufTensorTable> read_tensor_table(const fs::path& path) {
             return gguf_tensor_table(
                 plan_facts_of_gguf(read_local_head(path), local_gguf_bytes(path)));
         }
-        const PlanSourceFacts facts = plan_facts_of_artifact(path);
-        if (facts.model.weight_basis != runtime::WeightBasis::Artifact ||
-            facts.model.weight_bytes == 0) {
-            return std::nullopt;
-        }
-        return GgufTensorTable{.tensor_bytes           = facts.model.weight_bytes,
-                               .mtp_bytes              = facts.model.mtp_bytes,
-                               .own_drafter_bytes      = facts.model.own_drafter_bytes,
-                               .basis                  = runtime::WeightBasis::Artifact,
-                               .expert_layers          = facts.model.expert_layers,
-                               .expert_prefill         = facts.model.expert_prefill,
-                               .expert_prefill_int8    = facts.model.expert_prefill_int8,
-                               .expert_prefill_assumed = facts.model.expert_prefill_assumed,
-                               .weight_formats         = facts.shape.weight_formats,
-                               .layer_formats          = facts.shape.layer_formats,
-                               .rest_layer_formats     = facts.shape.rest_layer_formats,
-                               .expert_up_formats      = facts.model.expert_up_formats,
-                               .expert_down_formats    = facts.model.expert_down_formats,
-                               .head_format            = facts.model.head_format};
+        return tensor_table_of_artifact(plan_facts_of_artifact(path));
     } catch (const std::exception&) { return std::nullopt; }
 }
 
 } // namespace
+
+std::optional<GgufTensorTable> tensor_table_of_artifact(const PlanSourceFacts& facts) {
+    if (facts.model.weight_basis != runtime::WeightBasis::Artifact ||
+        facts.model.weight_bytes == 0) {
+        return std::nullopt;
+    }
+    return GgufTensorTable{.tensor_bytes           = facts.model.weight_bytes,
+                           .mtp_bytes              = facts.model.mtp_bytes,
+                           .own_drafter_bytes      = facts.model.own_drafter_bytes,
+                           .basis                  = runtime::WeightBasis::Artifact,
+                           .expert_layers          = facts.model.expert_layers,
+                           .expert_prefill         = facts.model.expert_prefill,
+                           .expert_prefill_int8    = facts.model.expert_prefill_int8,
+                           .expert_prefill_assumed = facts.model.expert_prefill_assumed,
+                           .weight_formats         = facts.shape.weight_formats,
+                           .layer_formats          = facts.shape.layer_formats,
+                           .rest_layer_formats     = facts.shape.rest_layer_formats,
+                           .expert_up_formats      = facts.model.expert_up_formats,
+                           .expert_down_formats    = facts.model.expert_down_formats,
+                           .head_format            = facts.model.head_format};
+}
 
 std::optional<GgufTensorTable> local_tensor_table(const fs::path& path) {
     // Read once per file as it is (every part's size and time): a plan is made often, a file rarely moves.
