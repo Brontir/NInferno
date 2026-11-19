@@ -146,7 +146,7 @@ std::optional<R8TableHit> tuned_r8(const Problem& p);
 // verify widths by the call's own rows; r8_call_refusal, generic_gemm.h, names why not).
 bool r8_call(const Problem& problem, const Weight& w, std::int32_t tokens);
 // The verify widths the vector kernel takes by rule: 2..4 tokens with tensor mma.sync (2..3 on
-// GA10x and consumer Blackwell for the formats R8 does not verify), every width it reads without.
+// GA10x and consumer Blackwell for the K-quants), every width it reads without.
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens);
 // ggml's matrix kernel for the verify band: 9..16 tokens of the codebook formats in a round of
 // several sequences (`lanes`: ops::round_lanes(), which the four-argument form reads itself); on

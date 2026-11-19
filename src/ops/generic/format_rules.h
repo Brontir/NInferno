@@ -67,14 +67,16 @@ enum class Rule : std::uint8_t {
     R8Verify,             // r8_verify_supports: R8 at verify widths
     R8VerifyQ40MinValues, // kR8VerifyQ40MinValues: Q4_0's verify R8 on a large matrix only
     MmqVerifyMinTokens,   // kMmqVerifyMinTokens: the first width of the mmq verify band
+    VecCapGa10xGb20x,     // vec_rule_max_tokens: the formats whose vec band stops at three tokens
+                          // on GA10x and consumer Blackwell
     R8VerifyEmulatedOff,  // r8_verify_takes: formats R8 leaves at verify widths where BF16 is
                           // emulated
 };
 
-inline constexpr std::array kAllRules = {Rule::LightStep,          Rule::TallTile,
-                                         Rule::MmqVerify,          Rule::W4a8WsTuned,
-                                         Rule::R8Verify,           Rule::R8VerifyQ40MinValues,
-                                         Rule::MmqVerifyMinTokens, Rule::R8VerifyEmulatedOff};
+inline constexpr std::array kAllRules = {
+    Rule::LightStep,          Rule::TallTile,         Rule::MmqVerify,
+    Rule::W4a8WsTuned,        Rule::R8Verify,         Rule::R8VerifyQ40MinValues,
+    Rule::MmqVerifyMinTokens, Rule::VecCapGa10xGb20x, Rule::R8VerifyEmulatedOff};
 
 constexpr std::string_view rule_name(Rule rule) {
     switch (rule) {
@@ -94,6 +96,8 @@ constexpr std::string_view rule_name(Rule rule) {
         return "kR8VerifyQ40MinValues";
     case Rule::MmqVerifyMinTokens:
         return "kMmqVerifyMinTokens";
+    case Rule::VecCapGa10xGb20x:
+        return "vec_cap_ga10x_gb20x";
     }
     return "";
 }
@@ -297,6 +301,24 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "r8_verify_supports' comment (generic_gemm.h); the comment stands in the first public "
      "commit (54ef5203), the lab runs behind it predate the repository's history",
      kBeforePublic, "'IQ2_XXS / IQ2_XS follow their family' (IQ2_S): not timed on their own"},
+
+    // --- vec_cap_ga10x_gb20x: the vec band stops at three tokens on GA10x and GB20x (#998) ---
+    {Rule::VecCapGa10xGb20x, Basis::Measured, FormatSet{Q::GGML_Q4_K}, 0,
+     "ga106:28sm, ga102:82sm, gb203:70sm, gb202:170sm", "RTX 3060, RTX 3090, RTX 5070 Ti, RTX 5090",
+     Evidence::TwoCards, "#998: abvecn.sh t3_* (lab/vec-minn NINFERNO_LAB_VEC_MAX_T=3)",
+     "2026-11-19",
+     "Qwen3.5-9B Q4_K_M, --spec off, C = 4 (T = 4 calls) capped at T = 3 against vec at T = 4: "
+     "RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 5070 Ti +11.1 %, RTX 5090 +5.3 %; C = 2 and 3 within "
+     "0.1 %"},
+    {Rule::VecCapGa10xGb20x, Basis::Measured, FormatSet{Q::GGML_Q6_K}, 0, "gb202:170sm", "RTX 5090",
+     Evidence::SingleCard, "#998: abvecn.sh t3q6nc_5090", "2026-11-19",
+     "Qwen3.5-9B Q6_K, --spec off, C = 4 capped at T = 3 against T = 4: +7.27 %; C = 2 and 3 "
+     "within 0.05 %"},
+    {Rule::VecCapGa10xGb20x, Basis::Unknown, FormatSet{Q::GGML_Q2_K, Q::GGML_Q3_K, Q::GGML_Q5_K}, 0,
+     kNone, kNone, Evidence::Carried, "#998", "2026-11-19",
+     "the other K-quants follow Q4_K / Q6_K, whose super-block decoder they share: not timed on "
+     "their own. Not in the rule: IQ4_XS (RTX 5070 Ti +4.45 %, RTX 5090 -3.27 %: the two cards "
+     "disagree), the formats R8 verifies, IQ1 and the legacy formats (not measured)"},
 
     // --- the thresholds ---
     {Rule::R8VerifyQ40MinValues, Basis::PlacedBetweenMeasured, FormatSet{Q::GGML_Q4_0},

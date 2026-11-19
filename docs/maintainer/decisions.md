@@ -3190,7 +3190,8 @@ the cap never lost more than 1.3 % (4090 C1) and gained up to +5.3 % (5090 C1).
 
 **Decision.** `kVecRuleMaxTokensGa10xGb20x = 3`: `vec_rule_max_tokens(qtype)` returns 3 on sm_86
 (`ga10x_cc`; not the A100, sm_87 or sm_88, none measured) and on consumer Blackwell (`gb20x_cc`)
-for the formats R8 does not take at the verify widths, 4 elsewhere; boards whose vec kernel reaches past eight
+for the K-quants (`format_rules.h` `vec_cap_ga10x_gb20x`: Q4_K on four cards, Q6_K on the RTX 5090,
+Q2_K / Q3_K / Q5_K carried), 4 elsewhere; boards whose vec kernel reaches past eight
 columns keep their widest. This is a **measured constant** keyed by generation (`route_rules.h`
 records it, `Basis::Measured`, with the four boards). It is not derived from chip facts: the
 cycles-a-byte column above does not split the boards by itself (the 4060 Ti gains at 0.299 while
@@ -3202,11 +3203,14 @@ needs the integer issue rate of a vec token per arch (isa_probe rows), the analy
 into the next range's route (the register MMA for the K-quants). Ada, Turing and Volta keep their
 selections.
 
-**Not moved: the formats R8 verifies** (`r8_verify_takes`: the codebook formats, Q4_0). Capped,
-their T 4 would go to R8 (IQ2 r8.w4r2, IQ3 and large Q4_0 r8.w4r1), which none of the A/Bs above
-measured. The vector rule's first case was one of them: the RTX 5090's ISTA IQ3_S MTP3 4-token
-verify, where vec beat the tuner's R8 and A16 schedules (C1 166 -> 174 tok/s). They keep four
-until an A/B of their own.
+**Not moved: every other format.** The formats R8 verifies (the codebook formats, Q4_0) would send
+T 4 to R8 (IQ2 r8.w4r2, IQ3 and large Q4_0 r8.w4r1). The vector rule's first case was one of
+them: the RTX 5090's ISTA IQ3_S MTP3 4-token verify, where vec beat the tuner's R8 and A16
+schedules (C1 166 -> 174 tok/s). With the cap on all formats, a 9B UD-IQ3_XXS on the RTX 5070 Ti
+gained 2.7 % at C4 and UD-IQ2_M under MTP did not move (rounds a second within 0.7 %), but its
+UD mix holds K-quant tensors too, so that is no IQ evidence. IQ4_XS, which goes to the register
+MMA, split the two GB20x cards: RTX 5070 Ti +4.45 %, RTX 5090 -3.27 % at C4. IQ1 and the legacy
+formats (Q4_1, Q5_0, Q5_1) are not measured. All of them keep four.
 
 The product estimate's launch counts for 2-4 rows (`choice_constants.h`, `format_facts.h`) stay
 Ada's routes (vec at 2-4, labelled transferred): on GA10x and GB20x a K-quant T 4 now launches the
