@@ -443,9 +443,8 @@ int route_tune_main(int argc, char** argv) {
                  // What a plan reserves for this shape up to t_max, so every route runs the form
                  // it takes in the product: on Volta the tiled route at T >= 17 runs CUTLASS over
                  // a decoded copy of the weight only where the workspace holds that copy, and its
-                 // own tile, up to 11x slower, where it does not (#787, GV100: a decode-only run
-                 // sized for T = 32 timed q4_K 8192x4096 tiled at 4937 us against 463 us; a full
-                 // run also fell short above T 2048 and for SwiGLU at every width).
+                 // own tile, up to 8x slower, where it does not (#787: a decode-only run sized
+                 // for T = 32 timed q4_K 8192x4096 tiled at 4937 us against 612 us).
                  generic::workspace_capacity_bytes(
                      generic::Problem{p.qtype, policy, p.n, p.k, p.epilogue}, nullptr, 1, t_max),
                  std::size_t{256}}));

@@ -565,14 +565,10 @@ void time_prefill_bands(const Problem& problem, const Call& model_call, cudaStre
         out.emplace(static_cast<std::size_t>(model_call.rows) * t_max * 2);
         // The register MMA of a min-term format reads the group-sums plane there (#619), only
         // while the switch is on.
-        // And what a plan reserves for the call up to t_max, so each band times the form the
-        // product runs: on Volta the tiled route runs CUTLASS over a decoded copy of the weight
-        // only where the workspace holds it, else its own tile, 1.3-2.6x slower (#787: GV100,
-        // q4_K 8192x4096 T 8192 24155 -> 9414 us; SwiGLU 12288x4096 T 17-32 1714 -> 1290 us).
         workspace.emplace(std::max<std::size_t>(
             {w4a8 ? route_workspace_bytes(Route{Family::W4a8Mma, 0}, k, t_max) : 0,
              group_sums_plane_enabled() ? rmma_group_sums_bytes(codec_of(weight), k, t_max) : 0,
-             workspace_capacity_bytes(problem, &weight, 1, t_max), 256}));
+             256}));
     } catch (const std::exception&) {
         (void)cudaGetLastError();
         tuned.prefill_base       = {};
