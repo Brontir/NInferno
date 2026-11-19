@@ -9,6 +9,8 @@
 #include "text/hf_token_codec.h"
 #include "text/tokenizer.h"
 
+#include "support/tiny_hf_tokenizer.h"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -1584,13 +1586,9 @@ int test_argument_key_order() {
     return failures;
 }
 
-// A tiny BPE: "a"+"b" merge, one special added token, byte-fallback decoding.
-constexpr std::string_view kTinyTokenizer = R"({
-  "model": {"type": "BPE", "vocab": {"a": 0, "b": 1, "ab": 2, " ": 3, "<": 4, "T": 5, ">": 6,
-            "<0x41>": 7, "<0xE2>": 8}, "merges": ["a b"], "byte_fallback": true},
-  "added_tokens": [{"id": 9, "content": "<T>", "special": true}],
-  "decoder": {"type": "Sequence", "decoders": [{"type": "ByteFallback"}, {"type": "Fuse"}]}
-})";
+// A tiny BPE: "a"+"b" merge, one special added token, byte-fallback decoding
+// (support/tiny_hf_tokenizer.h).
+constexpr std::string_view kTinyTokenizer = kTinyHfTokenizer;
 
 int test_codec() {
     int failures = 0;
