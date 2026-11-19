@@ -105,7 +105,9 @@ int spread_smem(Route route, WeightCodec codec, Epilogue epilogue, const GemmArg
             const auto cap        = static_cast<std::size_t>(lab_cap);
             // C CTAs fit (each with the 1 KiB the hardware reserves), C + 1 do not.
             std::size_t pad = (per / cap - 1024) / 1024 * 1024;
-            pad             = std::min<std::size_t>(pad, kStaticSharedBytesPerBlock);
+            // Below the 48 KiB a launch takes without an opt-in, leaving 8 KiB to the static shared
+            // memory.
+            pad = std::min<std::size_t>(pad, kStaticSharedBytesPerBlock - 8 * 1024);
             if ((cap + 1) * (pad + 1024) > per) { return static_cast<int>(pad); }
         } catch (const std::exception&) {}
         return 0;
