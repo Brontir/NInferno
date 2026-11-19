@@ -432,8 +432,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      ""},
     // The rule's lower edge, from two tokens: T = 1 keeps R8 and the dense tuner.
     {"vec_rule lower edge", Basis::Measured, "generic_select.cpp",
-     "return tokens >= 2 && tokens <= vec_rule_max_tokens(w.qtype) && vec_call(w, policy, tokens);", 2,
-     "tu102:68sm", "RTX 2080 Ti",
+     "return tokens >= 2 && tokens <= vec_rule_max_tokens(w.qtype) && vec_call(w, policy, tokens);",
+     2, "tu102:68sm", "RTX 2080 Ti",
      "decode (T = 1) keeps R8 and the dense tuner: on the RTX 2080 Ti the vector kernel lost "
      "decode by 10 % (9B Q4_K_M C1 88 -> 79 tok/s) and won C4 by 10 %",
      ""},
