@@ -514,8 +514,7 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
         }
     }
 
-    // Evidence demotes them. A read-only process times and writes nothing (it reads the release
-    // file only, so the cache reader's writable guard is not exercised here).
+    // Evidence demotes them.
     ops::set_route_policy(RoutePolicy::Evidence);
     for (const std::int32_t t : held_widths) {
         if (answered(pdec, t, false)) fail("evidence keeps lent width T=" + std::to_string(t));
@@ -523,10 +522,54 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
     for (const std::int32_t t : held_bands) {
         if (answered(ppre, t, true)) fail("evidence keeps lent band T=" + std::to_string(t));
     }
+    // A read-only process reads the release's file alone (<route dir>/tuner/dense_tune.json), as it
+    // is: the legacy entries go there, with one lent band of the prefill problem set to a candidate
+    // route and the others left null and never timed. The writable guard keeps those from making
+    // the entry incomplete, so the process reads it whole, the candidate band included, and times
+    // and writes nothing. A reader that took the demoted bands for missing would drop the entry.
+    const auto release      = dir / "tuner" / "dense_tune.json";
+    std::int32_t probe_band = 0;
+    std::optional<generic::Route> probe_route;
+    {
+        Json file = read_cache();
+        for (auto& [key, entry] : file["problems"].items()) {
+            if (key.find("|n" + std::to_string(ppre.n) + "|k" + std::to_string(ppre.k) + "|") ==
+                std::string::npos) {
+                continue;
+            }
+            for (const std::int32_t t : held_bands) {
+                const auto heuristic = generic::heuristic_route(ppre, dpre.weight, t, true);
+                const auto candidates =
+                    generic::prefill_band_candidates(heuristic, dpre.weight, pre.policy);
+                for (const auto r : candidates) {
+                    if (r == heuristic) continue;
+                    entry["prefill"][std::to_string(t)] = generic::route_name(r);
+                    probe_band                          = t;
+                    probe_route                         = r;
+                    break;
+                }
+                if (probe_route) break;
+            }
+        }
+        if (!probe_route || held_bands.size() < 2) {
+            fail("read-only: no lent band to set beside a null one, the case is not met");
+        }
+        std::filesystem::create_directories(release.parent_path());
+        std::ofstream(release) << file.dump(2);
+    }
     const std::string before = read_cache_text();
     generic::set_dense_tune(ninferno::TuneMode::Off, g_cache_file.parent_path());
     if (!run_both().empty()) fail("a read-only process retimed a demoted answer");
     if (read_cache_text() != before) fail("a read-only process wrote the tuner's file");
+    if (probe_route) {
+        const auto read = generic::tuned_prefill_route(
+            ppre, probe_band, generic::heuristic_route(ppre, dpre.weight, probe_band, true));
+        if (!read || !(*read == *probe_route)) {
+            fail("read-only: the release entry with demoted bands was not read (band T=" +
+                 std::to_string(probe_band) + " is not " + generic::route_name(*probe_route) + ")");
+        }
+    }
+    std::filesystem::remove(release);
 
     // A process that times does: the decode problem in full (its entry is not complete), the
     // prefill problem's bands alone.
