@@ -679,11 +679,13 @@ bool read_prefill_bands(const Problem& problem, const Weight& weight, const Json
         tuned.prefill_base[b] = base;
         if (v.is_null()) {
             // Only a band never timed ("prefill_us" absent: a timed band where the heuristic
-            // stays is null with its times), and never in a read-only process (the release's
-            // file is read as it is).
-            const Json& us   = entry.contains("prefill_us") ? entry["prefill_us"] : Json();
-            const bool timed = us.is_object() && us.contains(name);
-            if (writable && !timed && table_route(problem, t, true) &&
+            // stays is null with its times) whose skip was a table answer this policy no longer
+            // keeps (a W4A8 base never reads the table), and never in a read-only process (the
+            // release's file is read as it is).
+            const auto us     = entry.find("prefill_us");
+            const bool has_us = us != entry.end() && us->is_object() && us->contains(name);
+            if (writable && !has_us && base.family != Family::W4a8Mma &&
+                table_route(problem, t, true) && !table_route_kept(problem, t, true, base) &&
                 timed_band(problem, weight, t, base)) {
                 return false;
             }
