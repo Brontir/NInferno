@@ -47,6 +47,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <execinfo.h>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -321,6 +322,14 @@ bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, st
         if ((c & (c - 1)) == 0)
             std::fprintf(stderr, "LABMMQV tokens=%d lanes=%d rows=%d count=%ld\n", tokens, lanes,
                          rows, c);
+        // Past the load's calls (256 a key at most): the caller's stack, once a key.
+        if (c == 300) {
+            std::fprintf(stderr, "LABMMQV BT tokens=%d lanes=%d rows=%d\n", tokens, lanes, rows);
+            void* frames[40];
+            const int n = backtrace(frames, 40);
+            backtrace_symbols_fd(frames, n, 2);
+            std::fprintf(stderr, "LABMMQV BT end\n");
+        }
     }
     return lab_result;
 }
