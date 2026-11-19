@@ -425,13 +425,14 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "ga106:28sm, ga102:82sm, gb203:70sm, gb202:170sm", "RTX 3060, RTX 3090, RTX 5070 Ti, RTX 5090",
      "end to end, Qwen3.5-9B Q4_K_M, --spec off, the rule capped at T = 3 against T = 4: C = 4 "
      "(every trunk linear a T = 4 call) RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 5070 Ti +11.1 %, "
-     "RTX 5090 +5.3 %; C = 2 and 3 within 0.05 %; under MTP the cap never lost in rounds a second "
+     "RTX 5090 +5.3 %; C = 2 and 3 within 0.1 %; under MTP the cap never lost in rounds a second "
      "(RTX 3090, 5070 Ti, 5090). Ada keeps kVecRuleMaxTokens (RTX 4070 Ti -2.0 %, 4090 -1.4 % with "
-     "the cap, 4060 Ti +2.5 %), Turing too (its declined T = 4 call falls to R8, #1038)",
+     "the cap, 4060 Ti +2.5 %), Turing too (its declined T = 4 call falls to R8, #1038); sm_86 and "
+     "sm_120 only, and not the formats R8 takes at the verify widths (r8_verify_takes)",
      ""},
     // The rule's lower edge, from two tokens: T = 1 keeps R8 and the dense tuner.
     {"vec_rule lower edge", Basis::Measured, "generic_select.cpp",
-     "return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);", 2,
+     "return tokens >= 2 && tokens <= vec_rule_max_tokens(w.qtype) && vec_call(w, policy, tokens);", 2,
      "tu102:68sm", "RTX 2080 Ti",
      "decode (T = 1) keeps R8 and the dense tuner: on the RTX 2080 Ti the vector kernel lost "
      "decode by 10 % (9B Q4_K_M C1 88 -> 79 tok/s) and won C4 by 10 %",
