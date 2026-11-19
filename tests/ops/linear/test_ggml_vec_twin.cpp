@@ -6,6 +6,7 @@
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 
 #include "core/device_class.h"
+#include "core/kernel_occupancy.h"
 #include "ops/generic/kernel_facts.h"
 #include "ops/generic/selector_facts.h"
 
@@ -244,14 +245,26 @@ int main() {
         const Problem p{8192, 4096};
         Device d      = make(p, true);
         int described = 0, threads_only = 0;
+        const unsigned groups = unsigned((p.rows + 7) / 8);
         for (const auto& board : generic::kFactsBoards) {
-            const ninferno::ScopedDeviceClass scoped(generic::board_device_class(board));
+            const ninferno::DeviceClass board_class = generic::board_device_class(board);
+            const ninferno::ScopedDeviceClass scoped(board_class);
             const std::optional<std::string> arch = kf::sass_arch();
             if (!arch) {
-                // No release snapshot for its code (the GB10's sm_121): priced by threads alone,
-                // described with no resources, never refused (#1033).
+                // No release snapshot for its code (the GB10's sm_121): priced by threads alone
+                // (the CTAs the thread and block limits allow), described with no resources, never
+                // refused (#1033).
                 const LaunchShape got = describe(p, d, VecInstance::Plain);
-                expect(got.registers == 0 && got.threads > 0 && got.grid_x > 0,
+                const int by_threads  = board_class.max_threads_per_sm / 128;
+                const int per_sm      = board_class.max_blocks_per_sm > 0
+                                            ? std::min(by_threads, board_class.max_blocks_per_sm)
+                                            : by_threads;
+                const unsigned want   = std::min(groups, unsigned(std::max(per_sm, 1) * board.sms));
+                if (got.grid_x != want) {
+                    std::printf("%s: grid %u by threads alone, expected %u\n", board.name,
+                                got.grid_x, want);
+                }
+                expect(got.registers == 0 && got.threads > 0 && got.grid_x == want,
                        "a board with no snapshot is described by threads alone");
                 ++threads_only;
                 continue;
@@ -262,27 +275,31 @@ int main() {
                 if (!facts) continue;
                 const LaunchShape got =
                     describe(p, d, bounded ? VecInstance::Twin : VecInstance::Plain);
-                const bool same = got.registers == facts->registers &&
-                                  got.local_bytes == facts->spill_bytes() &&
-                                  got.static_smem == facts->static_shared_bytes && got.threads > 0;
+                bool same = got.registers == facts->registers &&
+                            got.local_bytes == facts->spill_bytes() &&
+                            got.static_smem == facts->static_shared_bytes && got.threads > 0;
+                if (!bounded) {
+                    // The plain instance's grid: its CTAs an SM holds by the facts, times the SMs.
+                    const int per_sm = ninferno::resident_ctas_per_sm(
+                        board_class, ninferno::KernelShape{facts->registers,
+                                                           facts->static_shared_bytes, 128, 0});
+                    same = same && got.grid_x ==
+                                       std::min(groups, unsigned(std::max(per_sm, 1) * board.sms));
+                }
                 if (!same) {
-                    std::printf("%s (sm_%s) %s: described %d regs %zu B local %zu B static, the "
-                                "facts %d regs %zu B local %zu B static
-                                ",
-                                board.name,
-                                arch->c_str(), bounded ? "twin" : "plain", got.registers,
-                                got.local_bytes, got.static_smem, facts->registers,
-                                facts->spill_bytes(), facts->static_shared_bytes);
+                    std::printf("%s (sm_%s) %s: described %d regs %zu B local %zu B static grid "
+                                "%u, the facts %d regs %zu B local %zu B static\n",
+                                board.name, arch->c_str(), bounded ? "twin" : "plain",
+                                got.registers, got.local_bytes, got.static_smem, got.grid_x,
+                                facts->registers, facts->spill_bytes(), facts->static_shared_bytes);
                 }
                 expect(same, "a substituted board's vec description is its committed facts");
                 ++described;
             }
         }
         free_all(d);
-        std::printf("substituted: %d vec descriptions from committed facts, %d by threads alone
-                    ",
-                    described,
-                    threads_only);
+        std::printf("substituted: %d vec descriptions from committed facts, %d by threads alone\n",
+                    described, threads_only);
         expect(described > 0, "some substituted board describes a vec launch");
         expect(threads_only > 0, "the GB10 (no release snapshot) is among the boards");
     }
