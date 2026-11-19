@@ -807,6 +807,31 @@ template <ggml_type type, int T, int KS, bool Gated, bool Bounded>
 void vec_launch_grid(const VecArgs& args, int groups, int slots, cudaStream_t stream) {
     const int blocks = std::min(groups, slots);
     if (LaunchShape* described = describe_target()) {
+        if (substituted_device_class() != nullptr) {
+            // A substituted board is described as vec_slots prices it (#1033): its instance's
+            // committed facts, never this build's kernel on the host GPU (which, with no device,
+            // throws). The versions are the build's architecture, as the register MMA's
+            // describe_from_facts. With no release snapshot for its code the resources stay 0:
+            // the threads-only price has no registers to show.
+            namespace kf = ninferno::ops::detail::generic::kernel_facts;
+            *described   = LaunchShape{};
+            if (const std::optional<std::string> arch = kf::sass_arch()) {
+                if (const std::optional<kf::KernelFacts> facts = kf::vec_facts(
+                        *arch, kf::VecKernelKey{static_cast<int>(type), T, KS, Gated, Bounded})) {
+                    described->registers   = facts->registers;
+                    described->local_bytes = facts->spill_bytes();
+                    described->static_smem = facts->static_shared_bytes;
+                }
+            }
+            described->threads               = kVecWarps * 32;
+            described->max_threads_per_block = kVecWarps * 32;
+            described->ptx_version           = NINFERNO_BUILD_ARCH;
+            described->binary_version        = NINFERNO_BUILD_ARCH;
+            described->grid_x                = static_cast<unsigned>(blocks);
+            described->grid_y                = 1;
+            described->grid_z                = 1;
+            return;
+        }
         describe_launch(*described,
                         reinterpret_cast<const void*>(vec_kernel<type, T, KS, Gated, Bounded>),
                         dim3(blocks), dim3(kVecWarps * 32), 0);

@@ -5,6 +5,10 @@
 // row groups, the plain instance otherwise, read from the launch's own description.
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 
+#include "core/device_class.h"
+#include "ops/generic/kernel_facts.h"
+#include "ops/generic/selector_facts.h"
+
 #include <cuda_runtime.h>
 
 #include <cstdint>
@@ -12,6 +16,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <optional>
+#include <string>
 #include <algorithm>
 #include <random>
 #include <vector>
@@ -228,6 +234,57 @@ int main() {
                "Auto launches the instance the rule names");
         if (want_twin) expect(got.local_bytes == 0, "a twin taken has no local memory");
         free_all(d);
+    }
+    // A substituted board (#1033) is described from its instance's committed facts, as its slots
+    // are priced: registers, local and static shared memory of the vec row (Q4_K, T 4, the
+    // runtime K, ungated; plain and bounded twin), never this build's kernel on the host GPU.
+    {
+        namespace generic = ninferno::ops::detail::generic;
+        namespace kf      = generic::kernel_facts;
+        const Problem p{8192, 4096};
+        Device d      = make(p, true);
+        int described = 0, threads_only = 0;
+        for (const auto& board : generic::kFactsBoards) {
+            const ninferno::ScopedDeviceClass scoped(generic::board_device_class(board));
+            const std::optional<std::string> arch = kf::sass_arch();
+            if (!arch) {
+                // No release snapshot for its code (the GB10's sm_121): priced by threads alone,
+                // described with no resources, never refused (#1033).
+                const LaunchShape got = describe(p, d, VecInstance::Plain);
+                expect(got.registers == 0 && got.threads > 0 && got.grid_x > 0,
+                       "a board with no snapshot is described by threads alone");
+                ++threads_only;
+                continue;
+            }
+            for (const bool bounded : {false, true}) {
+                const auto facts = kf::vec_facts(*arch, kf::VecKernelKey{12, 4, 0, false, bounded});
+                expect(facts.has_value(), "a release arch has the Q4_K T 4 vec row");
+                if (!facts) continue;
+                const LaunchShape got =
+                    describe(p, d, bounded ? VecInstance::Twin : VecInstance::Plain);
+                const bool same = got.registers == facts->registers &&
+                                  got.local_bytes == facts->spill_bytes() &&
+                                  got.static_smem == facts->static_shared_bytes && got.threads > 0;
+                if (!same) {
+                    std::printf("%s (sm_%s) %s: described %d regs %zu B local %zu B static, the "
+                                "facts %d regs %zu B local %zu B static
+                                ",
+                                board.name,
+                                arch->c_str(), bounded ? "twin" : "plain", got.registers,
+                                got.local_bytes, got.static_smem, facts->registers,
+                                facts->spill_bytes(), facts->static_shared_bytes);
+                }
+                expect(same, "a substituted board's vec description is its committed facts");
+                ++described;
+            }
+        }
+        free_all(d);
+        std::printf("substituted: %d vec descriptions from committed facts, %d by threads alone
+                    ",
+                    described,
+                    threads_only);
+        expect(described > 0, "some substituted board describes a vec launch");
+        expect(threads_only > 0, "the GB10 (no release snapshot) is among the boards");
     }
     if (const char* timing = std::getenv("NINFERNO_VEC_TWIN_TIMING"); timing && *timing == '1') {
         // Rows that put the groups just under the twin's slots (the twin saves a round on this
