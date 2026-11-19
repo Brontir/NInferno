@@ -229,7 +229,9 @@ void check_direct(const generic::Ask& ask, const generic::Problem& problem, cons
                 ++g_direct_answers;
                 // A round under the MMQ verify rule is the rule's: no tuned entry answers it
                 // (#1028).
-                if (a.name == "dense-tune" &&
+                // (On a substituted board dense-tune never answers, kUnreached: this guards a
+                // device run of the test, where the release file's entries are read.)
+                if (a.name == "dense-tune" && generic::bf16_mma_native() &&
                     generic::mmq_verify_rule(w, problem.policy, problem.n, ask.tokens, ask.lanes)) {
                     fail(where + ": dense-tune answered a round the MMQ verify rule holds");
                 }

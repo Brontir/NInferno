@@ -215,12 +215,17 @@ std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& prob
 // timed route that beat it may stand in. A round of several sequences under the MMQ verify rule
 // is the rule's, as the route table's is (a8_call): an entry holds no lane count, and its isolated
 // timing favours the register MMA where the rule measured MMQ ahead end to end at C4 (#1028; the
-// release file held 114 such A8 widths at T 9..16 on ad104 / ad106 / gb206).
+// release file held 114 such A8 widths at T 9..16 on ad104 / ad106 / gb206). Native BF16 MMA only,
+// as the tuner's skip (answered_before_tuner): where the MMA is emulated the rule ignores the
+// lanes and the tuner times A16 against MMQ on purpose (Turing's ~310 tu102 entries each beat MMQ
+// by kMargin), so its entries stand.
 std::optional<RouteAnswer> dense_tune_entry(const Ask& ask, const Problem& problem,
                                             const Weight& weight) {
     if (a8_wide_call(ask, problem, weight)) return std::nullopt;
-    if (mmq_verify_rule(weight, problem.policy, problem.n, ask.tokens, ask.lanes))
+    if (bf16_mma_native() &&
+        mmq_verify_rule(weight, problem.policy, problem.n, ask.tokens, ask.lanes)) {
         return std::nullopt;
+    }
     auto dense = tuned_dense_route(problem, ask.tokens);
     if (!dense) dense = release_dense_route(problem, weight, ask.tokens);
     if (!dense || !route_admits(*dense, weight, problem.policy)) return std::nullopt;
