@@ -646,6 +646,47 @@ __device__ __forceinline__ void store(const VecOut& o, int row, int column, floa
     *out = __float2bfloat16(v);
 }
 
+// The transposed warp reduction of `V` per-lane values (V a power of two, 2..32; #1044). At the
+// butterfly step of offset o (16, 8, ...), while a lane keeps n > 1 values, the lanes with bit o
+// set keep the upper half of their n values and send the lower half, the others the reverse, and
+// each adds its partner's; after log2(V) such steps every lane keeps one value, which the remaining
+// steps sum across the other lanes. Lane L ends with the whole warp's sum of the value whose index
+// vec_reduce_index<V>(L) gives: its bits are lane bits 4, 3, ... from the top.
+constexpr int vec_reduce_values(int n) {
+    int v = 2;
+    while (v < n) v *= 2;
+    return v;
+}
+
+template <int V>
+__device__ __forceinline__ int vec_reduce_index(int lane) {
+    static_assert(V >= 2 && V <= 32 && (V & (V - 1)) == 0);
+    int idx = 0;
+#pragma unroll
+    for (int o = 16, n = V; n > 1; o >>= 1, n >>= 1) idx = 2 * idx + ((lane & o) != 0 ? 1 : 0);
+    return idx;
+}
+
+template <int V>
+__device__ __forceinline__ void vec_transpose_reduce(float (&val)[V], int lane) {
+    static_assert(V >= 2 && V <= 32 && (V & (V - 1)) == 0);
+#pragma unroll
+    for (int o = 16, n = V; o > 0; o >>= 1) {
+        if (n > 1) {
+            const bool upper = (lane & o) != 0;
+#pragma unroll
+            for (int i = 0; i < n / 2; ++i) {
+                const float send = upper ? val[i] : val[i + n / 2];
+                const float keep = upper ? val[i + n / 2] : val[i];
+                val[i]           = keep + __shfl_xor_sync(0xFFFFFFFFu, send, o);
+            }
+            n >>= 1;
+        } else {
+            val[0] += __shfl_xor_sync(0xFFFFFFFFu, val[0], o);
+        }
+    }
+}
+
 // KS: the static K the slice loop unrolls over, or 0 for the runtime K. Gated: the SwiGlu pair (gate
 // and up rows, one row per warp), a separate instance as ninfer-all's Fused one: the plain product
 // keeps no gated branches or second-plane state in its loop.
@@ -717,32 +758,36 @@ __launch_bounds__(kVecWarps * 32, Bounded ? kVecBoundedBlocks : 0) __global__
         } else {
             for (int it = 0; lane + 32 * it < slices; ++it) slice(it);
         }
+        // The 2T sums of the row pair (index 2j + r, padded to a power of two) reduced in one
+        // transposed butterfly (#1044): each step halves the values a lane keeps, so the warp
+        // spends V/2 + V/4 + ... + 1 shuffles and the rest of the 5 steps at one, against 5 a
+        // value; lane L then holds the whole sum of value vec_reduce_index(L). One store a lane,
+        // not 2T inlined predicated ones.
+        constexpr int kValues = vec_reduce_values(kRows * T);
+        float val[kValues];
 #pragma unroll
-        for (int r = 0; r < kRows; ++r) {
-#pragma unroll
-            for (int j = 0; j < T; ++j) {
-#pragma unroll
-                for (int o = 16; o > 0; o >>= 1) acc[r][j] += __shfl_xor_sync(0xFFFFFFFFu, acc[r][j], o);
-            }
+        for (int i = 0; i < kValues; ++i) {
+            const int j = i / kRows, r = i % kRows;
+            val[i] = j < T ? acc[r][j] : 0.0f;
         }
-        // Every lane holds the sums: lane j stores column j (row pair: lanes T..2T-1 the second).
-#pragma unroll
-        for (int j = 0; j < T; ++j) {
-            if constexpr (gated) {
-                if (lane == j) store(p.out, row0, j, gate_of(p.out, acc[0][j]) * acc[1][j]);
-            } else {
-#pragma unroll
-                for (int r = 0; r < kRows; ++r) {
-                    if (lane == r * T + j && row0 + r < p.rows) {
-                        float v = acc[r][j];
-                        if (p.out.relu2 != 0) {
-                            v = fmaxf(v, 0.0F);
-                            v *= v;
-                        }
-                        store(p.out, row0 + r, j, v);
-                    }
-                }
+        vec_transpose_reduce<kValues>(val, lane);
+        const int idx = vec_reduce_index<kValues>(lane);
+        const int j   = idx / kRows;
+        const int r   = idx % kRows;
+        // One lane of each group of 32 / kValues holds a value; the padding indices hold none.
+        const bool owner = lane % (32 / kValues) == 0 && j < T;
+        if constexpr (gated) {
+            // The gate (r 0) and up (r 1) sums of column j sit in lanes that differ in the last
+            // halving step's bit: the up lane takes the gate's.
+            const float gate = __shfl_xor_sync(0xFFFFFFFFu, val[0], 32 / kValues);
+            if (owner && r == 1) store(p.out, row0, j, gate_of(p.out, gate) * val[0]);
+        } else if (owner && row0 + r < p.rows) {
+            float v = val[0];
+            if (p.out.relu2 != 0) {
+                v = fmaxf(v, 0.0F);
+                v *= v;
             }
+            store(p.out, row0 + r, j, v);
         }
     }
 }
