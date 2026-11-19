@@ -583,7 +583,8 @@ bool answered_before_tuner(const Problem& problem, const Weight& weight, std::in
     // entry before the rule and the entry has no lanes key, so a width the rule holds for such a
     // round stays untimed whatever the lanes of the call that tunes (none outside a round,
     // ops::round_lanes). A round of one sequence then loses the tuning of those widths. Where the
-    // MMA is emulated (Turing) the rule reads no lanes and the tuner times against it (replaceable).
+    // MMA is emulated (Turing) the rule reads no lanes and the tuner times against it
+    // (replaceable).
     if (bf16_mma_native() &&
         mmq_verify_rule(weight, problem.policy, problem.n, tokens, kSeveralLanes)) {
         return true;
