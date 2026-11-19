@@ -3,19 +3,26 @@
 // schedule for R8, never one that needs another workspace), an R8 call keeps its bytes, a prefill
 // band's route gives a token the heuristic's bytes (a W4A8 schedule for W4A8, the prefill route's
 // summation order for A16), the cache file gives a second process the same routes without timing
-// (and times again only the bands a failure skipped), and a call inside a CUDA graph capture times
-// nothing.
+// (and times again only the bands a failure skipped), a width or band a lent table answered is
+// timed once --route-policy evidence demotes that answer (never by a read-only process), and a
+// call inside a CUDA graph capture times nothing.
 #include "ops/linear/linear_test_common.h"
 
 #include "core/arena.h"
 #include "core/device.h"
+#include "core/device_class.h"
 #include "core/weight.h"
 #include "ninferno/ops/route_table.h"
+#include "ninferno/option_enums.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/route_query.h"
+#include "ops/generic/route_table.h"
+#include "ops/route_pins.h"
 #include "support/temp_dir.h"
 
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
+#include <nlohmann/json.hpp>
 
 #include <cstdint>
 #include <cstdlib>
@@ -39,6 +46,7 @@ using namespace ninferno;
 using namespace ninferno::test;
 using namespace ninferno::test::linear;
 namespace generic = ninferno::ops::detail::generic;
+using Json        = nlohmann::ordered_json;
 
 struct Case {
     const char* name;
@@ -352,6 +360,189 @@ int check_capture(cudaStream_t stream) {
     return 0;
 }
 
+// The tuner file's entry of the problem of shape n x k (one problem of that shape in this test).
+const Json* cached_entry(const Json& file, std::int32_t n, std::int32_t k) {
+    const std::string shape = "|n" + std::to_string(n) + "|k" + std::to_string(k) + "|";
+    if (!file.contains("problems")) return nullptr;
+    for (const auto& [key, entry] : file["problems"].items()) {
+        if (key.find(shape) != std::string::npos) return &entry;
+    }
+    return nullptr;
+}
+
+Json read_cache() {
+    std::ifstream in(g_cache_file);
+    return in ? Json::parse(in) : Json();
+}
+
+std::string read_cache_text() {
+    std::stringstream text;
+    text << std::ifstream(g_cache_file).rdbuf();
+    return text.str();
+}
+
+// Whether the entry holds a time for width `t` under `field` ("us": the decode widths,
+// "prefill_us": the prefill bands): a width never timed has none.
+bool timed_in(const Json* entry, const char* field, std::int32_t t) {
+    return entry != nullptr && entry->contains(field) && (*entry)[field].is_object() &&
+           (*entry)[field].contains(std::to_string(t));
+}
+
+// A decode width (#1008) or a prefill band (#1023) an older tune left untimed because a table
+// answered it is timed once --route-policy evidence demotes that answer, by a process that times
+// (TuneMode::On), and only once; a read-only process (TuneMode::Off) times nothing (#1024). The
+// answers are lent: the similar chip's table fills problems the device's own table lacks, and an
+// entry with a lender is Borrowed whatever the board distance, so evidence demotes it.
+int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scratch) {
+    const auto similar = device_class().similar_chips();
+    if (similar.empty()) {
+        std::cout << "demoted retime: SKIP, no similar chip of this architecture lends a table\n";
+        return 0;
+    }
+    int failures    = 0;
+    const auto fail = [&](const std::string& what) {
+        std::cerr << "demoted retime: " << what << "\n";
+        ++failures;
+    };
+    const auto table = [](const std::string& gpu, const std::string& entries) {
+        return "{\"schema\": \"ninferno-route-table/1\", \"gpu\": {\"class\": \"" + gpu +
+               "\", \"name\": \"test\"}, \"entries\": [" + entries + "]}";
+    };
+    const auto entry = [](std::int32_t n, std::int32_t k, const std::string& routes) {
+        return R"({"format": "q8", "compute": "a16", "epilogue": "store", "n": )" +
+               std::to_string(n) + R"(, "k": )" + std::to_string(k) + ", " + routes + "}";
+    };
+    // The decode problem has the lent decode bands, the prefill problem only a lent prefill route
+    // (its decode widths are timed as usual, so its retime is the bands' alone). The own table
+    // holds neither.
+    const Case dec{"q8 lent decode", QType::Q8_G32_FP16, ops::LinearPolicy::A16Only, 2560, 2048};
+    const Case pre{"q8 lent prefill", QType::Q8_G32_FP16, ops::LinearPolicy::A16Only, 2560, 3072};
+    const auto dir = scratch / "tables";
+    std::filesystem::create_directories(dir);
+    const std::string gpu = ops::route_gpu_class();
+    std::string own       = gpu;
+    for (char& ch : own) {
+        if (ch == ':') ch = '-';
+    }
+    std::ofstream(dir / (own + ".json"))
+        << table(gpu, entry(4096, 1024, R"("bands": [[1, 16, "rmma.m1.n1.w1x8"]])"));
+    std::ofstream(dir / (similar.front() + ".json")) << table(
+        similar.front(), entry(dec.n, dec.k, R"("bands": [[1, 16, "rmma.m1.n1.w1x8"]])") + ", " +
+                             entry(pre.n, pre.k, R"("prefill": "rmma.m1.n8.w4x1")"));
+    ops::set_route_table_dir(dir);
+    const generic::Problem pdec{dec.qtype, dec.policy, dec.n, dec.k, generic::Epilogue::Store};
+    const generic::Problem ppre{pre.qtype, pre.policy, pre.n, pre.k, generic::Epilogue::Store};
+    const auto status = ops::route_table_status();
+    if (!generic::table_route(pdec, 4, false) || !generic::table_route(ppre, 64, true) ||
+        status.borrowed_entries < 2) {
+        fail("the similar chip's table lends nothing, the case is not met: " + status.message);
+        ops::clear_route_table();
+        return failures;
+    }
+    const DeviceClass& device = device_class();
+    const auto answered       = [&](const generic::Problem& p, std::int32_t t, bool prefill) {
+        return generic::answered_before_tuner_query(device, p.qtype, p.policy, p.epilogue, p.n, p.k,
+                                                          t, prefill)
+            .value_or(false);
+    };
+
+    const Device ddec       = upload(dec, 41U);
+    const Device dpre       = upload(pre, 43U);
+    const std::int32_t wide = 128;
+    const auto act_dec      = make_linear_activation(dec.k, wide, 5U, ActivationCompute::A16);
+    const auto act_pre      = make_linear_activation(pre.k, wide, 6U, ActivationCompute::A16);
+    DeviceBuffer xdec(act_dec.size() * 2), xpre(act_pre.size() * 2);
+    xdec.copy_from_host(act_dec.data(), xdec.bytes);
+    xpre.copy_from_host(act_pre.data(), xpre.bytes);
+    DeviceArena workspace(std::max<std::size_t>(
+        generic::route_workspace_bytes({generic::Family::W4a8Mma, 0}, pre.k, wide), 256));
+    const auto run_both = [&] {
+        generic::clear_dense_tune();
+        generic::enable_dense_tune(true);
+        (void)call(ddec, xdec, wide, std::nullopt, dec.policy, workspace, stream);
+        (void)call(dpre, xpre, wide, std::nullopt, pre.policy, workspace, stream);
+        return generic::dense_tune_report();
+    };
+
+    // Legacy keeps the lent answers: the tuner leaves their widths and bands untimed.
+    const ops::ScopedRoutePolicy legacy(RoutePolicy::Legacy);
+    std::vector<std::int32_t> held_widths, held_bands;
+    for (std::int32_t t = 1; t <= generic::kDenseTuneMaxTokens; ++t) {
+        if (answered(pdec, t, false)) held_widths.push_back(t);
+    }
+    if (held_widths.empty()) fail("legacy: the lent decode bands hold no width");
+    if (run_both().size() != 2) fail("legacy: the two problems' first eager calls timed otherwise");
+    {
+        const Json file = read_cache();
+        const Json* e   = cached_entry(file, pdec.n, pdec.k);
+        const Json* p   = cached_entry(file, ppre.n, ppre.k);
+        if (e == nullptr || p == nullptr || !p->contains("prefill")) {
+            fail("legacy: no cache entry for the two problems");
+            ops::clear_route_table();
+            return failures;
+        }
+        for (const std::int32_t t : held_widths) {
+            if (timed_in(e, "us", t)) fail("legacy: lent width T=" + std::to_string(t) + " timed");
+        }
+        for (const auto& [name, v] : (*p)["prefill"].items()) {
+            const std::int32_t t = std::stoi(name);
+            if (!answered(ppre, t, true)) continue;
+            held_bands.push_back(t);
+            if (timed_in(p, "prefill_us", t)) fail("legacy: lent band T=" + name + " timed");
+        }
+        if (held_bands.empty()) fail("legacy: the lent prefill route holds no band");
+    }
+
+    // Evidence demotes them. A read-only process times nothing and leaves the file as it is.
+    ops::set_route_policy(RoutePolicy::Evidence);
+    for (const std::int32_t t : held_widths) {
+        if (answered(pdec, t, false)) fail("evidence keeps lent width T=" + std::to_string(t));
+    }
+    for (const std::int32_t t : held_bands) {
+        if (answered(ppre, t, true)) fail("evidence keeps lent band T=" + std::to_string(t));
+    }
+    const std::string before = read_cache_text();
+    generic::set_dense_tune(ninferno::TuneMode::Off, g_cache_file.parent_path());
+    if (!run_both().empty()) fail("a read-only process retimed a demoted answer");
+    if (read_cache_text() != before) fail("a read-only process wrote the tuner's file");
+
+    // A process that times does: the decode problem in full (its entry is not complete), the
+    // prefill problem's bands alone.
+    generic::set_dense_tune(ninferno::TuneMode::On, g_cache_file.parent_path());
+    const auto retimed = run_both();
+    int bands_lines    = 0;
+    for (const auto& line : retimed) {
+        bands_lines += line.find("(prefill bands)") != std::string::npos ? 1 : 0;
+        std::cout << line << "\n";
+    }
+    if (retimed.size() != 2 || bands_lines != 1) {
+        fail("evidence: " + std::to_string(retimed.size()) + " retimes, " +
+             std::to_string(bands_lines) + " of the prefill bands alone; expected 2 and 1");
+    }
+    {
+        const Json file = read_cache();
+        const Json* e   = cached_entry(file, pdec.n, pdec.k);
+        const Json* p   = cached_entry(file, ppre.n, ppre.k);
+        for (const std::int32_t t : held_widths) {
+            if (!timed_in(e, "us", t))
+                fail("evidence: demoted width T=" + std::to_string(t) + " still untimed");
+        }
+        for (const std::int32_t t : held_bands) {
+            if (!timed_in(p, "prefill_us", t))
+                fail("evidence: demoted band T=" + std::to_string(t) + " still untimed");
+        }
+    }
+    // Saved: the next process times nothing (no retime loop).
+    if (!run_both().empty()) fail("evidence: the retimed entries were timed again");
+    ops::clear_route_table();
+    if (failures == 0) {
+        std::cout << "demoted retime: " << held_widths.size() << " decode widths and "
+                  << held_bands.size() << " prefill bands lent by " << similar.front()
+                  << ", timed once under evidence\n";
+    }
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -382,6 +573,7 @@ int main() {
     };
     for (const Case& c : cases) failures += check_case(c, stream);
     failures += check_capture(stream);
+    failures += check_demoted_retime(stream, cache);
     cuda_check(cudaStreamDestroy(stream), "stream");
     generic::enable_dense_tune(false);
     generic::set_dense_tune(ninferno::TuneMode::Off, {});
