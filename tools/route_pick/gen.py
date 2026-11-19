@@ -24,6 +24,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -73,7 +74,13 @@ def tables(root, F):
     return out
 
 
-CARRY_DISTANCE = 1.0   # core/measured_boards.h kCarryDistance: within it a table's answers carry (Carried)
+def carry_distance(root):
+    """core/measured_boards.h kCarryDistance: within it a table's answers carry (Carried) and the engine reads no pick."""
+    with open(os.path.join(root, 'src', 'core', 'measured_boards.h'), encoding='utf-8') as f:
+        m = re.search(r'inline constexpr double kCarryDistance\s*=\s*([0-9.]+)\s*;', f.read())
+    if not m:
+        sys.exit('core/measured_boards.h: no kCarryDistance')
+    return float(m.group(1))
 
 
 def board_distance(a, b):
@@ -85,15 +92,15 @@ def board_distance(a, b):
     return apart(float(a['sms']), float(b['sms'])) + apart(bw(a), bw(b)) + 0.5 * apart(float(a['l2_mib']), float(b['l2_mib']))
 
 
-def classes(F, tabled_chips, table_boards):
-    """The classes the engine would read a file for: no table of the chip, and none within CARRY_DISTANCE (the loader
+def classes(F, tabled_chips, table_boards, carry):
+    """The classes the engine would read a file for: no table of the chip, and none within `carry` (the loader
     reads routes/pick only past it, where a table's answers would be Transferred)."""
     seen = {}
     for row in F['rows']:
         cc = int(row.get('cc', 0))
         if cc not in ARCH_OF_CC or ARCH_OF_CC[cc] not in F['isa'] or row.get('mma_slow'):
             continue
-        if row['chip'] in tabled_chips or any(board_distance(row, t) <= CARRY_DISTANCE for t in table_boards):
+        if row['chip'] in tabled_chips or any(board_distance(row, t) <= carry for t in table_boards):
             continue
         key = class_id(row)
         if key not in seen or (row.get('form') == 'desktop' and seen[key].get('form') != 'desktop'):
@@ -178,7 +185,7 @@ def main():
             sys.exit('no gpu_facts.json row of class %s' % a.only)
         want = {a.only: sorted(rows, key=lambda r: r.get('form') != 'desktop')[0]}
     else:
-        want = classes(F, tabled, table_boards(F, all_tables))
+        want = classes(F, tabled, table_boards(F, all_tables), carry_distance(a.root))
     out_dir = a.out or os.path.join(a.root, 'routes', 'pick')
     stale = []
     expected = set()

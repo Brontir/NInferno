@@ -81,10 +81,13 @@ int shipped_picks() {
     ninferno::ops::set_route_table_dir("");
     const auto dir = ninferno::path_from_utf8(ninferno::ops::route_table_dir()) / "pick";
     const std::regex pci_re("\"pci_id\": \"(0x[0-9a-fA-F]{4})\"");
-    const std::regex entry_re("\"format\": \"([a-z0-9_]+)\",\s*\"compute\": \"a16\",\s*"
-                              "\"epilogue\": \"([a-z]+)\",\s*\"n\": ([0-9]+),\s*\"k\": ([0-9]+),"
-                              "\s*\"bands\": \[\s*\[\s*([0-9]+),\s*[0-9]+,\s*\"([^\"]+)\"");
+    const std::regex entry_re(R"re("format": "([a-z0-9_]+)",\s*"compute": "a16",\s*)re"
+                              R"re("epilogue": "([a-z]+)",\s*"n": ([0-9]+),\s*"k": ([0-9]+),)re"
+                              R"re(\s*"bands": \[\s*\[\s*([0-9]+),\s*[0-9]+,\s*"([^"]+)")re");
     int files = 0;
+    // The first file and its board, for the refusals below.
+    std::string first_name, first_text;
+    std::uint32_t first_id = 0;
     for (const auto& f : std::filesystem::directory_iterator(dir)) {
         if (f.path().extension() != ".json") continue;
         ++files;
@@ -109,6 +112,11 @@ int shipped_picks() {
         d.facts = ninferno::machine_facts_of(d);
         const ninferno::ScopedDeviceClass scoped(d);
         ninferno::ops::set_route_table_dir("");
+        if (first_name.empty()) {
+            first_name = name;
+            first_text = text;
+            first_id   = id;
+        }
         try {
             const auto s = ninferno::ops::route_table_status();
             std::cout << name << " on " << ninferno::device_class().id() << ": " << s.message
@@ -134,6 +142,45 @@ int shipped_picks() {
         }
     }
     failures += check(files > 0, "shipped predicted bands found in " + utf8_path(dir));
+    // A pick file the loader refuses stops the lookup (a broken install): another class's file
+    // under this class's name, and a band outside T 9-16. The tables are the shipped ones, copied.
+    if (!first_name.empty()) {
+        const board_registry::BoardRow* row = board_registry::find(first_id);
+        ninferno::DeviceClass d =
+            ninferno::synthetic_device_class(first_id, row->major, row->minor, row->sms,
+                                             static_cast<std::size_t>(row->l2_mib * (1 << 20)), 0);
+        d.facts = ninferno::machine_facts_of(d);
+        const ninferno::ScopedDeviceClass scoped(d);
+        const auto routes       = dir.parent_path();
+        const auto tmp          = std::filesystem::temp_directory_path() / "ninferno_pick_refusals";
+        const auto refused_with = [&](const std::string& what, const std::string& text) {
+            std::filesystem::remove_all(tmp);
+            std::filesystem::create_directories(tmp / "pick");
+            for (const auto& t : std::filesystem::directory_iterator(routes)) {
+                if (t.path().extension() == ".json") {
+                    std::filesystem::copy_file(t.path(), tmp / t.path().filename());
+                }
+            }
+            std::ofstream(tmp / "pick" / first_name) << text;
+            ninferno::ops::set_route_table_dir(utf8_path(tmp));
+            bool refused = false;
+            try {
+                (void)ninferno::ops::route_table_status();
+            } catch (const std::runtime_error& e) {
+                refused = std::string(e.what()).find(first_name) != std::string::npos;
+            }
+            failures += check(refused, first_name + " " + what + " is refused, naming the file");
+        };
+        refused_with("as another class's file",
+                     std::regex_replace(first_text, std::regex(R"re("class": "[^"]+")re"),
+                                        R"re("class": "zz999:1sm")re",
+                                        std::regex_constants::format_first_only));
+        refused_with("with a band from T 5",
+                     std::regex_replace(first_text, std::regex(R"re("bands": \[\s*\[\s*9,)re"),
+                                        R"re("bands": [[5,)re",
+                                        std::regex_constants::format_first_only));
+        std::filesystem::remove_all(tmp);
+    }
     ninferno::ops::set_route_table_dir("");
     std::cout << files << " shipped predicted files; " << (failures == 0 ? "OK" : "FAIL")
               << " route_table shipped picks\n";

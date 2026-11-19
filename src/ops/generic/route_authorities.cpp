@@ -203,7 +203,9 @@ std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& prob
     e.kind     = hit->predicted ? Evidence::Kind::Predicted
                                 : table_evidence_kind(!hit->lender.empty(), hit->distance);
     if (e.kind == Evidence::Kind::Predicted) {
-        e.donor = "route-pick";
+        // Priced from this board's own facts: no measured board stands behind it.
+        e.donor    = "route-pick";
+        e.distance = 0;
     } else if (e.kind == Evidence::Kind::Borrowed) {
         e.donor    = hit->lender;
         e.distance = hit->lender_distance;
@@ -551,18 +553,26 @@ RouteAnswer heuristic_answer(const Ask& ask, const Problem& problem, const Weigh
 // The one place the precedence over evidence applies (route_authorities.h): under Legacy the first
 // answer wins; under Evidence a Borrowed or Transferred answer of the auto list yields to what
 // follows it, and stands only where the ranker has no candidate (the scalar fallback) or at the
-// MMQ boundary the ranker cannot price (keeps_mmq_boundary).
+// MMQ boundary the ranker cannot price (keeps_mmq_boundary). A Predicted answer (routes/pick)
+// yields to a later authority's answer, this board's own tuning (dense-tune), under either
+// policy, and stands above the ranker.
 RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& weight) {
     const Ask asked = nvfp4_promoted(ask, problem, weight);
     std::optional<RouteAnswer> demoted;
+    std::optional<RouteAnswer> predicted;
     for (const NamedAuthority& a : kAutoAuthorities) {
         auto answer = a.answer(asked, problem, weight);
         if (!answer) continue;
+        if (answer->evidence.kind == Evidence::Kind::Predicted) {
+            if (!predicted) predicted = std::move(answer);
+            continue;
+        }
         if (!policy_demotes(asked.policy, answer->evidence.kind)) {
             return under_policy(std::move(*answer), asked, demoted ? &*demoted : nullptr);
         }
         if (!demoted) demoted = std::move(answer);
     }
+    if (predicted) return under_policy(std::move(*predicted), asked, demoted ? &*demoted : nullptr);
     RouteAnswer answer = heuristic_answer(asked, problem, weight);
     if (auto band = dense_tune_prefill_band(asked, problem, weight, answer.route)) {
         return under_policy(std::move(*band), asked, demoted ? &*demoted : nullptr);
@@ -594,7 +604,8 @@ bool answered_before_tuner(const Problem& problem, const Weight& weight, std::in
         return true;
     }
     const auto table = route_table_entry(asked, problem, weight);
-    if (!table) return false;
+    // A Predicted band is never measured here: the tuner times the width, and its entry wins.
+    if (!table || table->evidence.kind == Evidence::Kind::Predicted) return false;
     return !policy_demotes(asked.policy, table->evidence.kind) || ranked.family == Family::Scalar ||
            keeps_mmq_boundary(table->route, ranked, tokens);
 }

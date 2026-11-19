@@ -595,7 +595,11 @@ const std::map<std::string_view, std::string_view> kUnreached = {
                    "(tuned_dense_route: substituted_foreign_class) and no tune runs here"},
     {"dense-tune-prefill-band", "the same tuner's bands, the same refusal for a substituted board"},
 };
-const std::map<std::string_view, std::string_view> kUnreachedKinds = {};
+const std::map<std::string_view, std::string_view> kUnreachedKinds = {
+    {"predicted",
+     "a routes/pick band answers only on a board past kCarryDistance of every table, "
+     "and no kFactsBoards board is (test_route_table --shipped-picks reads each file)"},
+};
 
 // What this build leaves unreached on top of kUnreached, read from the build and never from an arch
 // number: the W4A4 rule answers only where a W4A4 MMA kernel is compiled in (w4a4_schedule_count

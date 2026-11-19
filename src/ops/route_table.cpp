@@ -377,8 +377,13 @@ std::shared_ptr<Table> parse_table(const std::string& path) {
 
 // The widths an overlay band may hold: the T 9-16 calls the analyzer's pick was scored on (the
 // left-out cards' decode and verify widths, tools/route_pick/README.md).
+// The band starts above the widths pick.py does not price (T <= 8: vec, R8) and ends with the
+// decode and verify widths (kDecodePinMaxTokens).
 constexpr std::int32_t kPredictedMinTokens = 9;
-constexpr std::int32_t kPredictedMaxTokens = 16;
+constexpr std::int32_t kPredictedMaxTokens = kDecodePinMaxTokens;
+static_assert(kPredictedMinTokens > 8 && kPredictedMinTokens <= kPredictedMaxTokens,
+              "a predicted band starts above the vec and R8 widths (T <= 8), which pick.py does "
+              "not price, and ends at the widest verify");
 
 // A ninferno-route-pick/1 file (tools/route_pick/gen.py) into `table.predicted`: its class must
 // be this device's own (gpu.class), each entry an A16 problem of the generic path with bands inside
@@ -999,8 +1004,13 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
     // bands lie inside T 9-16, below every prefill band): ahead of the nearest table's entry,
     // which is Transferred or Borrowed wherever an overlay was read.
     if (!(prefill && tokens >= kPrefillMinTokens)) {
-        const auto p = table->predicted.find(
+        auto p = table->predicted.find(
             key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
+        // The same fp8 row-F32 fallback as the measured entries below.
+        if (p == table->predicted.end() && problem.qtype == QType::FP8_E4M3FN_ROW_F32) {
+            p = table->predicted.find(key_of(QType::FP8_E4M3FN_ROW_BF16, compute, problem.epilogue,
+                                             problem.n, problem.k));
+        }
         if (p != table->predicted.end()) {
             for (const auto& band : p->second) {
                 if (tokens >= band.t_min && tokens <= band.t_max) {
@@ -1073,7 +1083,8 @@ bool table_claims(const Problem& problem, std::int32_t tokens, bool prefill) {
 bool table_route_kept(const Problem& problem, std::int32_t tokens, bool prefill, Route ranked) {
     const auto answer = table_route_answer(problem, tokens, prefill);
     if (!answer) return false;
-    if (answer->predicted) return true; // Predicted is never demoted
+    // A Predicted band (routes/pick) yields to the tuner's entry: the tuner times the width.
+    if (answer->predicted) return false;
     return !policy_demotes(route_policy(),
                            table_evidence_kind(!answer->lender.empty(), answer->distance)) ||
            keeps_mmq_boundary(answer->route, ranked, tokens);

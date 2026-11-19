@@ -232,6 +232,12 @@ int main(int argc, char** argv) {
             std::string routes = ninferno::ops::route_table_status().message;
             std::string escaped;
             for (const char c : routes) {
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char hex[8];
+                    std::snprintf(hex, sizeof(hex), "\\u%04x", static_cast<unsigned>(c));
+                    escaped += hex;
+                    continue;
+                }
                 if (c == '"' || c == '\\') escaped += '\\';
                 escaped += c;
             }
