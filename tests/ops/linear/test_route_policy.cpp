@@ -302,7 +302,7 @@ void check_answered_before_tuner() {
                 continue;
             }
             const std::string_view source = answer->evidence.source;
-            const bool dispatch = source == "route-table" || source == "nvfp4-half-l2";
+            const bool dispatch           = source == "route-table" || source == "nvfp4-half-l2";
             ++compared;
             from_table += source == "route-table" ? 1 : 0;
             if (*answered != dispatch) {
