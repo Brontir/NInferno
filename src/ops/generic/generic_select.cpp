@@ -317,8 +317,7 @@ bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, st
         static std::set<std::tuple<int, int, int>> lab_seen;
         const std::lock_guard<std::mutex> lab_lock(lab_mutex);
         if (lab_seen.insert({tokens, lanes, rows}).second)
-            std::fprintf(stderr, "LABMMQV tokens=%d lanes=%d rows=%d
-", tokens, lanes, rows);
+            std::fprintf(stderr, "LABMMQV tokens=%d lanes=%d rows=%d\n", tokens, lanes, rows);
     }
     return lab_result;
 }
