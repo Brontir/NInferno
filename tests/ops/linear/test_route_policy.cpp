@@ -267,6 +267,58 @@ void check_dense_tune_reader() {
     }
 }
 
+// The dense tuner leaves a width untimed exactly where the dispatch answers it before the tuner's
+// entry (#1018, answered_before_tuner): on the RTX 5090, whose own table holds q4_K 4096 x 6656
+// store, every decode and wide width under both policies agrees with the dispatch's authority (a
+// width the tuner's own release entry answered says nothing and is skipped). The R8 call at T = 1
+// under AllowA8 is the case the table-only skip got wrong: the table holds the width, the
+// dispatch's route-table authority stands aside for the call, so the tuner times it.
+void check_answered_before_tuner() {
+    const RegretBoard* board = nullptr;
+    for (const RegretBoard& b : kRegretBoards) {
+        if (std::string_view(b.name) == "rtx5090") board = &b;
+    }
+    const DeviceClass d = board_class(*board);
+    const generic::Problem a8{QType::GGML_Q4_K, LinearPolicy::AllowA8, 4096, 6656,
+                              generic::Epilogue::Store};
+    int compared = 0, from_table = 0;
+    for (const LinearPolicy policy : {LinearPolicy::A16Only, LinearPolicy::AllowA8}) {
+        for (const std::int32_t t : {1, 2, 3, 4, 8, 12, 16, 32, 64}) {
+            const std::string at = std::string("q4k 4096x6656 ") +
+                                   (policy == LinearPolicy::AllowA8 ? "a8" : "a16") +
+                                   " T=" + std::to_string(t);
+            const auto answer = generic::route_answer_query(d, a8.qtype, policy, a8.epilogue, a8.n,
+                                                            a8.k, t);
+            const auto answered = generic::answered_before_tuner_query(d, a8.qtype, policy,
+                                                                       a8.epilogue, a8.n, a8.k, t);
+            if (!answer || !answered) {
+                fail(at + ": no answer");
+                continue;
+            }
+            const std::string_view source = answer->evidence.source;
+            if (source.starts_with("dense-tune")) continue;
+            const bool dispatch = source == "route-table" || source == "nvfp4-half-l2";
+            ++compared;
+            from_table += source == "route-table" ? 1 : 0;
+            if (*answered != dispatch) {
+                fail(at + ": the tuner " + (*answered ? "skips" : "times") +
+                     " a width the dispatch answers by " + std::string(source));
+            }
+        }
+    }
+    if (compared < 12 || from_table == 0) {
+        fail("answered_before_tuner: " + std::to_string(compared) + " widths compared, " +
+             std::to_string(from_table) + " from the table: the check is vacuous");
+    }
+    // The R8 call: the table holds T = 1, the dispatch does not take it there.
+    const ScopedDeviceClass scoped(d);
+    const auto r8 =
+        generic::route_answer_query(d, a8.qtype, a8.policy, a8.epilogue, a8.n, a8.k, 1);
+    if (r8 && r8->route.family == generic::Family::R8Mma && !generic::table_route(a8, 1, false)) {
+        fail("q4k 4096x6656: the RTX 5090 table no longer holds T = 1: the R8 case is not met");
+    }
+}
+
 // The cost model's price of `route` for the cell (priced_routes_query: the selector's own formula,
 // at any width; below 17 tokens the formula's figure, which the selector does not rank by).
 std::optional<double> model_seconds(const DeviceClass& d, const Cell& c, generic::Route route) {
@@ -642,6 +694,7 @@ int main(int argc, char** argv) {
         check_policy_words();
         check_transferred_claim();
         check_dense_tune_reader();
+        check_answered_before_tuner();
         const std::vector<SweepShape> shapes = read_shapes();
         const std::filesystem::path shipped  = ops::route_table_dir();
         if (shipped.empty() || !std::filesystem::is_directory(shipped)) {
