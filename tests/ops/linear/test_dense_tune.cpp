@@ -4,8 +4,8 @@
 // band's route gives a token the heuristic's bytes (a W4A8 schedule for W4A8, the prefill route's
 // summation order for A16), the cache file gives a second process the same routes without timing
 // (and times again only the bands a failure skipped), a width or band a lent table answered is
-// timed once --route-policy evidence demotes that answer (a read-only process times and writes
-// nothing), and a call inside a CUDA graph capture times nothing.
+// timed once --route-policy evidence demotes that answer (a read-only process reads such a release
+// entry whole and times nothing), and a call inside a CUDA graph capture times nothing.
 #include "ops/linear/linear_test_common.h"
 
 #include "core/arena.h"
