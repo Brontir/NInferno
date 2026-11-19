@@ -8,10 +8,10 @@
 // cards, which must be re-checked when a kernel it was timed on changes.
 //
 // The code reads these rows: `holds(rule, q)` is the format set of a rule (mmq_verify_format,
-// light_ggml_step, tall_tile_format, w4a8_ws_extra, r8_verify_supports and the Q4_0 matrix-size
-// gate read it), and the two thresholds below are the constants the selection compares a call
-// against. Nothing here was re-measured: the rows restate what the comments at the rules' uses
-// say, and the selector goldens are unchanged by them.
+// light_ggml_step, tall_tile_format, w4a8_ws_extra, r8_verify_supports, vec_rule_max_tokens and the
+// Q4_0 matrix-size gate read it), and the two thresholds below are the constants the selection
+// compares a call against. The rows up to #615 F6 restate what the comments at the rules' uses
+// say; vec_cap_ga10x_gb20x is new with its own end-to-end A/Bs (#998, DECISIONS 96).
 //
 // A rule may have several rows: one per group of formats whose evidence differs (other cards,
 // another run). Each row says how many cards stand behind it (principle 4 of
@@ -324,14 +324,14 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "Qwen3.5-9B Q6_K, --spec off, C = 4 capped at T = 3 against T = 4: RTX 5090 +7.27 %, RTX "
      "5070 Ti +4.52 %, RTX 3060 +15.3 %; C = 2 and 3 within 0.05 %"},
     {Rule::VecCapGa10xGb20x, Basis::Measured, FormatSet{Q::GGML_Q3_K, Q::GGML_Q5_K}, 0,
-     "gb203:70sm", "RTX 5070 Ti", Evidence::SingleCard, "#998: abvecn.sh t3q3_5070, t3q5_5070",
-     "2026-11-19",
-     "Qwen3.5-9B Q3_K_M / Q5_K_M, --spec off, C = 4 capped at T = 3 against T = 4: +15.7 % / "
-     "+6.74 %; C = 2 and 3 within 0.1 %"},
+     "gb203:70sm, ga106:28sm", "RTX 5070 Ti, RTX 3060", Evidence::TwoCards,
+     "#998: abvecn.sh t3q3_5070, t3q5_5070, t3q3_3060, t3q5_3060", "2026-11-19",
+     "Qwen3.5-9B Q3_K_M / Q5_K_M, --spec off, C = 4 capped at T = 3 against T = 4: RTX 5070 Ti "
+     "+15.7 % / +6.74 %, RTX 3060 +0.63 % / +10.76 %; C = 2 and 3 within 0.1 %"},
     {Rule::VecCapGa10xGb20x, Basis::Unknown, FormatSet{Q::GGML_Q2_K}, 0, kNone, kNone,
      Evidence::Carried, "#998", "2026-11-19",
      "Q2_K follows the other K-quants, whose super-block decoder it shares: not timed on its own. "
-     "Not in the rule: IQ4_XS (RTX 5070 Ti +4.45 %, RTX 5090 -3.27 %: the two cards disagree), "
+     "Not in the rule: IQ4_XS (RTX 5070 Ti +4.45 %, RTX 5090 -3.27 %, RTX 3060 -11.3 %), "
      "the formats R8 verifies, IQ1 and the legacy formats (not measured)"},
 
     // --- the thresholds ---
