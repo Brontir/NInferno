@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <set>
@@ -165,7 +166,7 @@ void check_words() {
             fail("evidence_columns of " + std::string(w.word) + ": '" + columns + "'");
         }
     }
-    if (distinct.size() != 6) fail("the kinds are not six distinct words");
+    if (distinct.size() != std::size(words)) fail("the kinds are not distinct words");
     // A donor and its distance: three decimals, whatever the locale.
     generic::Evidence carried;
     carried.kind     = K::Carried;
@@ -400,6 +401,11 @@ void check_evidence(const generic::RouteAnswer& a, const std::set<std::string_vi
         break;
     case K::Borrowed:
         if (e.donor.empty()) fail(where + ": borrowed from nobody");
+        break;
+    case K::Predicted:
+        if (e.donor != "route-pick" || e.distance != 0) {
+            fail(where + ": predicted by '" + e.donor + "' at " + std::to_string(e.distance));
+        }
         break;
     }
     // evidence_text prints the donor as one token, and the CSV column holds no comma.
@@ -641,7 +647,8 @@ void check_coverage(const std::set<std::string_view>& names) {
     }
     std::string missing_kinds;
     using K = generic::Evidence::Kind;
-    for (const K k : {K::Pin, K::Measured, K::Ranker, K::Carried, K::Transferred, K::Borrowed}) {
+    for (const K k :
+         {K::Pin, K::Measured, K::Ranker, K::Carried, K::Transferred, K::Borrowed, K::Predicted}) {
         const std::string name = generic::evidence_kind_name(k);
         if (g_reached_kinds.count(name) == 0 && kUnreachedKinds.count(name) == 0) {
             missing_kinds += " " + name;
