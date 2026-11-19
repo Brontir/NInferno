@@ -748,28 +748,28 @@ __launch_bounds__(kVecWarps * 32, Bounded ? kVecBoundedBlocks : 0) __global__
 }
 
 // The CTAs one launch fills at once. A bounded twin whose compile spilled (local memory) gives 0:
-// it is never worth its extra traffic, whatever it fits. From the instance's committed kernel
-// facts (the "vec" section, #763) for the board's own code (kernel_facts::sass_arch): its
-// registers and static shared memory through the occupancy calculator, times the SMs; never the
-// host GPU's kernels, so a substituted board's launch is its own. Without a row a substituted
-// board refuses by name; a real device asks its own kernel.
+// it is never worth its extra traffic, whatever it fits. A real device asks its own kernel (this
+// build's registers, whatever tree or nvcc made it). A substituted board (ScopedDeviceClass) has
+// no kernel of its own here: its instance's committed kernel facts (the "vec" section, #763) for
+// its code (kernel_facts::sass_arch), registers and static shared memory through the occupancy
+// calculator, times its SMs; never the host GPU's kernels. Without a row it refuses by name.
 template <ggml_type type, int T, int KS, bool Gated, bool Bounded>
 int vec_slots() {
     // Per device: a process may drive GPUs of different chips.
     static PerDevice<int> per_device;
     return per_device.get([](int) {
-        namespace kf                          = ninferno::ops::detail::generic::kernel_facts;
-        const std::optional<std::string> arch = kf::sass_arch();
-        const kf::VecKernelKey key{static_cast<int>(type), T, KS, Gated, Bounded};
-        if (const std::optional<kf::KernelFacts> facts =
-                arch ? kf::vec_facts(*arch, key) : std::nullopt) {
-            if (Bounded && facts->spill_bytes() != 0) return 0;
-            const int per_sm = resident_ctas_per_sm(
-                device_class(),
-                KernelShape{facts->registers, facts->static_shared_bytes, kVecWarps * 32, 0});
-            return std::max(per_sm, 1) * device_facts().sm_count;
-        }
         if (substituted_device_class() != nullptr) {
+            namespace kf                          = ninferno::ops::detail::generic::kernel_facts;
+            const std::optional<std::string> arch = kf::sass_arch();
+            const kf::VecKernelKey key{static_cast<int>(type), T, KS, Gated, Bounded};
+            if (const std::optional<kf::KernelFacts> facts =
+                    arch ? kf::vec_facts(*arch, key) : std::nullopt) {
+                if (Bounded && facts->spill_bytes() != 0) return 0;
+                const int per_sm = resident_ctas_per_sm(
+                    device_class(),
+                    KernelShape{facts->registers, facts->static_shared_bytes, kVecWarps * 32, 0});
+                return std::max(per_sm, 1) * device_facts().sm_count;
+            }
             throw std::runtime_error("ggml vector kernel: no kernel facts of vec_kernel<" +
                                      std::to_string(key.type) + ", " + std::to_string(T) + ", " +
                                      std::to_string(KS) + ", " + std::to_string(Gated) + ", " +
