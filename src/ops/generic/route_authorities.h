@@ -248,6 +248,11 @@ struct NamedAuthority {
 // key).
 // The dense tuner leaves such a width or band untimed; elsewhere the dispatch reads the tuner's
 // entry, so it is timed (#808). It reads no tuner entry (the tuner asks it under its own lock).
+// Whether the route table answers the width with a routes/pick band (Predicted): the tuner then
+// writes its timed best even where it does not beat the heuristic, so this board's own measured
+// entry (dense-tune) stands above the prediction, the heuristic included.
+[[nodiscard]] bool predicted_before_tuner(const Problem& problem, const Weight& weight,
+                                          std::int32_t tokens, bool prefill);
 [[nodiscard]] bool answered_before_tuner(const Problem& problem, const Weight& weight,
                                          std::int32_t tokens, bool prefill, Route ranked);
 // The ranker's answer: what auto_answer gives where neither the route table nor the dense tuner

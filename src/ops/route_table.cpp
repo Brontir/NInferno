@@ -381,6 +381,7 @@ std::shared_ptr<Table> parse_table(const std::string& path) {
 // decode and verify widths (kDecodePinMaxTokens).
 constexpr std::int32_t kPredictedMinTokens = 9;
 constexpr std::int32_t kPredictedMaxTokens = kDecodePinMaxTokens;
+// 8: the widest vec and R8 call pick.py leaves out (generic_gemm.h kGgmlVecMaxTokens).
 static_assert(kPredictedMinTokens > 8 && kPredictedMinTokens <= kPredictedMaxTokens,
               "a predicted band starts above the vec and R8 widths (T <= 8), which pick.py does "
               "not price, and ends at the widest verify");

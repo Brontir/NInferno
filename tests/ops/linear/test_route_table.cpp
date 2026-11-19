@@ -16,6 +16,7 @@
 #include "support/temp_dir.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -151,8 +152,23 @@ int shipped_picks() {
                                              static_cast<std::size_t>(row->l2_mib * (1 << 20)), 0);
         d.facts = ninferno::machine_facts_of(d);
         const ninferno::ScopedDeviceClass scoped(d);
-        const auto routes       = dir.parent_path();
-        const auto tmp          = std::filesystem::temp_directory_path() / "ninferno_pick_refusals";
+        const auto routes = dir.parent_path();
+        // A directory of this process's own (two builds' ctest may share a stand), removed on
+        // every way out.
+        const auto tmp =
+            std::filesystem::temp_directory_path() /
+            ("ninferno_pick_refusals_" +
+             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+
+        struct Removed {
+            std::filesystem::path path;
+
+            ~Removed() {
+                std::error_code ignored;
+                std::filesystem::remove_all(path, ignored);
+            }
+        } const removed{tmp};
+
         const auto refused_with = [&](const std::string& what, const std::string& text) {
             std::filesystem::remove_all(tmp);
             std::filesystem::create_directories(tmp / "pick");
@@ -179,7 +195,6 @@ int shipped_picks() {
                      std::regex_replace(first_text, std::regex(R"re("bands": \[\s*\[\s*9,)re"),
                                         R"re("bands": [[5,)re",
                                         std::regex_constants::format_first_only));
-        std::filesystem::remove_all(tmp);
     }
     ninferno::ops::set_route_table_dir("");
     std::cout << files << " shipped predicted files; " << (failures == 0 ? "OK" : "FAIL")
