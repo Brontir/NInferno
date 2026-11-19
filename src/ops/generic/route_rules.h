@@ -243,8 +243,10 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "mmq_verify_rule(weight, problem.policy, problem.n, ask.tokens, ask.lanes)", 0, kUnknown,
      kUnknown,
      "the two authority sites that call the rule pass the Ask's lane count on, not a constant (a "
-     "constant would turn the single-sequence rule on or off for every call): a contract of where "
-     "the value comes from, with no timing of its own",
+     "constant would turn the single-sequence rule on or off for every call; the dense tuner's "
+     "skip, answered_before_tuner, asks it for a round of several sequences on purpose, because "
+     "its entry has no lane count): a contract of where the value comes from, with no timing of "
+     "its own",
      "", 2},
     // The prefill band's edge: ONE definition (ops/route_pins.h), the widest speculative verify
     // plus one; the others below are defined from it, because their comments call the same width.
