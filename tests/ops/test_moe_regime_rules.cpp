@@ -189,6 +189,9 @@ void check_answers() {
         // (RTX 5070 Ti: 5.2) or none known; the RTX 4090, 4060 Ti and 5090 keep the generation's.
         const bool frag_iq_narrow = !b.roofline || std::string_view(b.name) == "RTX 5070 Ti";
         const int narrow          = std::min(4, b.wide);
+        // r8_q6k_narrow is measured against the tensor mma.sync register MMA: a build without it
+        // (sm_70) keeps the generation's limit for Q6_K (#965).
+        const bool mma_tensor = ninferno::build_features().mma_tensor;
 
         const struct {
             QType q;
@@ -205,7 +208,8 @@ void check_answers() {
              b.wide > 4 ? "r8_frag_q4_0_narrow" : ""},
             {QType::GGML_Q4_K, QuantLayout::GgmlFrag, b.wide, ""},
             {QType::GGML_IQ3_XXS, QuantLayout::GgmlBlocks, b.wide, ""},
-            {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, narrow, b.wide > 4 ? "r8_q6k_narrow" : ""},
+            {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, mma_tensor ? narrow : b.wide,
+             mma_tensor && b.wide > 4 ? "r8_q6k_narrow" : ""},
             {QType::GGML_Q3_K, QuantLayout::GgmlBlocks, b.wide, ""},
             {QType::MXFP4, QuantLayout::BlockScaleK32E8M0, narrow,
              b.wide > 4 ? "r8_fp4_elements" : ""},

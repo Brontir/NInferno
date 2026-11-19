@@ -82,6 +82,9 @@ struct BankFacts {
     QType format                   = QType::BF16;
     QuantLayout layout             = QuantLayout::RowSplit;
     double dram_bytes_per_sm_cycle = 0;
+    // The build's register MMA runs on tensor mma.sync (BuildFeatures::mma_tensor); without it
+    // (sm_70) it runs on FP32 FMAs, which no rule measured against the tensor MMA covers (#965).
+    bool mma_tensor = true;
 };
 
 struct RegimeRule {
@@ -261,8 +264,10 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
     {"r8_q6k_narrow",
      Regime::BankLimit,
      {},
+     // Measured against the tensor mma.sync register MMA: a build without it (sm_70, its FMA
+     // register MMA 2x slower than R8 on the V100, #965) keeps the generation's limit.
      +[](const BankFacts& b) {
-         return b.format == QType::GGML_Q6_K && b.layout != QuantLayout::GgmlFrag;
+         return b.mma_tensor && b.format == QType::GGML_Q6_K && b.layout != QuantLayout::GgmlFrag;
      },
      kR8NarrowTokens,
      Label::Measured,
