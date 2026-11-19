@@ -965,6 +965,13 @@ void parse_output_limit(const Json& body, const RequestLimits& limits, OpenAICha
         limit = optional_int(body, "max_tokens");
         param = "max_tokens";
     }
+    // llama.cpp's own name for the limit, which its clients send on the OpenAI endpoint too
+    // (ignored here before: such a client got an answer of the server's default length; the same
+    // gap in ninfer-all #356). The OpenAI names win where both are sent.
+    if (!limit) {
+        limit = optional_int(body, "n_predict");
+        param = "n_predict";
+    }
     // -1 is how llama.cpp-style clients (LM Studio, SillyTavern) say "no limit": the server's
     // default, as when the field is absent.
     if (limit && *limit < 0) { limit.reset(); }
@@ -1035,6 +1042,7 @@ OpenAIChatRequest parse_chat_completion_request(const Json& body, const RequestL
                                                   "logprobs",
                                                   "max_completion_tokens",
                                                   "max_tokens",
+                                                  "n_predict",
                                                   "messages",
                                                   "metadata",
                                                   "min_p",

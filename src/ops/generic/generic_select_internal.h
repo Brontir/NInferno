@@ -94,9 +94,34 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
 
 int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t tokens);
 
-// The R8 schedule of a call: at one token the nearest measured board's decode table entry
-// (tuned_r8), else the R8 rules (r8_rules_route).
+// The R8 schedule of a call: at one token this board's own decode table entry (tuned_r8,
+// r8_hit_here), else the R8 schedule law where it answers (law_r8_before), else an entry carried
+// from a nearby board, else the R8 rules (r8_rules_route).
 int heuristic_r8(const Problem& p, std::int32_t tokens);
+
+// The R8 decode schedule law's choice at one token (ops/generic/r8_law.h, #613 PR-10): the
+// schedule of least rank among those the device's kernel-facts snapshot holds, from the chip's
+// facts and each instance's counted SASS, no measurement. nullopt where it does not answer: a
+// generation or a format it is not taken on (r8_law_generation, r8_law_format), no snapshot or no
+// row for the call, or a term it cannot price.
+std::optional<int> law_r8(const Problem& p);
+// The law's choice where it outranks an entry carried from another board: nullopt where the law
+// does not answer, or where `carried` names a schedule the law could not price (a spilling
+// instance it skips: Q6_K SwiGLU w4r2 and w8r2 on sm_89), which then stands. Without a carried
+// entry, law_r8.
+std::optional<int> law_r8_before(const Problem& p, std::optional<int> carried);
+
+// Where the law decides at one token: Ada (sm_89), Volta (sm_70) and Turing (sm_75), the
+// generations whose unread holdout grids it beat the rules on (#613, predictions frozen at
+// 9bdd25031). GA10x keeps the rules (its issue term overcounts the FMA pipe's work, #960), GB20x
+// has no SM-rate row (its transfer is refuted, the law abstains).
+[[nodiscard]] bool r8_law_generation(const DeviceClass& d) noexcept;
+// The formats the law decides at one token: those whose T = 1 holdout calls (24 a board, five
+// boards) it beat the rules on, on most of the boards: IQ2_S, IQ2_XS, IQ2_XXS, IQ3_S, IQ3_XXS,
+// Q3_K and Q6_K. Q4_K keeps the tables and the rules (the law beat them on two boards of five:
+// it takes eight warps where four are as fast or faster, #966), and a format the holdout did not
+// hold (Q2_K, Q5_K, the 32-value codecs, IQ4) is one no grid verified.
+[[nodiscard]] bool r8_law_format(QType q) noexcept;
 
 // The R8 decode table's entry for the exact problem (r8_decode_table.h), from the table of the
 // nearest measured board within kR8CarryDistance: the schedule, the board's distance to this
@@ -110,13 +135,18 @@ struct R8TableHit {
 
 std::optional<R8TableHit> tuned_r8(const Problem& p);
 
+// Whether a decode-table hit was measured on this board's own class (the table's GPU class id is
+// the device's, or the boards' facts are equal): measured here, which ranks before the law; any
+// other hit is carried from a nearby board and ranks after it (#622).
+[[nodiscard]] bool r8_hit_here(const R8TableHit& hit);
+
 // The route selection's rules and fixed routes, which route_authorities.cpp asks in order
 // (generic_select.cpp holds the bodies and their measurements).
 // Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits; the
 // verify widths by the call's own rows; r8_call_refusal, generic_gemm.h, names why not).
 bool r8_call(const Problem& problem, const Weight& w, std::int32_t tokens);
-// The verify widths the vector kernel takes by rule: 2..4 tokens with tensor mma.sync, every
-// width it reads without.
+// The verify widths the vector kernel takes by rule: 2..4 tokens with tensor mma.sync (2..3 on
+// GA10x and consumer Blackwell for the K-quants), every width it reads without.
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens);
 // ggml's matrix kernel for the verify band: 9..16 tokens of the codebook formats in a round of
 // several sequences (`lanes`: ops::round_lanes(), which the four-argument form reads itself); on

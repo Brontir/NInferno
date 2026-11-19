@@ -72,6 +72,11 @@ std::vector<Expected> expected_facts() {
     warps("dram_latency", "clk", &IsaRow::dram_latency);
     warps("dram_tlbwarm_latency", "clk", &IsaRow::dram_tlbwarm_latency);
     warps("dram_tlbwarm_latency_ns", "ns", &IsaRow::dram_tlbwarm_latency_ns);
+    one("l2_bytes_per_sm_clock", "byte", &IsaRow::l2_bytes_per_sm_clock);
+    one("imma_wide_cycles_per_partition", "clk", &IsaRow::imma_wide_cycles_per_partition);
+    one("imma_narrow_cycles_per_partition", "clk", &IsaRow::imma_narrow_cycles_per_partition);
+    one("imma_wide_dependent_latency", "clk", &IsaRow::imma_wide_dependent_latency);
+    one("imma_narrow_dependent_latency", "clk", &IsaRow::imma_narrow_dependent_latency);
     return v;
 }
 

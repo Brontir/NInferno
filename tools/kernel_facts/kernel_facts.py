@@ -41,7 +41,9 @@ After the register-MMA rows a snapshot holds one section per further kernel fami
 #785): ggml's matrix kernel `mul_mat_q<type, J, fallback, prec>` (mmq) and the W4A8 tiles
 (w4a8), each with its own nvcc, kernel count and columns (`family_nvcc`, `family_kernels`,
 `family_columns` after its `family <name>` line), and the pipe counts of the loop
-(sass_counts.PIPE_FIELDS) besides schema 4's. `extract --families mmq,w4a8 --update FILE`
+(sass_counts.PIPE_FIELDS) besides schema 4's, then the wait classes (sass_counts.WAIT_FIELDS,
+mmq and w4a8) and in w4a8 the producer warps' loop (sass_counts.PRODUCER_FIELDS); the R8 decode kernels (r8, #613 PR-10) the same way, their loop marked by the
+dp4a and the quantizer's loop after the pipe counts. `extract --families mmq,w4a8 --update FILE`
 rewrites those sections alone and keeps the rest of FILE byte for byte. `check` compares every
 section the snapshot has: in full where the build's nvcc is the one the section records, its
 kernel set alone otherwise (the exit code then follows the register-MMA rows); a family the
@@ -275,6 +277,28 @@ def mmq_key(demangled):
         fail(f"unexpected mul_mat_q arguments in {demangled}")
 
 
+VEC_NAMESPACE = "ninferno::ops::ggml_mmq::detail::(anonymousnamespace)::"
+
+
+def vec_key(demangled):
+    """The key of a vector kernel instance (src/ops/generic/ggml_mmq/ggml_vec.cu, #763):
+    vec_kernel<type, T, KS, Gated, Bounded> in the file's anonymous namespace, keyed as the
+    ggml_type value, the tokens T, the static K KS (0: the runtime K) and the Gated and Bounded flags. None for other
+    symbols."""
+    unnamed = demangled.replace("(anonymous namespace)", "(anonymousnamespace)")
+    args = template_args(unnamed.replace("<unnamed>", "(anonymousnamespace)"),
+                         "void " + VEC_NAMESPACE + "vec_kernel<")
+    if args is None:
+        return None
+    if len(args) != 5:
+        fail(f"unexpected vec_kernel arguments in {demangled}")
+    try:
+        key = tuple(ggml_int(a) for a in args)
+    except ValueError:
+        fail(f"unexpected vec_kernel arguments in {demangled}")
+    return key[:3] + tuple(int(v) for v in key[3:])
+
+
 W4A8_SCHEDULE = re.compile(r"W4a8Schedule<(\d+),(\d+),(\d+),(\d+)>")
 
 
@@ -294,6 +318,121 @@ def w4a8_key(demangled):
         variant = (rest[1], 0, 0) if count == 4 else (0, rest[1], rest[2])
         return (args[0], *(int(v) for v in m.groups()), rest[0], *variant)
     return None
+
+
+def i8_key(demangled):
+    """The key of an I8 tile (generic_i8.cu, #613 PR-6): i8_kernel<WT, WN, Stages, Bits, E> in the
+    file's anonymous namespace, keyed as its warps along the tokens and the rows, its cp.async
+    stages, the code width and the epilogue. None for other symbols (the activation quantizer)."""
+    head = "void " + NAMESPACE + "(anonymousnamespace)::i8_kernel<"
+    unnamed = demangled.replace("(anonymous namespace)", "(anonymousnamespace)")
+    args = template_args(unnamed.replace("<unnamed>", "(anonymousnamespace)"), head)
+    if args is None:
+        return None
+    if len(args) != 5 or not all(re.fullmatch(r"\d+", a) for a in args):
+        fail(f"unexpected i8_kernel arguments in {demangled}")
+    return tuple(int(a) for a in args)
+MOE_NAMESPACE = "ninferno::ops::detail::moe::"
+# moe_internal.h Stage: Router 0, GateUp 1, Down 2, Up 3.
+MOE_STAGE = re.compile(r"\(" + re.escape(MOE_NAMESPACE) + r"Stage\)(\d+)")
+MOE_GATE_UP = 1
+
+
+def moe_stage(arg):
+    """A moe Stage template argument as its integer, `(ninferno::ops::detail::moe::Stage)1` -> 1."""
+    m = MOE_STAGE.fullmatch(arg.strip())
+    return int(m.group(1)) if m else None
+
+
+def moe_args(demangled, name):
+    """The raw template arguments of a moe kernel, the Stage cast kept for moe_stage, or None."""
+    head = "void " + MOE_NAMESPACE + name + "<"
+    if not demangled.startswith(head):
+        return None
+    depth, end = 1, len(head)
+    while end < len(demangled) and depth > 0:
+        if demangled[end] == "<":
+            depth += 1
+        elif demangled[end] == ">":
+            depth -= 1
+        end += 1
+    return split_top_level(demangled[len(head):end - 1])
+
+
+def moe_r8_key(demangled):
+    """The key of a routed-expert R8 kernel (src/ops/moe/moe_r8.cuh, #619 step 11):
+    moe_r8_kernel<C, R8Schedule<Warps, Rows>, NT, Stage, kPre>, keyed as the codec, the warps and
+    rows per warp, the token slots, the stage and kPre. None for other symbols."""
+    raw = moe_args(demangled, "moe_r8_kernel")
+    if raw is None:
+        return None
+    stage = moe_stage(raw[3]) if len(raw) == 5 else None
+    args = [canonical(a) for a in raw]
+    m = R8_SCHEDULE.fullmatch(args[1]) if len(args) == 5 else None
+    if not m or stage is None or not re.fullmatch(r"\d+", args[2]):
+        fail(f"unexpected moe_r8_kernel arguments in {demangled}")
+    return (args[0], *(int(v) for v in m.groups()), int(args[2]), stage, as_bool(args[4]))
+
+
+def moe_gemm_key(demangled):
+    """The key of a routed-expert register-MMA kernel (src/ops/moe/moe_gemm.cuh, #619 step 11):
+    moe_gemm_kernel<Decoder, RmmaSchedule<warps_m, warps_k, m_tiles, n_tiles, cluster>, Stage>,
+    keyed as the decoder, the schedule's five fields and the stage. None for other symbols."""
+    raw = moe_args(demangled, "moe_gemm_kernel")
+    if raw is None:
+        return None
+    stage = moe_stage(raw[2]) if len(raw) == 3 else None
+    args = [canonical(a) for a in raw]
+    m = re.fullmatch(r"RmmaSchedule<(\d+),(\d+),(\d+),(\d+),(\d+)>", args[1]) if len(args) == 3 else None
+    if not m or stage is None:
+        fail(f"unexpected moe_gemm_kernel arguments in {demangled}")
+    return (args[0], *(int(v) for v in m.groups()), stage)
+
+
+def moe_r8_products(key):
+    """The dp4a products one warp of a routed R8 kernel issues per block, as r8_products: rows x
+    row sets (two in the GateUp stage) x token slots, plus the half-min codec's ones sums."""
+    nt = key[3]
+    return key[2] * nt * (2 if key[4] == MOE_GATE_UP else 1) + (
+        nt if key[0] in R8_HALF_MIN_CODECS else 0)
+
+
+def moe_gemm_tiles(key):
+    """The m16n8 tiles one warp of a routed register-MMA kernel accumulates: m_tiles x n_tiles,
+    twice in the GateUp stage (gate and up)."""
+    return key[3] * key[4] * (2 if key[6] == MOE_GATE_UP else 1)
+
+
+R8_SCHEDULE = re.compile(r"R8Schedule<(\d+),(\d+)>")
+
+
+def r8_key(demangled):
+    """The key of an R8 decode kernel (generic_r8.cuh, #613 PR-10): r8_kernel<C, R8Schedule<Warps,
+    Rows>, NT, E, kPre>, keyed as the codec, the warps and rows per warp, the token slots NT, the
+    epilogue and kPre (1: the activation arrives quantized). None for other symbols."""
+    args = template_args(demangled, "void " + NAMESPACE + "r8_kernel<")
+    if args is None:
+        return None
+    m = R8_SCHEDULE.fullmatch(args[1]) if len(args) == 5 else None
+    if not m or not all(re.fullmatch(r"\d+", a) for a in args[2:4]):
+        fail(f"unexpected r8_kernel arguments in {demangled}")
+    return (args[0], *(int(v) for v in m.groups()), int(args[2]), int(args[3]), as_bool(args[4]))
+
+
+
+# The R8 codecs with kHalfMin (codec_traits.h half_min: Q2_K): per block and token slot the loop
+# also takes the code sums of values 0..15 and 16..31 by dp4a against ones (generic_r8.cuh), the
+# same eight dp4a a block as one row's product.
+R8_HALF_MIN_CODECS = ("W4a8Q2K",)
+
+
+def r8_products(key):
+    """The dp4a products one warp of an R8 kernel issues per block: rows x row sets (two under
+    SwiGLU) x token slots, plus one per token slot for a kHalfMin codec's ones sums; what the dp4a
+    count is divided by for k_iter."""
+    nt = key[3]
+    return key[2] * nt * (2 if key[4] == EPILOGUE_SWIGLU else 1) + (
+        nt if key[0] in R8_HALF_MIN_CODECS else 0)
 
 
 GEMMA4_NAMESPACE = "ninferno::ops::"
@@ -334,8 +473,23 @@ class Family:
     of its key (the first spelled as text where `text_key`, the others integers), the m16n8 tiles
     k_iter divides a warp's MMA work by, and whether its rows carry the pipe counts."""
 
-    def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True):
+    def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True,
+                 marker=None, prologue=None, waits=False, producer=None):
         self.name = name
+        # (marker, excluded) of the producer warps' loop, written as the PRODUCER_FIELDS after
+        # the wait classes (sass_counts.loop_counts): BAR, and no MMA or dp4a in the loop, the
+        # w4a8 producer-warp tile's loop (#613 PR-6); the classic tile's rows carry it as zeros.
+        # A tile with producer warps (the key's last field) must have exactly one such loop.
+        self.producer = producer
+        # Whether its rows carry the iteration's wait classes (sass_counts.WAIT_FIELDS) after the
+        # pipe counts: the mmq and w4a8 sections (#613 PR-5).
+        self.waits = waits
+        # The opcode that marks the counted loop where the kernel has no tensor-core MMA
+        # (sass_counts.loop_counts): IDP, the dp4a of the R8 kernels.
+        self.marker = marker
+        # The opcode that marks a second counted loop, written as the PROLOGUE_FIELDS after the
+        # pipe counts: F2I, the R8 kernels' activation quantizer.
+        self.prologue = prologue
         # Whether the SASS pass counts its loop: a family whose price reads its resources alone
         # (the CTAs an SM holds) is a resources-only section, schema 1's columns.
         self.loop = loop
@@ -350,7 +504,10 @@ class Family:
     def schema_columns(self):
         """{schema: (columns, loop fields)}: the resources alone (1), and the loop (4; with the
         pipe counts for a family that carries them)."""
-        loop = sass_counts.COLUMNS + (sass_counts.PIPE_FIELDS if self.pipes else ())
+        loop = sass_counts.COLUMNS + (sass_counts.PIPE_FIELDS if self.pipes else ()) + (
+            sass_counts.WAIT_FIELDS if self.pipes and self.waits else ()) + (
+            sass_counts.PRODUCER_FIELDS if self.pipes and self.waits and self.producer else ()) + (
+            sass_counts.PROLOGUE_FIELDS if self.pipes and self.prologue else ())
         return {1: (self.row_head, 0), 4: (self.row_head + loop, len(loop))}
 
     def parse_key(self, fields):
@@ -367,13 +524,28 @@ FAMILIES = {
     FAMILY: Family(FAMILY, KEY_COLUMNS, lambda d: rmma_key(d), "rmma_kernel", key_tiles, False,
                    True),
     "mmq": Family("mmq", ("type", "J", "fallback", "prec"), lambda d: mmq_key(d), "mul_mat_q",
-                  lambda key: 1, True, False),
+                  lambda key: 1, True, False, waits=True),
     "w4a8": Family("w4a8", ("codec", "block_m", "block_n", "warps_m", "warps_n", "epilogue",
                             "flavor", "stages", "producers"), lambda d: w4a8_key(d), "w4a8_",
-                   lambda key: 1, True, True),
+                   lambda key: 1, True, True, waits=True,
+                   producer=("BAR", sass_counts.MMA_OPCODES + ("IDP",))),
     "gemma4": Family("gemma4", ("kernel", "D", "G", "slice", "rows", "Bc", "partial", "fp8",
                                 "chain"), lambda d: gemma4_key(d), "gemma4_", lambda key: 1,
                      False, True, loop=False),
+    "r8": Family("r8", ("codec", "warps", "rows", "nt", "epilogue", "pre"), lambda d: r8_key(d),
+                 "r8_kernel", lambda key: r8_products(key), True, True, marker="IDP",
+                 prologue="F2I"),
+    "i8": Family("i8", ("WT", "WN", "stages", "bits", "epilogue"), lambda d: i8_key(d),
+                 "i8_kernel", lambda key: 1, True, False, waits=True),
+    "moer8": Family("moer8", ("codec", "warps", "rows", "nt", "stage", "pre"),
+                    lambda d: moe_r8_key(d), "moe_r8_kernel", lambda key: moe_r8_products(key),
+                    True, True, marker="IDP", prologue="F2I"),
+    "moegemm": Family("moegemm", ("decoder", "warps_m", "warps_k", "m_tiles", "n_tiles",
+                                  "cluster", "stage"), lambda d: moe_gemm_key(d),
+                      "moe_gemm_kernel", lambda key: moe_gemm_tiles(key), True, True,
+                      waits=True),
+    "vec": Family("vec", ("type", "T", "KS", "gated", "bounded"), lambda d: vec_key(d),
+                  "vec_kernel", lambda key: 1, False, False, loop=False),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -467,15 +639,62 @@ def sass_lines(binary, cuda_bin, arch, sass_dump=None, names=None, batch=SASS_BA
                 fail(f"cuobjdump -sass failed on {binary}: {errors.read().strip()[:400]}")
 
 
+def emulated_calls(binary, cuda_bin, arch, keys, sass_dump=None):
+    """relocation_calls of the image where its kernels call the emulated int8 MMA (sm_70,
+    NINFERNO_FMA_MMA, #787): its SASS prints those calls unresolved. None elsewhere, for a saved
+    dump (its relocations are not in it), and where `keys` holds no w4a8 kernel (the only family
+    whose loop makes those calls, #1006 review)."""
+    if sass_dump or not str(arch).endswith("70"):
+        return None
+    if not any(fk[0] == "w4a8" for fk in keys.values()):
+        return None
+    command = [cuda_tool("cuobjdump", cuda_bin), "-elf", "-arch", arch, binary]
+    with tempfile.TemporaryFile(mode="w+", errors="replace") as errors:
+        proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True,
+                                errors="replace", bufsize=1 << 20)
+        calls = sass_counts.relocation_calls(proc.stdout)
+        if proc.wait() != 0:
+            errors.seek(0)
+            fail(f"cuobjdump -elf failed on {binary}: {errors.read().strip()[:400]}")
+    # A build whose relocations name no emulated MMA would give every w4a8 row k_iter 0 again
+    # (#1006's first data): refuse it rather than write it.
+    if not any(sass_counts.EMULATED_MMA.search(sym) for per in calls.values() for sym in per.values()):
+        fail(f"no call to the emulated int8 MMA in the {arch} image's relocations of {binary}")
+    return calls
+
+
 def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATCH):
     """{(family, key): LoopCounts} of the kernels `keys` ({mangled: (family, key)}) of one image,
     from its SASS. A kernel disassembled twice in the image (two units) must agree."""
     counts = {}
     lines = sass_lines(binary, cuda_bin, arch, sass_dump, sorted(keys), batch)
-    for name, body in sass_counts.iter_functions(lines, lambda n: n in keys):
+    calls = emulated_calls(binary, cuda_bin, arch, keys, sass_dump)
+    if sass_dump and str(arch).endswith("70") and any(fk[0] == "w4a8" for fk in keys.values()):
+        fail("an sm_70 w4a8 extraction needs the binary: a saved SASS dump has no relocations, "
+             "so its emulated MMA calls would count as no MMA")
+    for name, body in sass_counts.iter_functions(lines, lambda n: n in keys, calls):
         fk = keys[name]
         family = FAMILIES[fk[0]]
-        c = sass_counts.loop_counts(body, family.tiles(fk[1])).with_pipes(family.pipes)
+        # A tile without producer warps (the key's last field 0) has no producer loop: its
+        # producer fields are zeros. Its staging may still be a loop of its own that holds a BAR and
+        # no MMA (the sm_70 tile, built from dp4a on every warp, stages its operands that way, #787),
+        # which is not a producer warps' loop and is not looked for. Nor is one in a producer-warp
+        # tile whose body holds no tensor-core MMA: on sm_70 that tile's int8 MMA is emulated by
+        # calls, so its MMA warps' loop holds no MMA either and cannot be told from the producers'
+        # (#787). With the image's relocations the calls count as the MMA (EMULATED_MMA, #1006),
+        # so on sm_70 the MMA warps' loop holds MMAs and the producer loop is looked for as on the
+        # other archs; without an MMA in the body the producer fields stay zeros. The tile is never
+        # selected on sm_70 (format_requires.h kW4a8WsTunedArch: sm_89 and sm_120).
+        has_mma = any(sass_counts.base_opcode(line[2]) in sass_counts.MMA_OPCODES for line in body)
+        producer = (family.producer
+                    if family.producer is not None and fk[1][-1] > 0 and has_mma else None)
+        c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker, family.prologue,
+                                    producer).with_pipes(
+            family.pipes, family.prologue is not None, family.waits, family.producer is not None)
+        if calls is not None and fk[0] == "w4a8" and c.mma == 0:
+            fail(f"{name}: an sm_70 w4a8 loop with no MMA (no emulated call resolved)")
+        if producer is not None and c.prod_loops != 1:
+            fail(f"{name}: {c.prod_loops} producer loops in a tile with {fk[1][-1]} producer warps")
         if fk in counts and counts[fk] != c:
             fail(f"{name} is disassembled twice in {arch} with different loops {counts[fk]} "
                  f"and {c}")
@@ -548,6 +767,10 @@ def loop_audit(rows):
 MMQ_EMPTY_INSTRUCTIONS = 64
 
 
+# The I8 tile's k_iter (family_audit): 32 m16n8 tiles a warp over one 64-value K group.
+I8_K_ITER = 32 * 64
+
+
 def family_audit(family, rows):
     """loop_audit for a section family's rows (#785): lines naming the kernels whose counted
     iteration is not the unit the family's price reads. ggml's matrix kernel: one or two
@@ -561,7 +784,9 @@ def family_audit(family, rows):
     producer-warp tile's consumers wait on a full stage and mark it empty). Q2_K's k_iter is
     above its unit's in both families (5 / 4 of it: its min term, a scale and a min per 16
     values, takes MMAs of its own that advance no K, which the ones-register search of
-    sass_counts.py does not tell apart)."""
+    sass_counts.py does not tell apart). The R8 decode kernels: one loop marked by its dp4a,
+    no CTA barrier and no MMA in it, and one F2I-marked quantizer loop where pre is 0, none
+    where it is 1."""
     out = []
     for k, v in sorted(rows.items()):
         c = v[4]
@@ -599,9 +824,51 @@ def family_audit(family, rows):
                 problems.append(f"k_iter {c.k_iter}, not {want}")
             if c.bar != 2:
                 problems.append(f"{c.bar} barriers in the iteration")
+        elif family == "i8":
+            # One K loop of int8 MMAs a cp.async stage (one 64-value group), one CTA barrier in it,
+            # and k_iter 2048: a warp's 64 x 64 output is 32 m16n8 tiles over the group's 64 K
+            # values (32 x 64). Below sm_80 the kernels are compiled empty: no loop, a few
+            # instructions, no barrier.
+            if c.loops == 0:
+                if c.scheduled and (c.outside_bar or
+                                    not 0 < c.outside_total <= MMQ_EMPTY_INSTRUCTIONS):
+                    out.append(f"{family} {row_key(k)}: no K loop, and not empty "
+                               f"({c.outside_total} instructions, {c.outside_bar} barriers)")
+                continue
+            if c.loops != 1:
+                problems.append(f"{c.loops} candidate loops")
+            if c.bar != 1:
+                problems.append(f"{c.bar} barriers in the iteration")
+            if c.k_iter != I8_K_ITER:
+                problems.append(f"k_iter {c.k_iter}, not {I8_K_ITER}")
+        elif family == "r8":
+            # One loop of dp4a per lane and group, no CTA barrier in it (the activation is in
+            # shared memory before the loop starts) and no MMA.
+            if c.loops != 1:
+                problems.append(f"{c.loops} candidate loops")
+            if c.bar != 0:
+                problems.append(f"{c.bar} barriers in the iteration")
+            if c.mma != 0:
+                problems.append(f"{c.mma} MMAs in the iteration")
+            if c.k_iter <= 0:
+                problems.append("no K count from the dp4a")
+            # The activation quantizer: one F2I loop where the kernel quantizes (pre 0), none
+            # where it reads a quantized activation (pre 1).
+            if c.pro_loops != (0 if k[5] else 1):
+                problems.append(f"{c.pro_loops} quantizer loops (pre {k[5]})")
         problems += c.schedule_problems()
         if problems:
             out.append(f"{family} {row_key(k)}: {'; '.join(problems)}")
+    if family == "r8":
+        # One codec's loop covers the same K an iteration in every schedule, epilogue and token
+        # width (its group and ring are the codec's and the architecture's, not the schedule's).
+        per_codec = {}
+        for k, v in rows.items():
+            if v[4] is not None and v[4].k_iter > 0:
+                per_codec.setdefault(k[0], set()).add(v[4].k_iter)
+        for codec, values in sorted(per_codec.items()):
+            if len(values) != 1:
+                out.append(f"r8 {codec}: k_iter differs between its rows: {sorted(values)}")
     return out
 
 
@@ -692,8 +959,10 @@ SECTION_NOTES = {
     "w4a8": (
         "# The W4A8 tiles (src/ops/generic/generic_w4a8.cuh): w4a8_kernel<codec, schedule, epilogue,",
         "# flavor> (stages and producers 0) and the producer-warp tile w4a8_ws_kernel<codec,",
-        "# schedule, epilogue, stages, producers> (flavor 0; its MMA warps' loop is counted, the",
-        "# producers' decode loop is not). One iteration is one 128-value K tile.",
+        "# schedule, epilogue, stages, producers> (flavor 0; its MMA warps' loop is the counted",
+        "# loop). One iteration is one 128-value K tile. After the wait classes, the producer",
+        "# warps' loop (prod_, #613 PR-6): the BAR loop without an MMA, one iteration a K tile;",
+        "# loops 0 on the classic tile.",
     ),
     "gemma4": (
         "# The Gemma 4 attention kernels (src/ops/softmax_attention/gemma4, #830):",
@@ -703,6 +972,46 @@ SECTION_NOTES = {
         "# the other columns 0). Resources alone: the decode plan reads the CTAs an SM holds",
         "# (core/kernel_occupancy.h), never the host's kernels.",
     ),
+    "r8": (
+        "# The R8 decode kernels (src/ops/generic/generic_r8.cuh, #613 PR-10): r8_kernel<codec,",
+        "# R8Schedule<warps, rows>, NT, epilogue, kPre> (pre 1: the activation arrives quantized;",
+        "# otherwise each CTA quantizes the [NT, K] activation into shared memory first). No",
+        "# tensor-core MMA: the counted loop is the one holding the dp4a (IDP), one iteration a",
+        "# group of 32-value blocks per lane and row; k_iter the K values one iteration covers per",
+        "# row and token (128 per dp4a over rows x sets x token slots), the MMA columns 0. After the",
+        "# pipe counts, the pro_ columns: the activation quantizer's loop (marked by F2I; pro_loops",
+        "# 0 where pre is 1), one iteration's instructions, integer and float work, global bytes",
+        "# loaded and shared bytes stored per warp, and its stall sum. Then the waits that expose a",
+        "# global load's latency (a wait on a scoreboard with an LDG pending): glb_waits in one",
+        "# dp4a iteration, outside_glb_waits outside both loops, pro_glb_waits in one quantizer",
+        "# iteration.",
+    ),
+    "i8": (
+        "# The I8 tiles (src/ops/generic/generic_i8.cu, #613 PR-6): i8_kernel<WT, WN, Stages, Bits,",
+        "# epilogue> (I8Tile: a CTA of WT x WN warps over 64 WT tokens x 64 WN weight rows, the",
+        "# weight codes as the int8 MMA's unsigned operand, the activation quantized by",
+        "# i8_quantize_kernel first). Compiled from sm_80 on (NINFERNO_I8_KERNELS); below, empty",
+        "# bodies (loops 0). One iteration of the counted loop is one cp.async stage: one group of",
+        "# 64 K values.",
+    ),
+    "moer8": (
+        "# The routed-expert R8 kernels (src/ops/moe/moe_r8.cuh, #619 step 11): moe_r8_kernel<codec,",
+        "# R8Schedule<warps, rows>, NT, stage, kPre>, stage as moe_internal.h's Stage (0 Router,",
+        "# 1 GateUp, 2 Down, 3 Up). Counted as the r8 rows: the dp4a loop (IDP), the pro_ columns",
+        "# the activation quantizer's loop (F2I), the global-load waits after them.",
+    ),
+    "moegemm": (
+        "# The routed-expert register-MMA kernels (src/ops/moe/moe_gemm.cuh, #619 step 11):",
+        "# moe_gemm_kernel<decoder, RmmaSchedule<warps_m, warps_k, m_tiles, n_tiles, cluster>,",
+        "# stage>; k_iter as the rmma rows' (m16n8 tiles a warp, twice in the GateUp stage).",
+    ),
+    "vec": (
+        "# ggml's vector kernels (src/ops/generic/ggml_mmq/ggml_vec.cu, #763): vec_kernel<type, T,",
+        "# KS, Gated, Bounded>, keyed as the ggml_type value, the tokens, the static K the slice loop",
+        "# unrolls over (0: the runtime K) and the two flags. Resources alone: the launch reads the",
+        "# CTAs an SM holds (core/kernel_occupancy.h) and a bounded twin's local bytes, never the",
+        "# host's kernels.",
+    ),
 }
 
 
@@ -711,7 +1020,7 @@ def render_section(family, rows, nvcc):
     `family <name>` line, its own nvcc, kernel count and columns (family_nvcc, family_kernels,
     family_columns: so the file's own nvcc, kernels and columns lines stay the register-MMA ones
     every reader and script takes), the rows. The loop columns are schema 4's and the pipe counts
-    (sass_counts.PIPE_FIELDS), or the resources alone where no row has a loop."""
+    (sass_counts.SECTION_FIELDS), or the resources alone where no row has a loop."""
     f = FAMILIES[family]
     loops = [v[4] for v in rows.values() if v[4] is not None]
     if loops and not all(c.scheduled for c in loops):
@@ -774,7 +1083,7 @@ def parse_rows(family, lines, columns, what):
             key = f.parse_key(fields[1:1 + keys])
             loop = fields[head:head + loop_width]
             counts = sass_counts.LoopCounts.from_row(loop) if loop_width else None
-            if counts is not None and counts.pipes != f.pipes:
+            if counts is not None and (counts.pipes != f.pipes or counts.waits != f.waits):
                 raise ValueError("pipe columns of another family")
             rows[key] = (*(int(v) for v in fields[1 + keys:head]), counts)
         except ValueError as error:
@@ -807,27 +1116,31 @@ def parse_sections(text):
         fail(f"snapshot says {header['kernels']} kernels, holds {len(rows)}")
     sections = {FAMILY: {"nvcc": header["nvcc"], "kernels": len(rows), "rows": rows}}
     for family, section in section_texts.items():
-        own, row_lines = {}, []
-        for line in section.splitlines()[1:]:
-            if not line or line.startswith("#"):
-                continue
-            fields = line.split()
-            if fields[0] == family:
-                row_lines.append(line)
-            elif fields[0] in ("family_nvcc", "family_kernels", "family_columns"):
-                own[fields[0]] = line[len(fields[0]) + 1:] if len(fields) > 1 else ""
-            else:
-                fail(f"unexpected line in the {family} section: {line}")
-        for want in ("family_nvcc", "family_kernels", "family_columns"):
-            if want not in own:
-                fail(f"the {family} section has no '{want}' line")
-        family_rows = parse_rows(family, row_lines, own["family_columns"], "family_columns")
-        if int(own["family_kernels"]) != len(family_rows):
-            fail(f"the {family} section says {own['family_kernels']} kernels, holds "
-                 f"{len(family_rows)}")
-        sections[family] = {"nvcc": own["family_nvcc"], "kernels": len(family_rows),
-                            "rows": family_rows}
+        sections[family] = parse_section(family, section)
     return header, sections
+
+
+def parse_section(family, section):
+    """{"nvcc", "kernels", "rows"} of one section family's text (split_sections)."""
+    own, row_lines = {}, []
+    for line in section.splitlines()[1:]:
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if fields[0] == family:
+            row_lines.append(line)
+        elif fields[0] in ("family_nvcc", "family_kernels", "family_columns"):
+            own[fields[0]] = line[len(fields[0]) + 1:] if len(fields) > 1 else ""
+        else:
+            fail(f"unexpected line in the {family} section: {line}")
+    for want in ("family_nvcc", "family_kernels", "family_columns"):
+        if want not in own:
+            fail(f"the {family} section has no '{want}' line")
+    family_rows = parse_rows(family, row_lines, own["family_columns"], "family_columns")
+    if int(own["family_kernels"]) != len(family_rows):
+        fail(f"the {family} section says {own['family_kernels']} kernels, holds "
+             f"{len(family_rows)}")
+    return {"nvcc": own["family_nvcc"], "kernels": len(family_rows), "rows": family_rows}
 
 
 def parse_snapshot(text):
@@ -881,8 +1194,10 @@ def cmd_extract(args):
     if args.update:
         with open(args.update) as f:
             old = f.read()
-        parse_sections(old)
         top, sections = split_sections(old)
+        # What is kept must parse; a family replaced may be in an earlier column layout.
+        parse_sections(top + "".join(sections[f] for f in SECTION_FAMILIES
+                                     if f in sections and f not in families))
     if FAMILY in families:
         source = args.source or (source_hash(args.source_root) if args.source_root else "unknown")
         top = render(args.arch, extracted[FAMILY], nvcc, args.flags or "unknown", source)
@@ -890,7 +1205,10 @@ def cmd_extract(args):
         fail("without the rmma family, extract writes into a snapshot: pass --update FILE")
     for f in families:
         if f != FAMILY:
-            sections[f] = render_section(f, extracted[f], nvcc)
+            rows = extracted[f]
+            if f in REGISTER_ALLOCATIONS and f in sections:
+                rows = keep_allocations(f, args.arch, section_rows_to_keep(f, sections[f]), rows)
+            sections[f] = render_section(f, rows, nvcc)
     text = top + "".join(sections[f] for f in SECTION_FAMILIES if f in sections)
     if args.update:
         header, _ = parse_sections(text)
@@ -1100,6 +1418,120 @@ def list_differences(args, differ, missing, extra, expected, got, line):
         print(f"  ... {shown - args.show} more")
 
 
+# Section rows whose SASS ptxas does not reproduce from the same source (#968): built twice clean
+# from one tree (sm_89, nvcc 13.4.92, no ccache, the five R8 translation units), 2 of 2019
+# functions came out with another schedule (3540 against 3556 SASS lines), and a third after a
+# comment line elsewhere in a header they include, all pre-quantized nt = 8 instances; on sm_75
+# and sm_86 other rows of the same kind moved between trees (sm_75: W4a8Ggml32<2> at both
+# epilogues). check holds every pre-quantized nt = 8 R8 row to its resources (the registers,
+# stack, local and shared bytes, which never moved) and reports its loop counts beside, never
+# failing on them: the R8 law prices T = 1 only and reads no nt = 8 row (#966). extract still
+# writes the build's counts. `key` is the row's key fields (FAMILIES["r8"].key_columns:
+# codec, warps, rows, nt, epilogue, pre).
+def sass_unstable(family, key):
+    return family == "r8" and int(key[3]) == 8 and int(key[5]) == 1
+
+
+# Section rows whose registers ptxas does not reproduce from one source (#968). One translation
+# unit, one path, no ccache, compiled 9 to 13 times with other compiles beside it, the two units
+# below 41 times an arch (one alone, then ten rounds of four at once; tools as in #968's comments,
+# nvcc 13.4.92; 13.5.37 the same): every moe and r8 unit gave one resource set except moe_gemm_q5.cu
+# / moe_gemm_q6.cu, whose GroupwiseG64Decoder<5> / <6> kernels at RmmaSchedule<4, 1, 1, 1, 1>, the
+# Down (2) and Up (3) stages, came out with the register counts below from the same PTX. Each arch's
+# set is counted on that arch alone: its census and the rows its full builds wrote (sm_89 also the
+# two trees of #968's ptx968 run). sm_75 and sm_120a gave one count in 41. Neither threads, cores,
+# ASLR nor --allow-expensive-optimizations reproduce one allocation, and the loop counts move with
+# the allocation. No price reads these rows: the MoE expert law prices the ggml K-quant decoders
+# (tools/bench/moe_expert_law.py GEMM_DEC; a test keeps it so). check holds such a row to its stack,
+# local and shared bytes and to another register count among the ones counted here (at one count the
+# row is held exact), prints both counts and never fails on the loop counts; extract --update keeps
+# the section's row where the build's is another counted allocation (keep_allocations). A new count
+# seen in a build is a new allocation of the same source: count it here (the census, #968) and rerun
+# the check; no rebuild. Key: FAMILIES["moegemm"].key_columns (decoder, warps_m, warps_k, m_tiles,
+# n_tiles, cluster, stage); per architecture label.
+# r8 (key FAMILIES["r8"].key_columns: codec, warps, rows, nt, epilogue, pre): sm_80's
+# W4a8U4ZpG<64> 4 2 8 1 1, a pre-quantized nt = 8 row (sass_unstable), with the stack, local and
+# shared bytes equal throughout: 160 registers in full ninferno-serve builds on an RTX 3060 stand at
+# master 5c10b6c8d (twice) and in a full build of 139136c74; 162, the committed count, in a
+# kernel_facts_families.sh build of the r8 units (KFF_FAMILIES=r8) at 714a05ced on another stand's
+# CPU; the r8 kernel files are unchanged between those trees, a few headers they include changed.
+# Host, build kind and tree all differ between the two counts, so this is a counted pair, not a
+# cause. No price reads the row (the R8 law prices T = 1 only, #966).
+REGISTER_ALLOCATIONS = {
+    "moegemm": {
+        "80": {
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 78),
+        },
+        "86": {
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 78),
+        },
+        "89": {
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 78),
+        },
+        "90": {
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 2): (72, 78),
+            ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): (72, 78),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
+            ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 77),
+        },
+    },
+    "r8": {
+        "80": {
+            ("W4a8U4ZpG<64>", 4, 2, 8, 1, 1): (160, 162),
+        },
+    },
+}
+
+
+def keep_allocations(family, arch, old, new):
+    """`new`, the rows of a build, with each row that differs from the section's (`old`) only by
+    an allocation ptxas makes either way (register_unstable) taken from the section as it is: a
+    re-extract does not flip such rows, nor the engine's embedded snapshot with them (#968)."""
+    def keep(k, v):
+        # Both rows carry their loop or neither (extract --no-sass writes the resources alone).
+        return (k in old and (old[k][4] is None) == (v[4] is None) and
+                register_unstable(family, arch, k, old[k], v))
+    return {k: old[k] if keep(k, v) else v for k, v in new.items()}
+
+
+def section_rows_to_keep(family, section):
+    """The rows of a committed section that extract --update may keep (keep_allocations): its
+    rows where its columns are today's, else none (a section in an earlier column layout is
+    replaced whole, as before #968)."""
+    columns = next((line.split()[1:] for line in section.splitlines()
+                    if line.startswith("family_columns ")), None)
+    today = [c for c, _ in FAMILIES[family].schema_columns().values()]
+    if columns not in [list(c) for c in today]:
+        return {}
+    try:
+        return parse_section(family, section)["rows"]
+    except SystemExit:
+        # A section that no longer parses (a stale kernel count, a schedule a newer rule refuses)
+        # is replaced whole, as before #968: extract is its fix.
+        print(f"kernel_facts: the committed {family} section does not parse: none of its rows "
+              "kept", file=sys.stderr)
+        return {}
+
+
+def register_unstable(family, arch, key, expected, got):
+    """Whether a row's build values differ from the section's only by an allocation ptxas makes
+    either way (REGISTER_ALLOCATIONS): registers both among the counted ones, the other resources
+    equal."""
+    allowed = REGISTER_ALLOCATIONS.get(family, {}).get(arch, {}).get(tuple(key))
+    # Another allocation only: at one register count the row is held exact, loop counts too.
+    return (allowed is not None and expected[0] != got[0] and expected[0] in allowed and
+            got[0] in allowed and expected[1:4] == got[1:4])
+
+
 def section_line(family):
     """A section row's text, as render_section writes it."""
     return lambda k, v: " ".join(str(x) for x in [family, *k, *v[:4]] +
@@ -1118,6 +1550,18 @@ def check_section(args, family, section, got, other_nvcc, with_sass, arch):
     extra = sorted(k for k in got if k not in expected)
     differ = [] if other_nvcc else sorted(
         k for k in expected if k in got and expected[k] != got[k])
+    # #968: a row ptxas does not reproduce is held to its resources alone.
+    unstable = [k for k in differ if sass_unstable(family, k) and expected[k][:4] == got[k][:4]]
+    allocated = [k for k in differ if k not in unstable and
+                 register_unstable(family, arch, k, expected[k], got[k])]
+    differ = [k for k in differ if k not in unstable and k not in allocated]
+    for k in unstable:
+        print(f"kernel_facts: {family} {row_key(k)}: loop counts differ from the section, a row "
+              f"ptxas does not reproduce (#968), resources equal: not a failure")
+    for k in allocated:
+        print(f"kernel_facts: {family} {row_key(k)}: {got[k][0]} registers against the section's "
+              f"{expected[k][0]}, both allocations ptxas makes of this source (#968, "
+              f"REGISTER_ALLOCATIONS): not a failure")
     if not (missing or extra or differ):
         if other_nvcc:
             print(f"kernel_facts: {len(got)} {family} kernels of sm_{arch}: the set equals "

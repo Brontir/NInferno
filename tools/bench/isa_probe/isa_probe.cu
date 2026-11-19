@@ -221,6 +221,68 @@ __global__ void mma_latency(Span* spans, float* sink, unsigned a, unsigned b) {
     if (s == 12345.f) sink[0] = s;
 }
 
+// ---- The int8 tensor shapes (probe 19, #978) ----
+// The W4A8 tiles' MMAs (generic_w4a8.cuh) by role: `wide`, the shape a 32-value K group runs
+// (IMMA.16832 from sm_80 on, IMMA.8816 on sm_75), and `narrow`, the shape a codec with 16-value
+// sub-block scales runs (IMMA.16816 from sm_80 on; on sm_75 the same IMMA.8816). sm_70 has no
+// int8 MMA: the kernels below are empty there and never launched (the host checks the cc).
+// Accumulators s32, operands packed int8 ones; four accumulators live in the chain on sm_80+,
+// two on sm_75 (the m8n8k16 shape's), as the tiles keep them.
+template <bool Wide>
+__device__ __forceinline__ void imma_once(int (&c)[4], unsigned a, unsigned b) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+    if constexpr (Wide) {
+        asm volatile("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {%0,%1,%2,%3}, "
+                     "{%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
+                     : "+r"(c[0]), "+r"(c[1]), "+r"(c[2]), "+r"(c[3])
+                     : "r"(a), "r"(a), "r"(a), "r"(a), "r"(b), "r"(b));
+    } else {
+        asm volatile("mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 {%0,%1,%2,%3}, "
+                     "{%4,%5}, {%6}, {%0,%1,%2,%3};\n"
+                     : "+r"(c[0]), "+r"(c[1]), "+r"(c[2]), "+r"(c[3])
+                     : "r"(a), "r"(a), "r"(b));
+    }
+#elif defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 750
+    asm volatile("mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32 {%0,%1}, {%2}, {%3}, {%0,%1};\n"
+                 : "+r"(c[0]), "+r"(c[1])
+                 : "r"(a), "r"(b));
+#else
+    (void)c;
+    (void)a;
+    (void)b;
+#endif
+}
+
+template <bool Wide>
+__global__ void imma_throughput(Span* spans, float* sink, unsigned a, unsigned b) {
+    int acc[kUnroll][4];
+    for (int u = 0; u < kUnroll; ++u)
+        for (int e = 0; e < 4; ++e) acc[u][e] = 0;
+    __syncthreads();
+    const long long t0 = clock64();
+    for (int i = 0; i < kThroughputN; ++i) {
+#pragma unroll
+        for (int u = 0; u < kUnroll; ++u) imma_once<Wide>(acc[u], a, b);
+    }
+    __syncthreads();
+    const long long t1 = clock64();
+    int s              = 0;
+    for (int u = 0; u < kUnroll; ++u)
+        for (int e = 0; e < 4; ++e) s += acc[u][e];
+    if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1, smid()};
+    if (s == 12345) sink[0] = static_cast<float>(s); // keeps the chain alive, never true
+}
+
+template <bool Wide>
+__global__ void imma_latency(Span* spans, float* sink, unsigned a, unsigned b) {
+    int acc[4]         = {0, 0, 0, 0};
+    const long long t0 = clock64();
+    for (int i = 0; i < kLatencyLinks; ++i) imma_once<Wide>(acc, a, b);
+    const long long t1 = clock64();
+    if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1, smid()};
+    if (acc[0] + acc[1] + acc[2] + acc[3] == 12345) sink[0] = 1.f;
+}
+
 // The FFMA warp of the `_held` chases: one warp of dependent FFMAs asked for on every SM, on a
 // second stream, so each chasing warp shares its SM with a working warp and the card clocks the
 // SM as one at work. Its loop touches no memory; it leaves `deadline_ns` after it started and not
@@ -286,6 +348,38 @@ __global__ void int32_throughput(Span* spans, float* sink, unsigned m, unsigned 
     for (int u = 0; u < kUnroll; ++u) s += x[u];
     if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1, smid()};
     if (s == 12345u) sink[0] = 1.f;
+}
+
+// Probe 18 (#613 PR-5): global loads, one coalesced 32-bit load a lane, kUnroll of them a step at
+// immediate offsets one 128-byte line apart (a warp instruction moves one line), consumed at the
+// step's end; then every warp's base moves by `step`, masked into the buffer. `Ca`: ld.ca over a
+// buffer the SM's L1 holds; otherwise ld.cg (the L1 passed by) over a buffer the L2 holds. The
+// span holds the base's add and mask beside the loads (2 of 10 instructions a step).
+template <bool Ca>
+__global__ void ldg32_throughput(Span* spans, float* sink, const char* buf, unsigned mask,
+                                 unsigned step) {
+    const unsigned warp = blockIdx.x * (blockDim.x / 32) + threadIdx.x / 32;
+    unsigned off        = (warp * kUnroll * 128u + (threadIdx.x % 32) * 4u) & mask;
+    unsigned acc        = 0;
+    __syncthreads();
+    const long long t0 = clock64();
+#pragma unroll 1
+    for (int i = 0; i < kThroughputN; ++i) {
+        const char* p = buf + off;
+        unsigned v[kUnroll];
+#pragma unroll
+        for (int u = 0; u < kUnroll; ++u) {
+            const unsigned* a = reinterpret_cast<const unsigned*>(p + u * 128);
+            v[u]              = Ca ? __ldca(a) : __ldcg(a);
+        }
+#pragma unroll
+        for (int u = 0; u < kUnroll; ++u) acc ^= v[u];
+        off = (off + step) & mask;
+    }
+    __syncthreads();
+    const long long t1 = clock64();
+    if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1, smid()};
+    if (acc == 0x12345678u) sink[0] = 1.f;
 }
 
 // ---- Dependent latencies of the ALU ops the decode chains use ----
@@ -662,7 +756,7 @@ int main() {
     CHECK(cudaDeviceGetAttribute(&mem_khz, cudaDevAttrMemoryClockRate, 0));
     char pci[32] = {};
     CHECK(cudaDeviceGetPCIBusId(pci, sizeof pci, 0));
-    std::printf("probe isa_probe 17\n");
+    std::printf("probe isa_probe 19\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -725,6 +819,34 @@ int main() {
         latency_span(pr.collect(pr.sms), "mma_dependent_latency") / kLatencyLinks;
     fact("mma_dependent_latency", mma_lat, "clk");
     check(mma_lat >= mma_sm * 4.0 * 0.5, "dependent MMA latency under half the issue interval");
+    // The int8 tensor shapes by role (probe 19): cycles per MMA a partition with every partition
+    // busy, with one CTA of 4 and 8 warps (1 and 2 warps a scheduler where the SM deals them
+    // evenly), and the dependent latency. Not on sm_70 (no int8 MMA).
+    if (cc >= 75) {
+        const unsigned i8_ones = 0x01010101u;
+        for (const bool wide : {true, false}) {
+            const std::string role = wide ? "imma_wide" : "imma_narrow";
+            const auto thr         = wide ? imma_throughput<true> : imma_throughput<false>;
+            const double sm        = pr.per_sm((role + "_cycles_per_sm").c_str(), true, kCtasPerSm,
+                                               kWarpsPerCta, thr, i8_ones, i8_ones);
+            fact((role + "_cycles_per_partition").c_str(), sm * 4.0, "clk");
+            for (int warps : {4, 8}) {
+                const std::string name = role + "_cycles_per_partition_w" + std::to_string(warps);
+                fact(name.c_str(),
+                     pr.per_sm(name.c_str(), false, 1, warps, thr, i8_ones, i8_ones) * 4.0, "clk");
+            }
+            const auto lat = wide ? imma_latency<true> : imma_latency<false>;
+            lat<<<pr.sms, 32>>>(pr.spans, pr.fsink, i8_ones, i8_ones);
+            LAUNCHED();
+            lat<<<pr.sms, 32>>>(pr.spans, pr.fsink, i8_ones, i8_ones);
+            LAUNCHED();
+            const double l =
+                latency_span(pr.collect(pr.sms), (role + "_dependent_latency").c_str()) /
+                kLatencyLinks;
+            fact((role + "_dependent_latency").c_str(), l, "clk");
+            check(l >= sm * 4.0 * 0.5, role + ": dependent latency under half the issue interval");
+        }
+    }
     // The SM clock under tensor load: the saturated MMA loop launched back to back for a second,
     // every CTA's clock64 span over its %globaltimer span. The fact is the median over the last
     // quarter of the launches; the note says where the clock was at the first launch (a card
@@ -770,6 +892,36 @@ int main() {
     const double fp32_floor = cc >= 80 ? 1.0 : 2.0;
     check(fp32 >= 0.97 * fp32_floor, "FP32 cycles per warp instruction under the lane floor");
     check(i32 >= 0.97 * 2.0, "INT32 cycles per warp instruction under the lane floor");
+
+    // Global loads (probe 18): cycles per warp instruction per SM of 32-bit loads that hit the L1
+    // (a 16 KiB buffer, every CTA of an SM inside it) and that hit the L2 (the largest power of
+    // two up to 4 MiB within half the L2, ld.cg), and the L2's bytes per SM clock per SM that the
+    // second gives (128 bytes a warp instruction). Saturated: 4 CTAs of 4 warps an SM, 8 loads in
+    // flight a warp.
+    {
+        size_t l2_buf = 4u << 20;
+        while (l2_buf > static_cast<size_t>(p.l2CacheSize) / 2) l2_buf /= 2;
+        char* gbuf = nullptr;
+        CHECK(cudaMalloc(&gbuf, l2_buf));
+        CHECK(cudaMemset(gbuf, 1, l2_buf));
+        const unsigned l1_mask = (16u << 10) - 1;
+        const unsigned l1_step = kUnroll * 128u * kWarpsPerCta * kCtasPerSm;
+        const auto l2_mask     = static_cast<unsigned>(l2_buf - 1);
+        const unsigned l2_step =
+            static_cast<unsigned>(kUnroll * 128ull * kWarpsPerCta * kCtasPerSm * pr.sms) & l2_mask;
+        const double l1 =
+            pr.per_sm("l1_ldg32_cycles_per_sm", true, kCtasPerSm, kWarpsPerCta,
+                      ldg32_throughput<true>, static_cast<const char*>(gbuf), l1_mask, l1_step);
+        const double l2 =
+            pr.per_sm("l2_ldg32_cycles_per_sm", true, kCtasPerSm, kWarpsPerCta,
+                      ldg32_throughput<false>, static_cast<const char*>(gbuf), l2_mask, l2_step);
+        fact("l1_ldg32_cycles_per_sm", l1, "clk");
+        fact("l2_ldg32_cycles_per_sm", l2, "clk");
+        fact("l2_bytes_per_sm_clock", 128.0 / l2, "byte");
+        check(l2 > l1, "L2 loads not slower than L1 loads");
+        check(l1 >= 0.9, "L1 loads faster than one warp instruction a clock");
+        CHECK(cudaFree(gbuf));
+    }
 
     // Dependent latencies of the decode chain's ops, one warp per SM, one op a link.
     const auto dep = [&](auto launch, const char* name, double lo, double hi) {

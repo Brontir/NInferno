@@ -189,7 +189,11 @@ DecisionSection route_evidence_of(const DeviceClass& device,
 
 RoutePolicy route_policy_of(const DecisionSection& options) {
     const auto it = options.find("maintainer.route_policy");
-    return it == options.end() ? RoutePolicy::Legacy : parse_route_policy(it->second);
+    if (it == options.end()) {
+        throw std::invalid_argument("the options section records no maintainer.route_policy: a "
+                                    "manifest from before #614 F1 is not supported");
+    }
+    return parse_route_policy(it->second);
 }
 
 DecisionSection replay_routes(const DeviceClass& device, const DecisionSection& recorded,

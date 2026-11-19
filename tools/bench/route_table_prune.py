@@ -92,6 +92,43 @@ RESOLUTION = regret.EXIT_RESOLUTION  # the ranker's slowdown within which an ove
 # speaks for its problem as dense-tune does.
 TABLE_AUTHORITIES = {"route-table": "route-table", "dense-tune": "dense-tune",
                      "dense-tune-prefill-band": "dense-tune"}
+# A route table keys its entries by compute class, not by policy (route_table.cpp compute_class):
+# A4 for an NVFP4 weight under a policy that allows A4, A16 for every other call. So an a16 entry
+# of a k-quant answers both the exact mode's A16Only calls (a16 cases) and the fast mode's AllowA8
+# calls (a8 cases, regret_collect.py POLICY), and a case speaks for the entry of its class. An
+# NVFP4 a16 entry is asked by both too: verify_linear_policy caps a verify call's AllowA4 at
+# AllowA8. Only the formats no generic A8 route admits (BF16, FP8) are asked by one policy. An entry
+# is pruned only when the cases of every policy that asks it clear it: the ranker picks per policy,
+# so one policy's cases say nothing of the other's calls. A policy asks the entry only where its
+# calls reach the table (route_authorities.cpp route_table_entry: an AllowA8 call that takes R8,
+# the vector kernel, ggml's verify kernel or W4A8 never does, and route_admits refuses an int8
+# route to an A16Only call), so a segment where that policy's cases were all answered by another
+# authority at every one of its widths needs no route-table case of it (a segment where only some
+# widths went elsewhere is judged by its route-table cases as before), and only when the report
+# holds a measured route-table case of the entry at all: that proves the table held it when the
+# report was collected (a report taken before the entry existed answers every width elsewhere).
+# route_tune sweeps the fast mode only for the ggml_mmq formats (route_tune_tool.cpp a8_sweep):
+# q8, q4, q5, q6, iq1m and nvfp4 a16 entries get no a8 cases, and so are kept.
+SINGLE_POLICY_FORMATS = ("bf16", "fp8", "fp8r32")
+
+
+def table_compute(fmt, compute):
+    """The compute class of the route-table entry a case of `compute` (its policy) reads."""
+    return "a4" if fmt == "nvfp4" and compute == "a4" else "a16"
+
+
+def regret_policy(compute):
+    """The selector policy a case compute stands for (regret_collect.py POLICY)."""
+    return {"a16": "A16Only, the exact mode", "a8": "AllowA8, the fast mode",
+            "a4": "AllowA4"}.get(compute, compute)
+
+
+def asking_policies(key):
+    """The case computes (policies) whose calls a route-table entry answers."""
+    fmt, compute = key[0], key[1]
+    if compute == "a16" and fmt not in SINGLE_POLICY_FORMATS:
+        return ("a16", "a8")
+    return (compute,)
 DECODE_MAX, VERIFY_MAX = 4, 16
 PREFILL_PROFILE = "prefill"
 INF = float("inf")
@@ -152,14 +189,39 @@ def evidence_by_entry(report):
         if parsed is None:
             continue
         key, from_id = parsed
+        policy = key[1]
+        if TABLE_AUTHORITIES[case["authority"]] == "route-table":
+            key = (key[0], table_compute(key[0], key[1])) + key[2:]
         t = case["t"] if type(case.get("t")) is int else from_id
         slowdown = case.get("ranker_vs_selected")
         if case.get("status") != "complete" or not finite(slowdown):
             slowdown = None
         profile = "prefill" if case.get("profile") == PREFILL_PROFILE else "speed"
         authority = TABLE_AUTHORITIES[case["authority"]]
-        out.setdefault((authority, key), {"speed": [], "prefill": []})[profile].append(
-            (t, slowdown, case.get("selected")))
+        out.setdefault((authority, key), {"speed": [], "prefill": [], "policies": set()})
+        out[(authority, key)][profile].append((t, slowdown, case.get("selected"), policy))
+        out[(authority, key)]["policies"].add(policy)
+    return out
+
+
+def elsewhere_by_key(report):
+    """{(route-table class key, policy, profile): [T]}: the widths at which a policy's calls were
+    answered by an authority other than the route table (the table was not asked there)."""
+    out = {}
+    for case in report["cases"]:
+        # an unknown authority (a collection without the columns) is no proof of anything
+        if case.get("authority") in TABLE_AUTHORITIES or case.get("authority") in ("", None,
+                                                                                     "unknown"):
+            continue
+        parsed = case_key(case)
+        if parsed is None:
+            continue
+        key, from_id = parsed
+        policy = key[1]
+        key = (key[0], table_compute(key[0], key[1])) + key[2:]
+        t = case["t"] if type(case.get("t")) is int else from_id
+        profile = "prefill" if case.get("profile") == PREFILL_PROFILE else "speed"
+        out.setdefault((key, policy, profile), []).append(t)
     return out
 
 
@@ -168,22 +230,24 @@ def judge(cases, label, resolution):
     cleared."""
     if not cases:
         return [f"{label}: no case"]
-    if any(s is None for _, s, _ in cases):
+    if any(s is None for _, s, *_ in cases):
         return [f"{label}: a case without a ranker time"]
-    worst = max(s for _, s, _ in cases)
+    worst = max(s for _, s, *_ in cases)
     if worst > resolution:
         return [f"{label}: ranker {100 * worst:.1f} % slower somewhere"]
     return []
 
 
-def cover(cases, ranges, ridge, resolution):
+def cover(cases, ranges, ridge, resolution, elsewhere=()):
     """Reasons the cases of one profile do not clear every segment of `ranges` [(lo, hi, route)].
     Each range is judged only by the cases that measured its own route (`selected`): where ranges
     overlap (an r8 band inside a band) a case of one says nothing of the other. A case whose route
     is none of those the override names at its width was collected against another version of the
-    entry, and keeps it."""
+    entry, and keeps it. `elsewhere`: the widths at which this policy's calls were answered by
+    another authority; a segment with no route-table case whose every width is one of those is
+    not asked."""
     reasons = []
-    for t, _, selected in sorted(cases, key=lambda c: c[0]):
+    for t, _, selected, *_ in sorted(cases, key=lambda c: c[0]):
         named = [route for lo, hi, route in ranges if lo <= t <= hi]
         if named and selected not in named:
             reasons.append(f"T {t}: the case measured {selected}, the entry routes "
@@ -194,22 +258,29 @@ def cover(cases, ranges, ridge, resolution):
                            "cannot be split")
         for a, b in segments(lo, hi, ridge):
             inside = [c for c in cases if a <= c[0] <= b and c[2] == route]
+            # every width there takes another authority: the table is not asked (sweeps time
+            # discrete widths, so only a short, fully timed segment such as T 1..4 qualifies;
+            # a wide one, the W4A8 widths from 17 under AllowA8, keeps the entry)
+            if not inside and b != INF and len({t for t in elsewhere if a <= t <= b}) == b - a + 1:
+                continue
             reasons += judge(inside, f"T {a}..{b}", resolution)
     return reasons
 
 
-def verdict(evidence, ranges, prefill_ranges, ridge, resolution):
+def verdict(evidence, ranges, prefill_ranges, ridge, resolution, elsewhere=None):
     """(prune, reasons) of an entry: `ranges` its speed ranges [(lo, hi, route)] (bands and
     r8_bands), `prefill_ranges` those of its prefill override, `evidence` its cases (speed and
-    prefill)."""
+    prefill), `elsewhere` {profile: [T]} the widths another authority answered."""
+    elsewhere = elsewhere or {}
     reasons = []
     if not ranges and not prefill_ranges:
         reasons.append("no band")
-    reasons += cover(evidence["speed"], ranges, ridge, resolution)
+    reasons += cover(evidence["speed"], ranges, ridge, resolution, elsewhere.get("speed", ()))
     if prefill_ranges:
-        if evidence["prefill"]:
+        if evidence["prefill"] or elsewhere.get("prefill"):
             reasons += ["prefill " + why for why in
-                        cover(evidence["prefill"], prefill_ranges, ridge, resolution)]
+                        cover(evidence["prefill"], prefill_ranges, ridge, resolution,
+                              elsewhere.get("prefill", ()))]
         else:
             reasons.append("prefill override: no prefill-profile case (the campaign runs the "
                            "speed profile)")
@@ -249,21 +320,38 @@ def plan_table(report, table, resolution, others=None, allow_borrowers=False, tu
     tables of the routes directory {name: doc}, for the lending rules; `tuned`: the keys the dense
     tuner routes for the board (dense_routed), which take the call once the entry is gone."""
     seen = evidence_by_entry(report)
+    away = elsewhere_by_key(report)
     ridge = ridge_of(report)
     out = []
     for i, entry in enumerate(table["entries"]):
-        if not ("tuned_on" in entry or "prefill_tuned_on" in entry):
-            continue  # not a measured override of this board
-        key = entry_key(entry)
-        evidence = seen.get(("route-table", key))
-        if evidence is None:
-            out.append((i, key, False, ["no case"]))
-            continue
+        # Every entry of the board's own table is a measured override: the selector reports it as
+        # measured evidence (table_evidence_kind: no lender, distance 0), with `tuned_on` (a dense
+        # tuner cache's entries) or without it (a route_tune sweep on that board, the table's
+        # note). A table exists only for a board that measured it; another board borrows.
         speed, prefill = entry_ranges(entry)
-        _, reasons = verdict(evidence, speed, prefill, ridge, resolution)
+        if not speed and not prefill:
+            continue  # a route_as or claim-only entry: no band of the ranker's to give back
+        key = entry_key(entry)
+        evidence = seen.get(("route-table", key), {"speed": [], "prefill": []})
+        reasons = []
+        policies = asking_policies(key)
+        for policy in policies:
+            own = {profile: [c for c in evidence[profile] if c[3] == policy]
+                   for profile in ("speed", "prefill")}
+            # without a measured route-table case of the entry the report may predate it
+            held = any(evidence["speed"]) or any(evidence["prefill"])
+            gone = {profile: away.get((key, policy, profile), []) if held else []
+                    for profile in ("speed", "prefill")}
+            tag = f"policy {policy} ({regret_policy(policy)}): " if len(policies) > 1 else ""
+            if not any(own.values()) and not any(gone.values()):
+                reasons.append(f"{tag}no case")
+                continue
+            reasons += [tag + why
+                        for why in verdict(own, speed, prefill, ridge, resolution, gone)[1]]
         if entry.get("claim"):
             reasons.append("the entry claims its problem (a measured claim the ranker does not make)")
-        if key in tuned:
+        # dense_tune.json is keyed per policy, and its entry answers right after the table's
+        if any((key[0], p) + key[2:] in tuned for p in policies):
             reasons.append("the dense tuner routes this problem too: pruning hands the call to it, "
                            "not the ranker")
         if others:
@@ -456,11 +544,36 @@ def write_both(writes):
                 temp.unlink()
 
 
+def merged_reports(reports):
+    """One report of several: their cases together. They must be of one device, selector revision
+    and build (each a policy's sweep of one regret job's build), so their rankers are one
+    selector's; the ridge is the first report's that names one."""
+    for r in reports:
+        if r.get("schema") != "ninferno-selection-regret-report/1":
+            raise ValueError("expected a ninferno-selection-regret-report/1 (selection_regret.py "
+                             "output)")
+    for field in ("device", "selector_revision", "build_id"):
+        values = {json.dumps(r.get(field)) for r in reports}
+        if len(values) != 1:
+            raise ValueError(f"the reports differ in {field} ({', '.join(sorted(values))}): "
+                             "merge only one build's sweeps")
+    out = dict(reports[0])
+    out["cases"] = [c for r in reports for c in r["cases"]]
+    ridged = [r for r in reports if ridge_of(r) is not None]
+    if len({ridge_of(r) for r in ridged}) > 1:
+        raise ValueError("the reports name different ridges: not one board's facts")
+    if ridged:
+        out["by_board_regime_authority"] = ridged[0]["by_board_regime_authority"]
+    return out
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("report", type=Path, nargs="?",
-                        help="selection_regret.py report of one board")
+    parser.add_argument("report", type=Path, nargs="*",
+                        help="selection_regret.py report(s) of one board, one revision and build: "
+                             "a policy's sweep each (regret_job.sh A8_CANDIDATES=1 for the fast "
+                             "mode's a8 cases, 0 for the exact mode's a16 cases)")
     parser.add_argument("--gaps", type=Path, metavar="ROUTES_DIR",
                         help="print the evidence gaps of the directory's tables "
                              "(tests/route_evidence_gaps.json) and exit")
@@ -499,7 +612,7 @@ def main(argv=None):
             return 0
         if args.gaps_out:
             raise ValueError("--gaps-out needs --gaps")
-        if args.report is None:
+        if not args.report:
             raise ValueError("no report (or --gaps ROUTES_DIR)")
         if not (args.table or args.dense_tune):
             raise ValueError("nothing to prune: give --table and/or --dense-tune")
@@ -507,10 +620,9 @@ def main(argv=None):
             raise ValueError("--dense-tune needs --class")
         if not 0 <= args.resolution < 1:
             raise ValueError("--resolution must be in [0, 1)")
-        report = json.loads(args.report.read_text(encoding="utf-8"),
-                            object_pairs_hook=regret.unique_object)
-        if report.get("schema") != "ninferno-selection-regret-report/1":
-            raise ValueError("expected a ninferno-selection-regret-report/1 (selection_regret.py output)")
+        report = merged_reports([json.loads(path.read_text(encoding="utf-8"),
+                                            object_pairs_hook=regret.unique_object)
+                                 for path in args.report])
         # A report timed one selector's ranker: after a change to the ranker rules the route that
         # takes over a deleted override may be another, never measured. --apply deletes only on a
         # report of the revision (and build, when given) the caller names.

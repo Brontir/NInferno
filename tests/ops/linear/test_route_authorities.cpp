@@ -79,8 +79,9 @@ constexpr Shape kShapes[]        = {{256, 2048}, {1024, 4096}, {4096, 4096}, {17
 constexpr std::int32_t kTokens[] = {1,  2,  3,  4,  5,   8,   9,   12,  16,   17,  24,
                                     32, 48, 64, 96, 128, 192, 256, 512, 1024, 2048};
 
-// The names an answer may carry: every list's entries and the two an authority answers under
-// when a measured entry stands in for its rule (r8_schedule's table, the dense tuner's band).
+// The names an answer may carry: every list's entries, the two an authority answers under when a
+// measured entry stands in for its rule (r8_schedule's table, the dense tuner's band), and the R8
+// schedule law r8_schedule asks before its rules (law_r8).
 std::set<std::string_view> listed_sources() {
     std::set<std::string_view> names;
     for (const auto list : {generic::select_authorities(), generic::auto_authorities(),
@@ -88,6 +89,7 @@ std::set<std::string_view> listed_sources() {
         for (const generic::NamedAuthority& a : list) names.insert(a.name);
     }
     names.insert("r8-table");
+    names.insert("r8-law");
     names.insert("dense-tune-prefill-band");
     return names;
 }
@@ -226,12 +228,14 @@ void check_direct(const generic::Ask& ask, const generic::Problem& problem, cons
                 ++g_direct_answers;
                 const std::string_view source = answer->evidence.source;
                 // r8-rules answers as r8-table only where the decode table gave the entry (a
-                // measured or carried answer); its own rule answers are the ranker's.
+                // measured or carried answer), as r8-law where the schedule law ranked (a cost
+                // ranker); its own rule answers are the rule ranker's.
+                const auto& e = answer->evidence;
                 const bool right =
                     a.name == "r8-rules"
-                        ? source == (answer->evidence.kind == generic::Evidence::Kind::Ranker
-                                         ? "r8-rules"
-                                         : "r8-table")
+                        ? source == (e.kind != generic::Evidence::Kind::Ranker     ? "r8-table"
+                                     : e.ranker == generic::Evidence::Ranker::Cost ? "r8-law"
+                                                                                   : "r8-rules")
                         : source == a.name;
                 if (!right) {
                     fail(where + ": " + std::string(a.name) + " answered as '" +
@@ -406,6 +410,10 @@ void check_evidence(const generic::RouteAnswer& a, const std::set<std::string_vi
     if (e.source == "r8-rules" && e.kind != K::Ranker) {
         fail(where + ": r8-rules answer of kind " + generic::evidence_kind_name(e.kind));
     }
+    // The R8 schedule law is a counted cost ranker (law_r8), never a rule or a measurement.
+    if (e.source == "r8-law" && (e.kind != K::Ranker || e.ranker != R::Cost)) {
+        fail(where + ": r8-law answer of kind " + generic::evidence_kind_name(e.kind));
+    }
     if (e.source == "route-pin" || e.source == "route-probe") {
         if (e.kind != K::Pin) fail(where + ": a pin's answer is not Pin evidence");
     }
@@ -423,6 +431,9 @@ struct KnownCase {
     bool prefill;
     int profile; // 0 speed, 1 invariant, 2 probe (A16 forced), 3 decode pin A16, 4 prefill pin A16
     std::string_view source;
+    // When given: the evidence's kind ("measured"), or the answer it demoted under the route
+    // policy ("demoted=route-table:borrowed"), checked besides the source.
+    std::string_view evidence = {};
 };
 
 std::string known_source(const KnownCase& c) {
@@ -462,12 +473,20 @@ std::string known_source(const KnownCase& c) {
                      std::string(c.board) + " " + generic::qtype_name(c.qtype) +
                          " known case, profile " + std::to_string(c.profile) +
                          " T=" + std::to_string(c.tokens));
-        return std::string(e.source);
+        std::string got(e.source);
+        if (c.evidence.starts_with("demoted=")) {
+            got += " demoted=" + std::string(e.demoted_source) + ":" +
+                   generic::evidence_kind_name(e.demoted_kind);
+        } else if (!c.evidence.empty()) {
+            got += std::string(" ") + generic::evidence_kind_name(e.kind);
+        }
+        return got;
     } catch (const std::exception& error) { return std::string("threw ") + error.what(); }
 }
 
 void check_known() {
     constexpr Shape big{4096, 4096};
+    constexpr Shape own{4096, 5120};
     constexpr QType q8         = QType::Q8_G32_FP16;
     constexpr QType q4k        = QType::GGML_Q4_K;
     constexpr QType q6k        = QType::GGML_Q6_K;
@@ -478,9 +497,14 @@ void check_known() {
         {"rtx4090", q8, big, a16, 4, false, 2, "route-probe"},
         {"rtx4090", q8, big, a16, 4, false, 3, "route-pin"},
         {"rtx4090", q8, big, a16, 512, true, 4, "route-pin"},
-        // the route table, the cost model, the rules, the MMQ gate
-        {"rtx4090", q4k, big, a16, 512, true, 0, "route-table"},
-        {"rtx4090", q4k, big, a16, 1, false, 0, "route-table"},
+        // the route table (an entry of ad102.json itself, measured on the board), the cost model,
+        // the rules, the MMQ gate
+        {"rtx4090", q4k, own, a16, 512, true, 0, "route-table", "measured"},
+        {"rtx4090", q4k, own, a16, 1, false, 0, "route-table", "measured"},
+        // the 4096x4096 store entry ad102.json lacks: borrowed, and under --route-policy evidence
+        // (the default, #614 F2) demoted to the rules, the borrowed answer named
+        {"rtx4090", q4k, big, a16, 512, true, 0, "tiled-rule", "demoted=route-table:borrowed"},
+        {"rtx4090", q4k, big, a16, 1, false, 0, "rmma-rule", "demoted=route-table:borrowed"},
         {"rtx4090", q8, big, a16, 64, false, 0, "cost-model"},
         {"rtx4090", q8, big, a16, 1, false, 0, "rmma-rule"},
         {"rtx4090", q6k, big, a16, 24, true, 0, "rmma-rule"},
@@ -489,12 +513,15 @@ void check_known() {
             "mmq-prefill-gate"},
     };
     for (const KnownCase& c : cases) {
-        const std::string got = known_source(c);
-        if (got != c.source) {
+        const std::string got  = known_source(c);
+        const std::string want = c.evidence.empty()
+                                     ? std::string(c.source)
+                                     : std::string(c.source) + " " + std::string(c.evidence);
+        if (got != want) {
             fail(std::string(c.board) + " " + generic::qtype_name(c.qtype) + " " +
                  std::to_string(c.shape.n) + "x" + std::to_string(c.shape.k) +
                  " T=" + std::to_string(c.tokens) + " profile " + std::to_string(c.profile) +
-                 ": answered by '" + got + "', expected '" + std::string(c.source) + "'");
+                 ": answered by '" + got + "', expected '" + want + "'");
         }
     }
 }

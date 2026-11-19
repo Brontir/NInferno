@@ -87,12 +87,13 @@ inline constexpr Scalar kL1BytesPerSmClock{{128.0}, Provenance::Fact, "l1_bytes_
 // rmma_counted_law_for_test (generic_gemm.h). It ships false until the A/B of the counted law.
 inline constexpr bool kRmmaCountedLaw = false;
 // The L1 hit latency a warp waits on a spilled register's reload (LDL); the counted law divides it
-// by the warps a scheduler holds, which overlap each other's waits. One value for every
-// architecture: 32 clocks, Turing's in the published microbenchmarks (33 on Ampere, 34 on Ada and
-// Blackwell there, 3-6 % of this term). It stands in for the per-architecture measured latency (the
-// ISA probe's row, #613), which the counted law is to read before it prices anything: the law is
-// off (kRmmaCountedLaw), so no price depends on this value. A fact of the SM, not of our sweeps.
-inline constexpr Scalar kL1HitLatencyCycles{{32.0}, Provenance::Fact, "l1_hit_latency_cycles"};
+// by the warps a scheduler holds, which overlap each other's waits. The counted law reads the
+// architecture's measured latency (isa_probe l1_latency_w1: sm_70 28, sm_75 32, sm_86 33, sm_89
+// 34, sm_120a 38 clk; kernel_roofline.h calibration_of); this value, 32 clocks (Turing's in the
+// published microbenchmarks), stands in only for an architecture without an ISA row (sm_80,
+// sm_90, sm_100), where it is a transfer, not a fact of that SM. The law is off
+// (kRmmaCountedLaw), so no price depends on it today.
+inline constexpr Scalar kL1HitLatencyCycles{{32.0}, Provenance::Fitted, "l1_hit_latency_cycles"};
 // The register file's allocation unit per warp (256 registers): a CUDA fact of every part the
 // model names.
 inline constexpr Scalar kRegAllocPerWarp{{256.0}, Provenance::Fact, "reg_alloc_per_warp"};
@@ -154,6 +155,30 @@ inline constexpr Scalar kQuantBytesPerValue{{4.3}, Provenance::Fitted, "quant_by
 // scale were fitted with these costs inside the timings, so switching it on alone would count
 // them twice. It flips per family with that family's counted law (PR-5c, PR-6, PR-7b; #613 PR-8d).
 inline constexpr bool kCompletenessTerms = false;
+// Which MMQ slice the A8 candidate prices (#613 PR-5): false, the fitted efficiency, chain and
+// slice (kMmqEfficiency, kMmqChainK, kMmqChainCycles, kMmqSliceSeconds below; what the selector
+// goldens hold); true, the counted unit of ops/generic/mmq_unit.h (the kernel's SASS counts, the
+// arch's isa_probe facts, the board's facts) times the launch's units, where every input is known,
+// and the fitted slice where one is missing (every format but Q4_K, Q5_K and Q6_K:
+// mmq_unit::scored; and an arch it was scored on: mmq_unit::scored_arch). One switch a binary,
+// as kRmmaCountedLaw; the host price tool flips it for its process (--mmq-counted-unit,
+// mmq_unit::counted_for_test), which the pick-regret check runs with. Off (#613 PR-5, 17.11): the
+// sealed grids score the counted unit's launch times 10.5 % (RTX 5070 Ti) / 14.3 % (RTX 4070 Ti)
+// against the fitted slice's 15.4 % / 12.0 %, but the selector's picks on the sealed route_tune
+// grids (Q4_K/Q5_K/Q6_K, A8) regress on all four boards: mean regret 24.8 -> 31.5 % (RTX
+// 3060), 10.7 -> 14.3 % (4090), 12.6 -> 13.0 % (4070 Ti), 9.4 -> 14.7 % (5070 Ti). The cause is in
+// the prices the counted unit is compared with: w4a8ws prices Q6_K at 0.75-0.84 of its measured
+// time on every board, which the fitted MMQ slice's own low price (0.85 on the RTX 3060) offset;
+// and the counted unit prices Q4_K and Q5_K at 0.80-0.83 on the RTX 4090. It turns on when those
+// two are counted and the pick regret falls (#978 for both, #973 for the switch).
+inline constexpr bool kMmqCountedUnit = false;
+// Which K step the W4A8 tiles' price takes (#613 PR-6, #978): false, the fitted efficiency and
+// chain (kW4a8Efficiency, kW4a8StepCycles, kW4a8ProducerStepCycles below; what the selector
+// goldens hold); true, the counted K tile of ops/generic/w4a8_unit.h (the snapshot's MMA-warp and
+// producer loops, isa_probe's shared latency) for Q4_K and Q6_K on sm_86 and sm_89, where every
+// input is known. Off until the sealed route_tune grids' w4a8 cells and the pick regret are
+// scored with it; the host price tool flips it (--w4a8-counted).
+inline constexpr bool kW4a8CountedStep = false;
 // The activation quantizers' DRAM bytes per value, counted from their kernels and static_asserted
 // there against the block each thread writes:
 //   W4A8 (generic_w4a8.cu w4a8_quantize_kernel): a thread a 32-value block reads 64 B of BF16 and

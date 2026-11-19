@@ -5,6 +5,7 @@
 #include "core/paged_kv_storage.h"
 #include "core/units.h"
 #include "models/qwen3_5/program/planning/graph_profiles.h"
+#include "ops/softmax_attention/gemma4/row_codec.h"
 #include "ninferno/ops/sampling.h"
 
 #include <algorithm>
@@ -140,7 +141,8 @@ DFlashPersistentLayout plan_drafter_state(LayoutBuilder& builder, const DrafterS
 }
 
 // The paged pool of a ring decoder, Gemma 4 and NemotronH: head-major planes the gemma4 attention
-// reads, BF16 or FP8 (E4M3 codes and an FP32 scale per row).
+// reads, BF16 or one-byte rows (E4M3 codes, or int8 on the sm_75 to sm_88 builds: the build's row
+// codec, ops/softmax_attention/gemma4/row_codec.h; and an FP32 scale per row).
 struct HeadMajorPool {
     KvCacheStorage storage = KvCacheStorage::BFloat16;
     PagedKVStorageLayout layer_storage;
@@ -149,7 +151,7 @@ struct HeadMajorPool {
 HeadMajorPool head_major_pool(KvCacheStorage requested, std::int32_t head_dim) {
     const bool fp8 = requested == KvCacheStorage::Fp8E4M3Row256;
     const PagedKVVectorLayout vector =
-        fp8 ? PagedKVVectorLayout{DType::FP8_E4M3FN, head_dim, DType::FP32, 1}
+        fp8 ? PagedKVVectorLayout{ops::kGemma4RowDtype, head_dim, DType::FP32, 1}
             : PagedKVVectorLayout{DType::BF16, head_dim, DType::U8, 0};
     const KvCacheStorage storage = fp8 ? KvCacheStorage::Fp8E4M3Row256 : KvCacheStorage::BFloat16;
     return {.storage       = storage,
@@ -485,6 +487,12 @@ void plan_program_buffers(LayoutBuilder& builder, const SequencePlanImpl& plan,
             "sampling config");
     }
     out.bytes = builder.finish(kArenaAlign, "persistent layout");
+}
+
+bool plan_kv_rows_int8(const SequencePlanImpl& plan) noexcept {
+    return (plan.kv_storage == KvCacheStorage::Fp8E4M3Row256 &&
+            plan.persistent.decoder.text_kv.layer_storage.key.data_dtype == DType::I8) ||
+           (plan.ring_storage == KvCacheStorage::Fp8E4M3Row256 && ops::kGemma4RowInt8);
 }
 
 PersistentLayout plan_persistent_layout(const StateShape& shape, const SequencePlanImpl& plan) {

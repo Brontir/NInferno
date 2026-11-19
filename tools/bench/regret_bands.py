@@ -54,11 +54,14 @@ BAND_NAMES = tuple(b[0] for b in BANDS)
 MODEL_MIN_T = 17  # the cost model ranks routes only from this many tokens
 
 # What route_tune's speed loop times at a width (route_tune_tool.cpp, the `for (const auto t :
-# points)` loop): every admitted route, except R8 above kR8MaxTokens (generic_gemm.h: 4) and the
+# points)` loop): every admitted route, except R8 above kR8VerifyTokens (generic_gemm.h: 8; past
+# kR8MaxTokens, 4, only its pre-quantized verify form, timed and never tabled) and the
 # w4a4, staged, NVFP4 tiled and tiled families below 17 tokens, plus the executed selection. Its
 # prefill loop runs after it and writes a (route, T) pair the speed loop did not; the routes CSV
 # has no profile column, so a row outside this is the prefill profile's, never a speed candidate.
-R8_MAX_TOKENS = 4
+# (With --prefill-chunk 16 or less the prefill loop starts below 8 tokens and can time an R8 row the
+# speed loop skipped; this mirror then counts it a speed row. The default chunk, 1024, starts at 512.)
+R8_SPEED_MAX_TOKENS = 8
 WIDE_ONLY_FAMILIES = ("w4a4", "staged", "nvfp4t", "tiled")
 WIDE_FROM_T = 17
 # The I8 tiles: cost_route offers them (generic_cost.cpp) where allows_i8 holds (generic_gemm.cpp:
@@ -74,7 +77,7 @@ def speed_loop_times(route, t, executed):
         return True
     family = family_of(route)
     if family == "r8":
-        return t <= R8_MAX_TOKENS
+        return t <= R8_SPEED_MAX_TOKENS
     return not (family in WIDE_ONLY_FAMILIES and t < WIDE_FROM_T)
 
 

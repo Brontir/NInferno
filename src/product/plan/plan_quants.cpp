@@ -18,6 +18,7 @@
 #include "runtime/engine/kv_capacity.h"
 
 #include <algorithm>
+#include <map>
 #include <cmath>
 #include <cstdio>
 #include <iomanip>
@@ -698,46 +699,16 @@ bool holds_own_context(const PlanSourceFacts& facts, const DryRunInputs& inputs,
     return own_plan(plan_model(facts, at_context(inputs, context)).plan);
 }
 
-std::vector<RowBound> order_bounds(std::vector<RowBound> bounds) {
-    std::stable_sort(bounds.begin(), bounds.end(),
-                     [](const RowBound& a, const RowBound& b) { return a.worth > b.worth; });
-    return bounds;
-}
-
-bool bound_in_reach(double bound, double top, double band) noexcept {
-    return !(bound < top - band);
-}
-
 RowRank rank_rows(const std::vector<RankedRow>& rows, double band) {
-    RowRank out;
-    out.top = -INFINITY;
-    for (const RankedRow& r : rows) { out.top = std::max(out.top, r.anchor_worth); }
+    std::vector<choice::ServedRow> served;
+    served.reserve(rows.size());
     for (std::size_t i = 0; i < rows.size(); ++i) {
-        const RankedRow& s = rows[i];
-        if (s.worth < out.top - band) { continue; }
-        if (!out.best) {
-            out.best   = i;
-            out.reason = RankReason::Only;
-            continue;
-        }
-        const RankedRow& b = rows[*out.best];
-        std::optional<RankReason> why;
-        if (s.kld < b.kld - choice::kWorthTie) {
-            why = RankReason::LowerKld;
-        } else if (std::abs(s.kld - b.kld) <= choice::kWorthTie) {
-            if (s.worth > b.worth + choice::kWorthTie) {
-                why = RankReason::HigherWorth;
-            } else if (std::abs(s.worth - b.worth) <= choice::kWorthTie &&
-                       runtime::quant_ranks_above(s.candidate, b.candidate)) {
-                why = RankReason::RuleOrder;
-            }
-        }
-        if (why) {
-            out.best   = i;
-            out.reason = *why;
-        }
+        const RankedRow& r = rows[i];
+        served.push_back({i, r.context, r.worth, r.kld, r.anchor_worth});
     }
-    return out;
+    return choice::rank_rows(served, band, [&](std::size_t a, std::size_t b) {
+        return runtime::quant_ranks_above(rows[a].candidate, rows[b].candidate);
+    });
 }
 
 QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListing>& listing,
@@ -883,123 +854,73 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         out.rows.push_back(std::move(row));
     }
     out.pick = runtime::largest_fitting_quant(candidates, fits, ask);
-    // A GPU generation that decides weighs the quantizations by worth within the rule's tier: the
-    // rows that keep the same own context per stream on the same side of the floor, each at its own
-    // choice (product/plan/plan_choice.h), a tie to the rule's order (quant_ranks_above). Only
-    // where every supported row's bits place it on the quantization curve (an unknown one has no
-    // accuracy term and would look exact). Elsewhere the rule's largest stands.
-    const bool bits_known = std::all_of(out.rows.begin(), out.rows.end(), [](const QuantRow& row) {
-        return !row.candidate.supported || row.candidate.bits_per_weight > 0; // what the choice reads
-    });
-    // Only a measurement of a row's own files, or a transfer of the family curve, decides on its
-    // accuracy (#368, choice::quant_authority): the trade weighs the rows that have one, against
-    // the rule's pick only where it has one too; an estimate is shown, never decisive.
-    // Each row's authority is kept for the plan JSON (`quality_authority`, #618 step 11).
+    // Each row's accuracy authority (choice::quant_authority), kept for the plan JSON
+    // (`quality_authority`, #618 step 11).
     const choice::ModelFacts quality_model = choice_model_of(shape);
     for (QuantRow& row : out.rows) {
         row.quality_authority = choice::quant_authority(
             quality_model, quant_option_of(row_facts(shape, row), row.listing.quant));
     }
-    // A transfer (#618 step 9: the family curve within the answer noise of every measured size)
-    // decides as a measurement does.
-    const auto authorized = [](const QuantRow& row) {
-        return row.quality_authority == choice::QualityAuthority::Direct ||
-               row.quality_authority == choice::QualityAuthority::Transfer;
-    };
-    const bool weighs = out.pick && bits_known &&
-                        choice::weighs_quantizations(quality_model, choice_card_of(inputs.gpu)) &&
-                        (out.pick->tier == runtime::QuantPickTier::Own ||
-                         out.pick->tier == runtime::QuantPickTier::OwnStepped ||
-                         out.pick->tier == runtime::QuantPickTier::OwnBelowFloor);
-    if (weighs) {
-        for (const QuantRow& row : out.rows) {
-            if (row.candidate.supported && !authorized(row)) {
-                out.quality_estimates.push_back(row.listing.quant);
-            }
-        }
-        out.quality_withheld = !authorized(out.rows[out.pick->index]);
-    }
-    if (weighs && !out.quality_withheld) {
+    // A GPU generation that decides weighs the quantizations by worth within the rule's tier, each
+    // row at its own choice (product/plan/plan_choice.h), a tie to the rule's order: the choice's
+    // quantization axis decides (choice::choose_quants, #618 step 5: whether it weighs at all, the
+    // authority and measured-class gates, the bound order, the band, the KLD, the rule's order).
+    // This hands it the rows' facts and their choices at their weights, and reports; the plans,
+    // and the launch's cap below, stay here. Elsewhere the rule's largest stands.
+    if (out.pick) {
         const ChoicePins& pins = inputs.pins;
-        // Every supported row on the tier's side of the floor, scored at its own choice: a narrower
-        // KV codec may bring a row the rule's resolved options left short to the target. Rows go in
-        // the order of the best worth their weights could reach (no memory planned: a bound); the
-        // memory is planned (one plan a step) only while a row's bound can still beat the best.
-        // A row whose weights take routes this generation did not measure on two cards
-        // (choice::class_measured: Other's codebook IQ*, Q4_0/1, FP4 anywhere; IQ4 off Ada) has a
-        // transferred speed: it wins no decision while a measured row is in the tier.
-        const choice::CardFacts measured_card = choice_card_of(inputs.gpu);
-        const auto measured = [&](const QuantRow& row) {
-            return choice::class_measured(measured_card,
-                                          quant_option_of(row_facts(shape, row), row.listing.quant).weights);
+        // Each row's choice at its weights, once per context mode (the axis asks the stepped one of
+        // a row it serves; the trade below asks it of the largest again).
+        std::map<std::pair<std::size_t, bool>, std::optional<ServedChoice>> chosen_at;
+        const auto served_at = [&](std::size_t i,
+                                   bool steps) -> const std::optional<ServedChoice>& {
+            const auto key = std::make_pair(i, steps);
+            if (const auto it = chosen_at.find(key); it != chosen_at.end()) { return it->second; }
+            const QuantRow& row = out.rows[i];
+            return chosen_at
+                .emplace(key,
+                         choose_at_weights(row_facts(shape, row), inputs_for(inputs, row.listing),
+                                           pins, row.listing.quant,
+                                           steps ? OwnContext::Steps : OwnContext::Unbounded))
+                .first->second;
         };
-        const bool any_measured = std::any_of(out.rows.begin(), out.rows.end(), [&](const QuantRow& row) {
-            return row.candidate.supported && measured(row) && authorized(row) &&
-                   out.pick->below_floor == runtime::below_quality_floor(row.candidate);
-        });
-        // Two rows' worths within the generation's measured decode error are a tie: the lower KLD
-        // wins (DECISIONS 60), then the rule's order.
-        const double band = std::max(choice::kWorthTie, choice::worth_band(choice_card_of(inputs.gpu)));
-        std::vector<RowBound> bounds;
+        choice::QuantAxis axis;
+        axis.rows.reserve(out.rows.size());
         for (std::size_t i = 0; i < out.rows.size(); ++i) {
             const QuantRow& row = out.rows[i];
-            if (!row.candidate.supported ||
-                out.pick->below_floor != runtime::below_quality_floor(row.candidate) ||
-                (any_measured && !measured(row)) || !authorized(row)) {
-                continue;
-            }
-            const auto bound = choose_at_weights(row_facts(shape, row),
-                                                 inputs_for(inputs, row.listing), pins,
-                                                 row.listing.quant, OwnContext::Unbounded);
-            if (bound && bound->choice.chosen) {
-                bounds.push_back({i, bound->choice.anchor_worth});
-            }
+            choice::QuantAxisRow a;
+            a.quant     = quant_option_of(row_facts(shape, row), row.listing.quant);
+            a.supported = row.candidate.supported;
+            a.rule_bits = row.candidate.bits_per_weight; // what the choice reads
+            a.on_tier   = row.candidate.supported &&
+                        out.pick->below_floor == runtime::below_quality_floor(row.candidate);
+            a.choose_at = [&served_at, i](bool steps) -> std::optional<choice::Choice> {
+                const auto& at = served_at(i, steps);
+                if (!at) { return std::nullopt; }
+                return at->choice;
+            };
+            axis.rows.push_back(std::move(a));
         }
-        bounds = order_bounds(std::move(bounds));
-        struct Served {
-            std::size_t index;
-            std::uint32_t context;
-            choice::Scored scored;
-            double anchor_worth; // the best worth the row's choice settled around (one allowance)
+        axis.rule_pick          = out.pick->index;
+        axis.rule_pick_own_tier = out.pick->tier == runtime::QuantPickTier::Own ||
+                                  out.pick->tier == runtime::QuantPickTier::OwnStepped ||
+                                  out.pick->tier == runtime::QuantPickTier::OwnBelowFloor;
+        axis.target_context = out.pick->target_context;
+        axis.ranks_above    = [&](std::size_t a, std::size_t b) {
+            return runtime::quant_ranks_above(out.rows[a].candidate, out.rows[b].candidate);
         };
-        std::vector<Served> served_rows;
-        std::vector<RankedRow> ranked;
-        double top = -INFINITY; // the best worth served
-        for (const auto& [i, bound] : bounds) {
-            if (!bound_in_reach(bound, top, band)) { break; }
-            const QuantRow& row = out.rows[i];
-            const auto served = choose_at_weights(row_facts(shape, row),
-                                                  inputs_for(inputs, row.listing), pins,
-                                                  row.listing.quant, OwnContext::Steps);
-            if (!served || !served->choice.chosen ||
-                served->choice.context < out.pick->target_context) {
-                continue;
-            }
-            const choice::Scored& sc = served->choice.scored[*served->choice.chosen];
-            served_rows.push_back({i, served->choice.context, sc, served->choice.anchor_worth});
-            ranked.push_back({i, served->choice.context, sc.worth, sc.accuracy.kld,
-                              served->choice.anchor_worth, out.rows[i].candidate});
-            top = std::max(top, served->choice.anchor_worth);
+        const choice::QuantAxisPick ranking =
+            choice::choose_quants(quality_model, choice_card_of(inputs.gpu), axis);
+        for (const std::size_t i : ranking.estimates) {
+            out.quality_estimates.push_back(out.rows[i].listing.quant);
         }
-        // Within the band of the best worth served (the rows' anchors, #301): a row is eligible by
-        // the worth of the configuration it would serve, so a row whose choice already moved inside
-        // its own resolution cannot trail the top by more than one band in all. Then the lower KLD,
-        // then the higher worth, then the rule's order (rank_rows).
-        const RowRank ranking = rank_rows(ranked, band);
-        std::optional<std::size_t> best;
-        std::uint32_t best_context = 0;
-        choice::Scored best_scored;
-        if (ranking.best) {
-            best         = ranked[*ranking.best].index;
-            best_context = ranked[*ranking.best].context;
-            best_scored  = served_rows[*ranking.best].scored;
-        }
+        out.quality_withheld                  = ranking.withheld;
+        const std::optional<std::size_t> best = ranking.row;
+        const std::uint32_t best_context      = ranking.context;
+        const choice::Scored best_scored      = ranking.scored;
         if (best && *best != out.pick->index) {
             // The largest at its own choice: what the trade was against.
-            const QuantRow& largest = out.rows[out.pick->index];
-            if (const auto at = choose_at_weights(row_facts(shape, largest),
-                                                  inputs_for(inputs, largest.listing), pins,
-                                                  largest.listing.quant, OwnContext::Steps);
+            if (const auto& at = served_at(out.pick->index, true);
                 at && at->choice.chosen && best_scored.decision_seconds > 0) {
                 const choice::Scored& l = at->choice.scored[*at->choice.chosen];
                 out.trade = QuantPlan::Trade{.time_ratio = l.decision_seconds / best_scored.decision_seconds,
@@ -1580,16 +1501,20 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
     // label). The parsed part read them before too (with_weights kept the shape's at equal bytes).
     // Not its banks' and head's formats (#834): the workspace takes the widest over every pair
     // of bank formats, and a sample that misses a later part's would size it short; none, and
-    // the formula stands.
+    // the formula stands. A sample can only lower the row's route claim (a route read off it is an
+    // assumed one), and its formats are a subset of the file's. Where the part read no route the
+    // facts' own mark stays (#835): the same rule as plan_facts, assumed() or any route read off a
+    // split part.
     const auto& shape = facts.shape;
     if (facts.model.weight_basis == runtime::WeightBasis::FileSize &&
         facts.model.gguf_data_offset != 0 && (route || !shape.weight_formats.empty())) {
-        return GgufTensorTable{.expert_prefill         = facts.model.expert_prefill,
-                               .expert_prefill_int8    = facts.model.expert_prefill_int8,
-                               .expert_prefill_assumed = route,
-                               .weight_formats         = shape.weight_formats,
-                               .layer_formats          = shape.layer_formats,
-                               .rest_layer_formats     = shape.rest_layer_formats};
+        return GgufTensorTable{.expert_prefill      = facts.model.expert_prefill,
+                               .expert_prefill_int8 = facts.model.expert_prefill_int8,
+                               .expert_prefill_assumed =
+                                   route || facts.model.expert_prefill_assumed,
+                               .weight_formats     = shape.weight_formats,
+                               .layer_formats      = shape.layer_formats,
+                               .rest_layer_formats = shape.rest_layer_formats};
     }
     if (facts.model.weight_basis != runtime::WeightBasis::GgufTensors ||
         facts.model.weight_bytes == 0) {

@@ -1,0 +1,11 @@
+# Qwen3-8B Q4_K_M (GGUF header: 18 blocks all Q4_K, 18 with attn_v and ffn_down Q6_K), one prefill's mul_mat_q
+# launches as the dense loader packs them (models/dense/load.cpp: q, k, v in one matrix where their formats agree,
+# else q and k packed and v alone) and the SwiGLU call runs them (gate, then up, n rows each).
+# COUNT FORMAT ROWS K
+18 q4_K 6144 4096
+18 q4_K 5120 4096
+18 q6_K 1024 4096
+36 q4_K 4096 4096
+72 q4_K 12288 4096
+18 q4_K 4096 12288
+18 q6_K 4096 12288

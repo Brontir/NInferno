@@ -14,12 +14,12 @@
       "sass_per_mma": 4,
       "mem_clock_khz": 850000,
       "tool": {
-        "probe": "isa_probe 17",
+        "probe": "isa_probe 19",
         "nvcc": "12.8.93",
         "driver": "13000",
         "runtime": "12080",
         "arch": "sm_70",
-        "source_sha256": "cde151411d78b687c618a444a700b23561ccc123cb64e112f6a258fa828bdefd"
+        "source_sha256": "132147e65607667cf893f959e2a55c706700baf5443874cbb80edbcae5bb5f04"
       },
       "notes": [
         "device 0 is the GPU at PCI 0000:01:00.0",
@@ -27,19 +27,21 @@
         "mma_cycles_per_sm_w4: 80 of 80 SMs ran 1 CTA(s) of 4 warps at once, the others are left out",
         "mma_cycles_per_sm_w8: 80 of 80 SMs ran 1 CTA(s) of 8 warps at once, the others are left out",
         "mma_cycles_per_sm_w16: 80 of 80 SMs ran 1 CTA(s) of 16 warps at once, the others are left out",
-        "the SM clock under the MMA loop: 1005 MHz at the first of 1224 launches, 1447..1447 over the last quarter",
+        "the SM clock under the MMA loop: 1132 MHz at the first of 1241 launches, 1447..1447 over the last quarter",
         "fp32_cycles_per_warp_instruction: 80 of 80 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
         "int32_cycles_per_warp_instruction: 80 of 80 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
-        "l1_held_latency_w2: 52 of 80 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "l2_held_latency_w2: 24 of 80 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "l1_ldg32_cycles_per_sm: 80 of 80 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "l2_ldg32_cycles_per_sm: 80 of 80 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "l1_held_latency_w2: 54 of 80 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "l2_held_latency_w2: 22 of 80 CTAs had an SM to themselves and one FFMA warp, the others are left out",
         "dram_tlbwarm_held_latency_w2: 38 of 80 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_held_latency_w2: 40 of 80 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_lanes_held_latency_w2: 36 of 80 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_lanes_half_held_latency_w2: 38 of 40 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "dram_held_latency_w2: 34 of 80 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "dram_lanes_held_latency_w2: 32 of 80 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "dram_lanes_half_held_latency_w2: 34 of 40 CTAs had an SM to themselves and one FFMA warp, the others are left out",
         "compute processes on the probe's GPU before the run: 0",
         "compute processes on the probe's GPU after the run: 0",
         "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
-        "nvidia-smi over the run (17 samples): memory clock 850..850 MHz, SM clock 135..1447 MHz, P-state P2"
+        "nvidia-smi over the run (17 samples): memory clock 850..850 MHz, SM clock 322..1447 MHz, P-state P2"
       ],
       "facts": {
         "mma_cycles_per_sm": {
@@ -63,11 +65,11 @@
           "unit": "clk"
         },
         "mma_cycles_per_sm_w16": {
-          "value": 2.013,
+          "value": 2.012,
           "unit": "clk"
         },
         "mma_dependent_latency": {
-          "value": 26.356,
+          "value": 26.409,
           "unit": "clk"
         },
         "fp32_cycles_per_warp_instruction": {
@@ -91,39 +93,39 @@
           "unit": "clk"
         },
         "l1_latency_w8": {
-          "value": 28.042,
+          "value": 28.043,
           "unit": "clk"
         },
         "l2_latency_w1": {
-          "value": 202.497,
+          "value": 202.517,
           "unit": "clk"
         },
         "l2_latency_w2": {
-          "value": 202.995,
+          "value": 202.991,
           "unit": "clk"
         },
         "l2_latency_w4": {
-          "value": 204.531,
+          "value": 204.526,
           "unit": "clk"
         },
         "l2_latency_w8": {
-          "value": 206.35,
+          "value": 206.339,
           "unit": "clk"
         },
         "dram_latency_w1": {
-          "value": 467.289,
+          "value": 468.166,
           "unit": "clk"
         },
         "dram_latency_w2": {
-          "value": 480.506,
+          "value": 480.436,
           "unit": "clk"
         },
         "dram_latency_w4": {
-          "value": 504.615,
+          "value": 504.414,
           "unit": "clk"
         },
         "dram_latency_w8": {
-          "value": 541.494,
+          "value": 539.891,
           "unit": "clk"
         },
         "l2_latency_ns_w1": {
@@ -159,23 +161,23 @@
           "unit": "ns"
         },
         "dram_tlbwarm_latency_w1": {
-          "value": 462.086,
+          "value": 460.473,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w2": {
-          "value": 477.791,
+          "value": 479.107,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w4": {
-          "value": 494.506,
+          "value": 494.197,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w8": {
-          "value": 530.945,
+          "value": 530.59,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_ns_w1": {
-          "value": 320.0,
+          "value": 318.0,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w2": {
@@ -187,11 +189,11 @@
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w8": {
-          "value": 368.0,
+          "value": 366.0,
           "unit": "ns"
         },
         "sm_clock_mhz_chase": {
-          "value": 1447.845,
+          "value": 1447.364,
           "unit": "mhz"
         },
         "shared_latency": {
@@ -247,23 +249,23 @@
           "unit": "clk"
         },
         "sm_clock_mhz_mma": {
-          "value": 1447.13,
+          "value": 1447.113,
           "unit": "mhz"
         },
         "dram_lanes_latency_w1": {
-          "value": 979.906,
+          "value": 977.305,
           "unit": "clk"
         },
         "dram_lanes_latency_w2": {
-          "value": 1544.551,
+          "value": 1541.547,
           "unit": "clk"
         },
         "dram_lanes_latency_w4": {
-          "value": 2878.395,
+          "value": 2878.539,
           "unit": "clk"
         },
         "dram_lanes_latency_w8": {
-          "value": 5606.344,
+          "value": 5615.773,
           "unit": "clk"
         },
         "dram_lanes_latency_ns_w1": {
@@ -271,7 +273,7 @@
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w2": {
-          "value": 1068.0,
+          "value": 1064.0,
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w4": {
@@ -279,27 +281,27 @@
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w8": {
-          "value": 3876.0,
+          "value": 3880.0,
           "unit": "ns"
         },
         "dram_lanes_half_latency_w1": {
-          "value": 770.621,
+          "value": 773.82,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w2": {
-          "value": 985.301,
+          "value": 987.523,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w4": {
-          "value": 1556.68,
+          "value": 1556.039,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w8": {
-          "value": 2890.488,
+          "value": 2886.984,
           "unit": "clk"
         },
         "dram_lanes_half_latency_ns_w1": {
-          "value": 532.0,
+          "value": 536.0,
           "unit": "ns"
         },
         "dram_lanes_half_latency_ns_w2": {
@@ -319,95 +321,95 @@
           "unit": "clk"
         },
         "l1_held_latency_w2": {
-          "value": 28.048,
+          "value": 28.046,
           "unit": "clk"
         },
         "l1_held_latency_w4": {
-          "value": 28.205,
+          "value": 28.203,
           "unit": "clk"
         },
         "l1_held_latency_w8": {
-          "value": 28.387,
+          "value": 28.396,
           "unit": "clk"
         },
         "l2_held_latency_w1": {
-          "value": 202.541,
+          "value": 202.597,
           "unit": "clk"
         },
         "l2_held_latency_w2": {
-          "value": 203.236,
+          "value": 205.464,
           "unit": "clk"
         },
         "l2_held_latency_w4": {
-          "value": 204.595,
+          "value": 204.629,
           "unit": "clk"
         },
         "l2_held_latency_w8": {
-          "value": 206.387,
+          "value": 206.412,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w1": {
-          "value": 462.217,
+          "value": 462.584,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w2": {
-          "value": 481.67,
+          "value": 479.463,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w4": {
-          "value": 494.002,
+          "value": 493.275,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w8": {
-          "value": 530.67,
+          "value": 531.201,
           "unit": "clk"
         },
         "dram_held_latency_w1": {
-          "value": 466.748,
+          "value": 468.42,
           "unit": "clk"
         },
         "dram_held_latency_w2": {
-          "value": 478.832,
+          "value": 481.352,
           "unit": "clk"
         },
         "dram_held_latency_w4": {
-          "value": 504.375,
+          "value": 503.785,
           "unit": "clk"
         },
         "dram_held_latency_w8": {
-          "value": 540.785,
+          "value": 540.328,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w1": {
-          "value": 978.098,
+          "value": 979.074,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w2": {
-          "value": 1516.793,
+          "value": 1520.777,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w4": {
-          "value": 2878.918,
+          "value": 2879.199,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w8": {
-          "value": 5607.551,
+          "value": 5617.875,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w1": {
-          "value": 773.488,
+          "value": 771.0,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w2": {
-          "value": 986.953,
+          "value": 984.453,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w4": {
-          "value": 1552.332,
+          "value": 1557.211,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w8": {
-          "value": 2888.492,
+          "value": 2887.836,
           "unit": "clk"
         },
         "l2_held_latency_ns_w1": {
@@ -415,7 +417,7 @@
           "unit": "ns"
         },
         "l2_held_latency_ns_w2": {
-          "value": 140.5,
+          "value": 142.0,
           "unit": "ns"
         },
         "l2_held_latency_ns_w4": {
@@ -423,7 +425,7 @@
           "unit": "ns"
         },
         "l2_held_latency_ns_w8": {
-          "value": 142.5,
+          "value": 142.75,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w1": {
@@ -443,7 +445,7 @@
           "unit": "ns"
         },
         "dram_held_latency_ns_w1": {
-          "value": 322.0,
+          "value": 324.0,
           "unit": "ns"
         },
         "dram_held_latency_ns_w2": {
@@ -463,19 +465,19 @@
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w2": {
-          "value": 1048.0,
+          "value": 1052.0,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w4": {
-          "value": 1992.0,
+          "value": 1988.0,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w8": {
-          "value": 3876.0,
+          "value": 3884.0,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w1": {
-          "value": 536.0,
+          "value": 532.0,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w2": {
@@ -483,7 +485,7 @@
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w4": {
-          "value": 1072.0,
+          "value": 1076.0,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w8": {
@@ -491,8 +493,20 @@
           "unit": "ns"
         },
         "sm_clock_mhz_chase_held": {
-          "value": 1446.737,
+          "value": 1446.812,
           "unit": "mhz"
+        },
+        "l1_ldg32_cycles_per_sm": {
+          "value": 1.614,
+          "unit": "clk"
+        },
+        "l2_ldg32_cycles_per_sm": {
+          "value": 5.76,
+          "unit": "clk"
+        },
+        "l2_bytes_per_sm_clock": {
+          "value": 22.221,
+          "unit": "byte"
         }
       },
       "launch": {
@@ -502,38 +516,38 @@
         "cc": 70,
         "sms": 80,
         "tool": {
-          "probe": "launch_probe 2",
+          "probe": "launch_probe 3",
           "nvcc": "12.8.93",
           "driver": "13000",
           "runtime": "12080",
           "arch": "sm_70",
-          "source_sha256": "183ab2b3440878fdea654c118941d1cab7b7eb522516e7d6c0e9714853993d05"
+          "source_sha256": "4937fa78ad50bf81b962401203509ea7d5a83ec4f87813be2845728f3c907428"
         },
         "notes": [
           "device 0 is the GPU at PCI 0000:01:00.0",
           "timer: CUDA events (a 1.024 us tick on the consumer boards and the GV100); a fact is the median over 15 repeats of the slope between series of 1 and 1024 graph nodes, or 1 and 256 stream launches, each series queued behind a 20 ms hold of FFMAs on every SM, a 200 ms hold before the first kind",
-          "node_ns: cudaGraphLaunch of the 1024-node graph kept the host 103.3 us on an idle stream, 90.1 us behind a 20 ms hold",
-          "node_ns: medians over 15 timings 3.072 us (N = 1; 3.072000..4.128000), 243.712 us (N = 256), 970.752 us (N = 1024; 960.511982..1129.472017); median slope 943.7 ns over N = 256, 945.9 over 1024 (935.913961..1100.074308); the host queued the series in at most 1.3, 33.3, 100.8 us",
+          "node_ns: cudaGraphLaunch of the 1024-node graph kept the host 106.1 us on an idle stream, 96.5 us behind a 20 ms hold",
+          "node_ns: medians over 15 timings 3.072 us (N = 1; 3.072000..4.096000), 243.712 us (N = 256), 970.752 us (N = 1024; 960.511982..1122.336030); median slope 943.7 ns over N = 256, 945.9 over 1024 (935.913961..1093.098759); the host queued the series in at most 1.3, 53.0, 100.8 us",
           "node_pdl_ns: the 1024-node graph has 1023 edges, 1023 programmatic",
-          "node_pdl_ns: cudaGraphLaunch of the 1024-node graph kept the host 407.7 us on an idle stream, 20010.1 us behind a 20 ms hold",
-          "node_pdl_ns: medians over 15 timings 3.072 us (N = 1; 3.072000..3.072000), 354.304 us (N = 256), 1420.288 us (N = 1024; 1418.239951..1459.200025); median slope 1377.4 ns over N = 256, 1385.4 over 1024 (1383.350881..1423.390053); the host queued the series in at most 1.3, 119.5, 20011.0 us",
-          "node_pdl_ns not measured: the host had not queued a series when its hold ended (at most 20010.953000 us for the longest, the hold 20000 us)",
-          "stream_ns: medians over 15 timings 3.072 us (N = 1; 3.072000..3.072000), 90.112 us (N = 64), 355.392 us (N = 256; 355.327994..360.448003); median slope 1381.6 ns over N = 64, 1381.6 over 256 (1381.396053..1401.474520); the host queued the series in at most 0.8, 45.7, 182.0 us",
-          "stream_ns: the host queued 256 launches in 182.0 us (the machine's CPU, not a fact of the card)",
-          "floor_ns_1: cudaGraphLaunch of the 1024-node graph kept the host 88.5 us on an idle stream, 75.4 us behind a 20 ms hold",
-          "floor_ns_1: medians over 15 timings 3.072 us (N = 1; 3.072000..3.072000), 238.592 us (N = 256), 953.344 us (N = 1024; 943.104029..955.392003); median slope 923.6 ns over N = 256, 928.9 over 1024 (918.897389..930.909094); the host queued the series in at most 1.5, 26.0, 92.1 us",
+          "node_pdl_ns: cudaGraphLaunch of the 1024-node graph kept the host 405.4 us on an idle stream, 20010.0 us behind a 20 ms hold",
+          "node_pdl_ns: medians over 15 timings 3.072 us (N = 1; 3.072000..4.096000), 354.304 us (N = 256), 1414.144 us (N = 1024; 1411.072016..1426.432014); median slope 1377.4 ns over N = 256, 1379.3 over 1024 (1376.344101..1391.358762); the host queued the series in at most 1.3, 105.7, 20010.5 us",
+          "node_pdl_ns not measured: the host had not queued a series when its hold ended (at most 20010.488000 us for the longest, the hold 20000 us)",
+          "stream_ns: medians over 15 timings 3.072 us (N = 1; 3.072000..4.096000), 91.168 us (N = 64), 360.448 us (N = 256; 359.423995..361.472011); median slope 1398.3 ns over N = 64, 1401.5 over 256 (1393.443118..1405.490237); the host queued the series in at most 0.8, 46.0, 182.5 us",
+          "stream_ns: the host queued 256 launches in 182.5 us (the machine's CPU, not a fact of the card)",
+          "floor_ns_1: cudaGraphLaunch of the 1024-node graph kept the host 93.2 us on an idle stream, 75.6 us behind a 20 ms hold",
+          "floor_ns_1: medians over 15 timings 3.072 us (N = 1; 3.072000..3.072000), 239.616 us (N = 256), 953.344 us (N = 1024; 943.104029..956.416011); median slope 927.6 ns over N = 256, 928.9 over 1024 (918.897389..931.910079); the host queued the series in at most 1.0, 47.6, 102.4 us",
           "floor_ns_1: 1 CTAs of 128 threads",
-          "floor_ns_sms: cudaGraphLaunch of the 1024-node graph kept the host 85.5 us on an idle stream, 76.5 us behind a 20 ms hold",
-          "floor_ns_sms: medians over 15 timings 4.096 us (N = 1; 3.072000..4.096000), 271.360 us (N = 256), 1077.248 us (N = 1024; 1064.960003..1080.320001); median slope 1048.1 ns over N = 256, 1050.0 over 1024 (1037.012711..1052.027371); the host queued the series in at most 2.0, 32.6, 173.5 us",
+          "floor_ns_sms: cudaGraphLaunch of the 1024-node graph kept the host 90.9 us on an idle stream, 76.4 us behind a 20 ms hold",
+          "floor_ns_sms: medians over 15 timings 4.096 us (N = 1; 3.072000..4.096000), 271.360 us (N = 256), 1077.248 us (N = 1024; 1064.960003..1079.295993); median slope 1048.1 ns over N = 256, 1049.0 over 1024 (1037.012711..1052.027363); the host queued the series in at most 1.5, 22.4, 87.7 us",
           "floor_ns_sms: 80 CTAs of 128 threads",
-          "floor_ns_4sms: cudaGraphLaunch of the 1024-node graph kept the host 94.2 us on an idle stream, 80.0 us behind a 20 ms hold",
-          "floor_ns_4sms: medians over 15 timings 4.096 us (N = 1; 3.072000..5.120000), 361.472 us (N = 256), 1439.744 us (N = 1024; 1438.719988..1441.792011); median slope 1401.5 ns over N = 256, 1403.4 over 1024 (1402.369490..1405.372445); the host queued the series in at most 1.4, 39.9, 137.9 us",
+          "floor_ns_4sms: cudaGraphLaunch of the 1024-node graph kept the host 84.6 us on an idle stream, 78.0 us behind a 20 ms hold",
+          "floor_ns_4sms: medians over 15 timings 4.096 us (N = 1; 3.072000..4.096000), 361.472 us (N = 256), 1439.744 us (N = 1024; 1438.719988..1455.103993); median slope 1401.5 ns over N = 256, 1403.4 over 1024 (1402.369490..1418.385135); the host queued the series in at most 0.9, 22.5, 88.8 us",
           "floor_ns_4sms: 320 CTAs of 128 threads",
-          "floor_ns_1024: cudaGraphLaunch of the 1024-node graph kept the host 94.0 us on an idle stream, 75.9 us behind a 20 ms hold",
-          "floor_ns_1024: medians over 15 timings 5.120 us (N = 1; 4.096000..5.120000), 629.760 us (N = 256), 2513.920 us (N = 1024; 2511.904001..2514.944077); median slope 2449.6 ns over N = 256, 2452.4 over 1024 (2451.362660..2454.396947); the host queued the series in at most 1.8, 24.4, 97.2 us",
+          "floor_ns_1024: cudaGraphLaunch of the 1024-node graph kept the host 87.6 us on an idle stream, 82.8 us behind a 20 ms hold",
+          "floor_ns_1024: medians over 15 timings 5.120 us (N = 1; 4.160000..5.120000), 629.760 us (N = 256), 2513.920 us (N = 1024; 2512.896061..2514.944077); median slope 2449.6 ns over N = 256, 2452.4 over 1024 (2451.393999..2453.395969); the host queued the series in at most 1.1, 22.4, 88.1 us",
           "floor_ns_1024: 1024 CTAs of 128 threads",
-          "floor_ns_4096: cudaGraphLaunch of the 1024-node graph kept the host 84.7 us on an idle stream, 82.6 us behind a 20 ms hold",
-          "floor_ns_4096: medians over 15 timings 9.216 us (N = 1; 9.216000..10.240000), 1802.240 us (N = 256), 7200.768 us (N = 1024; 7200.767994..7201.791763); median slope 7027.5 ns over N = 256, 7029.9 over 1024 (7028.864119..7030.865848); the host queued the series in at most 2.1, 34.8, 88.5 us",
+          "floor_ns_4096: cudaGraphLaunch of the 1024-node graph kept the host 84.2 us on an idle stream, 82.2 us behind a 20 ms hold",
+          "floor_ns_4096: medians over 15 timings 9.216 us (N = 1; 9.216000..9.216000), 1801.216 us (N = 256), 7200.768 us (N = 1024; 7200.767994..7201.791763); median slope 7027.5 ns over N = 256, 7029.9 over 1024 (7029.865096..7030.865848); the host queued the series in at most 1.0, 26.8, 87.5 us",
           "floor_ns_4096: 4096 CTAs of 128 threads",
           "compute processes on the probe's GPU before the run: 0",
           "compute processes on the probe's GPU after the run: 0",
@@ -546,7 +560,7 @@
             "unit": "ns"
           },
           "stream_ns": {
-            "value": 1381.647,
+            "value": 1401.475,
             "unit": "ns"
           },
           "floor_ns_1": {
@@ -554,7 +568,7 @@
             "unit": "ns"
           },
           "floor_ns_sms": {
-            "value": 1050.025,
+            "value": 1049.024,
             "unit": "ns"
           },
           "floor_ns_4sms": {
@@ -584,12 +598,12 @@
       "sass_per_mma": 1,
       "mem_clock_khz": 7000000,
       "tool": {
-        "probe": "isa_probe 17",
+        "probe": "isa_probe 19",
         "nvcc": "13.4.92",
         "driver": "13040",
         "runtime": "13040",
         "arch": "sm_75",
-        "source_sha256": "cde151411d78b687c618a444a700b23561ccc123cb64e112f6a258fa828bdefd"
+        "source_sha256": "132147e65607667cf893f959e2a55c706700baf5443874cbb80edbcae5bb5f04"
       },
       "notes": [
         "device 0 is the GPU at PCI 0000:01:00.0",
@@ -597,14 +611,23 @@
         "mma_cycles_per_sm_w4: 68 of 68 SMs ran 1 CTA(s) of 4 warps at once, the others are left out",
         "mma_cycles_per_sm_w8: 68 of 68 SMs ran 1 CTA(s) of 8 warps at once, the others are left out",
         "mma_cycles_per_sm_w16: 68 of 68 SMs ran 1 CTA(s) of 16 warps at once, the others are left out",
-        "the SM clock under the MMA loop: 1350 MHz at the first of 856 launches, 1979..1981 over the last quarter",
+        "imma_wide_cycles_per_sm: 68 of 68 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "imma_wide_cycles_per_partition_w4: 68 of 68 SMs ran 1 CTA(s) of 4 warps at once, the others are left out",
+        "imma_wide_cycles_per_partition_w8: 68 of 68 SMs ran 1 CTA(s) of 8 warps at once, the others are left out",
+        "imma_narrow_cycles_per_sm: 68 of 68 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "imma_narrow_cycles_per_partition_w4: 68 of 68 SMs ran 1 CTA(s) of 4 warps at once, the others are left out",
+        "imma_narrow_cycles_per_partition_w8: 68 of 68 SMs ran 1 CTA(s) of 8 warps at once, the others are left out",
+        "the SM clock under the MMA loop: 1350 MHz at the first of 875 launches, 1979..1981 over the last quarter",
         "fp32_cycles_per_warp_instruction: 68 of 68 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
         "int32_cycles_per_warp_instruction: 68 of 68 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
-        "l1_held_latency_w2: 52 of 68 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "l2_held_latency_w2: 42 of 68 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_tlbwarm_held_latency_w2: 36 of 68 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "l1_ldg32_cycles_per_sm: 68 of 68 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "l2_ldg32_cycles_per_sm: 68 of 68 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "l1_held_latency_w2: 46 of 68 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "l2_held_latency_w2: 32 of 68 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "dram_tlbwarm_held_latency_w2: 32 of 68 CTAs had an SM to themselves and one FFMA warp, the others are left out",
         "dram_held_latency_w2: 24 of 68 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_lanes_held_latency_w2: 36 of 68 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "dram_lanes_held_latency_w2: 34 of 68 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "dram_lanes_half_held_latency_w2: 28 of 34 CTAs had an SM to themselves and one FFMA warp, the others are left out",
         "compute processes on the probe's GPU before the run: 0",
         "compute processes on the probe's GPU after the run: 0",
         "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
@@ -656,7 +679,7 @@
           "unit": "clk"
         },
         "l1_latency_w4": {
-          "value": 32.822,
+          "value": 32.035,
           "unit": "clk"
         },
         "l1_latency_w8": {
@@ -664,59 +687,59 @@
           "unit": "clk"
         },
         "l2_latency_w1": {
-          "value": 217.902,
+          "value": 217.914,
           "unit": "clk"
         },
         "l2_latency_w2": {
-          "value": 217.348,
+          "value": 217.381,
           "unit": "clk"
         },
         "l2_latency_w4": {
-          "value": 216.981,
+          "value": 217.02,
           "unit": "clk"
         },
         "l2_latency_w8": {
-          "value": 216.803,
+          "value": 216.815,
           "unit": "clk"
         },
         "dram_latency_w1": {
-          "value": 498.951,
+          "value": 499.244,
           "unit": "clk"
         },
         "dram_latency_w2": {
-          "value": 486.609,
+          "value": 487.266,
           "unit": "clk"
         },
         "dram_latency_w4": {
-          "value": 506.979,
+          "value": 506.975,
           "unit": "clk"
         },
         "dram_latency_w8": {
-          "value": 574.105,
+          "value": 573.371,
           "unit": "clk"
         },
         "l2_latency_ns_w1": {
-          "value": 109.992,
+          "value": 110.055,
           "unit": "ns"
         },
         "l2_latency_ns_w2": {
-          "value": 109.68,
+          "value": 109.891,
           "unit": "ns"
         },
         "l2_latency_ns_w4": {
-          "value": 109.5,
+          "value": 109.773,
           "unit": "ns"
         },
         "l2_latency_ns_w8": {
-          "value": 109.492,
+          "value": 109.5,
           "unit": "ns"
         },
         "dram_latency_ns_w1": {
-          "value": 252.0,
+          "value": 252.062,
           "unit": "ns"
         },
         "dram_latency_ns_w2": {
-          "value": 245.0,
+          "value": 247.25,
           "unit": "ns"
         },
         "dram_latency_ns_w4": {
@@ -724,43 +747,43 @@
           "unit": "ns"
         },
         "dram_latency_ns_w8": {
-          "value": 290.0,
+          "value": 290.312,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_w1": {
-          "value": 491.805,
+          "value": 492.783,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w2": {
-          "value": 478.666,
+          "value": 477.799,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w4": {
-          "value": 499.266,
+          "value": 498.941,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w8": {
-          "value": 566.512,
+          "value": 568.723,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_ns_w1": {
-          "value": 248.188,
+          "value": 248.0,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w2": {
-          "value": 241.125,
+          "value": 241.0,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w4": {
-          "value": 251.938,
+          "value": 252.062,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w8": {
-          "value": 287.062,
+          "value": 287.812,
           "unit": "ns"
         },
         "sm_clock_mhz_chase": {
-          "value": 1980.749,
+          "value": 1979.994,
           "unit": "mhz"
         },
         "shared_latency": {
@@ -816,71 +839,71 @@
           "unit": "clk"
         },
         "sm_clock_mhz_mma": {
-          "value": 1979.96,
+          "value": 1979.85,
           "unit": "mhz"
         },
         "dram_lanes_latency_w1": {
-          "value": 1467.781,
+          "value": 1462.977,
           "unit": "clk"
         },
         "dram_lanes_latency_w2": {
-          "value": 2701.246,
+          "value": 2698.484,
           "unit": "clk"
         },
         "dram_lanes_latency_w4": {
-          "value": 5196.293,
+          "value": 5198.773,
           "unit": "clk"
         },
         "dram_lanes_latency_w8": {
-          "value": 10123.148,
+          "value": 10164.727,
           "unit": "clk"
         },
         "dram_lanes_latency_ns_w1": {
-          "value": 742.5,
+          "value": 739.375,
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w2": {
-          "value": 1363.75,
+          "value": 1362.875,
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w4": {
-          "value": 2624.125,
+          "value": 2625.125,
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w8": {
-          "value": 5112.375,
+          "value": 5135.875,
           "unit": "ns"
         },
         "dram_lanes_half_latency_w1": {
-          "value": 941.227,
+          "value": 937.902,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w2": {
-          "value": 1479.828,
+          "value": 1474.094,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w4": {
-          "value": 2707.766,
+          "value": 2718.074,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w8": {
-          "value": 5200.887,
+          "value": 5200.297,
           "unit": "clk"
         },
         "dram_lanes_half_latency_ns_w1": {
-          "value": 474.875,
+          "value": 473.625,
           "unit": "ns"
         },
         "dram_lanes_half_latency_ns_w2": {
-          "value": 746.375,
+          "value": 745.0,
           "unit": "ns"
         },
         "dram_lanes_half_latency_ns_w4": {
-          "value": 1367.875,
+          "value": 1373.75,
           "unit": "ns"
         },
         "dram_lanes_half_latency_ns_w8": {
-          "value": 2626.875,
+          "value": 2625.625,
           "unit": "ns"
         },
         "l1_held_latency_w1": {
@@ -888,7 +911,7 @@
           "unit": "clk"
         },
         "l1_held_latency_w2": {
-          "value": 33.026,
+          "value": 32.796,
           "unit": "clk"
         },
         "l1_held_latency_w4": {
@@ -896,159 +919,159 @@
           "unit": "clk"
         },
         "l1_held_latency_w8": {
-          "value": 33.04,
+          "value": 33.042,
           "unit": "clk"
         },
         "l2_held_latency_w1": {
-          "value": 218.306,
+          "value": 217.931,
           "unit": "clk"
         },
         "l2_held_latency_w2": {
-          "value": 219.815,
+          "value": 222.554,
           "unit": "clk"
         },
         "l2_held_latency_w4": {
-          "value": 217.045,
+          "value": 217.08,
           "unit": "clk"
         },
         "l2_held_latency_w8": {
-          "value": 216.868,
+          "value": 216.892,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w1": {
-          "value": 492.273,
+          "value": 491.715,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w2": {
-          "value": 482.17,
+          "value": 479.488,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w4": {
-          "value": 499.396,
+          "value": 499.045,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w8": {
-          "value": 566.512,
+          "value": 566.275,
           "unit": "clk"
         },
         "dram_held_latency_w1": {
-          "value": 499.396,
+          "value": 501.494,
           "unit": "clk"
         },
         "dram_held_latency_w2": {
-          "value": 490.73,
+          "value": 491.643,
           "unit": "clk"
         },
         "dram_held_latency_w4": {
-          "value": 507.299,
+          "value": 507.35,
           "unit": "clk"
         },
         "dram_held_latency_w8": {
-          "value": 571.994,
+          "value": 573.902,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w1": {
-          "value": 1463.008,
+          "value": 1468.871,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w2": {
-          "value": 2658.23,
+          "value": 2659.535,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w4": {
-          "value": 5194.609,
+          "value": 5187.102,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w8": {
-          "value": 10137.227,
+          "value": 10143.375,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w1": {
-          "value": 940.781,
+          "value": 941.066,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w2": {
-          "value": 1475.844,
+          "value": 1466.828,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w4": {
-          "value": 2706.629,
+          "value": 2707.418,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w8": {
-          "value": 5197.711,
+          "value": 5209.422,
           "unit": "clk"
         },
         "l2_held_latency_ns_w1": {
-          "value": 110.383,
+          "value": 110.062,
           "unit": "ns"
         },
         "l2_held_latency_ns_w2": {
-          "value": 111.0,
+          "value": 112.398,
           "unit": "ns"
         },
         "l2_held_latency_ns_w4": {
-          "value": 109.578,
+          "value": 109.633,
           "unit": "ns"
         },
         "l2_held_latency_ns_w8": {
-          "value": 109.508,
+          "value": 109.5,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w1": {
-          "value": 248.375,
+          "value": 248.062,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w2": {
-          "value": 243.562,
+          "value": 243.25,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w4": {
-          "value": 252.0,
+          "value": 251.938,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w8": {
-          "value": 286.375,
+          "value": 286.188,
           "unit": "ns"
         },
         "dram_held_latency_ns_w1": {
-          "value": 252.125,
+          "value": 252.062,
           "unit": "ns"
         },
         "dram_held_latency_ns_w2": {
-          "value": 247.812,
+          "value": 247.938,
           "unit": "ns"
         },
         "dram_held_latency_ns_w4": {
-          "value": 256.125,
+          "value": 256.0,
           "unit": "ns"
         },
         "dram_held_latency_ns_w8": {
-          "value": 288.812,
+          "value": 290.25,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w1": {
-          "value": 737.0,
+          "value": 743.375,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w2": {
-          "value": 1343.75,
+          "value": 1343.875,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w4": {
-          "value": 2623.875,
+          "value": 2620.625,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w8": {
-          "value": 5119.875,
+          "value": 5120.5,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w1": {
-          "value": 474.625,
+          "value": 474.875,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w2": {
-          "value": 744.875,
+          "value": 741.0,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w4": {
@@ -1056,12 +1079,56 @@
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w8": {
-          "value": 2624.0,
+          "value": 2631.75,
           "unit": "ns"
         },
         "sm_clock_mhz_chase_held": {
-          "value": 1980.503,
+          "value": 1980.063,
           "unit": "mhz"
+        },
+        "l1_ldg32_cycles_per_sm": {
+          "value": 2.06,
+          "unit": "clk"
+        },
+        "l2_ldg32_cycles_per_sm": {
+          "value": 8.154,
+          "unit": "clk"
+        },
+        "l2_bytes_per_sm_clock": {
+          "value": 15.698,
+          "unit": "byte"
+        },
+        "imma_wide_cycles_per_partition": {
+          "value": 4.026,
+          "unit": "clk"
+        },
+        "imma_wide_cycles_per_partition_w4": {
+          "value": 4.203,
+          "unit": "clk"
+        },
+        "imma_wide_cycles_per_partition_w8": {
+          "value": 4.027,
+          "unit": "clk"
+        },
+        "imma_wide_dependent_latency": {
+          "value": 10.06,
+          "unit": "clk"
+        },
+        "imma_narrow_cycles_per_partition": {
+          "value": 4.026,
+          "unit": "clk"
+        },
+        "imma_narrow_cycles_per_partition_w4": {
+          "value": 4.203,
+          "unit": "clk"
+        },
+        "imma_narrow_cycles_per_partition_w8": {
+          "value": 4.027,
+          "unit": "clk"
+        },
+        "imma_narrow_dependent_latency": {
+          "value": 10.061,
+          "unit": "clk"
         }
       },
       "launch": {
@@ -1071,71 +1138,71 @@
         "cc": 75,
         "sms": 68,
         "tool": {
-          "probe": "launch_probe 2",
+          "probe": "launch_probe 3",
           "nvcc": "13.4.92",
           "driver": "13040",
           "runtime": "13040",
           "arch": "sm_75",
-          "source_sha256": "183ab2b3440878fdea654c118941d1cab7b7eb522516e7d6c0e9714853993d05"
+          "source_sha256": "4937fa78ad50bf81b962401203509ea7d5a83ec4f87813be2845728f3c907428"
         },
         "notes": [
           "device 0 is the GPU at PCI 0000:01:00.0",
           "timer: CUDA events (a 1.024 us tick on the consumer boards and the GV100); a fact is the median over 15 repeats of the slope between series of 1 and 1024 graph nodes, or 1 and 256 stream launches, each series queued behind a 20 ms hold of FFMAs on every SM, a 200 ms hold before the first kind",
-          "node_ns: cudaGraphLaunch of the 1024-node graph kept the host 183.1 us on an idle stream, 169.9 us behind a 20 ms hold",
-          "node_ns: medians over 15 timings 2.848 us (N = 1; 2.304000..4.256000), 179.168 us (N = 256), 707.328 us (N = 1024; 704.735994..713.536024); median slope 690.9 ns over N = 256, 688.4 over 1024 (685.356785..694.521978); the host queued the series in at most 3.4, 59.8, 234.8 us",
+          "node_ns: cudaGraphLaunch of the 1024-node graph kept the host 197.3 us on an idle stream, 168.1 us behind a 20 ms hold",
+          "node_ns: medians over 15 timings 2.944 us (N = 1; 2.560000..4.160000), 177.952 us (N = 256), 701.344 us (N = 1024; 694.751978..707.423985); median slope 685.8 ns over N = 256, 682.7 over 1024 (676.254133..687.515137); the host queued the series in at most 1.8, 49.7, 167.4 us",
           "node_pdl_ns: the 1024-node graph has 1023 edges, 1023 programmatic",
-          "node_pdl_ns: cudaGraphLaunch of the 1024-node graph kept the host 909.3 us on an idle stream, 20008.6 us behind a 20 ms hold",
-          "node_pdl_ns: medians over 15 timings 2.880 us (N = 1; 2.400000..4.096000), 221.888 us (N = 256), 887.712 us (N = 1024; 864.448011..997.280002); median slope 858.4 ns over N = 256, 864.9 over 1024 (841.696956..971.386121); the host queued the series in at most 2.1, 235.7, 20011.0 us",
-          "node_pdl_ns not measured: the host had not queued a series when its hold ended (at most 20010.961000 us for the longest, the hold 20000 us)",
-          "stream_ns: medians over 15 timings 3.040 us (N = 1; 2.784000..4.096000), 65.440 us (N = 64), 255.456 us (N = 256; 253.951997..256.000012); median slope 989.0 ns over N = 64, 986.6 over 256 (980.956887..992.000047); the host queued the series in at most 1.8, 86.0, 345.4 us",
-          "stream_ns: the host queued 256 launches in 329.7 us (the machine's CPU, not a fact of the card)",
-          "floor_ns_1: cudaGraphLaunch of the 1024-node graph kept the host 157.0 us on an idle stream, 150.3 us behind a 20 ms hold",
-          "floor_ns_1: medians over 15 timings 3.072 us (N = 1; 2.496000..4.064000), 177.856 us (N = 256), 702.784 us (N = 1024; 700.608015..707.072020); median slope 685.9 ns over N = 256, 683.6 over 1024 (681.227776..688.172062); the host queued the series in at most 1.9, 50.1, 180.1 us",
+          "node_pdl_ns: cudaGraphLaunch of the 1024-node graph kept the host 846.4 us on an idle stream, 20007.5 us behind a 20 ms hold",
+          "node_pdl_ns: medians over 15 timings 2.912 us (N = 1; 2.496000..4.096000), 220.096 us (N = 256), 881.376 us (N = 1024; 858.528018..975.744009); median slope 852.8 ns over N = 256, 859.0 over 1024 (835.221914..950.334320); the host queued the series in at most 2.1, 214.2, 20010.7 us",
+          "node_pdl_ns not measured: the host had not queued a series when its hold ended (at most 20010.748000 us for the longest, the hold 20000 us)",
+          "stream_ns: medians over 15 timings 2.976 us (N = 1; 2.560000..4.096000), 64.416 us (N = 64), 253.504 us (N = 256; 251.904011..253.951997); median slope 975.2 ns over N = 64, 980.7 over 256 (972.549009..984.596065); the host queued the series in at most 1.3, 80.0, 346.9 us",
+          "stream_ns: the host queued 256 launches in 313.2 us (the machine's CPU, not a fact of the card)",
+          "floor_ns_1: cudaGraphLaunch of the 1024-node graph kept the host 155.5 us on an idle stream, 149.4 us behind a 20 ms hold",
+          "floor_ns_1: medians over 15 timings 3.040 us (N = 1; 2.752000..4.096000), 176.608 us (N = 256), 697.248 us (N = 1024; 694.751978..702.431977); median slope 680.2 ns over N = 256, 678.3 over 1024 (675.315762..683.354816); the host queued the series in at most 1.7, 43.1, 151.6 us",
           "floor_ns_1: 1 CTAs of 128 threads",
-          "floor_ns_sms: cudaGraphLaunch of the 1024-node graph kept the host 166.1 us on an idle stream, 155.9 us behind a 20 ms hold",
-          "floor_ns_sms: medians over 15 timings 3.360 us (N = 1; 2.592000..4.096000), 192.128 us (N = 256), 756.576 us (N = 1024; 756.128013..758.816004); median slope 740.4 ns over N = 256, 736.8 over 1024 (735.405692..738.846533); the host queued the series in at most 1.8, 44.0, 159.3 us",
+          "floor_ns_sms: cudaGraphLaunch of the 1024-node graph kept the host 156.5 us on an idle stream, 149.3 us behind a 20 ms hold",
+          "floor_ns_sms: medians over 15 timings 3.328 us (N = 1; 2.656000..4.096000), 191.456 us (N = 256), 751.616 us (N = 1024; 750.015974..759.808004); median slope 736.8 ns over N = 256, 731.6 over 1024 (729.493645..739.253181); the host queued the series in at most 1.7, 39.3, 150.1 us",
           "floor_ns_sms: 68 CTAs of 128 threads",
-          "floor_ns_4sms: cudaGraphLaunch of the 1024-node graph kept the host 159.8 us on an idle stream, 150.4 us behind a 20 ms hold",
-          "floor_ns_4sms: medians over 15 timings 3.424 us (N = 1; 2.400000..3.648000), 217.280 us (N = 256), 856.224 us (N = 1024; 853.568017..859.135985); median slope 837.9 ns over N = 256, 833.7 over 1024 (831.593370..836.285421); the host queued the series in at most 2.0, 44.7, 154.3 us",
+          "floor_ns_4sms: cudaGraphLaunch of the 1024-node graph kept the host 156.8 us on an idle stream, 150.4 us behind a 20 ms hold",
+          "floor_ns_4sms: medians over 15 timings 3.584 us (N = 1; 2.720000..4.096000), 217.152 us (N = 256), 855.776 us (N = 1024; 852.991998..857.728004); median slope 839.8 ns over N = 256, 833.0 over 1024 (830.623675..835.753670); the host queued the series in at most 1.7, 37.6, 154.8 us",
           "floor_ns_4sms: 272 CTAs of 128 threads",
-          "floor_ns_1024: cudaGraphLaunch of the 1024-node graph kept the host 156.6 us on an idle stream, 178.4 us behind a 20 ms hold",
-          "floor_ns_1024: medians over 15 timings 3.808 us (N = 1; 2.720000..4.192000), 313.248 us (N = 256), 1247.232 us (N = 1024; 1245.823979..1251.744032); median slope 1213.1 ns over N = 256, 1216.1 over 1024 (1213.966724..1219.503453); the host queued the series in at most 1.7, 39.5, 153.0 us",
+          "floor_ns_1024: cudaGraphLaunch of the 1024-node graph kept the host 154.5 us on an idle stream, 149.9 us behind a 20 ms hold",
+          "floor_ns_1024: medians over 15 timings 3.840 us (N = 1; 2.816000..4.480000), 313.024 us (N = 256), 1246.848 us (N = 1024; 1245.632052..1253.471971); median slope 1212.7 ns over N = 256, 1215.2 over 1024 (1213.466321..1221.286384); the host queued the series in at most 1.7, 39.4, 160.8 us",
           "floor_ns_1024: 1024 CTAs of 128 threads",
-          "floor_ns_4096: cudaGraphLaunch of the 1024-node graph kept the host 156.0 us on an idle stream, 149.1 us behind a 20 ms hold",
-          "floor_ns_4096: medians over 15 timings 5.408 us (N = 1; 4.416000..6.144000), 712.480 us (N = 256), 2840.800 us (N = 1024; 2839.263916..2842.623949); median slope 2771.8 ns over N = 256, 2772.0 over 1024 (2770.455631..2772.801514); the host queued the series in at most 1.7, 42.6, 180.2 us",
+          "floor_ns_4096: cudaGraphLaunch of the 1024-node graph kept the host 157.1 us on an idle stream, 150.3 us behind a 20 ms hold",
+          "floor_ns_4096: medians over 15 timings 5.056 us (N = 1; 4.480000..6.144000), 711.680 us (N = 256), 2839.008 us (N = 1024; 2838.399887..2841.311932); median slope 2770.7 ns over N = 256, 2770.1 over 1024 (2768.891395..2772.144769); the host queued the series in at most 3.2, 58.6, 237.1 us",
           "floor_ns_4096: 4096 CTAs of 128 threads",
           "compute processes on the probe's GPU before the run: 0",
           "compute processes on the probe's GPU after the run: 0",
           "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
-          "nvidia-smi over the run (40 samples): memory clock 405..6800 MHz, SM clock 300..1965 MHz, P-state P2/P8"
+          "nvidia-smi over the run (40 samples): memory clock 405..6800 MHz, SM clock 300..1995 MHz, P-state P2/P8"
         ],
         "facts": {
           "node_ns": {
-            "value": 688.422,
+            "value": 682.667,
             "unit": "ns"
           },
           "stream_ns": {
-            "value": 986.604,
+            "value": 980.706,
             "unit": "ns"
           },
           "floor_ns_1": {
-            "value": 683.636,
+            "value": 678.35,
             "unit": "ns"
           },
           "floor_ns_sms": {
-            "value": 736.845,
+            "value": 731.589,
             "unit": "ns"
           },
           "floor_ns_4sms": {
-            "value": 833.689,
+            "value": 833.001,
             "unit": "ns"
           },
           "floor_ns_1024": {
-            "value": 1216.094,
+            "value": 1215.218,
             "unit": "ns"
           },
           "floor_ns_4096": {
-            "value": 2771.957,
+            "value": 2770.08,
             "unit": "ns"
           }
         }
@@ -1153,12 +1220,12 @@
       "sass_per_mma": 1,
       "mem_clock_khz": 9751000,
       "tool": {
-        "probe": "isa_probe 17",
+        "probe": "isa_probe 19",
         "nvcc": "13.5.37",
         "driver": "13040",
         "runtime": "13050",
         "arch": "sm_86",
-        "source_sha256": "cde151411d78b687c618a444a700b23561ccc123cb64e112f6a258fa828bdefd"
+        "source_sha256": "132147e65607667cf893f959e2a55c706700baf5443874cbb80edbcae5bb5f04"
       },
       "notes": [
         "device 0 is the GPU at PCI 0000:01:00.0",
@@ -1166,13 +1233,21 @@
         "mma_cycles_per_sm_w4: 82 of 82 SMs ran 1 CTA(s) of 4 warps at once, the others are left out",
         "mma_cycles_per_sm_w8: 82 of 82 SMs ran 1 CTA(s) of 8 warps at once, the others are left out",
         "mma_cycles_per_sm_w16: 82 of 82 SMs ran 1 CTA(s) of 16 warps at once, the others are left out",
-        "the SM clock under the MMA loop: 1859 MHz at the first of 464 launches, 1979..1981 over the last quarter",
+        "imma_wide_cycles_per_sm: 82 of 82 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "imma_wide_cycles_per_partition_w4: 82 of 82 SMs ran 1 CTA(s) of 4 warps at once, the others are left out",
+        "imma_wide_cycles_per_partition_w8: 82 of 82 SMs ran 1 CTA(s) of 8 warps at once, the others are left out",
+        "imma_narrow_cycles_per_sm: 82 of 82 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "imma_narrow_cycles_per_partition_w4: 82 of 82 SMs ran 1 CTA(s) of 4 warps at once, the others are left out",
+        "imma_narrow_cycles_per_partition_w8: 82 of 82 SMs ran 1 CTA(s) of 8 warps at once, the others are left out",
+        "the SM clock under the MMA loop: 1861 MHz at the first of 465 launches, 1994..1995 over the last quarter",
         "fp32_cycles_per_warp_instruction: 82 of 82 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
         "int32_cycles_per_warp_instruction: 82 of 82 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "l1_ldg32_cycles_per_sm: 82 of 82 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "l2_ldg32_cycles_per_sm: 82 of 82 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
         "compute processes on the probe's GPU before the run: 0",
         "compute processes on the probe's GPU after the run: 0",
         "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
-        "nvidia-smi over the run (17 samples): memory clock 405..9501 MHz, SM clock 210..1980 MHz, P-state P2/P8"
+        "nvidia-smi over the run (17 samples): memory clock 405..9501 MHz, SM clock 210..1995 MHz, P-state P2/P8"
       ],
       "facts": {
         "mma_cycles_per_sm": {
@@ -1228,51 +1303,51 @@
           "unit": "clk"
         },
         "l2_latency_w1": {
-          "value": 227.909,
+          "value": 227.869,
           "unit": "clk"
         },
         "l2_latency_w2": {
-          "value": 227.578,
+          "value": 227.554,
           "unit": "clk"
         },
         "l2_latency_w4": {
-          "value": 227.339,
+          "value": 227.336,
           "unit": "clk"
         },
         "l2_latency_w8": {
-          "value": 227.09,
+          "value": 227.156,
           "unit": "clk"
         },
         "dram_latency_w1": {
-          "value": 526.322,
+          "value": 528.457,
           "unit": "clk"
         },
         "dram_latency_w2": {
-          "value": 524.311,
+          "value": 525.658,
           "unit": "clk"
         },
         "dram_latency_w4": {
-          "value": 527.771,
+          "value": 529.666,
           "unit": "clk"
         },
         "dram_latency_w8": {
-          "value": 540.209,
+          "value": 541.955,
           "unit": "clk"
         },
         "l2_latency_ns_w1": {
-          "value": 115.0,
+          "value": 114.25,
           "unit": "ns"
         },
         "l2_latency_ns_w2": {
-          "value": 115.0,
+          "value": 114.0,
           "unit": "ns"
         },
         "l2_latency_ns_w4": {
-          "value": 114.75,
+          "value": 113.75,
           "unit": "ns"
         },
         "l2_latency_ns_w8": {
-          "value": 114.75,
+          "value": 114.0,
           "unit": "ns"
         },
         "dram_latency_ns_w1": {
@@ -1292,23 +1367,23 @@
           "unit": "ns"
         },
         "dram_tlbwarm_latency_w1": {
-          "value": 517.221,
+          "value": 520.27,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w2": {
-          "value": 514.072,
+          "value": 516.184,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w4": {
-          "value": 517.623,
+          "value": 519.404,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w8": {
-          "value": 530.299,
+          "value": 532.582,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_ns_w1": {
-          "value": 262.0,
+          "value": 260.0,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w2": {
@@ -1316,19 +1391,19 @@
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w4": {
-          "value": 262.0,
+          "value": 260.0,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w8": {
-          "value": 268.0,
+          "value": 266.0,
           "unit": "ns"
         },
         "sm_clock_mhz_chase": {
-          "value": 1980.41,
+          "value": 1996.089,
           "unit": "mhz"
         },
         "shared_latency": {
-          "value": 23.105,
+          "value": 23.107,
           "unit": "clk"
         },
         "lat_imad": {
@@ -1380,23 +1455,23 @@
           "unit": "clk"
         },
         "sm_clock_mhz_mma": {
-          "value": 1979.71,
+          "value": 1994.916,
           "unit": "mhz"
         },
         "dram_lanes_latency_w1": {
-          "value": 999.344,
+          "value": 1007.195,
           "unit": "clk"
         },
         "dram_lanes_latency_w2": {
-          "value": 1543.617,
+          "value": 1550.074,
           "unit": "clk"
         },
         "dram_lanes_latency_w4": {
-          "value": 2780.496,
+          "value": 2804.742,
           "unit": "clk"
         },
         "dram_lanes_latency_w8": {
-          "value": 5396.969,
+          "value": 5455.703,
           "unit": "clk"
         },
         "dram_lanes_latency_ns_w1": {
@@ -1404,31 +1479,31 @@
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w2": {
-          "value": 780.0,
+          "value": 776.0,
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w4": {
-          "value": 1404.0,
+          "value": 1408.0,
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w8": {
-          "value": 2724.0,
+          "value": 2736.0,
           "unit": "ns"
         },
         "dram_lanes_half_latency_w1": {
-          "value": 810.16,
+          "value": 816.609,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w2": {
-          "value": 1000.215,
+          "value": 1006.855,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w4": {
-          "value": 1542.41,
+          "value": 1548.695,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w8": {
-          "value": 2786.242,
+          "value": 2812.23,
           "unit": "clk"
         },
         "dram_lanes_half_latency_ns_w1": {
@@ -1440,7 +1515,7 @@
           "unit": "ns"
         },
         "dram_lanes_half_latency_ns_w4": {
-          "value": 780.0,
+          "value": 776.0,
           "unit": "ns"
         },
         "dram_lanes_half_latency_ns_w8": {
@@ -1456,119 +1531,119 @@
           "unit": "clk"
         },
         "l1_held_latency_w4": {
-          "value": 34.035,
+          "value": 34.034,
           "unit": "clk"
         },
         "l1_held_latency_w8": {
-          "value": 34.045,
+          "value": 34.044,
           "unit": "clk"
         },
         "l2_held_latency_w1": {
-          "value": 228.178,
+          "value": 228.143,
           "unit": "clk"
         },
         "l2_held_latency_w2": {
-          "value": 227.638,
+          "value": 227.586,
           "unit": "clk"
         },
         "l2_held_latency_w4": {
-          "value": 227.38,
+          "value": 227.403,
           "unit": "clk"
         },
         "l2_held_latency_w8": {
-          "value": 227.235,
+          "value": 227.244,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w1": {
-          "value": 518.938,
+          "value": 520.84,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w2": {
-          "value": 514.857,
+          "value": 516.107,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w4": {
-          "value": 518.008,
+          "value": 519.561,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w8": {
-          "value": 531.105,
+          "value": 532.934,
           "unit": "clk"
         },
         "dram_held_latency_w1": {
-          "value": 527.877,
+          "value": 529.668,
           "unit": "clk"
         },
         "dram_held_latency_w2": {
-          "value": 523.967,
+          "value": 525.258,
           "unit": "clk"
         },
         "dram_held_latency_w4": {
-          "value": 528.439,
+          "value": 530.244,
           "unit": "clk"
         },
         "dram_held_latency_w8": {
-          "value": 540.15,
+          "value": 542.037,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w1": {
-          "value": 998.723,
+          "value": 1005.906,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w2": {
-          "value": 1540.508,
+          "value": 1550.672,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w4": {
-          "value": 2782.23,
+          "value": 2801.613,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w8": {
-          "value": 5408.316,
+          "value": 5434.211,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w1": {
-          "value": 811.164,
+          "value": 817.418,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w2": {
-          "value": 1003.172,
+          "value": 1006.504,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w4": {
-          "value": 1542.73,
+          "value": 1548.531,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w8": {
-          "value": 2784.047,
+          "value": 2814.086,
           "unit": "clk"
         },
         "l2_held_latency_ns_w1": {
-          "value": 115.25,
+          "value": 114.25,
           "unit": "ns"
         },
         "l2_held_latency_ns_w2": {
-          "value": 115.0,
+          "value": 114.0,
           "unit": "ns"
         },
         "l2_held_latency_ns_w4": {
-          "value": 114.75,
+          "value": 114.0,
           "unit": "ns"
         },
         "l2_held_latency_ns_w8": {
-          "value": 114.75,
+          "value": 114.0,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w1": {
-          "value": 262.0,
-          "unit": "ns"
-        },
-        "dram_tlbwarm_held_latency_ns_w2": {
           "value": 260.0,
           "unit": "ns"
         },
+        "dram_tlbwarm_held_latency_ns_w2": {
+          "value": 258.0,
+          "unit": "ns"
+        },
         "dram_tlbwarm_held_latency_ns_w4": {
-          "value": 262.0,
+          "value": 260.0,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w8": {
@@ -1604,28 +1679,72 @@
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w8": {
-          "value": 2732.0,
+          "value": 2724.0,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w1": {
-          "value": 412.0,
+          "value": 408.0,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w2": {
-          "value": 508.0,
+          "value": 504.0,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w4": {
-          "value": 780.0,
+          "value": 776.0,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w8": {
-          "value": 1408.0,
+          "value": 1412.0,
           "unit": "ns"
         },
         "sm_clock_mhz_chase_held": {
-          "value": 1980.677,
+          "value": 1995.53,
           "unit": "mhz"
+        },
+        "l1_ldg32_cycles_per_sm": {
+          "value": 2.051,
+          "unit": "clk"
+        },
+        "l2_ldg32_cycles_per_sm": {
+          "value": 8.096,
+          "unit": "clk"
+        },
+        "l2_bytes_per_sm_clock": {
+          "value": 15.809,
+          "unit": "byte"
+        },
+        "imma_wide_cycles_per_partition": {
+          "value": 16.018,
+          "unit": "clk"
+        },
+        "imma_wide_cycles_per_partition_w4": {
+          "value": 16.103,
+          "unit": "clk"
+        },
+        "imma_wide_cycles_per_partition_w8": {
+          "value": 16.02,
+          "unit": "clk"
+        },
+        "imma_wide_dependent_latency": {
+          "value": 24.02,
+          "unit": "clk"
+        },
+        "imma_narrow_cycles_per_partition": {
+          "value": 8.019,
+          "unit": "clk"
+        },
+        "imma_narrow_cycles_per_partition_w4": {
+          "value": 8.118,
+          "unit": "clk"
+        },
+        "imma_narrow_cycles_per_partition_w8": {
+          "value": 8.02,
+          "unit": "clk"
+        },
+        "imma_narrow_dependent_latency": {
+          "value": 16.017,
+          "unit": "clk"
         }
       },
       "launch": {
@@ -1635,51 +1754,51 @@
         "cc": 86,
         "sms": 82,
         "tool": {
-          "probe": "launch_probe 2",
+          "probe": "launch_probe 3",
           "nvcc": "13.5.37",
           "driver": "13040",
           "runtime": "13050",
           "arch": "sm_86",
-          "source_sha256": "183ab2b3440878fdea654c118941d1cab7b7eb522516e7d6c0e9714853993d05"
+          "source_sha256": "4937fa78ad50bf81b962401203509ea7d5a83ec4f87813be2845728f3c907428"
         },
         "notes": [
           "device 0 is the GPU at PCI 0000:01:00.0",
           "timer: CUDA events (a 1.024 us tick on the consumer boards and the GV100); a fact is the median over 15 repeats of the slope between series of 1 and 1024 graph nodes, or 1 and 256 stream launches, each series queued behind a 20 ms hold of FFMAs on every SM, a 200 ms hold before the first kind",
-          "node_ns: cudaGraphLaunch of the 1024-node graph kept the host 4.1 us on an idle stream, 1.8 us behind a 20 ms hold",
-          "node_ns: medians over 15 timings 3.072 us (N = 1; 2.048000..3.072000), 147.456 us (N = 256), 582.656 us (N = 1024; 581.632018..587.776005); median slope 570.2 ns over N = 256, 567.6 over 1024 (566.553292..572.559145); the host queued the series in at most 1.1, 1.2, 1.6 us",
+          "node_ns: cudaGraphLaunch of the 1024-node graph kept the host 4.2 us on an idle stream, 1.8 us behind a 20 ms hold",
+          "node_ns: medians over 15 timings 2.048 us (N = 1; 2.048000..3.264000), 147.456 us (N = 256), 587.776 us (N = 1024; 587.679982..626.688004); median slope 570.2 ns over N = 256, 572.6 over 1024 (571.464303..609.407628); the host queued the series in at most 1.1, 1.2, 1.6 us",
           "node_pdl_ns: the 1024-node graph has 1023 edges, 1023 programmatic",
-          "node_pdl_ns: cudaGraphLaunch of the 1024-node graph kept the host 415.8 us on an idle stream, 20006.6 us behind a 20 ms hold",
-          "node_pdl_ns: medians over 15 timings 3.072 us (N = 1; 2.048000..3.072000), 254.976 us (N = 256), 1001.472 us (N = 1024; 1000.447989..1013.759971); median slope 987.9 ns over N = 256, 977.0 over 1024 (974.952090..987.964781); the host queued the series in at most 1.2, 127.0, 20007.9 us",
-          "node_pdl_ns not measured: the host had not queued a series when its hold ended (at most 20007.898000 us for the longest, the hold 20000 us)",
-          "stream_ns: medians over 15 timings 3.072 us (N = 1; 2.048000..3.072000), 72.704 us (N = 64), 288.768 us (N = 256; 287.743986..288.767993); median slope 1121.5 ns over N = 64, 1120.4 over 256 (1116.360728..1124.392131); the host queued the series in at most 0.9, 77.3, 202.1 us",
-          "stream_ns: the host queued 256 launches in 202.1 us (the machine's CPU, not a fact of the card)",
-          "floor_ns_1: cudaGraphLaunch of the 1024-node graph kept the host 3.1 us on an idle stream, 1.6 us behind a 20 ms hold",
-          "floor_ns_1: medians over 15 timings 3.072 us (N = 1; 2.048000..3.072000), 147.456 us (N = 256), 583.584 us (N = 1024; 582.656026..583.679974); median slope 566.2 ns over N = 256, 567.6 over 1024 (566.553300..568.555204); the host queued the series in at most 1.0, 1.0, 1.5 us",
+          "node_pdl_ns: cudaGraphLaunch of the 1024-node graph kept the host 415.0 us on an idle stream, 20006.8 us behind a 20 ms hold",
+          "node_pdl_ns: medians over 15 timings 2.368 us (N = 1; 2.048000..3.072000), 248.832 us (N = 256), 999.424 us (N = 1024; 998.368025..1012.735963); median slope 967.8 ns over N = 256, 975.0 over 1024 (973.607062..986.963795); the host queued the series in at most 1.2, 101.4, 20008.4 us",
+          "node_pdl_ns not measured: the host had not queued a series when its hold ended (at most 20008.397000 us for the longest, the hold 20000 us)",
+          "stream_ns: medians over 15 timings 3.040 us (N = 1; 2.048000..3.072000), 76.800 us (N = 64), 304.128 us (N = 256; 303.104013..304.127991); median slope 1170.8 ns over N = 64, 1180.6 over 256 (1176.596130..1184.627416); the host queued the series in at most 0.8, 48.8, 195.0 us",
+          "stream_ns: the host queued 256 launches in 191.0 us (the machine's CPU, not a fact of the card)",
+          "floor_ns_1: cudaGraphLaunch of the 1024-node graph kept the host 4.3 us on an idle stream, 1.8 us behind a 20 ms hold",
+          "floor_ns_1: medians over 15 timings 3.072 us (N = 1; 2.048000..3.072000), 147.456 us (N = 256), 583.680 us (N = 1024; 582.656026..583.679974); median slope 566.2 ns over N = 256, 567.6 over 1024 (566.553300..568.555204); the host queued the series in at most 1.1, 1.0, 1.7 us",
           "floor_ns_1: 1 CTAs of 128 threads",
           "floor_ns_sms: cudaGraphLaunch of the 1024-node graph kept the host 2.5 us on an idle stream, 1.5 us behind a 20 ms hold",
-          "floor_ns_sms: medians over 15 timings 3.072 us (N = 1; 2.048000..3.072000), 166.912 us (N = 256), 660.480 us (N = 1024; 659.456015..660.480022); median slope 642.5 ns over N = 256, 642.6 over 1024 (641.626603..643.628565); the host queued the series in at most 2.6, 1.2, 1.8 us",
+          "floor_ns_sms: medians over 15 timings 3.072 us (N = 1; 2.048000..3.072000), 165.888 us (N = 256), 660.480 us (N = 1024; 660.351992..660.480022); median slope 642.5 ns over N = 256, 642.6 over 1024 (642.502436..643.628565); the host queued the series in at most 0.9, 1.1, 1.5 us",
           "floor_ns_sms: 82 CTAs of 128 threads",
-          "floor_ns_4sms: cudaGraphLaunch of the 1024-node graph kept the host 2.5 us on an idle stream, 1.5 us behind a 20 ms hold",
-          "floor_ns_4sms: medians over 15 timings 3.072 us (N = 1; 2.048000..3.104000), 208.896 us (N = 256), 829.440 us (N = 1024; 829.439998..830.464005); median slope 807.2 ns over N = 256, 807.8 over 1024 (807.757574..808.789839); the host queued the series in at most 0.8, 1.0, 1.5 us",
+          "floor_ns_4sms: cudaGraphLaunch of the 1024-node graph kept the host 2.6 us on an idle stream, 1.4 us behind a 20 ms hold",
+          "floor_ns_4sms: medians over 15 timings 3.072 us (N = 1; 2.048000..3.072000), 208.896 us (N = 256), 829.440 us (N = 1024; 829.343975..830.464005); median slope 807.2 ns over N = 256, 808.8 over 1024 (807.694990..809.790817); the host queued the series in at most 0.9, 1.3, 1.4 us",
           "floor_ns_4sms: 328 CTAs of 128 threads",
           "floor_ns_1024: cudaGraphLaunch of the 1024-node graph kept the host 2.4 us on an idle stream, 1.5 us behind a 20 ms hold",
-          "floor_ns_1024: medians over 15 timings 3.424 us (N = 1; 3.072000..4.096000), 315.392 us (N = 256), 1254.400 us (N = 1024; 1254.400015..1254.400015); median slope 1223.4 ns over N = 256, 1222.9 over 1024 (1222.193563..1223.194540); the host queued the series in at most 1.0, 1.4, 1.8 us",
+          "floor_ns_1024: medians over 15 timings 3.072 us (N = 1; 3.072000..4.096000), 314.368 us (N = 256), 1254.400 us (N = 1024; 1254.271984..1254.400015); median slope 1220.8 ns over N = 256, 1223.2 over 1024 (1222.068411..1223.194540); the host queued the series in at most 1.0, 1.0, 1.7 us",
           "floor_ns_1024: 1024 CTAs of 128 threads",
-          "floor_ns_4096: cudaGraphLaunch of the 1024-node graph kept the host 2.8 us on an idle stream, 1.5 us behind a 20 ms hold",
-          "floor_ns_4096: medians over 15 timings 5.120 us (N = 1; 4.096000..5.120000), 783.360 us (N = 256), 3128.320 us (N = 1024; 3127.295971..3128.319979); median slope 3051.9 ns over N = 256, 3053.0 over 1024 (3052.918947..3053.982384); the host queued the series in at most 1.2, 1.0, 1.4 us",
+          "floor_ns_4096: cudaGraphLaunch of the 1024-node graph kept the host 2.4 us on an idle stream, 1.4 us behind a 20 ms hold",
+          "floor_ns_4096: medians over 15 timings 5.120 us (N = 1; 4.096000..5.120000), 783.360 us (N = 256), 3128.320 us (N = 1024; 3128.288031..3128.319979); median slope 3055.9 ns over N = 256, 3053.0 over 1024 (3052.981406..3053.982384); the host queued the series in at most 1.0, 1.0, 1.5 us",
           "floor_ns_4096: 4096 CTAs of 128 threads",
           "compute processes on the probe's GPU before the run: 0",
           "compute processes on the probe's GPU after the run: 0",
           "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
-          "nvidia-smi over the run (41 samples): memory clock 405..9501 MHz, SM clock 210..1995 MHz, P-state P2/P8"
+          "nvidia-smi over the run (40 samples): memory clock 405..9501 MHz, SM clock 210..1995 MHz, P-state P2/P8"
         ],
         "facts": {
           "node_ns": {
-            "value": 567.554,
+            "value": 572.559,
             "unit": "ns"
           },
           "stream_ns": {
-            "value": 1120.376,
+            "value": 1180.612,
             "unit": "ns"
           },
           "floor_ns_1": {
@@ -1691,11 +1810,11 @@
             "unit": "ns"
           },
           "floor_ns_4sms": {
-            "value": 807.789,
+            "value": 808.79,
             "unit": "ns"
           },
           "floor_ns_1024": {
-            "value": 1222.85,
+            "value": 1223.195,
             "unit": "ns"
           },
           "floor_ns_4096": {
@@ -1717,12 +1836,12 @@
       "sass_per_mma": 1,
       "mem_clock_khz": 10501000,
       "tool": {
-        "probe": "isa_probe 17",
+        "probe": "isa_probe 19",
         "nvcc": "13.4.92",
         "driver": "13040",
         "runtime": "13040",
         "arch": "sm_89",
-        "source_sha256": "cde151411d78b687c618a444a700b23561ccc123cb64e112f6a258fa828bdefd"
+        "source_sha256": "132147e65607667cf893f959e2a55c706700baf5443874cbb80edbcae5bb5f04"
       },
       "notes": [
         "device 0 is the GPU at PCI 0000:01:00.0",
@@ -1730,14 +1849,21 @@
         "mma_cycles_per_sm_w4: 128 of 128 SMs ran 1 CTA(s) of 4 warps at once, the others are left out",
         "mma_cycles_per_sm_w8: 128 of 128 SMs ran 1 CTA(s) of 8 warps at once, the others are left out",
         "mma_cycles_per_sm_w16: 128 of 128 SMs ran 1 CTA(s) of 16 warps at once, the others are left out",
-        "the SM clock under the MMA loop: 2534 MHz at the first of 636 launches, 2771..2774 over the last quarter",
+        "imma_wide_cycles_per_sm: 128 of 128 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "imma_wide_cycles_per_partition_w4: 128 of 128 SMs ran 1 CTA(s) of 4 warps at once, the others are left out",
+        "imma_wide_cycles_per_partition_w8: 128 of 128 SMs ran 1 CTA(s) of 8 warps at once, the others are left out",
+        "imma_narrow_cycles_per_sm: 128 of 128 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "imma_narrow_cycles_per_partition_w4: 128 of 128 SMs ran 1 CTA(s) of 4 warps at once, the others are left out",
+        "imma_narrow_cycles_per_partition_w8: 128 of 128 SMs ran 1 CTA(s) of 8 warps at once, the others are left out",
+        "the SM clock under the MMA loop: 2534 MHz at the first of 635 launches, 2771..2774 over the last quarter",
         "fp32_cycles_per_warp_instruction: 128 of 128 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
         "int32_cycles_per_warp_instruction: 128 of 128 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "l1_ldg32_cycles_per_sm: 128 of 128 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "l2_ldg32_cycles_per_sm: 128 of 128 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
         "l2_held_latency_w2: 112 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_tlbwarm_held_latency_w2: 70 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_held_latency_w2: 66 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "dram_tlbwarm_held_latency_w2: 72 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "dram_held_latency_w2: 62 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out",
         "dram_lanes_held_latency_w2: 62 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_lanes_half_held_latency_w2: 62 of 64 CTAs had an SM to themselves and one FFMA warp, the others are left out",
         "compute processes on the probe's GPU before the run: 0",
         "compute processes on the probe's GPU after the run: 0",
         "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
@@ -1789,7 +1915,7 @@
           "unit": "clk"
         },
         "l1_latency_w4": {
-          "value": 35.028,
+          "value": 35.029,
           "unit": "clk"
         },
         "l1_latency_w8": {
@@ -1797,35 +1923,35 @@
           "unit": "clk"
         },
         "l2_latency_w1": {
-          "value": 261.365,
+          "value": 261.311,
           "unit": "clk"
         },
         "l2_latency_w2": {
-          "value": 261.408,
+          "value": 261.407,
           "unit": "clk"
         },
         "l2_latency_w4": {
-          "value": 260.968,
+          "value": 260.984,
           "unit": "clk"
         },
         "l2_latency_w8": {
-          "value": 260.658,
+          "value": 260.675,
           "unit": "clk"
         },
         "dram_latency_w1": {
-          "value": 656.969,
+          "value": 656.443,
           "unit": "clk"
         },
         "dram_latency_w2": {
-          "value": 658.893,
+          "value": 658.678,
           "unit": "clk"
         },
         "dram_latency_w4": {
-          "value": 687.844,
+          "value": 687.068,
           "unit": "clk"
         },
         "dram_latency_w8": {
-          "value": 689.613,
+          "value": 689.211,
           "unit": "clk"
         },
         "l2_latency_ns_w1": {
@@ -1837,7 +1963,7 @@
           "unit": "ns"
         },
         "l2_latency_ns_w4": {
-          "value": 94.25,
+          "value": 94.0,
           "unit": "ns"
         },
         "l2_latency_ns_w8": {
@@ -1861,23 +1987,23 @@
           "unit": "ns"
         },
         "dram_tlbwarm_latency_w1": {
-          "value": 651.783,
+          "value": 651.697,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w2": {
-          "value": 650.291,
+          "value": 648.992,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w4": {
-          "value": 681.775,
+          "value": 682.982,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w8": {
-          "value": 681.654,
+          "value": 680.951,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_ns_w1": {
-          "value": 234.0,
+          "value": 236.0,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w2": {
@@ -1893,11 +2019,11 @@
           "unit": "ns"
         },
         "sm_clock_mhz_chase": {
-          "value": 2772.954,
+          "value": 2772.338,
           "unit": "mhz"
         },
         "shared_latency": {
-          "value": 24.129,
+          "value": 24.132,
           "unit": "clk"
         },
         "lat_imad": {
@@ -1949,23 +2075,23 @@
           "unit": "clk"
         },
         "sm_clock_mhz_mma": {
-          "value": 2770.961,
+          "value": 2770.763,
           "unit": "mhz"
         },
         "dram_lanes_latency_w1": {
-          "value": 2378.867,
+          "value": 2378.246,
           "unit": "clk"
         },
         "dram_lanes_latency_w2": {
-          "value": 3381.852,
+          "value": 3377.395,
           "unit": "clk"
         },
         "dram_lanes_latency_w4": {
-          "value": 5993.984,
+          "value": 5996.555,
           "unit": "clk"
         },
         "dram_lanes_latency_w8": {
-          "value": 11393.875,
+          "value": 11394.203,
           "unit": "clk"
         },
         "dram_lanes_latency_ns_w1": {
@@ -1977,7 +2103,7 @@
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w4": {
-          "value": 2160.0,
+          "value": 2164.0,
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w8": {
@@ -1985,19 +2111,19 @@
           "unit": "ns"
         },
         "dram_lanes_half_latency_w1": {
-          "value": 1662.211,
+          "value": 1658.109,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w2": {
-          "value": 2382.5,
+          "value": 2384.211,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w4": {
-          "value": 3389.656,
+          "value": 3392.004,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w8": {
-          "value": 6025.32,
+          "value": 5989.461,
           "unit": "clk"
         },
         "dram_lanes_half_latency_ns_w1": {
@@ -2013,7 +2139,7 @@
           "unit": "ns"
         },
         "dram_lanes_half_latency_ns_w8": {
-          "value": 2172.0,
+          "value": 2160.0,
           "unit": "ns"
         },
         "l1_held_latency_w1": {
@@ -2029,87 +2155,87 @@
           "unit": "clk"
         },
         "l1_held_latency_w8": {
-          "value": 35.082,
+          "value": 35.077,
           "unit": "clk"
         },
         "l2_held_latency_w1": {
-          "value": 261.343,
+          "value": 261.313,
           "unit": "clk"
         },
         "l2_held_latency_w2": {
-          "value": 261.467,
+          "value": 261.476,
           "unit": "clk"
         },
         "l2_held_latency_w4": {
-          "value": 261.027,
+          "value": 261.054,
           "unit": "clk"
         },
         "l2_held_latency_w8": {
-          "value": 260.799,
+          "value": 260.749,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w1": {
-          "value": 647.637,
+          "value": 648.572,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w2": {
-          "value": 650.666,
+          "value": 648.588,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w4": {
-          "value": 682.422,
+          "value": 682.441,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w8": {
-          "value": 681.271,
+          "value": 680.949,
           "unit": "clk"
         },
         "dram_held_latency_w1": {
-          "value": 656.533,
+          "value": 657.551,
           "unit": "clk"
         },
         "dram_held_latency_w2": {
-          "value": 659.508,
+          "value": 660.375,
           "unit": "clk"
         },
         "dram_held_latency_w4": {
-          "value": 688.822,
+          "value": 689.199,
           "unit": "clk"
         },
         "dram_held_latency_w8": {
-          "value": 689.123,
+          "value": 689.121,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w1": {
-          "value": 2384.195,
+          "value": 2376.578,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w2": {
-          "value": 3379.469,
+          "value": 3377.324,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w4": {
-          "value": 6016.855,
+          "value": 5999.262,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w8": {
-          "value": 11403.426,
+          "value": 11382.391,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w1": {
-          "value": 1665.492,
+          "value": 1668.586,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w2": {
-          "value": 2381.645,
+          "value": 2385.555,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w4": {
-          "value": 3388.375,
+          "value": 3390.238,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w8": {
-          "value": 6008.059,
+          "value": 6013.031,
           "unit": "clk"
         },
         "l2_held_latency_ns_w1": {
@@ -2145,7 +2271,7 @@
           "unit": "ns"
         },
         "dram_held_latency_ns_w1": {
-          "value": 236.0,
+          "value": 238.0,
           "unit": "ns"
         },
         "dram_held_latency_ns_w2": {
@@ -2161,7 +2287,7 @@
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w1": {
-          "value": 860.0,
+          "value": 856.0,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w2": {
@@ -2169,11 +2295,11 @@
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w4": {
-          "value": 2172.0,
+          "value": 2164.0,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w8": {
-          "value": 4116.0,
+          "value": 4112.0,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w1": {
@@ -2193,8 +2319,52 @@
           "unit": "ns"
         },
         "sm_clock_mhz_chase_held": {
-          "value": 2772.873,
+          "value": 2773.901,
           "unit": "mhz"
+        },
+        "l1_ldg32_cycles_per_sm": {
+          "value": 2.053,
+          "unit": "clk"
+        },
+        "l2_ldg32_cycles_per_sm": {
+          "value": 8.483,
+          "unit": "clk"
+        },
+        "l2_bytes_per_sm_clock": {
+          "value": 15.09,
+          "unit": "byte"
+        },
+        "imma_wide_cycles_per_partition": {
+          "value": 16.019,
+          "unit": "clk"
+        },
+        "imma_wide_cycles_per_partition_w4": {
+          "value": 16.103,
+          "unit": "clk"
+        },
+        "imma_wide_cycles_per_partition_w8": {
+          "value": 16.02,
+          "unit": "clk"
+        },
+        "imma_wide_dependent_latency": {
+          "value": 24.021,
+          "unit": "clk"
+        },
+        "imma_narrow_cycles_per_partition": {
+          "value": 8.019,
+          "unit": "clk"
+        },
+        "imma_narrow_cycles_per_partition_w4": {
+          "value": 8.119,
+          "unit": "clk"
+        },
+        "imma_narrow_cycles_per_partition_w8": {
+          "value": 8.02,
+          "unit": "clk"
+        },
+        "imma_narrow_dependent_latency": {
+          "value": 16.018,
+          "unit": "clk"
         }
       },
       "launch": {
@@ -2204,43 +2374,43 @@
         "cc": 89,
         "sms": 128,
         "tool": {
-          "probe": "launch_probe 2",
+          "probe": "launch_probe 3",
           "nvcc": "13.4.92",
           "driver": "13040",
           "runtime": "13040",
           "arch": "sm_89",
-          "source_sha256": "183ab2b3440878fdea654c118941d1cab7b7eb522516e7d6c0e9714853993d05"
+          "source_sha256": "4937fa78ad50bf81b962401203509ea7d5a83ec4f87813be2845728f3c907428"
         },
         "notes": [
           "device 0 is the GPU at PCI 0000:01:00.0",
           "timer: CUDA events (a 1.024 us tick on the consumer boards and the GV100); a fact is the median over 15 repeats of the slope between series of 1 and 1024 graph nodes, or 1 and 256 stream launches, each series queued behind a 20 ms hold of FFMAs on every SM, a 200 ms hold before the first kind",
-          "node_ns: cudaGraphLaunch of the 1024-node graph kept the host 5.8 us on an idle stream, 2.4 us behind a 20 ms hold",
-          "node_ns: medians over 15 timings 2.048 us (N = 1; 2.048000..2.112000), 130.048 us (N = 256), 513.024 us (N = 1024; 513.023973..514.047980); median slope 501.8 ns over N = 256, 499.5 over 1024 (499.425193..500.488739); the host queued the series in at most 1.2, 1.5, 2.8 us",
+          "node_ns: cudaGraphLaunch of the 1024-node graph kept the host 6.2 us on an idle stream, 2.4 us behind a 20 ms hold",
+          "node_ns: medians over 15 timings 2.048 us (N = 1; 2.048000..2.112000), 130.048 us (N = 256), 513.024 us (N = 1024; 513.023973..517.120004); median slope 502.0 ns over N = 256, 499.5 over 1024 (499.425193..503.491695); the host queued the series in at most 1.2, 1.4, 1.9 us",
           "node_pdl_ns: the 1024-node graph has 1023 edges, 1023 programmatic",
-          "node_pdl_ns: cudaGraphLaunch of the 1024-node graph kept the host 457.0 us on an idle stream, 20007.1 us behind a 20 ms hold",
-          "node_pdl_ns: medians over 15 timings 2.048 us (N = 1; 2.048000..3.072000), 243.712 us (N = 256), 935.936 us (N = 1024; 931.840003..935.935974); median slope 947.6 ns over N = 256, 912.9 over 1024 (908.887588..912.891470); the host queued the series in at most 1.5, 120.4, 20008.6 us",
-          "node_pdl_ns not measured: the host had not queued a series when its hold ended (at most 20008.566000 us for the longest, the hold 20000 us)",
-          "stream_ns: medians over 15 timings 2.048 us (N = 1; 2.048000..3.072000), 67.872 us (N = 64), 269.312 us (N = 256; 268.319994..269.407988); median slope 1044.3 ns over N = 64, 1045.5 over 256 (1044.203899..1048.094095); the host queued the series in at most 4.3, 59.8, 242.8 us",
-          "stream_ns: the host queued 256 launches in 217.3 us (the machine's CPU, not a fact of the card)",
-          "floor_ns_1: cudaGraphLaunch of the 1024-node graph kept the host 4.5 us on an idle stream, 1.8 us behind a 20 ms hold",
-          "floor_ns_1: medians over 15 timings 2.048 us (N = 1; 2.048000..2.208000), 128.000 us (N = 256), 507.904 us (N = 1024; 507.903993..507.903993); median slope 493.9 ns over N = 256, 494.5 over 1024 (494.326484..494.482887); the host queued the series in at most 1.1, 1.3, 3.0 us",
+          "node_pdl_ns: cudaGraphLaunch of the 1024-node graph kept the host 464.7 us on an idle stream, 20007.0 us behind a 20 ms hold",
+          "node_pdl_ns: medians over 15 timings 2.048 us (N = 1; 2.048000..2.112000), 244.736 us (N = 256), 943.104 us (N = 1024; 937.983990..943.104029); median slope 951.7 ns over N = 256, 919.8 over 1024 (914.893441..919.898366); the host queued the series in at most 1.5, 126.0, 20014.1 us",
+          "node_pdl_ns not measured: the host had not queued a series when its hold ended (at most 20014.086000 us for the longest, the hold 20000 us)",
+          "stream_ns: medians over 15 timings 2.048 us (N = 1; 2.048000..2.048000), 68.608 us (N = 64), 270.336 us (N = 256; 270.336002..271.360010); median slope 1056.5 ns over N = 64, 1052.1 over 256 (1052.109812..1056.125529); the host queued the series in at most 1.1, 58.2, 249.4 us",
+          "stream_ns: the host queued 256 launches in 213.8 us (the machine's CPU, not a fact of the card)",
+          "floor_ns_1: cudaGraphLaunch of the 1024-node graph kept the host 4.6 us on an idle stream, 2.1 us behind a 20 ms hold",
+          "floor_ns_1: medians over 15 timings 2.048 us (N = 1; 2.048000..2.336000), 129.024 us (N = 256), 510.976 us (N = 1024; 510.976017..510.976017); median slope 497.9 ns over N = 256, 497.5 over 1024 (497.204317..497.485842); the host queued the series in at most 1.1, 1.3, 2.1 us",
           "floor_ns_1: 1 CTAs of 128 threads",
-          "floor_ns_sms: cudaGraphLaunch of the 1024-node graph kept the host 3.3 us on an idle stream, 1.8 us behind a 20 ms hold",
-          "floor_ns_sms: medians over 15 timings 2.112 us (N = 1; 2.048000..2.464000), 164.864 us (N = 256), 655.360 us (N = 1024; 655.359983..655.359983); median slope 638.2 ns over N = 256, 638.6 over 1024 (638.216993..638.623640); the host queued the series in at most 3.0, 2.0, 2.6 us",
+          "floor_ns_sms: cudaGraphLaunch of the 1024-node graph kept the host 3.1 us on an idle stream, 1.6 us behind a 20 ms hold",
+          "floor_ns_sms: medians over 15 timings 2.048 us (N = 1; 2.048000..2.272000), 165.888 us (N = 256), 659.456 us (N = 1024; 658.432007..659.456015); median slope 642.5 ns over N = 256, 642.6 over 1024 (641.626595..642.627580); the host queued the series in at most 1.1, 1.4, 1.8 us",
           "floor_ns_sms: 128 CTAs of 128 threads",
-          "floor_ns_4sms: cudaGraphLaunch of the 1024-node graph kept the host 3.4 us on an idle stream, 1.9 us behind a 20 ms hold",
-          "floor_ns_4sms: medians over 15 timings 2.048 us (N = 1; 2.048000..3.072000), 243.712 us (N = 256), 971.776 us (N = 1024; 971.776009..971.776009); median slope 947.7 ns over N = 256, 947.9 over 1024 (946.924739..947.925717); the host queued the series in at most 1.2, 1.5, 1.8 us",
+          "floor_ns_4sms: cudaGraphLaunch of the 1024-node graph kept the host 3.0 us on an idle stream, 1.6 us behind a 20 ms hold",
+          "floor_ns_4sms: medians over 15 timings 2.048 us (N = 1; 2.048000..3.072000), 245.760 us (N = 256), 977.920 us (N = 1024; 977.919996..977.919996); median slope 955.7 ns over N = 256, 953.9 over 1024 (952.930592..953.931570); the host queued the series in at most 1.1, 1.4, 2.0 us",
           "floor_ns_4sms: 512 CTAs of 128 threads",
-          "floor_ns_1024: cudaGraphLaunch of the 1024-node graph kept the host 3.2 us on an idle stream, 1.9 us behind a 20 ms hold",
-          "floor_ns_1024: medians over 15 timings 3.072 us (N = 1; 3.072000..3.072000), 302.080 us (N = 256), 1205.248 us (N = 1024; 1204.223990..1205.247998); median slope 1172.6 ns over N = 256, 1175.1 over 1024 (1174.146618..1175.147603); the host queued the series in at most 1.0, 1.2, 2.0 us",
+          "floor_ns_1024: cudaGraphLaunch of the 1024-node graph kept the host 3.1 us on an idle stream, 1.8 us behind a 20 ms hold",
+          "floor_ns_1024: medians over 15 timings 3.072 us (N = 1; 2.432000..3.072000), 304.128 us (N = 256), 1212.416 us (N = 1024; 1212.416053..1212.416053); median slope 1180.6 ns over N = 256, 1182.2 over 1024 (1182.154499..1182.780110); the host queued the series in at most 1.1, 1.3, 1.8 us",
           "floor_ns_1024: 1024 CTAs of 128 threads",
-          "floor_ns_4096: cudaGraphLaunch of the 1024-node graph kept the host 3.2 us on an idle stream, 1.9 us behind a 20 ms hold",
-          "floor_ns_4096: medians over 15 timings 4.096 us (N = 1; 4.096000..4.224000), 659.456 us (N = 256), 2631.680 us (N = 1024; 2630.656004..2631.680012); median slope 2570.0 ns over N = 256, 2568.5 over 1024 (2567.507335..2568.508320); the host queued the series in at most 1.1, 1.3, 25.9 us",
+          "floor_ns_4096: cudaGraphLaunch of the 1024-node graph kept the host 2.9 us on an idle stream, 1.7 us behind a 20 ms hold",
+          "floor_ns_4096: medians over 15 timings 4.096 us (N = 1; 4.096000..4.256000), 663.552 us (N = 256), 2649.088 us (N = 1024; 2649.087906..2649.087906); median slope 2586.1 ns over N = 256, 2585.5 over 1024 (2585.368432..2585.524835); the host queued the series in at most 1.2, 1.3, 1.8 us",
           "floor_ns_4096: 4096 CTAs of 128 threads",
           "compute processes on the probe's GPU before the run: 0",
           "compute processes on the probe's GPU after the run: 0",
           "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
-          "nvidia-smi over the run (40 samples): memory clock 405..10251 MHz, SM clock 210..2775 MHz, P-state P0/P2"
+          "nvidia-smi over the run (40 samples): memory clock 405..10251 MHz, SM clock 210..2775 MHz, P-state P2/P8"
         ],
         "facts": {
           "node_ns": {
@@ -2248,27 +2418,27 @@
             "unit": "ns"
           },
           "stream_ns": {
-            "value": 1045.459,
+            "value": 1052.11,
             "unit": "ns"
           },
           "floor_ns_1": {
-            "value": 494.483,
+            "value": 497.486,
             "unit": "ns"
           },
           "floor_ns_sms": {
-            "value": 638.561,
+            "value": 642.628,
             "unit": "ns"
           },
           "floor_ns_4sms": {
-            "value": 947.926,
+            "value": 953.932,
             "unit": "ns"
           },
           "floor_ns_1024": {
-            "value": 1175.148,
+            "value": 1182.154,
             "unit": "ns"
           },
           "floor_ns_4096": {
-            "value": 2568.508,
+            "value": 2585.525,
             "unit": "ns"
           }
         }
@@ -2286,12 +2456,12 @@
       "sass_per_mma": 1,
       "mem_clock_khz": 14001000,
       "tool": {
-        "probe": "isa_probe 17",
+        "probe": "isa_probe 19",
         "nvcc": "13.4.92",
         "driver": "13040",
         "runtime": "13040",
         "arch": "sm_120a",
-        "source_sha256": "cde151411d78b687c618a444a700b23561ccc123cb64e112f6a258fa828bdefd"
+        "source_sha256": "132147e65607667cf893f959e2a55c706700baf5443874cbb80edbcae5bb5f04"
       },
       "notes": [
         "device 0 is the GPU at PCI 0000:01:00.0",
@@ -2299,14 +2469,22 @@
         "mma_cycles_per_sm_w4: 170 of 170 SMs ran 1 CTA(s) of 4 warps at once, the others are left out",
         "mma_cycles_per_sm_w8: 170 of 170 SMs ran 1 CTA(s) of 8 warps at once, the others are left out",
         "mma_cycles_per_sm_w16: 170 of 170 SMs ran 1 CTA(s) of 16 warps at once, the others are left out",
-        "the SM clock under the MMA loop: 2878 MHz at the first of 651 launches, 2872..2879 over the last quarter",
+        "imma_wide_cycles_per_sm: 170 of 170 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "imma_wide_cycles_per_partition_w4: 170 of 170 SMs ran 1 CTA(s) of 4 warps at once, the others are left out",
+        "imma_wide_cycles_per_partition_w8: 170 of 170 SMs ran 1 CTA(s) of 8 warps at once, the others are left out",
+        "imma_narrow_cycles_per_sm: 170 of 170 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "imma_narrow_cycles_per_partition_w4: 170 of 170 SMs ran 1 CTA(s) of 4 warps at once, the others are left out",
+        "imma_narrow_cycles_per_partition_w8: 170 of 170 SMs ran 1 CTA(s) of 8 warps at once, the others are left out",
+        "the SM clock under the MMA loop: 2894 MHz at the first of 673 launches, 2871..2879 over the last quarter",
         "fp32_cycles_per_warp_instruction: 170 of 170 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
         "int32_cycles_per_warp_instruction: 170 of 170 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "l1_ldg32_cycles_per_sm: 170 of 170 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
+        "l2_ldg32_cycles_per_sm: 170 of 170 SMs ran 4 CTA(s) of 4 warps at once; every SM counts",
         "l2_held_latency_w2: 154 of 170 CTAs had an SM to themselves and one FFMA warp, the others are left out",
         "dram_tlbwarm_held_latency_w2: 94 of 170 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_held_latency_w2: 98 of 170 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_lanes_held_latency_w2: 94 of 170 CTAs had an SM to themselves and one FFMA warp, the others are left out",
-        "dram_lanes_half_held_latency_w2: 79 of 85 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "dram_held_latency_w2: 90 of 170 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "dram_lanes_held_latency_w2: 82 of 170 CTAs had an SM to themselves and one FFMA warp, the others are left out",
+        "dram_lanes_half_held_latency_w2: 75 of 85 CTAs had an SM to themselves and one FFMA warp, the others are left out",
         "compute processes on the probe's GPU before the run: 0",
         "compute processes on the probe's GPU after the run: 0",
         "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
@@ -2314,15 +2492,15 @@
       ],
       "facts": {
         "mma_cycles_per_sm": {
-          "value": 8.003,
+          "value": 8.002,
           "unit": "clk"
         },
         "mma_cycles_per_partition": {
-          "value": 32.011,
+          "value": 32.01,
           "unit": "clk"
         },
         "tensor_flops_per_sm_clock": {
-          "value": 511.808,
+          "value": 511.872,
           "unit": "flop"
         },
         "mma_cycles_per_sm_w4": {
@@ -2338,7 +2516,7 @@
           "unit": "clk"
         },
         "mma_dependent_latency": {
-          "value": 34.46,
+          "value": 34.459,
           "unit": "clk"
         },
         "fp32_cycles_per_warp_instruction": {
@@ -2346,7 +2524,7 @@
           "unit": "clk"
         },
         "int32_cycles_per_warp_instruction": {
-          "value": 2.01,
+          "value": 2.011,
           "unit": "clk"
         },
         "l1_latency_w1": {
@@ -2366,103 +2544,103 @@
           "unit": "clk"
         },
         "l2_latency_w1": {
-          "value": 354.333,
+          "value": 350.726,
           "unit": "clk"
         },
         "l2_latency_w2": {
-          "value": 354.368,
+          "value": 350.515,
           "unit": "clk"
         },
         "l2_latency_w4": {
-          "value": 352.901,
+          "value": 352.803,
           "unit": "clk"
         },
         "l2_latency_w8": {
-          "value": 352.346,
+          "value": 350.873,
           "unit": "clk"
         },
         "dram_latency_w1": {
-          "value": 874.285,
+          "value": 872.18,
           "unit": "clk"
         },
         "dram_latency_w2": {
-          "value": 876.793,
+          "value": 875.496,
           "unit": "clk"
         },
         "dram_latency_w4": {
-          "value": 841.664,
+          "value": 841.873,
           "unit": "clk"
         },
         "dram_latency_w8": {
-          "value": 837.379,
+          "value": 838.312,
           "unit": "clk"
         },
         "l2_latency_ns_w1": {
-          "value": 123.328,
+          "value": 122.078,
           "unit": "ns"
         },
         "l2_latency_ns_w2": {
-          "value": 123.094,
+          "value": 121.953,
           "unit": "ns"
         },
         "l2_latency_ns_w4": {
-          "value": 122.703,
+          "value": 122.641,
           "unit": "ns"
         },
         "l2_latency_ns_w8": {
-          "value": 122.469,
+          "value": 121.914,
           "unit": "ns"
         },
         "dram_latency_ns_w1": {
-          "value": 303.625,
+          "value": 302.875,
           "unit": "ns"
         },
         "dram_latency_ns_w2": {
-          "value": 304.5,
+          "value": 304.188,
           "unit": "ns"
         },
         "dram_latency_ns_w4": {
-          "value": 292.938,
+          "value": 292.438,
           "unit": "ns"
         },
         "dram_latency_ns_w8": {
-          "value": 291.438,
+          "value": 291.25,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_w1": {
-          "value": 864.314,
+          "value": 863.068,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w2": {
-          "value": 868.266,
+          "value": 868.07,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w4": {
-          "value": 836.656,
+          "value": 834.131,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_w8": {
-          "value": 828.1,
+          "value": 828.715,
           "unit": "clk"
         },
         "dram_tlbwarm_latency_ns_w1": {
-          "value": 300.875,
+          "value": 299.75,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w2": {
-          "value": 302.188,
+          "value": 301.562,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w4": {
-          "value": 291.125,
+          "value": 289.812,
           "unit": "ns"
         },
         "dram_tlbwarm_latency_ns_w8": {
-          "value": 288.5,
+          "value": 287.938,
           "unit": "ns"
         },
         "sm_clock_mhz_chase": {
-          "value": 2877.027,
+          "value": 2878.038,
           "unit": "mhz"
         },
         "shared_latency": {
@@ -2518,71 +2696,71 @@
           "unit": "clk"
         },
         "sm_clock_mhz_mma": {
-          "value": 2878.587,
+          "value": 2878.635,
           "unit": "mhz"
         },
         "dram_lanes_latency_w1": {
-          "value": 1765.93,
+          "value": 1748.422,
           "unit": "clk"
         },
         "dram_lanes_latency_w2": {
-          "value": 2168.215,
+          "value": 2168.574,
           "unit": "clk"
         },
         "dram_lanes_latency_w4": {
-          "value": 3598.145,
+          "value": 3596.383,
           "unit": "clk"
         },
         "dram_lanes_latency_w8": {
-          "value": 7012.496,
+          "value": 7033.977,
           "unit": "clk"
         },
         "dram_lanes_latency_ns_w1": {
-          "value": 613.5,
+          "value": 607.5,
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w2": {
-          "value": 753.5,
+          "value": 755.0,
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w4": {
-          "value": 1250.625,
+          "value": 1252.125,
           "unit": "ns"
         },
         "dram_lanes_latency_ns_w8": {
-          "value": 2441.0,
+          "value": 2444.375,
           "unit": "ns"
         },
         "dram_lanes_half_latency_w1": {
-          "value": 1511.332,
+          "value": 1509.926,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w2": {
-          "value": 1770.359,
+          "value": 1751.527,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w4": {
-          "value": 2181.496,
+          "value": 2173.344,
           "unit": "clk"
         },
         "dram_lanes_half_latency_w8": {
-          "value": 3598.312,
+          "value": 3599.973,
           "unit": "clk"
         },
         "dram_lanes_half_latency_ns_w1": {
-          "value": 525.0,
+          "value": 524.75,
           "unit": "ns"
         },
         "dram_lanes_half_latency_ns_w2": {
-          "value": 615.125,
+          "value": 608.625,
           "unit": "ns"
         },
         "dram_lanes_half_latency_ns_w4": {
-          "value": 758.375,
+          "value": 755.25,
           "unit": "ns"
         },
         "dram_lanes_half_latency_ns_w8": {
-          "value": 1250.5,
+          "value": 1253.0,
           "unit": "ns"
         },
         "l1_held_latency_w1": {
@@ -2594,176 +2772,220 @@
           "unit": "clk"
         },
         "l1_held_latency_w4": {
-          "value": 40.923,
+          "value": 40.891,
           "unit": "clk"
         },
         "l1_held_latency_w8": {
-          "value": 40.925,
+          "value": 40.924,
           "unit": "clk"
         },
         "l2_held_latency_w1": {
-          "value": 354.514,
+          "value": 350.604,
           "unit": "clk"
         },
         "l2_held_latency_w2": {
-          "value": 354.22,
+          "value": 350.367,
           "unit": "clk"
         },
         "l2_held_latency_w4": {
-          "value": 352.766,
+          "value": 352.39,
           "unit": "clk"
         },
         "l2_held_latency_w8": {
-          "value": 352.098,
+          "value": 350.269,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w1": {
-          "value": 864.094,
+          "value": 863.938,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w2": {
-          "value": 867.035,
+          "value": 866.207,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w4": {
-          "value": 836.574,
+          "value": 832.998,
           "unit": "clk"
         },
         "dram_tlbwarm_held_latency_w8": {
-          "value": 829.131,
+          "value": 828.578,
           "unit": "clk"
         },
         "dram_held_latency_w1": {
-          "value": 873.438,
+          "value": 871.988,
           "unit": "clk"
         },
         "dram_held_latency_w2": {
-          "value": 875.223,
+          "value": 876.686,
           "unit": "clk"
         },
         "dram_held_latency_w4": {
-          "value": 843.412,
+          "value": 840.666,
           "unit": "clk"
         },
         "dram_held_latency_w8": {
-          "value": 838.316,
+          "value": 836.748,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w1": {
-          "value": 1762.023,
+          "value": 1758.84,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w2": {
-          "value": 2172.059,
+          "value": 2172.27,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w4": {
-          "value": 3598.266,
+          "value": 3604.809,
           "unit": "clk"
         },
         "dram_lanes_held_latency_w8": {
-          "value": 7029.355,
+          "value": 7017.051,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w1": {
-          "value": 1510.156,
+          "value": 1511.129,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w2": {
-          "value": 1745.34,
+          "value": 1749.281,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w4": {
-          "value": 2173.469,
+          "value": 2180.211,
           "unit": "clk"
         },
         "dram_lanes_half_held_latency_w8": {
-          "value": 3601.105,
+          "value": 3606.102,
           "unit": "clk"
         },
         "l2_held_latency_ns_w1": {
-          "value": 123.125,
+          "value": 121.883,
           "unit": "ns"
         },
         "l2_held_latency_ns_w2": {
-          "value": 123.016,
+          "value": 121.727,
           "unit": "ns"
         },
         "l2_held_latency_ns_w4": {
-          "value": 122.625,
+          "value": 122.492,
           "unit": "ns"
         },
         "l2_held_latency_ns_w8": {
-          "value": 122.484,
+          "value": 121.719,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w1": {
-          "value": 300.062,
+          "value": 300.125,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w2": {
-          "value": 301.188,
+          "value": 300.938,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w4": {
-          "value": 290.75,
+          "value": 289.375,
           "unit": "ns"
         },
         "dram_tlbwarm_held_latency_ns_w8": {
-          "value": 288.062,
+          "value": 287.938,
           "unit": "ns"
         },
         "dram_held_latency_ns_w1": {
-          "value": 303.375,
+          "value": 302.938,
           "unit": "ns"
         },
         "dram_held_latency_ns_w2": {
-          "value": 304.0,
+          "value": 304.5,
           "unit": "ns"
         },
         "dram_held_latency_ns_w4": {
-          "value": 293.0,
+          "value": 292.0,
           "unit": "ns"
         },
         "dram_held_latency_ns_w8": {
-          "value": 291.188,
+          "value": 290.75,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w1": {
-          "value": 612.25,
+          "value": 611.875,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w2": {
-          "value": 755.0,
+          "value": 756.5,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w4": {
-          "value": 1250.375,
+          "value": 1253.25,
           "unit": "ns"
         },
         "dram_lanes_held_latency_ns_w8": {
-          "value": 2442.25,
+          "value": 2438.875,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w1": {
-          "value": 524.625,
+          "value": 525.125,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w2": {
-          "value": 606.375,
+          "value": 607.75,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w4": {
-          "value": 755.125,
+          "value": 757.625,
           "unit": "ns"
         },
         "dram_lanes_half_held_latency_ns_w8": {
-          "value": 1251.5,
+          "value": 1253.625,
           "unit": "ns"
         },
         "sm_clock_mhz_chase_held": {
-          "value": 2878.318,
+          "value": 2877.694,
           "unit": "mhz"
+        },
+        "l1_ldg32_cycles_per_sm": {
+          "value": 2.044,
+          "unit": "clk"
+        },
+        "l2_ldg32_cycles_per_sm": {
+          "value": 8.931,
+          "unit": "clk"
+        },
+        "l2_bytes_per_sm_clock": {
+          "value": 14.332,
+          "unit": "byte"
+        },
+        "imma_wide_cycles_per_partition": {
+          "value": 16.013,
+          "unit": "clk"
+        },
+        "imma_wide_cycles_per_partition_w4": {
+          "value": 16.126,
+          "unit": "clk"
+        },
+        "imma_wide_cycles_per_partition_w8": {
+          "value": 16.006,
+          "unit": "clk"
+        },
+        "imma_wide_dependent_latency": {
+          "value": 27.025,
+          "unit": "clk"
+        },
+        "imma_narrow_cycles_per_partition": {
+          "value": 16.01,
+          "unit": "clk"
+        },
+        "imma_narrow_cycles_per_partition_w4": {
+          "value": 16.118,
+          "unit": "clk"
+        },
+        "imma_narrow_cycles_per_partition_w8": {
+          "value": 16.004,
+          "unit": "clk"
+        },
+        "imma_narrow_dependent_latency": {
+          "value": 27.024,
+          "unit": "clk"
         }
       },
       "launch": {
@@ -2773,75 +2995,75 @@
         "cc": 120,
         "sms": 170,
         "tool": {
-          "probe": "launch_probe 2",
+          "probe": "launch_probe 3",
           "nvcc": "13.4.92",
           "driver": "13040",
           "runtime": "13040",
           "arch": "sm_120a",
-          "source_sha256": "183ab2b3440878fdea654c118941d1cab7b7eb522516e7d6c0e9714853993d05"
+          "source_sha256": "4937fa78ad50bf81b962401203509ea7d5a83ec4f87813be2845728f3c907428"
         },
         "notes": [
           "device 0 is the GPU at PCI 0000:01:00.0",
           "timer: CUDA events (a 1.024 us tick on the consumer boards and the GV100); a fact is the median over 15 repeats of the slope between series of 1 and 1024 graph nodes, or 1 and 256 stream launches, each series queued behind a 20 ms hold of FFMAs on every SM, a 200 ms hold before the first kind",
-          "node_ns: cudaGraphLaunch of the 1024-node graph kept the host 4.8 us on an idle stream, 2.2 us behind a 20 ms hold",
-          "node_ns: medians over 15 timings 1.760 us (N = 1; 1.632000..2.048000), 102.400 us (N = 256), 403.456 us (N = 1024; 402.943999..408.576012); median slope 393.8 ns over N = 256, 392.4 over 1024 (391.945273..397.700891); the host queued the series in at most 1.1, 1.4, 2.9 us",
+          "node_ns: cudaGraphLaunch of the 1024-node graph kept the host 4.2 us on an idle stream, 1.8 us behind a 20 ms hold",
+          "node_ns: medians over 15 timings 2.048 us (N = 1; 1.728000..2.048000), 102.400 us (N = 256), 401.408 us (N = 1024; 400.768012..401.407987); median slope 393.5 ns over N = 256, 390.4 over 1024 (389.943302..390.694024); the host queued the series in at most 1.1, 1.3, 6.1 us",
           "node_pdl_ns: the 1024-node graph has 1023 edges, 1023 programmatic",
-          "node_pdl_ns: cudaGraphLaunch of the 1024-node graph kept the host 3.1 us on an idle stream, 1.7 us behind a 20 ms hold",
-          "node_pdl_ns: medians over 15 timings 2.048 us (N = 1; 1.632000..4.096000), 77.824 us (N = 256), 303.104 us (N = 1024; 302.367985..314.368010); median slope 297.2 ns over N = 256, 294.3 over 1024 (291.941337..305.298152); the host queued the series in at most 1.5, 1.4, 3.2 us",
+          "node_pdl_ns: cudaGraphLaunch of the 1024-node graph kept the host 4.5 us on an idle stream, 1.8 us behind a 20 ms hold",
+          "node_pdl_ns: medians over 15 timings 2.048 us (N = 1; 1.408000..2.048000), 77.824 us (N = 256), 301.056 us (N = 1024; 300.671995..301.055998); median slope 297.2 ns over N = 256, 292.3 over 1024 (291.910063..292.911044); the host queued the series in at most 1.2, 1.7, 3.1 us",
           "node_pdl_ns: griddepcontrol.wait at the node's start, launch_dependents at its end",
-          "stream_ns: medians over 15 timings 1.760 us (N = 1; 1.632000..2.048000), 37.888 us (N = 64), 142.336 us (N = 256; 140.287995..158.720002); median slope 573.5 ns over N = 64, 551.3 over 256 (543.372531..614.400006); the host queued the series in at most 0.9, 50.3, 201.6 us",
-          "stream_ns: the host queued 256 launches in 197.5 us (the machine's CPU, not a fact of the card)",
-          "floor_ns_1: cudaGraphLaunch of the 1024-node graph kept the host 3.3 us on an idle stream, 1.8 us behind a 20 ms hold",
-          "floor_ns_1: medians over 15 timings 1.760 us (N = 1; 1.376000..2.048000), 102.400 us (N = 256), 401.408 us (N = 1024; 401.055992..401.407987); median slope 394.7 ns over N = 256, 390.7 over 1024 (390.349943..390.694029); the host queued the series in at most 1.1, 1.6, 1.8 us",
+          "stream_ns: medians over 15 timings 1.728 us (N = 1; 1.632000..2.048000), 37.888 us (N = 64), 140.288 us (N = 256; 139.872000..141.312003); median slope 574.0 ns over N = 64, 543.4 over 256 (540.486273..546.133346); the host queued the series in at most 1.0, 51.5, 225.9 us",
+          "stream_ns: the host queued 256 launches in 197.3 us (the machine's CPU, not a fact of the card)",
+          "floor_ns_1: cudaGraphLaunch of the 1024-node graph kept the host 3.1 us on an idle stream, 1.7 us behind a 20 ms hold",
+          "floor_ns_1: medians over 15 timings 1.760 us (N = 1; 1.728000..2.048000), 102.400 us (N = 256), 399.360 us (N = 1024; 399.008006..399.360001); median slope 393.5 ns over N = 256, 388.4 over 1024 (388.035196..388.692083); the host queued the series in at most 1.0, 1.1, 1.5 us",
           "floor_ns_1: 1 CTAs of 128 threads",
-          "floor_ns_sms: cudaGraphLaunch of the 1024-node graph kept the host 3.5 us on an idle stream, 1.7 us behind a 20 ms hold",
-          "floor_ns_sms: medians over 15 timings 2.048 us (N = 1; 1.728000..2.048000), 112.640 us (N = 256), 440.320 us (N = 1024; 440.319985..440.319985); median slope 433.7 ns over N = 256, 428.4 over 1024 (428.418363..428.731168); the host queued the series in at most 1.9, 3.0, 10.5 us",
+          "floor_ns_sms: cudaGraphLaunch of the 1024-node graph kept the host 3.5 us on an idle stream, 1.5 us behind a 20 ms hold",
+          "floor_ns_sms: medians over 15 timings 2.048 us (N = 1; 1.728000..2.048000), 110.592 us (N = 256), 438.272 us (N = 1024; 438.271999..438.271999); median slope 425.7 ns over N = 256, 426.4 over 1024 (426.416422..426.729227); the host queued the series in at most 1.1, 1.3, 1.4 us",
           "floor_ns_sms: 170 CTAs of 128 threads",
-          "floor_ns_4sms: cudaGraphLaunch of the 1024-node graph kept the host 3.1 us on an idle stream, 1.7 us behind a 20 ms hold",
-          "floor_ns_4sms: medians over 15 timings 2.048 us (N = 1; 1.728000..2.048000), 163.840 us (N = 256), 651.264 us (N = 1024; 650.816023..653.312027); median slope 634.5 ns over N = 256, 634.6 over 1024 (634.181841..636.903253); the host queued the series in at most 0.9, 1.2, 1.9 us",
+          "floor_ns_4sms: cudaGraphLaunch of the 1024-node graph kept the host 2.6 us on an idle stream, 1.4 us behind a 20 ms hold",
+          "floor_ns_4sms: medians over 15 timings 2.048 us (N = 1; 1.728000..4.096000), 163.840 us (N = 256), 649.216 us (N = 1024; 648.832023..649.215996); median slope 634.5 ns over N = 256, 632.6 over 1024 (630.615832..632.930593); the host queued the series in at most 0.9, 1.1, 1.4 us",
           "floor_ns_4sms: 680 CTAs of 128 threads",
-          "floor_ns_1024: cudaGraphLaunch of the 1024-node graph kept the host 2.8 us on an idle stream, 1.5 us behind a 20 ms hold",
-          "floor_ns_1024: medians over 15 timings 1.760 us (N = 1; 1.728000..4.096000), 202.752 us (N = 256), 802.816 us (N = 1024; 802.367985..804.863989); median slope 788.2 ns over N = 256, 782.8 over 1024 (782.326492..785.079168); the host queued the series in at most 1.2, 1.4, 5.0 us",
+          "floor_ns_1024: cudaGraphLaunch of the 1024-node graph kept the host 2.7 us on an idle stream, 1.4 us behind a 20 ms hold",
+          "floor_ns_1024: medians over 15 timings 2.048 us (N = 1; 1.696000..4.096000), 202.752 us (N = 256), 800.768 us (N = 1024; 800.320029..800.768018); median slope 787.1 ns over N = 256, 780.8 over 1024 (778.760526..781.075286); the host queued the series in at most 1.9, 3.6, 10.9 us",
           "floor_ns_1024: 1024 CTAs of 128 threads",
-          "floor_ns_4096: cudaGraphLaunch of the 1024-node graph kept the host 2.8 us on an idle stream, 1.6 us behind a 20 ms hold",
-          "floor_ns_4096: medians over 15 timings 4.096 us (N = 1; 3.616000..4.096000), 565.248 us (N = 256), 2257.472 us (N = 1024; 2257.344007..2257.920027); median slope 2201.7 ns over N = 256, 2203.0 over 1024 (2202.588473..2203.620749); the host queued the series in at most 1.0, 1.1, 1.5 us",
+          "floor_ns_4096: cudaGraphLaunch of the 1024-node graph kept the host 3.0 us on an idle stream, 1.6 us behind a 20 ms hold",
+          "floor_ns_4096: medians over 15 timings 3.808 us (N = 1; 3.776000..4.096000), 563.200 us (N = 256), 2249.280 us (N = 1024; 2247.231960..2249.727964); median slope 2193.7 ns over N = 256, 2195.0 over 1024 (2192.703774..2195.456466); the host queued the series in at most 1.2, 1.1, 1.5 us",
           "floor_ns_4096: 4096 CTAs of 128 threads",
           "compute processes on the probe's GPU before the run: 0",
           "compute processes on the probe's GPU after the run: 0",
           "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
-          "nvidia-smi over the run (40 samples): memory clock 405..13801 MHz, SM clock 180..2850 MHz, P-state P1/P8"
+          "nvidia-smi over the run (40 samples): memory clock 405..13801 MHz, SM clock 180..2872 MHz, P-state P1/P8"
         ],
         "facts": {
           "node_ns": {
-            "value": 392.383,
+            "value": 390.381,
             "unit": "ns"
           },
           "node_pdl_ns": {
-            "value": 294.287,
+            "value": 292.285,
             "unit": "ns"
           },
           "stream_ns": {
-            "value": 551.278,
+            "value": 543.373,
             "unit": "ns"
           },
           "floor_ns_1": {
-            "value": 390.663,
+            "value": 388.379,
             "unit": "ns"
           },
           "floor_ns_sms": {
-            "value": 428.418,
+            "value": 426.416,
             "unit": "ns"
           },
           "floor_ns_4sms": {
-            "value": 634.62,
+            "value": 632.618,
             "unit": "ns"
           },
           "floor_ns_1024": {
-            "value": 782.764,
+            "value": 780.762,
             "unit": "ns"
           },
           "floor_ns_4096": {
-            "value": 2202.995,
+            "value": 2194.987,
             "unit": "ns"
           }
         },
@@ -2853,38 +3075,38 @@
             "cc": 120,
             "sms": 70,
             "tool": {
-              "probe": "launch_probe 2",
+              "probe": "launch_probe 3",
               "nvcc": "13.4.92",
               "driver": "13040",
               "runtime": "13040",
               "arch": "sm_120a",
-              "source_sha256": "183ab2b3440878fdea654c118941d1cab7b7eb522516e7d6c0e9714853993d05"
+              "source_sha256": "4937fa78ad50bf81b962401203509ea7d5a83ec4f87813be2845728f3c907428"
             },
             "notes": [
               "device 0 is the GPU at PCI 0000:01:00.0",
               "timer: CUDA events (a 1.024 us tick on the consumer boards and the GV100); a fact is the median over 15 repeats of the slope between series of 1 and 1024 graph nodes, or 1 and 256 stream launches, each series queued behind a 20 ms hold of FFMAs on every SM, a 200 ms hold before the first kind",
-              "node_ns: cudaGraphLaunch of the 1024-node graph kept the host 4.3 us on an idle stream, 1.9 us behind a 20 ms hold",
-              "node_ns: medians over 15 timings 1.728 us (N = 1; 1.696000..2.048000), 104.448 us (N = 256), 407.552 us (N = 1024; 407.007992..407.552004); median slope 401.6 ns over N = 256, 396.4 over 1024 (395.917896..396.731187); the host queued the series in at most 1.1, 1.1, 1.9 us",
+              "node_ns: cudaGraphLaunch of the 1024-node graph kept the host 4.0 us on an idle stream, 1.9 us behind a 20 ms hold",
+              "node_ns: medians over 15 timings 1.728 us (N = 1; 1.536000..2.048000), 104.448 us (N = 256), 407.552 us (N = 1024; 407.072008..407.552004); median slope 402.8 ns over N = 256, 396.4 over 1024 (395.949155..396.699906); the host queued the series in at most 1.1, 1.2, 1.9 us",
               "node_pdl_ns: the 1024-node graph has 1023 edges, 1023 programmatic",
-              "node_pdl_ns: cudaGraphLaunch of the 1024-node graph kept the host 2.9 us on an idle stream, 1.6 us behind a 20 ms hold",
-              "node_pdl_ns: medians over 15 timings 2.048 us (N = 1; 1.440000..2.048000), 79.872 us (N = 256), 315.008 us (N = 1024; 314.720005..315.391988); median slope 305.2 ns over N = 256, 305.9 over 1024 (305.642233..306.455522); the host queued the series in at most 1.2, 1.2, 1.4 us",
+              "node_pdl_ns: cudaGraphLaunch of the 1024-node graph kept the host 3.0 us on an idle stream, 1.7 us behind a 20 ms hold",
+              "node_pdl_ns: medians over 15 timings 2.048 us (N = 1; 1.312000..2.048000), 79.872 us (N = 256), 315.008 us (N = 1024; 314.976007..315.391988); median slope 305.2 ns over N = 256, 305.9 over 1024 (305.892480..307.018561); the host queued the series in at most 1.3, 1.4, 1.6 us",
               "node_pdl_ns: griddepcontrol.wait at the node's start, launch_dependents at its end",
-              "stream_ns: medians over 15 timings 2.048 us (N = 1; 1.728000..4.096000), 36.864 us (N = 64), 141.312 us (N = 256; 141.312003..142.335996); median slope 552.6 ns over N = 64, 546.1 over 256 (538.101973..550.149004); the host queued the series in at most 0.9, 50.6, 200.5 us",
-              "stream_ns: the host queued 256 launches in 196.1 us (the machine's CPU, not a fact of the card)",
-              "floor_ns_1: cudaGraphLaunch of the 1024-node graph kept the host 3.1 us on an idle stream, 1.7 us behind a 20 ms hold",
-              "floor_ns_1: medians over 15 timings 2.048 us (N = 1; 1.728000..2.048000), 102.400 us (N = 256), 405.504 us (N = 1024; 405.119985..405.503988); median slope 393.5 ns over N = 256, 394.4 over 1024 (394.009761..394.385130); the host queued the series in at most 1.0, 1.3, 1.7 us",
+              "stream_ns: medians over 15 timings 2.048 us (N = 1; 2.048000..2.048000), 36.864 us (N = 64), 141.312 us (N = 256; 141.312003..142.335996); median slope 552.6 ns over N = 64, 546.1 over 256 (546.133346..550.149004); the host queued the series in at most 0.9, 51.2, 230.4 us",
+              "stream_ns: the host queued 256 launches in 199.4 us (the machine's CPU, not a fact of the card)",
+              "floor_ns_1: cudaGraphLaunch of the 1024-node graph kept the host 2.6 us on an idle stream, 1.7 us behind a 20 ms hold",
+              "floor_ns_1: medians over 15 timings 2.048 us (N = 1; 1.728000..2.048000), 102.400 us (N = 256), 405.120 us (N = 1024; 405.023992..405.503988); median slope 393.5 ns over N = 256, 394.0 over 1024 (393.915926..394.697936); the host queued the series in at most 1.0, 1.1, 1.6 us",
               "floor_ns_1: 1 CTAs of 128 threads",
-              "floor_ns_sms: cudaGraphLaunch of the 1024-node graph kept the host 4.2 us on an idle stream, 1.6 us behind a 20 ms hold",
-              "floor_ns_sms: medians over 15 timings 2.048 us (N = 1; 1.376000..2.048000), 106.496 us (N = 256), 417.792 us (N = 1024; 417.407990..417.791992); median slope 409.6 ns over N = 256, 406.4 over 1024 (406.021495..407.053756); the host queued the series in at most 1.1, 1.4, 2.3 us",
+              "floor_ns_sms: cudaGraphLaunch of the 1024-node graph kept the host 3.5 us on an idle stream, 1.6 us behind a 20 ms hold",
+              "floor_ns_sms: medians over 15 timings 2.048 us (N = 1; 2.048000..2.048000), 106.496 us (N = 256), 417.440 us (N = 1024; 417.407990..417.791992); median slope 409.6 ns over N = 256, 406.1 over 1024 (406.021495..406.396865); the host queued the series in at most 0.9, 1.3, 1.5 us",
               "floor_ns_sms: 70 CTAs of 128 threads",
-              "floor_ns_4sms: cudaGraphLaunch of the 1024-node graph kept the host 3.0 us on an idle stream, 1.5 us behind a 20 ms hold",
-              "floor_ns_4sms: medians over 15 timings 2.048 us (N = 1; 1.696000..2.048000), 118.784 us (N = 256), 464.512 us (N = 1024; 464.159995..464.895993); median slope 457.8 ns over N = 256, 452.4 over 1024 (451.722381..452.785917); the host queued the series in at most 1.0, 1.2, 1.7 us",
+              "floor_ns_4sms: cudaGraphLaunch of the 1024-node graph kept the host 2.6 us on an idle stream, 1.5 us behind a 20 ms hold",
+              "floor_ns_4sms: medians over 15 timings 2.048 us (N = 1; 1.696000..2.048000), 118.784 us (N = 256), 464.512 us (N = 1024; 464.255989..464.895993); median slope 457.8 ns over N = 256, 452.1 over 1024 (452.066462..452.754637); the host queued the series in at most 1.1, 1.1, 1.5 us",
               "floor_ns_4sms: 280 CTAs of 128 threads",
-              "floor_ns_1024: cudaGraphLaunch of the 1024-node graph kept the host 2.5 us on an idle stream, 1.4 us behind a 20 ms hold",
-              "floor_ns_1024: medians over 15 timings 2.048 us (N = 1; 1.696000..4.096000), 200.704 us (N = 256), 792.576 us (N = 1024; 792.064011..794.623971); median slope 779.0 ns over N = 256, 772.7 over 1024 (770.314786..774.756570); the host queued the series in at most 1.2, 1.2, 1.5 us",
+              "floor_ns_1024: cudaGraphLaunch of the 1024-node graph kept the host 2.5 us on an idle stream, 1.6 us behind a 20 ms hold",
+              "floor_ns_1024: medians over 15 timings 2.048 us (N = 1; 1.696000..2.048000), 200.704 us (N = 256), 794.176 us (N = 1024; 793.887973..794.623971); median slope 779.0 ns over N = 256, 774.3 over 1024 (774.256136..775.069375); the host queued the series in at most 0.9, 1.1, 1.6 us",
               "floor_ns_1024: 1024 CTAs of 128 threads",
-              "floor_ns_4096: cudaGraphLaunch of the 1024-node graph kept the host 2.7 us on an idle stream, 1.5 us behind a 20 ms hold",
-              "floor_ns_4096: medians over 15 timings 4.096 us (N = 1; 3.744000..4.096000), 575.488 us (N = 256), 2292.736 us (N = 1024; 2292.095900..2294.239998); median slope 2240.8 ns over N = 256, 2237.2 over 1024 (2236.559042..2238.654934); the host queued the series in at most 1.0, 1.2, 1.4 us",
+              "floor_ns_4096: cudaGraphLaunch of the 1024-node graph kept the host 2.8 us on an idle stream, 1.8 us behind a 20 ms hold",
+              "floor_ns_4096: medians over 15 timings 4.096 us (N = 1; 4.096000..4.096000), 575.488 us (N = 256), 2296.832 us (N = 1024; 2296.351910..2296.832085); median slope 2240.8 ns over N = 256, 2241.2 over 1024 (2240.719364..2241.188744); the host queued the series in at most 0.9, 1.1, 1.8 us",
               "floor_ns_4096: 4096 CTAs of 128 threads",
               "compute processes on the probe's GPU before the run: 0",
               "compute processes on the probe's GPU after the run: 0",
@@ -2905,23 +3127,23 @@
                 "unit": "ns"
               },
               "floor_ns_1": {
-                "value": 394.385,
+                "value": 394.01,
                 "unit": "ns"
               },
               "floor_ns_sms": {
-                "value": 406.397,
+                "value": 406.053,
                 "unit": "ns"
               },
               "floor_ns_4sms": {
-                "value": 452.379,
+                "value": 452.129,
                 "unit": "ns"
               },
               "floor_ns_1024": {
-                "value": 772.692,
+                "value": 774.319,
                 "unit": "ns"
               },
               "floor_ns_4096": {
-                "value": 2237.185,
+                "value": 2241.189,
                 "unit": "ns"
               }
             }

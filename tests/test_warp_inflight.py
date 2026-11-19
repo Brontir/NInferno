@@ -553,6 +553,11 @@ class WarpInflight(unittest.TestCase):
             for c in row["transfer"]["runs"]:
                 self.assertEqual(c["source"], f"warp_inflight_{key}_{wi.card_slug(c['card'])}.txt")
                 self.assertNotEqual(c["card"], row["card"], key)
+                # Whether the run's clock check was waived (#955): what its own notes say.
+                with open(os.path.join(wi.DEFAULT_INPUTS, c["source"]), encoding="utf-8") as f:
+                    run_head = wi.parse_run(f.read())[0]
+                self.assertEqual(c["clocks_waived"],
+                                 any(n.startswith(wi.CLOCK_WAIVED) for n in run_head["notes"]), key)
                 t = c["tool"]
                 self.assertEqual(t["source_sha256"],
                                  wi.source_sha256() if t["probe"] == wi.checked_in_probe()
@@ -746,10 +751,10 @@ class WarpInflight(unittest.TestCase):
         # chain16's margin is thin on sm_75 and sm_86 (inside the latency's own w1 / w2 spread:
         # the verdict there is formal, see #765) and wide on sm_89.
         want = {  # file: (latency is the card's own, chain8 reading / bound, chain16 the same)
-            "warp_inflight_75_rtx2080ti_probe5.txt": (True, 1.349, 1.025),
-            "warp_inflight_86_rtx3090_probe5.txt": (True, 1.313, 1.023),
-            "warp_inflight_89_rtx4090_probe5.txt": (True, 1.422, 1.141),
-            "warp_inflight_89_rtx4070ti_probe5.txt": (False, 1.410, 1.142),
+            "warp_inflight_75_rtx2080ti_probe5.txt": (True, 1.348, 1.024),
+            "warp_inflight_86_rtx3090_probe5.txt": (True, 1.303, 1.016),
+            "warp_inflight_89_rtx4090_probe5.txt": (True, 1.435, 1.151),
+            "warp_inflight_89_rtx4070ti_probe5.txt": (False, 1.422, 1.151),
         }
         runs = os.path.join(os.path.dirname(wi.SOURCE), "runs")
         for name, (mine, m8, m16) in want.items():

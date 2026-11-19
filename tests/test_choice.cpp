@@ -14,6 +14,7 @@
 #include "core/machine_facts.h"
 #include "core/measured_boards.h"
 #include "core/generation.h"
+#include "core/launch_facts.h"
 #include "core/mmq_columns.h"
 #include "product/choice/choice_replay.h"
 
@@ -1144,6 +1145,97 @@ void decides_by_generation(const json& fixture) {
 // log KLD; at or above Q8_0's bits it is the reference. The worth weighs the switches at a
 // quantization where its family's terms rest on two cards (which quantization a listing serves is
 // plan_quants', test_plan_dry_run).
+// #618 step 5: the quantization axis (choice::choose_quants) on rows whose choices are given: a
+// row whose accuracy is only an estimate never wins, whatever its worth; within the band the lower
+// KLD wins; a row whose choice falls short of the target context is passed over; a row off the
+// tier is not asked; a row whose bound cannot reach the band is not served (its memory never
+// planned); and a tie of worth and KLD goes to the rule's order.
+void quant_axis_decides(const json& fixture) {
+    const Bench b = nine_b(fixture, "RTX 4090");
+    const std::string measured_q4 =
+        "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8";
+    ch::QuantOption direct = b.quants[0];
+    direct.label           = "Q4_K_M";
+    direct.files           = measured_q4;
+    check(ch::quant_authority(b.model, direct) == ch::QualityAuthority::Direct,
+          "quant axis: the fixture row is direct");
+    ch::QuantOption estimate = direct;
+    estimate.files.clear();
+    // A choice whose one candidate scores `worth` and `kld` at `context`.
+    const auto choice_at = [](double worth, double kld, std::uint32_t context) {
+        ch::Choice c;
+        ch::Scored s;
+        s.worth        = worth;
+        s.accuracy.kld = kld;
+        c.scored.push_back(s);
+        c.chosen       = 0;
+        c.context      = context;
+        c.anchor_worth = worth;
+        return c;
+    };
+
+    struct Row {
+        ch::QuantOption q;
+        bool on_tier;
+        double worth, kld;
+        std::uint32_t context;
+    };
+
+    const auto run = [&](const std::vector<Row>& rows, std::uint32_t target,
+                         std::vector<int>& served, const ch::RanksAbove& ranks) {
+        ch::QuantAxis axis;
+        served.assign(rows.size(), 0);
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            ch::QuantAxisRow a;
+            a.quant     = rows[i].q;
+            a.supported = true;
+            a.rule_bits = rows[i].q.bits_per_weight;
+            a.on_tier   = rows[i].on_tier;
+            a.choose_at = [&, i](bool steps) -> std::optional<ch::Choice> {
+                if (steps) { ++served[i]; }
+                return choice_at(rows[i].worth, rows[i].kld, rows[i].context);
+            };
+            axis.rows.push_back(std::move(a));
+        }
+        axis.rule_pick          = 0; // a direct row: nothing is withheld
+        axis.rule_pick_own_tier = true;
+        axis.target_context     = target;
+        axis.ranks_above        = ranks;
+        return ch::choose_quants(b.model, b.card, axis);
+    };
+    const ch::RanksAbove lower_index = [](std::size_t a, std::size_t c) { return a < c; };
+    std::vector<int> served;
+    // 0: direct, 1: an estimate at a far higher worth, 2: direct, lower KLD within the band,
+    // 3: off the tier, 4: direct but short of the target context, 5: direct, out of reach.
+    const std::vector<Row> rows = {
+        {direct, true, 1.00, 0.020, 32768}, {estimate, true, 3.00, 0.001, 32768},
+        {direct, true, 0.98, 0.010, 32768}, {direct, false, 2.00, 0.001, 32768},
+        {direct, true, 1.01, 0.001, 16384}, {direct, true, 0.50, 0.001, 32768},
+    };
+    const ch::QuantAxisPick pick = run(rows, 32768, served, lower_index);
+    check(pick.weighs && !pick.withheld && pick.estimates == std::vector<std::size_t>{1},
+          "quant axis: weighed, the rule's pick direct, the estimate listed");
+    check(pick.row && *pick.row == 2 && pick.context == 32768,
+          "quant axis: the lower KLD within the band wins over the higher worth");
+    check(served[1] == 0 && served[3] == 0,
+          "quant axis: an estimate and an off-tier row are not served");
+    check(served[4] == 1, "quant axis: the short row is served, then passed over");
+    check(served[5] == 0, "quant axis: a bound out of reach is not served");
+    using W = ch::QuantAxisWhy;
+    check(pick.why == std::vector<W>{W::Ranked, W::Estimate, W::Chosen, W::OffTier, W::ShortContext,
+                                     W::OutOfReach},
+          "quant axis: each row's why");
+    // Worth and KLD tied: the rule's order decides, both ways.
+    const std::vector<Row> tied = {{direct, true, 1.0, 0.01, 32768},
+                                   {direct, true, 1.0, 0.01, 32768}};
+    check(*run(tied, 32768, served, lower_index).row == 0,
+          "quant axis: a tie keeps the rule's first");
+    check(*run(tied, 32768, served, [](std::size_t a, std::size_t c) { return a > c; }).row == 1,
+          "quant axis: a tie goes to the row the rule ranks above");
+    // No row reaches the target: no pick.
+    check(!run(tied, 65536, served, lower_index).row, "quant axis: nothing at the target, no pick");
+}
+
 void weighs_the_quantizations(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4090");
     ch::Candidate c;
@@ -4547,7 +4639,115 @@ void reports_gates_and_bands(const json& fixture) {
     }
 }
 
+// #613 PR-8e: every kKernelCost row names its census cards' architecture, which belongs to the
+// row's generation and has launch facts; else kernel_cost_seconds would rebase the row's own boards
+// from the wrong architecture's launch share.
+void kernel_cost_rows_name_their_architecture() {
+    for (const ch::KernelCost& row : ch::kKernelCost) {
+        const std::string what = std::string(row.generation) + " (sm_" + std::to_string(row.major) +
+                                 std::to_string(row.minor) + ")";
+        check(ninferno::generation_row(row.major, row.minor).name == row.generation,
+              "kKernelCost " + what + ": its architecture is of its generation");
+        check(ninferno::launch_row(row.major, row.minor).has_value(),
+              "kKernelCost " + what + ": its architecture has launch facts");
+    }
+}
+
+// #997: no card's price is rebased while every architecture with launch facts is the census
+// architecture of the kKernelCost row its boards are priced from: its generation's own, else
+// kTransferGeneration's (choice.cpp generation_row_of). A new launch row of another architecture
+// (sm_121 on gb20x's row, sm_80 or sm_90 on Ada's, sm_61 on Volta's) fails here: it moves those
+// boards' price, and on a generation of its own turns their basis transferred, so the change is
+// seen, not silent.
+void launch_rows_are_their_generations_census() {
+    const auto row_of = [](std::string_view gen) -> const ch::KernelCost* {
+        for (const std::string_view g : {gen, ch::kTransferGeneration}) {
+            for (const ch::KernelCost& row : ch::kKernelCost) {
+                if (row.generation == g) return &row;
+            }
+        }
+        return nullptr;
+    };
+    for (int major = 1; major <= 15; ++major) {
+        for (int minor = 0; minor <= 9; ++minor) {
+            if (!ninferno::launch_row(major, minor).has_value()) continue;
+            const std::string_view gen = ninferno::generation_row(major, minor).name;
+            const ch::KernelCost* row  = row_of(gen);
+            const std::string cc       = "sm_" + std::to_string(major) + std::to_string(minor);
+            check(row != nullptr, cc + ": a kKernelCost row prices its boards");
+            if (row == nullptr) continue;
+            check(
+                row->major == major && row->minor == minor,
+                cc +
+                    " has launch facts and is not the census architecture of the kKernelCost row " +
+                    "its boards (" + std::string(gen) + ") are priced from (" +
+                    std::string(row->generation) + "): their price is rebased");
+        }
+    }
+}
+
+// #997: the rebase of a row's launch share. On its own architecture, or on one without launch
+// facts, a row is priced as measured. Elsewhere it moves by the two architectures' launch shares,
+// the GEMV's node plus the dispatch ramp of its ~1024-CTA grid and the small kernel's node.
+// Volta's row on a Turing card is the case: both have launch facts and differ.
+void kernel_cost_rebases_the_launch_share() {
+    const ch::KernelCost* volta = nullptr;
+    for (const ch::KernelCost& row : ch::kKernelCost) {
+        if (row.generation == "volta") volta = &row;
+        check(ch::kernel_cost_seconds(row, row.major, row.minor, true) == row.gemv,
+              std::string(row.generation) +
+                  ": the row's own architecture prices the GEMV as measured");
+        check(ch::kernel_cost_seconds(row, row.major, row.minor, false) == row.small,
+              std::string(row.generation) +
+                  ": the row's own architecture prices a small kernel as measured");
+        check(ch::kernel_cost_seconds(row, 9, 0, true) == row.gemv,
+              std::string(row.generation) +
+                  ": sm_90 has no launch facts, so the row is as measured");
+        check(ch::kernel_cost_seconds(row, 9, 0, false) == row.small,
+              std::string(row.generation) +
+                  ": sm_90 has no launch facts, so a small kernel's row is as measured");
+        // As measured, the row is not rebased, so it marks nothing transferred (#997).
+        bool rebased = false;
+        (void)ch::kernel_cost_seconds(row, row.major, row.minor, true, &rebased);
+        (void)ch::kernel_cost_seconds(row, 9, 0, false, &rebased);
+        check(!rebased, std::string(row.generation) + ": a row as measured is not marked rebased");
+    }
+    check(volta != nullptr, "kKernelCost has the volta row");
+    if (volta == nullptr) return;
+    // Below sm_90 a GEMV's node is the plain graph node too (choice.cpp launch_share).
+    const auto share = [](int major, int minor, bool gemv) -> std::optional<double> {
+        const std::optional<double> node =
+            ninferno::launch_seconds(major, minor, ninferno::LaunchKind::GraphNode);
+        if (!node || !gemv) return node;
+        const std::optional<ninferno::Ramp> ramp = ninferno::ramp_seconds(major, minor, 1024.0);
+        if (!ramp) return std::nullopt;
+        return *node + ramp->seconds;
+    };
+    for (const bool gemv : {true, false}) {
+        const std::string kind             = gemv ? "GEMV" : "small";
+        const std::optional<double> census = share(7, 0, gemv);
+        const std::optional<double> own    = share(7, 5, gemv);
+        check(census.has_value() && own.has_value(),
+              "sm_70 and sm_75 have launch shares (" + kind + ")");
+        if (!census || !own) continue;
+        check(*census != *own,
+              "sm_70 and sm_75 launch shares differ, so the rebase is exercised (" + kind + ")");
+        const double measured = gemv ? volta->gemv : volta->small;
+        const double want     = measured - *census + *own;
+        bool rebased          = false;
+        const double got      = ch::kernel_cost_seconds(*volta, 7, 5, gemv, &rebased);
+        check(std::abs(got - want) <= 1e-12 * measured,
+              "volta row on sm_75 (" + kind + "): " + std::to_string(got) + " s, want " +
+                  std::to_string(want) + " s");
+        check(rebased,
+              "volta row on sm_75 (" + kind + ") is marked rebased, so transferred (#997)");
+    }
+}
+
 int main() {
+    kernel_cost_rows_name_their_architecture();
+    kernel_cost_rebases_the_launch_share();
+    launch_rows_are_their_generations_census();
     for (const char* name : {"speed_measured", "decode_measured", "prefill_measured"}) {
         std::ifstream cards(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/" + name +
                             ".json");
@@ -4579,6 +4779,7 @@ int main() {
     lent_generation_does_not_decide(fixture);
     steps_before_the_floor(fixture);
     weighs_the_quantizations(fixture);
+    quant_axis_decides(fixture);
     chooses_the_chunk(fixture);
     prices_the_request_mix(fixture);
     coarse_quant_keeps_kv(fixture);

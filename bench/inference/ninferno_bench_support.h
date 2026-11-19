@@ -148,7 +148,8 @@ std::string format_json(const BenchEnvironment& env, const std::string& command,
 std::string format_csv(const BenchEnvironment& env, const std::vector<TestResult>& results);
 
 std::string json_escape(std::string_view value);
-std::string kv_cache_name(KvCacheStorage storage);
+// The storage's report label; rows_int8: MemorySummary::kv_rows_int8 (kv_cache_storage_layout).
+std::string kv_cache_name(KvCacheStorage storage, bool rows_int8 = false);
 std::string proposal_head_name(ProposalHead head);
 std::uint64_t file_size_or_zero(const std::string& path);
 

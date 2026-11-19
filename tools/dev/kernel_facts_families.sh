@@ -1,7 +1,8 @@
 #!/bin/bash
 # kernel_facts_families.sh REPO [ARCH...] : regenerate the section families of the kernel-facts
-# snapshots (mmq and w4a8, #785; gemma4, #830) on the release toolchain, on a build machine's CPU,
-# and check them. KFF_FAMILIES picks them (default mmq,w4a8,gemma4): sm_70's snapshot is made with
+# snapshots (mmq and w4a8, #785; gemma4, #830; r8, #613 PR-10; i8, #613 PR-6; moer8 and moegemm,
+# #619 step 11) on the release toolchain, on a build machine's CPU, and check them. KFF_FAMILIES
+# picks them (default mmq,w4a8,gemma4,r8,i8,moer8,moegemm): sm_70's snapshot is made with
 # CUDA 12.8 and holds the gemma4 section alone (CUDACXX=/usr/local/cuda-12.8/bin/nvcc
 # KFF_FAMILIES=gemma4 kernel_facts_families.sh REPO 70).
 #
@@ -40,9 +41,26 @@ REPO=$(realpath "$1"); shift
 ARCHS=("$@"); [ ${#ARCHS[@]} -gt 0 ] || ARCHS=(75 80 86 89 90 100 120a)
 ROOT=$(realpath -m "${KFF_ROOT:-$HOME/kff}"); mkdir -p "$ROOT"
 JOBS=${KFF_JOBS:-8}; NVCC=${CUDACXX:-/usr/local/cuda-13.4/bin/nvcc}
-FAMS=${KFF_FAMILIES:-mmq,w4a8,gemma4}; IFS=, read -r -a FAM_LIST <<< "$FAMS"
+ALL_FAMS=${KFF_FAMILIES:-mmq,w4a8,gemma4,r8,i8,moer8,moegemm}
+# The families one arch is written with (FAMS, FAM_LIST): all of them, but for sm_100, which takes
+# no routed-expert family (moer8, moegemm) yet: six of its W4a8Nvfp4 GateUp rows read as unknown
+# flow (#987), and the kernel-facts test waives its MoE sections.
+arch_fams() {
+  FAMS=$ALL_FAMS
+  [ "$1" != 100 ] || FAMS=$(echo ",$ALL_FAMS," | sed 's/,moer8,/,/; s/,moegemm,/,/; s/^,//; s/,$//')
+  # The selector golden test's sm_120a link holds none of these families' kernels (below): they
+  # are read there from ninferno-serve, so a run on the golden test leaves them out and says so.
+  if [ "$1" = 120a ] && [ "${TARGET:-}" = ninferno_selector_golden_test ]; then
+    local kept; kept=$(echo ",$FAMS," | sed 's/,gemma4,/,/; s/,moer8,/,/; s/,moegemm,/,/; s/^,//; s/,$//')
+    [ "$kept" = "$FAMS" ] || echo "sm_120a: ${FAMS} less gemma4, moer8, moegemm on $TARGET (read them with KFF_TARGET=ninferno-serve)"
+    FAMS=$kept
+  fi
+  IFS=, read -r -a FAM_LIST <<< "$FAMS"
+}
+arch_fams all
 # The binary read (KFF_TARGET): the selector golden test by default. Its sm_120a link holds no
-# Gemma 4 kernel (libninferno_ops.a does, 232), so that family is read there from ninferno-serve.
+# Gemma 4 kernel (libninferno_ops.a does, 232) and no routed-expert one (moer8, moegemm), so those
+# families are read there from ninferno-serve (KFF_TARGET=ninferno-serve KFF_FAMILIES=...).
 TARGET=${KFF_TARGET:-ninferno_selector_golden_test}
 case "$TARGET" in
   ninferno-serve) BIN_REL=apps/ninferno-serve ;;
@@ -64,7 +82,7 @@ FACTS=$REPO/$FACTS_REL
 case "$ROOT/" in "$REPO"/*) echo "KFF_ROOT=$ROOT is inside $REPO; build outside the checkout"; exit 3 ;; esac
 [ -z "$(git -C "$REPO" status --porcelain -- "$FACTS_REL")" ] \
   || { echo "$REPO has uncommitted changes in $FACTS_REL; start from a clean checkout"; exit 3; }
-echo "== $FAMS sections of ${ARCHS[*]} at $(git -C "$REPO" log --oneline -1 | cut -c1-100)"
+echo "== $ALL_FAMS sections of ${ARCHS[*]} at $(git -C "$REPO" log --oneline -1 | cut -c1-100)"
 
 # 2. the toolkit: the nvcc every snapshot records, and its own cuobjdump and cu++filt
 [ -x "$NVCC" ] || { echo "no nvcc at $NVCC (set CUDACXX)"; exit 3; }
@@ -74,6 +92,7 @@ for t in cuobjdump cu++filt; do
 done
 VERSION=$("$NVCC" --version | sed -n 's/.*, V\([0-9.]*\)$/\1/p')
 for a in "${ARCHS[@]}"; do
+  arch_fams "$a"
   f=$FACTS/sm_$a.txt
   [ -f "$f" ] || { echo "no snapshot $f"; exit 3; }
   want=$(grep -m1 '^nvcc ' "$f" | cut -d' ' -f2)
@@ -93,6 +112,7 @@ declare -A RESULT
 WORST=0
 worst() { [ "$1" -le "$WORST" ] || WORST=$1; }
 for a in "${ARCHS[@]}"; do
+  arch_fams "$a"
   B=$ROOT/build_kff_$a
   f=$FACTS/sm_$a.txt
   FREE=$(df -BG --output=avail "$ROOT" | tail -1 | tr -dc 0-9)
@@ -152,7 +172,7 @@ for a in "${ARCHS[@]}"; do
   [ "${KFF_CLEAN:-0}" != 1 ] || rm -rf "$B"
 done
 
-echo "== $FAMS sections, nvcc $VERSION, $(($(date +%s) - T0)) s"
+echo "== $ALL_FAMS sections, nvcc $VERSION, $(($(date +%s) - T0)) s"
 for a in "${ARCHS[@]}"; do printf '  sm_%-5s %s\n' "$a" "${RESULT[$a]:-not run}"; done
 # What moved in the checkout: section lines only (each file's part before its first section was
 # compared with HEAD above).

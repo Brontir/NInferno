@@ -39,6 +39,7 @@
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
+#include "ninferno/ops/prefill_routes.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/route_pins.h"
 
@@ -211,6 +212,7 @@ bool in_auto_list(std::string_view source) {
 struct BoardTally {
     int cells = 0, borrowed = 0, transferred = 0, measured = 0, moved = 0, demoted_same_route = 0;
     int kept_rules = 0; // Borrowed or Transferred answers of the rules list, kept by design
+    int kept_mmq_boundary = 0; // demoted ggml_mmq entries kept at T 9..16 (keeps_mmq_boundary)
     std::map<std::string, int> moved_by_regime;
     Json moves = Json::array();
     std::set<std::string> moved_problems; // "<format>|<epilogue>|n<N>|k<K>"
@@ -266,6 +268,121 @@ void check_dense_tune_reader() {
     }
 }
 
+// The dense tuner leaves a width untimed exactly where the dispatch answers it before the tuner's
+// entry (#1018, answered_before_tuner): on the RTX 5090, whose own table holds q4_K 4096 x 6656
+// store, every decode and wide width under both policies agrees with the dispatch's authority. The
+// R8 call at T = 1 under AllowA8 is the case the table-only skip got wrong: the table holds the
+// width, the dispatch's route-table authority stands aside for the call, so the tuner times it.
+// The MMQ verify rule's widths (IQ4_XS, T 9..16, a C4 verify) stay untimed at every lane count:
+// the entry has no lanes key and would overrule the rule the dispatch reads after it.
+void check_answered_before_tuner() {
+    const RegretBoard* board = nullptr;
+    for (const RegretBoard& b : kRegretBoards) {
+        if (std::string_view(b.name) == "rtx5090") board = &b;
+    }
+    if (!board) {
+        fail("answered_before_tuner: kRegretBoards has no rtx5090");
+        return;
+    }
+    const DeviceClass d = board_class(*board);
+    const generic::Problem a8{QType::GGML_Q4_K, LinearPolicy::AllowA8, 4096, 6656,
+                              generic::Epilogue::Store};
+    int compared = 0, from_table = 0;
+    for (const LinearPolicy policy : {LinearPolicy::A16Only, LinearPolicy::AllowA8}) {
+        for (const std::int32_t t : {1, 2, 3, 4, 8, 12, 16, 32, 64}) {
+            const std::string at = std::string("q4k 4096x6656 ") +
+                                   (policy == LinearPolicy::AllowA8 ? "a8" : "a16") +
+                                   " T=" + std::to_string(t);
+            const auto answer =
+                generic::route_answer_query(d, a8.qtype, policy, a8.epilogue, a8.n, a8.k, t);
+            const auto answered = generic::answered_before_tuner_query(d, a8.qtype, policy,
+                                                                       a8.epilogue, a8.n, a8.k, t);
+            if (!answer || !answered) {
+                fail(at + ": no answer");
+                continue;
+            }
+            const std::string_view source = answer->evidence.source;
+            const bool dispatch           = source == "route-table" || source == "nvfp4-half-l2";
+            ++compared;
+            from_table += source == "route-table" ? 1 : 0;
+            if (*answered != dispatch) {
+                fail(at + ": the tuner " + (*answered ? "skips" : "times") +
+                     " a width the dispatch answers by " + std::string(source));
+            }
+        }
+    }
+    if (compared < 12 || from_table == 0) {
+        fail("answered_before_tuner: " + std::to_string(compared) + " widths compared, " +
+             std::to_string(from_table) + " from the table: the check is vacuous");
+    }
+    // The R8 call: the table holds T = 1, the dispatch does not take it there.
+    const ScopedDeviceClass scoped(d);
+    const auto r8 = generic::route_answer_query(d, a8.qtype, a8.policy, a8.epilogue, a8.n, a8.k, 1);
+    if (!r8 || r8->route.family != generic::Family::R8Mma) {
+        fail("q4k 4096x6656 a8 T=1: the dispatch takes no R8 schedule: the R8 case is not met");
+    } else if (!generic::table_route(a8, 1, false)) {
+        fail("q4k 4096x6656: the RTX 5090 table no longer holds T = 1: the R8 case is not met");
+    }
+    const auto r8_answered =
+        generic::answered_before_tuner_query(d, a8.qtype, a8.policy, a8.epilogue, a8.n, a8.k, 1);
+    if (!r8_answered || *r8_answered) fail("q4k 4096x6656 a8 T=1: the tuner skips the R8 call");
+    // The MMQ verify rule: a C4 verify takes mmq by the rule; the tuner times none of its widths,
+    // outside a round (lanes 0, where tune_dense runs) or in a round of one sequence.
+    const generic::Problem iq{QType::GGML_IQ4_XS, LinearPolicy::AllowA8, 4096, 4096,
+                              generic::Epilogue::Store};
+    for (const std::int32_t t : {9, 12, 16}) {
+        const std::string at = "iq4_xs 4096x4096 a8 T=" + std::to_string(t);
+        {
+            const ops::ScopedRoundLanes c4(4);
+            const auto answer =
+                generic::route_answer_query(d, iq.qtype, iq.policy, iq.epilogue, iq.n, iq.k, t);
+            if (!answer || answer->evidence.source != "mmq-verify-rule") {
+                fail(at + ": a C4 verify is not the MMQ verify rule's: the case is not met");
+                continue;
+            }
+        }
+        for (const int lanes : {0, 1, 4}) {
+            const ops::ScopedRoundLanes round(lanes);
+            const auto answered = generic::answered_before_tuner_query(d, iq.qtype, iq.policy,
+                                                                       iq.epilogue, iq.n, iq.k, t);
+            if (!answered || !*answered) {
+                fail(at + " lanes " + std::to_string(lanes) +
+                     ": the tuner times a width the MMQ verify rule holds");
+            }
+        }
+    }
+    // Where the BF16 MMA is emulated (the RTX 2080 Ti) the rule reads no lanes, and the tuner
+    // times the A16 schedules and R8 against ggml's matrix kernel at those widths (replaceable).
+    const RegretBoard* turing = nullptr;
+    for (const RegretBoard& b : kRegretBoards) {
+        if (std::string_view(b.name) == "rtx2080ti") turing = &b;
+    }
+    if (!turing) {
+        fail("answered_before_tuner: kRegretBoards has no rtx2080ti");
+        return;
+    }
+    const DeviceClass tu = board_class(*turing);
+    for (const std::int32_t t : {9, 12, 16}) {
+        const std::string at = "rtx2080ti iq4_xs 4096x4096 a8 T=" + std::to_string(t);
+        for (const int lanes : {0, 1, 4}) {
+            const ops::ScopedRoundLanes round(lanes);
+            const auto answer =
+                generic::route_answer_query(tu, iq.qtype, iq.policy, iq.epilogue, iq.n, iq.k, t);
+            if (!answer || answer->evidence.source != "mmq-verify-rule") {
+                fail(at + " lanes " + std::to_string(lanes) +
+                     ": not the MMQ verify rule's: the case is not met");
+                continue;
+            }
+            const auto answered = generic::answered_before_tuner_query(tu, iq.qtype, iq.policy,
+                                                                       iq.epilogue, iq.n, iq.k, t);
+            if (!answered || *answered) {
+                fail(at + " lanes " + std::to_string(lanes) +
+                     ": the tuner skips a width it times against the MMQ verify rule");
+            }
+        }
+    }
+}
+
 // The cost model's price of `route` for the cell (priced_routes_query: the selector's own formula,
 // at any width; below 17 tokens the formula's figure, which the selector does not rank by).
 std::optional<double> model_seconds(const DeviceClass& d, const Cell& c, generic::Route route) {
@@ -301,9 +418,21 @@ void check_cell(const DeviceClass& d, const Cell& c, const std::string& at,
     const bool auto_list = in_auto_list(le.source);
     if (le.kind == Kind::Borrowed) ++(auto_list ? tally.borrowed : tally.kept_rules);
     if (le.kind == Kind::Transferred) ++(auto_list ? tally.transferred : tally.kept_rules);
+    // The MMQ boundary (#614 F2, route_authorities.cpp keeps_mmq_boundary): a demoted ggml_mmq
+    // entry at 9 to 16 tokens keeps the call where the ranker would take the register MMA; the
+    // answer is then legacy's, with nothing named demoted.
+    const bool mmq_boundary = legacy.route.family == generic::Family::GgmlMmq && c.tokens >= 9 &&
+                              c.tokens <= 16 && evidence.route == legacy.route &&
+                              ee.source == le.source && ee.kind == le.kind &&
+                              ee.demoted_source.empty();
+    if (auto_list && generic::policy_demotes(RoutePolicy::Evidence, le.kind) && mmq_boundary) {
+        ++tally.kept_mmq_boundary;
+        return;
+    }
     if (auto_list && generic::policy_demotes(RoutePolicy::Evidence, le.kind)) {
         // Under legacy the entry won; under evidence it yields to the ranker. It would stand only
-        // where the ranker has no candidate (the scalar fallback), which no cell of this grid is.
+        // where the ranker has no candidate (the scalar fallback), which no cell of this grid is,
+        // or at the MMQ boundary above.
         if (ee.kind == Kind::Borrowed || ee.kind == Kind::Transferred || in_auto_list(ee.source)) {
             fail(at + ": the " + generic::evidence_kind_name(le.kind) + " entry did not yield: '" +
                  evidence_text + "'");
@@ -373,11 +502,11 @@ BoardTally run_board(const RegretBoard& b, const std::vector<SweepShape>& shapes
             legacy   = ask(d, c, RoutePolicy::Legacy);
             evidence = ask(d, c, RoutePolicy::Evidence);
         } catch (const std::exception& error) {
-            ops::set_route_policy(RoutePolicy::Legacy);
+            ops::set_route_policy(RoutePolicy::Evidence);
             fail(at + ": threw " + error.what());
             continue;
         }
-        ops::set_route_policy(RoutePolicy::Legacy);
+        ops::set_route_policy(RoutePolicy::Evidence);
         if (legacy.has_value() != evidence.has_value()) {
             fail(at + ": one policy routes the call, the other does not");
             continue;
@@ -424,6 +553,20 @@ std::filesystem::path tables_without(const std::filesystem::path& dir,
     return out;
 }
 
+// The ranker's route the tuner checks a table answer against (table_route_kept): the FP8 claims
+// below are no ggml_mmq answer, so the MMQ boundary never keeps them, whatever the ranker says.
+constexpr generic::Route kRanked{generic::Family::RegisterMma, 0};
+
+// The MMQ boundary dispatch and the tuner share (#808, codex on #1008): a demoted ggml_mmq answer
+// stands against the register MMA at 9..16 tokens only.
+static_assert(generic::keeps_mmq_boundary({generic::Family::GgmlMmq, 0}, kRanked, 9) &&
+              generic::keeps_mmq_boundary({generic::Family::GgmlMmq, 0}, kRanked, 16) &&
+              !generic::keeps_mmq_boundary({generic::Family::GgmlMmq, 0}, kRanked, 8) &&
+              !generic::keeps_mmq_boundary({generic::Family::GgmlMmq, 0}, kRanked, 17) &&
+              !generic::keeps_mmq_boundary({generic::Family::GgmlMmq, 0},
+                                           {generic::Family::R8Mma, 0}, 12) &&
+              !generic::keeps_mmq_boundary(kRanked, kRanked, 12));
+
 // --route-policy evidence and a claiming entry (RouteEntry::claim; table_claims): on a board whose
 // nearest table is another board's past kCarryDistance, the claim moves the call off its shape's
 // own kernel under legacy and does not under evidence. The board: sm_120, the RTX 5080's 84 SMs and
@@ -449,9 +592,27 @@ void check_transferred_claim() {
         const bool legacy_claims = generic::table_claims(claimed, t, false);
         ops::set_route_policy(RoutePolicy::Evidence);
         const bool evidence_claims = generic::table_claims(claimed, t, false);
-        ops::set_route_policy(RoutePolicy::Legacy);
+        ops::set_route_policy(RoutePolicy::Evidence);
         if (!legacy_claims) fail(at + ": the Transferred claim does not claim under legacy");
         if (evidence_claims) fail(at + ": the Transferred claim still claims under evidence");
+        // The dense tuner's skip (#808): legacy keeps the table's answer (the width is not timed),
+        // evidence demotes it (the width is timed).
+        ops::set_route_policy(RoutePolicy::Legacy);
+        const bool legacy_kept = generic::table_route_kept(claimed, t, false, kRanked);
+        ops::set_route_policy(RoutePolicy::Evidence);
+        const bool evidence_kept = generic::table_route_kept(claimed, t, false, kRanked);
+        if (!legacy_kept) fail(at + ": legacy does not keep the Transferred answer for the tuner");
+        if (evidence_kept) fail(at + ": evidence keeps the Transferred answer for the tuner");
+    }
+    {
+        // A prefill band's answer likewise (the tuner's prefill skip), where the table has one.
+        const ScopedDeviceClass scoped(d);
+        ops::set_route_policy(RoutePolicy::Evidence);
+        if (generic::table_route(claimed, 512, true) &&
+            generic::table_route_kept(claimed, 512, true, kRanked)) {
+            fail("claim fp8 14336x5120 prefill: evidence keeps the Transferred answer for the "
+                 "tuner");
+        }
     }
     // The board's own (measured) claims are kept under evidence: the RTX 5080 itself.
     const GpuFactsRow* r5080 = find_gpu_facts(0x2C02);
@@ -463,8 +624,16 @@ void check_transferred_claim() {
     const ScopedDeviceClass scoped(generic::board_device_class(own));
     ops::set_route_policy(RoutePolicy::Evidence);
     const bool kept = generic::table_claims(claimed, 64, false);
-    ops::set_route_policy(RoutePolicy::Legacy);
+    ops::set_route_policy(RoutePolicy::Evidence);
     if (!kept) fail("claim: the RTX 5080's own claim is refused under evidence");
+    // Its own (measured) answer is kept for the tuner too: that width is not timed again.
+    if (!generic::table_route_kept(claimed, 64, false, kRanked)) {
+        fail("claim: the RTX 5080's own answer is not kept for the tuner under evidence");
+    }
+    if (generic::table_route(claimed, 512, true) &&
+        !generic::table_route_kept(claimed, 512, true, kRanked)) {
+        fail("claim: the RTX 5080's own prefill answer is not kept for the tuner under evidence");
+    }
 }
 
 Json board_json(const RegretBoard& b, const char* tables, const BoardTally& t) {
@@ -562,7 +731,8 @@ void write_moves(const std::string& path, const std::map<std::string, Json>& wri
 }
 
 void check_policy_words() {
-    if (ops::route_policy() != RoutePolicy::Legacy) fail("the default route policy");
+    if (ops::route_policy() != RoutePolicy::Evidence)
+        fail("the default route policy (evidence, #614 F2)");
     for (const Kind k : {Kind::Pin, Kind::Measured, Kind::Ranker, Kind::Carried, Kind::Transferred,
                          Kind::Borrowed}) {
         const bool demoted = k == Kind::Borrowed || k == Kind::Transferred;
@@ -588,13 +758,14 @@ int main(int argc, char** argv) {
         check_policy_words();
         check_transferred_claim();
         check_dense_tune_reader();
+        check_answered_before_tuner();
         const std::vector<SweepShape> shapes = read_shapes();
         const std::filesystem::path shipped  = ops::route_table_dir();
         if (shipped.empty() || !std::filesystem::is_directory(shipped)) {
             throw std::runtime_error("no shipped route-table directory");
         }
         std::map<std::string, Json> written;
-        int borrowed = 0, transferred = 0, measured = 0;
+        int borrowed = 0, transferred = 0, measured = 0, kept_boundary = 0;
         for (const RegretBoard& b : kRegretBoards) {
             if (!only.empty() && only != b.name) continue;
             const auto own = own_table(shipped, b);
@@ -609,6 +780,7 @@ int main(int argc, char** argv) {
                 if (dir) std::filesystem::remove_all(*dir);
                 check_dense_tune_free(board_class(b), b, tables, t.moved_problems);
                 borrowed += t.borrowed;
+                kept_boundary += t.kept_mmq_boundary;
                 transferred += t.transferred;
                 measured += t.measured;
                 std::cout << b.name << " " << tables << " (" << kBuildSet << "): " << t.cells
@@ -618,7 +790,8 @@ int main(int argc, char** argv) {
                 for (const auto& [regime, n] : t.moved_by_regime) {
                     std::cout << " [" << regime << ": " << n << ']';
                 }
-                std::cout << ", " << t.demoted_same_route << " demoted to the same route\n";
+                std::cout << ", " << t.demoted_same_route << " demoted to the same route, "
+                          << t.kept_mmq_boundary << " kept at the MMQ boundary\n";
                 if (std::string_view(b.own_build_set) == kBuildSet) {
                     written[std::string(b.name) + "/" + tables] = board_json(b, tables, t);
                 }
@@ -631,7 +804,12 @@ int main(int argc, char** argv) {
         if (only.empty() && measured == 0) {
             fail("no measured answer in the grid: the never-demoted check is idle");
         }
-        ops::set_route_policy(RoutePolicy::Legacy);
+        // The grid holds the shape F1's A/B lost on (q4k swiglu 12288x4096 at T 12, 16): the MMQ
+        // boundary must keep some demoted entry, or its exception above is idle.
+        if (only.empty() && kept_boundary == 0) {
+            fail("no cell kept at the MMQ boundary: keeps_mmq_boundary is idle in the grid");
+        }
+        ops::set_route_policy(RoutePolicy::Evidence);
         if (!write.empty()) write_moves(write, written);
     } catch (const std::exception& error) {
         std::cerr << "route policy: " << error.what() << '\n';

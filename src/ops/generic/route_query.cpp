@@ -97,6 +97,21 @@ std::optional<RouteAnswer> route_answer_query(const DeviceClass& device, QType q
     return select_answer(problem, described.weight, tokens, prefill);
 }
 
+std::optional<bool> answered_before_tuner_query(const DeviceClass& device, QType qtype,
+                                                LinearPolicy policy, Epilogue epilogue,
+                                                std::int32_t n, std::int32_t k, std::int32_t tokens,
+                                                bool prefill) {
+    if (n <= 0 || k <= 0 || tokens <= 0) return std::nullopt;
+    const ScopedDeviceClass scoped(device);
+    const ops::ScopedPrefillRoutes profile(prefill);
+    DescribedWeight described;
+    describe_weight(described, qtype, epilogue, n, k, 0, std::nullopt);
+    if (!supports(described.weight)) return std::nullopt;
+    const Problem problem{qtype, policy, n, k, epilogue};
+    return answered_before_tuner(problem, described.weight, tokens, prefill,
+                                 heuristic_route(problem, described.weight, tokens, prefill));
+}
+
 std::optional<Route> route_query(const DeviceClass& device, QType qtype, LinearPolicy policy,
                                  Epilogue epilogue, std::int32_t n, std::int32_t k,
                                  std::int32_t tokens, bool prefill, std::int32_t parent_rows,
@@ -312,6 +327,21 @@ std::vector<PricedRouteQuery> priced_routes_query(const DeviceClass& device, QTy
     price_routes(problem, described.weight, tokens,
                  [&](Route r, double seconds) { out.push_back({r, seconds}); });
     return out;
+}
+
+std::optional<KernelResources> rmma_resources_query(const DeviceClass& device, int schedule,
+                                                    QType qtype, Epilogue epilogue, std::int32_t n,
+                                                    std::int32_t k, std::int32_t tokens) {
+    if (n <= 0 || k <= 0 || tokens <= 0) return std::nullopt;
+    const ScopedDeviceClass scoped(device);
+    DescribedWeight described;
+    describe_weight(described, qtype, epilogue, n, k, 0);
+    if (!supports(described.weight)) return std::nullopt;
+    try {
+        return rmma_resources(schedule, described.weight, epilogue, tokens, n);
+    } catch (const std::exception&) {
+        return std::nullopt; // as price_routes' rmma_kept: no facts, priced by threads alone
+    }
 }
 
 bool route_admitted_query(const DeviceClass& device, Route route, QType qtype, LinearPolicy policy,

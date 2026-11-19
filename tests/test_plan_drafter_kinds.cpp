@@ -332,33 +332,28 @@ void test_head_resolution() {
             p.measurements.begin(), p.measurements.end(),
             [](const spec::Measurement& m) { return m.config.mode == spec::Mode::Mtp; });
     };
-    // On the RTX 4090 (Ada, whose round-cost row the facts have) the sibling's rounds are priced on
-    // the card; on the RTX 3090 (Ampere, no round-cost row) its measurements are transferred
-    // unpriced: the pool rule's unpriced branch decides there.
-    for (const auto& [board, priced_here] :
-         std::vector<std::pair<const char*, bool>>{{"4090", true}, {"3090", false}}) {
+    // On the RTX 4090 (Ada) and the RTX 3090 (Ampere, since #794) the generation has a round-cost
+    // row, so the sibling's rounds are priced on the card and the pool rule's priced branch
+    // decides.
+    for (const char* board : {"4090", "3090"}) {
         const pr::SpeculationSubject subject = qwen27b_on(board);
         const pr::SpeculationSubject dflash2 = pr::subject_of_mode(subject, spec::Mode::DFlash2);
         check(dflash2.resolved && drafts_with(dflash2.resolved->profile, spec::Mode::DFlash2),
               std::string(board) + ": the DFlash2 drafter's own resolution");
         const spec::Profile& priced = pr::head_priced_profile(dflash2);
-        check(measures_mtp(priced) &&
-                  (!priced.joint_scale.empty() && !priced.plain_step_scale.empty()) == priced_here,
+        check(measures_mtp(priced) && !priced.joint_scale.empty() &&
+                  !priced.plain_step_scale.empty(),
               std::string(board) + ": a DFlash2 server takes the MTP head's measurements from the "
                                    "model's sibling pair, priced on the card's facts where it has "
                                    "them");
-        check(priced_here ||
-                  subject.resolved->source.find("no facts for ampere") != std::string::npos,
-              std::string(board) + ": unpriced for want of Ampere's facts (" +
-                  subject.resolved->source + ")");
         check(&pr::head_priced_profile(subject) == &subject.resolved->profile,
               std::string(board) + ": a subject that measured MTP prices the head from its own");
 
         // The head fallback's load table (fit_fallbacks' Head step, and the pool rule's head)
-        // follows the profile that prices it (#777): on the RTX 4090 the facts derive it from
-        // the model's own MTP measurement (2:3,5:2,9:0: depth 3's joint verify priced through 4
-        // streams, depth 2's from 5, #795); without that measurement, and on the RTX 3090
-        // whose rounds the facts do not price, it stays the built-in literal.
+        // follows the profile that prices it (#777): where the facts price the card's rounds they
+        // derive it from the model's own MTP measurement (on the RTX 4090 2:3,5:2,9:0: depth 3's
+        // joint verify priced through 4 streams, depth 2's from 5, #795; on the RTX 3090 a table of
+        // its own, basis facts, #794); without that measurement it stays the built-in literal.
         const auto table = [](const pr::ServedSpeculation& head) {
             std::string out;
             for (const auto& bound : head.engine.load) {
@@ -372,8 +367,9 @@ void test_head_resolution() {
         const auto head      = pr::served_head_fallback(dflash2, false);
         const auto bare_head = pr::served_head_fallback(bare, false);
         check(head && bare_head && bare_head->load_basis == "literal" &&
-                  (priced_here ? table(*head) == "2:3,5:2,9:0/facts"
-                               : table(*head) == table(*bare_head)),
+                  (std::string(board) == "4090"
+                       ? table(*head) == "2:3,5:2,9:0/facts"
+                       : !head->engine.load.empty() && table(*head).ends_with("/facts")),
               std::string(board) +
                   ": the head fallback's table from the model's MTP measurement (" +
                   (head ? table(*head) : std::string("none")) + " against " +
@@ -438,13 +434,12 @@ void test_head_resolution() {
 //   RTX 3090, C = 8: plain decode 38.3 tok/s a request in 5 contexts, MTP 3 51.1 in 4.
 //   RTX 4090, C = 4: dflash2 K=7 left 3 of 4 contexts; plain 48.9, MTP 3 88.8, the head leaving
 //   every context plain decode does; C = 8: plain 46.2, MTP 3 69.4.
-// The drafter's own count of contexts was not recorded: every count that enters the rule. The
-// 3090's rounds are not priced (Ampere has no round-cost row: "no facts for ampere"), so the rule
-// before #777 decides it (four fifths: 4 of 5, the head); the 4090's are, and its price decides.
+// The drafter's own count of contexts was not recorded: every count that enters the rule. Both
+// cards' rounds are priced (Ampere since #794, whose frozen check this is: the 3090 takes the
+// priced branch and keeps the head, as measured), so the price decides on both.
 void test_pool_rule_lab_runs() {
     const auto run = [](const char* board, std::uint32_t streams, std::uint32_t plain,
-                        std::uint32_t head, std::uint32_t drafter, double measured,
-                        bool priced_here) {
+                        std::uint32_t head, std::uint32_t drafter, double measured) {
         const pr::SpeculationSubject subject =
             pr::subject_of_mode(qwen27b_on(board), spec::Mode::DFlash2);
         const std::uint32_t context = 32768;
@@ -482,16 +477,17 @@ void test_pool_rule_lab_runs() {
                       decision.keep == pr::PoolKeep::Head ? "the head" : "plain decode",
                       decision.head_price ? *decision.head_price : -1.0, parts.c_str(), measured);
         std::cout << line << '\n';
-        check(decision.keep == pr::PoolKeep::Head && decision.head_price.has_value() == priced_here,
-              std::string(line) + ": measured faster, the rule keeps the head" +
-                  (priced_here ? " by its price" : ", unpriced, by four fifths"));
+        // Both cards' rounds are priced, so the price decides (the unpriced four-fifths branch:
+        // test_product_speculation's pool rule).
+        check(decision.keep == pr::PoolKeep::Head && decision.head_price.has_value(),
+              std::string(line) + ": measured faster, the rule keeps the head by its price");
     };
     for (std::uint32_t drafter = 1; drafter < 5; ++drafter) {
-        run("3090", 8, 5, 4, drafter, 51.1 / 38.3, false);
+        run("3090", 8, 5, 4, drafter, 51.1 / 38.3);
     }
-    run("4090", 4, 4, 4, 3, 88.8 / 48.9, true);
+    run("4090", 4, 4, 4, 3, 88.8 / 48.9);
     for (std::uint32_t contexts = 2; contexts <= 8; ++contexts) {
-        run("4090", 8, contexts, contexts, contexts - 1, 69.4 / 46.2, true);
+        run("4090", 8, contexts, contexts, contexts - 1, 69.4 / 46.2);
     }
 }
 

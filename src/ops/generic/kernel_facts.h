@@ -32,8 +32,8 @@ namespace ninferno::ops::detail::generic::kernel_facts {
 struct RmmaKernelKey {
     std::string decoder; // canonical type name: "GgmlQ45KQuadDecoder<4>", "Bf16Decoder"
     int warps_m = 0, warps_k = 0, m_tiles = 0, n_tiles = 0, cluster = 1;
-    int epilogue  = 0; // Epilogue as an integer
-    bool latency  = false;
+    int epilogue = 0; // Epilogue as an integer
+    bool latency = false;
     // Where a min-term kernel's group sums come from (rmma_kernel's RmmaSums): 0 the MMA with
     // ones (every other decoder's kernels too), 1 FP32 adds, 2 the call's pre-summed plane.
     int sums = 0;
@@ -79,6 +79,42 @@ struct PipeCounts {
     int fadd = 0; // FADD, FADD32I
     int imad = 0; // every IMAD form (IMAD.MOV, IMAD.WIDE ...)
     int bar  = 0; // CTA barriers: BAR.SYNC, BAR.ARV, BAR.RED
+    // The iteration's scoreboard waits by what they wait for (sass_counts.py WAIT_FIELDS, #613
+    // PR-5): on a global load's result, and on a shared load's where no global load is waited.
+    int sb_waits_global = 0;
+    int sb_waits_shared = 0;
+};
+
+// A second counted loop of a section row (#613 PR-10): the R8 decode kernels' activation
+// quantizer, the F2I-marked loop before the dp4a loop (sass_counts.py PROLOGUE_FIELDS). One
+// iteration's counts; loops 0 where the kernel reads a quantized activation (kPre).
+struct PrologueCounts {
+    int loops     = 0;
+    int total     = 0; // instructions of one iteration
+    int int_alu   = 0;
+    int fp_alu    = 0;
+    int ldg_bytes = 0; // global bytes one iteration loads, per warp
+    int sts_bytes = 0; // shared bytes one iteration stores, per warp
+    int stall_sum = 0; // the static schedule's clocks for one warp alone
+    // The waits that expose a global load's latency (sass_counts.py global_waits): in one
+    // iteration of this loop, in one iteration of the dp4a loop and outside both (the r8 row's
+    // glb_waits columns, kept here beside the quantizer's: only the r8 section has them).
+    int global_waits         = 0;
+    int loop_global_waits    = 0;
+    int outside_global_waits = 0;
+};
+
+// The producer warps' loop of the w4a8 producer-warp tile (#613 PR-6; sass_counts.py
+// PRODUCER_FIELDS): the BAR-marked loop without an MMA, one iteration a K tile; loops 0 on the
+// classic tile.
+struct ProducerCounts {
+    int loops           = 0;
+    int total           = 0; // instructions of one iteration
+    int stall_sum       = 0; // the static schedule's clocks for one warp alone
+    int sb_waits        = 0;
+    int sb_waits_global = 0; // of them on a global load (sass_counts.py WAIT_FIELDS' rule)
+    int sb_waits_shared = 0; // of them on a shared load
+    int int_alu         = 0;
 };
 
 struct LoopCounts {
@@ -110,11 +146,13 @@ struct LoopCounts {
 };
 
 struct KernelFacts {
-    int registers                   = 0; // per thread
-    std::size_t stack_bytes         = 0; // per thread: the stack frame (spills and stack arrays)
-    std::size_t local_bytes         = 0; // per thread: other local memory
-    std::size_t static_shared_bytes = 0; // per CTA
-    std::optional<LoopCounts> loop;      // schema 4 snapshots; nullopt in a resources-only one
+    int registers                   = 0;    // per thread
+    std::size_t stack_bytes         = 0;    // per thread: the stack frame (spills and stack arrays)
+    std::size_t local_bytes         = 0;    // per thread: other local memory
+    std::size_t static_shared_bytes = 0;    // per CTA
+    std::optional<LoopCounts> loop;         // schema 4 snapshots; nullopt in a resources-only one
+    std::optional<PrologueCounts> prologue; // the r8 section's pro_ columns (#613 PR-10)
+    std::optional<ProducerCounts> producer; // the w4a8 section's prod_ columns (#613 PR-6)
 
     // Per thread: every local-memory byte (the driver's localSizeBytes), the one spill measure
     // the price, the wide rule and the live check all read.
@@ -151,7 +189,28 @@ struct SnapshotHeader {
 //           256 8 256 2 64 1 0 0") or `volta` / `volta_tiled` (the Volta decode kernels <D,
 //           MaxRows = rows>, the other fields 0). The decode plan reads the CTAs an SM holds from
 //           them (#830), never the host's kernels.
-inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8", "gemma4"};
+//   "r8"    the R8 decode kernels r8_kernel<codec, R8Schedule<warps, rows>, NT, epilogue, kPre>
+//           (#613 PR-10): one iteration of the loop holding the dp4a is a group of 32-value
+//           blocks per lane and row (no MMA: k_iter 0); key "codec warps rows nt epilogue pre"
+//           ("W4a8Q45K<4> 4 1 1 0 0").
+//   "i8"    the I8 tiles i8_kernel<WT, WN, Stages, Bits, epilogue> (#613 PR-6): one iteration of
+//           the counted loop is one cp.async stage, a group of 64 K values (k_iter 2048: a warp's
+//           32 m16n8 tiles x 64 K); key "WT WN stages bits epilogue" ("4 2 4 4 0"). The stages
+//           are the build's (generic_i8_schedules.h i8_stages: 3 for 6-bit codes on sm_86 / 89 /
+//           120a); empty bodies (no loop) below sm_80.
+//   "moer8"   the routed-expert R8 kernels moe_r8_kernel<codec, R8Schedule<warps, rows>, NT,
+//             stage, kPre> (#619 step 11), counted as the r8 rows; key "codec warps rows nt stage
+//             pre", stage as moe_internal.h's Stage (0 Router, 1 GateUp, 2 Down, 3 Up).
+//   "moegemm" the routed-expert register-MMA kernels moe_gemm_kernel<decoder, RmmaSchedule<warps_m,
+//             warps_k, m_tiles, n_tiles, cluster>, stage> (#619 step 11): key "decoder warps_m
+//             warps_k m_tiles n_tiles cluster stage".
+//   "vec"     ggml's vector kernels vec_kernel<type, T, KS, Gated, Bounded> (ggml_vec.cu, #763),
+//             resources alone: key "type T KS gated bounded" ("13 2 0 0 0"; KS is 0, the runtime
+//             K, or a static K of 5120, 6144 or 17408). A substituted board's launch reads the
+//             CTAs an SM holds and a bounded twin's local bytes from them; a real device asks its
+//             own kernel.
+inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8",  "gemma4",  "r8",
+                                                        "i8",  "moer8", "moegemm", "vec"};
 
 struct MmqKernelKey {
     int type      = 0; // the ggml_type value: 12 Q4_K, 13 Q5_K, 14 Q6_K
@@ -177,6 +236,29 @@ struct Gemma4KernelKey {
     bool partial = false, fp8 = false, chain = false;
 };
 
+struct R8KernelKey {
+    std::string codec; // canonical type name: "W4a8Q45K<4>", "W4a8Q6K"
+    int warps = 0, rows = 0;
+    int nt       = 0;     // the token slots the kernel is compiled for
+    int epilogue = 0;     // Epilogue as an integer
+    bool pre     = false; // the activation arrives quantized (kPre)
+};
+
+struct I8KernelKey {
+    int WT = 0, WN = 0; // warps along the tokens and along the rows
+    int stages   = 0;   // the cp.async ring (generic_i8_schedules.h i8_stages)
+    int bits     = 0;   // the code width: 4, 5 or 6 (generic_i8.cu's instances)
+    int epilogue = 0;   // Epilogue as an integer
+};
+
+struct VecKernelKey {
+    int type     = 0; // the ggml_type value
+    int T        = 0; // the tokens the instance is compiled for
+    int KS       = 0; // the static K the slice loop unrolls over, 0 for the runtime K
+    bool gated   = false;
+    bool bounded = false; // the __launch_bounds__ twin
+};
+
 // One section of a label's snapshot: the nvcc its rows were read under and their count; nullopt
 // where the label has no snapshot or the snapshot no such section.
 struct SectionHeader {
@@ -194,6 +276,9 @@ section_rows(std::string_view arch, std::string_view family);
                                                     const W4a8KernelKey& key);
 [[nodiscard]] std::optional<KernelFacts> gemma4_facts(std::string_view arch,
                                                       const Gemma4KernelKey& key);
+[[nodiscard]] std::optional<KernelFacts> r8_facts(std::string_view arch, const R8KernelKey& key);
+[[nodiscard]] std::optional<KernelFacts> i8_facts(std::string_view arch, const I8KernelKey& key);
+[[nodiscard]] std::optional<KernelFacts> vec_facts(std::string_view arch, const VecKernelKey& key);
 
 // The build architecture labels with a committed snapshot, in file order.
 [[nodiscard]] std::vector<std::string_view> snapshot_archs();

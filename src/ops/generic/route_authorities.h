@@ -10,9 +10,9 @@
 // new is that every answer names its authority and its evidence.
 //
 // The precedence over evidence (#614 F1, the Ask's RoutePolicy: --route-policy, ops/route_pins.h).
-// Legacy, the default, is the order alone: the first answer wins, as above. Evidence demotes, in
-// the auto list (auto_answer), an answer whose evidence is Borrowed or Transferred (a route-table
-// entry measured on another board: lent by a farther table, or the nearest table past
+// Legacy is the order alone: the first answer wins, as above. Evidence, the default since F2,
+// demotes, in the auto list (auto_answer), an answer whose evidence is Borrowed or Transferred (a
+// route-table entry measured on another board: lent by a farther table, or the nearest table past
 // kCarryDistance) below the ranker: the walk goes on past it (the dense tuner's entry, measured
 // here, may still answer), then the ranker answers (the cost model where it prices the call, else
 // the rules) and the dense tuner's prefill band may refine that answer as usual. Where the ranker
@@ -129,6 +129,18 @@ struct Evidence {
            (kind == Evidence::Kind::Borrowed || kind == Evidence::Kind::Transferred);
 }
 
+// Whether a demoted table answer keeps the call over the ranker's anyway (#614 F2): ggml's matrix
+// kernel against the register MMA at 9 to 16 tokens, the one boundary the cost model does not price
+// (the per-SM DRAM law of #785). F1's A/B on four boards (evidence over legacy, 190 cells each)
+// lost only there: q4k a8 swiglu 12288x4096 at T 12 / 16, ggml_mmq -> rmma.m1.n2.w1x4, RTX 5070 Ti
+// +45..+75 %, RTX 3060 +35 %, RTX 4060 Ti +4 %; every other moved cell was within 1.1 % or gained.
+// Dispatch (auto_answer) and the dense tuner's skip (route_table.h table_route_kept, #808) read it.
+[[nodiscard]] constexpr bool keeps_mmq_boundary(Route demoted, Route ranked,
+                                                std::int32_t tokens) noexcept {
+    return demoted.family == Family::GgmlMmq && ranked.family == Family::RegisterMma &&
+           tokens >= 9 && tokens <= 16;
+}
+
 // The evidence kind of a route-table answer (route_table.h TableAnswer): Borrowed where a farther
 // table lent the entry (`lent`), else Measured at distance 0, Carried within kCarryDistance and
 // Transferred past it. The one classification route_table_entry prints and table_claims gates
@@ -211,6 +223,20 @@ struct NamedAuthority {
 [[nodiscard]] RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& weight);
 [[nodiscard]] RouteAnswer heuristic_answer(const Ask& ask, const Problem& problem,
                                            const Weight& weight);
+// Whether auto_answer answers a call of `tokens` before the dense tuner's entry could (#1018): the
+// NVFP4 half-L2 rule, or the route table's answer as the route-table authority gives it (after the
+// NVFP4 promotion; none for the int8 calls the tables stand aside for, or a route that
+// route_admits or profile_admits refuses) and the route policy keeps (not demoted; or demoted where
+// the ranker's route `ranked` is the scalar fallback, or at the MMQ boundary, keeps_mmq_boundary).
+// Two kept cases are not answered before the entry; the tuner leaves them untimed so that the
+// dispatch's measured answer stands: a demoted table answer the policy keeps (the dispatch reads
+// the entry first there; table_route_kept's rule), and, with a native BF16 MMA, a width the MMQ
+// verify rule holds for a round of several sequences (measured end to end; the entry has no lanes
+// key).
+// The dense tuner leaves such a width or band untimed; elsewhere the dispatch reads the tuner's
+// entry, so it is timed (#808). It reads no tuner entry (the tuner asks it under its own lock).
+[[nodiscard]] bool answered_before_tuner(const Problem& problem, const Weight& weight,
+                                         std::int32_t tokens, bool prefill, Route ranked);
 // The ranker's answer: what auto_answer gives where neither the route table nor the dense tuner
 // answers (the NVFP4 half-L2 rule, then the rules), under the Ask the call's rules see (an NVFP4
 // A16 call of 17 tokens or more as the prefill profile's, nvfp4_promoted). The route a measured

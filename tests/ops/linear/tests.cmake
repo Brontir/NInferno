@@ -185,6 +185,20 @@ ninferno_add_op_test(ninferno_kernel_roofline_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_kernel_roofline.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# The R8 decode schedule law's terms (ops/generic/r8_law.h, #613 PR-10) on constructed facts, the
+# kernel keys the R8 launch names, and the selector's law (law_r8) against the frozen T=1
+# predictions of tests/fixtures/r8_law on substituted boards.
+ninferno_add_op_test(ninferno_r8_law_test LABELS host NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_r8_law.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
+# The law's per-board prediction over a shapes file (tests/ops/linear/r8_law_predict.cpp): built so
+# that it keeps compiling, run by hand; its output is committed before a grid is scored (#613 PR-10).
+ninferno_add_test(ninferno_r8_law_predict
+  NO_DEFAULT_TEST
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/r8_law_predict.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # The generator of that golden table (tests/ops/linear/gen_kernel_roofline_golden.cpp): built so that
 # it keeps compiling, not run by ctest (it is run once, against the code before the move).
 ninferno_add_test(ninferno_gen_kernel_roofline_golden
@@ -327,10 +341,11 @@ ninferno_add_op_test(ninferno_route_catalogue_test LABELS host NEEDS_SOURCE_DIR
   LIBRARIES ninferno_linear_test_support ninferno::json)
 
 # The generic path's dense tuner: tuned at the first eager call, within the activation class, R8
-# decode bytes kept, the cache file read back, nothing timed inside a graph capture.
+# decode bytes kept, the cache file read back, a demoted table answer timed once (#1024), nothing
+# timed inside a graph capture.
 ninferno_add_op_test(ninferno_dense_tune_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_dense_tune.cpp"
-  LIBRARIES ninferno_linear_test_support)
+  LIBRARIES ninferno_linear_test_support ninferno::json)
 
 # The SwiGLU / GeGLU of a gate and an up weight of one or two formats (segmented_swiglu).
 ninferno_add_op_test(ninferno_segmented_swiglu_test
@@ -368,3 +383,16 @@ target_sources(ninferno_route_price_sweep PRIVATE
   ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
 target_compile_definitions(ninferno_route_price_sweep PRIVATE NINFERNO_HOST_ONLY)
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_route_price_sweep)
+
+# The counted MMQ unit (ops/generic/mmq_unit.h, #613 PR-5) against the chain law's script: the
+# committed snapshot's counts and the isa_probe facts give the seconds tools/dev/mmq_chain_law.py
+# printed for the RTX 4090. No GPU.
+ninferno_add_op_test(ninferno_mmq_unit_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_mmq_unit.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
+# The counted W4A8 K tile (ops/generic/w4a8_unit.h, #613 PR-6): the snapshot keys of every schedule
+# and the law's arithmetic against the frozen figure on #978. No GPU.
+ninferno_add_op_test(ninferno_w4a8_unit_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_w4a8_unit.cpp"
+  LIBRARIES ninferno_linear_test_support)

@@ -263,12 +263,13 @@ std::optional<RouteAnswer> w4a4_rule(const Ask& ask, const Problem& problem, con
     return std::nullopt;
 }
 
-// ggml's vector kernel for speculative verify (2..4 tokens) of the ggml block formats it decodes
-// (vec_rule). It streams each weight row once for every token of the call and runs the epilogue
-// in place: on the RTX 5090 ISTA IQ3_S MTP3 it beat the R8 and A16 schedules the dense tuner
-// picked there (C1 166 -> 174 tok/s), whose L2-cold timings of one call at a time miss the stream
-// of a verify step. The tuner still replaces it where a route beats it by its margin (Muse Glimmer
-// 30B Q4_K_M: the rule alone lost C1 by 19 %).
+// ggml's vector kernel for speculative verify (2..4 tokens; 2..3 for the K-quants on GA10x and
+// consumer Blackwell, vec_rule_max_tokens) of the ggml block formats it decodes (vec_rule). It
+// streams each weight row once for every token of the call and runs the epilogue in place: on the
+// RTX 5090 ISTA IQ3_S MTP3 it beat the R8 and A16 schedules the dense tuner picked there (C1 166 ->
+// 174 tok/s), whose L2-cold timings of one call at a time miss the stream of a verify step. The
+// tuner still replaces it where a route beats it by its margin (Muse Glimmer 30B Q4_K_M: the rule
+// alone lost C1 by 19 %).
 std::optional<RouteAnswer> vec_kernel_rule(const Ask& ask, const Problem& problem,
                                            const Weight& weight) {
     if (vec_rule(weight, problem.policy, ask.tokens)) {
@@ -291,22 +292,33 @@ std::optional<RouteAnswer> cost_model(const Ask& ask, const Problem& problem,
 }
 
 // R8 for decode and for the verify of the formats with an R8 codec (r8_call): at one token the
-// entry of the nearest measured board's decode table (tuned_r8, within kR8CarryDistance), else the
-// R8 rules (r8_rules_route), asked only when the table does not answer.
+// entry of this board's own decode table (tuned_r8 at distance 0), else the R8 schedule law where
+// it answers (law_r8: a counted ranker, "r8-law"), else the entry carried from the nearest
+// measured board (within kR8CarryDistance), else the R8 rules (r8_rules_route): measured here,
+// then the ranker, then carried (#622).
 std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
                                        const Weight& weight) {
     if (!r8_call(problem, weight, ask.tokens)) return std::nullopt;
-    // The rules' schedule is computed only when the T=1 table does not answer.
-    const auto hit = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;
+    auto hit        = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;
+    const bool here = hit && r8_hit_here(*hit);
+    const auto law =
+        ask.tokens == 1 && !here
+            ? law_r8_before(problem, hit ? std::optional<int>(hit->schedule) : std::nullopt)
+            : std::nullopt;
+    if (law) hit.reset(); // a carried entry yields to the law
     RouteAnswer answer =
-        hit ? RouteAnswer{Route{Family::R8Mma, static_cast<std::uint8_t>(hit->schedule)},
+        hit   ? RouteAnswer{Route{Family::R8Mma, static_cast<std::uint8_t>(hit->schedule)},
                           Evidence{}}
-            : by_rule(r8_rules_route(problem, ask.tokens), "r8-rules");
+        : law ? RouteAnswer{Route{Family::R8Mma, static_cast<std::uint8_t>(*law)},
+                            Evidence{Evidence::Kind::Ranker, Evidence::Ranker::Cost, "r8-law"}}
+              : by_rule(r8_rules_route(problem, ask.tokens), "r8-rules");
     if (hit) {
         answer.evidence.ranker   = Evidence::Ranker::None;
         answer.evidence.source   = "r8-table";
-        answer.evidence.distance = hit->distance;
-        if (hit->distance == 0) {
+        // A table of this board's own class is its measurement: distance 0 whatever the facts'
+        // small differences (r8_hit_here).
+        answer.evidence.distance = here ? 0.0 : hit->distance;
+        if (here) {
             answer.evidence.kind = Evidence::Kind::Measured;
         } else {
             answer.evidence.kind  = Evidence::Kind::Carried;
@@ -463,7 +475,7 @@ constexpr NamedAuthority kRuleAuthorities[] = {
     {"w4a4-rule", w4a4_rule},
     {"vec-rule", vec_kernel_rule},
     {"cost-model", cost_model},
-    {"r8-rules", r8_schedule}, // "r8-table" where the decode table answers
+    {"r8-rules", r8_schedule}, // "r8-table" / "r8-law" where the table / law answers
     {"mmq-prefill-gate", mmq_prefill_gate},
     {"i8-rule", i8_rule},
     {"w4a8-rule", w4a8_rule},
@@ -535,7 +547,8 @@ RouteAnswer heuristic_answer(const Ask& ask, const Problem& problem, const Weigh
 
 // The one place the precedence over evidence applies (route_authorities.h): under Legacy the first
 // answer wins; under Evidence a Borrowed or Transferred answer of the auto list yields to what
-// follows it, and stands only where the ranker has no candidate (the scalar fallback).
+// follows it, and stands only where the ranker has no candidate (the scalar fallback) or at the
+// MMQ boundary the ranker cannot price (keeps_mmq_boundary).
 RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& weight) {
     const Ask asked = nvfp4_promoted(ask, problem, weight);
     std::optional<RouteAnswer> demoted;
@@ -551,10 +564,36 @@ RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& we
     if (auto band = dense_tune_prefill_band(asked, problem, weight, answer.route)) {
         return under_policy(std::move(*band), asked, demoted ? &*demoted : nullptr);
     }
-    if (demoted && answer.evidence.source == "scalar-fallback") {
+    if (demoted && (answer.evidence.source == "scalar-fallback" ||
+                    keeps_mmq_boundary(demoted->route, answer.route, asked.tokens))) {
         return under_policy(std::move(*demoted), asked, nullptr);
     }
     return under_policy(std::move(answer), asked, demoted ? &*demoted : nullptr);
+}
+
+// A round of several sequences (mmq_verify_rule reads any lane count but 1 as one).
+constexpr int kSeveralLanes = 2;
+
+bool answered_before_tuner(const Problem& problem, const Weight& weight, std::int32_t tokens,
+                           bool prefill, Route ranked) {
+    const Ask asked = nvfp4_promoted(ask_below_profiles(tokens, prefill), problem, weight);
+    // auto_answer's order: the half-L2 rule, then the table, then the tuner's entry.
+    if (nvfp4_half_l2(asked, problem, weight)) return true;
+    // With a native BF16 MMA the MMQ verify rule is measured end to end at rounds of several
+    // sequences, where an isolated timing favours the register MMA; the dispatch reads the tuner's
+    // entry before the rule and the entry has no lanes key, so a width the rule holds for such a
+    // round stays untimed whatever the lanes of the call that tunes (none outside a round,
+    // ops::round_lanes). A round of one sequence then loses the tuning of those widths. Where the
+    // MMA is emulated (Turing, Volta) the rule reads no lanes and the tuner times against it
+    // (replaceable; on Volta where volta_fixed_route does not route the width).
+    if (bf16_mma_native() &&
+        mmq_verify_rule(weight, problem.policy, problem.n, tokens, kSeveralLanes)) {
+        return true;
+    }
+    const auto table = route_table_entry(asked, problem, weight);
+    if (!table) return false;
+    return !policy_demotes(asked.policy, table->evidence.kind) || ranked.family == Family::Scalar ||
+           keeps_mmq_boundary(table->route, ranked, tokens);
 }
 
 RouteAnswer ranker_answer(const Ask& ask, const Problem& problem, const Weight& weight) {

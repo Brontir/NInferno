@@ -44,6 +44,15 @@ void plan_program_buffers(LayoutBuilder& builder, const SequencePlanImpl& plan,
 [[nodiscard]] PersistentLayout plan_persistent_layout(const StateShape& shape,
                                                       const SequencePlanImpl& plan);
 
+// Whether a laid-out plan's one-byte KV rows (Fp8E4M3Row256) hold int8 codes, not E4M3
+// (MemorySummary::kv_rows_int8, #991): the full pool's key plane is I8 (the head-major pool of an
+// sm_75..88 build; the Qwen 3.5 paged pool stays E4M3), or the sliding rings take the one-byte rows
+// of an int8-codec build. The ring clause needs no family test: only a model with sliding rings,
+// all of them head-major one-byte rows, takes a ring storage other than BF16
+// (validate_state_storage refuses --sliding-kv-dtype fp8 for Qwen 3.5 and any model without
+// sliding layers).
+[[nodiscard]] bool plan_kv_rows_int8(const SequencePlanImpl& plan) noexcept;
+
 // The storage a ring decoder (the dense family, Gemma 4) offers: BF16 or FP8 keys and values in
 // the paged pool and the sliding rings, and no recurrent state. `family` names it in the refusal.
 void validate_ring_decoder_storage(const EngineOptions& options, std::string_view family);

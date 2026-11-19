@@ -20,6 +20,7 @@
 #include <iostream>
 #include <iterator>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -368,16 +369,27 @@ void sections_read() {
     // k_iter 32 J (a 128-row x J-column tile over 256 K on 8 warps, per m16n8 tile); the int8 MMA
     // the generation has (Turing's m8n8k16, m16n8k32 from sm_80 on); and the W4A8 32 x 128 tile
     // (Q4_K, Q6_K) with one loop, two barriers per 128-value K tile and k_iter 16 x 32.
-    // sm_70 has no mmq or w4a8 section: its snapshot is made with CUDA 12.8 (#762), and Volta takes
-    // no MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts.
+    // sm_70 has no mmq section: its snapshot is made with CUDA 12.8 (#762), and Volta takes no
+    // MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts, the
+    // r8 one (#613 PR-10): the R8 law reads the one-slot ring's, and the w4a8 one (#787): its
+    // int8 MMA is a call to the dp4a emulation, counted as the MMA it stands for, and the vec one
+    // (#763): a substituted board's vector-kernel launch reads its CTAs per SM from it. The
+    // routed-expert families (moer8, moegemm, #619 step 11) are not in it: the MoE law reads the
+    // boards it was measured on (Turing and newer), and sm_100 has none yet (six of its W4a8Nvfp4
+    // GateUp rows read as unknown flow; no lab board is an sm_100 part).
     constexpr std::string_view kWithoutSections[] = {"70"};
+    constexpr std::string_view kWithoutMoe[]      = {"70", "100"};
     int with_sections                             = 0;
     for (const auto arch : kf::snapshot_archs()) {
         const std::string name = "sm_" + std::string(arch);
         for (const auto family : kf::kSectionFamilies) {
-            const bool waived = family != "gemma4" &&
-                                std::find(std::begin(kWithoutSections), std::end(kWithoutSections),
-                                          arch) != std::end(kWithoutSections);
+            const bool moe = family == "moer8" || family == "moegemm";
+            const bool waived =
+                moe ? std::find(std::begin(kWithoutMoe), std::end(kWithoutMoe), arch) !=
+                          std::end(kWithoutMoe)
+                    : family != "gemma4" && family != "r8" && family != "w4a8" && family != "vec" &&
+                          std::find(std::begin(kWithoutSections), std::end(kWithoutSections),
+                                    arch) != std::end(kWithoutSections);
             const auto header = kf::section_header(arch, family);
             expect(header.has_value() != waived,
                    name + (waived ? ": has a " : ": no ") + std::string(family) + " section");
@@ -398,7 +410,8 @@ void sections_read() {
                     l.schedule->sb_waits <= l.total && l.pipes->bar <= l.total &&
                     l.pipes->i2f + l.pipes->i2fp + l.pipes->ffma + l.pipes->fmul + l.pipes->fadd <=
                         l.fp_alu &&
-                    l.pipes->imad <= l.int_alu;
+                    l.pipes->imad <= l.int_alu &&
+                    l.pipes->sb_waits_global + l.pipes->sb_waits_shared <= l.schedule->sb_waits;
                 if (!ok && bad++ == 0) first = key;
             }
             expect(bad == 0, name + " " + std::string(family) + ": " + std::to_string(bad) +
@@ -406,9 +419,11 @@ void sections_read() {
             std::cout << name << ' ' << family << ": " << rows.size() << " rows, nvcc "
                       << header->nvcc << '\n';
         }
-        if (!kf::section_header(arch, "mmq")) continue;
-        ++with_sections;
+        // The mmq rows where the arch has them; the w4a8 and r8 checks below run either way.
+        const bool mmq_section = kf::section_header(arch, "mmq").has_value();
+        if (mmq_section) ++with_sections;
         for (const int type : {12, 13, 14}) {
+            if (!mmq_section) break;
             for (const int J : {32, 128}) {
                 const auto f = kf::mmq_facts(arch, {type, J, false, 30});
                 const std::string what =
@@ -441,6 +456,70 @@ void sections_read() {
             }
             expect(found, name + " w4a8: no " + codec + " 32 x 128 store row with a loop");
         }
+        // The R8 decode kernels (#613 PR-10): one loop marked by the dp4a, no MMA and no CTA
+        // barrier in it, and one quantizer loop where the kernel quantizes (pre 0), none where it
+        // reads a quantized activation; the Q4_K four-warp single-row decode kernel is among them.
+        // The routed-expert R8 kernels (moer8, #619 step 11) are counted as the r8 rows, but for
+        // what the compiler splits: their Down stage (key "... 2 0") quantizes in two loops (four
+        // or five on sm_120a, nvcc 13), and sm_120a peels the dp4a loop of 72 of its pre-quantized
+        // Up rows into two.
+        if (!kf::section_header(arch, "r8")) continue;
+        for (const std::string_view family : {"r8", "moer8"}) {
+            if (!kf::section_header(arch, family)) continue;
+            int r8_bad = 0;
+            std::string r8_first;
+            for (const auto& [key, f] : kf::section_rows(arch, family)) {
+                const bool pre  = key.size() >= 2 && key.compare(key.size() - 2, 2, " 1") == 0;
+                const bool down = family == "moer8" && key.size() >= 4 &&
+                                  key.compare(key.size() - 4, 4, " 2 0") == 0;
+                const int loops  = f.loop ? f.loop->loops : 0;
+                const int quant  = f.prologue ? f.prologue->loops : -1;
+                const bool split = family == "moer8" && arch == "120a";
+                const bool up    = key.size() >= 4 && key.compare(key.size() - 4, 4, " 3 1") == 0;
+                const bool ok    = f.loop && (loops == 1 || (split && up && loops == 2)) &&
+                                f.loop->mma == 0 && f.loop->pipes && f.loop->pipes->bar == 0 &&
+                                f.loop->k_iter > 0 && f.prologue &&
+                                (pre    ? quant == 0
+                                 : down ? (quant == 2 || (split && (quant == 4 || quant == 5)))
+                                        : quant == 1);
+                if (!ok && r8_bad++ == 0) r8_first = key;
+            }
+            expect(r8_bad == 0,
+                   name + " " + std::string(family) + ": " + std::to_string(r8_bad) +
+                       " rows without one barrier-free dp4a loop and its quantizer loop, first " +
+                       r8_first);
+        }
+        // The routed-expert register-MMA kernels (moegemm): one K loop of MMAs, no CTA barrier.
+        int gemm_bad = 0;
+        std::string gemm_first;
+        for (const auto& [key, f] : kf::section_rows(arch, "moegemm")) {
+            const bool ok = f.loop && f.loop->loops == 1 && f.loop->mma > 0 && f.loop->pipes &&
+                            f.loop->pipes->bar == 0 && f.loop->k_iter > 0;
+            if (!ok && gemm_bad++ == 0) gemm_first = key;
+        }
+        expect(gemm_bad == 0, name + " moegemm: " + std::to_string(gemm_bad) +
+                                  " rows without one barrier-free MMA loop, first " + gemm_first);
+        expect(kf::r8_facts(arch, {"W4a8Q45K<4>", 4, 1, 1, 0, false}).has_value(),
+               name + " r8: no W4a8Q45K<4> 4 1 1 0 0 row");
+        // The I8 tiles (#613 PR-6): from sm_80 on every row has one K loop of int8 MMAs (one
+        // cp.async stage an iteration); below, generic_i8.cu compiles them empty.
+        if (!kf::section_header(arch, "i8")) continue;
+        const bool i8_built = arch != "75";
+        int i8_bad          = 0;
+        std::string i8_first;
+        for (const auto& [key, f] : kf::section_rows(arch, "i8")) {
+            const bool looped = f.loop && f.loop->loops == 1 && f.loop->mma > 0 &&
+                                f.loop->mma_shape.rfind("IMMA.", 0) == 0;
+            const bool ok = i8_built ? looped : !f.loop || f.loop->loops == 0;
+            if (!ok && i8_bad++ == 0) i8_first = key;
+        }
+        // The reader's key: the 4x2-warp, 4-bit Store tile (three stages on sm_75's empty build).
+        expect(kf::i8_facts(arch, {4, 2, i8_built ? 4 : 3, 4, 0}).has_value(),
+               name + " i8: no 4 2 " + (i8_built ? "4" : "3") + " 4 0 row");
+        expect(i8_bad == 0, name + " i8: " + std::to_string(i8_bad) +
+                                (i8_built ? " rows without one int8-MMA loop, first "
+                                          : " rows with a loop in an empty build, first ") +
+                                i8_first);
     }
     std::cout << "sections: " << with_sections << " snapshots with the mmq section\n";
     // The reader takes a section after the rows and refuses one that breaks its form.
@@ -462,6 +541,63 @@ void sections_read() {
     expect(!kf::snapshot_text_accepted(base + head + "mmq q4 32 0 30 128 0 0 0\n"),
            "a text key in the mmq section is refused");
     expect(!kf::snapshot_text_accepted(base + head), "a section without its rows is refused");
+}
+
+void section_wait_columns() {
+    // The wait classes (sb_waits_global, sb_waits_shared) follow the pipe counts in the mmq and
+    // w4a8 sections only; the r8 section has its quantizer loop there instead (#613 PR-5, PR-10).
+    // A header with the other family's columns is refused.
+    const std::string base = "arch 89\nkernels 0\ncolumns family decoder warps_m warps_k m_tiles "
+                             "n_tiles cluster epilogue latency sums registers stack local shared\n";
+    const std::string loop =
+        " loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds "
+        "lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total stall_sum "
+        "sb_waits sb_waits_local outside_total outside_stall outside_waits outside_bar";
+    const std::string pipes    = " i2f i2fp ffma fmul fadd imad bar";
+    const std::string waits    = " sb_waits_global sb_waits_shared";
+    const std::string prologue = " pro_loops pro_total pro_int pro_fp pro_ldg_bytes pro_sts_bytes "
+                                 "pro_stall glb_waits outside_glb_waits pro_glb_waits";
+    // A row's values past the resources: the loop (mma_shape is text), the schedule, the pipes.
+    const auto values = [](int n) {
+        std::string s;
+        for (int i = 0; i < n; ++i) s += i == 4 ? " -" : " 1";
+        return s;
+    };
+    const auto mmq = [&](const std::string& extra, int fields) {
+        return base +
+               "family mmq\nfamily_nvcc 13.0\nfamily_kernels 1\nfamily_columns family type "
+               "J fallback prec registers stack local shared" +
+               loop + pipes + extra + "\nmmq 12 32 0 30 128 0 0 0" + values(fields) + "\n";
+    };
+    const auto r8 = [&](const std::string& extra, int fields) {
+        return base +
+               "family r8\nfamily_nvcc 13.0\nfamily_kernels 1\nfamily_columns family codec "
+               "warps rows nt epilogue pre registers stack local shared" +
+               loop + pipes + extra + "\nr8 W4a8Q8 4 1 1 0 0 64 0 0 0" + values(fields) + "\n";
+    };
+    expect(kf::snapshot_text_accepted(mmq(waits, 30 + 7 + 2)), "an mmq section with its waits");
+    expect(!kf::snapshot_text_accepted(mmq("", 30 + 7)), "an mmq section without the waits");
+    expect(kf::snapshot_text_accepted(r8(prologue, 30 + 7 + 10)), "an r8 section, its prologue");
+    expect(!kf::snapshot_text_accepted(r8(waits + prologue, 30 + 7 + 2 + 10)),
+           "an r8 section with the mmq waits");
+    // The w4a8 section carries the producer warps' loop after its waits (#613 PR-6); an mmq
+    // section with it, and a w4a8 section without it, are refused.
+    const std::string producer =
+        " prod_loops prod_total prod_stall prod_sb_waits prod_glb_waits prod_shd_waits prod_int";
+    const auto w4a8 = [&](const std::string& extra, int fields) {
+        return base +
+               "family w4a8\nfamily_nvcc 13.0\nfamily_kernels 1\nfamily_columns family codec "
+               "block_m block_n warps_m warps_n epilogue flavor stages producers registers stack "
+               "local shared" +
+               loop + pipes + extra + "\nw4a8 W4a8Q6K 128 64 4 2 0 0 3 4 168 0 0 0" +
+               values(fields) + "\n";
+    };
+    expect(kf::snapshot_text_accepted(w4a8(waits + producer, 30 + 7 + 2 + 7)),
+           "a w4a8 section with its waits and producer loop");
+    expect(!kf::snapshot_text_accepted(w4a8(waits, 30 + 7 + 2)),
+           "a w4a8 section without the producer loop");
+    expect(!kf::snapshot_text_accepted(mmq(waits + producer, 30 + 7 + 2 + 7)),
+           "an mmq section with the producer loop");
 }
 
 void old_columns_refused() {
@@ -489,6 +625,45 @@ void old_columns_refused() {
 
 } // namespace
 
+// The vector kernels' rows through vec_facts (#1033): every arch has one row per launchable
+// instance (18 formats x 8 token counts x 6 forms, 4 ungated K and 2 gated, plus the 18 bounded
+// twins at T 4, the runtime K, ungated: 882), and each row of the section, looked up by its key's
+// fields through VecKernelKey, gives that row's resources. A swapped field in vec_facts' key, or a
+// form the snapshot lacks, fails here and not at describe time.
+void vec_rows_look_up() {
+    constexpr std::size_t kVecInstances = 18 * 8 * 6 + 18;
+    for (const auto arch : kf::snapshot_archs()) {
+        const std::string name = "sm_" + std::string(arch);
+        const auto rows        = kf::section_rows(arch, "vec");
+        expect(rows.size() == kVecInstances, name + " vec: " + std::to_string(rows.size()) +
+                                                 " rows, " + std::to_string(kVecInstances) +
+                                                 " launchable instances");
+        int looked = 0, twins = 0;
+        for (const auto& [key, f] : rows) {
+            std::istringstream in(key);
+            int type = -1, t = -1, ks = -1, gated = -1, bounded = -1;
+            in >> type >> t >> ks >> gated >> bounded;
+            if (!in || (gated != 0 && gated != 1) || (bounded != 0 && bounded != 1)) {
+                fail(name + " vec: the key \"" + key + "\" is not type T KS gated bounded");
+                continue;
+            }
+            expect(ks == 0 || ks == 5120 || ks == 6144 || ks == 17408,
+                   name + " vec " + key + ": a static K no instance has");
+            expect(bounded == 0 || (t == 4 && ks == 0 && gated == 0),
+                   name + " vec " + key + ": a bounded twin no launch takes");
+            twins += bounded;
+            const auto found = kf::vec_facts(arch, {type, t, ks, gated == 1, bounded == 1});
+            expect(found && found->registers == f.registers &&
+                       found->static_shared_bytes == f.static_shared_bytes &&
+                       found->spill_bytes() == f.spill_bytes(),
+                   name + " vec " + key + ": vec_facts gives another row");
+            ++looked;
+        }
+        expect(twins == 18, name + " vec: " + std::to_string(twins) + " bounded twins, not 18");
+        std::cout << name << " vec: " << looked << " rows looked up by key\n";
+    }
+}
+
 int main() {
     try {
         snapshots_parse();
@@ -497,6 +672,8 @@ int main() {
         loop_counts_read();
         schedules_read();
         sections_read();
+        vec_rows_look_up();
+        section_wait_columns();
         old_columns_refused();
         occupancy_from_facts();
         boards_read_facts();

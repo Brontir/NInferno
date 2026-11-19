@@ -182,22 +182,37 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
 // The launch is half the residual on Ada, a third on gb20x, a quarter on GA10x and under a fifth on
 // Turing: beyond Ada the rest, not the launch, is the term to count (L0 x rounds + drain, from the
 // kernels' facts).
+// The launch share is priced from the launch facts of the card's own architecture (#613 PR-8e,
+// choice.cpp kernel_cost_seconds): the row's census residual less its census cards' launch share
+// (node, and for a weight-reading kernel the dispatch ramp of its ~1024-CTA grid) plus the card's.
+// A card of the census cards' architecture (major.minor below), or of one without launch facts,
+// takes the row as measured.
 struct KernelCost {
     std::string_view generation;
     double gemv;  // seconds a weight-reading kernel beyond its bytes
     double small; // seconds a small kernel beyond its bytes
     int cards;
+    int major = 0, minor = 0; // the census cards' architecture
 };
+
 inline constexpr KernelCost kKernelCost[] = {
-    {"ada", 2.35e-6, 1.94e-6, 3},    // RTX 4060 Ti, 4070 Ti (its census of 28.10), 4090
-    {"gb20x", 1.90e-6, 2.29e-6, 2},  // RTX 5070 Ti, 5090
-    {"ga10x", 4.72e-6, 2.55e-6, 1},  // RTX 3060
-    {"turing", 8.56e-6, 4.30e-6, 1}, // RTX 2080 Ti
+    {"ada", 2.35e-6, 1.94e-6, 3, 8, 9},    // RTX 4060 Ti, 4070 Ti (its census of 28.10), 4090
+    {"gb20x", 1.90e-6, 2.29e-6, 2, 12, 0}, // RTX 5070 Ti, 5090
+    {"ga10x", 4.72e-6, 2.55e-6, 1, 8, 6},  // RTX 3060
+    {"turing", 8.56e-6, 4.30e-6, 1, 7, 5}, // RTX 2080 Ti
     // Quadro GV100 (thchk.sh, a cool board; its census less the node trace's 2.7-3.7 us a kernel):
     // a weight-reading kernel from Q8_0 alone (its K-quants' residual is their SM-bound decode,
     // kWeightSmRate), a small one from the three models.
-    {"volta", 6.37e-6, 5.06e-6, 1},
+    {"volta", 6.37e-6, 5.06e-6, 1, 7, 0},
 };
+
+// What a kernel costs a step beyond its bytes on a card of compute capability major.minor
+// (choice.cpp, #613 PR-8e): `row` as measured on its census cards' architecture, or where either
+// architecture has no launch facts; elsewhere the row less its census cards' launch share plus the
+// card's own, and `*rebased` (when given) is set true: the price was not measured on this
+// architecture, so the caller marks its estimate transferred (#997).
+[[nodiscard]] double kernel_cost_seconds(const KernelCost& row, int major, int minor, bool gemv,
+                                         bool* rebased = nullptr);
 
 // The share of the DRAM rate C rows' weight reads reach on a weight class's routes (C = 1: kDramEta;
 // linear in log2 C between points; beyond the last, the last's): measured, the mean over the class's
@@ -927,6 +942,19 @@ inline constexpr KvReadFactor kKvReadFactor[] = {
 //          clock the row prices at (the two hold 1.08 and 1.10 of it): past the two-card tolerance
 //          of 6 %, so the row is one card's (it prices the estimate, never a decision) until a
 //          re-census or a third card brings the two inside it
+// Gemma 4 12B's 8-bit rows on sm_75..88 (the int8 row kernel, #619 steps 9-10; g4cen.sh, the nsys
+// census of one stream's decode at 8K and 32K, the full layer's per-call time between them over the
+// 24576 tokens' rows, 2 x (512 + 2) = 1028 B a token (the planner's vector bytes, as the row is
+// priced; the FP32 scale makes it 1032 in memory), 2026-11-18):
+//   turing  RTX 2080 Ti: 256.1 us for 25.3 MB, 98.7 GB/s (16 % of 616), 0.94 a reference
+//           SM-clock; its BF16 full layer in the same census 185.8 us for 50.3 MB, 271 GB/s (2.58,
+//           3.4 % under the 2.67 row above)
+//   ga10x   RTX 3090: 615 GB/s (66 % of 936), 4.43; its BF16 read is DRAM-bound (858 GB/s, 92 %),
+//           so it has no row. The RTX 3060 (28 SMs, 1777 MHz reference) confirms it: 117.4 us for
+//           25.3 MB, 215 GB/s, 4.33 (2.3 % apart; its BF16 read 340 GB/s, 94 %, DRAM-bound too).
+//           The row stays one card's on purpose: two cards would let the choice decide the KV
+//           codec on ga10x (kv_decides), and the choice has no term for the rows' prefill cost
+//           (+14 % a full-layer call, #989), so it would flip the default by decode alone
 // On Ampere every codec but INT8 (91-92 % of the DRAM rate) is SM-bound. Its BF16 row is today's
 // kernel (bf16_kv_grouped_mma_kernel, which reads at 92 % of the DRAM rate on the RTX 4090): a
 // kernel finding is open (#856), and the row is measured again when that kernel changes.
@@ -940,8 +968,9 @@ struct KvSmRate {
 };
 
 inline constexpr KvSmRate kKvSmRate[] = {
-    {"turing", "qwen3_5_text", KvCacheStorage::Int8Group64, 256, 16, 4, 3.58, 1}, // Qwen3.5 9B
-    {"turing", "gemma4_text", KvCacheStorage::BFloat16, 512, 16, 1, 2.67, 1},     // Gemma 4 12B
+    {"turing", "qwen3_5_text", KvCacheStorage::Int8Group64, 256, 16, 4, 3.58, 1},  // Qwen3.5 9B
+    {"turing", "gemma4_text", KvCacheStorage::BFloat16, 512, 16, 1, 2.67, 1},      // Gemma 4 12B
+    {"turing", "gemma4_text", KvCacheStorage::Fp8E4M3Row256, 512, 16, 1, 0.94, 1}, // its int8 rows
     // The Quadro GV100 (80 SMs, 1627 MHz reference; mdcenv.sh, the census at 7K and 82K): Gemma 4
     // 12B's BF16 full layer 707 us a call for 153 MB, 216 GB/s, 25 % of its 870 (Qwen3.5's int8
     // kernel, int8_kv_key_major_kt, reaches 643 GB/s, 97 % of the 660 its HBM2 holds: no row).
@@ -951,6 +980,7 @@ inline constexpr KvSmRate kKvSmRate[] = {
     {"ga10x", "qwen3_5_text", KvCacheStorage::Fp8E4M3Row256, 256, 16, 4, 4.51, 2},
     {"ga10x", "qwen3_5_text", KvCacheStorage::Fp8KeyNvfp4Value, 256, 16, 4, 3.45, 2},
     {"ga10x", "qwen3_5_text", KvCacheStorage::Nvfp4Group16, 256, 16, 4, 2.48, 2},
+    {"ga10x", "gemma4_text", KvCacheStorage::Fp8E4M3Row256, 512, 16, 1, 4.43, 1}, // the 3090's
     {"ada", "qwen3_5_text", KvCacheStorage::Nvfp4Group16, 256, 16, 4, 2.56, 2},
     {"gb20x", "qwen3_5_text", KvCacheStorage::Nvfp4Group16, 256, 16, 4, 2.91, 1}, // 6.4 % apart
 };

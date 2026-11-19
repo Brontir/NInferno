@@ -25,6 +25,7 @@
 #include "models/qwen3_5/program/planning/startup.h"
 #include "models/qwen3_5/program/qwen3_5_execution.h"
 #include "convert/checks.h"
+#include "ops/softmax_attention/gemma4/row_codec.h"
 #include "convert/dense.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
@@ -606,6 +607,39 @@ EngineOptions options_of(std::uint32_t concurrency, SpeculativeBackend spec, KvC
     }
     // The copy window stays the Engine's default (automatic), as a server leaves it.
     return o;
+}
+
+// #991: a start plan's kv_rows_int8 (plan_kv_rows_int8, what MemorySummary reports): the
+// head-major one-byte rows (full pool or rings) of every ring decoder hold int8 codes exactly on an
+// int8-codec build (ops::kGemma4RowInt8, sm_75..88), the Qwen 3.5 paged pool's never.
+void test_kv_rows_int8(const std::vector<Subject>& all) {
+    std::size_t planned_rows = 0;
+    for (const Subject& s : all) {
+        if (!s.facts.offline_bytes) { continue; }
+        for (const KvCacheStorage kv : s.kv) {
+            for (const KvCacheStorage ring : s.rings) {
+                EngineOptions o = options_of(1, ninferno::SpeculativeBackend::None, kv, ring,
+                                             RecurrentStateStorage::FP32);
+                o.max_context   = 4096;
+                o.prefill_chunk = 1024;
+                o.context_cache.device_state_slots = 0;
+                const detail::ShapeExecution model(s.family);
+                auto planner     = detail::make_sequence_planner_impl(model, o, 0, false);
+                const auto pages = std::max(rt::plan_context_pages(4096), 1U);
+                const auto plan  = detail::finalize_sequence_plan_impl(std::move(planner), pages);
+                const bool rows =
+                    kv == KvCacheStorage::Fp8E4M3Row256 || ring == KvCacheStorage::Fp8E4M3Row256;
+                const bool want = rows && s.family.family != m::StateFamily::Qwen35 &&
+                                  ninferno::ops::kGemma4RowInt8;
+                check(detail::plan_kv_rows_int8(*plan) == want,
+                      s.name + " kv " + std::to_string(static_cast<int>(kv)) + " ring " +
+                          std::to_string(static_cast<int>(ring)) + ": kv_rows_int8 " +
+                          (want ? "false, want true" : "true, want false"));
+                planned_rows += rows ? 1 : 0;
+            }
+        }
+    }
+    check(planned_rows > 0, "no one-byte-row plan checked");
 }
 
 void test_shapes(const std::vector<Subject>& all) {
@@ -1247,6 +1281,18 @@ void test_proposal_bytes_per_quant() {
                   !dense_table->expert_prefill_assumed &&
                   dense_table->layer_formats == formatted.shape.layer_formats,
               "a dense split part: a table of its formats alone, no route, not assumed");
+        // The facts' own assumed mark (ExpertRoutes::assumed()) survives a part with no route
+        // (#835).
+        pr::PlanSourceFacts marked_formats          = dense_formats;
+        marked_formats.model.expert_prefill_assumed = true;
+        const auto marked_table                     = pr::gguf_tensor_table(marked_formats);
+        check(marked_table && marked_table->expert_prefill == rt::ExpertPrefill::Unknown &&
+                  marked_table->expert_prefill_assumed,
+              "a split part with no route keeps the facts' assumed mark");
+        pr::QuantRow marked_row  = part_row;
+        marked_row.listing.table = marked_table;
+        check(pr::row_facts(routed, marked_row).model.expert_prefill_assumed,
+              "a split row with no route: the mark reaches its facts (Transferred)");
         pr::QuantRow dense_row  = part_row;
         dense_row.listing.table = dense_table;
         check(pr::row_facts(routed, dense_row).shape.layer_formats == formatted.shape.layer_formats,
@@ -1631,6 +1677,7 @@ int main() {
     const std::vector<Subject> all = subjects();
     test_shapes(all);
     test_bytes(all);
+    test_kv_rows_int8(all);
     test_default_copy_window(all);
     test_what_the_estimate_missed();
     test_dry_run_basis();

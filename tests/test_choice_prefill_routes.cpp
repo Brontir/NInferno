@@ -14,6 +14,7 @@
 #include "choice_fixture.h"
 #include "core/board_registry.h"
 #include "core/device_class.h"
+#include "core/format_facts.h"
 #include "product/choice/choice.h"
 #include "product/choice/choice_replay.h"
 #include "product/plan/plan_choice.h"
@@ -245,6 +246,103 @@ void every_board(const json& fixture) {
     std::cout << '\n';
 }
 
+// #847: a final rest under 17 tokens. A request's prompt runs as whole chunks and a partial one,
+// each priced at its own route (single_request_seconds); at an 8-token rest the selector may take
+// R8 or the vector kernel (the int8 share) where the chunks run on the W4A8 tiles. The rest alone
+// is a 1032-token request less a 1024-token one in 1024-token chunks: attention, the tail calls
+// and decode read no prefill route, so the difference is the rest's linears. Per fixture board:
+// the selector's answer for a Q8_0 linear at 8 and at 1024 tokens (printed), the rests that move
+// once the routes are asked (listed), none on a quantization without a Q8_0 linear except a
+// slower one where a linear takes the 16-bit route at 8 tokens (Turing's K-quants), none on Volta
+// (its prefill is its CUTLASS route's, which the choice does not ask: selected_kernel), and at
+// least one move over the boards, so the check is not vacuous.
+void short_rest(const json& fixture) {
+    const auto& query = rt::plan_prefill_route_query();
+    const auto fast   = ninferno::ActivationMode::Fast;
+    int rests = 0, moves = 0;
+    for (const auto& [card_name, id] : kFixtureBoards) {
+        const rt::PlanDeviceFacts device = device_of(ninferno::board_registry::row(id));
+        const bool volta                 = device.compute_capability == 70;
+        const rt::PlanPrefillKernel rest_kernel =
+            query(device, "q8_g32_fp16", 4096, 4096, false, 8, fast);
+        const rt::PlanPrefillKernel chunk_kernel =
+            query(device, "q8_g32_fp16", 4096, 4096, false, 1024, fast);
+        std::cout << "  " << card_name << ": a Q8_0 4096 x 4096 call on kernel "
+                  << static_cast<int>(rest_kernel) << " at 8 tokens, "
+                  << static_cast<int>(chunk_kernel)
+                  << " at 1024 (0 unknown, 1 MMQ, 2 W4A8, 3 other A8, 4 A16)\n";
+        check(volta || rest_kernel != rt::PlanPrefillKernel::Unknown,
+              card_name + ": the selector answers an 8-token Q8_0 call");
+        const ch::CardFacts card = card_of(fixture.at("cards").at(card_name));
+        for (const auto& [model_name, m] : fixture.at("models").items()) {
+            for (const auto& [q, qj] : m.at("quants").items()) {
+                const ch::QuantOption quant = quant_of(q, qj);
+                ch::ModelFacts model        = model_at(m, q);
+                ch::Candidate c;
+                c.kv    = KvCacheStorage::Int8Group64;
+                c.chunk = 1024;
+                ch::Task task;
+                task.answer     = 64;
+                const auto rest = [&] {
+                    return ch::single_request_seconds(model, card, quant, c, task, 1032) -
+                           ch::single_request_seconds(model, card, quant, c, task, 1024);
+                };
+                const double before = rest();
+                pr::with_prefill_routes(model, device);
+                // The first trunk linear the choice asks a route for (selected_kernel's terms: no
+                // expert, an int8 route, the format the file or a one-format label names) that the
+                // selector runs on the 16-bit register MMA at the rest's 8 tokens: priced at the
+                // BF16 share (a16_weight_share), off the int8 tile law. "" where none.
+                const auto a16_at_rest = [&](const ch::ModelFacts& f, const ch::QuantOption& o) {
+                    if (!f.prefill_routes || !o.int8_route || o.nvfp4) { return std::string(); }
+                    for (ch::LinearShape l : f.linears) {
+                        if (l.expert) { continue; }
+                        if (l.format.empty()) {
+                            const auto label = ch::label_formats(o.label);
+                            if (!label || label->size() != 1) { continue; }
+                            l.format = std::string(ninferno::format_facts(*label->begin()).name);
+                        }
+                        if (f.prefill_routes(l, 8, c.activations) == ch::PrefillKernel::A16) {
+                            return l.format + ' ' + std::to_string(static_cast<long>(l.n)) + " x " +
+                                   std::to_string(static_cast<long>(l.k));
+                        }
+                    }
+                    return std::string();
+                };
+                const double after = rest();
+                ++rests;
+                if (!(std::abs(after - before) > 1e-9 * std::abs(before))) { continue; }
+                ++moves;
+                std::cout << "  rest moved: " << card_name << ' ' << model_name << ' ' << q << ": "
+                          << before * 1e3 << " -> " << after * 1e3 << " ms\n";
+                check(!volta, card_name +
+                                  ": a Volta rest moves (the choice asks no route there): " +
+                                  model_name + ' ' + q);
+                // A Q8_0 file names no role formats: its linears take the format from the label
+                // (selected_kernel), and on the int8 tiles any 8-token answer but W4A8 moves them.
+                // Elsewhere a rest moves only where a linear runs on the 16-bit register MMA at 8
+                // tokens (Turing's K-quants), and then only slower: the BF16 share's price.
+                // "Slower" is a premise of today's prices, not a law: the flops-priced BF16 share
+                // costs more than the MMQ tile law at 8 tokens on the one fixture board with an
+                // A16 rest, the RTX 2080 Ti (3.19 -> 10.65 ms, #1015's run). A board or a constant
+                // that makes the A16 rest cheaper fails this check on its premise, not on a wrong
+                // price (#1021). The check also does not tie the move to the linear it prints:
+                // another linear of the same file moving at once passes (#1021 item 1, which needs
+                // each board's law kernel).
+                const bool q8         = names_q8_linear(m, q) || q == "Q8_0";
+                const std::string a16 = q8 ? std::string() : a16_at_rest(model, quant);
+                if (!a16.empty()) { std::cout << "    (16-bit at 8 tokens: " << a16 << ")\n"; }
+                check(q8 || (!a16.empty() && after > before),
+                      "an 8-token rest moves only where a Q8_0 linear changes kernel, or slower "
+                      "where a linear takes the 16-bit route: " +
+                          card_name + ' ' + model_name + ' ' + q);
+            }
+        }
+    }
+    std::cout << "short rest: " << rests << " 8-token rests, " << moves << " moved\n";
+    check(moves > 0, "some 8-token rest moves with the selector's routes");
+}
+
 // #930: a real board's selector is useful for the displayed estimate, but it is not the
 // synthetic generation reference's selector. In particular, the 4B/22K case used to choose
 // INT8 KV on the 5090 and FP8 on the 5070 Ti with identical capacity.
@@ -344,6 +442,7 @@ int main() {
     production_choices_replay(fixture);
     measured_points(fixture);
     every_board(fixture);
+    short_rest(fixture);
     reference_prices(fixture);
     if (failures == 0) { std::cout << "choice prefill routes: OK\n"; }
     return failures == 0 ? 0 : 1;

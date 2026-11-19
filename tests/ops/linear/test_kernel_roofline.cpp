@@ -655,8 +655,16 @@ void check_price_arguments() {
     expect(call({"--local-bytes", "inf"}), 2, "--local-bytes inf");
     expect(call({"--local-bytes", "-4"}), 2, "--local-bytes -4");
     expect(call({"--local-bytes", "8x"}), 2, "--local-bytes 8x");
-    // The board spellings the usage text prints.
+    expect(call({"--rmma-counted-law", "maybe"}), 2, "--rmma-counted-law maybe");
+    expect(call({"--w4a8-counted", "maybe"}), 2, "--w4a8-counted maybe");
+    // The board spellings and the switches the usage text prints.
     const std::string usage = ninferno::tools::price_usage_text();
+    for (const char* option : {"--mmq-counted-unit", "--rmma-counted-law", "--w4a8-counted"}) {
+        if (usage.find(option) == std::string::npos) {
+            std::fprintf(stderr, "FAIL: the usage text no longer prints %s\n", option);
+            ++bad;
+        }
+    }
     for (const char* board : {"rtx4090", "l4", "a100pcie40gb", "0x2684"}) {
         if (usage.find(board) == std::string::npos) {
             std::fprintf(stderr, "FAIL: the usage text no longer prints %s\n", board);
@@ -730,6 +738,26 @@ void check_price_a8_rows() {
                 selector.size(), a8, rows, bad);
     // An A8 board with no A8 candidate tests nothing.
     if (bad > 0 || a8 == 0) ++failures;
+}
+
+// An explicit --local-bytes 0 is a given fact, not the absence of one (#983 codex): on a board
+// whose price reads compiled facts (the heavy form: the RTX 3090, sm_86, as
+// check_price_counted_law) the tool prints it as given, and under the counted law the snapshot's
+// local bytes no longer replace it.
+void check_price_explicit_zero_local_bytes() {
+    int rc = -1;
+    const std::string text =
+        price_stdout({"--board", "rtx3090", "--format", "q4_k", "--n", "4096", "--k", "4096", "--t",
+                      "64", "--local-bytes", "0", "--rmma-counted-law", "on"},
+                     rc);
+    const bool given = text.find("kernel facts given") != std::string::npos;
+    const bool zero  = text.find("given: unset registers, 0 local bytes") != std::string::npos;
+    if (rc != 0 || !given || !zero) {
+        std::fprintf(stderr, "FAIL: price --local-bytes 0 exits %d, given %d, zero %d\n", rc,
+                     given ? 1 : 0, zero ? 1 : 0);
+        ++failures;
+    }
+    std::printf("price explicit zero local bytes: rc %d, given %d\n", rc, given ? 1 : 0);
 }
 
 // The bytes a warp of the probe's two-slot rings keeps in flight by count: 2 slots x 2 (ring2) or
@@ -1380,8 +1408,74 @@ void check_launch_rule() {
     if (bad > 0 || checked == 0 || pdl == 0 || bound == 0 || board_bound == 0) ++failures;
 }
 
+// calibration_of's L1 hit latency: each ISA row's measured l1_latency_w1, the Fitted transfer
+// value on an architecture without a row (sm_80).
+void check_l1_latency() {
+    const auto fail = [](const std::string& what) {
+        std::fprintf(stderr, "FAIL: %s\n", what.c_str());
+        ++failures;
+    };
+    long rows = 0;
+    for (const IsaRow& row : isa_facts_table()) {
+        if (!row.l1_latency.w1) continue;
+        ++rows;
+        if (kr::calibration_of(row.major, row.minor).l1_hit_latency_cycles != *row.l1_latency.w1) {
+            fail("calibration_of(" + std::to_string(row.major) + ", " + std::to_string(row.minor) +
+                 ") does not read the ISA row's l1_latency_w1");
+        }
+    }
+    if (kr::calibration_of(8, 0).l1_hit_latency_cycles !=
+        g::route_cost::kL1HitLatencyCycles.value()) {
+        fail("sm_80 (no ISA row) does not take kL1HitLatencyCycles");
+    }
+    if (rows < 5) fail("fewer than five ISA rows with an L1 latency");
+}
+
+// The price tool under the counted law (#613 PR-7a review): on a board where the heavy form is
+// priced (the RTX 3090, sm_86), `price --rmma-counted-law on` prints every register-MMA row equal
+// to the selector's price under the same law, and some Q4_K schedule has its K loop counted.
+void check_price_counted_law() {
+    const g::FactsBoard* board = facts_board("rtx3090");
+    if (!board) {
+        std::fprintf(stderr, "FAIL: no rtx3090 board\n");
+        ++failures;
+        return;
+    }
+    const DeviceClass d = g::board_device_class(*board);
+    int counted         = 0;
+    for (int i = 0; i < g::rmma_schedule_count(); ++i) {
+        const auto res =
+            g::rmma_resources_query(d, i, QType::GGML_Q4_K, g::Epilogue::Store, 4096, 4096, 64);
+        if (res && res->loop && res->loop->loops >= 1) ++counted;
+    }
+    int rc = -1;
+    const std::string text =
+        price_stdout({"--board", board_id(*board), "--format", "q4_k", "--n", "4096", "--k", "4096",
+                      "--t", "64", "--rmma-counted-law", "on"},
+                     rc);
+    long rows = 0, differ = 0, equal = 0;
+    for (std::size_t at = text.find("\nrmma:"); at != std::string::npos;
+         at             = text.find("\nrmma:", at + 1)) {
+        const std::size_t end  = text.find("\n", at + 1);
+        const std::string line = text.substr(at + 1, end - at - 1);
+        ++rows;
+        if (line.find(" = ") != std::string::npos) ++equal;
+        if (line.find(" != ") != std::string::npos || line.find(" !=") == line.size() - 3) {
+            std::fprintf(stderr, "FAIL: price --rmma-counted-law on: %s\n", line.c_str());
+            ++differ;
+        }
+    }
+    std::printf("price counted law: %d of %d Q4_K schedules counted, %ld rmma rows, %ld equal, "
+                "%ld differ, rc %d\n",
+                counted, g::rmma_schedule_count(), rows, equal, differ, rc);
+    if (counted == 0) std::fprintf(stderr, "FAIL: no Q4_K schedule has its loop counted\n");
+    if (equal == 0) std::fprintf(stderr, "FAIL: no rmma row compared equal to the selector\n");
+    if (counted == 0 || equal == 0 || differ > 0 || rc != 0) ++failures;
+}
+
 int main() {
     check_golden();
+    check_l1_latency();
     check_wiring();
     check_completeness();
     check_launch_rule();
@@ -1392,6 +1486,8 @@ int main() {
     check_price_admitted();
     check_price_arguments();
     check_price_a8_rows();
+    check_price_explicit_zero_local_bytes();
+    check_price_counted_law();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

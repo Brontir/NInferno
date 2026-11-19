@@ -16,6 +16,7 @@
 #include "ninferno/ops/sigmoid_mul.h"
 #include "ninferno/ops/silu_mul.h"
 #include "ops/linear/linear_registry.h"
+#include "ops/softmax_attention/gemma4/row_codec.h"
 
 #include <algorithm>
 #include <atomic>
@@ -91,7 +92,7 @@ Target::Target(const Model& model, DeviceContext& device, DeviceArena& work,
         const std::int32_t window = spec.window < max_context ? spec.window : 0;
         const std::int32_t capacity = window > 0 ? window + prefill_chunk : max_context;
         const std::int64_t values = std::int64_t(c.head_dim) * capacity * c.kv_heads;
-        const DType dtype         = kv_fp8 ? DType::FP8_E4M3FN : DType::BF16;
+        const DType dtype           = kv_fp8 ? ops::kGemma4RowDtype : DType::BF16;
         const std::size_t bytes   = kv_fp8 ? static_cast<std::size_t>(values) : bf16_bytes(values);
         KvPlanes planes;
         planes.k = DeviceBuffer(bytes);

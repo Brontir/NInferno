@@ -31,6 +31,8 @@ src/ops/generic/format_rules.h
 src/ops/generic/compiled_codecs.h
 src/ops/generic/*route_authorities*
 src/ops/generic/*kernel_roofline*
+# the R8 decode schedule law (#613 PR-10): the r8 kernels' facts priced on the chip
+src/ops/generic/r8_law.h
 src/ops/route_table.cpp
 include/ninferno/ops/route_table.h
 include/ninferno/ops/prefill_routes.h

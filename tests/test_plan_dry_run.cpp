@@ -1881,6 +1881,10 @@ void test_kv_options() {
         const auto g = pr::kv_options(gemma, cc);
         check(find(g, KvCacheStorage::BFloat16).allowed && find(g, KvCacheStorage::Fp8E4M3Row256).allowed,
               "Gemma 4 takes BF16 and FP8");
+        // Gemma 4's rows hold int8 codes on sm_75 to sm_88 (gemma4_rows_int8_on): not slow there,
+        // unlike the Qwen paged pool's software E4M3 (#619 steps 9-10).
+        check(!find(g, KvCacheStorage::Fp8E4M3Row256).slow_on_card,
+              "Gemma 4's one-byte rows are slow at cc " + std::to_string(cc));
         for (const KvCacheStorage kv : {KvCacheStorage::Int8Group64, KvCacheStorage::Nvfp4Group16,
                                         KvCacheStorage::Fp8KeyNvfp4Value}) {
             const pr::KvOption o = find(g, kv);
@@ -1888,6 +1892,10 @@ void test_kv_options() {
                   "Gemma 4 refuses " + std::string(kv_cache_storage_name(kv)));
         }
     }
+    // Volta keeps E4M3 rows (row_codec.h), widened in software: slow there.
+    check(pr::kv_options(gemma, 70).size() > 0 &&
+              find(pr::kv_options(gemma, 70), KvCacheStorage::Fp8E4M3Row256).slow_on_card,
+          "Gemma 4's one-byte rows are slow on Volta (software E4M3)");
     // A Qwen pool of 128-wide heads: the target's append and attention are 256-wide only, so no
     // compact codec (the layout's 128-wide INT8 is the DFlash drafter pool's).
     pr::PlanSourceFacts narrow = qwen;

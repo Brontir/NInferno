@@ -3,24 +3,32 @@
 // schedule for R8, never one that needs another workspace), an R8 call keeps its bytes, a prefill
 // band's route gives a token the heuristic's bytes (a W4A8 schedule for W4A8, the prefill route's
 // summation order for A16), the cache file gives a second process the same routes without timing
-// (and times again only the bands a failure skipped), and a call inside a CUDA graph capture times
-// nothing.
+// (and times again only the bands a failure skipped), a width or band a lent table answered is
+// timed once --route-policy evidence demotes that answer (a read-only process reads such a release
+// entry whole and times nothing), and a call inside a CUDA graph capture times nothing.
 #include "ops/linear/linear_test_common.h"
 
 #include "core/arena.h"
 #include "core/device.h"
+#include "core/device_class.h"
 #include "core/weight.h"
 #include "ninferno/ops/route_table.h"
+#include "ninferno/option_enums.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/route_query.h"
+#include "ops/generic/route_table.h"
+#include "ops/route_pins.h"
 #include "support/temp_dir.h"
 
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
+#include <nlohmann/json.hpp>
 
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <iostream>
 #include <sstream>
 #include <optional>
@@ -39,6 +47,7 @@ using namespace ninferno;
 using namespace ninferno::test;
 using namespace ninferno::test::linear;
 namespace generic = ninferno::ops::detail::generic;
+using Json        = nlohmann::ordered_json;
 
 struct Case {
     const char* name;
@@ -352,6 +361,319 @@ int check_capture(cudaStream_t stream) {
     return 0;
 }
 
+// The tuner file's entry of the problem of shape n x k (one problem of that shape in this test).
+const Json* cached_entry(const Json& file, std::int32_t n, std::int32_t k) {
+    const std::string shape = "|n" + std::to_string(n) + "|k" + std::to_string(k) + "|";
+    if (!file.contains("problems")) return nullptr;
+    for (const auto& [key, entry] : file["problems"].items()) {
+        if (key.find(shape) != std::string::npos) return &entry;
+    }
+    return nullptr;
+}
+
+Json read_cache() {
+    std::ifstream in(g_cache_file);
+    return in ? Json::parse(in) : Json();
+}
+
+std::string read_cache_text() {
+    std::stringstream text;
+    text << std::ifstream(g_cache_file).rdbuf();
+    return text.str();
+}
+
+// Whether the entry holds a time for width `t` under `field` ("us": the decode widths,
+// "prefill_us": the prefill bands): a width never timed has none.
+bool timed_in(const Json* entry, const char* field, std::int32_t t) {
+    return entry != nullptr && entry->contains(field) && (*entry)[field].is_object() &&
+           (*entry)[field].contains(std::to_string(t));
+}
+
+// A decode width (#1008) or a prefill band (#1023) an older tune left untimed because a table
+// answered it is timed once --route-policy evidence demotes that answer, by a process that times
+// (TuneMode::On), and only once; a read-only process (TuneMode::Off) reads the release's entry with
+// the demoted widths and bands whole, and times and writes nothing (#1024). The answers are lent:
+// the similar chip's table fills problems the device's own table lacks, and an entry with a lender
+// is Borrowed whatever the board distance, so evidence demotes it.
+int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scratch) {
+    const auto similar = device_class().similar_chips();
+    if (similar.empty()) {
+        std::cout << "demoted retime: SKIP, no similar chip of this architecture lends a table\n";
+        return 0;
+    }
+    int failures    = 0;
+    const auto fail = [&](const std::string& what) {
+        std::cerr << "demoted retime: " << what << "\n";
+        ++failures;
+    };
+    const auto table = [](const std::string& gpu, const std::string& entries) {
+        return "{\"schema\": \"ninferno-route-table/1\", \"gpu\": {\"class\": \"" + gpu +
+               "\", \"name\": \"test\"}, \"entries\": [" + entries + "]}";
+    };
+    const auto entry = [](std::int32_t n, std::int32_t k, const std::string& routes) {
+        return R"({"format": "q8", "compute": "a16", "epilogue": "store", "n": )" +
+               std::to_string(n) + R"(, "k": )" + std::to_string(k) + ", " + routes + "}";
+    };
+    // The decode problem has the lent decode bands, the prefill problem only a lent prefill route
+    // (its decode widths are timed as usual, so its retime is the bands' alone). The own table
+    // holds neither.
+    const Case dec{"q8 lent decode", QType::Q8_G32_FP16, ops::LinearPolicy::A16Only, 2560, 2048};
+    const Case pre{"q8 lent prefill", QType::Q8_G32_FP16, ops::LinearPolicy::A16Only, 2560, 3072};
+    const auto dir = scratch / "tables";
+    std::filesystem::create_directories(dir);
+    const std::string gpu = ops::route_gpu_class();
+    std::string own       = gpu;
+    for (char& ch : own) {
+        if (ch == ':') ch = '-';
+    }
+    std::ofstream(dir / (own + ".json"))
+        << table(gpu, entry(4096, 1024, R"("bands": [[1, 16, "rmma.m1.n1.w1x8"]])"));
+    std::ofstream(dir / (similar.front() + ".json")) << table(
+        similar.front(), entry(dec.n, dec.k, R"("bands": [[1, 16, "rmma.m1.n1.w1x8"]])") + ", " +
+                             entry(pre.n, pre.k, R"("prefill": "rmma.m1.n8.w4x1")"));
+    // Restored before return: the scratch directory is removed after the test.
+    const std::string previous_dir = ops::route_table_dir();
+    ops::set_route_table_dir(dir);
+    const generic::Problem pdec{dec.qtype, dec.policy, dec.n, dec.k, generic::Epilogue::Store};
+    const generic::Problem ppre{pre.qtype, pre.policy, pre.n, pre.k, generic::Epilogue::Store};
+    const auto status = ops::route_table_status();
+    if (!generic::table_route(pdec, 4, false) || !generic::table_route(ppre, 64, true) ||
+        status.borrowed_entries < 2) {
+        fail("the table of " + similar.front() +
+             " lends nothing here, the fixture is not met: " + status.message);
+        ops::set_route_table_dir(previous_dir);
+        ops::clear_route_table();
+        return failures;
+    }
+    const DeviceClass& device = device_class();
+    const auto answered       = [&](const generic::Problem& p, std::int32_t t, bool prefill) {
+        return generic::answered_before_tuner_query(device, p.qtype, p.policy, p.epilogue, p.n, p.k,
+                                                          t, prefill)
+            .value_or(false);
+    };
+
+    const Device ddec       = upload(dec, 41U);
+    const Device dpre       = upload(pre, 43U);
+    const std::int32_t wide = 128;
+    const auto act_dec      = make_linear_activation(dec.k, wide, 5U, ActivationCompute::A16);
+    const auto act_pre      = make_linear_activation(pre.k, wide, 6U, ActivationCompute::A16);
+    DeviceBuffer xdec(act_dec.size() * 2), xpre(act_pre.size() * 2);
+    xdec.copy_from_host(act_dec.data(), xdec.bytes);
+    xpre.copy_from_host(act_pre.data(), xpre.bytes);
+    DeviceArena workspace(std::max<std::size_t>(
+        generic::route_workspace_bytes({generic::Family::W4a8Mma, 0}, pre.k, wide), 256));
+    const auto run_both = [&] {
+        generic::clear_dense_tune();
+        generic::enable_dense_tune(true);
+        (void)call(ddec, xdec, wide, std::nullopt, dec.policy, workspace, stream);
+        (void)call(dpre, xpre, wide, std::nullopt, pre.policy, workspace, stream);
+        return generic::dense_tune_report();
+    };
+
+    // Legacy keeps the lent answers: the tuner leaves their widths and bands untimed.
+    const ops::ScopedRoutePolicy legacy(RoutePolicy::Legacy);
+    std::vector<std::int32_t> held_widths, held_bands;
+    for (std::int32_t t = 1; t <= generic::kDenseTuneMaxTokens; ++t) {
+        if (answered(pdec, t, false)) held_widths.push_back(t);
+    }
+    if (held_widths.empty()) fail("legacy: the lent decode bands hold no width");
+    if (run_both().size() != 2) fail("legacy: the two problems' first eager calls timed otherwise");
+    {
+        const Json file = read_cache();
+        const Json* e   = cached_entry(file, pdec.n, pdec.k);
+        const Json* p   = cached_entry(file, ppre.n, ppre.k);
+        if (e == nullptr || p == nullptr || !p->contains("prefill")) {
+            fail("legacy: no cache entry for the two problems");
+            ops::set_route_table_dir(previous_dir);
+            ops::clear_route_table();
+            return failures;
+        }
+        for (const std::int32_t t : held_widths) {
+            if (timed_in(e, "us", t)) fail("legacy: lent width T=" + std::to_string(t) + " timed");
+        }
+        for (const auto& [name, v] : (*p)["prefill"].items()) {
+            const std::int32_t t = std::stoi(name);
+            if (!answered(ppre, t, true)) continue;
+            held_bands.push_back(t);
+            if (timed_in(p, "prefill_us", t)) fail("legacy: lent band T=" + name + " timed");
+        }
+        if (held_bands.empty()) fail("legacy: the lent prefill route holds no band");
+    }
+    // Where the tuner skips, the dispatch takes the lent route itself (#1018: one fixture for the
+    // tuner's skip and the dispatch's answer).
+    for (const std::int32_t t : held_widths) {
+        const auto lent = generic::table_route(pdec, t, false);
+        if (!lent || !(generic::select_route(pdec, ddec.weight, t, false) == *lent)) {
+            fail("legacy: the dispatch does not take lent width T=" + std::to_string(t));
+        }
+    }
+    for (const std::int32_t t : held_bands) {
+        const auto lent = generic::table_route(ppre, t, true);
+        if (!lent || !(generic::select_route(ppre, dpre.weight, t, true) == *lent)) {
+            fail("legacy: the dispatch does not take lent band T=" + std::to_string(t));
+        }
+    }
+
+    // Evidence demotes them.
+    ops::set_route_policy(RoutePolicy::Evidence);
+    for (const std::int32_t t : held_widths) {
+        if (answered(pdec, t, false)) fail("evidence keeps lent width T=" + std::to_string(t));
+    }
+    for (const std::int32_t t : held_bands) {
+        if (answered(ppre, t, true)) fail("evidence keeps lent band T=" + std::to_string(t));
+    }
+    // A read-only process reads the release's file alone (<route dir>/tuner/dense_tune.json), as it
+    // is: the legacy entries go there, with one lent width of the decode problem and one lent band
+    // of the prefill problem set to another admitted route and the others left null and never
+    // timed. The writable guards keep those from making the entries incomplete, so the process
+    // reads them whole, the set width and band included, and times and writes nothing (neither
+    // file). A reader that took the demoted widths or bands for missing would drop the entry.
+    const auto release      = dir / "tuner" / "dense_tune.json";
+    std::int32_t probe_band = 0, probe_width = 0;
+    std::optional<generic::Route> probe_route, probe_width_route;
+    {
+        Json file = read_cache();
+        for (auto& [key, entry] : file["problems"].items()) {
+            // The decode problem likewise: one lent width set to an admitted route other than the
+            // heuristic's, the other lent widths left null (#1034 review: a reader that dropped the
+            // writable guard of the decode widths would find the entry incomplete and read none).
+            if (key.find("|n" + std::to_string(pdec.n) + "|k" + std::to_string(pdec.k) + "|") !=
+                    std::string::npos &&
+                !probe_width_route) {
+                for (const std::int32_t t : held_widths) {
+                    const auto heuristic = generic::heuristic_route(pdec, ddec.weight, t, false);
+                    std::vector<generic::Route> options;
+                    if (const auto lent = generic::table_route(pdec, t, false)) {
+                        options.push_back(*lent);
+                    }
+                    for (const auto r :
+                         generic::prefill_band_candidates(heuristic, ddec.weight, dec.policy)) {
+                        options.push_back(r);
+                    }
+                    for (const auto r : options) {
+                        if (r == heuristic || !generic::route_admits(r, ddec.weight, dec.policy)) {
+                            continue;
+                        }
+                        entry["routes"][std::to_string(t)] = generic::route_name(r);
+                        probe_width                        = t;
+                        probe_width_route                  = r;
+                        break;
+                    }
+                    if (probe_width_route) break;
+                }
+                continue;
+            }
+            if (key.find("|n" + std::to_string(ppre.n) + "|k" + std::to_string(ppre.k) + "|") ==
+                std::string::npos) {
+                continue;
+            }
+            for (const std::int32_t t : held_bands) {
+                const auto heuristic = generic::heuristic_route(ppre, dpre.weight, t, true);
+                const auto candidates =
+                    generic::prefill_band_candidates(heuristic, dpre.weight, pre.policy);
+                for (const auto r : candidates) {
+                    if (r == heuristic) continue;
+                    entry["prefill"][std::to_string(t)] = generic::route_name(r);
+                    probe_band                          = t;
+                    probe_route                         = r;
+                    break;
+                }
+                if (probe_route) break;
+            }
+        }
+        if (!probe_route || held_bands.size() < 2) {
+            fail("read-only: no lent band to set beside a null one, the case is not met");
+        }
+        if (!probe_width_route || held_widths.size() < 2) {
+            fail("read-only: no lent width to set beside a null one, the case is not met");
+        }
+        std::filesystem::create_directories(release.parent_path());
+        std::ofstream(release) << file.dump(2);
+    }
+    const auto text_of = [](const std::filesystem::path& path) {
+        std::ifstream in(path);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    const std::string before         = read_cache_text();
+    const std::string release_before = text_of(release);
+    generic::set_dense_tune(ninferno::TuneMode::Off, g_cache_file.parent_path());
+    if (!run_both().empty()) fail("a read-only process retimed a demoted answer");
+    if (read_cache_text() != before) fail("a read-only process wrote the tuner's file");
+    if (text_of(release) != release_before) fail("a read-only process wrote the release's file");
+    if (probe_width_route) {
+        const auto read = generic::tuned_dense_route(pdec, probe_width);
+        if (!read || !(*read == *probe_width_route)) {
+            fail("read-only: the release entry with demoted widths was not read (width T=" +
+                 std::to_string(probe_width) + " is not " +
+                 generic::route_name(*probe_width_route) + ")");
+        }
+    }
+    if (probe_route) {
+        const auto read = generic::tuned_prefill_route(
+            ppre, probe_band, generic::heuristic_route(ppre, dpre.weight, probe_band, true));
+        if (!read || !(*read == *probe_route)) {
+            fail("read-only: the release entry with demoted bands was not read (band T=" +
+                 std::to_string(probe_band) + " is not " + generic::route_name(*probe_route) + ")");
+        }
+    }
+    std::filesystem::remove(release);
+
+    // A process that times does: the decode problem in full (its entry is not complete), the
+    // prefill problem's bands alone.
+    generic::set_dense_tune(ninferno::TuneMode::On, g_cache_file.parent_path());
+    const auto retimed = run_both();
+    int bands_lines    = 0;
+    for (const auto& line : retimed) {
+        bands_lines += line.find("(prefill bands)") != std::string::npos ? 1 : 0;
+        std::cout << line << "\n";
+    }
+    if (retimed.size() != 2 || bands_lines != 1) {
+        fail("evidence: " + std::to_string(retimed.size()) + " retimes, " +
+             std::to_string(bands_lines) + " of the prefill bands alone; expected 2 and 1");
+    }
+    {
+        const Json file = read_cache();
+        const Json* e   = cached_entry(file, pdec.n, pdec.k);
+        const Json* p   = cached_entry(file, ppre.n, ppre.k);
+        for (const std::int32_t t : held_widths) {
+            if (!timed_in(e, "us", t))
+                fail("evidence: demoted width T=" + std::to_string(t) + " still untimed");
+        }
+        for (const std::int32_t t : held_bands) {
+            if (!timed_in(p, "prefill_us", t))
+                fail("evidence: demoted band T=" + std::to_string(t) + " still untimed");
+        }
+    }
+    // And the dispatch answers what the tuner timed there, the heuristic's route where it stays,
+    // never the demoted lent route (#1018).
+    for (const std::int32_t t : held_widths) {
+        const auto expected = generic::tuned_dense_route(pdec, t).value_or(
+            generic::heuristic_route(pdec, ddec.weight, t, false));
+        if (!(generic::select_route(pdec, ddec.weight, t, false) == expected)) {
+            fail("evidence: the dispatch at demoted width T=" + std::to_string(t) + " is not " +
+                 generic::route_name(expected));
+        }
+    }
+    for (const std::int32_t t : held_bands) {
+        const auto heuristic = generic::heuristic_route(ppre, dpre.weight, t, true);
+        const auto expected  = generic::tuned_prefill_route(ppre, t, heuristic).value_or(heuristic);
+        if (!(generic::select_route(ppre, dpre.weight, t, true) == expected)) {
+            fail("evidence: the dispatch at demoted band T=" + std::to_string(t) + " is not " +
+                 generic::route_name(expected));
+        }
+    }
+    // Saved: the next process times nothing (no retime loop).
+    if (!run_both().empty()) fail("evidence: the retimed entries were timed again");
+    ops::set_route_table_dir(previous_dir);
+    ops::clear_route_table();
+    if (failures == 0) {
+        std::cout << "demoted retime: " << held_widths.size() << " decode widths and "
+                  << held_bands.size() << " prefill bands lent by " << similar.front()
+                  << ", timed once under evidence\n";
+    }
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -382,6 +704,7 @@ int main() {
     };
     for (const Case& c : cases) failures += check_case(c, stream);
     failures += check_capture(stream);
+    failures += check_demoted_retime(stream, cache);
     cuda_check(cudaStreamDestroy(stream), "stream");
     generic::enable_dense_tune(false);
     generic::set_dense_tune(ninferno::TuneMode::Off, {});

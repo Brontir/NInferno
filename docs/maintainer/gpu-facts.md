@@ -99,7 +99,7 @@ its provenance in `note`. The L40S and Tesla T4 values are also backed by publis
 hardware-owner reports in bytes. These are published facts; no local timing or tuning
 is needed. Identification-only rows remain `target: false` even after their L2 is sourced.
 
-Two rows remain unknown after that audit:
+Four rows remain unknown after that audit and #958:
 
 - `0x1F09`, GTX 1660 SUPER on **TU106** (target): the available
   [1660 SUPER specification](https://www.techpowerup.com/gpu-specs/geforce-gtx-1660-super.c3458)
@@ -109,9 +109,19 @@ Two rows remain unknown after that audit:
   while a [published H100 NVL research hardware table](https://repository.lib.ncsu.edu/server/api/core/bitstreams/a94ab66d-6435-46d5-acc1-28fe54766bfb/content)
   gives 50 MB. Resolve this with an unambiguous NVIDIA SKU specification or a whole-device
   `deviceQuery` report in bytes, not the GH100 full-chip figure or a two-GPU aggregate.
+- `0x1F0A`, GTX 1650 on **TU106** (target, #958): the aggregator's 1 MiB is TU117's GTX 1650.
+  TU106 carries at most 512 KiB per 32-bit controller (at most 2 MiB at 128 bits; a board may
+  disable some), and no SKU page or `deviceQuery` of this board gives its value.
+- `0x27B2`, RTX 4000 Ada Generation (target, #958): the aggregator's 48 MiB exceeds what five
+  32-bit controllers carry on Ada (8 MiB each, at most 40 MiB at 160 bits).
+- Three #905 rows by the same bound (their source pages give the full chip's or a wider board's
+  figure): `0x26B2` RTX 5000 Ada (72 MiB at 256 bits; AD102 holds at most 64 there), `0x27B0`
+  RTX 4000 SFF Ada (48 MiB at 160 bits; at most 40, as `0x27B2`), `0x1F83` GTX 1630 (1 MiB at 64
+  bits; TU117 holds 256 KiB a controller, at most 512 KiB).
 
-`ninferno_machine_facts_test` rejects another target row without L2. Its one explicit
-exception is `0x1F09`; remove that exception when its capacity is sourced. Unknown values
+`ninferno_machine_facts_test` rejects another target row without L2. Its explicit
+exceptions are `0x1F09`, `0x1F0A`, `0x27B2`, `0x26B2`, `0x27B0` and `0x1F83`; remove each when its
+capacity is sourced. Unknown values
 stay absent, preserving the conservative missing-fact behavior.
 
 ### Procedure

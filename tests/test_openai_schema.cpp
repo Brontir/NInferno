@@ -1324,6 +1324,15 @@ int test_stops_and_ranges() {
     body = base_request();
     body["max_tokens"] = -1;
     failures += check(!parse(body).output_tokens_explicit, "max_tokens -1 means the default");
+    body              = base_request();
+    body["n_predict"] = 7;
+    failures += check(parse(body).generation.max_tokens == 7 && parse(body).output_tokens_explicit,
+                      "llama.cpp's n_predict sets the limit");
+    body["max_tokens"] = 9;
+    failures += check(parse(body).generation.max_tokens == 9, "max_tokens wins over n_predict");
+    body              = base_request();
+    body["n_predict"] = -1;
+    failures += check(!parse(body).output_tokens_explicit, "n_predict -1 means the default");
     body = base_request();
     body["think"] = false;
     failures += check(parse(body).generation.enable_thinking == std::optional<bool>(false),

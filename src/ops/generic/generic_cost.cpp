@@ -6,6 +6,8 @@
 #include "core/mmq_columns.h"
 #include "core/device_class.h"
 #include "core/generation.h"
+#include "core/isa_facts.h"
+#include "core/launch_facts.h"
 #include "core/weight.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
@@ -14,13 +16,17 @@
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
+#include "ops/generic/kernel_facts.h"
 #include "ops/generic/kernel_roofline.h"
+#include "ops/generic/mmq_unit.h"
+#include "ops/generic/w4a8_unit.h"
 #include "ops/generic/route_cost_constants.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <utility>
 
 namespace ninferno::ops::detail::generic {
@@ -166,8 +172,33 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             // flight whatever the stages, over the warps that load it: every warp of the classic
             // tile, the producer warps of the ws tile (generic_w4a8.cuh w4a8_kernel and
             // w4a8_ws_kernel). The ring's stages hold decoded data in shared memory, not loads.
+            // The counted K tile (#613 PR-6, w4a8_unit::counted): every resident CTA's K tiles at
+            // the cycles the snapshot's loops and the arch's shared latency give, the waves of
+            // `occ` CTAs an SM one after the other, against the same DRAM time; the fitted
+            // efficiency and chain where an input is missing.
             const double load_warps = s.producers > 0 ? s.producers : threads / 32;
             const double in_flight  = rows_o * route_cost::kW4a8StepK.value() * bpw / load_warps;
+            if (w4a8_unit::counted()) {
+                const std::string arch          = kernel_facts::release_arch(d.major, d.minor);
+                const std::optional<IsaRow> isa = isa_row(d.major, d.minor);
+                const auto key =
+                    w4a8_unit::scored_arch(arch) && isa
+                        ? w4a8_unit::kernel_key(i, problem.qtype, problem.epilogue, arch)
+                        : std::nullopt;
+                const double k_tiles = std::ceil(ld / route_cost::kW4a8StepK.value());
+                const auto cycles    = key ? w4a8_unit::tile_cycles(arch, *key, *isa,
+                                                                    static_cast<int>(std::min(q, occ)),
+                                                                    static_cast<int>(k_tiles))
+                                           : std::nullopt;
+                if (cycles) {
+                    const double mem = kr::dram_time(chip, ctas, occ, load_warps, rows_o * k * bpw,
+                                                     in_flight, true);
+                    const double compute = std::ceil(q / occ) * k_tiles * *cycles / clk;
+                    const double price   = quant_w4a8 + std::max(mem, compute);
+                    offer(r, complete ? price + beyond(ctas) : price);
+                    continue;
+                }
+            }
             const double mem =
                 kr::dram_time(chip, ctas, occ, load_warps, rows_o * k * bpw, in_flight, true);
             const double price = quant_w4a8 + std::max(mem, mma / eff / fill) + chain;
@@ -262,22 +293,70 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         // Under the completeness terms the quantizer is counted (a CTA a column and 512 values of
         // K), and the output write and residual read are added once for the call; the tile
         // kernel's launch and its stream-k fixup stay inside the fitted slice (kMmqSliceSeconds)
-        // until the shared MMQ term prices them (#613 PR-5), as does the FP32 plane its tiles
-        // write and its epilogue reads.
-        // Counted, each slice's quantizer at its own width: the runtime loop (generic_gemm.cpp)
-        // gives the last slice the remaining tokens, so 513 tokens quantize 512 and then 1.
+        // where the counted unit does not price them (a format not mmq_unit::scored, or an arch not
+        // mmq_unit::scored_arch; #613 PR-5), as does the FP32 plane its tiles write and its
+        // epilogue reads. Counted, each slice's quantizer at its own width: the runtime loop
+        // (generic_gemm.cpp) gives the last slice the remaining tokens, so 513 tokens quantize 512
+        // and then 1.
         const auto quant_mmq_counted = [&](double width) {
             return quant_counted(width * k * route_cost::kQuantMmqBytesPerValue.value(),
                                  width * cdiv(k, route_cost::kQuantMmqValuesPerCta.value()),
                                  LaunchKind::GraphNodePdl);
         };
-        const double slice_body =
+        double slice_body =
             std::max(mem, mma / (route_cost::kMmqEfficiency.value() * scale)) + chain;
+        // The slice's launch and fixup: the fitted kMmqSliceSeconds, or under the counted unit
+        // the kernel's own graph node (its fixup is inside the counted seconds).
+        double slice_fixed = route_cost::kMmqSliceSeconds.value();
+        // The counted unit prices the last slice at its own width (generic_gemm.cpp gives it the
+        // remaining tokens: 513 tokens run 512, then 1); the fitted slice prices every slice alike.
+        std::optional<double> last_body;
+        // The counted slice (#613 PR-5, mmq_unit::counted): the launch's units at the unit its
+        // own resident CTAs give, with the fixup's bytes and graph node; the fitted slice where
+        // the kernel's counts, the arch's facts or the width's unit are missing.
+        if (mmq_unit::counted()) {
+            // The release engine's kernels for the board (release_arch), the same answer on
+            // every machine whatever its build, as the register MMA's facts are (#556).
+            // On the architectures it was scored on alone (mmq_unit::scored_arch).
+            const std::string arch          = kernel_facts::release_arch(d.major, d.minor);
+            const std::optional<IsaRow> isa = isa_row(d.major, d.minor);
+            if (mmq_unit::scored_arch(arch) && isa) {
+                const double node =
+                    ninferno::launch_seconds(d.major, d.minor, LaunchKind::GraphNode).value_or(0.0);
+                // The column tile the kernel's own table picks for each slice's width
+                // (core/mmq_columns.h), as the choice prices it, not the fitted price's 8-column
+                // step.
+                // A gated call runs one product a set (generic_gemm.cpp: gate, then up), each of
+                // n rows with its own graph node.
+                const auto counted_at = [&](double width) {
+                    return mmq_unit::launch_seconds(arch, problem.qtype, *isa, static_cast<int>(n),
+                                                    static_cast<int>(k), static_cast<int>(width),
+                                                    mmq_columns::pick(static_cast<int>(width),
+                                                                      d.major, d.minor, format,
+                                                                      widest, facts),
+                                                    d.sms, clk, bw, node);
+                };
+                const double rest       = t - (slices - 1) * tt;
+                const auto counted      = counted_at(tt);
+                const auto counted_last = rest == tt ? counted : counted_at(rest);
+                if (counted && counted_last) {
+                    slice_body  = sets * *counted;
+                    last_body   = sets * *counted_last;
+                    slice_fixed = sets * node;
+                }
+            }
+        }
         const double price =
-            complete ? slices * (slice_body + route_cost::kMmqSliceSeconds.value()) +
-                           (slices - 1) * quant_mmq_counted(tt) +
-                           quant_mmq_counted(t - (slices - 1) * tt)
-                     : slices * (slice_body + quant(tt) + route_cost::kMmqSliceSeconds.value());
+            last_body ? (complete ? (slices - 1) * (slice_body + slice_fixed) +
+                                        (*last_body + slice_fixed) +
+                                        (slices - 1) * quant_mmq_counted(tt) +
+                                        quant_mmq_counted(t - (slices - 1) * tt)
+                                  : (slices - 1) * (slice_body + quant(tt) + slice_fixed) +
+                                        (*last_body + quant(tt) + slice_fixed))
+            : complete
+                ? slices * (slice_body + slice_fixed) + (slices - 1) * quant_mmq_counted(tt) +
+                      quant_mmq_counted(t - (slices - 1) * tt)
+                : slices * (slice_body + quant(tt) + slice_fixed);
         if (complete) {
             const kr::Completeness c = kr::completeness(chip, call, 1.0);
             offer(Route{Family::GgmlMmq, 0}, price + c.output + c.residual);

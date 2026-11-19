@@ -36,7 +36,7 @@ The model argument can be:
 | Argument | What happens |
 |---|---|
 | hub id `org/name[@revision]` | downloaded into the Hugging Face cache, converted, and reused on later starts |
-| checkpoint directory or GGUF file | converted once into `<dir>/.ninferno-cache/`, again when its files change |
+| checkpoint directory or GGUF file | converted once into `<dir>/.ninferno-cache/` (where `<dir>` cannot be written, such as a read-only disk: into `$XDG_CACHE_HOME/ninferno/converted/<key>/`, else `~/.cache/ninferno/converted/<key>/`, `%LOCALAPPDATA%\NInferno\converted\<key>\` on Windows, one `<key>` per model directory), again when its files change |
 | `.ninferno` file | served as is |
 
 For a hub id:

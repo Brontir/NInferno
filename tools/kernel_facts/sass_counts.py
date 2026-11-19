@@ -22,16 +22,18 @@ How the loop is found (`loop_counts`):
 4. The K loop is the innermost loop holding tensor-core MMAs (HMMA, IMMA, QMMA, ...): the one
    whose body holds MMAs and no MMA-bearing loop inside it. Where the build has no MMA at all
    (the sm_70 build multiplies with FFMAs, NINFERNO_FMA_MMA) the innermost loop holding FFMAs
-   stands in. Several such loops (the compiler kept two versions of the body) are reported by
+   stands in. A CALL to the sm_70 build's emulated int8 MMA (mma_s8_dp4a_call<N>, EMULATED_MMA
+   below) is that MMA. Several such loops (the compiler kept two versions of the body) are reported by
    their number, and the one whose iteration is heaviest (step 5) is counted.
 5. One iteration executes one path through the body, from the header to a block that branches
    back to it. The counts are those of the heaviest path (the most MMAs, then the most
    instructions; `longest_iteration`): the full iteration, which fetches both slots and loads
    every row (the guards skip only rows past the call's end and the last fetches), with the
    longest of the compiler's alternative versions of a step where it kept several (the
-   group-tail path of the 32-value formats: the same MMAs and loads, a few more checks; Volta's
-   emulated MMA over its lane-local path). Predicated instructions count: they issue. A CALL's
-   callee (a slow path) is not counted; an MMA-free loop nested in the body counts once.
+   group-tail path of the 32-value formats: the same MMAs and loads, a few more checks; on Volta
+   the path whose calls to the emulated MMA are the most, as item 4 counts them). Predicated
+   instructions count: they issue. A CALL's callee (a slow path) is not counted; an MMA-free loop
+   nested in the body counts once.
 
 What is counted per iteration (`LoopCounts`): the MMAs and their shape; of them the min-term
 MMAs, whose A operand is a register holding the 1.0 pair (0x3f803f80 BF16, 0x3c003c00 F16: the
@@ -79,6 +81,14 @@ from collections import Counter
 
 INSTRUCTION = re.compile(r"/\*([0-9a-f]{4,})\*/\s+(@!?U?P\w+\s+)?([A-Z][A-Z0-9_.]*)\s*([^;]*);")
 FUNCTION = re.compile(r"Function : (\S+)")
+# sm_70 builds the int8 MMA from dp4a in a __noinline__ function (src/ops/common/mma.cuh,
+# mma_s8_dp4a_call<kChunks>: <8> stands for one m16n8k32, <4> for one m16n8k16), so the kernel's
+# loop holds a CALL to it, not an IMMA (#787). Such a call is counted as that IMMA. cuobjdump
+# -sass prints the call unresolved (CALL.ABS.NOINC 0x0, a relocation): its target is read from the
+# image's relocations (`cuobjdump -elf`, relocation_calls), or from the operand where the
+# disassembly names it (nvdisasm).
+EMULATED_MMA = re.compile(r"mma_s8_dp4a_callILi(\d+)E")
+EMULATED_SHAPES = {"8": "IMMA.16832.S8.S8.EMU", "4": "IMMA.16816.S8.S8.EMU"}
 TARGET = re.compile(r"0x([0-9a-f]+)\s*$")
 # The second line of a 128-bit instruction: its high 64-bit word alone in a comment.
 HIGH_WORD = re.compile(r"^\s*/\*\s*0x([0-9a-f]{16})\s*\*/\s*$")
@@ -147,6 +157,41 @@ PIPE_OPCODES = {
     "bar": ("BAR",),
 }
 PIPE_FIELDS = tuple(PIPE_OPCODES)
+# The iteration's scoreboard waits by what they wait for (#613 PR-5), written beside the pipe
+# counts: a wait on a scoreboard a global load (LDG, LD) set since its last wait, and a wait on
+# one a shared load (LDS, LDSM) set where no global load is pending on the scoreboards it waits
+# on; the iteration walked twice as for sb_waits_local. The chain law prices the first at the
+# DRAM's latency inside the load phase and the second at the shared latency inside the chain.
+WAIT_FIELDS = ("sb_waits_global", "sb_waits_shared")
+# The mmq and w4a8 sections' columns after the schedule (Family.pipes and Family.waits).
+SECTION_FIELDS = PIPE_FIELDS + WAIT_FIELDS
+# A second counted loop (#613 PR-10): the R8 decode kernels quantize the activation into shared
+# memory in a loop of their own before the dp4a loop, one 32-value block per thread and pass. Its
+# counts follow the pipe counts, prefixed pro_: the loops found (0 where the kernel reads a
+# quantized activation), and of one iteration the instructions, the integer and float ALU work,
+# the global bytes it loads and the shared bytes it stores (per warp), and its stall sum.
+# After them, the waits that expose a global load's latency (#613 PR-10, the law's latency term):
+# an instruction whose wait mask names a scoreboard with a global load (LDG, LD) pending since
+# that scoreboard's last wait, in the dp4a loop's iteration (walked twice, the second counted, as
+# the local waits), outside it, and in one iteration of the quantizer's loop.
+PROLOGUE_FIELDS = ("pro_loops", "pro_total", "pro_int", "pro_fp", "pro_ldg_bytes",
+                   "pro_sts_bytes", "pro_stall", "glb_waits", "outside_glb_waits", "pro_glb_waits")
+PROLOGUE_OF = {"pro_loops": "loops", "pro_total": "total", "pro_int": "int", "pro_fp": "fp",
+               "pro_ldg_bytes": "ldg_bytes", "pro_sts_bytes": "sts_bytes",
+               "pro_stall": "stall_sum", "pro_glb_waits": "glb_waits"}
+# The producer warps' loop of the w4a8 producer-warp tile (#613 PR-6, #978): w4a8_ws_kernel's
+# MMA warps' K loop is the counted loop; its producer warps run a loop of their own (copy the
+# activation tile, decode the weight tile into the ring, arrive at the stage's barrier) that
+# holds a CTA barrier (BAR) and no MMA. Its counts follow the wait classes, prefixed prod_: the
+# loops found (0 on the classic tile, whose only BAR loop holds the MMAs), and of one iteration
+# the instructions, the stall sum, the scoreboard waits and of them those on a global and on a
+# shared load (WAIT_FIELDS' rule), and the integer ALU work.
+PRODUCER_FIELDS = ("prod_loops", "prod_total", "prod_stall", "prod_sb_waits", "prod_glb_waits",
+                   "prod_shd_waits", "prod_int")
+PRODUCER_OF = {"prod_loops": "loops", "prod_total": "total", "prod_stall": "stall_sum",
+               "prod_sb_waits": "sb_waits", "prod_glb_waits": "sb_waits_global",
+               "prod_shd_waits": "sb_waits_shared", "prod_int": "int"}
+GLOBAL_LOADS = ("LDG", "LD")
 PIPE_OF = {opcode: field for field, opcodes in PIPE_OPCODES.items() for opcode in opcodes}
 NO_BARRIER = 7
 
@@ -170,12 +215,51 @@ class Control:
                 self.wait_mask, self.reuse)
 
 
-def iter_functions(lines, wanted=None):
+def relocation_calls(lines):
+    """{function: {offset: symbol}} from `cuobjdump -elf` text: the relocations of each
+    `.rel.text.<function>` section (offset, symbol, type), where a call's target is recorded in a
+    linked image whose SASS prints it as 0x0.
+
+    A function built in several units has a section in each image (#1014), and the sections are
+    merged per function (the union of their offsets). The callee is internal-linkage, so each unit
+    spells it with its own prefix; what must agree at a shared offset is what iter_functions reads
+    from it: the emulated MMA's chunk count, or no emulated MMA. Two sections that disagree raise
+    ValueError; where they agree, the first spelling is kept. The merge is not keyed by image: the
+    SASS is read in batches of `-fun` calls, each printing every image's header, so an image's
+    ordinal there does not line up with its ordinal here. An offset relocated in one section only
+    applies to every copy of the function; copies of different layouts show up as extract_counts'
+    "disassembled twice ... different loops" failure when that changes a copy's counts."""
+    def meaning(symbol):
+        m = EMULATED_MMA.search(symbol)
+        return m.group(1) if m else None
+
+    out, current, name = {}, None, None
+    for line in lines:
+        if line.startswith(".section"):
+            m = re.match(r"\.section\s+\.rel\.text\.(\S+)", line)
+            name = m.group(1) if m else None
+            current = out.setdefault(name, {}) if m else None
+            continue
+        if current is None:
+            continue
+        m = re.match(r"\s*0x([0-9a-f]+)\s+(\S+)\s+R_CUDA_", line)
+        if m:
+            offset, symbol = int(m.group(1), 16), m.group(2)
+            if offset in current:
+                if meaning(current[offset]) != meaning(symbol):
+                    raise ValueError(f"{name}: offset 0x{offset:x} relocates to {current[offset]} "
+                                     f"and to {symbol} in two .rel.text sections")
+                continue
+            current[offset] = symbol
+    return out
+
+
+def iter_functions(lines, wanted=None, calls=None):
     """(mangled name, [(offset, guarded, opcode, operands, high word)]) for each Function block
     of `cuobjdump -sass` text (an iterable of lines), as the text is read; the high word is the
     128-bit instruction's upper half printed on the next line (the control code), None where the
     text has none. `wanted(name)` selects the functions parsed, the others are skipped line by
-    line."""
+    line. `calls` (relocation_calls) names the target of a call the text prints as an address."""
     name, body = None, None
     for line in lines:
         if "Function" in line:
@@ -191,7 +275,17 @@ def iter_functions(lines, wanted=None):
         m = INSTRUCTION.search(line)
         if m:
             guard = (m.group(2) or "").strip()
-            body.append((int(m.group(1), 16), guard not in ("", "@PT"), m.group(3),
+            opcode = m.group(3)
+            if opcode.startswith("CALL"):
+                target = m.group(4)
+                if calls is not None and not EMULATED_MMA.search(target):
+                    target = calls.get(name, {}).get(int(m.group(1), 16), target)
+                e = EMULATED_MMA.search(target)
+                if e and e.group(1) not in EMULATED_SHAPES:
+                    raise ValueError(f"{name}: an emulated MMA of {e.group(1)} chunks has no shape")
+                if e:
+                    opcode = EMULATED_SHAPES[e.group(1)]
+            body.append((int(m.group(1), 16), guard not in ("", "@PT"), opcode,
                          m.group(4).strip(), None))
             continue
         m = HIGH_WORD.match(line)
@@ -201,9 +295,9 @@ def iter_functions(lines, wanted=None):
         yield name, body
 
 
-def parse_functions(lines, wanted=None):
+def parse_functions(lines, wanted=None, calls=None):
     """{mangled name: body} of every function iter_functions yields."""
-    return dict(iter_functions(lines, wanted))
+    return dict(iter_functions(lines, wanted, calls))
 
 
 def base_opcode(opcode):
@@ -239,16 +333,48 @@ def branch_edges(guarded, opcode, operands):
     return True, conditional
 
 
+def switch_targets(body, i):
+    """The possible targets of the indirect branch at `i`, a compiled switch (sm_100 / sm_120a
+    compile one so, e.g. the routed expert kernels' epilogue): the jump table is in a constant
+    bank, so its entries are not read, and the targets are over-approximated by every instruction
+    after the branch, up to the reconvergence point R of the BSSY that opens its region where one
+    stands within eight instructions before it (BSSY Bn, R), else to the function's end. All
+    forward: no edge back, so no loop is made, and a loop the branch sits outside of is counted as
+    before. None (unknown flow, the counts left empty) where no instruction follows, or where a
+    branch among the targets jumps back (a loop entered from the switch could lose its header's
+    dominance and vanish silently)."""
+    offset, end = body[i][0], None
+    for j in range(i - 1, max(i - 9, -1), -1):
+        if base_opcode(body[j][2]) == "BSSY":
+            m = TARGET.search(body[j][3])
+            if m and int(m.group(1), 16) > offset:
+                end = int(m.group(1), 16)
+            break
+    targets = [k for k in range(i + 1, len(body)) if end is None or body[k][0] <= end]
+    for k in targets:
+        if base_opcode(body[k][2]) in ("BRA", "JMP"):
+            m = TARGET.search(body[k][3])
+            # The function's closing self-branch (BRA to itself) is padding, not a loop.
+            if m and int(m.group(1), 16) < body[k][0]:
+                return None
+    return targets or None
+
+
 def successors(body):
     """The control-flow successors of every instruction (indices into `body`), or None where the
-    flow is unknown (an indirect branch, a branch to an offset outside the function)."""
+    flow is unknown (an indirect branch outside a BSSY region (switch_targets), a branch to an
+    offset outside the function)."""
     at = {offset: i for i, (offset, *_) in enumerate(body)}
     out = []
     for i, (_, guarded, opcode, operands, *_) in enumerate(body):
         nexts = []
         base = base_opcode(opcode)
         if base.startswith(("BRX", "JMX")):
-            return None
+            targets = switch_targets(body, i)
+            if targets is None:
+                return None
+            out.append(targets)
+            continue
         if base in ("BRA", "JMP"):
             m = TARGET.search(operands)
             if not m or int(m.group(1), 16) not in at:
@@ -271,7 +397,8 @@ def basic_blocks(body, succ):
     A leader is the entry, a successor of a branch, or the instruction after a block ender."""
     leaders = {0}
     for i, nexts in enumerate(succ):
-        if base_opcode(body[i][2]) in ("BRA", "JMP", "EXIT", "RET", "KILL"):
+        if base_opcode(body[i][2]) in ("BRA", "JMP", "EXIT", "RET", "KILL") or base_opcode(
+                body[i][2]).startswith(("BRX", "JMX")):
             leaders.add(i + 1)
             leaders.update(nexts)
     starts = sorted(l for l in leaders if l < len(body))
@@ -576,25 +703,34 @@ class LoopCounts:
     without one, `a:n+b:m` where shapes mix. `scheduled`: the static-schedule fields
     (SCHEDULE_FIELDS) are known, from the control codes of every instruction; a schema 2 row and
     a text without control codes leave them out. `pipes`: the row carries the pipe counts
-    (PIPE_FIELDS) after the schedule; they are counted either way, written only where set."""
+    and the wait classes (SECTION_FIELDS) after the schedule; they are counted either way,
+    written only where set."""
 
     def __init__(self):
         self.loops = 0
         self.k_iter = 0
         self.mma_shape = "-"
-        for f in COUNT_FIELDS + SCHEDULE_FIELDS + PIPE_FIELDS:
+        for f in (COUNT_FIELDS + SCHEDULE_FIELDS + PIPE_FIELDS + WAIT_FIELDS + PROLOGUE_FIELDS +
+                  PRODUCER_FIELDS):
             setattr(self, f, 0)
         self.scheduled = False
         self.pipes = False
+        self.waits = False
+        self.prologue = False
+        self.producer = False
 
     def columns(self):
         if not self.scheduled:
             return LOOP_COLUMNS
-        return COLUMNS + PIPE_FIELDS if self.pipes else COLUMNS
+        if not self.pipes:
+            return COLUMNS
+        return (COLUMNS + PIPE_FIELDS + (WAIT_FIELDS if self.waits else ()) +
+                (PRODUCER_FIELDS if self.producer else ()) +
+                (PROLOGUE_FIELDS if self.prologue else ()))
 
     def row(self):
         """The snapshot's columns (COLUMNS, LOOP_COLUMNS without the schedule, COLUMNS and
-        PIPE_FIELDS with the pipes), as strings."""
+        SECTION_FIELDS with the pipes), as strings."""
         return [str(getattr(self, c)) for c in self.columns()]
 
     def without_schedule(self):
@@ -604,23 +740,39 @@ class LoopCounts:
             setattr(c, name, getattr(self, name))
         return c
 
-    def with_pipes(self, pipes=True):
-        """This row's columns with (or without) the pipe counts, the counts unchanged."""
+    def with_pipes(self, pipes=True, prologue=False, waits=False, producer=False):
+        """This row's columns with (or without) the pipe counts, and after them the wait classes
+        (WAIT_FIELDS, the mmq and w4a8 sections) and the producer loop's (PRODUCER_FIELDS, the
+        w4a8 section), or the prologue loop's (PROLOGUE_FIELDS, the r8 section), each only with
+        the pipes, the counts unchanged."""
+        assert not (waits and prologue)
+        assert not producer or waits
         self.pipes = pipes
+        self.waits = waits and pipes
+        self.producer = producer and self.waits
+        self.prologue = prologue and pipes
         return self
 
     @classmethod
     def from_row(cls, fields):
         """The counts of a snapshot row's loop columns, with the schedule (COLUMNS), without it
-        (LOOP_COLUMNS) or with the schedule and the pipes (COLUMNS + PIPE_FIELDS); ValueError on
+        (LOOP_COLUMNS) or with the schedule and the pipes (COLUMNS + SECTION_FIELDS); ValueError on
         a field that is no count."""
-        widths = (len(COLUMNS), len(LOOP_COLUMNS), len(COLUMNS) + len(PIPE_FIELDS))
+        piped = len(COLUMNS) + len(PIPE_FIELDS)
+        widths = (len(COLUMNS), len(LOOP_COLUMNS), piped, piped + len(WAIT_FIELDS),
+                  piped + len(WAIT_FIELDS) + len(PRODUCER_FIELDS), piped + len(PROLOGUE_FIELDS))
+        assert len(set(widths)) == len(widths)
         if len(fields) not in widths:
             raise ValueError(f"{len(fields)} loop fields, {' or '.join(map(str, widths))} columns")
         c = cls()
         c.scheduled = len(fields) != len(LOOP_COLUMNS)
-        c.pipes = len(fields) == len(COLUMNS) + len(PIPE_FIELDS)
-        for name, value in zip(COLUMNS + PIPE_FIELDS, fields):
+        c.pipes = len(fields) >= piped
+        c.producer = len(fields) == piped + len(WAIT_FIELDS) + len(PRODUCER_FIELDS)
+        c.waits = len(fields) == piped + len(WAIT_FIELDS) or c.producer
+        c.prologue = len(fields) == piped + len(PROLOGUE_FIELDS)
+        extra = (WAIT_FIELDS + (PRODUCER_FIELDS if c.producer else ()) if c.waits
+                 else PROLOGUE_FIELDS)
+        for name, value in zip(COLUMNS + PIPE_FIELDS + extra, fields):
             setattr(c, name, value if name == "mma_shape" else int(value))
         return c
 
@@ -667,11 +819,13 @@ def schedule_counts(body, control, iteration, outside):
     loop. The local waits follow the scoreboards along the iteration walked twice, the second
     walk counted: a wait clears the scoreboards of its mask, a write barrier set by an LDL makes
     its scoreboard local until then."""
-    out = dict.fromkeys(SCHEDULE_FIELDS, 0)
+    out = dict.fromkeys(SCHEDULE_FIELDS + WAIT_FIELDS, 0)
     for i in iteration:
         out["stall_sum"] += control[i].stall
         out["sb_waits"] += control[i].wait_mask != 0
     local = [False] * 6
+    glob = [False] * 6
+    shared = [False] * 6
     for walk in (0, 1):
         for i in iteration:
             c = control[i]
@@ -679,10 +833,52 @@ def schedule_counts(body, control, iteration, outside):
                 waited = [b for b in range(6) if (c.wait_mask >> b) & 1]
                 if walk and any(local[b] for b in waited):
                     out["sb_waits_local"] += 1
+                if walk and any(glob[b] for b in waited):
+                    out["sb_waits_global"] += 1
+                elif walk and any(shared[b] for b in waited):
+                    out["sb_waits_shared"] += 1
                 for b in waited:
-                    local[b] = False
-            if c.write_barrier != NO_BARRIER and base_opcode(body[i][2]) == "LDL":
-                local[c.write_barrier] = True
+                    local[b] = glob[b] = shared[b] = False
+            if c.write_barrier != NO_BARRIER:
+                op = base_opcode(body[i][2])
+                if op == "LDL":
+                    local[c.write_barrier] = True
+                elif op in GLOBAL_LOADS:
+                    glob[c.write_barrier] = True
+                elif op in ("LDS", "LDSM"):
+                    shared[c.write_barrier] = True
+    outside_counts(body, control, outside, out)
+    out["glb_waits"] = global_waits(body, control, iteration, 2)
+    out["outside_glb_waits"] = global_waits(body, control, outside, 1)
+    return out
+
+
+def global_waits(body, control, indices, walks):
+    """The waits of `indices` (in order, walked `walks` times, the last one counted) that expose a
+    global load's latency, one per generation of loads: a wait counts where a scoreboard of its
+    mask holds a global load (GLOBAL_LOADS) issued after the last counted wait. Loads issued in
+    one burst return together, so the waits on the rest of the burst expose nothing more. The
+    static stalls between a load and its wait are not taken off (the law adds both)."""
+    pending = [None] * 6  # per scoreboard: the generation of its newest pending global load
+    generation, count = 0, 0
+    for walk in range(walks):
+        for i in indices:
+            c = control[i]
+            if c.wait_mask:
+                waited = [b for b in range(6) if (c.wait_mask >> b) & 1]
+                if any(pending[b] == generation for b in waited):
+                    if walk == walks - 1:
+                        count += 1
+                    generation += 1
+                for b in waited:
+                    pending[b] = None
+            if c.write_barrier != NO_BARRIER and base_opcode(body[i][2]) in GLOBAL_LOADS:
+                pending[c.write_barrier] = generation
+    return count
+
+
+def outside_counts(body, control, outside, out):
+    """Adds the outside fields of SCHEDULE_FIELDS over `outside` to `out`."""
     for i in outside:
         out["outside_total"] += 1
         out["outside_stall"] += control[i].stall
@@ -691,10 +887,33 @@ def schedule_counts(body, control, iteration, outside):
     return out
 
 
-def loop_counts(body, tiles=1):
+def loop_counts(body, tiles=1, marker=None, prologue_marker=None, producer=None):
+    """loop_counts_of (below), and where `prologue_marker` names an opcode (F2I), the counts of
+    the loop that opcode marks in the same body as the PROLOGUE_FIELDS (the R8 kernels'
+    activation quantizer). A row writes them only under with_pipes(prologue=True). Where
+    `producer` is (marker, excluded) (BAR, every MMA opcode and the dp4a), the counts of the loop
+    the marker marks that holds no excluded opcode as the PRODUCER_FIELDS (the w4a8 producer warps' loop), written
+    under with_pipes(producer=True)."""
+    out = loop_counts_of(body, tiles, marker)
+    if producer is not None:
+        prod = loop_counts_of(body, 1, producer[0], exclude=producer[1])
+        for field, source in PRODUCER_OF.items():
+            setattr(out, field, getattr(prod, source))
+    if prologue_marker is not None:
+        # The quantizer's loop holds no dp4a: a codec whose weight decode converts with F2I
+        # (NVFP4's) has F2I in the dp4a loop too, which is not the prologue.
+        pro = loop_counts_of(body, 1, prologue_marker, exclude=marker)
+        for field, source in PROLOGUE_OF.items():
+            setattr(out, field, getattr(pro, source))
+    return out
+
+
+def loop_counts_of(body, tiles=1, marker=None, exclude=None):
     """The K loop's LoopCounts of a function body (iter_functions); `tiles` the m16n8 tiles one
     warp accumulates (m_tiles * n_tiles * row sets), for k_iter. The schedule fields where every
-    instruction carries its control code."""
+    instruction carries its control code. `marker`, an opcode (IDP), marks the loop of a kernel
+    without tensor-core MMAs (the R8 decode kernels' dp4a); otherwise the MMAs mark it, or FFMA
+    where the body has none (Volta's emulated MMA)."""
     out = LoopCounts()
     if not body:
         return out
@@ -715,8 +934,10 @@ def loop_counts(body, tiles=1):
     dom, preds = dominators(edges, live)
     loops = natural_loops(edges, dom, preds, live)
     has_mma = any(base_opcode(op) in MMA_OPCODES for _, _, op, *_ in body)
-    marker = (lambda op: base_opcode(op) in MMA_OPCODES) if has_mma else \
-        (lambda op: base_opcode(op) == "FFMA")
+    marked_opcodes = (marker,) if marker is not None else MMA_OPCODES if has_mma else ("FFMA",)
+
+    def marker(op):
+        return base_opcode(op) in marked_opcodes
 
     def indices(members):
         for b in sorted(members):
@@ -734,6 +955,10 @@ def loop_counts(body, tiles=1):
 
     marked = {h: sum(weight(b)[0] for b in m) for h, m in loops.items()}
     candidates = [h for h, n in marked.items() if n > 0]
+    if exclude is not None:  # a loop holding an excluded opcode (one, or a tuple) is no candidate
+        excluded = (exclude,) if isinstance(exclude, str) else tuple(exclude)
+        candidates = [h for h in candidates
+                      if not any(base_opcode(body[i][2]) in excluded for i in indices(loops[h]))]
     innermost = [h for h in candidates
                  if not any(o != h and loops[o] < loops[h] for o in candidates)]
     iterations = {h: longest_iteration(edges, dom, h, loops[h], weight) for h in innermost}
@@ -778,6 +1003,13 @@ def loop_counts(body, tiles=1):
         per_tile = 16 * 8 * tiles
         if mnk_sum and not unknown_shape and mnk_sum % per_tile == 0:
             out.k_iter = mnk_sum // per_tile
+    elif marked_opcodes == ("IDP",):
+        # A dp4a loop (the R8 kernels): each IDP is 4 int8 products of one lane, so a warp's 32
+        # lanes cover 128 K values per IDP and (row, token) product; `tiles` is the products one
+        # warp accumulates (rows x row sets x token slots).
+        idp = sum(1 for i in indices(path) if base_opcode(body[i][2]) == "IDP")
+        if idp and (128 * idp) % tiles == 0:
+            out.k_iter = 128 * idp // tiles
     # Outside: what the entry reaches beyond the blocks of the loop whose iteration was counted
     # (its header is the path's first block).
     return scheduled(list(in_order(path)), list(indices(live - loops[path[0]])))

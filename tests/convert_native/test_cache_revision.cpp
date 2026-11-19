@@ -13,6 +13,8 @@
 #include "convert/qwen3_5.h"
 #include "core/sys.h"
 
+#include <cstdlib>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -217,6 +219,61 @@ int main() {
               "a --vision conversion");
         check(!converted_name("m.gguf") && !converted_name("plain.ninferno"),
               "another name is no conversion's");
+    }
+    // Where a model's artifacts go (#691): beside it, else NInferno's own cache under a key of the
+    // directory's absolute path, the same for every spelling of one directory.
+    {
+        using ninferno::convert::artifact_cache_dirs;
+        const fs::path root = fs::temp_directory_path() / "ninferno_cache_dirs_test";
+        fs::remove_all(root);
+        fs::create_directories(root / "a" / "b");
+        fs::create_directories(root / "xdg");
+#ifdef _WIN32
+        const char* variable = "LOCALAPPDATA";
+#else
+        const char* variable = "XDG_CACHE_HOME";
+#endif
+        const std::string saved = ninferno::sys::env(variable);
+        const auto put          = [&](const std::string& value) {
+#ifdef _WIN32
+            return _putenv_s(variable, value.c_str()) == 0;
+#else
+            return value.empty() ? unsetenv(variable) == 0
+                                 : setenv(variable, value.c_str(), 1) == 0;
+#endif
+        };
+        const bool set   = put((root / "xdg").string());
+        const auto one   = artifact_cache_dirs(root / "a");
+        const auto again = artifact_cache_dirs(root / "a" / "b" / "..");
+        const auto other = artifact_cache_dirs(root / "a" / "b");
+        check(one.beside == root / "a" / ".ninferno-cache", "beside: <dir>/.ninferno-cache");
+        check(set && !one.own.empty() && one.own.parent_path().filename() == "converted" &&
+                  one.own.filename().string().size() == 16,
+              "own: <cache_dir>/converted/<16 hex digits>");
+        check(one.own == again.own, "one directory, one key, however spelled");
+        check(one.own != other.own, "another directory, another key");
+        // A bare GGUF name's directory is "": the current directory's key, not a shared constant.
+        const auto bare = artifact_cache_dirs(fs::path());
+        check(!bare.own.empty() && bare.own == artifact_cache_dirs(fs::current_path()).own,
+              "a bare file name keys the current directory");
+#ifdef _WIN32
+        // Case-insensitive names: one key for any casing of the path (#975 review).
+        std::string upper = (root / "a").string();
+        for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        check(artifact_cache_dirs(fs::path(upper)).own == one.own, "one key for any casing");
+        // A tail that does not exist yet keeps the caller's casing in weakly_canonical.
+        check(artifact_cache_dirs(fs::path(upper) / "MISSING").own ==
+                  artifact_cache_dirs(root / "a" / "missing").own,
+              "one key for any casing of a missing tail");
+#else
+        // A symlink to the directory resolves to it: one key for both spellings (#975 review).
+        std::error_code link_ec;
+        fs::create_directory_symlink(root / "a", root / "link", link_ec);
+        check(link_ec || artifact_cache_dirs(root / "link").own == one.own,
+              "one key through a symlink");
+#endif
+        put(saved);
+        fs::remove_all(root);
     }
     if (failures == 0) { std::cout << "cache revision: all checks passed\n"; }
     return failures == 0 ? 0 : 1;

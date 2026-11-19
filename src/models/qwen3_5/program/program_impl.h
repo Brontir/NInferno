@@ -699,6 +699,8 @@ public:
     const std::uint32_t default_draft_depth; // a request's depth unless it chooses one
     const SpeculativeBackend speculative_backend;
     const KvCacheStorage kv_storage;
+    // The full layers' or the rings' one-byte rows hold int8 codes (MemorySummary::kv_rows_int8).
+    const bool kv_rows_int8;
     const ProposalHead proposal_head;
     const DFlashDraftWidth draft_width; // SpeculativeOptions::draft_width
     const spec::WatchdogPolicy watchdog_policy;

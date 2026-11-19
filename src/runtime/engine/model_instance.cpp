@@ -1619,12 +1619,13 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
         pins.any()) {
         summary.route_pins = ops::check_route_pin_coverage(pins);
     }
-    // --route-policy evidence (#614 F1) is a test setting too: printed with the pins.
-    if (options.maintainer.route_policy != RoutePolicy::Legacy) {
+    // --route-policy legacy (#614: evidence is the release's, F2) is a test setting: printed with
+    // the pins.
+    if (options.maintainer.route_policy != RoutePolicy::Evidence) {
         summary.route_pins.push_back(
             std::string("--route-policy ") + route_policy_name(options.maintainer.route_policy) +
-            ": route-table entries measured on another board (borrowed, transferred) yield to "
-            "the ranker");
+            ": route-table entries measured on another board (borrowed, transferred) keep their "
+            "calls ahead of the ranker");
     }
     summary.gpu_class    = ops::route_gpu_class();
     summary.device_facts = device_fact_notes(device_class(options.device));

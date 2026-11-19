@@ -4,7 +4,11 @@
 #include "core/device_class.h"
 #include "core/generation.h"
 #include "core/measured_boards.h"
+#include "core/isa_facts.h"
+#include "core/launch_facts.h"
 #include "core/mmq_columns.h"
+#include "ops/generic/kernel_facts.h"
+#include "ops/generic/mmq_unit.h"
 
 #include <algorithm>
 #include <cctype>
@@ -67,6 +71,22 @@ const Row* measured_row_of(const Row (&rows)[N], std::string_view generation, bo
     const Row* row = generation_row_of(rows, generation, transferred);
     if (row != nullptr && row->cards < 2) { transferred = true; }
     return row;
+}
+
+// The launch share of one kernel's residual on compute capability major.minor
+// (core/launch_facts.h), as #613 PR-8c decomposed the census: a weight-reading kernel's graph node
+// (the PDL node from sm_90 on, where the engine joins a decode GEMV to its producer) and the
+// dispatch ramp of its ~1024-CTA grid; a small kernel's plain graph node (PR-8c: PDL does not hide
+// the epilogues' and the small kernels' launch). nullopt where the architecture has no launch
+// facts.
+std::optional<double> launch_share(int major, int minor, bool gemv) {
+    const LaunchKind kind = gemv && major >= 9 ? LaunchKind::GraphNodePdl : LaunchKind::GraphNode;
+    const std::optional<double> node = launch_seconds(major, minor, kind);
+    if (!node) return std::nullopt;
+    if (!gemv) return node;
+    const std::optional<Ramp> ramp = ramp_seconds(major, minor, 1024.0);
+    if (!ramp) return std::nullopt;
+    return *node + ramp->seconds;
 }
 
 double dram_eta(std::string_view generation) noexcept {
@@ -615,6 +635,18 @@ Scored score(const ModelFacts& model, const ModelFacts& reference_model, const C
 
 } // namespace
 
+double kernel_cost_seconds(const KernelCost& row, int major, int minor, bool gemv, bool* rebased) {
+    const double measured = gemv ? row.gemv : row.small;
+    if (major == row.major && minor == row.minor) return measured;
+    // The card's own first: most boards off the census architectures have no launch facts.
+    const std::optional<double> own = launch_share(major, minor, gemv);
+    if (!own) return measured;
+    const std::optional<double> census = launch_share(row.major, row.minor, gemv);
+    if (!census) return measured;
+    if (rebased != nullptr) { *rebased = true; }
+    return measured - *census + *own;
+}
+
 bool is_qwen_family(const ModelFacts& model) noexcept { return qwen_family(model); }
 
 Coupled coupled_storages(const ModelFacts& model, KvCacheStorage kv, ActivationMode activations,
@@ -1080,13 +1112,35 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         const mmq_columns::LaunchFacts facts{static_cast<int>(n), static_cast<int>(l.k), card.sms,
                                              card.clock_hz, card.dram_bytes_per_s};
         const MmqLaunchLaw* law = mmq_columns::launch_law(card.major, card.minor, measured_format);
+        // The counted unit (ops/generic/mmq_unit.h, #613 PR-5), the selector's switch
+        // (mmq_unit::counted): the release engine's mul_mat_q counts for the card's arch and its
+        // isa_probe facts; the fixup's graph node from the launch facts.
+        // On the architectures it was scored on alone (mmq_unit::scored_arch).
+        std::string counted_arch =
+            mmq_unit::counted()
+                ? ops::detail::generic::kernel_facts::release_arch(card.major, card.minor)
+                : std::string();
+        if (!mmq_unit::scored_arch(counted_arch)) counted_arch.clear();
+        const std::optional<IsaRow> counted_isa =
+            counted_arch.empty() ? std::nullopt : isa_row(card.major, card.minor);
+        const double counted_node =
+            ninferno::launch_seconds(card.major, card.minor, LaunchKind::GraphNode).value_or(0.0);
         for (double done = 0; done < tokens; done += kMmqSliceTokens) {
             const double t = std::min(kMmqSliceTokens, tokens - done);
             // The column tile the kernel's table takes (core/mmq_columns.h).
             const int width      = mmq_columns::pick(static_cast<int>(t), card.major, card.minor,
                                                      measured_format, widest, facts);
             const double columns = width;
-            if (law != nullptr && mmq_columns::priced(facts)) {
+            const std::optional<double> counted =
+                counted_isa
+                    ? mmq_unit::launch_seconds(counted_arch, q, *counted_isa, facts.rows, facts.k,
+                                               static_cast<int>(t), width, card.sms, card.clock_hz,
+                                               card.dram_bytes_per_s, counted_node)
+                    : std::nullopt;
+            if (counted) {
+                // The launch's units at the counted unit, its fixup and graph node inside.
+                launch_s += grids * l.per_token * (*counted + counted_node);
+            } else if (law != nullptr && mmq_columns::priced(facts)) {
                 // The launch the kernel runs (DECISIONS 78): its longest CTA's units at the
                 // format's 128-column step scaled by the law's unit share, the fixup's bytes and
                 // its launch where it splits tiles.
@@ -1581,7 +1635,17 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
                                          [&](const MoeRoutedEta& r) { return r.generation == gen; });
     const WeightClass rest = !model.moe() ? quant.weights : moe_row ? WeightClass::KQuant : quant.rest_weights;
     const StepKernels kernels = step_kernels(model, quant.weights, rows, transferred);
-    const double launches = cost != nullptr ? kernels.gemv * cost->gemv + kernels.small * cost->small : 0;
+    // A row rebased to the card's own launch share (another architecture's census) was not measured
+    // on this card's architecture: the estimate is transferred (#997), as a row of another
+    // generation is marked.
+    bool rebased = false;
+    const double launches =
+        cost != nullptr
+            ? kernels.gemv * kernel_cost_seconds(*cost, card.major, card.minor, true, &rebased) +
+                  kernels.small *
+                      kernel_cost_seconds(*cost, card.major, card.minor, false, &rebased)
+            : 0;
+    if (rebased) { transferred = true; }
     // A class the SMs bound (kWeightSmRate): its reads at the longer of the DRAM rate and the SMs'.
     // An MoE's rest by its own linears' class (rest_weights), its routed banks by the file's.
     const auto sm_share = [&](WeightClass w) {
@@ -2906,6 +2970,173 @@ std::vector<Alternative> explain(const Choice& choice) {
                           "); the best worth, which differs on more than this axis";
             out.push_back(std::move(alt));
         }
+    }
+    return out;
+}
+
+std::vector<RowBound> order_bounds(std::vector<RowBound> bounds) {
+    std::stable_sort(bounds.begin(), bounds.end(),
+                     [](const RowBound& a, const RowBound& b) { return a.worth > b.worth; });
+    return bounds;
+}
+
+bool bound_in_reach(double bound, double top, double band) noexcept {
+    return !(bound < top - band);
+}
+
+RowRank rank_rows(const std::vector<ServedRow>& rows, double band, const RanksAbove& ranks_above) {
+    RowRank out;
+    out.top = -INFINITY;
+    for (const ServedRow& r : rows) { out.top = std::max(out.top, r.anchor_worth); }
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const ServedRow& s = rows[i];
+        if (s.worth < out.top - band) { continue; }
+        if (!out.best) {
+            out.best   = i;
+            out.reason = RankReason::Only;
+            continue;
+        }
+        const ServedRow& b = rows[*out.best];
+        std::optional<RankReason> why;
+        if (s.kld < b.kld - kWorthTie) {
+            why = RankReason::LowerKld;
+        } else if (std::abs(s.kld - b.kld) <= kWorthTie) {
+            if (s.worth > b.worth + kWorthTie) {
+                why = RankReason::HigherWorth;
+            } else if (std::abs(s.worth - b.worth) <= kWorthTie && ranks_above(s.index, b.index)) {
+                why = RankReason::RuleOrder;
+            }
+        }
+        if (why) {
+            out.best   = i;
+            out.reason = *why;
+        }
+    }
+    return out;
+}
+
+std::string_view quant_axis_why_name(QuantAxisWhy w) noexcept {
+    switch (w) {
+    case QuantAxisWhy::NotWeighed:
+        return "not_weighed";
+    case QuantAxisWhy::Unsupported:
+        return "unsupported";
+    case QuantAxisWhy::OffTier:
+        return "off_tier";
+    case QuantAxisWhy::Estimate:
+        return "estimate";
+    case QuantAxisWhy::Unmeasured:
+        return "unmeasured";
+    case QuantAxisWhy::NoChoice:
+        return "no_choice";
+    case QuantAxisWhy::OutOfReach:
+        return "out_of_reach";
+    case QuantAxisWhy::ShortContext:
+        return "short_context";
+    case QuantAxisWhy::OutOfBand:
+        return "out_of_band";
+    case QuantAxisWhy::Ranked:
+        return "ranked";
+    case QuantAxisWhy::Chosen:
+        return "chosen";
+    }
+    return "not_weighed";
+}
+
+QuantAxisPick choose_quants(const ModelFacts& quality_model, const CardFacts& card,
+                            const QuantAxis& axis) {
+    const std::vector<QuantAxisRow>& rows = axis.rows;
+    QuantAxisPick out;
+    out.why.assign(rows.size(), QuantAxisWhy::NotWeighed);
+    // Only a measurement of a row's own files, or a transfer of the family curve (#618 step 9: the
+    // curve within the answer noise of every measured size), decides on its accuracy (#368,
+    // quant_authority): the trade weighs the rows that have one, against the rule's pick only
+    // where it has one too; an estimate is shown, never decisive.
+    const auto authorized = [&](const QuantAxisRow& row) {
+        const QualityAuthority a = quant_authority(quality_model, row.quant);
+        return a == QualityAuthority::Direct || a == QualityAuthority::Transfer;
+    };
+    // Only where every supported row's bits place it on the quantization curve (an unknown one has
+    // no accuracy term and would look exact).
+    const bool bits_known = std::all_of(rows.begin(), rows.end(), [](const QuantAxisRow& row) {
+        return !row.supported || row.rule_bits > 0;
+    });
+    out.weighs            = axis.rule_pick < rows.size() && bits_known &&
+                 weighs_quantizations(quality_model, card) && axis.rule_pick_own_tier;
+    if (!out.weighs) { return out; }
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (rows[i].supported && !authorized(rows[i])) { out.estimates.push_back(i); }
+    }
+    out.withheld = !authorized(rows[axis.rule_pick]);
+    if (out.withheld) { return out; }
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        out.why[i] = !rows[i].supported ? QuantAxisWhy::Unsupported : QuantAxisWhy::OffTier;
+    }
+    // Two rows' worths within the generation's measured decode error are a tie: the lower KLD wins
+    // (DECISIONS 60), then the rule's order.
+    const double band = std::max(kWorthTie, worth_band(card));
+    // A row whose weights take routes this generation did not measure on two cards
+    // (class_measured: Other's codebook IQ*, Q4_0/1, FP4 anywhere; IQ4 off Ada) has a transferred
+    // speed: it wins no decision while a measured row is in the tier.
+    const auto measured = [&](const QuantAxisRow& row) {
+        return class_measured(card, row.quant.weights);
+    };
+    const bool any_measured = std::any_of(rows.begin(), rows.end(), [&](const QuantAxisRow& row) {
+        return row.on_tier && measured(row) && authorized(row);
+    });
+    std::vector<RowBound> bounds;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const QuantAxisRow& row = rows[i];
+        if (!row.on_tier || !row.choose_at) { continue; }
+        if (!authorized(row)) {
+            out.why[i] = QuantAxisWhy::Estimate;
+            continue;
+        }
+        if (any_measured && !measured(row)) {
+            out.why[i] = QuantAxisWhy::Unmeasured;
+            continue;
+        }
+        const auto bound = row.choose_at(false);
+        if (bound && bound->chosen) {
+            bounds.push_back({i, bound->anchor_worth});
+            out.why[i] = QuantAxisWhy::OutOfReach; // until it is served
+        } else {
+            out.why[i] = QuantAxisWhy::NoChoice;
+        }
+    }
+    bounds = order_bounds(std::move(bounds));
+    std::vector<Scored> served_scored;
+    std::vector<ServedRow> served;
+    double top = -INFINITY; // the best worth served
+    for (const auto& [i, bound] : bounds) {
+        if (!bound_in_reach(bound, top, band)) { break; }
+        const auto at = rows[i].choose_at(true);
+        if (!at || !at->chosen) {
+            out.why[i] = QuantAxisWhy::NoChoice;
+            continue;
+        }
+        if (at->context < axis.target_context) {
+            out.why[i] = QuantAxisWhy::ShortContext;
+            continue;
+        }
+        const Scored& sc = at->scored[*at->chosen];
+        served_scored.push_back(sc);
+        served.push_back({i, at->context, sc.worth, sc.accuracy.kld, at->anchor_worth});
+        top = std::max(top, at->anchor_worth);
+    }
+    // Within the band of the best worth served (the rows' anchors, #301): a row is eligible by the
+    // worth of the configuration it would serve, so a row whose choice already moved inside its
+    // own resolution cannot trail the top by more than one band in all.
+    const RowRank ranking = rank_rows(served, band, axis.ranks_above);
+    for (const ServedRow& r : served) {
+        out.why[r.index] =
+            r.worth < ranking.top - band ? QuantAxisWhy::OutOfBand : QuantAxisWhy::Ranked;
+    }
+    if (ranking.best) {
+        out.row           = served[*ranking.best].index;
+        out.context       = served[*ranking.best].context;
+        out.scored        = served_scored[*ranking.best];
+        out.why[*out.row] = QuantAxisWhy::Chosen;
     }
     return out;
 }

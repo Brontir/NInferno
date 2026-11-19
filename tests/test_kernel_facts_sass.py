@@ -5,6 +5,8 @@ alternative version of a step, an epilogue, a subroutine after EXIT), the heavie
 once, the min-term MMAs told apart, k_iter from the weight MMAs; then the snapshot round trip and
 the check's verdicts. No GPU, no CUDA toolkit."""
 
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -202,6 +204,31 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual(sc.loop_counts(body_of(indirect), tiles=2).loops, 0)
         self.assertEqual(sc.loop_counts([], tiles=2).loops, 0)
 
+    def test_switch_after_the_loop(self):
+        # A compiled switch in the epilogue (sm_100 / sm_120a: BSSY, then BRXU through a jump
+        # table): its targets are the instructions up to the BSSY's reconvergence point, all
+        # forward, so the K loop is counted as without it.
+        switch = {0x400: "BSSY.RECONVERGENT B0, 0x420 ;", 0x410: "BRXU UR4 -0x420 ;"}
+        lines = [(o, switch.get(o, t)) for o, t in KERNEL]
+        body = body_of(lines)
+        i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
+        self.assertEqual([body[k][0] for k in sc.switch_targets(body, i)], [0x420])
+        plain, counted = sc.loop_counts(body_of(KERNEL), tiles=2), sc.loop_counts(body, tiles=2)
+        self.assertEqual((counted.loops, counted.k_iter, counted.mma, counted.total),
+                         (plain.loops, plain.k_iter, plain.mma, plain.total))
+        self.assertGreater(counted.outside_total, 0)
+        # Without the BSSY the targets run to the function's end.
+        lines = [(o, "FMUL R36, R36, R30 ;" if o == 0x400 else t) for o, t in lines]
+        body = body_of(lines)
+        i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
+        self.assertEqual(body[sc.switch_targets(body, i)[-1]][0], body[-1][0])
+        # A switch before the K loop (the loop's back edge among its targets): unknown flow.
+        early = [(o, {0x010: "BRXU UR4 -0x20 ;"}.get(o, t)) for o, t in KERNEL]
+        body = body_of(early)
+        i = next(i for i, x in enumerate(body) if x[2] == "BRXU")
+        self.assertIsNone(sc.switch_targets(body, i))
+        self.assertEqual(sc.loop_counts(body, tiles=2).loops, 0)
+
     def test_ffma_loop_without_tensor_mma(self):
         # Volta's build: the loop with the FFMAs stands in; no shape, no k_iter.
         lines = [(o, t.replace("HMMA.16816.F32.BF16", "FFMA").replace(", RZ ;", ", R0 ;"))
@@ -209,6 +236,124 @@ class LoopFinder(unittest.TestCase):
         c = sc.loop_counts(body_of(lines), tiles=2)
         self.assertEqual((c.loops, c.mma, c.k_iter, c.mma_shape), (1, 0, 0, "-"))
         self.assertEqual(c.fp, 7)
+
+    def test_idp_marked_loop(self):
+        # The R8 decode kernels (#613 PR-10): no tensor-core MMA, the dp4a marks the loop. An FFMA
+        # loop beside it (the activation's quantizer) is not a candidate under the IDP marker.
+        lines = [(o, t.replace("HMMA.16816.F32.BF16", "IDP.4A.S8.S8").replace(", RZ ;", ", R0 ;"))
+                 for o, t in KERNEL]
+        c = sc.loop_counts(body_of(lines), tiles=1, marker="IDP")
+        # Six dp4a a lane: 6 x 4 x 32 = 768 K values per product; over three products, 256.
+        self.assertEqual((c.loops, c.mma, c.k_iter, c.mma_shape), (1, 0, 768, "-"))
+        self.assertEqual(sc.loop_counts(body_of(lines), tiles=3, marker="IDP").k_iter, 256)
+        self.assertEqual(sc.loop_counts(body_of(lines), tiles=5, marker="IDP").k_iter, 0)
+        self.assertEqual(c.int, sc.loop_counts(body_of(KERNEL), tiles=1).int + 6)
+        ffma = [(o, t.replace("HMMA.16816.F32.BF16", "FFMA").replace(", RZ ;", ", R0 ;"))
+                for o, t in KERNEL]
+        self.assertEqual(sc.loop_counts(body_of(ffma), tiles=1, marker="IDP").loops, 0)
+
+    def test_emulated_mma_call(self):
+        # sm_70 (#787): the int8 MMA is a CALL to mma_s8_dp4a_call<8> (one m16n8k32) or <4> (one
+        # m16n8k16), the callee named in the disassembly; the call counts as that IMMA, so the K
+        # loop is found and k_iter is in the MMA branch's units. An unnamed call stays a call.
+        callee = "`(_ZN61_INTERNAL_x_ninferno3ops16mma_s8_dp4a_callILi{}EEE4int4S3_5uint45uint2)`"
+        def emulated(chunks):
+            return [(o, "CALL.ABS.NOINC " + callee.format(chunks) + " ;"
+                     if t.startswith("HMMA") else t) for o, t in KERNEL]
+        hmma = sc.loop_counts(body_of(KERNEL), tiles=2).mma  # the loop's MMAs (six)
+        c8 = sc.loop_counts(body_of(emulated(8)), tiles=2)
+        self.assertEqual((c8.loops, c8.mma), (1, hmma))
+        self.assertEqual(c8.k_iter, hmma * 32 // 2)
+        self.assertTrue(c8.mma_shape.startswith("IMMA.16832."))
+        c4 = sc.loop_counts(body_of(emulated(4)), tiles=2)
+        self.assertEqual((c4.mma, c4.k_iter), (hmma, hmma * 16 // 2))
+        plain = [(o, "CALL.ABS.NOINC 0x0 ;" if t.startswith("HMMA") else t) for o, t in KERNEL]
+        self.assertEqual(sc.loop_counts(body_of(plain), tiles=2).mma, 0)
+        # cuobjdump -sass prints the linked image's call as 0x0; its relocation names the target.
+        elf = [".section .rel.text._Z6kernelv\tREL"] + [
+            f"0x{o:x}    _ZN61_INTERNAL_x_ninferno3ops16mma_s8_dp4a_callILi8EEE4int4    R_CUDA_ABS47_34"
+            for o, t in KERNEL if t.startswith("HMMA")] + ["", ".section .symtab"]
+        calls = sc.relocation_calls(elf)
+        body = sc.parse_functions(sass(plain).splitlines(), calls=calls)["_Z6kernelv"]
+        c = sc.loop_counts(body, tiles=2)
+        self.assertEqual((c.mma, c.k_iter), (hmma, hmma * 32 // 2))
+        # #1006 review: a second function's section after a non-rel one is read apart (a
+        # relocation-shaped line inside the non-rel section is not recorded, #1014), a <4>
+        # relocation counts as the m16n8k16, a call relocated to another symbol stays a call, and an
+        # emulated MMA of an unknown width is refused.
+        def rel(fn, chunks, symbol=None):
+            name = symbol or f"_ZN61_INTERNAL_x_ninferno3ops16mma_s8_dp4a_callILi{chunks}EEE4int4"
+            return [f".section .rel.text.{fn}\tREL"] + [
+                f"0x{o:x}    {name}    R_CUDA_ABS47_34" for o, t in KERNEL if t.startswith("HMMA")]
+        two = (rel("_Z6kernelv", 8) +
+               ["", ".section .nv.info._Z6kernelv", "\t.attr 0x1", "0x10    foo    R_CUDA_ABS32_32"] +
+               rel("_Z7kernel2v", 4) + ["", ".section .symtab"])
+        calls = sc.relocation_calls(two)
+        self.assertEqual(sorted(calls), ["_Z6kernelv", "_Z7kernel2v"])
+        self.assertFalse(any("foo" in c.values() for c in calls.values()))
+        both = sass(plain) + "\n" + sass(plain).replace("_Z6kernelv", "_Z7kernel2v")
+        bodies = sc.parse_functions(both.splitlines(), calls=calls)
+        c4 = sc.loop_counts(bodies["_Z7kernel2v"], tiles=2)
+        self.assertEqual((c4.mma, c4.k_iter), (hmma, hmma * 16 // 2))
+        self.assertTrue(c4.mma_shape.startswith("IMMA.16816."))
+        other = sc.relocation_calls(rel("_Z6kernelv", 8, "_Z9some_helperv") + [""])
+        body = sc.parse_functions(sass(plain).splitlines(), calls=other)["_Z6kernelv"]
+        self.assertEqual(sc.loop_counts(body, tiles=2).mma, 0)
+        with self.assertRaises(ValueError):
+            sc.parse_functions(sass(plain).splitlines(),
+                               calls=sc.relocation_calls(rel("_Z6kernelv", 2) + [""]))
+        # #1014: a function built in two units has a section in each image, and each unit spells
+        # the internal-linkage callee with its own prefix. The same callee width merges (the first
+        # spelling kept); another width, or an emulated MMA against another symbol, is refused.
+        unit_a = "_ZN40_INTERNAL_b2466db5_4_a_cu_56d27ffb_3200016mma_s8_dp4a_callILi8EEE4int4"
+        unit_b = "_ZN34_INTERNAL_a0f3c25b_4_b_cu_109353b216mma_s8_dp4a_callILi8EEE4int4"
+        twice = sc.relocation_calls(rel("_Z6kernelv", 8, unit_a) + [""] +
+                                    rel("_Z6kernelv", 8, unit_b))
+        self.assertEqual(twice, sc.relocation_calls(rel("_Z6kernelv", 8, unit_a) + [""]))
+        body = sc.parse_functions(sass(plain).splitlines(), calls=twice)["_Z6kernelv"]
+        self.assertEqual(sc.loop_counts(body, tiles=2).mma, hmma)
+        with self.assertRaises(ValueError):
+            sc.relocation_calls(rel("_Z6kernelv", 8) + [""] + rel("_Z6kernelv", 4) + [""])
+        with self.assertRaises(ValueError):
+            sc.relocation_calls(rel("_Z6kernelv", 8) + [""] +
+                                rel("_Z6kernelv", 8, "_Z9some_helperv"))
+
+    def test_prologue_loop(self):
+        # The R8 kernels' quantizer loop (#613 PR-10): a second loop, marked by F2I, counted into
+        # the pro_ columns beside the dp4a loop; none where the body has no F2I loop.
+        quantizer = [(0x600 + i * 0x10, t) for i, t in enumerate([
+            "LDG.E.128 R4, [R2.64] ;",
+            "F2I.NTZ R8, R5 ;",
+            "IADD3 R10, R10, 0x1, RZ ;",
+            "STS.128 [R12], R4 ;",
+            "ISETP.GE.AND P0, PT, R10, R11, PT ;",
+            "@!P0 BRA 0x600 ;",
+            "BRA 0x430 ;",
+        ])]
+        lines = [(o, t.replace("HMMA.16816.F32.BF16", "IDP.4A.S8.S8").replace(", RZ ;", ", R0 ;"))
+                 for o, t in KERNEL]
+        lines = [(o, t) if o != 0x430 else (o, "BRA 0x600 ;") for o, t in lines]
+        c = sc.loop_counts(body_of(lines + quantizer), tiles=1, marker="IDP",
+                           prologue_marker="F2I")
+        self.assertEqual(c.loops, 1)
+        self.assertEqual((c.pro_loops, c.pro_total, c.pro_ldg_bytes, c.pro_sts_bytes),
+                         (1, 6, 512, 512))
+        self.assertEqual(sc.loop_counts(body_of(lines), tiles=1, marker="IDP",
+                                        prologue_marker="F2I").pro_loops, 0)
+        # An F2I in the dp4a loop (NVFP4's weight decode) does not make it the prologue.
+        first = next(o for o, t in lines if t.startswith("IDP"))
+        mixed = [(o, "F2I.NTZ R8, R5 ;") if o == first else (o, t) for o, t in lines]
+        m = sc.loop_counts(body_of(mixed + quantizer), tiles=1, marker="IDP",
+                           prologue_marker="F2I")
+        self.assertEqual((m.loops, m.pro_loops, m.pro_total), (1, 1, 6))
+        self.assertEqual(sc.loop_counts(body_of(mixed), tiles=1, marker="IDP",
+                                        prologue_marker="F2I").pro_loops, 0)
+        # The columns follow the pipe counts only where asked, and the row reads back.
+        piped = c.with_pipes(True, prologue=True)
+        self.assertEqual(len(piped.row()),
+                         len(sc.COLUMNS) + len(sc.PIPE_FIELDS) + len(sc.PROLOGUE_FIELDS))
+        self.assertEqual(sc.LoopCounts.from_row(piped.row()), piped)
+        self.assertEqual(len(c.with_pipes(True).row()), len(sc.COLUMNS) + len(sc.PIPE_FIELDS))
 
     def test_mixed_shapes_and_odd_k(self):
         lines = [(o, t.replace("HMMA.16816.F32.BF16 R40", "HMMA.1688.F32 R40")) for o, t in KERNEL]
@@ -359,6 +504,8 @@ class StaticSchedule(unittest.TestCase):
         # Waits: 0x1a0 on the LDG's scoreboard, 0x2c0 on the LDL at 0x1c0, 0x160 on the LDL at
         # 0x2d0 of the previous iteration; the two last are local.
         self.assertEqual((c.sb_waits, c.sb_waits_local), (3, 2))
+        # By what they wait for: 0x1a0 on a global load; the LDL waits on neither class.
+        self.assertEqual((c.sb_waits_global, c.sb_waits_shared), (1, 0))
         # Outside: the prologue (0x000-0x070) and the epilogue (0x400-0x430); not the loop's
         # plain version of step two (0x280-0x2b0, a member of the loop off the counted path),
         # not the callee or the self-branch after EXIT.
@@ -368,11 +515,32 @@ class StaticSchedule(unittest.TestCase):
         self.assertEqual(c.schedule_problems(), [])
         self.assertGreaterEqual(c.stall_sum, c.total)
 
+    def test_global_waits(self):
+        # One wait a iteration exposes the LDG's latency: 0x1a0 on its scoreboard (#613 PR-10).
+        c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=2)
+        self.assertEqual(c.glb_waits, 1)
+        # The same scoreboard set by a shared load exposes no global latency.
+        ldg = [o for o, t in SCHEDULED if t.startswith("LDG")]
+        lds = [(o, t.replace("LDG.E", "LDS", 1) if o in ldg else t) for o, t in SCHEDULED]
+        self.assertEqual(sc.loop_counts(body_of(lds, SCHEDULED_WORDS), tiles=2).glb_waits, 0)
+
+    def test_global_waits_one_per_burst(self):
+        # Two loads issued before any wait return together: the second wait exposes nothing more.
+        C = sc.Control
+        body = [(0, False, "LDG.E", "R1, [R2]", None), (16, False, "LDG.E", "R3, [R4]", None),
+                (32, False, "IADD3", "R5, R1", None), (48, False, "IADD3", "R6, R3", None),
+                (64, False, "LDG.E", "R7, [R2]", None), (80, False, "IADD3", "R8, R7", None)]
+        words = [high_word(1, write=0), high_word(1, write=1), high_word(1, wait=1 << 0),
+                 high_word(1, wait=1 << 1), high_word(1, write=2), high_word(1, wait=1 << 2)]
+        control = [C(w) for w in words]
+        self.assertEqual(sc.global_waits(body, control, range(6), 1), 2)
+
     def test_local_wait_needs_the_ldl(self):
         # The same scoreboard set by a shared load is no local wait; a wait in between clears it.
         lds = [(o, "LDS R26, [R1] ;" if o == 0x1c0 else t) for o, t in SCHEDULED]
         c = sc.loop_counts(body_of(lds, SCHEDULED_WORDS), tiles=2)
         self.assertEqual((c.sb_waits, c.sb_waits_local), (3, 1))
+        self.assertEqual((c.sb_waits_global, c.sb_waits_shared), (1, 1))  # 0x2c0 on the LDS
         words = dict(SCHEDULED_WORDS)
         words[0x200] = high_word(2, wait=1 << 4)  # waits on the bottom LDL's scoreboard first
         c = sc.loop_counts(body_of(SCHEDULED, words), tiles=2)
@@ -406,6 +574,25 @@ class StaticSchedule(unittest.TestCase):
         self.assertEqual((unknown.loops, unknown.outside_total), (0, 0))
         self.assertEqual(len(kernel_facts.family_audit("mmq", {(2, 80, 0, 0): (0, 0, 0, 0, unknown)})), 1)
 
+    def test_i8_audit(self):
+        # One loop, one barrier and k_iter 2048 pass; an empty build's kernel (no loop, a few
+        # instructions, no barrier) passes; anything else is named.
+        from types import SimpleNamespace as N
+        ok = N(loops=1, bar=1, k_iter=kernel_facts.I8_K_ITER, scheduled=True, outside_bar=0,
+               outside_total=900, schedule_problems=lambda: [])
+        key = (4, 2, 4, 4, 0)
+        self.assertEqual(kernel_facts.family_audit("i8", {key: (0, 0, 0, 0, ok)}), [])
+        empty = N(loops=0, bar=0, k_iter=0, scheduled=True, outside_bar=0, outside_total=2,
+                    schedule_problems=lambda: [])
+        self.assertEqual(kernel_facts.family_audit("i8", {key: (0, 0, 0, 0, empty)}), [])
+        lost = N(loops=0, bar=0, k_iter=0, scheduled=True, outside_bar=1, outside_total=900, schedule_problems=lambda: [])
+        self.assertEqual(len(kernel_facts.family_audit("i8", {key: (0, 0, 0, 0, lost)})), 1)
+        two = N(loops=2, bar=2, k_iter=1024, scheduled=True, outside_bar=0, outside_total=900, schedule_problems=lambda: [])
+        problems = kernel_facts.family_audit("i8", {key: (0, 0, 0, 0, two)})
+        self.assertEqual(len(problems), 1)
+        for what in ("2 candidate loops", "2 barriers", "k_iter 1024"):
+            self.assertIn(what, problems[0])
+
     def test_problems(self):
         c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=2)
         c.stall_sum = c.total - 1
@@ -433,6 +620,16 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(rows, self.rows())
         self.assertIn("columns " + kernel_facts.COLUMNS, text)
         self.assertEqual(sum(1 for l in text.splitlines() if not l.startswith("#")), 6 + 1)
+
+    def test_replica_l1_latency_per_arch(self):
+        # The replica prices a spill at the arch's isa_probe L1 hit latency, as the engine's
+        # calibration_of does; an arch with no ISA row (sm_80) takes kL1HitLatencyCycles (32).
+        repo = Path(__file__).resolve().parents[1]
+        sys.path.insert(0, str(repo / "tools" / "bench"))
+        import rmma_counted_replica as replica
+        self.assertAlmostEqual(replica.l1_latency_of(str(repo), 86), 33.034, places=3)
+        self.assertAlmostEqual(replica.l1_latency_of(str(repo), 120), 38.01, places=3)
+        self.assertEqual(replica.l1_latency_of(str(repo), 80), 32.0)
 
     def test_replica_keeps_both_local_columns(self):
         # A snapshot names two fields `local`: the kernel's local memory in bytes and the K
@@ -784,7 +981,36 @@ class Sections(unittest.TestCase):
               f"({ns}Epilogue)0, 3, 4>({ns}GemmArgs, {ns}W4a8Activation)")
         self.assertEqual(kernel_facts.w4a8_key(ws), ("W4a8Q6K", 128, 64, 4, 2, 0, 0, 3, 4))
         self.assertIsNone(kernel_facts.w4a8_key(f"void {ns}w4a8_quantize_kernel(float *)"))
+        r8 = (f"void {ns}r8_kernel<{ns}W4a8Q45K<(int)4>, {ns}R8Schedule<(int)4, (int)1>, (int)1, "
+              f"({ns}Epilogue)0, (bool)0>({ns}GemmArgs, {ns}W4a8Activation)")
+        self.assertEqual(kernel_facts.r8_key(r8), ("W4a8Q45K<4>", 4, 1, 1, 0, 0))
+        pre = r8.replace("(int)1, ", "(int)8, ", 1).replace("(bool)0", "true")
+        self.assertEqual(kernel_facts.r8_key(pre)[3:], (8, 0, 1))
+        self.assertIsNone(kernel_facts.r8_key(classic))
+        self.assertIsNone(kernel_facts.w4a8_key(r8))
         self.assertIsNone(kernel_facts.rmma_key(self.MMQ_NAME))
+        # The I8 tile sits in generic_i8.cu's anonymous namespace; the quantizer is not keyed.
+        i8 = (f"void {ns}(anonymous namespace)::i8_kernel<(int)4, (int)2, (int)3, (int)4, "
+              f"({ns}Epilogue)0>({ns}GemmArgs, const signed char *, const float *, const int *, int)")
+        self.assertEqual(kernel_facts.i8_key(i8), (4, 2, 3, 4, 0))
+        self.assertEqual(kernel_facts.i8_key(i8.replace("(anonymous namespace)", "<unnamed>")),
+                         (4, 2, 3, 4, 0))
+        self.assertIsNone(kernel_facts.i8_key(
+            f"void {ns}(anonymous namespace)::i8_quantize_kernel(const float *, int)"))
+        self.assertIsNone(kernel_facts.i8_key(r8))
+        # The routed-expert kernels (#619 step 11): their Stage cast is moe's, not generic's.
+        moe = "ninferno::ops::detail::moe::"
+        moe_r8 = (f"void {moe}moe_r8_kernel<{ns}W4a8Ggml32<({ns}Ggml32)0>, {ns}R8Schedule<(int)2, "
+                  f"(int)1>, (int)1, ({moe}Stage)1, (bool)0>({moe}GemmArgs)")
+        self.assertEqual(kernel_facts.moe_r8_key(moe_r8), ("W4a8Ggml32<0>", 2, 1, 1, 1, 0))
+        self.assertEqual(kernel_facts.moe_r8_products(("W4a8Q45K<4>", 4, 2, 4, 1, 0)), 16)
+        moe_gemm = (f"void {moe}moe_gemm_kernel<{ns}Fp8Decoder, {ns}RmmaSchedule<(int)1, (int)4, "
+                    f"(int)1, (int)2, (int)1>, ({moe}Stage)1>({moe}GemmArgs)")
+        self.assertEqual(kernel_facts.moe_gemm_key(moe_gemm), ("Fp8Decoder", 1, 4, 1, 2, 1, 1))
+        self.assertEqual(kernel_facts.moe_gemm_tiles(kernel_facts.moe_gemm_key(moe_gemm)), 4)
+        self.assertIsNone(kernel_facts.moe_r8_key(moe_gemm))
+        self.assertIsNone(kernel_facts.moe_gemm_key(moe_r8))
+        self.assertIsNone(kernel_facts.r8_key(moe_r8))
 
     def test_pipe_counts(self):
         c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=1)
@@ -795,6 +1021,17 @@ class Sections(unittest.TestCase):
         piped = c.with_pipes()
         self.assertEqual(len(piped.row()), len(sc.COLUMNS) + len(sc.PIPE_FIELDS))
         self.assertEqual(sc.LoopCounts.from_row(piped.row()), piped)
+        # The mmq and w4a8 sections' rows: the wait classes after the pipe counts.
+        waited = c.with_pipes(waits=True)
+        self.assertEqual(len(waited.row()), len(sc.COLUMNS) + len(sc.SECTION_FIELDS))
+        self.assertEqual(sc.LoopCounts.from_row(waited.row()), waited)
+        # The w4a8 section's rows: the producer warps' loop after the wait classes (#613 PR-6).
+        produced = c.with_pipes(waits=True, producer=True)
+        self.assertEqual(len(produced.row()), len(sc.COLUMNS) + len(sc.SECTION_FIELDS) +
+                         len(sc.PRODUCER_FIELDS))
+        self.assertEqual(sc.LoopCounts.from_row(produced.row()), produced)
+        with self.assertRaises(AssertionError):
+            sc.LoopCounts().with_pipes(producer=True)  # the producer loop rides on the waits
         lines = [(o, {0x170: "I2F.F32.S32 R25, R24 ;", 0x1d0: "IMAD R9, R9, R10, RZ ;",
                       0x210: "BAR.SYNC.DEFER_BLOCKING 0x0 ;"}.get(o, t)) for o, t in KERNEL]
         c = sc.loop_counts(body_of(lines), tiles=1)
@@ -918,6 +1155,214 @@ class Sections(unittest.TestCase):
         self.assertEqual(self.check(out), 0)
         (self.root / "moved.txt").write_text(text.replace(" 168 0 0 16\n", " 167 0 0 16\n"))
         self.assertEqual(self.check(self.root / "moved.txt"), 1)
+
+    VEC = ("_ZN8ninferno3ops8ggml_mmq6detail12_GLOBAL__N_110vec_kernelIL9ggml_type13ELi4ELi0ELb0ELb1EEEv"
+           "NS2_7VecArgsE")
+    VEC_NAME = ("void ninferno::ops::ggml_mmq::detail::<unnamed>::vec_kernel<(ggml_type)13, 4, 0, false, "
+                "true>(ninferno::ops::ggml_mmq::detail::<unnamed>::VecArgs)")
+    VEC_KEY = (13, 4, 0, 0, 1)  # the bounded twin: T 4, the runtime K, ungated
+
+    def test_vec_keys(self):
+        self.assertEqual(kernel_facts.vec_key(self.VEC_NAME), self.VEC_KEY)
+        other = self.VEC_NAME.replace("<unnamed>", "(anonymous namespace)").replace(
+            "(ggml_type)13, 4, 0, false, true", "(ggml_type)12, 8, 5120, true, false")
+        self.assertEqual(kernel_facts.vec_key(other), (12, 8, 5120, 1, 0))
+        self.assertIsNone(kernel_facts.vec_key(self.MMQ_NAME))
+        with self.assertRaises(SystemExit):
+            kernel_facts.vec_key(self.VEC_NAME.replace(", true>", ">"))
+
+    def test_vec_section_is_resources_only(self):
+        # The vec family (#763) is read for its resources alone, as the gemma4 one.
+        dump = Check.DUMP + "\n".join((" Function " + self.VEC + ":",
+                                        "  REG:72 STACK:0 SHARED:1024 LOCAL:0", ""))
+        (self.root / "usage.txt").write_text(dump)
+        names = {self.RMMA: self.RMMA, self.VEC: self.VEC_NAME}
+        kernel_facts.demangle = lambda wanted, cuda_bin: {n: names[n] for n in wanted}
+        out = self.extract("--families", "rmma")
+        self.extract("--families", "vec", "--update", str(out))
+        text = out.read_text()
+        self.assertIn("family vec", text)
+        self.assertIn("family_columns family type T KS gated bounded registers stack local shared\n",
+                      text)
+        self.assertIn("vec 13 4 0 0 1 72 0 0 1024\n", text)
+        _, sections = kernel_facts.parse_sections(text)
+        self.assertEqual(sections["vec"]["rows"][self.VEC_KEY], (72, 0, 0, 1024, None))
+        self.assertEqual(self.check(out), 0)
+        (self.root / "moved.txt").write_text(text.replace(" 72 0 0 1024\n", " 80 0 0 1024\n"))
+        self.assertEqual(self.check(self.root / "moved.txt"), 1)
+
+
+class SassUnstable(unittest.TestCase):
+    # #968: every pre-quantized nt = 8 R8 row is held to its resources; another nt, a row that is
+    # not pre-quantized, or another family is not.
+    def test_pre_quantized_nt8_r8_rows_only(self):
+        self.assertTrue(kernel_facts.sass_unstable("r8", ("W4a8Ggml32<2>", 4, 2, 8, 0, 1)))
+        self.assertTrue(kernel_facts.sass_unstable("r8", ("W4a8Ggml32<2>", 4, 2, 8, 1, 1)))
+        self.assertTrue(kernel_facts.sass_unstable("r8", ("W4a8U4ZpG<64>", 4, 2, 8, 1, 1)))
+        self.assertFalse(kernel_facts.sass_unstable("r8", ("W4a8U4ZpG<64>", 4, 2, 4, 1, 1)))
+        self.assertFalse(kernel_facts.sass_unstable("r8", ("W4a8U4ZpG<64>", 4, 2, 8, 1, 0)))
+        self.assertFalse(kernel_facts.sass_unstable("mmq", ("W4a8Ggml32<2>", 4, 2, 8, 0, 1)))
+
+    def test_check_section_holds_them_to_their_resources(self):
+        # The check itself: a held row whose loop counts moved passes; the same row with a
+        # resource moved fails; a row the law reads (nt = 1) with its counts moved fails.
+        import types
+        args = types.SimpleNamespace(expected="sm_89.txt", nvcc="13.4.92", binary="serve",
+                                     dump=None, show=10)
+        before, after = sc.LoopCounts(), sc.LoopCounts()
+        before.total, after.total = 1547, 1549
+        held, read = ("W4a8Ggml32<2>", 4, 2, 8, 1, 1), ("W4a8Ggml32<2>", 4, 2, 1, 1, 0)
+
+        def check(key, expected, got):
+            section = {"rows": {key: expected}, "nvcc": "13.4.92"}
+            with contextlib.redirect_stdout(io.StringIO()):
+                return kernel_facts.check_section(args, "r8", section, {key: got}, False, True, "89")
+
+        self.assertEqual(check(held, (158, 0, 0, 0, before), (158, 0, 0, 0, after)), 0)
+        self.assertEqual(check(held, (158, 0, 0, 0, before), (159, 0, 0, 0, after)), 1)
+        self.assertEqual(check(read, (158, 0, 0, 0, before), (158, 0, 0, 0, after)), 1)
+
+
+
+class RegisterAllocations(unittest.TestCase):
+    # #968: a row ptxas allocates either way from one source (a moegemm decoder, sm_80's r8 row)
+    # passes at any counted register count, with its loop counts moved; an uncounted count, another
+    # resource moved, another arch or a row not listed fails.
+    def test_check_section_accepts_the_counted_allocations_only(self):
+        import types
+        args = types.SimpleNamespace(expected="sm_89.txt", nvcc="13.4.92", binary="serve",
+                                     dump=None, show=10)
+        table = kernel_facts.REGISTER_ALLOCATIONS["moegemm"]
+        self.assertTrue(table, "no counted allocation")
+        arch = sorted(table)[0]
+        key, counts = sorted(table[arch].items())[0]
+        self.assertGreaterEqual(len(counts), 2)
+        lo, hi = min(counts), max(counts)
+        before, after = sc.LoopCounts(), sc.LoopCounts()
+        before.total, after.total = 1200, 1212
+
+        def check(k, expected, got, at=arch):
+            section = {"rows": {k: expected}, "nvcc": "13.4.92"}
+            with contextlib.redirect_stdout(io.StringIO()):
+                return kernel_facts.check_section(args, "moegemm", section, {k: got}, False,
+                                                  True, at)
+
+        self.assertEqual(check(key, (lo, 0, 0, 0, before), (hi, 0, 0, 0, after)), 0)
+        self.assertEqual(check(key, (hi, 0, 0, 0, before), (lo, 0, 0, 0, before)), 0)
+        uncounted = next(r for r in range(hi + 1, 256) if r not in counts)
+        self.assertEqual(check(key, (lo, 0, 0, 0, before), (uncounted, 0, 0, 0, before)), 1)
+        self.assertEqual(check(key, (lo, 0, 0, 0, before), (hi, 0, 0, 16, before)), 1)
+        self.assertEqual(check(key, (lo, 0, 0, 0, before), (hi, 0, 0, 0, before), "999"), 1)
+        listed = {k for rows in table.values() for k in rows}
+        unlisted = next(("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, s) for s in range(4)
+                        if ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, s) not in listed)
+        self.assertEqual(check(unlisted, (lo, 0, 0, 0, before), (hi, 0, 0, 0, before)), 1)
+
+    def test_extract_keeps_the_sections_allocation(self):
+        table = kernel_facts.REGISTER_ALLOCATIONS["moegemm"]
+        arch = sorted(table)[0]
+        key, counts = sorted(table[arch].items())[0]
+        lo, hi = min(counts), max(counts)
+        a, b = sc.LoopCounts(), sc.LoopCounts()
+        a.total, b.total = 1200, 1212
+        other = ("Bf16Decoder", 1, 4, 1, 1, 1, 0)
+        old = {key: (lo, 0, 0, 0, a), other: (90, 0, 0, 0, a)}
+        new = {key: (hi, 0, 0, 0, b), other: (91, 0, 0, 0, b)}
+        kept = kernel_facts.keep_allocations("moegemm", arch, old, new)
+        self.assertEqual(kept[key], old[key])
+        self.assertEqual(kept[other], new[other])
+        moved = {key: (hi, 0, 0, 16, b)}
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, moved), moved)
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", "999", old, new), new)
+        # One register count, other loop counts: a real loop change, written.
+        same = {key: (lo, 0, 0, 0, b)}
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, same), same)
+        # extract --no-sass: the build's rows carry no loop; none is kept, so none mixes schemas.
+        bare = {key: (hi, 0, 0, 0, None), other: (91, 0, 0, 0, None)}
+        self.assertEqual(kernel_facts.keep_allocations("moegemm", arch, old, bare), bare)
+        kernel_facts.render_section("moegemm", bare, "13.4.92")
+
+    def test_check_section_holds_one_allocation_exact(self):
+        import types
+        args = types.SimpleNamespace(expected="sm_89.txt", nvcc="13.4.92", binary="serve",
+                                     dump=None, show=10)
+        table = kernel_facts.REGISTER_ALLOCATIONS["moegemm"]
+        arch = sorted(table)[0]
+        key, counts = sorted(table[arch].items())[0]
+        lo = min(counts)
+        a, b = sc.LoopCounts(), sc.LoopCounts()
+        a.total, b.total = 1200, 1212
+        for with_sass, want in ((True, 1), (False, 0)):
+            with contextlib.redirect_stdout(io.StringIO()):
+                got = kernel_facts.check_section(
+                    args, "moegemm", {"rows": {key: (lo, 0, 0, 0, a)}, "nvcc": "13.4.92"},
+                    {key: (lo, 0, 0, 0, b)}, False, with_sass, arch)
+            self.assertEqual(got, want, with_sass)
+
+    def test_a_section_of_other_columns_keeps_nothing(self):
+        data = (Path(__file__).resolve().parents[1] / "src" / "ops" / "generic" / "data" /
+                "kernel_facts")
+        arch = sorted(kernel_facts.REGISTER_ALLOCATIONS["moegemm"])[0]
+        _, sections = kernel_facts.split_sections((data / f"sm_{arch}.txt").read_text())
+        section = sections["moegemm"]
+        self.assertTrue(kernel_facts.section_rows_to_keep("moegemm", section))
+        old = "\n".join(line + " 0" if line.startswith(("family_columns", "moegemm ")) else line
+                        for line in section.splitlines()) + "\n"
+        self.assertEqual(kernel_facts.section_rows_to_keep("moegemm", old), {})
+        stale = section.replace("family_kernels ", "family_kernels 1", 1)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(kernel_facts.section_rows_to_keep("moegemm", stale), {})
+
+    def test_every_counted_row_is_a_committed_row(self):
+        # The table's keys spell the parsed keys (FAMILIES[family].parse_key, every family the
+        # table lists): each names a row of its arch's committed snapshot, whose registers are
+        # among the counted ones.
+        data = os.path.join(Path(__file__).resolve().parents[1], "src", "ops", "generic", "data", "kernel_facts")
+        for family, archs in kernel_facts.REGISTER_ALLOCATIONS.items():
+            for arch, rows in archs.items():
+                with open(os.path.join(data, f"sm_{arch}.txt")) as f:
+                    _, sections = kernel_facts.parse_sections(f.read())
+                committed = sections[family]["rows"]
+                for key, counts in rows.items():
+                    self.assertTrue(counts, (family, arch, key))
+                    self.assertIn(key, committed, (family, arch, key))
+                    self.assertIn(committed[key][0], counts, (family, arch, key))
+
+    def test_r8_allocation_passes_check(self):
+        # #968: sm_80's r8 W4a8U4ZpG<64> 4 2 8 1 1 came out with 160 registers in full builds and 162
+        # in a KFF_FAMILIES=r8 build (REGISTER_ALLOCATIONS' comment); the committed row (162) and a
+        # build at 160 pass, 158 fails.
+        import types
+        args = types.SimpleNamespace(expected="sm_80.txt", nvcc="13.4.92", binary="serve",
+                                     dump=None, show=10)
+        key = ("W4a8U4ZpG<64>", 4, 2, 8, 1, 1)
+        self.assertEqual(kernel_facts.REGISTER_ALLOCATIONS["r8"]["80"][key], (160, 162))
+        a, b = sc.LoopCounts(), sc.LoopCounts()
+        a.total, b.total = 1641, 1637
+
+        def check(expected, got):
+            section = {"rows": {key: expected}, "nvcc": "13.4.92"}
+            with contextlib.redirect_stdout(io.StringIO()):
+                return kernel_facts.check_section(args, "r8", section, {key: got}, False, True,
+                                                  "80")
+
+        self.assertEqual(check((162, 0, 0, 0, a), (160, 0, 0, 0, b)), 0)
+        self.assertEqual(check((162, 0, 0, 0, a), (162, 0, 0, 0, b)), 0)  # sass_unstable
+        self.assertEqual(check((162, 0, 0, 0, a), (158, 0, 0, 0, b)), 1)
+        self.assertEqual(check((162, 0, 0, 0, a), (160, 0, 0, 16, b)), 1)
+
+    def test_r8_extract_keeps_the_committed_allocation(self):
+        # extract --update over sm_80: a build at 160 keeps the committed 162 row whole; a build
+        # at 162 with other loop counts, another arch, or another resource writes the build's row.
+        key = ("W4a8U4ZpG<64>", 4, 2, 8, 1, 1)
+        a, b = sc.LoopCounts(), sc.LoopCounts()
+        a.total, b.total = 1641, 1637
+        old = {key: (162, 0, 0, 0, a)}
+        self.assertEqual(kernel_facts.keep_allocations("r8", "80", old, {key: (160, 0, 0, 0, b)}),
+                         old)
+        for arch, new in (("80", {key: (162, 0, 0, 0, b)}), ("86", {key: (160, 0, 0, 0, b)}),
+                          ("80", {key: (160, 0, 0, 16, b)})):
+            self.assertEqual(kernel_facts.keep_allocations("r8", arch, old, new), new, arch)
 
 
 if __name__ == "__main__":

@@ -73,7 +73,8 @@ xvid): `tools/release/ffmpeg.sh` builds FFmpeg 9.0.2 with dav1d 1.5.4 from the t
 and parsers only (MP4/MOV/3GP, MKV/WebM, AVI, MPEG-TS, FLV, GIF and the JPEG, PNG, WebP and BMP
 images; H.264, HEVC, VP8, VP9, AV1 through dav1d, MPEG-4 Part 2, MPEG-1 and MPEG-2 video, Motion
 JPEG, PNG, WebP, GIF, BMP), no encoder, muxer, protocol, hardware decoding or audio. It needs
-nasm, meson and ninja, and takes a few minutes; package.sh builds it once into
+nasm, meson, ninja and zlib's header and library (`zlib1g-dev` on Debian and Ubuntu,
+`zlib-devel` on Fedora), and takes a few minutes; package.sh builds it once into
 `NINFERNO_FFMPEG_PREFIX` (default `build-release-ffmpeg`) and points every tree at it. Offline,
 `NINFERNO_FFMPEG_ARCHIVE` and `NINFERNO_DAV1D_ARCHIVE` name the tarballs. package.sh refuses
 ffmpeg.sh's test switches (`NINFERNO_DAV1D_PREFIX`, `NINFERNO_FFMPEG_NO_ASM`), and stops when a

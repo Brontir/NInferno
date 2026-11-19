@@ -162,6 +162,13 @@ inline constexpr Holdout h_l2_ga10x = Holdout::none(
     "#499 Constants table and gate; core/generation.h rmma_terms_measured",
     "the RTX 3090 was out of sample only for the first version of the terms: production geomean "
     "1.136 -> 1.091 (90 cases, 2 passes x 7 samples, worst 1.83 -> 1.83)");
+inline constexpr Holdout h_l1_hit_latency =
+    Holdout::none("Turing's published L1 hit latency (32 clk), not a fit to data; an architecture "
+                  "with an ISA row prices by its own measured isa_probe l1_latency_w1 (28 / 32 / "
+                  "33 / 34 / 38 clk on sm_70 / 75 / 86 / 89 / 120a)",
+                  "a transfer to sm_80, sm_90 and sm_100, which have no lab card and no ISA row",
+                  "#613 PR-7a review (12.11); kernel_roofline.h calibration_of",
+                  "no price reads it while route_cost::kRmmaCountedLaw is off");
 inline constexpr Holdout h_l2_gb20x = Holdout::none(
     "RTX 5090 + RTX 5070 Ti together (replica geomean regret 5090 1.047, 5070 Ti 1.041; master "
     "1.135, 1.080; 16 gives 1.048 / 1.043, 32 gives 1.064 / 1.050)",
@@ -204,6 +211,7 @@ inline constexpr FittedHoldout kRouteCostHoldouts[] = {
     {kRouteCost, "kRmmaSaturatingWarps", h_a16_refit},
     {kRouteCost, "kRmmaHeavySaturatingWarps", h_rmma_heavy_warps},
     {kRouteCost, "kL2BytesPerSmClockGa10x", h_l2_ga10x},
+    {kRouteCost, "kL1HitLatencyCycles", h_l1_hit_latency},
     {kRouteCost, "kL2BytesPerSmClockGb20x", h_l2_gb20x},
     {kRouteCost, "kSpillAccessesPerStep", h_spill_accesses},
     {kRouteCost, "kClusterReduceCycles", h_a16_refit},
@@ -420,7 +428,10 @@ inline constexpr FittedHoldout kChoiceHoldouts[] = {
          "none left out", "choice_constants.h at KvReadFactor")},
     {kChoice, "kKvSmRate",
      Holdout::none(
-         "Turing: Qwen3.5 9B's int8 kernel and Gemma 4 12B's BF16 one on the RTX 2080 Ti; Volta: "
+         "Turing: Qwen3.5 9B's int8 kernel and Gemma 4 12B's BF16 one on the RTX 2080 Ti; Gemma "
+         "4 12B's int8 rows on the RTX 2080 Ti and 3090 (g4cen.sh at 8K and 32K, one card each; "
+         "the RTX 3060 confirms the ga10x row within 2.3 %); "
+         "Volta: "
          "the Quadro GV100's census at 7K and 82K (Gemma 4 12B's BF16 full layer 707 us a call for "
          "153 MB); Ampere, Ada and Blackwell: the census of #618 step 1 (Qwen3.5-9B, the RTX 3090 "
          "and 3060, 4070 Ti and 4090, 5070 Ti and 5090: the mean of two cards, within 2.7 %; "
@@ -530,6 +541,16 @@ inline constexpr FittedHoldout kSmallTEtaHoldouts[] = {
          "the shipped row",
          "tools/fits/round_cost/fit_eta.py; tests/test_round_cost_eta_fit.py"),
      "gb20x"},
+    {kRoundCost, "kSmallTEta",
+     Holdout::none(
+         "registry spec-tune rounds of Qwen targets, k 4..7, RTX 3060 and RTX 3090",
+         "the shipped 0.258 is fit_eta.py's fit over both cards (#794), so no card is held out of "
+         "it; the RTX 3090's rounds were predicted at the RTX 3060's one-card fit (0.269) with the "
+         "band frozen before they were read (mean within 5 %, rms at most 7 %): +4.4 % (rms "
+         "6.1 %); item 3 holds the 3060 out of a refit: +1.7 % (5.9 %), a hold-out of the "
+         "procedure, not of the shipped row",
+         "tools/fits/round_cost/fit_eta.py; tests/test_round_cost_eta_fit.py"),
+     "ga10x"},
 };
 
 inline constexpr FittedHoldout kSpecHoldouts[] = {

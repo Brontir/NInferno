@@ -200,9 +200,14 @@ int main() {
         expect(rtx4070ti.generation == "ada" && near(rtx4070ti.kappa(), 0.0098217, 1e-5),
                "RTX 4070 Ti: kappa " + std::to_string(rtx4070ti.kappa()));
         // A generation with one lab card has no eta (a constant rests on two cards): no estimate.
-        expect(gv100.generation == "volta" && near(gv100.int8_ops_per_s, 512.0 * 80 * 1627e6, 1e-9) &&
-                   !gv100.known() && !rtx3060.known() && !sp::card_rates_of_board(0x1E04).known(),
-               "Volta (dp4a's rate), Ampere, Turing: one lab card each, no eta yet");
+        expect(gv100.generation == "volta" &&
+                   near(gv100.int8_ops_per_s, 512.0 * 80 * 1627e6, 1e-9) && !gv100.known() &&
+                   !sp::card_rates_of_board(0x1E04).known(),
+               "Volta (dp4a's rate), Turing: one lab card each, no eta yet");
+        // Ampere's two lab cards (RTX 3060, RTX 3090: #794).
+        expect(rtx3060.generation == "ga10x" && rtx3060.known() && rtx3060.eta_cards == 2 &&
+                   sp::card_rates_of_board(0x2204).known(),
+               "Ampere: eta from its two lab cards");
         // Blackwell's two lab cards (RTX 5070 Ti, RTX 5090: DECISIONS 56).
         const auto rtx5070ti = sp::card_rates_of_board(0x2C05);
         const auto rtx5090   = sp::card_rates_of_board(0x2B85);
@@ -1283,12 +1288,14 @@ int main() {
         std::string note;
         (void)sp::profile_for_target({&arch_keyed}, "sm89", {}, &rtx4070ti, &note);
         expect(!note.empty(), "an architecture key is no card's own: priced by the facts");
-        // A generation without eta (one lab card): another board keeps the lab-measured profile.
+        // Ampere has eta since #794 (two lab cards): another board of the lab card's class is
+        // priced by the facts, as on Ada.
         const auto rtx3060_8gb = card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 240);
         std::string ampere_note;
         (void)sp::profile_for_target({&pair_of(kQ9, "ga106:28sm")}, "sm86", {}, &rtx3060_8gb,
                                      &ampere_note);
-        expect(ampere_note.empty(), "Ampere has no eta yet: the lab-measured profile, no facts");
+        expect(!ampere_note.empty(),
+               "Ampere: another board of the lab card's class, priced by the facts");
         // Turing: no eta and no lab pair of this target on Turing. The median R of every lab card
         // that measured it, said as a transfer; never the registry's first pair (the RTX 4070
         // Ti's own R, DECISIONS 57).
@@ -1502,9 +1509,11 @@ int main() {
             const char* gpu;
             sp::GpuKey key;
         };
+
         const Removed removed[] = {
             {"ad102:128sm", card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008)},
             {"ga106:28sm", card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 360)},
+            {"ga102:82sm", card("ga102:82sm", "ga102", "sm86", 86, 82, 1695, 936)},
             {"gb202:170sm", card("gb202:170sm", "gb202", "sm120", 120, 170, 2407, 1792)},
             {"gb203:70sm", card("gb203:70sm", "gb203", "sm120", 120, 70, 2452, 896)},
         };
@@ -1536,9 +1545,10 @@ int main() {
                         h.gpu, measured->profile.overall.config.label().c_str(), m,
                         predicted->profile.overall.config.label().c_str(), p, 100 * (p / m - 1),
                         predicted->source.c_str());
-            // Ada and Blackwell have eta (two lab cards); Ampere not yet (one): it keeps the
-            // previous transfer.
-            const bool facts = h.key.compute_capability == 89 || h.key.compute_capability == 120;
+            // Ada, Blackwell and Ampere (#794) have eta (two lab cards or more); Turing and Volta
+            // (one each) keep the previous transfer.
+            const bool facts = h.key.compute_capability == 89 || h.key.compute_capability == 120 ||
+                               h.key.compute_capability == 86;
             expect((predicted->source.find("rounds priced from the weights' bytes") !=
                     std::string::npos) == facts,
                    std::string("the card's rounds are priced by the facts only with eta: ") + h.gpu);

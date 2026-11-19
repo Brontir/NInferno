@@ -601,7 +601,7 @@ std::string format_table(const BenchEnvironment& env, const std::vector<TestResu
         << format_bytes(env.memory.kv_payload_bytes) << '\n'
         << "  corpus:     " << env.corpus_path << " (" << env.corpus_tokens << " tokens)\n"
         << "  config:     max_context=" << env.max_context << " prefill_chunk=" << env.prefill_chunk
-        << " kv_cache=" << kv_cache_name(env.kv_cache)
+        << " kv_cache=" << kv_cache_name(env.kv_cache, env.memory.kv_rows_int8)
         << " activations=" << product::activation_mode_name(env.activations)
         << " spec=" << product::speculative_backend_name(env.speculative.backend)
         << " draft_tokens=" << env.speculative.draft_tokens
@@ -697,7 +697,8 @@ std::string format_json(const BenchEnvironment& env, const std::string& command,
         << "    \"kv_capacity_page_groups\": " << env.memory.kv_capacity_page_groups << ",\n"
         << "    \"kv_capacity_max_page_groups\": " << env.memory.kv_capacity_max_page_groups
         << ",\n"
-        << "    \"kv_cache\": \"" << kv_cache_name(env.memory.kv_cache) << "\",\n";
+        << "    \"kv_cache\": \"" << kv_cache_name(env.memory.kv_cache, env.memory.kv_rows_int8)
+        << "\",\n";
     append_arena_json(out, "weights", env.memory.weights, "    ", true);
     append_arena_json(out, "sequence", env.memory.sequence, "    ", true);
     append_arena_json(out, "workspace", env.memory.workspace, "    ", true);
@@ -719,7 +720,7 @@ std::string format_json(const BenchEnvironment& env, const std::string& command,
         << "  \"config\": {\n"
         << "    \"max_context\": " << env.max_context << ",\n"
         << "    \"prefill_chunk\": " << env.prefill_chunk << ",\n"
-        << "    \"kv_cache\": \"" << kv_cache_name(env.kv_cache) << "\",\n"
+        << "    \"kv_cache\": \"" << kv_cache_name(env.kv_cache, env.memory.kv_rows_int8) << "\",\n"
         << "    \"activations\": \"" << product::activation_mode_name(env.activations) << "\",\n"
         << "    \"speculative_backend\": \""
         << product::speculative_backend_name(env.speculative.backend) << "\",\n"
@@ -834,10 +835,10 @@ std::string format_csv(const BenchEnvironment& env, const std::vector<TestResult
             << env.speculative.draft_tokens << ','
             << proposal_head_name(env.speculative.proposal_head) << ','
             << decode_path_name(env.use_cuda_graph, env.speculative) << ','
-            << kv_cache_name(env.kv_cache) << ',' << env.memory.kv_payload_bytes << ','
-            << env.load.host_to_device_bytes << ',' << env.memory.weights.capacity_bytes << ','
-            << env.memory.sequence.capacity_bytes << ',' << env.memory.workspace.capacity_bytes
-            << ','
+            << kv_cache_name(env.kv_cache, env.memory.kv_rows_int8) << ','
+            << env.memory.kv_payload_bytes << ',' << env.load.host_to_device_bytes << ','
+            << env.memory.weights.capacity_bytes << ',' << env.memory.sequence.capacity_bytes << ','
+            << env.memory.workspace.capacity_bytes << ','
             << (env.memory.vision_workspace
                     ? std::to_string(env.memory.vision_workspace->general_capacity_bytes)
                     : std::to_string(env.memory.workspace.capacity_bytes))
@@ -892,8 +893,8 @@ std::string json_escape(std::string_view value) {
     return out;
 }
 
-std::string kv_cache_name(KvCacheStorage storage) {
-    return std::string(kv_cache_storage_layout(storage));
+std::string kv_cache_name(KvCacheStorage storage, bool rows_int8) {
+    return std::string(kv_cache_storage_layout(storage, rows_int8));
 }
 
 std::string proposal_head_name(ProposalHead head) {

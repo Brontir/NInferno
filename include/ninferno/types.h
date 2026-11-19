@@ -62,13 +62,18 @@ inline constexpr std::string_view kKvCacheStorageNames = "bf16|int8|fp8|nvfp4|k8
 }
 
 // The storage's layout for reports: the int8 and fp8 storages with their scale grouping, the
-// others as their --kv-dtype spelling.
-[[nodiscard]] constexpr std::string_view kv_cache_storage_layout(KvCacheStorage storage) noexcept {
+// others as their --kv-dtype spelling. Fp8E4M3Row256 (--kv-dtype fp8) holds E4M3 codes for the
+// Qwen paged pool on every build, and for the Gemma 4 / dense rows on sm_89+ and Volta builds:
+// "fp8-e4m3-row256". The Gemma 4 / dense rows of sm_75..88 builds hold int8 codes in the same
+// layout (src/ops/softmax_attention/gemma4/row_codec.h, #619 steps 9-10): with rows_int8 (the
+// running program's MemorySummary::kv_rows_int8) the label is "int8-row256" (#991).
+[[nodiscard]] constexpr std::string_view kv_cache_storage_layout(KvCacheStorage storage,
+                                                                 bool rows_int8 = false) noexcept {
     switch (storage) {
     case KvCacheStorage::Int8Group64:
         return "int8-group64";
     case KvCacheStorage::Fp8E4M3Row256:
-        return "fp8-e4m3-row256";
+        return rows_int8 ? "int8-row256" : "fp8-e4m3-row256";
     default:
         return kv_cache_storage_name(storage);
     }
@@ -451,9 +456,10 @@ struct MaintainerOptions {
     DecodeRoute decode_route   = DecodeRoute::Auto;
     MoePath moe_path           = MoePath::Auto;
     // --route-policy legacy|evidence: the generic selector's precedence over evidence
-    // (option_enums.h RoutePolicy, #614 F1). Legacy is the release's selection; Evidence demotes
-    // the route-table entries measured on another board below the ranker, for an A/B.
-    RoutePolicy route_policy = RoutePolicy::Legacy;
+    // (option_enums.h RoutePolicy, #614). Evidence is the release's selection (F2): it demotes the
+    // route-table entries measured on another board below the ranker; Legacy keeps them, for an
+    // A/B.
+    RoutePolicy route_policy = RoutePolicy::Evidence;
     // --artifact-io auto|direct|buffered: how the weights are read at load (O_DIRECT or the page
     // cache). An I/O mode, not a decision: the bytes read are the same.
     ArtifactIo artifact_io = ArtifactIo::Auto;
@@ -514,8 +520,9 @@ struct EngineOptions {
     // true: recurrent_state is ignored; FP32 under --activations exact, else the family's choice
     // (FamilyEntry::recurrent_state: FP16 for Qwen 3.5). Engine::options() reports the choice.
     bool recurrent_state_automatic = false;
-    // The sliding-window layers' rings (a sequence's StateImage): BFloat16, or Fp8E4M3Row256 (E4M3
-    // codes with an FP32 scale per row, about half the bytes; Gemma 4 and dense decoders with
+    // The sliding-window layers' rings (a sequence's StateImage): BFloat16, or Fp8E4M3Row256 (one-
+    // byte codes with an FP32 scale per row, about half the bytes: E4M3, or int8 on sm_75..88
+    // builds, row_codec.h; Gemma 4 and dense decoders with
     // sliding-window layers, refused elsewhere). BFloat16 for a bare Engine; ninferno-serve and
     // ninferno choose FP8 rings for Gemma 4 and dense decoders whenever their KV is FP8
     // (choice::coupled_storages). Gemma 4 26B/31B next-token NLL moves by less than its standard
@@ -1681,6 +1688,9 @@ struct MemorySummary {
     std::uint32_t kv_capacity_page_groups     = 0;
     std::uint32_t kv_capacity_max_page_groups = 0;
     KvCacheStorage kv_cache                   = KvCacheStorage::BFloat16;
+    // The one-byte rows (Fp8E4M3Row256, also the sliding rings') hold int8 codes, not E4M3: the
+    // Gemma 4 / dense rows of an sm_75..88 build (kv_cache_storage_layout, #991).
+    bool kv_rows_int8 = false;
     ArenaMemorySummary weights;
     ArenaMemorySummary sequence;
     ArenaMemorySummary workspace;
@@ -1965,7 +1975,7 @@ struct LoadSummary {
     std::vector<std::string> moe_tune;
     // The route pins given (--prefill-route, --decode-route, --moe-path): one line per pin, with
     // what the startup's calls in its band took (ops/route_pins.h), and a line for a
-    // --route-policy other than legacy. Empty without either.
+    // --route-policy other than evidence (legacy). Empty without either.
     std::vector<std::string> route_pins;
     // A speculative drafter's load notes (the dense decoder's DFlash feature projection: split by
     // tap, or whole and why); empty without one.
