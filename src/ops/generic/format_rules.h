@@ -310,15 +310,21 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "Qwen3.5-9B Q4_K_M, --spec off, C = 4 (T = 4 calls) capped at T = 3 against vec at T = 4: "
      "RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 5070 Ti +11.1 %, RTX 5090 +5.3 %; C = 2 and 3 within "
      "0.1 %"},
-    {Rule::VecCapGa10xGb20x, Basis::Measured, FormatSet{Q::GGML_Q6_K}, 0, "gb202:170sm", "RTX 5090",
-     Evidence::SingleCard, "#998: abvecn.sh t3q6nc_5090", "2026-11-19",
-     "Qwen3.5-9B Q6_K, --spec off, C = 4 capped at T = 3 against T = 4: +7.27 %; C = 2 and 3 "
-     "within 0.05 %"},
-    {Rule::VecCapGa10xGb20x, Basis::Unknown, FormatSet{Q::GGML_Q2_K, Q::GGML_Q3_K, Q::GGML_Q5_K}, 0,
-     kNone, kNone, Evidence::Carried, "#998", "2026-11-19",
-     "the other K-quants follow Q4_K / Q6_K, whose super-block decoder they share: not timed on "
-     "their own. Not in the rule: IQ4_XS (RTX 5070 Ti +4.45 %, RTX 5090 -3.27 %: the two cards "
-     "disagree), the formats R8 verifies, IQ1 and the legacy formats (not measured)"},
+    {Rule::VecCapGa10xGb20x, Basis::Measured, FormatSet{Q::GGML_Q6_K}, 0,
+     "gb202:170sm, gb203:70sm, ga106:28sm", "RTX 5090, RTX 5070 Ti, RTX 3060", Evidence::TwoCards,
+     "#998: abvecn.sh t3q6nc_5090, t3q6_5070, t3q6_3060", "2026-11-19",
+     "Qwen3.5-9B Q6_K, --spec off, C = 4 capped at T = 3 against T = 4: RTX 5090 +7.27 %, RTX "
+     "5070 Ti +4.52 %, RTX 3060 +15.3 %; C = 2 and 3 within 0.05 %"},
+    {Rule::VecCapGa10xGb20x, Basis::Measured, FormatSet{Q::GGML_Q3_K, Q::GGML_Q5_K}, 0,
+     "gb203:70sm", "RTX 5070 Ti", Evidence::SingleCard, "#998: abvecn.sh t3q3_5070, t3q5_5070",
+     "2026-11-19",
+     "Qwen3.5-9B Q3_K_M / Q5_K_M, --spec off, C = 4 capped at T = 3 against T = 4: +15.7 % / "
+     "+6.74 %; C = 2 and 3 within 0.1 %"},
+    {Rule::VecCapGa10xGb20x, Basis::Unknown, FormatSet{Q::GGML_Q2_K}, 0, kNone, kNone,
+     Evidence::Carried, "#998", "2026-11-19",
+     "Q2_K follows the other K-quants, whose super-block decoder it shares: not timed on its own. "
+     "Not in the rule: IQ4_XS (RTX 5070 Ti +4.45 %, RTX 5090 -3.27 %: the two cards disagree), "
+     "the formats R8 verifies, IQ1 and the legacy formats (not measured)"},
 
     // --- the thresholds ---
     {Rule::R8VerifyQ40MinValues, Basis::PlacedBetweenMeasured, FormatSet{Q::GGML_Q4_0},
