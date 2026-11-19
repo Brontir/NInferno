@@ -1418,6 +1418,11 @@ def sass_unstable(family, key):
 # seen in a build is a new allocation of the same source: count it here (the census, #968) and rerun
 # the check; no rebuild. Key: FAMILIES["moegemm"].key (decoder, warps_m, warps_k, m_tiles, n_tiles,
 # cluster, stage); per architecture label.
+# r8 (key FAMILIES["r8"].key: codec, warps, rows, nt, epilogue, pre): sm_80's W4a8U4ZpG<64> 4 2 8 1 1,
+# a pre-quantized nt = 8 row (sass_unstable), at master 714a05ced came out with 160 registers on
+# two builds on one host (an RTX 3060 stand) and 162 on another (the committed count, rebuilt on a
+# GV100 stand's CPU, kffr8), with the stack, local and shared bytes equal. No price reads it (the R8
+# law prices T = 1 only, #966).
 REGISTER_ALLOCATIONS = {
     "moegemm": {
         "80": {
@@ -1443,6 +1448,11 @@ REGISTER_ALLOCATIONS = {
             ("GroupwiseG64Decoder<5>", 4, 1, 1, 1, 1, 3): (72, 78),
             ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 2): (72, 77),
             ("GroupwiseG64Decoder<6>", 4, 1, 1, 1, 1, 3): (72, 77),
+        },
+    },
+    "r8": {
+        "80": {
+            ("W4a8U4ZpG<64>", 4, 2, 8, 1, 1): (160, 162),
         },
     },
 }

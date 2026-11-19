@@ -1281,15 +1281,39 @@ class RegisterAllocations(unittest.TestCase):
     def test_every_counted_row_is_a_committed_row(self):
         # The table's keys spell the parsed keys (FAMILIES["moegemm"].parse_key): each names a row
         # of its arch's committed snapshot, whose registers are among the counted ones.
+        # Every family the table lists, r8 too (FAMILIES[family].parse_key).
         data = os.path.join(Path(__file__).resolve().parents[1], "src", "ops", "generic", "data", "kernel_facts")
-        for arch, rows in kernel_facts.REGISTER_ALLOCATIONS["moegemm"].items():
-            with open(os.path.join(data, f"sm_{arch}.txt")) as f:
-                _, sections = kernel_facts.parse_sections(f.read())
-            committed = sections["moegemm"]["rows"]
-            for key, counts in rows.items():
-                self.assertTrue(counts, (arch, key))
-                self.assertIn(key, committed, (arch, key))
-                self.assertIn(committed[key][0], counts, (arch, key))
+        for family, archs in kernel_facts.REGISTER_ALLOCATIONS.items():
+            for arch, rows in archs.items():
+                with open(os.path.join(data, f"sm_{arch}.txt")) as f:
+                    _, sections = kernel_facts.parse_sections(f.read())
+                committed = sections[family]["rows"]
+                for key, counts in rows.items():
+                    self.assertTrue(counts, (family, arch, key))
+                    self.assertIn(key, committed, (family, arch, key))
+                    self.assertIn(committed[key][0], counts, (family, arch, key))
+
+    def test_r8_allocation_passes_check(self):
+        # #968: sm_80's r8 W4a8U4ZpG<64> 4 2 8 1 1 built with 160 registers on one host and 162 on
+        # another from one tree; the committed row (162) and a build at 160 pass, 158 fails.
+        import types
+        args = types.SimpleNamespace(expected="sm_80.txt", nvcc="13.4.92", binary="serve",
+                                     dump=None, show=10)
+        key = ("W4a8U4ZpG<64>", 4, 2, 8, 1, 1)
+        self.assertEqual(kernel_facts.REGISTER_ALLOCATIONS["r8"]["80"][key], (160, 162))
+        a, b = sc.LoopCounts(), sc.LoopCounts()
+        a.total, b.total = 1641, 1637
+
+        def check(expected, got):
+            section = {"rows": {key: expected}, "nvcc": "13.4.92"}
+            with contextlib.redirect_stdout(io.StringIO()):
+                return kernel_facts.check_section(args, "r8", section, {key: got}, False, True,
+                                                  "80")
+
+        self.assertEqual(check((162, 0, 0, 0, a), (160, 0, 0, 0, b)), 0)
+        self.assertEqual(check((162, 0, 0, 0, a), (162, 0, 0, 0, b)), 0)  # sass_unstable
+        self.assertEqual(check((162, 0, 0, 0, a), (158, 0, 0, 0, b)), 1)
+        self.assertEqual(check((162, 0, 0, 0, a), (160, 0, 0, 16, b)), 1)
 
 
 if __name__ == "__main__":
