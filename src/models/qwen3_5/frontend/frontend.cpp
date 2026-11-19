@@ -26,6 +26,7 @@
 #include <limits>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -1077,10 +1078,41 @@ Frontend make_frontend(const FrontendResources& resources, FrontendOptions optio
     return Frontend(std::make_shared<const Frontend::Impl>(resources, options));
 }
 
+namespace {
+
+// The last HF text tokenizer built, kept for the same three files (#1005, as #839 for Qwen 3.5):
+// the plan's public-id count (runtime::hf_public_token_count) and the load build the same
+// tokenizer, and the codec owns everything it decoded (no view into these bytes), so the load
+// shares the one the count built. Keyed by the bytes, compared whole; one entry, replaced by the
+// next distinct tokenizer. Its cost: the three files' bytes and one codec stay for the process.
+std::shared_ptr<const text::HfTokenCodec>
+shared_hf_codec(std::string_view json, std::string_view config, std::string_view generation) {
+    struct Kept {
+        std::string json, config, generation;
+        std::shared_ptr<const text::HfTokenCodec> codec;
+    };
+
+    static std::mutex mutex;
+    static Kept kept;
+    {
+        const std::lock_guard lock(mutex);
+        if (kept.codec && kept.json == json && kept.config == config &&
+            kept.generation == generation) {
+            return kept.codec;
+        }
+    }
+    auto built = std::make_shared<const text::HfTokenCodec>(json, config, generation);
+    Kept next{std::string(json), std::string(config), std::string(generation), built};
+    const std::lock_guard lock(mutex);
+    kept = std::move(next);
+    return built;
+}
+
+} // namespace
+
 void attach_hf_text_tokenizer(FrontendResources& resources) {
-    auto tokenizer = std::make_shared<const text::HfTokenCodec>(
-        resources.tokenizer_json, resources.tokenizer_config_json,
-        resources.generation_config_json);
+    auto tokenizer = shared_hf_codec(resources.tokenizer_json, resources.tokenizer_config_json,
+                                     resources.generation_config_json);
     resources.public_token_count = static_cast<std::uint32_t>(tokenizer->vocab_size());
     resources.tokenizer          = std::move(tokenizer);
 }
