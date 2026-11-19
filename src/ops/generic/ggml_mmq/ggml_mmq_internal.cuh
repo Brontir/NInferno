@@ -54,6 +54,7 @@ static_assert(work_tiles_arch_matches_table());
 #include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -179,8 +180,13 @@ Launch select_launch(int rows, int columns, int k) {
     // min(SMs, units) CTAs over the units (a block beyond the call's units has nothing to do and
     // lengthens the fixup's scan, llama.cpp #30553), and the fixup where they do not divide the
     // tiles.
-    const mmq_columns::ColumnLaunch l = mmq_columns::launch_of(
-        rows, k, columns, best.J, device.sm_count, best.stream_k, best.k_vram, best.I);
+    // LAB ONLY (lab/mmq-nosk, #1039 finding 3): NINFERNO_LAB_MMQ_NO_SK=1 launches a tile a CTA,
+    // no stream-k, wherever the tiles fill at least every SM once.
+    static const bool lab_no_sk = std::getenv("NINFERNO_LAB_MMQ_NO_SK") != nullptr;
+    const bool lab_tiles = lab_no_sk && best.row_tiles * best.column_tiles >= device.sm_count;
+    const mmq_columns::ColumnLaunch l =
+        mmq_columns::launch_of(rows, k, columns, best.J, device.sm_count,
+                               best.stream_k && !lab_tiles, best.k_vram, best.I);
     best.blocks = l.blocks;
     best.fixup  = l.fixup;
     return best;
