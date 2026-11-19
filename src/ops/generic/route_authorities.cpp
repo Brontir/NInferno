@@ -570,6 +570,17 @@ RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& we
     return under_policy(std::move(answer), asked, demoted ? &*demoted : nullptr);
 }
 
+bool answered_before_tuner(const Problem& problem, const Weight& weight, std::int32_t tokens,
+                           bool prefill, Route ranked) {
+    const Ask asked = nvfp4_promoted(ask_below_profiles(tokens, prefill), problem, weight);
+    // auto_answer's order: the half-L2 rule, then the table, then the tuner's entry.
+    if (nvfp4_half_l2(asked, problem, weight)) return true;
+    const auto table = route_table_entry(asked, problem, weight);
+    if (!table) return false;
+    return !policy_demotes(asked.policy, table->evidence.kind) ||
+           ranked.family == Family::Scalar || keeps_mmq_boundary(table->route, ranked, tokens);
+}
+
 RouteAnswer ranker_answer(const Ask& ask, const Problem& problem, const Weight& weight) {
     const Ask asked = nvfp4_promoted(ask, problem, weight);
     if (auto answer = nvfp4_half_l2(asked, problem, weight)) {
