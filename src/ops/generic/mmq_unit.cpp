@@ -65,8 +65,7 @@ std::optional<double> unit_seconds(std::string_view arch, QType q, int j, const 
         std::call_once(said, [&] {
             std::fprintf(stderr,
                          "ninferno: the kernel facts of sm_%.*s do not read (%s); the MMQ unit "
-                         "falls back to the fitted price
-                         ",
+                         "falls back to the fitted price\n",
                          static_cast<int>(arch.size()),
                          arch.data(), e.what());
         });
