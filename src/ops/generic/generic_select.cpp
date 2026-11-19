@@ -255,10 +255,10 @@ namespace {
 // tok/s against C4 86.3, DFlash2 (verify 6) C1 15.7 against plain 30.1.
 constexpr std::int32_t kVecRuleMaxTokens = 4;
 // On GA10x (sm_86..88) and consumer Blackwell (sm_120) the vector kernel stops at three tokens
-// (#998, DECISIONS 96), the two generations whose two lab cards both lose T = 4 to it end to end. Qwen3.5-9B
-// Q4_K_M, --spec off, C = 4 (every trunk linear a T = 4 call), the rule capped at T = 3 against
-// T = 4: RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 5070 Ti +11.1 %, RTX 5090 +5.3 %, with C = 2 and
-// 3 within 0.05 %; under MTP the cap never lost in rounds a second (RTX 3090, 5070 Ti, 5090).
+// (#998, DECISIONS 96), the two generations whose two lab cards both lose T = 4 to it end to end.
+// Qwen3.5-9B Q4_K_M, --spec off, C = 4 (every trunk linear a T = 4 call), the rule capped at T = 3
+// against T = 4: RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 5070 Ti +11.1 %, RTX 5090 +5.3 %, with C = 2
+// and 3 within 0.05 %; under MTP the cap never lost in rounds a second (RTX 3090, 5070 Ti, 5090).
 // Ada keeps four: the RTX 4070 Ti (-2.0 %) and 4090 (-1.4 %) lose with the cap, the 4060 Ti gains
 // 2.5 %. Turing keeps four: a T = 4 call the vector kernel declines falls to R8 at its verify
 // widths, 1.7-2.8x the register MMA there (#1038). The A100 (sm_80) is not measured. The edge in
