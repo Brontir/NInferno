@@ -1190,9 +1190,9 @@ class SassUnstable(unittest.TestCase):
 
 
 class RegisterAllocations(unittest.TestCase):
-    # #968: a moegemm row ptxas allocates either way from one source passes at any counted register
-    # count, with its loop counts moved; an uncounted count, another resource moved, another arch
-    # or a row not listed fails.
+    # #968: a row ptxas allocates either way from one source (a moegemm decoder, sm_80's r8 row)
+    # passes at any counted register count, with its loop counts moved; an uncounted count, another
+    # resource moved, another arch or a row not listed fails.
     def test_check_section_accepts_the_counted_allocations_only(self):
         import types
         args = types.SimpleNamespace(expected="sm_89.txt", nvcc="13.4.92", binary="serve",
@@ -1279,9 +1279,9 @@ class RegisterAllocations(unittest.TestCase):
             self.assertEqual(kernel_facts.section_rows_to_keep("moegemm", stale), {})
 
     def test_every_counted_row_is_a_committed_row(self):
-        # The table's keys spell the parsed keys (FAMILIES["moegemm"].parse_key): each names a row
-        # of its arch's committed snapshot, whose registers are among the counted ones.
-        # Every family the table lists, r8 too (FAMILIES[family].parse_key).
+        # The table's keys spell the parsed keys (FAMILIES[family].parse_key, every family the
+        # table lists): each names a row of its arch's committed snapshot, whose registers are
+        # among the counted ones.
         data = os.path.join(Path(__file__).resolve().parents[1], "src", "ops", "generic", "data", "kernel_facts")
         for family, archs in kernel_facts.REGISTER_ALLOCATIONS.items():
             for arch, rows in archs.items():
@@ -1314,6 +1314,19 @@ class RegisterAllocations(unittest.TestCase):
         self.assertEqual(check((162, 0, 0, 0, a), (162, 0, 0, 0, b)), 0)  # sass_unstable
         self.assertEqual(check((162, 0, 0, 0, a), (158, 0, 0, 0, b)), 1)
         self.assertEqual(check((162, 0, 0, 0, a), (160, 0, 0, 16, b)), 1)
+
+    def test_r8_extract_keeps_the_committed_allocation(self):
+        # extract --update over sm_80: a build at 160 keeps the committed 162 row whole; a build
+        # at 162 with other loop counts, another arch, or another resource writes the build's row.
+        key = ("W4a8U4ZpG<64>", 4, 2, 8, 1, 1)
+        a, b = sc.LoopCounts(), sc.LoopCounts()
+        a.total, b.total = 1641, 1637
+        old = {key: (162, 0, 0, 0, a)}
+        self.assertEqual(kernel_facts.keep_allocations("r8", "80", old, {key: (160, 0, 0, 0, b)}),
+                         old)
+        for arch, new in (("80", {key: (162, 0, 0, 0, b)}), ("86", {key: (160, 0, 0, 0, b)}),
+                          ("80", {key: (160, 0, 0, 16, b)})):
+            self.assertEqual(kernel_facts.keep_allocations("r8", arch, old, new), new, arch)
 
 
 if __name__ == "__main__":
