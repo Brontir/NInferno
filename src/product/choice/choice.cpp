@@ -1115,16 +1115,9 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         // The counted unit (ops/generic/mmq_unit.h, #613 PR-5), the selector's switch
         // (mmq_unit::counted): the release engine's mul_mat_q counts for the card's arch and its
         // isa_probe facts; the fixup's graph node from the launch facts.
-        // On the architectures it was scored on alone (mmq_unit::scored_arch).
-        std::string counted_arch =
-            mmq_unit::counted()
-                ? ops::detail::generic::kernel_facts::release_arch(card.major, card.minor)
-                : std::string();
-        if (!mmq_unit::scored_arch(counted_arch)) counted_arch.clear();
-        const std::optional<IsaRow> counted_isa =
-            counted_arch.empty() ? std::nullopt : isa_row(card.major, card.minor);
-        const double counted_node =
-            ninferno::launch_seconds(card.major, card.minor, LaunchKind::GraphNode).value_or(0.0);
+        // On the architectures it was scored on alone (mmq_unit::counted_board).
+        const std::optional<mmq_unit::CountedBoard> counted_board =
+            mmq_unit::counted_board(card.major, card.minor);
         for (double done = 0; done < tokens; done += kMmqSliceTokens) {
             const double t = std::min(kMmqSliceTokens, tokens - done);
             // The column tile the kernel's table takes (core/mmq_columns.h).
@@ -1132,14 +1125,15 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                                                      measured_format, widest, facts);
             const double columns = width;
             const std::optional<double> counted =
-                counted_isa
-                    ? mmq_unit::launch_seconds(counted_arch, q, *counted_isa, facts.rows, facts.k,
-                                               static_cast<int>(t), width, card.sms, card.clock_hz,
-                                               card.dram_bytes_per_s, counted_node)
+                counted_board
+                    ? mmq_unit::launch_seconds(counted_board->arch, q, counted_board->isa,
+                                               facts.rows, facts.k, static_cast<int>(t), width,
+                                               card.sms, card.clock_hz, card.dram_bytes_per_s,
+                                               counted_board->node_seconds)
                     : std::nullopt;
             if (counted) {
                 // The launch's units at the counted unit, its fixup and graph node inside.
-                launch_s += grids * l.per_token * (*counted + counted_node);
+                launch_s += grids * l.per_token * (*counted + counted_board->node_seconds);
             } else if (law != nullptr && mmq_columns::priced(facts)) {
                 // The launch the kernel runs (DECISIONS 78): its longest CTA's units at the
                 // format's 128-column step scaled by the law's unit share, the fixup's bytes and

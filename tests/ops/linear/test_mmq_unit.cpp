@@ -7,11 +7,15 @@
 
 #include "core/format_facts.h"
 #include "core/isa_facts.h"
+#include "core/launch_facts.h"
 #include "core/mmq_columns.h"
 #include "ops/generic/mmq_unit.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <iterator>
+#include <optional>
 #include <iostream>
 #include <string>
 
@@ -62,14 +66,29 @@ int main() {
                                                               std::to_string(c.seconds));
         }
     }
-    const auto law = mmq_unit::law("89", QType::GGML_Q4_K, row, f);
-    expect(law.has_value(), "the Q4_K law of arch 89");
-    if (law) {
-        for (int i = 1; i < 6; ++i) {
-            expect(law->unit_clocks[i] > law->unit_clocks[i - 1],
-                   "units grow with the column tile");
-        }
+    // The units at the six work widths grow with the column tile (Q4_K, arch 89).
+    for (std::size_t i = 1; i < std::size(mmq_columns::kTilesWork); ++i) {
+        const auto a =
+            mmq_unit::unit_seconds("89", QType::GGML_Q4_K, mmq_columns::kTilesWork[i - 1], row, f);
+        const auto b =
+            mmq_unit::unit_seconds("89", QType::GGML_Q4_K, mmq_columns::kTilesWork[i], row, f);
+        expect(a && b && *b > *a, "units grow with the column tile");
     }
+    // The board both clients price on (#973): the switch on, a scored arch with its isa row and
+    // graph node; off, or an arch outside the scored three (sm_75), none.
+    mmq_unit::counted_for_test(true);
+    {
+        const auto board = mmq_unit::counted_board(8, 9);
+        expect(board && board->arch == "89" && board->isa.dram_latency.w1 == isa->dram_latency.w1,
+               "the counted board of cc 8.9: arch 89 and its isa row");
+        expect(board &&
+                   board->node_seconds == launch_seconds(8, 9, LaunchKind::GraphNode).value_or(0.0),
+               "the counted board of cc 8.9: its graph node");
+        expect(!mmq_unit::counted_board(7, 5), "cc 7.5 is not scored: no counted board");
+    }
+    mmq_unit::counted_for_test(false);
+    expect(!mmq_unit::counted_board(8, 9), "the switch off: no counted board");
+    mmq_unit::counted_for_test(std::nullopt);
     // The launch law's grid as a launch: 64 row tiles x 2 column tiles on 128 SMs, a tile a CTA,
     // read 64 weight tiles on 128 CTAs; 32 row tiles x 4 column tiles, 32 of 128.
     const auto g = mmq_unit::unit_facts_of(64 * 128, 4096, 2 * 16, 16, 128, 2520e6, 1008e9);

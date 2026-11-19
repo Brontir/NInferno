@@ -1,5 +1,6 @@
 #include "ops/generic/mmq_unit.h"
 
+#include "core/launch_facts.h"
 #include "core/mmq_columns.h"
 #include "ops/generic/kernel_facts.h"
 #include "ops/generic/route_cost_constants.h"
@@ -10,6 +11,7 @@
 #include <cstdio>
 #include <exception>
 #include <mutex>
+#include <utility>
 
 namespace ninferno::mmq_unit {
 namespace {
@@ -83,15 +85,15 @@ std::optional<double> unit_seconds(std::string_view arch, QType q, int j, const 
     return load + chain;
 }
 
-std::optional<MmqLaunchLaw> law(std::string_view arch, QType q, const IsaRow& isa,
-                                const UnitFacts& f) {
-    MmqLaunchLaw out;
-    for (std::size_t i = 0; i < std::size(mmq_columns::kTilesWork); ++i) {
-        const auto u = unit_seconds(arch, q, mmq_columns::kTilesWork[i], isa, f);
-        if (!u) return std::nullopt;
-        out.unit_clocks[i] = *u * f.clock_hz;
-    }
-    return out;
+std::optional<CountedBoard> counted_board(int major, int minor) {
+    if (!counted()) return std::nullopt;
+    std::string arch = kernel_facts::release_arch(major, minor);
+    if (!scored_arch(arch)) return std::nullopt;
+    std::optional<IsaRow> isa = isa_row(major, minor);
+    if (!isa) return std::nullopt;
+    return CountedBoard{
+        std::move(arch), *isa,
+        ninferno::launch_seconds(major, minor, LaunchKind::GraphNode).value_or(0.0)};
 }
 
 UnitFacts unit_facts_of(int rows, int k, int columns, int j, int sms, double clock_hz,
