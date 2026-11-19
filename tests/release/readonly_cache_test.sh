@@ -41,7 +41,7 @@ fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 start() { # log; from the user's own directory, as an ordinary user starts it
   cd "$work/cache"
   env CUDA_VISIBLE_DEVICES= XDG_CACHE_HOME="$work/cache" HOME="$work/cache" \
-    "${as_user[@]}" "$DENSE" "$work/model/model.gguf" chat --prompt hi --decode 1 > "$1" 2>&1 < /dev/null || true
+    ${as_user[@]+"${as_user[@]}"} "$DENSE" "$work/model/model.gguf" chat --prompt hi --decode 1 > "$1" 2>&1 < /dev/null || true
 }
 start "$work/first.log"
 own=$(find "$work/cache/ninferno/converted" -name '*.ninferno' 2>/dev/null | head -1 || true)
