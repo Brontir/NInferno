@@ -649,8 +649,8 @@ bool eager(cudaStream_t stream) {
 // where this process times, `writable`) left untimed because a table answered it, which this route
 // policy demotes (#808, as tune_dense's decode widths). A band this process does not admit (a
 // weight's alignment) keeps the heuristic's route.
-bool read_prefill_bands(const Problem& problem, const Weight& weight, const Json& entry,
-                        Tuned& out, bool writable) {
+bool read_prefill_bands(const Problem& problem, const Weight& weight, const Json& entry, Tuned& out,
+                        bool writable) {
     Tuned tuned;
     if (!entry.contains("prefill") || !entry["prefill"].is_object() ||
         !entry.contains("prefill_base") || !entry["prefill_base"].is_object()) {
