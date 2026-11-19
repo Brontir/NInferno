@@ -73,6 +73,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <set>
 #include <sstream>
@@ -243,6 +244,17 @@ std::string save_cache_locked() {
 // The heuristic's route at T is one the tuner may replace: an A16 family that needs no workspace,
 // or R8 (another R8 schedule needs the workspace this one was sized for: the pre-quantized
 // activation at verify widths, none at T = 1).
+bool replaceable(Route r, std::int32_t k, std::int32_t tokens);
+
+// Whether the tuner times decode width t of the problem: a replaceable heuristic route, no table
+// answer the route policy keeps (#808: a demoted one is timed) and no Volta rule that routes the
+// width before any tuned route.
+bool timed_width(const Problem& problem, const Weight& weight, std::int32_t t) {
+    const Route base = heuristic_route(problem, weight, t, false);
+    return replaceable(base, weight.k, t) && !table_route_kept(problem, t, false, base) &&
+           !volta_fixed_route(problem, weight, t);
+}
+
 bool replaceable(Route r, std::int32_t k, std::int32_t tokens) {
     if (r.family == Family::R8Mma) return true;
     // The vector kernel's rule: R8, ggml's matrix kernel and the A16 schedules time against it.
@@ -412,7 +424,9 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
         entry["routes"][name] = nullptr;
         // A width Volta's own rule routes (volta_fixed_route) takes that route before any tuned
         // one: timing it would record a choice the dispatch never reads.
-        if (replaceable(base, k, t) && !table_route(problem, t, false) &&
+        // A table answer the route policy demotes falls to the ranker at dispatch: that width is
+        // timed (#808), as a width no table holds.
+        if (replaceable(base, k, t) && !table_route_kept(problem, t, false, base) &&
             !volta_fixed_route(problem, weight, t)) {
             const double base_us = bench.median_us(base, t);
             double best_us       = base_us;
@@ -520,7 +534,7 @@ void time_prefill_bands(const Problem& problem, const Call& model_call, cudaStre
         // What the band is timed against: a later heuristic that picks another route there
         // makes the band stale (tune_dense times the bands again).
         entry["prefill_base"][std::to_string(t)] = route_name(base);
-        if (base.family != Family::W4a8Mma && table_route(problem, t, true)) continue;
+        if (base.family != Family::W4a8Mma && table_route_kept(problem, t, true, base)) continue;
         if (nvfp4 && base.family != Family::W4a8Mma) continue;
         // Without tensor mma.sync (Volta) the tiled kernel takes the width before any band
         // (volta_tiled_route): a band timed there is never dispatched.
@@ -696,6 +710,10 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream) {
         Tuned tuned;
         bool complete     = true;
         const auto& entry = problems[key];
+        // The decode widths under the speed profile, as time_problem times them (timed_width's
+        // heuristic route must be the one the timing loop compared against).
+        std::optional<ScopedPrefillRoutes> speed_profile;
+        speed_profile.emplace(false);
         for (std::int32_t t = 1; t <= kDenseTuneMaxTokens && complete; ++t) {
             const auto name = std::to_string(t);
             if (!entry.contains("routes") || !entry["routes"].contains(name)) {
@@ -703,7 +721,20 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream) {
                 break;
             }
             const auto& v = entry["routes"][name];
-            if (v.is_null()) continue;
+            if (v.is_null()) {
+                // A width an older tune left untimed because a table answered it, which this
+                // route policy demotes (#808, codex): the entry is not complete, time it now. Only
+                // a width never timed ("us" absent: a timed width where the heuristic stays is null
+                // with its time), and never in a read-only process (the release's file is read as
+                // it is, the user's dispatch never retimes).
+                const bool timed = entry.contains("us") && entry["us"].contains(name);
+                if (!read_only && !timed && table_route(problem, t, false) &&
+                    timed_width(problem, *call.weight, t)) {
+                    complete = false;
+                    break;
+                }
+                continue;
+            }
             if (!v.is_string()) {
                 complete = false;
                 break;
@@ -715,6 +746,7 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream) {
                 tuned.routes[static_cast<std::size_t>(t)] = *r;
             }
         }
+        speed_profile.reset();
         const bool bands = complete && read_prefill_bands(problem, *call.weight, entry, tuned);
         if (bands) {
             g_tuned[id] = tuned;

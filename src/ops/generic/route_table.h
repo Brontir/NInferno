@@ -83,6 +83,16 @@ struct TableAnswer {
 // its shape's kernel.
 [[nodiscard]] bool table_claims(const Problem& problem, std::int32_t tokens, bool prefill);
 
+// Whether a loaded table answers this call and dispatch keeps the answer (#808): under
+// --route-policy evidence a Borrowed or Transferred answer is demoted to the ranker
+// (route_authorities auto_answer), so the dense tuner times that width as if no table held it,
+// except where dispatch keeps the demoted answer anyway: at the MMQ boundary against `ranked`,
+// the ranker's route for the call (keeps_mmq_boundary). Legacy keeps every answer. It reads the
+// table's answer as table_route does: the admission checks dispatch makes after it
+// (route_table_entry: an A8 call, the route and profile admits) are not repeated here.
+[[nodiscard]] bool table_route_kept(const Problem& problem, std::int32_t tokens, bool prefill,
+                                    Route ranked);
+
 // The board a table file was measured on as the default lookup reads it (gpu.pci_id's registry
 // row, else gpu.board; nullopt: none recorded), after the loader's validation of the file under
 // this thread's device class. Throws as load_route_table does.
