@@ -218,18 +218,39 @@ class Control:
 def relocation_calls(lines):
     """{function: {offset: symbol}} from `cuobjdump -elf` text: the relocations of each
     `.rel.text.<function>` section (offset, symbol, type), where a call's target is recorded in a
-    linked image whose SASS prints it as 0x0."""
-    out, current = {}, None
+    linked image whose SASS prints it as 0x0.
+
+    A function built in several units has a section in each image (#1014), and the sections are
+    merged per function (the union of their offsets). The callee is internal-linkage, so each unit
+    spells it with its own prefix; what must agree at a shared offset is what iter_functions reads
+    from it: the emulated MMA's chunk count, or no emulated MMA. Two sections that disagree raise
+    ValueError; where they agree, the first spelling is kept. The merge is not keyed by image: the
+    SASS is read in batches of `-fun` calls, each printing every image's header, so an image's
+    ordinal there does not line up with its ordinal here. An offset relocated in one section only
+    applies to every copy of the function; copies of different layouts show up as extract_counts'
+    "disassembled twice ... different loops" failure when that changes a copy's counts."""
+    def meaning(symbol):
+        m = EMULATED_MMA.search(symbol)
+        return m.group(1) if m else None
+
+    out, current, name = {}, None, None
     for line in lines:
         if line.startswith(".section"):
             m = re.match(r"\.section\s+\.rel\.text\.(\S+)", line)
-            current = out.setdefault(m.group(1), {}) if m else None
+            name = m.group(1) if m else None
+            current = out.setdefault(name, {}) if m else None
             continue
         if current is None:
             continue
         m = re.match(r"\s*0x([0-9a-f]+)\s+(\S+)\s+R_CUDA_", line)
         if m:
-            current[int(m.group(1), 16)] = m.group(2)
+            offset, symbol = int(m.group(1), 16), m.group(2)
+            if offset in current:
+                if meaning(current[offset]) != meaning(symbol):
+                    raise ValueError(f"{name}: offset 0x{offset:x} relocates to {current[offset]} "
+                                     f"and to {symbol} in two .rel.text sections")
+                continue
+            current[offset] = symbol
     return out
 
 

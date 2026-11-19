@@ -302,6 +302,21 @@ class LoopFinder(unittest.TestCase):
         with self.assertRaises(ValueError):
             sc.parse_functions(sass(plain).splitlines(),
                                calls=sc.relocation_calls(rel("_Z6kernelv", 2) + [""]))
+        # #1014: a function built in two units has a section in each image, and each unit spells
+        # the internal-linkage callee with its own prefix. The same callee width merges (the first
+        # spelling kept); another width, or an emulated MMA against another symbol, is refused.
+        unit_a = "_ZN40_INTERNAL_b2466db5_4_a_cu_56d27ffb_3200016mma_s8_dp4a_callILi8EEE4int4"
+        unit_b = "_ZN34_INTERNAL_a0f3c25b_4_b_cu_109353b216mma_s8_dp4a_callILi8EEE4int4"
+        twice = sc.relocation_calls(rel("_Z6kernelv", 8, unit_a) + [""] +
+                                    rel("_Z6kernelv", 8, unit_b))
+        self.assertEqual(twice, sc.relocation_calls(rel("_Z6kernelv", 8, unit_a) + [""]))
+        body = sc.parse_functions(sass(plain).splitlines(), calls=twice)["_Z6kernelv"]
+        self.assertEqual(sc.loop_counts(body, tiles=2).mma, hmma)
+        with self.assertRaises(ValueError):
+            sc.relocation_calls(rel("_Z6kernelv", 8) + [""] + rel("_Z6kernelv", 4) + [""])
+        with self.assertRaises(ValueError):
+            sc.relocation_calls(rel("_Z6kernelv", 8) + [""] +
+                                rel("_Z6kernelv", 8, "_Z9some_helperv"))
 
     def test_prologue_loop(self):
         # The R8 kernels' quantizer loop (#613 PR-10): a second loop, marked by F2I, counted into
