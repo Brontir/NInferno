@@ -266,6 +266,10 @@ std::int32_t vec_rule_max_tokens() {
 } // namespace
 
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
+    // LAB ONLY (lab/mmqv-ab, never merged): NINFERNO_LAB_NO_VEC_RULE=1 turns the vector-kernel
+    // rule off, for the end-to-end A/B of its T 2..4 calls without speculation.
+    static const bool lab_no_vec = std::getenv("NINFERNO_LAB_NO_VEC_RULE") != nullptr;
+    if (lab_no_vec) return false;
     return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);
 }
 
