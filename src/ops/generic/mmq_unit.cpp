@@ -7,6 +7,9 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <cstdio>
+#include <exception>
+#include <mutex>
 
 namespace ninferno::mmq_unit {
 namespace {
@@ -55,8 +58,19 @@ std::optional<double> unit_seconds(std::string_view arch, QType q, int j, const 
     std::optional<kernel_facts::KernelFacts> facts;
     try {
         facts = kernel_facts::mmq_facts(arch, {type, j, false, 30});
-    } catch (...) {
-        return std::nullopt; // a snapshot that does not read: the fitted price
+    } catch (const std::exception& e) {
+        // A snapshot that does not read: the fitted price, but never silently (#973: a broken
+        // merge of a snapshot passed unnoticed outside test_kernel_facts). Said once a process.
+        static std::once_flag said;
+        std::call_once(said, [&] {
+            std::fprintf(stderr,
+                         "ninferno: the kernel facts of sm_%.*s do not read (%s); the MMQ unit "
+                         "falls back to the fitted price
+                         ",
+                         static_cast<int>(arch.size()),
+                         arch.data(), e.what());
+        });
+        return std::nullopt;
     }
     if (!facts || !facts->loop || !facts->loop->schedule || !facts->loop->pipes)
         return std::nullopt;
