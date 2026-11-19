@@ -12,8 +12,10 @@
 #include "ops/generic/generic_select_detail.h"
 #include "ops/generic/generic_select_internal.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <span>
 
@@ -89,6 +91,24 @@ bool spread_measured() { return device_gates().spread; }
 bool pdl_device() { return device_gates().pdl; }
 
 int spread_smem(Route route, WeightCodec codec, Epilogue epilogue, const GemmArgs& args) {
+    // LAB ONLY (lab/1051-rmma-cap, never merged): NINFERNO_LAB_RMMA_CAP=C holds a Q8 register-MMA
+    // call of 9-16 tokens to at most C CTAs an SM by a dynamic shared-memory reservation (#1051:
+    // n2.w1x4 capped against n2 uncapped and n4.w1x8).
+    static const int lab_cap = [] {
+        const char* v = std::getenv("NINFERNO_LAB_RMMA_CAP");
+        return v != nullptr ? std::atoi(v) : 0;
+    }();
+    if (lab_cap > 0 && route.family == Family::RegisterMma && codec == WeightCodec::Q8 &&
+        args.tokens >= 9 && args.tokens <= 16) {
+        try {
+            const auto per = device_class().smem_per_sm;
+            // C CTAs fit (each with the 1 KiB the hardware reserves), C + 1 do not.
+            std::size_t pad = (per / lab_cap - 1024) / 1024 * 1024;
+            pad = std::min<std::size_t>(pad, kStaticSharedBytesPerBlock);
+            if ((lab_cap + 1) * (pad + 1024) > per) { return static_cast<int>(pad); }
+        } catch (const std::exception&) {}
+        return 0;
+    }
     if (route.family != Family::RegisterMma || route.schedule != rmma_index(1, 8, 1, 1, 1) ||
         epilogue != Epilogue::Store || args.tokens > 8 ||
         !(codec == WeightCodec::Nvfp4 || codec == WeightCodec::Fp8 ||
