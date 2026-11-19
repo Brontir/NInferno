@@ -326,9 +326,10 @@ void short_rest(const json& fixture) {
                 // costs more than the MMQ tile law at 8 tokens on the one fixture board with an
                 // A16 rest, the RTX 2080 Ti (3.19 -> 10.65 ms, #1015's run). A board or a constant
                 // that makes the A16 rest cheaper fails this check on its premise, not on a wrong
-                // price (#1021). The check also does not tie the move to the linear it prints:
-                // another linear of the same file moving at once passes (#1021 item 1, which needs
-                // each board's law kernel).
+                // price (#1021). The move is tied to the 16-bit linears (#1021 item 1): the rest
+                // priced with only their answers (every other linear's answer Unknown, which
+                // priced_off_route and a16_weight_share read as the law's own kernel) equals the
+                // rest priced with every answer, so no other linear of the file moved with them.
                 const bool q8         = names_q8_linear(m, q) || q == "Q8_0";
                 const std::string a16 = q8 ? std::string() : a16_at_rest(model, quant);
                 if (!a16.empty()) { std::cout << "    (16-bit at 8 tokens: " << a16 << ")\n"; }
@@ -336,6 +337,22 @@ void short_rest(const json& fixture) {
                       "an 8-token rest moves only where a Q8_0 linear changes kernel, or slower "
                       "where a linear takes the 16-bit route: " +
                           card_name + ' ' + model_name + ' ' + q);
+                if (!q8 && !a16.empty()) {
+                    ch::ModelFacts only_a16 = model;
+                    only_a16.prefill_routes =
+                        [all = model.prefill_routes](const ch::LinearShape& l, std::uint32_t tokens,
+                                                     ninferno::ActivationMode a) {
+                            return all(l, tokens, a) == ch::PrefillKernel::A16
+                                       ? ch::PrefillKernel::A16
+                                       : ch::PrefillKernel::Unknown;
+                        };
+                    const double tied = rest_of(only_a16);
+                    check(std::abs(tied - after) <= 1e-9 * std::abs(after),
+                          "an 8-token rest's move is the 16-bit linears' alone (" +
+                              std::to_string(tied * 1e3) + " ms with only their routes, " +
+                              std::to_string(after * 1e3) + " ms with all): " + card_name + ' ' +
+                              model_name + ' ' + q);
+                }
             }
         }
     }
