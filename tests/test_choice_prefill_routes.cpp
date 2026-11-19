@@ -322,6 +322,13 @@ void short_rest(const json& fixture) {
                 // (selected_kernel), and on the int8 tiles any 8-token answer but W4A8 moves them.
                 // Elsewhere a rest moves only where a linear runs on the 16-bit register MMA at 8
                 // tokens (Turing's K-quants), and then only slower: the BF16 share's price.
+                // "Slower" is a premise of today's prices, not a law: the flops-priced BF16 share
+                // costs more than the MMQ tile law at 8 tokens on the one fixture board with an
+                // A16 rest, the RTX 2080 Ti (3.19 -> 10.65 ms, #1015's run). A board or a constant
+                // that makes the A16 rest cheaper fails this check on its premise, not on a wrong
+                // price (#1021). The check also does not tie the move to the linear it prints:
+                // another linear of the same file moving at once passes (#1021 item 1, which needs
+                // each board's law kernel).
                 const bool q8         = names_q8_linear(m, q) || q == "Q8_0";
                 const std::string a16 = q8 ? std::string() : a16_at_rest(model, quant);
                 if (!a16.empty()) { std::cout << "    (16-bit at 8 tokens: " << a16 << ")\n"; }
