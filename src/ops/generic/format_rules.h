@@ -8,10 +8,12 @@
 // cards, which must be re-checked when a kernel it was timed on changes.
 //
 // The code reads these rows: `holds(rule, q)` is the format set of a rule (mmq_verify_format,
-// light_ggml_step, tall_tile_format, w4a8_ws_extra, r8_verify_supports, vec_rule_max_tokens and the
-// Q4_0 matrix-size gate read it), and the two thresholds below are the constants the selection
-// compares a call against. The rows up to #615 F6 restate what the comments at the rules' uses
-// say; vec_cap_ga10x_gb20x is new with its own end-to-end A/Bs (#998, DECISIONS 96).
+// light_ggml_step, tall_tile_format, w4a8_ws_extra, r8_verify_supports, r8_verify_takes, rules_r8,
+// vec_rule_max_tokens and the Q4_0 matrix-size gate read it), and the two thresholds below are the
+// constants the selection compares a call against. The rows up to #615 F6 restate what the
+// comments at the rules' uses say; vec_cap_ga10x_gb20x is new with its own end-to-end A/Bs (#998,
+// DECISIONS 96), and the three Turing rules with theirs (#1038, DECISIONS 97), which move the
+// selector goldens of the RTX 2080 Ti board.
 //
 // A rule may have several rows: one per group of formats whose evidence differs (other cards,
 // another run). Each row says how many cards stand behind it (principle 4 of
@@ -60,21 +62,32 @@ namespace ninferno::ops::detail::generic::format_rules {
 using route_rules::Basis;
 
 enum class Rule : std::uint8_t {
-    LightStep,            // light_ggml_step: the four-warp decode step past two CTAs a SM
-    TallTile,             // tall_tile_format: the 128x32 register-MMA tile from 97 tokens
-    MmqVerify,            // mmq_verify_format: ggml's matrix kernel at verify widths
-    W4a8WsTuned,          // w4a8_ws_extra: the producer-warp W4A8 tile on sm_89 / sm_120
-    R8Verify,             // r8_verify_supports: R8 at verify widths
-    R8VerifyQ40MinValues, // kR8VerifyQ40MinValues: Q4_0's verify R8 on a large matrix only
-    MmqVerifyMinTokens,   // kMmqVerifyMinTokens: the first width of the mmq verify band
-    VecCapGa10xGb20x,     // vec_rule_max_tokens: the formats whose vec band stops at three tokens
-                          // on GA10x and consumer Blackwell
+    LightStep,             // light_ggml_step: the four-warp decode step past two CTAs a SM
+    TallTile,              // tall_tile_format: the 128x32 register-MMA tile from 97 tokens
+    MmqVerify,             // mmq_verify_format: ggml's matrix kernel at verify widths
+    W4a8WsTuned,           // w4a8_ws_extra: the producer-warp W4A8 tile on sm_89 / sm_120
+    R8Verify,              // r8_verify_supports: R8 at verify widths
+    R8VerifyQ40MinValues,  // kR8VerifyQ40MinValues: Q4_0's verify R8 on a large matrix only
+    MmqVerifyMinTokens,    // kMmqVerifyMinTokens: the first width of the mmq verify band
+    VecCapGa10xGb20x,      // vec_rule_max_tokens: the formats whose vec band stops at three tokens
+                           // on GA10x and consumer Blackwell
+    R8VerifyEmulatedOff,   // r8_verify_takes: formats R8 leaves at verify widths on Turing
+    R8VerifyTwoRowsTuring, // rules_r8: formats whose Turing verify R8 takes two rows a warp
+    VecCapTuring,          // vec_rule_max_tokens: the formats whose vec band stops at two tokens
+                           // on Turing
 };
 
-inline constexpr std::array kAllRules = {Rule::LightStep,          Rule::TallTile,
-                                         Rule::MmqVerify,          Rule::W4a8WsTuned,
-                                         Rule::R8Verify,           Rule::R8VerifyQ40MinValues,
-                                         Rule::MmqVerifyMinTokens, Rule::VecCapGa10xGb20x};
+inline constexpr std::array kAllRules = {Rule::LightStep,
+                                         Rule::TallTile,
+                                         Rule::MmqVerify,
+                                         Rule::W4a8WsTuned,
+                                         Rule::R8Verify,
+                                         Rule::R8VerifyQ40MinValues,
+                                         Rule::MmqVerifyMinTokens,
+                                         Rule::VecCapGa10xGb20x,
+                                         Rule::R8VerifyEmulatedOff,
+                                         Rule::R8VerifyTwoRowsTuring,
+                                         Rule::VecCapTuring};
 
 constexpr std::string_view rule_name(Rule rule) {
     switch (rule) {
@@ -88,12 +101,18 @@ constexpr std::string_view rule_name(Rule rule) {
         return "w4a8_ws_tuned";
     case Rule::R8Verify:
         return "r8_verify";
+    case Rule::R8VerifyEmulatedOff:
+        return "r8_verify_emulated_off";
+    case Rule::R8VerifyTwoRowsTuring:
+        return "r8_verify_two_rows_turing";
     case Rule::R8VerifyQ40MinValues:
         return "kR8VerifyQ40MinValues";
     case Rule::MmqVerifyMinTokens:
         return "kMmqVerifyMinTokens";
     case Rule::VecCapGa10xGb20x:
         return "vec_cap_ga10x_gb20x";
+    case Rule::VecCapTuring:
+        return "vec_cap_turing";
     }
     return "";
 }
@@ -346,6 +365,50 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "too; the record names no timing that places the edge at 9 rather than at 5..8 on a "
      "native-MMA "
      "board"},
+
+    // --- r8_verify_emulated_off: K-quants keep the register MMA at verify widths on Turing ---
+    {Rule::R8VerifyEmulatedOff, Basis::Measured,
+     FormatSet{Q::GGML_Q3_K, Q::GGML_Q4_K, Q::GGML_Q6_K}, 0, "tu102:68sm", "RTX 2080 Ti",
+     Evidence::SingleCard, "#1038: selcheck.sh 75 1038off / 1038fmt (route_tune, vec rule off)",
+     "2026-11-19",
+     "T = 3 / 4, the best R8 schedule against rmma n1: Q4_K 4096x4096 30.7 / 33.3 against 23.2 / "
+     "23.5 us, Q6_K 12288x4096 126.1 / 150.5 against 87.0 / 88.1, Q3_K 4096x4096 41.9 / 43.8 "
+     "against 23.9 / 24.8; R8's time grows with T, the register MMA's does not"},
+    {Rule::R8VerifyEmulatedOff, Basis::Unknown, FormatSet{Q::GGML_Q5_K}, 0, kNone, kNone,
+     Evidence::Carried, "#1038", "2026-11-19",
+     "Q5_K follows Q4_K, whose decoder it shares: not timed on its own. The rows say T = 3 / 4; "
+     "r8_verify_takes keys on the format, so R8 also leaves T = 2, where vec takes the call "
+     "(VecCapTuring) unless vec declines it"},
+
+    // --- r8_verify_two_rows_turing: two rows a warp at Turing's verify widths T = 3..4 ---
+    {Rule::R8VerifyTwoRowsTuring, Basis::Measured,
+     FormatSet{Q::GGML_IQ3_S, Q::GGML_IQ3_XXS, Q::GGML_IQ4_XS, Q::GGML_Q4_0}, 0, "tu102:68sm",
+     "RTX 2080 Ti", Evidence::SingleCard, "#1038: selcheck.sh 75 1038fmt (route_tune)",
+     "2026-11-19",
+     "T = 3 / 4, r8.w4r1 against r8.w4r2: IQ3_S 12288x4096 83.1 / 93.9 against 67.5 / 72.9 us, "
+     "IQ3_XXS 4096x4096 30.8 / 34.5 against 25.5 / 27.4, IQ4_XS 4096x4096 24.6 / 27.0 against "
+     "24.5 / 25.3, Q4_0 12288x4096 60.2 / 68.6 against 57.9 / 59.9; at T = 2 within 1 %, where "
+     "w4r1 is ahead for IQ4_XS and Q4_0. Not timed: the other R8 formats (NVFP4, MXFP4, U4 "
+     "zero-point, the native Q3-Q6 groups), which keep w4r1. The shipped picks do not change "
+     "today: vec takes T = 2..4 for these formats (kVecRuleMaxTokens) and r8_verify_widest is 4, "
+     "so the rule decides where vec declines a call, under NINFERNO_LAB_NO_VEC_RULE and in the "
+     "dense tuner's R8 candidate"},
+
+    // --- vec_cap_turing: the vec band stops at two tokens on Turing (#1038) ---
+    {Rule::VecCapTuring, Basis::Measured, FormatSet{Q::GGML_Q4_K, Q::GGML_Q6_K}, 0, "tu102:68sm",
+     "RTX 2080 Ti", Evidence::SingleCard, "#1038: abvecn.sh on the RTX 2080 Ti (lab/vec-minn)",
+     "2026-11-19",
+     "Qwen3.5-9B, --spec off, vec at T = 2 and the register MMA at T = 3..4 against vec at "
+     "T = 2..4, the real branch against master (abref, 8 alternating starts): Q4_K_M C = 2 +0.08 "
+     "%, "
+     "C = 3 +2.57 %, C = 4 +3.44 %; Q6_K +0.05 %, +28.5 %, +33.4 %. The vec-against-rmma edge "
+     "split cards of one generation on GA10x (cap at T = 2: RTX 3090 C3 -2.0 %, RTX 3060 +1.5 %), "
+     "so on another Turing board this row is the weak one"},
+    {Rule::VecCapTuring, Basis::Unknown, FormatSet{Q::GGML_Q3_K, Q::GGML_Q5_K}, 0, kNone, kNone,
+     Evidence::Carried, "#1038", "2026-11-19",
+     "Q3_K and Q5_K follow Q4_K / Q6_K, whose register-MMA verify they share (R8VerifyEmulatedOff: "
+     "Q3_K timed at kernel level, Q5_K carried): not timed end to end. Not in the rule: IQ4_XS "
+     "(capped at T = 2: -0.05 / +0.93 / -0.74 %) and every format R8 verifies"},
 });
 } // namespace rows
 
