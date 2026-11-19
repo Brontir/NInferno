@@ -182,6 +182,9 @@ std::unique_ptr<DescribedModel> describe_model(const artifact::Directory& direct
         out->bound_.push_back({reference.name, std::move(pending.source_objects), std::move(view),
                                std::move(pending.uses)});
     }
+    // As plan_load: a binding of a component this model loads that it never binds is refused, so
+    // --plan reports no fit for an artifact the start refuses (#892 item 6). The plan is not kept.
+    (void)std::move(binder).finish(artifact::UnusedBindings::RefuseInLoadedComponents);
     return out;
 }
 
