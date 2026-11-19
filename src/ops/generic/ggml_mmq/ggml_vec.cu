@@ -764,13 +764,15 @@ __launch_bounds__(kVecWarps * 32, Bounded ? kVecBoundedBlocks : 0) __global__
         } else {
             for (int it = 0; lane + 32 * it < slices; ++it) slice(it);
         }
-        if constexpr (kRows * T != 8) {
+        if constexpr (gated || kRows * T != 8) {
             // T = 2 / 3 (#1044): five shuffles a value and 2T predicated stores, as before. The
             // transposed reduction below gave Q3_K at T = 2 104 registers, not 96 (sm_86: 4 CTAs
             // a SM, not 5; RTX 3060 Q3_K_M C2 -2.2 %), and IQ4_XS at T = 3 lost (RTX 3090 C3
             // -3.6 %), and q4k 4096x12288 at T = 3 lost 6-13 % with no register or spill change
             // (unexplained). T = 4 only (2T = 8): T = 8, which Volta and the slow-tensor parts run
-            // as two parts of eight, was not timed with it either.
+            // as two parts of eight, was not timed with it either. The gated pair keeps it too: its
+            // IQ4_XS T = 4 instance took a 16 B local frame on sm_86 / 89 and lost end to end (RTX
+            // 3090 IQ4_XS C4 -1.24 % with the pair transposed).
 #pragma unroll
             for (int r = 0; r < kRows; ++r) {
 #pragma unroll
