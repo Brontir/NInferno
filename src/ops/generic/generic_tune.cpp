@@ -492,6 +492,21 @@ void time_prefill_bands_guarded(const Problem& problem, const Call& model_call, 
     }
 }
 
+// Whether the tuner times prefill band t against the heuristic's route `base`: no route table
+// answer the route policy keeps (a table that measured an A16 width keeps it; select_route never
+// takes one for W4A8; #808: a demoted answer is timed), and a candidate beside the base.
+bool timed_band(const Problem& problem, const Weight& weight, std::int32_t t, Route base) {
+    if (base.family != Family::W4a8Mma && table_route_kept(problem, t, true, base)) return false;
+    // NVFP4 prefill takes its own invariant routes (A16) or W4A4 before any band, but for W4A8: the
+    // A8 prefill of a weight W4A4 does not take (every NVFP4 weight without the native NVFP4
+    // kernels; with them, a policy that allows A8 but not A4). Only those bands are timed.
+    if (weight.qtype == QType::NVFP4 && base.family != Family::W4a8Mma) return false;
+    // Without tensor mma.sync (Volta) the tiled kernel takes the width before any band
+    // (volta_tiled_route): a band timed there is never dispatched.
+    if (volta_tiled_route(weight, problem.policy, t)) return false;
+    return prefill_candidates(base, weight, problem.policy).size() >= 2;
+}
+
 // The prefill bands (kPrefillBandTokens), on buffers of their own: the widest band's activation
 // and output, and the W4A8 workspace at that width. Without the memory for them the bands keep the
 // heuristic's routes and the decode widths their timing.
@@ -507,10 +522,6 @@ void time_prefill_bands(const Problem& problem, const Call& model_call, cudaStre
     tuned.prefill      = {};
     tuned.prefill_base = {};
     for (const std::int32_t t : kPrefillBandTokens) entry["prefill"][std::to_string(t)] = nullptr;
-    // NVFP4 prefill takes its own invariant routes (A16) or W4A4 before any band, but for W4A8: the
-    // A8 prefill of a weight W4A4 does not take (every NVFP4 weight without the native NVFP4
-    // kernels; with them, a policy that allows A8 but not A4). Only those bands are timed.
-    const bool nvfp4 = weight.qtype == QType::NVFP4;
     // The widest band whose buffers stay within 64 MiB each and whose call within 250 GFLOP (an
     // output head of 152K rows: T <= 128); wider bands keep the heuristic's route.
     const auto fits = [&](std::int32_t t) {
@@ -523,8 +534,7 @@ void time_prefill_bands(const Problem& problem, const Call& model_call, cudaStre
         if (fits(t)) t_max = t;
     }
     if (t_max == 0) return;
-    // The bands to time: candidates beyond the heuristic's route, and no route table entry (a
-    // table that measured an A16 width keeps it; select_route never takes one for W4A8).
+    // The bands to time (timed_band).
     std::array<std::vector<Route>, kPrefillBands> band_routes{};
     bool any = false, w4a8 = false;
     for (std::size_t b = 0; b < kPrefillBands && kPrefillBandTokens[b] <= t_max; ++b) {
@@ -534,14 +544,9 @@ void time_prefill_bands(const Problem& problem, const Call& model_call, cudaStre
         // What the band is timed against: a later heuristic that picks another route there
         // makes the band stale (tune_dense times the bands again).
         entry["prefill_base"][std::to_string(t)] = route_name(base);
-        if (base.family != Family::W4a8Mma && table_route_kept(problem, t, true, base)) continue;
-        if (nvfp4 && base.family != Family::W4a8Mma) continue;
-        // Without tensor mma.sync (Volta) the tiled kernel takes the width before any band
-        // (volta_tiled_route): a band timed there is never dispatched.
-        if (volta_tiled_route(weight, problem.policy, t)) continue;
+        if (!timed_band(problem, weight, t, base)) continue;
         band_routes[b] = prefill_candidates(base, weight, problem.policy);
-        if (band_routes[b].size() < 2) continue;
-        any  = true;
+        any            = true;
         w4a8 = w4a8 || base.family == Family::W4a8Mma;
     }
     if (!any) return;
@@ -640,10 +645,12 @@ bool eager(cudaStream_t stream) {
 }
 
 // A cached entry's prefill bands into `tuned`; false when they are to be timed again: skipped
-// (no memory, a failure), missing, or timed against a route the heuristic no longer picks. A band
-// this process does not admit (a weight's alignment) keeps the heuristic's route.
+// (no memory, a failure), missing, timed against a route the heuristic no longer picks, or (only
+// where this process times, `writable`) left untimed because a table answered it, which this route
+// policy demotes (#808, as tune_dense's decode widths). A band this process does not admit (a
+// weight's alignment) keeps the heuristic's route.
 bool read_prefill_bands(const Problem& problem, const Weight& weight, const Json& entry,
-                        Tuned& out) {
+                        Tuned& out, bool writable) {
     Tuned tuned;
     if (!entry.contains("prefill") || !entry["prefill"].is_object() ||
         !entry.contains("prefill_base") || !entry["prefill_base"].is_object()) {
@@ -670,7 +677,18 @@ bool read_prefill_bands(const Problem& problem, const Weight& weight, const Json
         const Route base = heuristic_route(problem, weight, t, true);
         if (bases[name].get<std::string>() != route_name(base)) return false;
         tuned.prefill_base[b] = base;
-        if (v.is_null()) continue;
+        if (v.is_null()) {
+            // Only a band never timed ("prefill_us" absent: a timed band where the heuristic
+            // stays is null with its times), and never in a read-only process (the release's
+            // file is read as it is).
+            const Json& us   = entry.contains("prefill_us") ? entry["prefill_us"] : Json();
+            const bool timed = us.is_object() && us.contains(name);
+            if (writable && !timed && table_route(problem, t, true) &&
+                timed_band(problem, weight, t, base)) {
+                return false;
+            }
+            continue;
+        }
         const auto r = parse_route(v.get<std::string>());
         if (!r) return false;
         const auto candidates = prefill_candidates(base, weight, problem.policy);
@@ -747,7 +765,8 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream) {
             }
         }
         speed_profile.reset();
-        const bool bands = complete && read_prefill_bands(problem, *call.weight, entry, tuned);
+        const bool bands =
+            complete && read_prefill_bands(problem, *call.weight, entry, tuned, !read_only);
         if (bands) {
             g_tuned[id] = tuned;
             g_attempted.insert(id);
@@ -861,7 +880,7 @@ static std::optional<Tuned> release_entry(const Problem& problem, const Weight& 
         if (!r || !route_admits(*r, weight, problem.policy)) return std::nullopt;
         tuned.routes[static_cast<std::size_t>(t)] = *r;
     }
-    (void)read_prefill_bands(problem, weight, entry, tuned);
+    (void)read_prefill_bands(problem, weight, entry, tuned, false);
     return tuned;
 }
 
