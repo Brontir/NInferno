@@ -699,7 +699,7 @@ int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scrat
     // tile is admitted, and the tuner times no W4A8 family at decode widths. (Q8 is no case for
     // it: R8 takes Q8's verify widths under an A8 policy, and the table stands aside for them.)
     const Case no{"q4k predicted not offered", QType::GGML_Q4_K, ops::LinearPolicy::AllowA8, 2560,
-                  3072};
+                  3584};
     const Device doff = upload(off, 47U);
     const Device dno  = upload(no, 53U);
     const generic::Problem poff{off.qtype, off.policy, off.n, off.k, generic::Epilogue::Store};
@@ -744,25 +744,45 @@ int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scrat
         ops::clear_route_table();
     };
     const auto status = ops::route_table_status();
-    if (status.predicted_entries < 2 ||
-        !generic::predicted_before_tuner(poff, doff.weight, 9, false) ||
-        !generic::predicted_before_tuner(pno, dno.weight, 9, false)) {
-        const auto said = [](const std::optional<generic::Route>& r) {
-            return r ? generic::route_name(*r) : std::string("none");
-        };
-        const auto answer = [](const generic::Problem& p) {
-            const auto a = generic::table_route_answer(p, 9, false);
-            return a ? generic::route_name(a->route) + (a->predicted ? " predicted" : " table")
-                     : std::string("none");
-        };
-        std::cout << "predicted band: SKIP, the pick file is not read on this board ("
-                  << status.predicted_skipped << status.message << "; offered "
-                  << said(generic::predicted_before_tuner(poff, doff.weight, 9, false))
-                  << " / table " << answer(poff) << ", not offered "
-                  << said(generic::predicted_before_tuner(pno, dno.weight, 9, false)) << " / table "
-                  << answer(pno) << ")\n";
+    const auto said   = [](const std::optional<generic::Route>& r) {
+        return r ? generic::route_name(*r) : std::string("none");
+    };
+    const auto answer = [](const generic::Problem& p) {
+        const auto a = generic::table_route_answer(p, 9, false);
+        return a ? generic::route_name(a->route) + (a->predicted ? " predicted" : " table")
+                 : std::string("none");
+    };
+    // The file is this class's own and the loader reads it beside the far table: fewer than two
+    // predicted entries is a loader failure, not a board to skip.
+    if (status.predicted_entries < 2) {
+        fail("the pick file is not read (" + status.predicted_skipped + status.message + ")");
         restore();
-        return 0;
+        return failures;
+    }
+    // Where the BF16 MMA is emulated (Turing, Volta) the MMQ verify rule takes Q4_K from T 9 under
+    // AllowA8 (an int8 call the table stands aside for), so the not-offered case has no prediction
+    // there; Volta's fixed routes (volta_fixed_route) take the q8 widths before any tuned route.
+    const bool native  = device_class().features.mma_bf16_native;
+    const bool run_off = device_class().compute_capability() != 70;
+    const bool run_no  = native;
+    const auto p_off   = generic::predicted_before_tuner(poff, doff.weight, 9, false);
+    const auto p_no    = generic::predicted_before_tuner(pno, dno.weight, 9, false);
+    if ((run_off && !p_off) || (run_no && !p_no)) {
+        fail("a band the file holds is not predicted (offered " + said(p_off) + " / table " +
+             answer(poff) + ", not offered " + said(p_no) + " / table " + answer(pno) + ")");
+        restore();
+        return failures;
+    }
+    if (!run_off)
+        std::cout << "predicted band: offered case SKIP on sm_70 (Volta's fixed routes)" << "\n";
+    if (!run_no) {
+        std::cout << "predicted band: not-offered case SKIP, the BF16 MMA is emulated (the MMQ "
+                     "verify rule takes Q4_K under AllowA8 from T 9)"
+                  << "\n";
+    }
+    if (!run_off && !run_no) {
+        restore();
+        return failures;
     }
 
     const std::int32_t wide = 128;
@@ -775,26 +795,29 @@ int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scrat
         generic::route_workspace_bytes({generic::Family::W4a8Mma, 0}, no.k, wide), 256));
     generic::clear_dense_tune();
     generic::enable_dense_tune(true);
-    (void)call(doff, xoff, wide, std::nullopt, off.policy, workspace, stream);
-    (void)call(dno, xno, wide, std::nullopt, no.policy, workspace, stream);
+    if (run_off) (void)call(doff, xoff, wide, std::nullopt, off.policy, workspace, stream);
+    if (run_no) (void)call(dno, xno, wide, std::nullopt, no.policy, workspace, stream);
     for (const auto& line : generic::dense_tune_report()) std::cout << line << "\n";
 
     constexpr double kMargin = 0.97; // generic_tune.cpp's
     const Json file          = read_cache();
-    const Json* eoff         = cached_entry(file, off.n, off.k);
-    const Json* eno          = cached_entry(file, no.n, no.k);
-    if (eoff == nullptr || eno == nullptr) {
-        fail("no tuner entry for the two problems");
+    const Json* eoff         = run_off ? cached_entry(file, off.n, off.k) : nullptr;
+    const Json* eno          = run_no ? cached_entry(file, no.n, no.k) : nullptr;
+    if ((run_off && eoff == nullptr) || (run_no && eno == nullptr)) {
+        fail("no tuner entry for a problem the band covers");
         restore();
         return failures;
     }
-    int offered = 0;
+    int offered = 0, offered_skipped = 0, not_offered = 0;
     for (std::int32_t t = 9; t <= 16; ++t) {
         const std::string w = std::to_string(t);
-        for (const auto& [e, predicted_name, is_offered] :
-             {std::tuple{eoff, generic::route_name(heuristic9), true},
-              std::tuple{eno, generic::route_name(generic::Route{generic::Family::W4a8Mma, 0}),
-                         false}}) {
+        std::vector<std::tuple<const Json*, std::string, bool>> cases;
+        if (run_off) cases.emplace_back(eoff, generic::route_name(heuristic9), true);
+        if (run_no) {
+            cases.emplace_back(
+                eno, generic::route_name(generic::Route{generic::Family::W4a8Mma, 0}), false);
+        }
+        for (const auto& [e, predicted_name, is_offered] : cases) {
             const std::string where =
                 (is_offered ? "offered" : "not offered") + std::string(" T") + w;
             if (!e->contains("routes") || !(*e)["routes"].contains(w) ||
@@ -805,35 +828,60 @@ int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scrat
             const std::string kept = (*e)["routes"][w].get<std::string>();
             const Json& us         = (*e)["us"][w];
             if (!is_offered) {
-                // base, best: the heuristic's route stands in for the prediction.
+                // base, best: the heuristic's route stands in for the prediction, kept unless a
+                // candidate beats it by the margin, and replaced where one does.
                 const std::string base =
                     generic::route_name(generic::heuristic_route(pno, dno.weight, t, false));
-                if (us.size() != 2) fail(where + ": " + us.dump() + " is not base and best");
+                ++not_offered;
+                if (us.size() != 2) {
+                    fail(where + ": " + us.dump() + " is not base and best");
+                    continue;
+                }
                 if (kept == predicted_name) fail(where + ": the route not offered was written");
-                if (us.size() == 2 && !(us[1].get<double>() <= kMargin * us[0].get<double>()) &&
-                    kept != base) {
+                const bool beaten = us[1].get<double>() <= kMargin * us[0].get<double>();
+                if (!beaten && kept != base) {
                     fail(where + ": " + kept + " kept though no candidate beats " + base +
                          " by the margin " + us.dump());
+                }
+                if (beaten && kept == base) {
+                    fail(where + ": " + base + " kept though a candidate beats it by the margin " +
+                         us.dump());
                 }
                 continue;
             }
             // Offered where the prediction is the heuristic's route or a candidate: base, best and
-            // the predicted route's own sample.
-            if (us.size() != 3) continue;
+            // the predicted route's own sample; a width whose heuristic route differs from T 9's
+            // and whose candidates miss the prediction has no third time.
+            if (us.size() != 3) {
+                ++offered_skipped;
+                continue;
+            }
             ++offered;
-            if (!(us[1].get<double>() <= kMargin * us[2].get<double>()) && kept != predicted_name) {
+            const bool beaten = us[1].get<double>() <= kMargin * us[2].get<double>();
+            if (!beaten && kept != predicted_name) {
                 fail(where + ": " + kept + " kept though no candidate beats the predicted " +
                      predicted_name + " by the margin " + us.dump());
             }
-            if (us[2].get<double>() < us[1].get<double>()) {
-                fail(where + ": the predicted route's sample " + us.dump() + " is below the best");
+            if (beaten && kept == predicted_name) {
+                fail(where + ": the predicted " + predicted_name +
+                     " kept though a candidate beats it by the margin " + us.dump());
+            }
+            // The prediction is the heuristic's route here: its time is the loop's own base
+            // sample, taken once.
+            const std::string base =
+                generic::route_name(generic::heuristic_route(poff, doff.weight, t, false));
+            if (base == predicted_name && us[2].get<double>() != us[0].get<double>()) {
+                fail(where + ": the predicted route was timed again (" + us.dump() + ")");
             }
         }
     }
-    if (offered == 0) fail("no width of the offered band timed the predicted route as itself");
+    if (run_off && offered == 0)
+        fail("no width of the offered band timed the predicted route as itself");
     restore();
     if (failures == 0) {
-        std::cout << "predicted band: " << offered << " offered widths and 8 not offered checked\n";
+        std::cout << "predicted band: " << offered << " offered widths (" << offered_skipped
+                  << " without the predicted route's time) and " << not_offered
+                  << " not offered checked" << "\n";
     }
     return failures;
 }
