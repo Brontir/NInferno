@@ -15,7 +15,9 @@
 #include "ops/generic/kernel_facts.h"
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <optional>
 #include <stdexcept>
@@ -359,7 +361,7 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
                     (args.tokens + Schedule::kTokensPerCta - 1) / Schedule::kTokensPerCta);
     if (grid.y > kMaxGridYZ)
         throw std::invalid_argument("generic linear: token extent exceeds the grid");
-    const auto smem = static_cast<std::size_t>(args.spread_smem);
+    auto smem = static_cast<std::size_t>(args.spread_smem);
     if (KernelResources* described = kernel_describe_target()) {
         // The kernel's committed facts (the cost model describes up to 20 schedules a call: one
         // snapshot read per instance and device). Without them nothing is described: the caller
@@ -373,6 +375,23 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
                         Schedule::kThreads, smem, Latency);
         described->sums = static_cast<int>(Sums);
         return;
+    }
+    // LAB (#1051 step 1, never merged): NINFERNO_LAB_RMMA_CTA_CAP=c pads every register-MMA launch's
+    // dynamic shared memory so that at most c CTAs fit an SM (shared memory per SM / c, less the
+    // kernel's static bytes and the per-CTA reservation).
+    if (const char* cap_text = std::getenv("NINFERNO_LAB_RMMA_CTA_CAP")) {
+        const int cap = std::atoi(cap_text);
+        if (cap > 0) {
+            auto kernel = rmma_kernel<Decoder, Schedule, E, Latency, Sums>;
+            cudaFuncAttributes fa{};
+            CUDA_CHECK(cudaFuncGetAttributes(&fa, kernel));
+            const auto& d             = device_class();
+            const std::size_t per_cta = d.smem_per_sm / static_cast<std::size_t>(cap);
+            const std::size_t fixed   = fa.sharedSizeBytes + reserved_shared_bytes_per_cta(d.major);
+            if (per_cta > fixed) smem = std::max(smem, per_cta - fixed);
+            CUDA_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                            static_cast<int>(smem)));
+        }
     }
     if (Schedule::kCluster == 1 &&
         ((args.join_previous == 0 && args.pdl_prefetch == 0) || !pdl::supported())) {
