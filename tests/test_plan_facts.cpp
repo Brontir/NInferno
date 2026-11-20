@@ -1392,11 +1392,53 @@ int gguf_linear_formats() {
     return failures;
 }
 
+// A gpt-oss artifact's bank formats (#1059): its converter names the banks
+// text/layers/<i>/mlp/experts/<x>/gate_up and .../down, beside the stacked biases
+// (mlp/experts/gate_up_bias); the banks' format is read, the biases' is not.
+int artifact_bank_formats() {
+    namespace art = ninferno::artifact;
+    int failures  = 0;
+    art::Directory dir;
+    dir.components["text"].config = gpt_oss_text_config();
+    const auto bind               = [&](const std::string& name, const std::string& format,
+                          std::vector<std::uint64_t> shape, std::uint64_t elements) {
+        art::TensorObject t;
+        t.id     = name;
+        t.shape  = std::move(shape);
+        t.format = format;
+        t.layout = std::string(art::layout_name(ninferno::default_weight_layout(
+            format == "mxfp4" ? ninferno::QType::MXFP4 : ninferno::QType::BF16)));
+        t.bytes  = elements;
+        const art::ObjectHandle handle{dir.objects.size()};
+        dir.objects.emplace_back(t);
+        dir.object_index[name] = handle;
+        art::Binding b;
+        b.whole_object     = true;
+        b.elements         = elements;
+        b.parts            = {art::Part{handle, 0, elements}};
+        dir.bindings[name] = b;
+    };
+    for (int x = 0; x < 2; ++x) {
+        const std::string ep = "text/layers/0/mlp/experts/" + std::to_string(x) + "/";
+        bind(ep + "gate_up", "mxfp4", {5760, 2880}, 5760ULL * 2880);
+        bind(ep + "down", "mxfp4", {2880, 2880}, 2880ULL * 2880);
+    }
+    bind("text/layers/0/mlp/experts/gate_up_bias", "bf16", {2 * 5760}, 2 * 5760);
+    bind("text/layers/0/mlp/experts/down_bias", "bf16", {2 * 2880}, 2 * 2880);
+    const auto facts = pr::plan_facts_of_directory(dir, "a test directory").model;
+    const std::vector<std::string> mxfp4{"mxfp4"};
+    failures += check(facts.expert_up_formats == mxfp4,
+                      "gpt-oss banks: gate_up's format read (mlp/experts/<x>), not the bias's");
+    failures += check(facts.expert_down_formats == mxfp4,
+                      "gpt-oss banks: down's format read (mlp/experts/<x>), not the bias's");
+    return failures;
+}
+
 int main() {
     const int failures = gguf_qwen35() + config_qwen35() + qwen35_moe() + gemma4() + gpt_oss() +
                          nemotron_h() + llama() + model_types() + boards() + artifact_errors() +
                          artifact_expert_layers() + artifact_prefill_policy() +
-                         gguf_linear_formats();
+                         gguf_linear_formats() + artifact_bank_formats();
     if (failures == 0) { std::cout << "plan facts OK\n"; }
     return failures == 0 ? 0 : 1;
 }
