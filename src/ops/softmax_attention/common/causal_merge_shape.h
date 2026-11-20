@@ -49,7 +49,9 @@ inline constexpr int kCausalMergeNarrowDChunk = 64;
 // narrowing more cheaply than its SASS says. sm_120a's own 391 is deliberately not used: on the
 // RTX 5090 and 5070 Ti it changes no decision at W 1-11 with the wave partition's splits. At
 // W = 1 a board's decision moves only for F under 210 (RTX 4070 Ti; 119 on the 4060 Ti, 61 on the
-// 3060), far below every count. ninferno_causal_merge_counts_test checks them on every build
+// 3060), far below every count. At large split counts F moves the narrow-versus-wide boundary of
+// a call (256 columns on 28 SMs narrow from 148 splits at F 501, from 152 at 515:
+// test_causal_merge_order's asserts). ninferno_causal_merge_counts_test checks them on every build
 // (tools/kernel_facts/merge_counts.py, #872): it counts the two instances in the build's own
 // binary by the rule above and fails where the fixed work exceeds F or a stage lies more than
 // 10 % from 70, so a compiler bump or a kernel edit that moves them is seen.
