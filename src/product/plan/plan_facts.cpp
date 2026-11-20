@@ -514,8 +514,9 @@ gguf_expert_policy(const std::string& model_type, const std::string& format, boo
 
 // The routed banks' prefill GEMM (runtime::ExpertPrefill), as ops/moe w4a8_bank_refusal decides it,
 // bank by bank (#311: a stage takes the grouped W4A8 where its own bank admits it): the grouped
-// W4A8 reads a bank of a format with int8 codes (convert::kept_block_policy AllowA8, the formats
-// generic::w4a8_supports names) whose K and activation are whole 32-value blocks
+// W4A8 reads a bank of a format with int8 codes (convert::kept_block_policy AllowA8) or NVFP4 (the
+// formats generic::w4a8_supports names; NVFP4's kept policy is A16Only) whose K and activation are
+// whole 32-value blocks
 // (moe_w4a8_whole_blocks, the op's own rule: `x_width` is the router's width for a gate/up bank,
 // which a zero-padded bank's K exceeds, and the bank's K for a down bank), in fragment order only
 // the formats ggml_frag_w4a8 names, and prefills it on int8 activations, unless the layer's expert
@@ -601,7 +602,12 @@ public:
             // The op asks the A4 veto only of an NVFP4 bank in whole blocks (w4a8_bank_refusal
             // refuses another for its K group first, on every build).
             l.nvfp4 = l.nvfp4 || (q == QType::NVFP4 && whole);
-            if (whole && int8_codes && (!frag || ggml_frag_w4a8(q))) { l.int8_bytes += bytes; }
+            // NVFP4 has a W4A8 tile on every build too (ops/generic compiled_codecs.h, W4A8_GGML32
+            // X(Nvfp4)), run where the layer allows A8 and not the build's A4
+            // (nvfp4_prefill_a8_policy; an A4 layer is the build's, build_decides below), though
+            // the converter keeps it A16Only: its bytes are the int8 route's, not kept_a8 (#1090).
+            const bool w4a8_codes = int8_codes || q == QType::NVFP4;
+            if (whole && w4a8_codes && (!frag || ggml_frag_w4a8(q))) { l.int8_bytes += bytes; }
             // An MXFP4 bank takes its layer's MXFP4 route (the int8 tier or the block-scaled MMA)
             // only in whole blocks too: the op refuses it otherwise (KGroup) and runs it A16.
             if (whole && q == QType::MXFP4) { l.mxfp4_bytes += bytes; }

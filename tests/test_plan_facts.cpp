@@ -1414,10 +1414,17 @@ int artifact_prefill_policy() {
     failures += check(route(QType::NVFP4, nvfp4_a4) == rt::ExpertPrefill::Unknown,
                       "artifact prefill: NVFP4 gate/up at AllowA4 beside a Q4_K down, the build's: "
                       "Unknown");
-    failures += check(route(QType::NVFP4, nvfp4_a4, true) != rt::ExpertPrefill::Unknown,
-                      "artifact prefill under int8: NVFP4 at AllowA4 beside Q4_K, not Unknown");
-    failures += check(route(QType::NVFP4, layers(a8, a8, a8, a8)) != rt::ExpertPrefill::Unknown,
-                      "artifact prefill: NVFP4 banks at AllowA8, not the build's");
+    // #1090: NVFP4 runs the grouped W4A8 on every build where its policy is A8 and not A4
+    // (nvfp4_prefill_a8_policy), as under --activations int8: the int8 route, not A16.
+    failures +=
+        check(route(QType::NVFP4, nvfp4_a4, true) == rt::ExpertPrefill::Int8,
+              "artifact prefill under int8: NVFP4 at AllowA4 beside Q4_K, the grouped W4A8");
+    failures += check(route(QType::NVFP4, layers(a8, a8, a8, a8)) == rt::ExpertPrefill::Int8,
+                      "artifact prefill: NVFP4 banks at AllowA8, the grouped W4A8");
+    failures += check(route(QType::NVFP4, layers(a16, a16, a16, a16)) == rt::ExpertPrefill::A16,
+                      "artifact prefill: NVFP4 banks recorded A16Only, A16");
+    failures += check(route(QType::NVFP4, layers(none, none, none, none)) == rt::ExpertPrefill::A16,
+                      "artifact prefill: NVFP4 banks with no recorded policy, the kept A16Only");
     // A bank known A16-only beside one with no recorded policy: the layer is A16 still
     // (ops::moe_policy), not the kept fallback.
     failures += check(route(QType::MXFP4, layers(a16, none, a16, none)) == rt::ExpertPrefill::A16,
