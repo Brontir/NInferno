@@ -367,7 +367,8 @@ void gemma4_attention(const Tensor& q, const Tensor& positions, const Gemma4KvLa
         if (bytes > 0 && workspace.used() + bytes + 256 <= workspace.capacity()) {
             chain = workspace.alloc_bytes(bytes).data;
         }
-        detail::gemma4_attention_prefill_launch(launch, binding.batch, chain, stream);
+        detail::gemma4_attention_prefill_launch(launch, binding.batch, chain,
+                                                chain != nullptr ? bytes : 0, stream);
         return;
     }
     auto scope = workspace.scope();
