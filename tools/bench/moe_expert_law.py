@@ -17,6 +17,8 @@ The trailing c is the fill and drain no bus hides. The counted facts are the ker
 sections (src/ops/generic/data/kernel_facts/sm_<arch>.txt). The grid geometry follows moe.cpp (rows a CTA,
 r8_lanes, jobs as the touched experts at T <= 8).
 
+Version 2 (#987): a warp's registers in 256-register units (defect 5), and the issue bound counts the code outside
+the K loop (the K split's reduction, the epilogue) and the R8 quantizer's loop (defect 7).
 Known defects (#987, DECISIONS 94), all pricing R8 low: the R8 kernel of the mean tokens a job
 (the runtime takes the next power of two at or above T); 32 lanes a row assumed (the loop steps by
 r8_lanes); R8's dynamic shared memory left out of the occupancy; the quantizer's global waits
@@ -135,7 +137,10 @@ def probe_latency(board_name):
 
 
 def occupancy(regs, smem, threads, max_ctas, max_threads, cc):
-    by_regs = (64 * 1024) // max(1, regs * threads) if regs else max_ctas
+    # A warp's registers are allocated in units of 256 (#987 defect 5; register_mma_occupancy rounds the same way).
+    warps = max(1, threads // 32)
+    per_warp = math.ceil(regs * 32 / 256) * 256 if regs else 0
+    by_regs = (64 * 1024) // (per_warp * warps) if regs else max_ctas
     smem_sm, reserved = smem_facts(cc)
     by_smem = smem_sm // (smem + reserved) if smem else max_ctas
     return max(0, min(max_ctas, by_regs, by_smem, max_threads // threads))
@@ -195,8 +200,13 @@ def stage_time(facts, board, fmt, sched, stage, T, jobs, H, F, K=8):
         pro_iters = math.ceil(NT_OF[0] * k / 32 / threads)
         c += pro_iters * int(f["pro_stall"]) / clock + int(f["pro_glb_waits"]) * lat
     t_chain = waves * c
-    # Issue: every warp instruction of the busiest SM's CTAs over its four schedulers (one a clock each).
-    t_issue = math.ceil(ctas / sms) * warps * iters * int(f["total"]) / (4 * clock)
+    # Issue: every warp instruction of the busiest SM's CTAs over its four schedulers (one a clock each): the K
+    # loop's, the code outside it (index setup, the K split's cross-warp reduction through shared memory, the
+    # epilogue: outside_total) and, for an R8 kernel that quantizes its input, the quantizer's (#987 defect 7).
+    per_warp = iters * int(f["total"]) + int(f.get("outside_total", 0) or 0)
+    if f.get("pro_loops", "0") not in ("0", None):
+        per_warp += math.ceil(NT_OF[0] * k / 32 / threads) * int(f.get("pro_total", 0) or 0)
+    t_issue = math.ceil(ctas / sms) * warps * per_warp / (4 * clock)
     return max(t_dram, t_chain, t_issue) + c, (t_dram, t_chain, waves, conc, res, t_issue)
 
 
