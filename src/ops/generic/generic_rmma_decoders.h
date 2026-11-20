@@ -30,6 +30,15 @@ struct RmmaDecoder {
     bool min_term;    // MinTermOf (kMinTerm): the add-sums variant's form
 };
 
+// Whether this build's MXFP4 register-MMA decoder is the byte-permute spread one (a build with
+// NINFERNO_WITHOUT_NVFP4) rather than the FP4 converter's (Mxfp4RmmaDecoder, generic_gemm.cuh):
+// the mxfp4_spread argument of this build's lookups.
+#ifdef NINFERNO_WITHOUT_NVFP4
+inline constexpr bool kRmmaMxfp4Spread = true;
+#else
+inline constexpr bool kRmmaMxfp4Spread = false;
+#endif
+
 // The decoder launch_rmma_<format> instantiates for a call of K values; name == nullptr where the
 // codec has no register-MMA launch. U4Zp's G32 and G64 take their quad-run decoder at K a multiple
 // of 128. MXFP4's is the FP4 converter's decoder (Mxfp4Decoder) where the build has one, else the

@@ -10,6 +10,7 @@
 #include "core/device_class.h"
 #include "core/format_facts.h"
 #include "core/generation.h"
+#include "core/kernel_occupancy.h"
 #include "core/layout.h"
 #include "core/measured_boards.h"
 #include "core/per_device.h"
@@ -25,6 +26,7 @@
 #include "ops/generic/compiled_codecs.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_ggml_internal.h"
+#include "ops/generic/generic_rmma_decoders.h"
 #include "ops/generic/generic_i8_schedules.h"
 #include "ops/generic/generic_schedule_tables.h"
 #include "ops/generic/generic_schedules.h"
@@ -1111,6 +1113,95 @@ LawR8 law_r8_uncached(const Problem& p, const DeviceClass& device) {
 
 bool w4a8_ws_supports(QType q) { return compiled(Variant::W4a8Ws, q); }
 
+namespace {
+
+// The 512-thread CTAs an SM holds of a kernel of `registers` a thread and `shared` static bytes,
+// counted from the board's own limits: its threads, its register file in the 256-register warp
+// allocation unit, and its shared memory with the per-CTA reservation (a launch without dynamic
+// shared memory, as the split's). Not through the CUDA occupancy calculator: the cuda_occupancy.h
+// of an older toolkit refuses an architecture it predates (CUDA 12.8, the CI host jobs': sm_103),
+// and the rule must answer alike on every build. The calculator's other limits are left out: at
+// 512 threads and at most 17 KiB of static shared memory (the largest w1x16 row, 15,872 bytes)
+// neither the blocks-per-SM cap nor the 128-byte shared rounding can bind. 0 where a limit is
+// unknown.
+int sixteen_warp_ctas(const DeviceClass& d, int registers, std::size_t shared) {
+    constexpr int kThreads = 16 * 32;
+    if (registers <= 0 || d.max_threads_per_sm <= 0 || d.registers_per_sm <= 0) return 0;
+    const int warp_registers = (registers * 32 + 255) / 256 * 256;
+    int ctas                 = std::min(d.max_threads_per_sm / kThreads,
+                                        d.registers_per_sm / warp_registers / (kThreads / 32));
+    if (shared > 0) {
+        if (d.smem_per_sm == 0) return 0;
+        const std::size_t per_cta = shared + reserved_shared_bytes_per_cta(d.major);
+        ctas                      = std::min<int>(ctas, static_cast<int>(d.smem_per_sm / per_cta));
+    }
+    return std::max(ctas, 0);
+}
+
+// The CTAs an SM holds of the sixteen-warp K split (rmma.m1.n1.w1x16) of a format's call (#1117):
+// the CUDA occupancy calculator on its kernel's committed facts (registers, static shared memory)
+// and the board's limits. The plain kernel of the call's decoder (rmma_decoder_of, as the launch
+// instantiates it) and epilogue is read: its latency, wide-load and add-sums twins hold the same
+// count in every committed snapshot (Q4_K latency 121 registers against 119, Q6_K wide on sm_86
+// 128 against 122: one 512-thread CTA either way). 0 where a fact is missing (a format without a
+// register-MMA launch, no snapshot for the build, no device): the caller keeps its pick.
+int sixteen_warp_resident_uncached(const Problem& problem) {
+    Weight weight;
+    weight.qtype              = problem.qtype;
+    const RmmaDecoder decoder = rmma_decoder_of(codec_of(weight), problem.k, kRmmaMxfp4Spread);
+    const auto arch           = kernel_facts::sass_arch();
+    if (decoder.name == nullptr || !arch) return 0;
+    const auto facts = kernel_facts::rmma_facts(
+        *arch, {decoder.name, 1, 16, 1, 1, 1, static_cast<int>(problem.epilogue), false, 0});
+    if (!facts) return 0;
+    return sixteen_warp_ctas(device_class(), facts->registers, facts->static_shared_bytes);
+}
+
+// sixteen_warp_resident_uncached once per device (or substituted board), format, epilogue and
+// K's 128-multiple (the U4Zp decoders' choice): the rule runs on the resolve path of every call.
+// A format without a codec (codec_of's invalid_argument) is remembered as 0; any other exception
+// that reaches here answers 0 for this call only, so it cannot turn the rule off for the process
+// (the advisor's review of #1119). A device query that kernel_facts::sass_arch swallows into "no
+// arch" is an answer of 0 and is remembered like one.
+int sixteen_warp_resident(const Problem& problem) {
+    struct Memo {
+        std::mutex mutex;
+        std::map<std::tuple<int, int, bool>, int> answers;
+    };
+
+    static PerDevice<std::shared_ptr<Memo>> memos;
+    std::shared_ptr<Memo> held;
+    try {
+        held = memos.get([](int) { return std::make_shared<Memo>(); });
+    } catch (const std::exception&) { return 0; }
+    const std::tuple<int, int, bool> key{static_cast<int>(problem.qtype),
+                                         static_cast<int>(problem.epilogue), problem.k % 128 == 0};
+    {
+        const std::lock_guard<std::mutex> lock(held->mutex);
+        if (const auto it = held->answers.find(key); it != held->answers.end()) return it->second;
+    }
+    int resident = 0;
+    try {
+        resident = sixteen_warp_resident_uncached(problem);
+    } catch (const std::invalid_argument&) {
+        // A format without a codec: no fact, the pick stands.
+    } catch (const std::exception&) { return 0; }
+    const std::lock_guard<std::mutex> lock(held->mutex);
+    return held->answers.emplace(key, resident).first->second;
+}
+
+// What the T 9-16 split rules read (#1117): the sixteen-warp CTAs an SM holds, for a store or add
+// call. A SwiGLU call is left as before (0: no fact): its grid is half its rows' (gate and up rows
+// in one CTA) where the rules count n / 16 CTAs, and none of its calls was measured. So is a board
+// without tensor mma.sync (Volta): its calls run Volta's own HMMA / GEMV kernels whatever the
+// register-MMA schedule (Quadro GV100, T 9-16: every rmma route of a call within 0.1 %).
+int rule_resident(const Problem& problem) {
+    if (problem.epilogue == Epilogue::SwiGlu || !current_features().mma_tensor) return 0;
+    return sixteen_warp_resident(problem);
+}
+
+} // namespace
+
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
     const std::int32_t k = problem.k;
     const int split      = k >= 1024 ? 8 : k >= 512 ? 4 : 1;
@@ -1165,6 +1256,16 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                 // on a board with clusters (current_arch_facts: in such a build a substituted
                 // board without them refuses the pair and keeps its narrow fallback); its
                 // sixteen-warp CTA (a build without them) and its cluster of eight stay.
+                // That sixteen-warp CTA meets the same count (#1117): 512 threads hold two CTAs an
+                // SM at up to 64 registers (store / add: Q8_0 45-58 and BF16 46-59 from sm_75, FP8
+                // 48-61 from sm_80, the groupwise and small-group U4 decoders) and one above (Q4_0
+                // 78-85, the K-quants 110-128, every SwiGLU row); past the CTAs an
+                // SM holds of it, columns x CTAs run a second wave, and the eight-warp CTA (two a
+                // SM, one wave) is the split.
+                // T 9-16, every route timed, master's w1x16 against the best: K-quants 14-23 % on
+                // the 3090, 3060, 4060 Ti and 4070 Ti where 2 x CTAs > SMs, 0-5 % below; Q8_0 0 %
+                // (the rule, frozen first, then right in 12 of 12 cells on the RTX 4090 at K 8192:
+                // Q4_K / Q6_K 13.6-31.8 % at 1536 and 2048 rows, 0.0 % at 768 and 1024).
                 const std::int64_t ctas = (static_cast<std::int64_t>(problem.n) + 15) / 16;
                 const std::int64_t sms  = sm_count();
                 const RmmaScheduleInfo eight = rmma_schedule_info(rmma_index(1, 8, 1, 1));
@@ -1175,9 +1276,25 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                         : 1;
                 if (ctas <= sms) {
                     const int pair_split = one_wave_split(ctas, sms);
-                    if (rmma_schedule_info(pair_split).cluster == 2 &&
-                        current_arch_facts().features.clusters && 2 * columns * ctas > held * sms) {
-                        return rmma_index(1, 8, 1, 1);
+                    const RmmaScheduleInfo pair = rmma_schedule_info(pair_split);
+                    // Past the pair's wave the sixteen-warp CTA where it still runs one (#1117):
+                    // the latency-bound Q8_0, BF16 and FP8 store / add loops (two such CTAs an SM)
+                    // take half the K trips a warp of the eight-warp CTA walks, at the same issue
+                    // work; the K-quants' one CTA an SM would run a second wave. RTX 5090 / 5070
+                    // Ti, T 9-16, K 2048-8192, the cells past the pair's wave: w1x16 took 0.70-0.79
+                    // of n1.w1x8's time on Q8_0 (19 cells), 1.00-1.56 on the K-quants (80 cells).
+                    if (pair.cluster == 2 && current_arch_facts().features.clusters &&
+                        2 * columns * ctas > held * sms) {
+                        const int resident = rule_resident(problem);
+                        return resident > 0 && columns * ctas <= resident * sms
+                                   ? rmma_index(1, 16, 1, 1)
+                                   : rmma_index(1, 8, 1, 1);
+                    }
+                    if (pair.cluster == 1 && pair.warps_k == 16) {
+                        const int resident = rule_resident(problem);
+                        if (resident > 0 && columns * ctas > resident * sms) {
+                            return rmma_index(1, 8, 1, 1);
+                        }
                     }
                     return pair_split;
                 }
