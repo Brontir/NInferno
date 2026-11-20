@@ -18,7 +18,8 @@ struct Engine {
     bool ptx      = false;
 };
 
-// The engine for a GPU of compute capability cc, if any (see the top of this file).
+// The engine for a GPU of compute capability cc, if any (the rule: the top of
+// apps/dispatch/main.cpp).
 inline std::optional<Engine> choose(const std::vector<Engine>& engines, int cc) {
     const auto pick = [&](auto&& runs) -> std::optional<Engine> {
         std::optional<Engine> best;
@@ -39,18 +40,23 @@ inline std::optional<Engine> choose(const std::vector<Engine>& engines, int cc) 
         })) {
         return e;
     }
-    return pick([&](const Engine& e) { return e.ptx && e.arch <= cc; });
+    // PTX the same way: an engine compiled for the newer card writes its own tree's row codes.
+    return pick([&](const Engine& e) {
+        return e.ptx && e.arch <= cc &&
+               ninferno::ops::gemma4_rows_int8_on(e.arch) == ninferno::ops::gemma4_rows_int8_on(cc);
+    });
 }
 
 // Why choose() found no engine for cc, for the message: a plain engine of the same major and an
-// older minor that writes other KV row codes (an 86 engine for an sm_89 card, #991), a GPU older
-// than every engine, or none of the release's engines runs it.
+// older minor that writes other KV row codes (an 86 engine for an sm_89 card, #991; a 70 one for an
+// sm_75 card), a GPU older than every engine, or none of the release's engines runs it.
 inline std::string no_engine_reason(const std::vector<Engine>& engines, int cc) {
     bool older = !engines.empty();
     for (const auto& e : engines) {
         if (!e.specific && e.arch / 10 == cc / 10 && e.arch <= cc) {
             return "needs the sm_" + std::to_string(cc) + " engine: the release's sm_" + e.tag +
-                   " engine writes other KV row codes (int8 below sm_89, E4M3 from it)";
+                   " engine writes other KV row codes than an sm_" + std::to_string(cc) +
+                   " card's plan prices";
         }
         older = older && e.arch > cc;
     }

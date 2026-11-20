@@ -42,7 +42,7 @@ int main() {
     expect_tag(release, 121, "89", "an unknown newer GPU runs the PTX engine");
 
     // A release without the 89 engine: the 86 engine writes int8 rows, Ada's plan prices E4M3, so
-    // an sm_89 card gets none (the newest engine then runs to refuse it, main.cpp).
+    // an sm_89 card gets none (main.cpp refuses it with no_engine_reason).
     const std::vector<Engine> no89 = {
         {"120a", 120, true, false}, {"86", 86, false, false}, {"80", 80, false, false}};
     expect_tag(no89, 89, std::nullopt, "an 86 engine on an sm_89 card (another KV row codec)");
@@ -50,6 +50,9 @@ int main() {
     expect_tag(no89, 87, "86", "the 86 engine still runs sm_87");
     // The 80 engine (int8 rows below sm_89) still runs sm_86 where no 86 engine ships.
     expect_tag({{"80", 80, false, false}}, 86, "80", "the 80 engine on sm_86 (same codec)");
+    // PTX keeps the codec too: an int8 engine with PTX does not run an E4M3 card.
+    expect_tag({{"86", 86, false, true}}, 90, std::nullopt, "an 86 PTX engine on sm_90");
+    expect_tag({{"89", 89, false, true}}, 90, "89", "the 89 PTX engine on sm_90");
 
     // The refusal names its cause (#991 review).
     using ninferno::dispatch::no_engine_reason;
