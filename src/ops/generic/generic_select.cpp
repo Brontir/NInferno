@@ -1159,9 +1159,10 @@ int sixteen_warp_resident_uncached(const Problem& problem) {
 
 // sixteen_warp_resident_uncached once per device (or substituted board), format, epilogue and
 // K's 128-multiple (the U4Zp decoders' choice): the rule runs on the resolve path of every call.
-// A format without a codec (codec_of's invalid_argument) is remembered as 0; any other failure
-// (the device or the snapshot not readable yet) answers 0 for this call only, so a transient
-// error cannot turn the rule off for the process (the advisor's review of #1119).
+// A format without a codec (codec_of's invalid_argument) is remembered as 0; any other exception
+// that reaches here answers 0 for this call only, so it cannot turn the rule off for the process
+// (the advisor's review of #1119). A device query that kernel_facts::sass_arch swallows into "no
+// arch" is an answer of 0 and is remembered like one.
 int sixteen_warp_resident(const Problem& problem) {
     struct Memo {
         std::mutex mutex;
