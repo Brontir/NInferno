@@ -34,10 +34,11 @@
 // Transferred: a measurement of a farther board, carried by the authority's own rule. Borrowed: an
 // exact-key entry taken from a farther table because the nearest lacked it (route_table.cpp
 // fill_from). Predicted: a band of the analyzer's overlay (routes/pick, tools/route_pick/gen.py),
-// priced from this board's facts and the build's kernel facts, nothing measured on any card; read
-// only where the nearest table is past kCarryDistance and only under RoutePolicy::Evidence, so it
-// stands where a Transferred answer would be demoted to the ranker (the 3090 left out: +5.5 %
-// prefill at chunk 16 over that path).
+// priced from this board's facts and the build's kernel facts, nothing measured on any card; only
+// under RoutePolicy::Evidence, and only on the board it was priced for: past kCarryDistance ahead
+// of the nearest table, so it stands where a Transferred answer would be demoted to the ranker (the
+// 3090 left out: +5.5 % prefill at chunk 16 over that path); within it only in a gap of the table
+// (no entry of its own, or a Borrowed one), below its measured entries (#1068).
 
 #include "ninferno/option_enums.h"
 #include "ops/generic/generic_gemm.h"

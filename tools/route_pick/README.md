@@ -22,9 +22,13 @@ Nothing is measured on the card.
   `python3 tools/route_pick/gen.py` and commit `routes/pick`.
 
 ## Where the engine reads them
-`src/ops/route_table.cpp` reads `routes/pick/<class>.json` only when the device's nearest measured table is past
-`measured::kCarryDistance`. There, every table answer would be Transferred or Borrowed, and `--route-policy evidence`
-would demote it to the ranker. The predicted band answers first, as evidence kind `predicted`. Such an answer is
+`src/ops/route_table.cpp` reads `routes/pick/<class>.json` on the board it was priced for. Where the device's nearest
+measured table is past `measured::kCarryDistance`, every table answer would be Transferred or Borrowed, and
+`--route-policy evidence` would demote it to the ranker; there the predicted band answers first, as evidence kind
+`predicted`. Within it (a tabled board, #1068) a band answers only in a gap of the table: a problem it holds no entry
+of its own for, which would be Borrowed from another board's table or left to the ranker. A tabled board's file holds
+only those gaps (the problems of its capability's other tables, the add epilogue included), and none is written where
+there are none (the RTX 2080 Ti, the only sm_75 table). Such an answer is
 never demoted and never claims a shape-owned problem. An explicit `--route-table` stands alone and reads no overlay,
 and `--route-policy legacy` reads none either (the lookup answers as before the overlay).
 
@@ -41,7 +45,19 @@ The test removed a card's own table, as for a card of the generation that nobody
 | RTX 2080 Ti | -0.02 / -0.02 % (ties) |
 
 Against a card's own measured table, the pick equals it on the 3090 and the 2080 Ti and loses 2.4-2.6 % on the 4060 Ti.
-So measured tables stay, and the pick serves only the classes nobody measured.
+So measured tables stay: the pick serves the classes nobody measured, and a tabled board's gaps.
+
+## Evidence for the gaps (#1068)
+Each tabled card's table was left out and both answers of every cell scored on a full route_tune grid (T 9-16):
+
+| card (generation) | borrowed / ranker: mean, p90 regret | predicted: mean, p90 |
+|---|---|---|
+| RTX 3090 (GA10x) | 8.46 %, 28.4 % | 5.67 %, 25.1 % |
+| RTX 3060 (GA10x) | 8.95 %, 27.6 % | 5.52 %, 21.4 % |
+| RTX 4060 Ti (Ada) | 5.10 %, 17.5 % | 4.70 %, 13.9 % |
+| RTX 5090 (GB20x) | 13.46 %, 43.8 % | 8.81 %, 31.5 % |
+
+End to end (Qwen3-8B prefill, gap-only against shipped): the 4060 Ti, 5070 Ti and 4090 within their A/A bands.
 
 Left out (constants fitted without the card): about 2.5 % pooled regret on the open grids. A whole generation left
 out of the fit costs at most 0.35 more.
