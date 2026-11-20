@@ -208,6 +208,10 @@ decltype(auto) with_tile_arch(Body&& body) {
         if (*arch == "90") return body.template operator()<90>(std::string_view("90"));
         if (*arch == "100") return body.template operator()<100>(std::string_view("100"));
         if (*arch == "120a") return body.template operator()<120>(std::string_view("120a"));
+        // A snapshot label this list lacks: no tile of its build here, so nothing of the board's
+        // (never this build's tile in its place).
+        throw std::logic_error("gemma4_attention: no tile of the sm_" + *arch +
+                               " build here (with_tile_arch)");
     }
     return body.template operator()<kGemma4BuildArch>(kf::build_arch());
 }

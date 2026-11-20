@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
+#include <string_view>
 
 namespace ninferno::ops {
 struct Gemma4AttentionArgs;
