@@ -1683,9 +1683,11 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
             reads += routed_read / at(nullptr);
             // No query to ask (#766): the measured pair's share, but not the op's answer. One row
             // reads at kDramEta whatever the pair (moe_routed_eta), so it stays as it is.
+            // With no query asked, banks assumed (below) name the reason where both hold; an
+            // asked query that gave no kernels keeps "MoE route not answered" (above).
             if (model.moe_route_unqueried && rows > 1) {
                 transferred = true;
-                out.why     = "MoE route not queried";
+                if (!quant.expert_banks_assumed) { out.why = "MoE route not queried"; }
             }
         }
         // Banks whose kept format the file does not tell (QuantOption::expert_banks_assumed:

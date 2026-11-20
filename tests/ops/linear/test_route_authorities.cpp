@@ -537,8 +537,9 @@ void check_known() {
 }
 
 // The MMQ prefill gate on a board whose L2 size is unknown (a card outside the facts whose driver
-// reports none): the gate answers Incomplete, which is not a measurement of this board even at
-// distance 0, so the evidence names a donor and is not `measured`.
+// reports none: no driver L2 and no facts L2, since board_of falls back to the facts' L2 since
+// #1082): the gate answers Incomplete, which is not a measurement of this board even at distance
+// 0, so the evidence names a donor and is not `measured`.
 void check_incomplete_gate() {
     constexpr Shape big{4096, 4096};
     for (const std::string_view name : {"rtx4090", "rtx5090", "rtx2080ti"}) {
@@ -554,6 +555,7 @@ void check_incomplete_gate() {
              {std::size_t{0}, generic::board_device_class(*board).l2_bytes}) {
             DeviceClass device = generic::board_device_class(*board);
             device.l2_bytes    = l2;
+            if (l2 == 0) device.facts.l2_mib = 0;
             const ScopedDeviceClass scoped(device);
             void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
             const quantized_weight::PackedWeight host = quantized_weight::make_patterned_weight(
@@ -795,6 +797,24 @@ int run_board(const generic::FactsBoard& b, const std::set<std::string_view>& na
 
 } // namespace
 
+// The tuner keeps a predicted band's route unless the timed best beats that route's own time by
+// the margin (#1074): a 1 % win within noise keeps it, a 5 % one replaces it.
+void check_tuned_over_prediction() {
+    constexpr generic::Route predicted{generic::Family::RegisterMma, 1};
+    constexpr generic::Route other{generic::Family::RegisterMma, 2};
+    constexpr double kMargin = 0.97;
+    if (!(generic::tuned_over_prediction(predicted, 100.0, other, 99.0, kMargin) == predicted)) {
+        fail("tuned_over_prediction: a 1 % win replaced the predicted route");
+    }
+    if (!(generic::tuned_over_prediction(predicted, 100.0, other, 95.0, kMargin) == other)) {
+        fail("tuned_over_prediction: a 5 % win kept the predicted route");
+    }
+    if (!(generic::tuned_over_prediction(predicted, 100.0, predicted, 100.0, kMargin) ==
+          predicted)) {
+        fail("tuned_over_prediction: the predicted route itself not kept");
+    }
+}
+
 int main() {
     try {
         const auto names = listed_sources();
@@ -803,6 +823,7 @@ int main() {
         check_selected_header();
         check_known();
         check_incomplete_gate();
+        check_tuned_over_prediction();
         for (const generic::FactsBoard& b : generic::kFactsBoards) run_board(b, names);
         check_coverage(names);
     } catch (const std::exception& error) {
