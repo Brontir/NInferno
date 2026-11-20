@@ -510,8 +510,14 @@ eq(H.nowLine({now: {free_now_bytes: 8 * 2 ** 30, fits_now: true, context_now: 65
   ok(why.includes("6.0") && why.includes("1.0"), "the now reason keeps its numbers");
   whole(EN("nowLess", {free: "5.0 GiB", ctx: "32K", was: "64K"}), "nowLess en");
   whole(RU("nowNoStart", {free: "1.0 GiB", why: "x"}), "nowNoStart ru");
+  // A card that refused a context otherwise than for memory (#891): the refusal, not "0 free".
+  const refused = H.nowLine({now: {free_now_bytes: 0, fits_now: false, context_now: 0, reason_code_now: "card_refused",
+    reason_params_now: {message: "all CUDA-capable devices are busy or unavailable"}, reason_now: "y"}}, {context: 65536}, tr);
+  ok(refused && refused.cls === "err" && refused.text.startsWith("nowRefused") && refused.text.includes("busy or unavailable"),
+     "a refusing card: said with the CUDA message");
+  whole(RU("nowRefused", {why: "x"}), "nowRefused ru");
 }
-for (const lang of ["en", "ru", "uk"]) for (const k of ["nowNoStart", "nowLess", "nowTip"])
+for (const lang of ["en", "ru", "uk"]) for (const k of ["nowNoStart", "nowRefused", "nowLess", "nowTip"])
   ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
 
 // ---- a start again from My models, planned first (/api/plan?artifact=) ----
