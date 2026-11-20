@@ -172,6 +172,12 @@ struct Board {
 
 [[nodiscard]] Board board_of(const DeviceClass& d) noexcept;
 
+// The board's L2 in bytes: the driver's where it gave one, else the machine facts' (a planned or
+// substituted class built without it: plan_device_class, plan_prefill_routes.cpp class_of). Every
+// selector reads the L2 through it or board_of, so a plan and a running card of one board read the
+// same L2 (#1082, #1084).
+[[nodiscard]] std::size_t class_l2_bytes(const DeviceClass& d) noexcept;
+
 // How far measured data of board `b` carries to board `a`: |log2| of the SM ratio, plus |log2| of
 // the bandwidth ratio, plus half |log2| of the L2 ratio (a quantity either side does not know is
 // not compared). Infinite between instruction sets (device_features_for rows that differ either
@@ -398,6 +404,12 @@ struct BoardClassSpec {
     // The features of the engine the board would run under. nullopt: the architecture's row
     // (device_features_for). mma_slow is the board's own (board_mma_slow) either way.
     std::optional<DeviceFeatures> engine;
+    // A registered variant of the product id (GpuFactsRow::subsystems: subsystem vendor << 16 |
+    // subsystem device, #903): machine_facts_of then takes that board's values. 0: none named.
+    std::uint32_t pci_subsystem_id = 0;
+    // The driver was asked for the subsystem and did not say (DeviceClass::pci_subsystem_unread):
+    // a row that lists boards by subsystem is priced as the slowest of them.
+    bool pci_subsystem_unread = false;
 };
 
 // The one class builder for a named board: synthetic_device_class's identity, features and

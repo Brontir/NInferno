@@ -293,14 +293,17 @@ std::uint64_t plan_idle_free_bytes(const PlanDeviceFacts& device) noexcept {
 }
 
 DeviceClass plan_device_class(const PlanDeviceFacts& device) {
-    // An explicit empty driver view: no driver L2 and no driver clocks (#612 step 10). board_of
-    // reads the registry row's L2 for it (#1082); l2_bytes itself stays 0.
-    return board_class({.pci_device_id = device.pci_device_id,
-                        .major         = device.compute_capability / 10,
-                        .minor         = device.compute_capability % 10,
-                        .sms           = device.sms,
-                        .global_bytes  = static_cast<std::size_t>(device.total_bytes),
-                        .driver        = BoardDriverView{}});
+    // An explicit empty driver view: no driver L2 and no driver clocks (#612 step 10). Its readers
+    // take the registry row's L2 through class_l2_bytes (board_of, the NVFP4 half-L2 rule, the
+    // sparse MoE decode prefetch limit; #1082, #1084); l2_bytes itself stays 0.
+    return board_class({.pci_device_id        = device.pci_device_id,
+                        .major                = device.compute_capability / 10,
+                        .minor                = device.compute_capability % 10,
+                        .sms                  = device.sms,
+                        .global_bytes         = static_cast<std::size_t>(device.total_bytes),
+                        .driver               = BoardDriverView{},
+                        .pci_subsystem_id     = device.pci_subsystem_id,
+                        .pci_subsystem_unread = device.pci_subsystem_unread});
 }
 
 std::uint64_t plan_board_total_bytes(double vram_gib) noexcept {
