@@ -536,6 +536,13 @@ ok(H.artifactPlanQuery("/hf/m/Q4.ninferno", {gpu: 1, ctx: 0, par: 2, kv: "fp8", 
   ok(!nofit.refused && nofit.nofit.length > 0, "no fit: the reason");
   const busy = H.replayDiff({ctx: 0, par: 1}, {...fits, now: {free_now_bytes: 2 ** 30, fits_now: false, reason_code_now: "weights_too_big", reason_now: "x"}}, tr);
   ok(!busy.refused && busy.nofit.length > 0, "the card fits but not with what another model holds now: said");
+  ok(!busy.busy, "a memory shortfall is not a refusing card");
+  // serve's card_refused reaches the page here, in My models' start again (#891): the refusal in
+  // words with the CUDA message, never a fit reason.
+  const held = H.replayDiff({ctx: 0, par: 1}, {...fits, now: {free_now_bytes: 0, fits_now: false, reason_code_now: "card_refused",
+    reason_params_now: {message: "all CUDA-capable devices are busy or unavailable"}, reason_now: "y"}}, tr);
+  ok(!held.refused && held.busy && held.nofit.startsWith("nowRefused") && held.nofit.includes("busy or unavailable"),
+     "a refusing card on a start again: said as a refusal, with the CUDA message");
   const less = H.replayDiff({ctx: 0, cap: 49152, par: 2}, {...fits, now: {free_now_bytes: 9 * 2 ** 30, fits_now: true, context_now: 16384}}, tr);
   eq(less.cap, 16384, "a start now gets less: the ceiling now, said");
 }

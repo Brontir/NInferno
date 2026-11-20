@@ -1484,7 +1484,7 @@ async function refreshMine() {
       <td class="num">${m.size_gib.toFixed(1)} GiB</td>
       <td class="muted">${esc(ago(m.modified))}</td>
       <td>${(() => { const n = replayNotes[m.artifact]; if (!n) return "";
-          const lines = n.refused ? [n.refused.why] : n.nofit ? [fill(t("replayNoFit"), {why: n.nofit})]
+          const lines = n.refused ? [n.refused.why] : n.nofit ? [n.busy ? n.nofit : fill(t("replayNoFit"), {why: n.nofit})]
             : n.changes.map(c => fill(t("replayContext"), {was: c.was ? planTok(c.was) : t("ctxAutoWord"), now: c.now ? planTok(c.now) : t("ctxAutoWord")}));
           return `<div class="sub ${n.refused || n.nofit ? "err" : "lowq"}">${lines.map(esc).join("<br>")}</div><div class="acts">` +
             (n.refused ? `<button class="primary" data-runauto="${esc(m.artifact)}">${t("replayAuto")}</button>` : `<button class="primary" data-runnow="${esc(m.artifact)}">${t(n.nofit ? "replayAnyway" : "replayRun")}</button>`) +
@@ -2029,6 +2029,12 @@ function launchSettingsOf(saved) {
 function nowReasonText(n, tr) {
   return reasonText({reason_code: n.reason_code_now, reason_params: n.reason_params_now, reason: n.reason_now}, tr);
 }
+// A card that refused a new CUDA context for another reason than memory (serve's card_refused, an
+// exclusive compute mode held by another process): the refusal with the CUDA message.
+function nowRefusedText(n, tr) {
+  const msg = n.reason_params_now && n.reason_params_now.message || n.reason_now || "";
+  return tr("nowRefused", {why: msg});
+}
 // What a start right now would get (/api/plan's "now": product::plan_now at the GPU's free memory),
 // said only where it differs from the idle card's plan `idle` (the row's plan): {cls, text}, or null.
 function nowLine(doc, idle, tr) {
@@ -2037,10 +2043,7 @@ function nowLine(doc, idle, tr) {
   const free = planGiB(n.free_now_bytes);
   // A card that refused a new context for another reason than memory (serve's card_refused: an
   // exclusive compute mode held by another process): no free memory to name, the refusal instead.
-  if (n.reason_code_now === "card_refused") {
-    const msg = n.reason_params_now && n.reason_params_now.message || n.reason_now || "";
-    return {cls: "err", text: tr("nowRefused", {why: msg})};
-  }
+  if (n.reason_code_now === "card_refused") return {cls: "err", text: nowRefusedText(n, tr)};
   if (!n.fits_now) {
     const why = nowReasonText(n, tr);
     return {cls: "err", text: tr("nowNoStart", {free, why})};
@@ -2193,6 +2196,9 @@ function replayDiff(saved, doc, tr) {
   if (!p.fits) return {refused: null, nofit: reasonText(p, tr), changes: [], cap: 0};
   // What a start right now would get (another model may hold the card).
   const n = doc.now;
+  // A card that refuses a new process (serve's card_refused): said as such, not as a fit (#891).
+  if (n && n.reason_code_now === "card_refused")
+    return {refused: null, nofit: nowRefusedText(n, tr), busy: true, changes: [], cap: 0};
   if (n && n.fits_now === false) return {refused: null, nofit: nowReasonText(n, tr), changes: [], cap: 0};
   const changes = [];
   let cap = 0;
