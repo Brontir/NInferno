@@ -618,11 +618,11 @@ public:
     }
 
     // `int8`: under --activations int8 (every bank at AllowA8), else fast activations.
-    // The route of the most bytes is asked twice, of a build with the W4A4 kernels (sm_120a,
-    // `veto`) and of one without (`plain`): a layer the build decides adds to each its own
-    // routes, every other layer the same to both. The two agreeing, theirs is the route; else
-    // Unknown (the build's), so a build-dependent layer too small to move the answer leaves it
-    // (codex on #1087).
+    // The route of the most bytes is asked of four starts (`by` below: a build with the W4A4
+    // kernels or without, and a recipe that keeps a policy the facts do not hold at AllowA4 or
+    // A16Only): a layer that depends on either adds to each start its own routes, every other
+    // layer the same to all. All four agreeing, theirs is the route; else Unknown, so a dependent
+    // layer too small to move the answer leaves it (codex on #1087 and #1094).
     [[nodiscard]] runtime::ExpertPrefill route(bool int8 = false) const {
         // The route asked of four starts (`by[s]`): a build with the W4A4 kernels or without
         // (s & 1: without), and a recipe that keeps a policy the facts do not hold at AllowA4 or at
@@ -690,10 +690,10 @@ public:
                 add(runtime::ExpertPrefill::A16, l.bytes - int8_bytes);
             }
         }
-        const auto winner = [](const std::array<std::uint64_t, 4>& by) {
-            const auto most = std::max_element(by.begin() + 1, by.end());
-            return *most > by[0] ? static_cast<runtime::ExpertPrefill>(most - by.begin())
-                                 : runtime::ExpertPrefill::Unknown;
+        const auto winner = [](const std::array<std::uint64_t, 4>& tally) {
+            const auto most = std::max_element(tally.begin() + 1, tally.end());
+            return *most > tally[0] ? static_cast<runtime::ExpertPrefill>(most - tally.begin())
+                                    : runtime::ExpertPrefill::Unknown;
         };
         const runtime::ExpertPrefill first = winner(by[0]);
         const bool agree                   = std::all_of(by.begin() + 1, by.end(),
