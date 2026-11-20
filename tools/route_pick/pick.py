@@ -33,6 +33,7 @@ Not priced: w4a8*, tiled, sm_70, r8 and ggml_vec above T 8, T > 16 on a compute 
 import math
 import os
 import re
+import sys
 
 P = dict(G=0.1240,       # exponent of the DRAM slowdown with the rows open on one SM
          GN=0.0733,      # added exponent where a K step takes a sector-sized piece of a row (q8)
@@ -175,22 +176,33 @@ def handover(gpu, F, T):
 MMQ_HEADER = os.path.join('src', 'ops', 'generic', 'ggml_mmq', 'ggml_mmq.h')
 
 
-def _mmq_row_multiple():
-    """ggml_mmq::kRowMultiple, read from the header: MMQ takes rows in whole tiles of it only (mmq_call)."""
+def _mmq_multiples():
+    """ggml_mmq::kRowMultiple and kKMultiple, read from the header (mmq_call / mmq_admits take a shape in whole
+    tiles of both). A copy of this file outside the tree (the analyzer's round folders) falls back to the values
+    the header held when this was written, with a note."""
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    with open(os.path.join(root, MMQ_HEADER), encoding='utf-8') as f:
-        m = re.search(r'inline constexpr int kRowMultiple\s*=\s*(\d+)\s*;', f.read())
-    if not m:
-        raise SystemExit(MMQ_HEADER + ': no kRowMultiple')
-    return int(m.group(1))
+    try:
+        with open(os.path.join(root, MMQ_HEADER), encoding='utf-8') as f:
+            text = f.read()
+    except OSError:
+        sys.stderr.write('pick.py: no %s beside this file: MMQ multiples 128 / 256\n' % MMQ_HEADER)
+        return 128, 256
+    out = []
+    for name in ('kRowMultiple', 'kKMultiple'):
+        m = re.search(r'inline constexpr int %s\s*=\s*(\d+)\s*;' % name, text)
+        if not m:
+            raise SystemExit(MMQ_HEADER + ': no ' + name)
+        out.append(int(m.group(1)))
+    return tuple(out)
 
 
-MMQ_ROW_MULTIPLE = _mmq_row_multiple()
+MMQ_ROW_MULTIPLE, MMQ_K_MULTIPLE = _mmq_multiples()
 
 
 def mmq_takes(shape):
-    """Whether ggml's MMQ takes the shape's rows (generic_select.cpp mmq_call): on others the launch demotes it (#1077)."""
-    return int(shape['n']) % MMQ_ROW_MULTIPLE == 0
+    """Whether ggml's MMQ takes the shape (generic_select.cpp mmq_call, mmq_admits): rows and K in whole tiles; on
+    other rows the launch demotes it, on other K the selection refuses it (#1077)."""
+    return int(shape['n']) % MMQ_ROW_MULTIPLE == 0 and int(shape['k']) % MMQ_K_MULTIPLE == 0
 
 
 def price_ns(gpu, F, shape, route, P=P, W=FAMILY_W):
