@@ -225,6 +225,28 @@ void every_board(const json& fixture) {
                 pr::with_prefill_routes(model, device);
                 const Estimate after = estimate(model, card, quant, 7000);
                 ++estimates;
+                if (row.pci_device_id == 0x2C3A || row.pci_device_id == 0x2C31) {
+                    // lab/905-debug: each trunk linear's prefill kernel with the query at 1024
+                    // tokens.
+                    std::cout << "  DEBUG905 " << std::hex << row.pci_device_id << std::dec << ' '
+                              << model_name << ' ' << q << " sms " << card.sms << " basis "
+                              << ch::speed_basis_name(before.basis) << "->"
+                              << ch::speed_basis_name(after.basis) << " pp " << before.prefill
+                              << "->" << after.prefill << ':';
+                    for (ch::LinearShape l : model.linears) {
+                        if (l.expert) { continue; }
+                        if (l.format.empty()) {
+                            const auto label = ch::label_formats(quant.label);
+                            if (!label || label->size() != 1) { continue; }
+                            l.format = std::string(ninferno::format_facts(*label->begin()).name);
+                        }
+                        std::cout << ' ' << l.format << '/' << static_cast<long>(l.n) << 'x'
+                                  << static_cast<long>(l.k) << '='
+                                  << static_cast<int>(
+                                         model.prefill_routes(l, 1024, ninferno::ActivationMode{}));
+                    }
+                    std::cout << '\n';
+                }
                 if (!moved(before, after)) { continue; }
                 ++moves;
                 ++moves_by_generation[std::string(ch::generation_of(card))];
