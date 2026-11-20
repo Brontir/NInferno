@@ -321,8 +321,9 @@ struct Fp8Decoder {
     struct Run {
         uint4 codes;
     };
+    // Lab #1121: a plain non-coherent load (L1-allocating) in place of ld.global.cs.
     __device__ static __forceinline__ Run load(const GemmArgs& a, int row, int k0) {
-        return {ld_stream_v4(a.codes + static_cast<std::int64_t>(row) * a.k + k0)};
+        return {__ldg(reinterpret_cast<const uint4*>(a.codes + static_cast<std::int64_t>(row) * a.k + k0))};
     }
     __device__ static __forceinline__ Run zero() { return {make_uint4(0, 0, 0, 0)}; }
     __device__ static __forceinline__ Run masked(const GemmArgs&, int, int) { return zero(); }
