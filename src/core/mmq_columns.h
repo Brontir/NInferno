@@ -111,6 +111,17 @@ struct ColumnLaunch {
     int split_tiles = 0;     // the tiles those ranges end in: the output tiles it adds them to
 };
 
+// The fixup kernel's CTAs that move its bytes: ggml launches the stream-k grid times I / 32 (the
+// tile's rows in warp-wide slices), and only the CTA whose range finishes a split tile works; it
+// reads that tile's partials and reads and writes its output tile (mmq.cuh,
+// mul_mat_q_stream_k_fixup). So kTile / 32 CTAs a split tile, at most one an SM (#973).
+inline constexpr int kFixupCtasPerTile = kTile / 32;
+
+[[nodiscard]] constexpr int fixup_ctas(const ColumnLaunch& l, int sms) noexcept {
+    const int ctas = l.split_tiles * kFixupCtasPerTile;
+    return ctas < 1 ? 1 : (ctas < sms ? ctas : sms);
+}
+
 // ggml's partition: CTA b takes units [b W / B, (b + 1) W / B) of the W units, rounded down to the
 // format's K_vram (a K-quant's block is 256 values; a 32-value block format's ranges round to 8
 // blocks: the same units).

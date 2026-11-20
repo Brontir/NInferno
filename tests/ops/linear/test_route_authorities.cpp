@@ -795,6 +795,24 @@ int run_board(const generic::FactsBoard& b, const std::set<std::string_view>& na
 
 } // namespace
 
+// The tuner keeps a predicted band's route unless the timed best beats that route's own time by
+// the margin (#1074): a 1 % win within noise keeps it, a 5 % one replaces it.
+void check_tuned_over_prediction() {
+    constexpr generic::Route predicted{generic::Family::RegisterMma, 1};
+    constexpr generic::Route other{generic::Family::RegisterMma, 2};
+    constexpr double kMargin = 0.97;
+    if (!(generic::tuned_over_prediction(predicted, 100.0, other, 99.0, kMargin) == predicted)) {
+        fail("tuned_over_prediction: a 1 % win replaced the predicted route");
+    }
+    if (!(generic::tuned_over_prediction(predicted, 100.0, other, 95.0, kMargin) == other)) {
+        fail("tuned_over_prediction: a 5 % win kept the predicted route");
+    }
+    if (!(generic::tuned_over_prediction(predicted, 100.0, predicted, 100.0, kMargin) ==
+          predicted)) {
+        fail("tuned_over_prediction: the predicted route itself not kept");
+    }
+}
+
 int main() {
     try {
         const auto names = listed_sources();
@@ -803,6 +821,7 @@ int main() {
         check_selected_header();
         check_known();
         check_incomplete_gate();
+        check_tuned_over_prediction();
         for (const generic::FactsBoard& b : generic::kFactsBoards) run_board(b, names);
         check_coverage(names);
     } catch (const std::exception& error) {
