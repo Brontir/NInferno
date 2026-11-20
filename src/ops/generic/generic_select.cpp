@@ -26,6 +26,7 @@
 #include "ops/generic/compiled_codecs.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_ggml_internal.h"
+#include "ops/generic/generic_rmma_decoders.h"
 #include "ops/generic/generic_i8_schedules.h"
 #include "ops/generic/generic_schedule_tables.h"
 #include "ops/generic/generic_schedules.h"
@@ -1115,19 +1116,50 @@ bool w4a8_ws_supports(QType q) { return compiled(Variant::W4a8Ws, q); }
 namespace {
 
 // The CTAs an SM holds of the sixteen-warp K split (rmma.m1.n1.w1x16) of a format's call (#1117):
-// the CUDA occupancy calculator on its kernel's committed facts (registers, static shared memory;
-// the plain kernel of the call's epilogue) and the board's limits. 0 where a fact is missing (no
-// decoder row, no snapshot for the build): the caller keeps its pick.
-int sixteen_warp_resident(const Problem& problem) {
-    const std::string_view decoder = rmma_geometry_decoder(problem.qtype);
-    const auto arch                = kernel_facts::sass_arch();
-    if (decoder.empty() || !arch) return 0;
-    const auto facts =
-        kernel_facts::rmma_facts(*arch, {std::string(decoder), 1, 16, 1, 1, 1,
-                                         static_cast<int>(problem.epilogue), false, 0});
+// the CUDA occupancy calculator on its kernel's committed facts (registers, static shared memory)
+// and the board's limits. The plain kernel of the call's decoder (rmma_decoder_of, as the launch
+// instantiates it) and epilogue is read: its latency, wide-load and add-sums twins hold the same
+// count in every committed snapshot (Q4_K latency 121 registers against 119, Q6_K wide on sm_86
+// 128 against 122: one 512-thread CTA either way). 0 where a fact is missing (a format without a
+// register-MMA launch, no snapshot for the build, no device): the caller keeps its pick.
+int sixteen_warp_resident_uncached(const Problem& problem) {
+    Weight weight;
+    weight.qtype              = problem.qtype;
+    const RmmaDecoder decoder = rmma_decoder_of(codec_of(weight), problem.k, kRmmaMxfp4Spread);
+    const auto arch           = kernel_facts::sass_arch();
+    if (decoder.name == nullptr || !arch) return 0;
+    const auto facts = kernel_facts::rmma_facts(
+        *arch, {decoder.name, 1, 16, 1, 1, 1, static_cast<int>(problem.epilogue), false, 0});
     if (!facts) return 0;
     return resident_ctas_per_sm(device_class(),
                                 KernelShape{facts->registers, facts->static_shared_bytes, 16 * 32});
+}
+
+// sixteen_warp_resident_uncached once per device (or substituted board), format, epilogue and
+// K's 128-multiple (the U4Zp decoders' choice): the rule runs on the resolve path of every call.
+int sixteen_warp_resident(const Problem& problem) {
+    struct Memo {
+        std::mutex mutex;
+        std::map<std::tuple<int, int, bool>, int> answers;
+    };
+
+    static PerDevice<std::shared_ptr<Memo>> memos;
+    std::shared_ptr<Memo> held;
+    try {
+        held = memos.get([](int) { return std::make_shared<Memo>(); });
+    } catch (const std::exception&) { return 0; }
+    const std::tuple<int, int, bool> key{static_cast<int>(problem.qtype),
+                                         static_cast<int>(problem.epilogue), problem.k % 128 == 0};
+    {
+        const std::lock_guard<std::mutex> lock(held->mutex);
+        if (const auto it = held->answers.find(key); it != held->answers.end()) return it->second;
+    }
+    int resident = 0;
+    try {
+        resident = sixteen_warp_resident_uncached(problem);
+    } catch (const std::exception&) {} // a format without a codec: no fact, the pick stands
+    const std::lock_guard<std::mutex> lock(held->mutex);
+    return held->answers.emplace(key, resident).first->second;
 }
 
 } // namespace
@@ -1187,9 +1219,11 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                 // board without them refuses the pair and keeps its narrow fallback); its
                 // sixteen-warp CTA (a build without them) and its cluster of eight stay.
                 // That sixteen-warp CTA meets the same count (#1117): 512 threads hold two CTAs an
-                // SM at up to 64 registers (Q8_0 50-56, BF16 46-52, FP8 48-60) and one above
-                // (Q4_0 78-80, the K-quants 112-128); past the CTAs an SM holds of it, columns x
-                // CTAs run a second wave, and the eight-warp CTA (two a SM, one wave) is the split.
+                // SM at up to 64 registers (store / add: Q8_0 45-56 and BF16 46-59 from sm_75, FP8
+                // 48-60 from sm_80, the groupwise and small-group U4 decoders) and one above (Q4_0
+                // 78-80, the K-quants 110-128, every SwiGLU row, every sm_70 row); past the CTAs an
+                // SM holds of it, columns x CTAs run a second wave, and the eight-warp CTA (two a
+                // SM, one wave) is the split.
                 // T 9-16, every route timed, master's w1x16 against the best: K-quants 14-23 % on
                 // the 3090, 3060, 4060 Ti and 4070 Ti where 2 x CTAs > SMs, 0-5 % below; Q8_0 0 %
                 // (the rule, frozen first, then right in 12 of 12 cells on the RTX 4090 at K 8192:
@@ -1206,11 +1240,11 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                     const int pair_split = one_wave_split(ctas, sms);
                     const RmmaScheduleInfo split = rmma_schedule_info(pair_split);
                     // Past the pair's wave the sixteen-warp CTA where it still runs one (#1117):
-                    // the latency-bound Q8_0, BF16 and FP8 loops (two such CTAs an SM) take half
-                    // the K trips a warp of the eight-warp CTA walks, at the same issue work; the
-                    // K-quants' one CTA an SM would run a second wave. RTX 5090 / 5070 Ti, T 9-16,
-                    // K 2048-8192, the cells past the pair's wave: w1x16 took 0.70-0.79 of
-                    // n1.w1x8's time on Q8_0 (19 cells), 1.00-1.56 on the K-quants (80 cells).
+                    // the latency-bound Q8_0, BF16 and FP8 store / add loops (two such CTAs an SM)
+                    // take half the K trips a warp of the eight-warp CTA walks, at the same issue
+                    // work; the K-quants' one CTA an SM would run a second wave. RTX 5090 / 5070
+                    // Ti, T 9-16, K 2048-8192, the cells past the pair's wave: w1x16 took 0.70-0.79
+                    // of n1.w1x8's time on Q8_0 (19 cells), 1.00-1.56 on the K-quants (80 cells).
                     if (split.cluster == 2 && current_arch_facts().features.clusters &&
                         2 * columns * ctas > held * sms) {
                         const int resident = sixteen_warp_resident(problem);

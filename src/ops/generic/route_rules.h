@@ -697,7 +697,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      0, "gb202:170sm, gb203:70sm", "RTX 5090, RTX 5070 Ti",
      "T = 9..16 past the CTA pair's wave on a board with clusters: the sixteen-warp CTA where "
      "token columns x CTAs fit the CTAs an SM holds of it (the occupancy calculator on its "
-     "committed registers: Q8_0, BF16, FP8 two, the K-quants one), else n1.w1x8 (#1117, "
+     "committed registers: Q8_0, BF16, FP8 store / add two, the K-quants and SwiGLU one), else "
+     "n1.w1x8 (#1117, "
      "route_tune of every route, K 2048-8192: w1x16 0.70-0.79 of n1.w1x8's time on Q8_0 in 19 "
      "cells, 1.00-1.56 on the K-quants in 80)",
      ""},
@@ -708,7 +709,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "RTX 3090, RTX 3060, RTX 4060 Ti, RTX 4070 Ti, RTX 4090",
      "T = 9..16 at most one CTA per SM, a build without the cluster schedules: the decode split's "
      "sixteen-warp CTA runs one wave only while token columns x CTAs fit the CTAs an SM holds of "
-     "it (the occupancy calculator on its committed registers: two at <= 64, one above); past it "
+     "it (the occupancy calculator on its committed registers: two at <= 64, one above; on sm_70 "
+     "every row is above, so there Q8_0 moves too, structural, not measured yet); past it "
      "n1.w1x8 (#1117, route_tune of every route: K-quants 14-23 % behind the best with w1x16 "
      "where 2 x CTAs > SMs; the rule frozen before the RTX 4090 and 4060 Ti K 8192 grids, right "
      "in 12 of 12 and 9 of 9 cells)",

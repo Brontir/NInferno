@@ -36,13 +36,6 @@ namespace {
 
 using Facts = std::optional<kernel_facts::KernelFacts>;
 
-// Whether this build's MXFP4 register-MMA decoder is the byte-permute spread one (a build with
-// NINFERNO_WITHOUT_NVFP4) rather than the FP4 converter's (Mxfp4RmmaDecoder, generic_gemm.cuh).
-#ifdef NINFERNO_WITHOUT_NVFP4
-constexpr bool kMxfp4Spread = true;
-#else
-constexpr bool kMxfp4Spread = false;
-#endif
 
 // The committed facts of the kernel instances of the kernels this thread's device runs, read once
 // per device (a substituted board's, once per substitute's content: PerDevice) and keyed by
@@ -220,7 +213,7 @@ std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epi
         (volta_hmma_takes(codec, args) || volta_gemv_takes(codec, args))) {
         return std::nullopt;
     }
-    const RmmaDecoder dec = rmma_decoder_of(codec, args.k, kMxfp4Spread);
+    const RmmaDecoder dec = rmma_decoder_of(codec, args.k, kRmmaMxfp4Spread);
     if (dec.name == nullptr) return std::nullopt; // no register-MMA launch for the codec
     const Instance instance{facts_memo(), codec, args.k % 128 == 0, schedule, s, epilogue};
 

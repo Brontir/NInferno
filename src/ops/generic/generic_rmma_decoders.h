@@ -36,6 +36,15 @@ struct RmmaDecoder {
 // byte-permute spread decoder (Mxfp4SpreadDecoder, a build with NINFERNO_WITHOUT_NVFP4:
 // Mxfp4RmmaDecoder, generic_gemm.cuh): the caller says which (mxfp4_spread), so that this
 // function has the one body in every build.
+// Whether this build's MXFP4 register-MMA decoder is the byte-permute spread one (a build with
+// NINFERNO_WITHOUT_NVFP4) rather than the FP4 converter's (Mxfp4RmmaDecoder, generic_gemm.cuh):
+// the mxfp4_spread argument of this build's lookups.
+#ifdef NINFERNO_WITHOUT_NVFP4
+inline constexpr bool kRmmaMxfp4Spread = true;
+#else
+inline constexpr bool kRmmaMxfp4Spread = false;
+#endif
+
 constexpr RmmaDecoder rmma_decoder_of(WeightCodec codec, std::int32_t k,
                                       bool mxfp4_spread = false) {
     switch (codec) {
