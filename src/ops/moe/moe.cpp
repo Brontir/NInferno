@@ -784,7 +784,12 @@ regime::R8LimitAnswer regime::r8_limit_answer(const Weight& bank) {
                           bank.layout == QuantLayout::GgmlFrag ? generic::dram_bytes_per_sm_cycle()
                                                                : 0.0};
     const auto& d = device_class();
-    return r8_limit_answer(d.major, d.minor, facts);
+    auto answer   = r8_limit_answer(d.major, d.minor, facts);
+    // Lab only (#860): NINFERNO_LAB_R8_LIMIT holds every bank to that many R8 tokens.
+    if (const char* lab = std::getenv("NINFERNO_LAB_R8_LIMIT")) {
+        answer.limit = std::max(1, std::atoi(lab));
+    }
+    return answer;
 }
 
 std::int32_t r8_token_limit(const Weight& bank) { return regime::r8_limit_answer(bank).limit; }
