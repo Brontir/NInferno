@@ -213,6 +213,7 @@ struct BoardTally {
     int cells = 0, borrowed = 0, transferred = 0, measured = 0, moved = 0, demoted_same_route = 0;
     int kept_rules = 0; // Borrowed or Transferred answers of the rules list, kept by design
     int kept_mmq_boundary = 0; // demoted ggml_mmq entries kept at T 9..16 (keeps_mmq_boundary)
+    int gap_bands = 0; // gaps of the table answered by a predicted band under evidence (#1068)
     std::map<std::string, int> moved_by_regime;
     Json moves = Json::array();
     std::set<std::string> moved_problems; // "<format>|<epilogue>|n<N>|k<K>"
@@ -429,7 +430,16 @@ void check_cell(const DeviceClass& d, const Cell& c, const std::string& at,
         ++tally.kept_mmq_boundary;
         return;
     }
-    if (auto_list && generic::policy_demotes(RoutePolicy::Evidence, le.kind)) {
+    // A gap of the board's table (no entry of its own, so legacy's ranker answered, or a borrowed
+    // entry) takes the analyzer's predicted band under evidence, ahead of the borrowed entry and
+    // the ranker (#1068, table_route_answer); legacy reads no band. A move like any other below.
+    const bool gap_band =
+        ee.kind == Kind::Predicted && ee.source == "route-table" &&
+        (le.kind == Kind::Ranker || le.kind == Kind::Borrowed || le.kind == Kind::Transferred) &&
+        ee.demoted_source.empty();
+    if (gap_band) {
+        ++tally.gap_bands;
+    } else if (auto_list && generic::policy_demotes(RoutePolicy::Evidence, le.kind)) {
         // Under legacy the entry won; under evidence it yields to the ranker. It would stand only
         // where the ranker has no candidate (the scalar fallback), which no cell of this grid is,
         // or at the MMQ boundary above.
@@ -791,7 +801,8 @@ int main(int argc, char** argv) {
                     std::cout << " [" << regime << ": " << n << ']';
                 }
                 std::cout << ", " << t.demoted_same_route << " demoted to the same route, "
-                          << t.kept_mmq_boundary << " kept at the MMQ boundary\n";
+                          << t.kept_mmq_boundary << " kept at the MMQ boundary, " << t.gap_bands
+                          << " gaps answered by a predicted band\n";
                 if (std::string_view(b.own_build_set) == kBuildSet) {
                     written[std::string(b.name) + "/" + tables] = board_json(b, tables, t);
                 }
