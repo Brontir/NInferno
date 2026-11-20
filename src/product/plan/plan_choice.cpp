@@ -333,8 +333,10 @@ choice::ExpertKernel expert_kernel_of(runtime::PlanExpertKernel kernel) noexcept
 void with_moe_routes(choice::ModelFacts& model, const PlanSourceFacts& facts,
                      const runtime::PlanDeviceFacts& device) {
     const runtime::PlanMoeRouteQuery& query = runtime::plan_moe_route_query();
-    // No query registered (ninferno-ui, #766): the MoE step's estimate says it was not asked.
-    model.moe_route_unqueried = !query && model.moe();
+    // No query registered (ninferno-ui, #766), or an MoE whose facts list no routed layers (a hub
+    // row priced from another quantization's header, #799): nobody asks which kernels its banks
+    // run on, so the MoE step's estimate says it was not asked.
+    model.moe_route_unqueried = model.moe() && (!query || facts.model.expert_layers.empty());
     if (!query || !model.moe() || facts.model.expert_layers.empty()) { return; }
     // What the query reads of the model: its routed layers and their geometry.
     runtime::PlanModelFacts layers;

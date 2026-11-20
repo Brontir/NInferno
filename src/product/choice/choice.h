@@ -273,9 +273,11 @@ struct ModelFacts {
     // step takes the pair its kMoeRoutedEta rows were measured on.
     std::function<std::vector<MoeStepRoute>(std::uint32_t rows, ActivationMode activations)>
         moe_routes;
-    // No route query could be asked: the program registers none (ninferno-ui, #766; with_moe_routes
-    // sets it). The step still takes the measured pair's share, but its estimate is Transferred
-    // past one row ("MoE route not queried"): which pair the op runs was never asked.
+    // No route query could be asked: the program registers none (ninferno-ui, #766), or the facts
+    // list no routed layers to ask about (a hub row priced from another quantization's header,
+    // #799); with_moe_routes sets it. The step still takes the measured pair's share, but its
+    // estimate is Transferred past one row ("MoE route not queried"): which pair the op runs was
+    // never asked.
     bool moe_route_unqueried = false;
     // The kernel a trunk linear's prefill call of `tokens` tokens runs on under `activations`
     // (#613 PR-9): the generic selector's own answer (ops/generic route_query, prefill = true) on
