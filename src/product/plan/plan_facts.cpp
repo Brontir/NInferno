@@ -591,7 +591,6 @@ public:
             note(b, format, std::string(artifact::layout_name(kept)), k, policy);
             const bool frag = at == QuantLayout::GgmlFrag;
             l.mxfp4 = l.mxfp4 && q == QType::MXFP4;
-            l.nvfp4         = l.nvfp4 || q == QType::NVFP4;
             // A format with int8 codes (the grouped W4A8 reads it), which the converter keeps at
             // AllowA8: the layer's policy where a bank records none (layer_allows_a8).
             const bool int8_codes =
@@ -599,6 +598,9 @@ public:
             l.kept_a8        = l.kept_a8 && int8_codes;
             const bool whole = moe_w4a8_whole_blocks(static_cast<std::int64_t>(k),
                                                      static_cast<std::int64_t>(x_width));
+            // The op asks the A4 veto only of an NVFP4 bank in whole blocks (w4a8_bank_refusal
+            // refuses another for its K group first, on every build).
+            l.nvfp4 = l.nvfp4 || (q == QType::NVFP4 && whole);
             if (whole && int8_codes && (!frag || ggml_frag_w4a8(q))) { l.int8_bytes += bytes; }
             // An MXFP4 bank takes its layer's MXFP4 route (the int8 tier or the block-scaled MMA)
             // only in whole blocks too: the op refuses it otherwise (KGroup) and runs it A16.
@@ -737,7 +739,8 @@ private:
         // bank kept as a format the header does not tell; loader_a16: a bank the loader runs at
         // A16 whatever it keeps (add's `assumed`, `loader_a16`)
         bool known = true, mxfp4 = true, kept_a8 = true, assumed = false, loader_a16 = false;
-        // nvfp4: a bank of the layer is NVFP4 (under an A4 policy the build decides, route()).
+        // nvfp4: a bank of the layer is NVFP4 in whole W4A8 blocks (under an A4 policy the build
+        // decides, route()).
         bool nvfp4 = false;
         Bank gate_up, down;
     };

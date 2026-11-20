@@ -334,8 +334,10 @@ int gguf_qwen35() {
             banks.tensors.push_back(
                 tensor(name, {5120, 512, 64}, ninferno::convert::ggml::NVFP4, 100));
         }
+        // The Q4_K down holds most of the bytes, so the route is its: Int8 if the gate/up's
+        // A16Only did not reach the layer.
         banks.tensors.push_back(tensor("blk.0.ffn_down_exps.weight", {512, 5120, 64},
-                                       ninferno::convert::ggml::Q4_K, 100));
+                                       ninferno::convert::ggml::Q4_K, 500));
         const auto route = pr::plan_facts_of_gguf(banks, 999999).model.expert_prefill;
         failures += check(route == rt::ExpertPrefill::A16,
                           "gguf NVFP4 gate/up without a divisor beside a Q4_K down: A16 (" +
