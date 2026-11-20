@@ -190,6 +190,12 @@ add_test(NAME ninferno_diff_lint_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_diff_lint.py)
 set_tests_properties(ninferno_diff_lint_test PROPERTIES LABELS host)
 
+# The release dispatcher's engine choice (apps/dispatch/engine_choice.h): the KV row codec keeps an
+# 86 engine off an sm_89 card (#991). No GPU.
+ninferno_add_test(ninferno_engine_choice_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_engine_choice.cpp")
+target_include_directories(ninferno_engine_choice_test PRIVATE "${PROJECT_SOURCE_DIR}/apps")
+
 # tools/audit/affected_arches.py: a diff to the arches and stands to test, synthetic diffs, no GPU
 # (#611).
 add_test(NAME ninferno_affected_arches_test
