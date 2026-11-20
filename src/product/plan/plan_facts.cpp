@@ -601,8 +601,10 @@ public:
                                                      static_cast<std::int64_t>(x_width));
             // The op asks the A4 veto only of an NVFP4 bank in whole blocks (w4a8_bank_refusal
             // refuses another for its K group first, on every build).
-            l.nvfp4     = l.nvfp4 || (q == QType::NVFP4 && whole);
-            l.all_nvfp4 = l.all_nvfp4 && q == QType::NVFP4;
+            l.nvfp4 = l.nvfp4 || (q == QType::NVFP4 && whole);
+            // A fused W4A4 layer (SparseMoe, Gemma4Moe) takes NVFP4 banks in whole blocks only:
+            // a padded one is refused for its K group first, the generic op then runs it A16.
+            l.all_nvfp4 = l.all_nvfp4 && q == QType::NVFP4 && whole;
             // NVFP4 has a W4A8 tile on every build too (ops/generic compiled_codecs.h, W4A8_GGML32
             // X(Nvfp4)), run where the layer allows A8 and not the build's A4
             // (nvfp4_prefill_a8_policy; an A4 layer is the build's, build_decides below), though
@@ -780,8 +782,9 @@ private:
         // nvfp4: a bank of the layer is NVFP4 in whole W4A8 blocks (under an A4 policy the build
         // decides, route()).
         bool nvfp4 = false;
-        // all_nvfp4: every bank NVFP4 (on sm_120a such a layer may take a fused W4A4 kernel,
-        // SparseMoe or Gemma4Moe, which no ExpertPrefill value prices).
+        // all_nvfp4: every bank NVFP4 in whole blocks (on sm_120a such a layer may take a fused
+        // W4A4 kernel, SparseMoe or Gemma4Moe, which no ExpertPrefill value prices; the facts do
+        // not name the model's kernel path, so it is Unknown there, never a guessed A16).
         bool all_nvfp4 = true;
         Bank gate_up, down;
     };
