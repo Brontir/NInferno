@@ -344,6 +344,32 @@ int gguf_qwen35() {
                           "gguf NVFP4 gate/up without a divisor beside a Q4_K down: A16 (" +
                               std::to_string(static_cast<int>(route)) + ")");
     }
+    // #1090: a GGUF NVFP4 MoE without divisors (A16Only) runs the grouped W4A8 under
+    // --activations int8; with divisors its policy is the loader's probe and the recipe's
+    // (unknown here): the build's under fast activations, the grouped W4A8 under int8.
+    for (const bool divisor : {false, true}) {
+        GgufFile banks = file;
+        for (const char* bank : {"ffn_gate_exps", "ffn_up_exps", "ffn_down_exps"}) {
+            const bool down = std::string(bank) == "ffn_down_exps";
+            banks.tensors.push_back(tensor(std::string("blk.0.") + bank + ".weight",
+                                           down ? std::vector<std::uint64_t>{512, 5120, 64}
+                                                : std::vector<std::uint64_t>{5120, 512, 64},
+                                           ninferno::convert::ggml::NVFP4, 100));
+            if (divisor) {
+                banks.tensors.push_back(tensor(std::string("blk.0.") + bank + ".input_scale", {64},
+                                               ninferno::convert::ggml::F32, 256));
+            }
+        }
+        const auto facts       = pr::plan_facts_of_gguf(banks, 999999).model;
+        const std::string what = divisor ? "with divisors" : "without divisors";
+        failures += check(facts.expert_prefill ==
+                              (divisor ? rt::ExpertPrefill::Unknown : rt::ExpertPrefill::A16),
+                          "gguf NVFP4 banks " + what + ": " + (divisor ? "Unknown" : "A16") + " (" +
+                              std::to_string(static_cast<int>(facts.expert_prefill)) + ")");
+        failures += check(facts.expert_prefill_int8 == rt::ExpertPrefill::Int8,
+                          "gguf NVFP4 banks " + what + " under int8: the grouped W4A8 (" +
+                              std::to_string(static_cast<int>(facts.expert_prefill_int8)) + ")");
+    }
     // Floating-point weight banks (F16, kept as bf16) are a kind of their own, at BF16 inputs:
     // the op runs them too (Codex on #764); a float auxiliary tensor of a bank (a scale, a bias)
     // is not a bank, and neither moves the prefill route.
@@ -1442,10 +1468,44 @@ int artifact_prefill_policy() {
         check(route(QType::NVFP4, padded_gate_up, false, false, 2888) == rt::ExpertPrefill::A16,
               "artifact prefill: NVFP4 alone, a padded gate/up beside a whole down at "
               "AllowA4, A16 on every build");
-    failures += check(route(QType::NVFP4, nvfp4_a4, true) != rt::ExpertPrefill::Unknown,
-                      "artifact prefill under int8: NVFP4 at AllowA4 beside Q4_K, not Unknown");
-    failures += check(route(QType::NVFP4, layers(a8, a8, a8, a8)) != rt::ExpertPrefill::Unknown,
-                      "artifact prefill: NVFP4 banks at AllowA8, not the build's");
+    // #1090: NVFP4 runs the grouped W4A8 on every build where its policy is A8 and not A4
+    // (nvfp4_prefill_a8_policy), as under --activations int8: the int8 route, not A16.
+    failures +=
+        check(route(QType::NVFP4, nvfp4_a4, true) == rt::ExpertPrefill::Int8,
+              "artifact prefill under int8: NVFP4 at AllowA4 beside Q4_K, the grouped W4A8");
+    failures += check(route(QType::NVFP4, layers(a8, a8, a8, a8)) == rt::ExpertPrefill::Int8,
+                      "artifact prefill: NVFP4 banks at AllowA8, the grouped W4A8");
+    failures += check(route(QType::NVFP4, layers(a16, a16, a16, a16)) == rt::ExpertPrefill::A16,
+                      "artifact prefill: NVFP4 banks recorded A16Only, A16");
+    // A policy the facts do not hold is the build's or the recipe's, not the kept A16Only (an
+    // artifact's start refuses a use with none, weight_use.cpp; a GGUF's divisor bank has none).
+    failures +=
+        check(route(QType::NVFP4, layers(none, none, none, none)) == rt::ExpertPrefill::Unknown,
+              "artifact prefill: NVFP4 banks with no recorded policy, Unknown");
+    failures +=
+        check(route(QType::NVFP4, layers(none, none, none, none), true) == rt::ExpertPrefill::Int8,
+              "artifact prefill under int8: NVFP4 banks with no recorded policy, the grouped W4A8");
+    // codex on #1094: a layer whose policy the facts do not hold may also be the recipe's
+    // A16Only (moe_recipe). 100 bytes voting Int8, 90 A16 and a 20-byte NVFP4 layer of unknown
+    // policy: Int8 on both builds at AllowA4, A16 where the recipe keeps it A16Only, so Unknown.
+    {
+        const std::vector<Bank> close = {
+            {"text/layers/0/experts/gate_up", 60, a8, QType::GGML_Q4_0},
+            {"text/layers/0/experts/down", 40, a8, QType::GGML_Q4_0},
+            {"text/layers/1/experts/gate_up", 50, a16, QType::GGML_Q4_0},
+            {"text/layers/1/experts/down", 40, a16, QType::GGML_Q4_0},
+            {"text/layers/2/experts/gate_up", 12, none},
+            {"text/layers/2/experts/down", 8, none}};
+        failures += check(route(QType::NVFP4, close) == rt::ExpertPrefill::Unknown,
+                          "artifact prefill: an unknown-policy NVFP4 layer that the recipe's "
+                          "A16Only would tip, Unknown");
+        // The same layer too small to tip it: Int8 at every start.
+        std::vector<Bank> small = close;
+        small[4].rows           = 6;
+        small[5].rows           = 2;
+        failures += check(route(QType::NVFP4, small) == rt::ExpertPrefill::Int8,
+                          "artifact prefill: an unknown-policy NVFP4 layer too small to tip, Int8");
+    }
     // A bank known A16-only beside one with no recorded policy: the layer is A16 still
     // (ops::moe_policy), not the kept fallback.
     failures += check(route(QType::MXFP4, layers(a16, none, a16, none)) == rt::ExpertPrefill::A16,
