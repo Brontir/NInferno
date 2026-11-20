@@ -87,7 +87,9 @@ int shipped_picks() {
                               R"re("epilogue": "([a-z]+)",\s*"n": ([0-9]+),\s*"k": ([0-9]+),)re"
                               R"re(\s*"bands": \[\s*\[\s*([0-9]+),\s*[0-9]+,\s*"([^"]+)")re");
     int files = 0;
-    // The first file and its board, for the refusals below.
+    // The file and its board for the refusals and the gap check below: of the files with two
+    // entries or more, the first by name (a directory's order is the filesystem's: one stand
+    // listed a one-entry file first and failed the gap check, #1123).
     std::string first_name, first_text;
     std::uint32_t first_id = 0;
     for (const auto& f : std::filesystem::directory_iterator(dir)) {
@@ -114,7 +116,9 @@ int shipped_picks() {
         d.facts = ninferno::machine_facts_of(d);
         const ninferno::ScopedDeviceClass scoped(d);
         ninferno::ops::set_route_table_dir("");
-        if (first_name.empty()) {
+        const auto entry_count = std::distance(
+            std::sregex_iterator(text.begin(), text.end(), entry_re), std::sregex_iterator());
+        if (entry_count >= 2 && (first_name.empty() || name < first_name)) {
             first_name = name;
             first_text = text;
             first_id   = id;
