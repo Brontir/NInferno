@@ -605,6 +605,7 @@ public:
             // A fused W4A4 layer (SparseMoe, Gemma4Moe) takes NVFP4 banks in whole blocks only:
             // a padded one is refused for its K group first, the generic op then runs it A16.
             l.all_nvfp4 = l.all_nvfp4 && q == QType::NVFP4 && whole;
+            l.any_nvfp4 = l.any_nvfp4 || q == QType::NVFP4;
             // NVFP4 has a W4A8 tile on every build too (ops/generic compiled_codecs.h, W4A8_GGML32
             // X(Nvfp4)), run where the layer allows A8 and not the build's A4
             // (nvfp4_prefill_a8_policy; an A4 layer is the build's, build_decides below), though
@@ -675,6 +676,22 @@ public:
                         tally[static_cast<std::size_t>(runtime::ExpertPrefill::A16)] +=
                             l.bytes - admitted;
                     }
+                }
+            } else if (!int8 && !l.loader_a16 && l.any_nvfp4 && !l.nvfp4 &&
+                       lp == runtime::PlanExpertPolicy::Unknown) {
+                // An NVFP4 site whose policy the facts do not hold, none of its NVFP4 banks in
+                // whole blocks (a whole one is build_decides, or the kept fallback where a bank is
+                // unseen: the W4A4 build's A4 veto, #1100 review): the recipe's AllowA4 lets the op
+                // run the layer's admitted banks (int8 codes in whole blocks) on the grouped W4A8
+                // on both builds, a padded NVFP4 bank refused for its K group with no A4 veto; its
+                // A16Only runs every bank A16 (#1097). The kept fallback would count A16 at every
+                // start.
+                for (std::size_t s = 0; s < by.size(); ++s) {
+                    auto& tally                = by[s];
+                    const std::uint64_t admits = (s & 2) == 0 ? l.int8_bytes : 0;
+                    tally[static_cast<std::size_t>(runtime::ExpertPrefill::Int8)] += admits;
+                    tally[static_cast<std::size_t>(runtime::ExpertPrefill::A16)] +=
+                        l.bytes - admits;
                 }
             } else if (l.mxfp4) {
                 // A bank the op refuses for its blocks (w4a8_bank_refusal KGroup), or under an A16
@@ -802,6 +819,8 @@ private:
         // W4A4 kernel, SparseMoe or Gemma4Moe, which no ExpertPrefill value prices; the facts do
         // not name the model's kernel path, so it is Unknown there, never a guessed A16).
         bool all_nvfp4 = true;
+        // any_nvfp4: a bank of the layer is NVFP4, in whole blocks or not (#1097).
+        bool any_nvfp4 = false;
         Bank gate_up, down;
     };
 

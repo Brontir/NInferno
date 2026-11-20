@@ -1506,6 +1506,32 @@ int artifact_prefill_policy() {
         failures += check(route(QType::NVFP4, small) == rt::ExpertPrefill::Int8,
                           "artifact prefill: an unknown-policy NVFP4 layer too small to tip, Int8");
     }
+    // #1097: an NVFP4 site of unknown policy whose NVFP4 bank is padded (a down of K 2896, whole
+    // 16-value NVFP4 blocks but no whole 32-value ones) beside a Q4_0 gate/up recorded AllowA8 (as
+    // gguf_expert_policy records Q4_0; the layer's policy stays unknown): the recipe's AllowA4 runs
+    // the Q4_0 bank on the grouped W4A8 on both builds (the padded bank is refused for its K group,
+    // no A4 veto), its A16Only runs all A16, so the route is Unknown, not the kept fallback's A16.
+    {
+        const std::vector<Bank> padded_down = {
+            {"text/layers/0/experts/gate_up", 5760, a8, QType::GGML_Q4_0},
+            {"text/layers/0/experts/down", 2880, none, std::nullopt, 2896},
+            {"text/layers/1/experts/gate_up", 5760, a8, QType::GGML_Q4_0},
+            {"text/layers/1/experts/down", 2880, none, std::nullopt, 2896}};
+        failures += check(route(QType::NVFP4, padded_down) == rt::ExpertPrefill::Unknown,
+                          "artifact prefill: a padded NVFP4 down of unknown policy beside a Q4_0 "
+                          "gate/up, Unknown (#1097)");
+        failures += check(route(QType::NVFP4, padded_down, true) == rt::ExpertPrefill::Int8,
+                          "artifact prefill under int8: the same layer, Int8 (#1097)");
+        // Beside a larger layer known AllowA8 (Int8 at every start), the padded layer cannot tip
+        // it: Int8, every start agreeing.
+        std::vector<Bank> beside = {{"text/layers/0/experts/gate_up", 5760, a8, QType::GGML_Q4_0},
+                                    {"text/layers/0/experts/down", 2880, a8, QType::GGML_Q4_0},
+                                    {"text/layers/1/experts/gate_up", 576, a8, QType::GGML_Q4_0},
+                                    {"text/layers/1/experts/down", 288, none, std::nullopt, 2896}};
+        failures += check(route(QType::NVFP4, beside) == rt::ExpertPrefill::Int8,
+                          "artifact prefill: a small padded NVFP4 layer beside a known AllowA8 "
+                          "one, Int8 (#1097)");
+    }
     // A bank known A16-only beside one with no recorded policy: the layer is A16 still
     // (ops::moe_policy), not the kept fallback.
     failures += check(route(QType::MXFP4, layers(a16, none, a16, none)) == rt::ExpertPrefill::A16,
