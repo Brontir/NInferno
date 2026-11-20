@@ -2027,6 +2027,11 @@ runtime::PlanDeviceFacts plan_device_of_cuda(int device, bool measure_free, bool
     const auto& cls   = device_class(device);
     out.pci_device_id = cls.pci_device_id;
     out.sms           = cls.sms;
+    // The board under a shared product id, as the start's class reads it (#903): a TITAN V CEO
+    // Edition is planned as itself, not as the Quadro GV100; an unread subsystem as the slowest
+    // board the row lists.
+    out.pci_subsystem_id     = cls.pci_subsystem_id;
+    out.pci_subsystem_unread = cls.pci_subsystem_unread;
     if (measure_free) {
         check(cudaSetDevice(device), "cudaSetDevice");
         // As a start reads it (model_instance.cpp, construct_or_plan): when its plan has an
