@@ -46,8 +46,6 @@ add_library(ninferno_engine STATIC
   engine/decision_sources.cpp
   engine/nemotron_h_family.cpp
   engine/gemma4_family.cpp
-  engine/hf_text_frontend.cpp
-  engine/prompt_tail.cpp
   engine/plan_workspace.cpp
   engine/plan_moe_routes.cpp
   engine/plan_prefill_routes.cpp
@@ -69,4 +67,17 @@ target_link_libraries(ninferno_engine PRIVATE
   ninferno_structured
   ninferno_text
   ninferno_media_decode)
+target_link_libraries(ninferno_engine PUBLIC ninferno_prompt_tail)
 add_library(ninferno::engine ALIAS ninferno_engine)
+
+# The prefill's tail calls read from a model's own frontend (DECISIONS 62): its tokenizer and chat
+# template, no weights and no launch code, so ninferno-ui's plan counts them as serve's does (#793).
+# Apart from the Engine because a static link pulls whole objects: model_instance.cpp and
+# family_registry.cpp reach every family's loaders.
+add_library(ninferno_prompt_tail STATIC
+  engine/artifact_model_type.cpp
+  engine/hf_text_frontend.cpp
+  engine/prompt_tail.cpp)
+ninferno_internal_includes(ninferno_prompt_tail)
+target_link_libraries(ninferno_prompt_tail PUBLIC ninferno_model_runtime ninferno_artifact
+  ninferno::core)

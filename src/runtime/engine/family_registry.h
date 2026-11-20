@@ -6,6 +6,7 @@
 
 #include "core/device.h"
 #include "ninferno/types.h"
+#include "runtime/engine/artifact_model_type.h"
 #include "runtime/engine/backend.h"
 #include "runtime/engine/model_instance.h"
 
@@ -38,9 +39,6 @@ struct FamilyEntry {
 // The recurrent state the family declaring `model_type` takes under --activations fast when the
 // Engine chooses it. Throws like family_loader when no family declares it.
 [[nodiscard]] RecurrentStateStorage automatic_recurrent_state(std::string_view model_type);
-
-// The text component's model_type of the artifact at `path`, read from its directory only.
-[[nodiscard]] std::string artifact_model_type(const std::filesystem::path& path);
 
 // The loader of the family that declares `model_type`. Throws std::invalid_argument naming the
 // served model types when no family declares it.
