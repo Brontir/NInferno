@@ -1159,6 +1159,9 @@ int sixteen_warp_resident_uncached(const Problem& problem) {
 
 // sixteen_warp_resident_uncached once per device (or substituted board), format, epilogue and
 // K's 128-multiple (the U4Zp decoders' choice): the rule runs on the resolve path of every call.
+// A format without a codec (codec_of's invalid_argument) is remembered as 0; any other failure
+// (the device or the snapshot not readable yet) answers 0 for this call only, so a transient
+// error cannot turn the rule off for the process (the advisor's review of #1119).
 int sixteen_warp_resident(const Problem& problem) {
     struct Memo {
         std::mutex mutex;
@@ -1179,7 +1182,9 @@ int sixteen_warp_resident(const Problem& problem) {
     int resident = 0;
     try {
         resident = sixteen_warp_resident_uncached(problem);
-    } catch (const std::exception&) {} // a format without a codec: no fact, the pick stands
+    } catch (const std::invalid_argument&) {
+        // A format without a codec: no fact, the pick stands.
+    } catch (const std::exception&) { return 0; }
     const std::lock_guard<std::mutex> lock(held->mutex);
     return held->answers.emplace(key, resident).first->second;
 }
@@ -1270,21 +1275,21 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                         : 1;
                 if (ctas <= sms) {
                     const int pair_split = one_wave_split(ctas, sms);
-                    const RmmaScheduleInfo split = rmma_schedule_info(pair_split);
+                    const RmmaScheduleInfo pair = rmma_schedule_info(pair_split);
                     // Past the pair's wave the sixteen-warp CTA where it still runs one (#1117):
                     // the latency-bound Q8_0, BF16 and FP8 store / add loops (two such CTAs an SM)
                     // take half the K trips a warp of the eight-warp CTA walks, at the same issue
                     // work; the K-quants' one CTA an SM would run a second wave. RTX 5090 / 5070
                     // Ti, T 9-16, K 2048-8192, the cells past the pair's wave: w1x16 took 0.70-0.79
                     // of n1.w1x8's time on Q8_0 (19 cells), 1.00-1.56 on the K-quants (80 cells).
-                    if (split.cluster == 2 && current_arch_facts().features.clusters &&
+                    if (pair.cluster == 2 && current_arch_facts().features.clusters &&
                         2 * columns * ctas > held * sms) {
                         const int resident = rule_resident(problem);
                         return resident > 0 && columns * ctas <= resident * sms
                                    ? rmma_index(1, 16, 1, 1)
                                    : rmma_index(1, 8, 1, 1);
                     }
-                    if (split.cluster == 1 && split.warps_k == 16) {
+                    if (pair.cluster == 1 && pair.warps_k == 16) {
                         const int resident = rule_resident(problem);
                         if (resident > 0 && columns * ctas > resident * sms) {
                             return rmma_index(1, 8, 1, 1);
