@@ -1576,7 +1576,8 @@ PlanSourceFacts directory_facts(const artifact::Directory& dir, const std::strin
     }
     // The activation policy each routed object's uses record (the converter's, convert/planner.cpp;
     // the start reads it: models/common/weight_use.cpp), the strictest where several read it; none
-    // where a use records none (ExpertRoutes: the layer's policy unknown).
+    // where a use records none (ExpertRoutes: the layer's policy unknown). An A16Only use stands
+    // whatever another use leaves unrecorded: the object never takes a narrower input (#1081).
     enum class Recorded : std::uint8_t { None, Policy, Unknown };
     std::vector<std::optional<artifact::ActivationPolicy>> recorded(dir.objects.size());
     std::vector<Recorded> used(dir.objects.size(), Recorded::None);
@@ -1588,7 +1589,13 @@ PlanSourceFacts directory_facts(const artifact::Directory& dir, const std::strin
             const std::size_t i = piece.object.index;
             if (i >= recorded.size()) { continue; }
             auto& r = recorded[i];
-            if (!use.activation_policy) {
+            const bool a16 = use.activation_policy == artifact::ActivationPolicy::A16Only;
+            if (a16) {
+                r       = use.activation_policy;
+                used[i] = Recorded::Policy;
+            } else if (used[i] == Recorded::Policy && r == artifact::ActivationPolicy::A16Only) {
+                // already the strictest
+            } else if (!use.activation_policy) {
                 used[i] = Recorded::Unknown; // a use without a policy, whatever the others say
             } else if (used[i] == Recorded::None ||
                        (used[i] == Recorded::Policy &&

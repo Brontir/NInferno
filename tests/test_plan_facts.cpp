@@ -26,8 +26,8 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
-#include <iostream>
 #include <initializer_list>
+#include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -295,8 +295,8 @@ int gguf_qwen35() {
     }
     // The GGUF banks' policy (gguf_expert_policy): MXFP4 kept as stored (AllowA8, qwen3_5's and
     // moe_recipe's); NVFP4 without an activation divisor at BF16 inputs; NVFP4 with one
-    // (<stem>.input_scale) as its recipe decides: unknown.
-    // `divisors`: the banks given an activation divisor (<stem>.input_scale).
+    // (<stem>.input_scale) on every bank as its recipe decides: unknown (one bank without:
+    // A16Only). `divisors`: the banks given an activation divisor (<stem>.input_scale).
     const auto policy_of = [&](std::uint32_t type, std::initializer_list<const char*> divisors) {
         GgufFile banks = file;
         banks.tensors.push_back(tensor("blk.0.ffn_gate_exps.weight", {5120, 512, 64}, type, 100));
@@ -1293,8 +1293,10 @@ int artifact_prefill_policy() {
         Policy policy;
     };
 
-    // `int8`: the route under --activations int8 (expert_prefill_int8), else fast activations'.
-    const auto route = [](QType format, const std::vector<Bank>& banks, bool int8 = false) {
+    // A directory of these banks, one object and one use each; `unrecorded_use`: a second use of
+    // every object that records no policy (the fold over an object's uses, #1081).
+    const auto directory = [](QType format, const std::vector<Bank>& banks,
+                              bool unrecorded_use = false) {
         art::Directory dir;
         dir.components["text"].config      = gpt_oss_text_config();
         const ninferno::QuantLayout layout = format == QType::MXFP4
@@ -1320,39 +1322,28 @@ int artifact_prefill_policy() {
             use.input                  = "x";
             use.activation_policy      = bank.policy;
             dir.uses[{bank.name, "x"}] = use;
+            if (unrecorded_use) {
+                use.input                  = "y";
+                use.activation_policy      = std::nullopt;
+                dir.uses[{bank.name, "y"}] = use;
+            }
         }
-        const auto facts = pr::plan_facts_of_directory(dir, "a test directory").model;
+        return dir;
+    };
+    // `int8`: the route under --activations int8 (expert_prefill_int8), else fast activations'.
+    const auto route = [&](QType format, const std::vector<Bank>& banks, bool int8 = false,
+                           bool unrecorded_use = false) {
+        const auto facts = pr::plan_facts_of_directory(directory(format, banks, unrecorded_use),
+                                                       "a test directory")
+                               .model;
         return int8 ? facts.expert_prefill_int8 : facts.expert_prefill;
     };
     // The decode kind's policy of the same directory (PlanExpertLayers::policy, layer_policy).
-    const auto kind_policy = [&](QType format, const std::vector<Bank>& banks) {
-        art::Directory dir;
-        dir.components["text"].config      = gpt_oss_text_config();
-        const ninferno::QuantLayout layout = format == QType::MXFP4
-                                                 ? ninferno::default_weight_layout(format)
-                                                 : ninferno::ggml_published_layout(format);
-        for (const Bank& bank : banks) {
-            art::TensorObject t;
-            t.id     = bank.name;
-            t.shape  = {32, bank.rows, 2880};
-            t.format = std::string(art::format_name(format));
-            t.layout = std::string(art::layout_name(layout));
-            t.bytes  = bank.rows;
-            const art::ObjectHandle handle{dir.objects.size()};
-            dir.objects.emplace_back(t);
-            dir.object_index[bank.name] = handle;
-            art::Binding b;
-            b.whole_object          = true;
-            b.elements              = 32 * bank.rows * 2880;
-            b.parts                 = {art::Part{handle, 0, b.elements}};
-            dir.bindings[bank.name] = b;
-            art::Use use;
-            use.parameter              = bank.name;
-            use.input                  = "x";
-            use.activation_policy      = bank.policy;
-            dir.uses[{bank.name, "x"}] = use;
-        }
-        const auto l = pr::plan_facts_of_directory(dir, "a test directory").model.expert_layers;
+    const auto kind_policy = [&](QType format, const std::vector<Bank>& banks,
+                                 bool unrecorded_use = false) {
+        const auto l = pr::plan_facts_of_directory(directory(format, banks, unrecorded_use),
+                                                   "a test directory")
+                           .model.expert_layers;
         return l.size() == 1 ? std::optional<rt::PlanExpertPolicy>(l[0].policy) : std::nullopt;
     };
     const auto layers = [](Policy gate_up0, Policy down0, Policy gate_up1, Policy down1) {
@@ -1389,6 +1380,17 @@ int artifact_prefill_policy() {
     failures += check(kind_policy(QType::MXFP4, layers(none, none, none, none)) ==
                           rt::PlanExpertPolicy::Unknown,
                       "decode kind: no bank records a policy, Unknown");
+    // One object read by an A16-only use and by a use that records none (#1081): the object is
+    // A16-only still, so the layer is, for the prefill route and the decode kind.
+    failures +=
+        check(route(QType::MXFP4, layers(a16, a8, a16, a8), false, true) == rt::ExpertPrefill::A16,
+              "artifact prefill: an A16-only use beside an unrecorded one, A16");
+    failures += check(kind_policy(QType::MXFP4, layers(a16, a8, a16, a8), true) ==
+                          rt::PlanExpertPolicy::A16Only,
+                      "decode kind: an A16-only use beside an unrecorded one, A16Only");
+    failures += check(kind_policy(QType::MXFP4, layers(a8, a8, a8, a8), true) ==
+                          rt::PlanExpertPolicy::Unknown,
+                      "decode kind: AllowA8 uses beside unrecorded ones, Unknown");
     // Under --activations int8 the start runs every bank at AllowA8 (models::effective_policy),
     // whatever was recorded: the formats decide.
     failures +=
