@@ -68,6 +68,7 @@
 #include "ninferno/ops/sampling.h"
 #include "ninferno/ops/speculative_round.h"
 #include "ops/generic/kernel_facts.h"
+#include "ops/softmax_attention/gemma4/launch.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "runtime/engine/plan_dry_run.h"
@@ -777,6 +778,60 @@ int main() {
     const std::vector<Subject> all      = subjects();
     const std::vector<NamedBoard> every = boards();
     check(every.size() >= 50, "the registry has its target boards");
+
+    // #1112: a substituted board's chained-prefill workspace is its own build's tile's, whatever
+    // this build is (launch.cu chain_plan through with_tile_arch). At a Gemma 4 31B full layer
+    // (D 512, 32 query and 4 KV heads), T 2048 is a wide-tile width where the tile fits it: the
+    // Volta and Turing builds' tiles do not (kWidePrefillFitsOf), Ampere's and later do, so their
+    // chain bytes differ. Every snapshot arch with a board answers (no arch of with_tile_arch's
+    // list missing), and every board of one arch answers alike. The lines are printed so the
+    // builds' outputs can be compared.
+    {
+        std::map<std::string, std::string> by_arch;
+        for (const NamedBoard& b : every) {
+            const std::string arch = ops::detail::generic::kernel_facts::release_arch(
+                b.substitute.major, b.substitute.minor);
+            if (arch.empty()) continue;
+            const ScopedDeviceClass scoped(b.substitute);
+            std::string line;
+            try {
+                line = std::to_string(ops::detail::gemma4_attention_chain_bytes(
+                           512, 32, 4, 0, false, false, 2048)) +
+                       " / " +
+                       std::to_string(ops::detail::gemma4_attention_chain_bytes(
+                           512, 32, 4, 0, false, false, 1023));
+            } catch (const std::exception& error) {
+                check(false, b.name + ": the chain bytes of sm_" + arch + " answer (" +
+                                 error.what() + ", #1112)");
+                continue;
+            }
+            const auto [it, first] = by_arch.emplace(arch, line);
+            check(first || it->second == line, b.name + ": the chain bytes of sm_" + arch +
+                                                   " boards agree (" + line + " vs " + it->second +
+                                                   ", #1112)");
+        }
+        for (const auto& [arch, line] : by_arch) {
+            std::cout << "gemma4 chain bytes sm_" << arch << " (T 2048 / 1023): " << line << '\n';
+        }
+        const auto wide_bytes = [&](const std::string& arch) {
+            const auto it = by_arch.find(arch);
+            return it == by_arch.end() ? std::string() : it->second.substr(0, it->second.find(' '));
+        };
+        // The pairs below are skipped where an arch has no board: they must not all be.
+        check(!wide_bytes("70").empty() && !wide_bytes("75").empty() &&
+                  (!wide_bytes("86").empty() || !wide_bytes("89").empty() ||
+                   !wide_bytes("120a").empty()),
+              "the registry has sm_70, sm_75 and a wide-tile arch's boards (#1112)");
+        for (const char* narrow : {"70", "75"}) {
+            for (const char* wide : {"86", "89", "120a"}) {
+                if (wide_bytes(narrow).empty() || wide_bytes(wide).empty()) continue;
+                check(wide_bytes(narrow) != wide_bytes(wide),
+                      std::string("sm_") + narrow + " and sm_" + wide +
+                          " boards price their own tiles at T 2048 (" + wide_bytes(narrow) +
+                          " vs " + wide_bytes(wide) + " bytes, #1112)");
+            }
+        }
+    }
 
     // #903 item 4: --plan-device names a registered variant of a shared PCI product (the TITAN V
     // CEO Edition, subsystem 10DE:12EB of the Quadro GV100's 0x1DBA): by its name or as
