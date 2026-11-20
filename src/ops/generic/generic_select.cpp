@@ -1160,10 +1160,11 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                 // every route timed: at 1024 rows, 64 CTAs, the pair is 0.3-4.7 % from the best and
                 // n1.w1x8 20-30 %; at 1536-2560 rows, 96-160 CTAs, n1.w1x8 is the best within
                 // 0.6 % and the pair 21-28 % behind). At 8 tokens and below (one column) the same
-                // count is the decode split's `ctas <= sms` above. The gate is the decode
-                // split's own answer: only its pair (one_wave_split, a build with the cluster
-                // schedules) is replaced; its sixteen-warp CTA (a build without them) and its
-                // cluster of eight stay.
+                // count is the decode split's `ctas <= sms` above. Only the decode split's own
+                // pair is replaced (one_wave_split: a build with the cluster schedules), and only
+                // on a board with clusters (current_arch_facts: in such a build a substituted
+                // board without them refuses the pair and keeps its narrow fallback); its
+                // sixteen-warp CTA (a build without them) and its cluster of eight stay.
                 const std::int64_t ctas = (static_cast<std::int64_t>(problem.n) + 15) / 16;
                 const std::int64_t sms  = sm_count();
                 const RmmaScheduleInfo eight = rmma_schedule_info(rmma_index(1, 8, 1, 1));
@@ -1173,11 +1174,12 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                         ? 2
                         : 1;
                 if (ctas <= sms) {
-                    const int split = one_wave_split(ctas, sms);
-                    if (rmma_schedule_info(split).cluster == 2 && 2 * columns * ctas > held * sms) {
+                    const int pair_split = one_wave_split(ctas, sms);
+                    if (rmma_schedule_info(pair_split).cluster == 2 &&
+                        current_arch_facts().features.clusters && 2 * columns * ctas > held * sms) {
                         return rmma_index(1, 8, 1, 1);
                     }
-                    return split;
+                    return pair_split;
                 }
                 return rmma_index(1, 4, 1, 2);
             }
