@@ -228,13 +228,13 @@ def main():
     ap.add_argument('--epilogues', help='with --class: the epilogues to write (a lab A/B, #1068: store,swiglu,add); '
                     'the shipped files keep %s' % ','.join(WRITTEN_EPILOGUES))
     a = ap.parse_args()
-    if a.epilogues and not (a.only and a.out):
+    if a.epilogues is not None and not (a.only and a.out):
         sys.exit('--epilogues is for a lab file of one class (--class, --out): the shipped files keep %s' % ','.join(WRITTEN_EPILOGUES))
     epilogues = WRITTEN_EPILOGUES
-    if a.epilogues:
+    if a.epilogues is not None:
         epilogues = tuple(e.strip() for e in a.epilogues.split(','))
         bad = sorted(set(epilogues) - EPILOGUES)
-        if bad or not epilogues:
+        if bad or not all(epilogues):
             sys.exit('--epilogues: %s is not one of %s' % (','.join(bad) or '(none)', ','.join(GAP_EPILOGUES)))
     F = facts.load_facts(a.root)
     all_tables = tables(a.root, F)
