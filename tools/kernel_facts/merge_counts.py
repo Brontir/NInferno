@@ -21,7 +21,8 @@ numbered from one:
 `check` passes where every instance's fixed count is at most the header's (the header takes the
 largest architecture's count, so a board is never priced as narrowing more cheaply than its SASS
 says) and its stage count lies within STAGE_TOLERANCE of the header's (a rounded figure): exit 0,
-1 where a count leaves its bound or an instance is missing, 3 on a tool error. `count` prints the
+1 where a count leaves its bound, an instance is missing or its SASS no longer has the shape the
+rule counts, 3 on a tool error. `count` prints the
 counts of a saved dump.
 """
 
@@ -56,13 +57,14 @@ def header_constant(text, name):
 
 def counts(body):
     """{fixed, stage} of one function body (sass_counts.iter_functions), None where its shape is
-    not the merge's (fewer than 16 wide loads, no barrier or no EXIT)."""
+    not the merge's (fewer than 16 wide loads, no barrier, no EXIT after the last barrier)."""
     ops = [sass_counts.base_opcode(line[2]) for line in body]
     full = [line[2] for line in body]
-    loads = [i for i, op in enumerate(full) if op.startswith("LDG") and ".128" in op]
+    # LDG alone: LDGSTS (cp.async) is not a global load into registers.
+    loads = [i for i, op in enumerate(ops) if op == "LDG" and ".128" in full[i]]
     bars = [i for i, op in enumerate(ops) if op == "BAR"]
     exits = [i for i, op in enumerate(ops) if op == "EXIT"]
-    if len(loads) < 16 or not bars or not exits:
+    if len(loads) < 16 or not bars or not exits or exits[-1] < bars[-1]:
         return None
     fixed = (loads[11] + 1) + (exits[-1] - bars[-1] + 1)
     after = [b for b in bars if b > loads[11]]
@@ -77,10 +79,12 @@ def instance_counts(lines, wanted):
     for name, body in sass_counts.iter_functions(lines, lambda n: n in wanted):
         c = counts(body)
         if c is None:
-            kernel_facts.fail(f"{name}: not the merge's shape (16 wide loads, a barrier, an EXIT)")
+            kernel_facts.fail(f"{name}: not the merge's shape (16 wide loads, a barrier, an EXIT "
+                              "after it): recount by hand", code=1)
         d = wanted[name]
         if d in out and out[d] != c:
-            kernel_facts.fail(f"the D = {d} merge is disassembled twice with counts {out[d]} and {c}")
+            kernel_facts.fail(f"the D = {d} merge is disassembled twice with counts {out[d]} and {c}",
+                              code=1)
         out[d] = c
     return out
 
