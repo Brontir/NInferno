@@ -598,40 +598,79 @@ public:
             l.kept_a8        = l.kept_a8 && int8_codes;
             const bool whole = moe_w4a8_whole_blocks(static_cast<std::int64_t>(k),
                                                      static_cast<std::int64_t>(x_width));
+            // The op asks the A4 veto only of an NVFP4 bank in whole blocks (w4a8_bank_refusal
+            // refuses another for its K group first, on every build).
+            l.nvfp4 = l.nvfp4 || (q == QType::NVFP4 && whole);
+            // A fused W4A4 layer (SparseMoe, Gemma4Moe) takes NVFP4 banks in whole blocks only:
+            // a padded one is refused for its K group first, the generic op then runs it A16.
+            l.all_nvfp4 = l.all_nvfp4 && q == QType::NVFP4 && whole;
             if (whole && int8_codes && (!frag || ggml_frag_w4a8(q))) { l.int8_bytes += bytes; }
             // An MXFP4 bank takes its layer's MXFP4 route (the int8 tier or the block-scaled MMA)
             // only in whole blocks too: the op refuses it otherwise (KGroup) and runs it A16.
             if (whole && q == QType::MXFP4) { l.mxfp4_bytes += bytes; }
+            if (whole && q == QType::NVFP4) { l.nvfp4_bytes += bytes; }
         } catch (const std::exception&) { l.known = false; }
     }
 
     // `int8`: under --activations int8 (every bank at AllowA8), else fast activations.
+    // The route of the most bytes is asked twice, of a build with the W4A4 kernels (sm_120a,
+    // `veto`) and of one without (`plain`): a layer the build decides adds to each its own
+    // routes, every other layer the same to both. The two agreeing, theirs is the route; else
+    // Unknown (the build's), so a build-dependent layer too small to move the answer leaves it
+    // (codex on #1087).
     [[nodiscard]] runtime::ExpertPrefill route(bool int8 = false) const {
-        std::array<std::uint64_t, 4> by{};
-        const auto at = [&](runtime::ExpertPrefill r) -> std::uint64_t& {
-            return by[static_cast<std::size_t>(r)];
+        std::array<std::uint64_t, 4> veto{}, plain{};
+        const auto add = [&](runtime::ExpertPrefill r, std::uint64_t bytes) {
+            veto[static_cast<std::size_t>(r)] += bytes;
+            plain[static_cast<std::size_t>(r)] += bytes;
         };
         for (const auto& [name, l] : layers_) {
             const bool a8 = int8 || (!l.loader_a16 && layer_allows_a8(l));
+            // An NVFP4 bank under an A4 expert policy: the generic op on a build with the W4A4
+            // kernels (sm_120a) keeps both of the layer's stages on the A16 register MMA, one
+            // without them takes the grouped W4A8 (ops w4a8_bank_refusal Nvfp4A4,
+            // nvfp4_prefill_a8_policy); on sm_120a the all-NVFP4 Qwen 3.5/3.6 A3B layers
+            // (SparseMoe) and calibrated Gemma 4 layers (Gemma4Moe) run a fused W4A4 instead,
+            // which no ExpertPrefill value prices. The facts name no build, so the layer's route
+            // is the build's: Unknown (#796 item 1).
+            // Under --activations int8 every bank runs at AllowA8 and no A4 policy remains.
+            const bool build_decides =
+                !int8 && l.nvfp4 && l.gate_up.seen && l.down.seen &&
+                layer_policy(l.gate_up, l.down) == runtime::PlanExpertPolicy::AllowA4;
             if (!l.known) {
-                at(runtime::ExpertPrefill::Unknown) += l.bytes;
+                add(runtime::ExpertPrefill::Unknown, l.bytes);
+            } else if (build_decides) {
+                // With the W4A4 kernels the veto keeps both stages A16 (a layer of NVFP4 banks
+                // alone may run a fused W4A4 instead: unpriced); without them the banks the op
+                // admits run the grouped W4A8, the rest A16.
+                veto[static_cast<std::size_t>(l.all_nvfp4 ? runtime::ExpertPrefill::Unknown
+                                                          : runtime::ExpertPrefill::A16)] +=
+                    l.bytes;
+                // NVFP4 has a W4A8 tile on every build (compiled_codecs.h W4A8_GGML32).
+                const std::uint64_t admitted = l.int8_bytes + l.nvfp4_bytes;
+                plain[static_cast<std::size_t>(runtime::ExpertPrefill::Int8)] += admitted;
+                plain[static_cast<std::size_t>(runtime::ExpertPrefill::A16)] += l.bytes - admitted;
             } else if (l.mxfp4) {
                 // A bank the op refuses for its blocks (w4a8_bank_refusal KGroup), or under an A16
                 // policy (Policy), runs A16.
                 const std::uint64_t mx = a8 ? l.mxfp4_bytes : 0;
-                at(runtime::ExpertPrefill::Mxfp4) += mx;
-                at(runtime::ExpertPrefill::A16) += l.bytes - mx;
+                add(runtime::ExpertPrefill::Mxfp4, mx);
+                add(runtime::ExpertPrefill::A16, l.bytes - mx);
             } else {
                 // An A16 expert policy refuses the grouped W4A8 every bank (w4a8_bank_refusal
                 // Policy).
                 const std::uint64_t int8_bytes = a8 ? l.int8_bytes : 0;
-                at(runtime::ExpertPrefill::Int8) += int8_bytes;
-                at(runtime::ExpertPrefill::A16) += l.bytes - int8_bytes;
+                add(runtime::ExpertPrefill::Int8, int8_bytes);
+                add(runtime::ExpertPrefill::A16, l.bytes - int8_bytes);
             }
         }
-        const auto most = std::max_element(by.begin() + 1, by.end());
-        return *most > by[0] ? static_cast<runtime::ExpertPrefill>(most - by.begin())
-                             : runtime::ExpertPrefill::Unknown;
+        const auto winner = [](const std::array<std::uint64_t, 4>& by) {
+            const auto most = std::max_element(by.begin() + 1, by.end());
+            return *most > by[0] ? static_cast<runtime::ExpertPrefill>(most - by.begin())
+                                 : runtime::ExpertPrefill::Unknown;
+        };
+        const runtime::ExpertPrefill with_w4a4 = winner(veto);
+        return with_w4a4 == winner(plain) ? with_w4a4 : runtime::ExpertPrefill::Unknown;
     }
 
     // Whether the route rests on a bank whose kept format the header does not tell (add's
@@ -724,10 +763,18 @@ private:
         std::uint64_t bytes = 0, int8_bytes = 0;
         std::uint64_t float_bytes = 0; // its floating-point weight banks (not the prefill route's)
         std::uint64_t mxfp4_bytes = 0; // of an MXFP4 layer: its banks in whole blocks
+        std::uint64_t nvfp4_bytes = 0; // its NVFP4 banks in whole blocks (the W4A8 tile's)
         // kept_a8: every bank a format the converter keeps at AllowA8 (int8 codes); assumed: a
         // bank kept as a format the header does not tell; loader_a16: a bank the loader runs at
         // A16 whatever it keeps (add's `assumed`, `loader_a16`)
         bool known = true, mxfp4 = true, kept_a8 = true, assumed = false, loader_a16 = false;
+        // nvfp4: a bank of the layer is NVFP4 in whole W4A8 blocks (under an A4 policy the build
+        // decides, route()).
+        bool nvfp4 = false;
+        // all_nvfp4: every bank NVFP4 in whole blocks (on sm_120a such a layer may take a fused
+        // W4A4 kernel, SparseMoe or Gemma4Moe, which no ExpertPrefill value prices; the facts do
+        // not name the model's kernel path, so it is Unknown there, never a guessed A16).
+        bool all_nvfp4 = true;
         Bank gate_up, down;
     };
 
