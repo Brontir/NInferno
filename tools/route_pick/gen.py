@@ -9,8 +9,9 @@ A board class is a chip and an SM count (core/device_class.h gpu_class_id). Writ
 src/core/data/gpu_facts.json whose chip has no table in routes/ (no routes/<chip>.json, no routes/<chip>-*.json),
 whose architecture has the facts pick.py prices from (sm_75, sm_86, sm_89, sm_120a) and whose board has tensor
 cores (not mma_slow: GTX 16), and that no table's board is within kCarryDistance of (board_distance from the
-facts rows: there the table's answers are Carried, kept, and the engine reads no file). The class's board is its
-first desktop row, else its first row.
+facts rows: there the table's answers are Carried, kept, and the engine reads no file), and whose SM count lies
+between the fewest and the most of the same compute capability's table boards (classes()). The class's board is
+its first desktop row, else its first row.
 
 The problems are every generic entry of the route tables of the same compute capability (the release models'
 shapes) that pick.py can price: an A16 entry of a format in pick.BITS with the store or SwiGLU epilogue. The add
@@ -96,13 +97,24 @@ def board_distance(a, b):
 
 def classes(F, tabled_chips, table_boards, carry):
     """The classes the engine would read a file for: no table of the chip, and none within `carry` (the loader
-    reads routes/pick only past it, where a table's answers would be Transferred)."""
+    reads routes/pick only past it, where a table's answers would be Transferred). And only between the fewest
+    and the most SMs of the boards that hold a table of the same compute capability: the law interpolates
+    between measured boards, it is not extrapolated past them (the one measured miss, #1051, was a long-K
+    call on a board of few SMs). Today that keeps AD103 and GA104 and leaves out AD107, GA107 (10-22 SMs)
+    and Turing (one table board, the 68-SM RTX 2080 Ti)."""
+    span = {}
+    for t in table_boards:
+        lo, hi = span.get(int(t['cc']), (math.inf, 0))
+        span[int(t['cc'])] = (min(lo, int(t['sms'])), max(hi, int(t['sms'])))
     seen = {}
     for row in F['rows']:
         cc = int(row.get('cc', 0))
         if cc not in ARCH_OF_CC or ARCH_OF_CC[cc] not in F['isa'] or row.get('mma_slow'):
             continue
         if row['chip'] in tabled_chips or any(board_distance(row, t) <= carry for t in table_boards):
+            continue
+        lo, hi = span.get(cc, (math.inf, 0))
+        if not lo <= int(row['sms']) <= hi:
             continue
         key = class_id(row)
         if key not in seen or (row.get('form') == 'desktop' and seen[key].get('form') != 'desktop'):

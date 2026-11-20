@@ -13,6 +13,7 @@
 #include "ops/generic/route_table.h"
 #include "ops/moe/moe_internal.h"
 #include "ops/op_tester.h"
+#include "ops/route_pins.h"
 #include "support/temp_dir.h"
 
 #include <algorithm>
@@ -140,6 +141,13 @@ int shipped_picks() {
                           generic::route_name(answer->route) == e[6].str(),
                       name + ": its first entry answers " + e[6].str() + " as predicted, not " +
                           (answer ? generic::route_name(answer->route) : std::string("none")));
+            {
+                // Under the Legacy policy the file is not read: the table answers as before it.
+                const ninferno::ops::ScopedRoutePolicy legacy(ninferno::RoutePolicy::Legacy);
+                const auto old = generic::table_route_answer(p, std::stoi(e[5].str()), false);
+                failures += check(!old || !old->predicted,
+                                  name + ": under --route-policy legacy no band is predicted");
+            }
         } catch (const std::exception& error) {
             failures += check(false, name + " refused: " + error.what());
         }

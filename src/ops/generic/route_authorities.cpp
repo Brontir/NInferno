@@ -553,9 +553,9 @@ RouteAnswer heuristic_answer(const Ask& ask, const Problem& problem, const Weigh
 // The one place the precedence over evidence applies (route_authorities.h): under Legacy the first
 // answer wins; under Evidence a Borrowed or Transferred answer of the auto list yields to what
 // follows it, and stands only where the ranker has no candidate (the scalar fallback) or at the
-// MMQ boundary the ranker cannot price (keeps_mmq_boundary). A Predicted answer (routes/pick)
-// yields to a later authority's answer, this board's own tuning (dense-tune), under either
-// policy, and stands above the ranker.
+// MMQ boundary the ranker cannot price (keeps_mmq_boundary). A Predicted answer (routes/pick, read
+// under Evidence only: route_table.cpp) yields to a later authority's answer, this board's own
+// tuning (dense-tune), and stands above the ranker.
 RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& weight) {
     const Ask asked = nvfp4_promoted(ask, problem, weight);
     std::optional<RouteAnswer> demoted;

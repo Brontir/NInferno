@@ -1026,8 +1026,10 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
     const auto compute = compute_class(problem.qtype, problem.policy);
     // The analyzer's predicted band, where the overlay holds one for this problem and width (its
     // bands lie inside T 9-16, below every prefill band): ahead of the nearest table's entry,
-    // which is Transferred or Borrowed wherever an overlay was read.
-    if (!(prefill && tokens >= kPrefillMinTokens)) {
+    // which is Transferred or Borrowed wherever an overlay was read. Not under the Legacy policy:
+    // there the table answers as it did before the overlay, the switch back for a regression
+    // report.
+    if (!(prefill && tokens >= kPrefillMinTokens) && route_policy() != RoutePolicy::Legacy) {
         auto p = table->predicted.find(
             key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
         // The same fp8 row-F32 fallback as the measured entries below.
