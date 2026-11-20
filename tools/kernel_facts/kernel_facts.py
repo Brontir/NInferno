@@ -1170,9 +1170,17 @@ def family_list(text):
     return tuple(f for f in FAMILIES if f in names)
 
 
+# (arch, family) pairs extracted with their resources alone (#762). ggml's matrix kernel runs from
+# sm_75 on (route_requires GgmlMmq, mmq_admits): its sm_70 instances are compiled and never
+# launched, so no price reads their loop, and the loop audit cannot place it (no barrier in any
+# candidate iteration). Their section's columns stop at the resources, as a schema 1 file's.
+RESOURCES_ONLY = {("70", "mmq")}
+
+
 def cmd_extract(args):
     families = family_list(args.families)
-    sass = () if args.no_sass else tuple(f for f in families if FAMILIES[f].loop)
+    sass = () if args.no_sass else tuple(
+        f for f in families if FAMILIES[f].loop and (args.arch, f) not in RESOURCES_ONLY)
     extracted = extract_families(args.binary, args.cuda_bin, args.arch, args.dump, args.sass_dump,
                                  families, sass, args.sass_batch)
     if FAMILY in families and not extracted[FAMILY]:

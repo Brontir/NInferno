@@ -269,6 +269,16 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual((c4.mma, c4.k_iter), (hmma, hmma * 16 // 2))
         plain = [(o, "CALL.ABS.NOINC 0x0 ;" if t.startswith("HMMA") else t) for o, t in KERNEL]
         self.assertEqual(sc.loop_counts(body_of(plain), tiles=2).mma, 0)
+        # #762: the 16-bit products are calls too (mma_bf16_fma_call, mma_f16_fma_call: one
+        # m16n8k16 each), the BF16 and FP8 codes' K loops on sm_70; each counts as that HMMA.
+        for kind, shape in (("bf16", "HMMA.16816.F32.BF16."), ("f16", "HMMA.16816.F32.EMU")):
+            fn = f"mma_{kind}_fma_call"
+            named = f"`(_ZN61_INTERNAL_x_ninferno3ops{len(fn)}{fn}E6float45uint45uint2)`"
+            calls16 = [(o, "CALL.ABS.NOINC " + named + " ;" if t.startswith("HMMA") else t)
+                       for o, t in KERNEL]
+            c16 = sc.loop_counts(body_of(calls16), tiles=2)
+            self.assertEqual((c16.loops, c16.mma, c16.k_iter), (1, hmma, hmma * 16 // 2))
+            self.assertTrue(c16.mma_shape.startswith(shape), c16.mma_shape)
         # cuobjdump -sass prints the linked image's call as 0x0; its relocation names the target.
         elf = [".section .rel.text._Z6kernelv\tREL"] + [
             f"0x{o:x}    _ZN61_INTERNAL_x_ninferno3ops16mma_s8_dp4a_callILi8EEE4int4    R_CUDA_ABS47_34"
