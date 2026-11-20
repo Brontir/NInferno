@@ -487,12 +487,11 @@ void apply_builtin_default(SpeculationSubject& subject) {
 
 SpeculationSubject subject_of_mode(SpeculationSubject subject, spec::Mode mode) {
     if (!subject.resolved) { return subject; }
-    // A drafter the profile does not draft with: its own resolution (other_kinds), never one that
-    // only prices the head beside a published profile (pricing_only, #777).
+    // A drafter the profile does not draft with: its own resolution (other_kinds).
     if (!spec::drafting_modes(subject.resolved->profile).contains(mode)) {
         auto& others   = subject.resolved->other_kinds;
         const auto own = std::find_if(others.begin(), others.end(), [&](const auto& other) {
-            return !other.pricing_only && spec::drafting_modes(other.profile).contains(mode);
+            return spec::drafting_modes(other.profile).contains(mode);
         });
         if (own != others.end()) {
             spec::ResolvedSpeculation chosen = std::move(*own);

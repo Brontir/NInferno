@@ -2225,18 +2225,16 @@ server's verdict can differ from the plan's.
 
 **The head's resolution.** The head is priced from the model's own measurement of it
 (`product::head_priced_profile`): the subject's profile where it measured MTP, else its MTP
-resolution among `ResolvedSpeculation::other_kinds`. Two changes make that resolution exist:
+resolution among `ResolvedSpeculation::other_kinds`. One change makes that resolution exist, and
+one of #777's did not:
 - `subject_of_mode` (a server drafting with DFlash2) keeps the kinds it does not draft with: the
   resolution it switches to carries the original one and the rest as its other kinds.
-- `spec::resolve_other_kinds` resolves a published or artifact profile's other kinds (same-model
-  only): from a measured pair of this model, its own (`PairStep::Own`) or a sibling quantization of
-  its repository revision (`PairStep::Sibling`), never a group of other models (`PairStep::Group`):
-  a fine-tune's acceptance is not its base's. With none, no other kind; the head is then unpriced.
-  These kinds are `ResolvedSpeculation::pricing_only`: they price the head and nothing else. The
-  drafter axis offers no option from them (`product::drafter_axis`) and no server or plan switches
-  to them (`product::subject_of_mode`), so a published profile's drafter choices are those of
-  master (pinned in `test_plan_drafter_kinds`: the axis with a pricing-only kind equals the axis
-  without it, and `subject_of_mode` to MTP serves the same resolution).
+- A published profile's other kinds are not resolved from the lab's pairs (#804). A pair that
+  measured any kind the target carries answers the target itself first (`pair_choice` over all
+  of them), so where a published profile is read, no pair of this model measured any of its
+  kinds, and a same-model lookup of one kind finds nothing either. The `same_model` lookup #777
+  added (and its `pricing_only` mark) never set a kind and was removed. The head beside a
+  published profile is therefore unpriced: the four fifths decide.
 
 **The head fallback's table, kept.** `served_head_fallback` derives the head's load table from the
 facts where the profile that prices it (`head_priced_profile`) has a facts table and prices the
