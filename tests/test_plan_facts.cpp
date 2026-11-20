@@ -325,6 +325,22 @@ int gguf_qwen35() {
     failures += check(policy_of(ninferno::convert::ggml::NVFP4, {"ffn_gate_exps"}) ==
                           rt::PlanExpertPolicy::A16Only,
                       "gguf NVFP4, a divisor on the gate only: A16Only (the up bank's)");
+    // #796 item 3: the GGUF path's recorded policy where it differs from the format's kept one:
+    // NVFP4 gate/up without a divisor (A16Only) beside an int8-coded Q4_K down (kept AllowA8)
+    // makes the layer A16 for the prefill route.
+    {
+        GgufFile banks = file;
+        for (const char* name : {"blk.0.ffn_gate_exps.weight", "blk.0.ffn_up_exps.weight"}) {
+            banks.tensors.push_back(
+                tensor(name, {5120, 512, 64}, ninferno::convert::ggml::NVFP4, 100));
+        }
+        banks.tensors.push_back(tensor("blk.0.ffn_down_exps.weight", {512, 5120, 64},
+                                       ninferno::convert::ggml::Q4_K, 100));
+        const auto route = pr::plan_facts_of_gguf(banks, 999999).model.expert_prefill;
+        failures += check(route == rt::ExpertPrefill::A16,
+                          "gguf NVFP4 gate/up without a divisor beside a Q4_K down: A16 (" +
+                              std::to_string(static_cast<int>(route)) + ")");
+    }
     // Floating-point weight banks (F16, kept as bf16) are a kind of their own, at BF16 inputs:
     // the op runs them too (Codex on #764); a float auxiliary tensor of a bank (a scale, a bias)
     // is not a bank, and neither moves the prefill route.
@@ -1291,6 +1307,7 @@ int artifact_prefill_policy() {
         std::string name;
         std::uint64_t rows;
         Policy policy;
+        std::optional<QType> format = std::nullopt; // the directory's format where none
     };
 
     // A directory of these banks, one object and one use each; `unrecorded_use`: a second use of
@@ -1298,15 +1315,16 @@ int artifact_prefill_policy() {
     const auto directory = [](QType format, const std::vector<Bank>& banks,
                               bool unrecorded_use = false) {
         art::Directory dir;
-        dir.components["text"].config      = gpt_oss_text_config();
-        const ninferno::QuantLayout layout = format == QType::MXFP4
-                                                 ? ninferno::default_weight_layout(format)
-                                                 : ninferno::ggml_published_layout(format);
+        dir.components["text"].config = gpt_oss_text_config();
         for (const Bank& bank : banks) {
+            const QType f                      = bank.format.value_or(format);
+            const ninferno::QuantLayout layout = f == QType::MXFP4 || f == QType::BF16
+                                                     ? ninferno::default_weight_layout(f)
+                                                     : ninferno::ggml_published_layout(f);
             art::TensorObject t;
             t.id     = bank.name;
             t.shape  = {32, bank.rows, 2880};
-            t.format = std::string(art::format_name(format));
+            t.format = std::string(art::format_name(f));
             t.layout = std::string(art::layout_name(layout));
             t.bytes  = bank.rows;
             const art::ObjectHandle handle{dir.objects.size()};
@@ -1369,6 +1387,17 @@ int artifact_prefill_policy() {
                       "artifact prefill: Q4_0 banks recorded AllowA8, the grouped W4A8");
     failures += check(route(QType::GGML_Q4_0, layers(a16, a16, a16, a16)) == rt::ExpertPrefill::A16,
                       "artifact prefill: Q4_0 banks recorded A16Only, A16 (not the kept AllowA8)");
+    // #796 item 3: a Q4_0 layer with one A16-only bank is A16 as MXFP4's is; a BF16 down beside a
+    // Q4_K gate/up (a float bank runs at BF16 inputs) makes the layer A16.
+    failures += check(route(QType::GGML_Q4_0, layers(a8, a16, a8, a16)) == rt::ExpertPrefill::A16,
+                      "artifact prefill: Q4_0 with an A16-only down bank, A16");
+    failures +=
+        check(route(QType::GGML_Q4_K, {{"text/layers/0/experts/gate_up", 5760, a8},
+                                       {"text/layers/0/experts/down", 2880, a16, QType::BF16},
+                                       {"text/layers/1/experts/gate_up", 5760, a8},
+                                       {"text/layers/1/experts/down", 2880, a16, QType::BF16}}) ==
+                  rt::ExpertPrefill::A16,
+              "artifact prefill: a BF16 down beside a Q4_K gate/up, A16");
     // A bank known A16-only beside one with no recorded policy: the layer is A16 still
     // (ops::moe_policy), not the kept fallback.
     failures += check(route(QType::MXFP4, layers(a16, none, a16, none)) == rt::ExpertPrefill::A16,
