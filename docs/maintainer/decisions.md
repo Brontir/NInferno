@@ -3286,7 +3286,7 @@ tensor-core boards (RTX 2060 / 2070 / 2080, TITAN RTX, T4). The V100 boards, the
 - Q3_K: RTX 3090 -9.0..-11.5 %, RTX 3060 -3.2..-8.6 %;
 - Q5_K: RTX 3090 -8.6..-13.7 %, RTX 3060 -1.1..-4.5 %.
 
-End to end on the RTX 3090, Qwen3.6-35B-A3B re-quantized to Q3_K_M (gate/up Q3_K), eight tokens against four: C8 +4.02 %, C6 +4.07 %. On a tensor mma.sync build only the gate/up stage asks the bank's limit: `heuristic_r8` admits R8 by the gate/up bank, and `down_r8_rule` puts the down on R8 only without tensor MMA. The down is where R8 loses (+34..+50 % at T 5..8 on both cards).
+End to end on the RTX 3090, Qwen3.6-35B-A3B re-quantized to Q3_K_M (gate/up Q3_K), eight tokens against four: C8 +4.02 %, C6 +4.07 %. The heuristic asks the bank's limit for the gate/up stage only: `heuristic_r8` admits R8 by the gate/up bank, and `down_r8_rule` puts the down on R8 only without tensor MMA. The down is where R8 loses (+34..+50 % at T 5..8 on both cards). A Q3_K down bank's wider limit reaches only measured plans (table bands and tuned plans, `r8_stages_admitted`). The cell is measured against the tensor mma.sync register MMA, so a build without it (sm_70) keeps the generation's four. Where a bank rule caps the cell below eight, the bank rule is the answer's authority.
 
 **Not taken.**
 - Frag Q4_K: the cards disagree. The 3090 wins 4-10 % at the kernel level and +3.8..+4.7 % end to end; the 3060 loses 6-9 %, with the same DRAM bytes per SM cycle.

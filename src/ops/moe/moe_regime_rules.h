@@ -340,13 +340,15 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
 
     // --- Measured cells ---
     // GA10x's Q3_K banks at five to eight tokens: R8 on the gate/up stage beats the register MMA
-    // on both cards, so the generation's four widens to eight for them (#860). On a tensor
-    // mma.sync build only the gate/up stage asks this limit (heuristic_r8; the down stage keeps the
-    // register MMA, down_r8_rule), and the down is where R8 loses (+34..+50 % at T = 5..8).
+    // on both cards, so the generation's four widens to eight for them (#860). The heuristic asks
+    // this limit for the gate/up stage only (heuristic_r8; the down keeps the register MMA,
+    // down_r8_rule), and the down is where R8 loses (+34..+50 % at T = 5..8). Measured against
+    // the tensor mma.sync register MMA: a build without it (sm_70, R8 on both stages, #965) keeps
+    // the generation's four.
     {"ga10x_q3k_r8_wide",
      Regime::Cell,
      "ga10x",
-     +[](const BankFacts& b) { return b.format == QType::GGML_Q3_K; },
+     +[](const BankFacts& b) { return b.mma_tensor && b.format == QType::GGML_Q3_K; },
      kR8Tokens,
      Label::Measured,
      {kRtx3090, kRtx3060},
@@ -443,8 +445,10 @@ struct R8LimitAnswer {
     }
     if (const RegimeRule* cell = applied_cell(generation.generation, bank);
         cell != nullptr && cell->limit > generation.limit) {
-        const std::int32_t cap = narrowing != nullptr ? narrowing->limit : cell->limit;
-        return {cell->limit < cap ? cell->limit : cap, cell, &generation};
+        // A bank rule that does not narrow still caps the cell; it answers where it set the limit.
+        const bool capped        = narrowing != nullptr && narrowing->limit < cell->limit;
+        const std::int32_t limit = capped ? narrowing->limit : cell->limit;
+        if (limit > generation.limit) return {limit, capped ? narrowing : cell, &generation};
     }
     return {generation.limit, &generation, &generation};
 }
