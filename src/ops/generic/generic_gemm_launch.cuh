@@ -365,7 +365,8 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
     // caps the CTAs resident on an SM (no opt-in: at most 48 KiB with the kernel's own).
     static const std::size_t lab_pad = [] {
         const char* v = std::getenv("NINFERNO_LAB_RMMA_SMEM_PAD");
-        return v != nullptr ? static_cast<std::size_t>(std::strtoul(v, nullptr, 10)) : std::size_t{0};
+        return v != nullptr ? static_cast<std::size_t>(std::strtoul(v, nullptr, 10))
+                            : std::size_t{0};
     }();
     const auto smem = static_cast<std::size_t>(args.spread_smem) + lab_pad;
     if (KernelResources* described = kernel_describe_target()) {
