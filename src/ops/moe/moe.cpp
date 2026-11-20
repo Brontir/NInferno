@@ -794,6 +794,11 @@ regime::R8LimitAnswer regime::r8_limit_answer(const Weight& bank) {
     if (const char* gen = std::getenv("NINFERNO_LAB_R8_GEN"); gen && bank_rule(facts) == nullptr) {
         answer.limit = std::max(1, std::atoi(gen));
     }
+    // Lab only (#860 item 2): NINFERNO_LAB_R8_Q4K holds only the Q4_K banks to that many tokens.
+    if (const char* q4k = std::getenv("NINFERNO_LAB_R8_Q4K");
+        q4k && bank.qtype == QType::GGML_Q4_K) {
+        answer.limit = std::max(1, std::atoi(q4k));
+    }
     return answer;
 }
 
