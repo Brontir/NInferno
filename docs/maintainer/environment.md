@@ -156,7 +156,9 @@ record.
 `ninferno-serve route-tune`) sets the generic selector's precedence over evidence (#614 F1,
 `src/ops/generic/route_authorities.h`). `evidence`, the default since #614 F2, is the release's
 selection (`ninferno_selector_golden_test` holds it); `legacy` is the selection before F2: the
-first authority that answers decides. `evidence` demotes route-table entries only: a route-table answer whose evidence is `borrowed` (an entry lent by a
+first authority that answers decides, and the analyzer's predicted bands (`routes/pick`, #1066) are
+not read, so a board of a pick-file class answers from its nearest table as before them. The
+startup's route-table line and the plan's sources still name the pick file under `legacy`. `evidence` demotes route-table entries only: a route-table answer whose evidence is `borrowed` (an entry lent by a
 farther board's table) or `transferred` (the nearest table lies past the carry distance) goes
 below the ranker. The walk goes on to the dense tuner's entry, then the cost model where it prices
 the call, else the rules. Where the ranker has no candidate (only the scalar fallback answers) the

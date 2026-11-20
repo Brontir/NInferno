@@ -264,6 +264,13 @@ add_test(NAME ninferno_route_table_prune_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_prune.py)
 ninferno_label_tests(ninferno_route_table_prune_test LABELS host)
 
+# The analyzer's predicted bands (routes/pick, tools/route_pick/gen.py) are what the committed
+# facts and the tool give now: a kernel-facts, gpu-facts or route-table change regenerates them.
+add_test(NAME ninferno_route_pick_fresh_test
+  COMMAND ${Python3_EXECUTABLE} -B ${PROJECT_SOURCE_DIR}/tools/route_pick/gen.py --check
+          --root ${PROJECT_SOURCE_DIR})
+ninferno_label_tests(ninferno_route_pick_fresh_test LABELS host)
+
 # The shared test tree's link modes on the built binaries (NINFERNO_SHARED_OP_TESTS, a Linux-only
 # option): every test, app and bench as the configure decided, no second copy of a member archive
 # or of the CUDA runtime beside the shared library. No GPU.

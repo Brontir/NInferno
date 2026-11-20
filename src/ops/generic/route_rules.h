@@ -280,6 +280,17 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "prefill route profile makes token-invariant', the same width as kPrefillPinMinTokens, from "
      "which it is defined",
      ""},
+    {"kPredictedMinTokens", Basis::Structural, "../route_table.cpp",
+     "constexpr std::int32_t kPredictedMinTokens = 9;", 9, kUnknown, kUnknown,
+     "the first width a routes/pick band may hold: the analyzer's pick (tools/route_pick) prices "
+     "T 9-16 alone, above the vec and R8 widths it does not price; held by a static_assert; a "
+     "structural width, no margin recorded",
+     ""},
+    {"kPredictedMaxTokens", Basis::Structural, "../route_table.cpp",
+     "constexpr std::int32_t kPredictedMaxTokens = kDecodePinMaxTokens;", 16, kUnknown, kUnknown,
+     "the last width a routes/pick band may hold: the widest decode and verify call, defined from "
+     "kDecodePinMaxTokens",
+     ""},
     {"kQ8PrefillA8Tokens", Basis::Structural, "generic_gemm.h",
      "inline constexpr std::int32_t kQ8PrefillA8Tokens = kPrefillBandMinTokens;", 17,
      "ad102:128sm, gb202:170sm", "RTX 4090, RTX 5090",

@@ -221,10 +221,11 @@ def by_regime_authority(rows, ridges):
 # Which kind of answer a case's route was (#616 step 9), by the evidence it rested on:
 #   table   - an override measured on this board (route table, dense tuner, r8 decode table, ...)
 #   carried - an answer measured elsewhere (a borrowed table entry, a carried or transferred one)
+#   predicted - a routes/pick band: the analyzer's pick from the facts, nothing measured on the card
 #   priced  - the cost model's ranking
 #   rules   - a rule or fallback of the selector (`ranker` evidence, any other authority)
 #   pin     - a pinned route; unknown - a row without authority/evidence (an older collection)
-ANSWER_KINDS = ("table", "carried", "priced", "rules", "pin", UNKNOWN)
+ANSWER_KINDS = ("table", "carried", "predicted", "priced", "rules", "pin", UNKNOWN)
 # The override authorities route_table_prune.py prunes: a measured answer of these replaces the
 # ranker's, so its ranker_vs_selected says whether the override still earns its place.
 OVERRIDE_AUTHORITIES = ("route-table", "dense-tune", "dense-tune-prefill-band")
@@ -241,6 +242,8 @@ def answer_kind(row):
         return "carried"
     if evidence == "pin":
         return "pin"
+    if evidence == "predicted":  # routes/pick: the analyzer's bands, nothing measured on the card
+        return "predicted"
     if evidence == "ranker":
         return "priced" if row["authority"] == "cost-model" else "rules"
     return UNKNOWN

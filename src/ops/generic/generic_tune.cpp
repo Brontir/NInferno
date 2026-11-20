@@ -456,7 +456,10 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
                 }
             }
             entry["us"][name] = {base_us, best_us};
-            if (best_us <= kMargin * base_us) {
+            // Over a predicted band (routes/pick) the timed best is written whatever its margin:
+            // otherwise a width the prediction loses on keeps dispatching it (auto_answer holds a
+            // Predicted answer until the tuner's entry answers).
+            if (best_us <= kMargin * base_us || predicted_before_tuner(problem, weight, t, false)) {
                 tuned.routes[static_cast<std::size_t>(t)] = best;
                 entry["routes"][name]                      = route_name(best);
                 ++improved;

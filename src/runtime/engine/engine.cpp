@@ -184,6 +184,10 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
             utf8_file_name(path_from_utf8(routes.path)) + " sha256:" + routes.content_sha256;
         in.sources["route_table.class"] = routes.gpu_class;
         route_table                     = routes.content_sha256;
+        if (!routes.predicted_sha256.empty()) {
+            in.sources["route_table.predicted"] = routes.predicted_sha256;
+            route_table += " + pick " + routes.predicted_sha256;
+        }
         if (!routes.lender_sha256.empty()) {
             in.sources["route_table.lenders"] = routes.lender_sha256;
             route_table += " + " + routes.lender_sha256;

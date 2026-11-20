@@ -48,6 +48,7 @@
 #include "models/dense/frontend.h"
 #include "models/dense/session.h"
 #include "ninferno/ops/prefill_routes.h"
+#include "ninferno/ops/route_table.h"
 #include "product/activation_options.h"
 #include "models/speculation/dflash.h"
 #include "product/numeric_options.h"
@@ -226,6 +227,21 @@ int main(int argc, char** argv) {
             }
             std::sort(prefill_s.begin(), prefill_s.end());
             std::sort(decode_s.begin(), decode_s.end());
+            // The route table the run read (its file, what it borrowed, the predicted bands):
+            // which data an A/B arm of another --route-dir actually ran.
+            std::string routes = ninferno::ops::route_table_status().message;
+            std::string escaped;
+            for (const char c : routes) {
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char hex[8];
+                    std::snprintf(hex, sizeof(hex), "\\u%04x", static_cast<unsigned>(c));
+                    escaped += hex;
+                    continue;
+                }
+                if (c == '"' || c == '\\') escaped += '\\';
+                escaped += c;
+            }
+            std::printf("\"route_table\":\"%s\",", escaped.c_str());
             const double p_med = prefill_s[prefill_s.size() / 2];
             const double d_med = decode_s[decode_s.size() / 2];
             std::printf("\"prompt_tokens\":%zu,\"decode_tokens\":%d,\"repeats\":%d,"
