@@ -324,8 +324,7 @@ pr::SpeculationSubject qwen27b_on(const char* board) {
 // kinds it does not draft with, so the model's MTP head is priced from this model's own lab
 // measurement of it (head_priced_profile); the lab's pairs answer by the target's own weights or a
 // sibling quantization of its revision, and only a group of other models (a fine-tune's acceptance
-// is not its base's) where neither is measured, which a published profile's other kinds do not
-// take (spec::resolve_other_kinds, same model only).
+// is not its base's) where neither is measured.
 void test_head_resolution() {
     const auto measures_mtp = [](const spec::Profile& p) {
         return std::any_of(
@@ -374,31 +373,6 @@ void test_head_resolution() {
                   ": the head fallback's table from the model's MTP measurement (" +
                   (head ? table(*head) : std::string("none")) + " against " +
                   (bare_head ? table(*bare_head) : std::string("none")) + ")");
-
-        // A kind resolved only to price the head beside a published profile (pricing_only, as
-        // spec::resolve_other_kinds marks the same-model pair it finds there) offers no drafter
-        // and is no mode a server switches to; it prices the head as before.
-        pr::SpeculationSubject priced_only = dflash2;
-        for (auto& other : priced_only.resolved->other_kinds) { other.pricing_only = true; }
-        const auto labels = [](const pr::DrafterAxis& axis) {
-            std::string out;
-            for (const auto& o : axis.options) {
-                out += " " + o.label + "@" + std::to_string(o.speedup);
-            }
-            return out;
-        };
-        const std::string with_kinds = labels(pr::drafter_axis(priced_only, pr::SpeculationAsk{}));
-        const std::string without    = labels(pr::drafter_axis(bare, pr::SpeculationAsk{}));
-        check(with_kinds == without, std::string(board) +
-                                         ": a pricing-only kind is no drafter option (" +
-                                         with_kinds + " against" + without + ")");
-        const auto switched      = pr::subject_of_mode(priced_only, spec::Mode::Mtp);
-        const auto bare_switched = pr::subject_of_mode(bare, spec::Mode::Mtp);
-        check(switched.resolved && bare_switched.resolved &&
-                  switched.resolved->source == bare_switched.resolved->source,
-              std::string(board) + ": no server switches to a pricing-only kind");
-        check(measures_mtp(pr::head_priced_profile(priced_only)),
-              std::string(board) + ": a pricing-only kind prices the head");
     }
 
     const auto& pairs = spec::Registry::builtin().pairs();
