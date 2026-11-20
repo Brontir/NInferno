@@ -19,8 +19,9 @@ epilogue (o_proj, down) is priced but not written: on the RTX 4060 Ti (Qwen3-8B 
 end against the borrowed table, the law's n2.w1x4 against the measured n4.w1x4 on the Q6_K down (#1051). For each,
 pick.pick() at T 9..16 gives one route a width, written as runs of equal routes. Nothing is measured on the card.
 
-The engine reads the file only where the device has no table of its own chip (src/ops/route_table.cpp): its
-answers are Predicted, below a pin and a measured or carried table, above the ranker.
+The engine reads the file only on the board it was priced for, where the nearest measured table lies past
+kCarryDistance, and only under --route-policy evidence (src/ops/route_table.cpp): its answers are Predicted, below a
+pin and a measured or carried table, above the ranker.
 """
 import argparse
 import hashlib
@@ -222,8 +223,15 @@ def main():
         with open(path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(body)
         print('%s: %s, %d entries' % (name, row['name'], len(doc['entries'])))
-    if a.check and not a.only and os.path.isdir(out_dir):
-        stale += sorted(set(n for n in os.listdir(out_dir) if n.endswith('.json')) - expected)
+    if not a.only and os.path.isdir(out_dir):
+        extra = sorted(set(n for n in os.listdir(out_dir) if n.endswith('.json')) - expected)
+        if a.check:
+            stale += extra
+        else:
+            # A class the facts no longer give (a span or carry change): its file goes.
+            for name in extra:
+                os.remove(os.path.join(out_dir, name))
+                print('%s: removed (no class of the facts)' % name)
     if stale:
         print('routes/pick is not what the facts give (regenerate: python3 tools/route_pick/gen.py): ' + ', '.join(stale))
         sys.exit(1)
