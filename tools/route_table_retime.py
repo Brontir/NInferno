@@ -77,7 +77,11 @@ def main():
         timed = [t for t in range(lo, hi + 1) if grid.get((key, t))]
         if not timed:
             continue
-        haves = {t: route_at(e["bands"], t) for t in timed}
+        # Counts no band of the entry covers are not the table's answer there: left alone.
+        haves = {t: r for t in timed if (r := route_at(e["bands"], t)) is not None}
+        if not haves:
+            continue
+        timed = sorted(haves)
         untimed = sorted({h for t, h in haves.items() if h not in grid[(key, t)]})
         if untimed:
             # The grid did not time the table's route: it may be absent for a reason (not offered

@@ -49,6 +49,13 @@ def test_untimed_table_route_is_kept_and_named(tmp_path):
     assert "n1 not timed" in r.stderr
 
 
+
+def test_counts_no_band_covers_are_left_alone(tmp_path):
+    # The entry's bands stop at T 9; T 10-11 are not the table's answer and stay uncovered.
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
+    bands, _ = run(tmp_path, [[1, 9, "n1"]], rows)
+    assert bands == [[1, 8, "n1"], [9, 9, "n2"]]
+
 if __name__ == "__main__":
     import pathlib
     import tempfile
