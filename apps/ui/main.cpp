@@ -13,6 +13,8 @@
 #include "convert/fetch.h"
 #include "core/command_line.h"
 #include "product/numeric_options.h"
+#include "product/plan/plan_facts.h"
+#include "runtime/engine/prompt_tail.h"
 #include "ui/app.h"
 #include "ui/browser.h"
 #include "ui/chat_ui.h"
@@ -281,6 +283,20 @@ int main(int argc, char** argv) {
                   << " (--access-key-file F)\n";
         return 1;
     }
+    // The prefill's tail calls of the plans this page shows, from the model's own frontend as the
+    // serve it starts counts them (apps/serve/main.cpp, DECISIONS 62): the artifact's or GGUF's own
+    // chat template (the page passes no --chat-template) and prefix reuse on (nor
+    // --no-prefix-reuse) (#793).
+    ninferno::product::set_prompt_tail_calls_source([](const std::filesystem::path& artifact) {
+        return ninferno::runtime::prompt_tail_calls_or_warn(artifact, {}, true);
+    });
+    ninferno::product::set_prompt_tail_calls_files_source(
+        [](const ninferno::product::PromptFrontendFiles& f) {
+            return ninferno::runtime::prompt_tail_calls_of_files_or_warn(
+                {f.tokenizer_json, f.tokenizer_config_json, f.chat_template_jinja,
+                 f.generation_config_json},
+                "the GGUF's frontend", {}, true);
+        });
     ninferno::ui::App app(options, ninferno::ui::make_nvml_source());
     g_app = &app;
     std::signal(SIGINT, on_signal);

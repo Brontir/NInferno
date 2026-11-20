@@ -1,12 +1,13 @@
 #include "runtime/engine/prompt_tail.h"
 
+#include "artifact/binder.h"
 #include "artifact/reader.h"
-#include "models/load_options.h"
+#include "models/qwen3_5/config.h"
 #include "models/qwen3_5/frontend/frontend.h"
 #include "models/qwen3_5/frontend/prepared_prompt.h"
-#include "models/qwen3_5/load.h"
+#include "models/qwen3_5/load/bindings.h"
 #include "models/qwen3_5/program/planning/neutral_frontier.h"
-#include "runtime/engine/family_registry.h"
+#include "runtime/engine/artifact_model_type.h"
 #include "runtime/engine/hf_text_frontend.h"
 
 #include <ninferno/types.h>
@@ -95,16 +96,22 @@ std::uint32_t prompt_tail_calls(const std::filesystem::path& artifact,
     const std::string type = artifact_model_type(artifact);
     if (type == "qwen3_5_text" || type == "qwen3_5_moe_text") {
         const artifact::Reader reader(artifact);
-        const models::qwen3_5::LoadPlan plan = models::qwen3_5::plan_load(reader);
+        // The config and the frontend's resources as plan_load binds them (load.cpp), without
+        // the weights: binding those reaches the launch code a host program does not link
+        // (ninferno-ui, #793). The binder owns the resource bytes the frontend's views read.
+        const models::qwen3_5::Config config =
+            models::qwen3_5::parse_config(reader.directory(), {});
+        artifact::Binder binder(reader);
+        const models::qwen3_5::FrontendResources resources =
+            models::qwen3_5::loading::bind_resources(binder, config);
         // The text frontend the engine makes without --vision (model_instance.cpp load_qwen3_5).
         models::qwen3_5::FrontendOptions options;
         options.chat_template_path = chat_template;
-        options.architecture       = plan.config().text.architecture;
+        options.architecture       = config.text.architecture;
         options.vision_enabled     = false;
         options.vision_component   = reader.directory().components.contains("vision");
         options.max_context        = 4096;
-        return count_tail_calls(models::qwen3_5::make_frontend(plan.resources(), options),
-                                prefix_reuse);
+        return count_tail_calls(models::qwen3_5::make_frontend(resources, options), prefix_reuse);
     }
     return prompt_tail_calls_of_files(read_hf_text_files(artifact), chat_template, prefix_reuse);
 }
