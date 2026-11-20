@@ -456,10 +456,43 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
                 }
             }
             entry["us"][name] = {base_us, best_us};
-            // Over a predicted band (routes/pick) the timed best is written whatever its margin:
-            // otherwise a width the prediction loses on keeps dispatching it (auto_answer holds a
-            // Predicted answer until the tuner's entry answers).
-            if (best_us <= kMargin * base_us || predicted_before_tuner(problem, weight, t, false)) {
+            // Over a predicted band (routes/pick) an entry is written whatever the heuristic's
+            // time (auto_answer holds a Predicted answer until the tuner's entry answers), and it
+            // keeps the predicted route unless a candidate beats that route's own timing by the
+            // margin: a plain argmin would flip between routes within noise from run to run, and
+            // a route change changes the output bits (#1074). Only a prediction the tuner offers
+            // (the heuristic or a candidate) is timed as itself: another (an MMQ band on rows the
+            // MMQ does not take) would be demoted by the launch, its time another route's, so the
+            // timed best is written as before.
+            const std::optional<Route> predicted =
+                predicted_before_tuner(problem, weight, t, false);
+            const bool offered =
+                predicted && (*predicted == base ||
+                              std::find(routes.begin(), routes.end(), *predicted) != routes.end());
+            if (offered) {
+                const double predicted_us = *predicted == best   ? best_us
+                                            : *predicted == base ? base_us
+                                                                 : bench.median_us(*predicted, t);
+                entry["us"][name].push_back(predicted_us);
+                const Route kept =
+                    tuned_over_prediction(*predicted, predicted_us, best, best_us, kMargin);
+                tuned.routes[static_cast<std::size_t>(t)] = kept;
+                entry["routes"][name]                     = route_name(kept);
+                ++improved;
+                summary << " T" << t << " " << format_us(predicted_us) << "->"
+                        << format_us(kept == *predicted ? predicted_us : best_us) << " us ("
+                        << route_name(kept)
+                        << (kept == *predicted
+                                ? ", the predicted route kept)"
+                                : ", over the predicted " + route_name(*predicted) + ")");
+            } else if (predicted) {
+                tuned.routes[static_cast<std::size_t>(t)] = best;
+                entry["routes"][name]                     = route_name(best);
+                ++improved;
+                summary << " T" << t << " " << format_us(base_us) << "->" << format_us(best_us)
+                        << " us (" << route_name(best) << ", the predicted "
+                        << route_name(*predicted) << " not offered)";
+            } else if (best_us <= kMargin * base_us) {
                 tuned.routes[static_cast<std::size_t>(t)] = best;
                 entry["routes"][name]                      = route_name(best);
                 ++improved;
