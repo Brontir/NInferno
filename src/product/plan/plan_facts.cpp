@@ -680,8 +680,9 @@ private:
         bool seen = false, whole = true;
         artifact::ActivationPolicy policy = artifact::ActivationPolicy::A16Only;
         bool policy_known                 = true;
-        // An object or use of the bank records A16Only: the bank runs A16 whatever the others
-        // record or leave unrecorded (the strictest of its policies, #796).
+        // An object of the bank records A16Only (note()'s policy, its uses folded first): the bank
+        // runs A16 whatever the other objects record or leave unrecorded (the strictest of its
+        // policies, ops::common_policy, #796).
         bool a16 = false;
     };
 

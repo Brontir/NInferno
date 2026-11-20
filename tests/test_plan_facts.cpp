@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <initializer_list>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -295,27 +296,35 @@ int gguf_qwen35() {
     // The GGUF banks' policy (gguf_expert_policy): MXFP4 kept as stored (AllowA8, qwen3_5's and
     // moe_recipe's); NVFP4 without an activation divisor at BF16 inputs; NVFP4 with one
     // (<stem>.input_scale) as its recipe decides: unknown.
-    const auto policy_of = [&](std::uint32_t type, bool divisor) {
+    // `divisors`: the banks given an activation divisor (<stem>.input_scale).
+    const auto policy_of = [&](std::uint32_t type, std::initializer_list<const char*> divisors) {
         GgufFile banks = file;
         banks.tensors.push_back(tensor("blk.0.ffn_gate_exps.weight", {5120, 512, 64}, type, 100));
         banks.tensors.push_back(tensor("blk.0.ffn_up_exps.weight", {5120, 512, 64}, type, 100));
         banks.tensors.push_back(tensor("blk.0.ffn_down_exps.weight", {512, 5120, 64}, type, 100));
-        if (divisor) {
-            banks.tensors.push_back(
-                tensor("blk.0.ffn_gate_exps.input_scale", {64}, ninferno::convert::ggml::F32, 256));
+        for (const char* stem : divisors) {
+            banks.tensors.push_back(tensor(std::string("blk.0.") + stem + ".input_scale", {64},
+                                           ninferno::convert::ggml::F32, 256));
         }
         const auto l = pr::plan_facts_of_gguf(banks, 999999).model.expert_layers;
-        return l.size() == 1 ? l[0].policy : rt::PlanExpertPolicy::Unknown;
+        // No kind at all is a failure of its own, not an Unknown policy.
+        return l.size() == 1 ? std::optional<rt::PlanExpertPolicy>(l[0].policy) : std::nullopt;
     };
     failures +=
-        check(policy_of(ninferno::convert::ggml::MXFP4, false) == rt::PlanExpertPolicy::AllowA8,
+        check(policy_of(ninferno::convert::ggml::MXFP4, {}) == rt::PlanExpertPolicy::AllowA8,
               "gguf MXFP4 banks: AllowA8");
     failures +=
-        check(policy_of(ninferno::convert::ggml::NVFP4, false) == rt::PlanExpertPolicy::A16Only,
+        check(policy_of(ninferno::convert::ggml::NVFP4, {}) == rt::PlanExpertPolicy::A16Only,
               "gguf NVFP4 banks without a divisor: A16Only");
-    failures +=
-        check(policy_of(ninferno::convert::ggml::NVFP4, true) == rt::PlanExpertPolicy::Unknown,
-              "gguf NVFP4 banks with a divisor: unknown");
+    failures += check(policy_of(ninferno::convert::ggml::NVFP4,
+                                {"ffn_gate_exps", "ffn_up_exps", "ffn_down_exps"}) ==
+                          rt::PlanExpertPolicy::Unknown,
+                      "gguf NVFP4 banks with a divisor: unknown");
+    // Only the gate has a divisor: the up bank (A16Only, no divisor) makes the packed gate/up bank
+    // A16 (ops::common_policy, the strictest of its objects), so the layer is A16Only (#796).
+    failures += check(policy_of(ninferno::convert::ggml::NVFP4, {"ffn_gate_exps"}) ==
+                          rt::PlanExpertPolicy::A16Only,
+                      "gguf NVFP4, a divisor on the gate only: A16Only (the up bank's)");
     // Floating-point weight banks (F16, kept as bf16) are a kind of their own, at BF16 inputs:
     // the op runs them too (Codex on #764); a float auxiliary tensor of a bank (a scale, a bias)
     // is not a bank, and neither moves the prefill route.
@@ -1344,7 +1353,7 @@ int artifact_prefill_policy() {
             dir.uses[{bank.name, "x"}] = use;
         }
         const auto l = pr::plan_facts_of_directory(dir, "a test directory").model.expert_layers;
-        return l.size() == 1 ? l[0].policy : rt::PlanExpertPolicy::Unknown;
+        return l.size() == 1 ? std::optional<rt::PlanExpertPolicy>(l[0].policy) : std::nullopt;
     };
     const auto layers = [](Policy gate_up0, Policy down0, Policy gate_up1, Policy down1) {
         return std::vector<Bank>{{"text/layers/0/experts/gate_up", 5760, gate_up0},
