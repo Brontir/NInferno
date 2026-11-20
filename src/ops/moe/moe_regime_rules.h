@@ -109,6 +109,8 @@ struct RegimeRule {
     // What the rule needs of the board and the build, in ArchRequires' vocabulary (#884): a rule
     // measured against the tensor mma.sync register MMA asks mma_tensor (a build without it, sm_70,
     // runs that MMA on FP32 FMAs, 2x slower than R8 on the V100, #965). The default asks nothing.
+    // BankLimit and Cell rules only: a TokenLimit rule is the generation's and asks nothing. The
+    // facts are the board's in common with the build's (moe.cpp r8_limit_answer).
     ArchRequires arch = {};
 };
 
