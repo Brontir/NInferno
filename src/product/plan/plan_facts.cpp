@@ -630,9 +630,13 @@ public:
             // which no ExpertPrefill value prices. The facts name no build, so the layer's route
             // is the build's: Unknown (#796 item 1).
             // Under --activations int8 every bank runs at AllowA8 and no A4 policy remains.
-            const bool build_decides =
-                !int8 && l.nvfp4 && l.gate_up.seen && l.down.seen &&
-                layer_policy(l.gate_up, l.down) == runtime::PlanExpertPolicy::AllowA4;
+            // So is one whose policy the facts do not hold (a GGUF NVFP4 bank with an activation
+            // divisor: the loader's probe and the model's recipe set it, AllowA4 for the Qwen 3.5
+            // and Gemma 4 recipes), never A16 by the kept fallback (#1090).
+            const runtime::PlanExpertPolicy lp = layer_policy(l.gate_up, l.down);
+            const bool build_decides = !int8 && l.nvfp4 && l.gate_up.seen && l.down.seen &&
+                                       (lp == runtime::PlanExpertPolicy::AllowA4 ||
+                                        lp == runtime::PlanExpertPolicy::Unknown);
             if (!l.known || build_decides) {
                 at(runtime::ExpertPrefill::Unknown) += l.bytes;
             } else if (l.mxfp4) {
