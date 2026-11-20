@@ -286,10 +286,13 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "T 9-16 alone, above the vec and R8 widths it does not price; held by a static_assert; a "
      "structural width, no margin recorded",
      ""},
-    {"kPredictedMaxTokens", Basis::Structural, "../route_table.cpp",
-     "constexpr std::int32_t kPredictedMaxTokens = kDecodePinMaxTokens;", 16, kUnknown, kUnknown,
-     "the last width a routes/pick band may hold: the widest decode and verify call, defined from "
-     "kDecodePinMaxTokens",
+    {"kPredictedMaxTokens", Basis::Measured, "../route_table.cpp",
+     "constexpr std::int32_t kPredictedMaxTokens = 32;", 32, "ad104:60sm, ad102:128sm, gb202:170sm",
+     "RTX 4070 Ti, RTX 4090, RTX 5090",
+     "the last width a routes/pick band may hold: the narrow prefill band T 17-32, where pick.py "
+     "(VERIFIED_T17: cc 86 / 89 / 120) took the timed routes at +2.0 / +4.1 / +5.7 % mean regret "
+     "against the cost model's +27.1 / +19.9 / +3.9 % (route_tune a16 decode-only, T 24 / 32, "
+     "open grids, #785)",
      ""},
     {"kQ8PrefillA8Tokens", Basis::Structural, "generic_gemm.h",
      "inline constexpr std::int32_t kQ8PrefillA8Tokens = kPrefillBandMinTokens;", 17,

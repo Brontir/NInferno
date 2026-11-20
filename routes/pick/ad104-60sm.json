@@ -13,7 +13,7 @@
   "src/ops/generic/data/kernel_facts/sm_89.txt": "8d5428d5dfa124791b37950a24ab806634ed53020267a9c901c689aff275c2ea",
   "tools/route_pick/pick.py": "cd017307f902fe6a02fe39019c44b16bf637daa8fe22eb725c9eeed6bf92f458",
   "tools/route_pick/facts.py": "22e14fd9524280429ed5f8455dee8b40217445518e7b411508cfbc52cd3fb24b",
-  "tools/route_pick/gen.py": "782c578743ca4728ea9dc9167a4f86cdb34941336ef320e7ad94e9362448865b",
+  "tools/route_pick/gen.py": "90181088a3b61edfe19b6cecb3cc2a78ec3e3f0ea352569b47bced90c01ad4fc",
   "src/ops/generic/ggml_mmq/ggml_mmq.h": "751d67528a6adda0a26363ca86c26b9e960ffdaae9c4a2634449eac8d1d4c58f"
  },
  "entries": [
@@ -28,6 +28,44 @@
      9,
      16,
      "rmma.m1.n2.w2x2"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "iq3s",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 5120,
+   "k": 17408,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "iq3s",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 1024,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     24,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n2.w1x4"
     ]
    ]
   },
@@ -42,6 +80,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -56,6 +99,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -70,6 +118,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -84,6 +137,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -98,6 +156,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -110,8 +173,55 @@
    "bands": [
     [
      9,
-     16,
+     32,
      "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "iq4xs",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 5120,
+   "k": 6144,
+   "bands": [
+    [
+     17,
+     32,
+     "rmma.m1.n4.w1x4"
+    ]
+   ]
+  },
+  {
+   "format": "iq4xs",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 5120,
+   "k": 17408,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "iq4xs",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 1024,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     24,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n2.w1x4"
     ]
    ]
   },
@@ -126,6 +236,39 @@
      9,
      16,
      "rmma.m1.n2.w2x2"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "iq4xs",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 6144,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "iq4xs",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 10240,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -140,6 +283,39 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "iq4xs",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 17408,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "iq4xs",
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "n": 17408,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -154,6 +330,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -168,6 +349,39 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q3k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 17408,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q3k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 248320,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -180,7 +394,96 @@
    "bands": [
     [
      9,
-     16,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 2560,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     24,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     25,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 2560,
+   "k": 9216,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 4096,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 4096,
+   "k": 12288,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 5120,
+   "k": 6144,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 5120,
+   "k": 17408,
+   "bands": [
+    [
+     17,
+     32,
      "ggml_mmq"
     ]
    ]
@@ -194,7 +497,7 @@
    "bands": [
     [
      9,
-     16,
+     32,
      "ggml_mmq"
     ]
    ]
@@ -208,8 +511,32 @@
    "bands": [
     [
      9,
-     16,
+     24,
      "rmma.m1.n1.w1x16"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n1.w1x8"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 1024,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     24,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n2.w1x4"
     ]
    ]
   },
@@ -222,8 +549,88 @@
    "bands": [
     [
      9,
-     16,
+     24,
      "rmma.m1.n1.w1x4"
+    ],
+    [
+     25,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 3840,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 3840,
+   "k": 8192,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 3840,
+   "k": 15360,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 4096,
+   "k": 2560,
+   "bands": [
+    [
+     17,
+     24,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     25,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 4096,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -238,6 +645,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -252,6 +664,39 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 6144,
+   "k": 3840,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 6144,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -266,6 +711,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -278,7 +728,7 @@
    "bands": [
     [
      9,
-     16,
+     32,
      "ggml_mmq"
     ]
    ]
@@ -292,7 +742,35 @@
    "bands": [
     [
      9,
-     16,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 8192,
+   "k": 3840,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 8704,
+   "k": 3840,
+   "bands": [
+    [
+     17,
+     32,
      "ggml_mmq"
     ]
    ]
@@ -306,7 +784,133 @@
    "bands": [
     [
      9,
-     16,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 9216,
+   "k": 2560,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 9216,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 10240,
+   "k": 2560,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 10240,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 10240,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 12288,
+   "k": 2560,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 12288,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 16384,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 17408,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
      "ggml_mmq"
     ]
    ]
@@ -320,7 +924,7 @@
    "bands": [
     [
      9,
-     16,
+     32,
      "ggml_mmq"
     ]
    ]
@@ -336,6 +940,81 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 262144,
+   "k": 3840,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "n": 9216,
+   "k": 2560,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "n": 12288,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "n": 15360,
+   "k": 3840,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q4k",
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "n": 17408,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -348,7 +1027,68 @@
    "bands": [
     [
      9,
-     16,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q5k",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 2560,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     24,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     25,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q5k",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 4096,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q5k",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 5120,
+   "k": 6144,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q5k",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 5120,
+   "k": 17408,
+   "bands": [
+    [
+     17,
+     32,
      "ggml_mmq"
     ]
    ]
@@ -362,8 +1102,32 @@
    "bands": [
     [
      9,
-     16,
+     24,
      "rmma.m1.n1.w1x16"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n1.w1x8"
+    ]
+   ]
+  },
+  {
+   "format": "q5k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 1024,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     24,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n2.w1x4"
     ]
    ]
   },
@@ -378,6 +1142,25 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q5k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 6144,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -392,6 +1175,95 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q5k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 7168,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q5k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 8192,
+   "k": 2560,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q5k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 8192,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q5k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 10240,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q5k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 16384,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q5k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 17408,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -406,6 +1278,25 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n4.w1x4"
+    ]
+   ]
+  },
+  {
+   "format": "q5k",
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "n": 17408,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -420,6 +1311,30 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     24,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n2.w2x2"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 2560,
+   "k": 9216,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -434,6 +1349,53 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n2.w2x2"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 4096,
+   "k": 12288,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 5120,
+   "k": 6144,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 5120,
+   "k": 17408,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -446,8 +1408,70 @@
    "bands": [
     [
      9,
-     16,
+     24,
      "rmma.m1.n1.w1x16"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n1.w1x8"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 1024,
+   "k": 2560,
+   "bands": [
+    [
+     17,
+     24,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n2.w1x4"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 1024,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     24,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n2.w1x4"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 1024,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     24,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n2.w1x4"
     ]
    ]
   },
@@ -460,8 +1484,13 @@
    "bands": [
     [
      9,
-     16,
+     24,
      "rmma.m1.n1.w1x4"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n2.w1x4"
     ]
    ]
   },
@@ -474,8 +1503,32 @@
    "bands": [
     [
      9,
-     16,
+     24,
      "rmma.m1.n1.w2x2"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n1.w4x1"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 2048,
+   "k": 3840,
+   "bands": [
+    [
+     17,
+     24,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n2.w2x2"
     ]
    ]
   },
@@ -490,6 +1543,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n2.w2x2"
     ]
    ]
   },
@@ -504,6 +1562,25 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 3840,
+   "k": 15360,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -518,6 +1595,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -532,6 +1614,25 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 6144,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -544,7 +1645,7 @@
    "bands": [
     [
      9,
-     16,
+     32,
      "ggml_mmq"
     ]
    ]
@@ -560,6 +1661,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -574,6 +1680,25 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 8192,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -588,6 +1713,11 @@
      9,
      16,
      "rmma.m1.n2.w2x2"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -602,6 +1732,25 @@
      9,
      16,
      "rmma.m1.n2.w2x2"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 10240,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -616,6 +1765,25 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 17408,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -630,6 +1798,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n4.w1x4"
     ]
    ]
   },
@@ -644,6 +1817,53 @@
      9,
      16,
      "rmma.m1.n2.w2x2"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 248320,
+   "k": 2560,
+   "bands": [
+    [
+     17,
+     32,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 248320,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 248320,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -658,6 +1878,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n4.w4x1"
     ]
    ]
   },
@@ -670,8 +1895,13 @@
    "bands": [
     [
      9,
-     16,
+     24,
      "rmma.m1.n1.w1x8"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n1.w2x2"
     ]
    ]
   },
@@ -686,6 +1916,30 @@
      9,
      16,
      "rmma.m1.n2.w2x2"
+    ],
+    [
+     17,
+     24,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "n": 17408,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "ggml_mmq"
     ]
    ]
   },
@@ -698,8 +1952,116 @@
    "bands": [
     [
      9,
-     16,
+     32,
      "rmma.m1.n2.w1x4"
+    ]
+   ]
+  },
+  {
+   "format": "q8",
+   "compute": "a16",
+   "epilogue": "add",
+   "n": 5120,
+   "k": 6144,
+   "bands": [
+    [
+     17,
+     32,
+     "rmma.m1.n4.w1x8"
+    ]
+   ]
+  },
+  {
+   "format": "q8",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 32,
+   "k": 2560,
+   "bands": [
+    [
+     17,
+     32,
+     "rmma.m1.n1.w1x16"
+    ]
+   ]
+  },
+  {
+   "format": "q8",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 32,
+   "k": 4096,
+   "bands": [
+    [
+     17,
+     32,
+     "rmma.m1.n1.w1x16"
+    ]
+   ]
+  },
+  {
+   "format": "q8",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 48,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "rmma.m1.n1.w1x16"
+    ]
+   ]
+  },
+  {
+   "format": "q8",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 256,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     32,
+     "rmma.m1.n1.w1x16"
+    ]
+   ]
+  },
+  {
+   "format": "q8",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 1024,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     24,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n4.w1x8"
+    ]
+   ]
+  },
+  {
+   "format": "q8",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 1280,
+   "k": 5120,
+   "bands": [
+    [
+     17,
+     24,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n4.w1x8"
     ]
    ]
   },
@@ -712,7 +2074,7 @@
    "bands": [
     [
      9,
-     16,
+     32,
      "rmma.m1.n1.w1x4"
     ]
    ]
@@ -728,6 +2090,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n4.w1x4"
     ]
    ]
   },
@@ -742,6 +2109,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n4.w1x4"
     ]
    ]
   },
@@ -754,7 +2126,7 @@
    "bands": [
     [
      9,
-     16,
+     32,
      "rmma.m1.n2.w1x4"
     ]
    ]
@@ -770,6 +2142,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n4.w1x4"
     ]
    ]
   },
@@ -782,7 +2159,7 @@
    "bands": [
     [
      9,
-     16,
+     32,
      "rmma.m1.n4.w1x8"
     ]
    ]
@@ -798,6 +2175,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n4.w1x4"
     ]
    ]
   },
@@ -812,6 +2194,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n4.w1x4"
     ]
    ]
   },
@@ -826,6 +2213,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n4.w1x4"
     ]
    ]
   },
@@ -840,6 +2232,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n4.w1x8"
     ]
    ]
   },
@@ -852,7 +2249,7 @@
    "bands": [
     [
      9,
-     16,
+     32,
      "rmma.m1.n4.w1x4"
     ]
    ]
@@ -866,7 +2263,7 @@
    "bands": [
     [
      9,
-     16,
+     32,
      "rmma.m1.n4.w1x4"
     ]
    ]
@@ -882,6 +2279,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n4.w1x8"
     ]
    ]
   },
@@ -896,6 +2298,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n4.w1x4"
     ]
    ]
   },
@@ -908,7 +2315,7 @@
    "bands": [
     [
      9,
-     16,
+     32,
      "rmma.m1.n4.w1x4"
     ]
    ]
@@ -922,7 +2329,7 @@
    "bands": [
     [
      9,
-     16,
+     32,
      "rmma.m1.n4.w1x4"
     ]
    ]
@@ -936,7 +2343,7 @@
    "bands": [
     [
      9,
-     16,
+     32,
      "rmma.m1.n4.w1x4"
     ]
    ]
@@ -950,8 +2357,13 @@
    "bands": [
     [
      9,
-     16,
+     24,
      "rmma.m1.n1.w1x8"
+    ],
+    [
+     25,
+     32,
+     "rmma.m1.n1.w1x4"
     ]
    ]
   },
@@ -966,6 +2378,11 @@
      9,
      16,
      "rmma.m1.n2.w1x4"
+    ],
+    [
+     17,
+     32,
+     "rmma.m1.n4.w1x4"
     ]
    ]
   }

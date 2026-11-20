@@ -178,10 +178,14 @@ bool a8_wide_call(const Ask& ask, const Problem& problem, const Weight& weight) 
     return ask.tokens >= kPrefillBandMinTokens && allows_w4a8(weight, problem.policy);
 }
 
-bool a8_call(const Ask& ask, const Problem& problem, const Weight& weight) {
-    return a8_wide_call(ask, problem, weight) || vec_rule(weight, problem.policy, ask.tokens) ||
-           r8_call(problem, weight, ask.tokens) ||
+// The other int8 calls the tables stand aside for: ggml's vector kernel, R8, the MMQ verify rule.
+bool a8_narrow_call(const Ask& ask, const Problem& problem, const Weight& weight) {
+    return vec_rule(weight, problem.policy, ask.tokens) || r8_call(problem, weight, ask.tokens) ||
            mmq_verify_rule(weight, problem.policy, problem.n, ask.tokens, ask.lanes);
+}
+
+bool a8_call(const Ask& ask, const Problem& problem, const Weight& weight) {
+    return a8_wide_call(ask, problem, weight) || a8_narrow_call(ask, problem, weight);
 }
 
 // The route table's entry for the exact problem (route_table.h): the nearest measured board's
@@ -189,12 +193,23 @@ bool a8_call(const Ask& ask, const Problem& problem, const Weight& weight) {
 // codec keeps its tiled route: the tiled and register-MMA families sum in different orders.
 std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& problem,
                                              const Weight& weight) {
-    if (a8_call(ask, problem, weight)) return std::nullopt;
-    auto hit            = table_route_answer(problem, ask.tokens, ask.prefill());
     const auto admitted = [&](const std::optional<TableAnswer>& h) {
         return h && route_admits(h->route, weight, problem.policy) &&
                profile_admits(h->route, ask, &weight);
     };
+    std::optional<TableAnswer> hit;
+    if (a8_call(ask, problem, weight)) {
+        // An int8 call of T 17-32 outside the prefill profile (a round of speculative verify, a
+        // decode batch) that only a8_wide_call sends past the table: the analyzer's predicted band,
+        // priced among both activation classes (#785: RTX 4070 Ti / 4090, T 24 / 32, mean regret
+        // +2.0 / +4.1 % against the cost model's +27.1 / +19.9 %), ahead of the cost model. The
+        // table's measured entries hold A16 schedules and stay aside.
+        if (a8_narrow_call(ask, problem, weight) || ask.prefill()) return std::nullopt;
+        hit = table_predicted_answer(problem, ask.tokens);
+        if (!admitted(hit)) return std::nullopt;
+    } else {
+        hit = table_route_answer(problem, ask.tokens, ask.prefill());
+    }
     // A predicted band this call does not admit (ggml_mmq under the speed profile) leaves the
     // table's own or borrowed entry to answer, as before the band filled the gap (#1068).
     if (hit && hit->predicted && !admitted(hit)) {

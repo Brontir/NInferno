@@ -142,7 +142,12 @@ int shipped_picks() {
                                      e[2].str() == "swiglu" ? generic::Epilogue::SwiGlu
                                      : e[2].str() == "add"  ? generic::Epilogue::AddResidual
                                                             : generic::Epilogue::Store};
-            const auto answer = generic::table_route_answer(p, std::stoi(e[5].str()), false);
+            // A band from T 17 (#785) answers the int8 calls the table stands aside for, read by
+            // table_predicted_answer whatever the board's table holds; a T 9-16 band answers in
+            // the table's gaps (table_route_answer).
+            const int width   = std::stoi(e[5].str());
+            const auto answer = width > 16 ? generic::table_predicted_answer(p, width)
+                                           : generic::table_route_answer(p, width, false);
             failures +=
                 check(q && answer && answer->predicted &&
                           generic::route_name(answer->route) == e[6].str(),
@@ -151,9 +156,11 @@ int shipped_picks() {
             {
                 // Under the Legacy policy the file is not read: the table answers as before it.
                 const ninferno::ops::ScopedRoutePolicy legacy(ninferno::RoutePolicy::Legacy);
-                const auto old = generic::table_route_answer(p, std::stoi(e[5].str()), false);
+                const auto old = generic::table_route_answer(p, width, false);
                 failures += check(!old || !old->predicted,
                                   name + ": under --route-policy legacy no band is predicted");
+                failures += check(!generic::table_predicted_answer(p, width),
+                                  name + ": under --route-policy legacy no band is read alone");
             }
         } catch (const std::exception& error) {
             failures += check(false, name + " refused: " + error.what());
