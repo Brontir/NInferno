@@ -838,7 +838,7 @@ int main() {
                   "gemma4 with_tile_arch lists the snapshot arch sm_" + std::string(label) +
                       " (#1115)");
         }
-        check(!ops::detail::gemma4_tile_arch_known("61"),
+        check(!ops::detail::gemma4_tile_arch_known("bogus"),
               "gemma4 with_tile_arch refuses a label it holds no tile of (#1115)");
     }
 

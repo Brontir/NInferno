@@ -201,10 +201,6 @@ inline constexpr int kGeoDecodeBc =
     kFittingBc<Geo, (Geo::D <= 128 ? kDecodeMaxWarpRowsD128 : kDecodeMaxWarpRows), kDecodeBc, true,
                Arch>;
 
-// The architecture whose tiles a board's plan prices (#912): this build's where the board runs
-// this build's kernels (or no snapshot names its kernels), else the release build of its
-// architecture (kernel_facts::sass_arch), whose snapshot holds those kernels' facts. `body` takes
-// the architecture as a template argument and its snapshot label.
 // `body` on the tiles of the build a snapshot label names (with_tile_arch's list).
 template <class Body>
 decltype(auto) with_label_tile_arch(std::string_view arch, Body&& body) {
@@ -222,6 +218,10 @@ decltype(auto) with_label_tile_arch(std::string_view arch, Body&& body) {
                            " build here (with_tile_arch)");
 }
 
+// The architecture whose tiles a board's plan prices (#912): this build's where the board runs
+// this build's kernels (or no snapshot names its kernels), else the release build of its
+// architecture (kernel_facts::sass_arch), whose snapshot holds those kernels' facts. `body` takes
+// the architecture as a template argument and its snapshot label.
 template <class Body>
 decltype(auto) with_tile_arch(Body&& body) {
     namespace kf                          = generic::kernel_facts;
