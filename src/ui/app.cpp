@@ -984,6 +984,23 @@ struct App::PlanNowContext {
 
 namespace {
 
+// A plan's `now` on a card NVML says takes no new process (GpuStat::refusal_now, #891): no start
+// fits, said as the card's refusal as serve's plan says it (reason_code_now card_refused).
+void name_refusal_now(Json& doc, const std::vector<GpuStat>& stats, int gpu) {
+    if (!doc.contains("now")) return;
+    for (const auto& stat : stats) {
+        if (stat.index != gpu) continue;
+        const std::string why = stat.refusal_now();
+        if (why.empty()) return;
+        Json& now                = doc["now"];
+        now["fits_now"]          = false;
+        now["reason_code_now"]   = "card_refused";
+        now["reason_params_now"] = {{"message", why}};
+        now["reason_now"]        = "the card takes no new process: " + why;
+        return;
+    }
+}
+
 // The free memory of GPU `gpu` now (NVML), nullopt when it does not say.
 std::optional<std::uint64_t> free_now_of(const std::vector<GpuStat>& stats, int gpu) {
     for (const auto& stat : stats) {
@@ -1143,6 +1160,7 @@ Json App::artifact_plan_json(const fs::path& artifact, int gpu, const product::L
             product::plan_now(plan.facts, plan.inputs, plan.served ? &*plan.served : nullptr,
                               plan.inputs.pins, *free_now),
             *free_now);
+        name_refusal_now(doc, stats, gpu);
     }
     // The workspace by the formula, not the start's planner (this binary links no Ops, #843).
     doc["planner"] = "ninferno-ui: no ninferno-serve beside it, the workspace is an estimate";
@@ -1155,7 +1173,8 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     // memory (product::plan_now, each request: another process's share moves).
     std::shared_ptr<const PlanNowContext> now;
     Json doc = plan_json_idle(repo, hub, gpu, quant, launch, true, &now);
-    const auto free_now = free_now_of(gpus_->snapshot(), gpu);
+    const auto stats    = gpus_->snapshot();
+    const auto free_now = free_now_of(stats, gpu);
     if (!now) { // a cached plan: its context kept beside it
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = plan_now_.find(plan_key(repo, hub, gpu, quant, launch));
@@ -1168,6 +1187,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
             product::plan_now(now->facts, now->inputs, now->served ? &*now->served : nullptr,
                               now->pins, *free_now),
             *free_now);
+        name_refusal_now(doc, stats, gpu);
     }
     return doc;
 }

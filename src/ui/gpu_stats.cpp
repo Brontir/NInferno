@@ -11,6 +11,15 @@ double GpuStat::bandwidth_gbs() const noexcept {
     return 2.0 * memory_clock_max_mhz * 1e6 * (memory_bus_bits / 8.0) / 1e9;
 }
 
+std::string GpuStat::refusal_now() const {
+    if (compute_mode == 2) return "its compute mode is prohibited (NVML)";
+    if ((compute_mode == 1 || compute_mode == 3) && !processes.empty()) {
+        return "its compute mode is exclusive and process " +
+               std::to_string(processes.front().pid) + " holds it (NVML)";
+    }
+    return {};
+}
+
 nlohmann::json GpuStat::to_json() const {
     nlohmann::json processes_json = nlohmann::json::array();
     for (const auto& process : processes) {
@@ -34,6 +43,7 @@ nlohmann::json GpuStat::to_json() const {
             {"memory_clock_mhz", memory_clock_mhz},
             {"bandwidth_gbs", bandwidth_gbs()},
             {"sms", sms},
+            {"compute_mode", compute_mode},
             {"processes", processes_json}};
 }
 
@@ -91,6 +101,7 @@ public:
         bind(capability_, "nvmlDeviceGetCudaComputeCapability");
         bind(pci_, "nvmlDeviceGetPciInfo_v3");
         bind(processes_, "nvmlDeviceGetComputeRunningProcesses_v3");
+        bind(compute_mode_, "nvmlDeviceGetComputeMode");
         bind(cores_, "nvmlDeviceGetNumGpuCores");
         bind(mig_mode_, "nvmlDeviceGetMigMode");
         if (init_ == nullptr || count_ == nullptr || by_index_ == nullptr) {
@@ -182,6 +193,9 @@ public:
                 const bool wide = stat.cc_major >= 9 || (stat.cc_major == 8 && stat.cc_minor > 0);
                 stat.sms        = static_cast<int>(value) / (wide ? 128 : 64);
             }
+            if (int mode = 0; compute_mode_ && compute_mode_(device, &mode) == kOk) {
+                stat.compute_mode = mode;
+            }
             if (processes_) {
                 unsigned n = 0;
                 int rc     = processes_(device, &n, nullptr);
@@ -234,6 +248,7 @@ private:
     int (*cores_)(Device, unsigned*)                       = nullptr;
     int (*mig_mode_)(Device, unsigned*, unsigned*)         = nullptr; // current, pending
     int (*processes_)(Device, unsigned*, NvmlProcessInfo*) = nullptr;
+    int (*compute_mode_)(Device, int*)                     = nullptr; // nvmlComputeMode_t
 };
 
 } // namespace
