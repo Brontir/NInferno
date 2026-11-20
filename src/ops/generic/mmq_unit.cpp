@@ -123,8 +123,15 @@ std::optional<double> launch_seconds(std::string_view arch, QType q, const IsaRo
     if (!l.fixup) return l.units * *u;
     // unit_seconds read the L2 rate, so it is there. The fixup's working CTAs move the bytes, not
     // the stream-k grid (mmq_columns::fixup_ctas).
-    const double rate = *isa.l2_bytes_per_sm_clock * mmq_columns::fixup_ctas(l, sms) * clock_hz;
-    return l.units * *u + mmq_columns::fixup_bytes(l) / rate + fixup_launch_seconds;
+    const double rate  = *isa.l2_bytes_per_sm_clock * mmq_columns::fixup_ctas(l, sms) * clock_hz;
+    const double bytes = mmq_columns::fixup_bytes(l) / rate;
+    // ...but no faster than its walk: the CTA of a split tile reads the preceding CTAs' partials
+    // one after another (mmq_columns::ColumnLaunch::rounds), each an L2 round trip of its four
+    // warps (the fixup CTA's 128 threads; isa_facts l2_latency), #1095. Where the row has no
+    // latency the bytes stand.
+    const std::optional<double> trip = isa.l2_latency.w4 ? isa.l2_latency.w4 : isa.l2_latency.w1;
+    const double walk                = trip ? l.rounds * *trip / clock_hz : 0.0;
+    return l.units * *u + std::max(bytes, walk) + fixup_launch_seconds;
 }
 
 } // namespace ninferno::mmq_unit

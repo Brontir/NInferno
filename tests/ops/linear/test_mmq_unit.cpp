@@ -141,8 +141,12 @@ int main() {
                     expect(l.rounds == 3, what + ": 3 fixup rounds, " + std::to_string(l.rounds));
                 }
                 const double l2_rate = *row.l2_bytes_per_sm_clock * fixers * 2520e6;
+                // ...no faster than its walk over a tile's partials: rounds L2 trips (#1095).
+                const double trip = row.l2_latency.w4.value_or(row.l2_latency.w1.value_or(0));
+                const double walk = l.rounds * trip / 2520e6;
                 const double want =
-                    l.units * *u + (l.fixup ? mmq_columns::fixup_bytes(l) / l2_rate + node : 0.0);
+                    l.units * *u +
+                    (l.fixup ? std::max(mmq_columns::fixup_bytes(l) / l2_rate, walk) + node : 0.0);
                 expect(std::fabs(*s / want - 1) < 1e-12, what + ": units x unit + fixup");
             }
             expect(l.split == (rows != 128 * 128), what + ": stream-k below a full wave");
@@ -155,6 +159,30 @@ int main() {
         expect(l.split && l.fixup && l.tiles == 8 && l.blocks == 128 && l.split_tiles == 8 &&
                    l.rounds == 15,
                "#1095: 8 tiles split 16 ways, 15 fixup rounds (" + std::to_string(l.rounds) + ")");
+    }
+    // On that split the walk, not the bytes, is the fixup's time (the RTX 4090's facts here, the
+    // same launch on 128 SMs: 15 rounds of an L2 trip against 1.1 MB over 32 fixing CTAs).
+    {
+        const double bw = 384 / 8.0 * 21e9, node = 3e-6;
+        const int rows = 1024, k = 4096, columns = 16, j = 16;
+        const mmq_columns::ColumnLaunch l = mmq_columns::launch_of(rows, k, columns, j, 128);
+        const auto u =
+            mmq_unit::unit_seconds("89", QType::GGML_Q4_K, j, row,
+                                   mmq_unit::unit_facts_of(rows, k, columns, j, 128, 2520e6, bw));
+        const auto s = mmq_unit::launch_seconds("89", QType::GGML_Q4_K, row, rows, k, columns, j,
+                                                128, 2520e6, bw, node);
+        const double trip = row.l2_latency.w4.value_or(row.l2_latency.w1.value_or(0));
+        const double walk = l.rounds * trip / 2520e6;
+        const double bytes =
+            mmq_columns::fixup_bytes(l) /
+            (*row.l2_bytes_per_sm_clock * mmq_columns::fixup_ctas(l, 128) * 2520e6);
+        expect(u && s && l.rounds == 15 && trip > 0 && walk > bytes,
+               "#1095: a 16-way split's fixup is its walk (" + std::to_string(walk * 1e6) +
+                   " us against " + std::to_string(bytes * 1e6) + " us of bytes)");
+        if (u && s) {
+            expect(std::fabs(*s / (l.units * *u + walk + node) - 1) < 1e-12,
+                   "#1095: units x unit + the walk + the node");
+        }
     }
     IsaRow old = *isa;
     old.l2_bytes_per_sm_clock.reset();
