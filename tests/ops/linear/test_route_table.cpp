@@ -128,10 +128,12 @@ int shipped_picks() {
                       name + " is read as " + ninferno::device_class().id() +
                           "'s predicted bands: " + s.message);
             const auto q = ninferno::find_route(e[1].str());
-            const generic::Problem p{
-                q.value_or(ninferno::QType::BF16), ninferno::ops::LinearPolicy::A16Only,
-                std::stoi(e[3].str()), std::stoi(e[4].str()),
-                e[2].str() == "swiglu" ? generic::Epilogue::SwiGlu : generic::Epilogue::Store};
+            const generic::Problem p{q.value_or(ninferno::QType::BF16),
+                                     ninferno::ops::LinearPolicy::A16Only, std::stoi(e[3].str()),
+                                     std::stoi(e[4].str()),
+                                     e[2].str() == "swiglu" ? generic::Epilogue::SwiGlu
+                                     : e[2].str() == "add"  ? generic::Epilogue::AddResidual
+                                                            : generic::Epilogue::Store};
             const auto answer = generic::table_route_answer(p, std::stoi(e[5].str()), false);
             failures +=
                 check(q && answer && answer->predicted &&

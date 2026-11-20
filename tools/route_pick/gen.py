@@ -13,7 +13,7 @@ facts rows: there the table's answers are Carried, kept, and the engine reads no
 first desktop row, else its first row.
 
 The problems are every generic entry of the route tables of the same compute capability (the release models'
-shapes) that pick.py can price: an A16 entry of a format in pick.BITS with the store or SwiGLU epilogue. For each,
+shapes) that pick.py can price: an A16 entry of a format in pick.BITS with the store, add or SwiGLU epilogue. For each,
 pick.pick() at T 9..16 gives one route a width, written as runs of equal routes. Nothing is measured on the card.
 
 The engine reads the file only where the device has no table of its own chip (src/ops/route_table.cpp): its
@@ -115,7 +115,7 @@ def problems(all_tables, cc):
             continue
         for e in t.get('entries', []):
             ep = e.get('epilogue', 'store')
-            if 'bands' not in e or e['format'] not in pick.BITS or e['compute'] != 'a16' or ep not in ('store', 'swiglu'):
+            if 'bands' not in e or e['format'] not in pick.BITS or e['compute'] != 'a16' or ep not in ('store', 'add', 'swiglu'):
                 continue
             out[(e['format'], ep, int(e['n']), int(e['k']))] = True
     return sorted(out)

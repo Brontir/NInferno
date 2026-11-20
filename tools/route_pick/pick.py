@@ -51,7 +51,8 @@ PARTITIONS = 4.0                   # tensor partitions of an SM
 PAIR = {'rmma.m1.n4.w1x8': ('q8', 'rmma.m1.n2.w1x4')}   # route: (format, the pair member its price is taken from)
 MMQ_WARPS = 8.0                    # warps of one ggml_mmq CTA
 MMQ_FILL = 0.9                     # ggml_mmq_internal.cuh: a tile a CTA where the grid fills its last wave to 90 %
-LAT_BYTES = {'store': 5.5, 'swiglu': 4.5}   # generic_gemm_internal.h kRmmaLatencyOneSetBytes / SwiGluBytes
+# generic_gemm_internal.h kRmmaLatencyOneSetBytes (store and add: one weight set, generic_rmma_describe.cpp) / SwiGluBytes
+LAT_BYTES = {'store': 5.5, 'add': 5.5, 'swiglu': 4.5}
 VEC_KS = (5120, 6144, 17408)       # ggml_vec.cu vec_launch_k: the K values with an unrolled kernel (5120 alone when gated)
 
 BITS = {'q4k': 4.5, 'q5k': 5.5, 'q6k': 6.5625, 'q8': 8.5, 'q3k': 3.4375, 'iq3s': 3.4375, 'iq4xs': 4.25}
@@ -59,7 +60,7 @@ RMMA_DEC = {'q4k': 'GgmlQ45KQuadDecoder<4>', 'q5k': 'GgmlQ45KQuadDecoder<5>', 'q
             'q3k': 'GgmlQ3KDecoder', 'iq3s': 'GgmlIq3SDecoder', 'iq4xs': 'GgmlIq4XsDecoder'}
 R8_CODEC = {'q4k': 'W4a8Q45K<4>', 'q5k': 'W4a8Q45K<5>', 'q6k': 'W4a8Q6K', 'q8': 'W4a8Q8'}
 MMQ_TYPE = {'q4k': '12', 'q5k': '13', 'q6k': '14', 'q8': '8', 'q3k': '11', 'iq3s': '21', 'iq4xs': '23'}   # ggml_type
-EPI = {'store': '0', 'swiglu': '2'}
+EPI = {'store': '0', 'add': '1', 'swiglu': '2'}   # the kernel facts' epilogue column
 _RMMA = re.compile(r'rmma\.m(\d+)\.n(\d+)\.w(\d+)x(\d+)(?:\.c(\d+))?$')
 _R8 = re.compile(r'r8\.w(\d+)r(\d+)$')
 _CACHE = {}
