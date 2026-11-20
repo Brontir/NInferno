@@ -2347,7 +2347,9 @@ with the context it fits).
 - `ninferno-serve --plan` prints the ladder (every rung's bytes and need), the rung the free memory
   picks now and the advice, then exits; `--plan --json` prints the same as JSON (`schema`
   `ninferno-plan/1`: `plan.ladder`, `plan.rung`, `plan.free_bytes`, `plan.weight_bytes`,
-  `plan.advice`; `plain`, plain decode's ladder, when `--spec auto` would leave the asked
+  `plan.advice`, `plan.workspace_regions` (the chosen rung's text prefill arena region by region,
+  as the no-load plan's `workspace_regions`: Qwen 3.5 only, `[]` for the other families or when
+  nothing fits); `plain`, plain decode's ladder, when `--spec auto` would leave the asked
   speculation: a start would try the profile's fit fallback, shallower drafts and the MTP head
   first, which the dry run does not plan). It uploads the weights to size the rungs and releases
   them; no tuner, warm-up or Program runs. A start runs the load-time route tuner before it reads

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/arena.h"
+#include "core/layout.h"
 #include "ninferno/score_detail.h"
 #include "ninferno/types.h"
 #include "runtime/contract/execution.h"
@@ -193,6 +194,9 @@ public:
     [[nodiscard]] const runtime::SequenceCapacityCurve& capacity_curve() const noexcept;
     // Bytes of one Host StateImage (a context-cache Host tier slot) of this plan.
     [[nodiscard]] std::size_t host_state_image_bytes() const noexcept;
+    // The text prefill arena's regions as this plan lays them out (#615 W5): what the started
+    // Program's workspace plan holds, the KV pages aside (they do not move the arena).
+    [[nodiscard]] const std::vector<WorkspaceRegion>& text_prefill_regions() const noexcept;
     [[nodiscard]] SequencePlan finalize(std::uint32_t main_page_groups) &&;
 
 public:
