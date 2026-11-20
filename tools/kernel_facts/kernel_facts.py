@@ -479,7 +479,9 @@ class Family:
         # Whether its loop calls the emulated MMA on sm_70 (NINFERNO_FMA_MMA): the int8
         # mma_s8_dp4a_call of the W4A8 tiles (#787) and the BF16 / F16 mma_*_fma_call of the
         # register-MMA and grouped MoE loops (#762), which that image's SASS prints unresolved
-        # (emulated_calls). The dp4a loops (r8, moer8, i8) and ggml's mmq never call it.
+        # (emulated_calls). The dp4a loops (r8, moer8), the int8 mma.sync of i8 (compiled
+        # below sm_80 out) and ggml's mmq never call it; gemma4's tiles do, but that family's loop
+        # is not counted (loop=False): it needs the flag the day its loop is.
         self.emulated = emulated
         # (marker, excluded) of the producer warps' loop, written as the PRODUCER_FIELDS after
         # the wait classes (sass_counts.loop_counts): BAR, and no MMA or dp4a in the loop, the

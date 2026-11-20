@@ -1376,8 +1376,8 @@ class RegisterAllocations(unittest.TestCase):
 
     def test_sm70_relocations_read_for_the_emulated_mma_families(self):
         # #762: rmma, w4a8 and moegemm loops call the emulated MMA on sm_70, and a per-family
-        # extraction of any of them reads the relocations; the dp4a families and the
-        # resources-only ones need none, so their sm_70 extraction neither reads nor refuses.
+        # extraction of any of them reads the relocations; the dp4a families, i8 (no sm_70
+        # kernel) and the resources-only ones need none, so their sm_70 extraction neither reads nor refuses.
         def keys(*families):
             return {f"k{i}": (f, ()) for i, f in enumerate(families)}
         for f in (kernel_facts.FAMILY, "w4a8", "moegemm"):
