@@ -13,23 +13,9 @@
   "src/ops/generic/data/kernel_facts/sm_75.txt": "3b9969606315dcb07c1e28263825c79e293e91036a429c0a5d39c7a0d7e91b71",
   "tools/route_pick/pick.py": "3b75e390aceb129e0eec2a4a02fc28835fe39a3f01aeb856cd6ce8b6e76b8532",
   "tools/route_pick/facts.py": "22e14fd9524280429ed5f8455dee8b40217445518e7b411508cfbc52cd3fb24b",
-  "tools/route_pick/gen.py": "36fd0a44e6e26075b4d7b21088f167ef7c371dda4974951bad40188c0316c98f"
+  "tools/route_pick/gen.py": "065576ae71308becb945dd6bcc7e94b37c81ab54b27171edd6a6b47f67178412"
  },
  "entries": [
-  {
-   "format": "iq3s",
-   "compute": "a16",
-   "epilogue": "add",
-   "n": 5120,
-   "k": 17408,
-   "bands": [
-    [
-     9,
-     16,
-     "ggml_mmq"
-    ]
-   ]
-  },
   {
    "format": "iq3s",
    "compute": "a16",
@@ -97,62 +83,6 @@
      9,
      16,
      "rmma.m1.n2.w2x2"
-    ]
-   ]
-  },
-  {
-   "format": "q4k",
-   "compute": "a16",
-   "epilogue": "add",
-   "n": 2560,
-   "k": 4096,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n1.w4x1"
-    ]
-   ]
-  },
-  {
-   "format": "q4k",
-   "compute": "a16",
-   "epilogue": "add",
-   "n": 2560,
-   "k": 9216,
-   "bands": [
-    [
-     9,
-     16,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q4k",
-   "compute": "a16",
-   "epilogue": "add",
-   "n": 4096,
-   "k": 4096,
-   "bands": [
-    [
-     9,
-     16,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q4k",
-   "compute": "a16",
-   "epilogue": "add",
-   "n": 4096,
-   "k": 12288,
-   "bands": [
-    [
-     9,
-     16,
-     "ggml_mmq"
     ]
    ]
   },
@@ -453,34 +383,6 @@
   {
    "format": "q5k",
    "compute": "a16",
-   "epilogue": "add",
-   "n": 2560,
-   "k": 4096,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n2.w2x2"
-    ]
-   ]
-  },
-  {
-   "format": "q5k",
-   "compute": "a16",
-   "epilogue": "add",
-   "n": 4096,
-   "k": 4096,
-   "bands": [
-    [
-     9,
-     16,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q5k",
-   "compute": "a16",
    "epilogue": "store",
    "n": 4096,
    "k": 2560,
@@ -526,34 +428,6 @@
    "epilogue": "store",
    "n": 8192,
    "k": 4096,
-   "bands": [
-    [
-     9,
-     16,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q6k",
-   "compute": "a16",
-   "epilogue": "add",
-   "n": 2560,
-   "k": 9216,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n2.w1x4"
-    ]
-   ]
-  },
-  {
-   "format": "q6k",
-   "compute": "a16",
-   "epilogue": "add",
-   "n": 4096,
-   "k": 12288,
    "bands": [
     [
      9,

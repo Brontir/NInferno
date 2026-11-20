@@ -13,7 +13,9 @@ facts rows: there the table's answers are Carried, kept, and the engine reads no
 first desktop row, else its first row.
 
 The problems are every generic entry of the route tables of the same compute capability (the release models'
-shapes) that pick.py can price: an A16 entry of a format in pick.BITS with the store, add or SwiGLU epilogue. For each,
+shapes) that pick.py can price: an A16 entry of a format in pick.BITS with the store or SwiGLU epilogue. The add
+epilogue (o_proj, down) is priced but not written: on the RTX 4060 Ti (Qwen3-8B Q4_K_M) its bands lost 2.9 % end to
+end against the borrowed table, the law's n2.w1x4 against the measured n4.w1x4 on the Q6_K down (#1051). For each,
 pick.pick() at T 9..16 gives one route a width, written as runs of equal routes. Nothing is measured on the card.
 
 The engine reads the file only where the device has no table of its own chip (src/ops/route_table.cpp): its
@@ -108,6 +110,10 @@ def classes(F, tabled_chips, table_boards, carry):
     return seen
 
 
+# The epilogues whose bands the file holds (the module docstring says why not add).
+WRITTEN_EPILOGUES = ('store', 'swiglu')
+
+
 def problems(all_tables, cc):
     out = {}
     for _, tcc, t in all_tables:
@@ -115,7 +121,7 @@ def problems(all_tables, cc):
             continue
         for e in t.get('entries', []):
             ep = e.get('epilogue', 'store')
-            if 'bands' not in e or e['format'] not in pick.BITS or e['compute'] != 'a16' or ep not in ('store', 'add', 'swiglu'):
+            if 'bands' not in e or e['format'] not in pick.BITS or e['compute'] != 'a16' or ep not in WRITTEN_EPILOGUES:
                 continue
             out[(e['format'], ep, int(e['n']), int(e['k']))] = True
     return sorted(out)
