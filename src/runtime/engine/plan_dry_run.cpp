@@ -293,8 +293,8 @@ std::uint64_t plan_idle_free_bytes(const PlanDeviceFacts& device) noexcept {
 }
 
 DeviceClass plan_device_class(const PlanDeviceFacts& device) {
-    // An explicit empty driver view: no L2 and no driver clocks, as the plan's class had before
-    // the one builder (#612 step 10; the row's L2 for the plan is a later, decision-moving PR).
+    // An explicit empty driver view: no driver L2 and no driver clocks (#612 step 10). board_of
+    // reads the registry row's L2 for it (#1082); l2_bytes itself stays 0.
     return board_class({.pci_device_id = device.pci_device_id,
                         .major         = device.compute_capability / 10,
                         .minor         = device.compute_capability % 10,
