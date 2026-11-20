@@ -213,6 +213,9 @@ NOT_DECIDING = {
     "src/ops/wrapper/linear_swiglu.cpp",
     # plan_facts also restates the MoE W4A8 bank refusal (ExpertRoutes); no selector golden reads it.
     "src/product/plan/plan_facts.cpp", "src/spec/round_cost.cpp",  # plan, spec costs
+    # the plan document: it reads machine_facts' rows only to name a listed variant's subsystem in
+    # the device block (#903); it decides nothing
+    "src/product/plan/plan_quants.cpp",
     "src/runtime/engine/engine.cpp", "src/runtime/engine/model_instance.cpp",  # engine setup
     "src/runtime/engine/warmup_widths.cpp",
     # the configuration choice (product code): the golden test links core and ops only, so nothing here
