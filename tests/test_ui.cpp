@@ -1272,6 +1272,7 @@ void test_artifact_plan_via_serve() {
         check(doc.is_object() && doc.contains("now") &&
                   doc["now"].value("reason_code_now", "") == "card_refused" &&
                   doc["now"].value("fits_now", true) == false &&
+                  doc["now"].value("free_now_bytes", std::uint64_t{1}) == 0 &&
                   doc["now"]["reason_params_now"].value("message", "").find("4242") !=
                       std::string::npos,
               "a held exclusive card's now is its refusal, naming the process: " +
