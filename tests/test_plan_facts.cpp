@@ -1343,18 +1343,11 @@ int artifact_prefill_policy() {
     // A directory of these banks, one object and one use each; `unrecorded_use`: a second use of
     // every object that records no policy (the fold over an object's uses, #1081).
     // `hidden`: the router's width (the gate/up stage's activation), 2880 as gpt_oss's.
-    // `gemma4`: the text config's family gemma4_text; `divisors`: every use records an activation
-    // divisor (the auxiliary activation_input_divisor, Gemma4Moe's calibration, #1092).
     const auto directory = [](QType format, const std::vector<Bank>& banks,
-                              bool unrecorded_use = false, int hidden = 2880, bool gemma4 = false,
-                              bool divisors = false) {
+                              bool unrecorded_use = false, int hidden = 2880) {
         art::Directory dir;
         dir.components["text"].config                = gpt_oss_text_config();
         dir.components["text"].config["hidden_size"] = hidden;
-        if (gemma4) {
-            dir.components["text"].config["model_type"]    = "gemma4_text";
-            dir.components["text"].config["architectures"] = {"Gemma4ForCausalLM"};
-        }
         for (const Bank& bank : banks) {
             const QType f                      = bank.format.value_or(format);
             const ninferno::QuantLayout layout = f == QType::MXFP4 || f == QType::BF16 ||
@@ -1380,7 +1373,6 @@ int artifact_prefill_policy() {
             use.parameter              = bank.name;
             use.input                  = "x";
             use.activation_policy      = bank.policy;
-            if (divisors) { use.auxiliaries["activation_input_divisor"] = art::Binding{}; }
             dir.uses[{bank.name, "x"}] = use;
             if (unrecorded_use) {
                 use.input                  = "y";
@@ -1392,11 +1384,9 @@ int artifact_prefill_policy() {
     };
     // `int8`: the route under --activations int8 (expert_prefill_int8), else fast activations'.
     const auto route = [&](QType format, const std::vector<Bank>& banks, bool int8 = false,
-                           bool unrecorded_use = false, int hidden = 2880, bool gemma4 = false,
-                           bool divisors = false) {
+                           bool unrecorded_use = false, int hidden = 2880) {
         const auto facts = pr::plan_facts_of_directory(
-                               directory(format, banks, unrecorded_use, hidden, gemma4, divisors),
-                               "a test directory")
+                               directory(format, banks, unrecorded_use, hidden), "a test directory")
                                .model;
         return int8 ? facts.expert_prefill_int8 : facts.expert_prefill;
     };
@@ -1478,33 +1468,6 @@ int artifact_prefill_policy() {
         check(route(QType::NVFP4, padded_gate_up, false, false, 2888) == rt::ExpertPrefill::A16,
               "artifact prefill: NVFP4 alone, a padded gate/up beside a whole down at "
               "AllowA4, A16 on every build");
-    // #1092: a calibrated Gemma 4 layer of NVFP4 banks (every use with its activation divisor).
-    // sm_120a runs it on Gemma4Moe's W4A4 tier whatever the recorded policy and under
-    // --activations int8 too; a build without it takes the grouped W4A8 (#1090). The two
-    // differ, so the route is Unknown at AllowA8 and under int8 alike. Without divisors, or in
-    // another family, Gemma4Moe never takes the layer: Int8 on every build.
-    const std::vector<Bank> nvfp4_a8 = {{"text/layers/0/experts/gate_up", 5760, a8},
-                                        {"text/layers/0/experts/down", 2880, a8},
-                                        {"text/layers/1/experts/gate_up", 5760, a8},
-                                        {"text/layers/1/experts/down", 2880, a8}};
-    for (const bool int8 : {false, true}) {
-        const std::string under = int8 ? " under int8" : " at AllowA8";
-        failures += check(route(QType::NVFP4, nvfp4_a8, int8, false, 2880, true, true) ==
-                              rt::ExpertPrefill::Unknown,
-                          "artifact prefill: a calibrated Gemma 4 NVFP4 layer" + under +
-                              ", Unknown (Gemma4Moe's W4A4 on sm_120a)");
-        failures += check(route(QType::NVFP4, nvfp4_a8, int8, false, 2880, true, false) ==
-                              rt::ExpertPrefill::Int8,
-                          "artifact prefill: a Gemma 4 NVFP4 layer without divisors" + under +
-                              ", Int8 (no Gemma4Moe)");
-        failures +=
-            check(route(QType::NVFP4, nvfp4_a8, int8, false, 2880, false, true) ==
-                      rt::ExpertPrefill::Int8,
-                  "artifact prefill: calibrated NVFP4 banks outside Gemma 4" + under + ", Int8");
-    }
-    failures += check(route(QType::NVFP4, nvfp4_a4, false, false, 2880, true, true) ==
-                          rt::ExpertPrefill::Unknown,
-                      "artifact prefill: a calibrated Gemma 4 NVFP4 gate/up at AllowA4, Unknown");
     // #1090: NVFP4 runs the grouped W4A8 on every build where its policy is A8 and not A4
     // (nvfp4_prefill_a8_policy), as under --activations int8: the int8 route, not A16.
     failures +=
