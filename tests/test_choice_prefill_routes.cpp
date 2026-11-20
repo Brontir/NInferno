@@ -15,6 +15,7 @@
 #include "core/board_registry.h"
 #include "core/device_class.h"
 #include "core/format_facts.h"
+#include "core/measured_boards.h"
 #include "product/choice/choice.h"
 #include "product/choice/choice_replay.h"
 #include "product/plan/plan_choice.h"
@@ -84,6 +85,39 @@ bool names_q8_linear(const json& model, const std::string& quant) {
     if (!q.contains("role_formats")) { return false; }
     for (const auto& [role, shares] : q.at("role_formats").items()) {
         if (shares.contains("q8_g32_fp16")) { return true; }
+    }
+    return false;
+}
+
+// Whether the selector runs one of the trunk's K-quant or IQ4_XS linears on another kernel than the
+// choice's tile law assumes without the query (mmq_linears_seconds: MMQ where the nearest measured
+// board of kMmqPrefillPays takes it, else the W4A8 tiles), at a prefill chunk of 1024 tokens. A
+// board whose route answer comes from a carried table on the other side of that gate (#905: the RTX
+// PRO 4500 Blackwell Server, the 5070 Ti's W4A8 against the 5090's MMQ) moves on such a
+// quantization too.
+bool kernel_differs_from_law(const ch::ModelFacts& with_query, const ch::CardFacts& card,
+                             const ch::QuantOption& quant) {
+    if (!with_query.prefill_routes) { return false; }
+    const ninferno::Board board{card.major, card.minor, card.sms, card.l2_bytes / (1 << 20),
+                                card.dram_bytes_per_s / 1e9};
+    const ch::PrefillKernel law = ninferno::measured::mmq_prefill_pays(board)
+                                      ? ch::PrefillKernel::Mmq
+                                      : ch::PrefillKernel::W4a8;
+    for (ch::LinearShape l : with_query.linears) {
+        if (l.expert) { continue; }
+        if (l.format.empty()) {
+            const auto label = ch::label_formats(quant.label);
+            if (!label || label->size() != 1) { continue; }
+            l.format = std::string(ninferno::format_facts(*label->begin()).name);
+        }
+        // The formats the gate chooses between MMQ and the W4A8 tiles for (mmq_linears_seconds).
+        static const std::set<std::string> gated = {"ggml_q3_k", "ggml_q4_k", "ggml_q5_k",
+                                                    "ggml_q6_k", "ggml_iq4_xs"};
+        if (gated.count(l.format) == 0) { continue; }
+        const ch::PrefillKernel k = with_query.prefill_routes(l, 1024, ninferno::ActivationMode{});
+        if ((k == ch::PrefillKernel::Mmq || k == ch::PrefillKernel::W4a8) && k != law) {
+            return true;
+        }
     }
     return false;
 }
@@ -233,9 +267,11 @@ void every_board(const json& fixture) {
                           << before.prefill << " -> " << after.prefill << " tok/s ("
                           << ch::speed_basis_name(before.basis) << " -> "
                           << ch::speed_basis_name(after.basis) << ")\n";
-                check(names_q8_linear(m, q), "a board's estimate moves only where a Q8_0 linear "
-                                             "changes kernel: " +
-                                                 model_name + ' ' + q);
+                check(
+                    names_q8_linear(m, q) || kernel_differs_from_law(model, card, quant),
+                    "a board's estimate moves only where a Q8_0 linear changes kernel, or the "
+                    "selector runs a K-quant linear on another kernel than the tile law assumes: " +
+                        model_name + ' ' + q);
             }
         }
     }
