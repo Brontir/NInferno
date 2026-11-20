@@ -222,6 +222,9 @@ std::vector<std::string> device_fact_notes(const DeviceClass& d) {
         std::string why;
         if (f.sku.empty()) {
             why = "PCI id not in the reference table: the driver's clocks on the 2^(1/16) grid";
+        } else if (f.subsystem_unknown) {
+            why = f.sku + "'s id is shared by boards the PCI subsystem tells apart, and it was "
+                          "unreadable: priced as the slowest of them";
         } else if (f.form == FormFactor::Laptop) {
             why = f.sku + ", a laptop: priced at the bottom of its published boost range";
         } else if (f.share < 1.0) {
@@ -256,7 +259,9 @@ DriverReport driver_report_of(const DeviceClass& d) noexcept {
             .sms              = d.sms,
             .sm_clock_khz     = d.sm_clock_khz,
             .memory_clock_khz = d.memory_clock_khz,
-            .memory_bus_bits  = d.memory_bus_bits};
+            .memory_bus_bits  = d.memory_bus_bits,
+            .pci_subsystem_id = d.pci_subsystem_id,
+            .subsystem_unread = d.pci_subsystem_unread};
 }
 
 MachineFacts machine_facts_of(const DeviceClass& d) { return machine_facts(driver_report_of(d)); }

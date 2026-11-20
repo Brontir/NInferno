@@ -65,10 +65,18 @@ int optional_attribute(cudaDeviceAttr attr, int device) {
     return value > 0 ? value : 0;
 }
 
-// The PCI product id (the upper half of NVIDIA's device/vendor word): from sysfs on a native Linux
-// driver, else from NVML (WSL2 exposes no PCI sysfs for the GPU), loaded at run time so nothing
-// links against it. 0 when neither answers; the chip then comes from the SM count.
-std::uint32_t pci_product_id(const cudaDeviceProp& prop, int device) {
+// The PCI product id (the upper half of NVIDIA's device/vendor word) and the subsystem: from sysfs
+// on a native Linux driver, else from NVML (WSL2 exposes no PCI sysfs for the GPU), loaded at run
+// time so nothing links against it. A product id of 0 when neither answers (the chip then comes
+// from the SM count); a subsystem of 0 with `subsystem_read` false where the source that gave the
+// product id could not give it (#903).
+struct PciIdentity {
+    std::uint32_t product   = 0;
+    std::uint32_t subsystem = 0; // vendor << 16 | device: 0x10DE12EB
+    bool subsystem_read     = false;
+};
+
+PciIdentity pci_identity(const cudaDeviceProp& prop, int device) {
     const auto sysfs_word = [&](const char* field) {
         char path[128];
         std::snprintf(path, sizeof(path), "/sys/bus/pci/devices/%04x:%02x:%02x.0/%s",
@@ -81,8 +89,18 @@ std::uint32_t pci_product_id(const cudaDeviceProp& prop, int device) {
         return value;
     };
     constexpr unsigned kNvidiaVendor = 0x10DE;
+    PciIdentity out;
     if (sysfs_word("vendor") == kNvidiaVendor) {
-        if (const unsigned value = sysfs_word("device"); value != 0) { return value; }
+        if (const unsigned value = sysfs_word("device"); value != 0) {
+            out.product           = value;
+            const unsigned vendor = sysfs_word("subsystem_vendor");
+            const unsigned board  = sysfs_word("subsystem_device");
+            if (vendor != 0 && vendor <= 0xFFFFu && board <= 0xFFFFu) {
+                out.subsystem      = vendor << 16 | board;
+                out.subsystem_read = true;
+            }
+            return out;
+        }
     }
     // nvmlPciInfo_t (nvml.h, unchanged since NVML's v2 PCI info).
     struct PciInfo {
@@ -95,8 +113,7 @@ std::uint32_t pci_product_id(const cudaDeviceProp& prop, int device) {
     using GetPci   = int (*)(void*, PciInfo*);
     using Shutdown = int (*)();
     void* nvml = sys::load_library("libnvidia-ml.so.1", "nvml.dll");
-    if (nvml == nullptr) { return 0; }
-    std::uint32_t id    = 0;
+    if (nvml == nullptr) { return out; }
     const auto init     = reinterpret_cast<Init>(sys::symbol(nvml, "nvmlInit_v2"));
     const auto by_bus   = reinterpret_cast<ByBusId>(sys::symbol(nvml, "nvmlDeviceGetHandleByPciBusId_v2"));
     const auto get_pci  = reinterpret_cast<GetPci>(sys::symbol(nvml, "nvmlDeviceGetPciInfo_v3"));
@@ -108,12 +125,18 @@ std::uint32_t pci_product_id(const cudaDeviceProp& prop, int device) {
         if (cudaDeviceGetPCIBusId(bus_id, sizeof(bus_id), device) == cudaSuccess &&
             by_bus(bus_id, &handle) == 0 && get_pci(handle, &info) == 0 &&
             (info.pci_device_id & 0xFFFFu) == kNvidiaVendor) {
-            id = info.pci_device_id >> 16;
+            out.product = info.pci_device_id >> 16;
+            // NVML packs the subsystem device in the upper half, its vendor in the lower.
+            if ((info.pci_subsystem_id & 0xFFFFu) != 0) {
+                out.subsystem =
+                    (info.pci_subsystem_id & 0xFFFFu) << 16 | info.pci_subsystem_id >> 16;
+                out.subsystem_read = true;
+            }
         }
         shutdown();
     }
     sys::free_library(nvml);
-    return id;
+    return out;
 }
 
 std::unique_ptr<DeviceClass> query(int device) {
@@ -140,7 +163,10 @@ std::unique_ptr<DeviceClass> query(int device) {
     out->memory_clock_khz = optional_attribute(cudaDevAttrMemoryClockRate, device);
     out->sm_clock_khz     = optional_attribute(cudaDevAttrClockRate, device);
     out->features = common_features(device_features_for(prop.major, prop.minor), build_features());
-    out->pci_device_id     = pci_product_id(prop, device);
+    const PciIdentity pci     = pci_identity(prop, device);
+    out->pci_device_id        = pci.product;
+    out->pci_subsystem_id     = pci.subsystem;
+    out->pci_subsystem_unread = pci.product != 0 && !pci.subsystem_read;
     out->chip              = gpu_chip(out->pci_device_id, prop.major, prop.minor, out->sms);
     out->chip_from_pci     = gpu_chip_by_pci(out->pci_device_id, prop.major, prop.minor);
     out->facts             = machine_facts_of(*out);
