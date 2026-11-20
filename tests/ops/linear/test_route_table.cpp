@@ -13,9 +13,11 @@
 #include "ops/generic/route_table.h"
 #include "ops/moe/moe_internal.h"
 #include "ops/op_tester.h"
+#include "ops/route_pins.h"
 #include "support/temp_dir.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -68,6 +70,175 @@ bool refused(const std::string& gpu, const std::string& name, const std::string&
         (void)ninferno::ops::load_route_table(write_file(name, table(gpu, entries)));
     } catch (const std::runtime_error&) { return true; }
     return false;
+}
+
+// Every shipped routes/pick/<class>.json (tools/route_pick/gen.py), read on a substitute of the
+// board its gpu.pci_id names (no GPU): the default lookup of the shipped directory finds no table
+// within kCarryDistance there, reads the file as this class's predicted bands, and its first
+// entry answers at its first width as Predicted, with the file's route. A file the lookup would
+// never read (a class some table carries to) fails here, as does one the loader refuses.
+int shipped_picks() {
+    namespace board_registry = ninferno::board_registry;
+    int failures             = 0;
+    ninferno::ops::set_route_table_dir("");
+    const auto dir = ninferno::path_from_utf8(ninferno::ops::route_table_dir()) / "pick";
+    const std::regex pci_re("\"pci_id\": \"(0x[0-9a-fA-F]{4})\"");
+    const std::regex entry_re(R"re("format": "([a-z0-9_]+)",\s*"compute": "a16",\s*)re"
+                              R"re("epilogue": "([a-z]+)",\s*"n": ([0-9]+),\s*"k": ([0-9]+),)re"
+                              R"re(\s*"bands": \[\s*\[\s*([0-9]+),\s*[0-9]+,\s*"([^"]+)")re");
+    int files = 0;
+    // The first file and its board, for the refusals below.
+    std::string first_name, first_text;
+    std::uint32_t first_id = 0;
+    for (const auto& f : std::filesystem::directory_iterator(dir)) {
+        if (f.path().extension() != ".json") continue;
+        ++files;
+        std::ifstream in(f.path());
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        const std::string name = f.path().filename().string();
+        std::smatch m, e;
+        if (!std::regex_search(text, m, pci_re) || !std::regex_search(text, e, entry_re)) {
+            failures += check(false, name + " names its board and has an entry");
+            continue;
+        }
+        const auto id = static_cast<std::uint32_t>(std::stoul(m[1].str(), nullptr, 16));
+        const board_registry::BoardRow* row = board_registry::find(id);
+        if (row == nullptr) {
+            failures += check(false, name + ": " + m[1].str() + " is a registry id");
+            continue;
+        }
+        ninferno::DeviceClass d =
+            ninferno::synthetic_device_class(id, row->major, row->minor, row->sms,
+                                             static_cast<std::size_t>(row->l2_mib * (1 << 20)), 0);
+        d.facts = ninferno::machine_facts_of(d);
+        const ninferno::ScopedDeviceClass scoped(d);
+        ninferno::ops::set_route_table_dir("");
+        if (first_name.empty()) {
+            first_name = name;
+            first_text = text;
+            first_id   = id;
+        }
+        try {
+            const auto s = ninferno::ops::route_table_status();
+            std::cout << name << " on " << ninferno::device_class().id() << ": " << s.message
+                      << '\n';
+            failures +=
+                check(s.loaded && ninferno::path_from_utf8(s.predicted_path).filename() == name &&
+                          s.predicted_entries > 0 && !s.predicted_sha256.empty(),
+                      name + " is read as " + ninferno::device_class().id() +
+                          "'s predicted bands: " + s.message);
+            const auto q = ninferno::find_route(e[1].str());
+            const generic::Problem p{q.value_or(ninferno::QType::BF16),
+                                     ninferno::ops::LinearPolicy::A16Only, std::stoi(e[3].str()),
+                                     std::stoi(e[4].str()),
+                                     e[2].str() == "swiglu" ? generic::Epilogue::SwiGlu
+                                     : e[2].str() == "add"  ? generic::Epilogue::AddResidual
+                                                            : generic::Epilogue::Store};
+            const auto answer = generic::table_route_answer(p, std::stoi(e[5].str()), false);
+            failures +=
+                check(q && answer && answer->predicted &&
+                          generic::route_name(answer->route) == e[6].str(),
+                      name + ": its first entry answers " + e[6].str() + " as predicted, not " +
+                          (answer ? generic::route_name(answer->route) : std::string("none")));
+            {
+                // Under the Legacy policy the file is not read: the table answers as before it.
+                const ninferno::ops::ScopedRoutePolicy legacy(ninferno::RoutePolicy::Legacy);
+                const auto old = generic::table_route_answer(p, std::stoi(e[5].str()), false);
+                failures += check(!old || !old->predicted,
+                                  name + ": under --route-policy legacy no band is predicted");
+            }
+        } catch (const std::exception& error) {
+            failures += check(false, name + " refused: " + error.what());
+        }
+    }
+    failures += check(files > 0, "shipped predicted bands found in " + utf8_path(dir));
+    // A pick file the loader refuses stops the lookup (a broken install): another class's file
+    // under this class's name, and a band outside T 9-16. The tables are the shipped ones, copied.
+    if (!first_name.empty()) {
+        const board_registry::BoardRow* row = board_registry::find(first_id);
+        ninferno::DeviceClass d =
+            ninferno::synthetic_device_class(first_id, row->major, row->minor, row->sms,
+                                             static_cast<std::size_t>(row->l2_mib * (1 << 20)), 0);
+        d.facts = ninferno::machine_facts_of(d);
+        const ninferno::ScopedDeviceClass scoped(d);
+        const auto routes = dir.parent_path();
+        // A directory of this process's own (two builds' ctest may share a stand), removed on
+        // every way out.
+        const auto tmp =
+            std::filesystem::temp_directory_path() /
+            ("ninferno_pick_refusals_" +
+             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+
+        struct Removed {
+            std::filesystem::path path;
+
+            ~Removed() {
+                std::error_code ignored;
+                std::filesystem::remove_all(path, ignored);
+            }
+        } const removed{tmp};
+
+        const auto refused_with = [&](const std::string& what, const std::string& text) {
+            std::filesystem::remove_all(tmp);
+            std::filesystem::create_directories(tmp / "pick");
+            for (const auto& t : std::filesystem::directory_iterator(routes)) {
+                if (t.path().extension() == ".json") {
+                    std::filesystem::copy_file(t.path(), tmp / t.path().filename());
+                }
+            }
+            std::ofstream(tmp / "pick" / first_name) << text;
+            ninferno::ops::set_route_table_dir(utf8_path(tmp));
+            bool refused = false;
+            try {
+                (void)ninferno::ops::route_table_status();
+            } catch (const std::runtime_error& e) {
+                refused = std::string(e.what()).find(first_name) != std::string::npos;
+            }
+            failures += check(refused, first_name + " " + what + " is refused, naming the file");
+        };
+        refused_with("as another class's file",
+                     std::regex_replace(first_text, std::regex(R"re("class": "[^"]+")re"),
+                                        R"re("class": "zz999:1sm")re",
+                                        std::regex_constants::format_first_only));
+        refused_with("with a band from T 5",
+                     std::regex_replace(first_text, std::regex(R"re("bands": \[\s*\[\s*9,)re"),
+                                        R"re("bands": [[5,)re",
+                                        std::regex_constants::format_first_only));
+    }
+    // A board of a shipped class on other memory reads none of the class's bands (codex on #1066):
+    // the RTX A4000 (448 GB/s) beside the RTX 3070 Ti's ga104:48sm (608), refused as another
+    // board's file. The Tesla T4's class (tu104:40sm) ships no file since the SM span (gen.py
+    // classes: sm_75's table boards span 68 SMs only), so it reads none either.
+    for (const std::uint32_t id : {0x24B0U, 0x1EB8U}) {
+        const bool shipped_class            = id == 0x24B0U;
+        const board_registry::BoardRow* row = board_registry::find(id);
+        if (row == nullptr) {
+            failures += check(false, "the registry has board " + std::to_string(id));
+            continue;
+        }
+        ninferno::DeviceClass d =
+            ninferno::synthetic_device_class(id, row->major, row->minor, row->sms,
+                                             static_cast<std::size_t>(row->l2_mib * (1 << 20)), 0);
+        d.facts = ninferno::machine_facts_of(d);
+        const ninferno::ScopedDeviceClass scoped(d);
+        ninferno::ops::set_route_table_dir("");
+        try {
+            const auto s = ninferno::ops::route_table_status();
+            std::cout << ninferno::device_class().id() << ": " << s.message << '\n';
+            failures += check(s.predicted_path.empty() && s.predicted_entries == 0 &&
+                                  (!shipped_class ||
+                                   s.predicted_skipped.find("another board") != std::string::npos),
+                              ninferno::device_class().id() +
+                                  " reads no other board's predicted bands: " + s.message);
+        } catch (const std::exception& error) {
+            failures += check(false, std::string("refused: ") + error.what());
+        }
+    }
+    ninferno::ops::set_route_table_dir("");
+    std::cout << files << " shipped predicted files; " << (failures == 0 ? "OK" : "FAIL")
+              << " route_table shipped picks\n";
+    return failures == 0 ? 0 : 1;
 }
 
 } // namespace
@@ -298,6 +469,7 @@ int shipped_boards() {
 
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--shipped-boards") { return shipped_boards(); }
+    if (argc == 2 && std::string(argv[1]) == "--shipped-picks") { return shipped_picks(); }
     if (ninferno::test::cuda_unavailable()) {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;

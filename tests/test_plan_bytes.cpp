@@ -23,6 +23,7 @@
 #include "models/qwen3_5/program/model_family.h"
 #include "models/qwen3_5/program/planning/sequence_bytes.h"
 #include "models/qwen3_5/program/planning/startup.h"
+#include "models/qwen3_5/program/program.h"
 #include "models/qwen3_5/program/qwen3_5_execution.h"
 #include "convert/checks.h"
 #include "ops/softmax_attention/gemma4/row_codec.h"
@@ -51,14 +52,16 @@ namespace ninferno::models::qwen3_5::detail {
 namespace {
 
 // A model the start's planner plans over without weights: a family's state shape laid out by the
-// family's rule, the family's traits, no workspace (the dry run estimates it). Nothing runs on it.
+// family's rule, the family's traits, no workspace (the dry run estimates it) unless a test hands
+// it one. Nothing runs on it.
 class ShapeExecution final : public ModelExecution {
 public:
-    explicit ShapeExecution(const StateShape& shape)
-        : shape_(shape), traits_{.hidden        = shape.hidden,
-                                 .output_rows   = shape.output_rows,
-                                 .public_tokens = shape.public_tokens,
-                                 .copy_rounds   = family_copy_rounds(shape.family)} {}
+    explicit ShapeExecution(const StateShape& shape, WorkspacePlan workspace = {})
+        : shape_(shape), workspace_(std::move(workspace)),
+          traits_{.hidden        = shape.hidden,
+                  .output_rows   = shape.output_rows,
+                  .public_tokens = shape.public_tokens,
+                  .copy_rounds   = family_copy_rounds(shape.family)} {}
 
     [[nodiscard]] const ModelTraits& traits() const noexcept override { return traits_; }
 
@@ -71,7 +74,7 @@ public:
     }
 
     [[nodiscard]] WorkspacePlan workspace_plan(const SequencePlanImpl&) const override {
-        return {};
+        return workspace_;
     }
 
     [[nodiscard]] std::uint32_t prefill_call_tokens(std::uint32_t, std::uint32_t,
@@ -107,6 +110,7 @@ private:
     }
 
     StateShape shape_;
+    WorkspacePlan workspace_;
     ModelTraits traits_;
 };
 
@@ -583,6 +587,25 @@ StartPlan start_plan(const m::StateShape& shape, const EngineOptions& planned,
     return out;
 }
 
+// The loaded --plan's prefill regions (#940): the planner hands out the regions its workspace
+// plan laid out, which model_instance's dry run prints for the chosen rung.
+void planner_regions(const m::StateShape& shape, const EngineOptions& planned) {
+    detail::WorkspacePlan laid;
+    laid.text_prefill_regions = {
+        {.op = "L00.gdn.output", .offset = 0, .bytes = 4096},
+        {.op = "output_head", .offset = 4096, .bytes = 512, .scratch = true}};
+    const detail::ShapeExecution model(shape, laid);
+    const m::qwen3_5::SequencePlanner planner(
+        detail::make_sequence_planner_impl(model, planned, 0, false));
+    const std::vector<ninferno::WorkspaceRegion>& got = planner.text_prefill_regions();
+    check(got.size() == 2 && got[0].op == "L00.gdn.output" && got[0].bytes == 4096 &&
+              !got[0].scratch && got[1].op == "output_head" && got[1].offset == 4096 &&
+              got[1].bytes == 512 && got[1].scratch,
+          "the planner hands out its workspace plan's prefill regions");
+    check(m::qwen3_5::SequencePlanner(nullptr).text_prefill_regions().empty(),
+          "an empty planner has no regions");
+}
+
 std::uint64_t start_bytes(const m::StateShape& shape, const EngineOptions& planned,
                           std::uint32_t pages) {
     return start_plan(shape, planned, pages).bytes;
@@ -726,6 +749,7 @@ void test_bytes(const std::vector<Subject>& all) {
 // Under none and DFlash, and with the window off, no copy window.
 void test_default_copy_window(const std::vector<Subject>& all) {
     std::size_t windows = 0;
+    bool regions        = false; // the planner's prefill regions, checked on the first start
     for (const Subject& s : all) {
         if (!s.facts.offline_bytes) { continue; }
         for (const SpeculativeBackend spec : s.spec) {
@@ -772,6 +796,11 @@ void test_default_copy_window(const std::vector<Subject>& all) {
                     EngineOptions planned_off                  = planned;
                     planned_off.speculative.ngram_draft_tokens = 0;
                     const StartPlan start                      = start_plan(s.family, planned, low);
+                    if (!regions) {
+                        regions = true;
+                        planner_regions(s.family,
+                                        planned); // the options the start just planned with
+                    }
                     const StartPlan start_off = start_plan(s.family, planned_off, low);
                     const rt::PlanRungBytes dry =
                         rt::plan_rung_bytes(s.facts, rung, o, concurrency, false);
@@ -880,6 +909,7 @@ void test_default_copy_window(const std::vector<Subject>& all) {
                   top_now.bytes.total() > top_before.bytes.total(),
               "the copy window costs the 27B MTP rung bytes");
     }
+    check(regions, "the planner's prefill regions were checked on a start");
 }
 
 // An artifact's proposal head (proposal/*) is on the Device only while it drafts: under MTP or

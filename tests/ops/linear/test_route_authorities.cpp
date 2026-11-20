@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <set>
@@ -139,9 +140,13 @@ void check_words() {
         const char* word;
     };
 
-    constexpr Word words[] = {
-        {K::Pin, "pin"},         {K::Measured, "measured"},       {K::Ranker, "ranker"},
-        {K::Carried, "carried"}, {K::Transferred, "transferred"}, {K::Borrowed, "borrowed"}};
+    constexpr Word words[] = {{K::Pin, "pin"},
+                              {K::Measured, "measured"},
+                              {K::Ranker, "ranker"},
+                              {K::Carried, "carried"},
+                              {K::Transferred, "transferred"},
+                              {K::Borrowed, "borrowed"},
+                              {K::Predicted, "predicted"}};
     std::set<std::string> distinct;
     for (const Word& w : words) {
         distinct.insert(w.word);
@@ -161,7 +166,7 @@ void check_words() {
             fail("evidence_columns of " + std::string(w.word) + ": '" + columns + "'");
         }
     }
-    if (distinct.size() != 6) fail("the kinds are not six distinct words");
+    if (distinct.size() != std::size(words)) fail("the kinds are not distinct words");
     // A donor and its distance: three decimals, whatever the locale.
     generic::Evidence carried;
     carried.kind     = K::Carried;
@@ -397,6 +402,11 @@ void check_evidence(const generic::RouteAnswer& a, const std::set<std::string_vi
     case K::Borrowed:
         if (e.donor.empty()) fail(where + ": borrowed from nobody");
         break;
+    case K::Predicted:
+        if (e.donor != "route-pick" || e.distance != 0) {
+            fail(where + ": predicted by '" + e.donor + "' at " + std::to_string(e.distance));
+        }
+        break;
     }
     // evidence_text prints the donor as one token, and the CSV column holds no comma.
     if (e.donor.find_first_of(" ,") != std::string::npos) {
@@ -591,7 +601,11 @@ const std::map<std::string_view, std::string_view> kUnreached = {
                    "(tuned_dense_route: substituted_foreign_class) and no tune runs here"},
     {"dense-tune-prefill-band", "the same tuner's bands, the same refusal for a substituted board"},
 };
-const std::map<std::string_view, std::string_view> kUnreachedKinds = {};
+const std::map<std::string_view, std::string_view> kUnreachedKinds = {
+    {"predicted",
+     "a routes/pick band answers only on a board past kCarryDistance of every table, "
+     "and no kFactsBoards board is (test_route_table --shipped-picks reads each file)"},
+};
 
 // What this build leaves unreached on top of kUnreached, read from the build and never from an arch
 // number: the W4A4 rule answers only where a W4A4 MMA kernel is compiled in (w4a4_schedule_count
@@ -633,7 +647,8 @@ void check_coverage(const std::set<std::string_view>& names) {
     }
     std::string missing_kinds;
     using K = generic::Evidence::Kind;
-    for (const K k : {K::Pin, K::Measured, K::Ranker, K::Carried, K::Transferred, K::Borrowed}) {
+    for (const K k :
+         {K::Pin, K::Measured, K::Ranker, K::Carried, K::Transferred, K::Borrowed, K::Predicted}) {
         const std::string name = generic::evidence_kind_name(k);
         if (g_reached_kinds.count(name) == 0 && kUnreachedKinds.count(name) == 0) {
             missing_kinds += " " + name;

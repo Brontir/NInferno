@@ -171,7 +171,11 @@ std::string warm_up_key_text(const EngineOptions& probe, std::uint32_t round_tok
     line("warm_up.widths", list);
     const ops::RouteTableStatus routes = ops::route_table_status();
     line("sources.route_table",
-         routes.loaded ? routes.content_sha256 + " + " + routes.lender_sha256 : "none");
+         routes.loaded
+             ? routes.content_sha256 + " + " + routes.lender_sha256 +
+                   (routes.predicted_sha256.empty() ? std::string()
+                                                    : " + pick " + routes.predicted_sha256)
+             : "none");
     add("sources", ops::detail::generic::dense_tune_sources());
     return text;
 }
@@ -1138,6 +1142,18 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             for (std::size_t index = 0; index < served.rungs.size(); ++index) {
                 out.ladder.push_back(rung_summary(index, cost));
             }
+            // The chosen rung's prefill arena as its planner lays it out (#940): the loaded --plan
+            // starts no Program, so the regions are the planner's, which the start would keep.
+            // Only Qwen 3.5's workspace plan records them: the other families print none.
+            try {
+                const models::qwen3_5::SequencePlanner planner =
+                    planner_at(served, served.rungs.at(chosen.rung), false);
+                for (const WorkspaceRegion& r : planner.text_prefill_regions()) {
+                    out.workspace_regions.push_back(
+                        {.op = r.op, .offset = r.offset, .bytes = r.bytes, .scratch = r.scratch});
+                }
+            } catch (const std::invalid_argument&) { // a rung its family refuses: no regions
+            }
         }
         return out;
     };
@@ -1172,6 +1188,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             dry_run->rung          = 0; // nothing fits
             dry_run->selected_rung = 0;
             dry_run->reserve.clear();
+            dry_run->workspace_regions.clear(); // nothing fits: no rung's arena
             // The refusal alone: no reserve advice for a plan that is not served.
             dry_run->advice.clear();
             try {

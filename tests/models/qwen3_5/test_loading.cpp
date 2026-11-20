@@ -203,6 +203,26 @@ void logical_data_and_instances() {
                 "the directory-only binding differs from plan_load's");
     }
     {
+        // A binding of a loaded component the model never binds: plan_load refuses the artifact,
+        // and so does the directory-only binding (#892 item 6).
+        auto extra = reader.directory();
+        for (auto& [key, use] : extra.uses) { use.auxiliaries.clear(); }
+        const auto text = std::find_if(extra.bindings.begin(), extra.bindings.end(),
+                                       [](const auto& b) { return b.first.starts_with("text/"); });
+        require(text != extra.bindings.end(), "the fixture binds a text weight");
+        const auto copy = text->second;
+        extra.bindings.emplace("text/unused_extra", copy);
+        std::string refused;
+        try {
+            (void)qwen::describe_model(extra, {}, 265);
+        } catch (const artifact::ArtifactError& e) { refused = e.what(); }
+        require(refused.find("never binds") != std::string::npos &&
+                    refused.find("text/unused_extra") != std::string::npos,
+                ("the directory-only binding accepted a text binding the model never binds (" +
+                 refused + ")")
+                    .c_str());
+    }
+    {
         // --plan's facts of the artifact file, the queries registered as ninferno-serve registers
         // them: the tokenizer's 265 ids and the directory reach the workspace query, read once
         // (a second read of the same file shares the kept directory).

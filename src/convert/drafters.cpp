@@ -777,11 +777,15 @@ std::optional<fs::path> resolve_ranking(const std::string& name, const fs::path&
     // The given source tree (the working directory for ninferno-convert), then the rankings
     // installed beside this binary (<exe dir>/../share/ninferno/rankings, as the route tables),
     // then the tree it was built from: the rankings the registry names ship in tools/spec/rankings.
+    // A tree this user cannot read (the build tree of a binary built elsewhere, under /root say, or
+    // an unreadable working directory) holds no ranking: exists() with an error code, which is
+    // false there, never the throwing form that stopped every start of an ordinary user (#1047).
     const auto in_tree = [&](const fs::path& root) -> std::optional<fs::path> {
         if (root.empty()) { return std::nullopt; }
         for (const auto& candidate : {root / "tools/spec/rankings" / name,
                                       root / "tools/freq_corpus/fixtures/ranking" / name}) {
-            if (fs::exists(candidate)) { return candidate; }
+            std::error_code missing;
+            if (fs::exists(candidate, missing)) { return candidate; }
         }
         return std::nullopt;
     };

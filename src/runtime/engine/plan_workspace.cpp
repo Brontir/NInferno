@@ -548,6 +548,15 @@ PlanWorkspaceAnswer decoder_workspace(const PlanModelFacts& m, const EngineOptio
         // --activations exact: the invariant route profile, as the start's execution sizes.
         const ops::ScopedInvariantRoutes routes(exact);
         if constexpr (std::is_same_v<std::decay_t<decltype(*model)>, models::dense::Model>) {
+            // The start's Program keeps the context in full-attention layers and refuses a model
+            // without one (models/dense/program_family.cpp), in its words (#892 item 2).
+            const auto& specs = model->config().layer_specs;
+            if (std::none_of(specs.begin(), specs.end(),
+                             [](const auto& spec) { return spec.window == 0; })) {
+                why = "the start refuses it: the dense decoder Program keeps its context in "
+                      "full-attention layers; this model has none";
+                return false;
+            }
             arenas = models::dense::target_workspace_plan(*model, tokens, *plan);
         } else {
             arenas = models::nemotron_h::target_workspace_plan(*model, tokens, *plan);

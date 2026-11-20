@@ -782,7 +782,8 @@ regime::R8LimitAnswer regime::r8_limit_answer(const Weight& bank) {
     // Only a ggml_frag_v1 bank's rules read the board's DRAM bytes per SM cycle.
     const BankFacts facts{bank.qtype, bank.layout,
                           bank.layout == QuantLayout::GgmlFrag ? generic::dram_bytes_per_sm_cycle()
-                                                               : 0.0};
+                                                               : 0.0,
+                          build_features().mma_tensor};
     const auto& d = device_class();
     return r8_limit_answer(d.major, d.minor, facts);
 }
