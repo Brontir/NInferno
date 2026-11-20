@@ -792,7 +792,7 @@ regime::R8LimitAnswer regime::r8_limit_answer(const Weight& bank) {
     // Lab only (#860 item 2): NINFERNO_LAB_R8_GEN raises the generation's limit and keeps the bank
     // rules (a Q6_K, FP4 or frag bank stays at its narrower limit).
     if (const char* gen = std::getenv("NINFERNO_LAB_R8_GEN");
-        gen && answer.rule == answer.generation) {
+        gen && bank_rule(facts) == nullptr) {
         answer.limit = std::max(1, std::atoi(gen));
     }
     return answer;
