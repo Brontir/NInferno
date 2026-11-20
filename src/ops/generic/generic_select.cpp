@@ -1171,7 +1171,7 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                         ? 2
                         : 1;
                 if (ctas <= sms && 2 * columns * ctas > held * sms &&
-                    current_arch_facts().clusters) {
+                    current_arch_facts().features.clusters) {
                     return rmma_index(1, 8, 1, 1);
                 }
                 if (ctas <= sms) return one_wave_split(ctas, sms);
