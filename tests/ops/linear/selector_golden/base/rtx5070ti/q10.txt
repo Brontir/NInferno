@@ -48,8 +48,8 @@ q10 p1 swiglu 128x2048 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 q10 p1 swiglu 128x2048 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 q10 p1 swiglu 128x2048 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q10 p1 swiglu 128x2048 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q10 p0 store 1024x4096 speed T=1..16 rmma.m1.n1.w1x16 ws=0
-q10 p0 store 1024x4096 speed T=17..32 rmma.m1.n1.w1x8 ws=0
+q10 p0 store 1024x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+q10 p0 store 1024x4096 speed T=9..32 rmma.m1.n1.w1x8 ws=0
 q10 p0 store 1024x4096 speed T=48 rmma.m1.n2.w1x4 ws=0
 q10 p0 store 1024x4096 speed T=64 rmma.m1.n4.w1x8 ws=0
 q10 p0 store 1024x4096 speed T=96..512 rmma.m1.n4.w1x4 ws=0
@@ -58,8 +58,8 @@ q10 p0 store 1024x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 q10 p0 store 1024x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 q10 p0 store 1024x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q10 p0 store 1024x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q10 p0 add 1024x4096 speed T=1..16 rmma.m1.n1.w1x16 ws=0
-q10 p0 add 1024x4096 speed T=17..32 rmma.m1.n1.w1x8 ws=0
+q10 p0 add 1024x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+q10 p0 add 1024x4096 speed T=9..32 rmma.m1.n1.w1x8 ws=0
 q10 p0 add 1024x4096 speed T=48 rmma.m1.n2.w1x4 ws=0
 q10 p0 add 1024x4096 speed T=64 rmma.m1.n4.w1x8 ws=0
 q10 p0 add 1024x4096 speed T=96..512 rmma.m1.n4.w1x4 ws=0
@@ -77,8 +77,8 @@ q10 p0 swiglu 512x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 q10 p0 swiglu 512x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 q10 p0 swiglu 512x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q10 p0 swiglu 512x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q10 p1 store 1024x4096 speed T=1..16 rmma.m1.n1.w1x16 ws=0
-q10 p1 store 1024x4096 speed T=17..32 rmma.m1.n1.w1x8 ws=0
+q10 p1 store 1024x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+q10 p1 store 1024x4096 speed T=9..32 rmma.m1.n1.w1x8 ws=0
 q10 p1 store 1024x4096 speed T=48 rmma.m1.n2.w1x4 ws=0
 q10 p1 store 1024x4096 speed T=64 rmma.m1.n4.w1x8 ws=0
 q10 p1 store 1024x4096 speed T=96..512 rmma.m1.n4.w1x4 ws=0
@@ -87,8 +87,8 @@ q10 p1 store 1024x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 q10 p1 store 1024x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 q10 p1 store 1024x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q10 p1 store 1024x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q10 p1 add 1024x4096 speed T=1..16 rmma.m1.n1.w1x16 ws=0
-q10 p1 add 1024x4096 speed T=17..32 rmma.m1.n1.w1x8 ws=0
+q10 p1 add 1024x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+q10 p1 add 1024x4096 speed T=9..32 rmma.m1.n1.w1x8 ws=0
 q10 p1 add 1024x4096 speed T=48 rmma.m1.n2.w1x4 ws=0
 q10 p1 add 1024x4096 speed T=64 rmma.m1.n4.w1x8 ws=0
 q10 p1 add 1024x4096 speed T=96..512 rmma.m1.n4.w1x4 ws=0

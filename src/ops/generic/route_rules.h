@@ -681,14 +681,39 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "against 16..41)",
      ""},
     {"heuristic_rmma: the verify pair past one wave", Basis::Measured, "generic_select.cpp",
-     "current_arch_facts().features.clusters && 2 * columns * ctas > held * sms) { return "
-     "rmma_index(1, 8, 1, 1);",
+     "current_arch_facts().features.clusters && 2 * columns * ctas > held * sms) { const int "
+     "resident = rule_resident(problem);",
      0, "gb202:170sm, gb203:70sm", "RTX 5090, RTX 5070 Ti",
      "T = 9..16 at most one CTA per SM: the decode split's CTA pair runs one wave only while "
      "pair x token columns x CTAs fit what the SMs hold (two one-tile CTAs of <= 256 threads an "
      "SM, kMinBlocks); past it n1.w1x8 (#1052, route_tune of every route, K-quants Q2_K-Q6_K at "
      "n 512-2560, K 2048 / 4096: RTX 5090 120 moved cells 24.0 % -> 0.13 % regret, RTX 5070 Ti "
      "112 moved cells 26.4 % -> 0.0 %, none worse)",
+     ""},
+    {"heuristic_rmma: the verify sixteen-warp CTA past the pair's wave", Basis::Structural,
+     "generic_select.cpp",
+     "return resident > 0 && columns * ctas <= resident * sms ? rmma_index(1, 16, 1, 1) : "
+     "rmma_index(1, 8, 1, 1);",
+     0, "gb202:170sm, gb203:70sm", "RTX 5090, RTX 5070 Ti",
+     "T = 9..16 past the CTA pair's wave on a board with clusters: the sixteen-warp CTA where "
+     "token columns x CTAs fit the CTAs an SM holds of it (the occupancy calculator on its "
+     "committed registers: Q8_0, BF16, FP8 store / add two, the K-quants and SwiGLU one), else "
+     "n1.w1x8 (#1117, "
+     "route_tune of every route, K 2048-8192: w1x16 0.70-0.79 of n1.w1x8's time on Q8_0 in 19 "
+     "cells, 1.00-1.56 on the K-quants in 80)",
+     ""},
+    {"heuristic_rmma: the verify sixteen-warp split past one wave", Basis::Structural,
+     "generic_select.cpp",
+     "if (resident > 0 && columns * ctas > resident * sms) { return rmma_index(1, 8, 1, 1);", 0,
+     "ga102:82sm, ga106:28sm, ad106:34sm, ad104:60sm, ad102:128sm",
+     "RTX 3090, RTX 3060, RTX 4060 Ti, RTX 4070 Ti, RTX 4090",
+     "T = 9..16 at most one CTA per SM, a build without the cluster schedules: the decode split's "
+     "sixteen-warp CTA runs one wave only while token columns x CTAs fit the CTAs an SM holds of "
+     "it (the occupancy calculator on its committed registers: two at <= 64, one above; not on a "
+     "board without tensor mma.sync, whose calls run Volta's own kernels); past it "
+     "n1.w1x8 (#1117, route_tune of every route: K-quants 14-23 % behind the best with w1x16 "
+     "where 2 x CTAs > SMs; the rule frozen before the RTX 4090 and 4060 Ti K 8192 grids, right "
+     "in 12 of 12 and 9 of 9 cells)",
      ""},
     // --- rmma_k_split_fit: the K split of a one-tile store / add call of more CTAs than SMs ---
     {"rmma_k_split_fit: ring refills", Basis::Structural, "generic_select.cpp",
