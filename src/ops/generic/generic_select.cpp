@@ -1219,9 +1219,9 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                 // board without them refuses the pair and keeps its narrow fallback); its
                 // sixteen-warp CTA (a build without them) and its cluster of eight stay.
                 // That sixteen-warp CTA meets the same count (#1117): 512 threads hold two CTAs an
-                // SM at up to 64 registers (store / add: Q8_0 45-56 and BF16 46-59 from sm_75, FP8
-                // 48-60 from sm_80, the groupwise and small-group U4 decoders) and one above (Q4_0
-                // 78-80, the K-quants 110-128, every SwiGLU row, every sm_70 row); past the CTAs an
+                // SM at up to 64 registers (store / add: Q8_0 45-58 and BF16 46-59 from sm_75, FP8
+                // 48-61 from sm_80, the groupwise and small-group U4 decoders) and one above (Q4_0
+                // 78-85, the K-quants 110-128, every SwiGLU row, every sm_70 row); past the CTAs an
                 // SM holds of it, columns x CTAs run a second wave, and the eight-warp CTA (two a
                 // SM, one wave) is the split.
                 // T 9-16, every route timed, master's w1x16 against the best: K-quants 14-23 % on
