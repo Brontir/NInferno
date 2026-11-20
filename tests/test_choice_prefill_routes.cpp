@@ -238,8 +238,7 @@ void every_board(const json& fixture) {
                                       << ' ' << model_name << ' ' << q << " fmt '" << l.format
                                       << "' " << l.n << 'x' << l.k << " T" << t << " kernel "
                                       << static_cast<int>(k) << " prefill " << before.prefill
-                                      << " -> " << after.prefill << '
-';
+                                      << " -> " << after.prefill << '\n';
                         }
                     }
                 }
