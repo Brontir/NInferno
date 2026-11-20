@@ -207,7 +207,8 @@ int shipped_picks() {
                                         std::regex_constants::format_first_only));
         // Within kCarryDistance a predicted band fills the table's gaps only (#1068): a table of
         // this class (distance 0) holding the file's first problem answers it as measured; the
-        // file's second problem, which the table lacks, is answered as predicted.
+        // file's second problem, which the table lacks, is answered as predicted, also where a
+        // similar chip's table lends it (Borrowed, fill_from).
         {
             std::vector<std::smatch> entries;
             for (auto it = std::sregex_iterator(first_text.begin(), first_text.end(), entry_re);
@@ -241,6 +242,19 @@ int shipped_picks() {
                                       entries[0][2].str() + "\", \"n\": " + entries[0][3].str() +
                                       ", \"k\": " + entries[0][4].str() +
                                       ", \"bands\": [[1, 16777216, \"" + own + "\"]]}");
+                const auto similar     = ninferno::device_class().similar_chips();
+                const std::string lent = entries[1][6].str() == "rmma.m1.n1.w1x4"
+                                             ? "rmma.m1.n2.w1x4"
+                                             : "rmma.m1.n1.w1x4";
+                if (!similar.empty()) {
+                    std::ofstream(tmp / (similar.front() + ".json"))
+                        << table(similar.front(),
+                                 "{\"format\": \"" + entries[1][1].str() +
+                                     "\", \"compute\": \"a16\", " + "\"epilogue\": \"" +
+                                     entries[1][2].str() + "\", \"n\": " + entries[1][3].str() +
+                                     ", \"k\": " + entries[1][4].str() +
+                                     ", \"bands\": [[1, 16777216, \"" + lent + "\"]]}");
+                }
                 ninferno::ops::set_route_table_dir(utf8_path(tmp));
                 try {
                     const auto s  = ninferno::ops::route_table_status();
@@ -256,9 +270,19 @@ int shipped_picks() {
                                           ": the table's own entry stands above the "
                                           "prediction (answers " +
                                           (a0 ? generic::route_name(a0->route) : "none") + ")");
-                    failures += check(a1 && a1->predicted &&
-                                          generic::route_name(a1->route) == entries[1][6].str(),
-                                      first_name + ": the table's gap takes the predicted band");
+                    failures += check(
+                        a1 && a1->predicted &&
+                            generic::route_name(a1->route) == entries[1][6].str(),
+                        first_name + ": the table's gap takes the predicted band" +
+                            (similar.empty()
+                                 ? std::string()
+                                 : ", ahead of " + similar.front() + "'s lent " + lent) +
+                            " (answers " + (a1 ? generic::route_name(a1->route) : "none") + ")");
+                    if (!similar.empty()) {
+                        failures += check(s.borrowed_entries > 0,
+                                          first_name + ": " + similar.front() +
+                                              "'s table lends the gap (" + s.message + ")");
+                    }
                 } catch (const std::exception& error) {
                     failures += check(false, first_name + " gap check refused: " + error.what());
                 }

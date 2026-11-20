@@ -605,8 +605,9 @@ const std::map<std::string_view, std::string_view> kUnreached = {
 };
 const std::map<std::string_view, std::string_view> kUnreachedKinds = {
     {"predicted",
-     "a routes/pick band answers only on a board past kCarryDistance of every table, "
-     "and no kFactsBoards board is (test_route_table --shipped-picks reads each file)"},
+     "a routes/pick band answers on a board past kCarryDistance of every table, which no "
+     "kFactsBoards board is, or in a gap of a tabled board's own table, which the walk's "
+     "shapes need not hit (test_route_table --shipped-picks reads each file, #1068)"},
 };
 
 // What this build leaves unreached on top of kUnreached, read from the build and never from an arch

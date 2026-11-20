@@ -1024,11 +1024,21 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
     const auto table = active_table(d);
     if (!table) return std::nullopt;
     const auto compute = compute_class(problem.qtype, problem.policy);
+    auto it =
+        table->generic.find(key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
+    // fp8_e4m3fn_row_f32 (an FP8 checkpoint's binary32 row scales, kept as published) runs the
+    // register MMA of fp8_e4m3fn_row_bf16 but for the multiplier's width, read once per row after
+    // the K loop: without an entry of its own it takes the fp8 (row BF16) entry of its shape. Its
+    // compute class is A16, so only an A16 entry is taken.
+    if (it == table->generic.end() && problem.qtype == QType::FP8_E4M3FN_ROW_F32) {
+        it = table->generic.find(
+            key_of(QType::FP8_E4M3FN_ROW_BF16, compute, problem.epilogue, problem.n, problem.k));
+    }
     // The analyzer's predicted band, where the overlay holds one for this problem and width (its
-    // bands lie inside T 9-16, below every prefill band): ahead of the nearest table's entry,
-    // which is Transferred or Borrowed wherever an overlay was read. Not under the Legacy policy:
-    // there the table answers as it did before the overlay, the switch back for a regression
-    // report.
+    // bands lie inside T 9-16, below every prefill band): ahead of the nearest table's entry past
+    // kCarryDistance (where it is Transferred or Borrowed), and in the table's gaps within it
+    // (#1068, below). Not under the Legacy policy: there the table answers as it did before the
+    // overlay, the switch back for a regression report.
     if (!(prefill && tokens >= kPrefillMinTokens) && route_policy() != RoutePolicy::Legacy) {
         auto p = table->predicted.find(
             key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
@@ -1037,13 +1047,12 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
             p = table->predicted.find(key_of(QType::FP8_E4M3FN_ROW_BF16, compute, problem.epilogue,
                                              problem.n, problem.k));
         }
-        // Within kCarryDistance the table's own entry stands above a prediction; a gap (no entry,
-        // or one borrowed from another board's table by fill_from) takes the predicted band
-        // before the borrowed one (#1068: RTX 3090, Qwen3-8B add linears, +4 %).
-        const auto own =
-            p == table->predicted.end() ? table->generic.end() : table->generic.find(p->first);
-        const bool gap = table->distance > measured::kCarryDistance ||
-                         own == table->generic.end() || !own->second.lender.empty();
+        // Within kCarryDistance the table's own entry (the one the measured path below answers
+        // with, after its fp8 fallback) stands above a prediction; a gap (no entry, or one
+        // borrowed from another board's table by fill_from) takes the predicted band before the
+        // borrowed one (#1068: RTX 3090, Qwen3-8B add linears, +4 %).
+        const bool gap = table->distance > measured::kCarryDistance || it == table->generic.end() ||
+                         !it->second.lender.empty();
         if (p != table->predicted.end() && gap) {
             for (const auto& band : p->second) {
                 if (tokens >= band.t_min && tokens <= band.t_max) {
@@ -1052,16 +1061,6 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
                 }
             }
         }
-    }
-    auto it =
-        table->generic.find(key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
-    // fp8_e4m3fn_row_f32 (an FP8 checkpoint's binary32 row scales, kept as published) runs the
-    // register MMA of fp8_e4m3fn_row_bf16 but for the multiplier's width, read once per row after
-    // the K loop: without an entry of its own it takes the fp8 (row BF16) entry of its shape. Its
-    // compute class is A16, so only an A16 entry is taken.
-    if (it == table->generic.end() && problem.qtype == QType::FP8_E4M3FN_ROW_F32) {
-        it = table->generic.find(key_of(QType::FP8_E4M3FN_ROW_BF16, compute, problem.epilogue,
-                                        problem.n, problem.k));
     }
     if (it == table->generic.end()) return std::nullopt;
     const RouteEntry& e = it->second;
