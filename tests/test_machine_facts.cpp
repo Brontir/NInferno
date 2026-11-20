@@ -39,7 +39,8 @@ bool same(const MachineFacts& a, const MachineFacts& b) {
            a.reference_clock_khz == b.reference_clock_khz &&
            a.memory_bus_bits == b.memory_bus_bits && a.memory_clock_khz == b.memory_clock_khz &&
            a.tdp_w == b.tdp_w && a.vram_gib == b.vram_gib && a.pcie_gen == b.pcie_gen &&
-           a.mma_slow == b.mma_slow && a.share == b.share && a.l2_mib == b.l2_mib;
+           a.mma_slow == b.mma_slow && a.share == b.share && a.l2_mib == b.l2_mib &&
+           a.subsystem_unknown == b.subsystem_unknown;
 }
 
 void table_well_formed() {
@@ -237,6 +238,52 @@ void memory_variants() {
     expect(same(machine_facts(DriverReport{0x2786, 8, 9, 46, 2475000, 1, 1}), x) &&
                same(machine_facts(DriverReport{0x2786, 8, 9, 46, 2475000, 99999, 200}), x),
            "implausible driver memory values: the row's");
+}
+
+// One id, two boards the PCI subsystem tells apart (#903): the Quadro GV100 (0x1DBA, 1627 MHz) and
+// the TITAN V CEO Edition (subsystem 10DE:12EB, 1455 MHz), both 80 SMs and 32 GB. The CEO Edition's
+// subsystem takes its row of `subsystems`, verified; any other subsystem, or none asked (a plan's
+// board), is the row's board; an unreadable subsystem on this id prices the slower board,
+// extrapolated. An id whose row lists no subsystem boards is the row whatever the subsystem.
+void subsystem_boards() {
+    const auto report = [](std::uint32_t subsystem, bool unread) {
+        return DriverReport{0x1DBA, 7, 0, 80, 1455000, 848000, 4096, subsystem, unread};
+    };
+    const MachineFacts plan = machine_facts(report(0, false));
+    expect(plan.source == FactSource::Verified && plan.sku == "Quadro GV100" &&
+               plan.reference_clock_khz == 1627000 && !plan.subsystem_unknown,
+           "0x1DBA, no subsystem asked: the Quadro GV100's row, verified");
+    expect(same(machine_facts(report(0x10DE12BA, false)), plan),
+           "0x1DBA, a subsystem the row does not list: the row's board");
+    const MachineFacts ceo = machine_facts(report(0x10DE12EB, false));
+    expect(ceo.source == FactSource::Verified && ceo.sku == "TITAN V CEO Edition" &&
+               ceo.reference_clock_khz == 1455000 && ceo.memory_bus_bits == 4096 &&
+               ceo.memory_clock_khz == plan.memory_clock_khz && ceo.vram_gib == 32 &&
+               !ceo.driver_read,
+           "0x1DBA, subsystem 10DE:12EB: the TITAN V CEO Edition, verified (" + ceo.sku + ", " +
+               std::to_string(ceo.reference_clock_khz) + " kHz)");
+    expect(
+        same(machine_facts(DriverReport{0x1DBA, 7, 0, 80, 1912000, 0, 0, 0x10DE12EB, false}), ceo),
+        "the CEO Edition's facts do not read the driver's clocks");
+    const MachineFacts unread = machine_facts(report(0, true));
+    expect(unread.source == FactSource::Extrapolated && unread.subsystem_unknown &&
+               unread.sku == "Quadro GV100" && unread.reference_clock_khz == 1455000 &&
+               unread.memory_clock_khz == plan.memory_clock_khz,
+           "0x1DBA, subsystem unreadable: the slower board's clock, extrapolated (" +
+               std::to_string(unread.reference_clock_khz) + " kHz)");
+    const MachineFacts rtx4090 = machine_facts(DriverReport{0x2684, 8, 9, 128, 0, 0, 0});
+    expect(same(machine_facts(DriverReport{0x2684, 8, 9, 128, 0, 0, 0, 0, true}), rtx4090) &&
+               same(machine_facts(DriverReport{0x2684, 8, 9, 128, 0, 0, 0, 0x10DE12EB, false}),
+                    rtx4090),
+           "an id without subsystem boards: the row, whatever the subsystem");
+    DeviceClass d =
+        synthetic_device_class(0x1DBA, 7, 0, 80, std::size_t{6} << 20, std::size_t{32} << 30);
+    d.pci_subsystem_id = 0x10DE12EB;
+    expect(machine_facts_of(d).sku == "TITAN V CEO Edition",
+           "machine_facts_of passes the class's subsystem");
+    d.pci_subsystem_id     = 0;
+    d.pci_subsystem_unread = true;
+    expect(machine_facts_of(d).subsystem_unknown, "machine_facts_of passes an unread subsystem");
 }
 
 // Principle 7: a laptop is priced at the bottom of its published boost range (an RTX 4090 Laptop
@@ -486,6 +533,40 @@ void malformed_tables_refused() {
     std::string bad = row;
     bad.replace(bad.find("\"pcie\":4"), 8, "\"pcie\":0");
     refused(R"({"schema":1,"gpus":[)" + bad + src + "]}", "PCIe generation 0");
+    const std::string ceo =
+        R"({"id":"0x10DE12EB","name":"y","boost_mhz":1455,"sources":["https://example.org/"]})";
+    const auto with_subsystems = [&](const std::string& list) {
+        return std::string(R"({"schema":1,"gpus":[)") + row + R"("subsystems":[)" + list + "]," +
+               src.substr(0, src.size() - 1) + "}]}";
+    };
+    const std::vector<GpuFactsRow> one = parse_gpu_facts(with_subsystems(ceo));
+    expect(one.size() == 1 && one[0].subsystems.size() == 1 &&
+               one[0].subsystems[0].id == 0x10DE12EB && one[0].subsystems[0].boost_mhz == 1455 &&
+               one[0].subsystems[0].gbps == 21.0 && one[0].subsystems[0].bus_bits == 384,
+           "a subsystem board: its values, the row's elsewhere");
+    refused(with_subsystems(ceo + "," + ceo), "a repeated subsystem");
+    std::string short_id = ceo;
+    short_id.replace(short_id.find("0x10DE12EB"), 10, "0x12EB");
+    refused(with_subsystems(short_id), "a subsystem id of four digits");
+    std::string prefixed = ceo;
+    prefixed.replace(prefixed.find("0x10DE12EB"), 10, "0x0x12EB12");
+    refused(with_subsystems(prefixed), "a subsystem id with a second 0x");
+    std::string no_vendor = ceo;
+    no_vendor.replace(no_vendor.find("0x10DE12EB"), 10, "0x000012EB");
+    refused(with_subsystems(no_vendor), "a subsystem id without a vendor");
+    std::string same_board = ceo;
+    same_board.replace(same_board.find("1455"), 4, "2520");
+    refused(with_subsystems(same_board), "a subsystem board that does not differ from the row");
+    std::string extra = ceo;
+    extra.replace(extra.find("\"boost_mhz\""), 0, "\"sms\":40,");
+    refused(with_subsystems(extra), "a subsystem key machine_facts does not read");
+    std::string odd_bus = ceo;
+    odd_bus.replace(odd_bus.find("\"boost_mhz\""), 0, "\"bus_bits\":100,");
+    refused(with_subsystems(odd_bus), "a subsystem bus of no whole 32-bit channels");
+    std::string laptop = with_subsystems(ceo);
+    laptop.replace(laptop.find("desktop"), 7, "laptop");
+    laptop.replace(laptop.find("\"bus_bits\""), 0, "\"boost_min_mhz\":1500,");
+    refused(laptop, "a laptop row listing subsystem boards");
 }
 
 } // namespace
@@ -496,6 +577,7 @@ int main() {
         lab_cards_old_vs_new();
         deterministic_and_driver_blind();
         memory_variants();
+        subsystem_boards();
         laptops_conservative();
         grid();
         mig_and_zero_clocks();

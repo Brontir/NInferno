@@ -103,6 +103,51 @@ GpuFactsRow parse_row(const Json& j) {
     r.target        = j.value("target", true);
     r.sources       = j.at("sources").get<std::vector<std::string>>();
     r.note          = j.value("note", std::string());
+    for (const Json& s : j.value("subsystems", Json::array())) {
+        GpuFactsSubsystem b;
+        const std::string id = s.at("id").get<std::string>();
+        const bool hex       = id.size() == 10 && id.rfind("0x", 0) == 0 &&
+                         id.find_first_not_of("0123456789abcdefABCDEF", 2) == std::string::npos;
+        if (hex) b.id = static_cast<std::uint32_t>(std::stoul(id.substr(2), nullptr, 16));
+        if (!hex || (b.id >> 16) == 0) {
+            throw std::runtime_error("subsystem id \"" + id +
+                                     "\" is not 0x and eight hex digits with a vendor");
+        }
+        b.name      = s.at("name").get<std::string>();
+        b.boost_mhz = s.value("boost_mhz", r.boost_mhz);
+        b.bus_bits  = s.value("bus_bits", r.bus_bits);
+        b.gbps      = s.value("gbps", r.gbps);
+        b.tdp_w     = s.value("tdp_w", r.tdp_w);
+        b.vram_gib  = s.value("vram_gib", r.vram_gib);
+        b.sources   = s.at("sources").get<std::vector<std::string>>();
+        for (const auto& [key, value] : s.items()) {
+            if (key != "id" && key != "name" && key != "boost_mhz" && key != "bus_bits" &&
+                key != "gbps" && key != "tdp_w" && key != "vram_gib" && key != "sources") {
+                throw std::runtime_error("subsystem " + id + ": key " + key + " is not read");
+            }
+        }
+        if (b.name.empty() || b.boost_mhz <= 0 || b.bus_bits <= 0 || b.bus_bits % 32 != 0 ||
+            b.gbps <= 0 || b.tdp_w <= 0 || b.vram_gib <= 0 || b.sources.empty()) {
+            throw std::runtime_error("subsystem " + id + ": a quantity is missing or out of range");
+        }
+        if (b.boost_mhz == r.boost_mhz && b.bus_bits == r.bus_bits && b.gbps == r.gbps &&
+            b.tdp_w == r.tdp_w && b.vram_gib == r.vram_gib) {
+            throw std::runtime_error("subsystem " + id +
+                                     ": a board that does not differ from the row");
+        }
+        for (const GpuFactsSubsystem& other : r.subsystems) {
+            if (other.id == b.id) throw std::runtime_error("subsystem " + id + " appears twice");
+        }
+        for (const auto& src : b.sources) {
+            if (src.rfind("https://", 0) != 0)
+                throw std::runtime_error("source \"" + src + "\" is not https");
+        }
+        r.subsystems.push_back(std::move(b));
+    }
+    if (!r.subsystems.empty() && r.form == FormFactor::Laptop) {
+        // A laptop is priced from its published range whatever its board (machine_facts).
+        throw std::runtime_error("a laptop row lists boards by subsystem");
+    }
     if (cc < 70 || r.sms <= 0 || r.boost_mhz <= 0 || r.bus_bits <= 0 || r.gbps <= 0 ||
         r.tdp_w <= 0 || r.vram_gib <= 0 || r.pcie_gen < 3 || r.name.empty() || r.chip.empty() ||
         r.l2_mib < 0) {
@@ -205,6 +250,31 @@ MachineFacts machine_facts(const DriverReport& driver, std::span<const GpuFactsR
         f.pcie_gen            = row->pcie_gen;
         f.mma_slow            = row->mma_slow;
         f.l2_mib              = row->l2_mib;
+        // Another board under the id, named by its subsystem (#903), takes its own values, and its
+        // facts stay verified. Where the row lists such boards and the driver could not say which
+        // this is, it is priced as the slowest of them (principle 7: the unknown is
+        // conservative), extrapolated. A subsystem the row does not list is the row's board.
+        const GpuFactsSubsystem* board = nullptr;
+        for (const GpuFactsSubsystem& s : row->subsystems) {
+            if (driver.pci_subsystem_id != 0 && s.id == driver.pci_subsystem_id) board = &s;
+        }
+        if (board != nullptr) {
+            f.sku                 = board->name;
+            f.reference_clock_khz = board->boost_mhz * 1000;
+            f.memory_bus_bits     = board->bus_bits;
+            f.memory_clock_khz    = memory_clock_khz_of(board->gbps);
+            f.tdp_w               = board->tdp_w;
+            f.vram_gib            = board->vram_gib;
+        } else if (driver.subsystem_unread && !row->subsystems.empty()) {
+            f.source            = FactSource::Extrapolated;
+            f.subsystem_unknown = true;
+            for (const GpuFactsSubsystem& s : row->subsystems) {
+                f.reference_clock_khz = std::min(f.reference_clock_khz, s.boost_mhz * 1000);
+                f.memory_bus_bits     = std::min(f.memory_bus_bits, s.bus_bits);
+                f.memory_clock_khz    = std::min(f.memory_clock_khz, memory_clock_khz_of(s.gbps));
+                f.vram_gib            = std::min(f.vram_gib, s.vram_gib);
+            }
+        }
         // A laptop's clocks follow the OEM's power limit (80 to 150 W for one name): it is priced
         // at the bottom of the published boost range (principle 7, the unknown is conservative),
         // or, where the table lacks the bottom, at the lower of the row's top and the driver's
@@ -240,7 +310,7 @@ MachineFacts machine_facts(const DriverReport& driver, std::span<const GpuFactsR
         const bool whole_board =
             row->form != FormFactor::Laptop && (driver.sms <= 0 || driver.sms == row->sms);
         if (whole_board && driver.memory_bus_bits >= 32 && driver.memory_bus_bits % 32 == 0 &&
-            driver.memory_bus_bits != row->bus_bits) {
+            driver.memory_bus_bits != f.memory_bus_bits) {
             f.source          = FactSource::Extrapolated;
             f.driver_read     = true;
             f.memory_bus_bits = driver.memory_bus_bits;

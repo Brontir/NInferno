@@ -101,6 +101,10 @@ struct DeviceClass {
     std::size_t global_bytes         = 0;
     std::string name; // informational only; never a key
     std::uint32_t pci_device_id = 0; // PCI product id (0x2B85: RTX 5090); 0 when unreadable
+    // The PCI subsystem, vendor << 16 | device (0x10DE12EB), and whether the driver was asked and
+    // could not say (DriverReport): only machine_facts reads them, the facts are in the key.
+    std::uint32_t pci_subsystem_id = 0;
+    bool pci_subsystem_unread      = false;
     std::string chip;                // "gb202"; the architecture ("sm120") when the chip is unknown
     bool chip_from_pci = false;      // chip named by the PCI id's block, not guessed by SM count
     DeviceIdentity identity; // which board (PCI address, UUID): logs and ordering, never a key
