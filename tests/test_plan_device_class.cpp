@@ -68,6 +68,7 @@
 #include "ninferno/ops/sampling.h"
 #include "ninferno/ops/speculative_round.h"
 #include "ops/generic/kernel_facts.h"
+#include "ops/softmax_attention/gemma4/launch.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "runtime/engine/plan_dry_run.h"
@@ -777,6 +778,38 @@ int main() {
     const std::vector<Subject> all      = subjects();
     const std::vector<NamedBoard> every = boards();
     check(every.size() >= 50, "the registry has its target boards");
+
+    // #1112: a substituted board's chained-prefill workspace is its own build's tile's, whatever
+    // this build is (launch.cu chain_plan through with_tile_arch). Printed per release arch, at a
+    // Gemma 4 31B full layer (D 512, 32 query and 4 KV heads) on the wide tile's widths (2048) and
+    // the narrow tile's (1023): every build must print the same lines, and every board of one
+    // arch answers alike.
+    {
+        std::map<std::string, std::string> by_arch;
+        for (const NamedBoard& b : every) {
+            const std::string arch = ops::detail::generic::kernel_facts::release_arch(
+                b.substitute.major, b.substitute.minor);
+            if (arch.empty()) continue;
+            const ScopedDeviceClass scoped(b.substitute);
+            std::string line;
+            try {
+                line = std::to_string(ops::detail::gemma4_attention_chain_bytes(
+                           512, 32, 4, 0, false, false, 2048)) +
+                       " / " +
+                       std::to_string(ops::detail::gemma4_attention_chain_bytes(
+                           512, 32, 4, 0, false, false, 1023));
+            } catch (const std::exception& error) { line = std::string("threw: ") + error.what(); }
+            const auto [it, first] = by_arch.emplace(arch, line);
+            check(first || it->second == line, b.name + ": the chain bytes of sm_" + arch +
+                                                   " boards agree (" + line + " vs " + it->second +
+                                                   ", #1112)");
+        }
+        for (const auto& [arch, line] : by_arch) {
+            std::cout << "gemma4 chain bytes sm_" << arch << " (T 2048 / 1023): " << line
+                      << "
+                         ";
+        }
+    }
 
     // #903 item 4: --plan-device names a registered variant of a shared PCI product (the TITAN V
     // CEO Edition, subsystem 10DE:12EB of the Quadro GV100's 0x1DBA): by its name or as
