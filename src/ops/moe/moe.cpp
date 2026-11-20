@@ -799,6 +799,11 @@ regime::R8LimitAnswer regime::r8_limit_answer(const Weight& bank) {
         q4k && bank.qtype == QType::GGML_Q4_K) {
         answer.limit = std::max(1, std::atoi(q4k));
     }
+    // Lab only (#860 item 2): NINFERNO_LAB_R8_Q35 holds only the Q3_K and Q5_K banks to that many.
+    if (const char* q35 = std::getenv("NINFERNO_LAB_R8_Q35");
+        q35 && (bank.qtype == QType::GGML_Q3_K || bank.qtype == QType::GGML_Q5_K)) {
+        answer.limit = std::max(1, std::atoi(q35));
+    }
     return answer;
 }
 
