@@ -8,9 +8,10 @@
 //                {"tag": "89",   "arch": 89,  "specific": false, "ptx": true}, ...]}
 //
 // An engine runs on a GPU of compute capability cc when its target is architecture-specific and
-// equal to cc (120a: 12.0 only), or plain with the same major version and arch <= cc (86: 8.6,
-// 8.7, 8.9), or it carries PTX and arch <= cc (89 with PTX: Hopper, datacenter Blackwell, any later
-// generation, the driver compiling each kernel once). The most specific, newest match wins.
+// equal to cc (120a: 12.0 only), or plain with the same major version, arch <= cc and the same KV
+// row codec (86: 8.6, 8.7, 8.8; not 8.9, whose rows are E4M3), or it carries PTX and arch <= cc (89
+// with PTX: Hopper, datacenter Blackwell, any later generation, the driver compiling each kernel
+// once). The most specific, newest match wins.
 //
 // The GPU is the one the command names (--device N, pci:BUSID or GPU-UUID; without it the first),
 // found as the engine finds it: among the GPUs the CUDA driver enumerates, so CUDA_VISIBLE_DEVICES
@@ -22,6 +23,7 @@
 #include "core/command_line.h"
 #include "core/device_identity.h"
 #include "core/sys.h"
+#include "engine_choice.h"
 
 #include <nlohmann/json.hpp>
 
@@ -50,13 +52,8 @@
 namespace {
 
 namespace fs = std::filesystem;
-
-struct Engine {
-    std::string tag; // "120a", "89", ...
-    int arch      = 0;
-    bool specific = false;
-    bool ptx      = false;
-};
+using ninferno::dispatch::Engine;
+using ninferno::dispatch::choose;
 
 struct Gpu {
     std::string name;
@@ -173,22 +170,6 @@ std::vector<Engine> read_engines(const fs::path& bin, const std::string& program
         return !fs::exists(bin / (program + "-sm" + e.tag + exe_suffix()));
     });
     return engines;
-}
-
-// The engine for a GPU of compute capability cc, if any (see the top of this file).
-std::optional<Engine> choose(const std::vector<Engine>& engines, int cc) {
-    const auto pick = [&](auto&& runs) -> std::optional<Engine> {
-        std::optional<Engine> best;
-        for (const auto& e : engines) {
-            if (runs(e) && (!best || e.arch > best->arch)) { best = e; }
-        }
-        return best;
-    };
-    if (auto e = pick([&](const Engine& e) { return e.specific && e.arch == cc; })) { return e; }
-    if (auto e = pick([&](const Engine& e) { return !e.specific && e.arch / 10 == cc / 10 && e.arch <= cc; })) {
-        return e;
-    }
-    return pick([&](const Engine& e) { return e.ptx && e.arch <= cc; });
 }
 
 // The ordinal of the GPU --device names among the arguments (the spelling every engine parses),

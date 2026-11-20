@@ -153,6 +153,12 @@ target_compile_definitions(ninferno_rmma_geometry_test PRIVATE
 ninferno_add_test(ninferno_device_identity_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_device_identity.cpp")
 
+# The release dispatcher's engine choice (apps/dispatch/engine_choice.h): the KV row codec keeps an
+# 86 engine off an sm_89 card (#991). No GPU.
+ninferno_add_test(ninferno_engine_choice_test LABELS host
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_engine_choice.cpp")
+target_include_directories(ninferno_engine_choice_test PRIVATE "${PROJECT_SOURCE_DIR}/apps")
+
 # The format facts table (core/format_facts.h) against the switches and spelling tables it
 # replaced, for every QType value. No GPU.
 ninferno_add_test(ninferno_format_facts_test LABELS host
