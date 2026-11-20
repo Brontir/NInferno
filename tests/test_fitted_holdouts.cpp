@@ -7,6 +7,10 @@
 //   - every record is complete (an explicit None, or a Checked whose source names a script under
 //     tools/fits/ that exists, with the fields its kind needs; an Unset one was forgotten) and
 //     appears once;
+//   - a Checked record's script reproduces its held-out score: run from the repository root as
+//     `python -B SCRIPT --holdout` (the Python CMake found), its last `holdout: ` line is the
+//     record's `error` (#715; a fixture script checks the runner itself, skipped where it does not
+//     run);
 //   - every key matches its DEFINITION in its file (a definition, a struct field or a function,
 //     read from the file's text, not a substring of it): a renamed or removed constant fails;
 //   - every constant a covered file marks or behaves as fitted has a record, or sits on that file's
@@ -37,10 +41,13 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <optional>
+#include <random>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -65,6 +72,90 @@ std::string read_file(std::string_view relative) {
     std::ifstream in(std::filesystem::path(NINFERNO_SOURCE_DIR) / std::string(relative),
                      std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+// The interpreter CMake found (NEEDS_SOURCE_DIR), -B so that no __pycache__ lands in tools/fits.
+std::string python() { return std::string("\"") + NINFERNO_PYTHON_EXECUTABLE + "\" -B"; }
+
+// What a command prints on stdout, run from the repository root; nullopt where it fails. Its
+// stderr is left to the test's own (a warning at a script's exit is not its last line).
+std::optional<std::string> output_of(const std::string& command) {
+    static int calls = 0;
+    const std::filesystem::path out =
+        std::filesystem::temp_directory_path() /
+        ("ninferno_holdout_" + std::to_string(std::random_device{}()) + "_" +
+         std::to_string(++calls) + ".txt");
+    const std::filesystem::path here = std::filesystem::current_path();
+    std::filesystem::current_path(NINFERNO_SOURCE_DIR);
+    std::string line = command + " > \"" + out.string() + "\"";
+#ifdef _WIN32
+    line = "\"" + line + "\""; // cmd /c strips the first and the last quote of its line
+#endif
+    const int status = std::system(line.c_str());
+    std::filesystem::current_path(here);
+    std::ifstream in(out, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    std::error_code ignored;
+    std::filesystem::remove(out, ignored);
+    if (status != 0) return std::nullopt;
+    return text;
+}
+
+bool python_runs() {
+    static const bool runs = output_of(python() + " --version").has_value();
+    return runs;
+}
+
+// The held-out score a fit script prints (the --holdout contract, #715): its last non-empty line,
+// which starts `holdout: `, the rest of it; nullopt where the script fails or its last line is
+// another. `extra`: more arguments (the self-check's).
+std::optional<std::string> script_holdout(const std::string& script,
+                                          const std::string& extra = {}) {
+    const auto text = output_of(python() + " \"" + script + "\" --holdout" + extra);
+    if (!text) return std::nullopt;
+    std::string last;
+    std::istringstream lines(*text);
+    for (std::string line; std::getline(lines, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!line.empty()) last = line;
+    }
+    if (last.rfind("holdout: ", 0) != 0) return std::nullopt;
+    return last.substr(9);
+}
+
+// Why a Checked record's script does not reproduce the record's error; empty where it does.
+std::string reproduction_gap(const std::string& script, std::string_view error) {
+    const auto score = script_holdout(script);
+    if (!score) return "`python " + script + " --holdout` failed or printed no `holdout: ` line";
+    if (*score != error) {
+        return "`python " + script + " --holdout` prints \"" + *score + "\", the record says \"" +
+               std::string(error) + "\"";
+    }
+    return {};
+}
+
+// The runner itself, on a fixture script (tests/fixtures/fits/holdout_selftest.py).
+void check_holdout_runner() {
+    if (!python_runs()) {
+        std::printf(
+            "holdout runner: the configured Python does not run here, its self-check skipped\n");
+        return;
+    }
+    const std::string fixture = "tests/fixtures/fits/holdout_selftest.py";
+    if (const std::string gap = reproduction_gap(fixture, "2.5 % mean absolute error");
+        !gap.empty()) {
+        fail("holdout runner: the fixture's score not read: " + gap);
+    }
+    if (reproduction_gap(fixture, "2.4 % mean absolute error").empty()) {
+        fail("holdout runner: a record's error that differs from the script's passed");
+    }
+    if (script_holdout(fixture, " --trailing").has_value()) {
+        fail("holdout runner: a score that is not the script's last line was read");
+    }
+    if (reproduction_gap("tests/fixtures/fits/no_such_script.py", "x").empty()) {
+        fail("holdout runner: a missing script passed");
+    }
 }
 
 // The text without its comments: a `//` to the end of its line, and a `/* ... */` block (its
@@ -515,6 +606,7 @@ void check_comment_stripping() {
 
 int main() {
     const auto records = all_records();
+    check_holdout_runner();
     if (records.size() != kExpectedRecords) {
         fail(std::to_string(records.size()) + " records, expected " +
              std::to_string(kExpectedRecords) +
@@ -543,6 +635,12 @@ int main() {
                 fail(name + ": Checked, but its source names no script under tools/fits/");
             } else if (read_file(m.str()).empty()) {
                 fail(name + ": Checked, but its script " + m.str() + " is not in the repository");
+            } else if (!python_runs()) {
+                fail(name +
+                     ": Checked, and the configured Python does not run here to reproduce it");
+            } else if (const std::string gap = reproduction_gap(m.str(), r->holdout.error);
+                       !gap.empty()) {
+                fail(name + ": Checked, but its score is not reproduced: " + gap);
             }
         }
     }
