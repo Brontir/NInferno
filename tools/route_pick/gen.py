@@ -177,7 +177,7 @@ def inputs_of(root, F, arch):
     for p in [q for q in facts.input_paths(root, F) if not q.startswith(facts.KERNEL_FACTS) or q.endswith('/sm_%s.txt' % arch)]:
         with open(os.path.join(root, p), 'rb') as f:
             out[p] = hashlib.sha256(f.read().replace(b'\r\n', b'\n')).hexdigest()
-    for p in ('tools/route_pick/pick.py', 'tools/route_pick/facts.py', 'tools/route_pick/gen.py'):
+    for p in ('tools/route_pick/pick.py', 'tools/route_pick/facts.py', 'tools/route_pick/gen.py', pick.MMQ_HEADER.replace(os.sep, '/')):
         with open(os.path.join(root, p), 'rb') as f:
             out[p] = hashlib.sha256(f.read().replace(b'\r\n', b'\n')).hexdigest()
     return out

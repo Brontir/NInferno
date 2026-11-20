@@ -249,11 +249,20 @@ struct NamedAuthority {
 // key).
 // The dense tuner leaves such a width or band untimed; elsewhere the dispatch reads the tuner's
 // entry, so it is timed (#808). It reads no tuner entry (the tuner asks it under its own lock).
-// Whether the route table answers the width with a routes/pick band (Predicted): the tuner then
-// writes its timed best even where it does not beat the heuristic, so this board's own measured
-// entry (dense-tune) stands above the prediction, the heuristic included.
-[[nodiscard]] bool predicted_before_tuner(const Problem& problem, const Weight& weight,
-                                          std::int32_t tokens, bool prefill);
+// The route of a routes/pick band (Predicted) where the route table answers the width with one,
+// else none: the tuner then writes an entry whatever the heuristic's time, so this board's own
+// measured entry (dense-tune) stands above the prediction; it keeps the predicted route unless a
+// candidate beats that route's own timing by the tuner's margin (#1074).
+[[nodiscard]] std::optional<Route> predicted_before_tuner(const Problem& problem,
+                                                          const Weight& weight, std::int32_t tokens,
+                                                          bool prefill);
+
+// The route the tuner writes over a predicted band (#1074): the predicted one, unless the timed
+// best takes at most `margin` of the predicted route's own time (generic_tune.cpp's kMargin).
+[[nodiscard]] constexpr Route tuned_over_prediction(Route predicted, double predicted_us,
+                                                    Route best, double best_us, double margin) {
+    return best_us <= margin * predicted_us ? best : predicted;
+}
 [[nodiscard]] bool answered_before_tuner(const Problem& problem, const Weight& weight,
                                          std::int32_t tokens, bool prefill, Route ranked);
 // The ranker's answer: what auto_answer gives where neither the route table nor the dense tuner
