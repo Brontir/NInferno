@@ -25,7 +25,8 @@ Nothing is measured on the card.
 `src/ops/route_table.cpp` reads `routes/pick/<class>.json` only when the device's nearest measured table is past
 `measured::kCarryDistance`. There, every table answer would be Transferred or Borrowed, and `--route-policy evidence`
 would demote it to the ranker. The predicted band answers first, as evidence kind `predicted`. Such an answer is
-never demoted and never claims a shape-owned problem. An explicit `--route-table` stands alone and reads no overlay.
+never demoted and never claims a shape-owned problem. An explicit `--route-table` stands alone and reads no overlay,
+and `--route-policy legacy` reads none either (the lookup answers as before the overlay).
 
 ## Evidence (analyzer_r14, 19.11)
 The test removed a card's own table, as for a card of the generation that nobody measured. Qwen3-8B prefill at chunk

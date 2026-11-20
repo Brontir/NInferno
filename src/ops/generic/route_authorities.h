@@ -35,8 +35,9 @@
 // exact-key entry taken from a farther table because the nearest lacked it (route_table.cpp
 // fill_from). Predicted: a band of the analyzer's overlay (routes/pick, tools/route_pick/gen.py),
 // priced from this board's facts and the build's kernel facts, nothing measured on any card; read
-// only where the nearest table is past kCarryDistance, so it stands where a Transferred answer
-// would be demoted to the ranker (the 3090 left out: +5.5 % prefill at chunk 16 over that path).
+// only where the nearest table is past kCarryDistance and only under RoutePolicy::Evidence, so it
+// stands where a Transferred answer would be demoted to the ranker (the 3090 left out: +5.5 %
+// prefill at chunk 16 over that path).
 
 #include "ninferno/option_enums.h"
 #include "ops/generic/generic_gemm.h"
