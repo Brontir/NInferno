@@ -207,9 +207,11 @@ int shipped_picks() {
                                         std::regex_constants::format_first_only));
     }
     // A board of a shipped class on other memory reads none of the class's bands (codex on #1066):
-    // the RTX A4000 (448 GB/s) beside the RTX 3070 Ti's ga104:48sm (608), the Tesla T4 (320)
-    // beside the RTX 2070 SUPER's tu104:40sm (448).
+    // the RTX A4000 (448 GB/s) beside the RTX 3070 Ti's ga104:48sm (608), refused as another
+    // board's file. The Tesla T4's class (tu104:40sm) ships no file since the SM span (gen.py
+    // classes: sm_75's table boards span 68 SMs only), so it reads none either.
     for (const std::uint32_t id : {0x24B0U, 0x1EB8U}) {
+        const bool shipped_class            = id == 0x24B0U;
         const board_registry::BoardRow* row = board_registry::find(id);
         if (row == nullptr) {
             failures += check(false, "the registry has board " + std::to_string(id));
@@ -225,7 +227,8 @@ int shipped_picks() {
             const auto s = ninferno::ops::route_table_status();
             std::cout << ninferno::device_class().id() << ": " << s.message << '\n';
             failures += check(s.predicted_path.empty() && s.predicted_entries == 0 &&
-                                  s.predicted_skipped.find("another board") != std::string::npos,
+                                  (!shipped_class ||
+                                   s.predicted_skipped.find("another board") != std::string::npos),
                               ninferno::device_class().id() +
                                   " reads no other board's predicted bands: " + s.message);
         } catch (const std::exception& error) {
