@@ -5,9 +5,11 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
+#include <string>
 #include <unordered_set>
 
 namespace ninferno {
@@ -184,6 +186,37 @@ std::vector<GpuFactsRow> parse_gpu_facts(std::string_view json_text) {
         if (!seen.insert(rows.back().pci_device_id).second) {
             throw std::runtime_error("gpu facts: id " + j.at("id").get<std::string>() +
                                      " appears twice");
+        }
+    }
+    // A registered variant (#903) is named as a board of its own by --plan-device: its name, as
+    // that lookup compares names (lower case, trimmed, without "nvidia " or "geforce "), names no
+    // row and no other variant, or the earlier entry would silently win the lookup. Rows may share
+    // a name (one board under two product ids).
+    const auto normalized = [](std::string name) {
+        for (char& ch : name) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        const auto trim = [](std::string& v) {
+            const auto first = v.find_first_not_of(" \t\r\n");
+            const auto last  = v.find_last_not_of(" \t\r\n");
+            v = first == std::string::npos ? std::string() : v.substr(first, last - first + 1);
+        };
+        trim(name);
+        for (const char* prefix : {"nvidia ", "geforce "}) {
+            if (name.rfind(prefix, 0) == 0) {
+                name = name.substr(std::string(prefix).size());
+                trim(name);
+            }
+        }
+        return name;
+    };
+    std::unordered_set<std::string> row_names, variant_names;
+    for (const GpuFactsRow& r : rows) row_names.insert(normalized(r.name));
+    for (const GpuFactsRow& r : rows) {
+        for (const GpuFactsSubsystem& v : r.subsystems) {
+            const std::string name = normalized(v.name);
+            if (row_names.contains(name) || !variant_names.insert(name).second) {
+                throw std::runtime_error("gpu facts: subsystem name \"" + v.name +
+                                         "\" names another row or variant");
+            }
         }
     }
     return rows;

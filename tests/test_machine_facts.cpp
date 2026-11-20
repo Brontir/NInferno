@@ -565,6 +565,19 @@ void malformed_tables_refused() {
     laptop.replace(laptop.find("desktop"), 7, "laptop");
     laptop.replace(laptop.find("\"bus_bits\""), 0, "\"boost_min_mhz\":1500,");
     refused(laptop, "a laptop row listing subsystem boards");
+    // --plan-device names a variant as a board of its own (#903): its name, as that lookup
+    // compares names, names no row and no other variant.
+    std::string as_row = ceo;
+    as_row.replace(as_row.find("\"name\":\"y\""), 10, "\"name\":\" NVIDIA X \"");
+    refused(with_subsystems(as_row), "a subsystem named as its row");
+    std::string twin = ceo;
+    twin.replace(twin.find("0x10DE12EB"), 10, "0x10DE12EC");
+    twin.replace(twin.find("\"name\":\"y\""), 10, "\"name\":\"GeForce Y\"");
+    refused(with_subsystems(ceo + "," + twin), "two subsystems of one name");
+    std::string other = twin;
+    other.replace(other.find("GeForce Y"), 9, "Y Prime");
+    expect(parse_gpu_facts(with_subsystems(ceo + "," + other))[0].subsystems.size() == 2,
+           "two subsystems of two names");
 }
 
 } // namespace
