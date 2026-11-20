@@ -39,6 +39,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -174,9 +175,20 @@ plan_drafter_state_of_config(const nlohmann::json& config, std::uint32_t target_
 [[nodiscard]] std::optional<runtime::PlanDeviceFacts> plan_device_of_board(std::string_view spec,
                                                                            std::string* error);
 
+// A CUDA call of plan_device_of_cuda that failed: its message, and whether the card refused for
+// want of memory (cudaErrorMemoryAllocation: a busy card with no room for a context), so a caller
+// reads the cause from the error code, not from the text (#891).
+struct PlanDeviceError : std::runtime_error {
+    PlanDeviceError(const std::string& what, bool memory)
+        : std::runtime_error(what), out_of_memory(memory) {}
+
+    bool out_of_memory = false;
+};
+
 // The CUDA device `device`: its name, total memory, compute capability, WDDM (as the Engine reads
 // it), display (the kernel watchdog) and integrated flag; with `measure_free` the free memory now
-// (cudaMemGetInfo). Throws std::runtime_error when the device cannot be read.
+// (cudaMemGetInfo). Throws PlanDeviceError when a CUDA call fails (std::runtime_error otherwise
+// where the device cannot be read).
 // `stack_reset`: read the free memory with the CUDA stack limit at 0, as a start does when its
 // plan has an automatic axis (runtime::plan_automatic_fit).
 [[nodiscard]] runtime::PlanDeviceFacts plan_device_of_cuda(int device, bool measure_free,

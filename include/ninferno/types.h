@@ -1621,6 +1621,15 @@ struct ConcurrencyFit {
     std::uint32_t max_context     = 0;
 };
 
+// One region of the chosen rung's text prefill arena (#615 W5, #940): the op that takes it, its
+// offset and bytes in the arena, and whether it is an op's raw scratch rather than a tensor.
+struct PlanWorkspaceRegion {
+    std::string op;
+    std::uint64_t offset = 0;
+    std::uint64_t bytes  = 0;
+    bool scratch         = false;
+};
+
 // One rung of the startup plan ladder (src/runtime/engine/plan_ladder.h): a complete memory plan
 // derived from the artifact, the options and the device's discrete facts.
 struct PlanRungSummary {
@@ -1669,6 +1678,9 @@ struct PlanSummary {
     std::vector<std::string> advice;
     // Every rung, top first: filled by the dry run (ninferno-serve --plan) only.
     std::vector<PlanRungSummary> ladder;
+    // The chosen rung's text prefill arena region by region, in the order a chunk takes them, as
+    // its planner lays them out (the started Program's workspace plan): the dry run only.
+    std::vector<PlanWorkspaceRegion> workspace_regions;
 };
 
 struct MemorySummary {

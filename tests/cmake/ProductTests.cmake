@@ -137,6 +137,15 @@ add_test(NAME ninferno_github_release_test
   COMMAND bash ${PROJECT_SOURCE_DIR}/tests/release/github_release_test.sh ${PROJECT_SOURCE_DIR})
 set_tests_properties(ninferno_github_release_test PROPERTIES SKIP_RETURN_CODE 77 LABELS host)
 
+# A conversion as an ordinary user against a model directory it cannot write (#975): it lands in
+# NInferno's own cache and a second start reuses it. Needs a small dense GGUF (NINFERNO_TEST_GGUF),
+# else skipped; no GPU (the start converts before it opens the device).
+if(TARGET ninferno-dense)
+  add_test(NAME ninferno_readonly_cache_test
+    COMMAND bash ${PROJECT_SOURCE_DIR}/tests/release/readonly_cache_test.sh $<TARGET_FILE:ninferno-dense>)
+  set_tests_properties(ninferno_readonly_cache_test PROPERTIES SKIP_RETURN_CODE 77 LABELS host)
+endif()
+
 ninferno_add_test(ninferno_tool_maintainer_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_tool_maintainer.cpp"
   LIBRARIES ninferno_ops ninferno_core)

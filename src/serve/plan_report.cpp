@@ -126,6 +126,13 @@ Json plan_summary_json(const ninferno::PlanSummary& plan, bool ladder) {
             rungs.push_back(rung_json(rung));
         }
         out["ladder"] = std::move(rungs);
+        // The chosen rung's prefill arena region by region (#940), as ninferno --plan prints it.
+        Json regions = Json::array();
+        for (const ninferno::PlanWorkspaceRegion& r : plan.workspace_regions) {
+            regions.push_back(
+                {{"op", r.op}, {"offset", r.offset}, {"bytes", r.bytes}, {"scratch", r.scratch}});
+        }
+        out["workspace_regions"] = std::move(regions);
     }
     return out;
 }

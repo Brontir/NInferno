@@ -314,36 +314,30 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         // The counted slice (#613 PR-5, mmq_unit::counted): the launch's units at the unit its
         // own resident CTAs give, with the fixup's bytes and graph node; the fitted slice where
         // the kernel's counts, the arch's facts or the width's unit are missing.
-        if (mmq_unit::counted()) {
-            // The release engine's kernels for the board (release_arch), the same answer on
-            // every machine whatever its build, as the register MMA's facts are (#556).
-            // On the architectures it was scored on alone (mmq_unit::scored_arch).
-            const std::string arch          = kernel_facts::release_arch(d.major, d.minor);
-            const std::optional<IsaRow> isa = isa_row(d.major, d.minor);
-            if (mmq_unit::scored_arch(arch) && isa) {
-                const double node =
-                    ninferno::launch_seconds(d.major, d.minor, LaunchKind::GraphNode).value_or(0.0);
-                // The column tile the kernel's own table picks for each slice's width
-                // (core/mmq_columns.h), as the choice prices it, not the fitted price's 8-column
-                // step.
-                // A gated call runs one product a set (generic_gemm.cpp: gate, then up), each of
-                // n rows with its own graph node.
-                const auto counted_at = [&](double width) {
-                    return mmq_unit::launch_seconds(arch, problem.qtype, *isa, static_cast<int>(n),
-                                                    static_cast<int>(k), static_cast<int>(width),
-                                                    mmq_columns::pick(static_cast<int>(width),
-                                                                      d.major, d.minor, format,
-                                                                      widest, facts),
-                                                    d.sms, clk, bw, node);
-                };
-                const double rest       = t - (slices - 1) * tt;
-                const auto counted      = counted_at(tt);
-                const auto counted_last = rest == tt ? counted : counted_at(rest);
-                if (counted && counted_last) {
-                    slice_body  = sets * *counted;
-                    last_body   = sets * *counted_last;
-                    slice_fixed = sets * node;
-                }
+        // The release engine's kernels for the board, as the register MMA's facts are (#556), on
+        // the architectures the unit was scored on alone (mmq_unit::counted_board).
+        if (const auto board = mmq_unit::counted_board(d.major, d.minor)) {
+            const double node = board->node_seconds;
+            // The column tile the kernel's own table picks for each slice's width
+            // (core/mmq_columns.h), as the choice prices it, not the fitted price's 8-column
+            // step.
+            // A gated call runs one product a set (generic_gemm.cpp: gate, then up), each of
+            // n rows with its own graph node.
+            const auto counted_at = [&](double width) {
+                return mmq_unit::launch_seconds(board->arch, problem.qtype, board->isa,
+                                                static_cast<int>(n), static_cast<int>(k),
+                                                static_cast<int>(width),
+                                                mmq_columns::pick(static_cast<int>(width), d.major,
+                                                                  d.minor, format, widest, facts),
+                                                d.sms, clk, bw, node);
+            };
+            const double rest       = t - (slices - 1) * tt;
+            const auto counted      = counted_at(tt);
+            const auto counted_last = rest == tt ? counted : counted_at(rest);
+            if (counted && counted_last) {
+                slice_body  = sets * *counted;
+                last_body   = sets * *counted_last;
+                slice_fixed = sets * node;
             }
         }
         const double price =

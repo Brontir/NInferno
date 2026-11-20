@@ -136,7 +136,9 @@ __device__ __forceinline__ unsigned codes02_bf16(unsigned w, unsigned offset) {
 // one FP16x2 subtraction of 1024 + Bias leaves c - Bias.
 template <int Bias, bool F16 = false>
 __device__ __forceinline__ void byte_codes(unsigned w, unsigned& lo, unsigned& hi) {
-    static_assert(Bias >= 0 && Bias < 128, "128 + Bias must be exact in BF16");
+    // BF16: 128 + c is exact for c < 128 only; FP16: 1024 + c for every byte c, so a bias up to
+    // 255.
+    static_assert(Bias >= 0 && Bias < (F16 ? 256 : 128), "the bias pair must be exact");
     if constexpr (F16) {
         const __half2 offset = __float2half2_rn(1024.0F + static_cast<float>(Bias));
         unsigned a           = __byte_perm(w, 0x64U, 0x4140U);
@@ -527,7 +529,15 @@ struct GroupwiseQ3Decoder {
 };
 
 // Q8 G32: a K step of 32 values is exactly one group.
+//
+// NINFERNO-SPECIAL(arch:sm75): FP16 codes on Turing (kF16Operands, #1050). Flipping a signed byte's
+// top bit gives s + 128 in 0 .. 255, and byte_codes' FP16 form (1024 + c, minus 1024 + 128) returns
+// s exactly; without it every MMA rounded the BF16 codes to FP16 (ops/common/mma.cuh) and the K
+// loop issued 5.3x the integer instructions of sm_86+ (sm_75 kernel facts before this: 571 against
+// 108-124 for 64 K values, 130 after), SM-bound on the RTX 2080 Ti. Every other build keeps the
+// BF16 conversion: BF16 has no exact form of 128 + c for c >= 128.
 struct Q8Decoder {
+    static constexpr bool kF16       = kF16Operands;
     static constexpr int kRun        = 8;
     static constexpr bool kStepScale = true;
     struct Run {
@@ -553,8 +563,12 @@ struct Q8Decoder {
         return static_cast<int>(static_cast<signed char>((word >> ((v & 3) * 8)) & 0xffU));
     }
     __device__ static __forceinline__ void pair(const Run& r, int j, unsigned& lo, unsigned& hi) {
-        lo = int_pair_bf16(code(r, 4 * j), code(r, 4 * j + 1));
-        hi = int_pair_bf16(code(r, 4 * j + 2), code(r, 4 * j + 3));
+        if constexpr (kF16) {
+            byte_codes<128, true>((j == 0 ? r.codes.x : r.codes.y) ^ 0x80808080U, lo, hi);
+        } else {
+            lo = int_pair_bf16(code(r, 4 * j), code(r, 4 * j + 1));
+            hi = int_pair_bf16(code(r, 4 * j + 2), code(r, 4 * j + 3));
+        }
     }
     __device__ static __forceinline__ float step_scale(const Run& r) {
         return __half2float(__ushort_as_half(static_cast<unsigned short>(r.scale)));

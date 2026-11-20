@@ -51,6 +51,13 @@ const runtime::SequenceCapacityCurve& SequencePlanner::capacity_curve() const no
     return impl_ != nullptr ? impl_->curve : empty;
 }
 
+const std::vector<WorkspaceRegion>& SequencePlanner::text_prefill_regions() const noexcept {
+    static const std::vector<WorkspaceRegion> empty;
+    return impl_ != nullptr && impl_->minimum != nullptr
+               ? impl_->minimum->workspace.text_prefill_regions
+               : empty;
+}
+
 std::size_t SequencePlanner::host_state_image_bytes() const noexcept {
     return impl_ != nullptr && impl_->minimum != nullptr
                ? impl_->minimum->persistent.state_images.host.image_bytes

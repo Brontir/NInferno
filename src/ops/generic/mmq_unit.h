@@ -35,6 +35,7 @@
 #include "core/isa_facts.h"
 
 #include <optional>
+#include <string>
 #include <string_view>
 
 namespace ninferno::mmq_unit {
@@ -72,10 +73,18 @@ struct UnitFacts {
 [[nodiscard]] std::optional<double> unit_seconds(std::string_view arch, QType q, int j,
                                                  const IsaRow& isa, const UnitFacts& f);
 
-// The launch law with the counted units at the six work widths (unit_clocks at f.clock_hz);
-// stream_k_unit 1 and launch_seconds 0, not yet counted. nullopt where any width is not priced.
-[[nodiscard]] std::optional<MmqLaunchLaw> law(std::string_view arch, QType q, const IsaRow& isa,
-                                              const UnitFacts& f);
+// The board the selector and the choice price the counted unit on (#973): the release engine's
+// kernels for it (kernel_facts::release_arch, the same answer on every machine whatever its build),
+// its isa_probe row and its graph node (the fixup's launch, 0 where the launch facts have none).
+// nullopt where the switch is off (counted()), the arch is not scored_arch() or has no isa row: the
+// client prices the fitted slice there.
+struct CountedBoard {
+    std::string arch;
+    IsaRow isa;
+    double node_seconds = 0;
+};
+
+[[nodiscard]] std::optional<CountedBoard> counted_board(int major, int minor);
 
 // The resident CTAs and the weight tiles they read from DRAM in one iteration of a launch of
 // `rows` x `k` x `columns` at the tile `j` on `sms` SMs (core/mmq_columns.h launch_of): a tile
