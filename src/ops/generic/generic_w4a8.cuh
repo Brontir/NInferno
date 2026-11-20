@@ -225,6 +225,18 @@ __host__ __device__ constexpr bool w4a8_int_halves() {
     }
 }
 
+// Whether buffer B is a stage of the producer-warp kernel's ring (W4a8Stage). The integer halves
+// run there only: on the classic kernel's tiles they time 0.98-1.00 against the float path but the
+// 64x64 tile 1.088 at n 12288 T 32 (RTX 3090, #1116), so the classic kernel keeps the float halves.
+template <class B>
+__host__ __device__ constexpr bool w4a8_ring() {
+    if constexpr (requires { B::kRing; }) {
+        return B::kRing;
+    } else {
+        return false;
+    }
+}
+
 // A kHalves codec with a min per 16 values (Q2_K): decode also makes the mins of values 0..15 and
 // 16..31, which the kernel takes against the token's code sums over the same 16 values (a k16 MMA
 // or dp4a against ones), and the buffer holds them in a plane of their own (b_hmin).
@@ -1389,6 +1401,8 @@ using W4a8BufferOf = W4a8Buffer<S, w4a8_half_min<C>()>;
 template <class C, class S, int Stages>
 struct W4a8Stage {
     static_assert(!w4a8_half_min<C>(), "the producer ring has no half-min plane");
+    // The producer-warp kernel's buffer: the one the integer halves run in (w4a8_ring).
+    static constexpr bool kRing   = true;
     static constexpr bool kSum    = C::kMin;
     static constexpr bool kAux    = C::kMin || w4a8_halves<C>();
     static constexpr int kFloats  = S::kBlockM * (kSum ? 8 : 4) + S::kBlockN * (kAux ? 8 : 4);
@@ -1465,7 +1479,7 @@ struct W4a8Weights {
                 if (ok[i]) {
                     if constexpr (w4a8_half_min<C>()) {
                         C::decode(raw[i], sp, lo, hi, scale, min, min_lo, min_hi);
-                    } else if constexpr (w4a8_int_halves<C>()) {
+                    } else if constexpr (w4a8_int_halves<C>() && w4a8_ring<B>()) {
                         C::decode_int(raw[i], sp, lo, hi, scale, min);
                     } else if constexpr (kSpan == 1) {
                         C::decode(raw[i], lo, hi, scale, min);
@@ -1534,7 +1548,7 @@ __device__ __forceinline__ void w4a8_mma_tile(float (&acc)[S::kMmaM][S::kMmaN][4
                                               Stepped&& stepped) {
     constexpr bool kHalves  = w4a8_halves<C>();
     constexpr bool kHalfMin = w4a8_half_min<C>();
-    constexpr bool kIntHalves = w4a8_int_halves<C>();
+    constexpr bool kIntHalves = w4a8_int_halves<C>() && w4a8_ring<B>();
     constexpr bool kAux     = C::kMin || kHalves;
     static_assert(!kHalfMin || kHalves);
     static_assert(!kIntHalves || (kHalves && !kHalfMin));
