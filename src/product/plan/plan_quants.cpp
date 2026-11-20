@@ -10,6 +10,7 @@
 #include "convert/fetch.h"
 #include "convert/gguf.h"
 #include "core/ascii.h"
+#include "core/machine_facts.h"
 #include "spec/round_cost.h"
 
 #include "product/activation_options.h"
@@ -1220,9 +1221,16 @@ Json device_json(const runtime::PlanDeviceFacts& device, const runtime::DryRunPl
                 {"desktop_bytes", !device.drives_display ? std::uint64_t{0}
                                   : device.paravirtual   ? runtime::kPlanIdleWindowsDesktopBytes
                                                          : runtime::kPlanIdleLinuxDesktopBytes}};
-    // A registered variant of the product id (#903: the TITAN V CEO Edition of 0x1DBA), only where
-    // one is named or read: the board the plan priced, beside the product id.
-    if (device.pci_subsystem_id != 0) { out["pci_subsystem_id"] = device.pci_subsystem_id; }
+    // A registered variant of the product id (#903: the TITAN V CEO Edition of 0x1DBA), named by
+    // --plan-device or read from the card, where its row lists that subsystem: the board the plan
+    // priced, beside the product id. Any other card's subsystem (its maker's) prices the row's
+    // board and is left out.
+    if (const GpuFactsRow* row = find_gpu_facts(device.pci_device_id);
+        row != nullptr && device.pci_subsystem_id != 0 &&
+        std::any_of(row->subsystems.begin(), row->subsystems.end(),
+                    [&](const GpuFactsSubsystem& v) { return v.id == device.pci_subsystem_id; })) {
+        out["pci_subsystem_id"] = device.pci_subsystem_id;
+    }
     return out;
 }
 
