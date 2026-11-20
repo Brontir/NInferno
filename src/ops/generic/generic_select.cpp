@@ -1204,11 +1204,20 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                         : 1;
                 if (ctas <= sms) {
                     const int pair_split = one_wave_split(ctas, sms);
-                    if (rmma_schedule_info(pair_split).cluster == 2 &&
-                        current_arch_facts().features.clusters && 2 * columns * ctas > held * sms) {
-                        return rmma_index(1, 8, 1, 1);
-                    }
                     const RmmaScheduleInfo split = rmma_schedule_info(pair_split);
+                    // Past the pair's wave the sixteen-warp CTA where it still runs one (#1117):
+                    // the latency-bound Q8_0, BF16 and FP8 loops (two such CTAs an SM) take half
+                    // the K trips a warp of the eight-warp CTA walks, at the same issue work; the
+                    // K-quants' one CTA an SM would run a second wave. RTX 5090 / 5070 Ti, T 9-16,
+                    // K 2048-8192, the cells past the pair's wave: w1x16 took 0.70-0.79 of
+                    // n1.w1x8's time on Q8_0 (19 cells), 1.00-1.56 on the K-quants (80 cells).
+                    if (split.cluster == 2 && current_arch_facts().features.clusters &&
+                        2 * columns * ctas > held * sms) {
+                        const int resident = sixteen_warp_resident(problem);
+                        return resident > 0 && columns * ctas <= resident * sms
+                                   ? rmma_index(1, 16, 1, 1)
+                                   : rmma_index(1, 8, 1, 1);
+                    }
                     if (split.cluster == 1 && split.warps_k == 16) {
                         const int resident = sixteen_warp_resident(problem);
                         if (resident > 0 && columns * ctas > resident * sms) {

@@ -681,14 +681,25 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "against 16..41)",
      ""},
     {"heuristic_rmma: the verify pair past one wave", Basis::Measured, "generic_select.cpp",
-     "current_arch_facts().features.clusters && 2 * columns * ctas > held * sms) { return "
-     "rmma_index(1, 8, 1, 1);",
+     "current_arch_facts().features.clusters && 2 * columns * ctas > held * sms) { const int "
+     "resident = sixteen_warp_resident(problem);",
      0, "gb202:170sm, gb203:70sm", "RTX 5090, RTX 5070 Ti",
      "T = 9..16 at most one CTA per SM: the decode split's CTA pair runs one wave only while "
      "pair x token columns x CTAs fit what the SMs hold (two one-tile CTAs of <= 256 threads an "
      "SM, kMinBlocks); past it n1.w1x8 (#1052, route_tune of every route, K-quants Q2_K-Q6_K at "
      "n 512-2560, K 2048 / 4096: RTX 5090 120 moved cells 24.0 % -> 0.13 % regret, RTX 5070 Ti "
      "112 moved cells 26.4 % -> 0.0 %, none worse)",
+     ""},
+    {"heuristic_rmma: the verify sixteen-warp CTA past the pair's wave", Basis::Structural,
+     "generic_select.cpp",
+     "return resident > 0 && columns * ctas <= resident * sms ? rmma_index(1, 16, 1, 1) : "
+     "rmma_index(1, 8, 1, 1);",
+     0, "gb202:170sm, gb203:70sm", "RTX 5090, RTX 5070 Ti",
+     "T = 9..16 past the CTA pair's wave on a board with clusters: the sixteen-warp CTA where "
+     "token columns x CTAs fit the CTAs an SM holds of it (the occupancy calculator on its "
+     "committed registers: Q8_0, BF16, FP8 two, the K-quants one), else n1.w1x8 (#1117, "
+     "route_tune of every route, K 2048-8192: w1x16 0.70-0.79 of n1.w1x8's time on Q8_0 in 19 "
+     "cells, 1.00-1.56 on the K-quants in 80)",
      ""},
     {"heuristic_rmma: the verify sixteen-warp split past one wave", Basis::Structural,
      "generic_select.cpp",
