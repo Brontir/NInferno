@@ -213,9 +213,11 @@ __host__ __device__ constexpr bool w4a8_block_scaled() {
 // as bytes 0 (values 0..15) and 1 (16..31) of one word, which the kernel reads with sign-extending
 // byte loads, and weighs the halves' int32
 // MMA sums by them in the integer domain: one conversion and one multiply a block instead of two
-// (#1116). The weighted sum stays exact: |code x activation| <= 32 x 127, a 16-term MMA <= 65 K,
-// times |sc| <= 128 and two halves, 16.6 M, below 2^24, so its float is exact too. The biased
-// accumulators (kBiasedIntAccumulators) hold 2^22 only, so this path starts its MMAs at 0.
+// (#1116). The weighted sum stays exact: |code x activation| <= 32 x 128, a 16-term MMA <= 2^16,
+// times |sc| <= 128 and two halves, <= 2^24, which a float holds exactly. The biased per-step
+// int32 MMA accumulators (kBiasedIntAccumulators) hold 2^22 only, so this path starts them at 0
+// and converts them with a plain cast. The two scale bytes ride in the float b_min plane as a bit
+// pattern (a subnormal): only moved and stored, never computed with, so no flush touches them.
 template <class C>
 __host__ __device__ constexpr bool w4a8_int_halves() {
     if constexpr (requires { C::kIntHalves; }) {
