@@ -1828,7 +1828,11 @@ std::optional<runtime::PlanDeviceFacts> plan_device_of_board(std::string_view sp
     const auto names_a_row = [&](std::string_view text) {
         const auto wanted = normalized_board(text);
         return std::any_of(table.begin(), table.end(), [&](const GpuFactsRow& r) {
-            return normalized_board(r.name) == wanted;
+            return normalized_board(r.name) == wanted ||
+                   std::any_of(r.subsystems.begin(), r.subsystems.end(),
+                               [&](const GpuFactsSubsystem& v) {
+                                   return normalized_board(v.name) == wanted;
+                               });
         });
     };
     if (!commas.empty()) {
@@ -1865,32 +1869,70 @@ std::optional<runtime::PlanDeviceFacts> plan_device_of_board(std::string_view sp
         }
     }
 
-    const GpuFactsRow* row = nullptr;
+    const GpuFactsRow* row           = nullptr;
+    const GpuFactsSubsystem* variant = nullptr; // a registered variant of the row (#903)
     if (const auto q = lower(query); starts_with(q, "0x") && q.size() > 2) {
-        char* end     = nullptr;
-        const auto id = std::strtoul(q.c_str() + 2, &end, 16);
+        // "0x1DBA" names the product's board, "0x1DBA:0x10DE12EB" a registered variant of it.
+        const auto colon     = q.find(':');
+        const std::string pd = q.substr(0, colon);
+        char* end            = nullptr;
+        const auto id        = std::strtoul(pd.c_str() + 2, &end, 16);
         if (end != nullptr && *end == '\0') {
             row = find_gpu_facts(static_cast<std::uint32_t>(id));
         }
         if (row == nullptr) { return fail("no board with PCI id " + query + " in gpu_facts.json"); }
+        if (colon != std::string::npos) {
+            const std::string sub = q.substr(colon + 1);
+            char* sub_end         = nullptr;
+            const auto sid        = starts_with(sub, "0x") && sub.size() > 2
+                                        ? std::strtoul(sub.c_str() + 2, &sub_end, 16)
+                                        : 0UL;
+            const bool parsed     = sid != 0 && sub_end != nullptr && *sub_end == '\0';
+            for (const auto& v : row->subsystems) {
+                if (parsed && v.id == sid) { variant = &v; }
+            }
+            if (variant == nullptr) {
+                std::string listed;
+                for (const auto& v : row->subsystems) {
+                    listed += (listed.empty() ? "" : ", ") + v.name;
+                }
+                return fail("no registered variant " + sub + " of " + row->name +
+                            (listed.empty() ? " (it lists none)" : " (listed: " + listed + ")"));
+            }
+        }
     } else {
         // The exact name first, else the shortest name containing the query ("4090" finds
         // "GeForce RTX 4090", not "... 4090 D" or "... 4090 Laptop GPU"); the table's order
         // breaks a tie.
+        // A registered variant (a row's `subsystems`, #903) is named as a board of its own.
         const auto wanted = normalized_board(query);
         for (const auto& r : table) {
             if (normalized_board(r.name) == wanted) {
                 row = &r;
                 break;
             }
+            for (const auto& v : r.subsystems) {
+                if (row == nullptr && normalized_board(v.name) == wanted) {
+                    row     = &r;
+                    variant = &v;
+                }
+            }
+            if (row != nullptr) { break; }
         }
         if (row == nullptr && !wanted.empty()) {
-            for (const auto& c : table) {
-                const auto name = normalized_board(c.name);
+            std::size_t best    = 0;
+            const auto consider = [&](const GpuFactsRow& r, const GpuFactsSubsystem* v) {
+                const auto name = normalized_board(v != nullptr ? v->name : r.name);
                 if (name.find(wanted) != std::string::npos &&
-                    (row == nullptr || name.size() < normalized_board(row->name).size())) {
-                    row = &c;
+                    (row == nullptr || name.size() < best)) {
+                    row     = &r;
+                    variant = v;
+                    best    = name.size();
                 }
+            };
+            for (const auto& c : table) {
+                consider(c, nullptr);
+                for (const auto& v : c.subsystems) { consider(c, &v); }
             }
         }
     }
@@ -1924,9 +1966,11 @@ std::optional<runtime::PlanDeviceFacts> plan_device_of_board(std::string_view sp
         return fail(message);
     }
     runtime::PlanDeviceFacts out;
-    out.name               = row->name;
-    out.source             = "named board " + row->name;
-    out.total_bytes        = runtime::plan_board_total_bytes(row->vram_gib);
+    out.name        = variant != nullptr ? variant->name : row->name;
+    out.source      = "named board " + out.name;
+    out.total_bytes = runtime::plan_board_total_bytes(
+        variant != nullptr && variant->vram_gib > 0 ? variant->vram_gib : row->vram_gib);
+    out.pci_subsystem_id   = variant != nullptr ? variant->id : 0;
     out.compute_capability = row->major * 10 + row->minor;
     out.pci_device_id      = row->pci_device_id;
     out.sms                = row->sms;

@@ -779,6 +779,50 @@ int main() {
     const std::vector<NamedBoard> every = boards();
     check(every.size() >= 50, "the registry has its target boards");
 
+    // #903 item 4: --plan-device names a registered variant of a shared PCI product (the TITAN V
+    // CEO Edition, subsystem 10DE:12EB of the Quadro GV100's 0x1DBA): by its name or as
+    // "0x1DBA:0x10DE12EB". Its class carries the subsystem, so the machine facts are that board's
+    // (1455 MHz, verified); the product's own name and id keep the product row's board, with no
+    // subsystem; an unregistered subsystem is refused, naming the variants the row lists.
+    {
+        std::string error;
+        const auto ceo    = pr::plan_device_of_board("TITAN V CEO Edition", &error);
+        const auto by_id  = pr::plan_device_of_board("0x1DBA:0x10DE12EB,linux,headless", &error);
+        const auto quadro = pr::plan_device_of_board("Quadro GV100", &error);
+        const auto bare   = pr::plan_device_of_board("0x1DBA", &error);
+        check(ceo && by_id && quadro && bare,
+              "--plan-device: the 0x1DBA boards resolve (" + error + ")");
+        if (ceo && by_id && quadro && bare) {
+            check(ceo->name == "TITAN V CEO Edition" && ceo->pci_device_id == 0x1DBA &&
+                      ceo->pci_subsystem_id == 0x10DE12EB,
+                  "--plan-device 'TITAN V CEO Edition': the 0x1DBA variant 10DE:12EB (" +
+                      ceo->name + ")");
+            check(by_id->name == ceo->name && by_id->pci_subsystem_id == 0x10DE12EB,
+                  "--plan-device 0x1DBA:0x10DE12EB: the same variant");
+            check(quadro->name == "Quadro GV100" && quadro->pci_subsystem_id == 0 &&
+                      bare->pci_subsystem_id == 0,
+                  "--plan-device 'Quadro GV100' / 0x1DBA: the product row's board, no subsystem");
+            const DeviceClass ceo_class    = rt::plan_device_class(*ceo);
+            const DeviceClass quadro_class = rt::plan_device_class(*quadro);
+            check(ceo_class.pci_subsystem_id == 0x10DE12EB && quadro_class.pci_subsystem_id == 0,
+                  "plan_device_class carries the named variant's subsystem");
+            check(ceo_class.facts.reference_clock_khz == 1455000 &&
+                      ceo_class.facts.source == FactSource::Verified &&
+                      quadro_class.facts.reference_clock_khz == 1627000,
+                  "the variant's machine facts are its own board's (CEO 1455 MHz, Quadro 1627 "
+                  "MHz): " +
+                      std::to_string(ceo_class.facts.reference_clock_khz) + " / " +
+                      std::to_string(quadro_class.facts.reference_clock_khz));
+        }
+        std::string refused;
+        check(!pr::plan_device_of_board("0x1DBA:0x10DE0001", &refused) &&
+                  refused.find("TITAN V CEO Edition") != std::string::npos,
+              "--plan-device 0x1DBA:0x10DE0001: refused, naming the registered variants (" +
+                  refused + ")");
+        check(!pr::plan_device_of_board("0x2684:0x10DE0001", &refused),
+              "--plan-device: a subsystem of a product that lists none is refused");
+    }
+
     // #829: the dry run of a named board sizes its rungs under the board's class. A probe in place
     // of the workspace query sees the class every call of it runs under: the board's
     // plan_device_class, on every board; and none is left in place after the dry run.
