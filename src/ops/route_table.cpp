@@ -729,8 +729,8 @@ void ensure_default_locked(DeviceTables& d) {
                 // The analyzer's bands for this board class, where tools/route_pick wrote them
                 // (routes/pick/<class>.json). Past kCarryDistance they answer ahead of the nearest
                 // table (whose answers would all be Transferred or Borrowed); within it, only the
-                // table's gaps: a problem it holds no entry of its own for (#1068,
-                // table_route_answer).
+                // table's gaps: a problem it holds no entry of its own for, one borrowed by
+                // fill_from, or a width its own entry has no band at (#1068, table_route_answer).
                 const auto pick = path_from_utf8(dir) / "pick" /
                                   path_from_utf8(route_table_file_name(route_gpu_class()));
                 std::error_code missing;

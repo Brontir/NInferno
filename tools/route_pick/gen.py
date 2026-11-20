@@ -24,7 +24,8 @@ pick.pick() at T 9..16 gives one route a width, written as runs of equal routes.
 A tabled board (a table's gpu.pci_id row of an architecture pick.py prices, tabled_classes()) gets a file of its
 table's gaps: the same problems, the add epilogue included, at the widths its own table does not answer. Past kCarryDistance an
 untabled class's bands answer ahead of the nearest table; within it the loader takes a band only in a gap of the
-table (no entry of its own, or one borrowed by fill_from), so a measured entry stands above a prediction. The add
+table (no entry of its own, one borrowed by fill_from, or a width its own entry has no band at), so a measured band
+stands above a prediction. The add
 bands lost on the 4060 Ti where they replaced measured entries (above); in the gaps alone they were scored by leaving
 each tabled card's table out on full route_tune grids (#1068 gate step 1: no worse in median and p90 on GA10x, Ada,
 GB20x) and held end to end within the A/A band (4060 Ti, 5070 Ti, 4090).
