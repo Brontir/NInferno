@@ -106,11 +106,12 @@ GpuFactsRow parse_row(const Json& j) {
     for (const Json& s : j.value("subsystems", Json::array())) {
         GpuFactsSubsystem b;
         const std::string id = s.at("id").get<std::string>();
-        std::size_t used     = 0;
-        if (id.size() != 10 || id.rfind("0x", 0) != 0 ||
-            (b.id = static_cast<std::uint32_t>(std::stoul(id.substr(2), &used, 16)), used != 8) ||
-            b.id == 0) {
-            throw std::runtime_error("subsystem id \"" + id + "\" is not 0x and eight hex digits");
+        const bool hex       = id.size() == 10 && id.rfind("0x", 0) == 0 &&
+                         id.find_first_not_of("0123456789abcdefABCDEF", 2) == std::string::npos;
+        if (hex) b.id = static_cast<std::uint32_t>(std::stoul(id.substr(2), nullptr, 16));
+        if (!hex || (b.id >> 16) == 0) {
+            throw std::runtime_error("subsystem id \"" + id +
+                                     "\" is not 0x and eight hex digits with a vendor");
         }
         b.name      = s.at("name").get<std::string>();
         b.boost_mhz = s.value("boost_mhz", r.boost_mhz);
@@ -128,6 +129,11 @@ GpuFactsRow parse_row(const Json& j) {
         if (b.name.empty() || b.boost_mhz <= 0 || b.bus_bits <= 0 || b.bus_bits % 32 != 0 ||
             b.gbps <= 0 || b.tdp_w <= 0 || b.vram_gib <= 0 || b.sources.empty()) {
             throw std::runtime_error("subsystem " + id + ": a quantity is missing or out of range");
+        }
+        if (b.boost_mhz == r.boost_mhz && b.bus_bits == r.bus_bits && b.gbps == r.gbps &&
+            b.tdp_w == r.tdp_w && b.vram_gib == r.vram_gib) {
+            throw std::runtime_error("subsystem " + id +
+                                     ": a board that does not differ from the row");
         }
         for (const GpuFactsSubsystem& other : r.subsystems) {
             if (other.id == b.id) throw std::runtime_error("subsystem " + id + " appears twice");

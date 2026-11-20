@@ -39,7 +39,8 @@ bool same(const MachineFacts& a, const MachineFacts& b) {
            a.reference_clock_khz == b.reference_clock_khz &&
            a.memory_bus_bits == b.memory_bus_bits && a.memory_clock_khz == b.memory_clock_khz &&
            a.tdp_w == b.tdp_w && a.vram_gib == b.vram_gib && a.pcie_gen == b.pcie_gen &&
-           a.mma_slow == b.mma_slow && a.share == b.share && a.l2_mib == b.l2_mib;
+           a.mma_slow == b.mma_slow && a.share == b.share && a.l2_mib == b.l2_mib &&
+           a.subsystem_unknown == b.subsystem_unknown;
 }
 
 void table_well_formed() {
@@ -545,6 +546,15 @@ void malformed_tables_refused() {
     std::string short_id = ceo;
     short_id.replace(short_id.find("0x10DE12EB"), 10, "0x12EB");
     refused(with_subsystems(short_id), "a subsystem id of four digits");
+    std::string prefixed = ceo;
+    prefixed.replace(prefixed.find("0x10DE12EB"), 10, "0x0x12EB12");
+    refused(with_subsystems(prefixed), "a subsystem id with a second 0x");
+    std::string no_vendor = ceo;
+    no_vendor.replace(no_vendor.find("0x10DE12EB"), 10, "0x000012EB");
+    refused(with_subsystems(no_vendor), "a subsystem id without a vendor");
+    std::string same_board = ceo;
+    same_board.replace(same_board.find("1455"), 4, "2520");
+    refused(with_subsystems(same_board), "a subsystem board that does not differ from the row");
     std::string extra = ceo;
     extra.replace(extra.find("\"boost_mhz\""), 0, "\"sms\":40,");
     refused(with_subsystems(extra), "a subsystem key machine_facts does not read");
