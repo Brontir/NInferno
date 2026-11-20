@@ -709,8 +709,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "RTX 3090, RTX 3060, RTX 4060 Ti, RTX 4070 Ti, RTX 4090",
      "T = 9..16 at most one CTA per SM, a build without the cluster schedules: the decode split's "
      "sixteen-warp CTA runs one wave only while token columns x CTAs fit the CTAs an SM holds of "
-     "it (the occupancy calculator on its committed registers: two at <= 64, one above; on sm_70 "
-     "every row is above, so there Q8_0 moves too, structural, not measured yet); past it "
+     "it (the occupancy calculator on its committed registers: two at <= 64, one above; not on a "
+     "board without tensor mma.sync, whose calls run Volta's own kernels); past it "
      "n1.w1x8 (#1117, route_tune of every route: K-quants 14-23 % behind the best with w1x16 "
      "where 2 x CTAs > SMs; the rule frozen before the RTX 4090 and 4060 Ti K 8192 grids, right "
      "in 12 of 12 and 9 of 9 cells)",

@@ -1186,9 +1186,12 @@ int sixteen_warp_resident(const Problem& problem) {
 
 // What the T 9-16 split rules read (#1117): the sixteen-warp CTAs an SM holds, for a store or add
 // call. A SwiGLU call is left as before (0: no fact): its grid is half its rows' (gate and up rows
-// in one CTA) where the rules count n / 16 CTAs, and none of its calls was measured.
+// in one CTA) where the rules count n / 16 CTAs, and none of its calls was measured. So is a board
+// without tensor mma.sync (Volta): its calls run Volta's own HMMA / GEMV kernels whatever the
+// register-MMA schedule (Quadro GV100, T 9-16: every rmma route of a call within 0.1 %).
 int rule_resident(const Problem& problem) {
-    return problem.epilogue == Epilogue::SwiGlu ? 0 : sixteen_warp_resident(problem);
+    if (problem.epilogue == Epilogue::SwiGlu || !current_features().mma_tensor) return 0;
+    return sixteen_warp_resident(problem);
 }
 
 } // namespace
@@ -1250,7 +1253,7 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                 // That sixteen-warp CTA meets the same count (#1117): 512 threads hold two CTAs an
                 // SM at up to 64 registers (store / add: Q8_0 45-58 and BF16 46-59 from sm_75, FP8
                 // 48-61 from sm_80, the groupwise and small-group U4 decoders) and one above (Q4_0
-                // 78-85, the K-quants 110-128, every SwiGLU row, every sm_70 row); past the CTAs an
+                // 78-85, the K-quants 110-128, every SwiGLU row); past the CTAs an
                 // SM holds of it, columns x CTAs run a second wave, and the eight-warp CTA (two a
                 // SM, one wave) is the split.
                 // T 9-16, every route timed, master's w1x16 against the best: K-quants 14-23 % on
