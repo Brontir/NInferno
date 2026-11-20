@@ -290,9 +290,6 @@ DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int 
     out["persisting_l2_max_bytes"] = number(static_cast<std::uint64_t>(d.persisting_l2_max_bytes));
     out["global_bytes"]            = number(static_cast<std::uint64_t>(d.global_bytes));
     out["pci_device_id"]           = number(d.pci_device_id);
-    // A registered variant (#903), only where one is named or read: a board without one keeps
-    // the fingerprint it had.
-    if (d.pci_subsystem_id != 0) { out["pci_subsystem_id"] = number(d.pci_subsystem_id); }
     out["chip"]                    = d.chip;
     out["id"]                      = d.id();
     out["max_threads_per_sm"]      = number(d.max_threads_per_sm);

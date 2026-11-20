@@ -1875,28 +1875,44 @@ std::optional<runtime::PlanDeviceFacts> plan_device_of_board(std::string_view sp
         // "0x1DBA" names the product's board, "0x1DBA:0x10DE12EB" a registered variant of it.
         const auto colon     = q.find(':');
         const std::string pd = q.substr(0, colon);
-        char* end            = nullptr;
-        const auto id        = std::strtoul(pd.c_str() + 2, &end, 16);
-        if (end != nullptr && *end == '\0') {
-            row = find_gpu_facts(static_cast<std::uint32_t>(id));
-        }
+        // Hex digits only, at most `digits` of them: strtoul alone takes a sign, spaces and a
+        // second 0x, and a cast to 32 bits wraps a longer id onto another board's.
+        const auto hex_of = [](const std::string& s,
+                               std::size_t digits) -> std::optional<std::uint32_t> {
+            if (s.empty() || s.size() > digits || !std::all_of(s.begin(), s.end(), [](char ch) {
+                    return std::isxdigit(static_cast<unsigned char>(ch)) != 0;
+                })) {
+                return std::nullopt;
+            }
+            return static_cast<std::uint32_t>(std::stoul(s, nullptr, 16));
+        };
+        if (const auto id = hex_of(pd.substr(2), 4)) { row = find_gpu_facts(*id); }
         if (row == nullptr) { return fail("no board with PCI id " + query + " in gpu_facts.json"); }
         if (colon != std::string::npos) {
-            const std::string sub = q.substr(colon + 1);
-            char* sub_end         = nullptr;
-            const auto sid        = starts_with(sub, "0x") && sub.size() > 2
-                                        ? std::strtoul(sub.c_str() + 2, &sub_end, 16)
-                                        : 0UL;
-            const bool parsed     = sid != 0 && sub_end != nullptr && *sub_end == '\0';
+            // The subsystem's vendor and device: 0x10DE12EB, 10DE12EB, or lspci's 10de:12eb.
+            std::string sub = q.substr(colon + 1);
+            if (starts_with(sub, "0x")) { sub = sub.substr(2); }
+            if (sub.size() == 9 && sub[4] == ':') { sub.erase(4, 1); }
+            const auto sid = hex_of(sub, 8);
+            if (!sid) {
+                return fail("'" + query +
+                            "': no subsystem id after ':' (write 0xDEVICE:0xVVVVDDDD, "
+                            "the subsystem's vendor and device)");
+            }
             for (const auto& v : row->subsystems) {
-                if (parsed && v.id == sid) { variant = &v; }
+                if (v.id == *sid) { variant = &v; }
             }
             if (variant == nullptr) {
+                static constexpr char kHex[] = "0123456789ABCDEF";
+                std::string spelled          = "0x";
+                for (int shift = 28; shift >= 0; shift -= 4) {
+                    spelled += kHex[(*sid >> shift) & 0xF];
+                }
                 std::string listed;
                 for (const auto& v : row->subsystems) {
                     listed += (listed.empty() ? "" : ", ") + v.name;
                 }
-                return fail("no registered variant " + sub + " of " + row->name +
+                return fail("no registered variant " + spelled + " of " + row->name +
                             (listed.empty() ? " (it lists none)" : " (listed: " + listed + ")"));
             }
         }
@@ -1948,16 +1964,21 @@ std::optional<runtime::PlanDeviceFacts> plan_device_of_board(std::string_view sp
             if (space == std::string::npos) { break; }
             begin = space + 1;
         }
+        // A registered variant's name too (#903).
         std::vector<std::string> close;
-        for (const auto& r : table) {
-            const auto name = normalized_board(r.name);
+        const auto propose = [&](const std::string& board) {
+            const auto name = normalized_board(board);
             const bool near = std::any_of(words.begin(), words.end(), [&](const std::string& w) {
                 return name.find(w) != std::string::npos;
             });
-            if (near && std::find(close.begin(), close.end(), r.name) == close.end()) {
-                close.push_back(r.name);
-                if (close.size() == 8) { break; }
+            if (near && close.size() < 8 &&
+                std::find(close.begin(), close.end(), board) == close.end()) {
+                close.push_back(board);
             }
+        };
+        for (const auto& r : table) {
+            propose(r.name);
+            for (const auto& v : r.subsystems) { propose(v.name); }
         }
         std::string message = "no board named '" + query + "' in gpu_facts.json";
         for (std::size_t i = 0; i < close.size(); ++i) {

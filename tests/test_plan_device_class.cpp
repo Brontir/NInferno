@@ -821,6 +821,22 @@ int main() {
                   refused + ")");
         check(!pr::plan_device_of_board("0x2684:0x10DE0001", &refused),
               "--plan-device: a subsystem of a product that lists none is refused");
+        // The other spellings of the id, a part of the variant's name, its name in lower case.
+        for (const char* spelled :
+             {"0x1DBA:10DE12EB", "0x1dba:10de:12eb", "CEO Edition", "titan v ceo edition"}) {
+            std::string why;
+            const auto v = pr::plan_device_of_board(spelled, &why);
+            check(v && v->pci_subsystem_id == 0x10DE12EB,
+                  std::string("--plan-device '") + spelled + "': the CEO Edition (" + why + ")");
+        }
+        check(!pr::plan_device_of_board("0x1DBA:", &refused) &&
+                  refused.find("no subsystem id after ':'") != std::string::npos,
+              "--plan-device 0x1DBA: (no subsystem): refused as such (" + refused + ")");
+        check(!pr::plan_device_of_board("0x100001DBA", &refused),
+              "--plan-device 0x100001DBA: a PCI id past 16 bits is refused, not wrapped");
+        check(!pr::plan_device_of_board("CEO Editon", &refused) &&
+                  refused.find("TITAN V CEO Edition") != std::string::npos,
+              "--plan-device 'CEO Editon': the close names hold the variant (" + refused + ")");
     }
 
     // #829: the dry run of a named board sizes its rungs under the board's class. A probe in place
