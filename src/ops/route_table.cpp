@@ -479,9 +479,8 @@ void read_predicted(const std::string& path, Table& table) {
 // A ninferno-moe-pick/1 file (tools/bench/moe_expert_law.py pick, #987) into
 // `table.moe_predicted`: its class must be this device's own and its gpu.pci_id a board whose facts
 // are this one's (board distance 0: another board of the class reads none of it, the law priced
-// that board's probe and facts), each
-// entry a generic-MoE layer with decode bands only (T 1-8, no prefill plan). A refused file is an
-// error: it is this device's own file.
+// that board's probe and facts), each entry a generic-MoE layer with decode bands only (T 1-8, no
+// prefill plan). A refused file is an error: it is this device's own file.
 void read_moe_predicted(const std::string& path, Table& table) {
     std::ifstream in(path_from_utf8(path), std::ios::binary);
     if (!in) throw std::runtime_error("moe pick: cannot open " + path);

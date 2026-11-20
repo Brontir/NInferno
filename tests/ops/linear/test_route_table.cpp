@@ -407,6 +407,12 @@ int shipped_moe_picks() {
                      }));
         refused_with("with an unknown bank in frag",
                      changed([](Json&, Json& e) { e["frag"] = Json::array({"router"}); }));
+        // Fragment order named on a bank whose format has none (Q5_K): never asked, refused.
+        refused_with("with frag on a format without fragment order", changed([](Json&, Json& e) {
+                         e["format"]      = "q5k";
+                         e["down_format"] = "q5k";
+                         e["frag"]        = Json::array({"gate_up"});
+                     }));
         // Priced for another board of the class (its gpu.pci_id): not read, and the status says so.
         const auto other = first_id == 0x2204U ? std::string("0x2206") : std::string("0x2204");
         install(changed([&](Json& root, Json&) { root["gpu"]["pci_id"] = other; }));
