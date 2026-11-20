@@ -278,8 +278,7 @@ q4k p1 store 4096x4096 speed T=1 r8.w4r1 ws=0
 q4k p1 store 4096x4096 speed T=2 ggml_vec ws=9216
 q4k p1 store 4096x4096 speed T=3 ggml_vec ws=13824
 q4k p1 store 4096x4096 speed T=4..8 rmma.m1.n1.w1x4 ws=0
-q4k p1 store 4096x4096 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-q4k p1 store 4096x4096 speed T=17..64 ggml_mmq ws=0
+q4k p1 store 4096x4096 speed T=9..64 ggml_mmq ws=0
 q4k p1 store 4096x4096 speed T=96 w4a8ws.128x64.p4 ws=491520
 q4k p1 store 4096x4096 speed T=128 w4a8ws.128x64.p4 ws=655360
 q4k p1 store 4096x4096 speed T=192 ggml_mmq ws=0
@@ -294,8 +293,7 @@ q4k p1 add 4096x4096 speed T=1 r8.w4r1 ws=0
 q4k p1 add 4096x4096 speed T=2 ggml_vec ws=9216
 q4k p1 add 4096x4096 speed T=3 ggml_vec ws=13824
 q4k p1 add 4096x4096 speed T=4..8 rmma.m1.n1.w1x4 ws=0
-q4k p1 add 4096x4096 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-q4k p1 add 4096x4096 speed T=17..64 ggml_mmq ws=0
+q4k p1 add 4096x4096 speed T=9..64 ggml_mmq ws=0
 q4k p1 add 4096x4096 speed T=96 w4a8ws.128x64.p4 ws=491520
 q4k p1 add 4096x4096 speed T=128 w4a8ws.128x64.p4 ws=655360
 q4k p1 add 4096x4096 speed T=192 ggml_mmq ws=0
