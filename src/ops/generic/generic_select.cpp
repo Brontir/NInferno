@@ -1122,6 +1122,26 @@ namespace {
 // count in every committed snapshot (Q4_K latency 121 registers against 119, Q6_K wide on sm_86
 // 128 against 122: one 512-thread CTA either way). 0 where a fact is missing (a format without a
 // register-MMA launch, no snapshot for the build, no device): the caller keeps its pick.
+// The 512-thread CTAs an SM holds of a kernel of `registers` a thread and `shared` static bytes,
+// counted from the board's own limits: its threads, its register file in the 256-register warp
+// allocation unit, and its shared memory with the per-CTA reservation (a launch without dynamic
+// shared memory, as the split's). Not through the CUDA occupancy calculator: the cuda_occupancy.h
+// of an older toolkit refuses an architecture it predates (CUDA 12.8, the CI host jobs': sm_103),
+// and the rule must answer alike on every build. 0 where a limit is unknown.
+int sixteen_warp_ctas(const DeviceClass& d, int registers, std::size_t shared) {
+    constexpr int kThreads = 16 * 32;
+    if (registers <= 0 || d.max_threads_per_sm <= 0 || d.registers_per_sm <= 0) return 0;
+    const int warp_registers = (registers * 32 + 255) / 256 * 256;
+    int ctas                 = std::min(d.max_threads_per_sm / kThreads,
+                                        d.registers_per_sm / warp_registers / (kThreads / 32));
+    if (shared > 0) {
+        if (d.smem_per_sm == 0) return 0;
+        const std::size_t per_cta = shared + reserved_shared_bytes_per_cta(d.major);
+        ctas                      = std::min<int>(ctas, static_cast<int>(d.smem_per_sm / per_cta));
+    }
+    return std::max(ctas, 0);
+}
+
 int sixteen_warp_resident_uncached(const Problem& problem) {
     Weight weight;
     weight.qtype              = problem.qtype;
@@ -1131,8 +1151,7 @@ int sixteen_warp_resident_uncached(const Problem& problem) {
     const auto facts = kernel_facts::rmma_facts(
         *arch, {decoder.name, 1, 16, 1, 1, 1, static_cast<int>(problem.epilogue), false, 0});
     if (!facts) return 0;
-    return resident_ctas_per_sm(device_class(),
-                                KernelShape{facts->registers, facts->static_shared_bytes, 16 * 32});
+    return sixteen_warp_ctas(device_class(), facts->registers, facts->static_shared_bytes);
 }
 
 // sixteen_warp_resident_uncached once per device (or substituted board), format, epilogue and
