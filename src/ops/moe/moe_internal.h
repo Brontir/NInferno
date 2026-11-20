@@ -480,6 +480,7 @@ enum class MoeAuthority {
     SpeedW4a8,       // a wide call outside the prefill profile on the grouped W4A8
     SpeedSchedule,   // T >= 64 outside the prefill band, the grouped W4A8 refused: plan_for's wide
                      // one
+    MoePick,         // decode width, the expert-call law's predicted plan (routes/moe_pick)
     DecodeR8,        // decode width, the class's default A8 route
     DecodeStreaming, // decode width, the streaming register-MMA schedule
 };
@@ -491,7 +492,15 @@ enum class MoeAuthority {
 // kCarryDistance), Transferred (a farther board's), Borrowed (an entry lent by another table).
 // Local to moe until #614 lands; then this becomes that type.
 struct Evidence {
-    enum class Kind : std::uint8_t { Pin, Measured, Ranker, Carried, Transferred, Borrowed };
+    enum class Kind : std::uint8_t {
+        Pin,
+        Measured,
+        Ranker,
+        Carried,
+        Transferred,
+        Borrowed,
+        Predicted
+    };
     enum class Ranker : std::uint8_t { None, Cost, Rule };
     Kind kind     = Kind::Ranker;
     Ranker ranker = Ranker::Rule; // Kind::Ranker: which ranker; None otherwise
@@ -557,6 +566,11 @@ void clear_tuned_plans();
 [[nodiscard]] std::optional<MoePlan> table_plan(const MoeRouteKey& key, std::int32_t tokens,
                                                 bool prefill);
 [[nodiscard]] MoeRouteKey route_key(const MoeWeights& weights, const MoeConfig& config);
+// The expert-call law's plan for `key` at a decode width (routes/moe_pick/<class>.json, #987),
+// for banks of the layouts it priced (`frag_*`: the bank is in ggml_frag_v1): nullopt where no pick
+// file of this board holds the layer, its layouts or the width, and under the Legacy policy.
+[[nodiscard]] std::optional<MoePlan> predicted_plan(const MoeRouteKey& key, std::int32_t tokens,
+                                                    bool frag_gate_up, bool frag_down);
 // The provenance of the active table's entry for `key` (nullopt: none).
 [[nodiscard]] std::optional<MoeTableOrigin> table_origin(const MoeRouteKey& key);
 

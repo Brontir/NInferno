@@ -1035,6 +1035,8 @@ const char* authority_name(MoeAuthority authority) {
         return "speed-w4a8";
     case MoeAuthority::SpeedSchedule:
         return "speed-schedule";
+    case MoeAuthority::MoePick:
+        return "moe-pick";
     case MoeAuthority::DecodeR8:
         return "decode-r8";
     case MoeAuthority::DecodeStreaming:
@@ -1229,6 +1231,21 @@ std::optional<MoeAnswer> table_authority(const MoeCall& c) {
     return answer(*tuned, MoeAuthority::TableAsMeasured);
 }
 
+// The expert-call law's plan (routes/moe_pick/<class>.json, tools/bench/moe_expert_law.py pick,
+// #987): a decode width of a layer the board's sealed grid covered, priced from the kernel facts
+// and this board's warp_inflight probe, nothing measured. Below the route table (a measured or
+// carried entry of the layer answers first), above the heuristics; its R8 stages only where this
+// layer admits them (abstains otherwise, as the table's do not: the law priced the plan whole).
+std::optional<MoeAnswer> moe_pick_authority(const MoeCall& c) {
+    if (c.prefill_band()) { return std::nullopt; }
+    const auto plan = predicted_plan(route_key(c.weights, c.config), c.tokens,
+                                     is_frag(c.weights.gate_up), is_frag(c.weights.down));
+    if (!plan || !r8_stages_admitted(c.weights, *plan, c.tokens)) { return std::nullopt; }
+    return MoeAnswer{
+        *plan, MoeAuthority::MoePick,
+        Evidence{Evidence::Kind::Predicted, Evidence::Ranker::None, "moe-pick", {}, 0}};
+}
+
 // Volta from T = 17, under a band of no route table: its own tensor cores (the int8 tier and the
 // register MMA run emulated there).
 std::optional<MoeAnswer> volta_authority(const MoeCall& c) {
@@ -1276,6 +1293,7 @@ constexpr NamedMoeAuthority kAuthorities[] = {
     {"tuner", tuner_authority},
     {"invariant-profile", invariant_authority},
     {"route-table", table_authority},
+    {"moe-pick", moe_pick_authority},
     {"volta-hmma", volta_authority},
     {"prefill-w4a8", prefill_w4a8_authority},
     {"prefill-schedule", prefill_schedule_authority},
@@ -1324,6 +1342,8 @@ const char* evidence_kind_name(Evidence::Kind k) {
         return "transferred";
     case Evidence::Kind::Borrowed:
         return "borrowed";
+    case Evidence::Kind::Predicted:
+        return "predicted";
     }
     return "ranker";
 }

@@ -24,6 +24,7 @@
 #include <fstream>
 #include <iterator>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
@@ -238,6 +239,183 @@ int shipped_picks() {
     ninferno::ops::set_route_table_dir("");
     std::cout << files << " shipped predicted files; " << (failures == 0 ? "OK" : "FAIL")
               << " route_table shipped picks\n";
+    return failures == 0 ? 0 : 1;
+}
+
+// Every shipped routes/moe_pick/<class>.json (tools/bench/moe_expert_law.py pick, #987), read on a
+// substitute of the board its gpu.pci_id names (no GPU): the default lookup reads it as the class's
+// predicted MoE plans, and each entry answers each of its widths with its band's plan, for the
+// banks' layouts it was priced for only, and nothing under the Legacy policy. A file the loader
+// refuses (another class's, a band past T 8, a prefill plan, an unknown bank) stops the lookup
+// naming the file; a file priced for another board of the class is not read.
+int shipped_moe_picks() {
+    namespace board_registry = ninferno::board_registry;
+    namespace moe            = ninferno::ops::detail::moe;
+    using Json               = nlohmann::json;
+    int failures             = 0;
+    ninferno::ops::set_route_table_dir("");
+    const auto routes       = ninferno::path_from_utf8(ninferno::ops::route_table_dir());
+    const auto dir          = routes / "moe_pick";
+    const auto scoped_board = [](std::uint32_t id) {
+        const board_registry::BoardRow* row = board_registry::find(id);
+        ninferno::DeviceClass d =
+            ninferno::synthetic_device_class(id, row->major, row->minor, row->sms,
+                                             static_cast<std::size_t>(row->l2_mib * (1 << 20)), 0);
+        d.facts = ninferno::machine_facts_of(d);
+        return d;
+    };
+    int files = 0, plans = 0;
+    std::string first_name, first_text;
+    std::uint32_t first_id = 0;
+    for (const auto& f : std::filesystem::directory_iterator(dir)) {
+        if (f.path().extension() != ".json") continue;
+        ++files;
+        std::ifstream in(f.path());
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        const std::string name = f.path().filename().string();
+        Json root;
+        try {
+            root = Json::parse(text);
+        } catch (const std::exception& e) {
+            failures += check(false, name + " parses: " + e.what());
+            continue;
+        }
+        const auto id = static_cast<std::uint32_t>(
+            std::stoul(root["gpu"]["pci_id"].get<std::string>(), nullptr, 16));
+        if (board_registry::find(id) == nullptr) {
+            failures += check(false, name + ": its pci_id is a registry id");
+            continue;
+        }
+        if (first_name.empty()) {
+            first_name = name;
+            first_text = text;
+            first_id   = id;
+        }
+        const ninferno::ScopedDeviceClass scoped(scoped_board(id));
+        ninferno::ops::set_route_table_dir("");
+        try {
+            const auto s = ninferno::ops::route_table_status();
+            std::cout << name << " on " << ninferno::device_class().id() << ": " << s.message
+                      << '\n';
+            failures += check(
+                s.loaded && ninferno::path_from_utf8(s.moe_predicted_path).filename() == name &&
+                    s.moe_predicted_layers == root["moe"].size() && !s.moe_predicted_sha256.empty(),
+                name + " is read as " + ninferno::device_class().id() +
+                    "'s predicted MoE plans: " + s.message);
+            for (const Json& e : root["moe"]) {
+                const auto q = ninferno::find_route(e["format"].get<std::string>());
+                const auto qd =
+                    ninferno::find_route(e.value("down_format", e["format"].get<std::string>()));
+                bool frag_gate_up = false, frag_down = false;
+                for (const Json& b : e.value("frag", Json::array())) {
+                    frag_gate_up = frag_gate_up || b == "gate_up";
+                    frag_down    = frag_down || b == "down";
+                }
+                if (!q || !qd) {
+                    failures += check(false, name + ": formats " + e.dump());
+                    continue;
+                }
+                const moe::MoeRouteKey key{*q,
+                                           *qd,
+                                           e["experts"].get<std::int32_t>(),
+                                           e["top_k"].get<std::int32_t>(),
+                                           e["hidden"].get<std::int32_t>(),
+                                           e["inter"].get<std::int32_t>()};
+                for (const Json& b : e["bands"]) {
+                    const auto want = moe::parse_plan(b[2].get<std::string>(), key.hidden);
+                    for (std::int32_t t = b[0].get<std::int32_t>(); t <= b[1].get<std::int32_t>();
+                         ++t) {
+                        ++plans;
+                        const auto got       = moe::predicted_plan(key, t, frag_gate_up, frag_down);
+                        const std::string at = name + " " + e.dump() + " T " + std::to_string(t);
+                        failures +=
+                            check(got && want && moe::plan_name(*got) == moe::plan_name(*want),
+                                  at + ": answers its band's plan");
+                        failures +=
+                            check(!moe::predicted_plan(key, t, !frag_gate_up, frag_down) &&
+                                      !moe::predicted_plan(key, t, frag_gate_up, !frag_down),
+                                  at + ": a bank of another layout reads no plan");
+                        const ninferno::ops::ScopedRoutePolicy legacy(
+                            ninferno::RoutePolicy::Legacy);
+                        failures +=
+                            check(!moe::predicted_plan(key, t, frag_gate_up, frag_down),
+                                  at + ": under --route-policy legacy no plan is predicted");
+                    }
+                }
+            }
+        } catch (const std::exception& error) {
+            failures += check(false, name + " refused: " + error.what());
+        }
+    }
+    failures += check(files > 0, "shipped predicted MoE plans found in " + utf8_path(dir));
+    if (!first_name.empty()) {
+        const ninferno::ScopedDeviceClass scoped(scoped_board(first_id));
+        const auto tmp =
+            std::filesystem::temp_directory_path() /
+            ("ninferno_moe_pick_refusals_" +
+             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+
+        struct Removed {
+            std::filesystem::path path;
+
+            ~Removed() {
+                std::error_code ignored;
+                std::filesystem::remove_all(path, ignored);
+            }
+        } const removed{tmp};
+
+        // The shipped tables, copied, beside a changed copy of the first file.
+        const auto install = [&](const std::string& text) {
+            std::filesystem::remove_all(tmp);
+            std::filesystem::create_directories(tmp / "moe_pick");
+            for (const auto& t : std::filesystem::directory_iterator(routes)) {
+                if (t.path().extension() == ".json") {
+                    std::filesystem::copy_file(t.path(), tmp / t.path().filename());
+                }
+            }
+            std::ofstream(tmp / "moe_pick" / first_name) << text;
+            ninferno::ops::set_route_table_dir(utf8_path(tmp));
+        };
+        const auto changed = [&](const std::string& from, const std::string& to) {
+            return std::regex_replace(first_text, std::regex(from), to,
+                                      std::regex_constants::format_first_only);
+        };
+        const auto refused_with = [&](const std::string& what, const std::string& text) {
+            install(text);
+            bool refused = false;
+            try {
+                (void)ninferno::ops::route_table_status();
+            } catch (const std::runtime_error& e) {
+                refused = std::string(e.what()).find(first_name) != std::string::npos;
+            }
+            failures += check(refused, first_name + " " + what + " is refused, naming the file");
+        };
+        refused_with("as another class's file",
+                     changed(R"re("class": "[^"]+")re", R"re("class": "zz999:1sm")re"));
+        refused_with("with a band to T 9",
+                     changed(R"re("bands": \[\[([0-9]+), [0-9]+,)re", R"re("bands": [[$1, 9,)re"));
+        refused_with("with a prefill plan",
+                     changed(R"re("bands": )re",
+                             R"re("prefill": "rmma.m1.n8.w4x1|rmma.m1.n8.w4x1", "bands": )re"));
+        refused_with("with an unknown bank in frag",
+                     changed(R"re("bands": )re", R"re("frag": ["router"], "bands": )re"));
+        // Priced for another board of the class (its gpu.pci_id): not read, and the status says so.
+        const auto other = first_id == 0x2204U ? std::string("0x2206") : std::string("0x2204");
+        install(changed(R"re("pci_id": "0x[0-9a-fA-F]{4}")re", "\"pci_id\": \"" + other + "\""));
+        try {
+            const auto s = ninferno::ops::route_table_status();
+            failures +=
+                check(s.moe_predicted_path.empty() && s.moe_predicted_layers == 0 &&
+                          s.moe_predicted_skipped.find("another board") != std::string::npos,
+                      first_name + " priced for " + other + " is not read: " + s.message);
+        } catch (const std::exception& error) {
+            failures += check(false, first_name + " for another board refused: " + error.what());
+        }
+    }
+    ninferno::ops::set_route_table_dir("");
+    std::cout << files << " shipped predicted MoE files, " << plans << " widths; "
+              << (failures == 0 ? "OK" : "FAIL") << " route_table shipped moe picks\n";
     return failures == 0 ? 0 : 1;
 }
 
@@ -470,6 +648,7 @@ int shipped_boards() {
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--shipped-boards") { return shipped_boards(); }
     if (argc == 2 && std::string(argv[1]) == "--shipped-picks") { return shipped_picks(); }
+    if (argc == 2 && std::string(argv[1]) == "--shipped-moe-picks") { return shipped_moe_picks(); }
     if (ninferno::test::cuda_unavailable()) {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;

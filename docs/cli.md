@@ -125,7 +125,8 @@ choice. `ninferno`, `ninferno-serve` and the serve bench tools (`tools/bench/run
 `--route-policy evidence|legacy` is an A/B setting of the same kind: `evidence` (the default, the
 release's selection since #614 F2) lets the cost model or the rules decide where the route table's
 entry for the call was measured on another board, and `legacy` keeps the first answering authority
-(the selection before F2, without the predicted bands of `routes/pick`). `ninferno`, `ninferno-serve`,
+(the selection before F2, without the predicted bands of `routes/pick` and the predicted MoE plans
+of `routes/moe_pick`). `ninferno`, `ninferno-serve`,
 `ninferno-perplexity` and `ninferno-serve route-tune` take it:
 [route policy](maintainer/environment.md#route-policy).
 

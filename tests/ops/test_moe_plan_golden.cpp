@@ -273,6 +273,8 @@ std::string_view source_of(moe::MoeAuthority a) {
     case A::TableClassA8:
     case A::TableR8Refused:
         return "route-table";
+    case A::MoePick:
+        return "moe-pick";
     case A::VoltaHmma:
         return "volta-hmma";
     case A::PrefillW4a8:
@@ -341,6 +343,8 @@ bool evidence_fits(const moe::MoePlanQuery& q, const ops::MoeWeights& weights,
         return table_evidence_fits(q, weights, config);
     case moe::MoeAuthority::DecodeR8:
         return same_provenance(e.kind, e.donor, e.distance, a8);
+    case moe::MoeAuthority::MoePick:
+        return e.kind == K::Predicted && e.donor.empty();
     default:
         return e.kind == K::Ranker && e.donor.empty();
     }

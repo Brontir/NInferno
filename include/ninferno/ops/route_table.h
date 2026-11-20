@@ -74,6 +74,15 @@ struct RouteTableStatus {
     // A pick file of this class read for another board (its gpu.pci_id): not read, and why.
     std::string predicted_skipped;
     std::string predicted_sha256;
+    // The expert-call law's MoE picks (routes/moe_pick/<class>.json, written by
+    // tools/bench/moe_expert_law.py pick, #987): decode widths T 1-8 of the layers the board's
+    // sealed grids covered, priced for that very board (gpu.pci_id), under RoutePolicy::Evidence;
+    // their answers are Predicted and stand below the table's own MoE entries. Empty path: none.
+    std::size_t moe_predicted_layers = 0;
+    std::string moe_predicted_path; // UTF-8
+    std::string
+        moe_predicted_skipped; // a file of this class priced for another board: why not read
+    std::string moe_predicted_sha256;
     std::string message;              // why nothing is loaded, or what was loaded
 };
 

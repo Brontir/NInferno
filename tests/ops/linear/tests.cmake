@@ -96,6 +96,10 @@ set_tests_properties(ninferno_route_table_shipped_boards_test PROPERTIES LABELS 
 add_test(NAME ninferno_route_table_shipped_picks_test
   COMMAND ninferno_route_table_test --shipped-picks)
 set_tests_properties(ninferno_route_table_shipped_picks_test PROPERTIES LABELS host)
+# Every shipped routes/moe_pick/<class>.json (#987) read on its board's substitute, no GPU.
+add_test(NAME ninferno_route_table_shipped_moe_picks_test
+  COMMAND ninferno_route_table_test --shipped-moe-picks)
+set_tests_properties(ninferno_route_table_shipped_moe_picks_test PROPERTIES LABELS host)
 
 # The generic projection path: random and awkward shapes in every format, every op and route,
 # against an FP64 reference GEMM, plus the token invariance of the prefill-admissible routes.

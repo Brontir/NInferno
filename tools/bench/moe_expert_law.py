@@ -17,14 +17,18 @@ The trailing c is the fill and drain no bus hides. The counted facts are the ker
 sections (src/ops/generic/data/kernel_facts/sm_<arch>.txt). The grid geometry follows moe.cpp (rows a CTA,
 r8_lanes, jobs as the touched experts at T <= 8).
 
+Version 2 (#987): a warp's registers in 256-register units (defect 5), and the issue bound counts the code outside
+the K loop (the K split's reduction, the epilogue) and the R8 quantizer's loop (defect 7).
 Known defects (#987, DECISIONS 94), all pricing R8 low: the R8 kernel of the mean tokens a job
 (the runtime takes the next power of two at or above T); 32 lanes a row assumed (the loop steps by
 r8_lanes); R8's dynamic shared memory left out of the occupancy; the quantizer's global waits
 counted once, not per iteration. The frozen CSVs record the law with them.
 
     moe_expert_law.py score FACTS GRID_DIR BOARD           the law's pick against a measured moe11 grid
-    moe_expert_law.py predict FACTS BOARD PLANS_CSV E,K,H,F OUT.csv
+    moe_expert_law.py predict FACTS BOARD PLANS_CSV E,K,H,F OUT.csv [GU:DOWN,...]
                                                            every plan's price and the pick, for a sealed grid
+                                                           (format pairs of a mixed layer: q4_k:q6_k)
+    moe_expert_law.py pick [--check]                       write (check) routes/moe_pick/<class>.json
 """
 import collections, csv, json, math, os, statistics as st, sys
 
@@ -53,6 +57,15 @@ BPW = {"q3_k": 3.4375, "q4_k": 4.5, "q5_k": 5.5, "q6_k": 6.5625}
 GEMM_DEC = {"q3_k": "GgmlQ3KDecoder", "q4_k": "GgmlQ45KDecoder<4>", "q5_k": "GgmlQ45KDecoder<5>", "q6_k": "GgmlQ6KDecoder"}
 R8_CODEC = {"q3_k": "W4a8Q3K", "q4_k": "W4a8Q45K<4>", "q5_k": "W4a8Q45K<5>", "q6_k": "W4a8Q6K"}
 R8_PER_LOAD = {"q3_k": 4, "q4_k": 2, "q5_k": 2, "q6_k": 4}
+# The same-format layers a grid and a pick file price by default.
+FORMATS = ("q3_k", "q4_k", "q5_k", "q6_k")
+# "q4_kf": a Q4_K bank in fragment order (ggml_frag_v1), as convert's expert_bank_layout Auto stores Q4_K
+# experts (ninferno_moe_bench --frag 1): its own decoder and R8 codec rows in the snapshot, Q4_K's bytes a
+# weight and loads a lane (moe.cpp r8_lanes reads the format, not the layout).
+BPW["q4_kf"] = BPW["q4_k"]
+GEMM_DEC["q4_kf"] = "GgmlQ4KFragDecoder"
+R8_CODEC["q4_kf"] = "ninferno::ops::detail::moe::W4a8Q4KFrag"
+R8_PER_LOAD["q4_kf"] = R8_PER_LOAD["q4_k"]
 # The candidates are the plans the call may run (moe.cpp r8_admits): an R8 stage only up to the R8 token limit,
 # moe_regime_rules.h's records (the generation's: eight on Ada and consumer Blackwell, four elsewhere; a non-frag
 # Q6_K bank four on every tensor mma.sync build; a Q3_K bank eight on GA10x, ga10x_q3k_r8_wide). The law prices the admitted plans; admission itself is the runtime's.
@@ -68,8 +81,24 @@ def r8_token_limit(board_name, fmt):
     return 8 if GENERATION[board_name] in ("ada", "gb20x") else 4
 
 
-def admitted(board_name, fmt, plan, tokens):
-    return all(not s.startswith("r8") or tokens <= r8_token_limit(board_name, fmt) for s in plan.split("|"))
+def admitted(board_name, fmt, plan, tokens, down_fmt=None):
+    """Whether the plan's R8 stages run at `tokens`: each stage by its own bank's format (gate/up `fmt`, down
+    `down_fmt`, the same where not given: a mixed layer such as Q4_K_M's q4_k gate/up over a q6_k down)."""
+    fmts = (fmt, down_fmt or fmt)
+    return all(not s.startswith("r8") or tokens <= r8_token_limit(board_name, f) for s, f in zip(plan.split("|"), fmts))
+
+
+def price_plans(facts, board, board_name, fmt, down_fmt, T, E, K, H, F, plans):
+    """{plan: predicted s} of every admitted plan the law prices, a layer of gate/up format `fmt` over a down
+    bank of `down_fmt` at T tokens."""
+    jobs = round(E * (1 - (1 - K / E) ** T)); pred = {}
+    for pl in plans:
+        if not admitted(board_name, fmt, pl, T, down_fmt): continue
+        gu, dn = pl.split("|")
+        a, _ = stage_time(facts, board, fmt, gu, 1, T, jobs, H, F, K)
+        b, _ = stage_time(facts, board, down_fmt, dn, 2, T, jobs, H, F, K)
+        if a is not None and b is not None: pred[pl] = a + b
+    return pred
 
 
 def r8_lanes(fmt, k):
@@ -135,7 +164,10 @@ def probe_latency(board_name):
 
 
 def occupancy(regs, smem, threads, max_ctas, max_threads, cc):
-    by_regs = (64 * 1024) // max(1, regs * threads) if regs else max_ctas
+    # A warp's registers are allocated in units of 256 (#987 defect 5; register_mma_occupancy rounds the same way).
+    warps = max(1, threads // 32)
+    per_warp = math.ceil(regs * 32 / 256) * 256 if regs else 0
+    by_regs = (64 * 1024) // (per_warp * warps) if regs else max_ctas
     smem_sm, reserved = smem_facts(cc)
     by_smem = smem_sm // (smem + reserved) if smem else max_ctas
     return max(0, min(max_ctas, by_regs, by_smem, max_threads // threads))
@@ -195,15 +227,20 @@ def stage_time(facts, board, fmt, sched, stage, T, jobs, H, F, K=8):
         pro_iters = math.ceil(NT_OF[0] * k / 32 / threads)
         c += pro_iters * int(f["pro_stall"]) / clock + int(f["pro_glb_waits"]) * lat
     t_chain = waves * c
-    # Issue: every warp instruction of the busiest SM's CTAs over its four schedulers (one a clock each).
-    t_issue = math.ceil(ctas / sms) * warps * iters * int(f["total"]) / (4 * clock)
+    # Issue: every warp instruction of the busiest SM's CTAs over its four schedulers (one a clock each): the K
+    # loop's, the code outside it (index setup, the K split's cross-warp reduction through shared memory, the
+    # epilogue: outside_total) and, for an R8 kernel that quantizes its input, the quantizer's (#987 defect 7).
+    per_warp = iters * int(f["total"]) + int(f.get("outside_total", 0) or 0)
+    if f.get("pro_loops", "0") not in ("0", None):
+        per_warp += math.ceil(NT_OF[0] * k / 32 / threads) * int(f.get("pro_total", 0) or 0)
+    t_issue = math.ceil(ctas / sms) * warps * per_warp / (4 * clock)
     return max(t_dram, t_chain, t_issue) + c, (t_dram, t_chain, waves, conc, res, t_issue)
 
 
 def main():
     global BOARD_NAME
     facts = load_facts(sys.argv[1]); D = sys.argv[2]; board = BOARDS[sys.argv[3]]; BOARD_NAME = sys.argv[3]
-    for fmt in BPW:
+    for fmt in FORMATS:
         meas = collections.defaultdict(list); auto = collections.defaultdict(list); geo = None
         for p in (1, 2, 3):
             for r in csv.DictReader(open(f"{D}/sw_{fmt}_p{p}.csv")):
@@ -238,7 +275,7 @@ def main():
 
 
 
-def predict(facts_path, plans_from, geo, out_path):
+def predict(facts_path, plans_from, geo, out_path, pairs=None):
     """The frozen form: every plan's predicted us and the pick, per format and T, for a board whose grid is
     sealed. The plan list is read from a training grid's sweep (the same 144 plans every board runs)."""
     global BOARD_NAME
@@ -246,28 +283,124 @@ def predict(facts_path, plans_from, geo, out_path):
     plans = sorted({r["plan"] for r in csv.DictReader(open(plans_from)) if r.get("plan")})
     E, K, H, F = geo
     with open(out_path, "w", newline="\n") as out:
-        out.write("board,format,E,K,H,F,T,plan,pred_us,pick\n")
-        for fmt in BPW:
+        out.write("board,format,E,K,H,F,T,plan,pred_us,pick" + (",down_format" if pairs else "") + "\n")
+        for fmt, down_fmt in pairs or [(f, f) for f in FORMATS]:
             for T in range(1, 9):
-                jobs = round(E * (1 - (1 - K / E) ** T)); pred = {}
-                for pl in plans:
-                    if not admitted(BOARD_NAME, fmt, pl, T): continue
-                    gu, dn = pl.split("|")
-                    a, _ = stage_time(facts, board, fmt, gu, 1, T, jobs, H, F, K)
-                    b, _ = stage_time(facts, board, fmt, dn, 2, T, jobs, H, F, K)
-                    if a is not None and b is not None: pred[pl] = a + b
+                pred = price_plans(facts, board, BOARD_NAME, fmt, down_fmt, T, E, K, H, F, plans)
                 if not pred:
-                    raise SystemExit(f"{facts_path}: no plan of {fmt} T={T} is priced (no moer8 / moegemm section?)")
+                    raise SystemExit(f"{facts_path}: no plan of {fmt}/{down_fmt} T={T} is priced (no moer8 / moegemm section?)")
                 pick = min(pred, key=pred.get)
                 for pl in plans:
                     if pl in pred:
-                        out.write(f"{BOARD_NAME},{fmt},{E},{K},{H},{F},{T},{pl},{pred[pl]*1e6:.3f},{int(pl == pick)}\n")
+                        out.write(f"{BOARD_NAME},{fmt},{E},{K},{H},{F},{T},{pl},{pred[pl]*1e6:.3f},{int(pl == pick)}"
+                                  + (f",{down_fmt}" if pairs else "") + "\n")
+
+
+# The stage schedules a plan pairs: every compiled grouped schedule (moe.cpp NINFERNO_MOE_SCHEDULES and
+# NINFERNO_MOE_R8_SCHEDULES), the 12 x 12 plans `ninferno_moe_bench --plans sweep` times.
+SWEEP_STAGES = ("rmma.m1.n1.w1x4", "rmma.m1.n1.w1x8", "rmma.m1.n1.w2x2", "rmma.m1.n1.w4x1", "rmma.m1.n4.w1x4",
+                "rmma.m1.n4.w1x8", "rmma.m1.n4.w4x1", "rmma.m1.n8.w4x1", "r8.w2r1", "r8.w4r1", "r8.w4r2", "r8.w8r1")
+# The boards and layer geometries (E, K, H, F) whose picks ship (routes/moe_pick/<class>.json, #987): each one
+# passed a sealed grid against production auto under the rule mean < auto and max <= auto + 2 points (the frozen
+# grids and their scores: C:/Users/MixaPC/analyzer_r4/RESULT_review.md 20.11, the issue's comments). A board or a
+# geometry joins only after its own sealed grid passes.
+PICKS = {
+    "rtx3090": {"class": "ga102", "pci_id": "0x2204", "arch": "86",
+                # Granite 3.0 MoE (E40): v2's own sealed grid. OLMoE (E64) passed sealed under v1 only (v2 was
+                # scored on it after unsealing), so it waits for a grid of its own.
+                "layers": ((40, 8, 1536, 512),)},
+    "rtx4060ti": {"class": "ad106", "pci_id": "0x2805", "arch": "89",
+                  "layers": ((64, 8, 2048, 1024),)},  # OLMoE (E64): v1 = v2 on this board, sealed
+}
+PICK_SCHEMA = "ninferno-moe-pick/1"
+PICK_DIR = os.path.join(ROOT, "routes", "moe_pick")
+
+
+def _sha256(path):
+    import hashlib
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def pick_document(board_name):
+    """The routes/moe_pick file of one board: per layer geometry and format, the law's cheapest plan at each
+    decode width T 1-8, as route-table moe bands ([t_min, t_max, "<gate/up>|<down>"], equal neighbours joined)."""
+    global BOARD_NAME
+    BOARD_NAME = board_name
+    spec = PICKS[board_name]
+    facts_path = os.path.join(ROOT, "src", "ops", "generic", "data", "kernel_facts", f"sm_{spec['arch']}.txt")
+    facts = load_facts(facts_path)
+    board = BOARDS[board_name]
+    plans = [f"{a}|{b}" for a in SWEEP_STAGES for b in SWEEP_STAGES]
+    entries = []
+    for layer in spec["layers"]:
+        E, K, H, F = layer[:4]
+        for fmt, down_fmt in (layer[4] if len(layer) > 4 else [(f, f) for f in FORMATS]):
+            picks = []
+            for T in range(1, 9):
+                pred = price_plans(facts, board, board_name, fmt, down_fmt, T, E, K, H, F, plans)
+                if not pred:
+                    raise SystemExit(f"{facts_path}: no plan of {fmt}/{down_fmt} T={T} is priced (no moer8 / moegemm section?)")
+                picks.append(min(sorted(pred), key=pred.get))
+            bands = []
+            for T, pl in enumerate(picks, start=1):
+                if bands and bands[-1][2] == pl: bands[-1][1] = T
+                else: bands.append([T, T, pl])
+            spell = lambda f: f[:-1].replace("_", "") if f.endswith("f") else f.replace("_", "")
+            entry = {"format": spell(fmt)}
+            if spell(down_fmt) != spell(fmt): entry["down_format"] = spell(down_fmt)
+            frag = [bank for bank, f in (("gate_up", fmt), ("down", down_fmt)) if f.endswith("f")]
+            if frag: entry["frag"] = frag
+            entry.update({"experts": E, "top_k": K, "hidden": H, "inter": F, "bands": bands})
+            entries.append(entry)
+    rel = lambda p: os.path.relpath(p, ROOT).replace(os.sep, "/")
+    inputs = {rel(p): _sha256(p) for p in (os.path.abspath(__file__), facts_path,
+                                           os.path.join(PROBE_DIR, PROBE[board_name]),
+                                           os.path.join(ROOT, "src", "core", "data", "gpu_facts.json"))}
+    return {"schema": PICK_SCHEMA, "gpu": {"class": spec["class"], "pci_id": spec["pci_id"], "board": board_name},
+            "source": "tools/bench/moe_expert_law.py pick (the expert-call law v2, #987): priced, not measured",
+            "inputs": inputs, "moe": entries}
+
+
+def pick_text(board_name):
+    """The file's text: the header indented, one line a layer (its key and bands), as a reviewer reads it."""
+    doc = pick_document(board_name)
+    head = json.dumps({k: v for k, v in doc.items() if k != "moe"}, indent=1)
+    rows = ",\n".join("  " + json.dumps(e) for e in doc["moe"])
+    return head[:-2] + ',\n "moe": [\n' + rows + "\n ]\n}\n"
+
+
+def write_picks(check):
+    """Writes (or, `check`, compares) every board's routes/moe_pick/<class>.json; exit 1 on a stale file."""
+    stale = []
+    want = {PICKS[b]["class"] + ".json": pick_text(b) for b in PICKS}
+    have = set(os.listdir(PICK_DIR)) if os.path.isdir(PICK_DIR) else set()
+    for name, text in sorted(want.items()):
+        path = os.path.join(PICK_DIR, name)
+        old = open(path, encoding="utf-8").read() if name in have else None
+        if old == text: continue
+        stale.append(name)
+        if not check:
+            os.makedirs(PICK_DIR, exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="\n") as f: f.write(text)
+    extra = sorted(n for n in have if n.endswith(".json") and n not in want)
+    if check:
+        if stale or extra:
+            print(f"routes/moe_pick: stale {stale}, not generated {extra}: run tools/bench/moe_expert_law.py pick")
+            sys.exit(1)
+        print(f"routes/moe_pick: {len(want)} boards, in step with the law and the facts")
+    else:
+        print(f"routes/moe_pick: wrote {stale or 'nothing (in step)'}" + (f"; remove {extra}" if extra else ""))
 
 
 if __name__ == "__main__":
-    if sys.argv[1] == "predict":
+    if sys.argv[1] == "pick":
+        write_picks("--check" in sys.argv[2:])
+    elif sys.argv[1] == "predict":
         BOARD_NAME = sys.argv[3]
-        predict(sys.argv[2], sys.argv[4], tuple(int(x) for x in sys.argv[5].split(",")), sys.argv[6])
+        # an optional 7th argument: gate/up:down format pairs, "q3_k:q4_k,q4_k:q6_k"
+        pairs = [tuple(x.split(":")) for x in sys.argv[7].split(",")] if len(sys.argv) > 7 else None
+        predict(sys.argv[2], sys.argv[4], tuple(int(x) for x in sys.argv[5].split(",")), sys.argv[6], pairs)
     elif sys.argv[1] == "score":
         sys.argv = sys.argv[1:]
         main()

@@ -1,0 +1,21 @@
+{
+ "schema": "ninferno-moe-pick/1",
+ "gpu": {
+  "class": "ad106",
+  "pci_id": "0x2805",
+  "board": "rtx4060ti"
+ },
+ "source": "tools/bench/moe_expert_law.py pick (the expert-call law v2, #987): priced, not measured",
+ "inputs": {
+  "tools/bench/moe_expert_law.py": "8c210f0d328dd4fb06216001bf20d2a3964731f8c8be2786f73e7913160f7afa",
+  "src/ops/generic/data/kernel_facts/sm_89.txt": "8d5428d5dfa124791b37950a24ab806634ed53020267a9c901c689aff275c2ea",
+  "src/core/data/warp_inflight/warp_inflight_89_rtx4060ti.txt": "69f6021ebad3d2c76f4d64bef478b9eade5fe3aca1158df31644fce3d80a0deb",
+  "src/core/data/gpu_facts.json": "27cbf40a172aac47a0a671ba927707b84269559890526c8a3518afe979472449"
+ },
+ "moe": [
+  {"format": "q3k", "experts": 64, "top_k": 8, "hidden": 2048, "inter": 1024, "bands": [[1, 8, "r8.w2r1|rmma.m1.n1.w1x4"]]},
+  {"format": "q4k", "experts": 64, "top_k": 8, "hidden": 2048, "inter": 1024, "bands": [[1, 1, "r8.w2r1|rmma.m1.n1.w1x4"], [2, 8, "r8.w8r1|rmma.m1.n1.w1x4"]]},
+  {"format": "q5k", "experts": 64, "top_k": 8, "hidden": 2048, "inter": 1024, "bands": [[1, 8, "r8.w2r1|rmma.m1.n1.w1x4"]]},
+  {"format": "q6k", "experts": 64, "top_k": 8, "hidden": 2048, "inter": 1024, "bands": [[1, 1, "r8.w2r1|rmma.m1.n1.w1x4"], [2, 8, "rmma.m1.n1.w1x8|rmma.m1.n1.w1x4"]]}
+ ]
+}
