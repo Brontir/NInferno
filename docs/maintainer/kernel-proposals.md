@@ -989,3 +989,37 @@ P from #850's plan. A, G, N and P have frozen predictions so far.
     its Q codec (the Hadamard and per-group quantization of every row) and its scale staging. The
     BF16 kernel has neither: it widens Q to FP32 once and starts its keys. Recorded, not fitted.
 - Decision: kept on sm_70 (the slope acceptance, at least 0.75x INT8's, is met).
+
+### R. Q6_K W4A8 halves weighed in the integer domain (#1116, #1126): removed
+- Regime: generic W4A8 prefill, Q6_K, T 32-512, every dense W4A8 tile (classic `w4a8_kernel` and producer-warp
+  `w4a8ws.128x64.p4`). Boards: RTX 3090, 3060, 4070 Ti, 4060 Ti, 4090, 5090. #1116 shows the producer-warp kernel
+  issue-bound at K 4096, T 128 (I2FP and FMUL a third of the executed instructions; sm_86 / sm_89 spill, LDL 230 K at
+  168 registers).
+- Law: per output and 32-value block, each 16-weight half's int32 MMA sum is converted and multiplied by its float
+  sub-scale (2 x (I2FP + FMUL + FFMA)); the binding term is issue.
+- Variant: the halves' sums weighed by their int8 sub-scales in the integer domain (`c0*sl + d0*sh`, IMAD), then one
+  conversion and one scale (`fmaf(float(.), a_scale*d, acc)`), exact below 2^24. The MoE kernel keeps the float
+  halves (its own writer).
+- Prediction (frozen 20.11 20:08, before any build): producer-warp time 0.93-0.97 on four boards; executed
+  instructions x0.945; Q4_K within +-1.5 %. Addenda frozen before each later A/B (20:12, 20:35, 20:36, 23:20, 23:31,
+  23:33); the analyzer log keeps them.
+- Acceptance / refutation (frozen): a gain under 3 % closes it; a classic Q6_K tile above 1.04 of master in both of
+  two runs, or above 1.06 in either, closes it with no change; KLD within 15 % of master's.
+- A/B (route_tune, branch/master):
+  - Producer-warp kernel only (a43690392): 0.84-0.95 on five boards, KLD identical to master's (Qwen3.5-9B Q4_K_M).
+    The gain on sm_86 / sm_89 is the spill going (LDL to 0), not the instruction count; on the 5090 (no spill)
+    registers 142 -> 129, instructions x0.972, time x0.915 at 0.38 waves. But that variant breaks the dense W4A8
+    same-bytes contract: test_generic_linear compares every admitted W4A8 route against the wide call byte for byte
+    (the prefill profile's token invariance across chunk widths), and the classic and producer-warp tiles of Q6_K
+    then sum differently (codex P1 on #1126).
+  - Both dense kernels (05f53a01b), two runs each against master 7b1215e4e:
+    - RTX 4060 Ti (sm_89): producer-warp 0.841-0.897, every classic tile 0.922-0.998. Held.
+    - RTX 3090 (sm_86): producer-warp 0.880-0.917; classic 64x64 at n 12288, T 32 1.067 / 1.121 (the same cell as the
+      first run's 1.088). The gate fires.
+    - RTX 5090 (sm_120a): producer-warp 0.882-0.946; classic 32x128 1.050 / 1.050 and 64x64 1.048 / 1.041 at
+      n 4096, T 64 (Q4_K control spread up to 3.4 %). The gate fires.
+- Decision: removed. The both-kernels variant fails its gate on sm_86 and sm_120a, and the producer-warp-only one
+  breaks the byte contract. An sm_89-only variant would choose the architecture from these results (no counted fact
+  separates sm_86 from sm_89: both spilled at 168 registers), so it is not proposed. What would reopen it: a counted
+  term for why the classic 64x64 / 32x128 tiles lose with the integer halves on sm_86 / sm_120a (registers, the
+  producer's decode chain) that a variant can remove on every arch.
