@@ -8,8 +8,9 @@
 //     tools/fits/ that exists, with the fields its kind needs; an Unset one was forgotten) and
 //     appears once;
 //   - a Checked record's script reproduces its held-out score: run from the repository root as
-//     `python3 SCRIPT --holdout`, its last `holdout: ` line is the record's `error` (#715; a
-//     fixture script checks the runner itself, skipped where python3 does not run);
+//     `python -B SCRIPT --holdout` (the Python CMake found), its last `holdout: ` line is the
+//     record's `error` (#715; a fixture script checks the runner itself, skipped where it does not
+//     run);
 //   - every key matches its DEFINITION in its file (a definition, a struct field or a function,
 //     read from the file's text, not a substring of it): a renamed or removed constant fails;
 //   - every constant a covered file marks or behaves as fitted has a record, or sits on that file's
@@ -126,9 +127,9 @@ std::optional<std::string> script_holdout(const std::string& script,
 // Why a Checked record's script does not reproduce the record's error; empty where it does.
 std::string reproduction_gap(const std::string& script, std::string_view error) {
     const auto score = script_holdout(script);
-    if (!score) return "`python3 " + script + " --holdout` failed or printed no `holdout: ` line";
+    if (!score) return "`python " + script + " --holdout` failed or printed no `holdout: ` line";
     if (*score != error) {
-        return "`python3 " + script + " --holdout` prints \"" + *score + "\", the record says \"" +
+        return "`python " + script + " --holdout` prints \"" + *score + "\", the record says \"" +
                std::string(error) + "\"";
     }
     return {};
@@ -137,7 +138,8 @@ std::string reproduction_gap(const std::string& script, std::string_view error) 
 // The runner itself, on a fixture script (tests/fixtures/fits/holdout_selftest.py).
 void check_holdout_runner() {
     if (!python_runs()) {
-        std::printf("holdout runner: python3 does not run here, its self-check skipped\n");
+        std::printf(
+            "holdout runner: the configured Python does not run here, its self-check skipped\n");
         return;
     }
     const std::string fixture = "tests/fixtures/fits/holdout_selftest.py";
@@ -634,7 +636,8 @@ int main() {
             } else if (read_file(m.str()).empty()) {
                 fail(name + ": Checked, but its script " + m.str() + " is not in the repository");
             } else if (!python_runs()) {
-                fail(name + ": Checked, and python3 does not run here to reproduce it");
+                fail(name +
+                     ": Checked, and the configured Python does not run here to reproduce it");
             } else if (const std::string gap = reproduction_gap(m.str(), r->holdout.error);
                        !gap.empty()) {
                 fail(name + ": Checked, but its score is not reproduced: " + gap);
