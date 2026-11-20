@@ -11,7 +11,7 @@
   "src/core/data/isa_facts.json": "ea91e207d90ba4516a40f0ff3016182926b15ee87204ae3e9b833ec4e1fc21d4",
   "src/core/data/sm_rate_facts.json": "bfcd77295bba25aea216aa800548bda80e655770725ef4bd66ef4251de3a105f",
   "src/ops/generic/data/kernel_facts/sm_75.txt": "3b9969606315dcb07c1e28263825c79e293e91036a429c0a5d39c7a0d7e91b71",
-  "tools/route_pick/pick.py": "ae873735dc174cd08d07807652d5bc0a80f6d69d7b32e981d99acbb8ae5b490c",
+  "tools/route_pick/pick.py": "3b75e390aceb129e0eec2a4a02fc28835fe39a3f01aeb856cd6ce8b6e76b8532",
   "tools/route_pick/facts.py": "22e14fd9524280429ed5f8455dee8b40217445518e7b411508cfbc52cd3fb24b",
   "tools/route_pick/gen.py": "36fd0a44e6e26075b4d7b21088f167ef7c371dda4974951bad40188c0316c98f"
  },
@@ -698,7 +698,7 @@
     [
      9,
      16,
-     "rmma.m1.n1.w1x8.c8"
+     "rmma.m1.n1.w1x16"
     ]
    ]
   },
@@ -712,7 +712,7 @@
     [
      9,
      16,
-     "rmma.m1.n1.w1x8.c8"
+     "rmma.m1.n1.w1x16"
     ]
    ]
   },
@@ -726,7 +726,7 @@
     [
      9,
      16,
-     "rmma.m1.n1.w1x8.c8"
+     "rmma.m1.n1.w1x16"
     ]
    ]
   },
@@ -740,7 +740,7 @@
     [
      9,
      16,
-     "rmma.m1.n1.w1x8.c2"
+     "rmma.m1.n1.w1x16"
     ]
    ]
   },

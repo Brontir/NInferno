@@ -225,6 +225,10 @@ def candidates(gpu, F, shape):
     T, fmt = max(float(shape.get('T', 1)), 1.0), str(shape['format']).lower()
     names = set(['ggml_mmq'] if T >= 5 else []) | set(['ggml_vec'] if 2 <= T <= 4 else [])
     for r in c['kf']['rmma']:
+        # Thread-block clusters are sm_90+ (generic_select.cpp rmma_index: below it a cluster
+        # schedule runs as its C == 1 twin), so a cluster row is no candidate there.
+        if r['cluster'] != '1' and c['cc'] < 90:
+            continue
         if r['decoder'] == RMMA_DEC.get(fmt) and r['latency'] == '0' and r['sums'] == '0':
             names.add('rmma.m%s.n%s.w%sx%s%s' % (r['m_tiles'], r['n_tiles'], r['warps_m'], r['warps_k'],
                                                   '' if r['cluster'] == '1' else '.c' + r['cluster']))
