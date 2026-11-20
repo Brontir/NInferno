@@ -208,6 +208,23 @@ __host__ __device__ constexpr bool w4a8_block_scaled() {
     }
 }
 
+// A kHalves codec whose scales per 16 values are integers times one float a block (Q6_K: int8
+// sub-block scales, binary16 d): decode_int makes the block's float d and its two sub-block scales
+// as bytes 0 (values 0..15) and 1 (16..31) of one word, which the kernel reads with sign-extending
+// byte loads, and weighs the halves' int32
+// MMA sums by them in the integer domain: one conversion and one multiply a block instead of two
+// (#1116). The weighted sum stays exact: |code x activation| <= 32 x 127, a 16-term MMA <= 65 K,
+// times |sc| <= 128 and two halves, 16.6 M, below 2^24, so its float is exact too. The biased
+// accumulators (kBiasedIntAccumulators) hold 2^22 only, so this path starts its MMAs at 0.
+template <class C>
+__host__ __device__ constexpr bool w4a8_int_halves() {
+    if constexpr (requires { C::kIntHalves; }) {
+        return C::kIntHalves;
+    } else {
+        return false;
+    }
+}
+
 // A kHalves codec with a min per 16 values (Q2_K): decode also makes the mins of values 0..15 and
 // 16..31, which the kernel takes against the token's code sums over the same 16 values (a k16 MMA
 // or dp4a against ones), and the buffer holds them in a plane of their own (b_hmin).
@@ -523,8 +540,9 @@ struct W4a8Q45K {
 // values 0..15 take d*sc[8h + 2u], 16..31 d*sc[8h + 2u + 1]. A load holds blocks u and u + 2,
 // which share their ql bytes.
 struct W4a8Q6K {
-    static constexpr bool kMin    = false;
-    static constexpr bool kHalves = true;
+    static constexpr bool kMin       = false;
+    static constexpr bool kHalves    = true;
+    static constexpr bool kIntHalves = true;
     static constexpr int kSpan    = 2;
     static constexpr int kStride  = 2;
     struct Raw {
@@ -573,6 +591,19 @@ struct W4a8Q6K {
         hi       = codes(r.lb, r.hb, shift, hshift);
         scale    = sub_scale(r, 2U * u);
         scale_hi = sub_scale(r, 2U * u + 1U);
+    }
+
+    // w4a8_int_halves: d, and the int8 scales sc[8h + 2u], sc[8h + 2u + 1] as bytes 0 and 1 of
+    // `packed`.
+    __device__ static __forceinline__ void decode_int(const Raw& r, int s, uint4& lo, uint4& hi,
+                                                      float& d, float& packed) {
+        const unsigned u     = r.u + 2U * static_cast<unsigned>(s);
+        const unsigned shift = 4U * static_cast<unsigned>(s), hshift = 2U * u;
+        lo               = codes(r.la, r.ha, shift, hshift);
+        hi               = codes(r.lb, r.hb, shift, hshift);
+        d                = half_bits(r.d);
+        const unsigned w = u < 2U ? r.sc.x : r.sc.y; // scales 2u, 2u + 1: bytes 2(u & 1), + 1
+        packed           = __uint_as_float((w >> (16U * (u & 1U))) & 0xffffU);
     }
 };
 
@@ -1434,6 +1465,8 @@ struct W4a8Weights {
                 if (ok[i]) {
                     if constexpr (w4a8_half_min<C>()) {
                         C::decode(raw[i], sp, lo, hi, scale, min, min_lo, min_hi);
+                    } else if constexpr (w4a8_int_halves<C>()) {
+                        C::decode_int(raw[i], sp, lo, hi, scale, min);
                     } else if constexpr (kSpan == 1) {
                         C::decode(raw[i], lo, hi, scale, min);
                     } else if constexpr (w4a8_lut_words<C>() > 0) {
@@ -1501,8 +1534,10 @@ __device__ __forceinline__ void w4a8_mma_tile(float (&acc)[S::kMmaM][S::kMmaN][4
                                               Stepped&& stepped) {
     constexpr bool kHalves  = w4a8_halves<C>();
     constexpr bool kHalfMin = w4a8_half_min<C>();
+    constexpr bool kIntHalves = w4a8_int_halves<C>();
     constexpr bool kAux     = C::kMin || kHalves;
     static_assert(!kHalfMin || kHalves);
+    static_assert(!kIntHalves || (kHalves && !kHalfMin));
     const int g            = lane >> 2;
     const int t            = lane & 3;
     // The four blocks' scales of a token or weight row are one float4 in shared memory.
@@ -1533,6 +1568,8 @@ __device__ __forceinline__ void w4a8_mma_tile(float (&acc)[S::kMmaM][S::kMmaN][4
         unsigned bf[S::kMmaN][2];
         float as[S::kMmaM][2], ws[S::kMmaN][2];
         float asum[S::kMmaM][2], wmin[S::kMmaN][2];
+        // kIntHalves: the weight rows' int8 scales of values 0..15 (wl) and 16..31 (wh).
+        int wl[S::kMmaN][2], wh[S::kMmaN][2];
         // kHalfMin: s_x times the code sum of values 0..15 of tokens g, g + 8, then of 16..31;
         // the weight rows' mins of the same halves.
         float hsum[S::kMmaM][4], hmin[S::kMmaN][2][2];
@@ -1582,9 +1619,18 @@ __device__ __forceinline__ void w4a8_mma_tile(float (&acc)[S::kMmaM][S::kMmaN][4
                 ws[n][0] = cur.b_scale[(base_row + 2 * t) * 4 + kk];
                 ws[n][1] = cur.b_scale[(base_row + 2 * t + 1) * 4 + kk];
             }
-            if constexpr (kAux) {
+            if constexpr (kAux && !kIntHalves) {
                 wmin[n][0] = cur.b_min[(base_row + 2 * t) * 4 + kk];
                 wmin[n][1] = cur.b_min[(base_row + 2 * t + 1) * 4 + kk];
+            }
+            if constexpr (kIntHalves) {
+#pragma unroll
+                for (int c = 0; c < 2; ++c) {
+                    const auto* b = reinterpret_cast<const signed char*>(
+                        cur.b_min + (base_row + 2 * t + c) * 4 + kk);
+                    wl[n][c] = b[0];
+                    wh[n][c] = b[1];
+                }
             }
             if constexpr (kHalfMin) {
 #pragma unroll
@@ -1602,7 +1648,21 @@ __device__ __forceinline__ void w4a8_mma_tile(float (&acc)[S::kMmaM][S::kMmaN][4
 #pragma unroll
             for (int n = 0; n < S::kMmaN; ++n) {
                 float* o = acc[m][n];
-                if constexpr (kHalves) {
+                if constexpr (kIntHalves) {
+                    // The halves as above, weighed by their int8 scales before the one conversion;
+                    // ws is the block's d. Plain int32 sums (no bias: they pass 2^22).
+                    int c0 = 0, c1 = 0, c2 = 0, c3 = 0, d0 = 0, d1 = 0, d2 = 0, d3 = 0;
+                    mma_s8_k16(c0, c1, c2, c3, af[m][0], af[m][1], bf[n][0]);
+                    mma_s8_k16(d0, d1, d2, d3, af[m][2], af[m][3], bf[n][1]);
+                    o[0] = fmaf(static_cast<float>(c0 * wl[n][0] + d0 * wh[n][0]),
+                                as[m][0] * ws[n][0], o[0]);
+                    o[1] = fmaf(static_cast<float>(c1 * wl[n][1] + d1 * wh[n][1]),
+                                as[m][0] * ws[n][1], o[1]);
+                    o[2] = fmaf(static_cast<float>(c2 * wl[n][0] + d2 * wh[n][0]),
+                                as[m][1] * ws[n][0], o[2]);
+                    o[3] = fmaf(static_cast<float>(c3 * wl[n][1] + d3 * wh[n][1]),
+                                as[m][1] * ws[n][1], o[3]);
+                } else if constexpr (kHalves) {
                     // Values 0..15 (A words 0, 1; B word 0), then 16..31 (A 2, 3; B 1).
                     int c0 = int_accumulator_zero(), c1 = int_accumulator_zero(),
                         c2 = int_accumulator_zero(), c3 = int_accumulator_zero();
