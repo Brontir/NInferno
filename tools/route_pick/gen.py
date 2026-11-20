@@ -4,6 +4,7 @@
     python3 tools/route_pick/gen.py            write routes/pick/<chip>-<sms>sm.json, one file a board class
     python3 tools/route_pick/gen.py --check    exit 1 when a file differs from what the facts give now (CI)
     python3 tools/route_pick/gen.py --class ga102:82sm --out DIR    one class, any (a lab A/B of a tabled card)
+    ... --class ga102:82sm --out DIR --epilogues store,swiglu,add   the same with the add epilogue's bands (#1068)
 
 A board class is a chip and an SM count (core/device_class.h gpu_class_id). Written for every class of
 src/core/data/gpu_facts.json whose chip has no table in routes/ (no routes/<chip>.json, no routes/<chip>-*.json),
@@ -127,14 +128,14 @@ def classes(F, tabled_chips, table_boards, carry):
 WRITTEN_EPILOGUES = ('store', 'swiglu')
 
 
-def problems(all_tables, cc):
+def problems(all_tables, cc, epilogues=WRITTEN_EPILOGUES):
     out = {}
     for _, tcc, t in all_tables:
         if tcc != cc:
             continue
         for e in t.get('entries', []):
             ep = e.get('epilogue', 'store')
-            if 'bands' not in e or e['format'] not in pick.BITS or e['compute'] != 'a16' or ep not in WRITTEN_EPILOGUES:
+            if 'bands' not in e or e['format'] not in pick.BITS or e['compute'] != 'a16' or ep not in epilogues:
                 continue
             out[(e['format'], ep, int(e['n']), int(e['k']))] = True
     return sorted(out)
@@ -193,7 +194,12 @@ def main():
     ap.add_argument('--check', action='store_true')
     ap.add_argument('--class', dest='only')
     ap.add_argument('--out')
+    ap.add_argument('--epilogues', help='with --class: the epilogues to write (a lab A/B, #1068: store,swiglu,add); '
+                    'the shipped files keep %s' % ','.join(WRITTEN_EPILOGUES))
     a = ap.parse_args()
+    if a.epilogues and not a.only:
+        sys.exit('--epilogues is for a lab file of one class (--class): the shipped files keep %s' % ','.join(WRITTEN_EPILOGUES))
+    epilogues = tuple(a.epilogues.split(',')) if a.epilogues else WRITTEN_EPILOGUES
     F = facts.load_facts(a.root)
     all_tables = tables(a.root, F)
     tabled = {chip for chip, _, _ in all_tables}
@@ -209,7 +215,7 @@ def main():
     stale = []
     expected = set()
     for key, row in sorted(want.items()):
-        doc = overlay(row, F, problems(all_tables, int(row['cc'])), inputs_of(a.root, F, ARCH_OF_CC[int(row['cc'])]))
+        doc = overlay(row, F, problems(all_tables, int(row['cc']), epilogues), inputs_of(a.root, F, ARCH_OF_CC[int(row['cc'])]))
         name = key.replace(':', '-') + '.json'
         expected.add(name)
         path = os.path.join(out_dir, name)
