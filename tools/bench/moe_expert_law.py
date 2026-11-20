@@ -417,8 +417,9 @@ def _bands(text):
 def write_picks(check, rebands=False):
     """Writes (or, `check`, compares) every board's routes/moe_pick/<class>.json; exit 1 on a stale file.
     The shipped plans are the sealed grids' frozen picks: a run whose inputs moved restamps a file only
-    where every layer it held keeps its bands. Bands that moved (a changed law, or kernel facts that moved
-    the prices) are refused unless `rebands` (--rebands), after a new sealed grid of those layers."""
+    where every layer it held keeps its bands and its key. Bands that moved (a changed law, or kernel facts
+    that moved the prices) or a layer whose key is gone (rekeyed or dropped) are refused unless `rebands`
+    (--rebands), after a new sealed grid of those layers. A new layer's key passes."""
     stale, moved = [], {}
     want = {PICKS[b]["class"].replace(":", "-") + ".json": pick_text(b) for b in PICKS}
     have = set(os.listdir(PICK_DIR)) if os.path.isdir(PICK_DIR) else set()
@@ -429,7 +430,11 @@ def write_picks(check, rebands=False):
         stale.append(name)
         if old is not None:
             before, after = _bands(old), _bands(text)
+            # A sealed layer whose key changed (its geometry, format pair or fragment layout) leaves
+            # its old key behind: a removed key moved as much as changed bands. New keys are new
+            # layers and pass.
             changed = sorted(str(k) for k in before.keys() & after.keys() if before[k] != after[k])
+            changed += sorted(f"{k} (removed)" for k in before.keys() - after.keys())
             if changed: moved[name] = changed
         if not check and (rebands or name not in moved):
             os.makedirs(PICK_DIR, exist_ok=True)
