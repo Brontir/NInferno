@@ -49,6 +49,7 @@ L1_MIN_KIB = 28.0                  # SET: the L1 an SM keeps beside its shared m
 VERIFIED_T17 = (86, 89, 120)       # guard: compute capabilities whose T 17-32 pick was scored on an open grid
 PARTITIONS = 4.0                   # tensor partitions of an SM
 PAIR = {'rmma.m1.n4.w1x8': ('q8', 'rmma.m1.n2.w1x4')}   # route: (format, the pair member its price is taken from)
+MMQ_ROW_MULTIPLE = 128             # ggml_mmq::kRowMultiple: MMQ's rows come in whole 128-row tiles
 MMQ_WARPS = 8.0                    # warps of one ggml_mmq CTA
 MMQ_FILL = 0.9                     # ggml_mmq_internal.cuh: a tile a CTA where the grid fills its last wave to 90 %
 # generic_gemm_internal.h kRmmaLatencyOneSetBytes (store and add: one weight set, generic_rmma_describe.cpp) / SwiGluBytes
@@ -223,7 +224,10 @@ def candidates(gpu, F, shape):
     if c is None:
         return []
     T, fmt = max(float(shape.get('T', 1)), 1.0), str(shape['format']).lower()
-    names = set(['ggml_mmq'] if T >= 5 else []) | set(['ggml_vec'] if 2 <= T <= 4 else [])
+    # ggml's MMQ takes rows in whole 128-row tiles only (generic_select.cpp mmq_call,
+    # ggml_mmq::kRowMultiple): on other rows the launch demotes it, so it is no candidate (#1077).
+    mmq_rows = int(shape['n']) % MMQ_ROW_MULTIPLE == 0
+    names = set(['ggml_mmq'] if T >= 5 and mmq_rows else []) | set(['ggml_vec'] if 2 <= T <= 4 else [])
     for r in c['kf']['rmma']:
         # Thread-block clusters are sm_90+ (generic_select.cpp rmma_index: below it a cluster
         # schedule runs as its C == 1 twin), so a cluster row is no candidate there.
