@@ -82,6 +82,9 @@ struct BankFacts {
     QType format                   = QType::BF16;
     QuantLayout layout             = QuantLayout::RowSplit;
     double dram_bytes_per_sm_cycle = 0;
+    // The build's register MMA runs on tensor mma.sync (BuildFeatures::mma_tensor); without it
+    // (sm_70) it runs on FP32 FMAs, which no rule measured against the tensor MMA covers (#965).
+    bool mma_tensor = true;
 };
 
 struct RegimeRule {
@@ -225,7 +228,8 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      Label::Measured,
      {kRtx5090, kRtx5070Ti},
      "R8 against the register MMA at T = 5..8, every K-quant and IQ3_XXS (A16 baseline; against "
-     "the A8 register MMA Q6_K loses, so r8_q6k_narrow holds it to four): RTX 5070 Ti -7..-14 %, "
+     "the A8 register MMA Q6_K loses, so r8_q6k_narrow holds it to four on tensor mma.sync "
+     "builds): RTX 5070 Ti -7..-14 %, "
      "RTX 5090 -5..-15 %; end to end C8 Qwen3.6-35B 180.8 -> 189.0 tok/s, Gemma 4 26B 161.0 -> "
      "167.4 (RTX 5090)",
      kR8T8Sweep},
@@ -261,8 +265,10 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
     {"r8_q6k_narrow",
      Regime::BankLimit,
      {},
+     // Measured against the tensor mma.sync register MMA: a build without it (sm_70, its FMA
+     // register MMA 2x slower than R8 on the V100, #965) keeps the generation's limit.
      +[](const BankFacts& b) {
-         return b.format == QType::GGML_Q6_K && b.layout != QuantLayout::GgmlFrag;
+         return b.mma_tensor && b.format == QType::GGML_Q6_K && b.layout != QuantLayout::GgmlFrag;
      },
      kR8NarrowTokens,
      Label::Measured,
