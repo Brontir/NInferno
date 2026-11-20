@@ -690,7 +690,9 @@ int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scrat
         std::cerr << "predicted band: " << what << "\n";
         ++failures;
     };
-    const Case off{"q8 predicted offered", QType::Q8_G32_FP16, ops::LinearPolicy::A16Only, 2560,
+    // A shape no earlier check tunes: the demoted retime's q8 2560x2048 entry is in the cache, and
+    // a problem the cache holds is not timed again.
+    const Case off{"q8 predicted offered", QType::Q8_G32_FP16, ops::LinearPolicy::A16Only, 2304,
                    2048};
     // Not offered: a W4A8 tile for Q4_K where the policy allows int8 activations. The route
     // table answers Q4_K at T 9-16 (no R8 past T 4, no vector or MMQ verify rule for it), the
