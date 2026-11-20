@@ -84,8 +84,12 @@ void check_records() {
         switch (rule.regime) {
         case regime::Regime::TokenLimit:
             expect(rule.applies == nullptr, name + ": a generation rule with a bank predicate");
-            expect(ninferno::satisfied(rule.arch, ninferno::ArchFacts{}) &&
-                       rule.arch.mma_tensor == ninferno::Need::Any,
+            expect(rule.arch.mma_tensor == ninferno::Need::Any &&
+                       rule.arch.mma_bf16_native == ninferno::Need::Any &&
+                       rule.arch.native_fp4 == ninferno::Need::Any &&
+                       rule.arch.mma_slow == ninferno::Need::Any &&
+                       rule.arch.fp32acc_full_rate == ninferno::Need::Any &&
+                       rule.arch.build_arch_below == 0 && rule.arch.cc_any_of[0].major == 0,
                    name + ": a generation rule asks nothing of the build (generation_rule reads no "
                           "arch)");
             expect(rule.disposition == regime::Disposition::Applied,

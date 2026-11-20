@@ -784,10 +784,11 @@ regime::R8LimitAnswer regime::r8_limit_answer(const Weight& bank) {
     const BankFacts facts{bank.qtype, bank.layout,
                           bank.layout == QuantLayout::GgmlFrag ? generic::dram_bytes_per_sm_cycle()
                                                                : 0.0};
-    // The rules' `arch` reads the build's tensor mma.sync in common with the board's: a substituted
-    // class (a golden's, a plan's) carries its architecture's features alone, not the build's.
-    ArchFacts arch           = generic::current_arch_facts();
-    arch.features.mma_tensor = arch.features.mma_tensor && build_features().mma_tensor;
+    // The rules' `arch` reads the board's features in common with the build's: a substituted class
+    // (a golden's, a plan's) carries its architecture's features alone, not the build's
+    // (common_features keeps the board's mma_slow).
+    ArchFacts arch = generic::current_arch_facts();
+    arch.features  = common_features(arch.features, build_features());
     return r8_limit_answer(arch, facts);
 }
 
