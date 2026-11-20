@@ -267,10 +267,9 @@ std::size_t class_l2_bytes(const DeviceClass& d) noexcept {
 }
 
 Board board_of(const DeviceClass& d) noexcept {
-    // The driver's L2 where it gave one, else the machine facts' (class_l2_bytes): the same L2
-    // card_facts_of reads, as dram_gbps() reads the facts' bandwidth (#1082).
-    const double l2_mib = d.l2_bytes > 0 ? static_cast<double>(d.l2_bytes) / (1 << 20)
-                                         : static_cast<double>(d.facts.l2_mib);
+    // The driver's L2 where it gave one, else the machine facts' (class_l2_bytes; where the driver
+    // gave none, the L2 card_facts_of reads), as dram_gbps() reads the facts' bandwidth (#1082).
+    const double l2_mib = static_cast<double>(class_l2_bytes(d)) / (1 << 20);
     return {d.major, d.minor, d.sms, l2_mib, d.dram_gbps(), d.features.mma_slow};
 }
 
