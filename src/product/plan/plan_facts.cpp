@@ -680,12 +680,18 @@ private:
         bool seen = false, whole = true;
         artifact::ActivationPolicy policy = artifact::ActivationPolicy::A16Only;
         bool policy_known                 = true;
+        // An object of the bank records A16Only (note()'s policy, its uses folded first): the bank
+        // runs A16 whatever the other objects record or leave unrecorded (the strictest of its
+        // policies, ops::common_policy, #796).
+        bool a16 = false;
     };
 
     // The experts' policy as a start reads it (ops::moe_policy of the two banks': A16 unless both
-    // allow A8, then A4 where either allows it); Unknown where a bank records none.
+    // allow A8, then A4 where either allows it); A16 where a bank is known A16 even if the other
+    // records nothing (#796); else Unknown where a bank records none.
     static runtime::PlanExpertPolicy layer_policy(const Bank& gate_up, const Bank& down) {
         using P = artifact::ActivationPolicy;
+        if (gate_up.a16 || down.a16) { return runtime::PlanExpertPolicy::A16Only; }
         if (!gate_up.policy_known || !down.policy_known) {
             return runtime::PlanExpertPolicy::Unknown;
         }
@@ -703,6 +709,7 @@ private:
     static void note(Bank& b, const std::string& format, const std::string& stored, std::uint64_t k,
                      const std::optional<artifact::ActivationPolicy>& policy) {
         if (b.seen && (b.format != format || b.layout != stored || b.k != k)) { b.whole = false; }
+        if (policy == artifact::ActivationPolicy::A16Only) { b.a16 = true; }
         if (!policy) {
             b.policy_known = false;
         } else if (!b.seen || static_cast<int>(*policy) < static_cast<int>(b.policy)) {
@@ -740,11 +747,9 @@ private:
             }
         }
         // One bank known A16-only makes the layer A16 whatever the other records
-        // (ops::moe_policy), even where the other's policy is unknown (codex on #792).
-        const auto a16 = [](const Bank& b) {
-            return b.seen && b.policy_known && b.policy == artifact::ActivationPolicy::A16Only;
-        };
-        if (a16(l.gate_up) || a16(l.down)) { return false; }
+        // (ops::moe_policy), even where the other's policy is unknown (codex on #792), and a bank
+        // one of whose objects records A16Only is A16 even where another records none (#796).
+        if ((l.gate_up.seen && l.gate_up.a16) || (l.down.seen && l.down.a16)) { return false; }
         return l.kept_a8;
     }
     std::map<std::string, Layer> layers_;
@@ -1571,7 +1576,8 @@ PlanSourceFacts directory_facts(const artifact::Directory& dir, const std::strin
     }
     // The activation policy each routed object's uses record (the converter's, convert/planner.cpp;
     // the start reads it: models/common/weight_use.cpp), the strictest where several read it; none
-    // where a use records none (ExpertRoutes: the layer's policy unknown).
+    // where a use records none (ExpertRoutes: the layer's policy unknown). An A16Only use stands
+    // whatever another use leaves unrecorded: the object never takes a narrower input (#1081).
     enum class Recorded : std::uint8_t { None, Policy, Unknown };
     std::vector<std::optional<artifact::ActivationPolicy>> recorded(dir.objects.size());
     std::vector<Recorded> used(dir.objects.size(), Recorded::None);
@@ -1583,7 +1589,13 @@ PlanSourceFacts directory_facts(const artifact::Directory& dir, const std::strin
             const std::size_t i = piece.object.index;
             if (i >= recorded.size()) { continue; }
             auto& r = recorded[i];
-            if (!use.activation_policy) {
+            const bool a16 = use.activation_policy == artifact::ActivationPolicy::A16Only;
+            if (a16) {
+                r       = use.activation_policy;
+                used[i] = Recorded::Policy;
+            } else if (used[i] == Recorded::Policy && r == artifact::ActivationPolicy::A16Only) {
+                // already the strictest
+            } else if (!use.activation_policy) {
                 used[i] = Recorded::Unknown; // a use without a policy, whatever the others say
             } else if (used[i] == Recorded::None ||
                        (used[i] == Recorded::Policy &&

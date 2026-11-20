@@ -233,7 +233,8 @@ struct PlanLinear {
 // (set_plan_moe_route_query). The policy is the layer's as a start reads it (ops::moe_policy of its
 // two banks'): an artifact's recorded one (each bank's Use: activation_policy), a GGUF bank's the
 // converter's for the encoding it keeps where the tensor table tells it (plan_facts.cpp
-// gguf_expert_policy); Unknown where a bank records none, or the recipe or the weights' bytes
+// gguf_expert_policy); A16Only where either bank, or any object of a bank, is known A16 (#796);
+// else Unknown where a bank records none, or the recipe or the weights' bytes
 // decide (a GGUF NVFP4 bank with an activation divisor, Gemma 4's MXFP4 experts). A layer whose
 // banks are not read whole (a format not parsed, a bank missing, gate and up of two formats) is one
 // kind with empty formats (and Unknown policy): the query is not asked for it, and its bytes are
