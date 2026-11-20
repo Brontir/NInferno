@@ -31,6 +31,7 @@ FITTED, none of them here: P (round 9; K_VEC is round 8's) and FAMILY_W (round 1
 Not priced: w4a8*, tiled, sm_70, r8 and ggml_vec above T 8, T > 16 on a compute capability outside VERIFIED_T17.
 """
 import math
+import os
 import re
 
 P = dict(G=0.1240,       # exponent of the DRAM slowdown with the rows open on one SM
@@ -49,7 +50,6 @@ L1_MIN_KIB = 28.0                  # SET: the L1 an SM keeps beside its shared m
 VERIFIED_T17 = (86, 89, 120)       # guard: compute capabilities whose T 17-32 pick was scored on an open grid
 PARTITIONS = 4.0                   # tensor partitions of an SM
 PAIR = {'rmma.m1.n4.w1x8': ('q8', 'rmma.m1.n2.w1x4')}   # route: (format, the pair member its price is taken from)
-MMQ_ROW_MULTIPLE = 128             # ggml_mmq::kRowMultiple: MMQ's rows come in whole 128-row tiles
 MMQ_WARPS = 8.0                    # warps of one ggml_mmq CTA
 MMQ_FILL = 0.9                     # ggml_mmq_internal.cuh: a tile a CTA where the grid fills its last wave to 90 %
 # generic_gemm_internal.h kRmmaLatencyOneSetBytes (store and add: one weight set, generic_rmma_describe.cpp) / SwiGluBytes
@@ -172,7 +172,30 @@ def handover(gpu, F, T):
     return c is None or (float(T) > 16 and c['cc'] not in VERIFIED_T17)
 
 
+MMQ_HEADER = os.path.join('src', 'ops', 'generic', 'ggml_mmq', 'ggml_mmq.h')
+
+
+def _mmq_row_multiple():
+    """ggml_mmq::kRowMultiple, read from the header: MMQ takes rows in whole tiles of it only (mmq_call)."""
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with open(os.path.join(root, MMQ_HEADER), encoding='utf-8') as f:
+        m = re.search(r'inline constexpr int kRowMultiple\s*=\s*(\d+)\s*;', f.read())
+    if not m:
+        raise SystemExit(MMQ_HEADER + ': no kRowMultiple')
+    return int(m.group(1))
+
+
+MMQ_ROW_MULTIPLE = _mmq_row_multiple()
+
+
+def mmq_takes(shape):
+    """Whether ggml's MMQ takes the shape's rows (generic_select.cpp mmq_call): on others the launch demotes it (#1077)."""
+    return int(shape['n']) % MMQ_ROW_MULTIPLE == 0
+
+
 def price_ns(gpu, F, shape, route, P=P, W=FAMILY_W):
+    if route == 'ggml_mmq' and not mmq_takes(shape):   # no price for a route the launch demotes (#1077)
+        return None
     fmt, anchor = PAIR.get(route, (None, None))
     if fmt == str(shape['format']).lower():                # the pair's ratio by the issue bound, on the anchor's price
         t = [_price(gpu, F, shape, r, P, W, i) for r, i in ((anchor, False), (route, True), (anchor, True))]
@@ -224,10 +247,8 @@ def candidates(gpu, F, shape):
     if c is None:
         return []
     T, fmt = max(float(shape.get('T', 1)), 1.0), str(shape['format']).lower()
-    # ggml's MMQ takes rows in whole 128-row tiles only (generic_select.cpp mmq_call,
-    # ggml_mmq::kRowMultiple): on other rows the launch demotes it, so it is no candidate (#1077).
-    mmq_rows = int(shape['n']) % MMQ_ROW_MULTIPLE == 0
-    names = set(['ggml_mmq'] if T >= 5 and mmq_rows else []) | set(['ggml_vec'] if 2 <= T <= 4 else [])
+    # ggml's MMQ on rows it takes only (mmq_takes; price_ns refuses the others too) (#1077).
+    names = set(['ggml_mmq'] if T >= 5 and mmq_takes(shape) else []) | set(['ggml_vec'] if 2 <= T <= 4 else [])
     for r in c['kf']['rmma']:
         # Thread-block clusters are sm_90+ (generic_select.cpp rmma_index: below it a cluster
         # schedule runs as its C == 1 twin), so a cluster row is no candidate there.

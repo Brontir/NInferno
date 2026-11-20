@@ -1,23 +1,29 @@
-"""routes/pick (tools/route_pick/gen.py): no predicted band names a route the launch would demote for its
-shape (#1077): ggml_mmq only on rows in whole 128-row tiles (generic_select.cpp mmq_call). No GPU."""
+"""routes/pick (tools/route_pick/gen.py): no predicted band names ggml_mmq on rows MMQ does not take
+(whole tiles of ggml_mmq::kRowMultiple, generic_select.cpp mmq_call), which the launch would demote (#1077).
+No GPU."""
 import glob
 import json
 import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MMQ_ROW_MULTIPLE = 128  # ggml_mmq::kRowMultiple
+sys.path.insert(0, os.path.join(ROOT, "tools", "route_pick"))
+
+import pick  # noqa: E402  (its kRowMultiple is read from ggml_mmq.h)
 
 
 def main():
     bad = []
     files = sorted(glob.glob(os.path.join(ROOT, "routes", "pick", "*.json")))
     for f in files:
-        for e in json.load(open(f, encoding="utf-8")).get("entries", []):
+        with open(f, encoding="utf-8") as fh:
+            entries = json.load(fh).get("entries", [])
+        for e in entries:
             for lo, hi, route in e.get("bands", []):
-                if route == "ggml_mmq" and e["n"] % MMQ_ROW_MULTIPLE:
-                    bad.append("%s: %s %dx%d T %d-%d ggml_mmq on rows not in 128-row tiles"
-                               % (os.path.basename(f), e["format"], e["n"], e["k"], lo, hi))
+                if route == "ggml_mmq" and not pick.mmq_takes(e):
+                    bad.append("%s: %s %dx%d T %d-%d ggml_mmq on rows not in %d-row tiles"
+                               % (os.path.basename(f), e["format"], e["n"], e["k"], lo, hi,
+                                  pick.MMQ_ROW_MULTIPLE))
     for b in bad:
         print("FAIL:", b)
     if not files:
