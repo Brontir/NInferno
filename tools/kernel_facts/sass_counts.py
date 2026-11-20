@@ -295,7 +295,7 @@ def iter_functions(lines, wanted=None, calls=None):
                     target = calls.get(name, {}).get(int(m.group(1), 16), target)
                 e = EMULATED_MMA.search(target)
                 if e and emulated_kind(e) not in EMULATED_SHAPES:
-                    raise ValueError(f"{name}: an emulated MMA of {e.group(1)} chunks has no shape")
+                    raise ValueError(f"{name}: an emulated MMA {emulated_kind(e)} has no shape")
                 if e:
                     opcode = EMULATED_SHAPES[emulated_kind(e)]
             body.append((int(m.group(1), 16), guard not in ("", "@PT"), opcode,

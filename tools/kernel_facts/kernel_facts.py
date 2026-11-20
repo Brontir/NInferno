@@ -639,14 +639,22 @@ def sass_lines(binary, cuda_bin, arch, sass_dump=None, names=None, batch=SASS_BA
                 fail(f"cuobjdump -sass failed on {binary}: {errors.read().strip()[:400]}")
 
 
+def counts_loops(keys):
+    """Whether `keys` ({mangled: (family, key)}) holds a kernel whose K loop is counted: every
+    family but the resources-only ones (the register-MMA rows carry no FAMILIES entry)."""
+    return any(FAMILIES[fk[0]].loop if fk[0] in FAMILIES else True for fk in keys.values())
+
+
 def emulated_calls(binary, cuda_bin, arch, keys, sass_dump=None):
-    """relocation_calls of the image where its kernels call the emulated int8 MMA (sm_70,
-    NINFERNO_FMA_MMA, #787): its SASS prints those calls unresolved. None elsewhere, for a saved
-    dump (its relocations are not in it), and where `keys` holds no w4a8 kernel (the only family
-    whose loop makes those calls, #1006 review)."""
+    """relocation_calls of the image where its kernels call the emulated MMA (sm_70,
+    NINFERNO_FMA_MMA: the int8 mma_s8_dp4a_call of the w4a8 tiles, #787, and the BF16 / F16
+    mma_*_fma_call of the register-MMA and grouped MoE loops, #762): its SASS prints those calls
+    unresolved. None elsewhere, for a saved dump (its relocations are not in it), and where `keys`
+    holds no family whose loop is counted (a per-family extraction of such a family must still
+    resolve them, or its loops count no MMA)."""
     if sass_dump or not str(arch).endswith("70"):
         return None
-    if not any(fk[0] == "w4a8" for fk in keys.values()):
+    if not counts_loops(keys):
         return None
     command = [cuda_tool("cuobjdump", cuda_bin), "-elf", "-arch", arch, binary]
     with tempfile.TemporaryFile(mode="w+", errors="replace") as errors:
@@ -659,7 +667,7 @@ def emulated_calls(binary, cuda_bin, arch, keys, sass_dump=None):
     # A build whose relocations name no emulated MMA would give every w4a8 row k_iter 0 again
     # (#1006's first data): refuse it rather than write it.
     if not any(sass_counts.EMULATED_MMA.search(sym) for per in calls.values() for sym in per.values()):
-        fail(f"no call to the emulated int8 MMA in the {arch} image's relocations of {binary}")
+        fail(f"no call to the emulated MMA in the {arch} image's relocations of {binary}")
     return calls
 
 
@@ -669,9 +677,9 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
     counts = {}
     lines = sass_lines(binary, cuda_bin, arch, sass_dump, sorted(keys), batch)
     calls = emulated_calls(binary, cuda_bin, arch, keys, sass_dump)
-    if sass_dump and str(arch).endswith("70") and any(fk[0] == "w4a8" for fk in keys.values()):
-        fail("an sm_70 w4a8 extraction needs the binary: a saved SASS dump has no relocations, "
-             "so its emulated MMA calls would count as no MMA")
+    if sass_dump and str(arch).endswith("70") and counts_loops(keys):
+        fail("an sm_70 extraction of counted loops needs the binary: a saved SASS dump has no "
+             "relocations, so its emulated MMA calls would count as no MMA")
     for name, body in sass_counts.iter_functions(lines, lambda n: n in keys, calls):
         fk = keys[name]
         family = FAMILIES[fk[0]]
