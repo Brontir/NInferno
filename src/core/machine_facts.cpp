@@ -190,8 +190,9 @@ std::vector<GpuFactsRow> parse_gpu_facts(std::string_view json_text) {
     }
     // A registered variant (#903) is named as a board of its own by --plan-device: its name, as
     // that lookup compares names (lower case, trimmed, without "nvidia " or "geforce "), names no
-    // row and no other variant, or the earlier entry would silently win the lookup. Rows may share
-    // a name (one board under two product ids).
+    // row and no other variant, or the earlier entry would silently win the lookup; nor is it
+    // empty, which --plan-device refuses before the lookup. Rows may share a name (one board under
+    // two product ids).
     const auto normalized = [](std::string name) {
         for (char& ch : name) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
         const auto trim = [](std::string& v) {
@@ -213,6 +214,10 @@ std::vector<GpuFactsRow> parse_gpu_facts(std::string_view json_text) {
     for (const GpuFactsRow& r : rows) {
         for (const GpuFactsSubsystem& v : r.subsystems) {
             const std::string name = normalized(v.name);
+            if (name.empty()) {
+                throw std::runtime_error("gpu facts: subsystem name \"" + v.name +
+                                         "\" is empty once trimmed and without its vendor prefix");
+            }
             if (row_names.contains(name) || !variant_names.insert(name).second) {
                 throw std::runtime_error("gpu facts: subsystem name \"" + v.name +
                                          "\" names another row or variant");

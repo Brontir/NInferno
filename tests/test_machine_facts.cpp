@@ -574,6 +574,9 @@ void malformed_tables_refused() {
     twin.replace(twin.find("0x10DE12EB"), 10, "0x10DE12EC");
     twin.replace(twin.find("\"name\":\"y\""), 10, "\"name\":\"GeForce Y\"");
     refused(with_subsystems(ceo + "," + twin), "two subsystems of one name");
+    std::string blank = ceo;
+    blank.replace(blank.find("\"name\":\"y\""), 10, "\"name\":\"   \"");
+    refused(with_subsystems(blank), "a subsystem name of only white space");
     std::string other = twin;
     other.replace(other.find("GeForce Y"), 9, "Y Prime");
     expect(parse_gpu_facts(with_subsystems(ceo + "," + other))[0].subsystems.size() == 2,
