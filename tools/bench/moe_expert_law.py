@@ -308,7 +308,8 @@ PICKS = {
     "rtx3090": {"class": "ga102", "pci_id": "0x2204", "arch": "86",
                 # Granite 3.0 MoE (E40): v2's own sealed grid. OLMoE (E64) passed sealed under v1 only (v2 was
                 # scored on it after unsealing), so it waits for a grid of its own.
-                "layers": ((40, 8, 1536, 512),)},
+                # Qwen3.6 35B-A3B (E256), the four K-quants with both banks in the published layout.
+                "layers": ((40, 8, 1536, 512), (256, 8, 2048, 512))},
     "rtx4060ti": {"class": "ad106", "pci_id": "0x2805", "arch": "89",
                   "layers": ((64, 8, 2048, 1024),)},  # OLMoE (E64): v1 = v2 on this board, sealed
 }
