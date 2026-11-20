@@ -405,11 +405,13 @@ def pick_text(board_name):
 
 
 def _bands(text):
-    """{(format, down_format, frag, E, K, H, F): bands} of a pick file's text."""
+    """{(format, down_format, frag, E, K, H, F): bands} of a pick file's text. Two entries of one key would
+    collapse into one and compare wrongly, so a file that holds one twice is refused (#1115)."""
     out = {}
     for e in json.loads(text)["moe"]:
         key = (e["format"], e.get("down_format", e["format"]), tuple(e.get("frag", ())), e["experts"], e["top_k"],
                e["hidden"], e["inter"])
+        if key in out: raise ValueError(f"routes/moe_pick: layer {key} appears twice")
         out[key] = e["bands"]
     return out
 
@@ -441,7 +443,7 @@ def write_picks(check, rebands=False):
             with open(path, "w", encoding="utf-8", newline="\n") as f: f.write(text)
     extra = sorted(n for n in have if n.endswith(".json") and n not in want)
     if moved:
-        print("routes/moe_pick: the bands of sealed layers moved: " +
+        print("routes/moe_pick: the bands of sealed layers moved or were removed: " +
               "; ".join(f"{n}: {', '.join(k)}" for n, k in moved.items()) +
               (" (written: --rebands)" if rebands and not check else
                ": refused; a sealed grid of these layers first, then --rebands"))

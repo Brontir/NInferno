@@ -100,3 +100,6 @@ def test_write_picks_refuses_moved_bands_and_names_files_by_class_id(tmp_path, m
     (pick_dir / "zz000-1sm.json").write_text("{}", encoding="utf-8")
     with pytest.raises(SystemExit):
         law.write_picks(check=True)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    with pytest.raises(ValueError, match="appears twice"):  # a layer listed twice is refused (#1115)
+        law._bands(json.dumps({"moe": doc["moe"] + doc["moe"][:1]}))

@@ -27,6 +27,7 @@
 #include "support/temp_dir.h"
 
 #include <cuda_runtime.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
@@ -1587,6 +1588,32 @@ int check_tuner() {
             fail("T=" + std::to_string(t) + ": the cached plan " + name + " is not the tuned " +
                  names[static_cast<std::size_t>(t - 1)]);
         }
+    }
+    // A cache entry timed against another default (a pick file or route table changed since), or
+    // one written before the defaults were kept, is timed again (#1115).
+    const auto rewrite_cache = [&](const auto& edit) {
+        nlohmann::json j;
+        {
+            std::ifstream in(path);
+            in >> j;
+        }
+        for (auto& [key, entry] : j["layers"].items()) { edit(entry); }
+        std::ofstream(path) << j.dump();
+        mo::clear_tuned_plans(); // the next tune reads the file again
+        return ops::tune_moe(l.weights, c.config, kWidths, nullptr);
+    };
+    const auto moved = rewrite_cache([](nlohmann::json& e) { e["base"]["1"] = "not-the-default"; });
+    if (!moved.ran || moved.cached) {
+        fail("a cache timed against another default was taken: " + moved.summary);
+    }
+    const auto older = rewrite_cache([](nlohmann::json& e) { e.erase("base"); });
+    if (!older.ran || older.cached) {
+        fail("a cache without its defaults was taken: " + older.summary);
+    }
+    mo::clear_tuned_plans();
+    const auto again = ops::tune_moe(l.weights, c.config, kWidths, nullptr);
+    if (!again.ran || !again.cached) {
+        fail("the retimed cache was not read back: " + again.summary);
     }
     mo::clear_tuned_plans();
     ops::set_moe_tune(TuneMode::Off, {});

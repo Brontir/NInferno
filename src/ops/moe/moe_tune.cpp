@@ -83,6 +83,14 @@ std::string layer_key(const MoeWeights& w, const MoeConfig& c) {
     return k.str();
 }
 
+// What the tuner timed T against: "table" where a route-table band serves the layer (the tuner
+// leaves it), else the name of the default plan (select_plan without the tuner). A cache entry
+// stands only while this is unchanged (#1115).
+std::string tuned_against(const MoeWeights& w, const MoeConfig& c, std::int32_t tokens) {
+    return table_covers(w, c, tokens) ? std::string("table")
+                                      : plan_name(untuned_plan(w, c, tokens, false));
+}
+
 // set_moe_tune: the mode and the cache directory (empty: NInferno's cache directory).
 std::atomic<TuneMode> g_mode{TuneMode::Off};
 std::filesystem::path g_cache_dir; // under g_mutex
@@ -228,14 +236,18 @@ MoeTuneReport tune_moe(const MoeWeights& weights, const MoeConfig& config, std::
     }
     load_cache_locked();
     auto& layers = g_cache["layers"];
-    // A cached layer: its plans, if every name still parses and every T asked is there.
+    // A cached layer: its plans, if every name still parses, every T asked is there, and every T
+    // was timed against the default select_plan gives today (#1115: after a pick file or route
+    // table changed, a cached "the default stays" would name another plan, never timed).
     if (mode != TuneMode::Retune && layers.contains(key)) {
         std::array<std::optional<MoePlan>, kTuneMaxTokens + 1> plans{};
         bool complete = true;
         const auto& entry = layers[key];
         for (std::int32_t t = 1; t <= max_tokens && complete; ++t) {
             const auto name = std::to_string(t);
-            if (!entry.contains("plans") || !entry["plans"].contains(name)) {
+            if (!entry.contains("plans") || !entry["plans"].contains(name) ||
+                !entry.contains("base") || !entry["base"].contains(name) ||
+                entry["base"][name] != tuned_against(weights, config, t)) {
                 complete = false;
                 break;
             }
@@ -276,7 +288,7 @@ MoeTuneReport tune_moe(const MoeWeights& weights, const MoeConfig& config, std::
                 timer};
 
     std::array<std::optional<MoePlan>, kTuneMaxTokens + 1> plans{};
-    Json entry{{"plans", Json::object()}, {"us", Json::object()}};
+    Json entry{{"plans", Json::object()}, {"us", Json::object()}, {"base", Json::object()}};
     std::ostringstream summary;
     summary << "moe tune " << key << ":";
     int improved = 0;
@@ -284,6 +296,7 @@ MoeTuneReport tune_moe(const MoeWeights& weights, const MoeConfig& config, std::
         for (std::int32_t t = 1; t <= max_tokens; ++t) {
             const auto name = std::to_string(t);
             entry["plans"][name] = nullptr;
+            entry["base"][name]  = tuned_against(weights, config, t);
             // A route-table band is measured and published: it stays.
             if (table_covers(weights, config, t)) { continue; }
             const MoePlan base = untuned_plan(weights, config, t, false);
