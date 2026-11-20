@@ -677,13 +677,15 @@ public:
                             l.bytes - admitted;
                     }
                 }
-            } else if (!int8 && !l.loader_a16 && l.any_nvfp4 &&
+            } else if (!int8 && !l.loader_a16 && l.any_nvfp4 && !l.nvfp4 &&
                        lp == runtime::PlanExpertPolicy::Unknown) {
                 // An NVFP4 site whose policy the facts do not hold, none of its NVFP4 banks in
-                // whole blocks (else build_decides): the recipe's AllowA4 lets the op run the
-                // layer's admitted banks (int8 codes in whole blocks) on the grouped W4A8 on both
-                // builds, a padded NVFP4 bank refused for its K group with no A4 veto; its A16Only
-                // runs every bank A16 (#1097). The kept fallback would count A16 at every start.
+                // whole blocks (a whole one is build_decides, or the kept fallback where a bank is
+                // unseen: the W4A4 build's A4 veto, #1100 review): the recipe's AllowA4 lets the op
+                // run the layer's admitted banks (int8 codes in whole blocks) on the grouped W4A8
+                // on both builds, a padded NVFP4 bank refused for its K group with no A4 veto; its
+                // A16Only runs every bank A16 (#1097). The kept fallback would count A16 at every
+                // start.
                 for (std::size_t s = 0; s < by.size(); ++s) {
                     auto& tally                = by[s];
                     const std::uint64_t admits = (s & 2) == 0 ? l.int8_bytes : 0;
