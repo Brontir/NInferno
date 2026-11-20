@@ -646,6 +646,53 @@ __device__ __forceinline__ void store(const VecOut& o, int row, int column, floa
     *out = __float2bfloat16(v);
 }
 
+// The transposed warp reduction of `V` per-lane values (2 <= V <= 32; #1044). While a lane keeps an
+// even number n > 1 of values, the butterfly step of offset o (16, 8, ...) halves them: lanes with
+// bit o set keep the upper half and send the lower, the others the reverse, and each adds its
+// partner's. After those vec_halvings(V) = H steps a lane keeps N = V >> H values, the block of V
+// that the lane's top H bits name (lane & 16, lane & 8, ...: block = lane >> (5 - H)); the
+// remaining 5 - H steps sum each of the N across the lanes of the block. No padding: V = 6 spends 3
+// + 3 x 4 = 15 shuffles, not the 8 values of a power of two (which spilled on sm_86) nor 6 x 5.
+// Lane L returns the whole sum of value block * N + sel, sel = L's low 5 - H bits, when sel < N.
+__host__ __device__ constexpr int vec_halvings(int v) {
+    int h = 0;
+    while (v > 1 && v % 2 == 0 && h < 5) {
+        v /= 2;
+        ++h;
+    }
+    return h;
+}
+
+template <int V>
+__device__ __forceinline__ float vec_transpose_reduce(float (&val)[V], int lane) {
+    static_assert(V >= 2 && V <= 32);
+    constexpr int kH = vec_halvings(V);
+    constexpr int kN = V >> kH;
+#pragma unroll
+    for (int s = 0, n = V; s < kH; ++s, n >>= 1) {
+        const int o      = 16 >> s;
+        const bool upper = (lane & o) != 0;
+#pragma unroll
+        for (int i = 0; i < n / 2; ++i) {
+            const float send = upper ? val[i] : val[i + n / 2];
+            const float keep = upper ? val[i + n / 2] : val[i];
+            val[i]           = keep + __shfl_xor_sync(0xFFFFFFFFu, send, o);
+        }
+    }
+#pragma unroll
+    for (int o = 16 >> kH; o > 0; o >>= 1) {
+#pragma unroll
+        for (int i = 0; i < kN; ++i) val[i] += __shfl_xor_sync(0xFFFFFFFFu, val[i], o);
+    }
+    const int sel = lane & ((32 >> kH) - 1);
+    float mine    = 0.0f;
+#pragma unroll
+    for (int i = 0; i < kN; ++i) {
+        if (sel == i) mine = val[i];
+    }
+    return mine;
+}
+
 // KS: the static K the slice loop unrolls over, or 0 for the runtime K. Gated: the SwiGlu pair (gate
 // and up rows, one row per warp), a separate instance as ninfer-all's Fused one: the plain product
 // keeps no gated branches or second-plane state in its loop.
@@ -717,31 +764,73 @@ __launch_bounds__(kVecWarps * 32, Bounded ? kVecBoundedBlocks : 0) __global__
         } else {
             for (int it = 0; lane + 32 * it < slices; ++it) slice(it);
         }
+        if constexpr (gated || kRows * T != 8) {
+            // T != 4 and the gated pair (#1044): five shuffles a value and 2T predicated stores, as
+            // before. The transposed reduction below gave Q3_K at T = 2 104 registers, not 96
+            // (sm_86: 4 CTAs a SM, not 5; RTX 3060 Q3_K_M C2 -2.2 %), and IQ4_XS at T = 3 lost (RTX
+            // 3090 C3 -3.6 %), and q4k 4096x12288 at T = 3 lost 6-13 % with no register or spill
+            // change (unexplained). T = 4 only (2T = 8): T = 8, which Volta and the slow-tensor
+            // parts run as two parts of eight, was not timed with it either. The gated pair keeps
+            // it too: its IQ4_XS T = 4 instance took a 16 B local frame on sm_86 / 89 and lost end
+            // to end (RTX 3090 IQ4_XS C4 -1.24 % with the pair transposed).
 #pragma unroll
-        for (int r = 0; r < kRows; ++r) {
+            for (int r = 0; r < kRows; ++r) {
+#pragma unroll
+                for (int j = 0; j < T; ++j) {
+#pragma unroll
+                    for (int o = 16; o > 0; o >>= 1)
+                        acc[r][j] += __shfl_xor_sync(0xFFFFFFFFu, acc[r][j], o);
+                }
+            }
+            // Every lane holds the sums: lane j stores column j (row pair: lanes T..2T-1 the
+            // second).
 #pragma unroll
             for (int j = 0; j < T; ++j) {
+                if constexpr (gated) {
+                    if (lane == j) store(p.out, row0, j, gate_of(p.out, acc[0][j]) * acc[1][j]);
+                } else {
 #pragma unroll
-                for (int o = 16; o > 0; o >>= 1) acc[r][j] += __shfl_xor_sync(0xFFFFFFFFu, acc[r][j], o);
-            }
-        }
-        // Every lane holds the sums: lane j stores column j (row pair: lanes T..2T-1 the second).
-#pragma unroll
-        for (int j = 0; j < T; ++j) {
-            if constexpr (gated) {
-                if (lane == j) store(p.out, row0, j, gate_of(p.out, acc[0][j]) * acc[1][j]);
-            } else {
-#pragma unroll
-                for (int r = 0; r < kRows; ++r) {
-                    if (lane == r * T + j && row0 + r < p.rows) {
-                        float v = acc[r][j];
-                        if (p.out.relu2 != 0) {
-                            v = fmaxf(v, 0.0F);
-                            v *= v;
+                    for (int r = 0; r < kRows; ++r) {
+                        if (lane == r * T + j && row0 + r < p.rows) {
+                            float v = acc[r][j];
+                            if (p.out.relu2 != 0) {
+                                v = fmaxf(v, 0.0F);
+                                v *= v;
+                            }
+                            store(p.out, row0 + r, j, v);
                         }
-                        store(p.out, row0 + r, j, v);
                     }
                 }
+            }
+        } else {
+            // The 2T sums of the row pair (index r * T + j) reduced in one transposed butterfly
+            // (#1044, vec_transpose_reduce): against 5 shuffles a value, and one store a lane, not
+            // 2T inlined predicated ones. The first halving splits the rows: lanes with bit 16 hold
+            // r 1.
+            constexpr int kValues = kRows * T;
+            float val[kValues];
+#pragma unroll
+            for (int r = 0; r < kRows; ++r) {
+#pragma unroll
+                for (int j = 0; j < T; ++j) val[r * T + j] = acc[r][j];
+            }
+            const float mine = vec_transpose_reduce<kValues>(val, lane);
+            constexpr int kH = vec_halvings(kValues);
+            constexpr int kN = kValues >> kH;
+            const int sel    = lane & ((32 >> kH) - 1);
+            const int idx    = (lane >> (5 - kH)) * kN + sel;
+            const int r      = idx / T;
+            const int j      = idx % T;
+            const bool owner = sel < kN;
+            static_assert(!gated,
+                          "the gated pair keeps the per-value butterfly (the branch above)");
+            if (owner && row0 + r < p.rows) {
+                float v = mine;
+                if (p.out.relu2 != 0) {
+                    v = fmaxf(v, 0.0F);
+                    v *= v;
+                }
+                store(p.out, row0 + r, j, v);
             }
         }
     }
