@@ -500,6 +500,7 @@ DeviceClass board_class(const BoardClassSpec& spec) {
     d.sm_clock_khz     = view.sm_clock_khz;
     d.memory_clock_khz = view.memory_clock_khz;
     d.memory_bus_bits  = view.memory_bus_bits;
+    d.pci_subsystem_id = spec.pci_subsystem_id;
     d.facts            = machine_facts_of(d);
     return d;
 }

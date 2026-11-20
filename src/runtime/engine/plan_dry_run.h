@@ -416,6 +416,9 @@ struct PlanDeviceFacts {
     std::uint64_t total_bytes   = 0;
     int compute_capability      = 0;
     std::uint32_t pci_device_id = 0;     // PCI product id (0: unknown): the speculation profile key
+    // A registered variant of the product (gpu_facts subsystems, #903: the TITAN V CEO Edition of
+    // 0x1DBA); 0: none named, the product row's board.
+    std::uint32_t pci_subsystem_id = 0;
     int sms                     = 0;     // multiprocessors (0: unknown)
     bool paravirtual            = false; // WDDM: native Windows or WSL 2
     bool drives_display         = false;

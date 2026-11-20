@@ -404,6 +404,9 @@ struct BoardClassSpec {
     // The features of the engine the board would run under. nullopt: the architecture's row
     // (device_features_for). mma_slow is the board's own (board_mma_slow) either way.
     std::optional<DeviceFeatures> engine;
+    // A registered variant of the product id (GpuFactsRow::subsystems: subsystem vendor << 16 |
+    // subsystem device, #903): machine_facts_of then takes that board's values. 0: none named.
+    std::uint32_t pci_subsystem_id = 0;
 };
 
 // The one class builder for a named board: synthetic_device_class's identity, features and
