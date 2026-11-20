@@ -55,7 +55,7 @@ def test_every_plan_is_priced_and_one_pick_a_cell(tmp_path):
     # Every plan in every cell, except the R8 stages past the R8 token limit (Q6_K: four, moe_regime_rules.h).
     assert len(rows) == 4 * 8 * 4 - 4 * 3
     assert not [r for r in rows if r["format"] == "q6_k" and int(r["T"]) > 4 and "r8." in r["plan"]]
-    for fmt in law.BPW:
+    for fmt in law.FORMATS:
         for t in range(1, 9):
             cell = [r for r in rows if r["format"] == fmt and int(r["T"]) == t]
             assert sum(int(r["pick"]) for r in cell) == 1

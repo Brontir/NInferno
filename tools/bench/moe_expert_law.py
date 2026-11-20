@@ -303,21 +303,22 @@ SWEEP_STAGES = ("rmma.m1.n1.w1x4", "rmma.m1.n1.w1x8", "rmma.m1.n1.w2x2", "rmma.m
                 "rmma.m1.n4.w1x8", "rmma.m1.n4.w4x1", "rmma.m1.n8.w4x1", "r8.w2r1", "r8.w4r1", "r8.w4r2", "r8.w8r1")
 # The boards and layer geometries (E, K, H, F) whose picks ship (routes/moe_pick/<class>.json, #987): each one
 # passed a sealed grid against production auto under the rule mean < auto and max <= auto + 2 points (the frozen
-# grids and their scores: C:/Users/MixaPC/analyzer_r4/RESULT_review.md 20.11, the issue's comments). A board or a
-# geometry joins only after its own sealed grid passes.
+# grids and their scores: the issue's comments). A board or a geometry joins only after its own sealed grid passes.
+# "class" is the board's device class id (DeviceClass::id(), the route lookup's route_gpu_class), so a cut-down
+# chip names its SM count; the file name spells its ':' as '-' (route_table_file_name), as routes/pick does.
 # The product's mixed expert banks (gate/up : down) of the K-quant mixes, Q4_K in fragment order (q4_kf).
 MIXED_FRAG = (("q3_k", "q4_kf"), ("q4_kf", "q6_k"), ("q5_k", "q6_k"))
 PICKS = {
-    "rtx3090": {"class": "ga102", "pci_id": "0x2204", "arch": "86",
+    "rtx3090": {"class": "ga102:82sm", "pci_id": "0x2204", "arch": "86",
                 # Granite 3.0 MoE (E40): v2's own sealed grid. OLMoE (E64) passed sealed under v1 only (v2 was
                 # scored on it after unsealing), so it waits for a grid of its own.
                 # Qwen3.6 35B-A3B (E256), the four K-quants with both banks in the published layout; and the
                 # product's mixed banks (Q3_K_M / Q4_K_M / Q5_K_M layers, Q4_K in fragment order as convert's
                 # Auto layout stores it): sealed grid 5.
                 "layers": ((40, 8, 1536, 512), (256, 8, 2048, 512), (256, 8, 2048, 512, MIXED_FRAG))},
-    "rtx3060": {"class": "ga106", "pci_id": "0x2504", "arch": "86",
+    "rtx3060": {"class": "ga106:28sm", "pci_id": "0x2504", "arch": "86",
                 "layers": ((256, 8, 2048, 512, MIXED_FRAG),)},  # Qwen3.6 35B-A3B, mixed banks: sealed grid 5
-    "rtx4060ti": {"class": "ad106", "pci_id": "0x2805", "arch": "89",
+    "rtx4060ti": {"class": "ad106:34sm", "pci_id": "0x2805", "arch": "89",
                   "layers": ((64, 8, 2048, 1024),)},  # OLMoE (E64): v1 = v2 on this board, sealed
 }
 PICK_SCHEMA = "ninferno-moe-pick/1"
@@ -419,7 +420,7 @@ def write_picks(check, rebands=False):
     where every layer it held keeps its bands. Bands that moved (a changed law, or kernel facts that moved
     the prices) are refused unless `rebands` (--rebands), after a new sealed grid of those layers."""
     stale, moved = [], {}
-    want = {PICKS[b]["class"] + ".json": pick_text(b) for b in PICKS}
+    want = {PICKS[b]["class"].replace(":", "-") + ".json": pick_text(b) for b in PICKS}
     have = set(os.listdir(PICK_DIR)) if os.path.isdir(PICK_DIR) else set()
     for name, text in sorted(want.items()):
         path = os.path.join(PICK_DIR, name)
