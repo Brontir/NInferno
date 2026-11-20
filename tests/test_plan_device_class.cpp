@@ -817,6 +817,11 @@ int main() {
             const auto it = by_arch.find(arch);
             return it == by_arch.end() ? std::string() : it->second.substr(0, it->second.find(' '));
         };
+        // The pairs below are skipped where an arch has no board: they must not all be.
+        check(!wide_bytes("70").empty() && !wide_bytes("75").empty() &&
+                  (!wide_bytes("86").empty() || !wide_bytes("89").empty() ||
+                   !wide_bytes("120a").empty()),
+              "the registry has sm_70, sm_75 and a wide-tile arch's boards (#1112)");
         for (const char* narrow : {"70", "75"}) {
             for (const char* wide : {"86", "89", "120a"}) {
                 if (wide_bytes(narrow).empty() || wide_bytes(wide).empty()) continue;
