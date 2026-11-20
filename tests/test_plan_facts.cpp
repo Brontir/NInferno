@@ -1485,6 +1485,27 @@ int artifact_prefill_policy() {
     failures +=
         check(route(QType::NVFP4, layers(none, none, none, none), true) == rt::ExpertPrefill::Int8,
               "artifact prefill under int8: NVFP4 banks with no recorded policy, the grouped W4A8");
+    // codex on #1094: a layer whose policy the facts do not hold may also be the recipe's
+    // A16Only (moe_recipe). 100 bytes voting Int8, 90 A16 and a 20-byte NVFP4 layer of unknown
+    // policy: Int8 on both builds at AllowA4, A16 where the recipe keeps it A16Only, so Unknown.
+    {
+        const std::vector<Bank> close = {
+            {"text/layers/0/experts/gate_up", 60, a8, QType::GGML_Q4_0},
+            {"text/layers/0/experts/down", 40, a8, QType::GGML_Q4_0},
+            {"text/layers/1/experts/gate_up", 50, a16, QType::GGML_Q4_0},
+            {"text/layers/1/experts/down", 40, a16, QType::GGML_Q4_0},
+            {"text/layers/2/experts/gate_up", 12, none},
+            {"text/layers/2/experts/down", 8, none}};
+        failures += check(route(QType::NVFP4, close) == rt::ExpertPrefill::Unknown,
+                          "artifact prefill: an unknown-policy NVFP4 layer that the recipe's "
+                          "A16Only would tip, Unknown");
+        // The same layer too small to tip it: Int8 at every start.
+        std::vector<Bank> small = close;
+        small[4].rows           = 6;
+        small[5].rows           = 2;
+        failures += check(route(QType::NVFP4, small) == rt::ExpertPrefill::Int8,
+                          "artifact prefill: an unknown-policy NVFP4 layer too small to tip, Int8");
+    }
     // A bank known A16-only beside one with no recorded policy: the layer is A16 still
     // (ops::moe_policy), not the kept fallback.
     failures += check(route(QType::MXFP4, layers(a16, none, a16, none)) == rt::ExpertPrefill::A16,

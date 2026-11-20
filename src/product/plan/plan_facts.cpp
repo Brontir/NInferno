@@ -624,10 +624,14 @@ public:
     // Unknown (the build's), so a build-dependent layer too small to move the answer leaves it
     // (codex on #1087).
     [[nodiscard]] runtime::ExpertPrefill route(bool int8 = false) const {
-        std::array<std::uint64_t, 4> veto{}, plain{};
+        // The route asked of four starts (`by[s]`): a build with the W4A4 kernels or without
+        // (s & 1: without), and a recipe that keeps a policy the facts do not hold at AllowA4 or at
+        // A16Only (s & 2: A16Only; moe_recipe keeps such an NVFP4 site A16Only, the Qwen 3.5 and
+        // Gemma 4 recipes AllowA4; codex on #1094). Every layer the starts agree on adds the same
+        // to all four.
+        std::array<std::array<std::uint64_t, 4>, 4> by{};
         const auto add = [&](runtime::ExpertPrefill r, std::uint64_t bytes) {
-            veto[static_cast<std::size_t>(r)] += bytes;
-            plain[static_cast<std::size_t>(r)] += bytes;
+            for (auto& tally : by) { tally[static_cast<std::size_t>(r)] += bytes; }
         };
         for (const auto& [name, l] : layers_) {
             const bool a8 = int8 || (!l.loader_a16 && layer_allows_a8(l));
@@ -652,16 +656,26 @@ public:
             if (!l.known) {
                 add(runtime::ExpertPrefill::Unknown, l.bytes);
             } else if (build_decides) {
-                // With the W4A4 kernels the veto keeps both stages A16 (a layer of NVFP4 banks
-                // alone may run a fused W4A4 instead: unpriced); without them the banks the op
-                // admits run the grouped W4A8, the rest A16.
-                veto[static_cast<std::size_t>(l.all_nvfp4 ? runtime::ExpertPrefill::Unknown
-                                                          : runtime::ExpertPrefill::A16)] +=
-                    l.bytes;
                 // int8_bytes holds the whole NVFP4 banks too (their W4A8 tile, #1090).
                 const std::uint64_t admitted = l.int8_bytes;
-                plain[static_cast<std::size_t>(runtime::ExpertPrefill::Int8)] += admitted;
-                plain[static_cast<std::size_t>(runtime::ExpertPrefill::A16)] += l.bytes - admitted;
+                for (std::size_t s = 0; s < by.size(); ++s) {
+                    auto& tally = by[s];
+                    if ((s & 2) != 0 && lp == runtime::PlanExpertPolicy::Unknown) {
+                        // The recipe's A16Only: the op refuses the grouped W4A8 (Policy).
+                        tally[static_cast<std::size_t>(runtime::ExpertPrefill::A16)] += l.bytes;
+                    } else if ((s & 1) == 0) {
+                        // With the W4A4 kernels the veto keeps both stages A16 (a layer of NVFP4
+                        // banks alone may run a fused W4A4 instead: unpriced).
+                        tally[static_cast<std::size_t>(
+                            l.all_nvfp4 ? runtime::ExpertPrefill::Unknown
+                                        : runtime::ExpertPrefill::A16)] += l.bytes;
+                    } else {
+                        // Without them the banks the op admits run the grouped W4A8, the rest A16.
+                        tally[static_cast<std::size_t>(runtime::ExpertPrefill::Int8)] += admitted;
+                        tally[static_cast<std::size_t>(runtime::ExpertPrefill::A16)] +=
+                            l.bytes - admitted;
+                    }
+                }
             } else if (l.mxfp4) {
                 // A bank the op refuses for its blocks (w4a8_bank_refusal KGroup), or under an A16
                 // policy (Policy), runs A16.
@@ -681,8 +695,10 @@ public:
             return *most > by[0] ? static_cast<runtime::ExpertPrefill>(most - by.begin())
                                  : runtime::ExpertPrefill::Unknown;
         };
-        const runtime::ExpertPrefill with_w4a4 = winner(veto);
-        return with_w4a4 == winner(plain) ? with_w4a4 : runtime::ExpertPrefill::Unknown;
+        const runtime::ExpertPrefill first = winner(by[0]);
+        const bool agree                   = std::all_of(by.begin() + 1, by.end(),
+                                                         [&](const auto& tally) { return winner(tally) == first; });
+        return agree ? first : runtime::ExpertPrefill::Unknown;
     }
 
     // Whether the route rests on a bank whose kept format the header does not tell (add's
