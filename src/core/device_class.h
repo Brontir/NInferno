@@ -407,6 +407,9 @@ struct BoardClassSpec {
     // A registered variant of the product id (GpuFactsRow::subsystems: subsystem vendor << 16 |
     // subsystem device, #903): machine_facts_of then takes that board's values. 0: none named.
     std::uint32_t pci_subsystem_id = 0;
+    // The driver was asked for the subsystem and did not say (DeviceClass::pci_subsystem_unread):
+    // a row that lists boards by subsystem is priced as the slowest of them.
+    bool pci_subsystem_unread = false;
 };
 
 // The one class builder for a named board: synthetic_device_class's identity, features and

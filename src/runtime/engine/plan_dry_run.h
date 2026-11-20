@@ -419,6 +419,9 @@ struct PlanDeviceFacts {
     // A registered variant of the product (gpu_facts subsystems, #903: the TITAN V CEO Edition of
     // 0x1DBA); 0: none named, the product row's board.
     std::uint32_t pci_subsystem_id = 0;
+    // A card in the machine whose driver did not give its subsystem (DeviceClass
+    // pci_subsystem_unread): priced as the slowest board its row lists, as its start is.
+    bool pci_subsystem_unread   = false;
     int sms                     = 0;     // multiprocessors (0: unknown)
     bool paravirtual            = false; // WDDM: native Windows or WSL 2
     bool drives_display         = false;

@@ -834,6 +834,24 @@ int main() {
               "--plan-device 0x1DBA: (no subsystem): refused as such (" + refused + ")");
         check(!pr::plan_device_of_board("0x100001DBA", &refused),
               "--plan-device 0x100001DBA: a PCI id past 16 bits is refused, not wrapped");
+        // A card in the machine whose driver did not give its subsystem (plan_device_of_cuda
+        // carries DeviceClass::pci_subsystem_unread): a row listing boards by subsystem prices it
+        // as the slowest of them, extrapolated, as its start does; a read subsystem is that board.
+        if (quadro) {
+            rt::PlanDeviceFacts live  = *quadro;
+            live.pci_subsystem_unread = true;
+            const DeviceClass unread  = rt::plan_device_class(live);
+            check(unread.facts.reference_clock_khz == 1455000 &&
+                      unread.facts.source == FactSource::Extrapolated &&
+                      unread.facts.subsystem_unknown,
+                  "an unread subsystem of 0x1DBA: the slowest listed board, extrapolated (" +
+                      std::to_string(unread.facts.reference_clock_khz) + ")");
+            live.pci_subsystem_unread = false;
+            live.pci_subsystem_id     = 0x10DE12EB;
+            check(rt::plan_device_class(live).facts.reference_clock_khz == 1455000 &&
+                      rt::plan_device_class(live).facts.source == FactSource::Verified,
+                  "a read CEO subsystem of 0x1DBA: the CEO Edition, verified");
+        }
         check(!pr::plan_device_of_board("CEO Editon", &refused) &&
                   refused.find("TITAN V CEO Edition") != std::string::npos,
               "--plan-device 'CEO Editon': the close names hold the variant (" + refused + ")");

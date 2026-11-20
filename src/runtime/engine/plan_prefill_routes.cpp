@@ -48,8 +48,9 @@ DeviceClass class_of(const PlanDeviceFacts& device) {
         synthetic_device_class(device.pci_device_id, device.compute_capability / 10,
                                device.compute_capability % 10, device.sms, 0, device.total_bytes);
     // A named variant's own board (#903 item 4: the TITAN V CEO Edition's clock, not the Quadro's).
-    d.pci_subsystem_id = device.pci_subsystem_id;
-    d.facts            = machine_facts_of(d);
+    d.pci_subsystem_id     = device.pci_subsystem_id;
+    d.pci_subsystem_unread = device.pci_subsystem_unread;
+    d.facts                = machine_facts_of(d);
     return d;
 }
 
