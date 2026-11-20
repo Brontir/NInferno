@@ -10,6 +10,7 @@
 #include "convert/fetch.h"
 #include "convert/gguf.h"
 #include "core/ascii.h"
+#include "core/machine_facts.h"
 #include "spec/round_cost.h"
 
 #include "product/activation_options.h"
@@ -1201,25 +1202,36 @@ Json planned_json(const PlannedSpeculation& planned, bool ladder) {
 }
 
 Json device_json(const runtime::PlanDeviceFacts& device, const runtime::DryRunPlan& plan) {
-    return {{"name", device.name},
-            {"source", device.source},
-            {"total_bytes", device.total_bytes},
-            {"class_bytes", device.total_bytes / runtime::kPlanVramClassGrainBytes *
-                                runtime::kPlanVramClassGrainBytes},
-            {"compute_capability", device.compute_capability},
-            {"pci_device_id", device.pci_device_id},
-            {"wddm", device.paravirtual},
-            {"display", device.drives_display},
-            {"integrated", device.integrated},
-            {"card_gb", card_gb(device)},
-            {"free_basis", device.free_bytes ? "measured" : "idle_card"},
-            {"free_bytes", plan.free_bytes},
-            {"class_reserve_bytes",
-             runtime::plan_class_reserve(device.total_bytes, device.paravirtual,
-                                         device.drives_display, device.integrated)},
-            {"desktop_bytes", !device.drives_display ? std::uint64_t{0}
-                              : device.paravirtual   ? runtime::kPlanIdleWindowsDesktopBytes
-                                                     : runtime::kPlanIdleLinuxDesktopBytes}};
+    Json out = {{"name", device.name},
+                {"source", device.source},
+                {"total_bytes", device.total_bytes},
+                {"class_bytes", device.total_bytes / runtime::kPlanVramClassGrainBytes *
+                                    runtime::kPlanVramClassGrainBytes},
+                {"compute_capability", device.compute_capability},
+                {"pci_device_id", device.pci_device_id},
+                {"wddm", device.paravirtual},
+                {"display", device.drives_display},
+                {"integrated", device.integrated},
+                {"card_gb", card_gb(device)},
+                {"free_basis", device.free_bytes ? "measured" : "idle_card"},
+                {"free_bytes", plan.free_bytes},
+                {"class_reserve_bytes",
+                 runtime::plan_class_reserve(device.total_bytes, device.paravirtual,
+                                             device.drives_display, device.integrated)},
+                {"desktop_bytes", !device.drives_display ? std::uint64_t{0}
+                                  : device.paravirtual   ? runtime::kPlanIdleWindowsDesktopBytes
+                                                         : runtime::kPlanIdleLinuxDesktopBytes}};
+    // A registered variant of the product id (#903: the TITAN V CEO Edition of 0x1DBA), named by
+    // --plan-device or read from the card, where its row lists that subsystem: the board the plan
+    // priced, beside the product id. Any other card's subsystem (its maker's) prices the row's
+    // board and is left out.
+    if (const GpuFactsRow* row = find_gpu_facts(device.pci_device_id);
+        row != nullptr && device.pci_subsystem_id != 0 &&
+        std::any_of(row->subsystems.begin(), row->subsystems.end(),
+                    [&](const GpuFactsSubsystem& v) { return v.id == device.pci_subsystem_id; })) {
+        out["pci_subsystem_id"] = device.pci_subsystem_id;
+    }
+    return out;
 }
 
 Json model_json(const PlanSourceFacts& facts, const std::string& source, const std::string& kind) {

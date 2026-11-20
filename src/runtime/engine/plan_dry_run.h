@@ -197,7 +197,8 @@ enum class WeightBasis : std::uint8_t {
 
 // The GEMM an MoE's routed banks prefill on (product/plan expert_prefill_of: the banks' formats and
 // their stored layout, as ops/moe w4a8_bank_refusal decides it bank by bank: the route of the most
-// of the banks' bytes). Unknown: dense, or not known.
+// of the banks' bytes). Unknown: dense, not known, or the build's (an NVFP4 layer at AllowA4: W4A4
+// kernels or not, #796).
 enum class ExpertPrefill : std::uint8_t {
     Unknown,
     Int8,  // the grouped W4A8 reads the bank: int8 activations on the int8 MMA (dp4a without one)
@@ -415,6 +416,12 @@ struct PlanDeviceFacts {
     std::uint64_t total_bytes   = 0;
     int compute_capability      = 0;
     std::uint32_t pci_device_id = 0;     // PCI product id (0: unknown): the speculation profile key
+    // A registered variant of the product (gpu_facts subsystems, #903: the TITAN V CEO Edition of
+    // 0x1DBA); 0: none named, the product row's board.
+    std::uint32_t pci_subsystem_id = 0;
+    // A card in the machine whose driver did not give its subsystem (DeviceClass
+    // pci_subsystem_unread): priced as the slowest board its row lists, as its start is.
+    bool pci_subsystem_unread   = false;
     int sms                     = 0;     // multiprocessors (0: unknown)
     bool paravirtual            = false; // WDDM: native Windows or WSL 2
     bool drives_display         = false;
