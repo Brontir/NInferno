@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -377,9 +378,11 @@ int shipped_moe_picks() {
             std::ofstream(tmp / "moe_pick" / first_name) << text;
             ninferno::ops::set_route_table_dir(utf8_path(tmp));
         };
-        const auto changed = [&](const std::string& from, const std::string& to) {
-            return std::regex_replace(first_text, std::regex(from), to,
-                                      std::regex_constants::format_first_only);
+        // The first file with its first entry changed by `edit` (the file's other fields kept).
+        const auto changed = [&](const std::function<void(Json&, Json&)>& edit) {
+            Json root = Json::parse(first_text);
+            edit(root, root["moe"][0]);
+            return root.dump(1);
         };
         const auto refused_with = [&](const std::string& what, const std::string& text) {
             install(text);
@@ -392,17 +395,21 @@ int shipped_moe_picks() {
             failures += check(refused, first_name + " " + what + " is refused, naming the file");
         };
         refused_with("as another class's file",
-                     changed(R"re("class": "[^"]+")re", R"re("class": "zz999:1sm")re"));
-        refused_with("with a band to T 9",
-                     changed(R"re("bands": \[\[([0-9]+), [0-9]+,)re", R"re("bands": [[$1, 9,)re"));
-        refused_with("with a prefill plan",
-                     changed(R"re("bands": )re",
-                             R"re("prefill": "rmma.m1.n8.w4x1|rmma.m1.n8.w4x1", "bands": )re"));
+                     changed([](Json& root, Json&) { root["gpu"]["class"] = "zz999:1sm"; }));
+        // A register-MMA band (no R8 stage, which moe_entry_of refuses past T 8 itself): the
+        // pick's own limit of T 1-8.
+        refused_with("with a band to T 9", changed([](Json&, Json& e) {
+                         e["bands"] =
+                             Json::array({Json::array({1, 9, "rmma.m1.n1.w1x8|rmma.m1.n1.w1x4"})});
+                     }));
+        refused_with("with a prefill plan", changed([](Json&, Json& e) {
+                         e["prefill"] = "rmma.m1.n8.w4x1|rmma.m1.n8.w4x1";
+                     }));
         refused_with("with an unknown bank in frag",
-                     changed(R"re("bands": )re", R"re("frag": ["router"], "bands": )re"));
+                     changed([](Json&, Json& e) { e["frag"] = Json::array({"router"}); }));
         // Priced for another board of the class (its gpu.pci_id): not read, and the status says so.
         const auto other = first_id == 0x2204U ? std::string("0x2206") : std::string("0x2204");
-        install(changed(R"re("pci_id": "0x[0-9a-fA-F]{4}")re", "\"pci_id\": \"" + other + "\""));
+        install(changed([&](Json& root, Json&) { root["gpu"]["pci_id"] = other; }));
         try {
             const auto s = ninferno::ops::route_table_status();
             failures +=

@@ -28,7 +28,8 @@ counted once, not per iteration. The frozen CSVs record the law with them.
     moe_expert_law.py predict FACTS BOARD PLANS_CSV E,K,H,F OUT.csv [GU:DOWN,...]
                                                            every plan's price and the pick, for a sealed grid
                                                            (format pairs of a mixed layer: q4_k:q6_k)
-    moe_expert_law.py pick [--check]                       write (check) routes/moe_pick/<class>.json
+    moe_expert_law.py pick [--check] [--rebands]           write (check) routes/moe_pick/<class>.json; a run that
+                                                           moves a sealed layer's bands is refused without --rebands
 """
 import collections, csv, json, math, os, statistics as st, sys
 
@@ -323,6 +324,29 @@ def _sha256(path):
         return hashlib.sha256(f.read()).hexdigest()
 
 
+def _sha256_text(text):
+    import hashlib
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _facts_sections(path):
+    """The snapshot's moegemm and moer8 sections, the only ones the law reads (a change elsewhere in the
+    snapshot leaves the picks in step)."""
+    keep, out = False, []
+    for line in open(path, encoding="utf-8"):
+        if line.startswith("family "):
+            keep = line.split()[1] in ("moegemm", "moer8")
+        if keep:
+            out.append(line)
+    return "".join(out)
+
+
+def _arch_rows():
+    """gpu_facts.json's archs array, the only part of it the law reads (smem_facts)."""
+    facts = json.load(open(os.path.join(ROOT, "src", "core", "data", "gpu_facts.json"), encoding="utf-8"))
+    return json.dumps(facts["archs"], sort_keys=True)
+
+
 def pick_document(board_name):
     """The routes/moe_pick file of one board: per layer geometry and format, the law's cheapest plan at each
     decode width T 1-8, as route-table moe bands ([t_min, t_max, "<gate/up>|<down>"], equal neighbours joined)."""
@@ -355,9 +379,11 @@ def pick_document(board_name):
             entry.update({"experts": E, "top_k": K, "hidden": H, "inter": F, "bands": bands})
             entries.append(entry)
     rel = lambda p: os.path.relpath(p, ROOT).replace(os.sep, "/")
-    inputs = {rel(p): _sha256(p) for p in (os.path.abspath(__file__), facts_path,
-                                           os.path.join(PROBE_DIR, PROBE[board_name]),
-                                           os.path.join(ROOT, "src", "core", "data", "gpu_facts.json"))}
+    probe = os.path.join(PROBE_DIR, PROBE[board_name])
+    inputs = {rel(os.path.abspath(__file__)): _sha256(os.path.abspath(__file__)),
+              rel(facts_path) + " moegemm+moer8": _sha256_text(_facts_sections(facts_path)),
+              rel(probe): _sha256(probe),
+              "src/core/data/gpu_facts.json archs": _sha256_text(_arch_rows())}
     return {"schema": PICK_SCHEMA, "gpu": {"class": spec["class"], "pci_id": spec["pci_id"], "board": board_name},
             "source": "tools/bench/moe_expert_law.py pick (the expert-call law v2, #987): priced, not measured",
             "inputs": inputs, "moe": entries}
@@ -371,9 +397,22 @@ def pick_text(board_name):
     return head[:-2] + ',\n "moe": [\n' + rows + "\n ]\n}\n"
 
 
-def write_picks(check):
-    """Writes (or, `check`, compares) every board's routes/moe_pick/<class>.json; exit 1 on a stale file."""
-    stale = []
+def _bands(text):
+    """{(format, down_format, frag, E, K, H, F): bands} of a pick file's text."""
+    out = {}
+    for e in json.loads(text)["moe"]:
+        key = (e["format"], e.get("down_format", e["format"]), tuple(e.get("frag", ())), e["experts"], e["top_k"],
+               e["hidden"], e["inter"])
+        out[key] = e["bands"]
+    return out
+
+
+def write_picks(check, rebands=False):
+    """Writes (or, `check`, compares) every board's routes/moe_pick/<class>.json; exit 1 on a stale file.
+    The shipped plans are the sealed grids' frozen picks: a run whose inputs moved restamps a file only
+    where every layer it held keeps its bands. Bands that moved (a changed law, or kernel facts that moved
+    the prices) are refused unless `rebands` (--rebands), after a new sealed grid of those layers."""
+    stale, moved = [], {}
     want = {PICKS[b]["class"] + ".json": pick_text(b) for b in PICKS}
     have = set(os.listdir(PICK_DIR)) if os.path.isdir(PICK_DIR) else set()
     for name, text in sorted(want.items()):
@@ -381,10 +420,21 @@ def write_picks(check):
         old = open(path, encoding="utf-8").read() if name in have else None
         if old == text: continue
         stale.append(name)
-        if not check:
+        if old is not None:
+            before, after = _bands(old), _bands(text)
+            changed = sorted(str(k) for k in before.keys() & after.keys() if before[k] != after[k])
+            if changed: moved[name] = changed
+        if not check and (rebands or name not in moved):
             os.makedirs(PICK_DIR, exist_ok=True)
             with open(path, "w", encoding="utf-8", newline="\n") as f: f.write(text)
     extra = sorted(n for n in have if n.endswith(".json") and n not in want)
+    if moved:
+        print("routes/moe_pick: the bands of sealed layers moved: " +
+              "; ".join(f"{n}: {', '.join(k)}" for n, k in moved.items()) +
+              (" (written: --rebands)" if rebands and not check else
+               ": refused; a sealed grid of these layers first, then --rebands"))
+        if check or not rebands:
+            sys.exit(1)
     if check:
         if stale or extra:
             print(f"routes/moe_pick: stale {stale}, not generated {extra}: run tools/bench/moe_expert_law.py pick")
@@ -396,7 +446,7 @@ def write_picks(check):
 
 if __name__ == "__main__":
     if sys.argv[1] == "pick":
-        write_picks("--check" in sys.argv[2:])
+        write_picks("--check" in sys.argv[2:], "--rebands" in sys.argv[2:])
     elif sys.argv[1] == "predict":
         BOARD_NAME = sys.argv[3]
         # an optional 7th argument: gate/up:down format pairs, "q3_k:q4_k,q4_k:q6_k"

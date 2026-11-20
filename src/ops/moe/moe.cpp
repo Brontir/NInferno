@@ -1195,11 +1195,32 @@ Evidence a8_route_evidence() {
     return e;
 }
 
-// A route-table band (measured and published), unless the grouped W4A8 prefill takes the call.
+// This board's predicted MoE plan for the call (routes/moe_pick, #987): a decode width (T <= 8)
+// of a layer and layouts its file holds, where the layer admits the plan's R8 stages.
+std::optional<MoePlan> pick_of(const MoeCall& c) {
+    if (c.prefill_band() || c.tokens > kR8Tokens) { return std::nullopt; }
+    auto plan = predicted_plan(route_key(c.weights, c.config), c.tokens, is_frag(c.weights.gate_up),
+                               is_frag(c.weights.down));
+    if (plan && !r8_stages_admitted(c.weights, *plan, c.tokens)) { plan.reset(); }
+    return plan;
+}
+
+// Whether the table's entry of the layer was measured on this board or one within
+// kCarryDistance (its own, not lent by another table, the table near): only such an entry stands
+// above this board's predicted plan, as the dense overlay's bands stand above a borrowed or
+// transferred entry (table_route_answer).
+bool table_entry_near(const MoeRouteKey& key) {
+    const auto origin = table_origin(key);
+    return origin && origin->lender.empty() && origin->table_distance <= measured::kCarryDistance;
+}
+
+// A route-table band (measured and published), unless the grouped W4A8 prefill takes the call,
+// or the board's predicted plan does where the entry is lent or far (#987).
 std::optional<MoeAnswer> table_authority(const MoeCall& c) {
     const MoeRouteKey key = route_key(c.weights, c.config);
     const auto tuned      = c.w4a8_prefill() ? std::nullopt : table_plan(key, c.tokens, c.prefill);
     if (!tuned || (c.prefill_band() && !plan_is_token_invariant(*tuned))) { return std::nullopt; }
+    if (pick_of(c) && !table_entry_near(key)) { return std::nullopt; }
     const auto answer = [&](MoePlan plan, MoeAuthority label) {
         if (!c.want_evidence) { return MoeAnswer{std::move(plan), label, Evidence{}}; }
         Evidence e = table_evidence(key);
@@ -1233,14 +1254,13 @@ std::optional<MoeAnswer> table_authority(const MoeCall& c) {
 
 // The expert-call law's plan (routes/moe_pick/<class>.json, tools/bench/moe_expert_law.py pick,
 // #987): a decode width of a layer the board's sealed grid covered, priced from the kernel facts
-// and this board's warp_inflight probe, nothing measured. Below the route table (a measured or
-// carried entry of the layer answers first), above the heuristics; its R8 stages only where this
-// layer admits them (abstains otherwise, as the table's do not: the law priced the plan whole).
+// and this board's warp_inflight probe, nothing measured. Below a table entry of this board or a
+// near one (table_entry_near; an entry lent by another table, or of a far table, yields to it in
+// table_authority), above the heuristics; its R8 stages only where this layer admits them
+// (abstains otherwise, as the table's do not: the law priced the plan whole).
 std::optional<MoeAnswer> moe_pick_authority(const MoeCall& c) {
-    if (c.prefill_band()) { return std::nullopt; }
-    const auto plan = predicted_plan(route_key(c.weights, c.config), c.tokens,
-                                     is_frag(c.weights.gate_up), is_frag(c.weights.down));
-    if (!plan || !r8_stages_admitted(c.weights, *plan, c.tokens)) { return std::nullopt; }
+    const auto plan = pick_of(c);
+    if (!plan) { return std::nullopt; }
     return MoeAnswer{
         *plan, MoeAuthority::MoePick,
         Evidence{Evidence::Kind::Predicted, Evidence::Ranker::None, "moe-pick", {}, 0}};

@@ -778,7 +778,8 @@ RouteTableStatus publish_loaded_locked(DeviceTables& d, std::shared_ptr<Table> t
         (table->status.moe_predicted_path.empty()
              ? ""
              : "; " + std::to_string(table->status.moe_predicted_layers) +
-                   " MoE layers' T 1-8 plans predicted from this board's facts (" +
+                   " MoE layer entries (a geometry, formats and layouts each) with T 1-8 plans "
+                   "predicted from this board's facts (" +
                    table->status.moe_predicted_path + ")");
     const RouteTableStatus status = table->status;
     publish_locked(d, std::move(table));
@@ -831,7 +832,9 @@ void ensure_default_locked(DeviceTables& d) {
                     }
                 }
                 // The expert-call law's MoE picks for this board (routes/moe_pick/<class>.json,
-                // #987), at any distance: they answer only a layer the table holds no entry for.
+                // #987), at any distance: they answer a width the table's entry of the layer does
+                // not, or one an entry lent by another table or a far table answers (moe.cpp
+                // table_entry_near). An explicit --route-table reads no pick file.
                 const auto moe_pick = path_from_utf8(dir) / "moe_pick" /
                                       path_from_utf8(route_table_file_name(route_gpu_class()));
                 std::error_code no_moe_pick;
