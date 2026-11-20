@@ -101,8 +101,18 @@ void check_records() {
         case regime::Regime::Cell:
             expect(rule.applies != nullptr && !rule.generation.empty(),
                    name + ": a cell needs a predicate and a generation");
-            expect(rule.disposition == regime::Disposition::Recorded,
-                   name + ": a cell is recorded, not applied");
+            // An applied cell widens its generation's limit: two cards of it, and wider than it.
+            if (rule.disposition == regime::Disposition::Applied) {
+                expect(rule.label == regime::Label::Measured,
+                       name + ": an applied cell needs two cards of its generation");
+                bool wider = false;
+                for (const regime::RegimeRule& g : regime::kRegimeRules) {
+                    if (g.regime == regime::Regime::TokenLimit && g.generation == rule.generation) {
+                        wider = rule.limit > g.limit;
+                    }
+                }
+                expect(wider, name + ": an applied cell that does not widen its generation");
+            }
             break;
         }
     }
@@ -189,6 +199,7 @@ void check_answers() {
         // (RTX 5070 Ti: 5.2) or none known; the RTX 4090, 4060 Ti and 5090 keep the generation's.
         const bool frag_iq_narrow = !b.roofline || std::string_view(b.name) == "RTX 5070 Ti";
         const int narrow          = std::min(4, b.wide);
+        const bool ga10x          = b.major == 8 && b.minor == 6;
         // r8_q6k_narrow is measured against the tensor mma.sync register MMA: a build without it
         // (sm_70) keeps the generation's limit for Q6_K (#965).
         const bool mma_tensor = ninferno::build_features().mma_tensor;
@@ -210,7 +221,10 @@ void check_answers() {
             {QType::GGML_IQ3_XXS, QuantLayout::GgmlBlocks, b.wide, ""},
             {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, mma_tensor ? narrow : b.wide,
              mma_tensor && b.wide > 4 ? "r8_q6k_narrow" : ""},
-            {QType::GGML_Q3_K, QuantLayout::GgmlBlocks, b.wide, ""},
+            // GA10x widens Q3_K to eight (ga10x_q3k_r8_wide, #860); Q5_K's cell is recorded.
+            {QType::GGML_Q3_K, QuantLayout::GgmlBlocks, ga10x ? 8 : b.wide,
+             ga10x ? "ga10x_q3k_r8_wide" : ""},
+            {QType::GGML_Q5_K, QuantLayout::GgmlBlocks, b.wide, ""},
             {QType::MXFP4, QuantLayout::BlockScaleK32E8M0, narrow,
              b.wide > 4 ? "r8_fp4_elements" : ""},
             {QType::NVFP4, QuantLayout::BlockScaleK16M128x4, narrow,

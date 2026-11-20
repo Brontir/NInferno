@@ -3277,3 +3277,19 @@ substituted boards carry their architecture's features, while a real sm_70 tree 
 lacks tensor mma.sync and does not meet `kR8VerifyTuring`. The atlas sets move the Turing
 tensor-core boards (RTX 2060 / 2070 / 2080, TITAN RTX, T4). The V100 boards, the GTX 16 boards
 (slow tensor cores, `mma_slow`) and every other card keep their selections.
+
+## 98. GA10x's Q3_K banks take R8 to eight tokens; a measured cell can widen its generation (#860, 20.11, measured)
+
+**Decision.** A `Regime::Cell` of `moe_regime_rules.h` may be Applied: two cards of its generation measured it, and it widens that generation's R8 limit for the banks it names (at most to a bank rule's own limit; a narrowing bank rule still wins). `ga10x_q3k_r8_wide` is the first: Q3_K banks on GA10x take R8 to eight tokens instead of the generation's four. `ga10x_q5k_r8_wide` is recorded beside it.
+
+**Evidence.** `moe_bench` at Qwen3.6-35B's shape (H 2048, F 512, E 256, k 8), the best plan with R8 gate/up and register-MMA down against the register MMA on both stages, T 5..8:
+- Q3_K: RTX 3090 -9.0..-11.5 %, RTX 3060 -3.2..-8.6 %;
+- Q5_K: RTX 3090 -8.6..-13.7 %, RTX 3060 -1.1..-4.5 %.
+
+End to end on the RTX 3090, Qwen3.6-35B-A3B re-quantized to Q3_K_M (gate/up Q3_K), eight tokens against four: C8 +4.02 %, C6 +4.07 %. On a tensor mma.sync build only the gate/up stage asks the bank's limit: `heuristic_r8` admits R8 by the gate/up bank, and `down_r8_rule` puts the down on R8 only without tensor MMA. The down is where R8 loses (+34..+50 % at T 5..8 on both cards).
+
+**Not taken.**
+- Frag Q4_K: the cards disagree. The 3090 wins 4-10 % at the kernel level and +3.8..+4.7 % end to end; the 3060 loses 6-9 %, with the same DRAM bytes per SM cycle.
+- Q5_K: the same sign on both cards, but no release quantization has Q5_K gate/up banks to check it end to end on.
+- IQ3_XXS: `r8_frag_dram_bound` holds (3090 ties, 3060 loses).
+- Turing: one card.
