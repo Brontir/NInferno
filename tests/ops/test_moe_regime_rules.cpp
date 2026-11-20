@@ -261,11 +261,16 @@ void check_answers() {
 // The rule's build predicate on its own, whatever this tree's build (#965): on consumer Blackwell
 // (generation limit eight) a non-frag Q6_K bank is held to four with tensor mma.sync and keeps
 // eight without it.
-static_assert(regime::r8_limit_answer(12, 0, {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, 0.0, true})
+constexpr ninferno::ArchFacts kBlackwell(bool mma_tensor) {
+    return {.major = 12, .minor = 0, .features = {.mma_tensor = mma_tensor}};
+}
+
+static_assert(regime::r8_limit_answer(kBlackwell(true),
+                                      {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, 0.0})
                   .limit == moe::kR8NarrowTokens);
-static_assert(
-    regime::r8_limit_answer(12, 0, {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, 0.0, false}).limit ==
-    moe::kR8Tokens);
+static_assert(regime::r8_limit_answer(kBlackwell(false),
+                                      {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, 0.0})
+                  .limit == moe::kR8Tokens);
 
 int main() {
     check_records();

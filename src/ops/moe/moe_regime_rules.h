@@ -31,6 +31,7 @@
 // 3060 (8.8) sit below the RTX 2080 Ti, and the law predicted Q6_K +40..+60 % and Q3_K +15..+30 %
 // there; they measured +3..+11 % and -3..-8 %. No rule reads it; the limits stay a table.
 
+#include "core/arch_requires.h"
 #include "core/generation.h"
 #include "core/weight.h"
 #include "ops/generic/generic_gemm_internal.h"
@@ -79,14 +80,12 @@ struct Card {
 
 // What a bank rule's predicate reads: the bank's format and stored layout, and the board's DRAM
 // bytes per SM cycle (generic::dram_bytes_per_sm_cycle; 0 when unknown, and 0 where the caller
-// did not need it: only ggml_frag_v1 banks are asked about it).
+// did not need it: only ggml_frag_v1 banks are asked about it). What a rule needs of the chip and
+// the build is its `arch` (core/arch_requires.h), not a bank fact (#884).
 struct BankFacts {
     QType format                   = QType::BF16;
     QuantLayout layout             = QuantLayout::RowSplit;
     double dram_bytes_per_sm_cycle = 0;
-    // The build's register MMA runs on tensor mma.sync (BuildFeatures::mma_tensor); without it
-    // (sm_70) it runs on FP32 FMAs, which no rule measured against the tensor MMA covers (#965).
-    bool mma_tensor = true;
 };
 
 struct RegimeRule {
@@ -107,6 +106,10 @@ struct RegimeRule {
     // Where the measurement is written: the bench and its shape, the tree, the record.
     std::string_view source;
     Disposition disposition = Disposition::Applied;
+    // What the rule needs of the board and the build, in ArchRequires' vocabulary (#884): a rule
+    // measured against the tensor mma.sync register MMA asks mma_tensor (a build without it, sm_70,
+    // runs that MMA on FP32 FMAs, 2x slower than R8 on the V100, #965). The default asks nothing.
+    ArchRequires arch = {};
 };
 
 inline constexpr std::string_view kUnknownGeneration = "unknown";
@@ -268,9 +271,9 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      Regime::BankLimit,
      {},
      // Measured against the tensor mma.sync register MMA: a build without it (sm_70, its FMA
-     // register MMA 2x slower than R8 on the V100, #965) keeps the generation's limit.
+     // register MMA 2x slower than R8 on the V100, #965) keeps the generation's limit (`arch`).
      +[](const BankFacts& b) {
-         return b.mma_tensor && b.format == QType::GGML_Q6_K && b.layout != QuantLayout::GgmlFrag;
+         return b.format == QType::GGML_Q6_K && b.layout != QuantLayout::GgmlFrag;
      },
      kR8NarrowTokens,
      Label::Measured,
@@ -280,7 +283,9 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      "plan, 84.0 against 77.8 us at T = 5); Ada level: RTX 4090 0.0..+0.8 %, 4070 Ti +0.3..+1.2 %, "
      "4060 Ti +0.4..+0.8 %",
      "moe_bench H 2048 F 512 E 128 k 8, published layout, --plans auto and --plans sweep --a8 1, "
-     "T = 1..8, two passes (2026-11-16, master a8c09e817 and 782b5c6db; #860)"},
+     "T = 1..8, two passes (2026-11-16, master a8c09e817 and 782b5c6db; #860)",
+     Disposition::Applied,
+     ArchRequires{.mma_tensor = Need::Yes}},
     {"r8_frag_q4k_wide",
      Regime::BankLimit,
      {},
@@ -348,7 +353,7 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
     {"ga10x_q3k_r8_wide",
      Regime::Cell,
      "ga10x",
-     +[](const BankFacts& b) { return b.mma_tensor && b.format == QType::GGML_Q3_K; },
+     +[](const BankFacts& b) { return b.format == QType::GGML_Q3_K; },
      kR8Tokens,
      Label::Measured,
      {kRtx3090, kRtx3060},
@@ -357,7 +362,9 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      "3090 (Qwen3.6-35B-A3B, Q3_K_M re-quantized, gate/up Q3_K) +4.02 / +4.07 % at eight tokens "
      "against four",
      "moe_bench Qwen3.6-35B's shape (H 2048, F 512, E 256, k 8), published layout, --plans sweep "
-     "--a8 1, lab limit 8; end to end C8 / C6 --spec off, 8 alternating starts"},
+     "--a8 1, lab limit 8; end to end C8 / C6 --spec off, 8 alternating starts",
+     Disposition::Applied,
+     ArchRequires{.mma_tensor = Need::Yes}},
     // GA10x's Q5_K: the same sign on both cards, but no release quantization has Q5_K gate/up
     // banks to check it end to end on (UD-Q4_K_M / XL keep Q5_K in the downs), so it is recorded.
     {"ga10x_q5k_r8_wide",
@@ -405,23 +412,29 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
     return *unknown;
 }
 
-// The first Applied bank rule whose predicate holds, or null.
-[[nodiscard]] constexpr const RegimeRule* bank_rule(const BankFacts& bank) {
+// Whether a rule is about this board and build (its `arch`) and this bank (its predicate).
+[[nodiscard]] constexpr bool rule_applies(const RegimeRule& rule, const ArchFacts& arch,
+                                          const BankFacts& bank) {
+    return satisfied(rule.arch, arch) && rule.applies(bank);
+}
+
+// The first Applied bank rule that applies, or null.
+[[nodiscard]] constexpr const RegimeRule* bank_rule(const ArchFacts& arch, const BankFacts& bank) {
     for (const RegimeRule& rule : kRegimeRules) {
         if (rule.regime == Regime::BankLimit && rule.disposition == Disposition::Applied &&
-            rule.applies(bank)) {
+            rule_applies(rule, arch, bank)) {
             return &rule;
         }
     }
     return nullptr;
 }
 
-// The first Applied cell of `generation` whose predicate holds, or null.
-[[nodiscard]] constexpr const RegimeRule* applied_cell(std::string_view generation,
-                                                       const BankFacts& bank) {
+// The first Applied cell of `generation` that applies, or null.
+[[nodiscard]] constexpr const RegimeRule*
+applied_cell(std::string_view generation, const ArchFacts& arch, const BankFacts& bank) {
     for (const RegimeRule& rule : kRegimeRules) {
         if (rule.regime == Regime::Cell && rule.disposition == Disposition::Applied &&
-            rule.generation == generation && rule.applies(bank)) {
+            rule.generation == generation && rule_applies(rule, arch, bank)) {
             return &rule;
         }
     }
@@ -437,13 +450,16 @@ struct R8LimitAnswer {
     const RegimeRule* generation = nullptr; // the generation's rule
 };
 
-[[nodiscard]] constexpr R8LimitAnswer r8_limit_answer(int major, int minor, const BankFacts& bank) {
-    const RegimeRule& generation = generation_rule(major, minor);
-    const RegimeRule* narrowing  = bank_rule(bank);
+// `arch`: the board's and the build's facts (arch_facts_of); its compute capability names the
+// generation.
+[[nodiscard]] constexpr R8LimitAnswer r8_limit_answer(const ArchFacts& arch,
+                                                      const BankFacts& bank) {
+    const RegimeRule& generation = generation_rule(arch.major, arch.minor);
+    const RegimeRule* narrowing  = bank_rule(arch, bank);
     if (narrowing != nullptr && narrowing->limit < generation.limit) {
         return {narrowing->limit, narrowing, &generation};
     }
-    if (const RegimeRule* cell = applied_cell(generation.generation, bank);
+    if (const RegimeRule* cell = applied_cell(generation.generation, arch, bank);
         cell != nullptr && cell->limit > generation.limit) {
         // A bank rule that does not narrow still caps the cell; it answers where it set the limit.
         const bool capped        = narrowing != nullptr && narrowing->limit < cell->limit;

@@ -13,6 +13,10 @@
 // No clock, bandwidth, SM count or L2 size: those are continuous facts, which a byte-class decision
 // may not read (docs/maintainer/deterministic-decisions.md, B1).
 //
+// The one vocabulary of declared arch predicates (#884): the format rules (format_requires.h) and
+// the MoE R8 regime rules (ops/moe/moe_regime_rules.h, RegimeRule::arch) both name what they need
+// of the chip and the build here; a regime rule's own predicate reads only the bank.
+//
 // The facts come from either of two sources, which agree for every board of the PCI-ID table
 // (tests/test_arch_requires.cpp):
 // - a board registry row (core/board_registry.h, from core/data/gpu_facts.json) with a build's
