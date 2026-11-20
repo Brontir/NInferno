@@ -84,6 +84,14 @@ void check_records() {
         switch (rule.regime) {
         case regime::Regime::TokenLimit:
             expect(rule.applies == nullptr, name + ": a generation rule with a bank predicate");
+            expect(rule.arch.mma_tensor == ninferno::Need::Any &&
+                       rule.arch.mma_bf16_native == ninferno::Need::Any &&
+                       rule.arch.native_fp4 == ninferno::Need::Any &&
+                       rule.arch.mma_slow == ninferno::Need::Any &&
+                       rule.arch.fp32acc_full_rate == ninferno::Need::Any &&
+                       rule.arch.build_arch_below == 0 && rule.arch.cc_any_of[0].major == 0,
+                   name + ": a generation rule asks nothing of the build (generation_rule reads no "
+                          "arch)");
             expect(rule.disposition == regime::Disposition::Applied,
                    name + ": a generation rule must be applied");
             expect(rule.limit == moe::kR8NarrowTokens || rule.label == regime::Label::Measured,
@@ -258,14 +266,31 @@ void check_answers() {
 
 } // namespace
 
-// The rule's build predicate on its own, whatever this tree's build (#965): on consumer Blackwell
-// (generation limit eight) a non-frag Q6_K bank is held to four with tensor mma.sync and keeps
-// eight without it.
-static_assert(regime::r8_limit_answer(12, 0, {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, 0.0, true})
+// The rule's `arch` on its own, whatever this tree's build (#965, #884): on consumer Blackwell
+// (generation limit eight) a non-frag Q6_K bank is held to four with tensor mma.sync (the board's
+// in common with the build's) and keeps eight without it; GA10x's Q3_K cell widens to eight only
+// with it, and an unmet `arch` falls through to the generation's four, not to a later rule.
+constexpr ninferno::ArchFacts kBlackwell(bool mma_tensor) {
+    return {.major = 12, .minor = 0, .features = {.mma_tensor = mma_tensor}};
+}
+
+static_assert(regime::r8_limit_answer(kBlackwell(true),
+                                      {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, 0.0})
                   .limit == moe::kR8NarrowTokens);
+static_assert(regime::r8_limit_answer(kBlackwell(false),
+                                      {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, 0.0})
+                  .limit == moe::kR8Tokens);
+
+constexpr ninferno::ArchFacts kGa10x(bool mma_tensor) {
+    return {.major = 8, .minor = 6, .features = {.mma_tensor = mma_tensor}};
+}
+
 static_assert(
-    regime::r8_limit_answer(12, 0, {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, 0.0, false}).limit ==
+    regime::r8_limit_answer(kGa10x(true), {QType::GGML_Q3_K, QuantLayout::GgmlPlanes, 0.0}).limit ==
     moe::kR8Tokens);
+static_assert(regime::r8_limit_answer(kGa10x(false),
+                                      {QType::GGML_Q3_K, QuantLayout::GgmlPlanes, 0.0})
+                  .limit == moe::kR8NarrowTokens);
 
 int main() {
     check_records();
