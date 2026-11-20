@@ -154,7 +154,7 @@ std::optional<RouteAnswer> nvfp4_half_l2(const Ask& ask, const Problem& problem,
     if (!nvfp4_a16_wide(ask, problem, weight)) return std::nullopt;
     const auto weight_bytes =
         static_cast<std::size_t>(problem.n) * static_cast<std::size_t>(problem.k) * 9 / 16;
-    if (2 * weight_bytes <= device_class().l2_bytes) {
+    if (2 * weight_bytes <= class_l2_bytes(device_class())) {
         const Route r{Family::RegisterMma,
                       static_cast<std::uint8_t>(invariant_rmma(problem.k, ask.tokens))};
         if (route_admits(r, weight, problem.policy)) return by_rule(r, "nvfp4-half-l2");

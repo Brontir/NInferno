@@ -221,6 +221,13 @@ void planned_board_reads_the_facts_l2() {
     real.facts       = machine_facts_of(real);
     expect(board_of(real).l2_mib == 48, "the driver's L2 stands where it gave one (" +
                                             std::to_string(board_of(real).l2_mib) + ")");
+    // The byte accessor the direct readers use (#1084: nvfp4_half_l2, the sparse MoE decode
+    // prefetch limit) reads the same L2.
+    expect(class_l2_bytes(d) == std::size_t{72} << 20,
+           "class_l2_bytes of a class without the driver's L2: the facts' (" +
+               std::to_string(class_l2_bytes(d)) + ")");
+    expect(class_l2_bytes(real) == std::size_t{48} << 20,
+           "class_l2_bytes: the driver's where it gave one");
 }
 
 int main() {

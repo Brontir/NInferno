@@ -261,10 +261,14 @@ DriverReport driver_report_of(const DeviceClass& d) noexcept {
 
 MachineFacts machine_facts_of(const DeviceClass& d) { return machine_facts(driver_report_of(d)); }
 
+std::size_t class_l2_bytes(const DeviceClass& d) noexcept {
+    if (d.l2_bytes > 0 || !(d.facts.l2_mib > 0)) return d.l2_bytes;
+    return static_cast<std::size_t>(std::llround(d.facts.l2_mib * (1 << 20)));
+}
+
 Board board_of(const DeviceClass& d) noexcept {
-    // The driver's L2 where it gave one, else the machine facts' (a planned or substituted class
-    // built without it, plan_prefill_routes.cpp class_of): the same L2 card_facts_of reads, as
-    // dram_gbps() reads the facts' bandwidth (#1082).
+    // The driver's L2 where it gave one, else the machine facts' (class_l2_bytes): the same L2
+    // card_facts_of reads, as dram_gbps() reads the facts' bandwidth (#1082).
     const double l2_mib = d.l2_bytes > 0 ? static_cast<double>(d.l2_bytes) / (1 << 20)
                                          : static_cast<double>(d.facts.l2_mib);
     return {d.major, d.minor, d.sms, l2_mib, d.dram_gbps(), d.features.mma_slow};
