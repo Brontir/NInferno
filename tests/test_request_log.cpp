@@ -1038,11 +1038,23 @@ int main() {
             "a plan the class reserve limits does not name the reserve and the override");
         failures += check(render_plan(ninferno::MemorySummary{}, false, 1).empty(),
                           "a plan line without a ladder");
-        const Json summary = plan_summary_json(plan, false);
+        ninferno::PlanSummary regions = plan;
+        regions.workspace_regions     = {
+            {.op = "L00.gdn.output", .offset = 0, .bytes = 4096},
+            {.op = "output_head", .offset = 4096, .bytes = 512, .scratch = true}};
+        const Json summary = plan_summary_json(regions, false);
         failures +=
             check(summary.at("rung") == 17 && summary.at("chosen").at("step") == "context" &&
-                      !summary.contains("ladder"),
-                  "the plan summary JSON");
+                      !summary.contains("ladder") && !summary.contains("workspace_regions"),
+                  "the plan summary JSON (no ladder, no regions: the server_start record keeps "
+                  "its schema)");
+        // The loaded --plan --json (#940): the chosen rung's prefill regions beside the ladder.
+        const Json dry = plan_summary_json(regions, true);
+        const Json& r  = dry.at("workspace_regions");
+        failures += check(r.is_array() && r.size() == 2 && r[0].at("op") == "L00.gdn.output" &&
+                              r[0].at("bytes") == 4096 && r[0].at("scratch") == false &&
+                              r[1].at("offset") == 4096 && r[1].at("scratch") == true,
+                          "the loaded plan JSON prints the prefill regions");
     }
 
     if (failures == 0) { std::cout << "ok\n"; }
