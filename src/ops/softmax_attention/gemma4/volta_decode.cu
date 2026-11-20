@@ -613,11 +613,13 @@ generic::kernel_facts::Gemma4KernelKey volta_key(std::int32_t head_dim, std::int
 } // namespace
 
 int gemma4_volta_decode_resident_ctas(std::int32_t head_dim, std::int32_t rows) {
-    const int per_sm =
-        gemma4_resident_ctas_per_sm(volta_key(head_dim, rows), kVoltaThreads, 0, [&] {
+    const int per_sm = gemma4_resident_ctas_per_sm(
+        volta_key(head_dim, rows), kVoltaThreads, 0,
+        [&] {
             return kernel_resident_ctas_per_sm(
                 reinterpret_cast<const void*>(kernel_for(head_dim, rows)), kVoltaThreads, 0);
-        });
+        },
+        std::nullopt);
     return per_sm * device_class().sms;
 }
 

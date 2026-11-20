@@ -42,6 +42,7 @@
 // tile holds the codes alone. Elsewhere the codes land in the upper half of the plane's BF16 tile
 // and, after a barrier, are written back widened into the swizzled tile the BF16 MMA loop reads.
 
+#include "core/arch_registry.h"
 #include "core/pdl.cuh"
 #include "ops/common/math.cuh"
 #include "ops/common/math.h"
@@ -128,11 +129,37 @@ struct Gemma4Group {
 // conversion is cheap: on sm_86 they halved the FP8 prefill (RTX 3090, 26B full at 32K 8.3 -> 4.4
 // TFLOP/s), and that build keeps the shared-memory widening. One tree compiles one architecture
 // (NINFERNO_BUILD_ARCH), so host and device code agree.
+//
+// The tile's shape is a function of the architecture it is compiled for (Gemma4ArchFacts, #912):
+// the kernels take the build's (kGemma4BuildArch), and a substituted board of another architecture
+// is priced on the tile its release build compiles (gemma4_arch_facts of its arch), whose kernel
+// facts its snapshot holds. 0: no architecture (a host-only tree), GA10x-to-Blackwell limits.
 #if defined(NINFERNO_BUILD_ARCH)
-inline constexpr bool kGemma4Fp8Hardware = NINFERNO_BUILD_ARCH >= 89;
+inline constexpr int kGemma4BuildArch = NINFERNO_BUILD_ARCH;
 #else
-inline constexpr bool kGemma4Fp8Hardware = true;
+inline constexpr int kGemma4BuildArch = 0;
 #endif
+
+// What the tile reads of its architecture: E4M3 conversion in hardware (sm_89 on), Volta's
+// m8n8k4 route (sm_70 to 7.4), and the shared memory the kernels compile against
+// (arch_registry's build columns, as ops/common/arch_limits.h reads them).
+struct Gemma4ArchFacts {
+    bool fp8_hardware        = true;
+    bool volta_hmma          = false;
+    int max_shared_per_block = 0;
+    int shared_per_sm        = 0;
+    int reserved_per_block   = 0;
+};
+
+constexpr Gemma4ArchFacts gemma4_arch_facts(int arch) {
+    const arch_registry::ArchRow& row = arch_registry::find(arch);
+    return Gemma4ArchFacts{
+        arch == 0 || arch >= 89, arch >= 70 && arch < 75,
+        static_cast<int>(row.build_smem_per_block_optin), static_cast<int>(row.build_smem_per_sm),
+        arch == 0 ? row.smem_reserved_per_block : arch_registry::shared_reserved_per_block(arch)};
+}
+
+inline constexpr bool kGemma4Fp8Hardware = gemma4_arch_facts(kGemma4BuildArch).fp8_hardware;
 
 // NINFERNO-SPECIAL(arch:sm70): Volta has none of the m16n8k16 MMAs the kernel is written in, and
 // their FP32-FMA form (ops/common/mma.cuh) held a Gemma 4 12B prefill's attention at 3.7 TFLOP/s
@@ -148,20 +175,19 @@ inline constexpr bool kGemma4Fp8Hardware = true;
 // its own scratch instead, and converts its output there when the planes are too small (gpt-oss's
 // 32-key sliding tile; D = 128 at any tile). The FP32-FMA form held gpt-oss-20b's attention at 1365 ms of a 7.6K-token
 // prefill's 3240 on the GV100 (llama.cpp's f16 flash attention: about 135 ms a request).
-#if defined(NINFERNO_BUILD_ARCH)
-inline constexpr bool kGemma4VoltaHmma = NINFERNO_BUILD_ARCH >= 70 && NINFERNO_BUILD_ARCH < 75;
-#else
-inline constexpr bool kGemma4VoltaHmma = false;
-#endif
+inline constexpr bool kGemma4VoltaHmma = gemma4_arch_facts(kGemma4BuildArch).volta_hmma;
 
-template <class Geo, int WR, int Bc, bool Fp8 = false>
+// One tile of geometry Geo, WR warp rows and Bc keys, as the build of architecture `Arch` compiles
+// it (the kernels: the build's own).
+template <class Geo, int WR, int Bc, bool Fp8 = false, int Arch = kGemma4BuildArch>
 struct Gemma4Tile {
+    static constexpr Gemma4ArchFacts ArchFacts = gemma4_arch_facts(Arch);
     static constexpr int Warps      = WR * Geo::WC;
     static constexpr int Threads    = Warps * 32;
     static constexpr int Br         = 16 * WR;
     // FP8 rows at D = 512 reach both MMAs straight from their codes (the kernel's KDirect and
     // VDirect): the tile holds the codes alone, half the bytes of a BF16 tile.
-    static constexpr bool CodesOnly = Fp8 && kGemma4Fp8Hardware && Geo::D >= 512;
+    static constexpr bool CodesOnly = Fp8 && ArchFacts.fp8_hardware && Geo::D >= 512;
     static constexpr int PlaneBytes = Bc * Geo::D * (CodesOnly ? 1 : 2); // one K or V tile
     static constexpr int CodeOffset = CodesOnly ? 0 : PlaneBytes / 2;    // FP8 codes in a plane
     // Slice-partial score exchange; a 128-wide head (one warp column) needs none.
@@ -171,7 +197,7 @@ struct Gemma4Tile {
     // FP32 accumulators, else each warp's scratch (a head of one warp column only).
     static constexpr bool VoltaPlanes = Warps * 16 * Geo::Slice * 4 <= 2 * PlaneBytes;
     // Volta's m8n8k4 route (not the wide D = 512 tile, which keeps the FMA form).
-    static constexpr bool Volta = kGemma4VoltaHmma && (VoltaPlanes || Geo::Parts == 1);
+    static constexpr bool Volta = ArchFacts.volta_hmma && (VoltaPlanes || Geo::Parts == 1);
     // Volta's per-warp scratch: P of its 16 rows (f16, Bc keys) and their 16 rescale factors; for a
     // head without an exchange then its scores in the exchange's layout (Bc / 8 float4 per lane),
     // and room for its output conversion where the planes have none.

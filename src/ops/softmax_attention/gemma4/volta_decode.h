@@ -30,9 +30,13 @@ namespace ninferno::ops::detail {
 // Where no snapshot holds the kernel, a real device asks its own kernel (`live`: a build or a
 // board the snapshots do not cover, the device the call runs on); a substituted board throws, so
 // a plan of it keeps its formula estimate rather than the host GPU's answer. At least 1.
+// `tile_arch`: the snapshot label of the architecture whose build the key, threads and bytes are
+// the tile of (the attention kernels' tiles follow their build, #912); nullopt for a kernel whose
+// key holds on every architecture (the Volta decode kernel).
 [[nodiscard]] int gemma4_resident_ctas_per_sm(const generic::kernel_facts::Gemma4KernelKey& key,
                                               int threads, std::size_t dynamic_shared_bytes,
-                                              const std::function<int()>& live);
+                                              const std::function<int()>& live,
+                                              std::optional<std::string_view> tile_arch);
 
 // The keys a split of this route takes are rounded to multiples of this many (the combine derives
 // the same split boundaries from it). A CTA walks its keys one after another, one warp a scheduler
