@@ -18,7 +18,9 @@ sections (src/ops/generic/data/kernel_facts/sm_<arch>.txt). The grid geometry fo
 r8_lanes, jobs as the touched experts at T <= 8).
 
 Version 2 (#987): a warp's registers in 256-register units (defect 5), and the issue bound counts the code outside
-the K loop (the K split's reduction, the epilogue) and the R8 quantizer's loop (defect 7).
+the K loop (the K split's reduction, the epilogue) and the R8 quantizer's loop (defect 7). Version 3: the DRAM term at
+the share of a CTA's chain spent in its K loop (the bytes are in flight only there), and a fetch latency per barrier
+outside the loop.
 Known defects (#987, DECISIONS 94), all pricing R8 low: the R8 kernel of the mean tokens a job
 (the runtime takes the next power of two at or above T); 32 lanes a row assumed (the loop steps by
 r8_lanes); R8's dynamic shared memory left out of the occupancy; the quantizer's global waits
@@ -187,19 +189,25 @@ def stage_time(facts, board, fmt, sched, stage, T, jobs, H, F, K=8):
     rate = min(gbs * 1e9, active * per_sm)
     touched_rows = jobs * rows_out  # jobs ~ the touched experts at T <= 8
     bytes_ = touched_rows * k * BPW[fmt] / 8
-    t_dram = bytes_ / rate
     waves = math.ceil(ctas / (sms * res))
     # One CTA's chain: each iteration's static stalls plus one DRAM latency for its loads (the first wave's fill
     # and the last wave's drain are not hidden by the bus).
-    c = max(1.0, iters) * (int(f["stall_sum"]) / clock + lat)
-    # The code outside the K loop (index setup, the K split's reduction, the epilogue): its static stalls.
-    c += int(f["outside_stall"]) / clock
+    loop = max(1.0, iters) * (int(f["stall_sum"]) / clock + lat)
+    # The code outside the K loop (index setup, the K split's reduction, the epilogue): its static stalls, and a
+    # fetch latency for each barrier there (the K split's warps meet once the slowest arrives).
+    outside = int(f["outside_stall"]) / clock + int(f.get("outside_bar", 0) or 0) * lat
     if f.get("pro_loops", "0") not in ("0", None):
         # The R8 kernel's activation quantizer (pro_ columns): one 32-value block a thread and pass over the CTA's
         # tokens x K, before the dp4a loop; its global-load waits each at the fetch latency.
         pro_iters = math.ceil(NT_OF[0] * k / 32 / threads)
-        c += pro_iters * int(f["pro_stall"]) / clock + int(f["pro_glb_waits"]) * lat
+        outside += pro_iters * int(f["pro_stall"]) / clock + int(f["pro_glb_waits"]) * lat
+    c = loop + outside
     t_chain = waves * c
+    # v3 (#987): a CTA keeps its loop's bytes in flight only while it is in the loop, so the SM's rate is the probe's
+    # over that share of the CTA's life. A K split of a short K (RTX 3060, Q4_K E128 F768 down at T 8: w1x4 runs 0.75
+    # of an iteration, then its reduction behind a barrier) spends half of it outside.
+    duty = loop / c
+    t_dram = bytes_ / (rate * duty)
     # Issue: every warp instruction of the busiest SM's CTAs over its four schedulers (one a clock each): the K
     # loop's, the code outside it (index setup, the K split's cross-warp reduction through shared memory, the
     # epilogue: outside_total) and, for an R8 kernel that quantizes its input, the quantizer's (#987 defect 7).
