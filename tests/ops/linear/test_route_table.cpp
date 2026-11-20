@@ -283,6 +283,24 @@ int shipped_picks() {
                                           first_name + ": " + similar.front() +
                                               "'s table lends the gap (" + s.message + ")");
                     }
+                    // A width the own entry has no band at is a gap too: the same entry measured
+                    // from 17 tokens only leaves the file's band to answer at its width.
+                    std::ofstream(tmp / first_name)
+                        << table(cls[1].str(),
+                                 "{\"format\": \"" + entries[0][1].str() +
+                                     "\", \"compute\": \"a16\", \"epilogue\": \"" +
+                                     entries[0][2].str() + "\", \"n\": " + entries[0][3].str() +
+                                     ", \"k\": " + entries[0][4].str() +
+                                     ", \"bands\": [[17, 16777216, \"" + own + "\"]]}");
+                    ninferno::ops::set_route_table_dir(utf8_path(tmp));
+                    const auto w0 = generic::table_route_answer(
+                        problem_of(entries[0]), std::stoi(entries[0][5].str()), false);
+                    failures += check(w0 && w0->predicted &&
+                                          generic::route_name(w0->route) == entries[0][6].str(),
+                                      first_name +
+                                          ": an own entry with no band at the width leaves it to "
+                                          "the predicted band (answers " +
+                                          (w0 ? generic::route_name(w0->route) : "none") + ")");
                 } catch (const std::exception& error) {
                     failures += check(false, first_name + " gap check refused: " + error.what());
                 }

@@ -22,7 +22,7 @@ end against the borrowed table, the law's n2.w1x4 against the measured n4.w1x4 o
 pick.pick() at T 9..16 gives one route a width, written as runs of equal routes. Nothing is measured on the card.
 
 A tabled board (a table's gpu.pci_id row of an architecture pick.py prices, tabled_classes()) gets a file of its
-table's gaps: the same problems, the add epilogue included, less those its own table holds. Past kCarryDistance an
+table's gaps: the same problems, the add epilogue included, at the widths its own table does not answer. Past kCarryDistance an
 untabled class's bands answer ahead of the nearest table; within it the loader takes a band only in a gap of the
 table (no entry of its own, or one borrowed by fill_from), so a measured entry stands above a prediction. The add
 bands lost on the 4060 Ti where they replaced measured entries (above); in the gaps alone they were scored by leaving
@@ -141,6 +141,12 @@ GAP_EPILOGUES = ('store', 'swiglu', 'add')
 EPILOGUES = frozenset(GAP_EPILOGUES)
 
 
+def covered(entry):
+    """The widths of LO..HI a table entry's own bands answer."""
+    return frozenset(T for T in range(LO, HI + 1)
+                     if any(int(b[0]) <= T <= int(b[1]) for b in entry.get('bands', [])))
+
+
 def tabled_classes(F, all_tables):
     """The tabled boards pick.py can price (a table's gpu.pci_id row of an architecture in ARCH_OF_CC with its isa
     facts, tensor cores), each with the problems its own table holds: its file is of the gaps, the rest."""
@@ -150,7 +156,9 @@ def tabled_classes(F, all_tables):
         row = next((r for r in F['rows'] if pci and str(r.get('id', '')).lower() == pci), None)
         if row is None or int(row.get('cc', 0)) not in ARCH_OF_CC or ARCH_OF_CC[int(row['cc'])] not in F['isa']                 or row.get('mma_slow'):
             continue
-        own = {(e['format'], e.get('epilogue', 'store'), int(e['n']), int(e['k']))
+        # {problem: the widths of LO..HI its own table answers}: the file holds bands at the other
+        # widths only, the gaps the loader takes a band at (route_table.cpp, #1068).
+        own = {(e['format'], e.get('epilogue', 'store'), int(e['n']), int(e['k'])): covered(e)
                for e in t.get('entries', []) if e.get('compute') == 'a16'}
         key = class_id(row)
         if key in out:
@@ -182,11 +190,15 @@ def runs(seq):
     return out
 
 
-def overlay(row, F, probs, inputs):
+def overlay(row, F, probs, inputs, own=None):
+    """The file of `probs`, at the widths of LO..HI `own` ({problem: widths}) leaves."""
+    own = own or {}
     entries = []
     for fmt, ep, n, k in probs:
         seq = []
         for T in range(LO, HI + 1):
+            if T in own.get((fmt, ep, n, k), ()):
+                continue
             r = pick.pick(row, F, dict(format=fmt, epilogue=ep, n=n, k=k, T=T))
             if r is None:
                 seq = None
@@ -244,9 +256,9 @@ def main():
         rows = [r for r in F['rows'] if r['chip'] == chip and '%dsm' % int(r['sms']) == sms]
         if not rows:
             sys.exit('no gpu_facts.json row of class %s' % a.only)
-        want = {a.only: (sorted(rows, key=lambda r: r.get('form') != 'desktop')[0], epilogues, set())}
+        want = {a.only: (sorted(rows, key=lambda r: r.get('form') != 'desktop')[0], epilogues, {})}
     else:
-        want = {k: (row, WRITTEN_EPILOGUES, set())
+        want = {k: (row, WRITTEN_EPILOGUES, {})
                 for k, row in classes(F, tabled, table_boards(F, all_tables), carry_distance(a.root)).items()}
         for k, (row, own) in tabled_classes(F, all_tables).items():
             if k in want:
@@ -256,8 +268,9 @@ def main():
     stale = []
     expected = set()
     for key, (row, eps, own) in sorted(want.items()):
-        probs = [p for p in problems(all_tables, int(row['cc']), eps) if p not in own]
-        doc = overlay(row, F, probs, inputs_of(a.root, F, ARCH_OF_CC[int(row['cc'])]))
+        full = frozenset(range(LO, HI + 1))
+        probs = [p for p in problems(all_tables, int(row['cc']), eps) if own.get(p, frozenset()) != full]
+        doc = overlay(row, F, probs, inputs_of(a.root, F, ARCH_OF_CC[int(row['cc'])]), own)
         if own and not doc['entries']:
             continue  # a tabled board with no gap the other tables of its capability fill: no file
         name = key.replace(':', '-') + '.json'

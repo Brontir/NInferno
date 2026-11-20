@@ -1049,11 +1049,16 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
                                              problem.n, problem.k));
         }
         // Within kCarryDistance the table's own entry (the one the measured path below answers
-        // with, after its fp8 fallback) stands above a prediction; a gap (no entry, or one
-        // borrowed from another board's table by fill_from) takes the predicted band before the
-        // borrowed one (#1068: RTX 3090, Qwen3-8B add linears, +4 %).
-        const bool gap = table->distance > measured::kCarryDistance || it == table->generic.end() ||
-                         !it->second.lender.empty();
+        // with, after its fp8 fallback) stands above a prediction where one of its bands covers
+        // this width; a gap (no entry, one borrowed from another board's table by fill_from, or
+        // an own entry with no band at this width) takes the predicted band before the borrowed
+        // one or the ranker (#1068: RTX 3090, Qwen3-8B add linears, +4 %).
+        const bool own_covers =
+            it != table->generic.end() && it->second.lender.empty() &&
+            std::any_of(it->second.bands.begin(), it->second.bands.end(), [&](const auto& band) {
+                return tokens >= band.t_min && tokens <= band.t_max;
+            });
+        const bool gap = table->distance > measured::kCarryDistance || !own_covers;
         if (p != table->predicted.end() && gap) {
             for (const auto& band : p->second) {
                 if (tokens >= band.t_min && tokens <= band.t_max) {
