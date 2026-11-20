@@ -18,7 +18,9 @@
 //
 // Checked only where a script and data in the repository reproduce the held-out score of the
 // shipped value (none today: a held-out score quoted from a fit whose data is not in the
-// repository is a None record that quotes it).
+// repository is a None record that quotes it). The test runs that script (`python3 SCRIPT
+// --holdout` from the repository root) and compares its last `holdout: ` line with the record's
+// error (#715).
 //
 // The records are a side table keyed by the name of the definition in its file, never a field of
 // the constant: values are not touched here, the records say where each value comes from, so that

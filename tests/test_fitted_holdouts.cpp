@@ -7,6 +7,9 @@
 //   - every record is complete (an explicit None, or a Checked whose source names a script under
 //     tools/fits/ that exists, with the fields its kind needs; an Unset one was forgotten) and
 //     appears once;
+//   - a Checked record's script reproduces its held-out score: run from the repository root as
+//     `python3 SCRIPT --holdout`, its last `holdout: ` line is the record's `error` (#715; a
+//     fixture script checks the runner itself, skipped where python3 does not run);
 //   - every key matches its DEFINITION in its file (a definition, a struct field or a function,
 //     read from the file's text, not a substring of it): a renamed or removed constant fails;
 //   - every constant a covered file marks or behaves as fitted has a record, or sits on that file's
@@ -31,16 +34,19 @@
 // No GPU.
 
 #include "core/fitted_holdouts.h"
+#include "core/sys.h"
 #include "ops/generic/route_cost_constants.h"
 #include "ops/generic/route_rules.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -65,6 +71,76 @@ std::string read_file(std::string_view relative) {
     std::ifstream in(std::filesystem::path(NINFERNO_SOURCE_DIR) / std::string(relative),
                      std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+// What a command prints, run from the repository root; nullopt where it fails.
+std::optional<std::string> output_of(const std::string& command) {
+    static int calls                = 0;
+    const std::filesystem::path out = std::filesystem::temp_directory_path() /
+                                      ("ninferno_holdout_" + std::to_string(ninferno::sys::pid()) +
+                                       "_" + std::to_string(++calls) + ".txt");
+    const std::filesystem::path here = std::filesystem::current_path();
+    std::filesystem::current_path(NINFERNO_SOURCE_DIR);
+    const int status = std::system((command + " > \"" + out.string() + "\" 2>&1").c_str());
+    std::filesystem::current_path(here);
+    std::ifstream in(out, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    std::error_code ignored;
+    std::filesystem::remove(out, ignored);
+    if (status != 0) return std::nullopt;
+    return text;
+}
+
+bool python_runs() {
+    static const bool runs = output_of("python3 --version").has_value();
+    return runs;
+}
+
+// The held-out score a fit script prints (the --holdout contract, #715): its last line that
+// starts `holdout: `, the rest of it; nullopt where the script fails or prints none.
+std::optional<std::string> script_holdout(const std::string& script) {
+    const auto text = output_of("python3 \"" + script + "\" --holdout");
+    if (!text) return std::nullopt;
+    std::optional<std::string> score;
+    std::istringstream lines(*text);
+    for (std::string line; std::getline(lines, line);) {
+        if (!line.empty() && line.back() == '
+') line.pop_back();
+        if (line.rfind("holdout: ", 0) == 0) score = line.substr(9);
+    }
+    return score;
+}
+
+// Why a Checked record's script does not reproduce the record's error; empty where it does.
+std::string reproduction_gap(const std::string& script, std::string_view error) {
+    const auto score = script_holdout(script);
+    if (!score) return "`python3 " + script + " --holdout` failed or printed no `holdout: ` line";
+    if (*score != error) {
+        return "`python3 " + script + " --holdout` prints \"" + *score + "\", the record says \"" +
+               std::string(error) + "\"";
+    }
+    return {};
+}
+
+// The runner itself, on a fixture script (tests/fixtures/fits/holdout_selftest.py).
+void check_holdout_runner() {
+    if (!python_runs()) {
+        std::printf("holdout runner: python3 does not run here, its self-check skipped
+");
+        return;
+    }
+    const std::string fixture = "tests/fixtures/fits/holdout_selftest.py";
+    if (const std::string gap = reproduction_gap(fixture, "2.5 % mean absolute error");
+        !gap.empty()) {
+        fail("holdout runner: the fixture's score not read: " + gap);
+    }
+    if (reproduction_gap(fixture, "2.4 % mean absolute error").empty()) {
+        fail("holdout runner: a record's error that differs from the script's passed");
+    }
+    if (reproduction_gap("tests/fixtures/fits/no_such_script.py", "x").empty()) {
+        fail("holdout runner: a missing script passed");
+    }
 }
 
 // The text without its comments: a `//` to the end of its line, and a `/* ... */` block (its
@@ -515,6 +591,7 @@ void check_comment_stripping() {
 
 int main() {
     const auto records = all_records();
+    check_holdout_runner();
     if (records.size() != kExpectedRecords) {
         fail(std::to_string(records.size()) + " records, expected " +
              std::to_string(kExpectedRecords) +
@@ -543,6 +620,11 @@ int main() {
                 fail(name + ": Checked, but its source names no script under tools/fits/");
             } else if (read_file(m.str()).empty()) {
                 fail(name + ": Checked, but its script " + m.str() + " is not in the repository");
+            } else if (!python_runs()) {
+                fail(name + ": Checked, and python3 does not run here to reproduce it");
+            } else if (const std::string gap = reproduction_gap(m.str(), r->holdout.error);
+                       !gap.empty()) {
+                fail(name + ": Checked, but its score is not reproduced: " + gap);
             }
         }
     }
