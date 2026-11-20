@@ -10,8 +10,9 @@ the query stores in `DeviceClass::facts`.
 
 Each row is a published reference configuration, keyed by its PCI product id. A product id is
 not always a unique SKU: NVIDIA also uses subsystem vendor/product ids to distinguish boards.
-The runtime lookup currently has no subsystem key; `variants` is audit metadata, not an exact
-variant selector. See [the shared-identity limitation](https://github.com/Brontir/NInferno/issues/903).
+A board whose subsystem id is known is a `subsystems` entry, which the runtime selects by that id
+(#903). `variants` is audit metadata for a board whose subsystem id is not confirmed yet: it is
+never selected, and such a card is priced and planned as its row.
 
 | Field | Meaning |
 |---|---|

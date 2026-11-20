@@ -96,7 +96,7 @@ def classify(name, identities):
         return "virtual-or-shared-identity"
     if "CMP" in name:
         return "mining-board"
-    if re.search(r"Mobile|Laptop|Embedded|Max-Q|\b(?:GV|TU|GA|AD|GH|GB)\d+(?:GL|B)?M\b",
+    if re.search(r"Mobile|Laptop|Embedded|Max-Q(?!.*Workstation)|\b(?:GV|TU|GA|AD|GH|GB)\d+(?:GL|B)?M\b",
                  name, re.I):
         return "oem-clock-range-review"
     if identities:

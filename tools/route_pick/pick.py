@@ -95,7 +95,10 @@ def card_of(gpu, F):
                    next((r for r in F['archs'] if r['cc'] == 0), None))
         c = None
         if arch is not None:
-            sms, clk = float(gpu['sms']), float(gpu['boost_mhz']) * 1e-3              # SM clock, cycles a ns
+            # A laptop at the bottom of its boost range, as the engine prices it (machine_facts.cpp: the
+            # OEM's power limit sets the clock; the unknown is conservative), else the boost clock.
+            mhz = gpu.get('boost_min_mhz') if gpu.get('form') == 'laptop' and gpu.get('boost_min_mhz') else gpu['boost_mhz']
+            sms, clk = float(gpu['sms']), float(mhz) * 1e-3                           # SM clock, cycles a ns
             bus = float(gpu['bus_bits']) * float(gpu['gbps']) / 8.0                   # DRAM bus, bytes a ns
             c = dict(F['isa'][arch], cc=cc, kf=F['kf'][arch], sms=sms, clk=clk, bus=bus, bpc=bus / (sms * clk),
                      regs_sm=int(lim['registers_per_sm']), l1=(float(lim['smem_per_sm_kib']) + L1_MIN_KIB) * 1024.0)
