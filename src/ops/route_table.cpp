@@ -726,16 +726,16 @@ void ensure_default_locked(DeviceTables& d) {
                 auto nearest = std::move(tables.front());
                 tables.erase(tables.begin());
                 fill_from(*nearest, tables);
-                // No table measured within kCarryDistance (every answer would be Transferred or
-                // Borrowed, demoted to the ranker): the analyzer's bands for this board class,
-                // where tools/route_pick wrote them (routes/pick/<class>.json).
-                if (table_distance(*nearest) > measured::kCarryDistance) {
-                    const auto pick = path_from_utf8(dir) / "pick" /
-                                      path_from_utf8(route_table_file_name(route_gpu_class()));
-                    std::error_code missing;
-                    if (std::filesystem::is_regular_file(pick, missing)) {
-                        read_predicted(utf8_path(pick), *nearest);
-                    }
+                // The analyzer's bands for this board class, where tools/route_pick wrote them
+                // (routes/pick/<class>.json). Past kCarryDistance they answer ahead of the nearest
+                // table (whose answers would all be Transferred or Borrowed); within it, only the
+                // table's gaps: a problem it holds no entry of its own for (#1068,
+                // table_route_answer).
+                const auto pick = path_from_utf8(dir) / "pick" /
+                                  path_from_utf8(route_table_file_name(route_gpu_class()));
+                std::error_code missing;
+                if (std::filesystem::is_regular_file(pick, missing)) {
+                    read_predicted(utf8_path(pick), *nearest);
                 }
                 (void)publish_loaded_locked(d, std::move(nearest));
             }
@@ -1037,7 +1037,14 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
             p = table->predicted.find(key_of(QType::FP8_E4M3FN_ROW_BF16, compute, problem.epilogue,
                                              problem.n, problem.k));
         }
-        if (p != table->predicted.end()) {
+        // Within kCarryDistance the table's own entry stands above a prediction; a gap (no entry,
+        // or one borrowed from another board's table by fill_from) takes the predicted band
+        // before the borrowed one (#1068: RTX 3090, Qwen3-8B add linears, +4 %).
+        const auto own =
+            p == table->predicted.end() ? table->generic.end() : table->generic.find(p->first);
+        const bool gap = table->distance > measured::kCarryDistance ||
+                         own == table->generic.end() || !own->second.lender.empty();
+        if (p != table->predicted.end() && gap) {
             for (const auto& band : p->second) {
                 if (tokens >= band.t_min && tokens <= band.t_max) {
                     return TableAnswer{band.route, table->distance, table->status.gpu_class, {}, 0,

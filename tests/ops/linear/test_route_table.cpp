@@ -205,6 +205,65 @@ int shipped_picks() {
                      std::regex_replace(first_text, std::regex(R"re("bands": \[\s*\[\s*9,)re"),
                                         R"re("bands": [[5,)re",
                                         std::regex_constants::format_first_only));
+        // Within kCarryDistance a predicted band fills the table's gaps only (#1068): a table of
+        // this class (distance 0) holding the file's first problem answers it as measured; the
+        // file's second problem, which the table lacks, is answered as predicted.
+        {
+            std::vector<std::smatch> entries;
+            for (auto it = std::sregex_iterator(first_text.begin(), first_text.end(), entry_re);
+                 it != std::sregex_iterator() && entries.size() < 2; ++it) {
+                entries.push_back(*it);
+            }
+            std::smatch cls;
+            const std::regex class_re("\"class\": \"([^\"]+)\"");
+            if (entries.size() < 2 || !std::regex_search(first_text, cls, class_re)) {
+                failures +=
+                    check(false, first_name + ": two entries and a class for the gap check");
+            } else {
+                const auto problem_of = [](const std::smatch& e) {
+                    return generic::Problem{
+                        ninferno::find_route(e[1].str()).value_or(ninferno::QType::BF16),
+                        ninferno::ops::LinearPolicy::A16Only, std::stoi(e[3].str()),
+                        std::stoi(e[4].str()),
+                        e[2].str() == "swiglu" ? generic::Epilogue::SwiGlu
+                        : e[2].str() == "add"  ? generic::Epilogue::AddResidual
+                                               : generic::Epilogue::Store};
+                };
+                const std::string own = entries[0][6].str() == "rmma.m1.n1.w1x4"
+                                            ? "rmma.m1.n2.w1x4"
+                                            : "rmma.m1.n1.w1x4";
+                std::filesystem::remove_all(tmp);
+                std::filesystem::create_directories(tmp / "pick");
+                std::ofstream(tmp / "pick" / first_name) << first_text;
+                std::ofstream(tmp / first_name) << table(
+                    cls[1].str(), "{\"format\": \"" + entries[0][1].str() +
+                                      "\", \"compute\": \"a16\", \"epilogue\": \"" +
+                                      entries[0][2].str() + "\", \"n\": " + entries[0][3].str() +
+                                      ", \"k\": " + entries[0][4].str() +
+                                      ", \"bands\": [[1, 16777216, \"" + own + "\"]]}");
+                ninferno::ops::set_route_table_dir(utf8_path(tmp));
+                try {
+                    const auto s  = ninferno::ops::route_table_status();
+                    const auto a0 = generic::table_route_answer(
+                        problem_of(entries[0]), std::stoi(entries[0][5].str()), false);
+                    const auto a1 = generic::table_route_answer(
+                        problem_of(entries[1]), std::stoi(entries[1][5].str()), false);
+                    failures += check(
+                        s.loaded && s.predicted_entries > 0,
+                        first_name + ": a table of the class still reads the pick: " + s.message);
+                    failures += check(a0 && !a0->predicted && generic::route_name(a0->route) == own,
+                                      first_name +
+                                          ": the table's own entry stands above the "
+                                          "prediction (answers " +
+                                          (a0 ? generic::route_name(a0->route) : "none") + ")");
+                    failures += check(a1 && a1->predicted &&
+                                          generic::route_name(a1->route) == entries[1][6].str(),
+                                      first_name + ": the table's gap takes the predicted band");
+                } catch (const std::exception& error) {
+                    failures += check(false, first_name + " gap check refused: " + error.what());
+                }
+            }
+        }
     }
     // A board of a shipped class on other memory reads none of the class's bands (codex on #1066):
     // the RTX A4000 (448 GB/s) beside the RTX 3070 Ti's ga104:48sm (608), refused as another
