@@ -1566,7 +1566,7 @@ PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
     }
     // Its routed layers by kind from its own table only: the shape's are another file's even at
     // equal bytes (with_weights keeps them there), and a row without its table has none (the MoE
-    // step then takes the measured pair's share: product/choice speed_of).
+    // step then takes the measured pair's share, marked unqueried by with_moe_routes, #799).
     out.model.expert_layers = row.listing.table ? row.listing.table->expert_layers
                                                 : std::vector<runtime::PlanExpertLayers>{};
     // Its banks' prefill route likewise (#775): the shape's is another file's formats and policy

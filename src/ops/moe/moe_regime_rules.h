@@ -48,7 +48,9 @@ namespace ninferno::ops::detail::moe::regime {
 //   BankLimit   a bank whose format or layout keeps R8 narrower, on every generation; the first
 //               Applied bank rule whose predicate holds answers (a rule that keeps the generation's
 //               limit stops the search)
-//   Cell        one measured (generation, format, width) cell, Recorded only
+//   Cell        one measured (generation, format, width) cell: Recorded, or Applied where two
+//               cards of the generation measured it, and then it widens the generation's limit
+//               for the banks it names (never past a bank rule's own limit)
 enum class Regime : std::uint8_t { TokenLimit, BankLimit, Cell };
 
 // What a rule rests on: two or more cards, one card, or none (the conservative answer).
@@ -336,6 +338,40 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      "(the one board at or above the 4.5 line), the other three bound it from below",
      "moe_bench Qwen3.6-35B's shape (H 2048, F 512, E 256, k 8), frag; end to end C8"},
 
+    // --- Measured cells ---
+    // GA10x's Q3_K banks at five to eight tokens: R8 on the gate/up stage beats the register MMA
+    // on both cards, so the generation's four widens to eight for them (#860). The heuristic asks
+    // this limit for the gate/up stage only (heuristic_r8; the down keeps the register MMA,
+    // down_r8_rule), and the down is where R8 loses (+34..+50 % at T = 5..8). Measured against
+    // the tensor mma.sync register MMA: a build without it (sm_70, R8 on both stages, #965) keeps
+    // the generation's four.
+    {"ga10x_q3k_r8_wide",
+     Regime::Cell,
+     "ga10x",
+     +[](const BankFacts& b) { return b.mma_tensor && b.format == QType::GGML_Q3_K; },
+     kR8Tokens,
+     Label::Measured,
+     {kRtx3090, kRtx3060},
+     "Q3_K, R8 gate/up with the register-MMA down against the register MMA on both stages at "
+     "T = 5..8: RTX 3090 -9.0..-11.5 %, RTX 3060 -3.2..-8.6 %; end to end C8 / C6 on the RTX "
+     "3090 (Qwen3.6-35B-A3B, Q3_K_M re-quantized, gate/up Q3_K) +4.02 / +4.07 % at eight tokens "
+     "against four",
+     "moe_bench Qwen3.6-35B's shape (H 2048, F 512, E 256, k 8), published layout, --plans sweep "
+     "--a8 1, lab limit 8; end to end C8 / C6 --spec off, 8 alternating starts"},
+    // GA10x's Q5_K: the same sign on both cards, but no release quantization has Q5_K gate/up
+    // banks to check it end to end on (UD-Q4_K_M / XL keep Q5_K in the downs), so it is recorded.
+    {"ga10x_q5k_r8_wide",
+     Regime::Cell,
+     "ga10x",
+     +[](const BankFacts& b) { return b.format == QType::GGML_Q5_K; },
+     kR8Tokens,
+     Label::Measured,
+     {kRtx3090, kRtx3060},
+     "Q5_K, R8 gate/up with the register-MMA down against the register MMA on both stages at "
+     "T = 5..8: RTX 3090 -8.6..-13.7 %, RTX 3060 -1.1..-4.5 %; no end-to-end model",
+     "moe_bench Qwen3.6-35B's shape (H 2048, F 512, E 256, k 8), published layout, --plans sweep "
+     "--a8 1, lab limit 8",
+     Disposition::Recorded},
     // --- Measured cells the table does not act on ---
     // The RTX 2080 Ti's Q6_K at four tokens: R8 loses, but the lab has one Turing card, so the
     // limit is not narrowed for it (two cards of a generation move a route); the cause is under
@@ -380,8 +416,21 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
     return nullptr;
 }
 
+// The first Applied cell of `generation` whose predicate holds, or null.
+[[nodiscard]] constexpr const RegimeRule* applied_cell(std::string_view generation,
+                                                       const BankFacts& bank) {
+    for (const RegimeRule& rule : kRegimeRules) {
+        if (rule.regime == Regime::Cell && rule.disposition == Disposition::Applied &&
+            rule.generation == generation && rule.applies(bank)) {
+            return &rule;
+        }
+    }
+    return nullptr;
+}
+
 // The widest R8 call over a bank on a generation, and the rule that set it: the bank rule where
-// it narrows the generation's limit, else the generation's rule (whose label the answer carries).
+// it narrows the generation's limit; else an Applied cell of the generation where it widens it
+// (to at most the bank rule's limit); else the generation's rule (whose label the answer carries).
 struct R8LimitAnswer {
     std::int32_t limit           = kR8NarrowTokens;
     const RegimeRule* rule       = nullptr; // the rule that set the limit
@@ -393,6 +442,13 @@ struct R8LimitAnswer {
     const RegimeRule* narrowing  = bank_rule(bank);
     if (narrowing != nullptr && narrowing->limit < generation.limit) {
         return {narrowing->limit, narrowing, &generation};
+    }
+    if (const RegimeRule* cell = applied_cell(generation.generation, bank);
+        cell != nullptr && cell->limit > generation.limit) {
+        // A bank rule that does not narrow still caps the cell; it answers where it set the limit.
+        const bool capped        = narrowing != nullptr && narrowing->limit < cell->limit;
+        const std::int32_t limit = capped ? narrowing->limit : cell->limit;
+        if (limit > generation.limit) return {limit, capped ? narrowing : cell, &generation};
     }
     return {generation.limit, &generation, &generation};
 }

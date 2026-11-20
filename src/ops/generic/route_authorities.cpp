@@ -587,11 +587,12 @@ RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& we
 // A round of several sequences (mmq_verify_rule reads any lane count but 1 as one).
 constexpr int kSeveralLanes = 2;
 
-bool predicted_before_tuner(const Problem& problem, const Weight& weight, std::int32_t tokens,
-                            bool prefill) {
+std::optional<Route> predicted_before_tuner(const Problem& problem, const Weight& weight,
+                                            std::int32_t tokens, bool prefill) {
     const Ask asked  = nvfp4_promoted(ask_below_profiles(tokens, prefill), problem, weight);
     const auto table = route_table_entry(asked, problem, weight);
-    return table && table->evidence.kind == Evidence::Kind::Predicted;
+    if (!table || table->evidence.kind != Evidence::Kind::Predicted) return std::nullopt;
+    return table->route;
 }
 
 bool answered_before_tuner(const Problem& problem, const Weight& weight, std::int32_t tokens,
