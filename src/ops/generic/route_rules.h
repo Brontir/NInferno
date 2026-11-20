@@ -669,7 +669,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "measured loss on both boards",
      ""},
     {"heuristic_rmma: one wave at verify widths", Basis::Unknown, "generic_select.cpp",
-     "return pair_split; } return rmma_index(1, 4, 1, 2);", 0,
+     "if (ctas <= sms) { const int pair_split = one_wave_split(ctas, sms);", 0,
      "unknown (nine cards of the dense tuner, sm_70 to sm_120, not named; the RTX 5090 for the "
      "CTA pair: gb202:170sm)",
      "unknown (nine cards; RTX 5090)",
@@ -683,7 +683,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     {"heuristic_rmma: the verify pair past one wave", Basis::Measured, "generic_select.cpp",
      "current_arch_facts().features.clusters && 2 * columns * ctas > held * sms) { return "
      "rmma_index(1, 8, 1, 1);",
-     2, "gb202:170sm, gb203:70sm", "RTX 5090, RTX 5070 Ti",
+     0, "gb202:170sm, gb203:70sm", "RTX 5090, RTX 5070 Ti",
      "T = 9..16 at most one CTA per SM: the decode split's CTA pair runs one wave only while "
      "pair x token columns x CTAs fit what the SMs hold (two one-tile CTAs of <= 256 threads an "
      "SM, kMinBlocks); past it n1.w1x8 (#1052, route_tune of every route, K-quants Q2_K-Q6_K at "
