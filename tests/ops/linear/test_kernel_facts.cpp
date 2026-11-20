@@ -15,6 +15,7 @@
 #include "ops/quantized_weight.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -260,12 +261,8 @@ void loop_counts_read() {
     // ninferno_kernel_facts_test checks only a build's own; tools/dev/kernel_facts_archs.sh checks
     // them now, #762). kResourcesOnly names the snapshots whose loop counts cannot be written yet,
     // each with its issue.
-    constexpr std::string_view kResourcesOnly[] = {
-        // #762: in 108 kernels (BF16 and FP8 codes, two or more token tiles) the K loop's products
-        // are calls (mma_bf16_fma_call, mma.cuh: not inlined), whose bodies sass_counts.py does
-        // not count, so the loop holds no FFMA and `extract` refuses the counts (loops 0).
-        "70",
-    };
+    // None today: sm_70's emulated BF16 / F16 MMA calls count as their HMMA (#762).
+    constexpr std::array<std::string_view, 0> kResourcesOnly{};
     kf::RmmaKernelKey key;
     key.decoder = "Bf16Decoder";
     key.warps_m = 1;
@@ -294,9 +291,10 @@ void loop_counts_read() {
         expect(l.ldg > 0 && l.ldg_bytes == 32 * 16 * static_cast<std::size_t>(l.ldg),
                name + ": the BF16 weights are 16-byte global loads");
         if (arch == "70") {
-            // Volta multiplies with FFMAs (NINFERNO_FMA_MMA): no tensor MMA, no K from shapes.
-            expect(l.mma == 0 && l.k_iter == 0 && l.fp_alu > 0, name + ": the FFMA loop");
-            continue;
+            // Volta's BF16 product is a call to the emulated m16n8k16 (mma_bf16_fma_call, FP32
+            // FMAs inside the callee), counted as that HMMA (sass_counts.py EMULATED_MMA, #762).
+            expect(l.mma_shape == "HMMA.16816.F32.BF16.EMU",
+                   name + ": the emulated BF16 MMA, " + l.mma_shape);
         }
         expect(l.k_iter == 64, name + ": k_iter " + std::to_string(l.k_iter));
         // 64 K per iteration in m16n8k16 MMAs, or in Turing's m16n8k8 ones (HMMA.1688, twice as
