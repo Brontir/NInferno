@@ -1162,6 +1162,13 @@ int sixteen_warp_resident(const Problem& problem) {
     return held->answers.emplace(key, resident).first->second;
 }
 
+// What the T 9-16 split rules read (#1117): the sixteen-warp CTAs an SM holds, for a store or add
+// call. A SwiGLU call is left as before (0: no fact): its grid is half its rows' (gate and up rows
+// in one CTA) where the rules count n / 16 CTAs, and none of its calls was measured.
+int rule_resident(const Problem& problem) {
+    return problem.epilogue == Epilogue::SwiGlu ? 0 : sixteen_warp_resident(problem);
+}
+
 } // namespace
 
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
@@ -1247,13 +1254,13 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                     // of n1.w1x8's time on Q8_0 (19 cells), 1.00-1.56 on the K-quants (80 cells).
                     if (split.cluster == 2 && current_arch_facts().features.clusters &&
                         2 * columns * ctas > held * sms) {
-                        const int resident = sixteen_warp_resident(problem);
+                        const int resident = rule_resident(problem);
                         return resident > 0 && columns * ctas <= resident * sms
                                    ? rmma_index(1, 16, 1, 1)
                                    : rmma_index(1, 8, 1, 1);
                     }
                     if (split.cluster == 1 && split.warps_k == 16) {
-                        const int resident = sixteen_warp_resident(problem);
+                        const int resident = rule_resident(problem);
                         if (resident > 0 && columns * ctas > resident * sms) {
                             return rmma_index(1, 8, 1, 1);
                         }

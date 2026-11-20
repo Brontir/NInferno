@@ -682,7 +682,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      ""},
     {"heuristic_rmma: the verify pair past one wave", Basis::Measured, "generic_select.cpp",
      "current_arch_facts().features.clusters && 2 * columns * ctas > held * sms) { const int "
-     "resident = sixteen_warp_resident(problem);",
+     "resident = rule_resident(problem);",
      0, "gb202:170sm, gb203:70sm", "RTX 5090, RTX 5070 Ti",
      "T = 9..16 at most one CTA per SM: the decode split's CTA pair runs one wave only while "
      "pair x token columns x CTAs fit what the SMs hold (two one-tile CTAs of <= 256 threads an "
