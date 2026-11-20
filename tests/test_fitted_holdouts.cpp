@@ -97,18 +97,21 @@ bool python_runs() {
     return runs;
 }
 
-// The held-out score a fit script prints (the --holdout contract, #715): its last line that
-// starts `holdout: `, the rest of it; nullopt where the script fails or prints none.
-std::optional<std::string> script_holdout(const std::string& script) {
-    const auto text = output_of("python3 \"" + script + "\" --holdout");
+// The held-out score a fit script prints (the --holdout contract, #715): its last non-empty line,
+// which starts `holdout: `, the rest of it; nullopt where the script fails or its last line is
+// another. `extra`: more arguments (the self-check's).
+std::optional<std::string> script_holdout(const std::string& script,
+                                          const std::string& extra = {}) {
+    const auto text = output_of("python3 \"" + script + "\" --holdout" + extra);
     if (!text) return std::nullopt;
-    std::optional<std::string> score;
+    std::string last;
     std::istringstream lines(*text);
     for (std::string line; std::getline(lines, line);) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.rfind("holdout: ", 0) == 0) score = line.substr(9);
+        if (!line.empty()) last = line;
     }
-    return score;
+    if (last.rfind("holdout: ", 0) != 0) return std::nullopt;
+    return last.substr(9);
 }
 
 // Why a Checked record's script does not reproduce the record's error; empty where it does.
@@ -135,6 +138,9 @@ void check_holdout_runner() {
     }
     if (reproduction_gap(fixture, "2.4 % mean absolute error").empty()) {
         fail("holdout runner: a record's error that differs from the script's passed");
+    }
+    if (script_holdout(fixture, " --trailing").has_value()) {
+        fail("holdout runner: a score that is not the script's last line was read");
     }
     if (reproduction_gap("tests/fixtures/fits/no_such_script.py", "x").empty()) {
         fail("holdout runner: a missing script passed");
