@@ -14,6 +14,8 @@
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/kernel_facts.h"
 
+#include <cstdlib>
+
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -359,7 +361,13 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
                     (args.tokens + Schedule::kTokensPerCta - 1) / Schedule::kTokensPerCta);
     if (grid.y > kMaxGridYZ)
         throw std::invalid_argument("generic linear: token extent exceeds the grid");
-    const auto smem = static_cast<std::size_t>(args.spread_smem);
+    // LAB (#1051): NINFERNO_LAB_RMMA_SMEM_PAD bytes of dynamic shared memory more a CTA, which
+    // caps the CTAs resident on an SM (no opt-in: at most 48 KiB with the kernel's own).
+    static const std::size_t lab_pad = [] {
+        const char* v = std::getenv("NINFERNO_LAB_RMMA_SMEM_PAD");
+        return v != nullptr ? static_cast<std::size_t>(std::strtoul(v, nullptr, 10)) : std::size_t{0};
+    }();
+    const auto smem = static_cast<std::size_t>(args.spread_smem) + lab_pad;
     if (KernelResources* described = kernel_describe_target()) {
         // The kernel's committed facts (the cost model describes up to 20 schedules a call: one
         // snapshot read per instance and device). Without them nothing is described: the caller
