@@ -12,7 +12,9 @@ Each row is a published reference configuration, keyed by its PCI product id. A 
 not always a unique SKU: NVIDIA also uses subsystem vendor/product ids to distinguish boards.
 A board whose subsystem id is known is a `subsystems` entry, which the runtime selects by that id
 (#903). `variants` is audit metadata for a board whose subsystem id is not confirmed yet: it is
-never selected, and such a card is priced and planned as its row.
+never selected. Such a card keeps its row's SM clock, but its bus width and memory clock come from
+the driver where they differ (machine_facts.cpp), and a live plan reads the driver's memory size;
+only `--plan-device` naming the row plans it at the row's own memory.
 
 | Field | Meaning |
 |---|---|
