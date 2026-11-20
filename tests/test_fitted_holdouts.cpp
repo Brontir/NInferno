@@ -34,7 +34,6 @@
 // No GPU.
 
 #include "core/fitted_holdouts.h"
-#include "core/sys.h"
 #include "ops/generic/route_cost_constants.h"
 #include "ops/generic/route_rules.h"
 
@@ -47,6 +46,7 @@
 #include <iterator>
 #include <map>
 #include <optional>
+#include <random>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -73,15 +73,24 @@ std::string read_file(std::string_view relative) {
     return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
-// What a command prints, run from the repository root; nullopt where it fails.
+// The interpreter CMake found (NEEDS_SOURCE_DIR), -B so that no __pycache__ lands in tools/fits.
+std::string python() { return std::string("\"") + NINFERNO_PYTHON_EXECUTABLE + "\" -B"; }
+
+// What a command prints on stdout, run from the repository root; nullopt where it fails. Its
+// stderr is left to the test's own (a warning at a script's exit is not its last line).
 std::optional<std::string> output_of(const std::string& command) {
-    static int calls                = 0;
-    const std::filesystem::path out = std::filesystem::temp_directory_path() /
-                                      ("ninferno_holdout_" + std::to_string(ninferno::sys::pid()) +
-                                       "_" + std::to_string(++calls) + ".txt");
+    static int calls = 0;
+    const std::filesystem::path out =
+        std::filesystem::temp_directory_path() /
+        ("ninferno_holdout_" + std::to_string(std::random_device{}()) + "_" +
+         std::to_string(++calls) + ".txt");
     const std::filesystem::path here = std::filesystem::current_path();
     std::filesystem::current_path(NINFERNO_SOURCE_DIR);
-    const int status = std::system((command + " > \"" + out.string() + "\" 2>&1").c_str());
+    std::string line = command + " > \"" + out.string() + "\"";
+#ifdef _WIN32
+    line = "\"" + line + "\""; // cmd /c strips the first and the last quote of its line
+#endif
+    const int status = std::system(line.c_str());
     std::filesystem::current_path(here);
     std::ifstream in(out, std::ios::binary);
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -93,7 +102,7 @@ std::optional<std::string> output_of(const std::string& command) {
 }
 
 bool python_runs() {
-    static const bool runs = output_of("python3 --version").has_value();
+    static const bool runs = output_of(python() + " --version").has_value();
     return runs;
 }
 
@@ -102,7 +111,7 @@ bool python_runs() {
 // another. `extra`: more arguments (the self-check's).
 std::optional<std::string> script_holdout(const std::string& script,
                                           const std::string& extra = {}) {
-    const auto text = output_of("python3 \"" + script + "\" --holdout" + extra);
+    const auto text = output_of(python() + " \"" + script + "\" --holdout" + extra);
     if (!text) return std::nullopt;
     std::string last;
     std::istringstream lines(*text);
