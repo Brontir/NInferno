@@ -1845,7 +1845,8 @@ void moe_step_reads_the_route(const json& fixture) {
                   "MoE step: assumed banks are transferred and named (" + at + ")");
             // Both marks (a split part: no layers asked, banks assumed): the banks' reason.
             const ch::Speed su = ch::speed_of(unqueried, card, assumed_q, c, rows, 1536, 0);
-            check(su.basis == ch::SpeedBasis::Transferred && su.why == "MoE banks assumed",
+            check(su.decode_per_stream == sp.decode_per_stream &&
+                      su.basis == ch::SpeedBasis::Transferred && su.why == "MoE banks assumed",
                   "MoE step: unqueried and assumed names the banks (" + at + ")");
         }
     }
