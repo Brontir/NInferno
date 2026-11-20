@@ -537,8 +537,9 @@ void check_known() {
 }
 
 // The MMQ prefill gate on a board whose L2 size is unknown (a card outside the facts whose driver
-// reports none): the gate answers Incomplete, which is not a measurement of this board even at
-// distance 0, so the evidence names a donor and is not `measured`.
+// reports none: no driver L2 and no facts L2, since board_of falls back to the facts' L2 since
+// #1082): the gate answers Incomplete, which is not a measurement of this board even at distance
+// 0, so the evidence names a donor and is not `measured`.
 void check_incomplete_gate() {
     constexpr Shape big{4096, 4096};
     for (const std::string_view name : {"rtx4090", "rtx5090", "rtx2080ti"}) {
@@ -554,6 +555,7 @@ void check_incomplete_gate() {
              {std::size_t{0}, generic::board_device_class(*board).l2_bytes}) {
             DeviceClass device = generic::board_device_class(*board);
             device.l2_bytes    = l2;
+            if (l2 == 0) device.facts.l2_mib = 0;
             const ScopedDeviceClass scoped(device);
             void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
             const quantized_weight::PackedWeight host = quantized_weight::make_patterned_weight(
