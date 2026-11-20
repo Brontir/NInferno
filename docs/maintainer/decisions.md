@@ -2215,9 +2215,11 @@ tokens are DECISIONS 73's, the rest are the pair's facts and the card's rates. T
 the table its build runs: the server's build sets it (a `--spec-load` table, bounds moved to
 captured depths) before the price is taken (Codex on #791). Only the table is replaced, not its
 basis (`ServedSpeculation::load_basis` stays the head's own table's): a `--spec-load` over a head
-whose own table the facts derived is priced at the given depths, and the same flag over a head
-with a literal table stays unpriced, so the four fifths decide there (#804). The plan
-(`--plan`, `plan_speculation.cpp`) prices the head at its own table: it models neither
+whose own table the facts derived or the lab measured is priced at the given depths (each capped
+at the head's own depth, and unpriced where the measurements or the joint verify's scales have no
+row for it), and the same flag over a head with a literal table stays unpriced, so the four
+fifths decide there (#804). The offline plan (`--plan --no-load`, `plan_speculation.cpp`) prices
+the head at its own table: it models neither
 `--spec-load` nor the captured-depth move, so where the server's build moves the table, the
 server's verdict can differ from the plan's.
 
