@@ -168,7 +168,7 @@ int shipped_picks() {
     }
     failures += check(files > 0, "shipped predicted bands found in " + utf8_path(dir));
     // A pick file the loader refuses stops the lookup (a broken install): another class's file
-    // under this class's name, and a band outside T 9-16. The tables are the shipped ones, copied.
+    // under this class's name, and a band outside T 9-32. The tables are the shipped ones, copied.
     if (!first_name.empty()) {
         const board_registry::BoardRow* row = board_registry::find(first_id);
         ninferno::DeviceClass d =
@@ -219,6 +219,10 @@ int shipped_picks() {
                      std::regex_replace(first_text, std::regex(R"re("bands": \[\s*\[\s*9,)re"),
                                         R"re("bands": [[5,)re",
                                         std::regex_constants::format_first_only));
+        refused_with(
+            "with a band past T 32",
+            std::regex_replace(first_text, std::regex(R"re("bands": \[\s*\[\s*9,\s*\d+)re"),
+                               R"re("bands": [[9, 40)re", std::regex_constants::format_first_only));
         // Within kCarryDistance a predicted band fills the table's gaps only (#1068): a table of
         // this class (distance 0) holding the file's first problem answers it as measured; the
         // file's second problem, which the table lacks, is answered as predicted, also where a

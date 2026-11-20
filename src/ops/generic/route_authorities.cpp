@@ -592,7 +592,19 @@ RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& we
         }
         if (!demoted) demoted = std::move(answer);
     }
-    if (predicted) return under_policy(std::move(*predicted), asked, demoted ? &*demoted : nullptr);
+    if (predicted) {
+        // An int8 call of T 17-32 (a8_wide_call) passes the dense-tune authority by, and its own
+        // tuned W4A8 band applied only through the heuristic (dense_tune_prefill_band below): it
+        // still does, ahead of the predicted band, as this board's own tuning (#785 review). The
+        // band is the one the cost model's route took before the predicted band answered.
+        if (a8_wide_call(asked, problem, weight)) {
+            const RouteAnswer ruled = heuristic_answer(asked, problem, weight);
+            if (auto band = dense_tune_prefill_band(asked, problem, weight, ruled.route)) {
+                return under_policy(std::move(*band), asked, demoted ? &*demoted : nullptr);
+            }
+        }
+        return under_policy(std::move(*predicted), asked, demoted ? &*demoted : nullptr);
+    }
     RouteAnswer answer = heuristic_answer(asked, problem, weight);
     if (auto band = dense_tune_prefill_band(asked, problem, weight, answer.route)) {
         return under_policy(std::move(*band), asked, demoted ? &*demoted : nullptr);
