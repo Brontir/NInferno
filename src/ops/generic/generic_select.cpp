@@ -1152,16 +1152,26 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                 // K/V, gates, small outputs) by x1.4..2.1 (median per card) to the sixteen-warp
                 // split; on the RTX 5090 the CTA pair or cluster of eight was 0..17 % faster still
                 // (n = 48 and 1024, T = 12 and 16: 8..20 us against 16..41 for the rule).
-                // The pair doubles the grid: it pays only while each pair's second CTA has an SM
-                // the call leaves idle (2 x CTAs <= SMs). Past that, one eight-warp CTA per 16
-                // rows is the split (#1052, RTX 5090, K-quants Q2_K-Q6_K, T 9-16, every route
-                // timed: at 1024 rows, 64 CTAs, the pair is 0.3-4.7 % from the best and n1.w1x8
-                // 20-30 %; at 1536-2560 rows, 96-160 CTAs, n1.w1x8 is the best within 0.6 % and
-                // the pair 21-28 % behind). A board without clusters (current_arch_facts: the
-                // device and the build) keeps its sixteen-warp CTA.
+                // The pair launches two CTAs for each of the eight-warp grid's: one a token column
+                // (n_tiles x 8 tokens: two columns from 9 tokens) per 16 rows. It runs in one wave
+                // only while pair x columns x CTAs fit in the CTAs an SM holds (two for a one-tile
+                // CTA of at most 256 threads, generic_gemm.cuh kMinBlocks) times the SMs; past that
+                // the eight-warp CTA is the split (#1052, RTX 5090, K-quants Q2_K-Q6_K, T 9-16,
+                // every route timed: at 1024 rows, 64 CTAs, the pair is 0.3-4.7 % from the best and
+                // n1.w1x8 20-30 %; at 1536-2560 rows, 96-160 CTAs, n1.w1x8 is the best within
+                // 0.6 % and the pair 21-28 % behind). At 8 tokens and below (one column) the same
+                // count is the decode split's `ctas <= sms` above. A board without clusters
+                // (current_arch_facts: the device and the build) keeps its sixteen-warp CTA.
                 const std::int64_t ctas = (static_cast<std::int64_t>(problem.n) + 15) / 16;
                 const std::int64_t sms  = sm_count();
-                if (ctas <= sms && 2 * ctas > sms && current_arch_facts().clusters) {
+                const RmmaScheduleInfo eight = rmma_schedule_info(rmma_index(1, 8, 1, 1));
+                const std::int64_t columns = (tokens + eight.n_tiles * 8 - 1) / (eight.n_tiles * 8);
+                const std::int64_t held =
+                    eight.m_tiles * eight.n_tiles == 1 && eight.warps_m * eight.warps_k * 32 <= 256
+                        ? 2
+                        : 1;
+                if (ctas <= sms && 2 * columns * ctas > held * sms &&
+                    current_arch_facts().clusters) {
                     return rmma_index(1, 8, 1, 1);
                 }
                 if (ctas <= sms) return one_wave_split(ctas, sms);
