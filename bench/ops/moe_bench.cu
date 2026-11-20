@@ -7,7 +7,8 @@
 // Usage: ninferno_moe_bench --format F [--down-format F] --experts E --topk K
 //                         --hidden H --inter F [--act swiglu|geglu|clamped|relu2]
 //                         [--layout concatenated|interleaved] [--tokens 1,2,4,...]
-//                         [--plans auto|sweep] [--prefill] [--repeat 20] [--passes 3]
+//                         [--plans auto|sweep] [--only PLAN[,PLAN...]] [--prefill] [--repeat 20]
+//                         [--passes 3]
 //                         [--flush-mib 256] [--graph 0|1] [--stages 0|1] [--a8 0|1]
 //                         [--frag 0|1]
 //
@@ -31,8 +32,11 @@
 //
 // --plans auto times the route the Op selects (under the prefill profile with --prefill); sweep
 // times every (gate/up schedule, down schedule) pair the compiled list allows, the router on its
-// selected schedule. Output: one CSV row per (T, plan): median and minimum microseconds, and the
-// weight bytes the call streams (selected experts' distinct rows) as a read-bandwidth figure.
+// selected schedule. --only keeps of the sweep the plans of those names (the CSV's `plan` column,
+// e.g. rmma.m1.n1.w1x8|rmma.m1.n1.w4x1), so a profiler sees their launches alone (#987); a name
+// the sweep does not reach is an error. Output: one CSV row per (T, plan): median and minimum
+// microseconds, and the weight bytes the call streams (selected experts' distinct rows) as a
+// read-bandwidth figure.
 
 #include "core/device.h"
 #include "core/ggml_frag.h"
@@ -55,6 +59,7 @@
 #include <map>
 #include <memory>
 #include <random>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -247,12 +252,19 @@ std::uint64_t digest(const std::vector<std::uint8_t>& bytes) {
 
 int main(int argc, char** argv) {
     try {
-        std::map<std::string, std::string> a{{"format", "mxfp4"}, {"experts", "32"}, {"topk", "4"},
-                                             {"hidden", "2880"}, {"inter", "2880"},
-                                             {"act", "swiglu"}, {"layout", "concatenated"},
+        std::map<std::string, std::string> a{{"format", "mxfp4"},
+                                             {"experts", "32"},
+                                             {"topk", "4"},
+                                             {"hidden", "2880"},
+                                             {"inter", "2880"},
+                                             {"act", "swiglu"},
+                                             {"layout", "concatenated"},
                                              {"tokens", "1,2,4,8,16,32,64,128,512,2048"},
-                                             {"plans", "auto"}, {"repeat", "20"}, {"passes", "3"},
-                                             {"flush-mib", "256"}};
+                                             {"plans", "auto"},
+                                             {"repeat", "20"},
+                                             {"passes", "3"},
+                                             {"flush-mib", "256"},
+                                             {"only", ""}};
         bool prefill = false;
         for (int i = 1; i < argc; ++i) {
             std::string k = argv[i];
@@ -310,6 +322,15 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaEventCreate(&e0));
         CUDA_CHECK(cudaEventCreate(&e1));
         const ops::ScopedPrefillRoutes profile(prefill);
+        std::set<std::string> only;
+        for (std::stringstream names(a["only"]); names.good();) {
+            std::string name;
+            std::getline(names, name, ',');
+            if (!name.empty()) only.insert(name);
+        }
+        if (!only.empty() && a["plans"] != "sweep") {
+            throw std::invalid_argument("--only picks plans of --plans sweep");
+        }
 
         const double expert_bytes =
             static_cast<double>(gate_up.weight.payload_bytes + down.weight.payload_bytes) / E;
@@ -349,7 +370,17 @@ int main(int argc, char** argv) {
                         }
                         if (prefill && t >= 17 && !moe::plan_is_token_invariant(p)) continue;
                         if (!moe::plan_compiled(w, p)) continue;
+                        if (!only.empty() && only.count(moe::plan_name(p)) == 0) continue;
                         plans.push_back(p);
+                    }
+                }
+                for (const auto& name : only) {
+                    if (std::none_of(plans.begin(), plans.end(), [&](const moe::MoePlan& p) {
+                            return moe::plan_name(p) == name;
+                        })) {
+                        throw std::invalid_argument("--only " + name +
+                                                    ": not a plan of the sweep at T " +
+                                                    std::to_string(t));
                     }
                 }
             } else {
