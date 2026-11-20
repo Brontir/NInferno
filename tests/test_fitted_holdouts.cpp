@@ -105,8 +105,7 @@ std::optional<std::string> script_holdout(const std::string& script) {
     std::optional<std::string> score;
     std::istringstream lines(*text);
     for (std::string line; std::getline(lines, line);) {
-        if (!line.empty() && line.back() == '
-') line.pop_back();
+        if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.rfind("holdout: ", 0) == 0) score = line.substr(9);
     }
     return score;
@@ -126,8 +125,7 @@ std::string reproduction_gap(const std::string& script, std::string_view error) 
 // The runner itself, on a fixture script (tests/fixtures/fits/holdout_selftest.py).
 void check_holdout_runner() {
     if (!python_runs()) {
-        std::printf("holdout runner: python3 does not run here, its self-check skipped
-");
+        std::printf("holdout runner: python3 does not run here, its self-check skipped\n");
         return;
     }
     const std::string fixture = "tests/fixtures/fits/holdout_selftest.py";
