@@ -222,6 +222,9 @@ std::vector<std::string> device_fact_notes(const DeviceClass& d) {
         std::string why;
         if (f.sku.empty()) {
             why = "PCI id not in the reference table: the driver's clocks on the 2^(1/16) grid";
+        } else if (f.subsystem_unknown) {
+            why = f.sku + "'s id is shared by boards the PCI subsystem tells apart, and it was "
+                          "unreadable: priced as the slowest of them";
         } else if (f.form == FormFactor::Laptop) {
             why = f.sku + ", a laptop: priced at the bottom of its published boost range";
         } else if (f.share < 1.0) {
@@ -256,15 +259,23 @@ DriverReport driver_report_of(const DeviceClass& d) noexcept {
             .sms              = d.sms,
             .sm_clock_khz     = d.sm_clock_khz,
             .memory_clock_khz = d.memory_clock_khz,
-            .memory_bus_bits  = d.memory_bus_bits};
+            .memory_bus_bits  = d.memory_bus_bits,
+            .pci_subsystem_id = d.pci_subsystem_id,
+            .subsystem_unread = d.pci_subsystem_unread};
 }
 
 MachineFacts machine_facts_of(const DeviceClass& d) { return machine_facts(driver_report_of(d)); }
 
+std::size_t class_l2_bytes(const DeviceClass& d) noexcept {
+    if (d.l2_bytes > 0 || !(d.facts.l2_mib > 0)) return d.l2_bytes;
+    return static_cast<std::size_t>(std::llround(d.facts.l2_mib * (1 << 20)));
+}
+
 Board board_of(const DeviceClass& d) noexcept {
-    return {d.major,       d.minor,
-            d.sms,         static_cast<double>(d.l2_bytes) / (1 << 20),
-            d.dram_gbps(), d.features.mma_slow};
+    // The driver's L2 where it gave one, else the machine facts' (class_l2_bytes; where the driver
+    // gave none, the L2 card_facts_of reads), as dram_gbps() reads the facts' bandwidth (#1082).
+    const double l2_mib = static_cast<double>(class_l2_bytes(d)) / (1 << 20);
+    return {d.major, d.minor, d.sms, l2_mib, d.dram_gbps(), d.features.mma_slow};
 }
 
 namespace {

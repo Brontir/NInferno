@@ -202,6 +202,12 @@ add_test(NAME ninferno_affected_arches_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_affected_arches.py)
 set_tests_properties(ninferno_affected_arches_test PROPERTIES LABELS host)
 
+# tools/route_table_retime.py: one route over a re-timed range, untimed table routes kept (#1073),
+# no GPU.
+add_test(NAME ninferno_route_table_retime_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_retime.py)
+set_tests_properties(ninferno_route_table_retime_test PROPERTIES LABELS host)
+
 # routes/*.json: evidence_us / tuned_on provenance (#634), no GPU.
 add_test(NAME ninferno_route_table_evidence_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_evidence.py)

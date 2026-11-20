@@ -29,6 +29,7 @@ Each row is one SKU, keyed by its PCI product id:
 | `target` | only when false: listed for identification, not a target (H100, H200, B200) |
 | `sources` | the datasheet or product page, a database page, and the pci-ids entry of the id |
 | `variants` | only where another board is sold, or reports itself, under the id: one object per board, with the values in which it differs from the row (`vram_gib`, `gbps`, `boost_mhz`, `bus_bits`; a bus width must be a whole number of 32-bit channels, the only widths `machine_facts` reads). The facts-vs-driver audit reads it, so a recorded board passes the audit as information; `machine_facts` never reads it and decides from the driver's values alone |
+| `subsystems` | only where another board under the id is told apart by its PCI subsystem and differs in a priced value (the TITAN V CEO Edition, subsystem `0x10DE12EB`, under the Quadro GV100's `0x1DBA`): one object per board with `id` (`0x`, subsystem vendor and device, eight hex digits), `name`, `sources`, and the values in which it differs (`boost_mhz`, `gbps`, `bus_bits`, `tdp_w`, `vram_gib`). Not on a laptop row. Unlike `variants`, `machine_facts` reads it (below) |
 | `note` | caveats: an id shared by two memory sizes, values from secondary sources |
 
 The reference clock is the published boost clock of NVIDIA's reference board. It is the value the
@@ -53,6 +54,12 @@ row in the table has it.
 - **A known id** of the reported architecture takes the row, whatever the driver reports: an
   overclock, a driver's rounding (14001 MHz against 14000), or no clocks at all on MIG or WSL. The
   source is *verified*.
+- **A board its PCI subsystem names** (a row's `subsystems`, #903) takes that board's name and
+  values, and stays *verified*. A subsystem the row does not list is the row's board, and so is a
+  board named without one (a plan's `--plan-device`, a test's class). Where the row lists such
+  boards and the driver was asked but could not give the subsystem (neither sysfs nor NVML), which
+  board this is stays unknown: it is priced as the slowest of them (the lowest clock, memory clock,
+  bus width and size), *extrapolated*.
 - **A laptop row, or a device whose SM count differs from the row's**, is *extrapolated*. A laptop
   takes the bottom of its boost range (above). A MIG slice (fewer SMs) also gets `share` = its SMs
   over the board's, and its bandwidth scales by it.

@@ -204,12 +204,39 @@ void spec_defaults() {
 
 } // namespace
 
+// A planned board's class carries no driver L2 (plan_prefill_routes.cpp class_of and
+// plan_device_class build it with 0): board_of takes the machine facts' L2 there, as
+// card_facts_of does, so the selector's gates and the choice measure the same distance (#1082).
+// The RTX 4090's row has 72 MiB; the driver's 48 stands where it gives one.
+void planned_board_reads_the_facts_l2() {
+    DeviceClass d = synthetic_device_class(0x2684, 8, 9, 128, 0, 24ull << 30);
+    d.facts       = machine_facts_of(d);
+    expect(d.facts.l2_mib == 72,
+           "the registry gives 0x2684 72 MiB of L2 (" + std::to_string(d.facts.l2_mib) + ")");
+    expect(board_of(d).l2_mib == d.facts.l2_mib,
+           "a class without the driver's L2 takes the facts' (" +
+               std::to_string(board_of(d).l2_mib) + " MiB, facts " +
+               std::to_string(d.facts.l2_mib) + ")");
+    DeviceClass real = synthetic_device_class(0x2684, 8, 9, 128, 48ull << 20, 24ull << 30);
+    real.facts       = machine_facts_of(real);
+    expect(board_of(real).l2_mib == 48, "the driver's L2 stands where it gave one (" +
+                                            std::to_string(board_of(real).l2_mib) + ")");
+    // The byte accessor the direct readers use (#1084: nvfp4_half_l2, the sparse MoE decode
+    // prefetch limit) reads the same L2.
+    expect(class_l2_bytes(d) == std::size_t{72} << 20,
+           "class_l2_bytes of a class without the driver's L2: the facts' (" +
+               std::to_string(class_l2_bytes(d)) + ")");
+    expect(class_l2_bytes(real) == std::size_t{48} << 20,
+           "class_l2_bytes: the driver's where it gave one");
+}
+
 int main() {
     try {
         every_row_keeps_its_three_classes();
         golden_boards_keep_their_class();
         golden_board_is_its_row();
         spec_defaults();
+        planned_board_reads_the_facts_l2();
     } catch (const std::exception& e) {
         std::cerr << "FAIL: " << e.what() << '\n';
         return 1;
