@@ -691,7 +691,9 @@ int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scrat
     };
     const Case off{"q8 predicted offered", QType::Q8_G32_FP16, ops::LinearPolicy::A16Only, 2560,
                    2048};
-    const Case no{"q8 predicted not offered", QType::Q8_G32_FP16, ops::LinearPolicy::A16Only, 2560,
+    // Not offered: ggml_mmq, admitted where the policy allows int8 activations (an A16 policy
+    // refuses it before the table is read), and never among the A16 families the tuner times.
+    const Case no{"q8 predicted not offered", QType::Q8_G32_FP16, ops::LinearPolicy::AllowA8, 2560,
                   3072};
     const Device doff = upload(off, 47U);
     const Device dno  = upload(no, 53U);
