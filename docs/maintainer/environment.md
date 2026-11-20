@@ -160,8 +160,10 @@ first authority that answers decides, and the analyzer's predicted bands (`route
 not read, so a board of a pick-file class answers from its nearest table as before them. Nor are the
 expert-call law's MoE plans (`routes/moe_pick/<class>.json`, written by
 `tools/bench/moe_expert_law.py pick`, #987): under `evidence` they answer a grouped MoE layer at
-decode widths (T 1-8) where the board's table holds no entry of its own for the layer, for the
-banks' layouts they were priced for, on the very board their `gpu.pci_id` names, and only for the
+decode widths (T 1-8) where the board's table holds no entry for the layer measured on this board
+or a near one (an entry lent by another table, or of a far table, yields to them), for the banks'
+layouts they were priced for, on a board whose facts equal those of the one their `gpu.pci_id`
+names (board distance 0), and only for the
 layers whose sealed grid on that board passed (`moe_expert_law.py` `PICKS`). `moe_expert_law.py pick
 --check` fails when the law, the kernel facts' moegemm and moer8 sections, the board's
 warp_inflight probe or gpu_facts.json's arch rows moved since the files were written, and a run of

@@ -9,6 +9,7 @@
 
 #include "core/device_class.h"
 #include "core/format_facts.h"
+#include "core/ggml_frag.h"
 #include "core/measured_boards.h"
 #include "ops/common/shape_routes.h"
 #include "ops/generic/route_authorities.h"
@@ -476,8 +477,9 @@ void read_predicted(const std::string& path, Table& table) {
 }
 
 // A ninferno-moe-pick/1 file (tools/bench/moe_expert_law.py pick, #987) into
-// `table.moe_predicted`: its class must be this device's own and its gpu.pci_id this very board
-// (another board of the class reads none of it: the law priced that board's probe and facts), each
+// `table.moe_predicted`: its class must be this device's own and its gpu.pci_id a board whose facts
+// are this one's (board distance 0: another board of the class reads none of it, the law priced
+// that board's probe and facts), each
 // entry a generic-MoE layer with decode bands only (T 1-8, no prefill plan). A refused file is an
 // error: it is this device's own file.
 void read_moe_predicted(const std::string& path, Table& table) {
@@ -530,6 +532,12 @@ void read_moe_predicted(const std::string& path, Table& table) {
                 }
             }
             auto entry = moe_entry_of(e, path);
+            // A bank the law names in fragment order must have that layout (ggml_frag.h): any
+            // other key would never be asked, a mistake of the writer, not a plan.
+            if ((frag_gate_up && !ggml_frag_format(entry.key.qtype)) ||
+                (frag_down && !ggml_frag_format(entry.key.down_qtype))) {
+                refuse("frag names a bank whose format has no fragment order", where);
+            }
             for (const auto& band : entry.bands) {
                 if (band.t_min < 1 || band.t_max > detail::moe::kR8Tokens) {
                     refuse("a predicted moe band outside T 1-" +

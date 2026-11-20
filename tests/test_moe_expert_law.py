@@ -69,3 +69,34 @@ def test_no_price_reads_a_row_ptxas_allocates_either_way():
     for arch, rows in kernel_facts.REGISTER_ALLOCATIONS["moegemm"].items():
         for key in rows:
             assert key[0] not in law.GEMM_DEC.values(), (arch, key)
+
+
+def test_write_picks_refuses_moved_bands_and_names_files_by_class_id(tmp_path, monkeypatch):
+    """routes/moe_pick: a file per device class id (':' as '-'); --check fails on a moved band or an extra
+    file; a write that would move a sealed layer's bands is refused unless --rebands (#987, #1110)."""
+    import json
+    import shutil
+    import pytest
+    pick_dir = tmp_path / "moe_pick"
+    shutil.copytree(law.PICK_DIR, pick_dir)
+    monkeypatch.setattr(law, "PICK_DIR", str(pick_dir))
+    names = sorted(os.listdir(pick_dir))
+    assert names == sorted(law.PICKS[b]["class"].replace(":", "-") + ".json" for b in law.PICKS)
+    assert all(":" in law.PICKS[b]["class"] for b in law.PICKS)
+    law.write_picks(check=True)  # the shipped files are in step
+    path = pick_dir / names[0]
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    band = doc["moe"][0]["bands"][0]
+    band[2] = "rmma.m1.n8.w4x1|rmma.m1.n8.w4x1" if band[2] != "rmma.m1.n8.w4x1|rmma.m1.n8.w4x1" else "r8.w2r1|r8.w2r1"
+    moved = json.dumps(doc)
+    path.write_text(moved, encoding="utf-8")
+    with pytest.raises(SystemExit):
+        law.write_picks(check=True)
+    with pytest.raises(SystemExit):
+        law.write_picks(check=False)  # a moved sealed band: refused, the file left as it was
+    assert path.read_text(encoding="utf-8") == moved
+    law.write_picks(check=False, rebands=True)
+    law.write_picks(check=True)
+    (pick_dir / "zz000-1sm.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        law.write_picks(check=True)
