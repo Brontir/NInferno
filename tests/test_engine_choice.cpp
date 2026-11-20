@@ -51,6 +51,22 @@ int main() {
     // The 80 engine (int8 rows below sm_89) still runs sm_86 where no 86 engine ships.
     expect_tag({{"80", 80, false, false}}, 86, "80", "the 80 engine on sm_86 (same codec)");
 
+    // The refusal names its cause (#991 review).
+    using ninferno::dispatch::no_engine_reason;
+    const auto expect_reason = [](bool ok, const std::string& what) {
+        if (!ok) {
+            ++g_failed;
+            std::cerr << "FAIL: " << what << '\n';
+        }
+    };
+    expect_reason(no_engine_reason(no89, 89).find("KV row codes") != std::string::npos,
+                  "an sm_89 card under an 86 engine is refused for its row codec");
+    expect_reason(no_engine_reason(release, 60) == "is older than this release supports",
+                  "a Pascal card is older than the release");
+    expect_reason(no_engine_reason({{"86", 86, false, false}}, 120) ==
+                      "is not supported by this release",
+                  "sm_120 under an 86-only release (no PTX) is not supported");
+
     if (g_failed != 0) { return 1; }
     std::cout << "engine choice: ok\n";
     return 0;

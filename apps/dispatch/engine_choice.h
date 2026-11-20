@@ -42,4 +42,19 @@ inline std::optional<Engine> choose(const std::vector<Engine>& engines, int cc) 
     return pick([&](const Engine& e) { return e.ptx && e.arch <= cc; });
 }
 
+// Why choose() found no engine for cc, for the message: a plain engine of the same major and an
+// older minor that writes other KV row codes (an 86 engine for an sm_89 card, #991), a GPU older
+// than every engine, or none of the release's engines runs it.
+inline std::string no_engine_reason(const std::vector<Engine>& engines, int cc) {
+    bool older = !engines.empty();
+    for (const auto& e : engines) {
+        if (!e.specific && e.arch / 10 == cc / 10 && e.arch <= cc) {
+            return "needs the sm_" + std::to_string(cc) + " engine: the release's sm_" + e.tag +
+                   " engine writes other KV row codes (int8 below sm_89, E4M3 from it)";
+        }
+        older = older && e.arch > cc;
+    }
+    return older ? "is older than this release supports" : "is not supported by this release";
+}
+
 } // namespace ninferno::dispatch

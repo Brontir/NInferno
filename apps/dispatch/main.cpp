@@ -319,9 +319,11 @@ int main(int argc, char** argv) {
             engine = choose(engines, gpus[static_cast<std::size_t>(device)].cc);
             // --help needs no GPU: on one this release does not support it still shows the help.
             if (!engine && !engine_help_requested(argc, argv)) {
-                std::cerr << program << ": GPU " << device << " (" << gpus[static_cast<std::size_t>(device)].name
-                          << ", sm_" << gpus[static_cast<std::size_t>(device)].cc
-                          << ") is older than this release supports (engines: " << engines_text(engines) << ")\n";
+                const int cc = gpus[static_cast<std::size_t>(device)].cc;
+                std::cerr << program << ": GPU " << device << " ("
+                          << gpus[static_cast<std::size_t>(device)].name << ", sm_" << cc << ") "
+                          << ninferno::dispatch::no_engine_reason(engines, cc)
+                          << " (engines: " << engines_text(engines) << ")\n";
                 return 1;
             }
         }
