@@ -1,6 +1,7 @@
 #include "ui/chat_ui.h"
 
 #include "artifact/reader.h"
+#include "core/sha256.h"
 
 #include <array>
 #include <utility>
@@ -21,7 +22,7 @@ std::optional<fs::path> find_chat_ui(const fs::path& configured, const fs::path&
     };
     if (!configured.empty()) {
         if (!has_index(configured)) {
-            throw std::invalid_argument(configured.string() + " holds no index.html (--chat-ui)");
+            throw std::invalid_argument(utf8_path(configured) + " holds no index.html (--chat-ui)");
         }
         return configured;
     }
@@ -65,7 +66,7 @@ std::string bundle_mime(const fs::path& file) {
         {".wasm", "application/wasm"},
         {".txt", "text/plain; charset=utf-8"},
     }};
-    const auto ext = file.extension().string();
+    const auto ext = utf8_path(file.extension());
     for (const auto& [suffix, type] : kTypes) {
         if (ext == suffix) { return type; }
     }

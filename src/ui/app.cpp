@@ -28,6 +28,7 @@
 #include "core/cache_file.h"
 #include "core/clock.h"
 #include "core/parse.h"
+#include "core/sha256.h"
 #include "core/sys.h"
 #include "core/units.h"
 #include "ui/chat_ui.h"
@@ -373,8 +374,8 @@ bool deletable_artifact(const fs::path& path, const fs::path& hub_root,
     const auto rel = path.lexically_relative(fs::weakly_canonical(hub_root, ec));
     if (!rel.empty() && *rel.begin() != ".." && std::distance(rel.begin(), rel.end()) >= 3) {
         auto it             = rel.begin();
-        const auto repo_dir = (*it++).string();
-        if (repo_dir.rfind("models--", 0) == 0 && (*it).string() == "ninferno") { return true; }
+        const auto repo_dir = utf8_path(*it++);
+        if (repo_dir.rfind("models--", 0) == 0 && utf8_path(*it) == "ninferno") { return true; }
     }
     return std::any_of(model_dirs.begin(), model_dirs.end(), under);
 }
@@ -486,7 +487,7 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
     spec.model = quant.empty() ? model : model + ":" + quant;
     spec.gpu   = request.gpu;
     spec.port  = request.prepare_only ? 0 : request.port;
-    spec.argv  = {options.serve_binary.string(), model};
+    spec.argv  = {utf8_path(options.serve_binary), model};
     if (!quant.empty()) {
         spec.argv.push_back("--quant");
         spec.argv.push_back(quant);
@@ -553,7 +554,7 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
         // else by the server, which refuses to start with a named tune that does not serve.
         std::error_code ec;
         const fs::path tune = spec::default_profile_path(model);
-        const bool by_path  = fs::path(model).extension() == ".ninferno";
+        const bool by_path  = path_from_utf8(model).extension() == ".ninferno";
         if (request.spec_profile) {
             if (!by_path) {
                 throw std::invalid_argument("spec_profile: a tune is made for a converted model, "
@@ -569,36 +570,36 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
                 throw std::invalid_argument("spec_profile: the tune does not serve here: " + why);
             }
             spec.argv.push_back("--spec-profile");
-            spec.argv.push_back(tune.string());
+            spec.argv.push_back(utf8_path(tune));
         } else if (by_path && fs::is_regular_file(tune, ec)) {
-            spec.notes.push_back("the tune beside the model (" + tune.string() +
+            spec.notes.push_back("the tune beside the model (" + utf8_path(tune) +
                                  ") is not named: a start names it only when it asks for it "
                                  "(POST /api/launch with \"spec_profile\": true; the page's Start "
                                  "does not ask for it yet)");
         }
     }
     if (request.gpu >= 0) { bind_gpu(spec, request.gpu, gpu); }
-    if (!options.hub_cache.empty()) { spec.env["HF_HUB_CACHE"] = options.hub_cache.string(); }
+    if (!options.hub_cache.empty()) { spec.env["HF_HUB_CACHE"] = utf8_path(options.hub_cache); }
     return spec;
 }
 
 LaunchSpec make_tune(const UiOptions& options, const TuneRequest& request, const GpuStat* gpu) {
     std::error_code ec;
     if (request.artifact.empty() || request.artifact.front() == '-' ||
-        fs::path(request.artifact).extension() != ".ninferno" ||
-        !fs::is_regular_file(request.artifact, ec)) {
+        path_from_utf8(request.artifact).extension() != ".ninferno" ||
+        !fs::is_regular_file(path_from_utf8(request.artifact), ec)) {
         throw std::invalid_argument("not a .ninferno artifact: " + request.artifact);
     }
     const fs::path bin = options.serve_binary.parent_path();
     LaunchSpec spec;
     spec.kind  = "tune";
-    spec.model = fs::path(request.artifact).filename().string();
+    spec.model = utf8_file_name(path_from_utf8(request.artifact));
     spec.gpu   = request.gpu;
     if (request.engine == "gemma4") {
-        spec.argv = {(bin / "ninferno-gemma4").string(), request.artifact, "spec-tune",
+        spec.argv = {utf8_path(bin / "ninferno-gemma4"), request.artifact, "spec-tune",
                      "--budget-seconds", "120"};
     } else {
-        spec.argv = {(bin / "ninferno").string(), "spec-tune", request.artifact, "--budget-seconds",
+        spec.argv = {utf8_path(bin / "ninferno"), "spec-tune", request.artifact, "--budget-seconds",
                      "120"};
     }
     if (request.gpu >= 0) { bind_gpu(spec, request.gpu, gpu); }
@@ -996,16 +997,6 @@ std::optional<std::uint64_t> free_now_of(const std::vector<GpuStat>& stats, int 
 
 } // namespace
 
-namespace {
-
-// A path as the UTF-8 the process pool's argv is (ProcessPool converts each argument from UTF-8;
-// path::string() is the ANSI code page on Windows).
-std::string utf8_of(const fs::path& path) {
-    const std::u8string text = path.u8string();
-    return std::string(text.begin(), text.end());
-}
-
-} // namespace
 
 std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
                                          const product::LaunchAsk& launch) {
@@ -1015,10 +1006,10 @@ std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
     }
     LaunchSpec spec;
     spec.kind  = "plan";
-    spec.model = utf8_of(artifact);
+    spec.model = utf8_path(artifact);
     spec.gpu   = gpu;
-    spec.argv  = {utf8_of(options_.serve_binary),
-                  utf8_of(artifact),
+    spec.argv  = {utf8_path(options_.serve_binary),
+                  utf8_path(artifact),
                   "--plan",
                   "--no-load",
                   "--plan-idle",
@@ -1056,7 +1047,7 @@ std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
         spec.argv.push_back(std::to_string(static_cast<std::uint64_t>(stat->memory_free)));
     }
     bind_gpu(spec, gpu, stat);
-    if (!options_.hub_cache.empty()) { spec.env["HF_HUB_CACHE"] = utf8_of(options_.hub_cache); }
+    if (!options_.hub_cache.empty()) { spec.env["HF_HUB_CACHE"] = utf8_path(options_.hub_cache); }
 
     std::uint64_t id = 0;
     try {
@@ -1136,7 +1127,7 @@ Json App::artifact_plan_json(const fs::path& artifact, int gpu, const product::L
            .kv = launch.exact || (!launch.kv_dtype.empty() && launch.kv_dtype != "auto"),
            .activations = launch.activations_pinned()};
     const product::ArtifactPlan plan = product::plan_artifact(artifact, inputs);
-    Json doc = product::artifact_plan_document(plan, artifact.string());
+    Json doc                         = product::artifact_plan_document(plan, utf8_path(artifact));
     // What a start right now would get (a second model may hold the card): the replay says it.
     if (const auto free_now = free_now_of(stats, gpu)) {
         doc["now"] = product::plan_now_json(
@@ -1672,7 +1663,7 @@ Json App::moved_json() {
     const std::int64_t now = std::time(nullptr);
     std::error_code ec;
     for (const auto& repo_dir : fs::directory_iterator(root, ec)) {
-        const auto repo = hub_repo_of_directory(repo_dir.path().filename().string());
+        const auto repo = hub_repo_of_directory(utf8_file_name(repo_dir.path()));
         if (repo.empty() || !fs::is_directory(repo_dir.path() / "ninferno", ec)) { continue; }
         // The branches (refs/<name>) and the commit each named when it was fetched.
         for (const auto& ref_file : fs::directory_iterator(repo_dir.path() / "refs", ec)) {
@@ -1683,7 +1674,7 @@ Json App::moved_json() {
             // A conversion of the commit the ref named, its download removed or still here: a
             // start keeps it either way (convert::acquire_model).
             if (commit.size() != 40 || !fs::is_directory(dir, ec)) { continue; }
-            const auto ref = ref_file.path().filename().string();
+            const auto ref = utf8_file_name(ref_file.path());
             const auto key = repo + "@" + ref;
             std::string hub_commit;
             {
@@ -1704,7 +1695,7 @@ Json App::moved_json() {
             Json artifacts = Json::array();
             for (const auto& entry : fs::directory_iterator(dir, ec)) {
                 if (entry.path().extension() == ".ninferno" && !facts(entry.path()).drafter) {
-                    artifacts.push_back(entry.path().string());
+                    artifacts.push_back(utf8_path(entry.path()));
                 }
             }
             out.push_back({{"repo", repo},
@@ -1778,7 +1769,7 @@ Json App::answer_moved(const std::string& repo, const std::string& ref, const st
         if (entry.path().extension() != ".ninferno" || facts(entry.path()).drafter) { continue; }
         LaunchRequest request;
         request.model         = ref == "main" ? repo : repo + "@" + ref;
-        const auto name       = artifact_name(entry.path().filename().string());
+        const auto name       = artifact_name(utf8_file_name(entry.path()));
         request.quant         = name.quant;
         request.recipe        = name.recipe; // the replaced conversion's, official or not
         request.prepare_only  = true;
@@ -1801,7 +1792,7 @@ bool ended(const std::string& state) { return state == "exited" || state == "fai
 
 bool same_file(const std::string& a, const fs::path& b) {
     std::error_code ec;
-    return !a.empty() && fs::equivalent(fs::path(a), b, ec) && !ec;
+    return !a.empty() && fs::equivalent(path_from_utf8(a), b, ec) && !ec;
 }
 
 // The requests a ninferno-serve on `port` has in flight (its /health); nullopt when unanswered.
@@ -1830,7 +1821,7 @@ LaunchSpec on_artifact(LaunchSpec spec, const fs::path& artifact, bool fresh) {
     for (std::size_t i = 0; i < spec.argv.size(); ++i) {
         const std::string& arg = spec.argv[i];
         if (i == 1) {
-            argv.push_back(artifact.string());
+            argv.push_back(utf8_path(artifact));
         } else if (arg == "--quant" || (fresh && arg == "--spec-profile")) {
             ++i; // and its value
         } else {
@@ -1838,7 +1829,7 @@ LaunchSpec on_artifact(LaunchSpec spec, const fs::path& artifact, bool fresh) {
         }
     }
     spec.argv  = std::move(argv);
-    spec.model = artifact.string();
+    spec.model = utf8_path(artifact);
     return spec;
 }
 
@@ -1970,7 +1961,7 @@ void App::advance_updates() {
             try {
                 (void)delete_artifact(part.old_artifact);
             } catch (const std::exception& error) {
-                update.error = "the old conversion " + part.old_artifact.filename().string() +
+                update.error = "the old conversion " + utf8_file_name(part.old_artifact) +
                                " was kept: " + error.what();
             }
         }
@@ -1986,10 +1977,10 @@ ArtifactFacts App::facts(const fs::path& artifact) {
     std::error_code ec;
     const auto stamp = fs::last_write_time(artifact, ec);
     std::lock_guard lock(kinds_mutex_);
-    auto it = kinds_.find(artifact.string());
+    auto it = kinds_.find(utf8_path(artifact));
     if (it == kinds_.end() || it->second.first != stamp) {
         it = kinds_
-                 .insert_or_assign(artifact.string(),
+                 .insert_or_assign(utf8_path(artifact),
                                    std::pair{stamp, read_artifact_facts(artifact)})
                  .first;
     }
@@ -2034,7 +2025,7 @@ Json App::local_json() {
                          const fs::path& path, const fs::path& repo_dir) {
         const auto f = facts(path);
         if (!f.readable || f.drafter) { return; }
-        const auto name   = artifact_name(path.filename().string());
+        const auto name   = artifact_name(utf8_file_name(path));
         std::string title = repo.empty() ? name.stem : repo.substr(repo.find('/') + 1);
         for (const char* suffix : {"-GGUF", "-gguf", "-NVFP4", "-nvfp4", "-MXFP4", "-FP8"}) {
             if (title.size() > std::strlen(suffix) && title.ends_with(suffix)) {
@@ -2045,18 +2036,18 @@ Json App::local_json() {
         out.push_back({{"repo", repo},
                        {"publisher", publisher},
                        {"title", title},
-                       {"artifact", path.string()},
-                       {"name", path.filename().string()},
+                       {"artifact", utf8_path(path)},
+                       {"name", utf8_file_name(path)},
                        {"arch", short_architecture(f.architecture)},
                        {"params", params_label(repo.empty() ? name.stem : repo + " " + name.stem)},
                        {"quant", name.quant},
                        {"vision", f.vision},
                        {"options", conversion_options(path)},
-                       {"mtp", f.mtp || fs::exists(path.string() + ".speculation.json", ec)},
+                       {"mtp", f.mtp || fs::exists(fs::path(path) += ".speculation.json", ec)},
                        {"size_gib", gib2(fs::file_size(path, ec))},
                        {"modified", iso_time(fs::last_write_time(path, ec))},
                        {"original_gib", gib2(original)},
-                       {"running", running.contains(path.string())},
+                       {"running", running.contains(utf8_path(path))},
                        // A tune made on this machine (spec-tune wrote it): a start names it only
                        // when it asks for it (spec_profile).
                        {"own_profile", fs::exists(spec::default_profile_path(path), ec)}});
@@ -2064,7 +2055,7 @@ Json App::local_json() {
     // Converted hub models: <cache>/models--org--name/ninferno/<commit>/*.ninferno.
     if (fs::is_directory(root, ec)) {
         for (const auto& repo_dir : fs::directory_iterator(root, ec)) {
-            const auto repo = hub_repo_of_directory(repo_dir.path().filename().string());
+            const auto repo = hub_repo_of_directory(utf8_file_name(repo_dir.path()));
             if (repo.empty()) { continue; }
             const auto converted = repo_dir.path() / "ninferno";
             if (!fs::is_directory(converted, ec)) { continue; }
@@ -2084,7 +2075,7 @@ Json App::local_json() {
             if (it.depth() >= 2) { it.disable_recursion_pending(); }
             const auto& path = it->path();
             if (it->is_regular_file(ec) && path.extension() == ".ninferno") {
-                add("", path.parent_path().filename().string(), path, fs::path());
+                add("", utf8_file_name(path.parent_path()), path, fs::path());
             }
         }
     }
@@ -2096,7 +2087,7 @@ Json App::local_json() {
         total += m.value("size_gib", 0.0);
         originals += m.value("original_gib", 0.0);
     }
-    return {{"root", root.string()},
+    return {{"root", utf8_path(root)},
             {"models", out},
             {"total_gib", std::round(total * 100) / 100},
             {"originals_gib", std::round(originals * 100) / 100},
@@ -2104,7 +2095,7 @@ Json App::local_json() {
 }
 
 std::string conversion_options(const fs::path& artifact) {
-    std::ifstream in(artifact.string() + ".options");
+    std::ifstream in(fs::path(artifact) += ".options");
     std::string line, out;
     while (std::getline(in, line)) {
         if (!line.empty()) { out += (out.empty() ? "" : ", ") + line; }
@@ -2113,7 +2104,7 @@ std::string conversion_options(const fs::path& artifact) {
 }
 
 bool is_default_conversion(const fs::path& artifact) {
-    return artifact.parent_path().filename().string().rfind("options-", 0) != 0;
+    return utf8_file_name(artifact.parent_path()).rfind("options-", 0) != 0;
 }
 
 fs::path App::local_artifact(const std::string& repo, const std::string& quant) {
@@ -2127,7 +2118,7 @@ fs::path App::local_artifact(const std::string& repo, const std::string& quant) 
         if (!is_default_conversion(entry.path())) { continue; }
         const auto f = facts(entry.path());
         if (!f.readable || f.drafter) { continue; }
-        if (quant.empty() || artifact_name(entry.path().filename().string()).quant == quant) {
+        if (quant.empty() || artifact_name(utf8_file_name(entry.path())).quant == quant) {
             return entry.path();
         }
     }
@@ -2139,11 +2130,11 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
     const auto path = fs::weakly_canonical(requested, ec);
     if (ec || !deletable_artifact(path, hub_root(), options_.model_dirs)) {
         throw std::invalid_argument("not a converted model ninferno-ui manages: " +
-                                    requested.string());
+                                    utf8_path(requested));
     }
     for (const auto& info : processes_.list()) {
         if (info.state != "exited" && info.state != "failed" &&
-            (info.artifact == path.string() || info.spec.model == path.string())) {
+            (info.artifact == utf8_path(path) || info.spec.model == utf8_path(path))) {
             throw std::invalid_argument("stop the model first: it is running");
         }
     }
@@ -2151,9 +2142,9 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
     // Its speculation manifest names the drafters converted for it (read before the sidecars go).
     const auto drafter_files = convert::manifest_drafter_files(path);
     // The file and its sidecars (<artifact>.conversion.json, .speculation.json, ...).
-    const auto prefix = path.filename().string();
+    const auto prefix = utf8_file_name(path);
     for (const auto& entry : fs::directory_iterator(path.parent_path(), ec)) {
-        const auto name = entry.path().filename().string();
+        const auto name = utf8_file_name(entry.path());
         if (name == prefix || name.rfind(prefix + ".", 0) == 0) {
             freed += entry.is_regular_file(ec) ? entry.file_size(ec) : 0;
             fs::remove(entry.path(), ec);
@@ -2163,8 +2154,7 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
     const auto root = fs::weakly_canonical(hub_root(), ec);
     fs::path repo_dir;
     for (auto p = path.parent_path(); !p.empty() && p != p.parent_path(); p = p.parent_path()) {
-        if (p.parent_path() == root &&
-            !hub_repo_of_directory(p.filename().string()).empty()) {
+        if (p.parent_path() == root && !hub_repo_of_directory(utf8_file_name(p)).empty()) {
             repo_dir = p;
             break;
         }
@@ -2191,7 +2181,7 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
         auto dir = path.parent_path();
         // The last conversion of an options-<hash>/ directory takes the directory with it (its
         // lock file, its drafters); the commit's directory is looked at next.
-        if (dir.filename().string().rfind("options-", 0) == 0 &&
+        if (utf8_file_name(dir).rfind("options-", 0) == 0 &&
             dir.parent_path().parent_path() == repo_dir / "ninferno") {
             if (!conversions_left(dir)) {
                 freed += tree_bytes(dir);
@@ -2216,7 +2206,7 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
         }
     }
     std::lock_guard lock(kinds_mutex_);
-    kinds_.erase(path.string());
+    kinds_.erase(utf8_path(path));
     return freed;
 }
 
@@ -2731,7 +2721,7 @@ void App::install(httplib::Server& server) {
         // an artifact this UI lists (/api/local), never any path.
         if (req.has_param("artifact")) {
             try {
-                const fs::path artifact = fs::path(req.get_param_value("artifact"));
+                const fs::path artifact = path_from_utf8(req.get_param_value("artifact"));
                 const Json local        = local_json();
                 const bool listed = std::any_of(
                     local["models"].begin(), local["models"].end(), [&](const Json& m) {
@@ -2836,7 +2826,7 @@ void App::install(httplib::Server& server) {
                         if (convert::is_repository_spec(repo)) {
                             const auto quant = request.quant.empty() ? tag : request.quant;
                             if (const auto local = local_artifact(repo, quant); !local.empty()) {
-                                request.model = local.string();
+                                request.model = utf8_path(local);
                                 request.quant.clear();
                             }
                         }
@@ -2848,7 +2838,7 @@ void App::install(httplib::Server& server) {
                         if (!request.activations.empty() || !request.kv_dtype.empty()) {
                             std::optional<product::PlanSourceFacts> facts;
                             const std::string model = split_model_tag(request.model).first;
-                            if (fs::path(model).extension() == ".ninferno") {
+                            if (path_from_utf8(model).extension() == ".ninferno") {
                                 try {
                                     facts = product::plan_facts_of_artifact(model);
                                 } catch (const std::exception&) {} // unreadable: the server says
@@ -2898,7 +2888,8 @@ void App::install(httplib::Server& server) {
             TuneRequest request;
             request.artifact = body.value("artifact", std::string());
             request.gpu      = body.value("gpu", 0);
-            request.engine   = convert::describe_artifact(request.artifact, "").engine;
+            request.engine =
+                convert::describe_artifact(path_from_utf8(request.artifact), "").engine;
             const auto stats = gpus_->snapshot();
             const auto id =
                 processes_.start(make_tune(options_, request, launch_gpu(stats, request.gpu)));
@@ -2941,10 +2932,10 @@ void App::install(httplib::Server& server) {
     // A model on disk the user names (a GGUF file, a checkpoint folder, an artifact): whether the
     // engine runs it, by the converter's rule set, before it is converted and started.
     server.Get("/api/disk", [](const httplib::Request& req, httplib::Response& res) {
-        const fs::path path = req.get_param_value("path");
+        const fs::path path = path_from_utf8(req.get_param_value("path"));
         std::error_code ec;
         if (path.empty() || !fs::exists(path, ec)) {
-            reply_error(res, 404, "no such file or folder: " + path.string());
+            reply_error(res, 404, "no such file or folder: " + utf8_path(path));
             return;
         }
         if (path.extension() == ".ninferno") {
@@ -2968,7 +2959,7 @@ void App::install(httplib::Server& server) {
         const auto token = convert::hub_token();
         Json out{{"token", !token.value.empty()},
                  {"source", token.source},
-                 {"path", convert::hub_token_path().string()}};
+                 {"path", utf8_path(convert::hub_token_path())}};
         if (!token.value.empty() && !options_.offline) {
             try {
                 out["account"] = convert::hub_account(token.value, {});
