@@ -37,12 +37,13 @@ inline constexpr int kCausalMergeNarrowDChunk = 64;
 //   addresses, then `cuobjdump -sass` (CUDA 13.1);
 // - fixed work: the static instructions from the entry to the end of the first stage's refetch
 //   (the twelfth LDG.E.128), plus those from the last barrier to the final EXIT. That is
-//   sm_75 500, sm_86 497, sm_89 497, sm_120a 391;
+//   sm_75 500, sm_86 497, sm_89 497, sm_120a 391; CUDA 13.4 (the stands' and the release's
+//   nvcc) makes sm_75's 501 (RTX 2080 Ti, ninferno_causal_merge_counts_test);
 // - a further stage: from the barrier after the first chain to the sixteenth LDG.E.128. That is
 //   sm_75 65, sm_86 74, sm_89 74, sm_120a 67, rounded to 70;
 // - a split: the chain's x16 body is 60 instructions (weight, test, value, FFMA), 3.75 a split,
 //   rounded up to 4.
-// One F = 500 serves every architecture, the largest count, so a board is never priced as
+// One F = 501 serves every architecture, the largest count, so a board is never priced as
 // narrowing more cheaply than its SASS says. sm_120a's own 391 is deliberately not used: on the
 // RTX 5090 and 5070 Ti it changes no decision at W 1-11 with the wave partition's splits. At
 // W = 1 a board's decision moves only for F under 210 (RTX 4070 Ti; 119 on the 4060 Ti, 61 on the
@@ -50,7 +51,7 @@ inline constexpr int kCausalMergeNarrowDChunk = 64;
 // (tools/kernel_facts/merge_counts.py, #872): it counts the two instances in the build's own
 // binary by the rule above and fails where the fixed work exceeds F or a stage lies more than
 // 10 % from 70, so a compiler bump or a kernel edit that moves them is seen.
-inline constexpr std::int64_t kCausalMergeFixedWarpInstructions = 500;
+inline constexpr std::int64_t kCausalMergeFixedWarpInstructions = 501;
 inline constexpr std::int64_t kCausalMergeStageWarpInstructions = 70;
 inline constexpr std::int64_t kCausalMergeSplitInstructions     = 4;
 // One stage: CausalMergeColumns::kStageFloats.
