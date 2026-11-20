@@ -68,8 +68,9 @@ int optional_attribute(cudaDeviceAttr attr, int device) {
 // The PCI product id (the upper half of NVIDIA's device/vendor word) and the subsystem: from sysfs
 // on a native Linux driver, else from NVML (WSL2 exposes no PCI sysfs for the GPU), loaded at run
 // time so nothing links against it. A product id of 0 when neither answers (the chip then comes
-// from the SM count); a subsystem of 0 with `subsystem_read` false where the source that gave the
-// product id could not give it (#903).
+// from the SM count). The subsystem from sysfs where both of its files read, else from NVML (a
+// container may expose the product's files and not the subsystem's); `subsystem_read` false where
+// neither gave it (#903).
 struct PciIdentity {
     std::uint32_t product   = 0;
     std::uint32_t subsystem = 0; // vendor << 16 | device: 0x10DE12EB
@@ -81,9 +82,10 @@ PciIdentity pci_identity(const cudaDeviceProp& prop, int device) {
         char path[128];
         std::snprintf(path, sizeof(path), "/sys/bus/pci/devices/%04x:%02x:%02x.0/%s",
                       prop.pciDomainID, prop.pciBusID, prop.pciDeviceID, field);
-        unsigned value = 0;
+        std::optional<unsigned> value;
         if (std::FILE* file = std::fopen(path, "r")) {
-            if (std::fscanf(file, "%x", &value) != 1) { value = 0; }
+            unsigned read = 0;
+            if (std::fscanf(file, "%x", &read) == 1) { value = read; }
             std::fclose(file);
         }
         return value;
@@ -91,15 +93,15 @@ PciIdentity pci_identity(const cudaDeviceProp& prop, int device) {
     constexpr unsigned kNvidiaVendor = 0x10DE;
     PciIdentity out;
     if (sysfs_word("vendor") == kNvidiaVendor) {
-        if (const unsigned value = sysfs_word("device"); value != 0) {
-            out.product           = value;
-            const unsigned vendor = sysfs_word("subsystem_vendor");
-            const unsigned board  = sysfs_word("subsystem_device");
-            if (vendor != 0 && vendor <= 0xFFFFu && board <= 0xFFFFu) {
-                out.subsystem      = vendor << 16 | board;
+        if (const auto value = sysfs_word("device"); value && *value != 0) {
+            out.product       = *value;
+            const auto vendor = sysfs_word("subsystem_vendor");
+            const auto board  = sysfs_word("subsystem_device");
+            if (vendor && board && *vendor != 0 && *vendor <= 0xFFFFu && *board <= 0xFFFFu) {
+                out.subsystem      = *vendor << 16 | *board;
                 out.subsystem_read = true;
+                return out;
             }
-            return out;
         }
     }
     // nvmlPciInfo_t (nvml.h, unchanged since NVML's v2 PCI info).
@@ -124,7 +126,8 @@ PciIdentity pci_identity(const cudaDeviceProp& prop, int device) {
         PciInfo info{};
         if (cudaDeviceGetPCIBusId(bus_id, sizeof(bus_id), device) == cudaSuccess &&
             by_bus(bus_id, &handle) == 0 && get_pci(handle, &info) == 0 &&
-            (info.pci_device_id & 0xFFFFu) == kNvidiaVendor) {
+            (info.pci_device_id & 0xFFFFu) == kNvidiaVendor &&
+            (out.product == 0 || out.product == info.pci_device_id >> 16)) {
             out.product = info.pci_device_id >> 16;
             // NVML packs the subsystem device in the upper half, its vendor in the lower.
             if ((info.pci_subsystem_id & 0xFFFFu) != 0) {
