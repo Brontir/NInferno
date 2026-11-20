@@ -157,7 +157,18 @@ record.
 `src/ops/generic/route_authorities.h`). `evidence`, the default since #614 F2, is the release's
 selection (`ninferno_selector_golden_test` holds it); `legacy` is the selection before F2: the
 first authority that answers decides, and the analyzer's predicted bands (`routes/pick`, #1066) are
-not read, so a board of a pick-file class answers from its nearest table as before them. The
+not read, so a board of a pick-file class answers from its nearest table as before them. Nor are the
+expert-call law's MoE plans (`routes/moe_pick/<class>.json`, written by
+`tools/bench/moe_expert_law.py pick`, #987): under `evidence` they answer a grouped MoE layer at
+decode widths (T 1-8) where the board's table holds no entry for the layer measured on this board
+or a near one (an entry lent by another table, or of a far table, yields to them), for the banks'
+layouts they were priced for, on a board whose facts equal those of the one their `gpu.pci_id`
+names (board distance 0), and only for the
+layers whose sealed grid on that board passed (`moe_expert_law.py` `PICKS`). `moe_expert_law.py pick
+--check` fails when the law, the kernel facts' moegemm and moer8 sections, the board's
+warp_inflight probe or gpu_facts.json's arch rows moved since the files were written, and a run of
+`pick` that would move a sealed layer's bands is refused without `--rebands`. An explicit
+`--route-table FILE` reads neither the pick files nor the MoE picks. The
 startup's route-table line and the plan's sources still name the pick file under `legacy`. `evidence` demotes route-table entries only: a route-table answer whose evidence is `borrowed` (an entry lent by a
 farther board's table) or `transferred` (the nearest table lies past the carry distance) goes
 below the ranker. The walk goes on to the dense tuner's entry, then the cost model where it prices

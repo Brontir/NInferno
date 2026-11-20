@@ -283,6 +283,12 @@ add_test(NAME ninferno_route_pick_fresh_test
           --root ${PROJECT_SOURCE_DIR})
 ninferno_label_tests(ninferno_route_pick_fresh_test LABELS host)
 
+# The expert-call law's MoE plans (routes/moe_pick, tools/bench/moe_expert_law.py pick, #987) are what
+# the law, the kernel facts, the boards' warp_inflight probes and gpu_facts.json give now.
+add_test(NAME ninferno_moe_pick_fresh_test
+  COMMAND ${Python3_EXECUTABLE} -B ${PROJECT_SOURCE_DIR}/tools/bench/moe_expert_law.py pick --check)
+ninferno_label_tests(ninferno_moe_pick_fresh_test LABELS host)
+
 # routes/pick: no predicted band names a route the launch would demote for its shape (ggml_mmq on
 # rows not in whole 128-row tiles, #1077). No GPU.
 add_test(NAME ninferno_route_pick_routes_test

@@ -188,6 +188,10 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
             in.sources["route_table.predicted"] = routes.predicted_sha256;
             route_table += " + pick " + routes.predicted_sha256;
         }
+        if (!routes.moe_predicted_sha256.empty()) {
+            in.sources["route_table.moe_predicted"] = routes.moe_predicted_sha256;
+            route_table += " + moe pick " + routes.moe_predicted_sha256;
+        }
         if (!routes.lender_sha256.empty()) {
             in.sources["route_table.lenders"] = routes.lender_sha256;
             route_table += " + " + routes.lender_sha256;
