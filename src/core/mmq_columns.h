@@ -109,6 +109,10 @@ struct ColumnLaunch {
     bool fixup      = false; // the fixup kernel runs (the CTAs do not divide the tiles)
     int partials    = 0;     // CTAs whose range ends inside a tile: the partial tiles it adds
     int split_tiles = 0;     // the tiles those ranges end in: the output tiles it adds them to
+    // The most partial tiles one output tile takes: the fixup's CTA for it walks back over them one
+    // after another (mmq.cuh mul_mat_q_stream_k_fixup's loop, one step a preceding CTA), so its
+    // time is this many dependent rounds, not its bytes (#1095). A tile's CTAs less one.
+    int rounds = 0;
 };
 
 // The fixup kernel's CTAs that move its bytes: ggml launches the stream-k grid times I / 32 (the
@@ -153,6 +157,28 @@ inline constexpr int kFixupCtasPerTile = kTile / 32;
             last = end / steps;
         }
     }
+    // The CTAs each tile's ranges touch, in launch order: a CTA counts for its first tile, and
+    // for its last where it spans several (the tiles between are its alone).
+    long long tile = -1;
+    int touching   = 0;
+    for (long long b = 0; b < l.blocks; ++b) {
+        const long long begin = b * work / l.blocks, end = (b + 1) * work / l.blocks;
+        if (begin == end) { continue; }
+        const long long first = begin / steps, closing = (end - 1) / steps;
+        if (first == tile) {
+            ++touching;
+        } else {
+            l.rounds = std::max(l.rounds, touching - 1);
+            tile     = first;
+            touching = 1;
+        }
+        if (closing != first) {
+            l.rounds = std::max(l.rounds, touching - 1);
+            tile     = closing;
+            touching = 1;
+        }
+    }
+    l.rounds = std::max(l.rounds, touching - 1);
     return l;
 }
 

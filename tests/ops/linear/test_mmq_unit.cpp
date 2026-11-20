@@ -130,11 +130,15 @@ int main() {
                 const int fixers = std::min(l.split_tiles * mmq_columns::kFixupCtasPerTile, 128);
                 if (rows == 16 * 128) {
                     expect(l.split_tiles == 16 && fixers == 64, what + ": 64 fixup CTAs");
+                    // 8 CTAs a tile: the fixup walks back over 7 partials (#1095).
+                    expect(l.rounds == 7, what + ": 7 fixup rounds, " + std::to_string(l.rounds));
                 }
                 // 48 tiles of 16 K steps on 128 CTAs of 6 units: every tile split, 192 fixup
                 // CTAs, held to the 128 SMs.
                 if (rows == 48 * 128) {
                     expect(l.split_tiles == 48 && fixers == 128, what + ": fixup CTAs at the SMs");
+                    // 6 units a CTA over 16-step tiles: a tile meets 3 or 4 CTAs.
+                    expect(l.rounds == 3, what + ": 3 fixup rounds, " + std::to_string(l.rounds));
                 }
                 const double l2_rate = *row.l2_bytes_per_sm_clock * fixers * 2520e6;
                 const double want =
@@ -143,6 +147,14 @@ int main() {
             }
             expect(l.split == (rows != 128 * 128), what + ": stream-k below a full wave");
         }
+    }
+    // #1095's RTX 5090 call (iq4_xs 1024 x 4096 at T 16, J 16): 8 tiles on 170 SMs, 128 CTAs of one
+    // unit each, every tile split 16 ways: the fixup walks back over 15 partials a tile.
+    {
+        const mmq_columns::ColumnLaunch l = mmq_columns::launch_of(1024, 4096, 16, 16, 170);
+        expect(l.split && l.fixup && l.tiles == 8 && l.blocks == 128 && l.split_tiles == 8 &&
+                   l.rounds == 15,
+               "#1095: 8 tiles split 16 ways, 15 fixup rounds (" + std::to_string(l.rounds) + ")");
     }
     IsaRow old = *isa;
     old.l2_bytes_per_sm_clock.reset();
