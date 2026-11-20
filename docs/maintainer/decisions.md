@@ -2213,22 +2213,29 @@ beside `joint_scale` on the same rates in `price_joint`). `price_joint` runs for
 architecture has the round-cost facts. No constant enters the priced branch: the request counts and
 tokens are DECISIONS 73's, the rest are the pair's facts and the card's rates. The head is priced at
 the table its build runs: the server's build sets it (a `--spec-load` table, bounds moved to
-captured depths) before the price is taken (Codex on #791).
+captured depths) before the price is taken (Codex on #791). Only the table is replaced, not its
+basis (`ServedSpeculation::load_basis` stays the head's own table's): a `--spec-load` over a head
+whose own table the facts derived or the lab measured is priced at the given depths (each capped
+at the head's own depth, and unpriced where the measurements or the joint verify's scales have no
+row for it), and the same flag over a head with a literal table stays unpriced, so the four
+fifths decide there (#804). The offline plan (`--plan --no-load`, `plan_speculation.cpp`) prices
+the head at its own table: it models neither
+`--spec-load` nor the captured-depth move, so where the server's build moves the table, the
+server's verdict can differ from the plan's.
 
 **The head's resolution.** The head is priced from the model's own measurement of it
 (`product::head_priced_profile`): the subject's profile where it measured MTP, else its MTP
-resolution among `ResolvedSpeculation::other_kinds`. Two changes make that resolution exist:
+resolution among `ResolvedSpeculation::other_kinds`. Of #777's two changes, one makes that
+resolution exist; the other never did and is removed (#804):
 - `subject_of_mode` (a server drafting with DFlash2) keeps the kinds it does not draft with: the
   resolution it switches to carries the original one and the rest as its other kinds.
-- `spec::resolve_other_kinds` resolves a published or artifact profile's other kinds (same-model
-  only): from a measured pair of this model, its own (`PairStep::Own`) or a sibling quantization of
-  its repository revision (`PairStep::Sibling`), never a group of other models (`PairStep::Group`):
-  a fine-tune's acceptance is not its base's. With none, no other kind; the head is then unpriced.
-  These kinds are `ResolvedSpeculation::pricing_only`: they price the head and nothing else. The
-  drafter axis offers no option from them (`product::drafter_axis`) and no server or plan switches
-  to them (`product::subject_of_mode`), so a published profile's drafter choices are those of
-  master (pinned in `test_plan_drafter_kinds`: the axis with a pricing-only kind equals the axis
-  without it, and `subject_of_mode` to MTP serves the same resolution).
+- A published profile's other kinds are not resolved from the lab's pairs. A published profile
+  is read only where `pair_choice` over every kind the target carries found nothing (its own
+  pair, a sibling's, a group's), or where the pairs are skipped (an empty registry, a bundle
+  declaration). One kind's query is a subset of that one, so it finds nothing either: the
+  `same_model` lookup (and its `pricing_only` mark) never set a kind and was removed. The head
+  beside a published profile that measured no MTP is therefore unpriced: the four fifths
+  decide.
 
 **The head fallback's table, kept.** `served_head_fallback` derives the head's load table from the
 facts where the profile that prices it (`head_priced_profile`) has a facts table and prices the
