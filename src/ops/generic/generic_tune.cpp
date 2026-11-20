@@ -477,7 +477,10 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
                 // others' first, would be a different draw of the noise.
                 double predicted_us = base_us;
                 for (const auto& [r, us] : timed) {
-                    if (r == *predicted) predicted_us = us;
+                    if (r == *predicted) {
+                        predicted_us = us;
+                        break;
+                    }
                 }
                 entry["us"][name].push_back(predicted_us);
                 const Route kept =
