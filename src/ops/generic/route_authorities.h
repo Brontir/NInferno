@@ -19,10 +19,10 @@
 // has no candidate (its answer is the scalar route of scalar-fallback, which only stands where no
 // rule names a route the build admits) the demoted answer stands, its evidence unchanged. Never
 // demoted: Pin, Measured (this board's own table, the dense tuner), Carried (a board within
-// kCarryDistance, every quantity compared) and Ranker. The select list (the profiles, the probe,
-// the pins, Volta's fixed routes) and the rules list are walked as under Legacy: the rules' one
-// answer that can be Transferred (mmq-prefill-gate) comes after the cost model already, and
-// answers where the cost model abstains (the prefill band, no clocks, NVFP4).
+// kCarryDistance, every quantity compared), Predicted and Ranker. The select list (the profiles,
+// the probe, the pins, Volta's fixed routes) and the rules list are walked as under Legacy: the
+// rules' one answer that can be Transferred (mmq-prefill-gate) comes after the cost model already,
+// and answers where the cost model abstains (the prefill band, no clocks, NVFP4).
 //
 // Evidence kinds. Pin: a maintainer's choice (a route pin, a route probe). Measured: timed on this
 // board (a route table measured here, the dense tuner's entry of this class and build, the R8
@@ -33,7 +33,11 @@
 // measurement of a board within kCarryDistance (core/measured_boards.h), every quantity compared.
 // Transferred: a measurement of a farther board, carried by the authority's own rule. Borrowed: an
 // exact-key entry taken from a farther table because the nearest lacked it (route_table.cpp
-// fill_from).
+// fill_from). Predicted: a band of the analyzer's overlay (routes/pick, tools/route_pick/gen.py),
+// priced from this board's facts and the build's kernel facts, nothing measured on any card; read
+// only where the nearest table is past kCarryDistance and only under RoutePolicy::Evidence, so it
+// stands where a Transferred answer would be demoted to the ranker (the 3090 left out: +5.5 %
+// prefill at chunk 16 over that path).
 
 #include "ninferno/option_enums.h"
 #include "ops/generic/generic_gemm.h"
@@ -105,7 +109,15 @@ struct Ask {
 [[nodiscard]] bool profile_admits_as(Route route, const Ask& ask, Route reference);
 
 struct Evidence {
-    enum class Kind : std::uint8_t { Pin, Measured, Ranker, Carried, Transferred, Borrowed };
+    enum class Kind : std::uint8_t {
+        Pin,
+        Measured,
+        Ranker,
+        Carried,
+        Transferred,
+        Borrowed,
+        Predicted
+    };
     enum class Ranker : std::uint8_t { None, Cost, Rule };
     Kind kind     = Kind::Ranker;
     Ranker ranker = Ranker::Rule; // Kind::Ranker: which ranker; None otherwise
@@ -162,6 +174,8 @@ struct Evidence {
         return "transferred";
     case Evidence::Kind::Borrowed:
         return "borrowed";
+    case Evidence::Kind::Predicted:
+        return "predicted";
     }
     return "ranker";
 }
@@ -235,6 +249,11 @@ struct NamedAuthority {
 // key).
 // The dense tuner leaves such a width or band untimed; elsewhere the dispatch reads the tuner's
 // entry, so it is timed (#808). It reads no tuner entry (the tuner asks it under its own lock).
+// Whether the route table answers the width with a routes/pick band (Predicted): the tuner then
+// writes its timed best even where it does not beat the heuristic, so this board's own measured
+// entry (dense-tune) stands above the prediction, the heuristic included.
+[[nodiscard]] bool predicted_before_tuner(const Problem& problem, const Weight& weight,
+                                          std::int32_t tokens, bool prefill);
 [[nodiscard]] bool answered_before_tuner(const Problem& problem, const Weight& weight,
                                          std::int32_t tokens, bool prefill, Route ranked);
 // The ranker's answer: what auto_answer gives where neither the route table nor the dense tuner
