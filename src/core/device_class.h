@@ -172,6 +172,12 @@ struct Board {
 
 [[nodiscard]] Board board_of(const DeviceClass& d) noexcept;
 
+// The board's L2 in bytes: the driver's where it gave one, else the machine facts' (a planned or
+// substituted class built without it: plan_device_class, plan_prefill_routes.cpp class_of). Every
+// selector reads the L2 through it or board_of, so a plan and a running card of one board read the
+// same L2 (#1082, #1084).
+[[nodiscard]] std::size_t class_l2_bytes(const DeviceClass& d) noexcept;
+
 // How far measured data of board `b` carries to board `a`: |log2| of the SM ratio, plus |log2| of
 // the bandwidth ratio, plus half |log2| of the L2 ratio (a quantity either side does not know is
 // not compared). Infinite between instruction sets (device_features_for rows that differ either

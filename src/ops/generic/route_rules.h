@@ -811,7 +811,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "5x at T = 32)",
      ""},
     {"nvfp4_half_l2: half the L2", Basis::PlacedBetweenMeasured, "route_authorities.cpp",
-     "if (2 * weight_bytes <= device_class().l2_bytes) {", 0, "ad102:128sm", "RTX 4090",
+     "if (2 * weight_bytes <= class_l2_bytes(device_class())) {", 0, "ad102:128sm", "RTX 4090",
      "an NVFP4 weight that fits half the L2 takes the invariant profile's register MMA: RTX 4090, "
      "Gemma 4 26B shapes 1024..8192 x 2112..8192 at T 17..128, where the 128x128 prefill tile ran "
      "2-4x slower than the speed bands; a larger weight takes the prefill profile's route (31B "
