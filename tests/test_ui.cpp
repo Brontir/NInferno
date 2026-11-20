@@ -1221,6 +1221,63 @@ void test_artifact_plan_via_serve() {
               "the planner is bound to the card by NVML's UUID, not '" +
                   (seen.empty() ? std::string() : seen.back()) + "'");
     }
+    // A card another process holds in an exclusive compute mode: NVML still reports its free
+    // memory, and the plan here (no serve to run) says the card refuses rather than a fit (#891).
+    {
+        struct HeldGpu final : GpuSource {
+            std::vector<GpuStat> snapshot() override {
+                GpuStat g;
+                g.index        = 0;
+                g.name         = "NVIDIA GeForce RTX 4090";
+                g.memory_total = 24ULL << 30;
+                g.memory_free  = 20ULL << 30;
+                g.cc_major     = 8;
+                g.cc_minor     = 9;
+                g.compute_mode = 3;
+                g.processes    = {{4242, 1ULL << 30}};
+                return {g};
+            }
+
+            std::string error() const override { return {}; }
+        };
+
+        GpuStat free_card;
+        free_card.compute_mode = 3;
+        check(free_card.refusal_now().empty(),
+              "an exclusive card no process holds takes a new one");
+        free_card.compute_mode = 2;
+        check(!free_card.refusal_now().empty(), "a prohibited card takes no new process");
+        free_card.compute_mode = 0;
+        free_card.processes    = {{1, 0}};
+        check(free_card.refusal_now().empty(), "a default-mode card in use takes another process");
+
+        UiOptions options;
+        options.offline      = true;
+        options.serve_binary = root / "serve-noexec";
+        options.model_dirs   = {fixture.directory};
+        App app(options, std::make_unique<HeldGpu>());
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        httplib::Client client("127.0.0.1", port);
+        auto res = client.Get("/api/plan?gpu=0&par=1&artifact=" +
+                              httplib::encode_query_component(artifact.string()));
+        server.stop();
+        thread.join();
+        const auto doc = res && res->status == 200
+                             ? nlohmann::json::parse(res->body, nullptr, false)
+                             : nlohmann::json();
+        check(doc.is_object() && doc.contains("now") &&
+                  doc["now"].value("reason_code_now", "") == "card_refused" &&
+                  doc["now"].value("fits_now", true) == false &&
+                  doc["now"].value("free_now_bytes", std::uint64_t{1}) == 0 &&
+                  doc["now"]["reason_params_now"].value("message", "").find("4242") !=
+                      std::string::npos,
+              "a held exclusive card's now is its refusal, naming the process: " +
+                  (res ? res->body.substr(0, 400) : std::string("no answer")));
+    }
     fs::remove_all(root);
 }
 #endif
