@@ -659,7 +659,7 @@ std::size_t gemma4_attention_chain_bound(std::int32_t head_dim, std::int32_t q_h
 }
 
 void gemma4_attention_prefill_launch(const Gemma4AttentionLaunch& launch, std::int32_t batch,
-                                     void* chain, cudaStream_t stream) {
+                                     void* chain, std::size_t chain_capacity, cudaStream_t stream) {
     const Gemma4AttentionArgs args = make_args(launch);
     const bool fp8                 = args.k_scale != nullptr;
     with_prefill_tile(
@@ -687,7 +687,7 @@ void gemma4_attention_prefill_launch(const Gemma4AttentionLaunch& launch, std::i
             }
             const ChainPlan plan          = chain_plan<Geo, TileGeo, WR, Bf16Only>(
                 group, args.kv_heads, args.window, args.block != 0, args.tokens);
-            if (chain != nullptr && plan.bytes > 0 &&
+            if (chain != nullptr && plan.bytes > 0 && plan.bytes <= chain_capacity &&
                 chain_pays<TileGeo, WR, Bc>(blocks * args.kv_heads)) {
                 if (plan.blocks != blocks) {
                     throw std::logic_error(
