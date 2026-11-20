@@ -726,16 +726,16 @@ void ensure_default_locked(DeviceTables& d) {
                 auto nearest = std::move(tables.front());
                 tables.erase(tables.begin());
                 fill_from(*nearest, tables);
-                // No table measured within kCarryDistance (every answer would be Transferred or
-                // Borrowed, demoted to the ranker): the analyzer's bands for this board class,
-                // where tools/route_pick wrote them (routes/pick/<class>.json).
-                if (table_distance(*nearest) > measured::kCarryDistance) {
-                    const auto pick = path_from_utf8(dir) / "pick" /
-                                      path_from_utf8(route_table_file_name(route_gpu_class()));
-                    std::error_code missing;
-                    if (std::filesystem::is_regular_file(pick, missing)) {
-                        read_predicted(utf8_path(pick), *nearest);
-                    }
+                // The analyzer's bands for this board class, where tools/route_pick wrote them
+                // (routes/pick/<class>.json). Past kCarryDistance they answer ahead of the nearest
+                // table (whose answers would all be Transferred or Borrowed); within it, only the
+                // table's gaps: a problem it holds no entry of its own for, one borrowed by
+                // fill_from, or a width its own entry has no band at (#1068, table_route_answer).
+                const auto pick = path_from_utf8(dir) / "pick" /
+                                  path_from_utf8(route_table_file_name(route_gpu_class()));
+                std::error_code missing;
+                if (std::filesystem::is_regular_file(pick, missing)) {
+                    read_predicted(utf8_path(pick), *nearest);
                 }
                 (void)publish_loaded_locked(d, std::move(nearest));
             }
@@ -1016,7 +1016,7 @@ std::string format_label(QType q) {
 }
 
 std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32_t tokens,
-                                              bool prefill) {
+                                              bool prefill, bool with_predicted) {
     DeviceTables& d = here();
     if (d.settled.load(std::memory_order_acquire) && !d.has_generic.load(std::memory_order_acquire)) {
         return std::nullopt;
@@ -1024,28 +1024,6 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
     const auto table = active_table(d);
     if (!table) return std::nullopt;
     const auto compute = compute_class(problem.qtype, problem.policy);
-    // The analyzer's predicted band, where the overlay holds one for this problem and width (its
-    // bands lie inside T 9-16, below every prefill band): ahead of the nearest table's entry,
-    // which is Transferred or Borrowed wherever an overlay was read. Not under the Legacy policy:
-    // there the table answers as it did before the overlay, the switch back for a regression
-    // report.
-    if (!(prefill && tokens >= kPrefillMinTokens) && route_policy() != RoutePolicy::Legacy) {
-        auto p = table->predicted.find(
-            key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
-        // The same fp8 row-F32 fallback as the measured entries below.
-        if (p == table->predicted.end() && problem.qtype == QType::FP8_E4M3FN_ROW_F32) {
-            p = table->predicted.find(key_of(QType::FP8_E4M3FN_ROW_BF16, compute, problem.epilogue,
-                                             problem.n, problem.k));
-        }
-        if (p != table->predicted.end()) {
-            for (const auto& band : p->second) {
-                if (tokens >= band.t_min && tokens <= band.t_max) {
-                    return TableAnswer{band.route, table->distance, table->status.gpu_class, {}, 0,
-                                       true};
-                }
-            }
-        }
-    }
     auto it =
         table->generic.find(key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
     // fp8_e4m3fn_row_f32 (an FP8 checkpoint's binary32 row scales, kept as published) runs the
@@ -1053,8 +1031,42 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
     // the K loop: without an entry of its own it takes the fp8 (row BF16) entry of its shape. Its
     // compute class is A16, so only an A16 entry is taken.
     if (it == table->generic.end() && problem.qtype == QType::FP8_E4M3FN_ROW_F32) {
-        it = table->generic.find(key_of(QType::FP8_E4M3FN_ROW_BF16, compute, problem.epilogue,
-                                        problem.n, problem.k));
+        it = table->generic.find(
+            key_of(QType::FP8_E4M3FN_ROW_BF16, compute, problem.epilogue, problem.n, problem.k));
+    }
+    // The analyzer's predicted band, where the overlay holds one for this problem and width (its
+    // bands lie inside T 9-16, below every prefill band): ahead of the nearest table's entry past
+    // kCarryDistance (where it is Transferred or Borrowed), and in the table's gaps within it
+    // (#1068, below). Not under the Legacy policy: there the table answers as it did before the
+    // overlay, the switch back for a regression report.
+    if (with_predicted && !(prefill && tokens >= kPrefillMinTokens) &&
+        route_policy() != RoutePolicy::Legacy) {
+        auto p = table->predicted.find(
+            key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
+        // The same fp8 row-F32 fallback as the measured entries below.
+        if (p == table->predicted.end() && problem.qtype == QType::FP8_E4M3FN_ROW_F32) {
+            p = table->predicted.find(key_of(QType::FP8_E4M3FN_ROW_BF16, compute, problem.epilogue,
+                                             problem.n, problem.k));
+        }
+        // Within kCarryDistance the table's own entry (the one the measured path below answers
+        // with, after its fp8 fallback) stands above a prediction where one of its bands covers
+        // this width; a gap (no entry, one borrowed from another board's table by fill_from, or
+        // an own entry with no band at this width) takes the predicted band before the borrowed
+        // one or the ranker (#1068: RTX 3090, Qwen3-8B add linears, +4 %).
+        const bool own_covers =
+            it != table->generic.end() && it->second.lender.empty() &&
+            std::any_of(it->second.bands.begin(), it->second.bands.end(), [&](const auto& band) {
+                return tokens >= band.t_min && tokens <= band.t_max;
+            });
+        const bool gap = table->distance > measured::kCarryDistance || !own_covers;
+        if (p != table->predicted.end() && gap) {
+            for (const auto& band : p->second) {
+                if (tokens >= band.t_min && tokens <= band.t_max) {
+                    return TableAnswer{band.route, table->distance, table->status.gpu_class, {}, 0,
+                                       true};
+                }
+            }
+        }
     }
     if (it == table->generic.end()) return std::nullopt;
     const RouteEntry& e = it->second;

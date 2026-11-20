@@ -491,20 +491,19 @@ std::string with_commas(std::uint64_t n) {
 bool device_hidden = false;
 
 // No known escape: #830 (the attention decode plan, which DensePass and NemotronH's Pass size their
-// attention with, read the host GPU's occupancy) is closed; the plan reads the kernels' facts.
-// Those price a board only where its kernels are this build's: the decode tile is a constexpr of
-// the build (#912), so a board of another arch refuses by name and keeps the formula.
+// attention with, read the host GPU's occupancy) is closed; the plan reads the kernels' facts, of
+// the tile the board's release build compiles (#912: the tile is a function of the architecture),
+// so every board whose release snapshot holds the gemma4 section answers, whatever this build is.
 bool own_tile(const DeviceClass& device) {
-    namespace kf = ninferno::ops::detail::generic::kernel_facts;
-    return kf::release_arch(device.major, device.minor) == kf::build_arch();
+    namespace kf           = ninferno::ops::detail::generic::kernel_facts;
+    const std::string arch = kf::release_arch(device.major, device.minor);
+    return !arch.empty() && kf::section_header(arch, "gemma4").has_value();
 }
 
-// A board of another arch: the query refuses by name (#912) and the formula stands.
+// A board no snapshot covers: the query refuses by name and the formula stands.
 void check_refused_other_arch(const std::string& name, const std::string& basis) {
-    check(basis.rfind("formula: ", 0) == 0 && basis.find("no kernel facts") != std::string::npos &&
-              basis.find("#912") != std::string::npos,
-          name + ": a board of another arch than the build's keeps the formula, by name (" + basis +
-              ")");
+    check(basis.rfind("formula: ", 0) == 0 && basis.find("no kernel facts") != std::string::npos,
+          name + ": a board no snapshot covers keeps the formula, by name (" + basis + ")");
 }
 
 // The rung's dry run against the start planner's capacity; prints the formula's beside it.
@@ -523,7 +522,7 @@ void compare(const std::string& name, const rt::PlanModelFacts& facts,
     bare.artifact_directory.reset();
     const auto formula = rt::plan_rung_bytes(bare, rung, options, options.max_concurrency, false);
     if (!own_tile(device)) {
-        std::cout << name << ": another arch than the build's, --plan workspace " << dry.workspace
+        std::cout << name << ": no snapshot covers the board, --plan workspace " << dry.workspace
                   << " (" << dry.workspace_basis << ")" << std::endl;
         check_refused_other_arch(name, dry.workspace_basis);
         return;
@@ -683,8 +682,8 @@ struct Case {
     EngineOptions options;
 };
 
-// A lab board of this build's arch (the decode tile is the build's, #912), or none: each case also
-// runs on it where its own board is of another arch, so every stand compares a start.
+// A lab board of this build's arch, or none: each case also runs on it where no snapshot covers its
+// own board, so every stand compares a start.
 std::optional<DeviceClass> own_board() {
     namespace kf             = ninferno::ops::detail::generic::kernel_facts;
     const std::string_view a = kf::build_arch();

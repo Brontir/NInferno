@@ -6,6 +6,7 @@
 #include <cuda_runtime.h>
 
 #include <cstdint>
+#include <string_view>
 
 namespace ninferno::ops::detail {
 
@@ -59,6 +60,10 @@ void gemma4_attention_set_prefill_chain(Gemma4PrefillChain chain) noexcept;
 [[nodiscard]] std::size_t gemma4_attention_chain_bytes(std::int32_t head_dim, std::int32_t q_heads,
                                                        std::int32_t kv_heads, std::int32_t window,
                                                        bool block, bool fp8, std::int32_t tokens);
+// Whether a kernel-facts snapshot label names a build whose tiles this build holds
+// (with_tile_arch's list in launch.cu): every committed snapshot's label must (#1115), or its
+// boards' plans throw.
+[[nodiscard]] bool gemma4_tile_arch_known(std::string_view label);
 // The most any prefill call of up to max_tokens takes (either prefill tile, BF16 or FP8 planes).
 [[nodiscard]] std::size_t gemma4_attention_chain_bound(std::int32_t head_dim, std::int32_t q_heads,
                                                        std::int32_t kv_heads, std::int32_t window,
@@ -66,9 +71,11 @@ void gemma4_attention_set_prefill_chain(Gemma4PrefillChain chain) noexcept;
 
 // A batched call (batch > 1) runs its rows one after another, each the single-row call over its
 // own slice of q, positions and out and its own binding.
-// chain: gemma4_attention_chain_bytes of workspace for a chained call, or null to run plain.
+// chain: workspace for a chained call, or null to run plain; chain_capacity: its bytes. The call
+// runs chained only where its plan's bytes fit them: a buffer sized for another build's tile
+// (#1112) runs plain, the same values at the plain speed.
 void gemma4_attention_prefill_launch(const Gemma4AttentionLaunch& launch, std::int32_t batch,
-                                     void* chain, cudaStream_t stream);
+                                     void* chain, std::size_t chain_capacity, cudaStream_t stream);
 
 // A batched decode call runs its rows in launches of up to rows_per_launch rows (partials hold
 // that many rows' splits); every row does the single-row call's work, so its bytes do not depend

@@ -669,9 +669,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "measured loss on both boards",
      ""},
     {"heuristic_rmma: one wave at verify widths", Basis::Unknown, "generic_select.cpp",
-     "const std::int64_t sms = sm_count(); if (ctas <= sms) return one_wave_split(ctas, sms); "
-     "return rmma_index(1, 4, 1, 2);",
-     0,
+     "if (ctas <= sms) { const int pair_split = one_wave_split(ctas, sms);", 0,
      "unknown (nine cards of the dense tuner, sm_70 to sm_120, not named; the RTX 5090 for the "
      "CTA pair: gb202:170sm)",
      "unknown (nine cards; RTX 5090)",
@@ -681,6 +679,16 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "x1.4..2.1 (median per card) to the sixteen-warp split; on the RTX 5090 the CTA pair or "
      "cluster of eight was 0..17 % faster still (n = 48 and 1024, T = 12 and 16: 8..20 us "
      "against 16..41)",
+     ""},
+    {"heuristic_rmma: the verify pair past one wave", Basis::Measured, "generic_select.cpp",
+     "current_arch_facts().features.clusters && 2 * columns * ctas > held * sms) { return "
+     "rmma_index(1, 8, 1, 1);",
+     0, "gb202:170sm, gb203:70sm", "RTX 5090, RTX 5070 Ti",
+     "T = 9..16 at most one CTA per SM: the decode split's CTA pair runs one wave only while "
+     "pair x token columns x CTAs fit what the SMs hold (two one-tile CTAs of <= 256 threads an "
+     "SM, kMinBlocks); past it n1.w1x8 (#1052, route_tune of every route, K-quants Q2_K-Q6_K at "
+     "n 512-2560, K 2048 / 4096: RTX 5090 120 moved cells 24.0 % -> 0.13 % regret, RTX 5070 Ti "
+     "112 moved cells 26.4 % -> 0.0 %, none worse)",
      ""},
     // --- rmma_k_split_fit: the K split of a one-tile store / add call of more CTAs than SMs ---
     {"rmma_k_split_fit: ring refills", Basis::Structural, "generic_select.cpp",
@@ -811,7 +819,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "5x at T = 32)",
      ""},
     {"nvfp4_half_l2: half the L2", Basis::PlacedBetweenMeasured, "route_authorities.cpp",
-     "if (2 * weight_bytes <= device_class().l2_bytes) {", 0, "ad102:128sm", "RTX 4090",
+     "if (2 * weight_bytes <= class_l2_bytes(device_class())) {", 0, "ad102:128sm", "RTX 4090",
      "an NVFP4 weight that fits half the L2 takes the invariant profile's register MMA: RTX 4090, "
      "Gemma 4 26B shapes 1024..8192 x 2112..8192 at T 17..128, where the 128x128 prefill tile ran "
      "2-4x slower than the speed bands; a larger weight takes the prefill profile's route (31B "

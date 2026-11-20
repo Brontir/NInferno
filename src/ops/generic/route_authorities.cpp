@@ -154,7 +154,7 @@ std::optional<RouteAnswer> nvfp4_half_l2(const Ask& ask, const Problem& problem,
     if (!nvfp4_a16_wide(ask, problem, weight)) return std::nullopt;
     const auto weight_bytes =
         static_cast<std::size_t>(problem.n) * static_cast<std::size_t>(problem.k) * 9 / 16;
-    if (2 * weight_bytes <= device_class().l2_bytes) {
+    if (2 * weight_bytes <= class_l2_bytes(device_class())) {
         const Route r{Family::RegisterMma,
                       static_cast<std::uint8_t>(invariant_rmma(problem.k, ask.tokens))};
         if (route_admits(r, weight, problem.policy)) return by_rule(r, "nvfp4-half-l2");
@@ -190,12 +190,17 @@ bool a8_call(const Ask& ask, const Problem& problem, const Weight& weight) {
 std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& problem,
                                              const Weight& weight) {
     if (a8_call(ask, problem, weight)) return std::nullopt;
-    const auto hit = table_route_answer(problem, ask.tokens, ask.prefill());
-    if (!hit) return std::nullopt;
-    if (!route_admits(hit->route, weight, problem.policy) ||
-        !profile_admits(hit->route, ask, &weight)) {
-        return std::nullopt;
+    auto hit            = table_route_answer(problem, ask.tokens, ask.prefill());
+    const auto admitted = [&](const std::optional<TableAnswer>& h) {
+        return h && route_admits(h->route, weight, problem.policy) &&
+               profile_admits(h->route, ask, &weight);
+    };
+    // A predicted band this call does not admit (ggml_mmq under the speed profile) leaves the
+    // table's own or borrowed entry to answer, as before the band filled the gap (#1068).
+    if (hit && hit->predicted && !admitted(hit)) {
+        hit = table_route_answer(problem, ask.tokens, ask.prefill(), false);
     }
+    if (!admitted(hit)) return std::nullopt;
     Evidence e;
     e.ranker   = Evidence::Ranker::None;
     e.source   = "route-table";

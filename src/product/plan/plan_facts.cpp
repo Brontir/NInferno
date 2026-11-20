@@ -514,8 +514,9 @@ gguf_expert_policy(const std::string& model_type, const std::string& format, boo
 
 // The routed banks' prefill GEMM (runtime::ExpertPrefill), as ops/moe w4a8_bank_refusal decides it,
 // bank by bank (#311: a stage takes the grouped W4A8 where its own bank admits it): the grouped
-// W4A8 reads a bank of a format with int8 codes (convert::kept_block_policy AllowA8, the formats
-// generic::w4a8_supports names) whose K and activation are whole 32-value blocks
+// W4A8 reads a bank of a format with int8 codes (convert::kept_block_policy AllowA8) or NVFP4 (the
+// formats generic::w4a8_supports names; NVFP4's kept policy is A16Only) whose K and activation are
+// whole 32-value blocks
 // (moe_w4a8_whole_blocks, the op's own rule: `x_width` is the router's width for a gate/up bank,
 // which a zero-padded bank's K exceeds, and the bank's K for a down bank), in fragment order only
 // the formats ggml_frag_w4a8 names, and prefills it on int8 activations, unless the layer's expert
@@ -598,7 +599,19 @@ public:
             l.kept_a8        = l.kept_a8 && int8_codes;
             const bool whole = moe_w4a8_whole_blocks(static_cast<std::int64_t>(k),
                                                      static_cast<std::int64_t>(x_width));
-            if (whole && int8_codes && (!frag || ggml_frag_w4a8(q))) { l.int8_bytes += bytes; }
+            // The op asks the A4 veto only of an NVFP4 bank in whole blocks (w4a8_bank_refusal
+            // refuses another for its K group first, on every build).
+            l.nvfp4 = l.nvfp4 || (q == QType::NVFP4 && whole);
+            // A fused W4A4 layer (SparseMoe, Gemma4Moe) takes NVFP4 banks in whole blocks only:
+            // a padded one is refused for its K group first, the generic op then runs it A16.
+            l.all_nvfp4 = l.all_nvfp4 && q == QType::NVFP4 && whole;
+            l.any_nvfp4 = l.any_nvfp4 || q == QType::NVFP4;
+            // NVFP4 has a W4A8 tile on every build too (ops/generic compiled_codecs.h, W4A8_GGML32
+            // X(Nvfp4)), run where the layer allows A8 and not the build's A4
+            // (nvfp4_prefill_a8_policy; an A4 layer is the build's, build_decides below), though
+            // the converter keeps it A16Only: its bytes are the int8 route's, not kept_a8 (#1090).
+            const bool w4a8_codes = int8_codes || q == QType::NVFP4;
+            if (whole && w4a8_codes && (!frag || ggml_frag_w4a8(q))) { l.int8_bytes += bytes; }
             // An MXFP4 bank takes its layer's MXFP4 route (the int8 tier or the block-scaled MMA)
             // only in whole blocks too: the op refuses it otherwise (KGroup) and runs it A16.
             if (whole && q == QType::MXFP4) { l.mxfp4_bytes += bytes; }
@@ -606,32 +619,103 @@ public:
     }
 
     // `int8`: under --activations int8 (every bank at AllowA8), else fast activations.
+    // The route of the most bytes is asked of four starts (`by` below: a build with the W4A4
+    // kernels or without, and a recipe that keeps a policy the facts do not hold at AllowA4 or
+    // A16Only): a layer that depends on either adds to each start its own routes, every other
+    // layer the same to all. All four agreeing, theirs is the route; else Unknown, so a dependent
+    // layer too small to move the answer leaves it (codex on #1087 and #1094).
     [[nodiscard]] runtime::ExpertPrefill route(bool int8 = false) const {
-        std::array<std::uint64_t, 4> by{};
-        const auto at = [&](runtime::ExpertPrefill r) -> std::uint64_t& {
-            return by[static_cast<std::size_t>(r)];
+        // The route asked of four starts (`by[s]`): a build with the W4A4 kernels or without
+        // (s & 1: without), and a recipe that keeps a policy the facts do not hold at AllowA4 or at
+        // A16Only (s & 2: A16Only; moe_recipe keeps such an NVFP4 site A16Only, the Qwen 3.5 and
+        // Gemma 4 recipes AllowA4; codex on #1094). Every layer the starts agree on adds the same
+        // to all four.
+        std::array<std::array<std::uint64_t, 4>, 4> by{};
+        const auto add = [&](runtime::ExpertPrefill r, std::uint64_t bytes) {
+            for (auto& tally : by) { tally[static_cast<std::size_t>(r)] += bytes; }
         };
         for (const auto& [name, l] : layers_) {
             const bool a8 = int8 || (!l.loader_a16 && layer_allows_a8(l));
+            // An NVFP4 bank under an A4 expert policy: the generic op on a build with the W4A4
+            // kernels (sm_120a) keeps both of the layer's stages on the A16 register MMA, one
+            // without them takes the grouped W4A8 (ops w4a8_bank_refusal Nvfp4A4,
+            // nvfp4_prefill_a8_policy); on sm_120a the all-NVFP4 Qwen 3.5/3.6 A3B layers
+            // (SparseMoe) and calibrated Gemma 4 layers (Gemma4Moe) run a fused W4A4 instead,
+            // which no ExpertPrefill value prices. The facts name no build, so the layer's route
+            // is the build's: Unknown (#796 item 1).
+            // So is one whose policy the facts do not hold (a GGUF NVFP4 bank with an activation
+            // divisor: the loader's probe and the model's recipe set it, AllowA4 for the Qwen 3.5
+            // and Gemma 4 recipes), never A16 by the kept fallback (#1090). Under --activations
+            // int8 every bank runs at AllowA8 and no A4 policy remains.
+            const runtime::PlanExpertPolicy lp = layer_policy(l.gate_up, l.down);
+            // A layer the loader runs at A16 (loader_a16: a Gemma 4 GGUF MXFP4 bank without a
+            // divisor beside it) stays A16 whatever its policy (ops moe_policy).
+            const bool build_decides = !int8 && !l.loader_a16 && l.nvfp4 && l.gate_up.seen &&
+                                       l.down.seen &&
+                                       (lp == runtime::PlanExpertPolicy::AllowA4 ||
+                                        lp == runtime::PlanExpertPolicy::Unknown);
             if (!l.known) {
-                at(runtime::ExpertPrefill::Unknown) += l.bytes;
+                add(runtime::ExpertPrefill::Unknown, l.bytes);
+            } else if (build_decides) {
+                // int8_bytes holds the whole NVFP4 banks too (their W4A8 tile, #1090).
+                const std::uint64_t admitted = l.int8_bytes;
+                for (std::size_t s = 0; s < by.size(); ++s) {
+                    auto& tally = by[s];
+                    if ((s & 2) != 0 && lp == runtime::PlanExpertPolicy::Unknown) {
+                        // The recipe's A16Only: the op refuses the grouped W4A8 (Policy).
+                        tally[static_cast<std::size_t>(runtime::ExpertPrefill::A16)] += l.bytes;
+                    } else if ((s & 1) == 0) {
+                        // With the W4A4 kernels the veto keeps both stages A16 (a layer of NVFP4
+                        // banks alone may run a fused W4A4 instead: unpriced).
+                        tally[static_cast<std::size_t>(
+                            l.all_nvfp4 ? runtime::ExpertPrefill::Unknown
+                                        : runtime::ExpertPrefill::A16)] += l.bytes;
+                    } else {
+                        // Without them the banks the op admits run the grouped W4A8, the rest A16.
+                        tally[static_cast<std::size_t>(runtime::ExpertPrefill::Int8)] += admitted;
+                        tally[static_cast<std::size_t>(runtime::ExpertPrefill::A16)] +=
+                            l.bytes - admitted;
+                    }
+                }
+            } else if (!int8 && !l.loader_a16 && l.any_nvfp4 && !l.nvfp4 &&
+                       lp == runtime::PlanExpertPolicy::Unknown) {
+                // An NVFP4 site whose policy the facts do not hold, none of its NVFP4 banks in
+                // whole blocks (a whole one is build_decides, or the kept fallback where a bank is
+                // unseen: the W4A4 build's A4 veto, #1100 review): the recipe's AllowA4 lets the op
+                // run the layer's admitted banks (int8 codes in whole blocks) on the grouped W4A8
+                // on both builds, a padded NVFP4 bank refused for its K group with no A4 veto; its
+                // A16Only runs every bank A16 (#1097). The kept fallback would count A16 at every
+                // start.
+                for (std::size_t s = 0; s < by.size(); ++s) {
+                    auto& tally                = by[s];
+                    const std::uint64_t admits = (s & 2) == 0 ? l.int8_bytes : 0;
+                    tally[static_cast<std::size_t>(runtime::ExpertPrefill::Int8)] += admits;
+                    tally[static_cast<std::size_t>(runtime::ExpertPrefill::A16)] +=
+                        l.bytes - admits;
+                }
             } else if (l.mxfp4) {
                 // A bank the op refuses for its blocks (w4a8_bank_refusal KGroup), or under an A16
                 // policy (Policy), runs A16.
                 const std::uint64_t mx = a8 ? l.mxfp4_bytes : 0;
-                at(runtime::ExpertPrefill::Mxfp4) += mx;
-                at(runtime::ExpertPrefill::A16) += l.bytes - mx;
+                add(runtime::ExpertPrefill::Mxfp4, mx);
+                add(runtime::ExpertPrefill::A16, l.bytes - mx);
             } else {
                 // An A16 expert policy refuses the grouped W4A8 every bank (w4a8_bank_refusal
                 // Policy).
                 const std::uint64_t int8_bytes = a8 ? l.int8_bytes : 0;
-                at(runtime::ExpertPrefill::Int8) += int8_bytes;
-                at(runtime::ExpertPrefill::A16) += l.bytes - int8_bytes;
+                add(runtime::ExpertPrefill::Int8, int8_bytes);
+                add(runtime::ExpertPrefill::A16, l.bytes - int8_bytes);
             }
         }
-        const auto most = std::max_element(by.begin() + 1, by.end());
-        return *most > by[0] ? static_cast<runtime::ExpertPrefill>(most - by.begin())
-                             : runtime::ExpertPrefill::Unknown;
+        const auto winner = [](const std::array<std::uint64_t, 4>& tally) {
+            const auto most = std::max_element(tally.begin() + 1, tally.end());
+            return *most > tally[0] ? static_cast<runtime::ExpertPrefill>(most - tally.begin())
+                                    : runtime::ExpertPrefill::Unknown;
+        };
+        const runtime::ExpertPrefill first = winner(by[0]);
+        const bool agree                   = std::all_of(by.begin() + 1, by.end(),
+                                                         [&](const auto& tally) { return winner(tally) == first; });
+        return agree ? first : runtime::ExpertPrefill::Unknown;
     }
 
     // Whether the route rests on a bank whose kept format the header does not tell (add's
@@ -728,6 +812,15 @@ private:
         // bank kept as a format the header does not tell; loader_a16: a bank the loader runs at
         // A16 whatever it keeps (add's `assumed`, `loader_a16`)
         bool known = true, mxfp4 = true, kept_a8 = true, assumed = false, loader_a16 = false;
+        // nvfp4: a bank of the layer is NVFP4 in whole W4A8 blocks (under an A4 policy the build
+        // decides, route()).
+        bool nvfp4 = false;
+        // all_nvfp4: every bank NVFP4 in whole blocks (on sm_120a such a layer may take a fused
+        // W4A4 kernel, SparseMoe or Gemma4Moe, which no ExpertPrefill value prices; the facts do
+        // not name the model's kernel path, so it is Unknown there, never a guessed A16).
+        bool all_nvfp4 = true;
+        // any_nvfp4: a bank of the layer is NVFP4, in whole blocks or not (#1097).
+        bool any_nvfp4 = false;
         Bank gate_up, down;
     };
 
@@ -1828,7 +1921,11 @@ std::optional<runtime::PlanDeviceFacts> plan_device_of_board(std::string_view sp
     const auto names_a_row = [&](std::string_view text) {
         const auto wanted = normalized_board(text);
         return std::any_of(table.begin(), table.end(), [&](const GpuFactsRow& r) {
-            return normalized_board(r.name) == wanted;
+            return normalized_board(r.name) == wanted ||
+                   std::any_of(r.subsystems.begin(), r.subsystems.end(),
+                               [&](const GpuFactsSubsystem& v) {
+                                   return normalized_board(v.name) == wanted;
+                               });
         });
     };
     if (!commas.empty()) {
@@ -1865,32 +1962,86 @@ std::optional<runtime::PlanDeviceFacts> plan_device_of_board(std::string_view sp
         }
     }
 
-    const GpuFactsRow* row = nullptr;
+    const GpuFactsRow* row           = nullptr;
+    const GpuFactsSubsystem* variant = nullptr; // a registered variant of the row (#903)
     if (const auto q = lower(query); starts_with(q, "0x") && q.size() > 2) {
-        char* end     = nullptr;
-        const auto id = std::strtoul(q.c_str() + 2, &end, 16);
-        if (end != nullptr && *end == '\0') {
-            row = find_gpu_facts(static_cast<std::uint32_t>(id));
-        }
+        // "0x1DBA" names the product's board, "0x1DBA:0x10DE12EB" a registered variant of it.
+        const auto colon     = q.find(':');
+        const std::string pd = q.substr(0, colon);
+        // Hex digits only, at most `digits` of them: strtoul alone takes a sign, spaces and a
+        // second 0x, and a cast to 32 bits wraps a longer id onto another board's.
+        const auto hex_of = [](const std::string& s,
+                               std::size_t digits) -> std::optional<std::uint32_t> {
+            if (s.empty() || s.size() > digits || !std::all_of(s.begin(), s.end(), [](char ch) {
+                    return std::isxdigit(static_cast<unsigned char>(ch)) != 0;
+                })) {
+                return std::nullopt;
+            }
+            return static_cast<std::uint32_t>(std::stoul(s, nullptr, 16));
+        };
+        if (const auto id = hex_of(pd.substr(2), 4)) { row = find_gpu_facts(*id); }
         if (row == nullptr) { return fail("no board with PCI id " + query + " in gpu_facts.json"); }
+        if (colon != std::string::npos) {
+            // The subsystem's vendor and device: 0x10DE12EB, 10DE12EB, or lspci's 10de:12eb.
+            std::string sub = q.substr(colon + 1);
+            if (starts_with(sub, "0x")) { sub = sub.substr(2); }
+            if (sub.size() == 9 && sub[4] == ':') { sub.erase(4, 1); }
+            const auto sid = hex_of(sub, 8);
+            if (!sid) {
+                return fail("'" + query +
+                            "': no subsystem id after ':' (write 0xDEVICE:0xVVVVDDDD, "
+                            "the subsystem's vendor and device)");
+            }
+            for (const auto& v : row->subsystems) {
+                if (v.id == *sid) { variant = &v; }
+            }
+            if (variant == nullptr) {
+                static constexpr char kHex[] = "0123456789ABCDEF";
+                std::string spelled          = "0x";
+                for (int shift = 28; shift >= 0; shift -= 4) {
+                    spelled += kHex[(*sid >> shift) & 0xF];
+                }
+                std::string listed;
+                for (const auto& v : row->subsystems) {
+                    listed += (listed.empty() ? "" : ", ") + v.name;
+                }
+                return fail("no registered variant " + spelled + " of " + row->name +
+                            (listed.empty() ? " (it lists none)" : " (listed: " + listed + ")"));
+            }
+        }
     } else {
         // The exact name first, else the shortest name containing the query ("4090" finds
         // "GeForce RTX 4090", not "... 4090 D" or "... 4090 Laptop GPU"); the table's order
         // breaks a tie.
+        // A registered variant (a row's `subsystems`, #903) is named as a board of its own.
         const auto wanted = normalized_board(query);
         for (const auto& r : table) {
             if (normalized_board(r.name) == wanted) {
                 row = &r;
                 break;
             }
+            for (const auto& v : r.subsystems) {
+                if (row == nullptr && normalized_board(v.name) == wanted) {
+                    row     = &r;
+                    variant = &v;
+                }
+            }
+            if (row != nullptr) { break; }
         }
         if (row == nullptr && !wanted.empty()) {
-            for (const auto& c : table) {
-                const auto name = normalized_board(c.name);
+            std::size_t best    = 0;
+            const auto consider = [&](const GpuFactsRow& r, const GpuFactsSubsystem* v) {
+                const auto name = normalized_board(v != nullptr ? v->name : r.name);
                 if (name.find(wanted) != std::string::npos &&
-                    (row == nullptr || name.size() < normalized_board(row->name).size())) {
-                    row = &c;
+                    (row == nullptr || name.size() < best)) {
+                    row     = &r;
+                    variant = v;
+                    best    = name.size();
                 }
+            };
+            for (const auto& c : table) {
+                consider(c, nullptr);
+                for (const auto& v : c.subsystems) { consider(c, &v); }
             }
         }
     }
@@ -1906,16 +2057,21 @@ std::optional<runtime::PlanDeviceFacts> plan_device_of_board(std::string_view sp
             if (space == std::string::npos) { break; }
             begin = space + 1;
         }
+        // A registered variant's name too (#903).
         std::vector<std::string> close;
-        for (const auto& r : table) {
-            const auto name = normalized_board(r.name);
+        const auto propose = [&](const std::string& board) {
+            const auto name = normalized_board(board);
             const bool near = std::any_of(words.begin(), words.end(), [&](const std::string& w) {
                 return name.find(w) != std::string::npos;
             });
-            if (near && std::find(close.begin(), close.end(), r.name) == close.end()) {
-                close.push_back(r.name);
-                if (close.size() == 8) { break; }
+            if (near && close.size() < 8 &&
+                std::find(close.begin(), close.end(), board) == close.end()) {
+                close.push_back(board);
             }
+        };
+        for (const auto& r : table) {
+            propose(r.name);
+            for (const auto& v : r.subsystems) { propose(v.name); }
         }
         std::string message = "no board named '" + query + "' in gpu_facts.json";
         for (std::size_t i = 0; i < close.size(); ++i) {
@@ -1924,9 +2080,11 @@ std::optional<runtime::PlanDeviceFacts> plan_device_of_board(std::string_view sp
         return fail(message);
     }
     runtime::PlanDeviceFacts out;
-    out.name               = row->name;
-    out.source             = "named board " + row->name;
-    out.total_bytes        = runtime::plan_board_total_bytes(row->vram_gib);
+    out.name        = variant != nullptr ? variant->name : row->name;
+    out.source      = "named board " + out.name;
+    out.total_bytes = runtime::plan_board_total_bytes(
+        variant != nullptr && variant->vram_gib > 0 ? variant->vram_gib : row->vram_gib);
+    out.pci_subsystem_id   = variant != nullptr ? variant->id : 0;
     out.compute_capability = row->major * 10 + row->minor;
     out.pci_device_id      = row->pci_device_id;
     out.sms                = row->sms;
@@ -1962,6 +2120,11 @@ runtime::PlanDeviceFacts plan_device_of_cuda(int device, bool measure_free, bool
     const auto& cls   = device_class(device);
     out.pci_device_id = cls.pci_device_id;
     out.sms           = cls.sms;
+    // The board under a shared product id, as the start's class reads it (#903): a TITAN V CEO
+    // Edition is planned as itself, not as the Quadro GV100; an unread subsystem as the slowest
+    // board the row lists.
+    out.pci_subsystem_id     = cls.pci_subsystem_id;
+    out.pci_subsystem_unread = cls.pci_subsystem_unread;
     if (measure_free) {
         check(cudaSetDevice(device), "cudaSetDevice");
         // As a start reads it (model_instance.cpp, construct_or_plan): when its plan has an

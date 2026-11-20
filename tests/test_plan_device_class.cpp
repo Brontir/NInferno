@@ -68,6 +68,7 @@
 #include "ninferno/ops/sampling.h"
 #include "ninferno/ops/speculative_round.h"
 #include "ops/generic/kernel_facts.h"
+#include "ops/softmax_attention/gemma4/launch.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "runtime/engine/plan_dry_run.h"
@@ -273,13 +274,12 @@ struct Subject {
 // gemma4_attention_decode_plan, which ops::gemma4_attention_workspace_bytes calls, and so
 // models::gemma4::target_op_bytes and drafter_pass_bytes) counts its splits from the resident CTAs
 // of the decode kernel, now from the kernel's committed facts (gemma4_resident_ctas_per_sm). A
-// board the snapshots cover and whose kernels are this build's (the tile is a constexpr of the
-// build, #912) answers; any other refuses by name, never by the host GPU.
+// board the snapshots cover answers on its release build's tile (#912: the tile is a function of
+// the architecture, whatever this build is); any other refuses by name, never by the host GPU.
 bool gemma4_facts_cover(const DeviceClass& d) {
     namespace kf           = ops::detail::generic::kernel_facts;
     const std::string arch = kf::release_arch(d.major, d.minor);
-    return !arch.empty() && arch == kf::build_arch() &&
-           kf::section_header(arch, "gemma4").has_value();
+    return !arch.empty() && kf::section_header(arch, "gemma4").has_value();
 }
 
 EngineOptions served(std::uint32_t context, std::uint32_t streams, SpeculativeBackend backend) {
@@ -778,6 +778,147 @@ int main() {
     const std::vector<Subject> all      = subjects();
     const std::vector<NamedBoard> every = boards();
     check(every.size() >= 50, "the registry has its target boards");
+
+    // #1112: a substituted board's chained-prefill workspace is its own build's tile's, whatever
+    // this build is (launch.cu chain_plan through with_tile_arch). At a Gemma 4 31B full layer
+    // (D 512, 32 query and 4 KV heads), T 2048 is a wide-tile width where the tile fits it: the
+    // Volta and Turing builds' tiles do not (kWidePrefillFitsOf), Ampere's and later do, so their
+    // chain bytes differ. Every snapshot arch with a board answers (no arch of with_tile_arch's
+    // list missing), and every board of one arch answers alike. The lines are printed so the
+    // builds' outputs can be compared.
+    {
+        std::map<std::string, std::string> by_arch;
+        for (const NamedBoard& b : every) {
+            const std::string arch = ops::detail::generic::kernel_facts::release_arch(
+                b.substitute.major, b.substitute.minor);
+            if (arch.empty()) continue;
+            const ScopedDeviceClass scoped(b.substitute);
+            std::string line;
+            try {
+                line = std::to_string(ops::detail::gemma4_attention_chain_bytes(
+                           512, 32, 4, 0, false, false, 2048)) +
+                       " / " +
+                       std::to_string(ops::detail::gemma4_attention_chain_bytes(
+                           512, 32, 4, 0, false, false, 1023));
+            } catch (const std::exception& error) {
+                check(false, b.name + ": the chain bytes of sm_" + arch + " answer (" +
+                                 error.what() + ", #1112)");
+                continue;
+            }
+            const auto [it, first] = by_arch.emplace(arch, line);
+            check(first || it->second == line, b.name + ": the chain bytes of sm_" + arch +
+                                                   " boards agree (" + line + " vs " + it->second +
+                                                   ", #1112)");
+        }
+        for (const auto& [arch, line] : by_arch) {
+            std::cout << "gemma4 chain bytes sm_" << arch << " (T 2048 / 1023): " << line << '\n';
+        }
+        const auto wide_bytes = [&](const std::string& arch) {
+            const auto it = by_arch.find(arch);
+            return it == by_arch.end() ? std::string() : it->second.substr(0, it->second.find(' '));
+        };
+        // The pairs below are skipped where an arch has no board: they must not all be.
+        check(!wide_bytes("70").empty() && !wide_bytes("75").empty() &&
+                  (!wide_bytes("86").empty() || !wide_bytes("89").empty() ||
+                   !wide_bytes("120a").empty()),
+              "the registry has sm_70, sm_75 and a wide-tile arch's boards (#1112)");
+        for (const char* narrow : {"70", "75"}) {
+            for (const char* wide : {"86", "89", "120a"}) {
+                if (wide_bytes(narrow).empty() || wide_bytes(wide).empty()) continue;
+                check(wide_bytes(narrow) != wide_bytes(wide),
+                      std::string("sm_") + narrow + " and sm_" + wide +
+                          " boards price their own tiles at T 2048 (" + wide_bytes(narrow) +
+                          " vs " + wide_bytes(wide) + " bytes, #1112)");
+            }
+        }
+        // #1115 item 6: with_tile_arch's hand-written list holds every committed snapshot's label,
+        // so the boards of an arch the registry has none of (above) would not throw either.
+        for (const std::string_view label : ops::detail::generic::kernel_facts::snapshot_archs()) {
+            check(ops::detail::gemma4_tile_arch_known(label),
+                  "gemma4 with_tile_arch lists the snapshot arch sm_" + std::string(label) +
+                      " (#1115)");
+        }
+        check(!ops::detail::gemma4_tile_arch_known("bogus"),
+              "gemma4 with_tile_arch refuses a label it holds no tile of (#1115)");
+    }
+
+    // #903 item 4: --plan-device names a registered variant of a shared PCI product (the TITAN V
+    // CEO Edition, subsystem 10DE:12EB of the Quadro GV100's 0x1DBA): by its name or as
+    // "0x1DBA:0x10DE12EB". Its class carries the subsystem, so the machine facts are that board's
+    // (1455 MHz, verified); the product's own name and id keep the product row's board, with no
+    // subsystem; an unregistered subsystem is refused, naming the variants the row lists.
+    {
+        std::string error;
+        const auto ceo    = pr::plan_device_of_board("TITAN V CEO Edition", &error);
+        const auto by_id  = pr::plan_device_of_board("0x1DBA:0x10DE12EB,linux,headless", &error);
+        const auto quadro = pr::plan_device_of_board("Quadro GV100", &error);
+        const auto bare   = pr::plan_device_of_board("0x1DBA", &error);
+        check(ceo && by_id && quadro && bare,
+              "--plan-device: the 0x1DBA boards resolve (" + error + ")");
+        if (ceo && by_id && quadro && bare) {
+            check(ceo->name == "TITAN V CEO Edition" && ceo->pci_device_id == 0x1DBA &&
+                      ceo->pci_subsystem_id == 0x10DE12EB,
+                  "--plan-device 'TITAN V CEO Edition': the 0x1DBA variant 10DE:12EB (" +
+                      ceo->name + ")");
+            check(by_id->name == ceo->name && by_id->pci_subsystem_id == 0x10DE12EB,
+                  "--plan-device 0x1DBA:0x10DE12EB: the same variant");
+            check(quadro->name == "Quadro GV100" && quadro->pci_subsystem_id == 0 &&
+                      bare->pci_subsystem_id == 0,
+                  "--plan-device 'Quadro GV100' / 0x1DBA: the product row's board, no subsystem");
+            const DeviceClass ceo_class    = rt::plan_device_class(*ceo);
+            const DeviceClass quadro_class = rt::plan_device_class(*quadro);
+            check(ceo_class.pci_subsystem_id == 0x10DE12EB && quadro_class.pci_subsystem_id == 0,
+                  "plan_device_class carries the named variant's subsystem");
+            check(ceo_class.facts.reference_clock_khz == 1455000 &&
+                      ceo_class.facts.source == FactSource::Verified &&
+                      quadro_class.facts.reference_clock_khz == 1627000,
+                  "the variant's machine facts are its own board's (CEO 1455 MHz, Quadro 1627 "
+                  "MHz): " +
+                      std::to_string(ceo_class.facts.reference_clock_khz) + " / " +
+                      std::to_string(quadro_class.facts.reference_clock_khz));
+        }
+        std::string refused;
+        check(!pr::plan_device_of_board("0x1DBA:0x10DE0001", &refused) &&
+                  refused.find("TITAN V CEO Edition") != std::string::npos,
+              "--plan-device 0x1DBA:0x10DE0001: refused, naming the registered variants (" +
+                  refused + ")");
+        check(!pr::plan_device_of_board("0x2684:0x10DE0001", &refused),
+              "--plan-device: a subsystem of a product that lists none is refused");
+        // The other spellings of the id, a part of the variant's name, its name in lower case.
+        for (const char* spelled :
+             {"0x1DBA:10DE12EB", "0x1dba:10de:12eb", "CEO Edition", "titan v ceo edition"}) {
+            std::string why;
+            const auto v = pr::plan_device_of_board(spelled, &why);
+            check(v && v->pci_subsystem_id == 0x10DE12EB,
+                  std::string("--plan-device '") + spelled + "': the CEO Edition (" + why + ")");
+        }
+        check(!pr::plan_device_of_board("0x1DBA:", &refused) &&
+                  refused.find("no subsystem id after ':'") != std::string::npos,
+              "--plan-device 0x1DBA: (no subsystem): refused as such (" + refused + ")");
+        check(!pr::plan_device_of_board("0x100001DBA", &refused),
+              "--plan-device 0x100001DBA: a PCI id past 16 bits is refused, not wrapped");
+        // A card in the machine whose driver did not give its subsystem (plan_device_of_cuda
+        // carries DeviceClass::pci_subsystem_unread): a row listing boards by subsystem prices it
+        // as the slowest of them, extrapolated, as its start does; a read subsystem is that board.
+        if (quadro) {
+            rt::PlanDeviceFacts live  = *quadro;
+            live.pci_subsystem_unread = true;
+            const DeviceClass unread  = rt::plan_device_class(live);
+            check(unread.facts.reference_clock_khz == 1455000 &&
+                      unread.facts.source == FactSource::Extrapolated &&
+                      unread.facts.subsystem_unknown,
+                  "an unread subsystem of 0x1DBA: the slowest listed board, extrapolated (" +
+                      std::to_string(unread.facts.reference_clock_khz) + ")");
+            live.pci_subsystem_unread = false;
+            live.pci_subsystem_id     = 0x10DE12EB;
+            check(rt::plan_device_class(live).facts.reference_clock_khz == 1455000 &&
+                      rt::plan_device_class(live).facts.source == FactSource::Verified,
+                  "a read CEO subsystem of 0x1DBA: the CEO Edition, verified");
+        }
+        check(!pr::plan_device_of_board("CEO Editon", &refused) &&
+                  refused.find("TITAN V CEO Edition") != std::string::npos,
+              "--plan-device 'CEO Editon': the close names hold the variant (" + refused + ")");
+    }
 
     // #829: the dry run of a named board sizes its rungs under the board's class. A probe in place
     // of the workspace query sees the class every call of it runs under: the board's

@@ -213,6 +213,8 @@ struct BoardTally {
     int cells = 0, borrowed = 0, transferred = 0, measured = 0, moved = 0, demoted_same_route = 0;
     int kept_rules = 0; // Borrowed or Transferred answers of the rules list, kept by design
     int kept_mmq_boundary = 0; // demoted ggml_mmq entries kept at T 9..16 (keeps_mmq_boundary)
+    int gap_bands     = 0; // gaps of the table answered by a predicted band under evidence (#1068)
+    int band_over_mmq = 0; // of them, a demoted ggml_mmq entry at T 9-16 moved off ggml_mmq
     std::map<std::string, int> moved_by_regime;
     Json moves = Json::array();
     std::set<std::string> moved_problems; // "<format>|<epilogue>|n<N>|k<K>"
@@ -429,7 +431,25 @@ void check_cell(const DeviceClass& d, const Cell& c, const std::string& at,
         ++tally.kept_mmq_boundary;
         return;
     }
-    if (auto_list && generic::policy_demotes(RoutePolicy::Evidence, le.kind)) {
+    // A gap of the board's table (no entry of its own, so legacy's ranker answered, or a borrowed
+    // entry) takes the analyzer's predicted band under evidence, ahead of the borrowed entry and
+    // the ranker (#1068, table_route_answer); legacy reads no band. A move like any other below.
+    // Only the route table's own Borrowed or Transferred entries make a gap: a rules list's
+    // Transferred answer is never demoted, and a band over it still fails below.
+    const bool gap_band =
+        ee.kind == Kind::Predicted && ee.source == "route-table" && ee.demoted_source.empty() &&
+        (le.kind == Kind::Ranker || (auto_list && le.source == "route-table" &&
+                                     (le.kind == Kind::Borrowed || le.kind == Kind::Transferred)));
+    if (gap_band) {
+        ++tally.gap_bands;
+        // F1's losing pattern (#614): a demoted ggml_mmq entry at T 9-16 that the MMQ boundary
+        // would have kept, answered by a band of another route. Counted and printed, so the
+        // pattern stays visible in the log and the moves file.
+        if (legacy.route.family == generic::Family::GgmlMmq && c.tokens >= 9 && c.tokens <= 16 &&
+            !(evidence.route == legacy.route)) {
+            ++tally.band_over_mmq;
+        }
+    } else if (auto_list && generic::policy_demotes(RoutePolicy::Evidence, le.kind)) {
         // Under legacy the entry won; under evidence it yields to the ranker. It would stand only
         // where the ranker has no candidate (the scalar fallback), which no cell of this grid is,
         // or at the MMQ boundary above.
@@ -650,6 +670,8 @@ Json board_json(const RegretBoard& b, const char* tables, const BoardTally& t) {
                 {"legacy_transferred_rules_kept", t.kept_rules},
                 {"moved", t.moved},
                 {"demoted_same_route", t.demoted_same_route},
+                {"gap_bands", t.gap_bands},
+                {"band_over_mmq", t.band_over_mmq},
                 {"moved_by_regime", regimes},
                 {"moves", t.moves}};
 }
@@ -791,7 +813,9 @@ int main(int argc, char** argv) {
                     std::cout << " [" << regime << ": " << n << ']';
                 }
                 std::cout << ", " << t.demoted_same_route << " demoted to the same route, "
-                          << t.kept_mmq_boundary << " kept at the MMQ boundary\n";
+                          << t.kept_mmq_boundary << " kept at the MMQ boundary, " << t.gap_bands
+                          << " gaps answered by a predicted band (" << t.band_over_mmq
+                          << " of them off a demoted ggml_mmq at T 9-16)\n";
                 if (std::string_view(b.own_build_set) == kBuildSet) {
                     written[std::string(b.name) + "/" + tables] = board_json(b, tables, t);
                 }
@@ -804,8 +828,10 @@ int main(int argc, char** argv) {
         if (only.empty() && measured == 0) {
             fail("no measured answer in the grid: the never-demoted check is idle");
         }
-        // The grid holds the shape F1's A/B lost on (q4k swiglu 12288x4096 at T 12, 16): the MMQ
-        // boundary must keep some demoted entry, or its exception above is idle.
+        // The MMQ boundary must keep some demoted entry over the grid, or its exception above is
+        // idle. F1's A/B lost on q4k swiglu 12288x4096 at T 12, 16; on a board whose pick file
+        // holds that shape the band answers it (#1068, counted as band_over_mmq where it leaves
+        // ggml_mmq), and the boards without a pick file or a band for it keep the boundary.
         if (only.empty() && kept_boundary == 0) {
             fail("no cell kept at the MMQ boundary: keeps_mmq_boundary is idle in the grid");
         }

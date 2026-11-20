@@ -4,6 +4,7 @@
 #include "core/arena.h"
 #include "core/weight_view.h"
 #include "ninferno/ops/gemma4_moe.h"
+#include "ninferno/ops/linear.h"
 #include "ninferno/ops/moe.h"
 #include "ops/route_pins.h"
 
@@ -313,12 +314,27 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
                 if (!ops::gemma4_moe_available()) {
                     return {false, "this build has no Gemma4Moe (sm_120a kernels)"};
                 }
-                if (contiguous_weight_region(prepare.view(ids.expert_gate_up.front()))
-                        .parent->geometry.format != QType::NVFP4) {
+                const auto nvfp4 = [&](const std::vector<Id>& experts) {
+                    return contiguous_weight_region(prepare.view(experts.front()))
+                               .parent->geometry.format == QType::NVFP4;
+                };
+                if (!nvfp4(ids.expert_gate_up) || !nvfp4(ids.expert_down)) {
                     return {false, "Gemma4Moe reads NVFP4 experts only"};
                 }
                 if (!calibrated(ids.expert_gate_up) || !calibrated(ids.expert_down)) {
                     return {false, "the NVFP4 experts carry no activation divisors"};
+                }
+                // Its prefill encodes the experts' inputs in four bits (gemma4_expert_plane
+                // requires AllowA4 of every expert): experts recorded at another policy take the
+                // generic op, which honours theirs (the grouped W4A8 at AllowA8, A16 at A16Only),
+                // where the load failed before (#1092).
+                const auto a4 = [&](const std::vector<Id>& experts) {
+                    return std::all_of(experts.begin(), experts.end(), [&](Id id) {
+                        return ops::allows_a4(prepare.recorded_input(id).policy);
+                    });
+                };
+                if (!a4(ids.expert_gate_up) || !a4(ids.expert_down)) {
+                    return {false, "the experts' recorded activation policy is not AllowA4"};
                 }
                 return {true, std::string()};
             };

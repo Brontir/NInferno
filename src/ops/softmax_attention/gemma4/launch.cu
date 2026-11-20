@@ -22,6 +22,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <type_traits>
 
 namespace ninferno::ops::detail {
@@ -111,12 +112,24 @@ constexpr int kDecodeMaxWarpRowsD128 = 4;
 // measured 32. Sized with the FP8 scales, so BF16 and FP8 planes of a geometry share one tile; a
 // BF16-only instance (the wide D=512 prefill tile) is sized without them.
 // (FP8 tiles of codes alone, D = 512, are smaller than the BF16 tile and are sized by it.)
-template <class Geo, int WR, int Bc, bool WithFp8 = true>
-inline constexpr int kFittingBc = std::max(Gemma4Tile<Geo, WR, Bc, false>::SmemBytes,
-                                           WithFp8 ? Gemma4Tile<Geo, WR, Bc, true>::SmemBytes
-                                                   : 0) <= static_cast<int>(kMaxSharedBytesPerBlock)
-                                      ? Bc
-                                      : Bc / 2;
+// The build's own instance of the tile's architecture facts is the build's compile-time limits
+// (#912): the kernels and the plan of this build's boards read one shape.
+static_assert(gemma4_arch_facts(kGemma4BuildArch).max_shared_per_block ==
+                      static_cast<int>(kMaxSharedBytesPerBlock) &&
+                  gemma4_arch_facts(kGemma4BuildArch).shared_per_sm ==
+                      static_cast<int>(kSharedBytesPerSm) &&
+                  gemma4_arch_facts(kGemma4BuildArch).reserved_per_block ==
+                      kSharedBytesReservedPerBlock,
+              "Gemma4ArchFacts of the build differ from ops/common/arch_limits.h");
+
+// Arch: the architecture whose build compiles the tile (#912; the kernels: this build's).
+template <class Geo, int WR, int Bc, bool WithFp8 = true, int Arch = kGemma4BuildArch>
+inline constexpr int kFittingBc =
+    std::max(Gemma4Tile<Geo, WR, Bc, false, Arch>::SmemBytes,
+             WithFp8 ? Gemma4Tile<Geo, WR, Bc, true, Arch>::SmemBytes : 0) <=
+            gemma4_arch_facts(Arch).max_shared_per_block
+        ? Bc
+        : Bc / 2;
 
 // The prefill key tile: kFittingBc, halved while the SM's shared memory holds fewer than the eight
 // warps the measured tiles run (PrefillConfig: D=256 on 2x2 warps, two CTAs an SM; D=512 on 2x4,
@@ -125,21 +138,24 @@ inline constexpr int kFittingBc = std::max(Gemma4Tile<Geo, WR, Bc, false>::SmemB
 // issue slots 18 % busy, occupancy 12.5 %, 1.36 ms a sliding layer). Its 16-key tile (20 KiB)
 // fits three CTAs by shared memory, and the registers hold two (ncu's block limit). Every other
 // build holds the measured tiles at 32 keys (Ampere, Ada and Blackwell 100 KiB a SM, Volta 96).
-template <class Geo, int WR, int Bc, bool WithFp8 = true>
+// Arch: the architecture whose build compiles the tile (#912, #1112; the kernels: this build's).
+template <class Geo, int WR, int Bc, bool WithFp8 = true, int Arch = kGemma4BuildArch>
 constexpr int prefill_bc() {
-    constexpr int fitting = kFittingBc<Geo, WR, Bc, WithFp8>;
-    constexpr int bytes   = std::max(Gemma4Tile<Geo, WR, fitting, false>::SmemBytes,
-                                     WithFp8 ? Gemma4Tile<Geo, WR, fitting, true>::SmemBytes : 0);
-    constexpr int ctas  = static_cast<int>(kSharedBytesPerSm) / (bytes + kSharedBytesReservedPerBlock);
-    constexpr int warps = Gemma4Tile<Geo, WR, fitting, false>::Warps;
+    constexpr Gemma4ArchFacts facts = gemma4_arch_facts(Arch);
+    constexpr int fitting           = kFittingBc<Geo, WR, Bc, WithFp8, Arch>;
+    constexpr int bytes =
+        std::max(Gemma4Tile<Geo, WR, fitting, false, Arch>::SmemBytes,
+                 WithFp8 ? Gemma4Tile<Geo, WR, fitting, true, Arch>::SmemBytes : 0);
+    constexpr int ctas  = facts.shared_per_sm / (bytes + facts.reserved_per_block);
+    constexpr int warps = Gemma4Tile<Geo, WR, fitting, false, Arch>::Warps;
     if constexpr (ctas * warps < 8 && fitting > 16) {
-        return prefill_bc<Geo, WR, fitting / 2, WithFp8>();
+        return prefill_bc<Geo, WR, fitting / 2, WithFp8, Arch>();
     } else {
         return fitting;
     }
 }
-template <class Geo, int WR, int Bc, bool WithFp8 = true>
-inline constexpr int kPrefillBc = prefill_bc<Geo, WR, Bc, WithFp8>();
+template <class Geo, int WR, int Bc, bool WithFp8 = true, int Arch = kGemma4BuildArch>
+inline constexpr int kPrefillBc = prefill_bc<Geo, WR, Bc, WithFp8, Arch>();
 
 // The wide tile only where it keeps the 32-row tile's keys per tile: a halved key tile would fold
 // the online softmax over other key tiles and change the bytes (V100: 96 KiB per block, which the
@@ -147,21 +163,27 @@ inline constexpr int kPrefillBc = prefill_bc<Geo, WR, Bc, WithFp8>();
 // Nor where the narrow tile runs Volta's m8n8k4 (Gemma4Tile::Volta) and the wide one cannot (its
 // 256-column accumulators do not fit the planes for the output conversion): the two would sum in
 // other orders, and a call's bytes would follow its width.
-inline constexpr bool kWidePrefillFits =
-    Gemma4Tile<WideGemma4Geometry, kWidePrefillWR, PrefillConfig<512>::Bc>::Volta ==
-        Gemma4Tile<Gemma4Geometry<512, 8>, PrefillConfig<512>::WR, PrefillConfig<512>::Bc>::Volta &&
-    kFittingBc<WideGemma4Geometry, kWidePrefillWR, PrefillConfig<512>::Bc, false> ==
+// Of the tile `Arch`'s build compiles (#1112: a plan prices a substituted board's own).
+template <int Arch>
+inline constexpr bool kWidePrefillFitsOf =
+    Gemma4Tile<WideGemma4Geometry, kWidePrefillWR, PrefillConfig<512>::Bc, false, Arch>::Volta ==
+        Gemma4Tile<Gemma4Geometry<512, 8>, PrefillConfig<512>::WR, PrefillConfig<512>::Bc, false,
+                   Arch>::Volta &&
+    kFittingBc<WideGemma4Geometry, kWidePrefillWR, PrefillConfig<512>::Bc, false, Arch> ==
         PrefillConfig<512>::Bc &&
-    kFittingBc<Gemma4Geometry<512, 8>, PrefillConfig<512>::WR, PrefillConfig<512>::Bc> ==
-        PrefillConfig<512>::Bc;
+    kFittingBc<Gemma4Geometry<512, 8>, PrefillConfig<512>::WR, PrefillConfig<512>::Bc, true,
+               Arch> == PrefillConfig<512>::Bc;
+inline constexpr bool kWidePrefillFits = kWidePrefillFitsOf<kGemma4BuildArch>;
 
+template <int Arch = kGemma4BuildArch>
 bool wide_prefill(std::int32_t tokens, bool fp8) {
-    if (!kWidePrefillFits) return false;
+    constexpr bool kFp8Hardware = gemma4_arch_facts(Arch).fp8_hardware;
+    if (!kWidePrefillFitsOf<Arch>) return false;
     switch (g_prefill_slices.load(std::memory_order_relaxed)) {
     case Gemma4PrefillSlices::Narrow:
         return false;
     case Gemma4PrefillSlices::Wide:
-        return !fp8 || kGemma4Fp8Hardware;
+        return !fp8 || kFp8Hardware;
     case Gemma4PrefillSlices::Auto:
         break;
     }
@@ -169,14 +191,46 @@ bool wide_prefill(std::int32_t tokens, bool fp8) {
     // Gemma 4 31B UD-Q4_K_XL prefill of a 16K prompt) gains 1.5-1.7 % as the 4090 did,
     // and 5.0 % with the token-major W4A8 grid beside it (2946 -> 3093 t/s).
     // FP8 rows take it too where their D = 512 tile holds the codes alone (64 KiB wide).
-    return (!fp8 || kGemma4Fp8Hardware) && tokens >= kWidePrefillMinTokens;
+    return (!fp8 || kFp8Hardware) && tokens >= kWidePrefillMinTokens;
 }
 
 
 // The decode key tile of a geometry, at its widest decode CTA.
-template <class Geo>
+template <class Geo, int Arch = kGemma4BuildArch>
 inline constexpr int kGeoDecodeBc =
-    kFittingBc<Geo, (Geo::D <= 128 ? kDecodeMaxWarpRowsD128 : kDecodeMaxWarpRows), kDecodeBc>;
+    kFittingBc<Geo, (Geo::D <= 128 ? kDecodeMaxWarpRowsD128 : kDecodeMaxWarpRows), kDecodeBc, true,
+               Arch>;
+
+// `body` on the tiles of the build a snapshot label names (with_tile_arch's list).
+template <class Body>
+decltype(auto) with_label_tile_arch(std::string_view arch, Body&& body) {
+    if (arch == "70") return body.template operator()<70>(std::string_view("70"));
+    if (arch == "75") return body.template operator()<75>(std::string_view("75"));
+    if (arch == "80") return body.template operator()<80>(std::string_view("80"));
+    if (arch == "86") return body.template operator()<86>(std::string_view("86"));
+    if (arch == "89") return body.template operator()<89>(std::string_view("89"));
+    if (arch == "90") return body.template operator()<90>(std::string_view("90"));
+    if (arch == "100") return body.template operator()<100>(std::string_view("100"));
+    if (arch == "120a") return body.template operator()<120>(std::string_view("120a"));
+    // A snapshot label this list lacks: no tile of its build here, so nothing of the board's
+    // (never this build's tile in its place).
+    throw std::logic_error("gemma4_attention: no tile of the sm_" + std::string(arch) +
+                           " build here (with_tile_arch)");
+}
+
+// The architecture whose tiles a board's plan prices (#912): this build's where the board runs
+// this build's kernels (or no snapshot names its kernels), else the release build of its
+// architecture (kernel_facts::sass_arch), whose snapshot holds those kernels' facts. `body` takes
+// the architecture as a template argument and its snapshot label.
+template <class Body>
+decltype(auto) with_tile_arch(Body&& body) {
+    namespace kf                          = generic::kernel_facts;
+    const std::optional<std::string> arch = kf::sass_arch();
+    if (arch && *arch != kf::build_arch()) {
+        return with_label_tile_arch(*arch, std::forward<Body>(body));
+    }
+    return body.template operator()<kGemma4BuildArch>(kf::build_arch());
+}
 
 // D<=128 splits: at least 64 keys each, and at most 64 per row group, under the resident wave
 // (gemma4_attention_decode_plan). Every split costs T * Hq * D * 4 bytes of FP32 partials each
@@ -321,21 +375,36 @@ generic::kernel_facts::Gemma4KernelKey attention_key() {
 // The CTAs of gemma4_attention_kernel<Geo, WR, Bc, Partial, Fp8, Chain> one SM holds, from its
 // facts (gemma4_resident_ctas_per_sm); the live fallback prepares the kernel (its shared-memory
 // opt-in) only where it asks the device.
-template <class Geo, int WR, int Bc, bool Partial, bool Fp8 = false, bool Chain = false>
-int attention_resident_per_sm() {
-    using Tile = Gemma4Tile<Geo, WR, Bc, Fp8>;
-    return gemma4_resident_ctas_per_sm(
-        attention_key<Geo, WR, Bc, Partial, Fp8, Chain>(), Tile::Threads, Tile::SmemBytes, [] {
+// Arch / tile_arch: the architecture the tile is sized for and its snapshot label (with_tile_arch);
+// only this build's tile has a kernel here to ask live.
+template <class Geo, int WR, int Bc, bool Partial, bool Fp8 = false, bool Chain = false,
+          int Arch = kGemma4BuildArch>
+int attention_resident_per_sm(std::string_view tile_arch = generic::kernel_facts::build_arch()) {
+    using Tile                = Gemma4Tile<Geo, WR, Bc, Fp8, Arch>;
+    std::function<int()> live = []() -> int {
+        throw std::logic_error("gemma4_attention: another architecture's tile has no kernel here");
+    };
+    if constexpr (Arch == kGemma4BuildArch) {
+        live = [] {
             const auto kernel = prepared_kernel<Geo, WR, Bc, Partial, Fp8, Chain>();
             return kernel_resident_ctas_per_sm(reinterpret_cast<const void*>(kernel), Tile::Threads,
                                                Tile::SmemBytes);
-        });
+        };
+    }
+    return gemma4_resident_ctas_per_sm(attention_key<Geo, WR, Bc, Partial, Fp8, Chain>(),
+                                       Tile::Threads, Tile::SmemBytes, live, tile_arch);
 }
 
 // CTAs of one decode instance the whole device holds at once.
 template <class Geo, int WR>
 int decode_resident_ctas() {
-    return attention_resident_per_sm<Geo, WR, kGeoDecodeBc<Geo>, true>() * device_class().sms;
+    // The board's own tile (#912): its key tile, threads and shared bytes, as its release build
+    // compiles them.
+    return with_tile_arch([&]<int Arch>(std::string_view label) {
+               return attention_resident_per_sm<Geo, WR, kGeoDecodeBc<Geo, Arch>, true, false,
+                                                false, Arch>(label);
+           }) *
+           device_class().sms;
 }
 
 // The layer's KV heads: a page pool keeps them on its fourth axis.
@@ -409,7 +478,10 @@ Gemma4DecodePlan gemma4_attention_decode_plan(std::int32_t head_dim, std::int32_
     // splits per row group, at D >= 256 the resident wave below.
     std::int64_t tiles = std::numeric_limits<std::int32_t>::max();
     int decode_bc      = kDecodeBc;
-    with_geometry(head_dim, q_heads, kv_heads, [&]<class Geo>() { decode_bc = kGeoDecodeBc<Geo>; });
+    with_geometry(head_dim, q_heads, kv_heads, [&]<class Geo>() {
+        decode_bc =
+            with_tile_arch([]<int Arch>(std::string_view) { return kGeoDecodeBc<Geo, Arch>; });
+    });
     if (window > 0) {
         const std::int64_t keys = static_cast<std::int64_t>(window) + tokens - 1;
         std::int64_t split_keys = decode_bc;
@@ -456,14 +528,15 @@ void gemma4_attention_set_prefill_chain(Gemma4PrefillChain chain) noexcept {
 
 namespace {
 
-// The prefill tile of a call: Body<Geo, TileGeo, WR, Bf16Only>.
-template <class Body>
+// The prefill tile of a call: Body<Geo, TileGeo, WR, Bf16Only>; Arch: the build whose tile it is
+// (this build's for a launch; a substituted board's own for the plan's bytes, #1112).
+template <int Arch = kGemma4BuildArch, class Body>
 void with_prefill_tile(std::int32_t head_dim, std::int32_t q_heads, std::int32_t kv_heads,
                        std::int32_t tokens, bool fp8, Body&& body) {
     with_geometry(head_dim, q_heads, kv_heads, [&]<class Geo>() {
         if constexpr (std::is_same_v<Geo, Gemma4Geometry<512, 8>>) {
-            if (wide_prefill(tokens, fp8)) {
-                if constexpr (kGemma4Fp8Hardware) {
+            if (wide_prefill<Arch>(tokens, fp8)) {
+                if constexpr (gemma4_arch_facts(Arch).fp8_hardware) {
                     if (fp8) {
                         body.template operator()<Geo, WideGemma4Geometry, kWidePrefillWR, false>();
                         return;
@@ -532,11 +605,11 @@ struct ChainPlan {
     std::size_t bytes   = 0; // all of it, 0: the call runs plain
 };
 
-template <class Geo, class TileGeo, int WR, bool Bf16Only>
+template <class Geo, class TileGeo, int WR, bool Bf16Only, int Arch = kGemma4BuildArch>
 ChainPlan chain_plan(std::int32_t group, std::int32_t kv_heads, std::int32_t window, bool block,
                      std::int32_t tokens) {
-    constexpr int Bc = kPrefillBc<TileGeo, WR, PrefillConfig<Geo::D>::Bc, !Bf16Only>;
-    using Tile       = Gemma4Tile<TileGeo, WR, Bc, false>;
+    constexpr int Bc = kPrefillBc<TileGeo, WR, PrefillConfig<Geo::D>::Bc, !Bf16Only, Arch>;
+    using Tile       = Gemma4Tile<TileGeo, WR, Bc, false, Arch>;
     // A row block inside one key tile (no span blocks: the last row's keys bound every block's)
     // of a full causal layer, wider than a decode call. D >= 256: the layers whose CTAs are few
     // and long (Gemma 4 full layers, one CTA per SM).
@@ -546,7 +619,7 @@ ChainPlan chain_plan(std::int32_t group, std::int32_t kv_heads, std::int32_t win
     constexpr bool fits = TileGeo::D >= 256 && TileGeo::Pow2 &&
                           (Tile::Br >> TileGeo::GLog2) <= Bc &&
                           Tile::SmemBytes + static_cast<int>(sizeof(int)) <=
-                              static_cast<int>(kMaxSharedBytesPerBlock);
+                              gemma4_arch_facts(Arch).max_shared_per_block;
     if (!fits || window != 0 || block || tokens <= kGemma4DecodeMaxTokens || !chain_enabled()) {
         return {};
     }
@@ -565,14 +638,25 @@ ChainPlan chain_plan(std::int32_t group, std::int32_t kv_heads, std::int32_t win
 std::size_t gemma4_attention_chain_bytes(std::int32_t head_dim, std::int32_t q_heads,
                                          std::int32_t kv_heads, std::int32_t window, bool block,
                                          bool fp8, std::int32_t tokens) {
+    // The board's own tile (#1112): a substituted board of another architecture holds the chain
+    // its release build's tile fits, never this build's.
     std::size_t bytes = 0;
-    with_prefill_tile(head_dim, q_heads, kv_heads, tokens, fp8,
-                      [&]<class Geo, class TileGeo, int WR, bool Bf16Only>() {
-                          bytes = chain_plan<Geo, TileGeo, WR, Bf16Only>(
-                                      q_heads / kv_heads, kv_heads, window, block, tokens)
-                                      .bytes;
-                      });
+    with_tile_arch([&]<int Arch>(std::string_view) {
+        with_prefill_tile<Arch>(head_dim, q_heads, kv_heads, tokens, fp8,
+                                [&]<class Geo, class TileGeo, int WR, bool Bf16Only>() {
+                                    bytes = chain_plan<Geo, TileGeo, WR, Bf16Only, Arch>(
+                                                q_heads / kv_heads, kv_heads, window, block, tokens)
+                                                .bytes;
+                                });
+    });
     return bytes;
+}
+
+bool gemma4_tile_arch_known(std::string_view label) {
+    try {
+        with_label_tile_arch(label, []<int Arch>(std::string_view) { return Arch; });
+        return true;
+    } catch (const std::logic_error&) { return false; }
 }
 
 std::size_t gemma4_attention_chain_bound(std::int32_t head_dim, std::int32_t q_heads,
@@ -589,7 +673,7 @@ std::size_t gemma4_attention_chain_bound(std::int32_t head_dim, std::int32_t q_h
 }
 
 void gemma4_attention_prefill_launch(const Gemma4AttentionLaunch& launch, std::int32_t batch,
-                                     void* chain, cudaStream_t stream) {
+                                     void* chain, std::size_t chain_capacity, cudaStream_t stream) {
     const Gemma4AttentionArgs args = make_args(launch);
     const bool fp8                 = args.k_scale != nullptr;
     with_prefill_tile(
@@ -617,7 +701,7 @@ void gemma4_attention_prefill_launch(const Gemma4AttentionLaunch& launch, std::i
             }
             const ChainPlan plan          = chain_plan<Geo, TileGeo, WR, Bf16Only>(
                 group, args.kv_heads, args.window, args.block != 0, args.tokens);
-            if (chain != nullptr && plan.bytes > 0 &&
+            if (chain != nullptr && plan.bytes > 0 && plan.bytes <= chain_capacity &&
                 chain_pays<TileGeo, WR, Bc>(blocks * args.kv_heads)) {
                 if (plan.blocks != blocks) {
                     throw std::logic_error(
@@ -742,13 +826,14 @@ void gemma4_kv_append_launch(const Tensor& k, const Tensor& v, const Tensor& pos
 }
 
 int gemma4_resident_ctas_per_sm(const generic::kernel_facts::Gemma4KernelKey& key, int threads,
-                                std::size_t dynamic_shared_bytes,
-                                const std::function<int()>& live) {
+                                std::size_t dynamic_shared_bytes, const std::function<int()>& live,
+                                std::optional<std::string_view> tile_arch) {
     namespace kf                          = generic::kernel_facts;
     const std::optional<std::string> arch = kf::sass_arch();
-    // The key, threads and shared bytes are this build's tile (Gemma4Tile, kFittingBc: constexprs
-    // of NINFERNO_BUILD_ARCH): they are a board's only where its kernels are this build's (#912).
-    const bool own_tile = arch && *arch == kf::build_arch();
+    // The key, threads and shared bytes are the tile of `tile_arch`'s build (Gemma4Tile of its
+    // Gemma4ArchFacts, #912): they are the board's where it runs that architecture's kernels;
+    // nullopt: a key of no tile (the Volta decode kernel's), the board's on every architecture.
+    const bool own_tile = arch && (!tile_arch || *arch == *tile_arch);
     const std::optional<kf::KernelFacts> facts =
         own_tile ? kf::gemma4_facts(*arch, key) : std::nullopt;
     if (facts) {
@@ -776,7 +861,7 @@ int gemma4_resident_ctas_per_sm(const generic::kernel_facts::Gemma4KernelKey& ke
             "gemma4_attention: no kernel facts of the " + key.kernel +
             " kernel for the substituted board" + (arch ? " (sm_" + *arch + ")" : std::string()) +
             (arch && !own_tile
-                 ? ": this build's tiles are sm_" + std::string(kf::build_arch()) + "'s (#912)"
+                 ? ": the tile priced is sm_" + std::string(tile_arch.value_or("?")) + "'s (#912)"
                  : std::string()));
     }
     return std::max(1, live());

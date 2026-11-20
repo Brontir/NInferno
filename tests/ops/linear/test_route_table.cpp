@@ -87,7 +87,9 @@ int shipped_picks() {
                               R"re("epilogue": "([a-z]+)",\s*"n": ([0-9]+),\s*"k": ([0-9]+),)re"
                               R"re(\s*"bands": \[\s*\[\s*([0-9]+),\s*[0-9]+,\s*"([^"]+)")re");
     int files = 0;
-    // The first file and its board, for the refusals below.
+    // The file and its board for the refusals and the gap check below: of the files with two
+    // entries or more, the first by name (a directory's order is the filesystem's: one stand
+    // listed a one-entry file first and failed the gap check, #1123).
     std::string first_name, first_text;
     std::uint32_t first_id = 0;
     for (const auto& f : std::filesystem::directory_iterator(dir)) {
@@ -114,7 +116,12 @@ int shipped_picks() {
         d.facts = ninferno::machine_facts_of(d);
         const ninferno::ScopedDeviceClass scoped(d);
         ninferno::ops::set_route_table_dir("");
-        if (first_name.empty()) {
+        int entry_count = 0;
+        for (auto it = std::sregex_iterator(text.begin(), text.end(), entry_re);
+             it != std::sregex_iterator() && entry_count < 2; ++it) {
+            ++entry_count;
+        }
+        if (entry_count >= 2 && (first_name.empty() || name < first_name)) {
             first_name = name;
             first_text = text;
             first_id   = id;
@@ -205,6 +212,114 @@ int shipped_picks() {
                      std::regex_replace(first_text, std::regex(R"re("bands": \[\s*\[\s*9,)re"),
                                         R"re("bands": [[5,)re",
                                         std::regex_constants::format_first_only));
+        // Within kCarryDistance a predicted band fills the table's gaps only (#1068): a table of
+        // this class (distance 0) holding the file's first problem answers it as measured; the
+        // file's second problem, which the table lacks, is answered as predicted, also where a
+        // similar chip's table lends it (Borrowed, fill_from).
+        {
+            std::vector<std::smatch> entries;
+            for (auto it = std::sregex_iterator(first_text.begin(), first_text.end(), entry_re);
+                 it != std::sregex_iterator() && entries.size() < 2; ++it) {
+                entries.push_back(*it);
+            }
+            std::smatch cls;
+            const std::regex class_re("\"class\": \"([^\"]+)\"");
+            if (entries.size() < 2 || !std::regex_search(first_text, cls, class_re)) {
+                failures +=
+                    check(false, first_name + ": two entries and a class for the gap check");
+            } else {
+                const auto problem_of = [](const std::smatch& e) {
+                    return generic::Problem{
+                        ninferno::find_route(e[1].str()).value_or(ninferno::QType::BF16),
+                        ninferno::ops::LinearPolicy::A16Only, std::stoi(e[3].str()),
+                        std::stoi(e[4].str()),
+                        e[2].str() == "swiglu" ? generic::Epilogue::SwiGlu
+                        : e[2].str() == "add"  ? generic::Epilogue::AddResidual
+                                               : generic::Epilogue::Store};
+                };
+                const std::string own = entries[0][6].str() == "rmma.m1.n1.w1x4"
+                                            ? "rmma.m1.n2.w1x4"
+                                            : "rmma.m1.n1.w1x4";
+                std::filesystem::remove_all(tmp);
+                std::filesystem::create_directories(tmp / "pick");
+                std::ofstream(tmp / "pick" / first_name) << first_text;
+                std::ofstream(tmp / first_name) << table(
+                    cls[1].str(), "{\"format\": \"" + entries[0][1].str() +
+                                      "\", \"compute\": \"a16\", \"epilogue\": \"" +
+                                      entries[0][2].str() + "\", \"n\": " + entries[0][3].str() +
+                                      ", \"k\": " + entries[0][4].str() +
+                                      ", \"bands\": [[1, 16777216, \"" + own + "\"]]}");
+                const auto similar     = ninferno::device_class().similar_chips();
+                const std::string lent = entries[1][6].str() == "rmma.m1.n1.w1x4"
+                                             ? "rmma.m1.n2.w1x4"
+                                             : "rmma.m1.n1.w1x4";
+                if (!similar.empty()) {
+                    std::ofstream(tmp / (similar.front() + ".json"))
+                        << table(similar.front(),
+                                 "{\"format\": \"" + entries[1][1].str() +
+                                     "\", \"compute\": \"a16\", " + "\"epilogue\": \"" +
+                                     entries[1][2].str() + "\", \"n\": " + entries[1][3].str() +
+                                     ", \"k\": " + entries[1][4].str() +
+                                     ", \"bands\": [[1, 16777216, \"" + lent + "\"]]}");
+                }
+                ninferno::ops::set_route_table_dir(utf8_path(tmp));
+                try {
+                    const auto s  = ninferno::ops::route_table_status();
+                    const auto a0 = generic::table_route_answer(
+                        problem_of(entries[0]), std::stoi(entries[0][5].str()), false);
+                    const auto a1 = generic::table_route_answer(
+                        problem_of(entries[1]), std::stoi(entries[1][5].str()), false);
+                    failures += check(
+                        s.loaded && s.predicted_entries > 0,
+                        first_name + ": a table of the class still reads the pick: " + s.message);
+                    failures += check(a0 && !a0->predicted && generic::route_name(a0->route) == own,
+                                      first_name +
+                                          ": the table's own entry stands above the "
+                                          "prediction (answers " +
+                                          (a0 ? generic::route_name(a0->route) : "none") + ")");
+                    failures += check(
+                        a1 && a1->predicted &&
+                            generic::route_name(a1->route) == entries[1][6].str(),
+                        first_name + ": the table's gap takes the predicted band" +
+                            (similar.empty()
+                                 ? std::string()
+                                 : ", ahead of " + similar.front() + "'s lent " + lent) +
+                            " (answers " + (a1 ? generic::route_name(a1->route) : "none") + ")");
+                    if (!similar.empty()) {
+                        failures += check(s.borrowed_entries > 0,
+                                          first_name + ": " + similar.front() +
+                                              "'s table lends the gap (" + s.message + ")");
+                    }
+                    // A width the own entry has no band at is a gap too: the same entry measured
+                    // from 17 tokens only leaves the file's band to answer at its width.
+                    std::ofstream(tmp / first_name)
+                        << table(cls[1].str(),
+                                 "{\"format\": \"" + entries[0][1].str() +
+                                     "\", \"compute\": \"a16\", \"epilogue\": \"" +
+                                     entries[0][2].str() + "\", \"n\": " + entries[0][3].str() +
+                                     ", \"k\": " + entries[0][4].str() +
+                                     ", \"bands\": [[17, 16777216, \"" + own + "\"]]}");
+                    // The same directory again: set_route_table_dir keeps a loaded table of an
+                    // unchanged directory, so it is dropped first (clear_route_table marks it
+                    // explicit, which the set resets to a fresh read of the directory).
+                    ninferno::ops::clear_route_table();
+                    ninferno::ops::set_route_table_dir(utf8_path(tmp));
+                    const auto w0 = generic::table_route_answer(
+                        problem_of(entries[0]), std::stoi(entries[0][5].str()), false);
+                    failures += check(w0 && w0->predicted &&
+                                          generic::route_name(w0->route) == entries[0][6].str(),
+                                      first_name +
+                                          ": an own entry with no band at the width leaves it to "
+                                          "the predicted band (answers " +
+                                          (w0 ? generic::route_name(w0->route) : "none") + ")");
+                } catch (const std::exception& error) {
+                    failures += check(false, first_name + " gap check refused: " + error.what());
+                }
+            }
+        }
+    } else if (files > 0) {
+        failures +=
+            check(false, "a shipped pick file with two entries for the refusals and the gap check");
     }
     // A board of a shipped class on other memory reads none of the class's bands (codex on #1066):
     // the RTX A4000 (448 GB/s) beside the RTX 3070 Ti's ga104:48sm (608), refused as another

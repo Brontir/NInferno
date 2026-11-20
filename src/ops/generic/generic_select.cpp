@@ -1152,9 +1152,35 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                 // K/V, gates, small outputs) by x1.4..2.1 (median per card) to the sixteen-warp
                 // split; on the RTX 5090 the CTA pair or cluster of eight was 0..17 % faster still
                 // (n = 48 and 1024, T = 12 and 16: 8..20 us against 16..41 for the rule).
+                // The pair launches two CTAs for each of the eight-warp grid's: one a token column
+                // (n_tiles x 8 tokens: two columns from 9 tokens) per 16 rows. It runs in one wave
+                // only while pair x columns x CTAs fit in the CTAs an SM holds (two for a one-tile
+                // CTA of at most 256 threads, generic_gemm.cuh kMinBlocks) times the SMs; past that
+                // the eight-warp CTA is the split (#1052, RTX 5090, K-quants Q2_K-Q6_K, T 9-16,
+                // every route timed: at 1024 rows, 64 CTAs, the pair is 0.3-4.7 % from the best and
+                // n1.w1x8 20-30 %; at 1536-2560 rows, 96-160 CTAs, n1.w1x8 is the best within
+                // 0.6 % and the pair 21-28 % behind). At 8 tokens and below (one column) the same
+                // count is the decode split's `ctas <= sms` above. Only the decode split's own
+                // pair is replaced (one_wave_split: a build with the cluster schedules), and only
+                // on a board with clusters (current_arch_facts: in such a build a substituted
+                // board without them refuses the pair and keeps its narrow fallback); its
+                // sixteen-warp CTA (a build without them) and its cluster of eight stay.
                 const std::int64_t ctas = (static_cast<std::int64_t>(problem.n) + 15) / 16;
                 const std::int64_t sms  = sm_count();
-                if (ctas <= sms) return one_wave_split(ctas, sms);
+                const RmmaScheduleInfo eight = rmma_schedule_info(rmma_index(1, 8, 1, 1));
+                const std::int64_t columns = (tokens + eight.n_tiles * 8 - 1) / (eight.n_tiles * 8);
+                const std::int64_t held =
+                    eight.m_tiles * eight.n_tiles == 1 && eight.warps_m * eight.warps_k * 32 <= 256
+                        ? 2
+                        : 1;
+                if (ctas <= sms) {
+                    const int pair_split = one_wave_split(ctas, sms);
+                    if (rmma_schedule_info(pair_split).cluster == 2 &&
+                        current_arch_facts().features.clusters && 2 * columns * ctas > held * sms) {
+                        return rmma_index(1, 8, 1, 1);
+                    }
+                    return pair_split;
+                }
                 return rmma_index(1, 4, 1, 2);
             }
             return rmma_index(1, 8, 1, 1);

@@ -37,20 +37,25 @@ inline constexpr int kCausalMergeNarrowDChunk = 64;
 //   addresses, then `cuobjdump -sass` (CUDA 13.1);
 // - fixed work: the static instructions from the entry to the end of the first stage's refetch
 //   (the twelfth LDG.E.128), plus those from the last barrier to the final EXIT. That is
-//   sm_75 500, sm_86 497, sm_89 497, sm_120a 391;
+//   sm_75 500, sm_86 497, sm_89 497, sm_120a 391 (CUDA 13.2); CUDA 13.4 (the stands' and the
+//   release's nvcc) makes sm_75's 501 (RTX 2080 Ti, ninferno_causal_merge_counts_test); the other
+//   three were not recounted under 13.4 (their builds' test checks them against F); CUDA 12.8 (the
+//   sm_70 build's nvcc: CUDA 13 compiles no sm_70) makes sm_70's 515, stage 67 (Quadro GV100);
 // - a further stage: from the barrier after the first chain to the sixteenth LDG.E.128. That is
 //   sm_75 65, sm_86 74, sm_89 74, sm_120a 67, rounded to 70;
 // - a split: the chain's x16 body is 60 instructions (weight, test, value, FFMA), 3.75 a split,
 //   rounded up to 4.
-// One F = 500 serves every architecture, the largest count, so a board is never priced as
+// One F = 515 serves every architecture, the largest count, so a board is never priced as
 // narrowing more cheaply than its SASS says. sm_120a's own 391 is deliberately not used: on the
 // RTX 5090 and 5070 Ti it changes no decision at W 1-11 with the wave partition's splits. At
 // W = 1 a board's decision moves only for F under 210 (RTX 4070 Ti; 119 on the 4060 Ti, 61 on the
-// 3060), far below every count. These counts are not yet in the kernel-facts snapshots
-// (tools/kernel_facts, ninferno_kernel_facts_test). That tool reads the register-MMA kernels only,
-// and adding the merges needs its kernel set and a snapshot per architecture, which is not a small
-// change. Until then the counts are pinned here by hand.
-inline constexpr std::int64_t kCausalMergeFixedWarpInstructions = 500;
+// 3060), far below every count. At large split counts F moves the narrow-versus-wide boundary of
+// a call (256 columns on 28 SMs narrow from 148 splits at F 501, from 152 at 515:
+// test_causal_merge_order's asserts). ninferno_causal_merge_counts_test checks them on every build
+// (tools/kernel_facts/merge_counts.py, #872): it counts the two instances in the build's own
+// binary by the rule above and fails where the fixed work exceeds F or a stage lies more than
+// 10 % from 70, so a compiler bump or a kernel edit that moves them is seen.
+inline constexpr std::int64_t kCausalMergeFixedWarpInstructions = 515;
 inline constexpr std::int64_t kCausalMergeStageWarpInstructions = 70;
 inline constexpr std::int64_t kCausalMergeSplitInstructions     = 4;
 // One stage: CausalMergeColumns::kStageFloats.

@@ -713,6 +713,12 @@ int machine_facts_decide() {
     const auto a                      = rt::decision_fingerprint(inputs(stock));
     const auto b                      = rt::decision_fingerprint(inputs(overclocked));
     failures += check(a.value == b.value, "an overclocked RTX 4090 fingerprints as a stock one");
+    // A board's own subsystem (every card has its maker's) that names no registered variant: the
+    // same machine, the same fingerprint (#903 item 4, the Opus review of #1093).
+    ninferno::DeviceClass vendor = stock;
+    vendor.pci_subsystem_id      = 0x10431234;
+    failures += check(rt::decision_fingerprint(inputs(vendor)).value == a.value,
+                      "an RTX 4090 with its maker's subsystem fingerprints as a stock one");
     failures += check(a.manifest != b.manifest, "the overclock is observed in the manifest");
     failures += check(inputs(stock).facts.at("machine.source") == "verified" &&
                           inputs(stock).facts.at("machine.reference_clock_khz") == "2520000" &&
