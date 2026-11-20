@@ -60,6 +60,12 @@ def test_w4a8_routes_are_not_candidates(tmp_path):
     assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
 
 
+def test_r8_routes_are_not_candidates(tmp_path):
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 150), ("r8.w4r1", 100))]
+    bands, _ = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows)
+    assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
+
+
 def test_a_tie_keeps_the_table_route(tmp_path):
     # n1 is far behind at T9, so the range moves; n2 and n4 tie on worst regret, and the table's own
     # n4 (at T10-11) is kept rather than the alphabetically first n2.

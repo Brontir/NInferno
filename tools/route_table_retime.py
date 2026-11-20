@@ -7,8 +7,9 @@ For every generic entry of the table (format, compute, epilogue, n, k) that the 
 --tokens, where the table's own route is slower than the grid's fastest by more than --margin at some
 count there, the range takes one route: the one whose worst regret over the range is least (the
 table's own route on a tie). The candidates are the routes a table's a16 bands hold: A16 schedules and
-ggml_mmq, as the dense tuner writes them; the W4A8 routes (route_tune --a8-candidates 1 times them too)
-belong to the W4A8 heuristic, not a table (route_authorities.cpp). An entry whose table route the grid
+ggml_mmq, as the dense tuner writes them; the W4A8 and R8 routes (route_tune --a8-candidates 1 times
+them too) are never tabled (route_tune_tool.cpp, route_authorities.cpp). A GGUF format's a8 rows are
+its a16 entry's; FP8's a8 entry keeps its own key. An entry whose table route the grid
 did not time, or where no route was timed at every count, is kept (and named on stderr). Bands outside
 the range are kept; adjacent bands of one route are joined. A moved count's evidence_us row timed the
 old route, so it is dropped. The grid must be the table's board's: route_tune --routes-out on the same
@@ -22,8 +23,9 @@ from collections import defaultdict
 from pathlib import Path
 
 INF = 16777216
-# Routes a table's a16 bands do not hold (the W4A8 heuristic answers them).
-NOT_TABLE_ROUTES = ("w4a8",)
+# Routes a table's a16 bands do not hold: W4A8 and R8 are timed by --a8-candidates 1 but never tabled
+# (src/ops/generic/route_tune_tool.cpp; the W4A8 heuristic and the R8 rules answer them).
+NOT_TABLE_ROUTES = ("w4a8", "r8.")
 
 
 def route_at(bands, t):
@@ -68,9 +70,10 @@ def main():
     for r in csv.DictReader(a.routes.open(encoding="utf-8")):
         t = int(r["T"])
         if lo <= t <= hi and not r["route"].startswith(NOT_TABLE_ROUTES):
-            # route_tune --a8-candidates 1 labels an a16 shape's rows a8 (the A8 routes are among
-            # its candidates); the tables hold such a problem as a16.
-            compute = "a16" if r["compute"] == "a8" else r["compute"]
+            # route_tune --a8-candidates 1 labels a GGUF a16 shape's rows a8 (the A8 routes are
+            # among its candidates); the tables hold such a problem as a16. FP8's a8 is its own
+            # key (route_tune_tool.cpp: a8 is FP8's only), kept.
+            compute = "a16" if r["compute"] == "a8" and r["format"] != "fp8" else r["compute"]
             key = (r["format"], compute, r["epilogue"], int(r["n"]), int(r["k"]))
             grid[(key, t)][r["route"]] = float(r["median_us"])
     doc = json.loads(a.table.read_text(encoding="utf-8"))
