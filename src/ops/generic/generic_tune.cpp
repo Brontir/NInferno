@@ -81,6 +81,7 @@
 #include <sstream>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #ifndef _WIN32
@@ -447,9 +448,11 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
             if (base.family != Family::R8Mma && r8_tunable(problem, weight, t)) {
                 routes.insert(routes.end(), r8.begin(), r8.end());
             }
+            std::vector<std::pair<Route, double>> timed; // each candidate's one sample
             for (const Route r : routes) {
                 if (r == base) continue;
                 const double us = bench.median_us(r, t);
+                timed.emplace_back(r, us);
                 if (us < best_us) {
                     best_us = us;
                     best    = r;
@@ -463,16 +466,19 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
             // a route change changes the output bits (#1074). Only a prediction the tuner offers
             // (the heuristic or a candidate) is timed as itself: another (an MMQ band on rows the
             // MMQ does not take) would be demoted by the launch, its time another route's, so the
-            // timed best is written as before.
+            // heuristic's route stands in for it under the same margin.
             const std::optional<Route> predicted =
                 predicted_before_tuner(problem, weight, t, false);
             const bool offered =
                 predicted && (*predicted == base ||
                               std::find(routes.begin(), routes.end(), *predicted) != routes.end());
             if (offered) {
-                const double predicted_us = *predicted == best   ? best_us
-                                            : *predicted == base ? base_us
-                                                                 : bench.median_us(*predicted, t);
+                // The route's own sample from above: a second timing of it, compared with the
+                // others' first, would be a different draw of the noise.
+                double predicted_us = base_us;
+                for (const auto& [r, us] : timed) {
+                    if (r == *predicted) predicted_us = us;
+                }
                 entry["us"][name].push_back(predicted_us);
                 const Route kept =
                     tuned_over_prediction(*predicted, predicted_us, best, best_us, kMargin);
@@ -486,12 +492,17 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
                                 ? ", the predicted route kept)"
                                 : ", over the predicted " + route_name(*predicted) + ")");
             } else if (predicted) {
-                tuned.routes[static_cast<std::size_t>(t)] = best;
-                entry["routes"][name]                     = route_name(best);
+                // The prediction is not timed as itself: the entry is still written (it answers
+                // over the band), holding the heuristic's route unless a candidate beats it by the
+                // margin, as above, so two runs on one card write the same route (#1074).
+                const Route kept = tuned_over_prediction(base, base_us, best, best_us, kMargin);
+                tuned.routes[static_cast<std::size_t>(t)] = kept;
+                entry["routes"][name]                     = route_name(kept);
                 ++improved;
-                summary << " T" << t << " " << format_us(base_us) << "->" << format_us(best_us)
-                        << " us (" << route_name(best) << ", the predicted "
-                        << route_name(*predicted) << " not offered)";
+                summary << " T" << t << " " << format_us(base_us) << "->"
+                        << format_us(kept == base ? base_us : best_us) << " us ("
+                        << route_name(kept) << ", the predicted " << route_name(*predicted)
+                        << " not offered)";
             } else if (best_us <= kMargin * base_us) {
                 tuned.routes[static_cast<std::size_t>(t)] = best;
                 entry["routes"][name]                      = route_name(best);
