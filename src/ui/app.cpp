@@ -2403,9 +2403,7 @@ std::optional<product::GgufTensorTable> App::gguf_table(const std::string& repo,
             gguf_failed_.erase(key);
             // A table that prices its row: its tensors, or a split part's prefill route (#775) or
             // formats (#811).
-            if (table.tensor_bytes > 0 || table.expert_prefill != runtime::ExpertPrefill::Unknown ||
-                table.expert_prefill_int8 != runtime::ExpertPrefill::Unknown ||
-                !table.weight_formats.empty()) {
+            if (product::table_prices_row(table)) {
                 ++tables_generation_[hub_key(repo, hub)];
                 if (read != nullptr) { read->stored = true; }
                 // The repository's plans priced before it (the catalog's too) are planned again.
