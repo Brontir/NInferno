@@ -201,7 +201,9 @@ std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& prob
     if (a8_call(ask, problem, weight)) {
         // An int8 call of T 17-32 outside the prefill profile (a round of speculative verify, a
         // decode batch) that only a8_wide_call sends past the table: the analyzer's predicted band,
-        // priced among both activation classes (#785: RTX 4070 Ti / 4090, T 24 / 32, mean regret
+        // priced among the A16 register MMA and the int8 ggml_mmq (pick.py does not price W4A8, so
+        // the band never names it; the board's own W4A8 band still answers first, auto_answer)
+        // (#785: RTX 4070 Ti / 4090, T 24 / 32, mean regret
         // +2.0 / +4.1 % against the cost model's +27.1 / +19.9 %), ahead of the cost model. The
         // table's measured entries hold A16 schedules and stay aside.
         if (a8_narrow_call(ask, problem, weight) || ask.prefill()) return std::nullopt;

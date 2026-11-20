@@ -287,12 +287,12 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "structural width, no margin recorded",
      ""},
     {"kPredictedMaxTokens", Basis::Measured, "../route_table.cpp",
-     "constexpr std::int32_t kPredictedMaxTokens = 32;", 32, "ad104:60sm, ad102:128sm, gb202:170sm",
-     "RTX 4070 Ti, RTX 4090, RTX 5090",
-     "the last width a routes/pick band may hold: the narrow prefill band T 17-32, where pick.py "
-     "(VERIFIED_T17: cc 86 / 89 / 120) took the timed routes at +2.0 / +4.1 / +5.7 % mean regret "
-     "against the cost model's +27.1 / +19.9 / +3.9 % (route_tune a16 decode-only, T 24 / 32, "
-     "open grids, #785)",
+     "constexpr std::int32_t kPredictedMaxTokens = 32;", 32, "ad104:60sm, ad102:128sm",
+     "RTX 4070 Ti, RTX 4090",
+     "the last width a routes/pick band may hold: T 17-32, written for cc 8.9 only (gen.py "
+     "NARROW_CC), where pick.py took the timed routes at +2.0 / +4.1 % mean regret against the "
+     "cost model's +27.1 / +19.9 % (route_tune a16 decode-only, T 24 / 32, open grids, #785); "
+     "the 5090's +5.7 against +3.9 % keeps cc 12.0 out, and the 3060's empty grid cc 8.6",
      ""},
     {"kQ8PrefillA8Tokens", Basis::Structural, "generic_gemm.h",
      "inline constexpr std::int32_t kQ8PrefillA8Tokens = kPrefillBandMinTokens;", 17,
