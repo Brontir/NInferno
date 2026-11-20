@@ -629,12 +629,15 @@ public:
             // (SparseMoe) and calibrated Gemma 4 layers (Gemma4Moe) run a fused W4A4 instead,
             // which no ExpertPrefill value prices. The facts name no build, so the layer's route
             // is the build's: Unknown (#796 item 1).
-            // Under --activations int8 every bank runs at AllowA8 and no A4 policy remains.
             // So is one whose policy the facts do not hold (a GGUF NVFP4 bank with an activation
             // divisor: the loader's probe and the model's recipe set it, AllowA4 for the Qwen 3.5
-            // and Gemma 4 recipes), never A16 by the kept fallback (#1090).
+            // and Gemma 4 recipes), never A16 by the kept fallback (#1090). Under --activations
+            // int8 every bank runs at AllowA8 and no A4 policy remains.
             const runtime::PlanExpertPolicy lp = layer_policy(l.gate_up, l.down);
-            const bool build_decides = !int8 && l.nvfp4 && l.gate_up.seen && l.down.seen &&
+            // A layer the loader runs at A16 (loader_a16: a Gemma 4 GGUF MXFP4 bank without a
+            // divisor beside it) stays A16 whatever its policy (ops moe_policy).
+            const bool build_decides = !int8 && !l.loader_a16 && l.nvfp4 && l.gate_up.seen &&
+                                       l.down.seen &&
                                        (lp == runtime::PlanExpertPolicy::AllowA4 ||
                                         lp == runtime::PlanExpertPolicy::Unknown);
             if (!l.known || build_decides) {

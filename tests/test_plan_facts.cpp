@@ -1449,7 +1449,8 @@ int artifact_prefill_policy() {
                       "artifact prefill: NVFP4 banks at AllowA8, the grouped W4A8");
     failures += check(route(QType::NVFP4, layers(a16, a16, a16, a16)) == rt::ExpertPrefill::A16,
                       "artifact prefill: NVFP4 banks recorded A16Only, A16");
-    // A policy the facts do not hold is the build's or the recipe's, not the kept A16Only.
+    // A policy the facts do not hold is the build's or the recipe's, not the kept A16Only (an
+    // artifact's start refuses a use with none, weight_use.cpp; a GGUF's divisor bank has none).
     failures +=
         check(route(QType::NVFP4, layers(none, none, none, none)) == rt::ExpertPrefill::Unknown,
               "artifact prefill: NVFP4 banks with no recorded policy, Unknown");
