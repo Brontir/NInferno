@@ -376,9 +376,9 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
         described->sums = static_cast<int>(Sums);
         return;
     }
-    // LAB (#1051 step 1, never merged): NINFERNO_LAB_RMMA_CTA_CAP=c pads every register-MMA launch's
-    // dynamic shared memory so that at most c CTAs fit an SM (shared memory per SM / c, less the
-    // kernel's static bytes and the per-CTA reservation).
+    // LAB (#1051 step 1, never merged): NINFERNO_LAB_RMMA_CTA_CAP=c pads every register-MMA
+    // launch's dynamic shared memory so that at most c CTAs fit an SM (shared memory per SM / c,
+    // less the kernel's static bytes and the per-CTA reservation).
     if (const char* cap_text = std::getenv("NINFERNO_LAB_RMMA_CTA_CAP")) {
         const int cap = std::atoi(cap_text);
         if (cap > 0) {
