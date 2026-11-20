@@ -292,6 +292,10 @@ int shipped_picks() {
                                      entries[0][2].str() + "\", \"n\": " + entries[0][3].str() +
                                      ", \"k\": " + entries[0][4].str() +
                                      ", \"bands\": [[17, 16777216, \"" + own + "\"]]}");
+                    // The same directory again: set_route_table_dir keeps a loaded table of an
+                    // unchanged directory, so it is dropped first (clear_route_table marks it
+                    // explicit, which the set resets to a fresh read of the directory).
+                    ninferno::ops::clear_route_table();
                     ninferno::ops::set_route_table_dir(utf8_path(tmp));
                     const auto w0 = generic::table_route_answer(
                         problem_of(entries[0]), std::stoi(entries[0][5].str()), false);
