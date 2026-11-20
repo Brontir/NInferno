@@ -798,7 +798,8 @@ void test_default_copy_window(const std::vector<Subject>& all) {
                     const StartPlan start                      = start_plan(s.family, planned, low);
                     if (!regions) {
                         regions = true;
-                        planner_regions(s.family, planned); // options the start normalized
+                        planner_regions(s.family,
+                                        planned); // the options the start just planned with
                     }
                     const StartPlan start_off = start_plan(s.family, planned_off, low);
                     const rt::PlanRungBytes dry =
@@ -908,6 +909,7 @@ void test_default_copy_window(const std::vector<Subject>& all) {
                   top_now.bytes.total() > top_before.bytes.total(),
               "the copy window costs the 27B MTP rung bytes");
     }
+    check(regions, "the planner's prefill regions were checked on a start");
 }
 
 // An artifact's proposal head (proposal/*) is on the Device only while it drafts: under MTP or
