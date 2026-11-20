@@ -43,6 +43,20 @@ enum class FormFactor : std::uint8_t { Unknown, Desktop, Laptop, Server };
 [[nodiscard]] std::string_view to_string(FormFactor form) noexcept;
 
 // One SKU of the reference table.
+// A board sold under a row's PCI product id that its PCI subsystem id names (#903: the TITAN V CEO
+// Edition, subsystem 10DE:12EB, under the Quadro GV100's 0x1DBA, same SMs and memory, a lower boost
+// clock). Its values are the row's except where gpu_facts.json gives its own.
+struct GpuFactsSubsystem {
+    std::uint32_t id = 0; // subsystem vendor << 16 | subsystem device: 0x10DE12EB
+    std::string name;
+    int boost_mhz   = 0;
+    int bus_bits    = 0;
+    double gbps     = 0;
+    int tdp_w       = 0;
+    double vram_gib = 0;
+    std::vector<std::string> sources;
+};
+
 struct GpuFactsRow {
     std::uint32_t pci_device_id = 0;
     std::string name;
@@ -64,6 +78,8 @@ struct GpuFactsRow {
     bool target     = true;  // false: listed for identification only (H100, B200)
     std::vector<std::string> sources;
     std::string note;
+    // The other boards of the id that the subsystem id tells apart (machine_facts reads them).
+    std::vector<GpuFactsSubsystem> subsystems;
 };
 
 // The reference table, parsed once from the embedded JSON. Throws std::runtime_error when the
@@ -84,6 +100,12 @@ struct DriverReport {
     int sm_clock_khz     = 0; // cudaDevAttrClockRate
     int memory_clock_khz = 0; // cudaDevAttrMemoryClockRate: half the data rate
     int memory_bus_bits  = 0; // cudaDevAttrGlobalMemoryBusWidth
+    // The PCI subsystem, vendor << 16 | device (0x10DE12EB). 0 where none was asked: a board named
+    // by its row (a plan's, a test's) is the row's own board.
+    std::uint32_t pci_subsystem_id = 0;
+    // The driver was asked for the subsystem and could not say: on an id whose row lists boards by
+    // subsystem, which of them this is stays unknown (machine_facts prices the slowest).
+    bool subsystem_unread = false;
 };
 
 struct MachineFacts {
@@ -113,6 +135,9 @@ struct MachineFacts {
     // SM count feeds `share`, which the decision fingerprint always hashes, so it does not set
     // this. The fingerprint hashes the driver's values only when this is set.
     bool driver_read = false;
+    // The row lists other boards under the id by subsystem and the driver could not say which
+    // this is: the facts are the slowest of them (extrapolated, #903).
+    bool subsystem_unknown = false;
 
     // Whether the cost model has a roofline: a clock, a bus width and a memory clock.
     [[nodiscard]] bool has_roofline() const noexcept {
