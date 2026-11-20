@@ -367,16 +367,14 @@ void sections_read() {
     // k_iter 32 J (a 128-row x J-column tile over 256 K on 8 warps, per m16n8 tile); the int8 MMA
     // the generation has (Turing's m8n8k16, m16n8k32 from sm_80 on); and the W4A8 32 x 128 tile
     // (Q4_K, Q6_K) with one loop, two barriers per 128-value K tile and k_iter 16 x 32.
-    // sm_70 has no mmq section: its snapshot is made with CUDA 12.8 (#762), and Volta takes no
-    // MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts, the
-    // r8 one (#613 PR-10): the R8 law reads the one-slot ring's, and the w4a8 one (#787): its
-    // int8 MMA is a call to the dp4a emulation, counted as the MMA it stands for, and the vec one
-    // (#763): a substituted board's vector-kernel launch reads its CTAs per SM from it. The
-    // routed-expert families (moer8, moegemm, #619 step 11) are not in it: the MoE law reads the
-    // boards it was measured on (Turing and newer), and sm_100 has none yet (six of its W4a8Nvfp4
-    // GateUp rows read as unknown flow; no lab board is an sm_100 part).
-    constexpr std::string_view kWithoutSections[] = {"70"};
-    constexpr std::string_view kWithoutMoe[]      = {"70", "100"};
+    // sm_70's snapshot (CUDA 12.8, regenerated in full from a GV100 build, #762) has every
+    // section: its mmq rows with their resources alone (ggml's matrix kernel runs from sm_75 on,
+    // route_requires, so those instances are never launched and RESOURCES_ONLY writes no loop),
+    // its i8 rows from an empty build (as sm_75's: generic_i8.cu compiles the tiles empty below
+    // sm_80), and the routed-expert families. sm_100 has no moer8 / moegemm section yet (six of
+    // its W4a8Nvfp4 GateUp rows read as unknown flow; no lab board is an sm_100 part).
+    constexpr std::array<std::string_view, 0> kWithoutSections{};
+    constexpr std::string_view kWithoutMoe[]      = {"100"};
     int with_sections                             = 0;
     for (const auto arch : kf::snapshot_archs()) {
         const std::string name = "sm_" + std::string(arch);
@@ -421,7 +419,7 @@ void sections_read() {
         const bool mmq_section = kf::section_header(arch, "mmq").has_value();
         if (mmq_section) ++with_sections;
         for (const int type : {12, 13, 14}) {
-            if (!mmq_section) break;
+            if (!mmq_section || arch == "70") break; // sm_70's rows: resources alone (above)
             for (const int J : {32, 128}) {
                 const auto f = kf::mmq_facts(arch, {type, J, false, 30});
                 const std::string what =
@@ -502,7 +500,7 @@ void sections_read() {
         // The I8 tiles (#613 PR-6): from sm_80 on every row has one K loop of int8 MMAs (one
         // cp.async stage an iteration); below, generic_i8.cu compiles them empty.
         if (!kf::section_header(arch, "i8")) continue;
-        const bool i8_built = arch != "75";
+        const bool i8_built = arch != "75" && arch != "70";
         int i8_bad          = 0;
         std::string i8_first;
         for (const auto& [key, f] : kf::section_rows(arch, "i8")) {
@@ -511,9 +509,11 @@ void sections_read() {
             const bool ok = i8_built ? looped : !f.loop || f.loop->loops == 0;
             if (!ok && i8_bad++ == 0) i8_first = key;
         }
-        // The reader's key: the 4x2-warp, 4-bit Store tile (three stages on sm_75's empty build).
-        expect(kf::i8_facts(arch, {4, 2, i8_built ? 4 : 3, 4, 0}).has_value(),
-               name + " i8: no 4 2 " + (i8_built ? "4" : "3") + " 4 0 row");
+        // The reader's key: the 4x2-warp, 4-bit Store tile (three stages on sm_75's empty build,
+        // four on sm_70's).
+        const int i8_stages = arch == "75" ? 3 : 4;
+        expect(kf::i8_facts(arch, {4, 2, i8_stages, 4, 0}).has_value(),
+               name + " i8: no 4 2 " + std::to_string(i8_stages) + " 4 0 row");
         expect(i8_bad == 0, name + " i8: " + std::to_string(i8_bad) +
                                 (i8_built ? " rows without one int8-MMA loop, first "
                                           : " rows with a loop in an empty build, first ") +
