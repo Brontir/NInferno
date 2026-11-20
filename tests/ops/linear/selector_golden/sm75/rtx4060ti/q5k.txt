@@ -446,8 +446,7 @@ q5k p1 add 5120x17408 speed T=2 ggml_vec ws=39168
 q5k p1 add 5120x17408 speed T=3 ggml_vec ws=58752
 q5k p1 add 5120x17408 speed T=4 ggml_vec ws=78336
 q5k p1 add 5120x17408 speed T=5..8 rmma.m1.n1.w1x4 ws=0
-q5k p1 add 5120x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-q5k p1 add 5120x17408 speed T=17..2048 ggml_mmq ws=0
+q5k p1 add 5120x17408 speed T=9..2048 ggml_mmq ws=0
 q5k p1 add 5120x17408 prefill T=17..2048 ggml_mmq ws=0
 q5k p1 add 5120x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q5k p1 add 5120x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0

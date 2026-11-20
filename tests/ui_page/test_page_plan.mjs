@@ -510,8 +510,14 @@ eq(H.nowLine({now: {free_now_bytes: 8 * 2 ** 30, fits_now: true, context_now: 65
   ok(why.includes("6.0") && why.includes("1.0"), "the now reason keeps its numbers");
   whole(EN("nowLess", {free: "5.0 GiB", ctx: "32K", was: "64K"}), "nowLess en");
   whole(RU("nowNoStart", {free: "1.0 GiB", why: "x"}), "nowNoStart ru");
+  // A card that refused a context otherwise than for memory (#891): the refusal, not "0 free".
+  const refused = H.nowLine({now: {free_now_bytes: 0, fits_now: false, context_now: 0, reason_code_now: "card_refused",
+    reason_params_now: {message: "all CUDA-capable devices are busy or unavailable"}, reason_now: "y"}}, {context: 65536}, tr);
+  ok(refused && refused.cls === "err" && refused.text.startsWith("nowRefused") && refused.text.includes("busy or unavailable"),
+     "a refusing card: said with the CUDA message");
+  whole(RU("nowRefused", {why: "x"}), "nowRefused ru");
 }
-for (const lang of ["en", "ru", "uk"]) for (const k of ["nowNoStart", "nowLess", "nowTip"])
+for (const lang of ["en", "ru", "uk"]) for (const k of ["nowNoStart", "nowRefused", "nowLess", "nowTip"])
   ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
 
 // ---- a start again from My models, planned first (/api/plan?artifact=) ----
@@ -530,6 +536,13 @@ ok(H.artifactPlanQuery("/hf/m/Q4.ninferno", {gpu: 1, ctx: 0, par: 2, kv: "fp8", 
   ok(!nofit.refused && nofit.nofit.length > 0, "no fit: the reason");
   const busy = H.replayDiff({ctx: 0, par: 1}, {...fits, now: {free_now_bytes: 2 ** 30, fits_now: false, reason_code_now: "weights_too_big", reason_now: "x"}}, tr);
   ok(!busy.refused && busy.nofit.length > 0, "the card fits but not with what another model holds now: said");
+  ok(!busy.busy, "a memory shortfall is not a refusing card");
+  // serve's card_refused reaches the page here, in My models' start again (#891): the refusal in
+  // words with the CUDA message, never a fit reason.
+  const held = H.replayDiff({ctx: 0, par: 1}, {...fits, now: {free_now_bytes: 0, fits_now: false, reason_code_now: "card_refused",
+    reason_params_now: {message: "all CUDA-capable devices are busy or unavailable"}, reason_now: "y"}}, tr);
+  ok(!held.refused && held.busy && held.nofit.startsWith("nowRefused") && held.nofit.includes("busy or unavailable"),
+     "a refusing card on a start again: said as a refusal, with the CUDA message");
   const less = H.replayDiff({ctx: 0, cap: 49152, par: 2}, {...fits, now: {free_now_bytes: 9 * 2 ** 30, fits_now: true, context_now: 16384}}, tr);
   eq(less.cap, 16384, "a start now gets less: the ceiling now, said");
 }

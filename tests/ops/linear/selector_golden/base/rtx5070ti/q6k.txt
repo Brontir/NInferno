@@ -591,8 +591,7 @@ q6k p1 store 17408x5120 speed T=1 r8.w4r1 ws=0
 q6k p1 store 17408x5120 speed T=2 ggml_vec ws=11520
 q6k p1 store 17408x5120 speed T=3 ggml_vec ws=17280
 q6k p1 store 17408x5120 speed T=4..8 rmma.m1.n1.w1x8 ws=0
-q6k p1 store 17408x5120 speed T=9..12 rmma.m1.n2.w1x4 ws=0
-q6k p1 store 17408x5120 speed T=16 ggml_mmq ws=0
+q6k p1 store 17408x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 q6k p1 store 17408x5120 speed T=17 w4a8.32x128 ws=108928
 q6k p1 store 17408x5120 speed T=24 w4a8.32x128 ws=153600
 q6k p1 store 17408x5120 speed T=32 w4a8.32x128 ws=204800

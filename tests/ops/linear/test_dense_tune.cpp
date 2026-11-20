@@ -15,6 +15,7 @@
 #include "ninferno/ops/route_table.h"
 #include "ninferno/option_enums.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/route_authorities.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/route_pins.h"
@@ -25,6 +26,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -34,6 +36,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <unistd.h>
@@ -674,6 +677,215 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
     return failures;
 }
 
+// Over a predicted band (routes/pick/<class>.json, #1066) the tuner writes an entry at every width
+// of the band and keeps the predicted route unless a candidate beats that route's own sample by the
+// margin; a prediction the tuner does not offer is stood in for by the heuristic's route under the
+// same margin (#1074, #1091). Two problems: one band predicts the heuristic's own route at T 9
+// (offered: the entry's "us" holds base, best and the predicted route's sample), one predicts a
+// Q4_K W4A8 tile, which the tuner never times at decode widths (not offered: base and best only).
+// #1098.
+int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scratch) {
+    int failures    = 0;
+    const auto fail = [&](const std::string& what) {
+        std::cerr << "predicted band: " << what << "\n";
+        ++failures;
+    };
+    // A shape no earlier check tunes: the demoted retime's q8 2560x2048 entry is in the cache, and
+    // a problem the cache holds is not timed again.
+    const Case off{"q8 predicted offered", QType::Q8_G32_FP16, ops::LinearPolicy::A16Only, 2304,
+                   2048};
+    // Not offered: a W4A8 tile for Q4_K where the policy allows int8 activations. The route
+    // table answers Q4_K at T 9-16 (no R8 past T 4, no vector or MMQ verify rule for it), the
+    // tile is admitted, and the tuner times no W4A8 family at decode widths. (Q8 is no case for
+    // it: R8 takes Q8's verify widths under an A8 policy, and the table stands aside for them.)
+    const Case no{"q4k predicted not offered", QType::GGML_Q4_K, ops::LinearPolicy::AllowA8, 2560,
+                  3584};
+    const Device doff = upload(off, 47U);
+    const Device dno  = upload(no, 53U);
+    const generic::Problem poff{off.qtype, off.policy, off.n, off.k, generic::Epilogue::Store};
+    const generic::Problem pno{no.qtype, no.policy, no.n, no.k, generic::Epilogue::Store};
+    const generic::Route heuristic9 = generic::heuristic_route(poff, doff.weight, 9, false);
+
+    const auto dir = scratch / "predicted";
+    std::filesystem::create_directories(dir / "pick");
+    const std::string gpu = ops::route_gpu_class();
+    std::string own       = gpu;
+    for (char& ch : own) {
+        if (ch == ':') ch = '-';
+    }
+    char pci[16];
+    std::snprintf(pci, sizeof pci, "0x%04X", static_cast<unsigned>(device_class().pci_device_id));
+    // compute a16 for both: the tables key a W4A8 format as a16 whatever the policy.
+    const auto entry = [](const std::string& format, std::int32_t n, std::int32_t k,
+                          const std::string& route) {
+        return R"({"format": ")" + format + R"(", "compute": "a16", "epilogue": "store", "n": )" +
+               std::to_string(n) + R"(, "k": )" + std::to_string(k) + R"(, "bands": [[9, 16, ")" +
+               route + R"("]]})";
+    };
+    std::ofstream(dir / "pick" / (own + ".json"))
+        << R"({"schema": "ninferno-route-pick/1", "gpu": {"class": ")" << gpu << R"(", "pci_id": ")"
+        << pci << R"(", "name": "test"}, "entries": [)"
+        << entry("q8", off.n, off.k, generic::route_name(heuristic9)) << ", "
+        << entry("q4k", no.n, no.k,
+                 generic::route_name(generic::Route{generic::Family::W4a8Mma, 0}))
+        << "]}";
+    // The loader reads a pick beside the nearest table, so one is written: a board of this
+    // architecture far past kCarryDistance (one SM, a sliver of L2 and bus), holding one other
+    // shape only, so the two problems' answers are the pick's.
+    std::ofstream(dir / "far.json")
+        << R"({"schema": "ninferno-route-table/1", "gpu": {"class": "zz999:1sm", "name": "test", )"
+        << R"("board": {"cc": )" << device_class().compute_capability()
+        << R"(, "sms": 1, "l2_mib": 0.25, "dram_gbps": 8}}, "entries": [)"
+        << entry("q8", 128, 128, "ggml_mmq") << "]}";
+    const std::string previous_dir = ops::route_table_dir();
+    ops::set_route_table_dir(dir);
+    const auto restore = [&] {
+        ops::set_route_table_dir(previous_dir);
+        ops::clear_route_table();
+    };
+    const auto status = ops::route_table_status();
+    const auto said   = [](const std::optional<generic::Route>& r) {
+        return r ? generic::route_name(*r) : std::string("none");
+    };
+    const auto answer = [](const generic::Problem& p) {
+        const auto a = generic::table_route_answer(p, 9, false);
+        return a ? generic::route_name(a->route) + (a->predicted ? " predicted" : " table")
+                 : std::string("none");
+    };
+    // The file is this class's own and the loader reads it beside the far table: fewer than two
+    // predicted entries is a loader failure, not a board to skip.
+    if (status.predicted_entries < 2) {
+        fail("the pick file is not read (" + status.predicted_skipped + status.message + ")");
+        restore();
+        return failures;
+    }
+    // Where the BF16 MMA is emulated (Turing, Volta) the MMQ verify rule takes Q4_K from T 9 under
+    // AllowA8 (an int8 call the table stands aside for), so the not-offered case has no prediction
+    // there; Volta's fixed routes (volta_fixed_route) take the q8 widths before any tuned route.
+    const bool native  = device_class().features.mma_bf16_native;
+    const bool run_off = device_class().compute_capability() != 70;
+    const bool run_no  = native;
+    const auto p_off   = generic::predicted_before_tuner(poff, doff.weight, 9, false);
+    const auto p_no    = generic::predicted_before_tuner(pno, dno.weight, 9, false);
+    if ((run_off && !p_off) || (run_no && !p_no)) {
+        fail("a band the file holds is not predicted (offered " + said(p_off) + " / table " +
+             answer(poff) + ", not offered " + said(p_no) + " / table " + answer(pno) + ")");
+        restore();
+        return failures;
+    }
+    if (!run_off)
+        std::cout << "predicted band: offered case SKIP on sm_70 (Volta's fixed routes)" << "\n";
+    if (!run_no) {
+        std::cout << "predicted band: not-offered case SKIP, the BF16 MMA is emulated (the MMQ "
+                     "verify rule takes Q4_K under AllowA8 from T 9)"
+                  << "\n";
+    }
+    if (!run_off && !run_no) {
+        restore();
+        return failures;
+    }
+
+    const std::int32_t wide = 128;
+    const auto act_off      = make_linear_activation(off.k, wide, 7U, ActivationCompute::A16);
+    const auto act_no       = make_linear_activation(no.k, wide, 8U, ActivationCompute::A16);
+    DeviceBuffer xoff(act_off.size() * 2), xno(act_no.size() * 2);
+    xoff.copy_from_host(act_off.data(), xoff.bytes);
+    xno.copy_from_host(act_no.data(), xno.bytes);
+    DeviceArena workspace(std::max<std::size_t>(
+        generic::route_workspace_bytes({generic::Family::W4a8Mma, 0}, no.k, wide), 256));
+    generic::clear_dense_tune();
+    generic::enable_dense_tune(true);
+    if (run_off) (void)call(doff, xoff, wide, std::nullopt, off.policy, workspace, stream);
+    if (run_no) (void)call(dno, xno, wide, std::nullopt, no.policy, workspace, stream);
+    for (const auto& line : generic::dense_tune_report()) std::cout << line << "\n";
+
+    constexpr double kMargin = 0.97; // generic_tune.cpp's
+    const Json file          = read_cache();
+    const Json* eoff         = run_off ? cached_entry(file, off.n, off.k) : nullptr;
+    const Json* eno          = run_no ? cached_entry(file, no.n, no.k) : nullptr;
+    if ((run_off && eoff == nullptr) || (run_no && eno == nullptr)) {
+        fail("no tuner entry for a problem the band covers");
+        restore();
+        return failures;
+    }
+    int offered = 0, offered_skipped = 0, not_offered = 0;
+    for (std::int32_t t = 9; t <= 16; ++t) {
+        const std::string w = std::to_string(t);
+        std::vector<std::tuple<const Json*, std::string, bool>> cases;
+        if (run_off) cases.emplace_back(eoff, generic::route_name(heuristic9), true);
+        if (run_no) {
+            cases.emplace_back(
+                eno, generic::route_name(generic::Route{generic::Family::W4a8Mma, 0}), false);
+        }
+        for (const auto& [e, predicted_name, is_offered] : cases) {
+            const std::string where =
+                (is_offered ? "offered" : "not offered") + std::string(" T") + w;
+            if (!e->contains("routes") || !(*e)["routes"].contains(w) ||
+                !(*e)["routes"][w].is_string()) {
+                fail(where + ": no route written over the predicted band");
+                continue;
+            }
+            const std::string kept = (*e)["routes"][w].get<std::string>();
+            const Json& us         = (*e)["us"][w];
+            if (!is_offered) {
+                // base, best: the heuristic's route stands in for the prediction, kept unless a
+                // candidate beats it by the margin, and replaced where one does.
+                const std::string base =
+                    generic::route_name(generic::heuristic_route(pno, dno.weight, t, false));
+                ++not_offered;
+                if (us.size() != 2) {
+                    fail(where + ": " + us.dump() + " is not base and best");
+                    continue;
+                }
+                if (kept == predicted_name) fail(where + ": the route not offered was written");
+                const bool beaten = us[1].get<double>() <= kMargin * us[0].get<double>();
+                if (!beaten && kept != base) {
+                    fail(where + ": " + kept + " kept though no candidate beats " + base +
+                         " by the margin " + us.dump());
+                }
+                if (beaten && kept == base) {
+                    fail(where + ": " + base + " kept though a candidate beats it by the margin " +
+                         us.dump());
+                }
+                continue;
+            }
+            // Offered where the prediction is the heuristic's route or a candidate: base, best and
+            // the predicted route's own sample; a width whose heuristic route differs from T 9's
+            // and whose candidates miss the prediction has no third time.
+            if (us.size() != 3) {
+                ++offered_skipped;
+                continue;
+            }
+            ++offered;
+            const bool beaten = us[1].get<double>() <= kMargin * us[2].get<double>();
+            if (!beaten && kept != predicted_name) {
+                fail(where + ": " + kept + " kept though no candidate beats the predicted " +
+                     predicted_name + " by the margin " + us.dump());
+            }
+            if (beaten && kept == predicted_name) {
+                fail(where + ": the predicted " + predicted_name +
+                     " kept though a candidate beats it by the margin " + us.dump());
+            }
+            // The prediction is the heuristic's route here: its time is the loop's own base
+            // sample, taken once.
+            const std::string base =
+                generic::route_name(generic::heuristic_route(poff, doff.weight, t, false));
+            if (base == predicted_name && us[2].get<double>() != us[0].get<double>()) {
+                fail(where + ": the predicted route was timed again (" + us.dump() + ")");
+            }
+        }
+    }
+    if (run_off && offered == 0)
+        fail("no width of the offered band timed the predicted route as itself");
+    restore();
+    if (failures == 0) {
+        std::cout << "predicted band: " << offered << " offered widths (" << offered_skipped
+                  << " without the predicted route's time) and " << not_offered
+                  << " not offered checked" << "\n";
+    }
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -705,6 +917,7 @@ int main() {
     for (const Case& c : cases) failures += check_case(c, stream);
     failures += check_capture(stream);
     failures += check_demoted_retime(stream, cache);
+    failures += check_predicted_band(stream, cache);
     cuda_check(cudaStreamDestroy(stream), "stream");
     generic::enable_dense_tune(false);
     generic::set_dense_tune(ninferno::TuneMode::Off, {});

@@ -501,6 +501,9 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
 OfflinePlan plan_without_load(const ServeOptions& options, std::optional<std::uint64_t> weight_bytes) {
     runtime::PlanDeviceFacts device;
     spec::GpuKey gpu;
+    // The CUDA error of a card that refused a context for another reason than memory (an exclusive
+    // compute mode held by another process): `now` is planned at nothing and names it (#891).
+    std::string refused_now;
     if (!options.plan_device.empty()) {
         std::string error;
         const auto board = product::plan_device_of_board(options.plan_device, &error);
@@ -535,6 +538,7 @@ OfflinePlan plan_without_load(const ServeOptions& options, std::optional<std::ui
                                         ? product::plan_free_now_of_nvml(std::min<std::uint64_t>(
                                               *options.plan_free_now, device.total_bytes))
                                         : 0;
+                if (!out_of_memory) refused_now = measured.what();
             }
         }
         gpu = spec::gpu_identity(options.device).key;
@@ -552,6 +556,20 @@ OfflinePlan plan_without_load(const ServeOptions& options, std::optional<std::ui
     Planning planning       = planning_of(options, model, device, gpu);
     planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
     OfflinePlan out;
+    // `now` of a card that refused a context otherwise than for memory: its reason is the
+    // refusal, not the plan's at 0 bytes (reason_code_now card_refused, the CUDA message).
+    const std::string refused_reason =
+        "the card refuses a new CUDA context (" + refused_now +
+        "): another process may hold it in an exclusive compute mode";
+    const auto name_refusal = [&] {
+        if (refused_now.empty()) return;
+        out.json["now"]["reason_code_now"]   = "card_refused";
+        out.json["now"]["reason_params_now"] = {{"message", refused_now}};
+        out.json["now"]["reason_now"]        = refused_reason;
+    };
+    const auto now_reason = [&](const product::PlannedSpeculation& at_now) {
+        return refused_now.empty() ? at_now.plan.reason : refused_reason;
+    };
     std::optional<product::QuantPlan> quants;
     product::PlannedSpeculation planned;
     product::PlanSourceFacts facts = model.facts;
@@ -648,11 +666,12 @@ OfflinePlan plan_without_load(const ServeOptions& options, std::optional<std::ui
         out.json["device"]["free_now_bytes"] = *free_now;
         out.json["device"]["fits_now"]       = at_now.plan.fits;
         out.json["now"]                      = product::plan_now_json(at_now, *free_now);
+        name_refusal();
         if (!at_now.plan.fits) {
             out.text += "now    | free now " +
                         std::to_string(*free_now / (std::uint64_t{1} << 20)) +
                         " MiB: " + row.listing.quant + " would not start right now (" +
-                        at_now.plan.reason + ")\n";
+                        now_reason(at_now) + ")\n";
         }
     } else if (!table && options.plan_idle && free_now) {
         // One model's idle plan: a start right now replays its choice at the free memory, as
@@ -662,10 +681,11 @@ OfflinePlan plan_without_load(const ServeOptions& options, std::optional<std::ui
         out.json["device"]["free_now_bytes"] = *free_now;
         out.json["device"]["fits_now"]       = at_now.plan.fits;
         out.json["now"]                      = product::plan_now_json(at_now, *free_now);
+        name_refusal();
         if (!at_now.plan.fits) {
             out.text += "now    | free now " +
                         std::to_string(*free_now / (std::uint64_t{1} << 20)) +
-                        " MiB: would not start right now (" + at_now.plan.reason + ")\n";
+                        " MiB: would not start right now (" + now_reason(at_now) + ")\n";
         }
     }
     return out;

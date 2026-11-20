@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""gen.py: the analyzer's predicted route bands (T 9-16) for the board classes no route table was measured on.
+"""gen.py: the analyzer's predicted route bands (T 9-16): for the board classes no route table was measured on,
+and for a tabled board, its table's gaps (#1068).
 
     python3 tools/route_pick/gen.py            write routes/pick/<chip>-<sms>sm.json, one file a board class
     python3 tools/route_pick/gen.py --check    exit 1 when a file differs from what the facts give now (CI)
     python3 tools/route_pick/gen.py --class ga102:82sm --out DIR    one class, any (a lab A/B of a tabled card)
+    ... --class ga102:82sm --out DIR --epilogues store,swiglu,add   the same with the add epilogue's bands (#1068)
 
 A board class is a chip and an SM count (core/device_class.h gpu_class_id). Written for every class of
 src/core/data/gpu_facts.json whose chip has no table in routes/ (no routes/<chip>.json, no routes/<chip>-*.json),
@@ -19,9 +21,18 @@ epilogue (o_proj, down) is priced but not written: on the RTX 4060 Ti (Qwen3-8B 
 end against the borrowed table, the law's n2.w1x4 against the measured n4.w1x4 on the Q6_K down (#1051). For each,
 pick.pick() at T 9..16 gives one route a width, written as runs of equal routes. Nothing is measured on the card.
 
-The engine reads the file only on the board it was priced for, where the nearest measured table lies past
-kCarryDistance, and only under --route-policy evidence (src/ops/route_table.cpp): its answers are Predicted, below a
-pin and a measured or carried table, above the ranker.
+A tabled board (a table's gpu.pci_id row of an architecture pick.py prices, tabled_classes()) gets a file of its
+table's gaps: the same problems, the add epilogue included, at the widths its own table does not answer. Past kCarryDistance an
+untabled class's bands answer ahead of the nearest table; within it the loader takes a band only in a gap of the
+table (no entry of its own, one borrowed by fill_from, or a width its own entry has no band at), so a measured band
+stands above a prediction. The add
+bands lost on the 4060 Ti where they replaced measured entries (above); in the gaps alone they were scored by leaving
+each tabled card's table out on full route_tune grids (#1068 gate step 1: no worse in median and p90 on GA10x, Ada,
+GB20x) and held end to end within the A/A band (4060 Ti, 5070 Ti, 4090).
+
+The engine reads the file only on the board it was priced for, and only under --route-policy evidence
+(src/ops/route_table.cpp): its answers are Predicted, below a pin and a measured or carried entry, above a borrowed
+entry and the ranker.
 """
 import argparse
 import hashlib
@@ -79,7 +90,7 @@ def tables(root, F):
 
 
 def carry_distance(root):
-    """core/measured_boards.h kCarryDistance: within it a table's answers carry (Carried) and the engine reads no pick."""
+    """core/measured_boards.h kCarryDistance: within it a table's answers carry (Carried) and a pick fills only its gaps."""
     with open(os.path.join(root, 'src', 'core', 'measured_boards.h'), encoding='utf-8') as f:
         m = re.search(r'inline constexpr double kCarryDistance\s*=\s*([0-9.]+)\s*;', f.read())
     if not m:
@@ -97,8 +108,9 @@ def board_distance(a, b):
 
 
 def classes(F, tabled_chips, table_boards, carry):
-    """The classes the engine would read a file for: no table of the chip, and none within `carry` (the loader
-    reads routes/pick only past it, where a table's answers would be Transferred). And only between the fewest
+    """The untabled classes a file of every problem is written for: no table of the chip, and none within `carry`
+    (past it a table's answers would be Transferred; within it a pick fills only the table's gaps, and only a
+    tabled board's gaps are written, tabled_classes()). And only between the fewest
     and the most SMs of the boards that hold a table of the same compute capability: the law interpolates
     between measured boards, it is not extrapolated past them (the one measured miss, #1051, was a long-K
     call on a board of few SMs). Today that keeps AD103 and GA104 and leaves out AD107, GA107 (10-22 SMs)
@@ -125,16 +137,45 @@ def classes(F, tabled_chips, table_boards, carry):
 
 # The epilogues whose bands the file holds (the module docstring says why not add).
 WRITTEN_EPILOGUES = ('store', 'swiglu')
+# A tabled board's gap file holds the add epilogue too (#1068 gate step 1, the module docstring).
+GAP_EPILOGUES = ('store', 'swiglu', 'add')
+EPILOGUES = frozenset(GAP_EPILOGUES)
 
 
-def problems(all_tables, cc):
+def covered(entry):
+    """The widths of LO..HI a table entry's own bands answer."""
+    return frozenset(T for T in range(LO, HI + 1)
+                     if any(int(b[0]) <= T <= int(b[1]) for b in entry.get('bands', [])))
+
+
+def tabled_classes(F, all_tables):
+    """The tabled boards pick.py can price (a table's gpu.pci_id row of an architecture in ARCH_OF_CC with its isa
+    facts, tensor cores), each with the problems its own table holds: its file is of the gaps, the rest."""
+    out = {}
+    for _, _, t in all_tables:
+        pci = str(t.get('gpu', {}).get('pci_id', '')).lower()
+        row = next((r for r in F['rows'] if pci and str(r.get('id', '')).lower() == pci), None)
+        if row is None or int(row.get('cc', 0)) not in ARCH_OF_CC or ARCH_OF_CC[int(row['cc'])] not in F['isa']                 or row.get('mma_slow'):
+            continue
+        # {problem: the widths of LO..HI its own table answers}: the file holds bands at the other
+        # widths only, the gaps the loader takes a band at (route_table.cpp, #1068).
+        own = {(e['format'], e.get('epilogue', 'store'), int(e['n']), int(e['k'])): covered(e)
+               for e in t.get('entries', []) if e.get('compute') == 'a16'}
+        key = class_id(row)
+        if key in out:
+            sys.exit('two route tables of board class %s' % key)
+        out[key] = (row, own)
+    return out
+
+
+def problems(all_tables, cc, epilogues=WRITTEN_EPILOGUES):
     out = {}
     for _, tcc, t in all_tables:
         if tcc != cc:
             continue
         for e in t.get('entries', []):
             ep = e.get('epilogue', 'store')
-            if 'bands' not in e or e['format'] not in pick.BITS or e['compute'] != 'a16' or ep not in WRITTEN_EPILOGUES:
+            if 'bands' not in e or e['format'] not in pick.BITS or e['compute'] != 'a16' or ep not in epilogues:
                 continue
             out[(e['format'], ep, int(e['n']), int(e['k']))] = True
     return sorted(out)
@@ -150,11 +191,15 @@ def runs(seq):
     return out
 
 
-def overlay(row, F, probs, inputs):
+def overlay(row, F, probs, inputs, own=None):
+    """The file of `probs`, at the widths of LO..HI `own` ({problem: widths}) leaves."""
+    own = own or {}
     entries = []
     for fmt, ep, n, k in probs:
         seq = []
         for T in range(LO, HI + 1):
+            if T in own.get((fmt, ep, n, k), ()):
+                continue
             r = pick.pick(row, F, dict(format=fmt, epilogue=ep, n=n, k=k, T=T))
             if r is None:
                 seq = None
@@ -193,7 +238,17 @@ def main():
     ap.add_argument('--check', action='store_true')
     ap.add_argument('--class', dest='only')
     ap.add_argument('--out')
+    ap.add_argument('--epilogues', help='with --class: the epilogues to write (a lab A/B, #1068: store,swiglu,add); '
+                    'the shipped files keep %s' % ','.join(WRITTEN_EPILOGUES))
     a = ap.parse_args()
+    if a.epilogues is not None and not (a.only and a.out):
+        sys.exit('--epilogues is for a lab file of one class (--class, --out): the shipped files keep %s' % ','.join(WRITTEN_EPILOGUES))
+    epilogues = WRITTEN_EPILOGUES
+    if a.epilogues is not None:
+        epilogues = tuple(e.strip() for e in a.epilogues.split(','))
+        bad = sorted(set(epilogues) - EPILOGUES)
+        if bad or not all(epilogues):
+            sys.exit('--epilogues: %s is not one of %s' % (','.join(bad) or '(none)', ','.join(GAP_EPILOGUES)))
     F = facts.load_facts(a.root)
     all_tables = tables(a.root, F)
     tabled = {chip for chip, _, _ in all_tables}
@@ -202,14 +257,23 @@ def main():
         rows = [r for r in F['rows'] if r['chip'] == chip and '%dsm' % int(r['sms']) == sms]
         if not rows:
             sys.exit('no gpu_facts.json row of class %s' % a.only)
-        want = {a.only: sorted(rows, key=lambda r: r.get('form') != 'desktop')[0]}
+        want = {a.only: (sorted(rows, key=lambda r: r.get('form') != 'desktop')[0], epilogues, {})}
     else:
-        want = classes(F, tabled, table_boards(F, all_tables), carry_distance(a.root))
+        want = {k: (row, WRITTEN_EPILOGUES, {})
+                for k, row in classes(F, tabled, table_boards(F, all_tables), carry_distance(a.root)).items()}
+        for k, (row, own) in tabled_classes(F, all_tables).items():
+            if k in want:
+                sys.exit('board class %s is both tabled and untabled' % k)
+            want[k] = (row, GAP_EPILOGUES, own)
     out_dir = a.out or os.path.join(a.root, 'routes', 'pick')
     stale = []
     expected = set()
-    for key, row in sorted(want.items()):
-        doc = overlay(row, F, problems(all_tables, int(row['cc'])), inputs_of(a.root, F, ARCH_OF_CC[int(row['cc'])]))
+    for key, (row, eps, own) in sorted(want.items()):
+        full = frozenset(range(LO, HI + 1))
+        probs = [p for p in problems(all_tables, int(row['cc']), eps) if own.get(p, frozenset()) != full]
+        doc = overlay(row, F, probs, inputs_of(a.root, F, ARCH_OF_CC[int(row['cc'])]), own)
+        if own and not doc['entries']:
+            continue  # a tabled board with no gap the other tables of its capability fill: no file
         name = key.replace(':', '-') + '.json'
         expected.add(name)
         path = os.path.join(out_dir, name)
