@@ -22,6 +22,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <type_traits>
 
 namespace ninferno::ops::detail {
@@ -200,6 +201,23 @@ inline constexpr int kGeoDecodeBc =
     kFittingBc<Geo, (Geo::D <= 128 ? kDecodeMaxWarpRowsD128 : kDecodeMaxWarpRows), kDecodeBc, true,
                Arch>;
 
+// `body` on the tiles of the build a snapshot label names (with_tile_arch's list).
+template <class Body>
+decltype(auto) with_label_tile_arch(std::string_view arch, Body&& body) {
+    if (arch == "70") return body.template operator()<70>(std::string_view("70"));
+    if (arch == "75") return body.template operator()<75>(std::string_view("75"));
+    if (arch == "80") return body.template operator()<80>(std::string_view("80"));
+    if (arch == "86") return body.template operator()<86>(std::string_view("86"));
+    if (arch == "89") return body.template operator()<89>(std::string_view("89"));
+    if (arch == "90") return body.template operator()<90>(std::string_view("90"));
+    if (arch == "100") return body.template operator()<100>(std::string_view("100"));
+    if (arch == "120a") return body.template operator()<120>(std::string_view("120a"));
+    // A snapshot label this list lacks: no tile of its build here, so nothing of the board's
+    // (never this build's tile in its place).
+    throw std::logic_error("gemma4_attention: no tile of the sm_" + std::string(arch) +
+                           " build here (with_tile_arch)");
+}
+
 // The architecture whose tiles a board's plan prices (#912): this build's where the board runs
 // this build's kernels (or no snapshot names its kernels), else the release build of its
 // architecture (kernel_facts::sass_arch), whose snapshot holds those kernels' facts. `body` takes
@@ -209,18 +227,7 @@ decltype(auto) with_tile_arch(Body&& body) {
     namespace kf                          = generic::kernel_facts;
     const std::optional<std::string> arch = kf::sass_arch();
     if (arch && *arch != kf::build_arch()) {
-        if (*arch == "70") return body.template operator()<70>(std::string_view("70"));
-        if (*arch == "75") return body.template operator()<75>(std::string_view("75"));
-        if (*arch == "80") return body.template operator()<80>(std::string_view("80"));
-        if (*arch == "86") return body.template operator()<86>(std::string_view("86"));
-        if (*arch == "89") return body.template operator()<89>(std::string_view("89"));
-        if (*arch == "90") return body.template operator()<90>(std::string_view("90"));
-        if (*arch == "100") return body.template operator()<100>(std::string_view("100"));
-        if (*arch == "120a") return body.template operator()<120>(std::string_view("120a"));
-        // A snapshot label this list lacks: no tile of its build here, so nothing of the board's
-        // (never this build's tile in its place).
-        throw std::logic_error("gemma4_attention: no tile of the sm_" + *arch +
-                               " build here (with_tile_arch)");
+        return with_label_tile_arch(*arch, std::forward<Body>(body));
     }
     return body.template operator()<kGemma4BuildArch>(kf::build_arch());
 }
@@ -645,6 +652,13 @@ std::size_t gemma4_attention_chain_bytes(std::int32_t head_dim, std::int32_t q_h
     return bytes;
 }
 
+bool gemma4_tile_arch_known(std::string_view label) {
+    try {
+        with_label_tile_arch(label, []<int Arch>(std::string_view) { return Arch; });
+        return true;
+    } catch (const std::logic_error&) { return false; }
+}
+
 std::size_t gemma4_attention_chain_bound(std::int32_t head_dim, std::int32_t q_heads,
                                          std::int32_t kv_heads, std::int32_t window,
                                          std::int32_t max_tokens) {
@@ -659,7 +673,7 @@ std::size_t gemma4_attention_chain_bound(std::int32_t head_dim, std::int32_t q_h
 }
 
 void gemma4_attention_prefill_launch(const Gemma4AttentionLaunch& launch, std::int32_t batch,
-                                     void* chain, cudaStream_t stream) {
+                                     void* chain, std::size_t chain_capacity, cudaStream_t stream) {
     const Gemma4AttentionArgs args = make_args(launch);
     const bool fp8                 = args.k_scale != nullptr;
     with_prefill_tile(
@@ -687,7 +701,7 @@ void gemma4_attention_prefill_launch(const Gemma4AttentionLaunch& launch, std::i
             }
             const ChainPlan plan          = chain_plan<Geo, TileGeo, WR, Bf16Only>(
                 group, args.kv_heads, args.window, args.block != 0, args.tokens);
-            if (chain != nullptr && plan.bytes > 0 &&
+            if (chain != nullptr && plan.bytes > 0 && plan.bytes <= chain_capacity &&
                 chain_pays<TileGeo, WR, Bc>(blocks * args.kv_heads)) {
                 if (plan.blocks != blocks) {
                     throw std::logic_error(
