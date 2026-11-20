@@ -116,8 +116,11 @@ int shipped_picks() {
         d.facts = ninferno::machine_facts_of(d);
         const ninferno::ScopedDeviceClass scoped(d);
         ninferno::ops::set_route_table_dir("");
-        const auto entry_count = std::distance(
-            std::sregex_iterator(text.begin(), text.end(), entry_re), std::sregex_iterator());
+        int entry_count = 0;
+        for (auto it = std::sregex_iterator(text.begin(), text.end(), entry_re);
+             it != std::sregex_iterator() && entry_count < 2; ++it) {
+            ++entry_count;
+        }
         if (entry_count >= 2 && (first_name.empty() || name < first_name)) {
             first_name = name;
             first_text = text;
@@ -314,6 +317,9 @@ int shipped_picks() {
                 }
             }
         }
+    } else if (files > 0) {
+        failures +=
+            check(false, "a shipped pick file with two entries for the refusals and the gap check");
     }
     // A board of a shipped class on other memory reads none of the class's bands (codex on #1066):
     // the RTX A4000 (448 GB/s) beside the RTX 3070 Ti's ga104:48sm (608), refused as another
