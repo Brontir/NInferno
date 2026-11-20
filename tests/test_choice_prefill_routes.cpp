@@ -224,6 +224,25 @@ void every_board(const json& fixture) {
                 const Estimate before       = estimate(model, card, quant, 7000);
                 pr::with_prefill_routes(model, device);
                 const Estimate after = estimate(model, card, quant, 7000);
+                // LAB (#905, 0x2C3A): the kernel the query answers per linear, at 1024 and 7000.
+                if (row.pci_device_id == 0x2C3A || row.pci_device_id == 0x2C31) {
+                    for (const auto& l : model.linears) {
+                        if (l.expert) continue;
+                        ch::LinearShape asked = l;
+                        for (const std::uint32_t t : {1024U, 7000U}) {
+                            const ch::PrefillKernel k =
+                                model.prefill_routes
+                                    ? model.prefill_routes(asked, t, ninferno::ActivationMode::Fast)
+                                    : ch::PrefillKernel::Unknown;
+                            std::cout << "  LAB " << std::hex << row.pci_device_id << std::dec
+                                      << ' ' << model_name << ' ' << q << " fmt '" << l.format
+                                      << "' " << l.n << 'x' << l.k << " T" << t << " kernel "
+                                      << static_cast<int>(k) << " prefill " << before.prefill
+                                      << " -> " << after.prefill << '
+';
+                        }
+                    }
+                }
                 ++estimates;
                 if (!moved(before, after)) { continue; }
                 ++moves;
