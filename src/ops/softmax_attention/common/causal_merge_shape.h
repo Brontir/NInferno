@@ -37,8 +37,9 @@ inline constexpr int kCausalMergeNarrowDChunk = 64;
 //   addresses, then `cuobjdump -sass` (CUDA 13.1);
 // - fixed work: the static instructions from the entry to the end of the first stage's refetch
 //   (the twelfth LDG.E.128), plus those from the last barrier to the final EXIT. That is
-//   sm_75 500, sm_86 497, sm_89 497, sm_120a 391; CUDA 13.4 (the stands' and the release's
-//   nvcc) makes sm_75's 501 (RTX 2080 Ti, ninferno_causal_merge_counts_test);
+//   sm_75 500, sm_86 497, sm_89 497, sm_120a 391 (CUDA 13.2); CUDA 13.4 (the stands' and the
+//   release's nvcc) makes sm_75's 501 (RTX 2080 Ti, ninferno_causal_merge_counts_test); the other
+//   three were not recounted under 13.4 (their builds' test checks them against F);
 // - a further stage: from the barrier after the first chain to the sixteenth LDG.E.128. That is
 //   sm_75 65, sm_86 74, sm_89 74, sm_120a 67, rounded to 70;
 // - a split: the chain's x16 body is 60 instructions (weight, test, value, FFMA), 3.75 a split,
