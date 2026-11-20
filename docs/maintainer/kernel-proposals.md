@@ -989,3 +989,41 @@ P from #850's plan. A, G, N and P have frozen predictions so far.
     its Q codec (the Hadamard and per-group quantization of every row) and its scale staging. The
     BF16 kernel has neither: it widens Q to FP32 once and starts its keys. Recorded, not fitted.
 - Decision: kept on sm_70 (the slope acceptance, at least 0.75x INT8's, is met).
+
+### R. Q6_K W4A8 halves weighed in the integer domain, producer-warp kernel (#1116, #1126)
+- Regime: generic W4A8 prefill, Q6_K, T 32-512, the producer-warp tile `w4a8ws.128x64.p4`; the RTX 3090, 3060,
+  4070 Ti, 4060 Ti, 4090 and 5090. #1116 shows the kernel issue-bound at K 4096, T 128: I2FP and FMUL take a third of
+  the executed instructions, and sm_86 / sm_89 spill (LDL 230 K at 168 registers).
+- Law: per output and 32-value block, each 16-weight half's int32 MMA sum is converted and multiplied by its float
+  sub-scale (2 x (I2FP + FMUL + FFMA)). The binding term is issue, from the counted instruction mix of the snapshot.
+- Variant: the halves' sums are weighed by their int8 sub-scales in the integer domain (`c0*sl + d0*sh`, IMAD). They
+  are converted once and scaled once (`fmaf(float(.), a_scale*d, acc)`), exact below 2^24 (`w4a8_int_halves`). The
+  scale bytes ride in the b_min plane as a bit pattern. Only the producer-warp kernel takes it (`w4a8_ring`).
+- Prediction (frozen 20.11 20:08, before any build; addenda 20:12 and 20:35-20:36, before the A/Bs they name):
+  - 5090 ncu at K 4096, T 128: I2FP x0.50, FMUL x0.50, executed instructions x0.945 +-0.02, registers within +-4.
+  - Branch/master time of the ws route: 0.93-0.97 on the 3090, 4060 Ti, 4090 and 5090.
+  - Q4_K (code unchanged) within +-1.5 %.
+  - 20:36, after the 3090 showed the gain is the spill: 0.87-0.93 on sm_89 with LDL to 0; 0.97-1.02 on the 5090
+    (nothing spills there).
+  - 20:35: the classic tiles that production picks for Q6_K at T 17-64 within 0.95-1.03.
+- Acceptance / refutation (frozen):
+  - A gain under 3 % on Q6_K closes #1116 with no action.
+  - The classic 64x64 tile more than 3 % slower at T 32-64 on any board limits the int path to the producer-warp
+    kernel.
+  - Byte rule: KLD within 15 % of master's (Qwen3.5-9B Q4_K_M perplexity).
+- A/B (route_tune, branch/master, n 4096 / 12288, T 32 / 64 / 128 / 512):
+  - ws Q6_K: 3060 0.878-0.912, 4070 Ti 0.889-0.902, 4090 0.838-0.904, 5090 0.880-0.946; the 3090 gains at every cell.
+  - The classic gate fired on the 3090 with the int path in both kernels: the 64x64 tile took 1.088 at n 12288,
+    T 32. So the int path is producer-warp only, and the classic tiles then measure 0.96-1.008 (the 4090's 64x64
+    0.914 at one cell is noise of that tile).
+  - Mechanism: on sm_86 / sm_89 the spill goes (LDL 230 K -> 0); the instruction count was refuted as the cause on
+    the 3090. On the 5090 (no spill) registers go 142 -> 129 and instructions x0.972 for time x0.915, at 0.38 waves:
+    not residency. The consumer's shorter dependent chain is the open reading.
+  - KLD: master and branch identical to every printed digit (mean 0.005478, p99 0.014208, top-1 98.1483 %).
+- Twins: the classic and producer-warp tiles of one shape no longer sum Q6_K alike, so `w4a8_executed_route`'s swap
+  (a weight property, never the workload) changes the last bits for Q6_K. Each W4A8 route stays token-invariant
+  (`route_is_token_invariant`: a token's sums are its own), and each W4A8 tile already sums in its own order
+  (`summation_order` Own), so no summation class pairs the twins. Under the speed profile a token's bytes already
+  move with the route (A16 rmma at T 9-16, A8 W4A8 from T 17).
+- Decision: kept on the producer-warp kernel. The kernel-facts snapshots are regenerated on every arch. #978
+  re-prices the ws Q6_K route after the merge.

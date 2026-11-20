@@ -89,7 +89,9 @@ bool allows_i8(const Weight& w, LinearPolicy policy) {
 
 namespace {
 
-// The classic W4A8 tile of a producer-warp tile's shape (the same bytes).
+// The classic W4A8 tile of a producer-warp tile's shape (the same bytes, except Q6_K: the
+// producer-warp kernel weighs its halves in the integer domain, w4a8_int_halves, #1116; the swap is
+// a weight's property, never the workload's).
 Route w4a8_classic_twin(Route route) {
     const auto s = w4a8_schedule_info(route.schedule);
     for (int i = 0; i < w4a8_schedule_count(); ++i) {
@@ -132,7 +134,7 @@ std::size_t mmq_workspace_bytes(std::int32_t k, std::int32_t plane_rows, std::in
 
 // The W4A8 schedule run_route executes for `route`: a producer-warp tile the weight is not admitted
 // to runs the classic tile of its shape, and a w4a8_ws_extra format's classic tile its
-// producer-warp twin (the same bytes either way).
+// producer-warp twin (the same bytes either way, but for Q6_K's last bits: w4a8_classic_twin).
 Route w4a8_executed_route(Route route, const Weight& w) {
     if (route.family != Family::W4a8Mma) return route;
     const bool producers = w4a8_schedule_info(route.schedule).producers > 0;
