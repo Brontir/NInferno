@@ -1320,11 +1320,12 @@ int artifact_prefill_policy() {
         art::Directory dir;
         dir.components["text"].config = gpt_oss_text_config();
         for (const Bank& bank : banks) {
-            const QType f = bank.format.value_or(format);
-            const ninferno::QuantLayout layout =
-                f == QType::MXFP4 || f == QType::BF16 || f == QType::NVFP4
-                    ? ninferno::default_weight_layout(f)
-                    : ninferno::ggml_published_layout(f);
+            const QType f                      = bank.format.value_or(format);
+            const ninferno::QuantLayout layout = f == QType::MXFP4 || f == QType::BF16 ||
+                                                         f == QType::NVFP4 ||
+                                                         f == QType::FP8_E4M3FN_ROW_BF16
+                                                     ? ninferno::default_weight_layout(f)
+                                                     : ninferno::ggml_published_layout(f);
             art::TensorObject t;
             t.id     = bank.name;
             t.shape  = {32, bank.rows, 2880};
@@ -1414,6 +1415,18 @@ int artifact_prefill_policy() {
     failures += check(route(QType::NVFP4, nvfp4_a4) == rt::ExpertPrefill::Unknown,
                       "artifact prefill: NVFP4 gate/up at AllowA4 beside a Q4_K down, the build's: "
                       "Unknown");
+    // codex on #1087: a build-dependent bank too small to move the route leaves it. An FP8 gate/up
+    // (no W4A8 tile: A16 on every build) beside a smaller NVFP4 down at AllowA4: A16 with the W4A4
+    // kernels (the veto) and without them (the down alone on the grouped W4A8).
+    const std::vector<Bank> small_nvfp4 = {
+        {"text/layers/0/experts/gate_up", 5760, a8, QType::FP8_E4M3FN_ROW_BF16},
+        {"text/layers/0/experts/down", 2880, a4},
+        {"text/layers/1/experts/gate_up", 5760, a8, QType::FP8_E4M3FN_ROW_BF16},
+        {"text/layers/1/experts/down", 2880, a4}};
+    failures +=
+        check(route(QType::NVFP4, small_nvfp4) == rt::ExpertPrefill::A16,
+              "artifact prefill: a smaller NVFP4 down at AllowA4 beside an FP8 gate/up, A16 "
+              "on every build");
     failures += check(route(QType::NVFP4, nvfp4_a4, true) != rt::ExpertPrefill::Unknown,
                       "artifact prefill under int8: NVFP4 at AllowA4 beside Q4_K, not Unknown");
     failures += check(route(QType::NVFP4, layers(a8, a8, a8, a8)) != rt::ExpertPrefill::Unknown,
