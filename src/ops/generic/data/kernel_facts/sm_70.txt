@@ -2416,12 +2416,12 @@ family mmq
 family_nvcc 12.8.93
 family_kernels 102
 family_columns family type J fallback prec registers stack local shared
-mmq 2 16 0 30 96 0 0 0
+mmq 2 16 0 30 95 0 0 0
 mmq 2 32 0 30 116 0 0 0
 mmq 2 64 0 30 137 0 0 0
 mmq 2 80 0 30 24 40 0 0
 mmq 2 96 0 30 24 40 0 0
-mmq 2 128 0 30 177 0 0 0
+mmq 2 128 0 30 172 0 0 0
 mmq 3 16 0 30 96 0 0 0
 mmq 3 32 0 30 125 0 0 0
 mmq 3 64 0 30 141 0 0 0
