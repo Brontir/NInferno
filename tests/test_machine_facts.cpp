@@ -57,10 +57,12 @@ void table_well_formed() {
         // The unresolved targets (gpu-facts.md): the TU106 1660 SUPER, whose published cache
         // belongs to TU116, and the two rows #958 found the chip structure contradicts (the TU106
         // GTX 1650's 1 MiB is TU117's and unsourced for it, the RTX 4000 Ada's 48 MiB exceeds five
-        // controllers' 40 at most).
-        // Do not borrow a value just to make coverage complete.
-        const bool unresolved =
-            r.pci_device_id == 0x1F09 || r.pci_device_id == 0x1F0A || r.pci_device_id == 0x27B2;
+        // controllers' 40 at most), and three #905 rows by the same bound (the RTX 5000 Ada's 72
+        // MiB at 256 bits, the RTX 4000 SFF Ada's 48 at 160, the GTX 1630's 1 MiB at 64 bits). Do
+        // not borrow a value just to make coverage complete.
+        const bool unresolved = r.pci_device_id == 0x1F09 || r.pci_device_id == 0x1F0A ||
+                                r.pci_device_id == 0x27B2 || r.pci_device_id == 0x26B2 ||
+                                r.pci_device_id == 0x27B0 || r.pci_device_id == 0x1F83;
         expect(!r.target || r.l2_mib > 0 || unresolved,
                where + ": a target needs a sourced L2 capacity (see gpu-facts.md)");
         expect(find_gpu_facts(r.pci_device_id) == &r, where + ": found by its id");

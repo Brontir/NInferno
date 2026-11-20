@@ -20,9 +20,11 @@ board. It answers in the words the measured gates use (`measured::Disposition`,
 - `Carried`: a row within `measured::kCarryDistance`, every compared quantity known. The reach (1.0)
   is a threshold placed between measurements, not a chip fact: it is meant to cover the variants
   and near neighbours (0.14 to 0.57), and the RTX 4090's R8 decode entries fail on the RTX 4080
-  SUPER at 1.2. Over the 105 rows below every answer is the same for any reach from 0.83 to 1.21
-  (the A10 at 0.83 from the 3090 is the farthest `Carried` row, the RTX 4080 SUPER at 1.22 from the
-  4090 the nearest row out of reach).
+  SUPER at 1.2. Over the 156 rows below every answer is the same for any reach from 0.99 to 1.04
+  (RTX PRO 4000 Blackwell at 0.985 from the 5080 is the farthest `Carried` row; RTX PRO 5000
+  Blackwell at 1.043 from the 5090 is the nearest row out of reach). Adding the catalogue's
+  smaller PRO cards narrows the previous 0.83..1.21 interval; it does not validate or change the
+  threshold.
 - `Incomplete`: no row with every quantity known is within the distance, but the nearest row by plain
   distance is, with its L2 or bandwidth unknown on either side. The distance could then understate
   the difference, so the table's literal answers (as a bounded gate takes the unmeasured default for
@@ -42,8 +44,8 @@ the answer is `Incomplete` or `None`. Only a table with an incomplete row could 
 - `sparse_moe_q4_groupwise_frontier_answer(Board)` (`ops/sparse_moe/prefill`): the first T of the
   grouped prefill route for Q4/Q5 and Q4/Q6 groupwise banks, with its disposition.
 - `tests/ops/test_table_dispositions.cpp` checks both against the production lookups, ties the
-  route's evidence to the answer, checks fourteen rows against answers written by hand from the
-  measurement comments beside the tables (with the donor where the comment names one), checks a
+  route's evidence to the answer, checks sixteen rows against answers written by hand from the
+  measurement comments and the published-facts distances (with their donor where known), checks a
   board at exactly the reach (`Carried`) and one with its bandwidth unknown (`Incomplete`), checks
   the counts below, and pins the disposition of every
   target SKU of `core/data/gpu_facts.json` (keyed by PCI id) in
@@ -59,8 +61,8 @@ and the two RTX 5080 Laptop GPU rows (A8 route). They now answer `Carried` at di
 distance rule. This is transfer evidence, not a measurement on those cards. The remaining
 target with unknown L2, GTX 1660 SUPER on TU106, has no donor in either table and answers `None`.
 
-Counts over the 105 target SKUs (measured / carried / incomplete / none):
-A8 route 4 / 12 / 0 / 89; Q4 frontier 4 / 17 / 0 / 84.
+Counts over the 156 target SKUs (measured / carried / incomplete / none):
+A8 route 4 / 19 / 0 / 133; Q4 frontier 4 / 22 / 0 / 130.
 
 ## `a8_default_route`
 
@@ -92,13 +94,16 @@ have a row and every other format takes w4r1. It is already fact-based, and it s
   w4r1, where the register MMA lost by x1.15..1.36 (V100 x3.5..4). On the one card where the schedule
   was measured against it (RTX 4060 Ti) every schedule is within 1..3 % of w4r1: the literal's cost,
   where measured, is at most that.
-- The literal answers 89 of 105 rows (`None` 89, `Incomplete` 0): every Ampere, Turing and Volta card
+- The literal answers 133 of 156 rows (`None` 133, `Incomplete` 0): every Ampere, Turing and Volta card
   (no row of those instruction sets), every Ada card outside distance 1.0 of the 4090 (RTX 4080 and
-  SUPER, the 4070 and 4060 families, L4, RTX 2000..4500 Ada, the Ada laptop parts), and the consumer
-  Blackwell cards outside reach of the 5090 and 5080: the RTX 5070, 5060 Ti and 5060 (`None`).
-  L40S, RTX PRO 6000 Blackwell Server Edition and both 5080 Laptop rows now carry their donors'
-  routes after the L2 audit. Hopper and datacenter Blackwell (H100, H200, H800, B200)
-  are not among the 105 target SKUs. That is the table's real coverage; it is labelled, not hidden.
+  SUPER, the 4070 and 4060 families, L4, RTX 2000..5000 Ada, the Ada laptop parts), and the consumer
+  Blackwell cards outside reach of the 5090 and 5080: the RTX 5070, 5060 Ti, 5060, 5050, their newly
+  listed laptop parts and PRO 2000 / 4000 SFF / 5000 (`None`). L40S, RTX PRO 6000 Blackwell Server
+  Edition and both 5080 Laptop rows carry their donors' routes after the L2 audit (#895). Other
+  carried boards are RTX 5090 D v2, RTX 6000D, PRO 4000 and the two PRO 4500 Blackwell editions,
+  RTX 5880 Ada and L20. Hopper and datacenter Blackwell (H100, H200, H800,
+  H20 variants, B200) are not among the 156 target SKUs. That is the table's real coverage; it is
+  labelled, not hidden.
 
 **What would move it.** A priced grouped stage in the cost model (a replica against the sweeps on
 disk) would turn the literal from a constant into a ranked answer if its residual is below the 3-9 %
@@ -126,16 +131,15 @@ parameters fits them exactly, which is a fit, not a derivation.
 **Disposition: declared.** Rows RTX 5090, 4090 (`kSparseMoePrefillQ4Q5Min` = 47) and RTX 3090 (17),
 measured ABBA as above; `Carried` within 1.0 (RTX PRO 6000 0.35, 4090 D 0.17, 6000 Ada 0.43, L40
 0.58; 3090 Ti 0.14, 3080 0.70, 3080 Ti 0.07, A6000 0.32, A5000 0.64, A40 0.46, A10 0.83).
-The L2 audit adds A10G (0.677) and RTX 3080 12GB (0.266), which carry the 3090's frontier of
-17 instead of the fallback 47; L40S (0.580) and RTX PRO 6000 Server (0.353) carry 47.
-Fallback literal: 47, the Blackwell/Ada edge. The literal answers 84 of 105 rows (`None` 84,
+The L2 audit (#895) adds A10G (0.677) and RTX 3080 12GB (0.266), which carry the 3090's frontier
+of 17 instead of the fallback 47; L40S (0.580) and RTX PRO 6000 Server (0.353) carry 47.
+Fallback literal: 47, the Blackwell/Ada edge. The literal answers 130 of 156 rows (`None` 130,
 `Incomplete` 0).
 
 **Open risk.** Ampere cards outside the 3090's reach take the 47 literal: the RTX 3060, 3060 Ti,
-3070, 3070 Ti, A4000, 3050, A2 and the two RTX 3060 Laptop GPU rows (14 rows, with their LHR and 8GB
-/ 6GB rows). So do the cards of the generations with no row at all: the 8 GA100 rows (A100, A30,
-A800), the 23 Turing rows and the 7 Volta rows. The A10G and RTX 3080 12GB now carry 17 from
-the 3090 using their published L2 capacities. The only Ampere measurement (3090) lost 28 % at C4
+3070, 3070 Ti, A1000, A2000, A4000, A4500, 3050, A2 and the two RTX 3060 Laptop GPU rows (24 rows,
+with their LHR, memory and alternate-chip variants). So do the cards of the generations with no
+row at all: the 8 GA100 rows (A100, A30, A800), the 32 Turing rows and the 11 Volta rows. The only Ampere measurement (3090) lost 28 % at C4
 with 47 against 17, so the step may carry to the whole generation. A C4 sweep at frontier 47 / 25 /
 17 on an RTX 3060 would show whether it does; if it does, a generation-keyed rule (a frontier of 17
 for a board without Ada's tensor-core rate) would turn those SKUs into a measured-and-labelled
@@ -145,7 +149,7 @@ answer. That is a behaviour change and needs the GPU run; nothing here changes t
 
 The host test and the production-equality checks run without a GPU. The production-equality checks
 cover the sixteen boards the selector goldens are kept for (`generic::kFactsBoards`, each under
-`ScopedDeviceClass`), not the 105 rows. The tie rule of the donor lookup (`nearest_known_measured`;
+`ScopedDeviceClass`), not the 156 rows. The tie rule of the donor lookup (`nearest_known_measured`;
 two rows at equal distance: the earlier answers) is pinned by a local two-row case in the test, not
 by any row; the tie of `nearest_measured` is not pinned. Not verified: the
 dispositions' meaning on a GPU (no kernel runs in the test), and the open Ampere frontier risk above
