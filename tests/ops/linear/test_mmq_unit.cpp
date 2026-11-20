@@ -143,7 +143,7 @@ int main() {
                 const double l2_rate = *row.l2_bytes_per_sm_clock * fixers * 2520e6;
                 // ...no faster than its walk over a tile's partials: rounds L2 trips (#1095).
                 const double trip = row.l2_latency.w4.value_or(row.l2_latency.w1.value_or(0));
-                const double walk = l.rounds * trip / 2520e6;
+                const double walk = l.rounds > 0 ? (l.rounds + 1) * trip / 2520e6 : 0.0;
                 const double want =
                     l.units * *u +
                     (l.fixup ? std::max(mmq_columns::fixup_bytes(l) / l2_rate, walk) + node : 0.0);
@@ -151,6 +151,60 @@ int main() {
             }
             expect(l.split == (rows != 128 * 128), what + ": stream-k below a full wave");
         }
+    }
+    // The rounds against ggml's own walk (mmq.cuh mul_mat_q_stream_k_fixup: for each CTA whose
+    // range starts inside a tile and that tile's last block, step back over the preceding CTAs,
+    // skipping the empty ones, reading one partial each, until one starts the tile), ported here:
+    // every launch of 1-39 tiles of 1-39 K steps on ten SM counts that splits.
+    {
+        const auto ggml_rounds = [](long long tiles, long long steps, long long blocks) {
+            const long long work = tiles * steps;
+            const auto kb        = [&](long long b) { return b * work / blocks; };
+            long long most       = 0;
+            for (long long b0 = 0; b0 < blocks; ++b0) {
+                const long long k0 = kb(b0), k0_stop = kb(b0 + 1);
+                if (k0 == k0_stop || k0 % steps == 0 ||
+                    (k0 / steps == k0_stop / steps && k0_stop % steps != 0)) {
+                    continue;
+                }
+                long long b = b0 - 1, stop = k0, reads = 0;
+                while (true) {
+                    const long long k = kb(b);
+                    if (k == stop) {
+                        --b;
+                        continue;
+                    }
+                    ++reads;
+                    if (k % steps == 0 || k / steps < k0 / steps) break;
+                    stop = k;
+                    --b;
+                }
+                most = std::max(most, reads);
+            }
+            return most;
+        };
+        int compared = 0, wrong = 0;
+        std::string first;
+        for (int tiles = 1; tiles < 40; ++tiles) {
+            for (int steps = 1; steps < 40; ++steps) {
+                for (const int sms : {8, 13, 17, 28, 30, 46, 68, 82, 128, 170}) {
+                    const mmq_columns::ColumnLaunch l =
+                        mmq_columns::launch_of(tiles * 128, steps * 256, 16, 16, sms);
+                    if (!l.fixup) continue;
+                    ++compared;
+                    const long long want = ggml_rounds(l.tiles, steps, l.blocks);
+                    if (want != l.rounds && wrong++ == 0) {
+                        first = std::to_string(tiles) + " tiles x " + std::to_string(steps) +
+                                " steps on " + std::to_string(sms) +
+                                " SMs: " + std::to_string(l.rounds) + " against " +
+                                std::to_string(want);
+                    }
+                }
+            }
+        }
+        expect(compared > 1000 && wrong == 0,
+               "fixup rounds as ggml's walk over " + std::to_string(compared) + " launches, " +
+                   std::to_string(wrong) + " differ" + (first.empty() ? "" : ", first " + first));
     }
     // #1095's RTX 5090 call (iq4_xs 1024 x 4096 at T 16, J 16): 8 tiles on 170 SMs, 128 CTAs of one
     // unit each, every tile split 16 ways: the fixup walks back over 15 partials a tile.
@@ -172,7 +226,7 @@ int main() {
         const auto s = mmq_unit::launch_seconds("89", QType::GGML_Q4_K, row, rows, k, columns, j,
                                                 128, 2520e6, bw, node);
         const double trip = row.l2_latency.w4.value_or(row.l2_latency.w1.value_or(0));
-        const double walk = l.rounds * trip / 2520e6;
+        const double walk = (l.rounds + 1) * trip / 2520e6;
         const double bytes =
             mmq_columns::fixup_bytes(l) /
             (*row.l2_bytes_per_sm_clock * mmq_columns::fixup_ctas(l, 128) * 2520e6);

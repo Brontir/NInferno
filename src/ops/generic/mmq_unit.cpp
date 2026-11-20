@@ -127,10 +127,12 @@ std::optional<double> launch_seconds(std::string_view arch, QType q, const IsaRo
     const double bytes = mmq_columns::fixup_bytes(l) / rate;
     // ...but no faster than its walk: the CTA of a split tile reads the preceding CTAs' partials
     // one after another (mmq_columns::ColumnLaunch::rounds), each an L2 round trip of its four
-    // warps (the fixup CTA's 128 threads; isa_facts l2_latency), #1095. Where the row has no
+    // warps (the fixup CTA's 128 threads; isa_facts l2_latency), then adds the sum into the
+    // output, one trip more (#1095). Not counted yet: each round's 64-bit divide of the block
+    // index ahead of its load (no kernel-facts row of the fixup kernel). Where the row has no
     // latency the bytes stand.
     const std::optional<double> trip = isa.l2_latency.w4 ? isa.l2_latency.w4 : isa.l2_latency.w1;
-    const double walk                = trip ? l.rounds * *trip / clock_hz : 0.0;
+    const double walk = trip && l.rounds > 0 ? (l.rounds + 1) * *trip / clock_hz : 0.0;
     return l.units * *u + std::max(bytes, walk) + fixup_launch_seconds;
 }
 
