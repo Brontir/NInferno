@@ -123,8 +123,7 @@ std::optional<double> launch_seconds(std::string_view arch, QType q, const IsaRo
     if (!l.fixup) return l.units * *u;
     // unit_seconds read the L2 rate, so it is there. The fixup's working CTAs move the bytes, not
     // the stream-k grid (mmq_columns::fixup_ctas).
-    const double rate =
-        *isa.l2_bytes_per_sm_clock * std::max(1, mmq_columns::fixup_ctas(l, sms)) * clock_hz;
+    const double rate = *isa.l2_bytes_per_sm_clock * mmq_columns::fixup_ctas(l, sms) * clock_hz;
     return l.units * *u + mmq_columns::fixup_bytes(l) / rate + fixup_launch_seconds;
 }
 

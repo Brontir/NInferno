@@ -115,7 +115,7 @@ int main() {
     // tiles, so 64 fixup CTAs, not the grid's 128 (#973).
     {
         const double bw = 384 / 8.0 * 21e9, node = 3e-6;
-        for (const int rows : {16 * 128, 32 * 128, 128 * 128}) {
+        for (const int rows : {16 * 128, 32 * 128, 48 * 128, 128 * 128}) {
             const int k = 4096, columns = 64, j = 64;
             const mmq_columns::ColumnLaunch l = mmq_columns::launch_of(rows, k, columns, j, 128);
             const auto u                      = mmq_unit::unit_seconds(
@@ -127,9 +127,14 @@ int main() {
             expect(u && s, what + ": priced");
             if (u && s) {
                 // The partial tiles move through the L2 at its rate over the fixing CTAs.
-                const int fixers = std::min(l.split_tiles * 4, 128);
+                const int fixers = std::min(l.split_tiles * mmq_columns::kFixupCtasPerTile, 128);
                 if (rows == 16 * 128) {
                     expect(l.split_tiles == 16 && fixers == 64, what + ": 64 fixup CTAs");
+                }
+                // 48 tiles of 16 K steps on 128 CTAs of 6 units: every tile split, 192 fixup
+                // CTAs, held to the 128 SMs.
+                if (rows == 48 * 128) {
+                    expect(l.split_tiles == 48 && fixers == 128, what + ": fixup CTAs at the SMs");
                 }
                 const double l2_rate = *row.l2_bytes_per_sm_clock * fixers * 2520e6;
                 const double want =
