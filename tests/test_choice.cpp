@@ -1843,6 +1843,11 @@ void moe_step_reads_the_route(const json& fixture) {
             check(s.basis == ch::SpeedBasis::Transferred && s.why == "MoE banks assumed" &&
                       sp.basis == ch::SpeedBasis::Transferred && sp.why == "MoE banks assumed",
                   "MoE step: assumed banks are transferred and named (" + at + ")");
+            // Both marks (a split part: no layers asked, banks assumed): the banks' reason.
+            const ch::Speed su = ch::speed_of(unqueried, card, assumed_q, c, rows, 1536, 0);
+            check(su.decode_per_stream == sp.decode_per_stream &&
+                      su.basis == ch::SpeedBasis::Transferred && su.why == "MoE banks assumed",
+                  "MoE step: unqueried and assumed names the banks (" + at + ")");
         }
     }
     check(lifts >= 3, "MoE step: the Own steps of several rows are the measured pair's alone");
