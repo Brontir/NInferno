@@ -718,6 +718,14 @@ int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scrat
         << pci << R"(", "name": "test"}, "entries": [)"
         << entry(off.n, off.k, generic::route_name(heuristic9)) << ", "
         << entry(no.n, no.k, "ggml_mmq") << "]}";
+    // The loader reads a pick beside the nearest table, so one is written: a board of this
+    // architecture far past kCarryDistance (one SM, a sliver of L2 and bus), holding one other
+    // shape only, so the two problems' answers are the pick's.
+    std::ofstream(dir / "far.json")
+        << R"({"schema": "ninferno-route-table/1", "gpu": {"class": "zz999:1sm", "name": "test", )"
+        << R"("board": {"cc": )" << device_class().compute_capability()
+        << R"(, "sms": 1, "l2_mib": 0.25, "dram_gbps": 8}}, "entries": [)"
+        << entry(128, 128, "ggml_mmq") << "]}";
     const std::string previous_dir = ops::route_table_dir();
     ops::set_route_table_dir(dir);
     const auto restore = [&] {
