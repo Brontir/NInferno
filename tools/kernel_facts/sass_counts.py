@@ -23,8 +23,9 @@ How the loop is found (`loop_counts`):
    whose body holds MMAs and no MMA-bearing loop inside it. Where the build has no MMA at all
    (the sm_70 build multiplies with FFMAs, NINFERNO_FMA_MMA) the innermost loop holding FFMAs
    stands in. A CALL to the sm_70 build's emulated int8 MMA (mma_s8_dp4a_call<N>, EMULATED_MMA
-   below) is that MMA. Several such loops (the compiler kept two versions of the body) are reported by
-   their number, and the one whose iteration is heaviest (step 5) is counted.
+   below), or to its emulated BF16 / F16 MMA (mma_bf16_fma_call, mma_f16_fma_call), is that
+   MMA. Several such loops (the compiler kept two versions of the body) are reported by their
+   number, and the one whose iteration is heaviest (step 5) is counted.
 5. One iteration executes one path through the body, from the header to a block that branches
    back to it. The counts are those of the heaviest path (the most MMAs, then the most
    instructions; `longest_iteration`): the full iteration, which fetches both slots and loads
@@ -87,8 +88,18 @@ FUNCTION = re.compile(r"Function : (\S+)")
 # -sass prints the call unresolved (CALL.ABS.NOINC 0x0, a relocation): its target is read from the
 # image's relocations (`cuobjdump -elf`, relocation_calls), or from the operand where the
 # disassembly names it (nvdisasm).
-EMULATED_MMA = re.compile(r"mma_s8_dp4a_callILi(\d+)E")
-EMULATED_SHAPES = {"8": "IMMA.16832.S8.S8.EMU", "4": "IMMA.16816.S8.S8.EMU"}
+# Its BF16 and F16 products are __noinline__ too (mma_bf16_fma_call, mma_f16_fma_call: one
+# m16n8k16 each, FP32 FMAs over warp shuffles inside the callee), so the K loop of a register-MMA
+# kernel of BF16 or FP8 codes holds their CALLs and no FFMA (#762): such a call counts as that HMMA.
+EMULATED_MMA = re.compile(r"mma_s8_dp4a_callILi(\d+)E|mma_(bf16|f16)_fma_callE")
+EMULATED_SHAPES = {"8": "IMMA.16832.S8.S8.EMU", "4": "IMMA.16816.S8.S8.EMU",
+                   "bf16": "HMMA.16816.F32.BF16.EMU", "f16": "HMMA.16816.F32.EMU"}
+
+
+def emulated_kind(match):
+    """The EMULATED_SHAPES key of an EMULATED_MMA match: the int8 call's chunk count, or the
+    16-bit call's type."""
+    return match.group(1) or match.group(2)
 TARGET = re.compile(r"0x([0-9a-f]+)\s*$")
 # The second line of a 128-bit instruction: its high 64-bit word alone in a comment.
 HIGH_WORD = re.compile(r"^\s*/\*\s*0x([0-9a-f]{16})\s*\*/\s*$")
@@ -233,7 +244,7 @@ def relocation_calls(lines):
     "disassembled twice ... different loops" failure when that changes a copy's counts."""
     def meaning(symbol):
         m = EMULATED_MMA.search(symbol)
-        return m.group(1) if m else None
+        return emulated_kind(m) if m else None
 
     out, current, name = {}, None, None
     for line in lines:
@@ -283,10 +294,10 @@ def iter_functions(lines, wanted=None, calls=None):
                 if calls is not None and not EMULATED_MMA.search(target):
                     target = calls.get(name, {}).get(int(m.group(1), 16), target)
                 e = EMULATED_MMA.search(target)
-                if e and e.group(1) not in EMULATED_SHAPES:
-                    raise ValueError(f"{name}: an emulated MMA of {e.group(1)} chunks has no shape")
+                if e and emulated_kind(e) not in EMULATED_SHAPES:
+                    raise ValueError(f"{name}: an emulated MMA {emulated_kind(e)} has no shape")
                 if e:
-                    opcode = EMULATED_SHAPES[e.group(1)]
+                    opcode = EMULATED_SHAPES[emulated_kind(e)]
             body.append((int(m.group(1), 16), guard not in ("", "@PT"), opcode,
                          m.group(4).strip(), None))
             continue

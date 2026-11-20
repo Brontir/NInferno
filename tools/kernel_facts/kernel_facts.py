@@ -474,8 +474,15 @@ class Family:
     k_iter divides a warp's MMA work by, and whether its rows carry the pipe counts."""
 
     def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True,
-                 marker=None, prologue=None, waits=False, producer=None):
+                 marker=None, prologue=None, waits=False, producer=None, emulated=False):
         self.name = name
+        # Whether its loop calls the emulated MMA on sm_70 (NINFERNO_FMA_MMA): the int8
+        # mma_s8_dp4a_call of the W4A8 tiles (#787) and the BF16 / F16 mma_*_fma_call of the
+        # register-MMA and grouped MoE loops (#762), which that image's SASS prints unresolved
+        # (emulated_calls). The dp4a loops (r8, moer8), the int8 mma.sync of i8 (compiled
+        # below sm_80 out) and ggml's mmq never call it; gemma4's tiles do, but that family's loop
+        # is not counted (loop=False): it needs the flag the day its loop is.
+        self.emulated = emulated
         # (marker, excluded) of the producer warps' loop, written as the PRODUCER_FIELDS after
         # the wait classes (sass_counts.loop_counts): BAR, and no MMA or dp4a in the loop, the
         # w4a8 producer-warp tile's loop (#613 PR-6); the classic tile's rows carry it as zeros.
@@ -522,13 +529,13 @@ class Family:
 # tile of 128.
 FAMILIES = {
     FAMILY: Family(FAMILY, KEY_COLUMNS, lambda d: rmma_key(d), "rmma_kernel", key_tiles, False,
-                   True),
+                   True, emulated=True),
     "mmq": Family("mmq", ("type", "J", "fallback", "prec"), lambda d: mmq_key(d), "mul_mat_q",
                   lambda key: 1, True, False, waits=True),
     "w4a8": Family("w4a8", ("codec", "block_m", "block_n", "warps_m", "warps_n", "epilogue",
                             "flavor", "stages", "producers"), lambda d: w4a8_key(d), "w4a8_",
                    lambda key: 1, True, True, waits=True,
-                   producer=("BAR", sass_counts.MMA_OPCODES + ("IDP",))),
+                   producer=("BAR", sass_counts.MMA_OPCODES + ("IDP",)), emulated=True),
     "gemma4": Family("gemma4", ("kernel", "D", "G", "slice", "rows", "Bc", "partial", "fp8",
                                 "chain"), lambda d: gemma4_key(d), "gemma4_", lambda key: 1,
                      False, True, loop=False),
@@ -543,7 +550,7 @@ FAMILIES = {
     "moegemm": Family("moegemm", ("decoder", "warps_m", "warps_k", "m_tiles", "n_tiles",
                                   "cluster", "stage"), lambda d: moe_gemm_key(d),
                       "moe_gemm_kernel", lambda key: moe_gemm_tiles(key), True, True,
-                      waits=True),
+                      waits=True, emulated=True),
     "vec": Family("vec", ("type", "T", "KS", "gated", "bounded"), lambda d: vec_key(d),
                   "vec_kernel", lambda key: 1, False, False, loop=False),
 }
@@ -639,14 +646,22 @@ def sass_lines(binary, cuda_bin, arch, sass_dump=None, names=None, batch=SASS_BA
                 fail(f"cuobjdump -sass failed on {binary}: {errors.read().strip()[:400]}")
 
 
+def calls_emulated_mma(keys):
+    """Whether `keys` ({mangled: (family, key)}) holds a kernel of a family whose loop calls the
+    emulated MMA on sm_70 (Family.emulated: rmma, w4a8, moegemm)."""
+    return any(FAMILIES[f].emulated for f, _ in keys.values())
+
+
 def emulated_calls(binary, cuda_bin, arch, keys, sass_dump=None):
-    """relocation_calls of the image where its kernels call the emulated int8 MMA (sm_70,
-    NINFERNO_FMA_MMA, #787): its SASS prints those calls unresolved. None elsewhere, for a saved
-    dump (its relocations are not in it), and where `keys` holds no w4a8 kernel (the only family
-    whose loop makes those calls, #1006 review)."""
+    """relocation_calls of the image where its kernels call the emulated MMA (sm_70,
+    NINFERNO_FMA_MMA: the int8 mma_s8_dp4a_call of the w4a8 tiles, #787, and the BF16 / F16
+    mma_*_fma_call of the register-MMA and grouped MoE loops, #762): its SASS prints those calls
+    unresolved. None elsewhere, for a saved dump (its relocations are not in it), and where `keys`
+    holds no family whose loop calls it (a per-family extraction of such a family must still
+    resolve them, or its loops count no MMA; one of the dp4a families needs none)."""
     if sass_dump or not str(arch).endswith("70"):
         return None
-    if not any(fk[0] == "w4a8" for fk in keys.values()):
+    if not calls_emulated_mma(keys):
         return None
     command = [cuda_tool("cuobjdump", cuda_bin), "-elf", "-arch", arch, binary]
     with tempfile.TemporaryFile(mode="w+", errors="replace") as errors:
@@ -656,10 +671,10 @@ def emulated_calls(binary, cuda_bin, arch, keys, sass_dump=None):
         if proc.wait() != 0:
             errors.seek(0)
             fail(f"cuobjdump -elf failed on {binary}: {errors.read().strip()[:400]}")
-    # A build whose relocations name no emulated MMA would give every w4a8 row k_iter 0 again
+    # A build whose relocations name no emulated MMA would give every such row k_iter 0 again
     # (#1006's first data): refuse it rather than write it.
     if not any(sass_counts.EMULATED_MMA.search(sym) for per in calls.values() for sym in per.values()):
-        fail(f"no call to the emulated int8 MMA in the {arch} image's relocations of {binary}")
+        fail(f"no call to the emulated MMA in the {arch} image's relocations of {binary}")
     return calls
 
 
@@ -669,9 +684,9 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
     counts = {}
     lines = sass_lines(binary, cuda_bin, arch, sass_dump, sorted(keys), batch)
     calls = emulated_calls(binary, cuda_bin, arch, keys, sass_dump)
-    if sass_dump and str(arch).endswith("70") and any(fk[0] == "w4a8" for fk in keys.values()):
-        fail("an sm_70 w4a8 extraction needs the binary: a saved SASS dump has no relocations, "
-             "so its emulated MMA calls would count as no MMA")
+    if sass_dump and str(arch).endswith("70") and calls_emulated_mma(keys):
+        fail("an sm_70 extraction of the emulated-MMA families needs the binary: a saved SASS "
+             "dump has no relocations, so its emulated MMA calls would count as no MMA")
     for name, body in sass_counts.iter_functions(lines, lambda n: n in keys, calls):
         fk = keys[name]
         family = FAMILIES[fk[0]]
@@ -691,8 +706,8 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
         c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker, family.prologue,
                                     producer).with_pipes(
             family.pipes, family.prologue is not None, family.waits, family.producer is not None)
-        if calls is not None and fk[0] == "w4a8" and c.mma == 0:
-            fail(f"{name}: an sm_70 w4a8 loop with no MMA (no emulated call resolved)")
+        if calls is not None and family.emulated and c.mma == 0:
+            fail(f"{name}: an sm_70 {fk[0]} loop with no MMA (no emulated call resolved)")
         if producer is not None and c.prod_loops != 1:
             fail(f"{name}: {c.prod_loops} producer loops in a tile with {fk[1][-1]} producer warps")
         if fk in counts and counts[fk] != c:
@@ -1170,9 +1185,17 @@ def family_list(text):
     return tuple(f for f in FAMILIES if f in names)
 
 
+# (arch, family) pairs extracted with their resources alone (#762). ggml's matrix kernel runs from
+# sm_75 on (route_requires GgmlMmq, mmq_admits): its sm_70 instances are compiled and never
+# launched, so no price reads their loop, and the loop audit cannot place it (no barrier in any
+# candidate iteration). Their section's columns stop at the resources, as a schema 1 file's.
+RESOURCES_ONLY = {("70", "mmq")}
+
+
 def cmd_extract(args):
     families = family_list(args.families)
-    sass = () if args.no_sass else tuple(f for f in families if FAMILIES[f].loop)
+    sass = () if args.no_sass else tuple(
+        f for f in families if FAMILIES[f].loop and (args.arch, f) not in RESOURCES_ONLY)
     extracted = extract_families(args.binary, args.cuda_bin, args.arch, args.dump, args.sass_dump,
                                  families, sass, args.sass_batch)
     if FAMILY in families and not extracted[FAMILY]:
