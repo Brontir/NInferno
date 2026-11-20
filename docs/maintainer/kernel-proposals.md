@@ -1020,10 +1020,12 @@ P from #850's plan. A, G, N and P have frozen predictions so far.
     the 3090. On the 5090 (no spill) registers go 142 -> 129 and instructions x0.972 for time x0.915, at 0.38 waves:
     not residency. The consumer's shorter dependent chain is the open reading.
   - KLD: master and branch identical to every printed digit (mean 0.005478, p99 0.014208, top-1 98.1483 %).
-- Twins: the classic and producer-warp tiles of one shape no longer sum Q6_K alike, so `w4a8_executed_route`'s swap
-  (a weight property, never the workload) changes the last bits for Q6_K. Each W4A8 route stays token-invariant
-  (`route_is_token_invariant`: a token's sums are its own), and each W4A8 tile already sums in its own order
-  (`summation_order` Own), so no summation class pairs the twins. Under the speed profile a token's bytes already
-  move with the route (A16 rmma at T 9-16, A8 W4A8 from T 17).
-- Decision: kept on the producer-warp kernel. The kernel-facts snapshots are regenerated on every arch. #978
-  re-prices the ws Q6_K route after the merge.
+- Twins (codex P1 on #1126, confirmed): every dense W4A8 tile of a format must write the same bytes, the prefill
+  profile's token invariance across chunk widths (test_generic_linear compares every admitted W4A8 route against the
+  wide call, byte for byte). The producer-warp-only version broke it for Q6_K. So the integer halves run in both dense
+  kernels (`w4a8_int_store`: the classic `W4a8DenseBufferOf` and the ring), and the MoE kernel, with a writer of its
+  own, keeps the float halves.
+- Re-measure (frozen 20.11 23:20, before the A/B of the both-kernels head): see the analyzer log; the classic tiles
+  against master twice (m b m b), so the 1.088 cell is read against its own spread.
+- Decision: open, pending that A/B. If the classic tiles hold, kept in both dense kernels; else #1116 closes as
+  measured with no change (the float halves everywhere).

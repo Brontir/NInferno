@@ -227,13 +227,15 @@ __host__ __device__ constexpr bool w4a8_int_halves() {
     }
 }
 
-// Whether buffer B is a stage of the producer-warp kernel's ring (W4a8Stage). The integer halves
-// run there only: on the classic kernel's tiles they time 0.98-1.00 against the float path but the
-// 64x64 tile 1.088 at n 12288 T 32 (RTX 3090, #1116), so the classic kernel keeps the float halves.
+// Whether buffer B is stored by a writer that makes the integer halves (decode_int): the dense
+// kernels' buffers, the classic one (W4a8Buffer<.., IntStore>) and the producer-warp ring
+// (W4a8Stage). Both dense kernels weigh a w4a8_int_halves codec's halves alike, so every dense
+// W4A8 tile still writes the same bytes (test_generic_linear's invariance). The MoE kernel's buffer
+// (W4a8BufferOf, its own writer MoeW4a8Weights) keeps the float halves.
 template <class B>
-__host__ __device__ constexpr bool w4a8_ring() {
-    if constexpr (requires { B::kRing; }) {
-        return B::kRing;
+__host__ __device__ constexpr bool w4a8_int_store() {
+    if constexpr (requires { B::kIntStore; }) {
+        return B::kIntStore;
     } else {
         return false;
     }
@@ -1366,8 +1368,9 @@ struct W4a8Iq2S {
 // ---------------------------------------------------------------------------------------------
 
 // HalfMin (w4a8_half_min): one more plane of two floats per block and weight row.
-template <class S, bool HalfMin = false>
+template <class S, bool HalfMin = false, bool IntStore = false>
 struct W4a8Buffer {
+    static constexpr bool kIntStore = IntStore; // w4a8_int_store
     static constexpr int kBytes = S::kBufferBytes + (HalfMin ? S::kBlockN * 32 : 0);
     static constexpr int kSmem  = 2 * kBytes;
     // The launch's buffers are the family's stages (family_facts.h), which the price reads.
@@ -1394,17 +1397,20 @@ struct W4a8Buffer {
     }
 };
 
-// The classic kernel's buffer for codec C, and its shared bytes.
+// The classic kernel's buffer for codec C, and its shared bytes (the MoE kernel's: float halves).
 template <class C, class S>
 using W4a8BufferOf = W4a8Buffer<S, w4a8_half_min<C>()>;
+// The dense classic kernel's: its writer (W4a8Weights) makes the integer halves.
+template <class C, class S>
+using W4a8DenseBufferOf = W4a8Buffer<S, w4a8_half_min<C>(), w4a8_int_halves<C>()>;
 
 // A stage of the producer/consumer ring: the per-token sums only for a codec with a min term, the
 // second weight plane only for a codec that reads one.
 template <class C, class S, int Stages>
 struct W4a8Stage {
     static_assert(!w4a8_half_min<C>(), "the producer ring has no half-min plane");
-    // The producer-warp kernel's buffer: the one the integer halves run in (w4a8_ring).
-    static constexpr bool kRing   = true;
+    // The producer-warp kernel's buffer: its writer makes the integer halves (w4a8_int_store).
+    static constexpr bool kIntStore = true;
     static constexpr bool kSum    = C::kMin;
     static constexpr bool kAux    = C::kMin || w4a8_halves<C>();
     static constexpr int kFloats  = S::kBlockM * (kSum ? 8 : 4) + S::kBlockN * (kAux ? 8 : 4);
@@ -1481,7 +1487,7 @@ struct W4a8Weights {
                 if (ok[i]) {
                     if constexpr (w4a8_half_min<C>()) {
                         C::decode(raw[i], sp, lo, hi, scale, min, min_lo, min_hi);
-                    } else if constexpr (w4a8_int_halves<C>() && w4a8_ring<B>()) {
+                    } else if constexpr (w4a8_int_halves<C>() && w4a8_int_store<B>()) {
                         C::decode_int(raw[i], sp, lo, hi, scale, min);
                     } else if constexpr (kSpan == 1) {
                         C::decode(raw[i], lo, hi, scale, min);
@@ -1550,7 +1556,7 @@ __device__ __forceinline__ void w4a8_mma_tile(float (&acc)[S::kMmaM][S::kMmaN][4
                                               Stepped&& stepped) {
     constexpr bool kHalves  = w4a8_halves<C>();
     constexpr bool kHalfMin = w4a8_half_min<C>();
-    constexpr bool kIntHalves = w4a8_int_halves<C>() && w4a8_ring<B>();
+    constexpr bool kIntHalves = w4a8_int_halves<C>() && w4a8_int_store<B>();
     constexpr bool kAux     = C::kMin || kHalves;
     static_assert(!kHalfMin || kHalves);
     static_assert(!kIntHalves || (kHalves && !kHalfMin));
@@ -1882,7 +1888,7 @@ dim3 w4a8_grid(const GemmArgs& args, W4a8Activation& act) {
 template <class C, class S, Epilogue E, int Flavor = w4a8_classic_flavor<S>()>
 __global__ __launch_bounds__(S::kThreads) void w4a8_kernel(GemmArgs a, W4a8Activation act) {
     constexpr bool kSwiGlu = E == Epilogue::SwiGlu;
-    using Buf              = W4a8BufferOf<C, S>;
+    using Buf              = W4a8DenseBufferOf<C, S>;
     extern __shared__ __align__(16) unsigned char w4a8_shared[];
     const int tid         = static_cast<int>(threadIdx.x);
     const int block_row   = w4a8_block_row(act);
