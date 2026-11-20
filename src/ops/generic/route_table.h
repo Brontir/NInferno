@@ -76,8 +76,11 @@ struct TableAnswer {
     bool predicted = false;
 };
 
+// `with_predicted` false: the table's own or borrowed entry only, the overlay's band skipped (the
+// route-table authority's retry when the band's route is not admitted here, #1068).
 [[nodiscard]] std::optional<TableAnswer> table_route_answer(const Problem& problem,
-                                                            std::int32_t tokens, bool prefill);
+                                                            std::int32_t tokens, bool prefill,
+                                                            bool with_predicted = true);
 
 // Whether a claiming entry (RouteEntry::claim) holds the exact problem and a route for this call
 // under an A16Only policy: then the generic path computes it even though its shape has a

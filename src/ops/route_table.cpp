@@ -1016,7 +1016,7 @@ std::string format_label(QType q) {
 }
 
 std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32_t tokens,
-                                              bool prefill) {
+                                              bool prefill, bool with_predicted) {
     DeviceTables& d = here();
     if (d.settled.load(std::memory_order_acquire) && !d.has_generic.load(std::memory_order_acquire)) {
         return std::nullopt;
@@ -1039,7 +1039,8 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
     // kCarryDistance (where it is Transferred or Borrowed), and in the table's gaps within it
     // (#1068, below). Not under the Legacy policy: there the table answers as it did before the
     // overlay, the switch back for a regression report.
-    if (!(prefill && tokens >= kPrefillMinTokens) && route_policy() != RoutePolicy::Legacy) {
+    if (with_predicted && !(prefill && tokens >= kPrefillMinTokens) &&
+        route_policy() != RoutePolicy::Legacy) {
         auto p = table->predicted.find(
             key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
         // The same fp8 row-F32 fallback as the measured entries below.
