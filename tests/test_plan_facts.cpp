@@ -1392,6 +1392,25 @@ int gguf_linear_formats() {
     return failures;
 }
 
+// plan_device_of_cuda's typed failure (#891): what serve's busy-card path reads through a
+// std::exception (src/serve/plan_offline.cpp), the cause and the message.
+int plan_device_error() {
+    int failures    = 0;
+    const auto read = [](bool memory) {
+        try {
+            throw pr::PlanDeviceError("GPU 0: cudaSetDevice: out of memory", memory);
+        } catch (const std::exception& e) {
+            const auto* cuda = dynamic_cast<const pr::PlanDeviceError*>(&e);
+            return std::pair<bool, std::string>(cuda != nullptr && cuda->out_of_memory, e.what());
+        }
+    };
+    failures += check(read(true).first, "plan device error: out of memory is read back");
+    failures += check(!read(false).first, "plan device error: another cause is not out of memory");
+    failures += check(read(true).second == "GPU 0: cudaSetDevice: out of memory",
+                      "plan device error: the message is kept");
+    return failures;
+}
+
 // A gpt-oss artifact's bank formats (#1059): its converter names the banks
 // text/layers/<i>/mlp/experts/<x>/gate_up and .../down, beside the stacked biases
 // (mlp/experts/gate_up_bias); the banks' format is read, the biases' is not.
@@ -1438,7 +1457,7 @@ int main() {
     const int failures = gguf_qwen35() + config_qwen35() + qwen35_moe() + gemma4() + gpt_oss() +
                          nemotron_h() + llama() + model_types() + boards() + artifact_errors() +
                          artifact_expert_layers() + artifact_prefill_policy() +
-                         gguf_linear_formats() + artifact_bank_formats();
+                         gguf_linear_formats() + plan_device_error() + artifact_bank_formats();
     if (failures == 0) { std::cout << "plan facts OK\n"; }
     return failures == 0 ? 0 : 1;
 }

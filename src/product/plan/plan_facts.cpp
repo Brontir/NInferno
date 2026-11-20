@@ -1927,8 +1927,9 @@ std::optional<runtime::PlanDeviceFacts> plan_device_of_board(std::string_view sp
 runtime::PlanDeviceFacts plan_device_of_cuda(int device, bool measure_free, bool stack_reset) {
     const auto check = [&](cudaError_t status, const char* what) {
         if (status != cudaSuccess) {
-            throw std::runtime_error("GPU " + std::to_string(device) + ": " + what + ": " +
-                                     cudaGetErrorString(status));
+            throw PlanDeviceError("GPU " + std::to_string(device) + ": " + what + ": " +
+                                      cudaGetErrorString(status),
+                                  status == cudaErrorMemoryAllocation);
         }
     };
     cudaDeviceProp props{};
