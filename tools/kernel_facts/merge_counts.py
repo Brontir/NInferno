@@ -39,8 +39,11 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 HEADER = os.path.join(ROOT, "src", "ops", "softmax_attention", "common", "causal_merge_shape.h")
 # The header rounds the per-arch stage counts (65-74) to 70: a count may lie this far either side.
 STAGE_TOLERANCE = 0.10
-INSTANCE = re.compile(r"causal_natural_merge_kernel<(?:[\w:]+::)?CausalGeometry<256,\s*16,\s*4>,"
-                      r"\s*(\d+),\s*false,\s*false,\s*false,\s*false>")
+# The instance by its mangled name (the demanglers spell template arguments differently: cu++filt
+# writes (int)256 and (bool)0): causal_natural_merge_kernel<CausalGeometry<256, 16, 4>, D, false,
+# false, false, false>.
+INSTANCE = re.compile(r"causal_natural_merge_kernelI\w*?CausalGeometryILi256ELi16ELi4EEELi(\d+)"
+                      r"ELb0ELb0ELb0ELb0EE")
 WIDTHS = (64, 256)
 
 
@@ -90,14 +93,14 @@ def check(a):
     usage = kernel_facts.resource_usage(a.binary, a.cuda_bin)
     image = kernel_facts.image_arch({arch: None for arch, _, _ in usage}, a.arch)
     names = sorted({n for arch, n, _ in usage if arch == image and "causal_natural_merge_kernel" in n})
-    demangled = kernel_facts.demangle(names, a.cuda_bin)
     wanted = {}
     for n in names:
-        m = INSTANCE.search(demangled[n].replace("(anonymous namespace)", ""))
+        m = INSTANCE.search(n)
         if m and int(m.group(1)) in WIDTHS:
             wanted[n] = int(m.group(1))
+    # None found: no disassembly (an empty --function list would disassemble the whole image).
     found = instance_counts(kernel_facts.sass_lines(a.binary, a.cuda_bin, image, None, sorted(wanted)),
-                            wanted)
+                            wanted) if wanted else {}
     bad = []
     for d in WIDTHS:
         c = found.get(d)
