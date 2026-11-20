@@ -1315,6 +1315,37 @@ int artifact_prefill_policy() {
         const auto facts = pr::plan_facts_of_directory(dir, "a test directory").model;
         return int8 ? facts.expert_prefill_int8 : facts.expert_prefill;
     };
+    // The decode kind's policy of the same directory (PlanExpertLayers::policy, layer_policy).
+    const auto kind_policy = [&](QType format, const std::vector<Bank>& banks) {
+        art::Directory dir;
+        dir.components["text"].config      = gpt_oss_text_config();
+        const ninferno::QuantLayout layout = format == QType::MXFP4
+                                                 ? ninferno::default_weight_layout(format)
+                                                 : ninferno::ggml_published_layout(format);
+        for (const Bank& bank : banks) {
+            art::TensorObject t;
+            t.id     = bank.name;
+            t.shape  = {32, bank.rows, 2880};
+            t.format = std::string(art::format_name(format));
+            t.layout = std::string(art::layout_name(layout));
+            t.bytes  = bank.rows;
+            const art::ObjectHandle handle{dir.objects.size()};
+            dir.objects.emplace_back(t);
+            dir.object_index[bank.name] = handle;
+            art::Binding b;
+            b.whole_object          = true;
+            b.elements              = 32 * bank.rows * 2880;
+            b.parts                 = {art::Part{handle, 0, b.elements}};
+            dir.bindings[bank.name] = b;
+            art::Use use;
+            use.parameter              = bank.name;
+            use.input                  = "x";
+            use.activation_policy      = bank.policy;
+            dir.uses[{bank.name, "x"}] = use;
+        }
+        const auto l = pr::plan_facts_of_directory(dir, "a test directory").model.expert_layers;
+        return l.size() == 1 ? l[0].policy : rt::PlanExpertPolicy::Unknown;
+    };
     const auto layers = [](Policy gate_up0, Policy down0, Policy gate_up1, Policy down1) {
         return std::vector<Bank>{{"text/layers/0/experts/gate_up", 5760, gate_up0},
                                  {"text/layers/0/experts/down", 2880, down0},
@@ -1342,6 +1373,13 @@ int artifact_prefill_policy() {
     // (ops::moe_policy), not the kept fallback.
     failures += check(route(QType::MXFP4, layers(a16, none, a16, none)) == rt::ExpertPrefill::A16,
                       "artifact prefill: an A16-only bank beside an unknown one, A16");
+    // The decode kind says the same (#796): A16Only, not Unknown, where one bank is known A16.
+    failures += check(kind_policy(QType::MXFP4, layers(a16, none, a16, none)) ==
+                          rt::PlanExpertPolicy::A16Only,
+                      "decode kind: an A16-only bank beside an unknown one, A16Only");
+    failures += check(kind_policy(QType::MXFP4, layers(none, none, none, none)) ==
+                          rt::PlanExpertPolicy::Unknown,
+                      "decode kind: no bank records a policy, Unknown");
     // Under --activations int8 the start runs every bank at AllowA8 (models::effective_policy),
     // whatever was recorded: the formats decide.
     failures +=
