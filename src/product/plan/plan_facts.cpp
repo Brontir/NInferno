@@ -591,6 +591,7 @@ public:
             note(b, format, std::string(artifact::layout_name(kept)), k, policy);
             const bool frag = at == QuantLayout::GgmlFrag;
             l.mxfp4 = l.mxfp4 && q == QType::MXFP4;
+            l.nvfp4         = l.nvfp4 || q == QType::NVFP4;
             // A format with int8 codes (the grouped W4A8 reads it), which the converter keeps at
             // AllowA8: the layer's policy where a bank records none (layer_allows_a8).
             const bool int8_codes =
@@ -613,7 +614,15 @@ public:
         };
         for (const auto& [name, l] : layers_) {
             const bool a8 = int8 || (!l.loader_a16 && layer_allows_a8(l));
-            if (!l.known) {
+            // An NVFP4 bank under an A4 expert policy: a build with the W4A4 kernels (sm_120a)
+            // keeps both of the layer's stages on the A16 register MMA, one without them takes
+            // the grouped W4A8 (ops w4a8_bank_refusal Nvfp4A4, nvfp4_prefill_a8_policy). The
+            // facts name no build, so the layer's route is the build's: Unknown (#796 item 1).
+            // Under --activations int8 every bank runs at AllowA8 and no A4 policy remains.
+            const bool build_decides =
+                !int8 && l.nvfp4 && l.gate_up.seen && l.down.seen &&
+                layer_policy(l.gate_up, l.down) == runtime::PlanExpertPolicy::AllowA4;
+            if (!l.known || build_decides) {
                 at(runtime::ExpertPrefill::Unknown) += l.bytes;
             } else if (l.mxfp4) {
                 // A bank the op refuses for its blocks (w4a8_bank_refusal KGroup), or under an A16
@@ -728,6 +737,8 @@ private:
         // bank kept as a format the header does not tell; loader_a16: a bank the loader runs at
         // A16 whatever it keeps (add's `assumed`, `loader_a16`)
         bool known = true, mxfp4 = true, kept_a8 = true, assumed = false, loader_a16 = false;
+        // nvfp4: a bank of the layer is NVFP4 (under an A4 policy the build decides, route()).
+        bool nvfp4 = false;
         Bank gate_up, down;
     };
 

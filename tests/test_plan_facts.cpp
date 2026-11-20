@@ -1317,10 +1317,11 @@ int artifact_prefill_policy() {
         art::Directory dir;
         dir.components["text"].config = gpt_oss_text_config();
         for (const Bank& bank : banks) {
-            const QType f                      = bank.format.value_or(format);
-            const ninferno::QuantLayout layout = f == QType::MXFP4 || f == QType::BF16
-                                                     ? ninferno::default_weight_layout(f)
-                                                     : ninferno::ggml_published_layout(f);
+            const QType f = bank.format.value_or(format);
+            const ninferno::QuantLayout layout =
+                f == QType::MXFP4 || f == QType::BF16 || f == QType::NVFP4
+                    ? ninferno::default_weight_layout(f)
+                    : ninferno::ggml_published_layout(f);
             art::TensorObject t;
             t.id     = bank.name;
             t.shape  = {32, bank.rows, 2880};
@@ -1398,6 +1399,22 @@ int artifact_prefill_policy() {
                                        {"text/layers/1/experts/down", 2880, a16, QType::BF16}}) ==
                   rt::ExpertPrefill::A16,
               "artifact prefill: a BF16 down beside a Q4_K gate/up, A16");
+    // #796 item 1: an NVFP4 gate/up at AllowA4 beside a Q4_K down at AllowA8. The op keeps the
+    // layer A16 on a build with the W4A4 kernels (sm_120a) and runs the grouped W4A8 on one
+    // without; the facts name no build, so the route is Unknown. Under --activations int8 there
+    // is no A4 policy, and the route is not Unknown.
+    const Policy a4                  = art::ActivationPolicy::AllowA4;
+    const std::vector<Bank> nvfp4_a4 = {{"text/layers/0/experts/gate_up", 5760, a4},
+                                        {"text/layers/0/experts/down", 2880, a8, QType::GGML_Q4_K},
+                                        {"text/layers/1/experts/gate_up", 5760, a4},
+                                        {"text/layers/1/experts/down", 2880, a8, QType::GGML_Q4_K}};
+    failures += check(route(QType::NVFP4, nvfp4_a4) == rt::ExpertPrefill::Unknown,
+                      "artifact prefill: NVFP4 gate/up at AllowA4 beside a Q4_K down, the build's: "
+                      "Unknown");
+    failures += check(route(QType::NVFP4, nvfp4_a4, true) != rt::ExpertPrefill::Unknown,
+                      "artifact prefill under int8: NVFP4 at AllowA4 beside Q4_K, not Unknown");
+    failures += check(route(QType::NVFP4, layers(a8, a8, a8, a8)) != rt::ExpertPrefill::Unknown,
+                      "artifact prefill: NVFP4 banks at AllowA8, not the build's");
     // A bank known A16-only beside one with no recorded policy: the layer is A16 still
     // (ops::moe_policy), not the kept fallback.
     failures += check(route(QType::MXFP4, layers(a16, none, a16, none)) == rt::ExpertPrefill::A16,
