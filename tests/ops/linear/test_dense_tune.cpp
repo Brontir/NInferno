@@ -681,8 +681,9 @@ int check_demoted_retime(cudaStream_t stream, const std::filesystem::path& scrat
 // of the band and keeps the predicted route unless a candidate beats that route's own sample by the
 // margin; a prediction the tuner does not offer is stood in for by the heuristic's route under the
 // same margin (#1074, #1091). Two problems: one band predicts the heuristic's own route at T 9
-// (offered: the entry's "us" holds base, best and the predicted route's sample), one predicts
-// ggml_mmq, which a Q8 G32 call never runs (not offered: base and best only). #1098.
+// (offered: the entry's "us" holds base, best and the predicted route's sample), one predicts a
+// Q4_K W4A8 tile, which the tuner never times at decode widths (not offered: base and best only).
+// #1098.
 int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scratch) {
     int failures    = 0;
     const auto fail = [&](const std::string& what) {
@@ -691,9 +692,11 @@ int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scrat
     };
     const Case off{"q8 predicted offered", QType::Q8_G32_FP16, ops::LinearPolicy::A16Only, 2560,
                    2048};
-    // Not offered: ggml_mmq, admitted where the policy allows int8 activations (an A16 policy
-    // refuses it before the table is read), and never among the A16 families the tuner times.
-    const Case no{"q8 predicted not offered", QType::Q8_G32_FP16, ops::LinearPolicy::AllowA8, 2560,
+    // Not offered: a W4A8 tile for Q4_K where the policy allows int8 activations. The route
+    // table answers Q4_K at T 9-16 (no R8 past T 4, no vector or MMQ verify rule for it), the
+    // tile is admitted, and the tuner times no W4A8 family at decode widths. (Q8 is no case for
+    // it: R8 takes Q8's verify widths under an A8 policy, and the table stands aside for them.)
+    const Case no{"q4k predicted not offered", QType::GGML_Q4_K, ops::LinearPolicy::AllowA8, 2560,
                   3072};
     const Device doff = upload(off, 47U);
     const Device dno  = upload(no, 53U);
@@ -710,16 +713,20 @@ int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scrat
     }
     char pci[16];
     std::snprintf(pci, sizeof pci, "0x%04X", static_cast<unsigned>(device_class().pci_device_id));
-    const auto entry = [](std::int32_t n, std::int32_t k, const std::string& route) {
-        return R"({"format": "q8", "compute": "a16", "epilogue": "store", "n": )" +
+    // compute a16 for both: the tables key a W4A8 format as a16 whatever the policy.
+    const auto entry = [](const std::string& format, std::int32_t n, std::int32_t k,
+                          const std::string& route) {
+        return R"({"format": ")" + format + R"(", "compute": "a16", "epilogue": "store", "n": )" +
                std::to_string(n) + R"(, "k": )" + std::to_string(k) + R"(, "bands": [[9, 16, ")" +
                route + R"("]]})";
     };
     std::ofstream(dir / "pick" / (own + ".json"))
         << R"({"schema": "ninferno-route-pick/1", "gpu": {"class": ")" << gpu << R"(", "pci_id": ")"
         << pci << R"(", "name": "test"}, "entries": [)"
-        << entry(off.n, off.k, generic::route_name(heuristic9)) << ", "
-        << entry(no.n, no.k, "ggml_mmq") << "]}";
+        << entry("q8", off.n, off.k, generic::route_name(heuristic9)) << ", "
+        << entry("q4k", no.n, no.k,
+                 generic::route_name(generic::Route{generic::Family::W4a8Mma, 0}))
+        << "]}";
     // The loader reads a pick beside the nearest table, so one is written: a board of this
     // architecture far past kCarryDistance (one SM, a sliver of L2 and bus), holding one other
     // shape only, so the two problems' answers are the pick's.
@@ -727,7 +734,7 @@ int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scrat
         << R"({"schema": "ninferno-route-table/1", "gpu": {"class": "zz999:1sm", "name": "test", )"
         << R"("board": {"cc": )" << device_class().compute_capability()
         << R"(, "sms": 1, "l2_mib": 0.25, "dram_gbps": 8}}, "entries": [)"
-        << entry(128, 128, "ggml_mmq") << "]}";
+        << entry("q8", 128, 128, "ggml_mmq") << "]}";
     const std::string previous_dir = ops::route_table_dir();
     ops::set_route_table_dir(dir);
     const auto restore = [&] {
@@ -784,7 +791,8 @@ int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scrat
         const std::string w = std::to_string(t);
         for (const auto& [e, predicted_name, is_offered] :
              {std::tuple{eoff, generic::route_name(heuristic9), true},
-              std::tuple{eno, std::string("ggml_mmq"), false}}) {
+              std::tuple{eno, generic::route_name(generic::Route{generic::Family::W4a8Mma, 0}),
+                         false}}) {
             const std::string where =
                 (is_offered ? "offered" : "not offered") + std::string(" T") + w;
             if (!e->contains("routes") || !(*e)["routes"].contains(w) ||
