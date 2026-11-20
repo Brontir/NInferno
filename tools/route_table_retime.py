@@ -3,9 +3,10 @@
 
     tools/route_table_retime.py --table routes/C.json --routes routes.csv --tokens 9-11 [--margin 0.03]
 
-For every generic entry of the table (format, compute, epilogue, n, k) that the grid timed at a token
-count inside --tokens, the band's route is replaced by the grid's fastest route at that count where the
-table's own route is slower than it by more than --margin (or was not timed). Bands outside the range
+For every generic entry of the table (format, compute, epilogue, n, k) that the grid timed inside
+--tokens, where the table's own route is slower than the grid's fastest by more than --margin at some
+count there, the range takes one route: the one whose worst regret over the range is least. An entry
+whose table route the grid did not time is kept (and named on stderr). Bands outside the range
 are kept; adjacent bands of one route are joined. The grid must be the table's board's: route_tune
 --routes-out on the same card, at the same master. Prints one line a moved entry; writes the table in
 place.
@@ -73,18 +74,33 @@ def main():
         if "bands" not in e:
             continue
         key = (e["format"], e["compute"], e.get("epilogue", "store"), e["n"], e["k"])
-        moved = {}
-        for t in range(lo, hi + 1):
-            times = grid.get((key, t))
-            if not times:
-                continue
-            best, best_us = min(times.items(), key=lambda kv: kv[1])
-            have = route_at(e["bands"], t)
-            have_us = times.get(have)
-            if have != best and (have_us is None or have_us > best_us * (1 + a.margin)):
-                moved[t] = best
-                print("%s %s %s %dx%d T%d: %s %s -> %s %.1f us" % (*key[:3], key[3], key[4], t, have,
-                      "untimed" if have_us is None else "%.1f us" % have_us, best, best_us))
+        timed = [t for t in range(lo, hi + 1) if grid.get((key, t))]
+        if not timed:
+            continue
+        haves = {t: route_at(e["bands"], t) for t in timed}
+        untimed = sorted({h for t, h in haves.items() if h not in grid[(key, t)]})
+        if untimed:
+            # The grid did not time the table's route: it may be absent for a reason (not offered
+            # on the board, refused by the shape), so the entry is left for a person to look at.
+            print("%s %s %s %dx%d: table route %s not timed, kept" % (*key[:3], key[3], key[4],
+                  ",".join(untimed)), file=sys.stderr)
+            continue
+
+        def regret(route, t):
+            times = grid[(key, t)]
+            return times[route] / min(times.values()) - 1
+
+        if all(regret(h, t) <= a.margin for t, h in haves.items()):
+            continue
+        # One route over the whole range (the one whose worst regret there is least), so a single
+        # noisy grid cannot checker the bands (T9 A, T10 B, T11 A).
+        common = set.intersection(*(set(grid[(key, t)]) for t in timed))
+        best = min(sorted(common), key=lambda r: max(regret(r, t) for t in timed))
+        moved = {t: best for t, h in haves.items() if h != best}
+        for t in sorted(moved):
+            times = grid[(key, t)]
+            print("%s %s %s %dx%d T%d: %s %.1f us -> %s %.1f us" % (*key[:3], key[3], key[4], t,
+                  haves[t], times[haves[t]], best, times[best]))
         if moved:
             e["bands"] = rebuild(e["bands"], moved)
             moved_entries += 1
