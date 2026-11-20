@@ -736,8 +736,20 @@ int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scrat
     if (status.predicted_entries < 2 ||
         !generic::predicted_before_tuner(poff, doff.weight, 9, false) ||
         !generic::predicted_before_tuner(pno, dno.weight, 9, false)) {
+        const auto said = [](const std::optional<generic::Route>& r) {
+            return r ? generic::route_name(*r) : std::string("none");
+        };
+        const auto answer = [](const generic::Problem& p) {
+            const auto a = generic::table_route_answer(p, 9, false);
+            return a ? generic::route_name(a->route) + (a->predicted ? " predicted" : " table")
+                     : std::string("none");
+        };
         std::cout << "predicted band: SKIP, the pick file is not read on this board ("
-                  << status.predicted_skipped << status.message << ")\n";
+                  << status.predicted_skipped << status.message << "; offered "
+                  << said(generic::predicted_before_tuner(poff, doff.weight, 9, false))
+                  << " / table " << answer(poff) << ", not offered "
+                  << said(generic::predicted_before_tuner(pno, dno.weight, 9, false)) << " / table "
+                  << answer(pno) << ")\n";
         restore();
         return 0;
     }
