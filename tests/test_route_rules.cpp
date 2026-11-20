@@ -880,6 +880,8 @@ const std::vector<NotRule>& not_rules() {
         {"ggml_mmq/ggml_vec.cu", "kBlockValues", 18, "a codec's values per block (a layout fact)"},
         {"ggml_mmq/ggml_vec.cu", "kHalfMax", 1, "the largest finite FP16 value"},
         {"ggml_mmq/ggml_vec.cu", "kRows", 1, "a kernel's tile rows (a tile shape, counted)"},
+        {"ggml_mmq/ggml_vec.cu", "kValues", 1,
+         "a lane's sums at T = 4, the rows times the tokens (a register array size)"},
         {"kernel_facts.cpp", "kColumns", 1,
          "the kernel facts file's column header (a file format)"},
         {"kernel_facts.cpp", "kLoopColumns", 1,
