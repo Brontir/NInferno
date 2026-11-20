@@ -277,6 +277,12 @@ add_test(NAME ninferno_route_pick_fresh_test
           --root ${PROJECT_SOURCE_DIR})
 ninferno_label_tests(ninferno_route_pick_fresh_test LABELS host)
 
+# routes/pick: no predicted band names a route the launch would demote for its shape (ggml_mmq on
+# rows not in whole 128-row tiles, #1077). No GPU.
+add_test(NAME ninferno_route_pick_routes_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_pick_routes.py)
+ninferno_label_tests(ninferno_route_pick_routes_test LABELS host)
+
 # The shared test tree's link modes on the built binaries (NINFERNO_SHARED_OP_TESTS, a Linux-only
 # option): every test, app and bench as the configure decided, no second copy of a member archive
 # or of the CUDA runtime beside the shared library. No GPU.
