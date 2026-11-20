@@ -10,6 +10,7 @@
 #include "core/device_class.h"
 #include "core/format_facts.h"
 #include "core/generation.h"
+#include "core/kernel_occupancy.h"
 #include "core/layout.h"
 #include "core/measured_boards.h"
 #include "core/per_device.h"
@@ -1111,6 +1112,26 @@ LawR8 law_r8_uncached(const Problem& p, const DeviceClass& device) {
 
 bool w4a8_ws_supports(QType q) { return compiled(Variant::W4a8Ws, q); }
 
+namespace {
+
+// The CTAs an SM holds of the sixteen-warp K split (rmma.m1.n1.w1x16) of a format's call (#1117):
+// the CUDA occupancy calculator on its kernel's committed facts (registers, static shared memory;
+// the plain kernel of the call's epilogue) and the board's limits. 0 where a fact is missing (no
+// decoder row, no snapshot for the build): the caller keeps its pick.
+int sixteen_warp_resident(const Problem& problem) {
+    const std::string_view decoder = rmma_geometry_decoder(problem.qtype);
+    const auto arch                = kernel_facts::sass_arch();
+    if (decoder.empty() || !arch) return 0;
+    const auto facts =
+        kernel_facts::rmma_facts(*arch, {std::string(decoder), 1, 16, 1, 1, 1,
+                                         static_cast<int>(problem.epilogue), false, 0});
+    if (!facts) return 0;
+    return resident_ctas_per_sm(device_class(),
+                                KernelShape{facts->registers, facts->static_shared_bytes, 16 * 32});
+}
+
+} // namespace
+
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
     const std::int32_t k = problem.k;
     const int split      = k >= 1024 ? 8 : k >= 512 ? 4 : 1;
@@ -1165,6 +1186,14 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                 // on a board with clusters (current_arch_facts: in such a build a substituted
                 // board without them refuses the pair and keeps its narrow fallback); its
                 // sixteen-warp CTA (a build without them) and its cluster of eight stay.
+                // That sixteen-warp CTA meets the same count (#1117): 512 threads hold two CTAs an
+                // SM at up to 64 registers (Q8_0 50-56, BF16 46-52, FP8 48-60) and one above
+                // (Q4_0 78-80, the K-quants 112-128); past the CTAs an SM holds of it, columns x
+                // CTAs run a second wave, and the eight-warp CTA (two a SM, one wave) is the split.
+                // T 9-16, every route timed, master's w1x16 against the best: K-quants 14-23 % on
+                // the 3090, 3060, 4060 Ti and 4070 Ti where 2 x CTAs > SMs, 0-5 % below; Q8_0 0 %
+                // (the rule, frozen first, then right in 12 of 12 cells on the RTX 4090 at K 8192:
+                // Q4_K / Q6_K 13.6-31.8 % at 1536 and 2048 rows, 0.0 % at 768 and 1024).
                 const std::int64_t ctas = (static_cast<std::int64_t>(problem.n) + 15) / 16;
                 const std::int64_t sms  = sm_count();
                 const RmmaScheduleInfo eight = rmma_schedule_info(rmma_index(1, 8, 1, 1));
@@ -1178,6 +1207,13 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                     if (rmma_schedule_info(pair_split).cluster == 2 &&
                         current_arch_facts().features.clusters && 2 * columns * ctas > held * sms) {
                         return rmma_index(1, 8, 1, 1);
+                    }
+                    const RmmaScheduleInfo split = rmma_schedule_info(pair_split);
+                    if (split.cluster == 1 && split.warps_k == 16) {
+                        const int resident = sixteen_warp_resident(problem);
+                        if (resident > 0 && columns * ctas > resident * sms) {
+                            return rmma_index(1, 8, 1, 1);
+                        }
                     }
                     return pair_split;
                 }
