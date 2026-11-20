@@ -536,6 +536,10 @@ gguf_expert_policy(const std::string& model_type, const std::string& format, boo
 // (runtime::PlanExpertLayers).
 class ExpertRoutes {
 public:
+    // `gemma4`: the model is Gemma 4 (gemma4_text), whose calibrated NVFP4 layers sm_120a runs on
+    // the fused Gemma4Moe whatever their policy (route(), #1092).
+    explicit ExpertRoutes(bool gemma4 = false) : gemma4_(gemma4) {}
+
     // `down`: the layer's down bank (else its gate, up or fused gate/up bank). `policy`: the
     // activation policy the bank runs at (an artifact's recorded Use, gguf_expert_policy for a
     // GGUF); none: unknown. `weight`: one of the layer's weight banks (else an auxiliary tensor:
@@ -551,7 +555,7 @@ public:
     void add(const std::string& layer, bool down, const std::string& format,
              const std::string& layout, std::uint64_t k, std::uint64_t x_width, std::uint64_t bytes,
              const std::optional<artifact::ActivationPolicy>& policy, bool weight,
-             bool assumed = false, bool loader_a16 = false) {
+             bool assumed = false, bool loader_a16 = false, bool divisor = false) {
         if (format == "bf16" || format == "fp32" || format == "int32") {
             if (!weight) { return; }
             Layer& l = layers_[layer];
@@ -577,6 +581,9 @@ public:
         l.bytes += bytes;
         l.assumed    = l.assumed || assumed;
         l.loader_a16 = l.loader_a16 || loader_a16;
+        // `divisor`: the bank's activation divisor is recorded (an artifact's Use auxiliary
+        // activation_input_divisor, a GGUF's <stem>.input_scale): Gemma4Moe's calibration.
+        l.calibrated = l.calibrated && divisor;
         try {
             const QType q = artifact::parse_format(format);
             const QuantLayout at =
@@ -625,11 +632,24 @@ public:
     // (codex on #1087).
     [[nodiscard]] runtime::ExpertPrefill route(bool int8 = false) const {
         std::array<std::uint64_t, 4> veto{}, plain{};
+        // fused: the W4A4 build runs the layer on a fused kernel no ExpertPrefill value prices,
+        // whatever its policy; only the plain build's route is the op's below.
+        bool fused     = false;
         const auto add = [&](runtime::ExpertPrefill r, std::uint64_t bytes) {
-            veto[static_cast<std::size_t>(r)] += bytes;
+            if (!fused) { veto[static_cast<std::size_t>(r)] += bytes; }
             plain[static_cast<std::size_t>(r)] += bytes;
         };
         for (const auto& [name, l] : layers_) {
+            // A calibrated Gemma 4 layer of NVFP4 banks in whole blocks, each with its activation
+            // divisor: sm_120a takes Gemma4Moe (models/gemma4 load_target.cpp fused_ready), whose
+            // prefill is its W4A4 tier unless the profile is A16Full (gemma4_moe default_route),
+            // under any recorded policy and under --activations int8 alike, Gemma 4 having no int8
+            // profile (#1092). On that build the layer is Unknown, as build_decides' is.
+            fused =
+                gemma4_ && l.known && l.all_nvfp4 && l.calibrated && l.gate_up.seen && l.down.seen;
+            if (fused) {
+                veto[static_cast<std::size_t>(runtime::ExpertPrefill::Unknown)] += l.bytes;
+            }
             const bool a8 = int8 || (!l.loader_a16 && layer_allows_a8(l));
             // An NVFP4 bank under an A4 expert policy: the generic op on a build with the W4A4
             // kernels (sm_120a) keeps both of the layer's stages on the A16 register MMA, one
@@ -655,9 +675,11 @@ public:
                 // With the W4A4 kernels the veto keeps both stages A16 (a layer of NVFP4 banks
                 // alone may run a fused W4A4 instead: unpriced); without them the banks the op
                 // admits run the grouped W4A8, the rest A16.
-                veto[static_cast<std::size_t>(l.all_nvfp4 ? runtime::ExpertPrefill::Unknown
-                                                          : runtime::ExpertPrefill::A16)] +=
-                    l.bytes;
+                if (!fused) {
+                    veto[static_cast<std::size_t>(l.all_nvfp4 ? runtime::ExpertPrefill::Unknown
+                                                              : runtime::ExpertPrefill::A16)] +=
+                        l.bytes;
+                }
                 // int8_bytes holds the whole NVFP4 banks too (their W4A8 tile, #1090).
                 const std::uint64_t admitted = l.int8_bytes;
                 plain[static_cast<std::size_t>(runtime::ExpertPrefill::Int8)] += admitted;
@@ -786,6 +808,8 @@ private:
         // W4A4 kernel, SparseMoe or Gemma4Moe, which no ExpertPrefill value prices; the facts do
         // not name the model's kernel path, so it is Unknown there, never a guessed A16).
         bool all_nvfp4 = true;
+        // calibrated: every quantized bank records its activation divisor (add's `divisor`).
+        bool calibrated = true;
         Bank gate_up, down;
     };
 
@@ -1280,7 +1304,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     double elements = 0;
     std::uint64_t input_table_bytes = 0;
     std::uint64_t output_bytes = 0, embedding_bytes = 0, routed = 0, mtp_routed = 0;
-    ExpertRoutes expert_routes;
+    ExpertRoutes expert_routes(g.model_type == "gemma4_text");
     // The trunk's linears' formats by role, weighted by their elements (split_linears_by_format).
     std::set<std::uint64_t> recurrent_blocks; // a recurrent mixer's layers (their attn_qkv is its input)
     for (const auto& t : head.tensors) {
@@ -1316,10 +1340,11 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
                 // the probe's, not A16 (gguf_expert_policy: the decode kind's stays unknown).
                 const bool gemma4_mx =
                     g.model_type == "gemma4_text" && t.type == convert::ggml::MXFP4;
-                expert_routes.add(
-                    std::to_string(*block), down, format, "", t.ne[0], down ? t.ne[0] : g.hidden,
-                    t.bytes, gguf_expert_policy(g.model_type, format, input_scale),
-                    t.name.ends_with("_exps.weight"), gemma4_mx, gemma4_mx && !input_scale);
+                expert_routes.add(std::to_string(*block), down, format, "", t.ne[0],
+                                  down ? t.ne[0] : g.hidden, t.bytes,
+                                  gguf_expert_policy(g.model_type, format, input_scale),
+                                  t.name.ends_with("_exps.weight"), gemma4_mx,
+                                  gemma4_mx && !input_scale, input_scale);
             }
             // The banks' weights only: a bank's per-expert scale (Gemma 4's ffn_down_exps.scale,
             // FP32) is not one of them.
@@ -1621,7 +1646,7 @@ PlanSourceFacts directory_facts(const artifact::Directory& dir, const std::strin
     std::vector<std::array<bool, Parts>> marks(dir.objects.size(), std::array<bool, Parts>{});
     // The routed expert objects as the runtime counts them (model_instance.cpp).
     const auto routed = artifact::routed_expert_object_layers(dir);
-    ExpertRoutes expert_routes;
+    ExpertRoutes expert_routes(geometry_of_config(text->second.config).model_type == "gemma4_text");
     // The width of the activation each routed bank reads (ExpertRoutes::add): the hidden size for a
     // gate/up bank ("experts/<i>/gate_up", "/gate", "/up"), the bank's own K for a down bank.
     const std::uint64_t hidden = geometry_of_config(text->second.config).hidden;
@@ -1665,6 +1690,19 @@ PlanSourceFacts directory_facts(const artifact::Directory& dir, const std::strin
     }
     for (std::size_t i = 0; i < recorded.size(); ++i) {
         if (used[i] != Recorded::Policy) { recorded[i].reset(); }
+    }
+    // An object every use of which records an activation divisor (the auxiliary
+    // activation_input_divisor, models/common/weight_use.cpp): Gemma4Moe's calibration (#1092).
+    std::vector<std::uint8_t> divided(dir.objects.size(), 0), undivided(dir.objects.size(), 0);
+    for (const auto& [key, use] : dir.uses) {
+        if (!artifact::routed_expert_layer(use.parameter)) { continue; }
+        const auto binding = dir.bindings.find(use.parameter);
+        if (binding == dir.bindings.end()) { continue; }
+        const bool has = use.auxiliaries.contains("activation_input_divisor");
+        for (const auto& piece : binding->second.parts) {
+            if (piece.object.index >= divided.size()) { continue; }
+            (has ? divided : undivided)[piece.object.index] = 1;
+        }
     }
     // The input table's objects that the output head does not share (an untied table: a decode
     // step gathers one row of it).
@@ -1737,7 +1775,8 @@ PlanSourceFacts directory_facts(const artifact::Directory& dir, const std::strin
                 const std::uint64_t k = tensor->shape.back();
                 expert_routes.add(*routed[i], reads_x[i] == 0, tensor->format, tensor->layout, k,
                                   reads_x[i] ? hidden : k, tensor->bytes, recorded[i],
-                                  used[i] != Recorded::None);
+                                  used[i] != Recorded::None, false, false,
+                                  divided[i] != 0 && undivided[i] == 0);
             }
         }
         if (alone && m[Drafter]) {
