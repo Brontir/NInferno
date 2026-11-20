@@ -302,6 +302,15 @@ add_test(NAME ninferno_kernel_facts_test
     --nvcc ${CMAKE_CUDA_COMPILER_VERSION} --cuda-bin ${ninferno_cuda_bin})
 ninferno_label_tests(ninferno_kernel_facts_test LABELS host slow)
 set_tests_properties(ninferno_kernel_facts_test PROPERTIES SKIP_RETURN_CODE 77)
+# - ninferno_causal_merge_counts_test: the natural merge's SASS, counted by the rule
+#   causal_merge_shape.h states, against the constants its chunk law prices with (fixed work at
+#   most kCausalMergeFixedWarpInstructions, a stage within 10 % of
+#   kCausalMergeStageWarpInstructions), on the binary the kernel-facts check reads (#872).
+add_test(NAME ninferno_causal_merge_counts_test
+  COMMAND ${Python3_EXECUTABLE} -B ${PROJECT_SOURCE_DIR}/tools/kernel_facts/merge_counts.py check
+    --binary ${ninferno_kernel_facts_check_binary} --arch ${NINFERNO_BUILD_ARCH_LABEL}
+    --cuda-bin ${ninferno_cuda_bin})
+ninferno_label_tests(ninferno_causal_merge_counts_test LABELS host slow)
 # `ninja ninferno_kernel_facts_update`: the snapshot of this build's architecture rewritten from
 # the binary the check reads (ninferno-serve where built: every family's kernels) into the source
 # tree (then regenerate the selector goldens that move with it).
