@@ -605,15 +605,20 @@ public:
             // A fused W4A4 layer (SparseMoe, Gemma4Moe) takes NVFP4 banks in whole blocks only:
             // a padded one is refused for its K group first, the generic op then runs it A16.
             l.all_nvfp4 = l.all_nvfp4 && q == QType::NVFP4 && whole;
+<<<<<<< HEAD
             // NVFP4 has a W4A8 tile on every build too (ops/generic compiled_codecs.h, W4A8_GGML32
             // X(Nvfp4)), run where the layer allows A8 and not the build's A4
             // (nvfp4_prefill_a8_policy; an A4 layer is the build's, build_decides below), though
             // the converter keeps it A16Only: its bytes are the int8 route's, not kept_a8 (#1090).
             const bool w4a8_codes = int8_codes || q == QType::NVFP4;
             if (whole && w4a8_codes && (!frag || ggml_frag_w4a8(q))) { l.int8_bytes += bytes; }
+=======
+            if (whole && int8_codes && (!frag || ggml_frag_w4a8(q))) { l.int8_bytes += bytes; }
+>>>>>>> origin/master
             // An MXFP4 bank takes its layer's MXFP4 route (the int8 tier or the block-scaled MMA)
             // only in whole blocks too: the op refuses it otherwise (KGroup) and runs it A16.
             if (whole && q == QType::MXFP4) { l.mxfp4_bytes += bytes; }
+            if (whole && q == QType::NVFP4) { l.nvfp4_bytes += bytes; }
         } catch (const std::exception&) { l.known = false; }
     }
 
@@ -638,6 +643,7 @@ public:
             // (SparseMoe) and calibrated Gemma 4 layers (Gemma4Moe) run a fused W4A4 instead,
             // which no ExpertPrefill value prices. The facts name no build, so the layer's route
             // is the build's: Unknown (#796 item 1).
+<<<<<<< HEAD
             // So is one whose policy the facts do not hold (a GGUF NVFP4 bank with an activation
             // divisor: the loader's probe and the model's recipe set it, AllowA4 for the Qwen 3.5
             // and Gemma 4 recipes), never A16 by the kept fallback (#1090). Under --activations
@@ -649,6 +655,12 @@ public:
                                        l.down.seen &&
                                        (lp == runtime::PlanExpertPolicy::AllowA4 ||
                                         lp == runtime::PlanExpertPolicy::Unknown);
+=======
+            // Under --activations int8 every bank runs at AllowA8 and no A4 policy remains.
+            const bool build_decides =
+                !int8 && l.nvfp4 && l.gate_up.seen && l.down.seen &&
+                layer_policy(l.gate_up, l.down) == runtime::PlanExpertPolicy::AllowA4;
+>>>>>>> origin/master
             if (!l.known) {
                 add(runtime::ExpertPrefill::Unknown, l.bytes);
             } else if (build_decides) {
@@ -658,8 +670,13 @@ public:
                 veto[static_cast<std::size_t>(l.all_nvfp4 ? runtime::ExpertPrefill::Unknown
                                                           : runtime::ExpertPrefill::A16)] +=
                     l.bytes;
+<<<<<<< HEAD
                 // int8_bytes holds the whole NVFP4 banks too (their W4A8 tile, #1090).
                 const std::uint64_t admitted = l.int8_bytes;
+=======
+                // NVFP4 has a W4A8 tile on every build (compiled_codecs.h W4A8_GGML32).
+                const std::uint64_t admitted = l.int8_bytes + l.nvfp4_bytes;
+>>>>>>> origin/master
                 plain[static_cast<std::size_t>(runtime::ExpertPrefill::Int8)] += admitted;
                 plain[static_cast<std::size_t>(runtime::ExpertPrefill::A16)] += l.bytes - admitted;
             } else if (l.mxfp4) {
@@ -775,6 +792,7 @@ private:
         std::uint64_t bytes = 0, int8_bytes = 0;
         std::uint64_t float_bytes = 0; // its floating-point weight banks (not the prefill route's)
         std::uint64_t mxfp4_bytes = 0; // of an MXFP4 layer: its banks in whole blocks
+        std::uint64_t nvfp4_bytes = 0; // its NVFP4 banks in whole blocks (the W4A8 tile's)
         // kept_a8: every bank a format the converter keeps at AllowA8 (int8 codes); assumed: a
         // bank kept as a format the header does not tell; loader_a16: a bank the loader runs at
         // A16 whatever it keeps (add's `assumed`, `loader_a16`)

@@ -13,7 +13,7 @@ namespace {
 // eighth of the device's L2, so the warmed block cannot evict what it was meant to help (both
 // bounds give 8 MiB on 64 and 96 MiB parts).
 std::size_t next_weight_prefetch_limit() {
-    return std::min(std::size_t{8} << 20, device_class().l2_bytes / 8);
+    return std::min(std::size_t{8} << 20, class_l2_bytes(device_class()) / 8);
 }
 } // namespace
 

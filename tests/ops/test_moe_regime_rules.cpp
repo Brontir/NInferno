@@ -84,6 +84,14 @@ void check_records() {
         switch (rule.regime) {
         case regime::Regime::TokenLimit:
             expect(rule.applies == nullptr, name + ": a generation rule with a bank predicate");
+            expect(rule.arch.mma_tensor == ninferno::Need::Any &&
+                       rule.arch.mma_bf16_native == ninferno::Need::Any &&
+                       rule.arch.native_fp4 == ninferno::Need::Any &&
+                       rule.arch.mma_slow == ninferno::Need::Any &&
+                       rule.arch.fp32acc_full_rate == ninferno::Need::Any &&
+                       rule.arch.build_arch_below == 0 && rule.arch.cc_any_of[0].major == 0,
+                   name + ": a generation rule asks nothing of the build (generation_rule reads no "
+                          "arch)");
             expect(rule.disposition == regime::Disposition::Applied,
                    name + ": a generation rule must be applied");
             expect(rule.limit == moe::kR8NarrowTokens || rule.label == regime::Label::Measured,
@@ -101,8 +109,18 @@ void check_records() {
         case regime::Regime::Cell:
             expect(rule.applies != nullptr && !rule.generation.empty(),
                    name + ": a cell needs a predicate and a generation");
-            expect(rule.disposition == regime::Disposition::Recorded,
-                   name + ": a cell is recorded, not applied");
+            // An applied cell widens its generation's limit: two cards of it, and wider than it.
+            if (rule.disposition == regime::Disposition::Applied) {
+                expect(rule.label == regime::Label::Measured,
+                       name + ": an applied cell needs two cards of its generation");
+                bool wider = false;
+                for (const regime::RegimeRule& g : regime::kRegimeRules) {
+                    if (g.regime == regime::Regime::TokenLimit && g.generation == rule.generation) {
+                        wider = rule.limit > g.limit;
+                    }
+                }
+                expect(wider, name + ": an applied cell that does not widen its generation");
+            }
             break;
         }
     }
@@ -189,6 +207,7 @@ void check_answers() {
         // (RTX 5070 Ti: 5.2) or none known; the RTX 4090, 4060 Ti and 5090 keep the generation's.
         const bool frag_iq_narrow = !b.roofline || std::string_view(b.name) == "RTX 5070 Ti";
         const int narrow          = std::min(4, b.wide);
+        const bool ga10x          = b.major == 8 && b.minor == 6;
         // r8_q6k_narrow is measured against the tensor mma.sync register MMA: a build without it
         // (sm_70) keeps the generation's limit for Q6_K (#965).
         const bool mma_tensor = ninferno::build_features().mma_tensor;
@@ -210,7 +229,13 @@ void check_answers() {
             {QType::GGML_IQ3_XXS, QuantLayout::GgmlBlocks, b.wide, ""},
             {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, mma_tensor ? narrow : b.wide,
              mma_tensor && b.wide > 4 ? "r8_q6k_narrow" : ""},
-            {QType::GGML_Q3_K, QuantLayout::GgmlBlocks, b.wide, ""},
+            // GA10x widens Q3_K to eight on a tensor mma.sync build (ga10x_q3k_r8_wide, #860), in
+            // its published planes layout (measured) and blocks; Q5_K's cell is recorded.
+            {QType::GGML_Q3_K, QuantLayout::GgmlPlanes, ga10x && mma_tensor ? 8 : b.wide,
+             ga10x && mma_tensor ? "ga10x_q3k_r8_wide" : ""},
+            {QType::GGML_Q3_K, QuantLayout::GgmlBlocks, ga10x && mma_tensor ? 8 : b.wide,
+             ga10x && mma_tensor ? "ga10x_q3k_r8_wide" : ""},
+            {QType::GGML_Q5_K, QuantLayout::GgmlBlocks, b.wide, ""},
             {QType::MXFP4, QuantLayout::BlockScaleK32E8M0, narrow,
              b.wide > 4 ? "r8_fp4_elements" : ""},
             {QType::NVFP4, QuantLayout::BlockScaleK16M128x4, narrow,
@@ -241,14 +266,31 @@ void check_answers() {
 
 } // namespace
 
-// The rule's build predicate on its own, whatever this tree's build (#965): on consumer Blackwell
-// (generation limit eight) a non-frag Q6_K bank is held to four with tensor mma.sync and keeps
-// eight without it.
-static_assert(regime::r8_limit_answer(12, 0, {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, 0.0, true})
+// The rule's `arch` on its own, whatever this tree's build (#965, #884): on consumer Blackwell
+// (generation limit eight) a non-frag Q6_K bank is held to four with tensor mma.sync (the board's
+// in common with the build's) and keeps eight without it; GA10x's Q3_K cell widens to eight only
+// with it, and an unmet `arch` falls through to the generation's four, not to a later rule.
+constexpr ninferno::ArchFacts kBlackwell(bool mma_tensor) {
+    return {.major = 12, .minor = 0, .features = {.mma_tensor = mma_tensor}};
+}
+
+static_assert(regime::r8_limit_answer(kBlackwell(true),
+                                      {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, 0.0})
                   .limit == moe::kR8NarrowTokens);
+static_assert(regime::r8_limit_answer(kBlackwell(false),
+                                      {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, 0.0})
+                  .limit == moe::kR8Tokens);
+
+constexpr ninferno::ArchFacts kGa10x(bool mma_tensor) {
+    return {.major = 8, .minor = 6, .features = {.mma_tensor = mma_tensor}};
+}
+
 static_assert(
-    regime::r8_limit_answer(12, 0, {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, 0.0, false}).limit ==
+    regime::r8_limit_answer(kGa10x(true), {QType::GGML_Q3_K, QuantLayout::GgmlPlanes, 0.0}).limit ==
     moe::kR8Tokens);
+static_assert(regime::r8_limit_answer(kGa10x(false),
+                                      {QType::GGML_Q3_K, QuantLayout::GgmlPlanes, 0.0})
+                  .limit == moe::kR8NarrowTokens);
 
 int main() {
     check_records();

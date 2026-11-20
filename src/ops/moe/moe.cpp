@@ -14,6 +14,7 @@
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
+#include "ops/generic/generic_select_detail.h"
 #include "ops/moe/moe_internal.h"
 #include "ops/moe/moe_regime_rules.h"
 #include "ops/common/arch_limits.h"
@@ -782,10 +783,13 @@ regime::R8LimitAnswer regime::r8_limit_answer(const Weight& bank) {
     // Only a ggml_frag_v1 bank's rules read the board's DRAM bytes per SM cycle.
     const BankFacts facts{bank.qtype, bank.layout,
                           bank.layout == QuantLayout::GgmlFrag ? generic::dram_bytes_per_sm_cycle()
-                                                               : 0.0,
-                          build_features().mma_tensor};
-    const auto& d = device_class();
-    return r8_limit_answer(d.major, d.minor, facts);
+                                                               : 0.0};
+    // The rules' `arch` reads the board's features in common with the build's: a substituted class
+    // (a golden's, a plan's) carries its architecture's features alone, not the build's
+    // (common_features keeps the board's mma_slow).
+    ArchFacts arch = generic::current_arch_facts();
+    arch.features  = common_features(arch.features, build_features());
+    return r8_limit_answer(arch, facts);
 }
 
 std::int32_t r8_token_limit(const Weight& bank) { return regime::r8_limit_answer(bank).limit; }
