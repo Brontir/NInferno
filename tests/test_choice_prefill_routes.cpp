@@ -225,11 +225,12 @@ void every_board(const json& fixture) {
                 pr::with_prefill_routes(model, device);
                 const Estimate after = estimate(model, card, quant, 7000);
                 ++estimates;
-                if (row.pci_device_id == 0x2C3A || row.pci_device_id == 0x2C31) {
+                if (row.major == 12 && (q == "Q4_K_M" || q == "Q5_K_M")) {
                     // lab/905-debug: each trunk linear's prefill kernel with the query at 1024
                     // tokens.
                     std::cout << "  DEBUG905 " << std::hex << row.pci_device_id << std::dec << ' '
-                              << model_name << ' ' << q << " sms " << card.sms << " basis "
+                              << model_name << ' ' << q << " sms " << card.sms << " gen "
+                              << ch::generation_of(card) << " basis "
                               << ch::speed_basis_name(before.basis) << "->"
                               << ch::speed_basis_name(after.basis) << " pp " << before.prefill
                               << "->" << after.prefill << ':';
