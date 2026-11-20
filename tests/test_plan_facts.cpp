@@ -325,9 +325,10 @@ int gguf_qwen35() {
     failures += check(policy_of(ninferno::convert::ggml::NVFP4, {"ffn_gate_exps"}) ==
                           rt::PlanExpertPolicy::A16Only,
                       "gguf NVFP4, a divisor on the gate only: A16Only (the up bank's)");
-    // #796 item 3: the GGUF path's recorded policy where it differs from the format's kept one:
-    // NVFP4 gate/up without a divisor (A16Only) beside an int8-coded Q4_K down (kept AllowA8)
-    // makes the layer A16 for the prefill route.
+    // #796 item 3: the GGUF path's recorded policy reaches the prefill route: NVFP4 gate/up
+    // without a divisor (A16Only) beside an int8-coded Q4_K down (kept AllowA8) makes the layer
+    // A16. The recorded policy here equals NVFP4's kept one (A16Only); no GGUF case has the two
+    // differ in a way that moves the route, so this checks the layer policy, not that difference.
     {
         GgufFile banks = file;
         for (const char* name : {"blk.0.ffn_gate_exps.weight", "blk.0.ffn_up_exps.weight"}) {

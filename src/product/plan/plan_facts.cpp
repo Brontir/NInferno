@@ -616,10 +616,13 @@ public:
         };
         for (const auto& [name, l] : layers_) {
             const bool a8 = int8 || (!l.loader_a16 && layer_allows_a8(l));
-            // An NVFP4 bank under an A4 expert policy: a build with the W4A4 kernels (sm_120a)
-            // keeps both of the layer's stages on the A16 register MMA, one without them takes
-            // the grouped W4A8 (ops w4a8_bank_refusal Nvfp4A4, nvfp4_prefill_a8_policy). The
-            // facts name no build, so the layer's route is the build's: Unknown (#796 item 1).
+            // An NVFP4 bank under an A4 expert policy: the generic op on a build with the W4A4
+            // kernels (sm_120a) keeps both of the layer's stages on the A16 register MMA, one
+            // without them takes the grouped W4A8 (ops w4a8_bank_refusal Nvfp4A4,
+            // nvfp4_prefill_a8_policy); on sm_120a the all-NVFP4 Qwen 3.5/3.6 A3B layers
+            // (SparseMoe) and calibrated Gemma 4 layers (Gemma4Moe) run a fused W4A4 instead,
+            // which no ExpertPrefill value prices. The facts name no build, so the layer's route
+            // is the build's: Unknown (#796 item 1).
             // Under --activations int8 every bank runs at AllowA8 and no A4 policy remains.
             const bool build_decides =
                 !int8 && l.nvfp4 && l.gate_up.seen && l.down.seen &&
