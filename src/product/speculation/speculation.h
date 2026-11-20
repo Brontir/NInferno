@@ -70,7 +70,9 @@ struct ServedSpeculation {
     std::string fit_fallback;
     // Where engine.load comes from: the served profile's spec::Profile::load_basis (measured,
     // facts, literal; "" where unsaid), whichever step serves it (the profile's choice, its fit
-    // fallback, a shallower draft, the model's MTP head).
+    // fallback, a shallower draft, the model's MTP head). A server's --spec-load or captured-depth
+    // table replaces engine.load and leaves this as it was: the basis is the served table's own
+    // (DECISIONS 80, #804).
     std::string load_basis;
     // Whether it drafts: false for a profile whose choice is plain decode (kept for its source,
     // basis and notes; every start and plan decodes it plainly, with no fallback to try).
