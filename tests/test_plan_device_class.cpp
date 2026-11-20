@@ -831,6 +831,15 @@ int main() {
                           " vs " + wide_bytes(wide) + " bytes, #1112)");
             }
         }
+        // #1115 item 6: with_tile_arch's hand-written list holds every committed snapshot's label,
+        // so the boards of an arch the registry has none of (above) would not throw either.
+        for (const std::string_view label : ops::detail::generic::kernel_facts::snapshot_archs()) {
+            check(ops::detail::gemma4_tile_arch_known(label),
+                  "gemma4 with_tile_arch lists the snapshot arch sm_" + std::string(label) +
+                      " (#1115)");
+        }
+        check(!ops::detail::gemma4_tile_arch_known("61"),
+              "gemma4 with_tile_arch refuses a label it holds no tile of (#1115)");
     }
 
     // #903 item 4: --plan-device names a registered variant of a shared PCI product (the TITAN V

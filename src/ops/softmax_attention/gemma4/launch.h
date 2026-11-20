@@ -6,6 +6,7 @@
 #include <cuda_runtime.h>
 
 #include <cstdint>
+#include <string_view>
 
 namespace ninferno::ops::detail {
 
@@ -59,6 +60,10 @@ void gemma4_attention_set_prefill_chain(Gemma4PrefillChain chain) noexcept;
 [[nodiscard]] std::size_t gemma4_attention_chain_bytes(std::int32_t head_dim, std::int32_t q_heads,
                                                        std::int32_t kv_heads, std::int32_t window,
                                                        bool block, bool fp8, std::int32_t tokens);
+// Whether a kernel-facts snapshot label names a build whose tiles this build holds
+// (with_tile_arch's list in launch.cu): every committed snapshot's label must (#1115), or its
+// boards' plans throw.
+[[nodiscard]] bool gemma4_tile_arch_known(std::string_view label);
 // The most any prefill call of up to max_tokens takes (either prefill tile, BF16 or FP8 planes).
 [[nodiscard]] std::size_t gemma4_attention_chain_bound(std::int32_t head_dim, std::int32_t q_heads,
                                                        std::int32_t kv_heads, std::int32_t window,
