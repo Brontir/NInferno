@@ -34,13 +34,14 @@ and `--route-policy legacy` reads none either (the lookup answers as before the 
 
 ## T 17-32 on sm_89 (#785)
 On compute capability 8.9 (`NARROW_CC`) every class's file also holds the bands of T 17-32 (`NARROW_HI`), on tabled
-boards too, for every problem whose T 9-16 band it writes. Past T 16 the bands stop at the first width `pick.py` cannot
-price. These bands answer a different set of calls than the T 9-16 ones: the int8 calls of T 17-32 outside the prefill
+boards too, for every problem it prices there, also where the table covers T 9-16 and the entry then holds the 17-32
+bands alone. Past T 16 the bands stop at the first width `pick.py` cannot price. These bands answer a different set of calls than the T 9-16 ones: the int8 calls of T 17-32 outside the prefill
 profile (`a8_wide_call`: a speculative verify round, a decode batch), which skip the table, and whose measured entries
 hold A16 schedules only. For such a call (`route_table_entry`, `table_predicted_answer`) the band answers ahead of the
 cost model, *whether or not the table holds an entry of its own*. It yields only to this board's own tuned W4A8 band of
 the width (`dense_tune_prefill_band`, `auto_answer`). A band the call does not admit leaves it to the cost model, as
-before. A16 calls of T 17-32 read these bands in the table's gaps only, like the T 9-16 ones.
+before. A16 calls of T 17-32 read these bands like the T 9-16 ones: in the table's gaps on a board within
+`kCarryDistance`, ahead of the table past it (the speed profile; no predicted band is read at prefill from T 17).
 
 Evidence (open grids, T 24 / 32, the cells the cost-model authority answers): pick.py's mean regret against the timed
 routes is +2.0 % on the RTX 4070 Ti and +4.1 % on the 4090, where the cost model's is +27.1 / +19.9 %. On the 3090 it

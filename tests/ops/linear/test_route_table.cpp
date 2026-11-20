@@ -221,8 +221,9 @@ int shipped_picks() {
                                         std::regex_constants::format_first_only));
         refused_with(
             "with a band past T 32",
-            std::regex_replace(first_text, std::regex(R"re("bands": \[\s*\[\s*9,\s*\d+)re"),
-                               R"re("bands": [[9, 40)re", std::regex_constants::format_first_only));
+            // The first entry's T 17-32 band widened to 40: no overlap, so the limit refuses it.
+            std::regex_replace(first_text, std::regex(R"re(\[\s*17,\s*32,)re"), R"re([17, 40,)re",
+                               std::regex_constants::format_first_only));
         // Within kCarryDistance a predicted band fills the table's gaps only (#1068): a table of
         // this class (distance 0) holding the file's first problem answers it as measured; the
         // file's second problem, which the table lacks, is answered as predicted, also where a
