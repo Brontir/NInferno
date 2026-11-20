@@ -2,8 +2,10 @@
 
 `gen.py` writes `routes/pick/<chip>-<sms>sm.json` for every board class of `src/core/data/gpu_facts.json` whose chip
 has no route table in `routes/` and whose board is past `kCarryDistance` from every table's board (nearer, the table's
-answers carry and the engine reads no file: the RTX 4070 Ti SUPER, the RTX 4060 and the RTX 5070 today). Each file holds the T 9-16 band of every A16 generic-path problem that the route
-tables of the same compute capability list (the release models' shapes), as `pick.py` prices it from repo facts.
+answers carry and the engine reads no file: the RTX 4070 Ti SUPER, the RTX 4060 and the RTX 5070 today). Each file holds the T 9-16 band of every A16 generic-path problem with the store or
+SwiGLU epilogue that the route tables of the same compute capability list (the release models' shapes), as `pick.py`
+prices it from repo facts. The add epilogue (o_proj, down) is priced but not written: on the RTX 4060 Ti its bands lost
+2.8 % against the borrowed table, the law's n2.w1x4 against the measured n4.w1x4 on the Q6_K down (#1051).
 Nothing is measured on the card.
 
 - `pick.py` is the route analyzer: analyzer core after round 11, with its constants frozen. It prices every route
@@ -30,10 +32,11 @@ The test removed a card's own table, as for a card of the generation that nobody
 |---|---|
 | RTX 3090, Q4_K_M | +5.5 % |
 | RTX 3090, Q5_K_M | +0.3 / +0.4 % |
-| RTX 4060 Ti | +0.5 / -0.03 % |
+| RTX 4060 Ti, Q4_K_M (store and SwiGLU bands, a1e7bc095) | +0.25 / -0.46 % |
+| RTX 4060 Ti, with add bands (8f339ae73) | -2.8 / -2.6 % |
 | RTX 2080 Ti | -0.02 / -0.02 % (ties) |
 
-Against a card's own measured table, the pick equals it on the 3090 and the 2080 Ti and loses 2.1 % on the 4060 Ti.
+Against a card's own measured table, the pick equals it on the 3090 and the 2080 Ti and loses 2.4-2.6 % on the 4060 Ti.
 So measured tables stay, and the pick serves only the classes nobody measured.
 
 Left out (constants fitted without the card): about 2.5 % pooled regret on the open grids. A whole generation left
