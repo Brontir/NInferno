@@ -96,12 +96,15 @@ struct CountedBoard {
                                       double dram_bytes_per_s) noexcept;
 
 // One mul_mat_q launch: the longest CTA's units (core/mmq_columns.h launch_of) at the unit its own
-// resident CTAs give, and where the CTAs do not divide the tiles, the fixup's bytes and
-// `fixup_launch_seconds` (its graph node). The partial tiles are written and read back through the
-// L2, at its rate (isa_probe 18's bytes per SM clock x the fixing SMs x the clock): their bytes
-// grow with the CTAs as that rate does. At the DRAM rate (or at the L2's only where they fit in
-// part of it) a board with more SMs priced higher (decision property P1, #613 PR-5). A stream-k
-// CTA's unit is the tile CTA's (not yet counted apart). nullopt where the unit is not priced.
+// resident CTAs give, and where the CTAs do not divide the tiles, the fixup and
+// `fixup_launch_seconds` (its graph node). The fixup is the larger of two times. Its bytes: the
+// partial tiles written and read back through the L2, at its rate (isa_probe 18's bytes per SM
+// clock x the fixing SMs x the clock), which grows with the CTAs as the bytes do; at the DRAM rate
+// (or at the L2's only where they fit in part of it) a board with more SMs priced higher (decision
+// property P1, #613 PR-5). Its walk: the CTA of a split tile reads the preceding CTAs' partials
+// one round at a time (mmq_columns::ColumnLaunch::rounds), each an L2 round trip, plus one trip
+// for the sum (#1095). A stream-k CTA's unit is the tile CTA's (not yet counted apart). nullopt
+// where the unit is not priced.
 [[nodiscard]] std::optional<double> launch_seconds(std::string_view arch, QType q,
                                                    const IsaRow& isa, int rows, int k, int columns,
                                                    int j, int sms, double clock_hz,
