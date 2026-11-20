@@ -2276,6 +2276,18 @@ void test_moe_routes() {
         pr::with_moe_routes(m, headerless, device);
         check(m.moe() && !m.moe_routes && m.moe_route_unqueried,
               "MoE routes: no routed layers in the facts, the model marked unqueried");
+        // The same through a hub row's facts (plan_quants' estimate_row): a GGUF row priced at
+        // the shape's bytes without its own tensor table gets no routed layers (row_facts), so
+        // its model is marked too.
+        pr::QuantRow hub;
+        hub.listing.format                       = "gguf";
+        hub.weight_bytes                         = f.model.weight_bytes;
+        hub.basis                                = rt::WeightBasis::GgufTensors;
+        const pr::PlanSourceFacts hub_facts      = pr::row_facts(f, hub);
+        ninferno::product::choice::ModelFacts hm = pr::choice_model_of(hub_facts);
+        pr::with_moe_routes(hm, hub_facts, device);
+        check(hub_facts.model.expert_layers.empty() && hm.moe() && hm.moe_route_unqueried,
+              "MoE routes: a hub row without its table is marked unqueried");
     }
     rt::set_plan_moe_route_query({});
     ninferno::product::choice::ModelFacts unasked = pr::choice_model_of(f);
