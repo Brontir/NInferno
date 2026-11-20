@@ -658,6 +658,18 @@ void declines(const std::string& name, const rt::PlanModelFacts& facts,
     payload.artifact_directory = std::make_shared<const art::Directory>(divided);
     refuses(basis_of(payload, options, device), "does not hold",
             "a binding that reads the payload");
+    // A dense model whose every layer is windowed: the start's Program refuses it (#892 item 2).
+    if (facts.model_type != "nemotron_h") {
+        art::Directory windowed = directory;
+        auto& config            = windowed.components.at("text").config;
+        if (config.contains("layer_types") && config.contains("sliding_window")) {
+            for (auto& type : config["layer_types"]) { type = "sliding_attention"; }
+            rt::PlanModelFacts sliding = facts;
+            sliding.artifact_directory = std::make_shared<const art::Directory>(windowed);
+            refuses(basis_of(sliding, options, device), "full-attention layers",
+                    "a model without a full-attention layer");
+        }
+    }
     rt::PlanModelFacts bare = facts;
     bare.artifact_directory.reset();
     refuses(basis_of(bare, options, device), "artifact", "facts without the directory");
