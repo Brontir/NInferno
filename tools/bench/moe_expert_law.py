@@ -55,7 +55,7 @@ R8_CODEC = {"q3_k": "W4a8Q3K", "q4_k": "W4a8Q45K<4>", "q5_k": "W4a8Q45K<5>", "q6
 R8_PER_LOAD = {"q3_k": 4, "q4_k": 2, "q5_k": 2, "q6_k": 4}
 # The candidates are the plans the call may run (moe.cpp r8_admits): an R8 stage only up to the R8 token limit,
 # moe_regime_rules.h's records (the generation's: eight on Ada and consumer Blackwell, four elsewhere; a non-frag
-# Q6_K bank four everywhere). The law prices the admitted plans; admission itself is the runtime's.
+# Q6_K bank four on every tensor mma.sync build). The law prices the admitted plans; admission itself is the runtime's.
 GENERATION = {"rtx4090": "ada", "rtx4060ti": "ada", "rtx4070ti": "ada", "rtx5090": "gb20x", "rtx5070ti": "gb20x",
               "rtx3090": "ga10x", "rtx3060": "ga10x", "rtx2080ti": "turing"}
 
