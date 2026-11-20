@@ -1374,6 +1374,30 @@ class RegisterAllocations(unittest.TestCase):
                           ("80", {key: (160, 0, 0, 16, b)})):
             self.assertEqual(kernel_facts.keep_allocations("r8", arch, old, new), new, arch)
 
+    def test_sm70_relocations_read_for_the_emulated_mma_families(self):
+        # #762: rmma, w4a8 and moegemm loops call the emulated MMA on sm_70, and a per-family
+        # extraction of any of them reads the relocations; the dp4a families and the
+        # resources-only ones need none, so their sm_70 extraction neither reads nor refuses.
+        def keys(*families):
+            return {f"k{i}": (f, ()) for i, f in enumerate(families)}
+        for f in (kernel_facts.FAMILY, "w4a8", "moegemm"):
+            self.assertTrue(kernel_facts.calls_emulated_mma(keys(f)), f)
+        for f in ("r8", "moer8", "i8", "mmq", "vec", "gemma4"):
+            self.assertFalse(kernel_facts.calls_emulated_mma(keys(f)), f)
+        self.assertTrue(kernel_facts.calls_emulated_mma(keys("r8", "moegemm")))
+        popen = kernel_facts.subprocess.Popen
+
+        def no_run(*args, **kwargs):
+            raise AssertionError("cuobjdump run for a family that needs no relocations")
+        kernel_facts.subprocess.Popen = no_run
+        try:
+            self.assertIsNone(kernel_facts.emulated_calls("b", None, "70", keys("r8", "vec")))
+            self.assertIsNone(kernel_facts.emulated_calls("b", None, "86", keys("moegemm")))
+            self.assertIsNone(kernel_facts.emulated_calls("b", None, "70", keys("moegemm"),
+                                                          sass_dump="d"))
+        finally:
+            kernel_facts.subprocess.Popen = popen
+
 
 if __name__ == "__main__":
     unittest.main()
