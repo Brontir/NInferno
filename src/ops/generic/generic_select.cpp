@@ -1115,19 +1115,15 @@ bool w4a8_ws_supports(QType q) { return compiled(Variant::W4a8Ws, q); }
 
 namespace {
 
-// The CTAs an SM holds of the sixteen-warp K split (rmma.m1.n1.w1x16) of a format's call (#1117):
-// the CUDA occupancy calculator on its kernel's committed facts (registers, static shared memory)
-// and the board's limits. The plain kernel of the call's decoder (rmma_decoder_of, as the launch
-// instantiates it) and epilogue is read: its latency, wide-load and add-sums twins hold the same
-// count in every committed snapshot (Q4_K latency 121 registers against 119, Q6_K wide on sm_86
-// 128 against 122: one 512-thread CTA either way). 0 where a fact is missing (a format without a
-// register-MMA launch, no snapshot for the build, no device): the caller keeps its pick.
 // The 512-thread CTAs an SM holds of a kernel of `registers` a thread and `shared` static bytes,
 // counted from the board's own limits: its threads, its register file in the 256-register warp
 // allocation unit, and its shared memory with the per-CTA reservation (a launch without dynamic
 // shared memory, as the split's). Not through the CUDA occupancy calculator: the cuda_occupancy.h
 // of an older toolkit refuses an architecture it predates (CUDA 12.8, the CI host jobs': sm_103),
-// and the rule must answer alike on every build. 0 where a limit is unknown.
+// and the rule must answer alike on every build. The calculator's other limits are left out: at
+// 512 threads and at most 17 KiB of static shared memory (the largest w1x16 row, 15,872 bytes)
+// neither the blocks-per-SM cap nor the 128-byte shared rounding can bind. 0 where a limit is
+// unknown.
 int sixteen_warp_ctas(const DeviceClass& d, int registers, std::size_t shared) {
     constexpr int kThreads = 16 * 32;
     if (registers <= 0 || d.max_threads_per_sm <= 0 || d.registers_per_sm <= 0) return 0;
@@ -1142,6 +1138,13 @@ int sixteen_warp_ctas(const DeviceClass& d, int registers, std::size_t shared) {
     return std::max(ctas, 0);
 }
 
+// The CTAs an SM holds of the sixteen-warp K split (rmma.m1.n1.w1x16) of a format's call (#1117):
+// the CUDA occupancy calculator on its kernel's committed facts (registers, static shared memory)
+// and the board's limits. The plain kernel of the call's decoder (rmma_decoder_of, as the launch
+// instantiates it) and epilogue is read: its latency, wide-load and add-sums twins hold the same
+// count in every committed snapshot (Q4_K latency 121 registers against 119, Q6_K wide on sm_86
+// 128 against 122: one 512-thread CTA either way). 0 where a fact is missing (a format without a
+// register-MMA launch, no snapshot for the build, no device): the caller keeps its pick.
 int sixteen_warp_resident_uncached(const Problem& problem) {
     Weight weight;
     weight.qtype              = problem.qtype;
