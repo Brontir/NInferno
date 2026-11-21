@@ -1028,33 +1028,13 @@ std::string at_commit(const std::string& repo, const std::string& commit) {
     return commit.empty() ? repo : repo.substr(0, repo.find('@')) + "@" + commit;
 }
 
-// A serve plan that failed for want of the hub or of time (its 45 s), not by refusing the model:
-// serve_plan_json's timeout, or a last line naming the transport (convert/fetch.cpp's curl and
-// HTTP errors). The plan here answers then (#766); any other failure is serve's refusal.
-bool hub_transport_failure(const std::string& what) {
-    // An HTTP status (convert/fetch.cpp: "HTTP <code>") is the hub's answer: a timeout, a rate
-    // limit or a server error may pass (408, 429, 5xx); any other (401, 403, 404: the revision
-    // lacks the file, the repository is gated) is permanent, and a start would refuse as serve
-    // does.
-    for (std::size_t at = what.find("HTTP "); at != std::string::npos;
-         at             = what.find("HTTP ", at + 5)) {
-        std::size_t used = 0;
-        int code         = 0;
-        try {
-            code = std::stoi(what.substr(at + 5, 3), &used);
-        } catch (const std::exception&) { continue; }
-        if (used != 3) { continue; }
-        return code == 408 || code == 429 || (code >= 500 && code < 600);
-    }
-    for (const char* mark :
-         {"did not answer within", "can't reach", "unreachable", "Couldn't resolve",
-          "Could not resolve", "Couldn't connect", "Timeout was reached", "Operation too slow",
-          "SSL", "HTTP/2", "curl", "Failure when receiving", "Send failure", "Recv failure",
-          "Server returned nothing", "Weird server reply", "partial file", "Connection reset"}) {
-        if (what.find(mark) != std::string::npos) { return true; }
-    }
-    return false;
-}
+// A serve plan that failed for want of the hub or of time, not by refusing the model: serve's
+// exit kHubTransportExit (convert::HubTransportError: no answer, a cut connection, HTTP 408 / 429 /
+// 5xx) or its 45 s. The plan here answers then (#766); any other failure is serve's refusal, read
+// by the code, never by the words of its last line (#1147).
+struct ServeTransportFailure : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
 
 } // namespace
 
@@ -1141,12 +1121,16 @@ std::optional<Json> App::serve_plan_json(const std::string& model, const std::st
     // it would refuse as it does.
     const std::string said = info.last_line.empty() ? std::string() : ": " + info.last_line;
     if (timed_out || !ended) {
-        throw std::runtime_error("ninferno-serve --plan did not answer within 45 s");
+        throw ServeTransportFailure("ninferno-serve --plan did not answer within 45 s");
     }
     // The binary never ran (a fork's execve failed: ProcessPool's child says so and exits 127,
     // where Windows' CreateProcess throws in start()): no serve answered, as without one.
     if (info.exit_code == 127 && info.last_line == "ninferno-ui: exec failed") {
         return std::nullopt;
+    }
+    if (info.exit_code == convert::kHubTransportExit) {
+        throw ServeTransportFailure("ninferno-serve --plan could not read the hub (exit " +
+                                    std::to_string(info.exit_code) + ")" + said);
     }
     // Exit 0: the plan fits, 2: it does not; both print the document (apps/serve/main.cpp).
     if (info.exit_code != 0 && info.exit_code != 2) {
@@ -1324,14 +1308,16 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                         // answers the next ask (no child ran, so no context moved the memory).
                         kept = Json{{"no_serve", true}};
                     }
-                } catch (const std::exception& error) {
+                } catch (const ServeTransportFailure& error) {
                     // serve's own hub read failed or it did not answer: the plan here answers from
-                    // what this process read, saying why. Any other failure is serve's refusal, and
-                    // a start would refuse as it does (#843): the plan's answer.
-                    const std::string what = error.what();
-                    kept                   = hub_transport_failure(what) ? Json{{"failed", what}}
-                                                                         : Json{{"refused", what}};
-                    (*kept)["at"]          = clock_now();
+                    // what this process read, saying why.
+                    kept          = Json{{"failed", error.what()}};
+                    (*kept)["at"] = clock_now();
+                } catch (const std::exception& error) {
+                    // Any other failure is serve's refusal, and a start would refuse as it does
+                    // (#843): the plan's answer.
+                    kept          = Json{{"refused", error.what()}};
+                    (*kept)["at"] = clock_now();
                 }
                 std::lock_guard lock(sizes_mutex_);
                 if (generation == hub_generation_ && !kept->contains("no_serve")) {

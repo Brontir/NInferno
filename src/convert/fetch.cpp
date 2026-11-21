@@ -471,6 +471,11 @@ private:
             if (status == 401 || status == 403 || status == 410) { refresh_url(url); }
             if (code == CURLE_OPERATION_TIMEDOUT) { ++stalls_; }
             if (++chunk.failures > options_.retries) {
+                if (transport_failure(code, status)) {
+                    throw HubTransportError(name_ + ": bytes " + range + " failed " +
+                                            std::to_string(chunk.failures) +
+                                            " times (last: " + curl_text(code, status) + ")");
+                }
                 throw std::runtime_error(name_ + ": bytes " +
                                          range + " failed " + std::to_string(chunk.failures) +
                                          " times (last: " + curl_text(code, status) + ")");
@@ -624,6 +629,10 @@ private:
             if (sink.file) { std::fclose(sink.file); }
             if (code == CURLE_OK && (status == 200 || status == 206)) { return; }
             if (attempt >= options_.retries) {
+                if (transport_failure(code, status)) {
+                    throw HubTransportError(name_ + ": download failed (" +
+                                            curl_text(code, status) + ")");
+                }
                 throw std::runtime_error(name_ +
                                          ": download failed (" + curl_text(code, status) + ")");
             }
@@ -673,10 +682,17 @@ public:
     [[nodiscard]] virtual fs::path cache_dir(const fs::path& root, const std::string& repo) const = 0;
 };
 
-std::runtime_error hub_error(const std::string& what, const Response& response,
-                             const std::string& hint) {
-    return std::runtime_error(what + ": " + curl_text(response.code, response.status) +
-                              (hint.empty() ? "" : " (" + hint + ")"));
+// Whether a failed read is the transport's (HubTransportError) rather than the hub's answer.
+bool transport_failure(CURLcode code, long status) {
+    return code != CURLE_OK || status == 408 || status == 429 || (status >= 500 && status < 600);
+}
+
+[[noreturn]] void throw_hub_error(const std::string& what, const Response& response,
+                                  const std::string& hint) {
+    const std::string text = what + ": " + curl_text(response.code, response.status) +
+                             (hint.empty() ? "" : " (" + hint + ")");
+    if (transport_failure(response.code, response.status)) { throw HubTransportError(text); }
+    throw std::runtime_error(text);
 }
 
 class HuggingFace final : public Hub {
@@ -690,7 +706,7 @@ public:
                          "?blobs=true";
         const auto response = request(url, credentials(), false, true);
         if (response.code != CURLE_OK || response.status != 200) {
-            throw hub_error(
+            throw_hub_error(
                 "listing " + repo + "@" + revision, response,
                 response.status == 401 || response.status == 403 ? listing_hint(repo)
                 : response.status == 404
@@ -727,7 +743,7 @@ public:
         // X-Linked-Etag (the CDN's own ETag is something else); a small file comes directly.
         for (int hop = 0; hop < 5; ++hop) {
             const auto head = request(out.url, credentials(), true, false);
-            if (head.code != CURLE_OK) { throw hub_error("resolving " + file.path, head, ""); }
+            if (head.code != CURLE_OK) { throw_hub_error("resolving " + file.path, head, ""); }
             if (head.status >= 300 && head.status < 400 && !head.redirect.empty()) {
                 if (const auto it = head.headers.find("x-linked-etag"); it != head.headers.end()) {
                     // 64 hex digits: an LFS file's sha256; 40: a git-stored file's blob sha1
@@ -762,7 +778,7 @@ public:
                 }
                 return out;
             }
-            throw hub_error("resolving " + file.path, head,
+            throw_hub_error("resolving " + file.path, head,
                             head.status == 401 || head.status == 403 ? access_hint(repo) : "");
         }
         throw std::runtime_error(file.path + ": too many redirects");
@@ -813,7 +829,7 @@ public:
                          url_path(revision) + "&Recursive=true";
         const auto response = request(url, credentials(), false, true);
         if (response.code != CURLE_OK || response.status != 200) {
-            throw hub_error("listing " + repo + "@" + revision + " on ModelScope", response,
+            throw_hub_error("listing " + repo + "@" + revision + " on ModelScope", response,
                             response.status == 404 ? "no such repository or revision" : "");
         }
         const auto body = Json::parse(response.body);
@@ -1527,9 +1543,9 @@ fs::path cached_model(const fs::path& snapshot, const FetchOptions& options,
         // Without a selector, what the snapshot holds (small files the caller reads, or weights
         // not yet downloaded: the caller says so).
         if (options.quant.empty() || !options.include.empty()) { return snapshot; }
-        throw std::runtime_error("the hub is unreachable and the cached snapshot " +
-                                 snapshot.string() + " has no model for " + options.quant + ": " +
-                                 error.what());
+        throw HubTransportError("the hub is unreachable and the cached snapshot " +
+                                snapshot.string() + " has no model for " + options.quant + ": " +
+                                error.what());
     }
 }
 
@@ -1626,7 +1642,7 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
         const auto first = range.find_first_of("0123456789");
         if (response.status == 206 &&
             (first == std::string::npos || number(range.substr(first, range.find('-', first) - first)) != begin)) {
-            throw hub_error("reading bytes from " + std::to_string(begin) + " of " + url, response,
+            throw_hub_error("reading bytes from " + std::to_string(begin) + " of " + url, response,
                             "the answer's range starts elsewhere");
         }
     } else if (response.status == 200) {
@@ -1637,8 +1653,8 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
         sink.data.size() >= bytes || (total != 0 && sink.data.size() + begin == total);
     if ((response.code != CURLE_OK && !(full && response.code == CURLE_WRITE_ERROR)) ||
         (response.status != 200 && response.status != 206) || !full) {
-        throw hub_error("reading the first " + std::to_string(bytes) + " bytes of " + url,
-                        response, full ? "" : "short response");
+        throw_hub_error("reading the first " + std::to_string(bytes) + " bytes of " + url, response,
+                        full ? "" : "short response");
     }
     return sink.data;
 }
@@ -1769,7 +1785,7 @@ FetchResult fetch_model(const std::string& spec, const FetchOptions& options) {
         }
         const auto head = request(spec, {}, true, true);
         if (head.code != CURLE_OK || head.status >= 400) {
-            throw hub_error("resolving " + spec, head, "");
+            throw_hub_error("resolving " + spec, head, "");
         }
         DownloadRequest file;
         file.url    = head.effective.empty() ? spec : head.effective;
@@ -2179,7 +2195,7 @@ std::vector<HubModel> search_modelscope(const std::string& term, const FetchOpti
                      "&page_size=" + std::to_string(std::clamp(limit, 1, 100));
     const auto response = request(url, {}, false, true);
     if (response.code != CURLE_OK || response.status != 200) {
-        throw hub_error("searching ModelScope for " + term, response, "");
+        throw_hub_error("searching ModelScope for " + term, response, "");
     }
     const auto body = Json::parse(response.body);
     std::vector<HubModel> out;
@@ -2284,7 +2300,7 @@ std::vector<HubModel> search_models(const std::string& query, const FetchOptions
     const HuggingFace hub(endpoint);
     const auto response = request(url, hub.credentials(), false, true);
     if (response.code != CURLE_OK || response.status != 200) {
-        throw hub_error("searching " + query, response, "");
+        throw_hub_error("searching " + query, response, "");
     }
     std::vector<HubModel> out;
     for (const auto& item : Json::parse(response.body)) {
@@ -2333,7 +2349,7 @@ std::string fetch_text(const std::string& url, std::size_t max_bytes) {
     }
     const auto response = request(url, headers, false, true);
     if (response.code != CURLE_OK || response.status != 200) {
-        throw hub_error("reading " + url, response,
+        throw_hub_error("reading " + url, response,
                         response.status == 401 && headers.empty() && url.starts_with(endpoint + "/")
                             ? "a private repository needs HF_TOKEN"
                             : "");
@@ -2350,7 +2366,7 @@ std::string hub_account(const std::string& token, const FetchOptions& options) {
     const auto response =
         request(endpoint + "/api/whoami-v2", {"Authorization: Bearer " + token}, false, true);
     if (response.code != CURLE_OK || response.status != 200) {
-        throw hub_error("checking the Hugging Face token", response,
+        throw_hub_error("checking the Hugging Face token", response,
                         response.status == 401 ? "the hub does not accept it" : "");
     }
     const auto body = Json::parse(response.body, nullptr, false);
@@ -2372,7 +2388,7 @@ std::optional<Json> fetch_model_card(const std::string& spec, const FetchOptions
     const HuggingFace hub(endpoint);
     const auto response = request(url, hub.credentials(), false, true);
     if (response.code != CURLE_OK || response.status != 200) {
-        throw hub_error("reading " + repo + "'s model card", response, "");
+        throw_hub_error("reading " + repo + "'s model card", response, "");
     }
     auto parsed = Json::parse(response.body, nullptr, false);
     if (!parsed.is_object()) {
@@ -2398,7 +2414,7 @@ Json fetch_repo_json(const std::string& spec, const FetchOptions& options,
     const auto response = request(endpoint + "/" + repo + "/resolve/" + revision + "/" + file,
                                   hub.credentials(), false, true);
     if (response.code != CURLE_OK || response.status != 200) {
-        throw hub_error("reading " + repo + "'s " + file, response, "");
+        throw_hub_error("reading " + repo + "'s " + file, response, "");
     }
     auto parsed = Json::parse(response.body, nullptr, false);
     if (!parsed.is_object()) {

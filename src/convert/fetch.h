@@ -28,6 +28,7 @@
 #include <map>
 #include <set>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -35,6 +36,18 @@
 #include <nlohmann/json.hpp>
 
 namespace ninferno::convert {
+
+// A hub read that failed for want of the hub: no answer, a cut connection, a timeout, a rate limit
+// or a server error (curl's own failure, or HTTP 408 / 429 / 5xx), where a later try may pass. Any
+// other HTTP status is the hub's answer (a gated repository, a revision without the file) and stays
+// a plain runtime_error. ninferno-serve exits kHubTransportExit on one (apps/serve/main.cpp), and
+// ninferno-ui reads that code, not the message's words (#1147).
+class HubTransportError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+inline constexpr int kHubTransportExit = 75; // EX_TEMPFAIL
 
 // The files a fetch is about to download, reported before the first byte is transferred.
 struct FetchPlan {

@@ -1190,7 +1190,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     say(options, "fetched " + fetched.repo + "@" + fetched.commit.substr(0, 12) + " -> " +
                      fetched.model.string());
     if (fetched.offline && !is_convertible(fetched.model)) {
-        throw std::runtime_error(
+        throw HubTransportError(
             "the hub is unreachable and the cached snapshot " + fetched.snapshot.string() +
             " is incomplete (no weights): connect to the hub once to finish the download");
     }

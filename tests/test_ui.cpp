@@ -1297,6 +1297,38 @@ void test_artifact_plan_via_serve() {
     fs::remove_all(root);
 }
 
+// #1147: a hub read's failure is typed: the transport's (no answer, a cut connection, HTTP 408 /
+// 429 / 5xx) is convert::HubTransportError, which ninferno-serve turns into its exit 75; the hub's
+// own answer (a 404) is a plain error, serve's refusal.
+void test_hub_transport_error_type() {
+    if (std::getenv("HF_HUB_OFFLINE") != nullptr) { return; } // reads nothing offline
+    httplib::Server hub;
+    hub.Get(R"(/api/models/org/gone-GGUF/revision/.*)",
+            [](const httplib::Request&, httplib::Response& res) { res.status = 404; });
+    const int port = hub.bind_to_any_port("127.0.0.1");
+    std::thread thread([&] { hub.listen_after_bind(); });
+    hub.wait_until_ready();
+    ninferno::convert::FetchOptions options;
+    options.endpoint = "http://127.0.0.1:" + std::to_string(port);
+    bool plain = false, typed = false;
+    try {
+        (void)ninferno::convert::fetch_model_card("org/gone-GGUF", options);
+    } catch (const ninferno::convert::HubTransportError&) {
+        typed = true;
+    } catch (const std::runtime_error&) { plain = true; }
+    check(plain && !typed, "a hub's 404 is its answer, not a transport failure");
+    hub.stop();
+    thread.join();
+    // Nothing listens on the port now: curl cannot connect, the transport's failure.
+    typed = false;
+    try {
+        (void)ninferno::convert::fetch_model_card("org/gone-GGUF", options);
+    } catch (const ninferno::convert::HubTransportError&) { typed = true; } catch (...) {
+    }
+    check(typed, "a hub that does not answer is a HubTransportError");
+    check(ninferno::convert::kHubTransportExit == 75, "the transport's exit code is 75");
+}
+
 // #766: a hub row's plan is serve's own where serve reads the same hub (its MoE route and
 // workspace queries are the start's): the repository at the listing's commit, the quantization
 // asked for, the model named as the plan here names it. A quantization the listing lacks is
@@ -1405,7 +1437,7 @@ void test_hub_plan_via_serve() {
     check(status == 502 && body.find("cannot be run: no") != std::string::npos,
           "serve's refusal of a hub row is the plan's: " + body);
     std::ofstream(root / "serve-offline")
-        << "#!/bin/sh\necho 'error: org/m-GGUF: can'\"'\"'t reach the hub' >&2\nexit 1\n";
+        << "#!/bin/sh\necho 'error: org/m-GGUF: can'\"'\"'t reach the hub' >&2\nexit 75\n";
     fs::permissions(root / "serve-offline", fs::perms::owner_all);
     std::tie(status, body) = plan(root / "serve-offline", "");
     check(status == 502 && body.find("no GPU 0") != std::string::npos &&
@@ -1421,11 +1453,20 @@ void test_hub_plan_via_serve() {
               body.find("ninferno-serve --plan failed") == std::string::npos,
           "serve's HTTP 404 is the plan's refusal: " + body);
     std::ofstream(root / "serve-503")
-        << "#!/bin/sh\necho 'error: org/m-GGUF: HTTP 503' >&2\nexit 1\n";
+        << "#!/bin/sh\necho 'error: org/m-GGUF: HTTP 503' >&2\nexit 75\n";
     fs::permissions(root / "serve-503", fs::perms::owner_all);
     std::tie(status, body) = plan(root / "serve-503", "");
     check(status == 502 && body.find("ninferno-serve --plan failed") != std::string::npos,
           "serve's HTTP 503 is a transport failure: the plan here answers: " + body);
+    // The words of the last line decide nothing: a refusal that names "SSL" or "curl" (a file,
+    // a repository) is still a refusal; only serve's exit 75 is a transport failure.
+    std::ofstream(root / "serve-words")
+        << "#!/bin/sh\necho 'error: org/curl-SSL-GGUF: cannot be run: no' >&2\nexit 1\n";
+    fs::permissions(root / "serve-words", fs::perms::owner_all);
+    std::tie(status, body) = plan(root / "serve-words", "");
+    check(status == 502 && body.find("cannot be run: no") != std::string::npos &&
+              body.find("ninferno-serve --plan failed") == std::string::npos,
+          "a refusal naming SSL / curl is serve's refusal: " + body);
     // One serve run a plan key: the page asks again at every move of the free memory.
     {
         fs::remove(root / "runs.txt");
@@ -2074,6 +2115,7 @@ int main(int argc, char** argv) {
     test_delete_options();
 #ifndef _WIN32
     test_artifact_plan_via_serve();
+    test_hub_transport_error_type();
     test_hub_plan_via_serve();
 #endif
     if (failures != 0) {
