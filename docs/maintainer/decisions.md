@@ -2470,10 +2470,12 @@ activations keep the family's default (`--activations fast`). Two gates follow:
   `Choice::activations_by_worth`) needs the exact-route factor too. Ada has both; gb20x the first.
 - Under the worth a KV codec is taken only where its own read cost on the generation rests on two
   cards (`kv_decides`: its kKvSmRate row for the model's family and geometry, else its own
-  kKvReadFactor row; INT8 is the reference codec). A codec priced on a row carried from Ada stays
-  the default or a pin (`Choice::kv_not_decided`), and so does one priced on a row of one card: on
-  gb20x NVFP4, whose Qwen3.5 SM rate is one card's (below) and whose other geometries carry Ada's
-  factor. Every codec of Ada decides; on gb20x every codec but NVFP4.
+  kKvReadFactor row, except for a codec the SMs bound on the generation, which has a kKvSmRate row
+  there and decides only at a geometry of its own row (#863); INT8 is the reference codec). A codec
+  priced on a row carried from Ada stays the default or a pin (`Choice::kv_not_decided`), and so
+  does one priced on a row of one card: on gb20x NVFP4, whose Qwen3.5 SM rate is one card's (below)
+  and whose other geometries carry Ada's factor. On Ada every codec decides but NVFP4 away from
+  Qwen3.5's geometry; on gb20x every codec but NVFP4.
 
 **The census** (mcb.sh on each card: Qwen3.5-9B Q4_K_M, one stream, 128 decode steps at 7.8K and
 21.9K tokens of context; per step the attention kernel's time between the sampling kernels, 8 full
@@ -2508,11 +2510,12 @@ BF16 DRAM-bound (wrong: 53 %, the kernel's finding #856).
 | ga10x | BF16, FP8, K8V4, NVFP4, Qwen3.5 | 3.585, 4.51, 3.45, 2.48 B/rclk | Ada's factors, carried | 0.4, 2.7, 0.7, 1.9 % |
 
 Kept: Ada's K8V4 1.025 (the census has K8V4 on the 4070 Ti only) and Ada's NVFP4 factor 1.235 for
-the geometries the SM rate was not read on (the Qwen 3.5 MoE family; the other families run BF16
-and FP8 KV only). Turing's and Volta's rows are unchanged. Ampere has no reference card: its rows move
-its estimates only (an RTX 3090's Qwen3.5 BF16 KV at 1.78 of its DRAM time, the 3060's at 1.91,
-where Ada's 1.06 stood). Ampere's BF16 row is today's kernel: #856 is open, and the row is measured
-again when that kernel changes.
+the geometries the SM rate was not read on (the Qwen 3.5 MoE family and Qwen3.8-27B's 256/24/4; the
+other families run BF16 and FP8 KV only). Since #863 that factor only prices the estimate there: an
+SM-bound codec decides only at a geometry of its own kKvSmRate row. Turing's and Volta's rows are
+unchanged. Ampere has no reference card: its rows move its estimates only (an RTX 3090's Qwen3.5
+BF16 KV at 1.78 of its DRAM time, the 3060's at 1.91, where Ada's 1.06 stood). Ampere's BF16 row is
+today's kernel: #856 is open, and the row is measured again when that kernel changes.
 
 **The gb20x NVFP4 spread.** Per held SM-clock the two cards read 2.60 (5090, 2610 MHz) and 2.74
 (5070 Ti, 2685 MHz), 5.4 % apart; per reference SM-clock, the table's form, 2.82 and 3.00, 6.4 %

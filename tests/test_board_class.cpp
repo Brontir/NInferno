@@ -40,10 +40,11 @@ std::string fields(const DeviceClass& d) {
     char buf[512];
     std::snprintf(buf, sizeof(buf),
                   "device %d name '%s' facts: source %d sku '%s' ref %d bus %d mem %d tdp %d "
-                  "vram %a pcie %d mma_slow %d l2 %a share %a driver_read %d",
+                  "vram %a pcie %d mma_slow %d l2 %a share %a memory_share %a driver_read %d",
                   d.device, d.name.c_str(), static_cast<int>(m.source), m.sku.c_str(),
                   m.reference_clock_khz, m.memory_bus_bits, m.memory_clock_khz, m.tdp_w, m.vram_gib,
-                  m.pcie_gen, m.mma_slow ? 1 : 0, m.l2_mib, m.share, m.driver_read ? 1 : 0);
+                  m.pcie_gen, m.mma_slow ? 1 : 0, m.l2_mib, m.share, m.memory_share,
+                  m.driver_read ? 1 : 0);
     return device_class_key(d) + " | " + buf;
 }
 

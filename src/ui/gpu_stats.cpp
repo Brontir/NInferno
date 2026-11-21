@@ -59,7 +59,9 @@ std::string GpuStat::refusal_now() const {
 nlohmann::json GpuStat::to_json() const {
     nlohmann::json processes_json = nlohmann::json::array();
     for (const auto& process : processes) {
-        processes_json.push_back({{"pid", process.pid}, {"used_bytes", process.used_bytes}});
+        processes_json.push_back({{"pid", process.pid},
+                                  {"used_bytes", process.used_bytes},
+                                  {"mps_server", process.mps_server}});
     }
     return {{"index", index},
             {"name", name},

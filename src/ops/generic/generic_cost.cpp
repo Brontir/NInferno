@@ -267,23 +267,17 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         const double slices = std::ceil(t / kMmqPrefillSlice);
         const double tt     = std::min<double>(t, kMmqPrefillSlice);
         const double rows_t = route_cost::kMmqTileRows.value();
-        const double step   = route_cost::kMmqColumnStep.value();
-        // The column tile: the kernel's own table where the generation and the format take the
-        // work-based one (core/mmq_columns.h), else 8-column steps up to a tile, the shape the
-        // efficiency was fitted on.
-        // Never wider than the tile the device's shared memory holds for the format (Turing's
-        // 64 KiB: Q2_K's 128-column tile does not fit, the kernel runs 64).
-        // A generation whose widths a launch law prices (Turing, DECISIONS 78) takes the width
-        // that law picks for the product's grid on this card (the facts below).
+        // The column tile (mmq_column_width): the kernel's own table where the generation and the
+        // format take the work-based one (core/mmq_columns.h), else 8-column steps up to a tile,
+        // the shape the efficiency was fitted on. Never wider than the tile the device's shared
+        // memory holds for the format (Turing's 64 KiB: Q2_K's 128-column tile does not fit, the
+        // kernel runs 64). A generation whose widths a launch law prices (Turing, DECISIONS 78)
+        // takes the width that law picks for the product's grid on this card (the facts below).
         const bool format   = mmq_columns::work_tiles_format(problem.qtype, d.major, d.minor);
         const int widest    = mmq_columns::widest_tile(problem.qtype, d.major, d.minor);
         const mmq_columns::LaunchFacts facts{static_cast<int>(n), static_cast<int>(k), d.sms, clk,
                                              bw};
-        const double cols =
-            mmq_columns::uses_work_table(d.major, d.minor, format)
-                ? static_cast<double>(mmq_columns::pick(static_cast<int>(tt), d.major, d.minor,
-                                                        true, widest, facts))
-                : std::min({rows_t, static_cast<double>(widest), cdiv(tt, step) * step});
+        const double cols   = mmq_column_width(d, problem, tokens);
         const double tiles  = cdiv(n * sets, rows_t) * cdiv(tt, cols);
         const double mem    = n * k * bpw / bw;
         const double mma    = tiles / sms * 2.0 * rows_t * cols * k / peak_sm;
@@ -606,5 +600,19 @@ std::optional<Route> cost_route(const Problem& problem, const Weight& weight, st
     return best;
 }
 
+int mmq_column_width(const DeviceClass& d, const Problem& problem, std::int32_t tokens) {
+    const int tt      = std::min<int>(tokens, kMmqPrefillSlice);
+    const bool format = mmq_columns::work_tiles_format(problem.qtype, d.major, d.minor);
+    const int widest  = mmq_columns::widest_tile(problem.qtype, d.major, d.minor);
+    if (mmq_columns::uses_work_table(d.major, d.minor, format)) {
+        const mmq_columns::LaunchFacts facts{
+            problem.n, problem.k, d.sms, d.facts.reference_clock_hz(), d.facts.dram_bytes_per_s()};
+        return mmq_columns::pick(tt, d.major, d.minor, true, widest, facts);
+    }
+    const double rows_t = route_cost::kMmqTileRows.value();
+    const double step   = route_cost::kMmqColumnStep.value();
+    return static_cast<int>(
+        std::min({rows_t, static_cast<double>(widest), std::ceil(tt / step) * step}));
+}
 
 } // namespace ninferno::ops::detail::generic
