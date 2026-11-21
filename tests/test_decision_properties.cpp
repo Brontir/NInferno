@@ -568,13 +568,28 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                     if (r.family == generic::Family::GgmlMmq) {
                                         const DeviceClass& larger =
                                             prices == &sms ? more_sms : more_bw;
-                                        const int at = mmq_law_width(base, problem, t);
-                                        // Exempt up to x1.10 (#789: the measured worst x1.04,
-                                        // Tesla T4); past it a width-differing case is a
+                                        const int at       = mmq_law_width(base, problem, t);
+                                        const int at_wider = mmq_law_width(larger, problem, t);
+                                        // The width change's own cost bounds the rise (#789): the
+                                        // price's MMA term scales with the padded columns, its
+                                        // chain and per-tile terms with the column tiles, each over
+                                        // the SMs, which only grew; the rest does not see the
+                                        // width. Past that bound a width-differing case is a
                                         // regression like any other.
-                                        constexpr double kMmqWidthBound = 1.10;
-                                        if (at != 0 && at != mmq_law_width(larger, problem, t) &&
-                                            it->second / seconds <= kMmqWidthBound) {
+                                        const auto width_bound = [&] {
+                                            const int cols =
+                                                std::min<int>(t, generic::kMmqPrefillSlice);
+                                            const auto tiles = [&](int w) {
+                                                return static_cast<double>((cols + w - 1) / w);
+                                            };
+                                            return std::max({1.0,
+                                                             tiles(at_wider) * at_wider /
+                                                                 (tiles(at) * at),
+                                                             tiles(at_wider) / tiles(at)}) *
+                                                   (1.0 + kResolution);
+                                        };
+                                        if (at != 0 && at_wider != 0 && at != at_wider &&
+                                            it->second / seconds <= width_bound()) {
                                             ++mmq_width_cases;
                                             mmq_width_worst =
                                                 std::max(mmq_width_worst, it->second / seconds);
