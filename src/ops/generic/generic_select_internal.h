@@ -221,6 +221,13 @@ bool volta_cutlass_only_qtype(QType qtype);
 // prices with its time (the A16 scale applied); false where the facts have no roofline (nothing
 // priced). cost_route: the cheapest of them.
 using PricedRoute = std::function<void(Route, double)>;
+// The column tile ggml's matrix kernel runs a call of `tokens` columns with on `d`, as the price
+// takes it (a8_candidates, #789): the kernel's own work table where the generation and the format
+// take it (core/mmq_columns.h, a launch law's pick on Turing), else 8-column steps up to a tile;
+// never wider than the tile the board's shared memory holds for the format. One slice's width:
+// tokens past kMmqPrefillSlice run as slices.
+[[nodiscard]] int mmq_column_width(const DeviceClass& d, const Problem& problem,
+                                   std::int32_t tokens);
 bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tokens,
                   const PricedRoute& take);
 std::optional<Route> cost_route(const Problem& problem, const Weight& weight, std::int32_t tokens);
