@@ -22,6 +22,7 @@
 #include "ops/generic/w4a8_unit.h"
 #include "ops/generic/route_cost_constants.h"
 
+#include <cstdlib>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -542,6 +543,14 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         kernel.shared_bytes = kr::register_mma_static_shared_bytes(
             rmma_geometry_decoder(problem.qtype), s.warps_m, s.warps_k, s.m_tiles, s.n_tiles,
             s.cluster, problem.epilogue == Epilogue::SwiGlu, d.major * 10 + d.minor);
+        // LAB (#1151): the plain decoders' compiled registers too (occupancy only: no spill, shared
+        // or loop terms), NINFERNO_LAB_RMMA_PLAIN_REGS=1.
+        if (!kept && std::getenv("NINFERNO_LAB_RMMA_PLAIN_REGS") != nullptr) {
+            if (const auto plain =
+                    rmma_kept(i, weight, problem.epilogue, tokens, problem.n, false)) {
+                kernel.registers = plain->registers;
+            }
+        }
         if (kept) {
             kernel.registers    = kept->registers;
             kernel.local_bytes  = kept->local_bytes;
