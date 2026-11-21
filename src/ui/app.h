@@ -41,6 +41,7 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -238,23 +239,33 @@ private:
     // here only when no such binary is beside the UI, marked so ("planner").
     nlohmann::json artifact_plan_json(const std::filesystem::path& artifact, int gpu,
                                       const product::LaunchAsk& launch);
-    // ninferno-serve's plan of `artifact` on GPU `gpu`; nullopt only when there is no binary or it
-    // cannot be started. A serve that ran without a "ninferno-dry-plan/1" document (a refusal, a
-    // hang past 45 s, garbled output) throws std::runtime_error with its last line: its refusal
-    // is the start's, never answered by the formula.
-    std::optional<nlohmann::json> serve_plan_json(const std::filesystem::path& artifact, int gpu,
+    // ninferno-serve's plan of `model` (an artifact's path, or a hub repository as repo@commit, at
+    // `quant` when one is named) on GPU `gpu`; nullopt only when there is no binary or it cannot be
+    // started. A serve that ran without a "ninferno-dry-plan/1" document (a refusal, a hang past
+    // 45 s, garbled output) throws std::runtime_error with its last line: its refusal is the
+    // start's, never answered by the formula.
+    std::optional<nlohmann::json> serve_plan_json(const std::string& model,
+                                                  const std::string& quant, int gpu,
                                                   const product::LaunchAsk& launch);
     // The plan without the weights of a repository's quantization (all of them when `quant` is
     // empty, with the largest that fits) on GPU `gpu` for what a launch asks: the
     // "ninferno-dry-plan/1" document (product/plan/plan_quants.h), as ninferno-serve <repo> --plan
-    // --no-load --json would print it for an idle card of that GPU, but for the queries
-    // ninferno-serve registers from the Ops this program does not link: a family's workspace
-    // (runtime::set_plan_workspace_query) and an MoE step's routes (set_plan_moe_route_query,
-    // DECISIONS 79: here the step keeps the measured pair's share, and its estimate is Transferred
-    // past one row with speed_why "MoE route not queried", #766). Throws when the repository's
-    // shape cannot be read.
+    // --no-load --json would print it for an idle card of that GPU. With a ninferno-serve beside
+    // the UI and the hub online, a GGUF repository's idle plan is serve's own document (#766, one
+    // run a plan key, kept): the repository at the commit the listing here was read at, so its
+    // workspace (runtime::set_plan_workspace_query) and an MoE step's routes
+    // (set_plan_moe_route_query) are the start's; `now` is replayed here. Otherwise (offline,
+    // another hub, no serve, serve failing, a native or mixed repository) the plan here answers
+    // without those queries (this program does not link the Ops; DECISIONS 79: the step keeps the
+    // measured pair's share, and its estimate is Transferred past one row with speed_why "MoE
+    // route not queried") and says why ("planner"). Throws when the repository's shape cannot be
+    // read.
     nlohmann::json plan_json(const std::string& repo, const std::string& hub, int gpu,
                              const std::string& quant, const product::LaunchAsk& launch);
+    // Why the idle plan of a hub row is not serve's (#766): "" where serve plans it as the plan
+    // here would (online, Hugging Face, a GPU, a GGUF repository's table or one of its GGUF rows).
+    std::string serve_hub_plan_refusal(const std::string& repo, const std::string& hub, int gpu,
+                                       const std::string& quant);
     // read_tables: the chosen GGUF row's own tensor table is read when not known (a user's plan);
     // the catalog's plans (no network) price the tables known. `now_out`: the "now" context of
     // this plan (also when it is not cached).
@@ -382,6 +393,12 @@ private:
     // What plan_json's "now" (product::plan_now) re-plans per request at the GPU's free memory: the
     // shown quantization's facts, inputs (their subjects kept alive here), choice and pins.
     std::map<std::string, std::shared_ptr<const PlanNowContext>> plan_now_;
+    // plan_json's ninferno-serve runs in flight by key: an ask that finds its key running shares
+    // that run's document, never starts a second child (#766).
+    std::map<std::string, std::shared_future<nlohmann::json>> serve_plans_running_;
+    // One plan_json serve child a card (under sizes_mutex_ to find or make; held while it runs).
+    std::map<int, std::unique_ptr<std::mutex>> serve_card_mutexes_;
+    std::mutex serve_unlisted_card_mutex_; // an index the GPU source does not list
     // hub_key -> the config.json kv_json read (a checkpoint's converted size reads it)
     std::map<std::string, nlohmann::json> configs_;
     // hub_key -> when a header or config read last failed (tried again after a minute)

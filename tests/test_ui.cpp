@@ -24,8 +24,10 @@
 #include <atomic>
 #include <chrono>
 #include <map>
+#include <optional>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <thread>
 
@@ -1296,6 +1298,312 @@ void test_artifact_plan_via_serve() {
     }
     fs::remove_all(root);
 }
+
+// #766: a hub row's plan is serve's own where serve reads the same hub (its MoE route and
+// workspace queries are the start's): the repository at the listing's commit, the quantization
+// asked for, the model named as the plan here names it. A quantization the listing lacks is
+// refused before any child runs; with no serve the plan here answers.
+void test_hub_plan_via_serve() {
+    namespace fs = std::filesystem;
+    const auto root =
+        fs::temp_directory_path() / ("ninferno_ui_hub_plan_" + std::to_string(::getpid()));
+    fs::remove_all(root);
+    fs::create_directories(root);
+    const std::string sha = "c0ffee0123456789abcdef0123456789abcdef01";
+    // The stand-in hub: one GGUF quantization at `sha`.
+    httplib::Server hub;
+    hub.Get(R"(/api/models/org/m-GGUF/revision/.*)",
+            [&](const httplib::Request&, httplib::Response& res) {
+                res.set_content(
+                    nlohmann::json{{"id", "org/m-GGUF"},
+                                   {"sha", sha},
+                                   {"siblings", {{{"rfilename", "m-Q4_K_M.gguf"}, {"size", 1000}}}}}
+                        .dump(),
+                    "application/json");
+            });
+    const int hub_port = hub.bind_to_any_port("127.0.0.1");
+    std::thread hub_thread([&] { hub.listen_after_bind(); });
+    hub.wait_until_ready();
+    const char* old_endpoint = std::getenv("HF_ENDPOINT");
+    const std::optional<std::string> kept =
+        old_endpoint ? std::optional<std::string>(old_endpoint) : std::nullopt;
+    ::setenv("HF_ENDPOINT", ("http://127.0.0.1:" + std::to_string(hub_port)).c_str(), 1);
+
+    const fs::path args = root / "args.txt";
+    std::ofstream(root / "serve-plan")
+        << "#!/bin/sh\nprintf '%s\\n' \"$@\" > '" << args.string() << "'\necho run >> '"
+        << (root / "runs.txt").string() << "'\n"
+        << "printf '{\\n \"schema\": \"ninferno-dry-plan/1\",\\n \"model\": {\"source\": "
+           "\"org/m-GGUF@x Q4_K_M\"},\\n \"now\": {\"fits\": true}\\n}\\n'\nexit 0\n";
+    fs::permissions(root / "serve-plan", fs::perms::owner_all);
+
+    struct NoGpu final : GpuSource {
+        std::vector<GpuStat> snapshot() override { return {}; }
+
+        std::string error() const override { return {}; }
+    };
+
+    const auto plan = [&](const fs::path& serve, const std::string& extra) {
+        UiOptions options;
+        options.offline      = false; // the hub answers here (HF_ENDPOINT)
+        options.serve_binary = serve;
+        options.hub_cache    = root / "hub";
+        App app(options, std::make_unique<NoGpu>());
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        httplib::Client client("127.0.0.1", port);
+        auto res = client.Get("/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF" + extra);
+        std::pair<int, std::string> out{res ? res->status : 0, res ? res->body : std::string()};
+        server.stop();
+        thread.join();
+        return out;
+    };
+    const auto args_of = [&] {
+        std::ifstream file(args);
+        std::vector<std::string> out;
+        for (std::string line; std::getline(file, line);) { out.push_back(line); }
+        return out;
+    };
+    auto [status, body] = plan(root / "serve-plan", "&quant=Q4_K_M");
+    auto doc            = nlohmann::json::parse(body, nullptr, false);
+    auto argv           = args_of();
+    check(status == 200 && doc.is_object() && doc.contains("now"),
+          "a hub row's plan is serve's document: " + body);
+    check(!argv.empty() && argv.front() == "org/m-GGUF@" + sha,
+          "serve plans the repository at the listing's commit");
+    check(argv.size() >= 2 && argv[argv.size() - 2] == "--quant" && argv.back() == "Q4_K_M",
+          "serve plans the quantization asked for");
+    check(doc.is_object() && doc["model"].value("source", "") == "org/m-GGUF:Q4_K_M",
+          "the model is named as the plan here names it: " + body);
+    // A repository named at a revision: serve plans it at the commit that revision listed,
+    // org/m-GGUF@<sha>, never org/m-GGUF@branch@<sha>.
+    fs::remove(args);
+    std::tie(status, body) = plan(root / "serve-plan", "@branch&quant=Q4_K_M");
+    argv                   = args_of();
+    check(status == 200 && !argv.empty() && argv.front() == "org/m-GGUF@" + sha,
+          "a repository at a revision is planned at its listed commit: " + body);
+    fs::remove(args);
+    std::tie(status, body) = plan(root / "serve-plan", "");
+    argv                   = args_of();
+    check(status == 200 && std::find(argv.begin(), argv.end(), "--quant") == argv.end(),
+          "a table's plan passes no --quant: " + body);
+    fs::remove(args);
+    std::tie(status, body) = plan(root / "serve-plan", "&quant=Q8_0");
+    check(status == 400 && body.find("no quant Q8_0") != std::string::npos && !fs::exists(args),
+          "a quantization the listing lacks is refused before serve runs: " + body);
+    // No serve beside the UI: the plan here answers (here: no GPU 0 to plan for).
+    std::tie(status, body) = plan(root / "no-such-serve", "");
+    check(status == 502 && body.find("no GPU 0") != std::string::npos,
+          "without serve the plan here answers: " + body);
+    // serve refuses the model: its refusal is the plan's (a start would refuse as it does), with
+    // its last line; a failure for want of the hub falls back to the plan here, naming it.
+    std::ofstream(root / "serve-refuses")
+        << "#!/bin/sh\necho 'error: cannot be run: no' >&2\nexit 1\n";
+    fs::permissions(root / "serve-refuses", fs::perms::owner_all);
+    std::tie(status, body) = plan(root / "serve-refuses", "");
+    check(status == 502 && body.find("cannot be run: no") != std::string::npos,
+          "serve's refusal of a hub row is the plan's: " + body);
+    std::ofstream(root / "serve-offline")
+        << "#!/bin/sh\necho 'error: org/m-GGUF: can'\"'\"'t reach the hub' >&2\nexit 1\n";
+    fs::permissions(root / "serve-offline", fs::perms::owner_all);
+    std::tie(status, body) = plan(root / "serve-offline", "");
+    check(status == 502 && body.find("no GPU 0") != std::string::npos &&
+              body.find("ninferno-serve --plan failed") != std::string::npos,
+          "serve without the hub: the plan here answers, naming serve's failure: " + body);
+    // A permanent HTTP status from serve's hub read (the revision lacks the file) is its refusal,
+    // not a transport failure: no estimate here.
+    std::ofstream(root / "serve-404")
+        << "#!/bin/sh\necho 'error: org/m-GGUF: m-Q4_K_M.gguf: HTTP 404' >&2\nexit 1\n";
+    fs::permissions(root / "serve-404", fs::perms::owner_all);
+    std::tie(status, body) = plan(root / "serve-404", "");
+    check(status == 502 && body.find("HTTP 404") != std::string::npos &&
+              body.find("ninferno-serve --plan failed") == std::string::npos,
+          "serve's HTTP 404 is the plan's refusal: " + body);
+    std::ofstream(root / "serve-503")
+        << "#!/bin/sh\necho 'error: org/m-GGUF: HTTP 503' >&2\nexit 1\n";
+    fs::permissions(root / "serve-503", fs::perms::owner_all);
+    std::tie(status, body) = plan(root / "serve-503", "");
+    check(status == 502 && body.find("ninferno-serve --plan failed") != std::string::npos,
+          "serve's HTTP 503 is a transport failure: the plan here answers: " + body);
+    // One serve run a plan key: the page asks again at every move of the free memory.
+    {
+        fs::remove(root / "runs.txt");
+        UiOptions options;
+        options.serve_binary = root / "serve-plan";
+        options.hub_cache    = root / "hub";
+        App app(options, std::make_unique<NoGpu>());
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        httplib::Client client("127.0.0.1", port);
+        const std::string ask = "/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF";
+        const auto first      = client.Get(ask);
+        const auto second     = client.Get(ask);
+        const auto other      = client.Get(ask + "&quant=Q4_K_M");
+        server.stop();
+        thread.join();
+        std::ifstream runs(root / "runs.txt");
+        int count = 0;
+        for (std::string line; std::getline(runs, line);) { ++count; }
+        check(first && first->status == 200 && second && second->status == 200 && other &&
+                  other->status == 200 && count == 2,
+              "serve runs once a plan key (" + std::to_string(count) + " runs for 2 keys)");
+    }
+    // Two asks of one key at once share one serve run (single flight): the second waits for the
+    // first's document, never starts a second child.
+    {
+        fs::remove(root / "runs.txt");
+        std::ofstream(root / "serve-slow")
+            << "#!/bin/sh\nsleep 1\nexec '" << (root / "serve-plan").string() << "' \"$@\"\n";
+        fs::permissions(root / "serve-slow", fs::perms::owner_all);
+        UiOptions options;
+        options.serve_binary = root / "serve-slow";
+        options.hub_cache    = root / "hub";
+        App app(options, std::make_unique<NoGpu>());
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        const auto ask = [&] {
+            httplib::Client client("127.0.0.1", port);
+            const auto res = client.Get("/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF");
+            return res ? res->status : 0;
+        };
+        auto first        = std::async(std::launch::async, ask);
+        auto second       = std::async(std::launch::async, ask);
+        const int status1 = first.get();
+        const int status2 = second.get();
+        server.stop();
+        thread.join();
+        std::ifstream runs(root / "runs.txt");
+        int count = 0;
+        for (std::string line; std::getline(runs, line);) { ++count; }
+        check(status1 == 200 && status2 == 200 && count == 1,
+              "two asks of one key at once: one serve run (" + std::to_string(count) + ")");
+    }
+    // Two asks of different keys at once: two serve runs, one after the other on the card (a child
+    // that finds another running notes the overlap).
+    {
+        fs::remove(root / "runs.txt");
+        fs::remove(root / "overlaps.txt");
+        fs::remove_all(root / "child-running");
+        // mkdir claims the card in one step (a check then a touch would let two children both
+        // miss each other).
+        std::ofstream(root / "serve-one-card")
+            << "#!/bin/sh\nmkdir '" << (root / "child-running").string()
+            << "' 2>/dev/null || echo overlap >> '" << (root / "overlaps.txt").string()
+            << "'\nsleep 1\nrmdir '" << (root / "child-running").string() << "' 2>/dev/null\nexec '"
+            << (root / "serve-plan").string() << "' \"$@\"\n";
+        fs::permissions(root / "serve-one-card", fs::perms::owner_all);
+        UiOptions options;
+        options.serve_binary = root / "serve-one-card";
+        options.hub_cache    = root / "hub";
+        App app(options, std::make_unique<NoGpu>());
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        const auto ask = [&](const std::string& par) {
+            httplib::Client client("127.0.0.1", port);
+            const auto res = client.Get("/api/plan?gpu=0&par=" + par + "&ctx=4096&repo=org/m-GGUF");
+            return res ? res->status : 0;
+        };
+        auto first        = std::async(std::launch::async, ask, std::string("1"));
+        auto second       = std::async(std::launch::async, ask, std::string("2"));
+        const int status1 = first.get();
+        const int status2 = second.get();
+        server.stop();
+        thread.join();
+        std::ifstream runs(root / "runs.txt");
+        int count = 0;
+        for (std::string line; std::getline(runs, line);) { ++count; }
+        check(status1 == 200 && status2 == 200 && count == 2 && !fs::exists(root / "overlaps.txt"),
+              "two keys at once: two serve runs, never two children on the card at once (" +
+                  std::to_string(count) + " runs" +
+                  (fs::exists(root / "overlaps.txt") ? ", overlapped" : "") + ")");
+    }
+    // A token change while a run is going: an ask after it starts its own run, never joins one
+    // under the old token (its listing, its access). The token file is the test's own.
+    {
+        fs::remove(root / "runs.txt");
+        fs::remove(root / "started");
+        std::ofstream(root / "serve-slow-start")
+            << "#!/bin/sh\ntouch '" << (root / "started").string() << "'\nsleep 1\nexec '"
+            << (root / "serve-plan").string() << "' \"$@\"\n";
+        fs::permissions(root / "serve-slow-start", fs::perms::owner_all);
+        const char* names[] = {"HF_TOKEN_PATH", "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"};
+        std::optional<std::string> saved[3];
+        for (int i = 0; i < 3; ++i) {
+            if (const char* v = std::getenv(names[i])) { saved[i] = v; }
+        }
+        ::setenv("HF_TOKEN_PATH", (root / "hf-token").string().c_str(), 1);
+        ::unsetenv("HF_TOKEN");
+        ::unsetenv("HUGGING_FACE_HUB_TOKEN");
+        int set_status = 0, status1 = 0, status2 = 0;
+        bool started = false;
+        {
+            // The App and its threads end before the environment is restored (setenv beside a
+            // getenv of another thread is a race).
+            UiOptions options;
+            options.serve_binary = root / "serve-slow-start";
+            options.hub_cache    = root / "hub";
+            App app(options, std::make_unique<NoGpu>());
+            httplib::Server server;
+            app.install(server);
+            const int port = server.bind_to_any_port("127.0.0.1");
+            std::thread thread([&] { server.listen_after_bind(); });
+            server.wait_until_ready();
+            const auto ask = [&] {
+                httplib::Client client("127.0.0.1", port);
+                const auto res = client.Get("/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF");
+                return res ? res->status : 0;
+            };
+            auto first = std::async(std::launch::async, ask);
+            for (int i = 0; i < 3000 && !fs::exists(root / "started"); ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            started = fs::exists(root / "started");
+            httplib::Client client("127.0.0.1", port);
+            const auto set = client.Post("/api/hf", R"({"token": ""})", "application/json");
+            set_status     = set ? set->status : 0;
+            auto second    = std::async(std::launch::async, ask);
+            status1        = first.get();
+            status2        = second.get();
+            server.stop();
+            thread.join();
+        }
+        check(started, "the token-change test's serve child started within 30 s");
+        for (int i = 0; i < 3; ++i) {
+            if (saved[i]) {
+                ::setenv(names[i], saved[i]->c_str(), 1);
+            } else {
+                ::unsetenv(names[i]);
+            }
+        }
+        std::ifstream runs(root / "runs.txt");
+        int count = 0;
+        for (std::string line; std::getline(runs, line);) { ++count; }
+        check(set_status == 200 && status1 == 200 && status2 == 200 && count == 2,
+              "an ask after a token change runs serve again (" + std::to_string(count) +
+                  " runs, token set " + std::to_string(set_status) + ")");
+    }
+
+    if (kept) {
+        ::setenv("HF_ENDPOINT", kept->c_str(), 1);
+    } else {
+        ::unsetenv("HF_ENDPOINT");
+    }
+    hub.stop();
+    hub_thread.join();
+    fs::remove_all(root);
+}
 #endif
 
 #ifdef _WIN32
@@ -1769,6 +2077,7 @@ int main(int argc, char** argv) {
     test_refusal_now();
 #ifndef _WIN32
     test_artifact_plan_via_serve();
+    test_hub_plan_via_serve();
 #endif
     if (failures != 0) {
         std::cerr << failures << " ui check(s) failed" << std::endl;

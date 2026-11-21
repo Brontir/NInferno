@@ -2150,13 +2150,20 @@ rows, the register MMA on both stages at eight, the invariant profile's under ex
 **Open.** A step on the register-MMA pair (gpt-oss-20b, or Qwen3.6 at 16 rows) on two cards of a
 generation would give that pair its own share; the gpt-oss step rows as regression rows once their
 windows are re-measured; ninferno-ui links no Ops and registers neither this query nor the
-workspace ones (#766, held for the #620 host split: either query pulls the Ops' kernels into the
-UI). Its MoE steps keep the measured pair's share, but an estimate no query was asked for is
-Transferred past one row, `speed_why` "MoE route not queried" (`ModelFacts::moe_route_unqueried`),
-never Own; a kind the query gives no kernels for says "MoE route not answered". An MoE whose facts list
-no routed layers (a hub row priced from another quantization's header, a split GGUF part without
-expert banks, a `--plan-weight-bytes` estimate) is marked the same way (#799): nobody asked which
-pair runs its banks.
+workspace ones (the #620 host split: either query pulls the Ops' kernels into the UI). Its plan
+of a local artifact (#843) is ninferno-serve's own, both queries asked; online on Hugging Face,
+so is a GGUF repository's idle plan (#766: one serve run a plan key, kept, a failure for three
+minutes; `now` replayed in the UI at serve's pick and the free memory, its workspace by the
+formula; where serve's chosen configuration is another, `now` is serve's own when just measured,
+else none until the plan is asked again). serve's refusal is the plan's answer, as for an
+artifact. Offline, on ModelScope, with no serve, a serve that could not reach the hub or answer
+in time, or a native or mixed repository, the plan there answers, its `planner` saying why; the
+quantization rows' fits (`/api/quants`) and the catalog are always planned there. Its MoE steps keep the measured pair's
+share, but an estimate no query was asked for is Transferred past one row, `speed_why` "MoE route
+not queried" (`ModelFacts::moe_route_unqueried`), never Own; a kind the query gives no kernels for
+says "MoE route not answered". An MoE whose facts list no routed layers (a hub row priced from
+another quantization's header, a split GGUF part without expert banks, a `--plan-weight-bytes`
+estimate) is marked the same way (#799): nobody asked which pair runs its banks.
 
 ## 80. The pool rule prices the MTP head's pool over the benchmark's mix where the facts price it (#777, 12.11, rule)
 
