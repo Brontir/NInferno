@@ -88,6 +88,11 @@ std::string curl_text(CURLcode code, long status) {
     return code == CURLE_OK ? "HTTP " + std::to_string(status) : curl_easy_strerror(code);
 }
 
+// Whether a failed read is the transport's (HubTransportError) rather than the hub's answer.
+bool transport_failure(CURLcode code, long status) {
+    return code != CURLE_OK || status == 408 || status == 429 || (status >= 500 && status < 600);
+}
+
 void curl_init() {
     static std::once_flag once;
     std::call_once(once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
@@ -681,11 +686,6 @@ public:
     [[nodiscard]] virtual std::vector<std::string> credentials() const                       = 0;
     [[nodiscard]] virtual fs::path cache_dir(const fs::path& root, const std::string& repo) const = 0;
 };
-
-// Whether a failed read is the transport's (HubTransportError) rather than the hub's answer.
-bool transport_failure(CURLcode code, long status) {
-    return code != CURLE_OK || status == 408 || status == 429 || (status >= 500 && status < 600);
-}
 
 [[noreturn]] void throw_hub_error(const std::string& what, const Response& response,
                                   const std::string& hint) {
