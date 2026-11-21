@@ -2197,6 +2197,9 @@ std::optional<Route> volta_tiled_route(const Weight& weight, LinearPolicy policy
 // vector kernel was up to 1.4x faster.
 std::optional<Route> volta_hmma_route(const Problem& problem, const Weight& weight,
                                       std::int32_t tokens) {
+    // LAB ONLY (lab/1152-vec-cap): NINFERNO_LAB_NO_VOLTA_HMMA=1 turns the HMMA band off (#1153).
+    static const bool lab_off = std::getenv("NINFERNO_LAB_NO_VOLTA_HMMA") != nullptr;
+    if (lab_off) return std::nullopt;
     if (tokens < kVoltaHmmaMinTokens || tokens > kVoltaHmmaMaxTokens ||
         current_features().mma_tensor || !supports(weight) || !volta_hmma_codec(codec_of(weight)) ||
         (weight.k % volta_hmma_k_multiple(codec_of(weight))) != 0) {
