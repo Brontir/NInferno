@@ -299,6 +299,12 @@ std::int32_t vec_rule_max_tokens(QType qtype) {
 } // namespace
 
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
+    // LAB ONLY (lab/1152-vec-cap): NINFERNO_LAB_VEC_MAX_T=T caps the rule at T tokens (#1152).
+    static const int lab_max_t = [] {
+        const char* v = std::getenv("NINFERNO_LAB_VEC_MAX_T");
+        return v != nullptr ? std::atoi(v) : 1 << 30;
+    }();
+    if (tokens > lab_max_t) return false;
     return tokens >= 2 && tokens <= vec_rule_max_tokens(w.qtype) && vec_call(w, policy, tokens);
 }
 
