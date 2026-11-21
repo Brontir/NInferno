@@ -228,10 +228,9 @@ std::vector<std::string> device_fact_notes(const DeviceClass& d) {
         } else if (f.form == FormFactor::Laptop) {
             why = f.sku + ", a laptop: priced at the bottom of its published boost range";
         } else if (f.share < 1.0) {
-            why =
-                f.sku + ", a slice of " + std::to_string(d.sms) +
-                " SMs (MIG): its share of the board's bandwidth by " +
-                (f.memory_share != f.share ? "the memory it owns" : "its SMs (no memory reported)");
+            why = f.sku + ", a slice of " + std::to_string(d.sms) +
+                  " SMs (MIG): its share of the board's bandwidth by " +
+                  (d.global_bytes > 0 ? "the memory it owns" : "its SMs (no memory reported)");
         } else if (const GpuFactsRow* row = find_gpu_facts(d.pci_device_id);
                    row != nullptr && row->sms == d.sms) {
             why = f.sku + " on another memory than its row's: the driver's bus width and memory "

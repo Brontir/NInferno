@@ -137,7 +137,11 @@ struct MachineFacts {
     // row's (a MIG GPU instance owns whole memory slices, each with its controllers: the published
     // profiles pair 1/7 of the SMs with 1/8 or 2/8 of the memory, #906), never above 1; where the
     // slice reports no memory, its SM share. 1 for a whole board. The reported memory is a little
-    // under the profile's nominal size (the driver's reserve), so the bandwidth errs low.
+    // under the profile's nominal size (the driver's reserve), so the bandwidth errs low. A compute
+    // instance reports its GPU instance's memory: it is priced at that instance's ceiling, which
+    // its sibling compute instances share (a ceiling, not a guarantee under contention). A board
+    // reporting fewer SMs than its row outside MIG (a cut-down under the row's id) is priced at its
+    // memory, not its SMs.
     double memory_share = 1.0;
     // Whether a driver clock or bus width fed a fact: an unknown id (its clocks on the grid), a
     // laptop row without the bottom of its range (its clock bounded by the driver's), or a whole
