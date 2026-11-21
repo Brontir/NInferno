@@ -107,6 +107,19 @@ def test_the_table_route_already_least_worst_is_left_alone(tmp_path):
     assert bands == [[1, 16777216, "n1"]]
 
 
+def test_second_grid_with_the_default_far_ahead_keeps_the_entry(tmp_path):
+    # n2 wins T 9-11 in the first grid; in the second, n2 beats n1 (150 vs 200) but the ranker's
+    # n4 takes 100 at T 10: the moved entry would ship 1.5x the default there, kept.
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
+    second = ([(9, "n1", 200), (9, "n2", 100), (9, "n4", 100), (10, "n1", 200), (10, "n2", 150),
+               (10, "n4", 100), (11, "n1", 200), (11, "n2", 100), (11, "n4", 100)],
+              [(t, "n4") for t in (9, 10, 11)])
+    bands, evidence = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[],
+                          second=second)
+    assert bands == [[1, 11, "n1"], [12, 16777216, "n2"]]
+    assert evidence == []
+
+
 def test_route_within_the_margin_is_kept(tmp_path):
     rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 102), ("n2", 100))]
     bands, _ = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows)

@@ -20,8 +20,8 @@ ROUTES SELECTED (a second grid of the same card, its route_tune --routes-out and
 is written again from that grid as [T, ranker us, shipped us], the ranker being --selected-out's
 `ranker` column (route_tune's default answer), and an entry that grid cannot give a row for is kept
 (named on stderr), as is one where that grid does not repeat the move (the range's route slower than
-the old one by more than --margin at a moved count). A count a band covers but the grid did not time
-keeps its old route. The grid must be the table's board's: route_tune --routes-out on the same card,
+the old one, or than that grid's default answer, by more than --margin at a moved count). A count a
+band covers but the grid did not time keeps its old route. The grid must be the table's board's: route_tune --routes-out on the same card,
 at the same master. Prints one line a moved count; writes the table in place.
 """
 import argparse
@@ -179,8 +179,12 @@ def main():
                 continue
             # A move the second grid reverses (the range's route slower than the old one there
             # past the margin) is noise in the first grid: the entry is kept as it was.
+            # ...or puts it behind the call's default answer (the ranker) past the margin: a table
+            # entry slower than what the call runs without it overrides nothing worth keeping.
             reversed_at = [t for t in sorted(moved)
-                           if ev_grid[(key, t)][best] > ev_grid[(key, t)][haves[t]] * (1 + a.margin)]
+                           if ev_grid[(key, t)][best] > ev_grid[(key, t)][haves[t]] * (1 + a.margin)
+                           or ev_grid[(key, t)][best]
+                           > ev_grid[(key, t)][ranker[(key, t)]] * (1 + a.margin)]
             if reversed_at:
                 print("%s %s %s %dx%d: the evidence grid does not repeat %s at T%s, kept"
                       % (*key[:3], key[3], key[4], best, ",".join(map(str, reversed_at))),
