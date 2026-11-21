@@ -6,12 +6,35 @@
 #include <cstring>
 #include <mutex>
 
+#ifndef _WIN32
+#    include <sys/stat.h>
+#    include <unistd.h>
+#endif
+
 namespace ninferno::ui {
 
 double GpuStat::bandwidth_gbs() const noexcept {
     if (memory_bus_bits <= 0 || memory_clock_max_mhz <= 0) { return 0.0; }
     return 2.0 * memory_clock_max_mhz * 1e6 * (memory_bus_bits / 8.0) / 1e9;
 }
+
+namespace {
+
+// Whether process `pid` runs as this UI's user: MPS lets clients of the same UID (and pipe
+// directory) join its server, so another user's server does not open the card to our starts.
+// Linux only (MPS is a Linux service); false where it cannot be read, so the card stays refused.
+bool same_user(std::uint32_t pid) {
+#ifdef _WIN32
+    (void)pid;
+    return false;
+#else
+    struct stat info{};
+    const std::string proc = "/proc/" + std::to_string(pid);
+    return ::stat(proc.c_str(), &info) == 0 && info.st_uid == ::getuid();
+#endif
+}
+
+} // namespace
 
 bool is_mps_server(std::string_view path) {
     const auto slash = path.find_last_of("/\\");
@@ -225,7 +248,8 @@ public:
                             if (process_name_ &&
                                 process_name_(process.pid, path, sizeof(path)) == kOk) {
                                 process.mps_server =
-                                    is_mps_server(std::string(path, strnlen(path, sizeof(path))));
+                                    is_mps_server(std::string(path, strnlen(path, sizeof(path)))) &&
+                                    same_user(process.pid);
                             }
                             stat.processes.push_back(process);
                         }

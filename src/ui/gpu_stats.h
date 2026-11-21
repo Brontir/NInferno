@@ -19,8 +19,9 @@ namespace ninferno::ui {
 struct GpuProcess {
     std::uint32_t pid        = 0;
     std::uint64_t used_bytes = 0; // 0 when the driver does not say (WSL)
-    // The NVIDIA MPS server (nvidia-cuda-mps-server, by NVML's process name): an exclusive-process
-    // card it holds still takes MPS clients, as in the default mode.
+    // The NVIDIA MPS server (nvidia-cuda-mps-server, by NVML's process name) running as this UI's
+    // user: an exclusive-process card it holds still takes our starts as MPS clients, as in the
+    // default mode. Another user's server does not count.
     bool mps_server = false;
 };
 
