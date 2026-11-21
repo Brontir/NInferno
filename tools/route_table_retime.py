@@ -11,8 +11,11 @@ some count, where the entry is kept (and named on stderr). The candidates are th
 ggml_mmq, as the dense tuner writes them; the W4A8 and R8 routes (route_tune --a8-candidates 1 times
 them too) are never tabled (route_tune_tool.cpp, route_authorities.cpp). A GGUF format's a8 rows are
 its a16 entry's; FP8's a8 entry keeps its own key. An entry whose table route the grid
-did not time, or where no route was timed at every count, is kept (and named on stderr). Bands outside
-the range are kept; adjacent bands of one route are joined. A moved count's evidence_us row timed the
+did not time, or where no route was timed at every count, is kept (and named on stderr). A count the
+grid did not time between two it did takes the range's route too where its band's route is one the
+grid beat (#1149: a band joined from T 16 and T 24 across n2's 16-token edge, T 17-23 untimed); a band
+route the grid never timed in the range is left alone. Bands outside the range are kept; adjacent
+bands of one route are joined. A moved count's evidence_us row timed the
 old route, so it is dropped; with --evidence ROUTES SELECTED (a second grid of the same card, its
 route_tune --routes-out and --selected-out) it is written again from that grid as [T, ranker us,
 shipped us], the ranker being --selected-out's `ranker` column (route_table_prune's default), and an
@@ -144,9 +147,21 @@ def main():
             print("%s %s %s %dx%d: %s would slow T%s past the margin, kept"
                   % (*key[:3], key[3], key[4], best, ",".join(map(str, slower))), file=sys.stderr)
             continue
+        # Untimed counts between the timed ones: a band is one route over its counts, so where its
+        # route is one the grid beat at a timed count, the range's route takes it there too (else
+        # T 17 n4, T 19 n1, T 20 n4 from a grid timed at 17/18/20/22/23). A route the grid never
+        # timed in the range is a band it did not see: left alone.
+        beaten = {haves[t] for t in moved}
+        filled = {}
+        for u in range(timed[0] + 1, timed[-1]):
+            h = route_at(e["bands"], u)
+            if u not in haves and h is not None and h != best and h in beaten:
+                filled[u] = best
         new_rows = {}
         if moved and a.evidence:
-            for t in sorted(moved):
+            # A filled count's row where the evidence grid timed it (a second grid may time the
+            # counts the first left out); only a timed moved count's row is required.
+            for t in sorted({**moved, **filled}):
                 times = ev_grid.get((key, t), {})
                 rk = ranker.get((key, t))
                 if rk in times and best in times:
@@ -160,12 +175,16 @@ def main():
             times = grid[(key, t)]
             print("%s %s %s %dx%d T%d: %s %.1f us -> %s %.1f us" % (*key[:3], key[3], key[4], t,
                   haves[t], times[haves[t]], best, times[best]))
+        for u in sorted(filled):
+            print("%s %s %s %dx%d T%d: %s -> %s (untimed, between timed counts)"
+                  % (*key[:3], key[3], key[4], u, route_at(e["bands"], u), best))
         if moved:
-            e["bands"] = rebuild(e["bands"], moved)
+            e["bands"] = rebuild(e["bands"], {**moved, **filled})
             if "evidence_us" in e or new_rows:
                 # [T, default us, the table route's us]: a moved count's row timed the old route; the
                 # evidence grid's row takes its place.
-                rows = {int(row[0]): row for row in e.get("evidence_us", []) if int(row[0]) not in moved}
+                rows = {int(row[0]): row for row in e.get("evidence_us", [])
+                        if int(row[0]) not in moved and int(row[0]) not in filled}
                 rows.update(new_rows)
                 e["evidence_us"] = [rows[t] for t in sorted(rows)]
             moved_entries += 1

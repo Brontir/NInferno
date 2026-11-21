@@ -58,6 +58,34 @@ def test_stale_band_takes_one_route_over_the_range(tmp_path):
     assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
 
 
+def test_untimed_count_between_timed_ones_takes_the_range_route(tmp_path):
+    # #1149: the grid timed T 9 and T 11, not T 10; n1's band spans all three, n2 wins both timed
+    # counts: T 10 is n2 too (one band), not n1 left between them.
+    rows = [(9, "n1", 200), (9, "n2", 100), (11, "n1", 200), (11, "n2", 100)]
+    bands, r = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows)
+    assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
+    assert "T10: n1 -> n2 (untimed" in r.stdout
+
+
+def test_untimed_band_the_grid_never_timed_is_left_alone(tmp_path):
+    # T 10's band holds n4, which the grid timed at no count of the range: left as it is.
+    rows = [(9, "n1", 200), (9, "n2", 100), (11, "n1", 200), (11, "n2", 100)]
+    bands, _ = run(tmp_path, [[1, 9, "n1"], [10, 10, "n4"], [11, 11, "n1"], [12, 16777216, "n2"]], rows)
+    assert bands == [[1, 8, "n1"], [9, 9, "n2"], [10, 10, "n4"], [11, 16777216, "n2"]]
+
+
+def test_filled_count_takes_its_evidence_row_from_the_second_grid(tmp_path):
+    # The first grid timed T 9 and 11; the second times T 9-11 and the ranker's answer: T 10 is
+    # filled (no first-grid row) and its evidence row comes from the second grid.
+    rows = [(9, "n1", 200), (9, "n2", 100), (11, "n1", 200), (11, "n2", 100)]
+    second = ([(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 201), ("n2", 99), ("n4", 150))],
+              [(t, "n4") for t in (9, 10, 11)])
+    bands, evidence = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[],
+                          second=second)
+    assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
+    assert evidence == [[9, 150.0, 99.0], [10, 150.0, 99.0], [11, 150.0, 99.0]]
+
+
 def test_route_within_the_margin_is_kept(tmp_path):
     rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 102), ("n2", 100))]
     bands, _ = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows)
