@@ -569,7 +569,12 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                         const DeviceClass& larger =
                                             prices == &sms ? more_sms : more_bw;
                                         const int at = mmq_law_width(base, problem, t);
-                                        if (at != 0 && at != mmq_law_width(larger, problem, t)) {
+                                        // Exempt up to x1.10 (#789: the measured worst x1.04,
+                                        // Tesla T4); past it a width-differing case is a
+                                        // regression like any other.
+                                        constexpr double kMmqWidthBound = 1.10;
+                                        if (at != 0 && at != mmq_law_width(larger, problem, t) &&
+                                            it->second / seconds <= kMmqWidthBound) {
                                             ++mmq_width_cases;
                                             mmq_width_worst =
                                                 std::max(mmq_width_worst, it->second / seconds);
