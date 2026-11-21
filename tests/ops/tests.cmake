@@ -43,7 +43,7 @@ endforeach()
 # independent, so ctest -j spreads them. ninferno_moe_test keeps its name for the layers.
 ninferno_add_op_test(ninferno_moe_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_moe.cpp"
-  LIBRARIES ninferno_ops
+  LIBRARIES ninferno_ops ninferno::json
   NO_DEFAULT_TEST)
 add_test(NAME ninferno_moe_test COMMAND ninferno_moe_test --part layers)
 ninferno_label_tests(ninferno_moe_test LABELS gpu slow)
