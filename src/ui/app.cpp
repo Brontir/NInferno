@@ -1175,43 +1175,74 @@ Json App::artifact_plan_json(const fs::path& artifact, int gpu, const product::L
 
 Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     const std::string& quant, const product::LaunchAsk& launch) {
-    // serve's own plan where it reads the same hub (#766): its MoE route and workspace queries are
-    // the start's, which this binary cannot link. The repository at the commit the listing here
-    // was read at, so serve plans the files the rows show; its "now" is planned at the GPU's free
-    // memory (--plan-free-now), as for a local artifact.
-    const bool serve_reads_hub =
-        gpu >= 0 && !options_.offline && (hub.empty() || hub == "huggingface");
-    if (serve_reads_hub) {
-        const Json list = listing_of(repo, hub);
-        if (!quant.empty() && std::none_of(list.begin(), list.end(), [&](const Json& q) {
-                return !q.value("drafter", false) && q.value("quant", std::string()) == quant;
-            })) {
-            throw std::invalid_argument("no quant " + quant + " in " + repo);
+    // The idle plan is serve's own where it reads the same hub (#766): its MoE route and workspace
+    // queries are the start's, which this binary cannot link. One serve run a plan key (the ask,
+    // the GPU, the conversions and files here), kept as the plan here is: the page asks again at
+    // every move of the free memory, and a serve child's own CUDA context is one. `now` is
+    // replayed here from the plan here's context, as before (the workspace by the formula).
+    // A quantization the listing lacks is refused before any child runs.
+    std::string planner;
+    std::optional<Json> served;
+    if (const std::string why = serve_hub_plan_refusal(repo, hub, gpu, quant); !why.empty()) {
+        planner = "ninferno-ui: " + why + ", the workspace and MoE routes are estimates";
+    } else {
+        const std::string key = plan_key(repo, hub, gpu, quant, launch) + "|serve";
+        {
+            std::lock_guard lock(sizes_mutex_);
+            if (const auto it = plans_.find(key); it != plans_.end()) { served = it->second; }
         }
-        const std::string commit = list.empty() || !list.front().is_object()
-                                       ? std::string()
-                                       : list.front().value("commit", std::string());
-        if (auto doc =
-                serve_plan_json(commit.empty() ? repo : repo + "@" + commit, quant, gpu, launch)) {
-            // The model by the name the plan here gives it (the page names a family's gate by
-            // it), not serve's repo@commit.
-            if (doc->contains("model") && (*doc)["model"].is_object()) {
-                (*doc)["model"]["source"] = quant.empty() ? repo : repo + ":" + quant;
+        if (!served) {
+            const auto generation    = hub_generation();
+            const Json list          = listing_of(repo, hub);
+            const std::string commit = list.empty() || !list.front().is_object()
+                                           ? std::string()
+                                           : list.front().value("commit", std::string());
+            // A repository named at a revision keeps it (repo@rev@commit is no spec).
+            const std::string model =
+                commit.empty() || repo.find('@') != std::string::npos ? repo : repo + "@" + commit;
+            try {
+                served = serve_plan_json(model, quant, gpu, launch);
+            } catch (const std::exception& error) {
+                // serve's own hub read failed (the network, a timeout): the plan here answers
+                // from what this process read, and says why.
+                planner = std::string("ninferno-ui: ninferno-serve --plan failed (") +
+                          error.what() + "), the workspace and MoE routes are estimates";
             }
-            return std::move(*doc);
+            if (served) {
+                // The model by the name the plan here gives it (the page names a family's gate by
+                // it), not serve's repo@commit.
+                if (served->contains("model") && (*served)["model"].is_object()) {
+                    (*served)["model"]["source"] = quant.empty() ? repo : repo + ":" + quant;
+                }
+                std::lock_guard lock(sizes_mutex_);
+                if (generation == hub_generation_ && plans_.size() < kMaxKeptPlans) {
+                    plans_[key] = *served;
+                }
+            } else if (planner.empty()) {
+                planner = "ninferno-ui: no ninferno-serve beside it, the workspace and MoE routes "
+                          "are estimates";
+            }
         }
     }
-    // The plan of an idle card (cached), and what a start right now would get at the GPU's free
-    // memory (product::plan_now, each request: another process's share moves).
+    // The plan of an idle card here (cached), and its context for what a start right now would
+    // get at the GPU's free memory (product::plan_now, each request: another process's share
+    // moves). Where only serve could plan (no card NVML reads, a shape this process cannot read),
+    // serve's document answers with its own `now`.
     std::shared_ptr<const PlanNowContext> now;
-    Json doc = plan_json_idle(repo, hub, gpu, quant, launch, true, &now);
-    // Without serve's queries (DECISIONS 79): the workspace by the formula, an MoE step at the
-    // measured pair's share.
-    doc["planner"]      = serve_reads_hub
-                              ? "ninferno-ui: no ninferno-serve beside it, the workspace and MoE "
-                                "routes are estimates"
-                              : "ninferno-ui: offline or not on Hugging Face, the workspace and MoE "
-                                "routes are estimates";
+    Json doc;
+    try {
+        doc = plan_json_idle(repo, hub, gpu, quant, launch, true, &now);
+    } catch (const std::invalid_argument&) {
+        throw; // the ask itself (a quantization the listing lacks)
+    } catch (const std::exception&) {
+        if (!served) { throw; }
+        return std::move(*served);
+    }
+    if (served) {
+        doc = std::move(*served);
+        doc.erase("now"); // replayed below, at the free memory now
+    }
+    if (!planner.empty()) { doc["planner"] = planner; }
     const auto stats    = gpus_->snapshot();
     const auto free_now = free_now_of(stats, gpu);
     if (!now) { // a cached plan: its context kept beside it
@@ -1231,6 +1262,28 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         if (!refused.empty()) name_refusal_now(doc["now"], refused);
     }
     return doc;
+}
+
+std::string App::serve_hub_plan_refusal(const std::string& repo, const std::string& hub, int gpu,
+                                        const std::string& quant) {
+    if (options_.offline) { return "offline"; }
+    if (!hub.empty() && hub != "huggingface") { return "not on Hugging Face"; }
+    if (gpu < 0) { return "no GPU"; }
+    // serve plans a GGUF table only where the repository holds no top-level safetensors weights
+    // (plan_offline.cpp: those are its plan then), and matches --quant over the GGUF groups only:
+    // a native or safetensors row, or a mixed repository's table, is planned here.
+    const Json list = listing_of(repo, hub);
+    bool gguf = false, other = false;
+    for (const auto& q : list) {
+        if (!q.is_object() || q.value("drafter", false)) { continue; }
+        const bool is_gguf = q.value("format", std::string()) == "gguf";
+        if (!quant.empty() && q.value("quant", std::string()) == quant) {
+            return is_gguf ? std::string() : "a " + q.value("format", std::string()) + " row";
+        }
+        (is_gguf ? gguf : other) = true;
+    }
+    if (!quant.empty()) { throw std::invalid_argument("no quant " + quant + " in " + repo); }
+    return gguf && !other ? std::string() : "not a GGUF repository";
 }
 
 std::string App::plan_key(const std::string& repo, const std::string& hub, int gpu,

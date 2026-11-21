@@ -1328,7 +1328,8 @@ void test_hub_plan_via_serve() {
 
     const fs::path args = root / "args.txt";
     std::ofstream(root / "serve-plan")
-        << "#!/bin/sh\nprintf '%s\\n' \"$@\" > '" << args.string() << "'\n"
+        << "#!/bin/sh\nprintf '%s\\n' \"$@\" > '" << args.string() << "'\necho run >> '"
+        << (root / "runs.txt").string() << "'\n"
         << "printf '{\\n \"schema\": \"ninferno-dry-plan/1\",\\n \"model\": {\"source\": "
            "\"org/m-GGUF@x Q4_K_M\"},\\n \"now\": {\"fits\": true}\\n}\\n'\nexit 0\n";
     fs::permissions(root / "serve-plan", fs::perms::owner_all);
@@ -1387,6 +1388,32 @@ void test_hub_plan_via_serve() {
     std::tie(status, body) = plan(root / "no-such-serve", "");
     check(status == 502 && body.find("no GPU 0") != std::string::npos,
           "without serve the plan here answers: " + body);
+    // One serve run a plan key: the page asks again at every move of the free memory.
+    {
+        fs::remove(root / "runs.txt");
+        UiOptions options;
+        options.serve_binary = root / "serve-plan";
+        options.hub_cache    = root / "hub";
+        App app(options, std::make_unique<NoGpu>());
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        httplib::Client client("127.0.0.1", port);
+        const std::string ask = "/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF";
+        const auto first      = client.Get(ask);
+        const auto second     = client.Get(ask);
+        const auto other      = client.Get(ask + "&quant=Q4_K_M");
+        server.stop();
+        thread.join();
+        std::ifstream runs(root / "runs.txt");
+        int count = 0;
+        for (std::string line; std::getline(runs, line);) { ++count; }
+        check(first && first->status == 200 && second && second->status == 200 && other &&
+                  other->status == 200 && count == 2,
+              "serve runs once a plan key (" + std::to_string(count) + " runs for 2 keys)");
+    }
 
     if (kept) {
         ::setenv("HF_ENDPOINT", kept->c_str(), 1);

@@ -250,15 +250,21 @@ private:
     // empty, with the largest that fits) on GPU `gpu` for what a launch asks: the
     // "ninferno-dry-plan/1" document (product/plan/plan_quants.h), as ninferno-serve <repo> --plan
     // --no-load --json would print it for an idle card of that GPU. With a ninferno-serve beside
-    // the UI and the hub online it is serve's own document (#766): the repository at the commit
-    // the listing here was read at, so its workspace (runtime::set_plan_workspace_query) and an
-    // MoE step's routes (set_plan_moe_route_query) are the start's. Offline, on another hub than
-    // Hugging Face or with no serve, the plan here answers without those queries (this program
-    // does not link the Ops; DECISIONS 79: the step keeps the measured pair's share, and its
-    // estimate is Transferred past one row with speed_why "MoE route not queried") and says so
-    // ("planner"). Throws when the repository's shape cannot be read.
+    // the UI and the hub online, a GGUF repository's idle plan is serve's own document (#766, one
+    // run a plan key, kept): the repository at the commit the listing here was read at, so its
+    // workspace (runtime::set_plan_workspace_query) and an MoE step's routes
+    // (set_plan_moe_route_query) are the start's; `now` is replayed here. Otherwise (offline,
+    // another hub, no serve, serve failing, a native or mixed repository) the plan here answers
+    // without those queries (this program does not link the Ops; DECISIONS 79: the step keeps the
+    // measured pair's share, and its estimate is Transferred past one row with speed_why "MoE
+    // route not queried") and says why ("planner"). Throws when the repository's shape cannot be
+    // read.
     nlohmann::json plan_json(const std::string& repo, const std::string& hub, int gpu,
                              const std::string& quant, const product::LaunchAsk& launch);
+    // Why the idle plan of a hub row is not serve's (#766): "" where serve plans it as the plan
+    // here would (online, Hugging Face, a GPU, a GGUF repository's table or one of its GGUF rows).
+    std::string serve_hub_plan_refusal(const std::string& repo, const std::string& hub, int gpu,
+                                       const std::string& quant);
     // read_tables: the chosen GGUF row's own tensor table is read when not known (a user's plan);
     // the catalog's plans (no network) price the tables known. `now_out`: the "now" context of
     // this plan (also when it is not cached).
