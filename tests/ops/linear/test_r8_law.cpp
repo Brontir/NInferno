@@ -253,8 +253,8 @@ std::string schedule_name(int i) {
 // key the price builds names its instance exactly: each W4A8 schedule x decoder x epilogue that the
 // snapshot compiles under some flavor or ring is found under the price's (a tile not compiled for a
 // codec, as the producer-warp tile for most, is not offered); on every snapshot holding I8 kernels,
-// each I8 schedule x code width x epilogue at the stages its arch compiles is there. And every row of
-// either section is reached by exactly one price key: a key built wrong for a whole family (a
+// each I8 schedule x code width x epilogue at the stages its arch compiles is there. And every row
+// of either section is reached by exactly one price key: a key built wrong for a whole family (a
 // decoder spelling, a block or epilogue mapping) finds no variant either, which only the counts
 // catch.
 void check_a8_occupancy_keys() {
