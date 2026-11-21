@@ -236,8 +236,6 @@ private:
     // <artifact> --plan --no-load --plan-idle --json on that GPU, whose workspace is the start's
     // own planner's (the Ops' queries this binary does not link, #843); product::plan_artifact
     // here only when no such binary is beside the UI, marked so ("planner").
-    // The pids of the processes this UI runs (not exited): a refusal check leaves them out.
-    std::set<int> own_pids();
     nlohmann::json artifact_plan_json(const std::filesystem::path& artifact, int gpu,
                                       const product::LaunchAsk& launch);
     // ninferno-serve's plan of `artifact` on GPU `gpu`; nullopt only when there is no binary or it
