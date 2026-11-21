@@ -98,7 +98,8 @@ def default_route(times, ranker, t):
 def round_width(route):
     """The token count a route's round count steps at (ceil(T / width)): eight columns a tile for the
     register MMA's nN (rmma.m1.nN.*); the token tile its name carries for the staged
-    (staged.ROWSxTOKENS), tiled, W4A8 and W4A4 tiles (tiled.MxN, w4a8.MxN, w4a4.MxN: M tokens; generic_routes.cpp
+    (staged.ROWSxTOKENS), tiled, W4A8, W4A4, I8 and NVFP4 tiles (tiled.MxN, w4a8.MxN, w4a4.MxN, i8.MxN,
+    nvfp4t.cC.MxN: M tokens, generic_routes.cpp route_name's block_m; generic_routes.cpp
     route_name); eight, the narrowest column step, for any other route (ggml_mmq's column tiles
     are multiples of eight)."""
     m = re.search(r"(?:^|\.)n(\d+)(?:\.|$)", route)
@@ -107,7 +108,7 @@ def round_width(route):
     m = re.match(r"staged\.\d+x(\d+)", route)
     if m:
         return int(m.group(1))
-    m = re.match(r"(?:tiled|w4a8|w4a8ws|w4a4|w4a4ws)\.(\d+)x\d+", route)
+    m = re.match(r"(?:tiled|w4a8|w4a8ws|w4a4|w4a4ws|i8|nvfp4t\.c\d+)\.(\d+)x\d+", route)
     if m:
         return int(m.group(1))
     return 8

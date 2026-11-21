@@ -419,6 +419,8 @@ def test_round_width_reads_the_token_tile_from_the_name():
     assert tool.round_width("staged.64x128.w4") == 128
     assert tool.round_width("staged.128x64.w8") == 64
     assert tool.round_width("w4a4.32x64") == 32  # #1157 review: W4A4 names its token tile too
+    assert tool.round_width("nvfp4t.c2.128x128") == 128
+    assert tool.round_width("i8.64x128") == 64
     assert tool.round_width("tiled.128x64") == 128
     assert tool.round_width("w4a8.32x128") == 32
     assert tool.round_width("ggml_mmq") == 8
