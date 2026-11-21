@@ -402,6 +402,28 @@ void decodes_from_facts(const json& fixture) {
         const double a           = ch::speed_of(own, tu, qo, c, 1, 82000).decode_per_stream;
         const double b           = ch::speed_of(other, tu, qo, c, 1, 82000).decode_per_stream;
         check(a > b * 1.1, "the SM rate holds only for its own head geometry");
+        // The dense family's D128 full layer (16 heads, 4 KV heads: SmolLM3-3B) on Turing reads
+        // at its own kKvSmRate rows (#991 item 3, #1129), not the codec's factor. The same
+        // geometry and bytes under a family with no row for it keep the factor: BF16 rows price
+        // faster with the row (3.38 B a reference SM-clock, SM-bound, against the 3.38x read
+        // factor), the one-byte int8 rows slower (1.515 against 2.26).
+        ch::ModelFacts dense       = own;
+        dense.family               = "dense_decoder";
+        dense.full_head_dim        = 128;
+        dense.full_kv_heads        = 4;
+        dense.full_attention_width = 16.0 * dense.full_layers * 2 * 128;
+        ch::ModelFacts unrowed     = dense;
+        unrowed.family             = "gemma4_text";
+        const auto at              = [&](const ch::ModelFacts& m, KvCacheStorage kv) {
+            ch::Candidate k;
+            k.kv = k.ring = kv;
+            return ch::speed_of(m, tu, qo, k, 1, 82000).decode_per_stream;
+        };
+        check(at(dense, KvCacheStorage::BFloat16) > at(unrowed, KvCacheStorage::BFloat16) * 1.05,
+              "dense D128 BF16 rows on Turing read at their own SM rate");
+        check(at(dense, KvCacheStorage::Fp8E4M3Row256) * 1.05 <
+                  at(unrowed, KvCacheStorage::Fp8E4M3Row256),
+              "dense D128 int8 rows on Turing read at their own SM rate");
     }
 }
 
