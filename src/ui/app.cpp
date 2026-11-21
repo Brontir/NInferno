@@ -985,10 +985,15 @@ struct App::PlanNowContext {
 namespace {
 
 // NVML's word that GPU `gpu` takes no new process (GpuStat::refusal_now, #891); empty when it
-// takes one or NVML does not say.
-std::string refusal_now_of(const std::vector<GpuStat>& stats, int gpu) {
-    for (const auto& stat : stats) {
-        if (stat.index == gpu) return stat.refusal_now();
+// takes one or NVML does not say. The processes this UI manages (`own`, their pids) do not count:
+// a start replaces the model it serves (the plan replays that model's share, plan.served), so an
+// exclusive card our own ninferno-serve holds is not refused.
+std::string refusal_now_of(const std::vector<GpuStat>& stats, int gpu, const std::set<int>& own) {
+    for (auto stat : stats) {
+        if (stat.index != gpu) continue;
+        std::erase_if(stat.processes,
+                      [&](const GpuProcess& p) { return own.count(static_cast<int>(p.pid)) != 0; });
+        return stat.refusal_now();
     }
     return {};
 }
@@ -1131,6 +1136,14 @@ std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
     return doc;
 }
 
+std::set<int> App::own_pids() {
+    std::set<int> pids;
+    for (const auto& info : processes_.list()) {
+        if (info.pid > 0 && info.state != "exited" && info.state != "failed") pids.insert(info.pid);
+    }
+    return pids;
+}
+
 Json App::artifact_plan_json(const fs::path& artifact, int gpu, const product::LaunchAsk& launch) {
     if (gpu < 0) { throw std::invalid_argument("no GPU " + std::to_string(gpu) + " to plan for"); }
     // The start's own plan when its binary is beside the UI (#843): its workspace is the start's
@@ -1156,7 +1169,7 @@ Json App::artifact_plan_json(const fs::path& artifact, int gpu, const product::L
     Json doc = product::artifact_plan_document(plan, artifact.string());
     // What a start right now would get (a second model may hold the card): the replay says it.
     if (const auto free_now = free_now_of(stats, gpu)) {
-        const std::string refused = refusal_now_of(stats, gpu);
+        const std::string refused = refusal_now_of(stats, gpu, own_pids());
         const std::uint64_t at    = refused.empty() ? *free_now : 0;
         doc["now"] = product::plan_now_json(product::plan_now(plan.facts, plan.inputs,
                                                               plan.served ? &*plan.served : nullptr,
@@ -1185,7 +1198,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         }
     }
     if (free_now && now) {
-        const std::string refused = refusal_now_of(stats, gpu);
+        const std::string refused = refusal_now_of(stats, gpu, own_pids());
         const std::uint64_t at    = refused.empty() ? *free_now : 0;
         doc["now"] = product::plan_now_json(product::plan_now(now->facts, now->inputs,
                                                               now->served ? &*now->served : nullptr,
