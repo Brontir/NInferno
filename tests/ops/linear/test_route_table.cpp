@@ -8,6 +8,7 @@
 #include "core/device_class.h"
 #include "core/measured_boards.h"
 #include "core/sha256.h"
+#include "core/weight_view.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/common/shape_routes.h"
 #include "ops/generic/generic_gemm.h"
@@ -625,7 +626,7 @@ int moe_pick_precedence() {
     };
     for (const auto& f : std::filesystem::directory_iterator(routes / "moe_pick")) {
         const auto name = f.path().filename();
-        if (f.path().extension() != ".json" || !std::filesystem::exists(routes / name)) continue;
+        if (f.path().extension() != ".json") continue;
         const Json pick = read(f.path());
         const auto id   = static_cast<std::uint32_t>(
             std::stoul(pick["gpu"]["pci_id"].get<std::string>(), nullptr, 16));
@@ -636,6 +637,19 @@ int moe_pick_precedence() {
                                              static_cast<std::size_t>(row->l2_mib * (1 << 20)), 0);
         board.facts = ninferno::machine_facts_of(board);
         const ninferno::ScopedDeviceClass scoped(board);
+        // The board's own table: the first of its class chain with a shipped file ("ga102-82sm"
+        // -> "ga102"), named as the lookup names it (':' is '-').
+        std::filesystem::path own_name;
+        for (std::string c : ninferno::device_class().class_chain()) {
+            for (char& ch : c) {
+                if (ch == ':') ch = '-';
+            }
+            if (std::filesystem::exists(routes / (c + ".json"))) {
+                own_name = c + ".json";
+                break;
+            }
+        }
+        if (own_name.empty()) continue;
         for (const Json& e : pick["moe"]) {
             const auto q = ninferno::find_route(e["format"].get<std::string>());
             const auto qd =
@@ -674,10 +688,10 @@ int moe_pick_precedence() {
             std::filesystem::create_directories(dir / "moe_pick");
             std::filesystem::copy_file(f.path(), dir / "moe_pick" / name);
             // This board's own table, with the band: it stands above the pick.
-            Json own   = read(routes / name);
+            Json own   = read(routes / own_name);
             own["moe"] = own.value("moe", Json::array());
             own["moe"].push_back(entry);
-            std::ofstream(dir / name) << own.dump(1);
+            std::ofstream(dir / own_name) << own.dump(1);
             ninferno::ops::set_route_table_dir(utf8_path(dir));
             const auto near = moe::moe_route_query(board, layer, t);
             failures += check(near && table_answer(near->authority),
@@ -685,11 +699,14 @@ int moe_pick_precedence() {
             // The same band in a similar chip's table, lent to this board's: it yields to the pick.
             const auto similar = ninferno::device_class().similar_chips();
             if (!similar.empty()) {
-                std::ofstream(dir / name) << read(routes / name).dump(1);
+                std::ofstream(dir / own_name) << read(routes / own_name).dump(1);
                 std::string lender = table(similar.front(), "");
                 lender.pop_back();
                 lender += ", \"moe\": [" + entry.dump() + "]}";
                 std::ofstream(dir / (similar.front() + ".json")) << lender;
+                // The same directory again keeps the loaded table (set_route_table_dir): reset
+                // first, so the lookup reads the files as they are now.
+                ninferno::ops::set_route_table_dir("");
                 ninferno::ops::set_route_table_dir(utf8_path(dir));
                 const auto s    = ninferno::ops::route_table_status();
                 const auto lent = moe::moe_route_query(board, layer, t);
