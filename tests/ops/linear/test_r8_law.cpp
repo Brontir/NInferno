@@ -248,15 +248,15 @@ std::string schedule_name(int i) {
     return "w" + std::to_string(s.warps) + "r" + std::to_string(s.rows);
 }
 
-// The launch names the kernel instance whose snapshot row the law reads (r8_kernel_key): the
-// predictor's codec spelling, every schedule's warps and rows, one token slot, the epilogue, the
-// in-kernel quantizer; and the pre-quantized verify form where asked.
 // #938: the A8 tiles' occupancy prices from the snapshot's compiled registers, and a key the
 // snapshot lacks falls back to the hand count without a word (generic_cost.cpp `resident`). So a
 // key the price builds names its instance exactly: each W4A8 schedule x decoder x epilogue that the
 // snapshot compiles under some flavor or ring is found under the price's (a tile not compiled for a
 // codec, as the producer-warp tile for most, is not offered); on every snapshot holding I8 kernels,
-// each I8 schedule x code width x epilogue at the stages its arch compiles is there.
+// each I8 schedule x code width x epilogue at the stages its arch compiles is there. And every row of
+// either section is reached by exactly one price key: a key built wrong for a whole family (a
+// decoder spelling, a block or epilogue mapping) finds no variant either, which only the counts
+// catch.
 void check_a8_occupancy_keys() {
     const g::Epilogue epilogues[] = {g::Epilogue::Store, g::Epilogue::AddResidual,
                                      g::Epilogue::SwiGlu};
@@ -298,6 +298,12 @@ void check_a8_occupancy_keys() {
                "sm_" + std::string(arch) + ": " + std::to_string(miss) +
                    " W4A8 keys the price builds name no compiled instance of their tile (" +
                    std::to_string(have) + " found; first: " + first + ")");
+        if (const auto header = kf::section_header(arch, "w4a8")) {
+            expect(static_cast<std::size_t>(have) == header->kernels,
+                   "sm_" + std::string(arch) + ": the price's W4A8 keys reach " +
+                       std::to_string(have) + " of the snapshot's " +
+                       std::to_string(header->kernels) + " W4A8 rows");
+        }
         // The I8 tiles: the stages the arch's block holds (generic_cost.cpp's key).
         const int arch_number = std::stoi(std::string(arch));
         int i8_have = 0, i8_miss = 0;
@@ -325,9 +331,18 @@ void check_a8_occupancy_keys() {
         expect(i8_have == 0 || i8_miss == 0,
                "sm_" + std::string(arch) + ": " + std::to_string(i8_miss) +
                    " I8 keys the price builds are not in the snapshot (first: " + i8_first + ")");
+        if (const auto header = kf::section_header(arch, "i8")) {
+            expect(static_cast<std::size_t>(i8_have) == header->kernels,
+                   "sm_" + std::string(arch) + ": the price's I8 keys reach " +
+                       std::to_string(i8_have) + " of the snapshot's " +
+                       std::to_string(header->kernels) + " I8 rows");
+        }
     }
 }
 
+// The launch names the kernel instance whose snapshot row the law reads (r8_kernel_key): the
+// predictor's codec spelling, every schedule's warps and rows, one token slot, the epilogue, the
+// in-kernel quantizer; and the pre-quantized verify form where asked.
 void check_kernel_keys() {
     for (const LawFormat& f : kLawFormats) {
         for (int i = 0; i < g::r8_schedule_count(); ++i) {
