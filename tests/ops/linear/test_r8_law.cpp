@@ -15,6 +15,9 @@
 #include "ops/generic/route_authorities.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/selector_facts.h"
+#include "ops/common/arch_limits.h"
+#include "ops/generic/generic_i8_schedules.h"
+#include "ops/generic/w4a8_unit.h"
 
 #include <algorithm>
 #include <cmath>
@@ -248,6 +251,67 @@ std::string schedule_name(int i) {
 // The launch names the kernel instance whose snapshot row the law reads (r8_kernel_key): the
 // predictor's codec spelling, every schedule's warps and rows, one token slot, the epilogue, the
 // in-kernel quantizer; and the pre-quantized verify form where asked.
+// #938: the A8 tiles' occupancy prices from the snapshot's compiled registers, and a key the
+// snapshot lacks falls back to the hand count without a word (generic_cost.cpp `resident`). So on
+// every snapshot that holds the family at all, every key the price builds is there: each W4A8
+// schedule x decoder x epilogue, each I8 schedule x code width x epilogue at the stages its arch
+// compiles.
+void check_a8_occupancy_keys() {
+    const g::Epilogue epilogues[] = {g::Epilogue::Store, g::Epilogue::AddResidual,
+                                     g::Epilogue::SwiGlu};
+    for (const std::string_view arch : kf::snapshot_archs()) {
+        int have = 0, miss = 0;
+        std::string first;
+        for (const ninferno::FormatFacts& f : ninferno::kFormatFacts) {
+            if (!f.codec) continue;
+            const std::string_view dec = g::w4a8_decoder_name(*f.codec);
+            if (dec.empty()) continue;
+            for (int i = 0; i < g::w4a8_schedule_count(); ++i) {
+                for (const g::Epilogue e : epilogues) {
+                    const auto key = ninferno::w4a8_unit::kernel_key_of(i, dec, e, arch);
+                    if (!key) continue;
+                    if (kf::w4a8_facts(arch, *key)) {
+                        ++have;
+                    } else if (++miss == 1) {
+                        first = key->codec + " schedule " + std::to_string(i) + " epilogue " +
+                                std::to_string(static_cast<int>(e));
+                    }
+                }
+            }
+        }
+        expect(have == 0 || miss == 0,
+               "sm_" + std::string(arch) + ": " + std::to_string(miss) +
+                   " W4A8 keys the price builds are not in the snapshot (first: " + first + ")");
+        // The I8 tiles: the stages the arch's block holds (generic_cost.cpp's key).
+        const int arch_number = std::stoi(std::string(arch));
+        int i8_have = 0, i8_miss = 0;
+        std::string i8_first;
+        for (int i = 0; i < g::i8_schedule_count(); ++i) {
+            const g::I8ScheduleInfo si = g::i8_schedule_info(i);
+            for (const int bits : {4, 5, 6}) {
+                const int stages =
+                    g::i8_stages(si.block_m, si.block_n, bits,
+                                 ninferno::ops::shared_bytes_per_block_for_arch(arch_number));
+                const int wn = si.block_n / 64, wt = si.threads / 32 / std::max(wn, 1);
+                for (const g::Epilogue e : epilogues) {
+                    const kf::I8KernelKey key{wt, wn, stages, bits, static_cast<int>(e)};
+                    if (kf::i8_facts(arch, key)) {
+                        ++i8_have;
+                    } else if (++i8_miss == 1) {
+                        i8_first = std::to_string(si.block_m) + "x" + std::to_string(si.block_n) +
+                                   " bits " + std::to_string(bits) + " stages " +
+                                   std::to_string(stages) + " epilogue " +
+                                   std::to_string(static_cast<int>(e));
+                    }
+                }
+            }
+        }
+        expect(i8_have == 0 || i8_miss == 0,
+               "sm_" + std::string(arch) + ": " + std::to_string(i8_miss) +
+                   " I8 keys the price builds are not in the snapshot (first: " + i8_first + ")");
+    }
+}
+
 void check_kernel_keys() {
     for (const LawFormat& f : kLawFormats) {
         for (int i = 0; i < g::r8_schedule_count(); ++i) {
@@ -603,6 +667,7 @@ void check_law_before() {
 int main() {
     check_terms();
     check_kernel_keys();
+    check_a8_occupancy_keys();
     check_selector_is_the_prediction();
     count_reproduced_entries();
     check_retired_entries();
