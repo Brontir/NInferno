@@ -29,9 +29,12 @@
 //       width (Turing, DECISIONS 78: core/mmq_columns.h pick) where the larger board picks another
 //       width: two launches, not one priced twice. The price is the A8 fit's tile count at the
 //       law's width, not the law's own time, so it can rise there (#786: up to x1.04 on the
-//       Tesla T4). OPEN: pricing that launch by the law itself was tried and moved the RTX 2080
-//       Ti's A8 regret from +0.3 % to +14 .. +31 %, against the W4A8 tiles still priced at 0.7 of
-//       their time; counted and printed, not failed.
+//       Tesla T4). A rise within the width change's own cost is counted and printed, not failed:
+//       in the fitted slice the MMA term scales with the padded columns and the chain with the
+//       column tiles, over the SMs (#789: x1.101 on the CI's boards); past that bound it fails.
+//       OPEN: pricing that launch by the law itself was tried and moved the RTX 2080 Ti's A8
+//       regret from +0.3 % to +14 .. +31 %, against the W4A8 tiles still priced at 0.7 of their
+//       time.
 //   P3  fields the selector does not read: the board's labels (names, PCI address, UUID, ordinal),
 //       the table row's name, sources and note, and (each on its own) its TDP, nominal VRAM, PCIe
 //       generation and segment, and the memory size the driver reports, move no route. Every
@@ -83,6 +86,7 @@
 #include "core/weight_view.h"
 #include "ops/common/arch_limits.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/mmq_unit.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/generic_select_internal.h"
@@ -482,11 +486,8 @@ Explained explain_rmma_rise(const DeviceClass& base, const DeviceClass& more,
 int mmq_law_width(const DeviceClass& d, const generic::Problem& p, std::int32_t tokens) {
     const bool format = mmq_columns::work_tiles_format(p.qtype, d.major, d.minor);
     if (mmq_columns::launch_law(d.major, d.minor, format) == nullptr) return 0;
-    const int columns = std::min(tokens, generic::kMmqPrefillSlice);
-    const mmq_columns::LaunchFacts facts{p.n, p.k, d.sms, d.facts.reference_clock_hz(),
-                                         d.facts.dram_bytes_per_s()};
-    return mmq_columns::pick(columns, d.major, d.minor, true,
-                             mmq_columns::widest_tile(p.qtype, d.major, d.minor), facts);
+    // The width the price takes (#789: one function, so this exemption cannot drift from it).
+    return generic::mmq_column_width(d, p, tokens);
 }
 
 void property_price_monotone(const std::vector<Row>& rows) {
@@ -571,8 +572,43 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                     if (r.family == generic::Family::GgmlMmq) {
                                         const DeviceClass& larger =
                                             prices == &sms ? more_sms : more_bw;
-                                        const int at = mmq_law_width(base, problem, t);
-                                        if (at != 0 && at != mmq_law_width(larger, problem, t)) {
+                                        const int at        = mmq_law_width(base, problem, t);
+                                        const int at_larger = mmq_law_width(larger, problem, t);
+                                        // The width change's own cost bounds the rise (#789): in
+                                        // the fitted slice the MMA term scales with the padded
+                                        // columns and the chain with the column tiles, each over
+                                        // the SMs (on the SM scale they grew by more_sms / base);
+                                        // the rest does not see the width. Past that bound a
+                                        // width-differing case is a regression like any other.
+                                        // Only where the price is the fitted slice (no counted
+                                        // MMQ unit, no completeness terms): the completeness terms
+                                        // keep the MMQ slice fitted too, so the bound would hold
+                                        // there, but the exemption is kept conservative until a
+                                        // board prices with them (the counted unit prices by its
+                                        // launch units, its own width).
+                                        const bool fitted_slice =
+                                            !mmq_unit::counted_board(base.major, base.minor) &&
+                                            !generic::completeness_terms();
+                                        const auto width_bound = [&] {
+                                            const int cols =
+                                                std::min<int>(t, generic::kMmqPrefillSlice);
+                                            const auto tiles = [&](int w) {
+                                                return static_cast<double>((cols + w - 1) / w);
+                                            };
+                                            const double sm_share =
+                                                prices == &sms
+                                                    ? static_cast<double>(base.sms) / more_sms.sms
+                                                    : 1.0;
+                                            return std::max(
+                                                       {1.0,
+                                                        sm_share * tiles(at_larger) * at_larger /
+                                                            (tiles(at) * at),
+                                                        sm_share * tiles(at_larger) / tiles(at)}) *
+                                                   (1.0 + kResolution);
+                                        };
+                                        if (fitted_slice && at != 0 && at_larger != 0 &&
+                                            at != at_larger &&
+                                            it->second / seconds <= width_bound()) {
                                             ++mmq_width_cases;
                                             mmq_width_worst =
                                                 std::max(mmq_width_worst, it->second / seconds);

@@ -1023,6 +1023,32 @@ void test_catalog() {
     check(!e.recommended && !e.preferred.has_value(), "8 GB: 35B does not fit");
 }
 
+// Which compute modes and holders take no new process (GpuStat::refusal_now), and the MPS
+// server's name: pure checks, on every platform (#891).
+void test_refusal_now() {
+    GpuStat free_card;
+    free_card.compute_mode = 3;
+    check(free_card.refusal_now().empty(), "an exclusive card no process holds takes a new one");
+    free_card.compute_mode = 2;
+    check(!free_card.refusal_now().empty(), "a prohibited card takes no new process");
+    free_card.compute_mode = 0;
+    free_card.processes    = {{1, 0}};
+    check(free_card.refusal_now().empty(), "a default-mode card in use takes another process");
+    free_card.compute_mode = 3;
+    check(!free_card.refusal_now().empty(), "an exclusive card a process holds takes no other");
+    free_card.processes = {{1, 0, true}};
+    check(free_card.refusal_now().empty(),
+          "an exclusive card an MPS server holds takes an MPS client");
+    free_card.compute_mode = 1;
+    check(!free_card.refusal_now().empty(), "an exclusive-thread card is refused even under MPS");
+    check(ninferno::ui::is_mps_server("/usr/bin/nvidia-cuda-mps-server") &&
+              ninferno::ui::is_mps_server("C:\\x\\nvidia-cuda-mps-server.exe") &&
+              ninferno::ui::is_mps_server("nvidia-cuda-mps-server") &&
+              !ninferno::ui::is_mps_server("/usr/bin/nvidia-cuda-mps-control") &&
+              !ninferno::ui::is_mps_server("python"),
+          "the MPS server is told by its executable's name");
+}
+
 #ifndef _WIN32
 // #843: the plan of a local artifact is ninferno-serve's own (--plan --no-load --plan-idle, its
 // workspace the start's planner's), with the ask's flags and the GPU bound; a serve that ran and
@@ -1242,30 +1268,6 @@ void test_artifact_plan_via_serve() {
 
             std::string error() const override { return {}; }
         };
-
-        GpuStat free_card;
-        free_card.compute_mode = 3;
-        check(free_card.refusal_now().empty(),
-              "an exclusive card no process holds takes a new one");
-        free_card.compute_mode = 2;
-        check(!free_card.refusal_now().empty(), "a prohibited card takes no new process");
-        free_card.compute_mode = 0;
-        free_card.processes    = {{1, 0}};
-        check(free_card.refusal_now().empty(), "a default-mode card in use takes another process");
-        free_card.compute_mode = 3;
-        check(!free_card.refusal_now().empty(), "an exclusive card a process holds takes no other");
-        free_card.processes = {{1, 0, true}};
-        check(free_card.refusal_now().empty(),
-              "an exclusive card an MPS server holds takes an MPS client");
-        free_card.compute_mode = 1;
-        check(!free_card.refusal_now().empty(),
-              "an exclusive-thread card is refused even under MPS");
-        check(ninferno::ui::is_mps_server("/usr/bin/nvidia-cuda-mps-server") &&
-                  ninferno::ui::is_mps_server("C:\\x\\nvidia-cuda-mps-server.exe") &&
-                  ninferno::ui::is_mps_server("nvidia-cuda-mps-server") &&
-                  !ninferno::ui::is_mps_server("/usr/bin/nvidia-cuda-mps-control") &&
-                  !ninferno::ui::is_mps_server("python"),
-              "the MPS server is told by its executable's name");
 
         UiOptions options;
         options.offline      = true;
@@ -2148,6 +2150,7 @@ int main(int argc, char** argv) {
     test_processes(ninferno::sys::self_exe().string());
     test_http();
     test_delete_options();
+    test_refusal_now();
 #ifndef _WIN32
     test_artifact_plan_via_serve();
     test_hub_transport_error_type();
