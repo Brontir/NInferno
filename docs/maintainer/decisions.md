@@ -2160,9 +2160,9 @@ repository, the plan there answers, its `planner` saying why; the quantization r
 (`/api/quants`) and the catalog are always planned there. Its MoE steps keep the measured pair's
 share, but an estimate no query was asked for is Transferred past one row, `speed_why` "MoE route
 not queried" (`ModelFacts::moe_route_unqueried`), never Own; a kind the query gives no kernels for
-says "MoE route not answered". An MoE whose facts list no routed layers (a hub row priced from another quantization's header, a split GGUF part without
-expert banks, a `--plan-weight-bytes` estimate) is marked the same way (#799): nobody asked which
-pair runs its banks.
+says "MoE route not answered". An MoE whose facts list no routed layers (a hub row priced from
+another quantization's header, a split GGUF part without expert banks, a `--plan-weight-bytes`
+estimate) is marked the same way (#799): nobody asked which pair runs its banks.
 
 ## 80. The pool rule prices the MTP head's pool over the benchmark's mix where the facts price it (#777, 12.11, rule)
 
