@@ -89,12 +89,34 @@ std::string curl_text(CURLcode code, long status) {
 }
 
 // Whether a failed read is the transport's (HubTransportError) rather than the hub's answer.
+// curl's own failure counts only where it is the network's: a name that did not resolve, a
+// connection refused or cut, a timeout (CURLOPT_LOW_SPEED_* ends as one), a TLS handshake that did
+// not finish. A malformed or unsupported endpoint, a failed certificate check or a local failure
+// (memory, a file) is no outage: a later try fails the same way (#1147 review).
 bool transport_failure(CURLcode code, long status) {
     const bool status_says = status == 408 || status == 429 || (status >= 500 && status < 600);
+    switch (code) {
+    case CURLE_OK:
     // A write callback that refused the body (a 403 / 404 page, or a full disk) ends in
     // CURLE_WRITE_ERROR: the status decides then, never the code.
-    if (code == CURLE_WRITE_ERROR) { return status_says; }
-    return code != CURLE_OK || status_says;
+    case CURLE_WRITE_ERROR:
+        return status_says;
+    case CURLE_COULDNT_RESOLVE_PROXY:
+    case CURLE_COULDNT_RESOLVE_HOST:
+    case CURLE_COULDNT_CONNECT:
+    case CURLE_OPERATION_TIMEDOUT:
+    case CURLE_SSL_CONNECT_ERROR:
+    case CURLE_SEND_ERROR:
+    case CURLE_RECV_ERROR:
+    case CURLE_GOT_NOTHING:
+    case CURLE_PARTIAL_FILE:
+    case CURLE_HTTP2:
+    case CURLE_HTTP2_STREAM:
+    case CURLE_WEIRD_SERVER_REPLY:
+        return true;
+    default:
+        return false;
+    }
 }
 
 void curl_init() {

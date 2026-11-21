@@ -1326,6 +1326,17 @@ void test_hub_transport_error_type() {
     } catch (const ninferno::convert::HubTransportError&) { typed = true; } catch (...) {
     }
     check(typed, "a hub that does not answer is a HubTransportError");
+    // An endpoint curl cannot use is the user's setting, not an outage: a plain error.
+    {
+        ninferno::convert::FetchOptions unusable = options;
+        unusable.endpoint   = "nosuchscheme://127.0.0.1:" + std::to_string(port);
+        bool plain_endpoint = false;
+        try {
+            (void)ninferno::convert::fetch_model_card("org/gone-GGUF", unusable);
+        } catch (const ninferno::convert::HubTransportError&) {
+        } catch (const std::runtime_error&) { plain_endpoint = true; }
+        check(plain_endpoint, "an endpoint of an unknown scheme is a plain error");
+    }
     // The cache fallback keeps the type: a GGUF head of a model the (empty) cache does not hold,
     // the hub unreachable, is still the transport's failure (serve's --plan --no-load path).
     const fs::path cache =
