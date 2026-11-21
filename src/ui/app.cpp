@@ -1261,6 +1261,10 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                 .count();
         };
         std::optional<Json> kept;
+        // The good document a move past kNowStepBytes plans again: kept if that run fails (a
+        // busy card's serve may time out or refuse where it planned before).
+        std::optional<Json> previous;
+        std::optional<std::uint64_t> previous_free_at;
         // One serve run a key at a time: an ask that finds its key running waits for that run's
         // document. Two children at once would also contend for the card (an exclusive-compute GPU
         // lets one open a context: the other's refusal would be kept). A run is of one hub token:
@@ -1285,6 +1289,9 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                             : !moved) {
                     kept = it->second;
                     if (at != serve_free_at_.end()) { kept_free_at = at->second; }
+                } else if (moved) {
+                    previous         = it->second;
+                    previous_free_at = at->second;
                 }
             }
             if (!kept) {
@@ -1364,11 +1371,22 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                         plan_now_.clear();
                         serve_free_at_.clear();
                     }
-                    plans_[key] = *kept;
-                    if (served_free_at && !kept->contains("failed") && !kept->contains("refused")) {
-                        serve_free_at_[key] = *served_free_at;
+                    const bool failed_now = kept->contains("failed") || kept->contains("refused");
+                    if (failed_now && previous) {
+                        // The re-plan failed: the document before it answers, its `now` of another
+                        // moment (null, for the asks that joined this run too), and stays kept; the
+                        // next move asks serve again.
+                        kept = previous;
+                        if (kept->contains("now")) { (*kept)["now"] = nullptr; }
+                        kept_free_at = previous_free_at;
+                        fresh        = false;
                     } else {
-                        serve_free_at_.erase(key);
+                        plans_[key] = *kept;
+                        if (served_free_at && !failed_now) {
+                            serve_free_at_[key] = *served_free_at;
+                        } else {
+                            serve_free_at_.erase(key);
+                        }
                     }
                 }
                 serve_plans_running_.erase(running_key);
@@ -2744,7 +2762,11 @@ std::optional<product::GgufTensorTable> App::gguf_table(const std::string& repo,
                 if (read != nullptr) { read->stored = true; }
                 // The repository's plans priced before it (the catalog's too) are planned again.
                 const std::string prefix = hub_key(repo, hub) + "|";
-                std::erase_if(plans_, [&](const auto& p) { return p.first.starts_with(prefix); });
+                // serve's own documents (|serve keys) read the hub themselves, not this table: kept
+                // (#1147 item 4: dropping them cost a serve run).
+                std::erase_if(plans_, [&](const auto& p) {
+                    return p.first.starts_with(prefix) && !p.first.ends_with("|serve");
+                });
                 std::erase_if(plan_now_, [&](const auto& p) { return p.first.starts_with(prefix); });
             }
             return table;

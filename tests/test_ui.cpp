@@ -1595,6 +1595,60 @@ void test_hub_plan_via_serve() {
         check(has_now(far) && after_far == 2,
               "a move past NOW_STEP plans again (" + std::to_string(after_far) + " runs)");
     }
+    // A re-plan that fails (serve's hub read, exit 75) keeps the good document: its plan answers,
+    // with no `now`, not the estimates of a failed serve.
+    {
+        fs::remove(root / "runs.txt");
+        std::ofstream(root / "serve-flaky")
+            << "#!/bin/sh
+if [ -s '" << (root / "runs.txt").string()
+            << "' ]; then echo run >> '" << (root / "runs.txt").string()
+            << "'; echo 'error: HTTP 503' >&2; exit 75; fi
+exec '" << (root / "serve-plan").string()
+            << "' \"$@\"
+";
+        fs::permissions(root / "serve-flaky", fs::perms::owner_all);
+        struct MovingGpu final : GpuSource {
+            std::atomic<std::uint64_t>* free;
+            explicit MovingGpu(std::atomic<std::uint64_t> * f) : free(f) {}
+            std::vector<GpuStat> snapshot() override {
+                GpuStat g;
+                g.index        = 0;
+                g.name         = "NVIDIA GeForce RTX 4090";
+                g.memory_total = 24ULL << 30;
+                g.memory_free  = free->load();
+                g.cc_major     = 8;
+                g.cc_minor     = 9;
+                return {g};
+            }
+
+            std::string error() const override { return {}; }
+        };
+        std::atomic<std::uint64_t> free{8ULL << 30};
+        UiOptions options;
+        options.serve_binary = root / "serve-flaky";
+        options.hub_cache    = root / "hub";
+        App app(options, std::make_unique<MovingGpu>(&free));
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] {
+            server.listen_after_bind(); });
+        server.wait_until_ready();
+        httplib::Client client("127.0.0.1", port);
+        const std::string ask = "/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF";
+        const auto first      = client.Get(ask);
+        free += 1ULL << 30;
+        const auto again = client.Get(ask);
+        server.stop();
+        thread.join();
+        const auto doc = again ? nlohmann::json::parse(again->body, nullptr, false) : nlohmann::json();
+        check(first && first->status == 200 && again && again->status == 200 && doc.is_object() &&
+                  doc.contains("now") && doc["now"].is_null() &&
+                  again->body.find("--plan failed") == std::string::npos,
+              "a failed re-plan answers the kept document, now null: " +
+                  (again ? again->body.substr(0, 300) : std::string("no answer")));
+    }
     // Two asks of one key at once share one serve run (single flight): the second waits for the
     // first's document, never starts a second child.
     {
