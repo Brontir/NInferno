@@ -113,6 +113,9 @@ bool transport_failure(CURLcode code, long status) {
     case CURLE_HTTP2:
     case CURLE_HTTP2_STREAM:
     case CURLE_WEIRD_SERVER_REPLY:
+#if LIBCURL_VERSION_NUM >= 0x074900 // 7.73: a SOCKS / HAProxy proxy's failure has its own code
+    case CURLE_PROXY:
+#endif
         return true;
     default:
         return false;
@@ -1571,8 +1574,7 @@ fs::path cached_model(const fs::path& snapshot, const FetchOptions& options,
         // Without a selector, what the snapshot holds (small files the caller reads, or weights
         // not yet downloaded: the caller says so).
         if (options.quant.empty() || !options.include.empty()) { return snapshot; }
-        const bool unreachable =
-            cause != nullptr && dynamic_cast<const HubTransportError*>(cause) != nullptr;
+        const bool unreachable = dynamic_cast<const HubTransportError*>(cause) != nullptr;
         const std::string text =
             std::string(unreachable ? "the hub is unreachable" : "the hub's listing failed") +
             " and the cached snapshot " + snapshot.string() + " has no model for " + options.quant +
