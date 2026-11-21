@@ -1502,31 +1502,40 @@ void test_hub_plan_via_serve() {
         ::setenv("HF_TOKEN_PATH", (root / "hf-token").string().c_str(), 1);
         ::unsetenv("HF_TOKEN");
         ::unsetenv("HUGGING_FACE_HUB_TOKEN");
-        UiOptions options;
-        options.serve_binary = root / "serve-slow-start";
-        options.hub_cache    = root / "hub";
-        App app(options, std::make_unique<NoGpu>());
-        httplib::Server server;
-        app.install(server);
-        const int port = server.bind_to_any_port("127.0.0.1");
-        std::thread thread([&] { server.listen_after_bind(); });
-        server.wait_until_ready();
-        const auto ask = [&] {
+        int set_status = 0, status1 = 0, status2 = 0;
+        bool started = false;
+        {
+            // The App and its threads end before the environment is restored (setenv beside a
+            // getenv of another thread is a race).
+            UiOptions options;
+            options.serve_binary = root / "serve-slow-start";
+            options.hub_cache    = root / "hub";
+            App app(options, std::make_unique<NoGpu>());
+            httplib::Server server;
+            app.install(server);
+            const int port = server.bind_to_any_port("127.0.0.1");
+            std::thread thread([&] { server.listen_after_bind(); });
+            server.wait_until_ready();
+            const auto ask = [&] {
+                httplib::Client client("127.0.0.1", port);
+                const auto res = client.Get("/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF");
+                return res ? res->status : 0;
+            };
+            auto first = std::async(std::launch::async, ask);
+            for (int i = 0; i < 3000 && !fs::exists(root / "started"); ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            started = fs::exists(root / "started");
             httplib::Client client("127.0.0.1", port);
-            const auto res = client.Get("/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF");
-            return res ? res->status : 0;
-        };
-        auto first = std::async(std::launch::async, ask);
-        for (int i = 0; i < 500 && !fs::exists(root / "started"); ++i) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            const auto set = client.Post("/api/hf", R"({"token": ""})", "application/json");
+            set_status     = set ? set->status : 0;
+            auto second    = std::async(std::launch::async, ask);
+            status1        = first.get();
+            status2        = second.get();
+            server.stop();
+            thread.join();
         }
-        httplib::Client client("127.0.0.1", port);
-        const auto set    = client.Post("/api/hf", R"({"token": ""})", "application/json");
-        auto second       = std::async(std::launch::async, ask);
-        const int status1 = first.get();
-        const int status2 = second.get();
-        server.stop();
-        thread.join();
+        check(started, "the token-change test's serve child started within 30 s");
         for (int i = 0; i < 3; ++i) {
             if (saved[i]) {
                 ::setenv(names[i], saved[i]->c_str(), 1);
@@ -1537,9 +1546,9 @@ void test_hub_plan_via_serve() {
         std::ifstream runs(root / "runs.txt");
         int count = 0;
         for (std::string line; std::getline(runs, line);) { ++count; }
-        check(set && set->status == 200 && status1 == 200 && status2 == 200 && count == 2,
+        check(set_status == 200 && status1 == 200 && status2 == 200 && count == 2,
               "an ask after a token change runs serve again (" + std::to_string(count) +
-                  " runs, token set " + std::to_string(set ? set->status : 0) + ")");
+                  " runs, token set " + std::to_string(set_status) + ")");
     }
 
     if (kept) {
