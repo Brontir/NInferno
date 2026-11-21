@@ -12,8 +12,9 @@
 // vec_rule_max_tokens and the Q4_0 matrix-size gate read it), and the two thresholds below are the
 // constants the selection compares a call against. The rows up to #615 F6 restate what the
 // comments at the rules' uses say; vec_cap_ga10x_gb20x is new with its own end-to-end A/Bs (#998,
-// DECISIONS 96), and the three Turing rules with theirs (#1038, DECISIONS 97), which move the
-// selector goldens of the RTX 2080 Ti board.
+// DECISIONS 96), the three Turing rules with theirs (#1038, DECISIONS 97), which move the
+// selector goldens of the RTX 2080 Ti board, and vec_cap_ga10x_two with its (#1152, DECISIONS 99),
+// which moves the GA10x boards'.
 //
 // A rule may have several rows: one per group of formats whose evidence differs (other cards,
 // another run). Each row says how many cards stand behind it (principle 4 of
@@ -75,6 +76,8 @@ enum class Rule : std::uint8_t {
     R8VerifyTwoRowsTuring, // rules_r8: formats whose Turing verify R8 takes two rows a warp
     VecCapTuring,          // vec_rule_max_tokens: the formats whose vec band stops at two tokens
                            // on Turing
+    VecCapGa10xTwo,        // vec_rule_max_tokens: the formats whose vec band stops at two tokens
+                           // on GA10x
 };
 
 inline constexpr std::array kAllRules = {Rule::LightStep,
@@ -87,7 +90,8 @@ inline constexpr std::array kAllRules = {Rule::LightStep,
                                          Rule::VecCapGa10xGb20x,
                                          Rule::R8VerifyEmulatedOff,
                                          Rule::R8VerifyTwoRowsTuring,
-                                         Rule::VecCapTuring};
+                                         Rule::VecCapTuring,
+                                         Rule::VecCapGa10xTwo};
 
 constexpr std::string_view rule_name(Rule rule) {
     switch (rule) {
@@ -113,6 +117,8 @@ constexpr std::string_view rule_name(Rule rule) {
         return "vec_cap_ga10x_gb20x";
     case Rule::VecCapTuring:
         return "vec_cap_turing";
+    case Rule::VecCapGa10xTwo:
+        return "vec_cap_ga10x_two";
     }
     return "";
 }
@@ -409,6 +415,23 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "Q3_K and Q5_K follow Q4_K / Q6_K, whose register-MMA verify they share (R8VerifyEmulatedOff: "
      "Q3_K timed at kernel level, Q5_K carried): not timed end to end. Not in the rule: IQ4_XS "
      "(capped at T = 2: -0.05 / +0.93 / -0.74 %) and every format R8 verifies"},
+
+    // --- vec_cap_ga10x_two: the vec band stops at two tokens on GA10x (#1152) ---
+    {Rule::VecCapGa10xTwo, Basis::Measured, FormatSet{Q::GGML_Q6_K}, 0, "ga106:28sm, ga102:82sm",
+     "RTX 3060, RTX 3090", Evidence::TwoCards,
+     "#1152: abvecn.sh q6v1152 (RTX 3060), q6v1152g (RTX 3090) (lab/1152-vec-cap "
+     "NINFERNO_LAB_VEC_MAX_T=1)",
+     "2026-11-21",
+     "Qwen3.5-9B Q6_K, --spec off, vec at T = 1 only against master (vec at T = 2..3), 4 "
+     "alternating starts each: C = 3 RTX 3060 +10.7 %, RTX 3090 +5.0 %; C = 2 RTX 3060 +4.0 %, RTX "
+     "3090 -2.3 % (the T = 2 edge splits the cards: T = 2 keeps vec); C = 4 within 0.1 %"},
+    {Rule::VecCapGa10xTwo, Basis::Measured, FormatSet{Q::GGML_Q5_K}, 0, "ga106:28sm, ga102:82sm",
+     "RTX 3060, RTX 3090", Evidence::TwoCards,
+     "#1152: abvecn.sh q5v1152c (RTX 3060), q5v1152g (RTX 3090) (lab/1152-vec-cap)", "2026-11-21",
+     "Qwen3.5-9B Q5_K_M, --spec off, as Q6_K: C = 3 RTX 3060 +10.4 %, RTX 3090 +5.2 %; C = 2 RTX "
+     "3060 +1.4 %, RTX 3090 -4.3 % (T = 2 keeps vec); C = 4 within 0.2 %. Not in the rule: Q4_K "
+     "(RTX 3060 C = 3 +1.5 %, C = 2 -1.6 %), Q3_K (RTX 3060 vec ahead: C = 2 -11.6 %, C = 3 "
+     "-5.7 %) and the consumer Blackwell cards (not measured at T = 3)"},
 });
 } // namespace rows
 

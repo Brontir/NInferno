@@ -261,7 +261,8 @@ constexpr std::int32_t kVecRuleMaxTokens = 4;
 // Qwen3.5-9B Q4_K_M, --spec off, C = 4 (every trunk linear a T = 4 call), the rule capped at T = 3
 // against T = 4: RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 5070 Ti +11.1 %, RTX 5090 +5.3 %, with C = 2
 // and 3 within 0.1 %; under MTP the cap never lost in rounds a second (RTX 3090, 5070 Ti, 5090).
-// There T = 4 goes to the register MMA. The cap holds for the K-quants only (format_rules.h
+// There T = 4 goes to the register MMA (on GA10x Q5_K and Q6_K stop at two:
+// kVecRuleMaxTokensGa10xTwo below). The cap holds for the K-quants only (format_rules.h
 // VecCapGa10xGb20x): IQ4_XS split the two GB20x cards (RTX 5070 Ti +4.45 %, RTX 5090 -3.27 %), the
 // formats R8 verifies would send T = 4 to R8, which no A/B here isolated (the vector kernel's own
 // first case was one of them, the IQ3_S verify above), and the others are not measured.
@@ -276,6 +277,13 @@ constexpr std::int32_t kVecRuleMaxTokensGa10xGb20x = 3;
 // at T = 2 and the register MMA at T = 3..4 against vec at T = 2..4 (the branch against master):
 // Q4_K_M C = 2 +0.08 %, C = 3 +2.57 %, C = 4 +3.44 %; Q6_K +0.05 %, +28.5 %, +33.4 %.
 constexpr std::int32_t kVecRuleMaxTokensTuring = 2;
+// On GA10x the vector kernel stops at two tokens for Q5_K and Q6_K (#1152; format_rules.h
+// VecCapGa10xTwo). Qwen3.5-9B, --spec off, vec at T = 1 only against master's T = 2..3: Q6_K C = 3
+// RTX 3060 +10.7 %, RTX 3090 +5.0 %; Q5_K RTX 3060 +10.4 %, RTX 3090 +5.2 %; Q4_K only +1.5 %
+// (RTX 3060) and Q3_K far behind without vec (-5.7 %), so they keep three. T = 2 keeps vec: there
+// the cards split (Q6_K C = 2 RTX 3060 +4.0 %, RTX 3090 -2.3 %). Ada (RTX 4090 Q5_K_M: vec ahead at
+// T = 2..4), Turing (its own cap) and Volta (vec 7-18 % ahead at T = 3..4, #1153) keep theirs.
+constexpr std::int32_t kVecRuleMaxTokensGa10xTwo = 2;
 
 std::int32_t vec_rule_max_tokens(QType qtype) {
     // vec_max_tokens() reaches past eight columns only without tensor mma.sync.
@@ -283,6 +291,10 @@ std::int32_t vec_rule_max_tokens(QType qtype) {
     if (widest > ggml_mmq::kVecMaxColumns) return widest;
     try {
         const auto& d = device_class();
+        if (ga10x_cc(d.major, d.minor) &&
+            format_rules::holds(format_rules::Rule::VecCapGa10xTwo, qtype)) {
+            return kVecRuleMaxTokensGa10xTwo;
+        }
         if ((ga10x_cc(d.major, d.minor) || gb20x_cc(d.major, d.minor)) &&
             format_rules::holds(format_rules::Rule::VecCapGa10xGb20x, qtype)) {
             return kVecRuleMaxTokensGa10xGb20x;
