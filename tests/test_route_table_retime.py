@@ -99,6 +99,14 @@ def test_a_count_the_move_leaves_alone_does_not_block_it(tmp_path):
     assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]], r.stderr
 
 
+def test_the_table_route_already_least_worst_is_left_alone(tmp_path):
+    # n1 5 % behind at T 9, far ahead at T 10-11: n1 is the range's route, nothing moves (rc 0).
+    rows = [(9, "n1", 105), (9, "n2", 100), (10, "n1", 100), (10, "n2", 120),
+            (11, "n1", 100), (11, "n2", 120)]
+    bands, _ = run(tmp_path, [[1, 16777216, "n1"]], rows)
+    assert bands == [[1, 16777216, "n1"]]
+
+
 def test_route_within_the_margin_is_kept(tmp_path):
     rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 102), ("n2", 100))]
     bands, _ = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows)

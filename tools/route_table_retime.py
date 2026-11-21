@@ -152,6 +152,8 @@ def main():
         # least-worst route no better than the bands as they are (T 17-20 A the fastest, T 21-23 B
         # 4 % behind and A 7 %) would trade one count's loss for another's. Counts it leaves alone
         # are the same on both sides and take no part.
+        if not moved:
+            continue  # the table's own route is the range's: nothing to move
         old_worst = max(regret(haves[t], t) for t in moved)
         new_worst = max(regret(best, t) for t in moved)
         if new_worst >= old_worst - a.margin:
