@@ -100,3 +100,14 @@ if __name__ == "__main__":
             with tempfile.TemporaryDirectory() as d:
                 test(pathlib.Path(d))
             print("ok", name)
+
+
+def test_a_range_route_slower_at_a_kept_count_keeps_the_entry(tmp_path):
+    # a is 5 % off c at T9-10 (past the margin), so the range is re-timed; a has the least worst
+    # regret, but at T11 it is 6 % slower than the table's own b: the entry is kept (#1125, GV100).
+    rows = [(9, "a", 100), (9, "c", 95), (9, "b", 200),
+            (10, "a", 100), (10, "c", 95), (10, "b", 200),
+            (11, "b", 100), (11, "a", 106), (11, "c", 300)]
+    bands, r = run(tmp_path, [[1, 10, "a"], [11, 16777216, "b"]], rows)
+    assert bands == [[1, 10, "a"], [11, 16777216, "b"]]
+    assert "would slow T11 past the margin, kept" in r.stderr

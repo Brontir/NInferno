@@ -6,7 +6,8 @@
 For every generic entry of the table (format, compute, epilogue, n, k) that the grid timed inside
 --tokens, where the table's own route is slower than the grid's fastest by more than --margin at some
 count there, the range takes one route: the one whose worst regret over the range is least (the
-table's own route on a tie). The candidates are the routes a table's a16 bands hold: A16 schedules and
+table's own route on a tie), unless it is slower than the table's own route by more than --margin at
+some count, where the entry is kept (and named on stderr). The candidates are the routes a table's a16 bands hold: A16 schedules and
 ggml_mmq, as the dense tuner writes them; the W4A8 and R8 routes (route_tune --a8-candidates 1 times
 them too) are never tabled (route_tune_tool.cpp, route_authorities.cpp). A GGUF format's a8 rows are
 its a16 entry's; FP8's a8 entry keeps its own key. An entry whose table route the grid
@@ -114,6 +115,15 @@ def main():
         own = set(haves.values())
         best = min(sorted(common), key=lambda r: (max(regret(r, t) for t in timed), r not in own))
         moved = {t: best for t, h in haves.items() if h != best}
+        # A count where the range's route is slower than the table's own by more than the margin:
+        # the move would trade it for the others (GV100, #1125: w1x16 best at T 9-13 spread over
+        # n2.w1x4's 14-16, 3-6 % slower there). The entry is kept for a person to look at.
+        slower = [t for t in sorted(moved)
+                  if grid[(key, t)][best] > grid[(key, t)][haves[t]] * (1 + a.margin)]
+        if slower:
+            print("%s %s %s %dx%d: %s would slow T%s past the margin, kept"
+                  % (*key[:3], key[3], key[4], best, ",".join(map(str, slower))), file=sys.stderr)
+            continue
         for t in sorted(moved):
             times = grid[(key, t)]
             print("%s %s %s %dx%d T%d: %s %.1f us -> %s %.1f us" % (*key[:3], key[3], key[4], t,
