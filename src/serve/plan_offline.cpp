@@ -560,7 +560,7 @@ OfflinePlan plan_without_load(const ServeOptions& options, std::optional<std::ui
     // refusal, not the plan's at 0 bytes (reason_code_now card_refused, the CUDA message).
     const std::string refused_reason =
         "the card refuses a new CUDA context (" + refused_now +
-        "): another process may hold it in an exclusive compute mode";
+        "): its compute mode takes no new process (exclusive and held by another, or prohibited)";
     const auto name_refusal = [&] {
         if (refused_now.empty()) return;
         out.json["now"]["reason_code_now"]   = "card_refused";

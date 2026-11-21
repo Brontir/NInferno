@@ -1076,21 +1076,21 @@ for (const code of ["de", "fr", "es", "it", "pl", "zh", "ja"]) if (T[code]) dele
 // Activation precision (ninferno-serve --activations): a choice the user may pin; Auto is the
 // configuration choice's. The modes offered are the ones the plan's choice says the model runs.
 for (const [code, words] of Object.entries({
-  en:{replayContext:"Planned again for this card now: the context each request gets is {now}, not {was} as last time",replayNoFit:"By the plan for this card now it does not fit ({why}): the start may fail",replayRun:"Run with this",replayAnyway:"Run anyway",replayAuto:"Run with Auto for it",nowNoStart:"Right now only {free} is free: a start would not fit ({why})",nowRefused:"Right now the card refuses a new process ({why}): another process may hold it in an exclusive compute mode, so a start would fail",nowLess:"Right now {free} is free: a start gets {ctx} per request, not {was}",nowTip:"What a start right now would get: the same plan at the memory other processes leave free now (the server decides the same way at start); the line before is the card when nothing else runs",actType:"Activations",actTip:"The precision of the inputs the matrix multiplies take.\nAuto: the engine's choice for this model, card, context and streams (the server decides the same way at start).\nOn each button: what it changes against Auto, from the configuration choice's estimates (not a measurement). KLD: how far the answers move from the exact model (lower is closer)",
+  en:{replayContext:"Planned again for this card now: the context each request gets is {now}, not {was} as last time",replayNoFit:"By the plan for this card now it does not fit ({why}): the start may fail",replayRun:"Run with this",replayAnyway:"Run anyway",replayAuto:"Run with Auto for it",nowNoStart:"Right now only {free} is free: a start would not fit ({why})",nowRefused:"Right now the card refuses a new process ({why}), so a start would fail",nowLess:"Right now {free} is free: a start gets {ctx} per request, not {was}",nowTip:"What a start right now would get: the same plan at the memory other processes leave free now (the server decides the same way at start); the line before is the card when nothing else runs",actType:"Activations",actTip:"The precision of the inputs the matrix multiplies take.\nAuto: the engine's choice for this model, card, context and streams (the server decides the same way at start).\nOn each button: what it changes against Auto, from the configuration choice's estimates (not a measurement). KLD: how far the answers move from the exact model (lower is closer)",
       act_exact:"16-bit",act_fast:"mixed (fast)",act_int8:"8-bit everywhere",
       actTip_exact:"exact: 16-bit (BF16) inputs on every multiply: the closest to the original model, the slowest prompt reading",
       actTip_fast:"fast (the default): 8 bits (4 for NVFP4 weights) on wide calls such as prompt reading and speculative checks, 16 bits when generating",
       actTip_int8:"int8: 8 bits on every call that has an 8-bit route, never 4 (ternary and 2-bit blocks keep 16); Qwen models only",
       actNotHere:"Not available for this model",actAgainst:"against Auto ({v}): decode {d}, request time {t}, KLD {k}",actTime:"time",actNoFit:"does not hold the context",
       actDropped:"{m} is not available for this model: Auto is used",reason_activations_not_run:"the chosen activations are not run by this model's family: pick Auto, 16-bit or mixed",kvWhy_family_codec:"this model keeps its cache in BF16 or FP8 only",kvWhy_head_width:"this model's heads are not 256 wide: this compact cache takes 256-wide heads",kvWhy_shape_unknown:"the model's shape is not read yet: only BF16 can be checked",kvNotRead:"waiting for the plan: which formats this model takes",kvSlowCard:"runs, but this card converts FP8 in software: a smaller cache, a slower step",kvPinRefused:"KV {kv} is chosen but this model does not take it: {why}",kvUseAuto:"Use Auto",reason_kv_not_run:"the chosen KV cache format is not taken by this model: pick Auto or another format",unsup_kv_not_run:"this model does not take the chosen KV cache format",unsup_activations_not_run:"this model's family does not run the chosen activations"},
-  ru:{replayContext:"План заново для этой карты сейчас: контекст на запрос {now}, а не {was}, как в прошлый раз",replayNoFit:"По плану для этой карты сейчас не помещается ({why}): запуск может не удаться",replayRun:"Запустить так",replayAnyway:"Всё равно запустить",replayAuto:"Запустить с Авто для этого",nowNoStart:"Сейчас свободно только {free}: запуск не поместится ({why})",nowRefused:"Сейчас карта не принимает новый процесс ({why}): похоже, её держит другой процесс в эксклюзивном режиме вычислений, запуск не удастся",nowLess:"Сейчас свободно {free}: запуск получит {ctx} на запрос, а не {was}",nowTip:"Что получит запуск прямо сейчас: тот же план при памяти, которую оставляют свободной другие процессы (сервер при старте решает так же); строка перед этим — карта, когда больше ничего не запущено",actType:"Активации",actTip:"Точность входов умножений матриц.\nАвто: выбор движка для этой модели, карты, контекста и потоков (сервер при старте решает так же).\nНа кнопках — что изменится против Авто, по оценкам модели выбора (не замер). KLD — насколько ответы отходят от точной модели (меньше — ближе)",
+  ru:{replayContext:"План заново для этой карты сейчас: контекст на запрос {now}, а не {was}, как в прошлый раз",replayNoFit:"По плану для этой карты сейчас не помещается ({why}): запуск может не удаться",replayRun:"Запустить так",replayAnyway:"Всё равно запустить",replayAuto:"Запустить с Авто для этого",nowNoStart:"Сейчас свободно только {free}: запуск не поместится ({why})",nowRefused:"Сейчас карта не принимает новый процесс ({why}), запуск не удастся",nowLess:"Сейчас свободно {free}: запуск получит {ctx} на запрос, а не {was}",nowTip:"Что получит запуск прямо сейчас: тот же план при памяти, которую оставляют свободной другие процессы (сервер при старте решает так же); строка перед этим — карта, когда больше ничего не запущено",actType:"Активации",actTip:"Точность входов умножений матриц.\nАвто: выбор движка для этой модели, карты, контекста и потоков (сервер при старте решает так же).\nНа кнопках — что изменится против Авто, по оценкам модели выбора (не замер). KLD — насколько ответы отходят от точной модели (меньше — ближе)",
       act_exact:"16 бит",act_fast:"смешанный (быстро)",act_int8:"8 бит везде",
       actTip_exact:"exact: входы 16 бит (BF16) на каждом умножении: ближе всего к исходной модели, самое медленное чтение промпта",
       actTip_fast:"fast (по умолчанию): 8 бит (4 для весов NVFP4) на широких вызовах — чтение промпта и проверка спекуляции, 16 бит при генерации",
       actTip_int8:"int8: 8 бит на каждом вызове, где есть 8-битный маршрут, никогда 4 (тернарные и 2-битные блоки остаются 16); только модели Qwen",
       actNotHere:"Недоступно для этой модели",actAgainst:"против Авто ({v}): декод {d}, время запроса {t}, KLD {k}",actTime:"время",actNoFit:"не держит контекст",
       actDropped:"{m}: недоступно для этой модели, используется Авто",reason_activations_not_run:"семейство этой модели не запускает выбранные активации: выберите Авто, 16 бит или смешанный",kvWhy_family_codec:"эта модель хранит кеш только в BF16 или FP8",kvWhy_head_width:"головы этой модели не шириной 256: этот компактный кеш только для голов 256",kvWhy_shape_unknown:"форма модели ещё не прочитана: проверить можно только BF16",kvNotRead:"ждём план: какие форматы берёт эта модель",kvSlowCard:"работает, но эта карта переводит FP8 программно: кеш меньше, шаг медленнее",kvPinRefused:"Выбран KV {kv}, но эта модель его не берёт: {why}",kvUseAuto:"Взять Авто",reason_kv_not_run:"эта модель не берёт выбранный формат KV-кеша: выберите Авто или другой формат",unsup_kv_not_run:"эта модель не берёт выбранный формат KV-кеша",unsup_activations_not_run:"семейство этой модели не запускает выбранные активации"},
-  uk:{replayContext:"План заново для цієї карти зараз: контекст на запит {now}, а не {was}, як минулого разу",replayNoFit:"За планом для цієї карти зараз не вміщується ({why}): запуск може не вдатися",replayRun:"Запустити так",replayAnyway:"Усе одно запустити",replayAuto:"Запустити з Авто для цього",nowNoStart:"Зараз вільно лише {free}: запуск не вміститься ({why})",nowRefused:"Зараз карта не приймає новий процес ({why}): схоже, її тримає інший процес в ексклюзивному режимі обчислень, запуск не вдасться",nowLess:"Зараз вільно {free}: запуск отримає {ctx} на запит, а не {was}",nowTip:"Що отримає запуск просто зараз: той самий план за пам'яті, яку залишають вільною інші процеси (сервер під час старту вирішує так само); рядок перед цим — карта, коли більше нічого не запущено",actType:"Активації",actTip:"Точність входів множень матриць.\nАвто: вибір рушія для цієї моделі, карти, контексту й потоків (сервер під час старту вирішує так само).\nНа кнопках — що зміниться проти Авто, за оцінками моделі вибору (не замір). KLD — наскільки відповіді відходять від точної моделі (менше — ближче)",
+  uk:{replayContext:"План заново для цієї карти зараз: контекст на запит {now}, а не {was}, як минулого разу",replayNoFit:"За планом для цієї карти зараз не вміщується ({why}): запуск може не вдатися",replayRun:"Запустити так",replayAnyway:"Усе одно запустити",replayAuto:"Запустити з Авто для цього",nowNoStart:"Зараз вільно лише {free}: запуск не вміститься ({why})",nowRefused:"Зараз карта не приймає новий процес ({why}), запуск не вдасться",nowLess:"Зараз вільно {free}: запуск отримає {ctx} на запит, а не {was}",nowTip:"Що отримає запуск просто зараз: той самий план за пам'яті, яку залишають вільною інші процеси (сервер під час старту вирішує так само); рядок перед цим — карта, коли більше нічого не запущено",actType:"Активації",actTip:"Точність входів множень матриць.\nАвто: вибір рушія для цієї моделі, карти, контексту й потоків (сервер під час старту вирішує так само).\nНа кнопках — що зміниться проти Авто, за оцінками моделі вибору (не замір). KLD — наскільки відповіді відходять від точної моделі (менше — ближче)",
       act_exact:"16 біт",act_fast:"змішаний (швидко)",act_int8:"8 біт скрізь",
       actTip_exact:"exact: входи 16 біт (BF16) на кожному множенні: найближче до вихідної моделі, найповільніше читання промпту",
       actTip_fast:"fast (типово): 8 біт (4 для ваг NVFP4) на широких викликах — читання промпту й перевірка спекуляції, 16 біт під час генерації",
@@ -1296,6 +1296,10 @@ async function refreshState() {
 // model's plans are asked again (the server keeps their idle part; it re-plans only "now").
 const NOW_STEP = 256 * 2 ** 20;
 let nowFree = null, nowGpu = null, nowGen = 0; // nowGen: one step per move of the memory
+// The card's compute mode and its process count as last asked: a mode change (nvidia-smi -c) or a
+// process starting or stopping moves whether the card takes a new one (refusal_now), whatever the
+// memory does (#891).
+let nowHold = null;
 // A plan fetched while the memory moved: its "now" is of before (dropped: asked again when shown).
 function keepPlan(key, doc, gen) {
   if (doc && gen !== nowGen) delete doc.now;
@@ -1305,10 +1309,12 @@ function keepPlan(key, doc, gen) {
 function refreshPlanNow() {
   const g = (S.gpus || []).find(x => x.index === gpu);
   if (!g) return;
-  if (nowGpu === gpu && nowFree !== null && Math.abs(g.memory_free - nowFree) < NOW_STEP) return;
+  const hold = nowHoldOf(g);
+  if (nowGpu === gpu && nowFree !== null && Math.abs(g.memory_free - nowFree) < NOW_STEP &&
+      hold === nowHold) return;
   // Another GPU chosen counts too: its cached plans' "now" may be from long ago.
   const moved = nowFree !== null;
-  nowGpu = gpu; nowFree = g.memory_free;
+  nowGpu = gpu; nowFree = g.memory_free; nowHold = hold;
   if (!moved) return;
   nowGen++;
   for (const doc of planDocs.values()) if (doc) delete doc.now;
@@ -2030,7 +2036,7 @@ function nowReasonText(n, tr) {
   return reasonText({reason_code: n.reason_code_now, reason_params: n.reason_params_now, reason: n.reason_now}, tr);
 }
 // A card that refused a new CUDA context for another reason than memory (serve's card_refused, an
-// exclusive compute mode held by another process): the refusal with the CUDA message.
+// exclusive compute mode held by another process, a prohibited one): the refusal as it was named.
 function nowRefusedText(n, tr) {
   const msg = n.reason_params_now && n.reason_params_now.message || n.reason_now || "";
   return tr("nowRefused", {why: msg});
@@ -2042,7 +2048,8 @@ function nowLine(doc, idle, tr) {
   if (!n || typeof n.free_now_bytes !== "number") return null;
   const free = planGiB(n.free_now_bytes);
   // A card that refused a new context for another reason than memory (serve's card_refused: an
-  // exclusive compute mode held by another process): no free memory to name, the refusal instead.
+  // exclusive compute mode held by another process, a prohibited one): no free memory to name,
+  // the refusal instead.
   if (n.reason_code_now === "card_refused") return {cls: "err", text: nowRefusedText(n, tr)};
   if (!n.fits_now) {
     const why = nowReasonText(n, tr);
@@ -2229,6 +2236,12 @@ function actOptions(doc, autoDoc, mode) {
 }
 // The mode a plan and a launch take: Auto, or the one chosen while the model runs it.
 function actAskOf(mode, allowed) { return mode && mode !== "auto" && (!allowed || allowed.includes(mode)) ? mode : "auto"; }
+// What decides whether a card takes a new process besides its memory (/api/gpus: NVML's compute
+// mode and its compute processes, GpuStat::refusal_now): when it moves, every "now" is asked
+// again (refreshPlanNow, #891).
+function nowHoldOf(g) {
+  return (g && g.compute_mode !== undefined ? g.compute_mode : "?") + "/" + ((g && g.processes) || []).length;
+}
 // ---- end plan helpers ----
 
 // Detail: one hub repository; the catalog's model when it lists the repository.
