@@ -111,6 +111,19 @@ def test_filled_count_takes_its_evidence_row_from_the_second_grid(tmp_path):
     assert evidence == [[9, 150.0, 99.0], [10, 150.0, 99.0], [11, 150.0, 99.0]]
 
 
+def test_a_filled_count_the_second_grid_reverses_keeps_the_entry(tmp_path):
+    # #1157 review: T 9 and 11 move n1 -> n2 and T 10 is filled; the second grid times T 10 with
+    # n2 at 200 against n1's and the ranker's 90. The move would write that regression into the
+    # table: the entry is kept.
+    rows = [(9, "n1", 200), (9, "n2", 100), (11, "n1", 200), (11, "n2", 100)]
+    second = ([(9, "n1", 201), (9, "n2", 99), (11, "n1", 201), (11, "n2", 99),
+               (10, "n1", 90), (10, "n2", 200)],
+              [(t, "n1") for t in (9, 10, 11)])
+    table = [[1, 11, "n1"], [12, 16777216, "n2"]]
+    bands, evidence = run(tmp_path, table, rows, evidence=[], second=second)
+    assert bands == table and evidence == []
+
+
 def test_repeat_keeps_an_entry_the_second_grid_does_not_repeat(tmp_path):
     # n2 wins T 9-11 in the first grid. In the second, n2 ties n1 at T 10 and n4 (a table route)
     # is 10 % ahead of both: no reversal past the margin, so without --repeat the move is written;

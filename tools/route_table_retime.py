@@ -311,11 +311,23 @@ def main():
             # ...or puts it behind the call's default answer past the margin (default_route: an
             # A8 ranker is no rival, the table stands aside where it may run): a table entry slower
             # than what the call runs without it overrides nothing worth keeping.
-            reversed_at = [t for t in sorted(moved)
-                           if (t not in dead and ev_grid[(key, t)][best]
-                               > ev_grid[(key, t)][haves[t]] * (1 + a.margin))
-                           or ev_grid[(key, t)][best] > ev_grid[(key, t)][default_route(
-                               ev_grid[(key, t)], ranker[(key, t)], t)] * (1 + a.margin)]
+            # A filled count the second grid timed is held to the same two tests: the move writes
+            # the range's route there too (#1157 review). Its old route is the band's; a dead one
+            # (ggml_mmq where W4A8 may run) or one the second grid did not time is no rival.
+            def reversed_by_evidence(t, old):
+                times = ev_grid.get((key, t), {})
+                if best not in times:
+                    return False
+                if (old in times and not (old == "ggml_mmq" and a8_wide(times, t))
+                        and times[best] > times[old] * (1 + a.margin)):
+                    return True
+                rk = default_route(times, ranker.get((key, t)), t)
+                return rk in times and times[best] > times[rk] * (1 + a.margin)
+
+            reversed_at = sorted(
+                [t for t in moved if reversed_by_evidence(t, None if t in dead else haves[t])]
+                + [u for u in filled if u not in moved
+                   and reversed_by_evidence(u, route_at(e["bands"], u))])
             if reversed_at:
                 print("%s %s %s %dx%d: the evidence grid does not repeat %s at T%s, kept"
                       % (*key[:3], key[3], key[4], best, ",".join(map(str, reversed_at))),
