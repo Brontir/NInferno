@@ -4,6 +4,7 @@
 // route that is not token-invariant, a route_as width below its band, compute classes a format does
 // not have, duplicates) and tolerance of keys no consumer reads. Every shipped routes/*.json must
 // pass the same validation.
+#include "core/board_registry.h"
 #include "core/device_class.h"
 #include "core/measured_boards.h"
 #include "core/sha256.h"
@@ -27,6 +28,7 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -422,6 +424,28 @@ int shipped_moe_picks() {
         }
         const ninferno::ScopedDeviceClass scoped(scoped_board(id));
         ninferno::ops::set_route_table_dir("");
+        // The layers the file holds, by layout: a layer shipped in both layouts answers either, so
+        // a flipped layout reads no plan only where the file holds no such entry (#1115).
+        std::set<std::string> layouts;
+        for (const Json& e : root["moe"]) {
+            Json k = e;
+            k.erase("bands");
+            k["down_format"] = e.value("down_format", e["format"]);
+            Json frag        = k.value("frag", Json::array());
+            std::sort(frag.begin(), frag.end());
+            k["frag"] = frag;
+            layouts.insert(k.dump());
+        }
+        const auto holds_layout = [&](const Json& e, bool gate_up, bool down) {
+            Json k = e;
+            k.erase("bands");
+            k["down_format"] = e.value("down_format", e["format"]);
+            Json frag        = Json::array();
+            if (down) frag.push_back("down");
+            if (gate_up) frag.push_back("gate_up");
+            k["frag"] = frag;
+            return layouts.count(k.dump()) != 0;
+        };
         try {
             const auto s = ninferno::ops::route_table_status();
             std::cout << name << " on " << ninferno::device_class().id() << ": " << s.message
@@ -461,9 +485,11 @@ int shipped_moe_picks() {
                             check(got && want && moe::plan_name(*got) == moe::plan_name(*want),
                                   at + ": answers its band's plan");
                         failures +=
-                            check(!moe::predicted_plan(key, t, !frag_gate_up, frag_down) &&
-                                      !moe::predicted_plan(key, t, frag_gate_up, !frag_down),
-                                  at + ": a bank of another layout reads no plan");
+                            check((holds_layout(e, !frag_gate_up, frag_down) ||
+                                   !moe::predicted_plan(key, t, !frag_gate_up, frag_down)) &&
+                                      (holds_layout(e, frag_gate_up, !frag_down) ||
+                                       !moe::predicted_plan(key, t, frag_gate_up, !frag_down)),
+                                  at + ": a bank of a layout the file does not hold reads no plan");
                         const ninferno::ops::ScopedRoutePolicy legacy(
                             ninferno::RoutePolicy::Legacy);
                         failures +=
@@ -540,8 +566,25 @@ int shipped_moe_picks() {
                          e["down_format"] = "q5k";
                          e["frag"]        = Json::array({"gate_up"});
                      }));
-        // Priced for another board of the class (its gpu.pci_id): not read, and the status says so.
-        const auto other = first_id == 0x2204U ? std::string("0x2206") : std::string("0x2204");
+        // Priced for another board (its gpu.pci_id): not read, and the status says so. The loader
+        // skips a file whose board is at a nonzero board_distance from this one (a board of the
+        // same facts reads it), so the other board is a registry board of the first file's arch at
+        // a nonzero distance, whichever file that is (#1115: a fixed 0x2204 / 0x2206 assumed
+        // GA102).
+        std::string other;
+        const ninferno::Board first_board = board_registry::board(first_id);
+        for (const board_registry::BoardRow& row : board_registry::kRows) {
+            const ninferno::Board b = board_registry::board(row.pci_device_id);
+            if (row.major != first_board.major || row.minor != first_board.minor ||
+                !(b.dram_gbps > 0) || ninferno::board_distance(first_board, b) == 0.0) {
+                continue;
+            }
+            char hex[16];
+            std::snprintf(hex, sizeof hex, "0x%04X", static_cast<unsigned>(row.pci_device_id));
+            other = hex;
+            break;
+        }
+        failures += check(!other.empty(), "a registry board of another facts than " + first_name);
         install(changed([&](Json& root, Json&) { root["gpu"]["pci_id"] = other; }));
         try {
             const auto s = ninferno::ops::route_table_status();
