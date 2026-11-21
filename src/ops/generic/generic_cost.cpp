@@ -106,13 +106,6 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         const int ctas              = resident_ctas_per_sm(d, shape);
         return ctas > 0 ? static_cast<double>(ctas) : hand;
     };
-    const auto facts_of = [](auto&& read) -> std::optional<kernel_facts::KernelFacts> {
-        try {
-            return read();
-        } catch (...) {
-            return std::nullopt; // a snapshot that does not read: the hand count
-        }
-    };
     const auto codec           = format_facts(problem.qtype).codec;
     const std::string_view dec = codec ? w4a8_decoder_name(*codec) : std::string_view();
     // The DRAM time of a tile grid (kernel_roofline.h dram_time, issue #690): the shared bus or the
