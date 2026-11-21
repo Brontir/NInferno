@@ -206,18 +206,33 @@ int main() {
     check(moved_line || (fa.manifest == fb.manifest && fa.routes == fb.routes),
           "a table that moved no line moved the manifest");
 
-    // A row view whose planes start past 16 bytes (#724): its key names the offsets, the line is
-    // the selector's answer on planes laid so, and the replay of the line asks the same.
+    // A row view whose planes start past 16 bytes (#724): an IQ4_XS row from row 1 of its
+    // parent (planes of 128, 4 and 4 bytes per 256 values: the high and scale planes start 4
+    // bytes in). Its key names the offsets, the line is the selector's answer on planes laid so,
+    // the replay of the line asks the same, and the offsets are applied: a whole weight of the
+    // same shape is answered otherwise at some width (the high plane off 16 bytes refuses the
+    // register-MMA tiles).
     {
         generic::SeenProblem view =
             problem(QType::GGML_IQ4_XS, LinearPolicy::A16Only, generic::Epilogue::Store, 2, 256, 2);
-        view.planes = {8, 0, 0};
+        view.planes = {0, 4, 4};
         const std::vector<generic::SeenProblem> one{view};
-        const auto lines = rt::routes_of(device_class(), one, chunk, false);
-        const auto found = std::find_if(lines.begin(), lines.end(), [](const auto& kv) {
+        const auto lines           = rt::routes_of(device_class(), one, chunk, false);
+        const auto found           = std::find_if(lines.begin(), lines.end(), [](const auto& kv) {
             return kv.first != rt::kDecisionRouteCount;
         });
-        check(found != lines.end() && found->first.ends_with(" speed planes+8,0,0"),
+        generic::SeenProblem whole = view;
+        whole.planes               = {};
+        const std::vector<generic::SeenProblem> aligned{whole};
+        const auto whole_lines = rt::routes_of(device_class(), aligned, chunk, false);
+        const auto whole_found =
+            std::find_if(whole_lines.begin(), whole_lines.end(),
+                         [](const auto& kv) { return kv.first != rt::kDecisionRouteCount; });
+        check(found != lines.end() && whole_found != whole_lines.end() &&
+                  found->second != whole_found->second,
+              "the view's offsets move its line from the whole weight's: " +
+                  (found == lines.end() ? std::string("none") : found->second));
+        check(found != lines.end() && found->first.ends_with(" speed planes+0,4,4"),
               "the view's key names its plane offsets: " +
                   (found == lines.end() ? std::string("none") : found->first));
         if (found != lines.end()) {

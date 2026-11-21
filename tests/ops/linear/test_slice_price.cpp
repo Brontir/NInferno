@@ -330,6 +330,9 @@ void check_padded_view_replay() {
     check(replay_cases >= kMinReplayCases, std::to_string(replay_cases) +
                                                " views compared their routes, fewer than " +
                                                std::to_string(kMinReplayCases));
+    // And some of the compared selections are of a view off 16-byte alignment (the replay lays
+    // its plane offsets, #724): a case list that left none would drop that path unnoticed.
+    check(replay_unaligned > 0, "no view off 16-byte alignment compared its routes");
 }
 
 // The R8 verify gate (Q4_0 takes R8 at T = 2..4 only on a matrix of kR8VerifyQ40MinValues values
