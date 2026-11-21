@@ -83,6 +83,7 @@
 #include "core/weight_view.h"
 #include "ops/common/arch_limits.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/mmq_unit.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/generic_select_internal.h"
@@ -568,27 +569,38 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                     if (r.family == generic::Family::GgmlMmq) {
                                         const DeviceClass& larger =
                                             prices == &sms ? more_sms : more_bw;
-                                        const int at       = mmq_law_width(base, problem, t);
-                                        const int at_wider = mmq_law_width(larger, problem, t);
-                                        // The width change's own cost bounds the rise (#789): the
-                                        // price's MMA term scales with the padded columns, its
-                                        // chain and per-tile terms with the column tiles, each over
-                                        // the SMs, which only grew; the rest does not see the
-                                        // width. Past that bound a width-differing case is a
-                                        // regression like any other.
+                                        const int at        = mmq_law_width(base, problem, t);
+                                        const int at_larger = mmq_law_width(larger, problem, t);
+                                        // The width change's own cost bounds the rise (#789): in
+                                        // the fitted slice the MMA term scales with the padded
+                                        // columns and the chain with the column tiles, each over
+                                        // the SMs (on the SM scale they grew by more_sms / base);
+                                        // the rest does not see the width. Past that bound a
+                                        // width-differing case is a regression like any other.
+                                        // The counted unit and the completeness terms price the
+                                        // width otherwise (waves, the fixup): no exemption there.
+                                        const bool fitted_slice =
+                                            !mmq_unit::counted_board(base.major, base.minor) &&
+                                            !generic::completeness_terms();
                                         const auto width_bound = [&] {
                                             const int cols =
                                                 std::min<int>(t, generic::kMmqPrefillSlice);
                                             const auto tiles = [&](int w) {
                                                 return static_cast<double>((cols + w - 1) / w);
                                             };
-                                            return std::max({1.0,
-                                                             tiles(at_wider) * at_wider /
-                                                                 (tiles(at) * at),
-                                                             tiles(at_wider) / tiles(at)}) *
+                                            const double sm_share =
+                                                prices == &sms
+                                                    ? static_cast<double>(base.sms) / more_sms.sms
+                                                    : 1.0;
+                                            return std::max(
+                                                       {1.0,
+                                                        sm_share * tiles(at_larger) * at_larger /
+                                                            (tiles(at) * at),
+                                                        sm_share * tiles(at_larger) / tiles(at)}) *
                                                    (1.0 + kResolution);
                                         };
-                                        if (at != 0 && at_wider != 0 && at != at_wider &&
+                                        if (fitted_slice && at != 0 && at_larger != 0 &&
+                                            at != at_larger &&
                                             it->second / seconds <= width_bound()) {
                                             ++mmq_width_cases;
                                             mmq_width_worst =
