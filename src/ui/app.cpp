@@ -1235,6 +1235,11 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                 .count();
         };
         std::optional<Json> kept;
+        // One serve run a key at a time: an ask that finds its key running waits for that run's
+        // document. Two children at once would also contend for the card (an exclusive-compute GPU
+        // lets one open a context: the other's refusal would be kept).
+        std::shared_future<Json> running;
+        std::promise<Json> runs;
         {
             std::lock_guard lock(sizes_mutex_);
             if (const auto it = plans_.find(key); it != plans_.end()) {
@@ -1245,46 +1250,70 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     kept = it->second;
                 }
             }
+            if (!kept) {
+                if (const auto it = serve_plans_running_.find(key);
+                    it != serve_plans_running_.end()) {
+                    running = it->second;
+                } else {
+                    serve_plans_running_[key] = runs.get_future().share();
+                }
+            }
+        }
+        if (!kept && running.valid()) {
+            kept  = running.get(); // that run's document, measured for this burst of asks
+            fresh = true;
         }
         if (!kept) {
-            fresh                    = true;
-            const auto generation    = hub_generation();
-            const Json list          = listing_of(repo, hub);
-            const std::string commit = list.empty() || !list.front().is_object()
-                                           ? std::string()
-                                           : list.front().value("commit", std::string());
-            // At the listing's commit, a repository named at a revision too (its branch may have
-            // moved since the listing here was read, which the plan here and the key describe).
-            const std::string model = at_commit(repo, commit);
             try {
-                if (auto answer = serve_plan_json(model, quant, gpu, launch)) {
-                    // The model by the name the plan here gives it (the page names a family's
-                    // gate by it), not serve's repo@commit.
-                    if (answer->contains("model") && (*answer)["model"].is_object()) {
-                        (*answer)["model"]["source"] = quant.empty() ? repo : repo + ":" + quant;
+                fresh                    = true;
+                const auto generation    = hub_generation();
+                const Json list          = listing_of(repo, hub);
+                const std::string commit = list.empty() || !list.front().is_object()
+                                               ? std::string()
+                                               : list.front().value("commit", std::string());
+                // At the listing's commit, a repository named at a revision too (its branch may
+                // have moved since the listing here was read, which the plan here and the key
+                // describe).
+                const std::string model = at_commit(repo, commit);
+                try {
+                    if (auto answer = serve_plan_json(model, quant, gpu, launch)) {
+                        // The model by the name the plan here gives it (the page names a family's
+                        // gate by it), not serve's repo@commit.
+                        if (answer->contains("model") && (*answer)["model"].is_object()) {
+                            (*answer)["model"]["source"] =
+                                quant.empty() ? repo : repo + ":" + quant;
+                        }
+                        kept = std::move(*answer);
+                    } else {
+                        // No binary, or none that started: nothing kept, a serve installed later
+                        // answers the next ask (no child ran, so no context moved the memory).
+                        kept = Json{{"no_serve", true}};
                     }
-                    kept = std::move(*answer);
-                } else {
-                    // No binary, or none that started: nothing kept, a serve installed later
-                    // answers the next ask (no child ran, so no context moved the memory).
-                    kept = Json{{"no_serve", true}};
+                } catch (const std::exception& error) {
+                    // serve's own hub read failed or it did not answer: the plan here answers from
+                    // what this process read, saying why. Any other failure is serve's refusal, and
+                    // a start would refuse as it does (#843): the plan's answer.
+                    const std::string what = error.what();
+                    kept                   = hub_transport_failure(what) ? Json{{"failed", what}}
+                                                                         : Json{{"refused", what}};
+                    (*kept)["at"]          = clock_now();
                 }
-            } catch (const std::exception& error) {
-                // serve's own hub read failed or it did not answer: the plan here answers from what
-                // this process read, saying why. Any other failure is serve's refusal, and a
-                // start would refuse as it does (#843): the plan's answer.
-                const std::string what = error.what();
-                kept =
-                    hub_transport_failure(what) ? Json{{"failed", what}} : Json{{"refused", what}};
-                (*kept)["at"] = clock_now();
-            }
-            std::lock_guard lock(sizes_mutex_);
-            if (generation == hub_generation_ && !kept->contains("no_serve")) {
-                if (plans_.size() >= kMaxKeptPlans) {
-                    plans_.clear();
-                    plan_now_.clear();
+                std::lock_guard lock(sizes_mutex_);
+                if (generation == hub_generation_ && !kept->contains("no_serve")) {
+                    if (plans_.size() >= kMaxKeptPlans) {
+                        plans_.clear();
+                        plan_now_.clear();
+                    }
+                    plans_[key] = *kept;
                 }
-                plans_[key] = *kept;
+                serve_plans_running_.erase(key);
+                runs.set_value(*kept);
+            } catch (...) {
+                // The listing's read failed: the asks waiting on this run fail as this one does.
+                std::lock_guard lock(sizes_mutex_);
+                serve_plans_running_.erase(key);
+                runs.set_exception(std::current_exception());
+                throw;
             }
         }
         if (kept->contains("refused")) {

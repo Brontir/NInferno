@@ -27,6 +27,7 @@
 #include <optional>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <thread>
 
@@ -1435,6 +1436,39 @@ void test_hub_plan_via_serve() {
         check(first && first->status == 200 && second && second->status == 200 && other &&
                   other->status == 200 && count == 2,
               "serve runs once a plan key (" + std::to_string(count) + " runs for 2 keys)");
+    }
+    // Two asks of one key at once share one serve run (single flight): the second waits for the
+    // first's document, never starts a second child.
+    {
+        fs::remove(root / "runs.txt");
+        std::ofstream(root / "serve-slow")
+            << "#!/bin/sh\nsleep 1\nexec '" << (root / "serve-plan").string() << "' \"$@\"\n";
+        fs::permissions(root / "serve-slow", fs::perms::owner_all);
+        UiOptions options;
+        options.serve_binary = root / "serve-slow";
+        options.hub_cache    = root / "hub";
+        App app(options, std::make_unique<NoGpu>());
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        const auto ask = [&] {
+            httplib::Client client("127.0.0.1", port);
+            const auto res = client.Get("/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF");
+            return res ? res->status : 0;
+        };
+        auto first        = std::async(std::launch::async, ask);
+        auto second       = std::async(std::launch::async, ask);
+        const int status1 = first.get();
+        const int status2 = second.get();
+        server.stop();
+        thread.join();
+        std::ifstream runs(root / "runs.txt");
+        int count = 0;
+        for (std::string line; std::getline(runs, line);) { ++count; }
+        check(status1 == 200 && status2 == 200 && count == 1,
+              "two asks of one key at once: one serve run (" + std::to_string(count) + ")");
     }
 
     if (kept) {

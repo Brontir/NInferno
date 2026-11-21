@@ -41,6 +41,7 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -392,6 +393,9 @@ private:
     // What plan_json's "now" (product::plan_now) re-plans per request at the GPU's free memory: the
     // shown quantization's facts, inputs (their subjects kept alive here), choice and pins.
     std::map<std::string, std::shared_ptr<const PlanNowContext>> plan_now_;
+    // plan_json's ninferno-serve runs in flight by key: an ask that finds its key running shares
+    // that run's document, never starts a second child (#766).
+    std::map<std::string, std::shared_future<nlohmann::json>> serve_plans_running_;
     // hub_key -> the config.json kv_json read (a checkpoint's converted size reads it)
     std::map<std::string, nlohmann::json> configs_;
     // hub_key -> when a header or config read last failed (tried again after a minute)
