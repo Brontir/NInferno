@@ -100,6 +100,11 @@ set_tests_properties(ninferno_route_table_shipped_picks_test PROPERTIES LABELS h
 add_test(NAME ninferno_route_table_shipped_moe_picks_test
   COMMAND ninferno_route_table_test --shipped-moe-picks)
 set_tests_properties(ninferno_route_table_shipped_moe_picks_test PROPERTIES LABELS host)
+# The pick's precedence (#1115): an own table band stands above it, a lent one yields; no GPU.
+add_test(NAME ninferno_route_table_moe_pick_precedence_test
+  COMMAND ninferno_route_table_test --moe-pick-precedence)
+set_tests_properties(ninferno_route_table_moe_pick_precedence_test PROPERTIES LABELS host
+  SKIP_RETURN_CODE 77)
 
 # The generic projection path: random and awkward shapes in every format, every op and route,
 # against an FP64 reference GEMM, plus the token invariance of the prefill-admissible routes.

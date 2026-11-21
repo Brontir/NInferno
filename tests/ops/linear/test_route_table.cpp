@@ -13,6 +13,7 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_table.h"
 #include "ops/moe/moe_internal.h"
+#include "ops/moe/moe_route_query.h"
 #include "ops/op_tester.h"
 #include "ops/route_pins.h"
 #include "support/temp_dir.h"
@@ -602,6 +603,115 @@ int shipped_moe_picks() {
     return failures == 0 ? 0 : 1;
 }
 
+// The pick's precedence (#1115 item 1, moe.cpp table_authority / table_entry_near): on a substitute
+// of a shipped moe_pick file's board, a layer the file plans (and the board's shipped table does
+// not) takes the pick; a band of this board's own table for the layer stands above the pick; the
+// same band lent by a similar chip's table (fill_from) yields to it.
+int moe_pick_precedence() {
+    namespace board_registry = ninferno::board_registry;
+    namespace moe            = ninferno::ops::detail::moe;
+    using Json               = nlohmann::json;
+    int failures             = 0;
+    ninferno::ops::set_route_table_dir("");
+    const auto routes = ninferno::path_from_utf8(ninferno::ops::route_table_dir());
+    const auto read   = [](const std::filesystem::path& path) {
+        std::ifstream in(path);
+        return Json::parse(
+            std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()));
+    };
+    const auto table_answer = [](moe::MoeAuthority a) {
+        return a == moe::MoeAuthority::TableAsMeasured || a == moe::MoeAuthority::TableW4a8 ||
+               a == moe::MoeAuthority::TableClassA8 || a == moe::MoeAuthority::TableR8Refused;
+    };
+    for (const auto& f : std::filesystem::directory_iterator(routes / "moe_pick")) {
+        const auto name = f.path().filename();
+        if (f.path().extension() != ".json" || !std::filesystem::exists(routes / name)) continue;
+        const Json pick = read(f.path());
+        const auto id   = static_cast<std::uint32_t>(
+            std::stoul(pick["gpu"]["pci_id"].get<std::string>(), nullptr, 16));
+        const board_registry::BoardRow* row = board_registry::find(id);
+        if (row == nullptr) continue;
+        ninferno::DeviceClass board =
+            ninferno::synthetic_device_class(id, row->major, row->minor, row->sms,
+                                             static_cast<std::size_t>(row->l2_mib * (1 << 20)), 0);
+        board.facts = ninferno::machine_facts_of(board);
+        const ninferno::ScopedDeviceClass scoped(board);
+        for (const Json& e : pick["moe"]) {
+            const auto q = ninferno::find_route(e["format"].get<std::string>());
+            const auto qd =
+                ninferno::find_route(e.value("down_format", e["format"].get<std::string>()));
+            if (!q || !qd) continue;
+            bool frag_gate_up = false, frag_down = false;
+            for (const Json& b : e.value("frag", Json::array())) {
+                frag_gate_up = frag_gate_up || b == "gate_up";
+                frag_down    = frag_down || b == "down";
+            }
+            moe::MoeLayerShape layer;
+            layer.gate_up        = *q;
+            layer.down           = *qd;
+            layer.gate_up_layout = frag_gate_up ? ninferno::QuantLayout::GgmlFrag
+                                                : ninferno::default_weight_layout(*q);
+            layer.down_layout =
+                frag_down ? ninferno::QuantLayout::GgmlFrag : ninferno::default_weight_layout(*qd);
+            layer.experts        = e["experts"].get<std::int32_t>();
+            layer.top_k          = e["top_k"].get<std::int32_t>();
+            layer.hidden         = e["hidden"].get<std::int32_t>();
+            layer.inter          = e["inter"].get<std::int32_t>();
+            const Json& band     = e["bands"][0];
+            const std::int32_t t = band[0].get<std::int32_t>();
+            ninferno::ops::set_route_table_dir("");
+            const auto shipped = moe::moe_route_query(board, layer, t);
+            if (!shipped || shipped->authority != moe::MoeAuthority::MoePick) continue;
+            const std::string at = name.string() + " " + e.dump() + " T " + std::to_string(t);
+            // The layer's band as a table entry: the pick's own plan, so only the authority tells.
+            Json entry = {
+                {"format", e["format"]}, {"experts", e["experts"]},
+                {"top_k", e["top_k"]},   {"hidden", e["hidden"]},
+                {"inter", e["inter"]},   {"bands", Json::array({Json::array({t, t, band[2]})})}};
+            if (e.contains("down_format")) entry["down_format"] = e["down_format"];
+            const auto dir = scratch_dir() / "moe_precedence";
+            std::filesystem::remove_all(dir);
+            std::filesystem::create_directories(dir / "moe_pick");
+            std::filesystem::copy_file(f.path(), dir / "moe_pick" / name);
+            // This board's own table, with the band: it stands above the pick.
+            Json own   = read(routes / name);
+            own["moe"] = own.value("moe", Json::array());
+            own["moe"].push_back(entry);
+            std::ofstream(dir / name) << own.dump(1);
+            ninferno::ops::set_route_table_dir(utf8_path(dir));
+            const auto near = moe::moe_route_query(board, layer, t);
+            failures += check(near && table_answer(near->authority),
+                              at + ": the board's own table band stands above the pick");
+            // The same band in a similar chip's table, lent to this board's: it yields to the pick.
+            const auto similar = ninferno::device_class().similar_chips();
+            if (!similar.empty()) {
+                std::ofstream(dir / name) << read(routes / name).dump(1);
+                std::string lender = table(similar.front(), "");
+                lender.pop_back();
+                lender += ", \"moe\": [" + entry.dump() + "]}";
+                std::ofstream(dir / (similar.front() + ".json")) << lender;
+                ninferno::ops::set_route_table_dir(utf8_path(dir));
+                const auto s    = ninferno::ops::route_table_status();
+                const auto lent = moe::moe_route_query(board, layer, t);
+                failures += check(s.borrowed_moe_layers >= 1 && lent &&
+                                      lent->authority == moe::MoeAuthority::MoePick,
+                                  at + ": a band lent by " + similar.front() +
+                                      " yields to the pick: " + s.message);
+            } else {
+                std::cout << "no similar chip of " << ninferno::device_class().id()
+                          << ": the lent case is not run\n";
+            }
+            ninferno::ops::set_route_table_dir("");
+            std::cout << "moe pick precedence on " << name.string() << ": "
+                      << (failures == 0 ? "OK" : "FAIL") << '\n';
+            return failures == 0 ? 0 : 1;
+        }
+    }
+    ninferno::ops::set_route_table_dir("");
+    std::cout << "SKIP: no shipped moe pick answers a layer its board's table lacks\n";
+    return 77;
+}
+
 } // namespace
 
 // A malformed default table (the device's own class file in the --route-dir directory) stops the
@@ -832,6 +942,9 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--shipped-boards") { return shipped_boards(); }
     if (argc == 2 && std::string(argv[1]) == "--shipped-picks") { return shipped_picks(); }
     if (argc == 2 && std::string(argv[1]) == "--shipped-moe-picks") { return shipped_moe_picks(); }
+    if (argc == 2 && std::string(argv[1]) == "--moe-pick-precedence") {
+        return moe_pick_precedence();
+    }
     if (ninferno::test::cuda_unavailable()) {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;
