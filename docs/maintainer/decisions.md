@@ -2158,11 +2158,9 @@ formula). serve's refusal is the plan's answer, as for an artifact. Offline, on 
 no serve, a serve that could not reach the hub or answer in time, or a native or mixed
 repository, the plan there answers, its `planner` saying why; the quantization rows' fits
 (`/api/quants`) and the catalog are always planned there. Its MoE steps keep the measured pair's
-share, but an
-estimate no query was asked for is
-Transferred past one row, `speed_why` "MoE route not queried" (`ModelFacts::moe_route_unqueried`),
-never Own; a kind the query gives no kernels for says "MoE route not answered". An MoE whose facts list
-no routed layers (a hub row priced from another quantization's header, a split GGUF part without
+share, but an estimate no query was asked for is Transferred past one row, `speed_why` "MoE route
+not queried" (`ModelFacts::moe_route_unqueried`), never Own; a kind the query gives no kernels for
+says "MoE route not answered". An MoE whose facts list no routed layers (a hub row priced from another quantization's header, a split GGUF part without
 expert banks, a `--plan-weight-bytes` estimate) is marked the same way (#799): nobody asked which
 pair runs its banks.
 
