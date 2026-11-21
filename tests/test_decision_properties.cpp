@@ -482,11 +482,8 @@ Explained explain_rmma_rise(const DeviceClass& base, const DeviceClass& more,
 int mmq_law_width(const DeviceClass& d, const generic::Problem& p, std::int32_t tokens) {
     const bool format = mmq_columns::work_tiles_format(p.qtype, d.major, d.minor);
     if (mmq_columns::launch_law(d.major, d.minor, format) == nullptr) return 0;
-    const int columns = std::min(tokens, generic::kMmqPrefillSlice);
-    const mmq_columns::LaunchFacts facts{p.n, p.k, d.sms, d.facts.reference_clock_hz(),
-                                         d.facts.dram_bytes_per_s()};
-    return mmq_columns::pick(columns, d.major, d.minor, true,
-                             mmq_columns::widest_tile(p.qtype, d.major, d.minor), facts);
+    // The width the price takes (#789: one function, so this exemption cannot drift from it).
+    return generic::mmq_column_width(d, p, tokens);
 }
 
 void property_price_monotone(const std::vector<Row>& rows) {
