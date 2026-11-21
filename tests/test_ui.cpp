@@ -1346,9 +1346,9 @@ void test_hub_transport_error_type() {
     }
     // The cache fallback keeps the type: a GGUF head of a model the (empty) cache does not hold,
     // the hub unreachable, is still the transport's failure (serve's --plan --no-load path).
-    const fs::path cache =
-        fs::temp_directory_path() / ("ninferno_ui_1147_" + std::to_string(::getpid()));
-    fs::create_directories(cache);
+    const std::filesystem::path cache =
+        std::filesystem::temp_directory_path() / ("ninferno_ui_1147_" + std::to_string(::getpid()));
+    std::filesystem::create_directories(cache);
     options.cache = cache;
     typed         = false;
     std::string said;
@@ -1360,7 +1360,7 @@ void test_hub_transport_error_type() {
     } catch (const std::exception& error) { said = error.what(); }
     check(typed && said.find("no snapshot in the cache") != std::string::npos,
           "an unreachable hub with no cached snapshot is a HubTransportError: " + said);
-    fs::remove_all(cache);
+    std::filesystem::remove_all(cache);
     check(ninferno::convert::kHubTransportExit == 75, "the transport's exit code is 75");
 }
 
