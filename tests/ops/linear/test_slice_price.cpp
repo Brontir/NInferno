@@ -235,10 +235,10 @@ bool planes_aligned16(const Weight& w) {
 // the bit, which is what the decision manifest's replay prices: the run records the call with the
 // view's rows and layout (record_problem: Problem, w.n, w.layout), and replay describes that shape
 // (route_query, described_bytes_per_weight). The selector's answer on the live view and the
-// replay's agree at every priced width, in the speed profile and the prefill band, where the
-// view's planes are 16-byte aligned as the replay's are. A view whose planes start off that
-// alignment (a row of 4 high bytes from row 1) is refused the tiles that read them aligned, which
-// the recorded line cannot tell: its routes are counted, not compared; its bytes are.
+// replay's agree at every priced width, in the speed profile and the prefill band. A view whose
+// planes start off 16-byte alignment (a row of 4 high bytes from row 1) is refused the tiles that
+// read them aligned; the run records those offsets (record_problem: plane_offsets, #724) and the
+// replay lays them on its described planes, so its routes are compared too.
 void check_padded_view_replay() {
     struct Case {
         QType qtype;
@@ -304,15 +304,13 @@ void check_padded_view_replay() {
                             std::optional<generic::Route> q;
                             const bool q_threw = throws([&] {
                                 q = generic::route_query(d, c.qtype, policy, epilogue, rows, k, t,
-                                                         prefill, w.n, w.layout);
+                                                         prefill, w.n, w.layout,
+                                                         generic::plane_offsets(w));
                             });
                             if (!both_answer(q_threw, s.starts_with("threw"), at + " replay")) {
                                 continue;
                             }
-                            if (!planes_aligned16(w)) {
-                                ++replay_unaligned;
-                                continue;
-                            }
+                            if (!planes_aligned16(w)) ++replay_unaligned;
                             ++replay_compared;
                             if (text(q) != s) ++replay_differs;
                             check(text(q) == s, at + ": the view takes " + s +
@@ -535,7 +533,7 @@ int main() {
               << replay_differs << " selections where the replay answers otherwise than the view, "
               << replay_compared << " compared (in " << replay_cases << " views), "
               << replay_unaligned
-              << " not compared (the view's planes off 16-byte alignment); R8 verify gate: "
+              << " of them with the view's planes off 16-byte alignment; R8 verify gate: "
               << gate_differs << " calls where a slice answers otherwise than its own shape\n";
     // With a device every pair answers; without one the MMQ-or-register-MMA pairs need it.
     if (device) {

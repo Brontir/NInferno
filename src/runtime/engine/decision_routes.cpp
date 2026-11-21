@@ -38,7 +38,11 @@ std::string key_of(const generic::SeenProblem& s, bool invariant) {
     return std::string(generic::qtype_name(p.qtype)) + ' ' + policy_name(p.policy) + ' ' +
            generic::epilogue_name(p.epilogue) + ' ' + std::to_string(p.n) + 'x' +
            std::to_string(p.k) + " of " + std::to_string(s.parent_rows) + ' ' +
-           std::string(artifact::layout_name(s.layout)) + ' ' + profile_name(invariant);
+           std::string(artifact::layout_name(s.layout)) + ' ' + profile_name(invariant) +
+           (s.planes.any()
+                ? " planes+" + std::to_string(s.planes.qdata) + ',' +
+                      std::to_string(s.planes.qhigh) + ',' + std::to_string(s.planes.scales)
+                : std::string());
 }
 
 // What a line names at one width: the route alone (the routes section) or the route and the
@@ -56,7 +60,7 @@ std::string line_of(const DeviceClass& device, const generic::SeenProblem& s,
         // answer's.
         const auto answer =
             generic::route_answer_query(device, p.qtype, p.policy, p.epilogue, p.n, p.k, tokens,
-                                                   prefill, s.parent_rows, s.layout);
+                                        prefill, s.parent_rows, s.layout, s.planes);
         if (!answer) return std::string("none");
         return say == Say::Route ? generic::route_name(answer->route)
                                             : generic::route_name(answer->route) + ' ' +
@@ -109,8 +113,21 @@ generic::SeenProblem parse_key(const std::string& key, bool& invariant) {
         malformed(key, "not \"<format> <policy> <epilogue> <N>x<K> of <rows> <layout> <profile>\"");
     }
     invariant = profile == "invariant";
+    // A row view whose planes start past 16 bytes: "planes+<qdata>,<qhigh>,<scales>" (#724).
+    generic::PlaneOffsets planes;
     std::string rest;
-    if (in >> rest) malformed(key, "trailing text");
+    if (in >> rest) {
+        unsigned q = 0, h = 0, sc = 0;
+        char c1 = 0, c2 = 0;
+        std::istringstream offsets(rest.rfind("planes+", 0) == 0 ? rest.substr(7) : std::string());
+        if (!(offsets >> q >> c1 >> h >> c2 >> sc) || c1 != ',' || c2 != ',' || q > 15 || h > 15 ||
+            sc > 15 || offsets.peek() != std::char_traits<char>::eof()) {
+            malformed(key, "trailing text (not planes+<qdata>,<qhigh>,<scales>, each 0..15)");
+        }
+        planes = {static_cast<std::uint8_t>(q), static_cast<std::uint8_t>(h),
+                  static_cast<std::uint8_t>(sc)};
+        if (in >> rest) malformed(key, "trailing text");
+    }
     const auto x = shape.find('x');
     if (x == std::string::npos) malformed(key, "no NxK");
     generic::SeenProblem s;
@@ -128,6 +145,7 @@ generic::SeenProblem parse_key(const std::string& key, bool& invariant) {
     s.problem.epilogue = parse_enum<generic::Epilogue>(
         key, epilogue, 3, [](generic::Epilogue e) { return std::string(generic::epilogue_name(e)); });
     s.parent_rows = static_cast<std::int32_t>(parent);
+    s.planes      = planes;
     try {
         s.layout = artifact::parse_layout(layout);
     } catch (const std::exception&) { malformed(key, "an unknown layout"); }

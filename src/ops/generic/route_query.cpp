@@ -29,9 +29,11 @@ struct DescribedWeight {
     DescribedWeight& operator=(const DescribedWeight&) = delete;
 };
 
+// `planes`: a row view's plane offsets past 16 bytes (SeenProblem::planes, #724), laid on the
+// described planes so the selector's alignment refusals answer as on the recorded call.
 void describe_weight(DescribedWeight& out, QType qtype, Epilogue epilogue, std::int32_t n,
                      std::int32_t k, std::int32_t parent_rows,
-                     std::optional<QuantLayout> layout = std::nullopt) {
+                     std::optional<QuantLayout> layout = std::nullopt, PlaneOffsets planes = {}) {
     const std::uint64_t own = epilogue == Epilogue::SwiGlu ? 2ULL * static_cast<std::uint64_t>(n)
                                                            : static_cast<std::uint64_t>(n);
     const bool nvfp4 = qtype == QType::NVFP4;
@@ -45,6 +47,12 @@ void describe_weight(DescribedWeight& out, QType qtype, Epilogue epilogue, std::
     out.view.shape      = {stored, static_cast<std::uint64_t>(k)};
     out.view.parts      = {WeightRegion{&out.parent, 0, stored * static_cast<std::uint64_t>(k)}};
     out.weight          = native_weight(out.view, nvfp4 ? 1.0F : 0.0F);
+    const auto shift    = [](const void*& plane, std::uint8_t by) {
+        if (plane != nullptr) plane = static_cast<const std::byte*>(plane) + by;
+    };
+    shift(out.weight.qdata, planes.qdata);
+    shift(out.weight.qhigh, planes.qhigh);
+    shift(out.weight.scales, planes.scales);
 }
 
 // workspace_free_route with the evidence of the walk that gave the route it hands on: the
@@ -84,14 +92,15 @@ std::optional<RouteAnswer> route_answer_query(const DeviceClass& device, QType q
                                               LinearPolicy policy, Epilogue epilogue,
                                               std::int32_t n, std::int32_t k, std::int32_t tokens,
                                               bool prefill, std::int32_t parent_rows,
-                                              std::optional<QuantLayout> layout) {
+                                              std::optional<QuantLayout> layout,
+                                              PlaneOffsets planes) {
     if (n <= 0 || k <= 0 || tokens <= 0 || parent_rows < 0) return std::nullopt;
     const ScopedDeviceClass scoped(device);
     // The asked profile, not the caller's: the selection reads it too (the group-sums plane's
     // resources, rmma_group_sums), as resolved_route_query and describe_call do.
     const ops::ScopedPrefillRoutes profile(prefill);
     DescribedWeight described;
-    describe_weight(described, qtype, epilogue, n, k, parent_rows, layout);
+    describe_weight(described, qtype, epilogue, n, k, parent_rows, layout, planes);
     if (!supports(described.weight)) return std::nullopt;
     const Problem problem{qtype, policy, n, k, epilogue};
     return select_answer(problem, described.weight, tokens, prefill);
@@ -115,9 +124,9 @@ std::optional<bool> answered_before_tuner_query(const DeviceClass& device, QType
 std::optional<Route> route_query(const DeviceClass& device, QType qtype, LinearPolicy policy,
                                  Epilogue epilogue, std::int32_t n, std::int32_t k,
                                  std::int32_t tokens, bool prefill, std::int32_t parent_rows,
-                                 std::optional<QuantLayout> layout) {
+                                 std::optional<QuantLayout> layout, PlaneOffsets planes) {
     const auto answer = route_answer_query(device, qtype, policy, epilogue, n, k, tokens, prefill,
-                                           parent_rows, layout);
+                                           parent_rows, layout, planes);
     if (!answer) return std::nullopt;
     return answer->route;
 }

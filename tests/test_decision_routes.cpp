@@ -206,9 +206,41 @@ int main() {
     check(moved_line || (fa.manifest == fb.manifest && fa.routes == fb.routes),
           "a table that moved no line moved the manifest");
 
+    // A row view whose planes start past 16 bytes (#724): its key names the offsets, the line is
+    // the selector's answer on planes laid so, and the replay of the line asks the same.
+    {
+        generic::SeenProblem view =
+            problem(QType::GGML_IQ4_XS, LinearPolicy::A16Only, generic::Epilogue::Store, 2, 256, 2);
+        view.planes = {8, 0, 0};
+        const std::vector<generic::SeenProblem> one{view};
+        const auto lines = rt::routes_of(device_class(), one, chunk, false);
+        const auto found = std::find_if(lines.begin(), lines.end(), [](const auto& kv) {
+            return kv.first != rt::kDecisionRouteCount;
+        });
+        check(found != lines.end() && found->first.ends_with(" speed planes+8,0,0"),
+              "the view's key names its plane offsets: " +
+                  (found == lines.end() ? std::string("none") : found->first));
+        if (found != lines.end()) {
+            for (std::int32_t t = 1; t <= rt::kDecisionRouteWidths; ++t) {
+                const auto r = generic::route_query(device_class(), QType::GGML_IQ4_XS,
+                                                    LinearPolicy::A16Only, generic::Epilogue::Store,
+                                                    2, 256, t, false, 2, view.layout, view.planes);
+                check(route_at(found->second, t) == (r ? generic::route_name(*r) : "none"),
+                      found->first + " T=" + std::to_string(t) + ": " + found->second);
+            }
+        }
+        check(rt::replay_routes(device_class(), lines, RoutePolicy::Evidence) == lines,
+              "the view's line replays to itself");
+    }
+
     // Refused: a line that does not parse, or not in its canonical form.
     for (const std::string key :
          {"q4k a16only store 4096x4096 of 4096", "zz a16only store 1x1 of 1 ggml_blocks_v1 speed",
+          "q4k a16only store 4096x4096 of 4096 ggml_blocks_v1 speed planes+0,0,0",
+          "q4k a16only store 4096x4096 of 4096 ggml_blocks_v1 speed planes+16,0,0",
+          "q4k a16only store 4096x4096 of 4096 ggml_blocks_v1 speed planes+4,0",
+          "q4k a16only store 4096x4096 of 4096 ggml_blocks_v1 speed planes+4,0,0x",
+          "q4k a16only store 4096x4096 of 4096 ggml_blocks_v1 speed planes+4,0,0 extra",
           "q4k a16only store 4096x4096 of 4096 ggml_blocks_v1 speed extra",
           "q4k  a16only store 4096x4096 of 4096 ggml_blocks_v1 speed",
           "q4k a16only store 0x4096 of 4096 ggml_blocks_v1 speed",
