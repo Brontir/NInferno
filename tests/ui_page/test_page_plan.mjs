@@ -518,7 +518,7 @@ eq(H.nowLine({now: {free_now_bytes: 8 * 2 ** 30, fits_now: true, context_now: 65
   whole(RU("nowRefused", {why: "x"}), "nowRefused ru");
 }
 // A compute-mode change or a process starting or stopping asks "now" again, whatever the memory
-// does (#891): the hold differs; the same mode and count do not.
+// does (#891): the hold differs; the same mode and holders do not.
 {
   const g = {compute_mode: 0, processes: [{pid: 7}]};
   ok(H.nowHoldOf(g) === H.nowHoldOf({compute_mode: 0, processes: [{pid: 7, used_bytes: 5}]}), "same mode and holder: the same hold");

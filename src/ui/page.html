@@ -1296,9 +1296,9 @@ async function refreshState() {
 // model's plans are asked again (the server keeps their idle part; it re-plans only "now").
 const NOW_STEP = 256 * 2 ** 20;
 let nowFree = null, nowGpu = null, nowGen = 0; // nowGen: one step per move of the memory
-// The card's compute mode and its process count as last asked: a mode change (nvidia-smi -c) or a
-// process starting or stopping moves whether the card takes a new one (refusal_now), whatever the
-// memory does (#891).
+// The card's compute mode and its holders as last asked (nowHoldOf): a mode change (nvidia-smi -c)
+// or a holder starting, stopping or being replaced moves whether the card takes a new one
+// (refusal_now), whatever the memory does (#891).
 let nowHold = null;
 // A plan fetched while the memory moved: its "now" is of before (dropped: asked again when shown).
 function keepPlan(key, doc, gen) {
@@ -2236,11 +2236,10 @@ function actOptions(doc, autoDoc, mode) {
 }
 // The mode a plan and a launch take: Auto, or the one chosen while the model runs it.
 function actAskOf(mode, allowed) { return mode && mode !== "auto" && (!allowed || allowed.includes(mode)) ? mode : "auto"; }
-// What decides whether a card takes a new process besides its memory (/api/gpus: NVML's compute
-// mode and its compute processes, GpuStat::refusal_now): when it moves, every "now" is asked
-// again (refreshPlanNow, #891).
-// What refusal_now reads (serve's GpuStat): the compute mode and who holds the card, each holder
-// by its pid and whether it is the MPS server, so a holder replaced at the same count re-asks.
+// What decides whether a card takes a new process besides its memory (GpuStat::refusal_now over
+// NVML's compute mode and compute processes): the mode and who holds the card, each holder by its
+// pid and whether it is the MPS server. When it moves, every "now" is asked again (refreshPlanNow,
+// #891), a holder replaced at the same count too.
 function nowHoldOf(g) {
   const holders = ((g && g.processes) || []).map(p => p.pid + (p.mps_server ? "m" : "")).sort();
   return (g && g.compute_mode !== undefined ? g.compute_mode : "?") + "/" + holders.join(",");
