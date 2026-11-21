@@ -1250,11 +1250,16 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         std::optional<Json> kept;
         // One serve run a key at a time: an ask that finds its key running waits for that run's
         // document. Two children at once would also contend for the card (an exclusive-compute GPU
-        // lets one open a context: the other's refusal would be kept).
+        // lets one open a context: the other's refusal would be kept). A run is of one hub token:
+        // an ask after a new token never joins a run under the old one (its listing, its access).
         std::shared_future<Json> running;
         std::promise<Json> runs;
+        std::uint64_t generation = 0;
+        std::string running_key;
         {
             std::lock_guard lock(sizes_mutex_);
+            generation  = hub_generation_;
+            running_key = key + "|generation " + std::to_string(generation);
             if (const auto it = plans_.find(key); it != plans_.end()) {
                 const bool failure =
                     it->second.contains("failed") || it->second.contains("refused");
@@ -1264,11 +1269,11 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                 }
             }
             if (!kept) {
-                if (const auto it = serve_plans_running_.find(key);
+                if (const auto it = serve_plans_running_.find(running_key);
                     it != serve_plans_running_.end()) {
                     running = it->second;
                 } else {
-                    serve_plans_running_[key] = runs.get_future().share();
+                    serve_plans_running_[running_key] = runs.get_future().share();
                 }
             }
         }
@@ -1279,7 +1284,6 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         if (!kept) {
             try {
                 fresh                    = true;
-                const auto generation    = hub_generation();
                 const Json list          = listing_of(repo, hub);
                 const std::string commit = list.empty() || !list.front().is_object()
                                                ? std::string()
@@ -1319,12 +1323,12 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     }
                     plans_[key] = *kept;
                 }
-                serve_plans_running_.erase(key);
+                serve_plans_running_.erase(running_key);
                 runs.set_value(*kept);
             } catch (...) {
                 // The listing's read failed: the asks waiting on this run fail as this one does.
                 std::lock_guard lock(sizes_mutex_);
-                serve_plans_running_.erase(key);
+                serve_plans_running_.erase(running_key);
                 runs.set_exception(std::current_exception());
                 throw;
             }
