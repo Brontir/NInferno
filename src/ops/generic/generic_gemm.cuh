@@ -322,7 +322,13 @@ struct Fp8Decoder {
         uint4 codes;
     };
     __device__ static __forceinline__ Run load(const GemmArgs& a, int row, int k0) {
-        return {ld_stream_v4(a.codes + static_cast<std::int64_t>(row) * a.k + k0)};
+        // LAB #1121: a plain (cached) load in place of ld.global.cs.
+        uint4 v;
+        asm volatile("ld.global.v4.u32 {%0, %1, %2, %3}, [%4];
+"
+                     : "=r"(v.x), "=r"(v.y), "=r"(v.z), "=r"(v.w)
+                     : "l"(a.codes + static_cast<std::int64_t>(row) * a.k + k0));
+        return {v};
     }
     __device__ static __forceinline__ Run zero() { return {make_uint4(0, 0, 0, 0)}; }
     __device__ static __forceinline__ Run masked(const GemmArgs&, int, int) { return zero(); }
