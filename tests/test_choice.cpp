@@ -402,6 +402,28 @@ void decodes_from_facts(const json& fixture) {
         const double a           = ch::speed_of(own, tu, qo, c, 1, 82000).decode_per_stream;
         const double b           = ch::speed_of(other, tu, qo, c, 1, 82000).decode_per_stream;
         check(a > b * 1.1, "the SM rate holds only for its own head geometry");
+        // The dense family's D128 full layer (16 heads, 4 KV heads: SmolLM3-3B) on Turing reads
+        // at its own kKvSmRate rows (#991 item 3, #1129), not the codec's factor. The same
+        // geometry and bytes under a family with no row for it keep the factor: BF16 rows price
+        // faster with the row (3.38 B a reference SM-clock, SM-bound, against the 3.38x read
+        // factor), the one-byte int8 rows slower (1.515 against 2.26).
+        ch::ModelFacts dense       = own;
+        dense.family               = "dense_decoder";
+        dense.full_head_dim        = 128;
+        dense.full_kv_heads        = 4;
+        dense.full_attention_width = 16.0 * dense.full_layers * 2 * 128;
+        ch::ModelFacts unrowed     = dense;
+        unrowed.family             = "gemma4_text";
+        const auto at              = [&](const ch::ModelFacts& m, KvCacheStorage kv) {
+            ch::Candidate k;
+            k.kv = k.ring = kv;
+            return ch::speed_of(m, tu, qo, k, 1, 82000).decode_per_stream;
+        };
+        check(at(dense, KvCacheStorage::BFloat16) > at(unrowed, KvCacheStorage::BFloat16) * 1.05,
+              "dense D128 BF16 rows on Turing read at their own SM rate");
+        check(at(dense, KvCacheStorage::Fp8E4M3Row256) * 1.05 <
+                  at(unrowed, KvCacheStorage::Fp8E4M3Row256),
+              "dense D128 int8 rows on Turing read at their own SM rate");
     }
 }
 
@@ -1040,8 +1062,9 @@ void decides_by_generation(const json& fixture) {
     // its exact-route factor on none: the worth decides the KV codec, the activations keep fast.
     // Qwen3.5-9B's BF16, FP8 and K8V4 have two-card rows of their own there; its NVFP4 SM rate is
     // one card's (the two 6.4 % apart per reference SM-clock), and the MoE family's NVFP4, of
-    // another geometry, carries Ada's factor: the worth takes neither (kv_decides), while on Ada
-    // every codec decides.
+    // another geometry, carries Ada's factor: the worth takes neither (kv_decides). On Ada every
+    // codec of Qwen3.5-9B decides; the MoE family's NVFP4 does not, since NVFP4's read is SM-bound
+    // there and its factor row was read on the 9B's geometry alone (#863 item 2).
     const Bench g = nine_b(fixture, "RTX 5070 Ti");
     const Bench h = nine_b(fixture, "RTX 5090");
     const auto rg = ch::reference_of(g.card), rh = ch::reference_of(h.card);
@@ -1068,8 +1091,10 @@ void decides_by_generation(const json& fixture) {
         const ch::ModelFacts moe = model_of(fixture.at("models").at("Qwen3.6-35B-A3B"));
         check(!ch::kv_decides(moe, "gb20x", KvCacheStorage::Nvfp4Group16) &&
                   ch::kv_decides(moe, "gb20x", KvCacheStorage::Fp8KeyNvfp4Value) &&
-                  ch::kv_decides(moe, "ada", KvCacheStorage::Nvfp4Group16),
-              "the MoE family's NVFP4 does not decide on gb20x (Ada's factor carried)");
+                  !ch::kv_decides(moe, "ada", KvCacheStorage::Nvfp4Group16) &&
+                  ch::kv_decides(moe, "ada", KvCacheStorage::Fp8KeyNvfp4Value),
+              "the MoE family's NVFP4 decides on neither gb20x (Ada's factor carried) nor Ada (an "
+              "SM-bound read priced off its own geometry)");
     }
     {
         ch::Task task;
@@ -1098,6 +1123,30 @@ void decides_by_generation(const json& fixture) {
                       std::vector<KvCacheStorage>{KvCacheStorage::Nvfp4Group16},
               "gb20x: exact and NVFP4 are the family's default's alternatives, not weighed");
         if (choice.chosen) { std::cout << choice.why << '\n'; }
+    }
+    {
+        // #863 item 3: on Ada the MoE family's NVFP4 read is SM-bound off the geometry its rate was
+        // read on, so the worth does not weigh it: listed as not decided, the default's
+        // alternative.
+        const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
+        Bench moe{
+            model_of(m35), a.card, {quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"))}};
+        ch::Task task;
+        task.contexts           = {32768};
+        const ch::Choice choice = ch::choose(
+            moe.model, moe.card, moe.quants[0],
+            ch::allowed_axes(moe.model, KvCacheStorage::Int8Group64), {}, task, oracle(moe, 20e9));
+        bool nvfp4_default = false;
+        for (const ch::Alternative& alt : ch::explain(choice)) {
+            if (alt.axis == ch::Axis::Kv && alt.value == "nvfp4") {
+                nvfp4_default = alt.why_code == "default";
+            }
+        }
+        check(choice.by_worth && choice.chosen &&
+                  chosen(choice).candidate.kv != KvCacheStorage::Nvfp4Group16 && nvfp4_default &&
+                  std::find(choice.kv_not_decided.begin(), choice.kv_not_decided.end(),
+                            KvCacheStorage::Nvfp4Group16) != choice.kv_not_decided.end(),
+              "Ada: the MoE's NVFP4 is not weighed, the default's alternative (#863)");
     }
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
     check(!ch::reference_of(t.card), "Turing has no reference card");

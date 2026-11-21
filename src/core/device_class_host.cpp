@@ -229,7 +229,8 @@ std::vector<std::string> device_fact_notes(const DeviceClass& d) {
             why = f.sku + ", a laptop: priced at the bottom of its published boost range";
         } else if (f.share < 1.0) {
             why = f.sku + ", a slice of " + std::to_string(d.sms) +
-                  " SMs (MIG): its share of the board's bandwidth";
+                  " SMs (MIG): its share of the board's bandwidth by " +
+                  (d.global_bytes > 0 ? "the memory it owns" : "its SMs (no memory reported)");
         } else if (const GpuFactsRow* row = find_gpu_facts(d.pci_device_id);
                    row != nullptr && row->sms == d.sms) {
             why = f.sku + " on another memory than its row's: the driver's bus width and memory "
@@ -261,7 +262,8 @@ DriverReport driver_report_of(const DeviceClass& d) noexcept {
             .memory_clock_khz = d.memory_clock_khz,
             .memory_bus_bits  = d.memory_bus_bits,
             .pci_subsystem_id = d.pci_subsystem_id,
-            .subsystem_unread = d.pci_subsystem_unread};
+            .subsystem_unread = d.pci_subsystem_unread,
+            .global_bytes     = d.global_bytes};
 }
 
 MachineFacts machine_facts_of(const DeviceClass& d) { return machine_facts(driver_report_of(d)); }
@@ -549,7 +551,7 @@ std::string device_class_key(const DeviceClass& d) {
     }
     add(d.pci_device_id);
     add(m.vram_gib);
-    add(m.share);
+    add(m.share); // the memory share follows from global_bytes, already in the key (#906)
     for (const bool b :
          {d.chip_from_pci, f.mma_bf16, f.mma_bf16_native, f.mma_tensor, f.mma_fp8, f.mma_f8f6f4,
           f.mma_mxf4nvf4, f.tma, f.pdl, f.clusters, f.mma_slow, m.mma_slow, m.driver_read}) {
