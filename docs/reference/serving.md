@@ -589,8 +589,8 @@ prefix, with the same behavior, errors, and request IDs.
 - **Hub failure at start.** When the hub does not answer (no connection, a cut transfer, a timeout,
   HTTP 408, 429 or 5xx) and the cache cannot stand in, the process exits with status 75
   (`EX_TEMPFAIL`): a later try may pass. Any other failure to start, the hub's own refusal (401,
-  403, 404) included, exits with status 1 (`--plan` exits 0 when the plan fits, 2 when it does not). ninferno-ui reads 75
-  as "the hub could not be read", never the message's words.
+  403, 404) included, exits with status 1 (`--plan` exits 0 when the plan fits, 2 when it does not).
+  ninferno-ui reads 75 as "the hub could not be read", never the message's words.
 - **Recoverable CUDA error.** A failed CUDA call the device survives (a failed allocation, a bad
   launch configuration) is not Engine-wide. The requests being generated are answered HTTP 503 with
   `Retry-After`, the Engine resets its sequence state and the context cache, and the queued
