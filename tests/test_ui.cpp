@@ -1411,6 +1411,21 @@ void test_hub_plan_via_serve() {
     check(status == 502 && body.find("no GPU 0") != std::string::npos &&
               body.find("ninferno-serve --plan failed") != std::string::npos,
           "serve without the hub: the plan here answers, naming serve's failure: " + body);
+    // A permanent HTTP status from serve's hub read (the revision lacks the file) is its refusal,
+    // not a transport failure: no estimate here.
+    std::ofstream(root / "serve-404")
+        << "#!/bin/sh\necho 'error: org/m-GGUF: m-Q4_K_M.gguf: HTTP 404' >&2\nexit 1\n";
+    fs::permissions(root / "serve-404", fs::perms::owner_all);
+    std::tie(status, body) = plan(root / "serve-404", "");
+    check(status == 502 && body.find("HTTP 404") != std::string::npos &&
+              body.find("ninferno-serve --plan failed") == std::string::npos,
+          "serve's HTTP 404 is the plan's refusal: " + body);
+    std::ofstream(root / "serve-503")
+        << "#!/bin/sh\necho 'error: org/m-GGUF: HTTP 503' >&2\nexit 1\n";
+    fs::permissions(root / "serve-503", fs::perms::owner_all);
+    std::tie(status, body) = plan(root / "serve-503", "");
+    check(status == 502 && body.find("ninferno-serve --plan failed") != std::string::npos,
+          "serve's HTTP 503 is a transport failure: the plan here answers: " + body);
     // One serve run a plan key: the page asks again at every move of the free memory.
     {
         fs::remove(root / "runs.txt");

@@ -1032,12 +1032,25 @@ std::string at_commit(const std::string& repo, const std::string& commit) {
 // serve_plan_json's timeout, or a last line naming the transport (convert/fetch.cpp's curl and
 // HTTP errors). The plan here answers then (#766); any other failure is serve's refusal.
 bool hub_transport_failure(const std::string& what) {
+    // An HTTP status (convert/fetch.cpp: "HTTP <code>") is the hub's answer: a timeout, a rate
+    // limit or a server error may pass (408, 429, 5xx); any other (401, 403, 404: the revision
+    // lacks the file, the repository is gated) is permanent, and a start would refuse as serve
+    // does.
+    for (std::size_t at = what.find("HTTP "); at != std::string::npos;
+         at             = what.find("HTTP ", at + 5)) {
+        std::size_t used = 0;
+        int code         = 0;
+        try {
+            code = std::stoi(what.substr(at + 5, 3), &used);
+        } catch (const std::exception&) { continue; }
+        if (used != 3) { continue; }
+        return code == 408 || code == 429 || (code >= 500 && code < 600);
+    }
     for (const char* mark :
          {"did not answer within", "can't reach", "unreachable", "Couldn't resolve",
           "Could not resolve", "Couldn't connect", "Timeout was reached", "Operation too slow",
-          "SSL", "HTTP ", "HTTP/2", "curl", "Failure when receiving", "Send failure",
-          "Recv failure", "Server returned nothing", "Weird server reply", "partial file",
-          "Connection reset"}) {
+          "SSL", "HTTP/2", "curl", "Failure when receiving", "Send failure", "Recv failure",
+          "Server returned nothing", "Weird server reply", "partial file", "Connection reset"}) {
         if (what.find(mark) != std::string::npos) { return true; }
     }
     return false;
@@ -2715,6 +2728,11 @@ std::optional<bool> App::gguf_mtp(const std::string& repo, const std::string& hu
 }
 
 Json App::kv_json(const std::string& repo, const Json& listing, const std::string& hub) {
+    // The reads at the listing's commit (a repository named at a revision reads the commit it
+    // listed, as the serve child does, #766); the maps keep the name the page asked by.
+    const std::string at  = at_commit(repo, listing.empty() || !listing.front().is_object()
+                                                ? std::string()
+                                                : listing.front().value("commit", std::string()));
     const auto generation = hub_generation();
     {
         std::lock_guard lock(sizes_mutex_);
@@ -2773,7 +2791,7 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                 auto source = repo;
                 if (native) {
                     const auto manifest =
-                        convert::fetch_repo_json(repo, fetch, "artifact-manifest.json");
+                        convert::fetch_repo_json(at, fetch, "artifact-manifest.json");
                     source = manifest.value("source", Json::object())
                                  .value("base", Json::object())
                                  .value("repo_id", repo);
@@ -2793,7 +2811,7 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                     product::plan_facts_of_config(config, weights, runtime::WeightBasis::FileSize);
                 facts.model.mtp_bytes   = mtp;
                 out                     = kv_summary(&facts);
-                facts.shape.base_models = convert::hub_base_models(repo, fetch);
+                facts.shape.base_models = convert::hub_base_models(at, fetch);
                 std::lock_guard lock(sizes_mutex_);
                 if (generation == hub_generation_) {
                     plan_facts_[hub_key(repo, hub)] = std::move(facts);
@@ -2809,13 +2827,13 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
     bool read   = false;
     for (const std::uint64_t bytes : {8ULL << 20, 32ULL << 20}) {
         try {
-            const auto head = convert::fetch_gguf_head(repo, fetch, bytes);
+            const auto head = convert::fetch_gguf_head(at, fetch, bytes);
             const auto file =
                 convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
                                          head.bytes.size(), head.size, head.path);
             auto facts = product::plan_facts_of_gguf(file, static_cast<std::uint64_t>(smallest));
             // A split model's head from the part that holds it (as the server's plan reads it).
-            product::complete_split_gguf_head(facts, repo, fetch, quant);
+            product::complete_split_gguf_head(facts, at, fetch, quant);
             out        = kv_summary(&facts);
             {
                 std::lock_guard lock(sizes_mutex_);
