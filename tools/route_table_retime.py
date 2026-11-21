@@ -2,26 +2,31 @@
 """Re-time a route table's bands over a token range from its own board's route_tune grid (#1073).
 
     tools/route_table_retime.py --table routes/C.json --routes routes.csv --tokens 9-11 [--margin 0.03]
+        [--evidence ROUTES SELECTED]
 
 For every generic entry of the table (format, compute, epilogue, n, k) that the grid timed inside
---tokens, where the table's own route is slower than the grid's fastest by more than --margin at some
-count there, the range takes one route: the one whose worst regret over the range is least (the
+--tokens, where the table's own route is slower than the grid's fastest by more than --margin at
+some count there, the range takes one route: the one whose worst regret over the range is least (the
 table's own route on a tie), unless it is slower than the table's own route by more than --margin at
-some count, where the entry is kept (and named on stderr). The candidates are the routes a table's a16 bands hold: A16 schedules and
-ggml_mmq, as the dense tuner writes them; the W4A8 and R8 routes (route_tune --a8-candidates 1 times
-them too) are never tabled (route_tune_tool.cpp, route_authorities.cpp). A GGUF format's a8 rows are
-its a16 entry's; FP8's a8 entry keeps its own key. An entry whose table route the grid
-did not time, or where no route was timed at every count, is kept (and named on stderr). A count the
+some count or does not lower the worst regret of the counts it moves by more than --margin; then
+the entry is kept (and named on stderr). The candidates are the routes a table's
+a16 bands hold: A16 schedules and ggml_mmq, as the dense tuner writes them; the W4A8 and R8 routes
+(route_tune --a8-candidates 1 times them too) are never tabled (route_tune_tool.cpp,
+route_authorities.cpp). A GGUF format's a8 rows are its a16 entry's; FP8's a8 entry keeps its own
+key. An entry whose table route the grid did not time, or where no route was timed at every count,
+is kept (and named on stderr). Bands outside the range are kept; adjacent bands of one route are
+joined. A moved count's evidence_us row timed the old route, so it is dropped; with --evidence
+ROUTES SELECTED (a second grid of the same card, its route_tune --routes-out and --selected-out) it
+is written again from that grid as [T, ranker us, shipped us], the ranker being --selected-out's
+`ranker` column (route_tune's default answer), and an entry that grid cannot give a row for is kept
+(named on stderr), as is one where that grid does not repeat the move (the range's route slower than
+the old one by more than --margin at a moved count). A count the
 grid did not time between two it did takes the range's route too where its band's route is one the
-grid beat (#1149: a band joined from T 16 and T 24 across n2's 16-token edge, T 17-23 untimed); a band
-route the grid never timed in the range is left alone. Bands outside the range are kept; adjacent
-bands of one route are joined. A moved count's evidence_us row timed the
-old route, so it is dropped; with --evidence ROUTES SELECTED (a second grid of the same card, its
-route_tune --routes-out and --selected-out) it is written again from that grid as [T, ranker us,
-shipped us], the ranker being --selected-out's `ranker` column (route_table_prune's default), and an
-entry that grid cannot give a row for is kept (named on stderr). The grid must be the table's
-board's: route_tune --routes-out on the same card, at the same master. Prints one line a moved count;
-writes the table in place.
+grid beat (#1149: a band joined from T 16 and T 24 across n2's 16-token edge, T 17-23 untimed), unless
+a round edge of the old or the new route lies between those two; a band route the grid never timed
+in the range is left alone. With --repeat (needs --evidence) a move stands only where the second grid
+repeats it; an entry tuned on another board class (tuned_on) moves but gets no rows of this board. The grid must be the table's board's: route_tune --routes-out on the same card,
+at the same master. Prints one line a moved count; writes the table in place.
 """
 import argparse
 import csv
@@ -153,6 +158,19 @@ def main():
             print("%s %s %s %dx%d: %s would slow T%s past the margin, kept"
                   % (*key[:3], key[3], key[4], best, ",".join(map(str, slower))), file=sys.stderr)
             continue
+        # The move must lower the worst regret of the counts it moves by more than the margin: a
+        # least-worst route no better than the bands as they are (T 17-20 A the fastest, T 21-23 B
+        # 4 % behind and A 7 %) would trade one count's loss for another's. Counts it leaves alone
+        # are the same on both sides and take no part.
+        if not moved:
+            continue  # the table's own route is the range's: nothing to move
+        old_worst = max(regret(haves[t], t) for t in moved)
+        new_worst = max(regret(best, t) for t in moved)
+        if new_worst >= old_worst - a.margin:
+            print("%s %s %s %dx%d: %s would not lower the worst regret (%.1f %% -> %.1f %%), kept"
+                  % (*key[:3], key[3], key[4], best, 100 * old_worst, 100 * new_worst),
+                  file=sys.stderr)
+            continue
         # Untimed counts between the timed ones: a band is one route over its counts, so where its
         # route is one the grid beat at a timed count, the range's route takes it there too (else
         # T 17 n4, T 19 n1, T 20 n4 from a grid timed at 17/18/20/22/23). A route the grid never
@@ -172,10 +190,23 @@ def main():
                 rk = ranker.get((key, t))
                 if rk in times and best in times:
                     new_rows[t] = [t, round(times[rk], 2), round(times[best], 2)]
-            gaps = [t for t in sorted(moved) if t not in new_rows]
+            # A count the second grid cannot confirm (no ranker, new or old route row there) is a
+            # gap: the move would stand on the first grid alone.
+            gaps = [t for t in sorted(moved)
+                    if t not in new_rows or haves[t] not in ev_grid.get((key, t), {})]
             if gaps:
-                print("%s %s %s %dx%d: the evidence grid has no ranker / %s row at T%s, kept"
-                      % (*key[:3], key[3], key[4], best, ",".join(map(str, gaps))), file=sys.stderr)
+                print("%s %s %s %dx%d: the evidence grid has no ranker / %s / old route row at T%s,"
+                      " kept" % (*key[:3], key[3], key[4], best, ",".join(map(str, gaps))),
+                      file=sys.stderr)
+                continue
+            # A move the second grid reverses (the range's route slower than the old one there
+            # past the margin) is noise in the first grid: the entry is kept as it was.
+            reversed_at = [t for t in sorted(moved)
+                           if ev_grid[(key, t)][best] > ev_grid[(key, t)][haves[t]] * (1 + a.margin)]
+            if reversed_at:
+                print("%s %s %s %dx%d: the evidence grid does not repeat %s at T%s, kept"
+                      % (*key[:3], key[3], key[4], best, ",".join(map(str, reversed_at))),
+                      file=sys.stderr)
                 continue
             # An entry whose evidence is borrowed (tuned_on another board's class) keeps that
             # borrow: this board's rows beside it would break the borrow's copy of the donor

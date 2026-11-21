@@ -12,7 +12,8 @@ TOOL = os.path.join(ROOT, "tools", "route_table_retime.py")
 FIELDS = ["format", "compute", "epilogue", "n", "k", "T", "route", "median_us"]
 
 
-def run(tmp_path, bands, rows, margin="0.03", evidence=None, second=None, repeat=False, tuned=None):
+def run(tmp_path, bands, rows, margin="0.03", evidence=None, second=None, repeat=False, tuned=None,
+        tokens="9-11"):
     table = tmp_path / "t.json"
     entry = {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 4096, "k": 4096, "bands": bands}
     if evidence is not None:
@@ -47,7 +48,7 @@ def run(tmp_path, bands, rows, margin="0.03", evidence=None, second=None, repeat
     if repeat:
         extra.append("--repeat")
     r = subprocess.run([sys.executable, TOOL, "--table", str(table), "--routes", str(grid),
-                        "--tokens", "9-11", "--margin", margin] + extra, capture_output=True, text=True)
+                        "--tokens", tokens, "--margin", margin] + extra, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     out = json.loads(table.read_text())["entries"][0]
     return (out["bands"], r) if evidence is None else (out["bands"], out["evidence_us"])
@@ -91,17 +92,17 @@ def test_filled_count_takes_its_evidence_row_from_the_second_grid(tmp_path):
 
 
 def test_repeat_keeps_an_entry_the_second_grid_does_not_repeat(tmp_path):
-    # n2 wins T 9-11 in the first grid; in the second n1 wins T 10 by 5 %: with --repeat the entry
-    # stays as it was, without it the move is written.
+    # n2 wins T 9-11 in the first grid. In the second, n2 ties n1 at T 10 and n4 (a table route)
+    # is 10 % ahead of both: no reversal past the margin, so without --repeat the move is written;
+    # with it, n2 is neither within the margin of that grid's fastest nor ahead of n1: kept.
     rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
-    second = ([(9, "n1", 200), (9, "n2", 100), (10, "n1", 95), (10, "n2", 100),
+    second = ([(9, "n1", 200), (9, "n2", 100), (10, "n1", 100), (10, "n2", 100), (10, "n4", 90),
                (11, "n1", 200), (11, "n2", 100)], [(t, "n1") for t in (9, 10, 11)])
-    bands, _ = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[],
-                   second=second, repeat=True)
-    assert bands == [[1, 11, "n1"], [12, 16777216, "n2"]]
-    bands, _ = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[],
-                   second=second)
-    assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
+    table = [[1, 11, "n1"], [12, 20, "n2"], [21, 16777216, "n4"]]
+    bands, _ = run(tmp_path, table, rows, evidence=[], second=second, repeat=True)
+    assert bands == table
+    bands, _ = run(tmp_path, table, rows, evidence=[], second=second)
+    assert bands == [[1, 8, "n1"], [9, 20, "n2"], [21, 16777216, "n4"]]
 
 
 def test_repeat_keeps_a_large_gain_the_second_grid_puts_a_little_behind(tmp_path):
@@ -123,6 +124,55 @@ def test_a_borrowed_entry_moves_but_keeps_its_borrowed_rows(tmp_path):
                           evidence=[[8, 5.0, 4.0]], second=second, tuned="ga102:82sm")
     assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
     assert evidence == [[8, 5.0, 4.0]]
+
+
+def test_second_grid_without_the_old_route_keeps_the_entry(tmp_path):
+    # n2 wins T 9-11 in the first grid; the second grid times n2 and the ranker n4 at T 10, not n1.
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
+    second = ([(9, "n1", 200), (9, "n2", 100), (10, "n2", 108), (10, "n4", 100),
+               (11, "n1", 200), (11, "n2", 100)],
+              [(9, "n1"), (10, "n4"), (11, "n1")])
+    bands, evidence = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[],
+                          second=second)
+    assert bands == [[1, 11, "n1"], [12, 16777216, "n2"]]
+    assert evidence == []
+
+
+def test_second_grid_that_reverses_the_move_keeps_the_entry(tmp_path):
+    # n2 wins T 9-11 in the first grid; the second grid has n2 8 % slower than n1 at T 10: kept.
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
+    second = ([(9, "n1", 200), (9, "n2", 100), (10, "n1", 100), (10, "n2", 108),
+               (11, "n1", 200), (11, "n2", 100)], [(t, "n1") for t in (9, 10, 11)])
+    bands, evidence = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[],
+                          second=second)
+    assert bands == [[1, 11, "n1"], [12, 16777216, "n2"]]
+    assert evidence == []
+
+
+def test_a_move_that_does_not_lower_the_worst_regret_is_kept(tmp_path):
+    # T 9-10 n1 the fastest; T 11 n2 4 % behind n4, n1 7 % behind: n1 over the range would trade
+    # T 11's 4 % for 7 %, inside the slow-down margin (104 -> 107 us).
+    rows = ([(t, r, us) for t in (9, 10) for r, us in (("n1", 100), ("n2", 108), ("n4", 110))]
+            + [(11, "n1", 107), (11, "n2", 104), (11, "n4", 100)])
+    bands, _ = run(tmp_path, [[1, 10, "n1"], [11, 16777216, "n2"]], rows)
+    assert bands == [[1, 10, "n1"], [11, 16777216, "n2"]]
+
+
+def test_a_count_the_move_leaves_alone_does_not_block_it(tmp_path):
+    # T 9-15 n1 10 % behind n2; T 16 n2 8 % behind n4 (n1 far behind there): n2 over the range
+    # clears T 9-15 and leaves T 16 as it is. T 16's 8 % is on both sides: the move stands.
+    rows = ([(t, r, us) for t in range(9, 16) for r, us in (("n1", 110), ("n2", 100), ("n4", 300))]
+            + [(16, "n1", 300), (16, "n2", 108), (16, "n4", 100)])
+    bands, r = run(tmp_path, [[1, 15, "n1"], [16, 16777216, "n2"]], rows, tokens="9-16")
+    assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]], r.stderr
+
+
+def test_the_table_route_already_least_worst_is_left_alone(tmp_path):
+    # n1 5 % behind at T 9, far ahead at T 10-11: n1 is the range's route, nothing moves (rc 0).
+    rows = [(9, "n1", 105), (9, "n2", 100), (10, "n1", 100), (10, "n2", 120),
+            (11, "n1", 100), (11, "n2", 120)]
+    bands, _ = run(tmp_path, [[1, 16777216, "n1"]], rows)
+    assert bands == [[1, 16777216, "n1"]]
 
 
 def test_route_within_the_margin_is_kept(tmp_path):
@@ -179,7 +229,8 @@ def test_counts_no_band_covers_are_left_alone(tmp_path):
 def test_second_grid_writes_the_moved_counts_evidence(tmp_path):
     # Moved T9-11 n1 -> n2; the second grid's ranker answers n4 there (rk us, n2 us); T12's row stays.
     rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
-    second = ([(t, r, us) for t in (9, 10, 11) for r, us in (("n2", 101.234), ("n4", 150), ("w4a8.32x128", 90))],
+    second = ([(t, r, us) for t in (9, 10, 11)
+               for r, us in (("n1", 200), ("n2", 101.234), ("n4", 150), ("w4a8.32x128", 90))],
               [(t, "n4") for t in (9, 10, 11)])
     bands, ev = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows,
                     evidence=[[9, 300, 200], [12, 300, 100]], second=second)
