@@ -128,9 +128,11 @@ def catalog(pci, drivers, registry):
             excluded.append({**base, "reason": "non-GPU PCI function"})
             continue
         names = sorted({n for i in identities.values() for n in i["names"]})
+        # The driver list's names count too: pci.ids may give only the chip (GB203) where NVIDIA
+        # names the board a Laptop, GRID or engineering SKU.
         rows.append({**base, "generation": family,
                      "registry": row["name"] if row else None,
-                     "triage": classify(name, identities),
+                     "triage": classify(" / ".join([name, *names]), identities),
                      "multiple_driver_names": len(names) > 1,
                      "nvidia": identities, "pci_subsystems": entry.get("subsystems", {})})
     counts = {}

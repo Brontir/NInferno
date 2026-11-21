@@ -71,6 +71,18 @@ class CatalogTest(unittest.TestCase):
         self.assertEqual(gb10["triage"], "platform-review")
         self.assertEqual([r["id"] for r in result["unclassified_driver_ids"]], ["0x3456"])
 
+    def test_driver_names_take_part_in_triage(self):
+        # pci.ids names only the chip; NVIDIA's list names a laptop board (codex on #905).
+        pci = "10de  NVIDIA Corporation\n\t2c58  GB203\n"
+        chips = ("<table><tr><th>GPU</th><th>PCI ID</th></tr>"
+                 "<tr><td>NVIDIA GeForce RTX 5090 Laptop GPU</td><td>2C58</td></tr></table>")
+        result = gpu_catalog.catalog(gpu_catalog.pci_devices(pci),
+                                     gpu_catalog.driver_identities([("chips.html", chips)]),
+                                     {"gpus": []})
+        row = next(r for r in result["rows"] if r["id"] == "0x2C58")
+        self.assertEqual(row["triage"], "oem-clock-range-review")
+        self.assertEqual(result["missing_by_triage"], {"oem-clock-range-review": 1})
+
     def test_changed_driver_document_does_not_report_empty_success(self):
         with self.assertRaisesRegex(ValueError, "no supported-chip rows"):
             gpu_catalog.driver_identities([("error.html", "<h1>Access denied</h1>")])

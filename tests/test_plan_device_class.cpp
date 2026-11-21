@@ -842,6 +842,31 @@ int main() {
               "gemma4 with_tile_arch refuses a label it holds no tile of (#1115)");
     }
 
+    // The RTX PRO 5000 72GB, subsystem device 227A of 0x2BB3 under four vendor ids in NVIDIA's
+    // driver list (codex on #905): by its name (NVIDIA's own subsystem, listed first) or by a
+    // vendor's id it plans as its own 72 GiB board; the product's name keeps the 48 GiB row.
+    {
+        std::string error;
+        const auto big   = pr::plan_device_of_board("RTX PRO 5000 72GB Blackwell", &error);
+        const auto dell  = pr::plan_device_of_board("0x2BB3:0x1028227A", &error);
+        const auto small = pr::plan_device_of_board("RTX PRO 5000 Blackwell", &error);
+        check(big && dell && small, "--plan-device: the 0x2BB3 boards resolve (" + error + ")");
+        if (big && dell && small) {
+            check(big->pci_subsystem_id == 0x10DE227A && dell->pci_subsystem_id == 0x1028227A &&
+                      small->pci_subsystem_id == 0,
+                  "--plan-device: the 72 GB board by name is 10DE:227A, by a vendor's id that one");
+            const DeviceClass big_class   = rt::plan_device_class(*big);
+            const DeviceClass dell_class  = rt::plan_device_class(*dell);
+            const DeviceClass small_class = rt::plan_device_class(*small);
+            check(big_class.facts.vram_gib == 72 && dell_class.facts.vram_gib == 72 &&
+                      small_class.facts.vram_gib == 48,
+                  "the 72 GB board plans with 72 GiB, the product with 48: " +
+                      std::to_string(big_class.facts.vram_gib) + " / " +
+                      std::to_string(dell_class.facts.vram_gib) + " / " +
+                      std::to_string(small_class.facts.vram_gib));
+        }
+    }
+
     // #903 item 4: --plan-device names a registered variant of a shared PCI product (the TITAN V
     // CEO Edition, subsystem 10DE:12EB of the Quadro GV100's 0x1DBA): by its name or as
     // "0x1DBA:0x10DE12EB". Its class carries the subsystem, so the machine facts are that board's
