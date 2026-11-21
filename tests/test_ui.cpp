@@ -1486,7 +1486,9 @@ void test_hub_plan_via_serve() {
               "two asks of one key at once: one serve run (" + std::to_string(count) + ")");
     }
     // Two asks of different keys at once: two serve runs, one after the other on the card (a child
-    // that finds another running notes the overlap).
+    // that finds another running notes the overlap). The code before the card's mutex showed no
+    // overlap here either (another lock ordered the two asks, even with a 3 s child): this guards
+    // the order, it did not catch a failure.
     {
         fs::remove(root / "runs.txt");
         fs::remove(root / "overlaps.txt");
