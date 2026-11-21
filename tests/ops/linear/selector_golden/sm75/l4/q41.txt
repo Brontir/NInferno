@@ -489,10 +489,7 @@ q41 p1 store 28672x8192 speed T=3 ggml_vec ws=27648
 q41 p1 store 28672x8192 speed T=4 ggml_vec ws=36864
 q41 p1 store 28672x8192 speed T=5..8 rmma.m1.n1.w1x4 ws=0
 q41 p1 store 28672x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-q41 p1 store 28672x8192 speed T=17 w4a8.32x128 ws=174080
-q41 p1 store 28672x8192 speed T=24 w4a8.32x128 ws=245760
-q41 p1 store 28672x8192 speed T=32 w4a8.32x128 ws=327680
-q41 p1 store 28672x8192 speed T=48..2048 ggml_mmq ws=0
+q41 p1 store 28672x8192 speed T=17..2048 ggml_mmq ws=0
 q41 p1 store 28672x8192 prefill T=17..2048 ggml_mmq ws=0
 q41 p1 store 28672x8192 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q41 p1 store 28672x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
@@ -502,10 +499,7 @@ q41 p1 add 28672x8192 speed T=3 ggml_vec ws=27648
 q41 p1 add 28672x8192 speed T=4 ggml_vec ws=36864
 q41 p1 add 28672x8192 speed T=5..8 rmma.m1.n1.w1x4 ws=0
 q41 p1 add 28672x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-q41 p1 add 28672x8192 speed T=17 w4a8.32x128 ws=174080
-q41 p1 add 28672x8192 speed T=24 w4a8.32x128 ws=245760
-q41 p1 add 28672x8192 speed T=32 w4a8.32x128 ws=327680
-q41 p1 add 28672x8192 speed T=48..2048 ggml_mmq ws=0
+q41 p1 add 28672x8192 speed T=17..2048 ggml_mmq ws=0
 q41 p1 add 28672x8192 prefill T=17..2048 ggml_mmq ws=0
 q41 p1 add 28672x8192 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q41 p1 add 28672x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
@@ -515,10 +509,7 @@ q41 p1 swiglu 14336x8192 speed T=3 ggml_vec ws=27648
 q41 p1 swiglu 14336x8192 speed T=4 ggml_vec ws=36864
 q41 p1 swiglu 14336x8192 speed T=5..8 rmma.m1.n1.w1x8 ws=0
 q41 p1 swiglu 14336x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-q41 p1 swiglu 14336x8192 speed T=17 w4a8.32x128 ws=174080
-q41 p1 swiglu 14336x8192 speed T=24 w4a8.32x128 ws=245760
-q41 p1 swiglu 14336x8192 speed T=32 w4a8.32x128 ws=327680
-q41 p1 swiglu 14336x8192 speed T=48..2048 ggml_mmq ws=0
+q41 p1 swiglu 14336x8192 speed T=17..2048 ggml_mmq ws=0
 q41 p1 swiglu 14336x8192 prefill T=17..2048 ggml_mmq ws=0
 q41 p1 swiglu 14336x8192 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q41 p1 swiglu 14336x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0

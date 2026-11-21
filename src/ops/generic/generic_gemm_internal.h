@@ -283,6 +283,9 @@ void launch_r8(int schedule, WeightCodec codec, Epilogue epilogue, const GemmArg
 // beyond the form's).
 [[nodiscard]] std::optional<kernel_facts::R8KernelKey>
 r8_kernel_key(int schedule, QType qtype, Epilogue epilogue, std::int32_t tokens, bool prequantized);
+// The kernel-facts name of the W4A8 decoder type `codec` instantiates ("W4a8Q45K<4>"), which the
+// W4A8 and R8 kernels share; "" for a codec without one (generic_select.cpp).
+[[nodiscard]] std::string_view w4a8_decoder_name(WeightCodec codec);
 [[nodiscard]] std::optional<kernel_facts::R8KernelKey>
 r8_launch_key(int schedule, QType qtype, Epilogue epilogue, std::int32_t tokens, bool prequantized);
 bool launch_r8_iq3(int schedule, WeightCodec codec, Epilogue epilogue, const GemmArgs& args,

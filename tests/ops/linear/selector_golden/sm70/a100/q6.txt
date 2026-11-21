@@ -438,9 +438,7 @@ q6 p1 add 17408x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 q6 p1 swiglu 8704x5120 speed T=1 r8.w4r1 ws=0
 q6 p1 swiglu 8704x5120 speed T=2..8 rmma.m1.n1.w1x8 ws=0
 q6 p1 swiglu 8704x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-q6 p1 swiglu 8704x5120 speed T=17 w4a8.32x128 ws=108928
-q6 p1 swiglu 8704x5120 speed T=24 w4a8.32x128 ws=153600
-q6 p1 swiglu 8704x5120 speed T=32 w4a8.32x128 ws=204800
+q6 p1 swiglu 8704x5120 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 q6 p1 swiglu 8704x5120 speed T=48..192 tiled.64x128 ws=0
 q6 p1 swiglu 8704x5120 speed T=256 i8.128x128 ws=1474560
 q6 p1 swiglu 8704x5120 speed T=512 i8.256x128 ws=2949120
@@ -561,9 +559,7 @@ q6 p0 swiglu 14336x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 q6 p1 store 28672x8192 speed T=1 r8.w8r2 ws=0
 q6 p1 store 28672x8192 speed T=2..8 rmma.m1.n1.w1x8 ws=0
 q6 p1 store 28672x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-q6 p1 store 28672x8192 speed T=17 w4a8.32x128 ws=174080
-q6 p1 store 28672x8192 speed T=24 w4a8.32x128 ws=245760
-q6 p1 store 28672x8192 speed T=32 w4a8.32x128 ws=327680
+q6 p1 store 28672x8192 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 q6 p1 store 28672x8192 speed T=48..192 tiled.64x128 ws=0
 q6 p1 store 28672x8192 speed T=256 i8.128x128 ws=2359296
 q6 p1 store 28672x8192 speed T=512 i8.256x128 ws=4718592
@@ -578,9 +574,7 @@ q6 p1 store 28672x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 q6 p1 add 28672x8192 speed T=1 r8.w8r2 ws=0
 q6 p1 add 28672x8192 speed T=2..8 rmma.m1.n1.w1x8 ws=0
 q6 p1 add 28672x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-q6 p1 add 28672x8192 speed T=17 w4a8.32x128 ws=174080
-q6 p1 add 28672x8192 speed T=24 w4a8.32x128 ws=245760
-q6 p1 add 28672x8192 speed T=32 w4a8.32x128 ws=327680
+q6 p1 add 28672x8192 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 q6 p1 add 28672x8192 speed T=48..192 tiled.64x128 ws=0
 q6 p1 add 28672x8192 speed T=256 i8.128x128 ws=2359296
 q6 p1 add 28672x8192 speed T=512 i8.256x128 ws=4718592
@@ -595,9 +589,7 @@ q6 p1 add 28672x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 q6 p1 swiglu 14336x8192 speed T=1 r8.w8r2 ws=0
 q6 p1 swiglu 14336x8192 speed T=2..8 rmma.m1.n1.w1x8 ws=0
 q6 p1 swiglu 14336x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-q6 p1 swiglu 14336x8192 speed T=17 w4a8.32x128 ws=174080
-q6 p1 swiglu 14336x8192 speed T=24 w4a8.32x128 ws=245760
-q6 p1 swiglu 14336x8192 speed T=32 w4a8.32x128 ws=327680
+q6 p1 swiglu 14336x8192 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 q6 p1 swiglu 14336x8192 speed T=48..192 tiled.64x128 ws=0
 q6 p1 swiglu 14336x8192 speed T=256 i8.128x128 ws=2359296
 q6 p1 swiglu 14336x8192 speed T=512 i8.256x128 ws=4718592

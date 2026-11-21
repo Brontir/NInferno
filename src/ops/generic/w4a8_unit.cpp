@@ -52,11 +52,19 @@ bool scored(QType q) noexcept { return q == QType::GGML_Q4_K || q == QType::GGML
 
 std::optional<kernel_facts::W4a8KernelKey>
 kernel_key(int schedule, QType q, ops::detail::generic::Epilogue epilogue, std::string_view arch) {
-    if (!scored(q) || schedule < 0 || schedule >= static_cast<int>(kSchedules.size()))
+    if (!scored(q)) return std::nullopt;
+    return kernel_key_of(schedule, q == QType::GGML_Q4_K ? "W4a8Q45K<4>" : "W4a8Q6K", epilogue,
+                         arch);
+}
+
+std::optional<kernel_facts::W4a8KernelKey> kernel_key_of(int schedule, std::string_view codec,
+                                                         ops::detail::generic::Epilogue epilogue,
+                                                         std::string_view arch) {
+    if (codec.empty() || schedule < 0 || schedule >= static_cast<int>(kSchedules.size()))
         return std::nullopt;
     const Schedule& s = kSchedules[static_cast<std::size_t>(schedule)];
     kernel_facts::W4a8KernelKey k;
-    k.codec    = q == QType::GGML_Q4_K ? "W4a8Q45K<4>" : "W4a8Q6K";
+    k.codec    = std::string(codec);
     k.block_m  = s.block_m;
     k.block_n  = s.block_n;
     k.warps_m  = s.warps_m;
