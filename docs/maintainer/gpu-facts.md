@@ -8,7 +8,14 @@ the query stores in `DeviceClass::facts`.
 
 ## Fields
 
-Each row is one SKU, keyed by its PCI product id:
+Each row is a published reference configuration, keyed by its PCI product id. A product id is
+not always a unique SKU: NVIDIA also uses subsystem vendor/product ids to distinguish boards.
+A board whose subsystem id is known is a `subsystems` entry, which the runtime selects by that id
+(#903). `variants` is audit metadata: the facts-vs-driver audit reads it, the runtime never selects it.
+A board whose subsystem id is not confirmed yet is only there; a board with a confirmed one is in
+both (the audit does not read `subsystems`). Such a card keeps its row's SM clock, but its bus width and memory clock come from
+the driver where they differ (machine_facts.cpp), and a live plan reads the driver's memory size;
+only `--plan-device` naming the row plans it at the row's own memory.
 
 | Field | Meaning |
 |---|---|
@@ -29,7 +36,7 @@ Each row is one SKU, keyed by its PCI product id:
 | `target` | only when false: listed for identification, not a target (H100, H200, B200) |
 | `sources` | the datasheet or product page, a database page, and the pci-ids entry of the id |
 | `variants` | only where another board is sold, or reports itself, under the id: one object per board, with the values in which it differs from the row (`vram_gib`, `gbps`, `boost_mhz`, `bus_bits`; a bus width must be a whole number of 32-bit channels, the only widths `machine_facts` reads). The facts-vs-driver audit reads it, so a recorded board passes the audit as information; `machine_facts` never reads it and decides from the driver's values alone |
-| `subsystems` | only where another board under the id is told apart by its PCI subsystem and differs in a priced value (the TITAN V CEO Edition, subsystem `0x10DE12EB`, under the Quadro GV100's `0x1DBA`): one object per board with `id` (`0x`, subsystem vendor and device, eight hex digits), `name`, `sources`, and the values in which it differs (`boost_mhz`, `gbps`, `bus_bits`, `tdp_w`, `vram_gib`). Not on a laptop row. A subsystem's `name`, compared as `--plan-device` compares names (lower case, trimmed, without "nvidia " or "geforce "), names no row and no other subsystem: `--plan-device` names the board by it. Unlike `variants`, `machine_facts` reads it (below) |
+| `subsystems` | only where another board under the id is told apart by its PCI subsystem and differs in a priced value (the TITAN V CEO Edition, subsystem `0x10DE12EB`, under the Quadro GV100's `0x1DBA`): one object per board with `id` (`0x`, subsystem vendor and device, eight hex digits), `name`, `sources`, and the values in which it differs (`boost_mhz`, `gbps`, `bus_bits`, `tdp_w`, `vram_gib`). Not on a laptop row. A subsystem's `name`, compared as `--plan-device` compares names (lower case, trimmed, without "nvidia " or "geforce "), names no row and no other board: `--plan-device` names the board by it. One board sold under several subsystem vendors (the RTX PRO 5000 72GB, device `227A` under NVIDIA, Dell, HP and Lenovo) is one entry per id, of one name and equal values; the name plans as the first. Unlike `variants`, `machine_facts` reads it (below) |
 | `note` | caveats: an id shared by two memory sizes, values from secondary sources |
 
 The reference clock is the published boost clock of NVIDIA's reference board. It is the value the
@@ -119,9 +126,14 @@ Four rows remain unknown after that audit and #958:
   disable some), and no SKU page or `deviceQuery` of this board gives its value.
 - `0x27B2`, RTX 4000 Ada Generation (target, #958): the aggregator's 48 MiB exceeds what five
   32-bit controllers carry on Ada (8 MiB each, at most 40 MiB at 160 bits).
+- Three #905 rows by the same bound (their source pages give the full chip's or a wider board's
+  figure): `0x26B2` RTX 5000 Ada (72 MiB at 256 bits; AD102 holds at most 64 there), `0x27B0`
+  RTX 4000 SFF Ada (48 MiB at 160 bits; at most 40, as `0x27B2`), `0x1F83` GTX 1630 (1 MiB at 64
+  bits; TU117 holds 256 KiB a controller, at most 512 KiB).
 
 `ninferno_machine_facts_test` rejects another target row without L2. Its explicit
-exceptions are `0x1F09`, `0x1F0A` and `0x27B2`; remove each when its capacity is sourced. Unknown values
+exceptions are `0x1F09`, `0x1F0A`, `0x27B2`, `0x26B2`, `0x27B0` and `0x1F83`; remove each when its
+capacity is sourced. Unknown values
 stay absent, preserving the conservative missing-fact behavior.
 
 ### Procedure
@@ -141,3 +153,47 @@ stay absent, preserving the conservative missing-fact behavior.
    --update-atlas` on a build of each set (base: sm_86 or sm_89; full: sm_120a; sm75; sm70) writes
    `tests/data/decision_atlas/<set>.txt`, a line per row (#614 F5). The new row appears there, and
    any other row that moved is a decision the change made.
+
+## Auditing identity coverage
+
+`tools/audit/gpu_catalog.py` compares the registry with saved
+[pci.ids](https://pci-ids.ucw.cz/v2.2/pci.ids) and NVIDIA's `README/supportedchips.html` lists
+([620.70.06](https://download.nvidia.com/XFree86/Linux-x86_64/620.70.06/README/supportedchips.html),
+[580.196.07](https://download.nvidia.com/XFree86/Linux-x86_64/580.196.07/README/supportedchips.html)).
+Use current and legacy driver lists: one current driver branch is not an inventory of every
+older board. Save the retrieval date and URLs beside the inputs; the report records their SHA-256
+hashes. Each driver identity refers to a source id made from the filename and its full hash, so two
+different driver versions saved as `supportedchips.html` cannot lose their separate provenance.
+It runs offline, without CUDA, a GPU or a driver:
+
+```bash
+python3 tools/audit/gpu_catalog.py --pci-ids /path/to/pci.ids \
+  --supported-chips /path/to/nvidia-620.70.06.html \
+  --supported-chips /path/to/nvidia-580.196.07.html \
+  --output /path/to/coverage.json
+```
+
+The report retains all observed subsystem identities and names, lists missing product ids by
+chip generation, excludes audio/USB/PCI-bridge functions, and keeps unclassified driver identities
+visible. Architecture follows a published chip name, not the marketing series: RTX 2050 is
+Ampere, whereas RTX 3050 A is Ada. Triage labels distinguish OEM clock-range work, engineering
+ids, mining boards, virtual/shared identities and platform review. They are not support claims:
+an id in pci.ids or a driver list does not prove a released, physically tested SKU. A row marked
+`multiple_driver_names` needs inspection; names alone do not prove different decision facts.
+The dated census and remaining qualification work are tracked in
+[#904](https://github.com/Brontir/NInferno/issues/904).
+
+Keep three questions separate: **identity listed**, **decision facts complete and applicable to
+that variant**, and **hardware qualified**. Registered product-id counts answer only the first.
+Do not fill a missing SKU's L2 with the full chip's cache, take a desktop clock for its mobile
+version, or infer a laptop's lower boost limit from one OEM's clock. For shared product ids, retain
+the subsystem evidence before adding a generic row. Capacity-only variants with identical pricing
+facts can use the existing `variants` metadata; variants that change reference clocks, SMs or L2
+need identity resolution before their facts can be called verified. A SoC or virtual identity
+also needs the relevant platform or partition contract; adding a name cannot establish it.
+
+Check conflicting sources field by field. For example, RTX 5880 Ada uses NVIDIA's published
+960 GB/s (20 Gbps on 384 bits), rather than TechPowerUp's 864 GB/s; Quadro RTX 5000's total board
+power is 265 W, while its 230 W graphics-power figure describes a different quantity. The row's
+sources and note record these distinctions. The catalogue audit discovers gaps; it never writes
+or guesses production specifications.

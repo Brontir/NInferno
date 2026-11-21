@@ -7,11 +7,11 @@
  },
  "source": "tools/route_pick/gen.py: pick.py over the facts below, nothing measured on this card",
  "inputs": {
-  "src/core/data/gpu_facts.json": "27cbf40a172aac47a0a671ba927707b84269559890526c8a3518afe979472449",
+  "src/core/data/gpu_facts.json": "beb9d18a93d7ab298370bcfe5998ad7f18afe2cf24b19efeca2f7787d35d596d",
   "src/core/data/isa_facts.json": "ea91e207d90ba4516a40f0ff3016182926b15ee87204ae3e9b833ec4e1fc21d4",
   "src/core/data/sm_rate_facts.json": "bfcd77295bba25aea216aa800548bda80e655770725ef4bd66ef4251de3a105f",
   "src/ops/generic/data/kernel_facts/sm_86.txt": "6a87d1fefe652eb47cc8ec91c5194b7d5c3929181d99e8d88a7c3a467f1d7d60",
-  "tools/route_pick/pick.py": "cd017307f902fe6a02fe39019c44b16bf637daa8fe22eb725c9eeed6bf92f458",
+  "tools/route_pick/pick.py": "7b6166d08ff970a7546ea98701c764bc2e1552c6baf4c86d4570b9ca3e00aad4",
   "tools/route_pick/facts.py": "22e14fd9524280429ed5f8455dee8b40217445518e7b411508cfbc52cd3fb24b",
   "tools/route_pick/gen.py": "90181088a3b61edfe19b6cecb3cc2a78ec3e3f0ea352569b47bced90c01ad4fc",
   "src/ops/generic/ggml_mmq/ggml_mmq.h": "751d67528a6adda0a26363ca86c26b9e960ffdaae9c4a2634449eac8d1d4c58f"

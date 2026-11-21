@@ -562,6 +562,9 @@ class Compare(unittest.TestCase):
     def test_variants_are_boards_that_differ_from_the_row(self):
         recorded = {i: r["variants"] for i, r in ROWS.items() if "variants" in r}
         self.assertEqual(recorded, {0x2D04: [{"vram_gib": 8}],
+                                    0x2BB3: [{"vram_gib": 72}],
+                                    0x2D18: [{"vram_gib": 12}],
+                                    0x2D58: [{"vram_gib": 12}],
                                     0x1F82: [{"gbps": 12.0, "boost_mhz": 1590}],
                                     0x2786: [{"gbps": 20.0}],
                                     0x2503: [{"vram_gib": 8, "bus_bits": 128}]})
