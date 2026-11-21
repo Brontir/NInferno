@@ -1022,6 +1022,18 @@ std::string utf8_of(const fs::path& path) {
     return std::string(text.begin(), text.end());
 }
 
+// A serve plan that failed for want of the hub or of time (its 45 s), not by refusing the model:
+// serve_plan_json's timeout, or a last line naming the transport (convert/fetch.cpp's curl and
+// HTTP errors). The plan here answers then (#766); any other failure is serve's refusal.
+bool hub_transport_failure(const std::string& what) {
+    for (const char* mark :
+         {"did not answer within", "can't reach", "unreachable", "Couldn't resolve",
+          "Couldn't connect", "Timeout was reached", "SSL", "HTTP ", "curl"}) {
+        if (what.find(mark) != std::string::npos) { return true; }
+    }
+    return false;
+}
+
 } // namespace
 
 std::optional<Json> App::serve_plan_json(const std::string& model, const std::string& quant,
@@ -1177,21 +1189,33 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     const std::string& quant, const product::LaunchAsk& launch) {
     // The idle plan is serve's own where it reads the same hub (#766): its MoE route and workspace
     // queries are the start's, which this binary cannot link. One serve run a plan key (the ask,
-    // the GPU, the conversions and files here), kept as the plan here is: the page asks again at
-    // every move of the free memory, and a serve child's own CUDA context is one. `now` is
-    // replayed here from the plan here's context, as before (the workspace by the formula).
-    // A quantization the listing lacks is refused before any child runs.
+    // the GPU, the conversions and files here), kept as the plan here is, a failure too: the page
+    // asks again at every move of the free memory, and a serve child's own CUDA context is one.
+    // `now` is replayed here at serve's pick (the workspace by the formula). A quantization the
+    // listing lacks is refused before any child runs (serve_hub_plan_refusal throws).
+    const std::string why = serve_hub_plan_refusal(repo, hub, gpu, quant);
+    // The plan here first: its first tensor-table read drops the repository's kept plans
+    // (gguf_table), which would drop a serve document kept before it.
+    std::shared_ptr<const PlanNowContext> now;
+    Json doc;
+    std::string here_failed;
+    try {
+        doc = plan_json_idle(repo, hub, gpu, quant, launch, true, &now);
+    } catch (const std::invalid_argument&) {
+        throw; // the ask itself
+    } catch (const std::exception& error) { here_failed = error.what(); }
     std::string planner;
     std::optional<Json> served;
-    if (const std::string why = serve_hub_plan_refusal(repo, hub, gpu, quant); !why.empty()) {
+    if (!why.empty()) {
         planner = "ninferno-ui: " + why + ", the workspace and MoE routes are estimates";
     } else {
         const std::string key = plan_key(repo, hub, gpu, quant, launch) + "|serve";
+        std::optional<Json> kept;
         {
             std::lock_guard lock(sizes_mutex_);
-            if (const auto it = plans_.find(key); it != plans_.end()) { served = it->second; }
+            if (const auto it = plans_.find(key); it != plans_.end()) { kept = it->second; }
         }
-        if (!served) {
+        if (!kept) {
             const auto generation    = hub_generation();
             const Json list          = listing_of(repo, hub);
             const std::string commit = list.empty() || !list.front().is_object()
@@ -1201,44 +1225,75 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
             const std::string model =
                 commit.empty() || repo.find('@') != std::string::npos ? repo : repo + "@" + commit;
             try {
-                served = serve_plan_json(model, quant, gpu, launch);
+                if (auto answer = serve_plan_json(model, quant, gpu, launch)) {
+                    // The model by the name the plan here gives it (the page names a family's
+                    // gate by it), not serve's repo@commit.
+                    if (answer->contains("model") && (*answer)["model"].is_object()) {
+                        (*answer)["model"]["source"] = quant.empty() ? repo : repo + ":" + quant;
+                    }
+                    kept = std::move(*answer);
+                } else {
+                    kept = Json{{"no_serve", true}};
+                }
             } catch (const std::exception& error) {
-                // serve's own hub read failed (the network, a timeout): the plan here answers
-                // from what this process read, and says why.
-                planner = std::string("ninferno-ui: ninferno-serve --plan failed (") +
-                          error.what() + "), the workspace and MoE routes are estimates";
+                // serve's own hub read failed or it did not answer: the plan here answers from what
+                // this process read, saying why. Any other failure is serve's refusal, and a
+                // start would refuse as it does (#843): the plan's answer.
+                const std::string what = error.what();
+                kept =
+                    hub_transport_failure(what) ? Json{{"failed", what}} : Json{{"refused", what}};
             }
-            if (served) {
-                // The model by the name the plan here gives it (the page names a family's gate by
-                // it), not serve's repo@commit.
-                if (served->contains("model") && (*served)["model"].is_object()) {
-                    (*served)["model"]["source"] = quant.empty() ? repo : repo + ":" + quant;
+            std::lock_guard lock(sizes_mutex_);
+            if (generation == hub_generation_) {
+                if (plans_.size() >= kMaxKeptPlans) {
+                    plans_.clear();
+                    plan_now_.clear();
                 }
-                std::lock_guard lock(sizes_mutex_);
-                if (generation == hub_generation_ && plans_.size() < kMaxKeptPlans) {
-                    plans_[key] = *served;
-                }
-            } else if (planner.empty()) {
-                planner = "ninferno-ui: no ninferno-serve beside it, the workspace and MoE routes "
-                          "are estimates";
+                plans_[key] = *kept;
             }
         }
+        if (kept->contains("refused")) {
+            throw std::runtime_error((*kept)["refused"].get<std::string>());
+        }
+        if (kept->contains("failed")) {
+            planner = "ninferno-ui: ninferno-serve --plan failed (" +
+                      (*kept)["failed"].get<std::string>() +
+                      "), the workspace and MoE routes are estimates";
+        } else if (kept->contains("no_serve")) {
+            planner = "ninferno-ui: no ninferno-serve beside it, the workspace and MoE routes are "
+                      "estimates";
+        } else {
+            served = std::move(*kept);
+        }
     }
-    // The plan of an idle card here (cached), and its context for what a start right now would
-    // get at the GPU's free memory (product::plan_now, each request: another process's share
-    // moves). Where only serve could plan (no card NVML reads, a shape this process cannot read),
-    // serve's document answers with its own `now`.
-    std::shared_ptr<const PlanNowContext> now;
-    Json doc;
-    try {
-        doc = plan_json_idle(repo, hub, gpu, quant, launch, true, &now);
-    } catch (const std::invalid_argument&) {
-        throw; // the ask itself (a quantization the listing lacks)
-    } catch (const std::exception&) {
-        if (!served) { throw; }
-        return std::move(*served);
+    if (!here_failed.empty()) {
+        // Only serve could plan (no card NVML reads, a shape this process cannot read): its
+        // document answers with its own `now`.
+        if (served) { return std::move(*served); }
+        throw std::runtime_error(here_failed + (planner.empty() ? "" : "; " + planner));
     }
     if (served) {
+        // serve's pick may be another row than the plan here's (the workspace and the MoE routes
+        // move the fit at its edge): `now` is replayed at serve's, from that row's plan here.
+        const auto label_of = [](const Json& d) {
+            return d.contains("chosen") && d["chosen"].is_string() ? d["chosen"].get<std::string>()
+                                                                   : std::string();
+        };
+        const std::string pick = label_of(*served);
+        if (quant.empty() && !pick.empty() && pick != label_of(doc)) {
+            now.reset();
+            try {
+                (void)plan_json_idle(repo, hub, gpu, pick, launch, true, &now);
+            } catch (const std::exception&) {}
+            if (!now) {
+                std::lock_guard lock(sizes_mutex_);
+                if (const auto it = plan_now_.find(plan_key(repo, hub, gpu, pick, launch));
+                    it != plan_now_.end()) {
+                    now = it->second;
+                }
+            }
+            if (!now) { return std::move(*served); } // serve's own `now`, of its pick
+        }
         doc = std::move(*served);
         doc.erase("now"); // replayed below, at the free memory now
     }

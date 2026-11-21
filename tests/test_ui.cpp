@@ -1388,6 +1388,21 @@ void test_hub_plan_via_serve() {
     std::tie(status, body) = plan(root / "no-such-serve", "");
     check(status == 502 && body.find("no GPU 0") != std::string::npos,
           "without serve the plan here answers: " + body);
+    // serve refuses the model: its refusal is the plan's (a start would refuse as it does), with
+    // its last line; a failure for want of the hub falls back to the plan here, naming it.
+    std::ofstream(root / "serve-refuses")
+        << "#!/bin/sh\necho 'error: cannot be run: no' >&2\nexit 1\n";
+    fs::permissions(root / "serve-refuses", fs::perms::owner_all);
+    std::tie(status, body) = plan(root / "serve-refuses", "");
+    check(status == 502 && body.find("cannot be run: no") != std::string::npos,
+          "serve's refusal of a hub row is the plan's: " + body);
+    std::ofstream(root / "serve-offline")
+        << "#!/bin/sh\necho 'error: org/m-GGUF: can'\"'\"'t reach the hub' >&2\nexit 1\n";
+    fs::permissions(root / "serve-offline", fs::perms::owner_all);
+    std::tie(status, body) = plan(root / "serve-offline", "");
+    check(status == 502 && body.find("no GPU 0") != std::string::npos &&
+              body.find("ninferno-serve --plan failed") != std::string::npos,
+          "serve without the hub: the plan here answers, naming serve's failure: " + body);
     // One serve run a plan key: the page asks again at every move of the free memory.
     {
         fs::remove(root / "runs.txt");
