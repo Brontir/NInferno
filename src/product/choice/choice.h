@@ -819,7 +819,8 @@ struct Choice {
     // on two lab cards, Reference::activations_decide); else the default (or the pin) stood.
     bool activations_by_worth = false;
     // Under by_worth, the KV codecs the worth does not take (kv_decides false: their read cost on
-    // the generation rests on fewer than two lab cards); each stays only as the default or a pin.
+    // the generation rests on fewer than two lab cards, or the SMs bound it there and no SM-rate
+    // row of this model's geometry exists, #863); each stays only as the default or a pin.
     std::vector<KvCacheStorage> kv_not_decided;
     bool chunk_by_speed = false;       // an MoE's chunk was the fastest (else the default stood)
     ChunkBasis chunk_basis = ChunkBasis::None; // what the chunk decision rests on

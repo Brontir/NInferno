@@ -1102,6 +1102,30 @@ void decides_by_generation(const json& fixture) {
               "gb20x: exact and NVFP4 are the family's default's alternatives, not weighed");
         if (choice.chosen) { std::cout << choice.why << '\n'; }
     }
+    {
+        // #863 item 3: on Ada the MoE family's NVFP4 read is SM-bound off the geometry its rate was
+        // read on, so the worth does not weigh it: listed as not decided, the default's
+        // alternative.
+        const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
+        Bench moe{
+            model_of(m35), a.card, {quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"))}};
+        ch::Task task;
+        task.contexts           = {32768};
+        const ch::Choice choice = ch::choose(
+            moe.model, moe.card, moe.quants[0],
+            ch::allowed_axes(moe.model, KvCacheStorage::Int8Group64), {}, task, oracle(moe, 20e9));
+        bool nvfp4_default = false;
+        for (const ch::Alternative& alt : ch::explain(choice)) {
+            if (alt.axis == ch::Axis::Kv && alt.value == "nvfp4") {
+                nvfp4_default = alt.why_code == "default";
+            }
+        }
+        check(choice.by_worth && choice.chosen &&
+                  chosen(choice).candidate.kv != KvCacheStorage::Nvfp4Group16 && nvfp4_default &&
+                  std::find(choice.kv_not_decided.begin(), choice.kv_not_decided.end(),
+                            KvCacheStorage::Nvfp4Group16) != choice.kv_not_decided.end(),
+              "Ada: the MoE's NVFP4 is not weighed, the default's alternative (#863)");
+    }
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
     check(!ch::reference_of(t.card), "Turing has no reference card");
     ch::CardFacts volta = board_card(0x1DB5);
