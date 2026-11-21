@@ -575,7 +575,12 @@ void malformed_tables_refused() {
     std::string twin = ceo;
     twin.replace(twin.find("0x10DE12EB"), 10, "0x10DE12EC");
     twin.replace(twin.find("\"name\":\"y\""), 10, "\"name\":\"GeForce Y\"");
-    refused(with_subsystems(ceo + "," + twin), "two subsystems of one name");
+    // One name for two ids is one board under two vendors: equal values parse, others do not.
+    expect(parse_gpu_facts(with_subsystems(ceo + "," + twin))[0].subsystems.size() == 2,
+           "two ids of one board (one name, equal values)");
+    std::string twin_slower = twin;
+    twin_slower.replace(twin_slower.find("\"boost_mhz\""), 0, "\"tdp_w\":200,");
+    refused(with_subsystems(ceo + "," + twin_slower), "two subsystems of one name, other values");
     std::string blank = ceo;
     blank.replace(blank.find("\"name\":\"y\""), 10, "\"name\":\"   \"");
     refused(with_subsystems(blank), "a subsystem name of only white space");

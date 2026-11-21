@@ -104,6 +104,11 @@ def classify(name, identities):
     return "pci-list-only"
 
 
+# The labels in classify's order: a device takes the first any of its names earns.
+TRIAGE_ORDER = ("engineering-or-reserved", "platform-review", "virtual-or-shared-identity",
+                "mining-board", "oem-clock-range-review", "driver-listed", "pci-list-only")
+
+
 def catalog(pci, drivers, registry):
     registered = {row["id"].removeprefix("0x").upper(): row for row in registry["gpus"]}
     rows, excluded, unclassified = [], [], []
@@ -128,11 +133,12 @@ def catalog(pci, drivers, registry):
             excluded.append({**base, "reason": "non-GPU PCI function"})
             continue
         names = sorted({n for i in identities.values() for n in i["names"]})
-        # The driver list's names count too: pci.ids may give only the chip (GB203) where NVIDIA
-        # names the board a Laptop, GRID or engineering SKU.
+        # Each driver-list name counts too, classified on its own: pci.ids may give only the chip
+        # (GB203) where NVIDIA names the board a Laptop, GRID or engineering SKU.
         rows.append({**base, "generation": family,
                      "registry": row["name"] if row else None,
-                     "triage": classify(" / ".join([name, *names]), identities),
+                     "triage": min((classify(n, identities) for n in [name, *names]),
+                                   key=TRIAGE_ORDER.index),
                      "multiple_driver_names": len(names) > 1,
                      "nvidia": identities, "pci_subsystems": entry.get("subsystems", {})})
     counts = {}
