@@ -200,6 +200,15 @@ struct ArtifactName {
                                       const std::filesystem::path& hub_root,
                                       const std::vector<std::filesystem::path>& model_dirs);
 
+// The card as a ninferno-serve document planned its `now` (#1147): NVML's free memory (the bytes
+// passed as --plan-free-now) and its word that the card takes no new process (GpuStat::refusal_now,
+// empty when it takes one). A kept `now` answers while both hold: the page asks again when either
+// moves (page.html NOW_STEP, nowHoldOf).
+struct NowPoint {
+    std::uint64_t free = 0;
+    std::string refusal;
+};
+
 class App {
 public:
     App(UiOptions options, std::unique_ptr<GpuSource> gpus);
@@ -244,12 +253,12 @@ private:
     // started. A serve that ran without a "ninferno-dry-plan/1" document (a refusal, a hang past
     // 45 s, garbled output) throws std::runtime_error with its last line: its refusal is the
     // start's, never answered by the formula.
-    // `free_given`, when given: the free memory (NVML bytes) passed as --plan-free-now, the point
-    // the document's `now` was planned at (nullopt when none was passed).
-    std::optional<nlohmann::json>
-    serve_plan_json(const std::string& model, const std::string& quant, int gpu,
-                    const product::LaunchAsk& launch,
-                    std::optional<std::uint64_t>* free_given = nullptr);
+    // `given`, when given: the point the document's `now` was planned at, the free memory (NVML
+    // bytes) passed as --plan-free-now and the card's refusal then (nullopt when none was passed).
+    std::optional<nlohmann::json> serve_plan_json(const std::string& model,
+                                                  const std::string& quant, int gpu,
+                                                  const product::LaunchAsk& launch,
+                                                  std::optional<NowPoint>* given = nullptr);
     // The plan without the weights of a repository's quantization (all of them when `quant` is
     // empty, with the largest that fits) on GPU `gpu` for what a launch asks: the
     // "ninferno-dry-plan/1" document (product/plan/plan_quants.h), as ninferno-serve <repo> --plan
@@ -393,9 +402,10 @@ private:
     // plan_json's documents by their inputs (the listing and the GPU's facts do not change;
     // bounded: plan_json clears it beyond kMaxKeptPlans)
     std::map<std::string, nlohmann::json> plans_;
-    // The card's free memory (NVML, bytes) a kept ninferno-serve document planned its `now` at, by
-    // plan_json's key (#1147): its `now` answers while the memory stays within kNowStepBytes.
-    std::map<std::string, std::uint64_t> serve_free_at_;
+    // The point a kept ninferno-serve document planned its `now` at, by plan_json's key (#1147):
+    // its `now` answers while the free memory stays within kNowStepBytes and the refusal is the
+    // same.
+    std::map<std::string, NowPoint> serve_free_at_;
     // What plan_json's "now" (product::plan_now) re-plans per request at the GPU's free memory: the
     // shown quantization's facts, inputs (their subjects kept alive here), choice and pins.
     std::map<std::string, std::shared_ptr<const PlanNowContext>> plan_now_;

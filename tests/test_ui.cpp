@@ -1537,8 +1537,9 @@ void test_hub_plan_via_serve() {
 
         struct MovingGpu final : GpuSource {
             std::atomic<std::uint64_t>* free;
+            std::atomic<int>* mode;
 
-            explicit MovingGpu(std::atomic<std::uint64_t>* f) : free(f) {}
+            MovingGpu(std::atomic<std::uint64_t>* f, std::atomic<int>* m) : free(f), mode(m) {}
 
             std::vector<GpuStat> snapshot() override {
                 GpuStat g;
@@ -1548,6 +1549,7 @@ void test_hub_plan_via_serve() {
                 g.memory_free  = free->load();
                 g.cc_major     = 8;
                 g.cc_minor     = 9;
+                g.compute_mode = mode->load();
                 return {g};
             }
 
@@ -1555,10 +1557,11 @@ void test_hub_plan_via_serve() {
         };
 
         std::atomic<std::uint64_t> free{8ULL << 30};
+        std::atomic<int> mode{0};
         UiOptions options;
         options.serve_binary = root / "serve-plan";
         options.hub_cache    = root / "hub";
-        App app(options, std::make_unique<MovingGpu>(&free));
+        App app(options, std::make_unique<MovingGpu>(&free, &mode));
         httplib::Server server;
         app.install(server);
         const int port = server.bind_to_any_port("127.0.0.1");
@@ -1585,8 +1588,14 @@ void test_hub_plan_via_serve() {
         free += 1ULL << 30; // past it: serve plans again
         const auto far      = client.Get(ask);
         const int after_far = runs();
+        mode = 2; // prohibited: no memory moves, but the kept `now` is of a card that took a start
+        const auto refused      = client.Get(ask);
+        const int after_refused = runs();
         server.stop();
         thread.join();
+        check(refused && refused->status == 200 && after_refused == 3,
+              "a refusal change plans again though the memory did not move (" +
+                  std::to_string(after_refused) + " runs)");
         check(has_now(first) && after_first == 1, "the first ask runs serve and has its now");
         check(has_now(near) && after_near == 1,
               "a move within NOW_STEP keeps the document and its now (" +

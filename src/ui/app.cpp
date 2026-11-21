@@ -1006,19 +1006,26 @@ void name_refusal_now(Json& now, const std::string& why) {
 // planned it (#1147).
 constexpr std::uint64_t kNowStepBytes = 256ULL << 20;
 
-// NVML's free memory of GPU `gpu` as it reports it (the bytes serve is given), nullopt when it
-// does not say.
-std::optional<std::uint64_t> nvml_free_of(const std::vector<GpuStat>& stats, int gpu) {
+// GPU `gpu` as NVML reports it now: its free memory (the bytes serve is given) and its refusal;
+// nullopt when it does not say.
+std::optional<NowPoint> now_point_of(const GpuStat& stat) {
+    if (stat.memory_total == 0) return std::nullopt;
+    return NowPoint{static_cast<std::uint64_t>(stat.memory_free), stat.refusal_now()};
+}
+
+std::optional<NowPoint> now_point_of(const std::vector<GpuStat>& stats, int gpu) {
     for (const auto& stat : stats) {
-        if (stat.index == gpu && stat.memory_total > 0) {
-            return static_cast<std::uint64_t>(stat.memory_free);
-        }
+        if (stat.index == gpu) return now_point_of(stat);
     }
     return std::nullopt;
 }
 
-bool within_now_step(std::uint64_t a, std::uint64_t b) {
-    return (a > b ? a - b : b - a) < kNowStepBytes;
+// Whether a `now` planned at `a` answers at `b`: the free memory within the page's step, the card
+// taking new processes or refusing them as it did (#1156 review: a compute-mode or holder change
+// moves no memory).
+bool same_now_point(const NowPoint& a, const NowPoint& b) {
+    return (a.free > b.free ? a.free - b.free : b.free - a.free) < kNowStepBytes &&
+           a.refusal == b.refusal;
 }
 
 // The free memory of GPU `gpu` now (NVML), nullopt when it does not say.
@@ -1060,7 +1067,7 @@ struct ServeTransportFailure : std::runtime_error {
 
 std::optional<Json> App::serve_plan_json(const std::string& model, const std::string& quant,
                                          int gpu, const product::LaunchAsk& launch,
-                                         std::optional<std::uint64_t>* free_given) {
+                                         std::optional<NowPoint>* given) {
     std::error_code ec;
     if (options_.serve_binary.empty() || !fs::is_regular_file(options_.serve_binary, ec)) {
         return std::nullopt;
@@ -1107,12 +1114,11 @@ std::optional<Json> App::serve_plan_json(const std::string& model, const std::st
     // NVML's free memory, for serve to plan `now` at where the card is too busy to open a context
     // (#891): without it the document would carry no `now`, and the page would take the idle
     // card's fit for a start right now.
-    if (free_given != nullptr) { free_given->reset(); }
-    if (stat != nullptr && stat->memory_total > 0) {
-        const auto free = static_cast<std::uint64_t>(stat->memory_free);
+    if (given != nullptr) { given->reset(); }
+    if (const auto point = stat != nullptr ? now_point_of(*stat) : std::nullopt) {
         spec.argv.push_back("--plan-free-now");
-        spec.argv.push_back(std::to_string(free));
-        if (free_given != nullptr) { *free_given = free; }
+        spec.argv.push_back(std::to_string(point->free));
+        if (given != nullptr) { *given = point; }
     }
     bind_gpu(spec, gpu, stat);
     if (!options_.hub_cache.empty()) { spec.env["HF_HUB_CACHE"] = utf8_of(options_.hub_cache); }
@@ -1240,15 +1246,14 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     std::string planner;
     std::optional<Json> served;
     bool fresh = false; // serve ran for this ask: its `now` is of the free memory now
-    // The card's free memory now, and where a kept document's `now` was planned (#1147).
-    const std::optional<std::uint64_t> free_bytes = nvml_free_of(gpus_->snapshot(), gpu);
-    std::optional<std::uint64_t> kept_free_at;
+    // The card now, and where a kept document's `now` was planned (#1147).
+    const std::optional<NowPoint> point_now = now_point_of(gpus_->snapshot(), gpu);
+    std::optional<NowPoint> kept_free_at;
     // serve's document as it is answered without a replay here: its `now` when just measured, or
-    // kept and planned within kNowStepBytes of the free memory now; else null (a kept one is of
+    // kept and planned at the card as it is now (same_now_point); else null (a kept one is of
     // another moment; null reads as no `now`, and the page asks again at the next move).
     const auto as_served = [&](Json d) {
-        const bool still =
-            kept_free_at && free_bytes && within_now_step(*kept_free_at, *free_bytes);
+        const bool still = kept_free_at && point_now && same_now_point(*kept_free_at, *point_now);
         if (!fresh && !still && d.contains("now")) { d["now"] = nullptr; }
         return d;
     };
@@ -1268,7 +1273,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         // The good document a move past kNowStepBytes plans again: kept if that run fails (a
         // busy card's serve may time out or refuse where it planned before).
         std::optional<Json> previous;
-        std::optional<std::uint64_t> previous_free_at;
+        std::optional<NowPoint> previous_free_at;
         // One serve run a key at a time: an ask that finds its key running waits for that run's
         // document. Two children at once would also contend for the card (an exclusive-compute GPU
         // lets one open a context: the other's refusal would be kept). A run is of one hub token:
@@ -1283,14 +1288,15 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                 const bool failure =
                     it->second.contains("failed") || it->second.contains("refused");
                 const auto at = serve_free_at_.find(key);
-                // A document whose `now` was planned past kNowStepBytes from the free memory now
-                // is planned again: the page asks only at such a move, and the run in flight is
-                // shared (serve_plans_running_), so the card sees one child a move (#1147).
-                // A good document with no point at all (NVML said nothing when serve ran) is
-                // planned again once NVML reports: its `now` could never answer.
+                // A document whose `now` was planned past kNowStepBytes from the free memory now,
+                // or before the card's refusal changed, is planned again: the page asks only at
+                // such a move, and the run in flight is shared (serve_plans_running_), so the card
+                // sees one child a move (#1147). A good document with no point at all (NVML said
+                // nothing when serve ran) is planned again once NVML reports: its `now` could
+                // never answer.
                 const bool moved =
-                    !failure && free_bytes &&
-                    (at == serve_free_at_.end() || !within_now_step(at->second, *free_bytes));
+                    !failure && point_now &&
+                    (at == serve_free_at_.end() || !same_now_point(at->second, *point_now));
                 if (failure ? clock_now() - it->second.value("at", std::int64_t{0}) <
                                   kFailureKeptSeconds
                             : !moved) {
@@ -1320,11 +1326,11 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                 kept_free_at = at->second;
                 fresh        = false;
             } else {
-                fresh = !free_bytes;
+                fresh = !point_now;
             }
         }
         if (!kept) {
-            std::optional<std::uint64_t> served_free_at;
+            std::optional<NowPoint> served_free_at;
             try {
                 fresh                    = true;
                 const Json list          = listing_of(repo, hub);
