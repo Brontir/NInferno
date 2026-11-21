@@ -1600,17 +1600,16 @@ void test_hub_plan_via_serve() {
     {
         fs::remove(root / "runs.txt");
         std::ofstream(root / "serve-flaky")
-            << "#!/bin/sh
-if [ -s '" << (root / "runs.txt").string()
-            << "' ]; then echo run >> '" << (root / "runs.txt").string()
-            << "'; echo 'error: HTTP 503' >&2; exit 75; fi
-exec '" << (root / "serve-plan").string()
-            << "' \"$@\"
-";
+            << "#!/bin/sh\nif [ -s '" << (root / "runs.txt").string() << "' ]; then echo run >> '"
+            << (root / "runs.txt").string() << "'; echo 'error: HTTP 503' >&2; exit 75; fi\nexec '"
+            << (root / "serve-plan").string() << "' \"$@\"\n";
         fs::permissions(root / "serve-flaky", fs::perms::owner_all);
+
         struct MovingGpu final : GpuSource {
             std::atomic<std::uint64_t>* free;
-            explicit MovingGpu(std::atomic<std::uint64_t> * f) : free(f) {}
+
+            explicit MovingGpu(std::atomic<std::uint64_t>* f) : free(f) {}
+
             std::vector<GpuStat> snapshot() override {
                 GpuStat g;
                 g.index        = 0;
@@ -1624,6 +1623,7 @@ exec '" << (root / "serve-plan").string()
 
             std::string error() const override { return {}; }
         };
+
         std::atomic<std::uint64_t> free{8ULL << 30};
         UiOptions options;
         options.serve_binary = root / "serve-flaky";
@@ -1632,8 +1632,7 @@ exec '" << (root / "serve-plan").string()
         httplib::Server server;
         app.install(server);
         const int port = server.bind_to_any_port("127.0.0.1");
-        std::thread thread([&] {
-            server.listen_after_bind(); });
+        std::thread thread([&] { server.listen_after_bind(); });
         server.wait_until_ready();
         httplib::Client client("127.0.0.1", port);
         const std::string ask = "/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF";
@@ -1642,7 +1641,8 @@ exec '" << (root / "serve-plan").string()
         const auto again = client.Get(ask);
         server.stop();
         thread.join();
-        const auto doc = again ? nlohmann::json::parse(again->body, nullptr, false) : nlohmann::json();
+        const auto doc =
+            again ? nlohmann::json::parse(again->body, nullptr, false) : nlohmann::json();
         check(first && first->status == 200 && again && again->status == 200 && doc.is_object() &&
                   doc.contains("now") && doc["now"].is_null() &&
                   again->body.find("--plan failed") == std::string::npos,
