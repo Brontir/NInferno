@@ -91,17 +91,6 @@ def test_counts_no_band_covers_are_left_alone(tmp_path):
     assert bands == [[1, 8, "n1"], [9, 9, "n2"]]
 
 
-if __name__ == "__main__":
-    import pathlib
-    import tempfile
-
-    for name, test in sorted(globals().items()):
-        if name.startswith("test_"):
-            with tempfile.TemporaryDirectory() as d:
-                test(pathlib.Path(d))
-            print("ok", name)
-
-
 def test_a_range_route_slower_at_a_kept_count_keeps_the_entry(tmp_path):
     # a is 5 % off c at T9-10 (past the margin), so the range is re-timed; a has the least worst
     # regret, but at T11 it is 6 % slower than the table's own b: the entry is kept (#1125, GV100).
@@ -111,3 +100,14 @@ def test_a_range_route_slower_at_a_kept_count_keeps_the_entry(tmp_path):
     bands, r = run(tmp_path, [[1, 10, "a"], [11, 16777216, "b"]], rows)
     assert bands == [[1, 10, "a"], [11, 16777216, "b"]]
     assert "would slow T11 past the margin, kept" in r.stderr
+
+
+if __name__ == "__main__":
+    import pathlib
+    import tempfile
+
+    for name, test in sorted(globals().items()):
+        if name.startswith("test_"):
+            with tempfile.TemporaryDirectory() as d:
+                test(pathlib.Path(d))
+            print("ok", name)
