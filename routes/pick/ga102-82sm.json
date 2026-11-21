@@ -274,6 +274,20 @@
    "format": "q6k",
    "compute": "a16",
    "epilogue": "store",
+   "n": 256,
+   "k": 6656,
+   "bands": [
+    [
+     9,
+     16,
+     "rmma.m1.n1.w1x16"
+    ]
+   ]
+  },
+  {
+   "format": "q6k",
+   "compute": "a16",
+   "epilogue": "store",
    "n": 3840,
    "k": 15360,
    "bands": [
@@ -314,6 +328,34 @@
      16,
      16,
      "rmma.m1.n2.w2x2"
+    ]
+   ]
+  },
+  {
+   "format": "q8",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 48,
+   "k": 5120,
+   "bands": [
+    [
+     9,
+     16,
+     "rmma.m1.n1.w1x16"
+    ]
+   ]
+  },
+  {
+   "format": "q8",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 256,
+   "k": 2688,
+   "bands": [
+    [
+     9,
+     16,
+     "rmma.m1.n1.w1x16"
     ]
    ]
   },
@@ -462,6 +504,20 @@
      9,
      9,
      "rmma.m1.n2.w1x4"
+    ]
+   ]
+  },
+  {
+   "format": "q8",
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "n": 512,
+   "k": 2048,
+   "bands": [
+    [
+     9,
+     16,
+     "rmma.m1.n1.w1x16"
     ]
    ]
   }
