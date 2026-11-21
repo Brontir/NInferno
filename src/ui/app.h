@@ -238,21 +238,25 @@ private:
     // here only when no such binary is beside the UI, marked so ("planner").
     nlohmann::json artifact_plan_json(const std::filesystem::path& artifact, int gpu,
                                       const product::LaunchAsk& launch);
-    // ninferno-serve's plan of `artifact` on GPU `gpu`; nullopt only when there is no binary or it
-    // cannot be started. A serve that ran without a "ninferno-dry-plan/1" document (a refusal, a
-    // hang past 45 s, garbled output) throws std::runtime_error with its last line: its refusal
-    // is the start's, never answered by the formula.
-    std::optional<nlohmann::json> serve_plan_json(const std::filesystem::path& artifact, int gpu,
+    // ninferno-serve's plan of `model` (an artifact's path, or a hub repository as repo@commit, at
+    // `quant` when one is named) on GPU `gpu`; nullopt only when there is no binary or it cannot be
+    // started. A serve that ran without a "ninferno-dry-plan/1" document (a refusal, a hang past
+    // 45 s, garbled output) throws std::runtime_error with its last line: its refusal is the
+    // start's, never answered by the formula.
+    std::optional<nlohmann::json> serve_plan_json(const std::string& model,
+                                                  const std::string& quant, int gpu,
                                                   const product::LaunchAsk& launch);
     // The plan without the weights of a repository's quantization (all of them when `quant` is
     // empty, with the largest that fits) on GPU `gpu` for what a launch asks: the
     // "ninferno-dry-plan/1" document (product/plan/plan_quants.h), as ninferno-serve <repo> --plan
-    // --no-load --json would print it for an idle card of that GPU, but for the queries
-    // ninferno-serve registers from the Ops this program does not link: a family's workspace
-    // (runtime::set_plan_workspace_query) and an MoE step's routes (set_plan_moe_route_query,
-    // DECISIONS 79: here the step keeps the measured pair's share, and its estimate is Transferred
-    // past one row with speed_why "MoE route not queried", #766). Throws when the repository's
-    // shape cannot be read.
+    // --no-load --json would print it for an idle card of that GPU. With a ninferno-serve beside
+    // the UI and the hub online it is serve's own document (#766): the repository at the commit
+    // the listing here was read at, so its workspace (runtime::set_plan_workspace_query) and an
+    // MoE step's routes (set_plan_moe_route_query) are the start's. Offline, on another hub than
+    // Hugging Face or with no serve, the plan here answers without those queries (this program
+    // does not link the Ops; DECISIONS 79: the step keeps the measured pair's share, and its
+    // estimate is Transferred past one row with speed_why "MoE route not queried") and says so
+    // ("planner"). Throws when the repository's shape cannot be read.
     nlohmann::json plan_json(const std::string& repo, const std::string& hub, int gpu,
                              const std::string& quant, const product::LaunchAsk& launch);
     // read_tables: the chosen GGUF row's own tensor table is read when not known (a user's plan);

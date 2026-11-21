@@ -1024,18 +1024,18 @@ std::string utf8_of(const fs::path& path) {
 
 } // namespace
 
-std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
-                                         const product::LaunchAsk& launch) {
+std::optional<Json> App::serve_plan_json(const std::string& model, const std::string& quant,
+                                         int gpu, const product::LaunchAsk& launch) {
     std::error_code ec;
     if (options_.serve_binary.empty() || !fs::is_regular_file(options_.serve_binary, ec)) {
         return std::nullopt;
     }
     LaunchSpec spec;
     spec.kind  = "plan";
-    spec.model = utf8_of(artifact);
+    spec.model = model;
     spec.gpu   = gpu;
     spec.argv  = {utf8_of(options_.serve_binary),
-                  utf8_of(artifact),
+                  model,
                   "--plan",
                   "--no-load",
                   "--plan-idle",
@@ -1060,6 +1060,10 @@ std::optional<Json> App::serve_plan_json(const fs::path& artifact, int gpu,
     }
     spec.argv.push_back("--spec");
     spec.argv.push_back(launch.spec.empty() ? "auto" : launch.spec);
+    if (!quant.empty()) {
+        spec.argv.push_back("--quant");
+        spec.argv.push_back(quant);
+    }
     const auto stats    = gpus_->snapshot();
     const GpuStat* stat = nullptr;
     for (const auto& s : stats) {
@@ -1135,7 +1139,7 @@ Json App::artifact_plan_json(const fs::path& artifact, int gpu, const product::L
     if (gpu < 0) { throw std::invalid_argument("no GPU " + std::to_string(gpu) + " to plan for"); }
     // The start's own plan when its binary is beside the UI (#843): its workspace is the start's
     // planner's. Only without one does the plan here answer, and it says so ("planner").
-    if (auto doc = serve_plan_json(artifact, gpu, launch)) { return std::move(*doc); }
+    if (auto doc = serve_plan_json(utf8_of(artifact), "", gpu, launch)) { return std::move(*doc); }
     const auto stats  = gpus_->snapshot();
     const auto device = plan_device(stats, gpu);
     if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
@@ -1171,10 +1175,43 @@ Json App::artifact_plan_json(const fs::path& artifact, int gpu, const product::L
 
 Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     const std::string& quant, const product::LaunchAsk& launch) {
+    // serve's own plan where it reads the same hub (#766): its MoE route and workspace queries are
+    // the start's, which this binary cannot link. The repository at the commit the listing here
+    // was read at, so serve plans the files the rows show; its "now" is planned at the GPU's free
+    // memory (--plan-free-now), as for a local artifact.
+    const bool serve_reads_hub =
+        gpu >= 0 && !options_.offline && (hub.empty() || hub == "huggingface");
+    if (serve_reads_hub) {
+        const Json list = listing_of(repo, hub);
+        if (!quant.empty() && std::none_of(list.begin(), list.end(), [&](const Json& q) {
+                return !q.value("drafter", false) && q.value("quant", std::string()) == quant;
+            })) {
+            throw std::invalid_argument("no quant " + quant + " in " + repo);
+        }
+        const std::string commit = list.empty() || !list.front().is_object()
+                                       ? std::string()
+                                       : list.front().value("commit", std::string());
+        if (auto doc =
+                serve_plan_json(commit.empty() ? repo : repo + "@" + commit, quant, gpu, launch)) {
+            // The model by the name the plan here gives it (the page names a family's gate by
+            // it), not serve's repo@commit.
+            if (doc->contains("model") && (*doc)["model"].is_object()) {
+                (*doc)["model"]["source"] = quant.empty() ? repo : repo + ":" + quant;
+            }
+            return std::move(*doc);
+        }
+    }
     // The plan of an idle card (cached), and what a start right now would get at the GPU's free
     // memory (product::plan_now, each request: another process's share moves).
     std::shared_ptr<const PlanNowContext> now;
     Json doc = plan_json_idle(repo, hub, gpu, quant, launch, true, &now);
+    // Without serve's queries (DECISIONS 79): the workspace by the formula, an MoE step at the
+    // measured pair's share.
+    doc["planner"]      = serve_reads_hub
+                              ? "ninferno-ui: no ninferno-serve beside it, the workspace and MoE "
+                                "routes are estimates"
+                              : "ninferno-ui: offline or not on Hugging Face, the workspace and MoE "
+                                "routes are estimates";
     const auto stats    = gpus_->snapshot();
     const auto free_now = free_now_of(stats, gpu);
     if (!now) { // a cached plan: its context kept beside it
