@@ -208,6 +208,20 @@ def test_second_grid_with_the_default_far_ahead_keeps_the_entry(tmp_path):
     assert evidence == []
 
 
+def test_an_a8_default_is_no_rival_of_the_table(tmp_path):
+    # #1154: the ranker answers W4A8 (100) at T 9-11, faster than any table route; the table
+    # stands aside where W4A8 may run, so the move to n2 (the fastest table route) stands and its
+    # rows hold n2 against the fastest table route, not against the A8 tile.
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 150))]
+    second = ([(t, r, us) for t in (9, 10, 11)
+               for r, us in (("n1", 200), ("n2", 150), ("w4a8.64x64", 100))],
+              [(t, "w4a8.64x64") for t in (9, 10, 11)])
+    bands, evidence = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[],
+                          second=second)
+    assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
+    assert evidence == [[9, 150, 150], [10, 150, 150], [11, 150, 150]]
+
+
 def test_route_within_the_margin_is_kept(tmp_path):
     rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 102), ("n2", 100))]
     bands, _ = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows)

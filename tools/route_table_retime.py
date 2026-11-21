@@ -17,8 +17,10 @@ route the grid did not time, or where no route was timed at every count, is kept
 stderr). Bands outside the range are kept; adjacent bands of one route are joined. A moved count's
 evidence_us row timed the old route, so it is dropped; with --evidence ROUTES SELECTED (a second
 grid of the same card, its route_tune --routes-out and --selected-out) it is written again from that
-grid as [T, ranker us, shipped us], the ranker being --selected-out's `ranker` column (route_tune's
-default answer), and an entry that grid cannot give a row for is kept (named on stderr), as is one
+grid as [T, default us, shipped us], the default being --selected-out's `ranker` column (route_tune's
+default answer) where it names a table route; where it names W4A8 or R8, an A8 route the table stands
+aside for (route_authorities.cpp: a call that may take it never reads the measured entry, #1154),
+the default is that grid's fastest table route, what an A16 call could run. An entry that grid cannot give a row for is kept (named on stderr), as is one
 where that grid does not repeat the move (the range's route slower than the old one, or than that
 grid's default answer, by more than --margin at a moved count). A count the grid did not time
 between two it did takes the range's route too where its band's route is one the grid beat (#1149: a
@@ -41,6 +43,15 @@ INF = 16777216
 # Routes a table's a16 bands do not hold: W4A8 and R8 are timed by --a8-candidates 1 but never tabled
 # (src/ops/generic/route_tune_tool.cpp; the W4A8 heuristic and the R8 rules answer them).
 NOT_TABLE_ROUTES = ("w4a8", "r8.")
+
+
+def default_route(times, ranker):
+    """The default an a16 band is held to at one count: the ranker where it names a table route,
+    else (an A8 route the table never competes with) the fastest table route timed there."""
+    if ranker in times and not ranker.startswith(NOT_TABLE_ROUTES):
+        return ranker
+    table = {r: us for r, us in times.items() if not r.startswith(NOT_TABLE_ROUTES)}
+    return min(table, key=table.get) if table else None
 
 
 def round_width(route):
@@ -216,7 +227,7 @@ def main():
             # counts the first left out); only a timed moved count's row is required.
             for t in sorted({**moved, **filled}):
                 times = ev_grid.get((key, t), {})
-                rk = ranker.get((key, t))
+                rk = default_route(times, ranker.get((key, t)))
                 if rk in times and best in times:
                     new_rows[t] = [t, round(times[rk], 2), round(times[best], 2)]
             # A count the second grid cannot confirm (no ranker, new or old route row there) is a
@@ -230,12 +241,13 @@ def main():
                 continue
             # A move the second grid reverses (the range's route slower than the old one there
             # past the margin) is noise in the first grid: the entry is kept as it was.
-            # ...or puts it behind the call's default answer (the ranker) past the margin: a table
-            # entry slower than what the call runs without it overrides nothing worth keeping.
+            # ...or puts it behind the call's default answer past the margin (default_route: an
+            # A8 ranker is no rival, the table stands aside where it may run): a table entry slower
+            # than what the call runs without it overrides nothing worth keeping.
             reversed_at = [t for t in sorted(moved)
                            if ev_grid[(key, t)][best] > ev_grid[(key, t)][haves[t]] * (1 + a.margin)
-                           or ev_grid[(key, t)][best]
-                           > ev_grid[(key, t)][ranker[(key, t)]] * (1 + a.margin)]
+                           or ev_grid[(key, t)][best] > ev_grid[(key, t)][default_route(
+                               ev_grid[(key, t)], ranker[(key, t)])] * (1 + a.margin)]
             if reversed_at:
                 print("%s %s %s %dx%d: the evidence grid does not repeat %s at T%s, kept"
                       % (*key[:3], key[3], key[4], best, ",".join(map(str, reversed_at))),
