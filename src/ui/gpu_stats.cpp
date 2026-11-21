@@ -2,13 +2,58 @@
 
 #include "core/sys.h"
 
+#include <algorithm>
+#include <cstring>
 #include <mutex>
+
+#ifndef _WIN32
+#    include <sys/stat.h>
+#    include <unistd.h>
+#endif
 
 namespace ninferno::ui {
 
 double GpuStat::bandwidth_gbs() const noexcept {
     if (memory_bus_bits <= 0 || memory_clock_max_mhz <= 0) { return 0.0; }
     return 2.0 * memory_clock_max_mhz * 1e6 * (memory_bus_bits / 8.0) / 1e9;
+}
+
+namespace {
+
+// Whether process `pid` runs as this UI's user: MPS lets clients of the same UID (and pipe
+// directory) join its server, so another user's server does not open the card to our starts.
+// Linux only (MPS is a Linux service); false where it cannot be read, so the card stays refused.
+bool same_user(std::uint32_t pid) {
+#ifdef _WIN32
+    (void)pid;
+    return false;
+#else
+    struct stat info{};
+    const std::string proc = "/proc/" + std::to_string(pid);
+    return ::stat(proc.c_str(), &info) == 0 && info.st_uid == ::getuid();
+#endif
+}
+
+} // namespace
+
+bool is_mps_server(std::string_view path) {
+    const auto slash = path.find_last_of("/\\");
+    const auto base  = slash == std::string_view::npos ? path : path.substr(slash + 1);
+    return base == "nvidia-cuda-mps-server" || base == "nvidia-cuda-mps-server.exe";
+}
+
+std::string GpuStat::refusal_now() const {
+    if (compute_mode == 2) return "its compute mode is prohibited (NVML)";
+    // Under MPS the server holds an exclusive-process card and clients join it (NVIDIA's MPS
+    // overview: that mode then behaves as the default mode for them); MPS does not apply to the
+    // exclusive-thread mode.
+    const bool mps = std::any_of(processes.begin(), processes.end(),
+                                 [](const GpuProcess& p) { return p.mps_server; });
+    if ((compute_mode == 1 || (compute_mode == 3 && !mps)) && !processes.empty()) {
+        return "its compute mode is exclusive and process " +
+               std::to_string(processes.front().pid) + " holds it (NVML)";
+    }
+    return {};
 }
 
 nlohmann::json GpuStat::to_json() const {
@@ -34,6 +79,7 @@ nlohmann::json GpuStat::to_json() const {
             {"memory_clock_mhz", memory_clock_mhz},
             {"bandwidth_gbs", bandwidth_gbs()},
             {"sms", sms},
+            {"compute_mode", compute_mode},
             {"processes", processes_json}};
 }
 
@@ -91,6 +137,8 @@ public:
         bind(capability_, "nvmlDeviceGetCudaComputeCapability");
         bind(pci_, "nvmlDeviceGetPciInfo_v3");
         bind(processes_, "nvmlDeviceGetComputeRunningProcesses_v3");
+        bind(compute_mode_, "nvmlDeviceGetComputeMode");
+        bind(process_name_, "nvmlSystemGetProcessName");
         bind(cores_, "nvmlDeviceGetNumGpuCores");
         bind(mig_mode_, "nvmlDeviceGetMigMode");
         if (init_ == nullptr || count_ == nullptr || by_index_ == nullptr) {
@@ -182,6 +230,9 @@ public:
                 const bool wide = stat.cc_major >= 9 || (stat.cc_major == 8 && stat.cc_minor > 0);
                 stat.sms        = static_cast<int>(value) / (wide ? 128 : 64);
             }
+            if (int mode = 0; compute_mode_ && compute_mode_(device, &mode) == kOk) {
+                stat.compute_mode = mode;
+            }
             if (processes_) {
                 unsigned n = 0;
                 int rc     = processes_(device, &n, nullptr);
@@ -192,8 +243,15 @@ public:
                     if (rc == kOk) {
                         for (unsigned p = 0; p < n; ++p) {
                             const auto used = infos[p].used_gpu_memory;
-                            stat.processes.push_back(
-                                {infos[p].pid, used == kUnavailableMemory ? 0 : used});
+                            GpuProcess process{infos[p].pid, used == kUnavailableMemory ? 0 : used};
+                            char path[256] = {};
+                            if (process_name_ &&
+                                process_name_(process.pid, path, sizeof(path)) == kOk) {
+                                process.mps_server =
+                                    is_mps_server(std::string(path, strnlen(path, sizeof(path)))) &&
+                                    same_user(process.pid);
+                            }
+                            stat.processes.push_back(process);
                         }
                     }
                 }
@@ -234,6 +292,8 @@ private:
     int (*cores_)(Device, unsigned*)                       = nullptr;
     int (*mig_mode_)(Device, unsigned*, unsigned*)         = nullptr; // current, pending
     int (*processes_)(Device, unsigned*, NvmlProcessInfo*) = nullptr;
+    int (*compute_mode_)(Device, int*)                     = nullptr; // nvmlComputeMode_t
+    int (*process_name_)(unsigned, char*, unsigned)        = nullptr; // a pid's executable path
 };
 
 } // namespace

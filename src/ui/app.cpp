@@ -984,6 +984,23 @@ struct App::PlanNowContext {
 
 namespace {
 
+// NVML's word that GPU `gpu` takes no new process (GpuStat::refusal_now, #891); empty when it
+// takes one or NVML does not say.
+std::string refusal_now_of(const std::vector<GpuStat>& stats, int gpu) {
+    for (const auto& stat : stats) {
+        if (stat.index == gpu) return stat.refusal_now();
+    }
+    return {};
+}
+
+// A refused card's `now`: planned at 0 bytes, as serve's plan does it, and named as the card's
+// refusal (reason_code_now card_refused, the shape serve's plan writes).
+void name_refusal_now(Json& now, const std::string& why) {
+    now["reason_code_now"]   = "card_refused";
+    now["reason_params_now"] = {{"message", why}};
+    now["reason_now"]        = "the card takes no new process: " + why;
+}
+
 // The free memory of GPU `gpu` now (NVML), nullopt when it does not say.
 std::optional<std::uint64_t> free_now_of(const std::vector<GpuStat>& stats, int gpu) {
     for (const auto& stat : stats) {
@@ -1139,10 +1156,13 @@ Json App::artifact_plan_json(const fs::path& artifact, int gpu, const product::L
     Json doc = product::artifact_plan_document(plan, artifact.string());
     // What a start right now would get (a second model may hold the card): the replay says it.
     if (const auto free_now = free_now_of(stats, gpu)) {
-        doc["now"] = product::plan_now_json(
-            product::plan_now(plan.facts, plan.inputs, plan.served ? &*plan.served : nullptr,
-                              plan.inputs.pins, *free_now),
-            *free_now);
+        const std::string refused = refusal_now_of(stats, gpu);
+        const std::uint64_t at    = refused.empty() ? *free_now : 0;
+        doc["now"] = product::plan_now_json(product::plan_now(plan.facts, plan.inputs,
+                                                              plan.served ? &*plan.served : nullptr,
+                                                              plan.inputs.pins, at),
+                                            at);
+        if (!refused.empty()) name_refusal_now(doc["now"], refused);
     }
     // The workspace by the formula, not the start's planner (this binary links no Ops, #843).
     doc["planner"] = "ninferno-ui: no ninferno-serve beside it, the workspace is an estimate";
@@ -1155,7 +1175,8 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     // memory (product::plan_now, each request: another process's share moves).
     std::shared_ptr<const PlanNowContext> now;
     Json doc = plan_json_idle(repo, hub, gpu, quant, launch, true, &now);
-    const auto free_now = free_now_of(gpus_->snapshot(), gpu);
+    const auto stats    = gpus_->snapshot();
+    const auto free_now = free_now_of(stats, gpu);
     if (!now) { // a cached plan: its context kept beside it
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = plan_now_.find(plan_key(repo, hub, gpu, quant, launch));
@@ -1164,10 +1185,13 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         }
     }
     if (free_now && now) {
-        doc["now"] = product::plan_now_json(
-            product::plan_now(now->facts, now->inputs, now->served ? &*now->served : nullptr,
-                              now->pins, *free_now),
-            *free_now);
+        const std::string refused = refusal_now_of(stats, gpu);
+        const std::uint64_t at    = refused.empty() ? *free_now : 0;
+        doc["now"] = product::plan_now_json(product::plan_now(now->facts, now->inputs,
+                                                              now->served ? &*now->served : nullptr,
+                                                              now->pins, at),
+                                            at);
+        if (!refused.empty()) name_refusal_now(doc["now"], refused);
     }
     return doc;
 }

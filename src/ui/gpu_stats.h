@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ninferno::ui {
@@ -18,6 +19,10 @@ namespace ninferno::ui {
 struct GpuProcess {
     std::uint32_t pid        = 0;
     std::uint64_t used_bytes = 0; // 0 when the driver does not say (WSL)
+    // The NVIDIA MPS server (nvidia-cuda-mps-server, by NVML's process name) running as this UI's
+    // user: an exclusive-process card it holds still takes our starts as MPS clients, as in the
+    // default mode. Another user's server does not count.
+    bool mps_server = false;
 };
 
 struct GpuStat {
@@ -36,12 +41,24 @@ struct GpuStat {
     std::uint32_t pci_device_id = 0; // PCI product id (the chip table's key), 0 when unknown
     int sms                     = 0; // from NVML's CUDA core count, 0 when unknown
     std::vector<GpuProcess> processes;
+    // NVML's compute mode: 0 default, 1 exclusive thread, 2 prohibited, 3 exclusive process; -1
+    // when it does not say.
+    int compute_mode = -1;
+
+    // NVML's word that this card takes no new CUDA process now: a prohibited compute mode, or an
+    // exclusive one that a running process holds and no MPS server serves (#891). Empty when it
+    // takes one or NVML does not say. NVML still reports such a card's free memory, which alone
+    // reads as a fit.
+    [[nodiscard]] std::string refusal_now() const;
 
     // Peak memory bandwidth from the bus width and the maximum memory clock (GDDR: two transfers
     // per clock as NVML reports it), 0 when either is unknown.
     [[nodiscard]] double bandwidth_gbs() const noexcept;
     [[nodiscard]] nlohmann::json to_json() const;
 };
+
+// Whether an executable path (NVML's process name) is the NVIDIA MPS server's.
+[[nodiscard]] bool is_mps_server(std::string_view path);
 
 class GpuSource {
 public:
