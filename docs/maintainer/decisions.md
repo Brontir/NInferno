@@ -2152,12 +2152,14 @@ generation would give that pair its own share; the gpt-oss step rows as regressi
 windows are re-measured; ninferno-ui links no Ops and registers neither this query nor the
 workspace ones (the #620 host split: either query pulls the Ops' kernels into the UI). Its plan
 of a local artifact (#843) is ninferno-serve's own, both queries asked; online on Hugging Face,
-so is a GGUF repository's idle plan (#766: one serve run a plan key, kept, a failure too; `now`
-replayed in the UI at serve's pick and the free memory, its workspace by the formula). serve's
-refusal is the plan's answer, as for an artifact. Offline, on ModelScope, with no serve, a serve
-that could not reach the hub or answer in time, or a native or mixed repository, the plan there
-answers, its `planner` saying why; the quantization rows' fits (`/api/quants`) and the catalog are always planned there. Its
-MoE steps keep the measured pair's share, but an estimate no query was asked for is
+so is a GGUF repository's idle plan (#766: one serve run a plan key, kept, a failure for three
+minutes; `now` replayed in the UI at serve's pick and the free memory, its workspace by the
+formula). serve's refusal is the plan's answer, as for an artifact. Offline, on ModelScope, with
+no serve, a serve that could not reach the hub or answer in time, or a native or mixed
+repository, the plan there answers, its `planner` saying why; the quantization rows' fits
+(`/api/quants`) and the catalog are always planned there. Its MoE steps keep the measured pair's
+share, but an
+estimate no query was asked for is
 Transferred past one row, `speed_why` "MoE route not queried" (`ModelFacts::moe_route_unqueried`),
 never Own; a kind the query gives no kernels for says "MoE route not answered". An MoE whose facts list
 no routed layers (a hub row priced from another quantization's header, a split GGUF part without

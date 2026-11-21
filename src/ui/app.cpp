@@ -1028,7 +1028,10 @@ std::string utf8_of(const fs::path& path) {
 bool hub_transport_failure(const std::string& what) {
     for (const char* mark :
          {"did not answer within", "can't reach", "unreachable", "Couldn't resolve",
-          "Couldn't connect", "Timeout was reached", "SSL", "HTTP ", "curl"}) {
+          "Could not resolve", "Couldn't connect", "Timeout was reached", "Operation too slow",
+          "SSL", "HTTP ", "HTTP/2", "curl", "Failure when receiving", "Send failure",
+          "Recv failure", "Server returned nothing", "Weird server reply", "partial file",
+          "Connection reset"}) {
         if (what.find(mark) != std::string::npos) { return true; }
     }
     return false;
@@ -1206,16 +1209,39 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     } catch (const std::exception& error) { here_failed = error.what(); }
     std::string planner;
     std::optional<Json> served;
+    bool fresh = false; // serve ran for this ask: its `now` is of the free memory now
+    // serve's document as it is answered without a replay here: its `now` only when just measured
+    // (a kept one is of another moment; null reads as no `now`, and the page asks no more).
+    const auto as_served = [&](Json d) {
+        if (!fresh && d.contains("now")) { d["now"] = nullptr; }
+        return d;
+    };
     if (!why.empty()) {
         planner = "ninferno-ui: " + why + ", the workspace and MoE routes are estimates";
     } else {
         const std::string key = plan_key(repo, hub, gpu, quant, launch) + "|serve";
+        // A failure is kept a while, not for good: the network or the card may come back, and a
+        // while covers the page's bursts of asks (every 2 s at most).
+        constexpr std::int64_t kFailureKeptSeconds = 180;
+        const auto clock_now                       = [] {
+            return std::chrono::duration_cast<std::chrono::seconds>(
+                       std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        };
         std::optional<Json> kept;
         {
             std::lock_guard lock(sizes_mutex_);
-            if (const auto it = plans_.find(key); it != plans_.end()) { kept = it->second; }
+            if (const auto it = plans_.find(key); it != plans_.end()) {
+                const bool failure =
+                    it->second.contains("failed") || it->second.contains("refused");
+                if (!failure ||
+                    clock_now() - it->second.value("at", std::int64_t{0}) < kFailureKeptSeconds) {
+                    kept = it->second;
+                }
+            }
         }
         if (!kept) {
+            fresh                    = true;
             const auto generation    = hub_generation();
             const Json list          = listing_of(repo, hub);
             const std::string commit = list.empty() || !list.front().is_object()
@@ -1233,6 +1259,8 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     }
                     kept = std::move(*answer);
                 } else {
+                    // No binary, or none that started: nothing kept, a serve installed later
+                    // answers the next ask (no child ran, so no context moved the memory).
                     kept = Json{{"no_serve", true}};
                 }
             } catch (const std::exception& error) {
@@ -1242,9 +1270,10 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                 const std::string what = error.what();
                 kept =
                     hub_transport_failure(what) ? Json{{"failed", what}} : Json{{"refused", what}};
+                (*kept)["at"] = clock_now();
             }
             std::lock_guard lock(sizes_mutex_);
-            if (generation == hub_generation_) {
+            if (generation == hub_generation_ && !kept->contains("no_serve")) {
                 if (plans_.size() >= kMaxKeptPlans) {
                     plans_.clear();
                     plan_now_.clear();
@@ -1269,7 +1298,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     if (!here_failed.empty()) {
         // Only serve could plan (no card NVML reads, a shape this process cannot read): its
         // document answers with its own `now`.
-        if (served) { return std::move(*served); }
+        if (served) { return as_served(std::move(*served)); }
         throw std::runtime_error(here_failed + (planner.empty() ? "" : "; " + planner));
     }
     if (served) {
@@ -1280,6 +1309,11 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                                                                    : std::string();
         };
         const std::string pick = label_of(*served);
+        // Nothing fits once serve counts its workspace and routes: no `now` replayed at the row
+        // the plan here would start.
+        if (quant.empty() && pick.empty() && !label_of(doc).empty()) {
+            return as_served(std::move(*served));
+        }
         if (quant.empty() && !pick.empty() && pick != label_of(doc)) {
             now.reset();
             try {
@@ -1292,7 +1326,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     now = it->second;
                 }
             }
-            if (!now) { return std::move(*served); } // serve's own `now`, of its pick
+            if (!now) { return as_served(std::move(*served)); } // serve's `now`, of its pick
         }
         doc = std::move(*served);
         doc.erase("now"); // replayed below, at the free memory now
