@@ -1,5 +1,6 @@
 """tools/route_table_retime.py (#1073): one route over the range, untimed table routes kept, no W4A8 route
-in a table, a moved count's evidence row dropped."""
+in a table, a moved count's evidence row dropped or written again from a second grid (--evidence), an
+entry kept where the range route would slow a count past the margin."""
 import csv
 import json
 import os
@@ -11,7 +12,7 @@ TOOL = os.path.join(ROOT, "tools", "route_table_retime.py")
 FIELDS = ["format", "compute", "epilogue", "n", "k", "T", "route", "median_us"]
 
 
-def run(tmp_path, bands, rows, margin="0.03", evidence=None):
+def run(tmp_path, bands, rows, margin="0.03", evidence=None, second=None):
     table = tmp_path / "t.json"
     entry = {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 4096, "k": 4096, "bands": bands}
     if evidence is not None:
@@ -24,8 +25,25 @@ def run(tmp_path, bands, rows, margin="0.03", evidence=None):
         for t, route, us in rows:
             # route_tune --a8-candidates 1 labels an a16 shape's rows a8.
             w.writerow(["q4k", "a8", "store", 4096, 4096, t, route, us])
+    extra = []
+    if second is not None:
+        # A second grid of the card: its timings and the ranker's answer per count.
+        times, rankers = second
+        ev = tmp_path / "ev_routes.csv"
+        with ev.open("w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(FIELDS)
+            for t, route, us in times:
+                w.writerow(["q4k", "a8", "store", 4096, 4096, t, route, us])
+        sel = tmp_path / "ev_selected.csv"
+        with sel.open("w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["format", "compute", "epilogue", "n", "k", "T", "ranker"])
+            for t, route in rankers:
+                w.writerow(["q4k", "a8", "store", 4096, 4096, t, route])
+        extra = ["--evidence", str(ev), str(sel)]
     r = subprocess.run([sys.executable, TOOL, "--table", str(table), "--routes", str(grid),
-                        "--tokens", "9-11", "--margin", margin], capture_output=True, text=True)
+                        "--tokens", "9-11", "--margin", margin] + extra, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     out = json.loads(table.read_text())["entries"][0]
     return (out["bands"], r) if evidence is None else (out["bands"], out["evidence_us"])
@@ -89,6 +107,24 @@ def test_counts_no_band_covers_are_left_alone(tmp_path):
     rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
     bands, _ = run(tmp_path, [[1, 9, "n1"]], rows)
     assert bands == [[1, 8, "n1"], [9, 9, "n2"]]
+
+
+def test_second_grid_writes_the_moved_counts_evidence(tmp_path):
+    # Moved T9-11 n1 -> n2; the second grid's ranker answers n4 there (rk us, n2 us); T12's row stays.
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
+    second = ([(t, r, us) for t in (9, 10, 11) for r, us in (("n2", 101.234), ("n4", 150), ("w4a8.32x128", 90))],
+              [(t, "n4") for t in (9, 10, 11)])
+    bands, ev = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows,
+                    evidence=[[9, 300, 200], [12, 300, 100]], second=second)
+    assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
+    assert ev == [[9, 150, 101.23], [10, 150, 101.23], [11, 150, 101.23], [12, 300, 100]]
+
+
+def test_second_grid_without_a_row_keeps_the_entry(tmp_path):
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
+    second = ([(t, "n2", 100) for t in (9, 10)], [(t, "n4") for t in (9, 10, 11)])
+    bands, ev = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[], second=second)
+    assert bands == [[1, 11, "n1"], [12, 16777216, "n2"]] and ev == []
 
 
 def test_a_range_route_slower_at_a_kept_count_keeps_the_entry(tmp_path):
