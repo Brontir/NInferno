@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace ninferno {
@@ -209,8 +210,17 @@ std::vector<GpuFactsRow> parse_gpu_facts(std::string_view json_text) {
         }
         return name;
     };
-    std::unordered_set<std::string> row_names, variant_names;
+    std::unordered_set<std::string> row_names;
     for (const GpuFactsRow& r : rows) row_names.insert(normalized(r.name));
+    // One board sold under several subsystem vendors (the RTX PRO 5000 72GB: 227A under NVIDIA,
+    // Dell, HP and Lenovo) is one name for several ids of its row with every priced value equal:
+    // whichever id --plan-device takes for the name, the plan is the same.
+    std::unordered_map<std::string, std::pair<const GpuFactsRow*, const GpuFactsSubsystem*>>
+        variant_names;
+    const auto same_board = [](const GpuFactsSubsystem& a, const GpuFactsSubsystem& b) {
+        return a.boost_mhz == b.boost_mhz && a.bus_bits == b.bus_bits && a.gbps == b.gbps &&
+               a.tdp_w == b.tdp_w && a.vram_gib == b.vram_gib;
+    };
     for (const GpuFactsRow& r : rows) {
         for (const GpuFactsSubsystem& v : r.subsystems) {
             const std::string name = normalized(v.name);
@@ -218,7 +228,9 @@ std::vector<GpuFactsRow> parse_gpu_facts(std::string_view json_text) {
                 throw std::runtime_error("gpu facts: subsystem name \"" + v.name +
                                          "\" is empty once trimmed and without its vendor prefix");
             }
-            if (row_names.contains(name) || !variant_names.insert(name).second) {
+            const auto [seen, fresh] = variant_names.emplace(name, std::pair{&r, &v});
+            if (row_names.contains(name) ||
+                (!fresh && (seen->second.first != &r || !same_board(*seen->second.second, v)))) {
                 throw std::runtime_error("gpu facts: subsystem name \"" + v.name +
                                          "\" names another row or variant");
             }
