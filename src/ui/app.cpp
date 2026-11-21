@@ -1001,6 +1001,26 @@ void name_refusal_now(Json& now, const std::string& why) {
     now["reason_now"]        = "the card takes no new process: " + why;
 }
 
+// The page asks a plan's `now` again when the card's free memory moves this far (page.html
+// NOW_STEP): a kept serve document's `now` answers while the memory stays within it of where serve
+// planned it (#1147).
+constexpr std::uint64_t kNowStepBytes = 256ULL << 20;
+
+// NVML's free memory of GPU `gpu` as it reports it (the bytes serve is given), nullopt when it
+// does not say.
+std::optional<std::uint64_t> nvml_free_of(const std::vector<GpuStat>& stats, int gpu) {
+    for (const auto& stat : stats) {
+        if (stat.index == gpu && stat.memory_total > 0) {
+            return static_cast<std::uint64_t>(stat.memory_free);
+        }
+    }
+    return std::nullopt;
+}
+
+bool within_now_step(std::uint64_t a, std::uint64_t b) {
+    return (a > b ? a - b : b - a) < kNowStepBytes;
+}
+
 // The free memory of GPU `gpu` now (NVML), nullopt when it does not say.
 std::optional<std::uint64_t> free_now_of(const std::vector<GpuStat>& stats, int gpu) {
     for (const auto& stat : stats) {
@@ -1216,10 +1236,16 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     std::string planner;
     std::optional<Json> served;
     bool fresh = false; // serve ran for this ask: its `now` is of the free memory now
-    // serve's document as it is answered without a replay here: its `now` only when just measured
-    // (a kept one is of another moment; null reads as no `now`, and the page asks no more).
+    // The card's free memory now, and where a kept document's `now` was planned (#1147).
+    const std::optional<std::uint64_t> free_bytes = nvml_free_of(gpus_->snapshot(), gpu);
+    std::optional<std::uint64_t> kept_free_at;
+    // serve's document as it is answered without a replay here: its `now` when just measured, or
+    // kept and planned within kNowStepBytes of the free memory now; else null (a kept one is of
+    // another moment; null reads as no `now`, and the page asks again at the next move).
     const auto as_served = [&](Json d) {
-        if (!fresh && d.contains("now")) { d["now"] = nullptr; }
+        const bool still =
+            kept_free_at && free_bytes && within_now_step(*kept_free_at, *free_bytes);
+        if (!fresh && !still && d.contains("now")) { d["now"] = nullptr; }
         return d;
     };
     if (!why.empty()) {
@@ -1248,9 +1274,17 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                 it != plans_.end() && generation == hub_generation_) {
                 const bool failure =
                     it->second.contains("failed") || it->second.contains("refused");
-                if (!failure ||
-                    clock_now() - it->second.value("at", std::int64_t{0}) < kFailureKeptSeconds) {
+                const auto at = serve_free_at_.find(key);
+                // A document whose `now` was planned past kNowStepBytes from the free memory now
+                // is planned again: the page asks only at such a move, and the run in flight is
+                // shared (serve_plans_running_), so the card sees one child a move (#1147).
+                const bool moved = !failure && at != serve_free_at_.end() && free_bytes &&
+                                   !within_now_step(at->second, *free_bytes);
+                if (failure ? clock_now() - it->second.value("at", std::int64_t{0}) <
+                                  kFailureKeptSeconds
+                            : !moved) {
                     kept = it->second;
+                    if (at != serve_free_at_.end()) { kept_free_at = at->second; }
                 }
             }
             if (!kept) {
@@ -1267,6 +1301,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
             fresh = true;
         }
         if (!kept) {
+            std::optional<std::uint64_t> served_free_at;
             try {
                 fresh                    = true;
                 const Json list          = listing_of(repo, hub);
@@ -1295,6 +1330,9 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                         card = slot.get();
                     }
                     std::lock_guard one_child(*card);
+                    // The free memory serve is given (serve_plan_json's --plan-free-now), read
+                    // with the card held: its `now` is planned there.
+                    served_free_at = nvml_free_of(gpus_->snapshot(), gpu);
                     if (auto answer = serve_plan_json(model, quant, gpu, launch)) {
                         // The model by the name the plan here gives it (the page names a family's
                         // gate by it), not serve's repo@commit.
@@ -1324,8 +1362,14 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     if (plans_.size() >= kMaxKeptPlans) {
                         plans_.clear();
                         plan_now_.clear();
+                        serve_free_at_.clear();
                     }
                     plans_[key] = *kept;
+                    if (served_free_at && !kept->contains("failed") && !kept->contains("refused")) {
+                        serve_free_at_[key] = *served_free_at;
+                    } else {
+                        serve_free_at_.erase(key);
+                    }
                 }
                 serve_plans_running_.erase(running_key);
                 runs.set_value(*kept);
@@ -1738,6 +1782,7 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
     if (plans_.size() >= kMaxKeptPlans) {
         plans_.clear();
         plan_now_.clear();
+        serve_free_at_.clear();
     }
     if (now_out != nullptr) { *now_out = now; }
     // A table kept by another request while this one planned: this plan is not the latest.
@@ -3309,6 +3354,7 @@ void App::install(httplib::Server& server) {
                 gguf_failed_.clear();
                 plans_.clear();
                 plan_now_.clear();
+                serve_free_at_.clear();
             }
             catalog_wake_ = true;
             const auto now = convert::hub_token();

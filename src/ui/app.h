@@ -390,6 +390,9 @@ private:
     // plan_json's documents by their inputs (the listing and the GPU's facts do not change;
     // bounded: plan_json clears it beyond kMaxKeptPlans)
     std::map<std::string, nlohmann::json> plans_;
+    // The card's free memory (NVML, bytes) a kept ninferno-serve document planned its `now` at, by
+    // plan_json's key (#1147): its `now` answers while the memory stays within kNowStepBytes.
+    std::map<std::string, std::uint64_t> serve_free_at_;
     // What plan_json's "now" (product::plan_now) re-plans per request at the GPU's free memory: the
     // shown quantization's facts, inputs (their subjects kept alive here), choice and pins.
     std::map<std::string, std::shared_ptr<const PlanNowContext>> plan_now_;

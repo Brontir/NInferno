@@ -1528,6 +1528,71 @@ void test_hub_plan_via_serve() {
                   other->status == 200 && count == 2,
               "serve runs once a plan key (" + std::to_string(count) + " runs for 2 keys)");
     }
+    // A kept document keeps serve's `now` while the card's free memory stays within the page's
+    // NOW_STEP (256 MiB) of where serve planned it; past that the plan runs again (#1147).
+    {
+        fs::remove(root / "runs.txt");
+
+        struct MovingGpu final : GpuSource {
+            std::atomic<std::uint64_t>* free;
+
+            explicit MovingGpu(std::atomic<std::uint64_t>* f) : free(f) {}
+
+            std::vector<GpuStat> snapshot() override {
+                GpuStat g;
+                g.index        = 0;
+                g.name         = "NVIDIA GeForce RTX 4090";
+                g.memory_total = 24ULL << 30;
+                g.memory_free  = free->load();
+                g.cc_major     = 8;
+                g.cc_minor     = 9;
+                return {g};
+            }
+
+            std::string error() const override { return {}; }
+        };
+
+        std::atomic<std::uint64_t> free{8ULL << 30};
+        UiOptions options;
+        options.serve_binary = root / "serve-plan";
+        options.hub_cache    = root / "hub";
+        App app(options, std::make_unique<MovingGpu>(&free));
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        httplib::Client client("127.0.0.1", port);
+        const std::string ask = "/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF";
+        const auto runs       = [&] {
+            std::ifstream in(root / "runs.txt");
+            int count = 0;
+            for (std::string line; std::getline(in, line);) { ++count; }
+            return count;
+        };
+        const auto has_now = [](const httplib::Result& r) {
+            if (!r || r->status != 200) return false;
+            const auto doc = nlohmann::json::parse(r->body, nullptr, false);
+            return doc.is_object() && doc.contains("now") && doc["now"].is_object();
+        };
+        const auto first      = client.Get(ask);
+        const int after_first = runs();
+        free += 100ULL << 20; // within the step: the kept document and its `now`
+        const auto near      = client.Get(ask);
+        const int after_near = runs();
+        free += 1ULL << 30; // past it: serve plans again
+        const auto far      = client.Get(ask);
+        const int after_far = runs();
+        server.stop();
+        thread.join();
+        check(has_now(first) && after_first == 1, "the first ask runs serve and has its now");
+        check(has_now(near) && after_near == 1,
+              "a move within NOW_STEP keeps the document and its now (" +
+                  std::to_string(after_near) +
+                  " runs): " + (near ? near->body.substr(0, 200) : ""));
+        check(has_now(far) && after_far == 2,
+              "a move past NOW_STEP plans again (" + std::to_string(after_far) + " runs)");
+    }
     // Two asks of one key at once share one serve run (single flight): the second waits for the
     // first's document, never starts a second child.
     {
