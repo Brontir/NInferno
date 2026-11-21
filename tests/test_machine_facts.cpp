@@ -406,6 +406,33 @@ void mig_and_zero_clocks() {
                reported.memory_clock_khz == slice.memory_clock_khz &&
                std::abs(reported.dram_gbps() - slice.dram_gbps()) < 1e-6,
            "MIG slice reporting its memory: the board's memory times the share, once");
+    // Two MIG GPU instances of one compute size and different memory (#906): the A100 SXM4 40GB's
+    // 1g.5gb and 1g.10gb (NVIDIA's MIG profile table: 1/7 of the SMs each, 1/8 and 2/8 of the
+    // memory slices, which carry the controllers). Their reported memory (a little under the
+    // profile's, the driver's reserve) prices the bandwidth; the SMs still price the compute.
+    const auto gi = [](std::uint64_t mib) {
+        return machine_facts(DriverReport{
+            .pci_device_id = 0x20B0, .major = 8, .minor = 0, .sms = 14, .global_bytes = mib << 20});
+    };
+    const MachineFacts g5 = gi(4864), g10 = gi(9984);
+    expect(g5.share == slice.share && g10.share == slice.share,
+           "MIG GPU instances: the SM share prices the compute");
+    expect(std::abs(g5.memory_share - 4864.0 / 40960) < 1e-12 &&
+               std::abs(g10.memory_share - 9984.0 / 40960) < 1e-12,
+           "MIG GPU instances: the reported memory over the board's prices the bandwidth");
+    expect(std::abs(g5.dram_gbps() - 1555.2 * 4864 / 40960) < 1e-6 &&
+               g10.dram_gbps() > 2 * g5.dram_gbps() * 0.99 && g10.dram_gbps() <= 1555.2 * 0.25,
+           "1g.10gb sees about twice 1g.5gb's bandwidth, under the published 2/8");
+    expect(gi(1ULL << 20).memory_share == 1.0,
+           "a memory above the board's: the share is capped at 1");
+    expect(slice.memory_share == slice.share, "a slice reporting no memory: its SM share");
+    expect(machine_facts(DriverReport{.pci_device_id = 0x20B0,
+                                      .major         = 8,
+                                      .minor         = 0,
+                                      .sms           = 108,
+                                      .global_bytes  = 40ULL << 30})
+                   .memory_share == 1.0,
+           "the whole board: its whole bandwidth");
     // The whole A100 with zero clocks (a WSL driver): verified table facts.
     const MachineFacts whole = machine_facts(DriverReport{0x20B0, 8, 0, 108, 0, 0, 0});
     expect(whole.source == FactSource::Verified && std::abs(whole.dram_gbps() - 1555.2) < 1e-6,

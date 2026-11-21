@@ -106,6 +106,10 @@ struct DriverReport {
     // The driver was asked for the subsystem and could not say: on an id whose row lists boards by
     // subsystem, which of them this is stays unknown (machine_facts prices the slowest).
     bool subsystem_unread = false;
+    // The device's memory (cudaDevAttr / totalGlobalMem; 0: not reported). A MIG GPU instance
+    // reports its own memory slices, which carry the memory controllers and so its share of the
+    // board's bandwidth (#906); a compute instance reports its GPU instance's.
+    std::uint64_t global_bytes = 0;
 };
 
 struct MachineFacts {
@@ -126,9 +130,15 @@ struct MachineFacts {
     bool mma_slow        = false;
     // The board's L2 cache, MiB (0: its row does not give it).
     double l2_mib = 0;
-    // The fraction of the board this device is: its SMs over the row's when fewer (a MIG slice);
-    // the bandwidth it sees scales with it. 1 otherwise.
+    // The fraction of the board this device is: its SMs over the row's when fewer (a MIG slice).
+    // 1 otherwise.
     double share = 1.0;
+    // The fraction of the board's memory bandwidth it sees: a slice's reported memory over the
+    // row's (a MIG GPU instance owns whole memory slices, each with its controllers: the published
+    // profiles pair 1/7 of the SMs with 1/8 or 2/8 of the memory, #906), never above 1; where the
+    // slice reports no memory, its SM share. 1 for a whole board. The reported memory is a little
+    // under the profile's nominal size (the driver's reserve), so the bandwidth errs low.
+    double memory_share = 1.0;
     // Whether a driver clock or bus width fed a fact: an unknown id (its clocks on the grid), a
     // laptop row without the bottom of its range (its clock bounded by the driver's), or a whole
     // board on another memory than its row's (its bus width or slower memory clock). A slice's
@@ -147,9 +157,9 @@ struct MachineFacts {
     [[nodiscard]] double reference_clock_hz() const noexcept { return reference_clock_khz * 1e3; }
 
     // DRAM bandwidth in bytes per second: two transfers per memory clock across the bus, times
-    // share.
+    // memory_share.
     [[nodiscard]] double dram_bytes_per_s() const noexcept {
-        return board_facts::dram_bytes_per_s(memory_clock_khz, memory_bus_bits, share);
+        return board_facts::dram_bytes_per_s(memory_clock_khz, memory_bus_bits, memory_share);
     }
 
     [[nodiscard]] double dram_gbps() const noexcept { return dram_bytes_per_s() / 1e9; }
