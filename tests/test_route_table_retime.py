@@ -12,7 +12,7 @@ TOOL = os.path.join(ROOT, "tools", "route_table_retime.py")
 FIELDS = ["format", "compute", "epilogue", "n", "k", "T", "route", "median_us"]
 
 
-def run(tmp_path, bands, rows, margin="0.03", evidence=None, second=None):
+def run(tmp_path, bands, rows, margin="0.03", evidence=None, second=None, tokens="9-11"):
     table = tmp_path / "t.json"
     entry = {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 4096, "k": 4096, "bands": bands}
     if evidence is not None:
@@ -43,7 +43,7 @@ def run(tmp_path, bands, rows, margin="0.03", evidence=None, second=None):
                 w.writerow(["q4k", "a8", "store", 4096, 4096, t, route])
         extra = ["--evidence", str(ev), str(sel)]
     r = subprocess.run([sys.executable, TOOL, "--table", str(table), "--routes", str(grid),
-                        "--tokens", "9-11", "--margin", margin] + extra, capture_output=True, text=True)
+                        "--tokens", tokens, "--margin", margin] + extra, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     out = json.loads(table.read_text())["entries"][0]
     return (out["bands"], r) if evidence is None else (out["bands"], out["evidence_us"])
@@ -88,6 +88,15 @@ def test_a_move_that_does_not_lower_the_worst_regret_is_kept(tmp_path):
             + [(11, "n1", 107), (11, "n2", 104), (11, "n4", 100)])
     bands, _ = run(tmp_path, [[1, 10, "n1"], [11, 16777216, "n2"]], rows)
     assert bands == [[1, 10, "n1"], [11, 16777216, "n2"]]
+
+
+def test_a_count_the_move_leaves_alone_does_not_block_it(tmp_path):
+    # T 9-15 n1 10 % behind n2; T 16 n2 8 % behind n4 (n1 far behind there): n2 over the range
+    # clears T 9-15 and leaves T 16 as it is. T 16's 8 % is on both sides: the move stands.
+    rows = ([(t, r, us) for t in range(9, 16) for r, us in (("n1", 110), ("n2", 100), ("n4", 300))]
+            + [(16, "n1", 300), (16, "n2", 108), (16, "n4", 100)])
+    bands, r = run(tmp_path, [[1, 15, "n1"], [16, 16777216, "n2"]], rows, tokens="9-16")
+    assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]], r.stderr
 
 
 def test_route_within_the_margin_is_kept(tmp_path):

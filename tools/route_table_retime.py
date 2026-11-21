@@ -8,7 +8,8 @@ For every generic entry of the table (format, compute, epilogue, n, k) that the 
 --tokens, where the table's own route is slower than the grid's fastest by more than --margin at
 some count there, the range takes one route: the one whose worst regret over the range is least (the
 table's own route on a tie), unless it is slower than the table's own route by more than --margin at
-some count, where the entry is kept (and named on stderr). The candidates are the routes a table's
+some count or does not lower the worst regret of the counts it moves by more than --margin; then
+the entry is kept (and named on stderr). The candidates are the routes a table's
 a16 bands hold: A16 schedules and ggml_mmq, as the dense tuner writes them; the W4A8 and R8 routes
 (route_tune --a8-candidates 1 times them too) are never tabled (route_tune_tool.cpp,
 route_authorities.cpp). A GGUF format's a8 rows are its a16 entry's; FP8's a8 entry keeps its own
@@ -147,11 +148,12 @@ def main():
             print("%s %s %s %dx%d: %s would slow T%s past the margin, kept"
                   % (*key[:3], key[3], key[4], best, ",".join(map(str, slower))), file=sys.stderr)
             continue
-        # The move must lower the range's worst regret by more than the margin: a least-worst route
-        # no better than the bands as they are (T 17-20 A the fastest, T 21-23 B 4 % behind and A
-        # 7 %) would trade one count's loss for another's.
-        old_worst = max(regret(h, t) for t, h in haves.items())
-        new_worst = max(regret(best, t) for t in timed)
+        # The move must lower the worst regret of the counts it moves by more than the margin: a
+        # least-worst route no better than the bands as they are (T 17-20 A the fastest, T 21-23 B
+        # 4 % behind and A 7 %) would trade one count's loss for another's. Counts it leaves alone
+        # are the same on both sides and take no part.
+        old_worst = max(regret(haves[t], t) for t in moved)
+        new_worst = max(regret(best, t) for t in moved)
         if new_worst >= old_worst - a.margin:
             print("%s %s %s %dx%d: %s would not lower the worst regret (%.1f %% -> %.1f %%), kept"
                   % (*key[:3], key[3], key[4], best, 100 * old_worst, 100 * new_worst),
