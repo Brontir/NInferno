@@ -14,15 +14,17 @@
 // runs no warm-up (every size pinned) records none and says so in the count line.
 //
 // A line holds everything its replay needs besides the board's class and the route tables: the
-// format, policy, epilogue, N, K, the stored rows and layout, and the chunk; and the start's
-// --route-policy (#614 F1), which is the manifest's options.maintainer.route_policy
+// format, policy, epilogue, N, K, the stored rows, layout and plane offsets, and the chunk; and
+// the start's --route-policy (#614 F1), which is the manifest's options.maintainer.route_policy
 // (route_policy_of) and is passed to the replay. replay_routes asks the selector again from the
 // lines and that policy alone, so a manifest can be checked on a CPU against a board's class (and
 // the tables of a release): the same lines, or the lines that moved. Every function here asks the
 // selector under the policy it is given (ops::ScopedRoutePolicy: process-wide for the call, so
 // not beside a live Engine of another policy).
 //
-//   "<format> <policy> <epilogue> <N>x<K> of <stored rows> <layout name> <speed|invariant>"
+//   "<format> <policy> <epilogue> <N>x<K> of <stored rows> <layout name> <speed|invariant>
+//    [planes+<qdata>,<qhigh>,<scales>]"   (the last only for a row view whose planes start past a
+//    16-byte boundary, by those bytes: the replay describes them so, #724)
 //       = "1-3 <route>, 4-16 <route>[; one lane <runs>][; several lanes <runs>]; prefill <chunk>
 //          <route>"   ("none": the path does not read such a weight). The runs by width alone,
 //         then those of a verify round of one sequence and of several (ScopedRoundLanes) where

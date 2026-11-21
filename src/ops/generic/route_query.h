@@ -39,11 +39,14 @@ namespace ninferno::ops::detail::generic {
 // default lookup's for `device`; where `device` is the current device's own class, that device's
 // (an explicit --route-table included). select_route's exceptions propagate. `layout`: the stored
 // layout where it is not the converter's default for the format (a recorded call's, SeenProblem).
+// `planes`: where a recorded row view's planes start past 16 bytes (SeenProblem::planes, #724),
+// so a view the selector refuses the aligned tiles is answered as the call was.
 [[nodiscard]] std::optional<Route> route_query(const DeviceClass& device, QType qtype,
                                                LinearPolicy policy, Epilogue epilogue,
                                                std::int32_t n, std::int32_t k, std::int32_t tokens,
                                                bool prefill = false, std::int32_t parent_rows = 0,
-                                               std::optional<QuantLayout> layout = std::nullopt);
+                                               std::optional<QuantLayout> layout = std::nullopt,
+                                               PlaneOffsets planes               = {});
 
 // route_query's answer with the evidence it rests on (#614, A3): the route and the authority that
 // answered, from the one selection (select_answer) route_query returns the route of. nullopt where
@@ -51,7 +54,8 @@ namespace ninferno::ops::detail::generic {
 [[nodiscard]] std::optional<RouteAnswer>
 route_answer_query(const DeviceClass& device, QType qtype, LinearPolicy policy, Epilogue epilogue,
                    std::int32_t n, std::int32_t k, std::int32_t tokens, bool prefill = false,
-                   std::int32_t parent_rows = 0, std::optional<QuantLayout> layout = std::nullopt);
+                   std::int32_t parent_rows = 0, std::optional<QuantLayout> layout = std::nullopt,
+                   PlaneOffsets planes = {});
 
 // answered_before_tuner (route_authorities.h) for the call route_answer_query describes, against
 // the heuristic's route at that width: whether the dense tuner leaves the width untimed (#1018).

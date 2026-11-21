@@ -504,14 +504,31 @@ struct Problem {
     return (problem.epilogue == Epilogue::SwiGlu ? 2LL : 1LL) * problem.n;
 }
 
+// Where a weight's planes start past a 16-byte boundary, in bytes (0..15 each): a row view's,
+// whose rows start inside its parent (#724). The selector refuses the tiles that read a plane
+// aligned (rmma_refusal, r8_refusal, w4a8_refusal: Alignment), so a replay of the call describes
+// its planes at these offsets, not as a standalone weight's. All zero for a whole weight.
+struct PlaneOffsets {
+    std::uint8_t qdata  = 0;
+    std::uint8_t qhigh  = 0;
+    std::uint8_t scales = 0;
+
+    [[nodiscard]] bool any() const noexcept { return qdata != 0 || qhigh != 0 || scales != 0; }
+
+    friend bool operator==(const PlaneOffsets&, const PlaneOffsets&) = default;
+};
+
+[[nodiscard]] PlaneOffsets plane_offsets(const Weight& w) noexcept;
+
 // A distinct problem that reached the generic path on this thread since clear_seen_problems, with
-// its weight's stored rows and layout: what route_query needs to ask the call's route again (the
-// decision manifest's route lines, runtime/engine/decision_routes.h). In (format, policy,
-// epilogue, N, K, stored rows, layout) order.
+// its weight's stored rows, layout and plane offsets: what route_query needs to ask the call's
+// route again (the decision manifest's route lines, runtime/engine/decision_routes.h). In
+// (format, policy, epilogue, N, K, stored rows, layout, plane offsets) order.
 struct SeenProblem {
     Problem problem;
     std::int32_t parent_rows = 0;
     QuantLayout layout       = QuantLayout::RowSplit;
+    PlaneOffsets planes{};
 };
 [[nodiscard]] std::vector<SeenProblem> seen_problems();
 // Forgets them and collects this thread's from here on: an Engine's load starts its own record, and

@@ -164,7 +164,8 @@ void note_group_sums_demotion(Route route, int rows, int tokens, int k, std::siz
 // an Engine's load, on its own thread, so another live Engine's calls stay out), and under
 // NINFERNO_ROUTE_RECORD=<file> each distinct (format, compute, epilogue, N, K) appended to the file
 // in ninferno_route_tune's --shapes format, so a model's shapes come from running it.
-using SeenSet = std::set<std::tuple<int, int, int, std::int32_t, std::int32_t, std::int32_t, int>>;
+using SeenSet =
+    std::set<std::tuple<int, int, int, std::int32_t, std::int32_t, std::int32_t, int, int>>;
 
 struct ThreadSeen {
     bool collecting = false;
@@ -186,11 +187,24 @@ RecordedProblems& recorded_state() {
     return state;
 }
 
+} // namespace
+
+PlaneOffsets plane_offsets(const Weight& w) noexcept {
+    const auto off = [](const void* p) {
+        return static_cast<std::uint8_t>(reinterpret_cast<std::uintptr_t>(p) & 15U);
+    };
+    return PlaneOffsets{off(w.qdata), off(w.qhigh), off(w.scales)};
+}
+
+namespace {
+
 void record_problem(const Problem& p, const Weight& w) {
     static const char* path = std::getenv("NINFERNO_ROUTE_RECORD");
     if (ThreadSeen& t = thread_seen(); t.collecting) {
+        const PlaneOffsets o = plane_offsets(w);
         t.seen.insert({static_cast<int>(p.qtype), static_cast<int>(p.policy),
-                       static_cast<int>(p.epilogue), p.n, p.k, w.n, static_cast<int>(w.layout)});
+                       static_cast<int>(p.epilogue), p.n, p.k, w.n, static_cast<int>(w.layout),
+                       o.qdata | (o.qhigh << 4) | (o.scales << 8)});
     }
     if (path == nullptr || *path == 0) return;
     RecordedProblems& s = recorded_state();
@@ -250,10 +264,13 @@ std::vector<SeenProblem> seen_problems() {
     const ThreadSeen& t = thread_seen();
     std::vector<SeenProblem> out;
     out.reserve(t.seen.size());
-    for (const auto& [qtype, policy, epilogue, n, k, parent_rows, layout] : t.seen) {
+    for (const auto& [qtype, policy, epilogue, n, k, parent_rows, layout, planes] : t.seen) {
+        const PlaneOffsets offsets{static_cast<std::uint8_t>(planes & 15),
+                                   static_cast<std::uint8_t>((planes >> 4) & 15),
+                                   static_cast<std::uint8_t>((planes >> 8) & 15)};
         out.push_back({Problem{static_cast<QType>(qtype), static_cast<LinearPolicy>(policy), n, k,
                                static_cast<Epilogue>(epilogue)},
-                       parent_rows, static_cast<QuantLayout>(layout)});
+                       parent_rows, static_cast<QuantLayout>(layout), offsets});
     }
     return out;
 }
