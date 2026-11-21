@@ -151,6 +151,19 @@ def test_a_filled_counts_dead_old_route_is_no_rival(tmp_path):
     assert evidence == [[17, 100, 100], [18, 100, 100], [19, 100, 100]]
 
 
+def test_a_dead_count_needs_no_old_route_row_in_the_second_grid(tmp_path):
+    # #1157 review: neither grid times the dead ggml_mmq band (W4A8 timed at T 17-19); the move to
+    # n2 needs n2's and the default's rows in the second grid, not the old route's.
+    rows = [(t, r, us) for t in (17, 19) for r, us in (("n1", 200), ("n2", 100), ("w4a8.64x64", 50))]
+    second = ([(t, r, us) for t in (17, 18, 19)
+               for r, us in (("n1", 200), ("n2", 100), ("w4a8.64x64", 50))],
+              [(t, "w4a8.64x64") for t in (17, 18, 19)])
+    bands, evidence = run(tmp_path, [[1, 19, "ggml_mmq"], [20, 16777216, "n2"]], rows,
+                          evidence=[], second=second, tokens="17-19")
+    assert bands == [[1, 16, "ggml_mmq"], [17, 16777216, "n2"]]
+    assert evidence == [[17, 100, 100], [18, 100, 100], [19, 100, 100]]
+
+
 def test_repeat_keeps_an_entry_the_second_grid_does_not_repeat(tmp_path):
     # n2 wins T 9-11 in the first grid. In the second, n2 ties n1 at T 10 and n4 (a table route)
     # is 10 % ahead of both: no reversal past the margin, so without --repeat the move is written;
@@ -405,6 +418,7 @@ def test_round_width_reads_the_token_tile_from_the_name():
     assert tool.round_width("rmma.m2.n1.w4x1.c2") == 8
     assert tool.round_width("staged.64x128.w4") == 128
     assert tool.round_width("staged.128x64.w8") == 64
+    assert tool.round_width("w4a4.32x64") == 32  # #1157 review: W4A4 names its token tile too
     assert tool.round_width("tiled.128x64") == 128
     assert tool.round_width("w4a8.32x128") == 32
     assert tool.round_width("ggml_mmq") == 8

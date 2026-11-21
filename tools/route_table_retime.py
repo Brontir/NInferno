@@ -98,7 +98,7 @@ def default_route(times, ranker, t):
 def round_width(route):
     """The token count a route's round count steps at (ceil(T / width)): eight columns a tile for the
     register MMA's nN (rmma.m1.nN.*); the token tile its name carries for the staged
-    (staged.ROWSxTOKENS), tiled and W4A8 tiles (tiled.MxN, w4a8.MxN: M tokens; generic_routes.cpp
+    (staged.ROWSxTOKENS), tiled, W4A8 and W4A4 tiles (tiled.MxN, w4a8.MxN, w4a4.MxN: M tokens; generic_routes.cpp
     route_name); eight, the narrowest column step, for any other route (ggml_mmq's column tiles
     are multiples of eight)."""
     m = re.search(r"(?:^|\.)n(\d+)(?:\.|$)", route)
@@ -107,7 +107,7 @@ def round_width(route):
     m = re.match(r"staged\.\d+x(\d+)", route)
     if m:
         return int(m.group(1))
-    m = re.match(r"(?:tiled|w4a8|w4a8ws)\.(\d+)x\d+", route)
+    m = re.match(r"(?:tiled|w4a8|w4a8ws|w4a4|w4a4ws)\.(\d+)x\d+", route)
     if m:
         return int(m.group(1))
     return 8
@@ -298,9 +298,11 @@ def main():
                 if rk in times and best in times:
                     new_rows[t] = [t, round(times[rk], 2), round(times[best], 2)]
             # A count the second grid cannot confirm (no ranker, a ranker it did not time, new or
-            # old route row there) is a gap: the move would stand on the first grid alone.
+            # old route row there) is a gap: the move would stand on the first grid alone. A dead
+            # count's old route runs nowhere (#1157 review): only its new and default rows count.
             gaps = [t for t in sorted(moved)
-                    if t not in new_rows or haves[t] not in ev_grid.get((key, t), {})]
+                    if t not in new_rows
+                    or (t not in dead and haves[t] not in ev_grid.get((key, t), {}))]
             if gaps:
                 print("%s %s %s %dx%d: the evidence grid has no ranker / %s / old route row at T%s,"
                       " kept" % (*key[:3], key[3], key[4], best, ",".join(map(str, gaps))),
