@@ -1255,6 +1255,15 @@ void test_artifact_plan_via_serve() {
         free_card.processes = {{1, 0, true}};
         check(free_card.refusal_now().empty(),
               "an exclusive card an MPS server holds takes an MPS client");
+        free_card.compute_mode = 1;
+        check(!free_card.refusal_now().empty(),
+              "an exclusive-thread card is refused even under MPS");
+        check(ninferno::ui::is_mps_server("/usr/bin/nvidia-cuda-mps-server") &&
+                  ninferno::ui::is_mps_server("C:\\x\\nvidia-cuda-mps-server.exe") &&
+                  ninferno::ui::is_mps_server("nvidia-cuda-mps-server") &&
+                  !ninferno::ui::is_mps_server("/usr/bin/nvidia-cuda-mps-control") &&
+                  !ninferno::ui::is_mps_server("python"),
+              "the MPS server is told by its executable's name");
 
         UiOptions options;
         options.offline      = true;

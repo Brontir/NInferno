@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ninferno::ui {
@@ -54,6 +55,9 @@ struct GpuStat {
     [[nodiscard]] double bandwidth_gbs() const noexcept;
     [[nodiscard]] nlohmann::json to_json() const;
 };
+
+// Whether an executable path (NVML's process name) is the NVIDIA MPS server's.
+[[nodiscard]] bool is_mps_server(std::string_view path);
 
 class GpuSource {
 public:

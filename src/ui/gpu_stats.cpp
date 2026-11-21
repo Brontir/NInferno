@@ -3,6 +3,7 @@
 #include "core/sys.h"
 
 #include <algorithm>
+#include <cstring>
 #include <mutex>
 
 namespace ninferno::ui {
@@ -12,13 +13,20 @@ double GpuStat::bandwidth_gbs() const noexcept {
     return 2.0 * memory_clock_max_mhz * 1e6 * (memory_bus_bits / 8.0) / 1e9;
 }
 
+bool is_mps_server(std::string_view path) {
+    const auto slash = path.find_last_of("/\\");
+    const auto base  = slash == std::string_view::npos ? path : path.substr(slash + 1);
+    return base == "nvidia-cuda-mps-server" || base == "nvidia-cuda-mps-server.exe";
+}
+
 std::string GpuStat::refusal_now() const {
     if (compute_mode == 2) return "its compute mode is prohibited (NVML)";
-    // Under MPS the server holds the exclusive context and clients join it (NVIDIA's MPS
-    // overview: exclusive-process mode then behaves as the default mode for them).
+    // Under MPS the server holds an exclusive-process card and clients join it (NVIDIA's MPS
+    // overview: that mode then behaves as the default mode for them); MPS does not apply to the
+    // exclusive-thread mode.
     const bool mps = std::any_of(processes.begin(), processes.end(),
                                  [](const GpuProcess& p) { return p.mps_server; });
-    if ((compute_mode == 1 || compute_mode == 3) && !processes.empty() && !mps) {
+    if ((compute_mode == 1 || (compute_mode == 3 && !mps)) && !processes.empty()) {
         return "its compute mode is exclusive and process " +
                std::to_string(processes.front().pid) + " holds it (NVML)";
     }
@@ -216,11 +224,8 @@ public:
                             char path[256] = {};
                             if (process_name_ &&
                                 process_name_(process.pid, path, sizeof(path)) == kOk) {
-                                const std::string name(path);
-                                const auto slash = name.find_last_of("/\\");
-                                const std::string base =
-                                    slash == std::string::npos ? name : name.substr(slash + 1);
-                                process.mps_server = base.rfind("nvidia-cuda-mps-server", 0) == 0;
+                                process.mps_server =
+                                    is_mps_server(std::string(path, strnlen(path, sizeof(path))));
                             }
                             stat.processes.push_back(process);
                         }
