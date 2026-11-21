@@ -1486,19 +1486,18 @@ void test_hub_plan_via_serve() {
               "two asks of one key at once: one serve run (" + std::to_string(count) + ")");
     }
     // Two asks of different keys at once: two serve runs, one after the other on the card (a child
-    // that finds another running notes the overlap). The code before the card's mutex showed no
-    // overlap here either (another lock ordered the two asks, even with a 3 s child): this guards
-    // the order, it did not catch a failure.
+    // that finds another running notes the overlap).
     {
         fs::remove(root / "runs.txt");
         fs::remove(root / "overlaps.txt");
-        fs::remove(root / "child-running");
+        fs::remove_all(root / "child-running");
+        // mkdir claims the card in one step (a check then a touch would let two children both
+        // miss each other).
         std::ofstream(root / "serve-one-card")
-            << "#!/bin/sh\n[ -e '" << (root / "child-running").string()
-            << "' ] && echo overlap >> '" << (root / "overlaps.txt").string() << "'\ntouch '"
-            << (root / "child-running").string() << "'\nsleep 1\nrm -f '"
-            << (root / "child-running").string() << "'\nexec '" << (root / "serve-plan").string()
-            << "' \"$@\"\n";
+            << "#!/bin/sh\nmkdir '" << (root / "child-running").string()
+            << "' 2>/dev/null || echo overlap >> '" << (root / "overlaps.txt").string()
+            << "'\nsleep 1\nrmdir '" << (root / "child-running").string() << "' 2>/dev/null\nexec '"
+            << (root / "serve-plan").string() << "' \"$@\"\n";
         fs::permissions(root / "serve-one-card", fs::perms::owner_all);
         UiOptions options;
         options.serve_binary = root / "serve-one-card";

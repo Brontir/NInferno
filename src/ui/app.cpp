@@ -1297,8 +1297,14 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     // One serve child a card at a time, whatever its key: two at once would each
                     // see the other's context in the free memory, or (exclusive compute) be
                     // refused the card.
-                    std::mutex* card = nullptr;
-                    {
+                    // A card the GPU source lists has its own; any other index shares one, so
+                    // the map grows with the cards, not with what a client asks.
+                    std::mutex* card = &serve_unlisted_card_mutex_;
+                    bool listed      = false;
+                    for (const auto& stat : gpus_->snapshot()) {
+                        listed = listed || stat.index == gpu;
+                    }
+                    if (listed) {
                         std::lock_guard lock(sizes_mutex_);
                         auto& slot = serve_card_mutexes_[gpu];
                         if (!slot) { slot = std::make_unique<std::mutex>(); }
