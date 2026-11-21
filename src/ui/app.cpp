@@ -1332,13 +1332,25 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         // The replay plans `now` at the plan here's configuration; serve's own choice may be
         // another (its workspace and routes move it): then serve's `now` is the answer, never a
         // replay of a configuration the document does not show.
-        if (now && now->served && served->contains("choice") && (*served)["choice"].is_object()) {
-            const Json here  = product::choice_json(*now->served).value("chosen", Json::object());
-            const Json there = (*served)["choice"].value("chosen", Json::object());
-            for (const char* axis :
-                 {"quant", "kv", "activations", "chunk", "ring", "state", "drafter", "depth"}) {
-                if (here.value(axis, Json()) != there.value(axis, Json())) {
-                    return as_served(std::move(*served));
+        if (now) {
+            // A choice on one side only is a mismatch too.
+            const bool serve_chose = served->contains("choice") && (*served)["choice"].is_object();
+            if (serve_chose != static_cast<bool>(now->served)) {
+                return as_served(std::move(*served));
+            }
+            if (serve_chose) {
+                // `chosen` is null where a choice chose nothing (plan_choice.cpp): compared whole.
+                const Json here  = product::choice_json(*now->served).value("chosen", Json());
+                const Json there = (*served)["choice"].value("chosen", Json());
+                if (!here.is_object() || !there.is_object()) {
+                    if (here != there) { return as_served(std::move(*served)); }
+                } else {
+                    for (const char* axis : {"quant", "kv", "activations", "chunk", "ring", "state",
+                                             "drafter", "depth"}) {
+                        if (here.value(axis, Json()) != there.value(axis, Json())) {
+                            return as_served(std::move(*served));
+                        }
+                    }
                 }
             }
         }

@@ -2154,7 +2154,9 @@ workspace ones (the #620 host split: either query pulls the Ops' kernels into th
 of a local artifact (#843) is ninferno-serve's own, both queries asked; online on Hugging Face,
 so is a GGUF repository's idle plan (#766: one serve run a plan key, kept, a failure for three
 minutes; `now` replayed in the UI at serve's pick and the free memory, its workspace by the
-formula). serve's refusal is the plan's answer, as for an artifact. Offline, on ModelScope, with
+formula; where serve's chosen configuration is another, `now` is serve's own when just measured,
+else none until the plan is asked again). serve's refusal is the plan's answer, as for an
+artifact. Offline, on ModelScope, with
 no serve, a serve that could not reach the hub or answer in time, or a native or mixed
 repository, the plan there answers, its `planner` saying why; the quantization rows' fits
 (`/api/quants`) and the catalog are always planned there. Its MoE steps keep the measured pair's
