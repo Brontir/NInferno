@@ -335,9 +335,16 @@ bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, st
     // formats only: the affine ones (the K-quants, Q4_0) dequant cheaply on the register MMA (RTX
     // 2080 Ti, one call each, T 5..8: Q3_K-Q6_K 10-58 % faster off mmq; Gemma 4 12B Q4_K_M MTP5
     // 116.7 -> 136.1 tok/s), while the codebook IQ4_XS lost 23-38 % there.
-    if (!bf16_mma_native())
+    if (!bf16_mma_native()) {
+        // Lab A/B (#1040, never merged): NINFERNO_LAB_NO_MMQ_VERIFY_LOW=1 leaves the codebook
+        // formats' T 5..8 calls to the register MMA on Turing.
+        static const bool no_low = [] {
+            const char* v = std::getenv("NINFERNO_LAB_NO_MMQ_VERIFY_LOW");
+            return v != nullptr && v[0] == '1';
+        }();
         return mmq_call(w, policy, rows, tokens) &&
-               (tokens >= kMmqVerifyMinTokens || mmq_verify_format(w.qtype));
+               (tokens >= kMmqVerifyMinTokens || (!no_low && mmq_verify_format(w.qtype)));
+    }
     return mmq_call(w, policy, rows, tokens) && tokens >= kMmqVerifyMinTokens && lanes != 1 &&
            mmq_verify_format(w.qtype);
 }
