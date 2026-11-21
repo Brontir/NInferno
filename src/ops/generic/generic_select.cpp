@@ -278,10 +278,10 @@ constexpr std::int32_t kVecRuleMaxTokensGa10xGb20x = 3;
 constexpr std::int32_t kVecRuleMaxTokensTuring = 2;
 // On GA10x the vector kernel stops at two tokens for Q5_K and Q6_K (#1152; format_rules.h
 // VecCapGa10xTwo). Qwen3.5-9B, --spec off, vec at T = 1 only against master's T = 2..3: Q6_K C = 3
-// RTX 3060 +10.7 %, RTX 3090 +5.0 %; Q5_K RTX 3060 +10.4 %; Q4_K only +1.5 % (RTX 3060), so it
-// keeps three. T = 2 keeps vec: there the cards split (Q6_K C = 2 RTX 3060 +4.0 %, RTX 3090
-// -2.3 %). Ada (RTX 4090 Q5_K_M: vec ahead at T = 2..4), Turing (its own cap) and Volta (vec 7-18 %
-// ahead at T = 3..4, #1153) keep theirs.
+// RTX 3060 +10.7 %, RTX 3090 +5.0 %; Q5_K RTX 3060 +10.4 %, RTX 3090 +5.2 %; Q4_K only +1.5 %
+// (RTX 3060) and Q3_K far behind without vec (-5.7 %), so they keep three. T = 2 keeps vec: there
+// the cards split (Q6_K C = 2 RTX 3060 +4.0 %, RTX 3090 -2.3 %). Ada (RTX 4090 Q5_K_M: vec ahead at
+// T = 2..4), Turing (its own cap) and Volta (vec 7-18 % ahead at T = 3..4, #1153) keep theirs.
 constexpr std::int32_t kVecRuleMaxTokensGa10xTwo = 2;
 
 std::int32_t vec_rule_max_tokens(QType qtype) {

@@ -461,7 +461,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "RTX 3060, RTX 3090",
      "end to end, Qwen3.5-9B, --spec off, vec at T = 1 only against vec at T = 2..3 (lab A/B, "
      "4 alternating starts): Q6_K C = 3 RTX 3060 +10.7 %, RTX 3090 +5.0 %; Q5_K C = 3 RTX 3060 "
-     "+10.4 %; T = 2 keeps vec (Q6_K C = 2 RTX 3060 +4.0 %, RTX 3090 -2.3 %); sm_86 only, for "
+     "+10.4 %, RTX 3090 +5.2 %; T = 2 keeps vec (Q6_K C = 2 RTX 3060 +4.0 %, RTX 3090 -2.3 %); "
+     "sm_86 only, for "
      "the formats of format_rules.h VecCapGa10xTwo; Q4_K keeps kVecRuleMaxTokensGa10xGb20x",
      ""},
     // The rule's lower edge, from two tokens: T = 1 keeps R8 and the dense tuner.

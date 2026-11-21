@@ -424,11 +424,13 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "Qwen3.5-9B Q6_K, --spec off, vec at T = 1 only against master (vec at T = 2..3), 4 "
      "alternating starts each: C = 3 RTX 3060 +10.7 %, RTX 3090 +5.0 %; C = 2 RTX 3060 +4.0 %, RTX "
      "3090 -2.3 % (the T = 2 edge splits the cards: T = 2 keeps vec); C = 4 within 0.1 %"},
-    {Rule::VecCapGa10xTwo, Basis::Measured, FormatSet{Q::GGML_Q5_K}, 0, "ga106:28sm", "RTX 3060",
-     Evidence::SingleCard, "#1152: abvecn.sh q5v1152c (lab/1152-vec-cap)", "2026-11-21",
-     "Qwen3.5-9B Q5_K_M, --spec off, as Q6_K: C = 3 +10.4 %, C = 2 +1.4 %, C = 4 +0.2 %. Not in "
-     "the rule: Q4_K (RTX 3060 C = 3 +1.5 %, C = 2 -1.6 %: vec ahead at T = 2), Q3_K and the "
-     "consumer Blackwell cards (not measured at T = 3)"},
+    {Rule::VecCapGa10xTwo, Basis::Measured, FormatSet{Q::GGML_Q5_K}, 0, "ga106:28sm, ga102:82sm",
+     "RTX 3060, RTX 3090", Evidence::TwoCards,
+     "#1152: abvecn.sh q5v1152c (RTX 3060), q5v1152g (RTX 3090) (lab/1152-vec-cap)", "2026-11-21",
+     "Qwen3.5-9B Q5_K_M, --spec off, as Q6_K: C = 3 RTX 3060 +10.4 %, RTX 3090 +5.2 %; C = 2 RTX "
+     "3060 +1.4 %, RTX 3090 -4.3 % (T = 2 keeps vec); C = 4 within 0.2 %. Not in the rule: Q4_K "
+     "(RTX 3060 C = 3 +1.5 %, C = 2 -1.6 %), Q3_K (RTX 3060 vec ahead: C = 2 -11.6 %, C = 3 "
+     "-5.7 %) and the consumer Blackwell cards (not measured at T = 3)"},
 });
 } // namespace rows
 
