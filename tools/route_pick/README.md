@@ -5,7 +5,7 @@ has no route table in `routes/` and whose board is past `kCarryDistance` from ev
 answers carry and the engine reads no file: the RTX 4070 Ti SUPER, the RTX 4060 and the RTX 5070 today), and whose SM
 count lies between the fewest and the most SMs of the same compute capability's table boards: the law interpolates
 between measured boards and is not extrapolated past them. Five classes today: AD103 (76, 80 SMs) and GA104 (38, 46,
-48); AD107, GA107 (10-22 SMs) and Turing (one table board, 68 SMs) get none. Each file holds the T 9-16 band of every A16 generic-path problem with the store or
+48); AD107, GA107 (10-22 SMs) and Turing (one table board, 68 SMs) get none. Each file holds the T 9-16 band (T 9-32 on sm_89, below) of every A16 generic-path problem with the store or
 SwiGLU epilogue that the route tables of the same compute capability list (the release models' shapes), as `pick.py`
 prices it from repo facts. The add epilogue (o_proj, down) is priced but not written: on the RTX 4060 Ti its bands lost
 2.8 % against the borrowed table, the law's n2.w1x4 against the measured n4.w1x4 on the Q6_K down (#1051).
@@ -31,6 +31,23 @@ only those gaps (the problems of its capability's other tables, the add epilogue
 there are none (the RTX 2080 Ti, the only sm_75 table). Such an answer is
 never demoted and never claims a shape-owned problem. An explicit `--route-table` stands alone and reads no overlay,
 and `--route-policy legacy` reads none either (the lookup answers as before the overlay).
+
+## T 17-32 on sm_89 (#785)
+On compute capability 8.9 (`NARROW_CC`) every class's file also holds the bands of T 17-32 (`NARROW_HI`), on tabled
+boards too, for every problem it prices there, also where the table covers T 9-16 and the entry then holds the 17-32
+bands alone. Past T 16 the bands stop at the first width `pick.py` cannot price. These bands answer a different set of calls than the T 9-16 ones: the int8 calls of T 17-32 outside the prefill
+profile (`a8_wide_call`: a speculative verify round, a decode batch), which skip the table, and whose measured entries
+hold A16 schedules only. For such a call (`route_table_entry`, `table_predicted_answer`) the band answers ahead of the
+cost model, *whether or not the table holds an entry of its own*. It yields only to this board's own tuned W4A8 band of
+the width (`dense_tune_prefill_band`, `auto_answer`). A band the call does not admit leaves it to the cost model, as
+before. A16 calls of T 17-32 read these bands like the T 9-16 ones: in the table's gaps on a board within
+`kCarryDistance`, ahead of the table past it (the speed profile; no predicted band is read at prefill from T 17).
+
+Evidence (open grids, T 24 / 32, the cells the cost-model authority answers): pick.py's mean regret against the timed
+routes is +2.0 % on the RTX 4070 Ti and +4.1 % on the 4090, where the cost model's is +27.1 / +19.9 %. On the 3090 it
+is 5.1 % against 16.1 %, but the 3060 had no such cell to score, so cc 8.6 stays out. On the 5090 the pick is not
+better (+5.7 % against +3.9 %), so cc 12.0 stays out. End to end on the RTX 4090 (ninferno-serve, MTP draft 3,
+Qwen3.5-9B Q4_K_M): +4.8 % at 6 lanes (verify width 24), +0.8 % at 8 (width 32, noise level).
 
 ## Evidence (analyzer_r14, 19.11)
 The test removed a card's own table, as for a card of the generation that nobody measured. Qwen3-8B prefill at chunk

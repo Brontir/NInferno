@@ -174,7 +174,10 @@ std::string warm_up_key_text(const EngineOptions& probe, std::uint32_t round_tok
          routes.loaded
              ? routes.content_sha256 + " + " + routes.lender_sha256 +
                    (routes.predicted_sha256.empty() ? std::string()
-                                                    : " + pick " + routes.predicted_sha256)
+                                                    : " + pick " + routes.predicted_sha256) +
+                   (routes.moe_predicted_sha256.empty()
+                        ? std::string()
+                        : " + moe pick " + routes.moe_predicted_sha256)
              : "none");
     add("sources", ops::detail::generic::dense_tune_sources());
     return text;

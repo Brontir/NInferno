@@ -178,10 +178,14 @@ bool a8_wide_call(const Ask& ask, const Problem& problem, const Weight& weight) 
     return ask.tokens >= kPrefillBandMinTokens && allows_w4a8(weight, problem.policy);
 }
 
-bool a8_call(const Ask& ask, const Problem& problem, const Weight& weight) {
-    return a8_wide_call(ask, problem, weight) || vec_rule(weight, problem.policy, ask.tokens) ||
-           r8_call(problem, weight, ask.tokens) ||
+// The other int8 calls the tables stand aside for: ggml's vector kernel, R8, the MMQ verify rule.
+bool a8_narrow_call(const Ask& ask, const Problem& problem, const Weight& weight) {
+    return vec_rule(weight, problem.policy, ask.tokens) || r8_call(problem, weight, ask.tokens) ||
            mmq_verify_rule(weight, problem.policy, problem.n, ask.tokens, ask.lanes);
+}
+
+bool a8_call(const Ask& ask, const Problem& problem, const Weight& weight) {
+    return a8_wide_call(ask, problem, weight) || a8_narrow_call(ask, problem, weight);
 }
 
 // The route table's entry for the exact problem (route_table.h): the nearest measured board's
@@ -189,12 +193,25 @@ bool a8_call(const Ask& ask, const Problem& problem, const Weight& weight) {
 // codec keeps its tiled route: the tiled and register-MMA families sum in different orders.
 std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& problem,
                                              const Weight& weight) {
-    if (a8_call(ask, problem, weight)) return std::nullopt;
-    auto hit            = table_route_answer(problem, ask.tokens, ask.prefill());
     const auto admitted = [&](const std::optional<TableAnswer>& h) {
         return h && route_admits(h->route, weight, problem.policy) &&
                profile_admits(h->route, ask, &weight);
     };
+    std::optional<TableAnswer> hit;
+    if (a8_call(ask, problem, weight)) {
+        // An int8 call of T 17-32 outside the prefill profile (a round of speculative verify, a
+        // decode batch) that only a8_wide_call sends past the table: the analyzer's predicted band,
+        // priced among the A16 register MMA and the int8 ggml_mmq (pick.py does not price W4A8, so
+        // the band never names it; the board's own W4A8 band still answers first, auto_answer)
+        // (#785: RTX 4070 Ti / 4090, T 24 / 32, mean regret
+        // +2.0 / +4.1 % against the cost model's +27.1 / +19.9 %), ahead of the cost model. The
+        // table's measured entries hold A16 schedules and stay aside.
+        if (a8_narrow_call(ask, problem, weight) || ask.prefill()) return std::nullopt;
+        hit = table_predicted_answer(problem, ask.tokens);
+        if (!admitted(hit)) return std::nullopt;
+    } else {
+        hit = table_route_answer(problem, ask.tokens, ask.prefill());
+    }
     // A predicted band this call does not admit (ggml_mmq under the speed profile) leaves the
     // table's own or borrowed entry to answer, as before the band filled the gap (#1068).
     if (hit && hit->predicted && !admitted(hit)) {
@@ -577,7 +594,19 @@ RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& we
         }
         if (!demoted) demoted = std::move(answer);
     }
-    if (predicted) return under_policy(std::move(*predicted), asked, demoted ? &*demoted : nullptr);
+    if (predicted) {
+        // An int8 call of T 17-32 (a8_wide_call) passes the dense-tune authority by, and its own
+        // tuned W4A8 band applied only through the heuristic (dense_tune_prefill_band below): it
+        // still does, ahead of the predicted band, as this board's own tuning (#785 review). The
+        // band is the one the cost model's route took before the predicted band answered.
+        if (a8_wide_call(asked, problem, weight)) {
+            const RouteAnswer ruled = heuristic_answer(asked, problem, weight);
+            if (auto band = dense_tune_prefill_band(asked, problem, weight, ruled.route)) {
+                return under_policy(std::move(*band), asked, demoted ? &*demoted : nullptr);
+            }
+        }
+        return under_policy(std::move(*predicted), asked, demoted ? &*demoted : nullptr);
+    }
     RouteAnswer answer = heuristic_answer(asked, problem, weight);
     if (auto band = dense_tune_prefill_band(asked, problem, weight, answer.route)) {
         return under_policy(std::move(*band), asked, demoted ? &*demoted : nullptr);

@@ -9,6 +9,7 @@
 
 #include "core/device_class.h"
 #include "core/format_facts.h"
+#include "core/ggml_frag.h"
 #include "core/measured_boards.h"
 #include "ops/common/shape_routes.h"
 #include "ops/generic/route_authorities.h"
@@ -92,6 +93,10 @@ struct Table {
     std::unordered_map<std::uint64_t, std::vector<RouteAsBand>> route_as; // shape-owned tables
     // The analyzer's predicted bands (routes/pick/<class>.json; read_predicted), per problem.
     std::unordered_map<std::uint64_t, std::vector<RouteBand>> predicted;
+    // The expert-call law's MoE picks (routes/moe_pick/<class>.json; read_moe_predicted), per
+    // layer and the banks' layouts it priced (gate/up, down in ggml_frag_v1): decode bands only
+    // (T 1-8).
+    std::map<std::tuple<MoeKey, bool, bool>, detail::moe::MoeRouteEntry> moe_predicted;
     RouteTableStatus status;
     // The board it was measured on (gpu.pci_id's registry row, else gpu.board), when recorded.
     std::optional<Board> board;
@@ -229,7 +234,7 @@ void parse_entry(const Json& e, const std::string& path, Table& table) {
 // A generic-MoE entry: {"format", ["down_format",] "experts", "top_k", "hidden", "inter",
 // "bands": [[t_min, t_max, "<gate/up>|<down>"], ...], "prefill": "<gate/up>|<down>"};
 // "down_format" (default: "format") names the down bank's format of a mixed layer.
-void parse_moe_entry(const Json& e, const std::string& path, Table& table) {
+detail::moe::MoeRouteEntry moe_entry_of(const Json& e, const std::string& path) {
     const std::string where = path + " moe entry " + e.dump();
     if (!e.is_object()) refuse("a moe entry that is not an object", where);
     const auto q  = parse_qtype(e.at("format").get<std::string>());
@@ -276,8 +281,13 @@ void parse_moe_entry(const Json& e, const std::string& path, Table& table) {
         }
         entry.prefill = p;
     }
+    return entry;
+}
+
+void parse_moe_entry(const Json& e, const std::string& path, Table& table) {
+    auto entry = moe_entry_of(e, path);
     if (!table.moe.emplace(moe_key_of(entry.key), std::move(entry)).second) {
-        refuse("a duplicate moe layer", where);
+        refuse("a duplicate moe layer", path + " moe entry " + e.dump());
     }
     ++table.status.entries;
 }
@@ -375,12 +385,13 @@ std::shared_ptr<Table> parse_table(const std::string& path) {
     return table;
 }
 
-// The widths an overlay band may hold: the T 9-16 calls the analyzer's pick was scored on (the
-// left-out cards' decode and verify widths, tools/route_pick/README.md).
+// The widths an overlay band may hold: the T 9-32 calls the analyzer's pick was scored on (the
+// left-out cards' decode and verify widths, and the narrow prefill chunks of T 17-32 on the compute
+// capabilities pick.py's VERIFIED_T17 names, tools/route_pick/README.md; #785).
 // The band starts above the widths pick.py does not price (T <= 8: vec, R8) and ends with the
-// decode and verify widths (kDecodePinMaxTokens).
+// narrow band, below which the cost model answered the T 17-32 calls 15-27 % slow on Ada (#785).
 constexpr std::int32_t kPredictedMinTokens = 9;
-constexpr std::int32_t kPredictedMaxTokens = kDecodePinMaxTokens;
+constexpr std::int32_t kPredictedMaxTokens = 32;
 // 8: the widest vec and R8 call pick.py leaves out (generic_gemm.h kGgmlVecMaxTokens).
 static_assert(kPredictedMinTokens > 8 && kPredictedMinTokens <= kPredictedMaxTokens,
               "a predicted band starts above the vec and R8 widths (T <= 8), which pick.py does "
@@ -388,7 +399,7 @@ static_assert(kPredictedMinTokens > 8 && kPredictedMinTokens <= kPredictedMaxTok
 
 // A ninferno-route-pick/1 file (tools/route_pick/gen.py) into `table.predicted`: its class must
 // be this device's own (gpu.class), each entry an A16 problem of the generic path with bands inside
-// T 9-16 only (no prefill route, no claim, no route_as), routes this build names. A refused file
+// T 9-32 only (no prefill route, no claim, no route_as), routes this build names. A refused file
 // is an error: it is this device's own file.
 void read_predicted(const std::string& path, Table& table) {
     std::ifstream in(path_from_utf8(path), std::ios::binary);
@@ -463,6 +474,87 @@ void read_predicted(const std::string& path, Table& table) {
         table.status.predicted_sha256  = sha256_hex(std::string_view(bytes));
     } catch (const nlohmann::json::exception& e) {
         throw std::runtime_error("route pick: " + path + ": " + e.what());
+    }
+}
+
+// A ninferno-moe-pick/1 file (tools/bench/moe_expert_law.py pick, #987) into
+// `table.moe_predicted`: its class must be this device's own and its gpu.pci_id a board whose facts
+// are this one's (board distance 0: another board of the class reads none of it, the law priced
+// that board's probe and facts), each entry a generic-MoE layer with decode bands only (T 1-8, no
+// prefill plan). A refused file is an error: it is this device's own file.
+void read_moe_predicted(const std::string& path, Table& table) {
+    std::ifstream in(path_from_utf8(path), std::ios::binary);
+    if (!in) throw std::runtime_error("moe pick: cannot open " + path);
+    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (in.bad()) throw std::runtime_error("moe pick: cannot read " + path);
+    try {
+        const Json root = Json::parse(bytes);
+        if (!root.is_object() || root.value("schema", std::string{}) != "ninferno-moe-pick/1") {
+            throw std::runtime_error("moe pick: " + path + " is not ninferno-moe-pick/1");
+        }
+        const std::string cls = root.at("gpu").at("class").get<std::string>();
+        if (cls != route_gpu_class()) {
+            throw std::runtime_error("moe pick: " + path + " is for " + cls + ", this device is " +
+                                     route_gpu_class());
+        }
+        const std::string id = root.at("gpu").at("pci_id").get<std::string>();
+        const auto pci       = parse_pci_id(id);
+        if (!pci) {
+            throw std::runtime_error("moe pick: " + path + ": gpu.pci_id \"" + id +
+                                     "\" is not a PCI product id");
+        }
+        const auto priced = measured::find_board_of_pci(*pci);
+        if (!priced) {
+            throw std::runtime_error("moe pick: " + path + ": gpu.pci_id " + id +
+                                     " is no board of the registry");
+        }
+        const Board here = board_of(device_class());
+        if (!(here.dram_gbps > 0) || !(priced->dram_gbps > 0) ||
+            board_distance(here, *priced) != 0.0) {
+            table.status.moe_predicted_skipped = path + " (priced for " + id + ", another board)";
+            return;
+        }
+        for (const Json& e : root.at("moe")) {
+            const std::string where = path + " moe entry " + e.dump();
+            if (e.contains("prefill"))
+                refuse("a predicted moe entry holds decode bands only", where);
+            // The banks the law priced in fragment order ("frag": ["gate_up", "down"]; none:
+            // both in the published layout): a layer of other layouts runs other kernels.
+            bool frag_gate_up = false, frag_down = false;
+            for (const Json& f : e.value("frag", Json::array())) {
+                const auto bank = f.get<std::string>();
+                if (bank == "gate_up") {
+                    frag_gate_up = true;
+                } else if (bank == "down") {
+                    frag_down = true;
+                } else {
+                    refuse("an unknown bank '" + bank + "' in frag", where);
+                }
+            }
+            auto entry = moe_entry_of(e, path);
+            // A bank the law names in fragment order must have that layout (ggml_frag.h): any
+            // other key would never be asked, a mistake of the writer, not a plan.
+            if ((frag_gate_up && !ggml_frag_format(entry.key.qtype)) ||
+                (frag_down && !ggml_frag_format(entry.key.down_qtype))) {
+                refuse("frag names a bank whose format has no fragment order", where);
+            }
+            for (const auto& band : entry.bands) {
+                if (band.t_min < 1 || band.t_max > detail::moe::kR8Tokens) {
+                    refuse("a predicted moe band outside T 1-" +
+                               std::to_string(detail::moe::kR8Tokens),
+                           where);
+                }
+            }
+            const auto key = std::make_tuple(moe_key_of(entry.key), frag_gate_up, frag_down);
+            if (!table.moe_predicted.emplace(key, std::move(entry)).second) {
+                refuse("a duplicate moe layer", where);
+            }
+        }
+        table.status.moe_predicted_layers = table.moe_predicted.size();
+        table.status.moe_predicted_path   = path;
+        table.status.moe_predicted_sha256 = sha256_hex(std::string_view(bytes));
+    } catch (const nlohmann::json::exception& e) {
+        throw std::runtime_error("moe pick: " + path + ": " + e.what());
     }
 }
 
@@ -657,7 +749,8 @@ void publish_locked(DeviceTables& d, std::shared_ptr<const Table> table) {
     d.has_route_as.store(d.table && !d.table->route_as.empty(), std::memory_order_release);
     d.has_generic.store(d.table && (!d.table->generic.empty() || !d.table->predicted.empty()),
                         std::memory_order_release);
-    d.has_moe.store(d.table && !d.table->moe.empty(), std::memory_order_release);
+    d.has_moe.store(d.table && (!d.table->moe.empty() || !d.table->moe_predicted.empty()),
+                    std::memory_order_release);
     d.settled.store(true, std::memory_order_release);
 }
 
@@ -686,7 +779,16 @@ RouteTableStatus publish_loaded_locked(DeviceTables& d, std::shared_ptr<Table> t
              : "; " + std::to_string(table->status.predicted_entries) + " problems' T " +
                    std::to_string(kPredictedMinTokens) + "-" + std::to_string(kPredictedMaxTokens) +
                    " bands predicted from this board's facts (" + table->status.predicted_path +
-                   ")");
+                   ")") +
+        (table->status.moe_predicted_skipped.empty()
+             ? ""
+             : "; no predicted MoE plans: " + table->status.moe_predicted_skipped) +
+        (table->status.moe_predicted_path.empty()
+             ? ""
+             : "; " + std::to_string(table->status.moe_predicted_layers) +
+                   " MoE layer entries (a geometry, formats and layouts each) with T 1-8 plans "
+                   "predicted from this board's facts (" +
+                   table->status.moe_predicted_path + ")");
     const RouteTableStatus status = table->status;
     publish_locked(d, std::move(table));
     return status;
@@ -736,6 +838,16 @@ void ensure_default_locked(DeviceTables& d) {
                 std::error_code missing;
                 if (std::filesystem::is_regular_file(pick, missing)) {
                     read_predicted(utf8_path(pick), *nearest);
+                }
+                // The expert-call law's MoE picks for this board (routes/moe_pick/<class>.json,
+                // #987), at any distance: they answer a width the table's entry of the layer does
+                // not, or one an entry lent by another table or a far table answers (moe.cpp
+                // table_entry_near). An explicit --route-table reads no pick file.
+                const auto moe_pick = path_from_utf8(dir) / "moe_pick" /
+                                      path_from_utf8(route_table_file_name(route_gpu_class()));
+                std::error_code no_moe_pick;
+                if (std::filesystem::is_regular_file(moe_pick, no_moe_pick)) {
+                    read_moe_predicted(utf8_path(moe_pick), *nearest);
                 }
                 (void)publish_loaded_locked(d, std::move(nearest));
             }
@@ -961,6 +1073,26 @@ std::optional<MoePlan> table_plan(const MoeRouteKey& key, std::int32_t tokens, b
     return std::nullopt;
 }
 
+std::optional<MoePlan> predicted_plan(const MoeRouteKey& key, std::int32_t tokens,
+                                      bool frag_gate_up, bool frag_down) {
+    // Not under the Legacy policy: there the layer answers as before the picks (the switch back
+    // for a regression report), as the dense overlay's bands (table_route_answer).
+    if (route_policy() == RoutePolicy::Legacy) return std::nullopt;
+    DeviceTables& d = here();
+    if (d.settled.load(std::memory_order_acquire) && !d.has_moe.load(std::memory_order_acquire)) {
+        return std::nullopt;
+    }
+    const auto table = active_table(d);
+    if (!table) return std::nullopt;
+    const auto it =
+        table->moe_predicted.find(std::make_tuple(moe_key_of(key), frag_gate_up, frag_down));
+    if (it == table->moe_predicted.end()) return std::nullopt;
+    for (const auto& band : it->second.bands) {
+        if (tokens >= band.t_min && tokens <= band.t_max) return band.plan;
+    }
+    return std::nullopt;
+}
+
 std::optional<MoeTableOrigin> table_origin(const MoeRouteKey& key) {
     const auto table = active_table(here());
     if (!table) return std::nullopt;
@@ -1035,8 +1167,8 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
             key_of(QType::FP8_E4M3FN_ROW_BF16, compute, problem.epilogue, problem.n, problem.k));
     }
     // The analyzer's predicted band, where the overlay holds one for this problem and width (its
-    // bands lie inside T 9-16, below every prefill band): ahead of the nearest table's entry past
-    // kCarryDistance (where it is Transferred or Borrowed), and in the table's gaps within it
+    // bands lie inside T 9-32; none is read at a prefill width): ahead of the nearest table's entry
+    // past kCarryDistance (where it is Transferred or Borrowed), and in the table's gaps within it
     // (#1068, below). Not under the Legacy policy: there the table answers as it did before the
     // overlay, the switch back for a regression report.
     if (with_predicted && !(prefill && tokens >= kPrefillMinTokens) &&
@@ -1083,6 +1215,35 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
     }
     for (const auto& band : e.bands) {
         if (tokens >= band.t_min && tokens <= band.t_max) return answer(band.route);
+    }
+    return std::nullopt;
+}
+
+std::optional<TableAnswer> table_predicted_answer(const Problem& problem, std::int32_t tokens) {
+    if (tokens < kPredictedMinTokens || tokens > kPredictedMaxTokens ||
+        route_policy() == RoutePolicy::Legacy) {
+        return std::nullopt;
+    }
+    DeviceTables& d = here();
+    if (d.settled.load(std::memory_order_acquire) &&
+        !d.has_generic.load(std::memory_order_acquire)) {
+        return std::nullopt;
+    }
+    const auto table = active_table(d);
+    if (!table) return std::nullopt;
+    const auto compute = compute_class(problem.qtype, problem.policy);
+    auto p             = table->predicted.find(
+        key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
+    // The same fp8 row-F32 fallback as table_route_answer.
+    if (p == table->predicted.end() && problem.qtype == QType::FP8_E4M3FN_ROW_F32) {
+        p = table->predicted.find(
+            key_of(QType::FP8_E4M3FN_ROW_BF16, compute, problem.epilogue, problem.n, problem.k));
+    }
+    if (p == table->predicted.end()) return std::nullopt;
+    for (const auto& band : p->second) {
+        if (tokens >= band.t_min && tokens <= band.t_max) {
+            return TableAnswer{band.route, table->distance, table->status.gpu_class, {}, 0, true};
+        }
     }
     return std::nullopt;
 }

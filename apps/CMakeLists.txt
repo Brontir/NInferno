@@ -14,7 +14,8 @@ target_link_libraries(ninferno PRIVATE
 
 add_executable(ninferno-ui ui/main.cpp)
 ninferno_internal_includes(ninferno-ui)
-target_link_libraries(ninferno-ui PRIVATE ninferno_ui ninferno_product_update)
+# The prefill's tail calls of its plans from the model's own frontend, as serve counts them (#793).
+target_link_libraries(ninferno-ui PRIVATE ninferno_ui ninferno_product_update ninferno_prompt_tail)
 
 # Also `ninferno-serve spec-tune` / `spec-reselect` (the CLI's own code) and `route-tune`: a
 # release's measurement tools run through the dispatcher on the GPU's engine (tools/kit).

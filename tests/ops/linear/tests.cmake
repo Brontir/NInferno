@@ -71,7 +71,7 @@ ninferno_add_op_test(ninferno_qwen_prefill_token_invariance_test
 # Route tables of the generic projection path: lookup, prefill route, refusals.
 ninferno_add_op_test(ninferno_route_table_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_table.cpp"
-  LIBRARIES ninferno_linear_test_support)
+  LIBRARIES ninferno_linear_test_support ninferno::json)
 # Every format and activation path over the scale domain (tensor scale 3e-4..2.5, block
 # scales across 2^16 with E4M3 and FP16 subnormals, N and K off the 512 grid, M = 1, 3, 127, 129).
 ninferno_add_op_test(ninferno_linear_scale_domain_test
@@ -96,6 +96,10 @@ set_tests_properties(ninferno_route_table_shipped_boards_test PROPERTIES LABELS 
 add_test(NAME ninferno_route_table_shipped_picks_test
   COMMAND ninferno_route_table_test --shipped-picks)
 set_tests_properties(ninferno_route_table_shipped_picks_test PROPERTIES LABELS host)
+# Every shipped routes/moe_pick/<class>.json (#987) read on its board's substitute, no GPU.
+add_test(NAME ninferno_route_table_shipped_moe_picks_test
+  COMMAND ninferno_route_table_test --shipped-moe-picks)
+set_tests_properties(ninferno_route_table_shipped_moe_picks_test PROPERTIES LABELS host)
 
 # The generic projection path: random and awkward shapes in every format, every op and route,
 # against an FP64 reference GEMM, plus the token invariance of the prefill-admissible routes.
@@ -264,7 +268,7 @@ ninferno_add_op_test(ninferno_selector_real_device_test
 #   facts no price reads yet) are compared the same way, each under the nvcc it records: in full
 #   where it is this build's, by their kernel set otherwise.
 # - ninferno_kernel_facts_lookup_test: every snapshot parses and carries the loop counts (schema
-#   4; sm_70 waived until #762), the release engine of each lab capability is found, and every facts-priced golden board's
+#   4; sm_70 too since #762), the release engine of each lab capability is found, and every facts-priced golden board's
 #   price reads facts; the sections' rows are within a kernel's bounds and count the unit #785's
 #   launch laws read; no GPU.
 # - ninferno_kernel_facts_live_test: on a GPU that runs this build's SASS, the running kernels'

@@ -269,6 +269,16 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual((c4.mma, c4.k_iter), (hmma, hmma * 16 // 2))
         plain = [(o, "CALL.ABS.NOINC 0x0 ;" if t.startswith("HMMA") else t) for o, t in KERNEL]
         self.assertEqual(sc.loop_counts(body_of(plain), tiles=2).mma, 0)
+        # #762: the 16-bit products are calls too (mma_bf16_fma_call, mma_f16_fma_call: one
+        # m16n8k16 each), the BF16 and FP8 codes' K loops on sm_70; each counts as that HMMA.
+        for kind, shape in (("bf16", "HMMA.16816.F32.BF16."), ("f16", "HMMA.16816.F32.EMU")):
+            fn = f"mma_{kind}_fma_call"
+            named = f"`(_ZN61_INTERNAL_x_ninferno3ops{len(fn)}{fn}E6float45uint45uint2)`"
+            calls16 = [(o, "CALL.ABS.NOINC " + named + " ;" if t.startswith("HMMA") else t)
+                       for o, t in KERNEL]
+            c16 = sc.loop_counts(body_of(calls16), tiles=2)
+            self.assertEqual((c16.loops, c16.mma, c16.k_iter), (1, hmma, hmma * 16 // 2))
+            self.assertTrue(c16.mma_shape.startswith(shape), c16.mma_shape)
         # cuobjdump -sass prints the linked image's call as 0x0; its relocation names the target.
         elf = [".section .rel.text._Z6kernelv\tREL"] + [
             f"0x{o:x}    _ZN61_INTERNAL_x_ninferno3ops16mma_s8_dp4a_callILi8EEE4int4    R_CUDA_ABS47_34"
@@ -1363,6 +1373,30 @@ class RegisterAllocations(unittest.TestCase):
         for arch, new in (("80", {key: (162, 0, 0, 0, b)}), ("86", {key: (160, 0, 0, 0, b)}),
                           ("80", {key: (160, 0, 0, 16, b)})):
             self.assertEqual(kernel_facts.keep_allocations("r8", arch, old, new), new, arch)
+
+    def test_sm70_relocations_read_for_the_emulated_mma_families(self):
+        # #762: rmma, w4a8 and moegemm loops call the emulated MMA on sm_70, and a per-family
+        # extraction of any of them reads the relocations; the dp4a families, i8 (no sm_70
+        # kernel) and the resources-only ones need none, so their sm_70 extraction neither reads nor refuses.
+        def keys(*families):
+            return {f"k{i}": (f, ()) for i, f in enumerate(families)}
+        for f in (kernel_facts.FAMILY, "w4a8", "moegemm"):
+            self.assertTrue(kernel_facts.calls_emulated_mma(keys(f)), f)
+        for f in ("r8", "moer8", "i8", "mmq", "vec", "gemma4"):
+            self.assertFalse(kernel_facts.calls_emulated_mma(keys(f)), f)
+        self.assertTrue(kernel_facts.calls_emulated_mma(keys("r8", "moegemm")))
+        popen = kernel_facts.subprocess.Popen
+
+        def no_run(*args, **kwargs):
+            raise AssertionError("cuobjdump run for a family that needs no relocations")
+        kernel_facts.subprocess.Popen = no_run
+        try:
+            self.assertIsNone(kernel_facts.emulated_calls("b", None, "70", keys("r8", "vec")))
+            self.assertIsNone(kernel_facts.emulated_calls("b", None, "86", keys("moegemm")))
+            self.assertIsNone(kernel_facts.emulated_calls("b", None, "70", keys("moegemm"),
+                                                          sass_dump="d"))
+        finally:
+            kernel_facts.subprocess.Popen = popen
 
 
 if __name__ == "__main__":

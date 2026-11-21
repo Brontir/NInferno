@@ -38,7 +38,10 @@
 // under RoutePolicy::Evidence, and only on the board it was priced for: past kCarryDistance ahead
 // of the nearest table, so it stands where a Transferred answer would be demoted to the ranker (the
 // 3090 left out: +5.5 % prefill at chunk 16 over that path); within it only in a gap of the table
-// (no entry of its own, or a Borrowed one), below its measured entries (#1068).
+// (no entry of its own, or a Borrowed one), below its measured entries (#1068). One exception
+// (#785): an int8 call of T 17-32 outside the prefill profile (a8_wide_call), which skips the
+// table's A16 entries, takes the band (sm_89 files only) whatever the table holds, ahead of the
+// cost model and below this board's own tuned W4A8 band of the width (auto_answer).
 
 #include "ninferno/option_enums.h"
 #include "ops/generic/generic_gemm.h"

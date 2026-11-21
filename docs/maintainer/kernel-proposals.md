@@ -989,3 +989,56 @@ P from #850's plan. A, G, N and P have frozen predictions so far.
     its Q codec (the Hadamard and per-group quantization of every row) and its scale staging. The
     BF16 kernel has neither: it widens Q to FP32 once and starts its keys. Recorded, not fitted.
 - Decision: kept on sm_70 (the slope acceptance, at least 0.75x INT8's, is met).
+
+### R. Q6_K W4A8 halves weighed in the integer domain (#1116, #1126): removed
+- Regime: generic W4A8 prefill, Q6_K, T 32-512, every dense W4A8 tile (classic `w4a8_kernel` and producer-warp
+  `w4a8ws.128x64.p4`). Boards: RTX 3090, 3060, 4070 Ti, 4060 Ti, 4090, 5090. #1116 shows the producer-warp kernel
+  issue-bound at K 4096, T 128 (I2FP and FMUL a third of the executed instructions; sm_86 / sm_89 spill, LDL 230 K at
+  168 registers).
+- Law: per output and 32-value block, each 16-weight half's int32 MMA sum is converted and multiplied by its float
+  sub-scale (2 x (I2FP + FMUL + FFMA)); the binding term is issue.
+- Variant: the halves' sums weighed by their int8 sub-scales in the integer domain (`c0*sl + d0*sh`, IMAD), then one
+  conversion and one scale (`fmaf(float(.), a_scale*d, acc)`), exact below 2^24. The MoE kernel keeps the float
+  halves (its own writer).
+- Prediction (frozen 20.11 20:08, before any build): producer-warp time 0.93-0.97 on four boards; executed
+  instructions x0.945; Q4_K within +-1.5 %. Addenda frozen before each later A/B (20:12, 20:35, 20:36, 23:20, 23:31,
+  23:33); the analyzer log keeps them.
+- Acceptance / refutation (frozen): a gain under 3 % closes it; a classic Q6_K tile above 1.04 of master in both of
+  two runs, or above 1.06 in either, closes it with no change; KLD within 15 % of master's.
+- Protocol (per board, one script):
+  - Build master and the branch on the same stand: Release, the stand's CUDA, the board's one arch.
+  - Time them one after the other (A then B, no ABBA): `ninferno_route_tune --a8-candidates 1 --points 32,64,128,512 --samples 30` on Q6_K and Q4_K (the control, code unchanged) a16 store, n 4096 / 12288 x K 4096. Each cell is the median of 30 samples, read as branch / master.
+  - The both-kernels head ran the script twice (A B, A B).
+  - ncu: one launch of `w4a8_ws_kernel` at n 4096, T 128 a side, for instructions by opcode, local loads and registers.
+  - KLD: `ninferno-perplexity` on Qwen3.5-9B Q4_K_M, the quick corpus, context 4096, stride 2048, each side against master's exact reference (RTX 3090).
+- A/B, producer-warp kernel first. The first form, 36cfa7e6a, put the integer halves in both kernels. The second, a43690392, put them in the producer-warp kernel only, so the classic tiles at that head run master's code. Q6_K branch / master:
+
+  | board | head | `w4a8ws.128x64.p4` | classic Q6_K tiles | Q4_K control | ncu, producer-warp, K 4096 T 128 |
+  |---|---|---|---|---|---|
+  | RTX 3090 (sm_86) | 36cfa7e6a | 0.867-0.918 | 0.91-0.99; 64x64 1.047 (n 4096 T 512), 1.077 (n 12288 T 128), 1.088 (n 12288 T 32) | 0.985-1.020 | LDL 230 K -> 0, instructions x1.008, registers 168 -> 168, 75.0 -> 66.0 us |
+  | RTX 4070 Ti (sm_89) | 36cfa7e6a | 0.889-0.902 | 64x64 0.962-0.987 (T 32 / 64) | 0.995-1.005 | LDL 230 K -> 0, x1.008, 168, 108.1 -> 96.0 us |
+  | RTX 4090 (sm_89) | a43690392 | 0.838-0.907 | 0.914-1.005 (master's code: spread) | 0.985-1.014 | LDL 230 K -> 0, x1.008, 55.4 -> 50.1 us |
+  | RTX 3060 (sm_86) | a43690392 | 0.878-0.912 | 0.982-1.011 (master's code) | 0.996-1.023 | LDL 230 K -> 0, 219.7 -> 194.2 us |
+  | RTX 5090 (sm_120a) | a43690392 | 0.880-0.946 | 0.994-1.008 (master's code) | 0.994-1.008 | no LDL either way, registers 142 -> 129, instructions x0.972, 56.38 -> 51.58 us (0.38 waves) |
+
+  - KLD (3090, a43690392): identical to master's to every digit. Mean 0.005478, p99 0.014208, top-1 98.1483 %.
+  - Against the 20:08 prediction: the time range was REFUTED (0.84-0.95, not 0.93-0.97), and so was the instruction count (x1.008 on sm_86 / sm_89, x0.972 on sm_120a, not x0.945). Q4_K within +-1.5 % held except one 3060 cell at 1.023, whose code is master's.
+  - The producer-warp-only form breaks the dense W4A8 same-bytes contract. test_generic_linear compares every admitted W4A8 route against the wide call byte for byte (the prefill profile's token invariance across chunk widths), and the classic and producer-warp tiles of Q6_K would then sum differently (codex P1 on #1126).
+- A/B, both dense kernels (05f53a01b, the form that keeps the contract), two runs against master 7b1215e4e:
+
+  | board | `w4a8ws.128x64.p4` | classic Q6_K tiles, T 32 / 64 (run 1 / run 2) | Q4_K control | gate |
+  |---|---|---|---|---|
+  | RTX 4060 Ti (sm_89) | 0.841-0.897 | 0.922-0.998 (mean of the two runs) | 0.996-1.010 | does not fire |
+  | RTX 3090 (sm_86) | 0.880-0.917 | 64x64 n 12288 T 32: 1.067 / 1.121; the rest 0.919-1.000 | 0.965-1.041 | fires |
+  | RTX 5090 (sm_120a) | 0.882-0.946 | n 4096 T 64: 32x128 1.050 / 1.050, 64x64 1.048 / 1.041; 128x128 0.914-0.923, 128x64 0.958-0.962, 64x128 0.964-0.970 | 0.994-1.043 | fires |
+
+  - The gate (frozen 20.11 23:20) is a stop rule. Once it fired on two architectures, the remaining three boards were not run on this head.
+- Decision: removed. The both-kernels variant fails its gate on sm_86 and sm_120a, and the producer-warp-only one
+  breaks the byte contract. An sm_89-only variant would choose the architecture from these results (no counted fact
+  separates sm_86 from sm_89: both spilled at 168 registers), so it is not proposed. What would reopen it: a counted
+  term for why the classic 64x64 / 32x128 tiles lose with the integer halves on sm_86 / sm_120a (registers, the
+  producer's decode chain) that a variant can remove on every arch.
+- The law as measured covers the producer-warp kernel only, and differently by arch:
+  - sm_86 / sm_89: the gain is the spill going, not issue.
+  - sm_120a, with no spill: 3 % fewer instructions and 8 % less time at 0.38 waves, a dependent-chain reading not counted here.
+  - No measured term explains the classic tiles' losses on sm_86 / sm_120a. The entry claims no law for them, which is why the proposal is removed and not narrowed into a variant.

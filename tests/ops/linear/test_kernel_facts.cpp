@@ -15,6 +15,7 @@
 #include "ops/quantized_weight.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -260,12 +261,8 @@ void loop_counts_read() {
     // ninferno_kernel_facts_test checks only a build's own; tools/dev/kernel_facts_archs.sh checks
     // them now, #762). kResourcesOnly names the snapshots whose loop counts cannot be written yet,
     // each with its issue.
-    constexpr std::string_view kResourcesOnly[] = {
-        // #762: in 108 kernels (BF16 and FP8 codes, two or more token tiles) the K loop's products
-        // are calls (mma_bf16_fma_call, mma.cuh: not inlined), whose bodies sass_counts.py does
-        // not count, so the loop holds no FFMA and `extract` refuses the counts (loops 0).
-        "70",
-    };
+    // None today: sm_70's emulated BF16 / F16 MMA calls count as their HMMA (#762).
+    constexpr std::array<std::string_view, 0> kResourcesOnly{};
     kf::RmmaKernelKey key;
     key.decoder = "Bf16Decoder";
     key.warps_m = 1;
@@ -294,9 +291,10 @@ void loop_counts_read() {
         expect(l.ldg > 0 && l.ldg_bytes == 32 * 16 * static_cast<std::size_t>(l.ldg),
                name + ": the BF16 weights are 16-byte global loads");
         if (arch == "70") {
-            // Volta multiplies with FFMAs (NINFERNO_FMA_MMA): no tensor MMA, no K from shapes.
-            expect(l.mma == 0 && l.k_iter == 0 && l.fp_alu > 0, name + ": the FFMA loop");
-            continue;
+            // Volta's BF16 product is a call to the emulated m16n8k16 (mma_bf16_fma_call, FP32
+            // FMAs inside the callee), counted as that HMMA (sass_counts.py EMULATED_MMA, #762).
+            expect(l.mma_shape == "HMMA.16816.F32.BF16.EMU",
+                   name + ": the emulated BF16 MMA, " + l.mma_shape);
         }
         expect(l.k_iter == 64, name + ": k_iter " + std::to_string(l.k_iter));
         // 64 K per iteration in m16n8k16 MMAs, or in Turing's m16n8k8 ones (HMMA.1688, twice as
@@ -369,16 +367,14 @@ void sections_read() {
     // k_iter 32 J (a 128-row x J-column tile over 256 K on 8 warps, per m16n8 tile); the int8 MMA
     // the generation has (Turing's m8n8k16, m16n8k32 from sm_80 on); and the W4A8 32 x 128 tile
     // (Q4_K, Q6_K) with one loop, two barriers per 128-value K tile and k_iter 16 x 32.
-    // sm_70 has no mmq section: its snapshot is made with CUDA 12.8 (#762), and Volta takes no
-    // MMQ law. It has the gemma4 one (#830): its decode plan reads the Volta kernels' facts, the
-    // r8 one (#613 PR-10): the R8 law reads the one-slot ring's, and the w4a8 one (#787): its
-    // int8 MMA is a call to the dp4a emulation, counted as the MMA it stands for, and the vec one
-    // (#763): a substituted board's vector-kernel launch reads its CTAs per SM from it. The
-    // routed-expert families (moer8, moegemm, #619 step 11) are not in it: the MoE law reads the
-    // boards it was measured on (Turing and newer), and sm_100 has none yet (six of its W4a8Nvfp4
-    // GateUp rows read as unknown flow; no lab board is an sm_100 part).
-    constexpr std::string_view kWithoutSections[] = {"70"};
-    constexpr std::string_view kWithoutMoe[]      = {"70", "100"};
+    // sm_70's snapshot (CUDA 12.8, regenerated in full from a GV100 build, #762) has every
+    // section: its mmq rows with their resources alone (ggml's matrix kernel runs from sm_75 on,
+    // route_requires, so those instances are never launched and RESOURCES_ONLY writes no loop),
+    // its i8 rows from an empty build (as sm_75's: generic_i8.cu compiles the tiles empty below
+    // sm_80), and the routed-expert families. sm_100 has no moer8 / moegemm section yet (six of
+    // its W4a8Nvfp4 GateUp rows read as unknown flow; no lab board is an sm_100 part).
+    constexpr std::array<std::string_view, 0> kWithoutSections{};
+    constexpr std::string_view kWithoutMoe[]      = {"100"};
     int with_sections                             = 0;
     for (const auto arch : kf::snapshot_archs()) {
         const std::string name = "sm_" + std::string(arch);
@@ -423,7 +419,7 @@ void sections_read() {
         const bool mmq_section = kf::section_header(arch, "mmq").has_value();
         if (mmq_section) ++with_sections;
         for (const int type : {12, 13, 14}) {
-            if (!mmq_section) break;
+            if (!mmq_section || arch == "70") break; // sm_70's rows: resources alone (above)
             for (const int J : {32, 128}) {
                 const auto f = kf::mmq_facts(arch, {type, J, false, 30});
                 const std::string what =
@@ -504,7 +500,7 @@ void sections_read() {
         // The I8 tiles (#613 PR-6): from sm_80 on every row has one K loop of int8 MMAs (one
         // cp.async stage an iteration); below, generic_i8.cu compiles them empty.
         if (!kf::section_header(arch, "i8")) continue;
-        const bool i8_built = arch != "75";
+        const bool i8_built = arch != "75" && arch != "70";
         int i8_bad          = 0;
         std::string i8_first;
         for (const auto& [key, f] : kf::section_rows(arch, "i8")) {
@@ -513,9 +509,11 @@ void sections_read() {
             const bool ok = i8_built ? looped : !f.loop || f.loop->loops == 0;
             if (!ok && i8_bad++ == 0) i8_first = key;
         }
-        // The reader's key: the 4x2-warp, 4-bit Store tile (three stages on sm_75's empty build).
-        expect(kf::i8_facts(arch, {4, 2, i8_built ? 4 : 3, 4, 0}).has_value(),
-               name + " i8: no 4 2 " + (i8_built ? "4" : "3") + " 4 0 row");
+        // The reader's key: the 4x2-warp, 4-bit Store tile (three stages on sm_75's empty build,
+        // four on sm_70's).
+        const int i8_stages = arch == "75" ? 3 : 4;
+        expect(kf::i8_facts(arch, {4, 2, i8_stages, 4, 0}).has_value(),
+               name + " i8: no 4 2 " + std::to_string(i8_stages) + " 4 0 row");
         expect(i8_bad == 0, name + " i8: " + std::to_string(i8_bad) +
                                 (i8_built ? " rows without one int8-MMA loop, first "
                                           : " rows with a loop in an empty build, first ") +

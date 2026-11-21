@@ -971,6 +971,15 @@ inline constexpr KvSmRate kKvSmRate[] = {
     {"turing", "qwen3_5_text", KvCacheStorage::Int8Group64, 256, 16, 4, 3.58, 1},  // Qwen3.5 9B
     {"turing", "gemma4_text", KvCacheStorage::BFloat16, 512, 16, 1, 2.67, 1},      // Gemma 4 12B
     {"turing", "gemma4_text", KvCacheStorage::Fp8E4M3Row256, 512, 16, 1, 0.94, 1}, // its int8 rows
+    // The dense family's D128 full layer (16 heads, 4 KV heads; SmolLM3-3B), RTX 2080 Ti (#991
+    // item 3): nsys of ninferno-dense bench at 8K and 32K, master d6bb01198, the decode kernel
+    // gemma4_volta_decode_tiled_kernel<128, 4> between them over the 24576 tokens' rows. BF16
+    // 141.76 us for 50.33 MB (2 x 4 x 128 x 2 B a token), 355 GB/s (58 % of 616: SM-bound); its
+    // int8 rows 160.57 us for 25.56 MB (2 x 4 x (128 + 2), the planner's vector bytes), 159 GB/s.
+    // The census at e99ce56a3 read 3.41 / 1.53 (1 % apart). One card: the estimate, never a
+    // decision.
+    {"turing", "dense_decoder", KvCacheStorage::BFloat16, 128, 16, 4, 3.38, 1},
+    {"turing", "dense_decoder", KvCacheStorage::Fp8E4M3Row256, 128, 16, 4, 1.515, 1},
     // The Quadro GV100 (80 SMs, 1627 MHz reference; mdcenv.sh, the census at 7K and 82K): Gemma 4
     // 12B's BF16 full layer 707 us a call for 153 MB, 216 GB/s, 25 % of its 870 (Qwen3.5's int8
     // kernel, int8_kv_key_major_kt, reaches 643 GB/s, 97 % of the 660 its HBM2 holds: no row).

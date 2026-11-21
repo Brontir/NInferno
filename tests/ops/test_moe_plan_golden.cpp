@@ -116,6 +116,12 @@ const Layer kLayers[] = {
      true, true, 128},
     {"nemotron-3.5-30b-a3b", 128, 6, 2688, 2048, QType::GGML_IQ3_XXS, QType::GGML_IQ3_XXS, true,
      false, false, 128},
+    // The layers routes/moe_pick holds (#987: the RTX 4060 Ti's OLMoE, the RTX 3090's Granite 3.0
+    // MoE), in a format both banks keep in the published layout at Auto: moe-pick answers their
+    // decode widths on those boards, its R8 plans abstain under A16Only, every other board keeps
+    // its own authority.
+    {"olmoe-1b-7b", 64, 8, 2048, 1024, QType::GGML_Q5_K, QType::GGML_Q5_K},
+    {"granite-3.0-3b-a800m", 40, 8, 1536, 512, QType::GGML_Q5_K, QType::GGML_Q5_K},
     // The same banks in fragment order (frag at Auto): the R8 fragment rules, the codec refusals,
     // Volta's HMMA layout rule and the W4A8 fragment admission.
     {"qwen3.6-35b-a3b", 256, 8, 2048, 512, QType::GGML_Q4_K, QType::GGML_Q6_K, false, true, false},
@@ -273,6 +279,8 @@ std::string_view source_of(moe::MoeAuthority a) {
     case A::TableClassA8:
     case A::TableR8Refused:
         return "route-table";
+    case A::MoePick:
+        return "moe-pick";
     case A::VoltaHmma:
         return "volta-hmma";
     case A::PrefillW4a8:
@@ -341,6 +349,8 @@ bool evidence_fits(const moe::MoePlanQuery& q, const ops::MoeWeights& weights,
         return table_evidence_fits(q, weights, config);
     case moe::MoeAuthority::DecodeR8:
         return same_provenance(e.kind, e.donor, e.distance, a8);
+    case moe::MoeAuthority::MoePick:
+        return e.kind == K::Predicted && e.donor.empty();
     default:
         return e.kind == K::Ranker && e.donor.empty();
     }
@@ -508,7 +518,7 @@ int main(int argc, char** argv) {
         for (const Layer& l : kLayers) dump_layer(l, dumps);
         int failed                                         = 0;
         const std::vector<std::string_view> expected_order = {
-            "tuner",        "invariant-profile", "route-table", "volta-hmma",
+            "tuner",        "invariant-profile", "route-table", "moe-pick", "volta-hmma",
             "prefill-w4a8", "prefill-schedule",  "speed-w4a8",  "decode"};
         if (moe::authority_order() != expected_order) {
             std::cerr << "moe plan golden: the authority order moved\n";
