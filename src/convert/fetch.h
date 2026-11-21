@@ -28,6 +28,7 @@
 #include <map>
 #include <set>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -35,6 +36,27 @@
 #include <nlohmann/json.hpp>
 
 namespace ninferno::convert {
+
+// A hub read that failed for want of the hub: no answer, a cut connection, a timeout, a rate limit
+// or a server error (curl's own failure, or HTTP 408 / 429 / 5xx), where a later try may pass. Any
+// other HTTP status is the hub's answer (a gated repository, a revision without the file) and stays
+// a plain runtime_error. ninferno-serve exits kHubTransportExit on one (apps/serve/main.cpp), and
+// ninferno-ui reads that code, not the message's words (#1147).
+class HubTransportError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+inline constexpr int kHubTransportExit = 75; // EX_TEMPFAIL
+
+// Throws `text` as `cause`'s kind: a HubTransportError when the cause is one, else a plain
+// runtime_error. A failure that carries a hub read's failure on keeps whether a later try may pass.
+[[noreturn]] inline void throw_as(const std::exception& cause, const std::string& text) {
+    if (dynamic_cast<const HubTransportError*>(&cause) != nullptr) {
+        throw HubTransportError(text);
+    }
+    throw std::runtime_error(text);
+}
 
 // The files a fetch is about to download, reported before the first byte is transferred.
 struct FetchPlan {
@@ -91,6 +113,9 @@ struct FetchResult {
     // The hub was not asked (unreachable, or $HF_HUB_OFFLINE): the snapshot is what the cache
     // held for the revision, complete or not.
     bool offline = false;
+    // Offline because the hub did not answer (a HubTransportError), not by $HF_HUB_OFFLINE or the
+    // hub's own refusal: a later try may pass.
+    bool offline_transport = false;
 };
 
 // The hub cache root: $HF_HUB_CACHE, $HF_HOME/hub, $XDG_CACHE_HOME/huggingface/hub or

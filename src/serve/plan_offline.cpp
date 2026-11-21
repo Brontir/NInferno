@@ -809,8 +809,8 @@ largest_fitting_hub_quant(const ServeOptions& options,
                     }
                     return choice_of(row, plan, options, planning, local.facts, log);
                 }
-                throw std::runtime_error(repo + ": can't reach the hub to choose a quant (" +
-                                         e.what() + "), and no cached one fits: " + plan.rule +
+                convert::throw_as(e, repo + ": can't reach the hub to choose a quant (" + e.what() +
+                                         "), and no cached one fits: " + plan.rule +
                                          "; pass --quant LABEL");
             }
         }

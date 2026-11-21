@@ -7,6 +7,7 @@
 #include "core/device_class.h"
 #include "core/generation.h"
 #include "core/isa_facts.h"
+#include "core/kernel_occupancy.h"
 #include "core/launch_facts.h"
 #include "core/weight.h"
 #include "ops/generic/generic_gemm.h"
@@ -86,6 +87,27 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     const double max_cta = std::max(d.max_blocks_per_sm, 1);
     const double smem_sm = static_cast<double>(d.smem_per_sm);
     const auto cdiv      = [](double a, double b) { return std::ceil(a / b); };
+    // The CTAs of an A8 tile one SM holds (#938): the occupancy calculator over the kernel's
+    // compiled registers and static shared memory (the release engine's kernel-facts snapshot),
+    // the tile's dynamic shared memory and the driver's per-CTA reserve; the hand count of
+    // threads, blocks and shared memory alone where the snapshot holds no such kernel.
+    const std::string facts_arch = kernel_facts::release_arch(d.major, d.minor);
+    const auto resident = [&](const std::optional<kernel_facts::KernelFacts>& f, double threads,
+                              double smem) {
+        const double hand = std::max(
+            1.0, std::min({std::floor(max_thr / threads), max_cta, std::floor(smem_sm / smem)}));
+        if (!f || f->registers <= 0) return hand;
+        KernelShape shape;
+        shape.registers             = f->registers;
+        shape.static_shared_bytes   = f->static_shared_bytes;
+        shape.threads               = static_cast<int>(threads);
+        shape.dynamic_shared_bytes  = static_cast<std::size_t>(smem);
+        shape.dynamic_shared_opt_in = true;
+        const int ctas              = resident_ctas_per_sm(d, shape);
+        return ctas > 0 ? static_cast<double>(ctas) : hand;
+    };
+    const auto codec           = format_facts(problem.qtype).codec;
+    const std::string_view dec = codec ? w4a8_decoder_name(*codec) : std::string_view();
     // The DRAM time of a tile grid (kernel_roofline.h dram_time, issue #690): the shared bus or the
     // busiest SM's rounds at the rate its own warps reach, with the shared-largest carve-out (the
     // A8 tiles stage through shared memory); on an architecture without an SM rate row the legacy
@@ -144,8 +166,11 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
                 s.producers > 0 ? kW4a8MmaFacts.producer_stages : kW4a8MmaFacts.stages;
             const double smem =
                 stages * (rows_w + cols) * route_cost::kW4a8StageBytesPerRow.value();
-            const double occ     = std::max(
-                1.0, std::min({std::floor(max_thr / threads), max_cta, std::floor(smem_sm / smem)}));
+            // The snapshots parse once (release_arch above reads them all): a lookup, no throw.
+            const auto tile_key = w4a8_unit::kernel_key_of(i, dec, problem.epilogue, facts_arch);
+            const double occ =
+                resident(tile_key ? kernel_facts::w4a8_facts(facts_arch, *tile_key) : std::nullopt,
+                         threads, smem);
             const double ctas = cdiv(n, rows_o) * cdiv(t, cols);
             const double q    = std::ceil(ctas / sms);
             const double mma  = q * 2.0 * rows_w * cols * k / peak_sm;
@@ -232,8 +257,13 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
                                          shared_bytes_per_block_for_arch(d.major * 10 + d.minor));
             const double smem =
                 static_cast<double>(i8_smem_bytes(s.block_m, s.block_n, bits, stages));
-            const double occ     = std::max(1.0, std::min({std::floor(max_thr / s.threads), max_cta,
-                                                           std::floor(smem_sm / smem)}));
+            // The instance's key: 64 rows a warp column, the tile's warps over them
+            // (generic_i8_schedules.h: 256x128 4x2, 128x128 2x2, 128x64 2x1).
+            const int wn = s.block_n / 64, wt = s.threads / 32 / std::max(wn, 1);
+            const kernel_facts::I8KernelKey i8_key{wt, wn, stages, bits,
+                                                   static_cast<int>(problem.epilogue)};
+            const double occ =
+                resident(kernel_facts::i8_facts(facts_arch, i8_key), s.threads, smem);
             const double ctas    = cdiv(n, rows_o) * cdiv(t, cols);
             const double q       = std::ceil(ctas / sms);
             const double mma     = q * 2.0 * rows_w * cols * k / peak_sm;

@@ -1,3 +1,4 @@
+#include "convert/fetch.h"
 #include "core/removed_environment.h"
 #include "core/device_class.h"
 #include "ops/generic/build_manifest.h"
@@ -449,6 +450,12 @@ int main(int argc, char** argv) {
             std::_Exit(1);
         }
         return 0;
+    } catch (const ninferno::convert::HubTransportError& exception) {
+        // The hub did not answer (or answered 408 / 429 / 5xx): a later try may pass, which the
+        // exit code says to a caller (ninferno-ui's plan, #1147) without reading the words.
+        g_server.store(nullptr);
+        operational_log.server_failure(serving, exception.what());
+        return ninferno::convert::kHubTransportExit;
     } catch (const std::exception& exception) {
         g_server.store(nullptr);
         operational_log.server_failure(serving, exception.what());

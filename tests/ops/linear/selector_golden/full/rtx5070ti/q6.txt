@@ -563,7 +563,7 @@ q6 p1 store 5120x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 q6 p1 store 5120x17408 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 q6 p1 store 5120x17408 speed T=48 w4a8.64x64 ws=1044480
 q6 p1 store 5120x17408 speed T=64 w4a8.64x64 ws=1392640
-q6 p1 store 5120x17408 speed T=96 w4a8.32x128 ws=2088960
+q6 p1 store 5120x17408 speed T=96 w4a8.64x64 ws=2088960
 q6 p1 store 5120x17408 speed T=128 w4a8.64x64 ws=2785280
 q6 p1 store 5120x17408 speed T=192 w4a8.64x64 ws=4177920
 q6 p1 store 5120x17408 speed T=256 w4a8.128x64 ws=5570560
@@ -583,7 +583,7 @@ q6 p1 add 5120x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 q6 p1 add 5120x17408 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 q6 p1 add 5120x17408 speed T=48 w4a8.64x64 ws=1044480
 q6 p1 add 5120x17408 speed T=64 w4a8.64x64 ws=1392640
-q6 p1 add 5120x17408 speed T=96 w4a8.32x128 ws=2088960
+q6 p1 add 5120x17408 speed T=96 w4a8.64x64 ws=2088960
 q6 p1 add 5120x17408 speed T=128 w4a8.64x64 ws=2785280
 q6 p1 add 5120x17408 speed T=192 w4a8.64x64 ws=4177920
 q6 p1 add 5120x17408 speed T=256 w4a8.128x64 ws=5570560
@@ -605,7 +605,7 @@ q6 p1 swiglu 2560x17408 speed T=24 w4a8.32x128 ws=522240
 q6 p1 swiglu 2560x17408 speed T=32 w4a8.32x128 ws=696320
 q6 p1 swiglu 2560x17408 speed T=48 w4a8.64x64 ws=1044480
 q6 p1 swiglu 2560x17408 speed T=64 w4a8.64x64 ws=1392640
-q6 p1 swiglu 2560x17408 speed T=96 w4a8.32x128 ws=2088960
+q6 p1 swiglu 2560x17408 speed T=96 w4a8.64x64 ws=2088960
 q6 p1 swiglu 2560x17408 speed T=128 w4a8.64x64 ws=2785280
 q6 p1 swiglu 2560x17408 speed T=192 w4a8.64x64 ws=4177920
 q6 p1 swiglu 2560x17408 speed T=256 w4a8.128x64 ws=5570560
@@ -648,9 +648,9 @@ q6 p0 swiglu 14336x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 q6 p1 store 28672x8192 speed T=1 r8.w8r2 ws=0
 q6 p1 store 28672x8192 speed T=2..8 rmma.m1.n1.w1x8 ws=0
 q6 p1 store 28672x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-q6 p1 store 28672x8192 speed T=17 w4a8.32x128 ws=174080
-q6 p1 store 28672x8192 speed T=24 w4a8.32x128 ws=245760
-q6 p1 store 28672x8192 speed T=32 w4a8.32x128 ws=327680
+q6 p1 store 28672x8192 speed T=17 w4a8.64x64 ws=174080
+q6 p1 store 28672x8192 speed T=24 w4a8.64x64 ws=245760
+q6 p1 store 28672x8192 speed T=32 w4a8.64x64 ws=327680
 q6 p1 store 28672x8192 speed T=48 w4a8.64x64 ws=491520
 q6 p1 store 28672x8192 speed T=64 w4a8.64x64 ws=655360
 q6 p1 store 28672x8192 speed T=96 w4a8.128x64 ws=983040
@@ -669,9 +669,9 @@ q6 p1 store 28672x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 q6 p1 add 28672x8192 speed T=1 r8.w8r2 ws=0
 q6 p1 add 28672x8192 speed T=2..8 rmma.m1.n1.w1x8 ws=0
 q6 p1 add 28672x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-q6 p1 add 28672x8192 speed T=17 w4a8.32x128 ws=174080
-q6 p1 add 28672x8192 speed T=24 w4a8.32x128 ws=245760
-q6 p1 add 28672x8192 speed T=32 w4a8.32x128 ws=327680
+q6 p1 add 28672x8192 speed T=17 w4a8.64x64 ws=174080
+q6 p1 add 28672x8192 speed T=24 w4a8.64x64 ws=245760
+q6 p1 add 28672x8192 speed T=32 w4a8.64x64 ws=327680
 q6 p1 add 28672x8192 speed T=48 w4a8.64x64 ws=491520
 q6 p1 add 28672x8192 speed T=64 w4a8.64x64 ws=655360
 q6 p1 add 28672x8192 speed T=96 w4a8.128x64 ws=983040
@@ -690,9 +690,9 @@ q6 p1 add 28672x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 q6 p1 swiglu 14336x8192 speed T=1 r8.w8r2 ws=0
 q6 p1 swiglu 14336x8192 speed T=2..8 rmma.m1.n1.w1x8 ws=0
 q6 p1 swiglu 14336x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-q6 p1 swiglu 14336x8192 speed T=17 w4a8.32x128 ws=174080
-q6 p1 swiglu 14336x8192 speed T=24 w4a8.32x128 ws=245760
-q6 p1 swiglu 14336x8192 speed T=32 w4a8.32x128 ws=327680
+q6 p1 swiglu 14336x8192 speed T=17 w4a8.64x64 ws=174080
+q6 p1 swiglu 14336x8192 speed T=24 w4a8.64x64 ws=245760
+q6 p1 swiglu 14336x8192 speed T=32 w4a8.64x64 ws=327680
 q6 p1 swiglu 14336x8192 speed T=48 w4a8.64x64 ws=491520
 q6 p1 swiglu 14336x8192 speed T=64 w4a8.64x64 ws=655360
 q6 p1 swiglu 14336x8192 speed T=96 w4a8.128x64 ws=983040

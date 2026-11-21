@@ -88,6 +88,40 @@ std::string curl_text(CURLcode code, long status) {
     return code == CURLE_OK ? "HTTP " + std::to_string(status) : curl_easy_strerror(code);
 }
 
+// Whether a failed read is the transport's (HubTransportError) rather than the hub's answer.
+// curl's own failure counts only where it is the network's: a name that did not resolve, a
+// connection refused or cut, a timeout (CURLOPT_LOW_SPEED_* ends as one), a TLS handshake that did
+// not finish. A malformed or unsupported endpoint, a failed certificate check or a local failure
+// (memory, a file) is no outage: a later try fails the same way (#1147 review).
+bool transport_failure(CURLcode code, long status) {
+    const bool status_says = status == 408 || status == 429 || (status >= 500 && status < 600);
+    switch (code) {
+    case CURLE_OK:
+    // A write callback that refused the body (a 403 / 404 page, or a full disk) ends in
+    // CURLE_WRITE_ERROR: the status decides then, never the code.
+    case CURLE_WRITE_ERROR:
+        return status_says;
+    case CURLE_COULDNT_RESOLVE_PROXY:
+    case CURLE_COULDNT_RESOLVE_HOST:
+    case CURLE_COULDNT_CONNECT:
+    case CURLE_OPERATION_TIMEDOUT:
+    case CURLE_SSL_CONNECT_ERROR:
+    case CURLE_SEND_ERROR:
+    case CURLE_RECV_ERROR:
+    case CURLE_GOT_NOTHING:
+    case CURLE_PARTIAL_FILE:
+    case CURLE_HTTP2:
+    case CURLE_HTTP2_STREAM:
+    case CURLE_WEIRD_SERVER_REPLY:
+#if LIBCURL_VERSION_NUM >= 0x074900 // 7.73: a SOCKS / HAProxy proxy's failure has its own code
+    case CURLE_PROXY:
+#endif
+        return true;
+    default:
+        return false;
+    }
+}
+
 void curl_init() {
     static std::once_flag once;
     std::call_once(once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
@@ -471,6 +505,11 @@ private:
             if (status == 401 || status == 403 || status == 410) { refresh_url(url); }
             if (code == CURLE_OPERATION_TIMEDOUT) { ++stalls_; }
             if (++chunk.failures > options_.retries) {
+                if (transport_failure(code, status)) {
+                    throw HubTransportError(name_ + ": bytes " + range + " failed " +
+                                            std::to_string(chunk.failures) +
+                                            " times (last: " + curl_text(code, status) + ")");
+                }
                 throw std::runtime_error(name_ + ": bytes " +
                                          range + " failed " + std::to_string(chunk.failures) +
                                          " times (last: " + curl_text(code, status) + ")");
@@ -624,6 +663,10 @@ private:
             if (sink.file) { std::fclose(sink.file); }
             if (code == CURLE_OK && (status == 200 || status == 206)) { return; }
             if (attempt >= options_.retries) {
+                if (transport_failure(code, status)) {
+                    throw HubTransportError(name_ + ": download failed (" +
+                                            curl_text(code, status) + ")");
+                }
                 throw std::runtime_error(name_ +
                                          ": download failed (" + curl_text(code, status) + ")");
             }
@@ -673,10 +716,12 @@ public:
     [[nodiscard]] virtual fs::path cache_dir(const fs::path& root, const std::string& repo) const = 0;
 };
 
-std::runtime_error hub_error(const std::string& what, const Response& response,
-                             const std::string& hint) {
-    return std::runtime_error(what + ": " + curl_text(response.code, response.status) +
-                              (hint.empty() ? "" : " (" + hint + ")"));
+[[noreturn]] void throw_hub_error(const std::string& what, const Response& response,
+                                  const std::string& hint) {
+    const std::string text = what + ": " + curl_text(response.code, response.status) +
+                             (hint.empty() ? "" : " (" + hint + ")");
+    if (transport_failure(response.code, response.status)) { throw HubTransportError(text); }
+    throw std::runtime_error(text);
 }
 
 class HuggingFace final : public Hub {
@@ -690,7 +735,7 @@ public:
                          "?blobs=true";
         const auto response = request(url, credentials(), false, true);
         if (response.code != CURLE_OK || response.status != 200) {
-            throw hub_error(
+            throw_hub_error(
                 "listing " + repo + "@" + revision, response,
                 response.status == 401 || response.status == 403 ? listing_hint(repo)
                 : response.status == 404
@@ -727,7 +772,7 @@ public:
         // X-Linked-Etag (the CDN's own ETag is something else); a small file comes directly.
         for (int hop = 0; hop < 5; ++hop) {
             const auto head = request(out.url, credentials(), true, false);
-            if (head.code != CURLE_OK) { throw hub_error("resolving " + file.path, head, ""); }
+            if (head.code != CURLE_OK) { throw_hub_error("resolving " + file.path, head, ""); }
             if (head.status >= 300 && head.status < 400 && !head.redirect.empty()) {
                 if (const auto it = head.headers.find("x-linked-etag"); it != head.headers.end()) {
                     // 64 hex digits: an LFS file's sha256; 40: a git-stored file's blob sha1
@@ -762,7 +807,7 @@ public:
                 }
                 return out;
             }
-            throw hub_error("resolving " + file.path, head,
+            throw_hub_error("resolving " + file.path, head,
                             head.status == 401 || head.status == 403 ? access_hint(repo) : "");
         }
         throw std::runtime_error(file.path + ": too many redirects");
@@ -813,7 +858,7 @@ public:
                          url_path(revision) + "&Recursive=true";
         const auto response = request(url, credentials(), false, true);
         if (response.code != CURLE_OK || response.status != 200) {
-            throw hub_error("listing " + repo + "@" + revision + " on ModelScope", response,
+            throw_hub_error("listing " + repo + "@" + revision + " on ModelScope", response,
                             response.status == 404 ? "no such repository or revision" : "");
         }
         const auto body = Json::parse(response.body);
@@ -1481,18 +1526,19 @@ std::string cached_commit(const fs::path& repo_dir, const std::string& repo,
     } else if (revision.size() == 40 && fs::is_directory(repo_dir / "snapshots" / revision)) {
         commit = revision;
     } else {
-        throw std::runtime_error(std::string(error.what()) + "; and " + repo + "@" + revision +
-                                 " has no snapshot in the cache " + root.string());
+        throw_as(error, std::string(error.what()) + "; and " + repo + "@" + revision +
+                            " has no snapshot in the cache " + root.string());
     }
     // A ref (a branch, a tag) may have moved since it was cached: its snapshot is served only when
     // the user asked for the cache ($HF_HUB_OFFLINE), never because the hub could not be reached
     // (the same command would serve another model by the state of the network). A commit is its
     // own snapshot.
     if (!hub_offline() && revision != commit) {
-        throw std::runtime_error(std::string(error.what()) + "; " + repo + "@" + revision +
-                                 " was cached at " + commit +
-                                 ", which the ref may have left: set HF_HUB_OFFLINE=1 to serve "
-                                 "that snapshot, or name the commit (" + repo + "@" + commit + ")");
+        throw_as(error, std::string(error.what()) + "; " + repo + "@" + revision +
+                            " was cached at " + commit +
+                            ", which the ref may have left: set HF_HUB_OFFLINE=1 to serve "
+                            "that snapshot, or name the commit (" +
+                            repo + "@" + commit + ")");
     }
     return commit;
 }
@@ -1510,9 +1556,10 @@ fs::path model_of(const fs::path& snapshot, const std::vector<RemoteFile>& files
 }
 
 // What a cached snapshot holds for `options`, chosen from its complete files as a listing's are:
-// --quant selects offline as it does online, and a snapshot without the file it names is refused.
+// --quant selects offline as it does online, and a snapshot without the file it names is refused,
+// as `cause` (the listing's failure, when there was one) was.
 fs::path cached_model(const fs::path& snapshot, const FetchOptions& options,
-                      const std::string& repo) {
+                      const std::string& repo, const std::exception* cause = nullptr) {
     Listing listing;
     for (const auto& entry : fs::recursive_directory_iterator(snapshot)) {
         // By the link's own name (fs::relative would resolve it into blobs/).
@@ -1527,9 +1574,13 @@ fs::path cached_model(const fs::path& snapshot, const FetchOptions& options,
         // Without a selector, what the snapshot holds (small files the caller reads, or weights
         // not yet downloaded: the caller says so).
         if (options.quant.empty() || !options.include.empty()) { return snapshot; }
-        throw std::runtime_error("the hub is unreachable and the cached snapshot " +
-                                 snapshot.string() + " has no model for " + options.quant + ": " +
-                                 error.what());
+        const bool unreachable = dynamic_cast<const HubTransportError*>(cause) != nullptr;
+        const std::string text =
+            std::string(unreachable ? "the hub is unreachable" : "the hub's listing failed") +
+            " and the cached snapshot " + snapshot.string() + " has no model for " + options.quant +
+            ": " + error.what();
+        if (unreachable) { throw HubTransportError(text); }
+        throw std::runtime_error(text);
     }
 }
 
@@ -1626,7 +1677,7 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
         const auto first = range.find_first_of("0123456789");
         if (response.status == 206 &&
             (first == std::string::npos || number(range.substr(first, range.find('-', first) - first)) != begin)) {
-            throw hub_error("reading bytes from " + std::to_string(begin) + " of " + url, response,
+            throw_hub_error("reading bytes from " + std::to_string(begin) + " of " + url, response,
                             "the answer's range starts elsewhere");
         }
     } else if (response.status == 200) {
@@ -1637,8 +1688,8 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
         sink.data.size() >= bytes || (total != 0 && sink.data.size() + begin == total);
     if ((response.code != CURLE_OK && !(full && response.code == CURLE_WRITE_ERROR)) ||
         (response.status != 200 && response.status != 206) || !full) {
-        throw hub_error("reading the first " + std::to_string(bytes) + " bytes of " + url,
-                        response, full ? "" : "short response");
+        throw_hub_error("reading the first " + std::to_string(bytes) + " bytes of " + url, response,
+                        full ? "" : "short response");
     }
     return sink.data;
 }
@@ -1769,7 +1820,7 @@ FetchResult fetch_model(const std::string& spec, const FetchOptions& options) {
         }
         const auto head = request(spec, {}, true, true);
         if (head.code != CURLE_OK || head.status >= 400) {
-            throw hub_error("resolving " + spec, head, "");
+            throw_hub_error("resolving " + spec, head, "");
         }
         DownloadRequest file;
         file.url    = head.effective.empty() ? spec : head.effective;
@@ -1794,9 +1845,10 @@ FetchResult fetch_model(const std::string& spec, const FetchOptions& options) {
                               "); using the cached snapshot " + commit);
         out.repo     = repo;
         out.commit   = commit;
-        out.offline  = true;
-        out.snapshot = repo_dir / "snapshots" / commit;
-        out.model    = cached_model(out.snapshot, options, repo);
+        out.offline           = true;
+        out.offline_transport = dynamic_cast<const HubTransportError*>(&error) != nullptr;
+        out.snapshot          = repo_dir / "snapshots" / commit;
+        out.model             = cached_model(out.snapshot, options, repo, &error);
         return out;
     }
     check_pinned(options, repo, revision, listing);
@@ -1908,8 +1960,10 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
         out.commit          = cached_commit(repo_dir, repo, revision, root, error);
         out.offline         = true;
         const auto snapshot = repo_dir / "snapshots" / out.commit;
-        const auto model    = cached_model(snapshot, options, repo);
-        if (model == snapshot) { throw no_gguf(" in the cached snapshot " + snapshot.string()); }
+        const auto model    = cached_model(snapshot, options, repo, &error);
+        if (model == snapshot) {
+            throw_as(error, no_gguf(" in the cached snapshot " + snapshot.string()).what());
+        }
         out.path = model.lexically_relative(snapshot).generic_string();
         read_local(model);
         return out;
@@ -2179,7 +2233,7 @@ std::vector<HubModel> search_modelscope(const std::string& term, const FetchOpti
                      "&page_size=" + std::to_string(std::clamp(limit, 1, 100));
     const auto response = request(url, {}, false, true);
     if (response.code != CURLE_OK || response.status != 200) {
-        throw hub_error("searching ModelScope for " + term, response, "");
+        throw_hub_error("searching ModelScope for " + term, response, "");
     }
     const auto body = Json::parse(response.body);
     std::vector<HubModel> out;
@@ -2284,7 +2338,7 @@ std::vector<HubModel> search_models(const std::string& query, const FetchOptions
     const HuggingFace hub(endpoint);
     const auto response = request(url, hub.credentials(), false, true);
     if (response.code != CURLE_OK || response.status != 200) {
-        throw hub_error("searching " + query, response, "");
+        throw_hub_error("searching " + query, response, "");
     }
     std::vector<HubModel> out;
     for (const auto& item : Json::parse(response.body)) {
@@ -2333,7 +2387,7 @@ std::string fetch_text(const std::string& url, std::size_t max_bytes) {
     }
     const auto response = request(url, headers, false, true);
     if (response.code != CURLE_OK || response.status != 200) {
-        throw hub_error("reading " + url, response,
+        throw_hub_error("reading " + url, response,
                         response.status == 401 && headers.empty() && url.starts_with(endpoint + "/")
                             ? "a private repository needs HF_TOKEN"
                             : "");
@@ -2350,7 +2404,7 @@ std::string hub_account(const std::string& token, const FetchOptions& options) {
     const auto response =
         request(endpoint + "/api/whoami-v2", {"Authorization: Bearer " + token}, false, true);
     if (response.code != CURLE_OK || response.status != 200) {
-        throw hub_error("checking the Hugging Face token", response,
+        throw_hub_error("checking the Hugging Face token", response,
                         response.status == 401 ? "the hub does not accept it" : "");
     }
     const auto body = Json::parse(response.body, nullptr, false);
@@ -2372,7 +2426,7 @@ std::optional<Json> fetch_model_card(const std::string& spec, const FetchOptions
     const HuggingFace hub(endpoint);
     const auto response = request(url, hub.credentials(), false, true);
     if (response.code != CURLE_OK || response.status != 200) {
-        throw hub_error("reading " + repo + "'s model card", response, "");
+        throw_hub_error("reading " + repo + "'s model card", response, "");
     }
     auto parsed = Json::parse(response.body, nullptr, false);
     if (!parsed.is_object()) {
@@ -2398,7 +2452,7 @@ Json fetch_repo_json(const std::string& spec, const FetchOptions& options,
     const auto response = request(endpoint + "/" + repo + "/resolve/" + revision + "/" + file,
                                   hub.credentials(), false, true);
     if (response.code != CURLE_OK || response.status != 200) {
-        throw hub_error("reading " + repo + "'s " + file, response, "");
+        throw_hub_error("reading " + repo + "'s " + file, response, "");
     }
     auto parsed = Json::parse(response.body, nullptr, false);
     if (!parsed.is_object()) {

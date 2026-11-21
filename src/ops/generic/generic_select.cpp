@@ -886,13 +886,12 @@ std::optional<R8TableHit> tuned_r8(const Problem& p) {
     return std::nullopt;
 }
 
-namespace {
-
-// The canonical name (kernel_facts.h decoder_name) of the type each R8 codec instantiates
-// (compiled_codecs.h's NINFERNO_R8_CODECS): "" for a codec without an R8 launch. The enum
-// argument of W4a8Ggml32 is spelled by value, as the snapshot keeps it. ninferno_r8_law_test
-// compares every key built from this table with the one the launch names (r8_launch_key).
-std::string_view r8_decoder_name(WeightCodec codec) {
+// The canonical name (kernel_facts.h decoder_name) of the W4A8 decoder type each codec
+// instantiates, which the R8 kernels instantiate too (compiled_codecs.h's NINFERNO_R8_CODECS): ""
+// for a codec without one. The enum argument of W4a8Ggml32 is spelled by value, as the snapshot
+// keeps it. ninferno_r8_law_test compares every key built from this table with the one the launch
+// names (r8_launch_key).
+std::string_view w4a8_decoder_name(WeightCodec codec) {
     switch (codec) {
     case WeightCodec::Q8:
         return "W4a8Q8";
@@ -957,8 +956,6 @@ std::string_view r8_decoder_name(WeightCodec codec) {
     }
 }
 
-} // namespace
-
 // The launch's token slots (generic_r8.cuh r8_launch_schedule): 1, 2 or 4 with the in-kernel
 // quantizer; 2, 4 or 8 in the pre-quantized form, where the codec compiles it.
 std::optional<kernel_facts::R8KernelKey> r8_kernel_key(int schedule, QType qtype, Epilogue epilogue,
@@ -968,7 +965,7 @@ std::optional<kernel_facts::R8KernelKey> r8_kernel_key(int schedule, QType qtype
         tokens < 1) {
         return std::nullopt;
     }
-    const std::string_view name = r8_decoder_name(*codec);
+    const std::string_view name = w4a8_decoder_name(*codec);
     if (name.empty()) return std::nullopt;
     int nt = 0;
     if (prequantized) {

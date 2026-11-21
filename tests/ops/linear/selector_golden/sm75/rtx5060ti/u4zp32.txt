@@ -473,9 +473,7 @@ u4zp32 p0 swiglu 3072x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 u4zp32 p1 store 6144x5120 speed T=1 r8.w4r1 ws=0
 u4zp32 p1 store 6144x5120 speed T=2..8 rmma.m1.n1.w1x8 ws=0
 u4zp32 p1 store 6144x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-u4zp32 p1 store 6144x5120 speed T=17 w4a8.32x128 ws=108928
-u4zp32 p1 store 6144x5120 speed T=24 w4a8.32x128 ws=153600
-u4zp32 p1 store 6144x5120 speed T=32 w4a8.32x128 ws=204800
+u4zp32 p1 store 6144x5120 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 u4zp32 p1 store 6144x5120 speed T=48 w4a8.64x64 ws=307200
 u4zp32 p1 store 6144x5120 speed T=64 w4a8.64x64 ws=409600
 u4zp32 p1 store 6144x5120 speed T=96 w4a8.128x64 ws=614400
@@ -502,9 +500,7 @@ u4zp32 p1 store 6144x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 u4zp32 p1 add 6144x5120 speed T=1 r8.w4r1 ws=0
 u4zp32 p1 add 6144x5120 speed T=2..8 rmma.m1.n1.w1x8 ws=0
 u4zp32 p1 add 6144x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-u4zp32 p1 add 6144x5120 speed T=17 w4a8.32x128 ws=108928
-u4zp32 p1 add 6144x5120 speed T=24 w4a8.32x128 ws=153600
-u4zp32 p1 add 6144x5120 speed T=32 w4a8.32x128 ws=204800
+u4zp32 p1 add 6144x5120 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 u4zp32 p1 add 6144x5120 speed T=48 w4a8.64x64 ws=307200
 u4zp32 p1 add 6144x5120 speed T=64 w4a8.64x64 ws=409600
 u4zp32 p1 add 6144x5120 speed T=96 w4a8.128x64 ws=614400
@@ -758,9 +754,7 @@ u4zp32 p1 add 5120x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 u4zp32 p1 swiglu 2560x17408 speed T=1 r8.w8r2 ws=0
 u4zp32 p1 swiglu 2560x17408 speed T=2..8 rmma.m1.n1.w1x8 ws=0
 u4zp32 p1 swiglu 2560x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
-u4zp32 p1 swiglu 2560x17408 speed T=17 w4a8.32x128 ws=370048
-u4zp32 p1 swiglu 2560x17408 speed T=24 w4a8.32x128 ws=522240
-u4zp32 p1 swiglu 2560x17408 speed T=32 w4a8.32x128 ws=696320
+u4zp32 p1 swiglu 2560x17408 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 u4zp32 p1 swiglu 2560x17408 speed T=48 w4a8.64x64 ws=1044480
 u4zp32 p1 swiglu 2560x17408 speed T=64 w4a8.64x64 ws=1392640
 u4zp32 p1 swiglu 2560x17408 speed T=96 w4a8.128x64 ws=2088960
