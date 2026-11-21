@@ -90,7 +90,11 @@ std::string curl_text(CURLcode code, long status) {
 
 // Whether a failed read is the transport's (HubTransportError) rather than the hub's answer.
 bool transport_failure(CURLcode code, long status) {
-    return code != CURLE_OK || status == 408 || status == 429 || (status >= 500 && status < 600);
+    const bool status_says = status == 408 || status == 429 || (status >= 500 && status < 600);
+    // A write callback that refused the body (a 403 / 404 page, or a full disk) ends in
+    // CURLE_WRITE_ERROR: the status decides then, never the code.
+    if (code == CURLE_WRITE_ERROR) { return status_says; }
+    return code != CURLE_OK || status_says;
 }
 
 void curl_init() {
@@ -1497,18 +1501,19 @@ std::string cached_commit(const fs::path& repo_dir, const std::string& repo,
     } else if (revision.size() == 40 && fs::is_directory(repo_dir / "snapshots" / revision)) {
         commit = revision;
     } else {
-        throw std::runtime_error(std::string(error.what()) + "; and " + repo + "@" + revision +
-                                 " has no snapshot in the cache " + root.string());
+        throw_as(error, std::string(error.what()) + "; and " + repo + "@" + revision +
+                            " has no snapshot in the cache " + root.string());
     }
     // A ref (a branch, a tag) may have moved since it was cached: its snapshot is served only when
     // the user asked for the cache ($HF_HUB_OFFLINE), never because the hub could not be reached
     // (the same command would serve another model by the state of the network). A commit is its
     // own snapshot.
     if (!hub_offline() && revision != commit) {
-        throw std::runtime_error(std::string(error.what()) + "; " + repo + "@" + revision +
-                                 " was cached at " + commit +
-                                 ", which the ref may have left: set HF_HUB_OFFLINE=1 to serve "
-                                 "that snapshot, or name the commit (" + repo + "@" + commit + ")");
+        throw_as(error, std::string(error.what()) + "; " + repo + "@" + revision +
+                            " was cached at " + commit +
+                            ", which the ref may have left: set HF_HUB_OFFLINE=1 to serve "
+                            "that snapshot, or name the commit (" +
+                            repo + "@" + commit + ")");
     }
     return commit;
 }
@@ -1526,9 +1531,10 @@ fs::path model_of(const fs::path& snapshot, const std::vector<RemoteFile>& files
 }
 
 // What a cached snapshot holds for `options`, chosen from its complete files as a listing's are:
-// --quant selects offline as it does online, and a snapshot without the file it names is refused.
+// --quant selects offline as it does online, and a snapshot without the file it names is refused,
+// as `cause` (the listing's failure, when there was one) was.
 fs::path cached_model(const fs::path& snapshot, const FetchOptions& options,
-                      const std::string& repo) {
+                      const std::string& repo, const std::exception* cause = nullptr) {
     Listing listing;
     for (const auto& entry : fs::recursive_directory_iterator(snapshot)) {
         // By the link's own name (fs::relative would resolve it into blobs/).
@@ -1543,9 +1549,11 @@ fs::path cached_model(const fs::path& snapshot, const FetchOptions& options,
         // Without a selector, what the snapshot holds (small files the caller reads, or weights
         // not yet downloaded: the caller says so).
         if (options.quant.empty() || !options.include.empty()) { return snapshot; }
-        throw HubTransportError("the hub is unreachable and the cached snapshot " +
-                                snapshot.string() + " has no model for " + options.quant + ": " +
-                                error.what());
+        const std::string text = "the hub is unreachable and the cached snapshot " +
+                                 snapshot.string() + " has no model for " + options.quant + ": " +
+                                 error.what();
+        if (cause != nullptr) { throw_as(*cause, text); }
+        throw std::runtime_error(text);
     }
 }
 
@@ -1810,9 +1818,10 @@ FetchResult fetch_model(const std::string& spec, const FetchOptions& options) {
                               "); using the cached snapshot " + commit);
         out.repo     = repo;
         out.commit   = commit;
-        out.offline  = true;
-        out.snapshot = repo_dir / "snapshots" / commit;
-        out.model    = cached_model(out.snapshot, options, repo);
+        out.offline           = true;
+        out.offline_transport = dynamic_cast<const HubTransportError*>(&error) != nullptr;
+        out.snapshot          = repo_dir / "snapshots" / commit;
+        out.model             = cached_model(out.snapshot, options, repo, &error);
         return out;
     }
     check_pinned(options, repo, revision, listing);
@@ -1924,8 +1933,10 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
         out.commit          = cached_commit(repo_dir, repo, revision, root, error);
         out.offline         = true;
         const auto snapshot = repo_dir / "snapshots" / out.commit;
-        const auto model    = cached_model(snapshot, options, repo);
-        if (model == snapshot) { throw no_gguf(" in the cached snapshot " + snapshot.string()); }
+        const auto model    = cached_model(snapshot, options, repo, &error);
+        if (model == snapshot) {
+            throw_as(error, no_gguf(" in the cached snapshot " + snapshot.string()).what());
+        }
         out.path = model.lexically_relative(snapshot).generic_string();
         read_local(model);
         return out;
