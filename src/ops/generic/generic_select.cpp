@@ -261,7 +261,8 @@ constexpr std::int32_t kVecRuleMaxTokens = 4;
 // Qwen3.5-9B Q4_K_M, --spec off, C = 4 (every trunk linear a T = 4 call), the rule capped at T = 3
 // against T = 4: RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 5070 Ti +11.1 %, RTX 5090 +5.3 %, with C = 2
 // and 3 within 0.1 %; under MTP the cap never lost in rounds a second (RTX 3090, 5070 Ti, 5090).
-// There T = 4 goes to the register MMA. The cap holds for the K-quants only (format_rules.h
+// There T = 4 goes to the register MMA (on GA10x Q5_K and Q6_K stop at two:
+// kVecRuleMaxTokensGa10xTwo below). The cap holds for the K-quants only (format_rules.h
 // VecCapGa10xGb20x): IQ4_XS split the two GB20x cards (RTX 5070 Ti +4.45 %, RTX 5090 -3.27 %), the
 // formats R8 verifies would send T = 4 to R8, which no A/B here isolated (the vector kernel's own
 // first case was one of them, the IQ3_S verify above), and the others are not measured.

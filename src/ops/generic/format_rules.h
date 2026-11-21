@@ -12,8 +12,9 @@
 // vec_rule_max_tokens and the Q4_0 matrix-size gate read it), and the two thresholds below are the
 // constants the selection compares a call against. The rows up to #615 F6 restate what the
 // comments at the rules' uses say; vec_cap_ga10x_gb20x is new with its own end-to-end A/Bs (#998,
-// DECISIONS 96), and the three Turing rules with theirs (#1038, DECISIONS 97), which move the
-// selector goldens of the RTX 2080 Ti board.
+// DECISIONS 96), the three Turing rules with theirs (#1038, DECISIONS 97), which move the
+// selector goldens of the RTX 2080 Ti board, and vec_cap_ga10x_two with its (#1152, DECISIONS 99),
+// which moves the GA10x boards'.
 //
 // A rule may have several rows: one per group of formats whose evidence differs (other cards,
 // another run). Each row says how many cards stand behind it (principle 4 of

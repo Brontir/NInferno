@@ -442,7 +442,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "RTX 5090 +5.3 %; C = 2 and 3 within 0.1 %; under MTP the cap never lost in rounds a second "
      "(RTX 3090, 5070 Ti, 5090). Ada keeps kVecRuleMaxTokens (RTX 4070 Ti -2.0 %, 4090 -1.4 % with "
      "the cap, 4060 Ti +2.5 %), Turing has its own (kVecRuleMaxTokensTuring); sm_86 and "
-     "sm_120 only, for the formats of format_rules.h VecCapGa10xGb20x (the K-quants)",
+     "sm_120 only, for the formats of format_rules.h VecCapGa10xGb20x (the K-quants; on sm_86 "
+     "Q5_K and Q6_K take kVecRuleMaxTokensGa10xTwo)",
      ""},
     // Turing: the vector kernel stops at two tokens for the K-quants (#1038).
     {"kVecRuleMaxTokensTuring", Basis::Measured, "generic_select.cpp",
