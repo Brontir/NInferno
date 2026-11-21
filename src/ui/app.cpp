@@ -1247,9 +1247,10 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
             const std::string commit = list.empty() || !list.front().is_object()
                                            ? std::string()
                                            : list.front().value("commit", std::string());
-            // A repository named at a revision keeps it (repo@rev@commit is no spec).
-            const std::string model =
-                commit.empty() || repo.find('@') != std::string::npos ? repo : repo + "@" + commit;
+            // At the listing's commit, a repository named at a revision too (its branch may have
+            // moved since the listing here was read, which the plan here and the key describe).
+            const std::string base  = repo.substr(0, repo.find('@'));
+            const std::string model = commit.empty() ? repo : base + "@" + commit;
             try {
                 if (auto answer = serve_plan_json(model, quant, gpu, launch)) {
                     // The model by the name the plan here gives it (the page names a family's
@@ -1327,6 +1328,19 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                 }
             }
             if (!now) { return as_served(std::move(*served)); } // serve's `now`, of its pick
+        }
+        // The replay plans `now` at the plan here's configuration; serve's own choice may be
+        // another (its workspace and routes move it): then serve's `now` is the answer, never a
+        // replay of a configuration the document does not show.
+        if (now && now->served && served->contains("choice") && (*served)["choice"].is_object()) {
+            const Json here  = product::choice_json(*now->served).value("chosen", Json::object());
+            const Json there = (*served)["choice"].value("chosen", Json::object());
+            for (const char* axis :
+                 {"quant", "kv", "activations", "chunk", "ring", "state", "drafter", "depth"}) {
+                if (here.value(axis, Json()) != there.value(axis, Json())) {
+                    return as_served(std::move(*served));
+                }
+            }
         }
         doc = std::move(*served);
         doc.erase("now"); // replayed below, at the free memory now
