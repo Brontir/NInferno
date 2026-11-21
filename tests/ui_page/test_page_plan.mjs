@@ -22,7 +22,7 @@ const from = html.indexOf(BEGIN), to = html.indexOf(END);
 assert.ok(from >= 0 && to > from, "the plan helpers block is marked in the page");
 const NAMES = ["parseCtxText", "planTok", "ctxInput", "ctxNoteText", "planSpecOf", "planQuery", "catalogQuery", "planStateOf",
                "planRowOf", "launchContextOf", "reasonText", "unsupportedText", "cardGbOf", "cardGbText", "ruleText", "planRowState",
-               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf", "actOptions", "actAskOf", "ACT_MODES", "artifactPlanQuery", "replayDiff", "nowLine", "nowReasonText", "kvOptionsOf", "kvWhyText", "KV_CODECS", "KV_WHY_CODES",
+               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf", "actOptions", "actAskOf", "ACT_MODES", "artifactPlanQuery", "replayDiff", "nowLine", "nowHoldOf", "nowReasonText", "kvOptionsOf", "kvWhyText", "KV_CODECS", "KV_WHY_CODES",
                "gateTexts", "decidedOnText", "decidedChunkText", "decidedText", "bandText", "answerText", "qualityText", "GATE_CODES", "GATE_OPENS", "QUALITY_AUTHORITIES", "GEN_LABELS", "PREFILL_WHY",
                "REASON_CODES", "UNSUPPORTED_CODES", "RULE_TIERS", "SPEC_BASES"];
 const ctx = vm.createContext({});
@@ -516,6 +516,22 @@ eq(H.nowLine({now: {free_now_bytes: 8 * 2 ** 30, fits_now: true, context_now: 65
   ok(refused && refused.cls === "err" && refused.text.startsWith("nowRefused") && refused.text.includes("busy or unavailable"),
      "a refusing card: said with the CUDA message");
   whole(RU("nowRefused", {why: "x"}), "nowRefused ru");
+}
+// Only what refusal_now reads moves the hold (#891, #1135 review): a mode change; in an exclusive mode
+// the card becoming held or free, or held by the MPS server. In the default mode no process does, the
+// plan's own serve child among them.
+{
+  const g = {compute_mode: 0, processes: [{pid: 7}]};
+  ok(H.nowHoldOf(g) === H.nowHoldOf({compute_mode: 0, processes: [{pid: 7}, {pid: 9}]}), "default mode: a process starting (a plan's own child) leaves the hold");
+  ok(H.nowHoldOf(g) === H.nowHoldOf({compute_mode: 0, processes: []}), "default mode: a process stopping leaves the hold");
+  ok(H.nowHoldOf(g) !== H.nowHoldOf({compute_mode: 1, processes: [{pid: 7}]}), "a mode change moves the hold");
+  ok(H.nowHoldOf({compute_mode: 2, processes: [{pid: 7}]}) === H.nowHoldOf({compute_mode: 2, processes: []}), "prohibited: the processes do not matter");
+  const held = {compute_mode: 3, processes: [{pid: 7}]};
+  ok(H.nowHoldOf(held) !== H.nowHoldOf({compute_mode: 3, processes: []}), "exclusive: the holder stopping moves the hold");
+  ok(H.nowHoldOf(held) !== H.nowHoldOf({compute_mode: 3, processes: [{pid: 9, mps_server: true}]}), "exclusive: the holder replaced by the MPS server at the same count moves the hold");
+  ok(H.nowHoldOf(held) === H.nowHoldOf({compute_mode: 3, processes: [{pid: 9}]}), "exclusive: another ordinary holder leaves the hold (still refused)");
+  ok(H.nowHoldOf({compute_mode: 1, processes: [{pid: 1}]}) !== H.nowHoldOf({compute_mode: 1, processes: []}), "exclusive thread: held and free differ");
+  ok(H.nowHoldOf({}) === H.nowHoldOf({processes: []}), "no mode and no processes read alike");
 }
 for (const lang of ["en", "ru", "uk"]) for (const k of ["nowNoStart", "nowRefused", "nowLess", "nowTip"])
   ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
