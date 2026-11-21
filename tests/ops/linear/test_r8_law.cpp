@@ -252,10 +252,11 @@ std::string schedule_name(int i) {
 // predictor's codec spelling, every schedule's warps and rows, one token slot, the epilogue, the
 // in-kernel quantizer; and the pre-quantized verify form where asked.
 // #938: the A8 tiles' occupancy prices from the snapshot's compiled registers, and a key the
-// snapshot lacks falls back to the hand count without a word (generic_cost.cpp `resident`). So on
-// every snapshot that holds the family at all, every key the price builds is there: each W4A8
-// schedule x decoder x epilogue, each I8 schedule x code width x epilogue at the stages its arch
-// compiles.
+// snapshot lacks falls back to the hand count without a word (generic_cost.cpp `resident`). So a
+// key the price builds names its instance exactly: each W4A8 schedule x decoder x epilogue that the
+// snapshot compiles under some flavor or ring is found under the price's (a tile not compiled for a
+// codec, as the producer-warp tile for most, is not offered); on every snapshot holding I8 kernels,
+// each I8 schedule x code width x epilogue at the stages its arch compiles is there.
 void check_a8_occupancy_keys() {
     const g::Epilogue epilogues[] = {g::Epilogue::Store, g::Epilogue::AddResidual,
                                      g::Epilogue::SwiGlu};
@@ -272,16 +273,31 @@ void check_a8_occupancy_keys() {
                     if (!key) continue;
                     if (kf::w4a8_facts(arch, *key)) {
                         ++have;
-                    } else if (++miss == 1) {
+                        continue;
+                    }
+                    // Not this key: is the instance compiled under another flavor or ring (a key
+                    // built wrong, the bug this checks), or not at all (a codec the tile is not
+                    // compiled for, which route_admits never offers: skipped)?
+                    bool compiled = false;
+                    for (int flavor = 0; flavor <= 3 && !compiled; ++flavor) {
+                        for (int stages = 0; stages <= 4 && !compiled; ++stages) {
+                            kf::W4a8KernelKey other = *key;
+                            other.flavor            = key->producers > 0 ? 0 : flavor;
+                            other.stages            = key->producers > 0 ? stages : 0;
+                            compiled                = kf::w4a8_facts(arch, other).has_value();
+                        }
+                    }
+                    if (compiled && ++miss == 1) {
                         first = key->codec + " schedule " + std::to_string(i) + " epilogue " +
                                 std::to_string(static_cast<int>(e));
                     }
                 }
             }
         }
-        expect(have == 0 || miss == 0,
+        expect(miss == 0,
                "sm_" + std::string(arch) + ": " + std::to_string(miss) +
-                   " W4A8 keys the price builds are not in the snapshot (first: " + first + ")");
+                   " W4A8 keys the price builds name no compiled instance of their tile (" +
+                   std::to_string(have) + " found; first: " + first + ")");
         // The I8 tiles: the stages the arch's block holds (generic_cost.cpp's key).
         const int arch_number = std::stoi(std::string(arch));
         int i8_have = 0, i8_miss = 0;
