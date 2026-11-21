@@ -2188,6 +2188,14 @@ ChunkBasis chunk_basis_of(const ModelFacts& model, const CardFacts& card, const 
 bool kv_decides(const ModelFacts& model, std::string_view generation, KvCacheStorage kv) noexcept {
     if (kv == KvCacheStorage::Int8Group64) { return true; } // the reference codec
     if (const KvSmRate* r = kv_sm_rate(model, generation, kv)) { return r->cards >= 2; }
+    // A codec whose read the SMs bound on this generation (it has a kKvSmRate row there) is
+    // priced at another geometry by its factor row, which was read on one geometry end to end:
+    // an estimate there, never a decision (#863 item 2: Ada's NVFP4 1.235, Qwen3.5-9B's). Any
+    // family's row marks the codec SM-bound on the generation: a later DRAM-bound family of the
+    // same codec there would need a row of its own (choice_constants.h kKvReadFactor's note).
+    for (const KvSmRate& r : kKvSmRate) {
+        if (r.generation == generation && r.kv == kv) { return false; }
+    }
     for (const KvReadFactor& row : kKvReadFactor) {
         if (row.generation == generation && row.kv == kv) { return row.cards >= 2; }
     }
@@ -2865,7 +2873,8 @@ std::vector<Alternative> explain(const Choice& choice) {
                                  s.candidate.kv) != choice.kv_not_decided.end()) {
                 alt.why_code = "default";
                 alt.why_not  = "the family's default stands (this codec's read cost on this "
-                               "generation does not rest on two lab cards)";
+                               "generation does not rest on two lab cards at this model's "
+                               "geometry)";
             } else if (axis == Axis::Chunk ? !choice.chunk_by_speed : !choice.by_worth) {
                 alt.why_code = "default";
                 alt.why_not  = axis == Axis::Chunk
