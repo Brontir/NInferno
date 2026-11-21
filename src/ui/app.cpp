@@ -1059,7 +1059,8 @@ struct ServeTransportFailure : std::runtime_error {
 } // namespace
 
 std::optional<Json> App::serve_plan_json(const std::string& model, const std::string& quant,
-                                         int gpu, const product::LaunchAsk& launch) {
+                                         int gpu, const product::LaunchAsk& launch,
+                                         std::optional<std::uint64_t>* free_given) {
     std::error_code ec;
     if (options_.serve_binary.empty() || !fs::is_regular_file(options_.serve_binary, ec)) {
         return std::nullopt;
@@ -1106,9 +1107,12 @@ std::optional<Json> App::serve_plan_json(const std::string& model, const std::st
     // NVML's free memory, for serve to plan `now` at where the card is too busy to open a context
     // (#891): without it the document would carry no `now`, and the page would take the idle
     // card's fit for a start right now.
+    if (free_given != nullptr) { free_given->reset(); }
     if (stat != nullptr && stat->memory_total > 0) {
+        const auto free = static_cast<std::uint64_t>(stat->memory_free);
         spec.argv.push_back("--plan-free-now");
-        spec.argv.push_back(std::to_string(static_cast<std::uint64_t>(stat->memory_free)));
+        spec.argv.push_back(std::to_string(free));
+        if (free_given != nullptr) { *free_given = free; }
     }
     bind_gpu(spec, gpu, stat);
     if (!options_.hub_cache.empty()) { spec.env["HF_HUB_CACHE"] = utf8_of(options_.hub_cache); }
@@ -1282,16 +1286,19 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                 // A document whose `now` was planned past kNowStepBytes from the free memory now
                 // is planned again: the page asks only at such a move, and the run in flight is
                 // shared (serve_plans_running_), so the card sees one child a move (#1147).
-                const bool moved = !failure && at != serve_free_at_.end() && free_bytes &&
-                                   !within_now_step(at->second, *free_bytes);
+                // A good document with no point at all (NVML said nothing when serve ran) is
+                // planned again once NVML reports: its `now` could never answer.
+                const bool moved =
+                    !failure && free_bytes &&
+                    (at == serve_free_at_.end() || !within_now_step(at->second, *free_bytes));
                 if (failure ? clock_now() - it->second.value("at", std::int64_t{0}) <
                                   kFailureKeptSeconds
                             : !moved) {
                     kept = it->second;
                     if (at != serve_free_at_.end()) { kept_free_at = at->second; }
                 } else if (moved) {
-                    previous         = it->second;
-                    previous_free_at = at->second;
+                    previous = it->second;
+                    if (at != serve_free_at_.end()) { previous_free_at = at->second; }
                 }
             }
             if (!kept) {
@@ -1304,8 +1311,17 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
             }
         }
         if (!kept && running.valid()) {
-            kept  = running.get(); // that run's document, measured for this burst of asks
-            fresh = true;
+            kept = running.get(); // that run's document, measured for this burst of asks
+            // At the free memory it was planned at (serve_free_at_, stored before the run's
+            // document is handed out): a joiner a step of memory later is not answered that
+            // `now` (#1156 review). Without NVML's figures the run's `now` is the burst's.
+            std::lock_guard lock(sizes_mutex_);
+            if (const auto at = serve_free_at_.find(key); at != serve_free_at_.end()) {
+                kept_free_at = at->second;
+                fresh        = false;
+            } else {
+                fresh = !free_bytes;
+            }
         }
         if (!kept) {
             std::optional<std::uint64_t> served_free_at;
@@ -1337,10 +1353,9 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                         card = slot.get();
                     }
                     std::lock_guard one_child(*card);
-                    // The free memory serve is given (serve_plan_json's --plan-free-now), read
-                    // with the card held: its `now` is planned there.
-                    served_free_at = nvml_free_of(gpus_->snapshot(), gpu);
-                    if (auto answer = serve_plan_json(model, quant, gpu, launch)) {
+                    // The free memory serve is given (its --plan-free-now): its `now` is planned
+                    // there.
+                    if (auto answer = serve_plan_json(model, quant, gpu, launch, &served_free_at)) {
                         // The model by the name the plan here gives it (the page names a family's
                         // gate by it), not serve's repo@commit.
                         if (answer->contains("model") && (*answer)["model"].is_object()) {

@@ -244,9 +244,12 @@ private:
     // started. A serve that ran without a "ninferno-dry-plan/1" document (a refusal, a hang past
     // 45 s, garbled output) throws std::runtime_error with its last line: its refusal is the
     // start's, never answered by the formula.
-    std::optional<nlohmann::json> serve_plan_json(const std::string& model,
-                                                  const std::string& quant, int gpu,
-                                                  const product::LaunchAsk& launch);
+    // `free_given`, when given: the free memory (NVML bytes) passed as --plan-free-now, the point
+    // the document's `now` was planned at (nullopt when none was passed).
+    std::optional<nlohmann::json>
+    serve_plan_json(const std::string& model, const std::string& quant, int gpu,
+                    const product::LaunchAsk& launch,
+                    std::optional<std::uint64_t>* free_given = nullptr);
     // The plan without the weights of a repository's quantization (all of them when `quant` is
     // empty, with the largest that fits) on GPU `gpu` for what a launch asks: the
     // "ninferno-dry-plan/1" document (product/plan/plan_quants.h), as ninferno-serve <repo> --plan
