@@ -393,6 +393,7 @@ int facts_reach_their_section() {
         {"facts.memory_clock_khz", [](DeviceClass& d) { d.facts.memory_clock_khz = 1; }},
         {"facts.memory_bus_bits", [](DeviceClass& d) { d.facts.memory_bus_bits = 1; }},
         {"facts.share", [](DeviceClass& d) { d.facts.share = 0.5; }},
+        {"facts.memory_share", [](DeviceClass& d) { d.facts.memory_share = 0.25; }},
         {"facts.mma_slow", [](DeviceClass& d) { d.facts.mma_slow = true; }},
     };
     int failures = each_field_reaches("facts", sample_device(), collect, edits);

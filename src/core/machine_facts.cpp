@@ -345,7 +345,15 @@ MachineFacts machine_facts(const DriverReport& driver, std::span<const GpuFactsR
         }
         if (driver.sms > 0 && driver.sms != row->sms) {
             f.source = FactSource::Extrapolated;
-            if (driver.sms < row->sms) f.share = static_cast<double>(driver.sms) / row->sms;
+            if (driver.sms < row->sms) {
+                f.share = static_cast<double>(driver.sms) / row->sms;
+                // The memory bandwidth by the memory the slice owns, not by its SMs (#906).
+                const double row_bytes = f.vram_gib * static_cast<double>(1ULL << 30);
+                f.memory_share =
+                    driver.global_bytes > 0 && row_bytes > 0
+                        ? std::min(1.0, static_cast<double>(driver.global_bytes) / row_bytes)
+                        : f.share;
+            }
         }
         // A board sharing its id with a variant on another memory bus or a slower memory (an RTX
         // 4070 with GDDR6 under the GDDR6X board's id, an 8 GB RTX 3060 on a 128-bit bus) prices

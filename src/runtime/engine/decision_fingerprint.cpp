@@ -303,6 +303,9 @@ DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int 
     out["machine.memory_clock_khz"]    = number(m.memory_clock_khz);
     out["machine.memory_bus_bits"]     = number(m.memory_bus_bits);
     out["machine.share"]               = bits(m.share);
+    // A MIG slice's memory share where it is not its SM share (#906); absent otherwise, so every
+    // other device's fingerprint is unchanged.
+    if (m.memory_share != m.share) out["machine.memory_share"] = bits(m.memory_share);
     out["machine.mma_slow"]            = flag(m.mma_slow);
     // The driver's values are inputs only where they fed a fact (MachineFacts::driver_read: an
     // unknown id snaps them, a laptop row without its range's bottom bounds its clock by them, a
