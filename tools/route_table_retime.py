@@ -147,6 +147,16 @@ def main():
             print("%s %s %s %dx%d: %s would slow T%s past the margin, kept"
                   % (*key[:3], key[3], key[4], best, ",".join(map(str, slower))), file=sys.stderr)
             continue
+        # The move must lower the range's worst regret by more than the margin: a least-worst route
+        # no better than the bands as they are (T 17-20 A the fastest, T 21-23 B 4 % behind and A
+        # 7 %) would trade one count's loss for another's.
+        old_worst = max(regret(h, t) for t, h in haves.items())
+        new_worst = max(regret(best, t) for t in timed)
+        if new_worst >= old_worst - a.margin:
+            print("%s %s %s %dx%d: %s would not lower the worst regret (%.1f %% -> %.1f %%), kept"
+                  % (*key[:3], key[3], key[4], best, 100 * old_worst, 100 * new_worst),
+                  file=sys.stderr)
+            continue
         new_rows = {}
         if moved and a.evidence:
             for t in sorted(moved):

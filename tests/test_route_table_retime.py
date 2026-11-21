@@ -81,6 +81,15 @@ def test_second_grid_that_reverses_the_move_keeps_the_entry(tmp_path):
     assert evidence == []
 
 
+def test_a_move_that_does_not_lower_the_worst_regret_is_kept(tmp_path):
+    # T 9-10 n1 the fastest; T 11 n2 4 % behind n4, n1 7 % behind: n1 over the range would trade
+    # T 11's 4 % for 7 %, inside the slow-down margin (104 -> 107 us).
+    rows = ([(t, r, us) for t in (9, 10) for r, us in (("n1", 100), ("n2", 108), ("n4", 110))]
+            + [(11, "n1", 107), (11, "n2", 104), (11, "n4", 100)])
+    bands, _ = run(tmp_path, [[1, 10, "n1"], [11, 16777216, "n2"]], rows)
+    assert bands == [[1, 10, "n1"], [11, 16777216, "n2"]]
+
+
 def test_route_within_the_margin_is_kept(tmp_path):
     rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 102), ("n2", 100))]
     bands, _ = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows)
