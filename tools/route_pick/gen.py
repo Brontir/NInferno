@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gen.py: the analyzer's predicted route bands (T 9-16): for the board classes no route table was measured on,
+"""gen.py: the analyzer's predicted route bands (T 9-16, and T 17-32 on sm_89, #785): for the board classes no route table was measured on,
 and for a tabled board, its table's gaps (#1068).
 
     python3 tools/route_pick/gen.py            write routes/pick/<chip>-<sms>sm.json, one file a board class
@@ -49,6 +49,14 @@ import facts  # noqa: E402
 import pick  # noqa: E402
 
 LO, HI = 9, 16
+# The narrow band (#785): on these compute capabilities the file also holds T 17..NARROW_HI, which answers the int8
+# calls of those widths outside the prefill profile (speculative verify rounds, decode batches) ahead of the cost
+# model (route_authorities route_table_entry, table_predicted_answer), and an A16 call's table gaps. Only sm_89:
+# route_tune a16 decode-only at T 24 / 32, the cells the cost model answers, mean regret pick.py / cost model
+# RTX 4070 Ti +2.0 / +27.1 %, RTX 4090 +4.1 / +19.9 %; on the RTX 5090 (sm_120a) pick.py lost (+5.7 / +3.9 %),
+# and no sm_86 grid was scored at those widths.
+NARROW_CC = (89,)
+NARROW_HI = 32
 SCHEMA = 'ninferno-route-pick/1'
 ARCH_OF_CC = {75: '75', 86: '86', 89: '89', 120: '120a'}
 
@@ -143,7 +151,9 @@ EPILOGUES = frozenset(GAP_EPILOGUES)
 
 
 def covered(entry):
-    """The widths of LO..HI a table entry's own bands answer."""
+    """The widths of LO..HI a table entry's own bands answer. Past HI the file's bands are written whatever the table
+    holds: they answer the int8 calls of T 17-32 the table stands aside for (route_authorities a8_wide_call, #785),
+    and where the table's own band covers a width it stands above the file's (route_table.cpp own_covers)."""
     return frozenset(T for T in range(LO, HI + 1)
                      if any(int(b[0]) <= T <= int(b[1]) for b in entry.get('bands', [])))
 
@@ -192,16 +202,21 @@ def runs(seq):
 
 
 def overlay(row, F, probs, inputs, own=None):
-    """The file of `probs`, at the widths of LO..HI `own` ({problem: widths}) leaves."""
+    """The file of `probs`, at the widths of LO..HI (LO..NARROW_HI on NARROW_CC) `own` ({problem: widths}) leaves.
+    A problem pick.py cannot price at some width of LO..HI is left out; past HI the bands stop at the first
+    width it cannot price."""
     own = own or {}
     entries = []
+    hi = NARROW_HI if int(row['cc']) in NARROW_CC else HI
     for fmt, ep, n, k in probs:
         seq = []
-        for T in range(LO, HI + 1):
+        for T in range(LO, hi + 1):
             if T in own.get((fmt, ep, n, k), ()):
                 continue
             r = pick.pick(row, F, dict(format=fmt, epilogue=ep, n=n, k=k, T=T))
             if r is None:
+                if T > HI:
+                    break
                 seq = None
                 break
             seq.append((T, r))
@@ -269,7 +284,7 @@ def main():
     stale = []
     expected = set()
     for key, (row, eps, own) in sorted(want.items()):
-        full = frozenset(range(LO, HI + 1))
+        full = frozenset(range(LO, (NARROW_HI if int(row['cc']) in NARROW_CC else HI) + 1))
         probs = [p for p in problems(all_tables, int(row['cc']), eps) if own.get(p, frozenset()) != full]
         doc = overlay(row, F, probs, inputs_of(a.root, F, ARCH_OF_CC[int(row['cc'])]), own)
         if own and not doc['entries']:

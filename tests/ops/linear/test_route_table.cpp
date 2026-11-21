@@ -144,7 +144,12 @@ int shipped_picks() {
                                      e[2].str() == "swiglu" ? generic::Epilogue::SwiGlu
                                      : e[2].str() == "add"  ? generic::Epilogue::AddResidual
                                                             : generic::Epilogue::Store};
-            const auto answer = generic::table_route_answer(p, std::stoi(e[5].str()), false);
+            // A band from T 17 (#785) answers the int8 calls the table stands aside for, read by
+            // table_predicted_answer whatever the board's table holds; a T 9-16 band answers in
+            // the table's gaps (table_route_answer).
+            const int width   = std::stoi(e[5].str());
+            const auto answer = width > 16 ? generic::table_predicted_answer(p, width)
+                                           : generic::table_route_answer(p, width, false);
             failures +=
                 check(q && answer && answer->predicted &&
                           generic::route_name(answer->route) == e[6].str(),
@@ -153,9 +158,11 @@ int shipped_picks() {
             {
                 // Under the Legacy policy the file is not read: the table answers as before it.
                 const ninferno::ops::ScopedRoutePolicy legacy(ninferno::RoutePolicy::Legacy);
-                const auto old = generic::table_route_answer(p, std::stoi(e[5].str()), false);
+                const auto old = generic::table_route_answer(p, width, false);
                 failures += check(!old || !old->predicted,
                                   name + ": under --route-policy legacy no band is predicted");
+                failures += check(!generic::table_predicted_answer(p, width),
+                                  name + ": under --route-policy legacy no band is read alone");
             }
         } catch (const std::exception& error) {
             failures += check(false, name + " refused: " + error.what());
@@ -163,7 +170,7 @@ int shipped_picks() {
     }
     failures += check(files > 0, "shipped predicted bands found in " + utf8_path(dir));
     // A pick file the loader refuses stops the lookup (a broken install): another class's file
-    // under this class's name, and a band outside T 9-16. The tables are the shipped ones, copied.
+    // under this class's name, and a band outside T 9-32. The tables are the shipped ones, copied.
     if (!first_name.empty()) {
         const board_registry::BoardRow* row = board_registry::find(first_id);
         ninferno::DeviceClass d =
@@ -214,6 +221,11 @@ int shipped_picks() {
                      std::regex_replace(first_text, std::regex(R"re("bands": \[\s*\[\s*9,)re"),
                                         R"re("bands": [[5,)re",
                                         std::regex_constants::format_first_only));
+        refused_with(
+            "with a band past T 32",
+            // The first entry's T 17-32 band widened to 40: no overlap, so the limit refuses it.
+            std::regex_replace(first_text, std::regex(R"re(\[\s*17,\s*32,)re"), R"re([17, 40,)re",
+                               std::regex_constants::format_first_only));
         // Within kCarryDistance a predicted band fills the table's gaps only (#1068): a table of
         // this class (distance 0) holding the file's first problem answers it as measured; the
         // file's second problem, which the table lacks, is answered as predicted, also where a

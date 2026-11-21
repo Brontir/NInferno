@@ -385,12 +385,13 @@ std::shared_ptr<Table> parse_table(const std::string& path) {
     return table;
 }
 
-// The widths an overlay band may hold: the T 9-16 calls the analyzer's pick was scored on (the
-// left-out cards' decode and verify widths, tools/route_pick/README.md).
+// The widths an overlay band may hold: the T 9-32 calls the analyzer's pick was scored on (the
+// left-out cards' decode and verify widths, and the narrow prefill chunks of T 17-32 on the compute
+// capabilities pick.py's VERIFIED_T17 names, tools/route_pick/README.md; #785).
 // The band starts above the widths pick.py does not price (T <= 8: vec, R8) and ends with the
-// decode and verify widths (kDecodePinMaxTokens).
+// narrow band, below which the cost model answered the T 17-32 calls 15-27 % slow on Ada (#785).
 constexpr std::int32_t kPredictedMinTokens = 9;
-constexpr std::int32_t kPredictedMaxTokens = kDecodePinMaxTokens;
+constexpr std::int32_t kPredictedMaxTokens = 32;
 // 8: the widest vec and R8 call pick.py leaves out (generic_gemm.h kGgmlVecMaxTokens).
 static_assert(kPredictedMinTokens > 8 && kPredictedMinTokens <= kPredictedMaxTokens,
               "a predicted band starts above the vec and R8 widths (T <= 8), which pick.py does "
@@ -398,7 +399,7 @@ static_assert(kPredictedMinTokens > 8 && kPredictedMinTokens <= kPredictedMaxTok
 
 // A ninferno-route-pick/1 file (tools/route_pick/gen.py) into `table.predicted`: its class must
 // be this device's own (gpu.class), each entry an A16 problem of the generic path with bands inside
-// T 9-16 only (no prefill route, no claim, no route_as), routes this build names. A refused file
+// T 9-32 only (no prefill route, no claim, no route_as), routes this build names. A refused file
 // is an error: it is this device's own file.
 void read_predicted(const std::string& path, Table& table) {
     std::ifstream in(path_from_utf8(path), std::ios::binary);
@@ -1166,8 +1167,8 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
             key_of(QType::FP8_E4M3FN_ROW_BF16, compute, problem.epilogue, problem.n, problem.k));
     }
     // The analyzer's predicted band, where the overlay holds one for this problem and width (its
-    // bands lie inside T 9-16, below every prefill band): ahead of the nearest table's entry past
-    // kCarryDistance (where it is Transferred or Borrowed), and in the table's gaps within it
+    // bands lie inside T 9-32; none is read at a prefill width): ahead of the nearest table's entry
+    // past kCarryDistance (where it is Transferred or Borrowed), and in the table's gaps within it
     // (#1068, below). Not under the Legacy policy: there the table answers as it did before the
     // overlay, the switch back for a regression report.
     if (with_predicted && !(prefill && tokens >= kPrefillMinTokens) &&
@@ -1214,6 +1215,35 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
     }
     for (const auto& band : e.bands) {
         if (tokens >= band.t_min && tokens <= band.t_max) return answer(band.route);
+    }
+    return std::nullopt;
+}
+
+std::optional<TableAnswer> table_predicted_answer(const Problem& problem, std::int32_t tokens) {
+    if (tokens < kPredictedMinTokens || tokens > kPredictedMaxTokens ||
+        route_policy() == RoutePolicy::Legacy) {
+        return std::nullopt;
+    }
+    DeviceTables& d = here();
+    if (d.settled.load(std::memory_order_acquire) &&
+        !d.has_generic.load(std::memory_order_acquire)) {
+        return std::nullopt;
+    }
+    const auto table = active_table(d);
+    if (!table) return std::nullopt;
+    const auto compute = compute_class(problem.qtype, problem.policy);
+    auto p             = table->predicted.find(
+        key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
+    // The same fp8 row-F32 fallback as table_route_answer.
+    if (p == table->predicted.end() && problem.qtype == QType::FP8_E4M3FN_ROW_F32) {
+        p = table->predicted.find(
+            key_of(QType::FP8_E4M3FN_ROW_BF16, compute, problem.epilogue, problem.n, problem.k));
+    }
+    if (p == table->predicted.end()) return std::nullopt;
+    for (const auto& band : p->second) {
+        if (tokens >= band.t_min && tokens <= band.t_max) {
+            return TableAnswer{band.route, table->distance, table->status.gpu_class, {}, 0, true};
+        }
     }
     return std::nullopt;
 }

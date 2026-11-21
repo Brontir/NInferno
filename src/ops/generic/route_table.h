@@ -82,6 +82,13 @@ struct TableAnswer {
                                                             std::int32_t tokens, bool prefill,
                                                             bool with_predicted = true);
 
+// The analyzer's predicted band alone (routes/pick, T 9-32), whatever this board's table holds: for
+// the int8 calls of T 17-32 the table stands aside for (route_authorities a8_wide_call), whose
+// route the cost model chose among both activation classes; the file's band was priced among both
+// too, and a measured entry holds A16 schedules only (#785). None under the Legacy policy.
+[[nodiscard]] std::optional<TableAnswer> table_predicted_answer(const Problem& problem,
+                                                                std::int32_t tokens);
+
 // Whether a claiming entry (RouteEntry::claim) holds the exact problem and a route for this call
 // under an A16Only policy: then the generic path computes it even though its shape has a
 // shape-owned Linear table. Under --route-policy evidence (#614 F1) a claim whose answer is
