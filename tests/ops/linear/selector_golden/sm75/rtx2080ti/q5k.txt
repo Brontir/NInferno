@@ -185,8 +185,8 @@ q5k p1 swiglu 1024x1024 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 q5k p0 store 4096x4096 speed T=1..2 rmma.m1.n1.w1x4 ws=0
 q5k p0 store 4096x4096 speed T=3..4 rmma.m1.n1.w1x8 ws=0
 q5k p0 store 4096x4096 speed T=5..8 rmma.m1.n1.w1x4 ws=0
-q5k p0 store 4096x4096 speed T=9..17 rmma.m1.n1.w2x2 ws=0
-q5k p0 store 4096x4096 speed T=24..32 rmma.m1.n1.w4x1 ws=0
+q5k p0 store 4096x4096 speed T=9..16 rmma.m1.n1.w2x2 ws=0
+q5k p0 store 4096x4096 speed T=17..32 rmma.m1.n1.w4x1 ws=0
 q5k p0 store 4096x4096 speed T=48 rmma.m1.n2.w4x1 ws=0
 q5k p0 store 4096x4096 speed T=64 rmma.m2.n2.w4x1 ws=0
 q5k p0 store 4096x4096 speed T=96..128 rmma.m1.n2.w4x1 ws=0
@@ -195,8 +195,8 @@ q5k p0 store 4096x4096 prefill T=17..2048 tiled.64x128 ws=0
 q5k p0 store 4096x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q5k p0 store 4096x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 q5k p0 add 4096x4096 speed T=1..8 rmma.m1.n1.w1x4 ws=0
-q5k p0 add 4096x4096 speed T=9..17 rmma.m1.n1.w2x2 ws=0
-q5k p0 add 4096x4096 speed T=24 rmma.m1.n1.w4x1 ws=0
+q5k p0 add 4096x4096 speed T=9..16 rmma.m1.n1.w2x2 ws=0
+q5k p0 add 4096x4096 speed T=17..24 rmma.m1.n1.w4x1 ws=0
 q5k p0 add 4096x4096 speed T=32 rmma.m2.n1.w4x1 ws=0
 q5k p0 add 4096x4096 speed T=48 rmma.m1.n2.w4x1 ws=0
 q5k p0 add 4096x4096 speed T=64 rmma.m2.n2.w4x1 ws=0
