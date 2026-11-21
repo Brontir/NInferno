@@ -1191,7 +1191,9 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                      fetched.model.string());
     if (fetched.offline && !is_convertible(fetched.model)) {
         const std::string text =
-            "the hub is unreachable and the cached snapshot " + fetched.snapshot.string() +
+            std::string(fetched.offline_transport ? "the hub is unreachable"
+                                                  : "the hub's listing failed") +
+            " and the cached snapshot " + fetched.snapshot.string() +
             " is incomplete (no weights): connect to the hub once to finish the download";
         if (fetched.offline_transport) { throw HubTransportError(text); }
         throw std::runtime_error(text);

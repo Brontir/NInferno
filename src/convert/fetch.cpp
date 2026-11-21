@@ -1549,10 +1549,13 @@ fs::path cached_model(const fs::path& snapshot, const FetchOptions& options,
         // Without a selector, what the snapshot holds (small files the caller reads, or weights
         // not yet downloaded: the caller says so).
         if (options.quant.empty() || !options.include.empty()) { return snapshot; }
-        const std::string text = "the hub is unreachable and the cached snapshot " +
-                                 snapshot.string() + " has no model for " + options.quant + ": " +
-                                 error.what();
-        if (cause != nullptr) { throw_as(*cause, text); }
+        const bool unreachable =
+            cause != nullptr && dynamic_cast<const HubTransportError*>(cause) != nullptr;
+        const std::string text =
+            std::string(unreachable ? "the hub is unreachable" : "the hub's listing failed") +
+            " and the cached snapshot " + snapshot.string() + " has no model for " + options.quant +
+            ": " + error.what();
+        if (unreachable) { throw HubTransportError(text); }
         throw std::runtime_error(text);
     }
 }
