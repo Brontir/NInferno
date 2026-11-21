@@ -154,16 +154,19 @@ def main():
                 rk = ranker.get((key, t))
                 if rk in times and best in times:
                     new_rows[t] = [t, round(times[rk], 2), round(times[best], 2)]
-            gaps = [t for t in sorted(moved) if t not in new_rows]
+            # A count the second grid cannot confirm (no ranker, new or old route row there) is a
+            # gap: the move would stand on the first grid alone.
+            gaps = [t for t in sorted(moved)
+                    if t not in new_rows or haves[t] not in ev_grid.get((key, t), {})]
             if gaps:
-                print("%s %s %s %dx%d: the evidence grid has no ranker / %s row at T%s, kept"
-                      % (*key[:3], key[3], key[4], best, ",".join(map(str, gaps))), file=sys.stderr)
+                print("%s %s %s %dx%d: the evidence grid has no ranker / %s / old route row at T%s,"
+                      " kept" % (*key[:3], key[3], key[4], best, ",".join(map(str, gaps))),
+                      file=sys.stderr)
                 continue
             # A move the second grid reverses (the range's route slower than the old one there
             # past the margin) is noise in the first grid: the entry is kept as it was.
             reversed_at = [t for t in sorted(moved)
-                           if haves[t] in ev_grid.get((key, t), {})
-                           and ev_grid[(key, t)][best] > ev_grid[(key, t)][haves[t]] * (1 + a.margin)]
+                           if ev_grid[(key, t)][best] > ev_grid[(key, t)][haves[t]] * (1 + a.margin)]
             if reversed_at:
                 print("%s %s %s %dx%d: the evidence grid does not repeat %s at T%s, kept"
                       % (*key[:3], key[3], key[4], best, ",".join(map(str, reversed_at))),

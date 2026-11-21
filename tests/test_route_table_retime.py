@@ -58,6 +58,18 @@ def test_stale_band_takes_one_route_over_the_range(tmp_path):
     assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
 
 
+def test_second_grid_without_the_old_route_keeps_the_entry(tmp_path):
+    # n2 wins T 9-11 in the first grid; the second grid times n2 and the ranker n4 at T 10, not n1.
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
+    second = ([(9, "n1", 200), (9, "n2", 100), (10, "n2", 108), (10, "n4", 100),
+               (11, "n1", 200), (11, "n2", 100)],
+              [(9, "n1"), (10, "n4"), (11, "n1")])
+    bands, evidence = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[],
+                          second=second)
+    assert bands == [[1, 11, "n1"], [12, 16777216, "n2"]]
+    assert evidence == []
+
+
 def test_second_grid_that_reverses_the_move_keeps_the_entry(tmp_path):
     # n2 wins T 9-11 in the first grid; the second grid has n2 8 % slower than n1 at T 10: kept.
     rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
@@ -123,7 +135,8 @@ def test_counts_no_band_covers_are_left_alone(tmp_path):
 def test_second_grid_writes_the_moved_counts_evidence(tmp_path):
     # Moved T9-11 n1 -> n2; the second grid's ranker answers n4 there (rk us, n2 us); T12's row stays.
     rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
-    second = ([(t, r, us) for t in (9, 10, 11) for r, us in (("n2", 101.234), ("n4", 150), ("w4a8.32x128", 90))],
+    second = ([(t, r, us) for t in (9, 10, 11)
+               for r, us in (("n1", 200), ("n2", 101.234), ("n4", 150), ("w4a8.32x128", 90))],
               [(t, "n4") for t in (9, 10, 11)])
     bands, ev = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows,
                     evidence=[[9, 300, 200], [12, 300, 100]], second=second)
