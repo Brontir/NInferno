@@ -1485,6 +1485,47 @@ void test_hub_plan_via_serve() {
         check(status1 == 200 && status2 == 200 && count == 1,
               "two asks of one key at once: one serve run (" + std::to_string(count) + ")");
     }
+    // Two asks of different keys at once: two serve runs, one after the other on the card (a child
+    // that finds another running notes the overlap).
+    {
+        fs::remove(root / "runs.txt");
+        fs::remove(root / "overlaps.txt");
+        fs::remove(root / "child-running");
+        std::ofstream(root / "serve-one-card")
+            << "#!/bin/sh\n[ -e '" << (root / "child-running").string()
+            << "' ] && echo overlap >> '" << (root / "overlaps.txt").string() << "'\ntouch '"
+            << (root / "child-running").string() << "'\nsleep 1\nrm -f '"
+            << (root / "child-running").string() << "'\nexec '" << (root / "serve-plan").string()
+            << "' \"$@\"\n";
+        fs::permissions(root / "serve-one-card", fs::perms::owner_all);
+        UiOptions options;
+        options.serve_binary = root / "serve-one-card";
+        options.hub_cache    = root / "hub";
+        App app(options, std::make_unique<NoGpu>());
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        const auto ask = [&](const std::string& par) {
+            httplib::Client client("127.0.0.1", port);
+            const auto res = client.Get("/api/plan?gpu=0&par=" + par + "&ctx=4096&repo=org/m-GGUF");
+            return res ? res->status : 0;
+        };
+        auto first        = std::async(std::launch::async, ask, std::string("1"));
+        auto second       = std::async(std::launch::async, ask, std::string("2"));
+        const int status1 = first.get();
+        const int status2 = second.get();
+        server.stop();
+        thread.join();
+        std::ifstream runs(root / "runs.txt");
+        int count = 0;
+        for (std::string line; std::getline(runs, line);) { ++count; }
+        check(status1 == 200 && status2 == 200 && count == 2 && !fs::exists(root / "overlaps.txt"),
+              "two keys at once: two serve runs, never two children on the card at once (" +
+                  std::to_string(count) + " runs" +
+                  (fs::exists(root / "overlaps.txt") ? ", overlapped" : "") + ")");
+    }
     // A token change while a run is going: an ask after it starts its own run, never joins one
     // under the old token (its listing, its access). The token file is the test's own.
     {

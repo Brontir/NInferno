@@ -396,6 +396,8 @@ private:
     // plan_json's ninferno-serve runs in flight by key: an ask that finds its key running shares
     // that run's document, never starts a second child (#766).
     std::map<std::string, std::shared_future<nlohmann::json>> serve_plans_running_;
+    // One plan_json serve child a card (under sizes_mutex_ to find or make; held while it runs).
+    std::map<int, std::unique_ptr<std::mutex>> serve_card_mutexes_;
     // hub_key -> the config.json kv_json read (a checkpoint's converted size reads it)
     std::map<std::string, nlohmann::json> configs_;
     // hub_key -> when a header or config read last failed (tried again after a minute)

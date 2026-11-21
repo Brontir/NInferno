@@ -1221,6 +1221,9 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     std::shared_ptr<const PlanNowContext> now;
     Json doc;
     std::string here_failed;
+    // One hub token for the whole ask: the plan here, the serve run it joins or starts and the
+    // store all read under the token current now (a change since keeps nothing, joins nothing).
+    const std::uint64_t generation = hub_generation();
     try {
         doc = plan_json_idle(repo, hub, gpu, quant, launch, true, &now);
     } catch (const std::invalid_argument&) {
@@ -1254,13 +1257,11 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         // an ask after a new token never joins a run under the old one (its listing, its access).
         std::shared_future<Json> running;
         std::promise<Json> runs;
-        std::uint64_t generation = 0;
-        std::string running_key;
+        const std::string running_key = key + "|generation " + std::to_string(generation);
         {
             std::lock_guard lock(sizes_mutex_);
-            generation  = hub_generation_;
-            running_key = key + "|generation " + std::to_string(generation);
-            if (const auto it = plans_.find(key); it != plans_.end()) {
+            if (const auto it = plans_.find(key);
+                it != plans_.end() && generation == hub_generation_) {
                 const bool failure =
                     it->second.contains("failed") || it->second.contains("refused");
                 if (!failure ||
@@ -1293,6 +1294,17 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                 // describe).
                 const std::string model = at_commit(repo, commit);
                 try {
+                    // One serve child a card at a time, whatever its key: two at once would each
+                    // see the other's context in the free memory, or (exclusive compute) be
+                    // refused the card.
+                    std::mutex* card = nullptr;
+                    {
+                        std::lock_guard lock(sizes_mutex_);
+                        auto& slot = serve_card_mutexes_[gpu];
+                        if (!slot) { slot = std::make_unique<std::mutex>(); }
+                        card = slot.get();
+                    }
+                    std::lock_guard one_child(*card);
                     if (auto answer = serve_plan_json(model, quant, gpu, launch)) {
                         // The model by the name the plan here gives it (the page names a family's
                         // gate by it), not serve's repo@commit.
