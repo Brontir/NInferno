@@ -1296,8 +1296,8 @@ async function refreshState() {
 // model's plans are asked again (the server keeps their idle part; it re-plans only "now").
 const NOW_STEP = 256 * 2 ** 20;
 let nowFree = null, nowGpu = null, nowGen = 0; // nowGen: one step per move of the memory
-// The card's compute mode and its holders as last asked (nowHoldOf): a mode change (nvidia-smi -c)
-// or a holder starting, stopping or being replaced moves whether the card takes a new one
+// The card's hold as last asked (nowHoldOf): a mode change (nvidia-smi -c), or in an exclusive mode
+// the card becoming held or free or held by the MPS server, moves whether it takes a new process
 // (refusal_now), whatever the memory does (#891).
 let nowHold = null;
 // A plan fetched while the memory moved: its "now" is of before (dropped: asked again when shown).
@@ -2237,12 +2237,18 @@ function actOptions(doc, autoDoc, mode) {
 // The mode a plan and a launch take: Auto, or the one chosen while the model runs it.
 function actAskOf(mode, allowed) { return mode && mode !== "auto" && (!allowed || allowed.includes(mode)) ? mode : "auto"; }
 // What decides whether a card takes a new process besides its memory (GpuStat::refusal_now over
-// NVML's compute mode and compute processes): the mode and who holds the card, each holder by its
-// pid and whether it is the MPS server. When it moves, every "now" is asked again (refreshPlanNow,
-// #891), a holder replaced at the same count too.
+// NVML's compute mode and compute processes): the mode, and in an exclusive mode whether the card
+// is held and whether by the MPS server. When it moves, every "now" is asked again (refreshPlanNow,
+// #891), an ordinary holder replaced by the MPS server at the same count too.
+// Only what refusal_now reads: the default and prohibited modes never look at the processes (a
+// plan's own serve child, which NVML lists, must not move the hold: the answer it brings would be
+// dropped and asked again, #1135 review); the exclusive modes read whether a process holds the card
+// and whether one is the MPS server.
 function nowHoldOf(g) {
-  const holders = ((g && g.processes) || []).map(p => p.pid + (p.mps_server ? "m" : "")).sort();
-  return (g && g.compute_mode !== undefined ? g.compute_mode : "?") + "/" + holders.join(",");
+  const mode = g && g.compute_mode !== undefined ? g.compute_mode : "?";
+  if (mode !== 1 && mode !== 3) return String(mode);
+  const ps = (g && g.processes) || [];
+  return mode + "/" + (ps.length ? "held" : "free") + (ps.some(p => p.mps_server) ? "/mps" : "");
 }
 // ---- end plan helpers ----
 

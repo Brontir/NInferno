@@ -517,16 +517,20 @@ eq(H.nowLine({now: {free_now_bytes: 8 * 2 ** 30, fits_now: true, context_now: 65
      "a refusing card: said with the CUDA message");
   whole(RU("nowRefused", {why: "x"}), "nowRefused ru");
 }
-// A compute-mode change or a process starting or stopping asks "now" again, whatever the memory
-// does (#891): the hold differs; the same mode and holders do not.
+// Only what refusal_now reads moves the hold (#891, #1135 review): a mode change; in an exclusive mode
+// the card becoming held or free, or held by the MPS server. In the default mode no process does, the
+// plan's own serve child among them.
 {
   const g = {compute_mode: 0, processes: [{pid: 7}]};
-  ok(H.nowHoldOf(g) === H.nowHoldOf({compute_mode: 0, processes: [{pid: 7, used_bytes: 5}]}), "same mode and holder: the same hold");
-  ok(H.nowHoldOf(g) !== H.nowHoldOf({compute_mode: 0, processes: [{pid: 9}]}), "another holder at the same count moves the hold");
-  ok(H.nowHoldOf(g) !== H.nowHoldOf({compute_mode: 0, processes: [{pid: 7, mps_server: true}]}), "the holder becoming the MPS server moves the hold");
-  ok(H.nowHoldOf({compute_mode: 3, processes: [{pid: 1}, {pid: 2}]}) === H.nowHoldOf({compute_mode: 3, processes: [{pid: 2}, {pid: 1}]}), "the holders' order does not matter");
+  ok(H.nowHoldOf(g) === H.nowHoldOf({compute_mode: 0, processes: [{pid: 7}, {pid: 9}]}), "default mode: a process starting (a plan's own child) leaves the hold");
+  ok(H.nowHoldOf(g) === H.nowHoldOf({compute_mode: 0, processes: []}), "default mode: a process stopping leaves the hold");
   ok(H.nowHoldOf(g) !== H.nowHoldOf({compute_mode: 1, processes: [{pid: 7}]}), "a mode change moves the hold");
-  ok(H.nowHoldOf(g) !== H.nowHoldOf({compute_mode: 0, processes: []}), "a process stopping moves the hold");
+  ok(H.nowHoldOf({compute_mode: 2, processes: [{pid: 7}]}) === H.nowHoldOf({compute_mode: 2, processes: []}), "prohibited: the processes do not matter");
+  const held = {compute_mode: 3, processes: [{pid: 7}]};
+  ok(H.nowHoldOf(held) !== H.nowHoldOf({compute_mode: 3, processes: []}), "exclusive: the holder stopping moves the hold");
+  ok(H.nowHoldOf(held) !== H.nowHoldOf({compute_mode: 3, processes: [{pid: 9, mps_server: true}]}), "exclusive: the holder replaced by the MPS server at the same count moves the hold");
+  ok(H.nowHoldOf(held) === H.nowHoldOf({compute_mode: 3, processes: [{pid: 9}]}), "exclusive: another ordinary holder leaves the hold (still refused)");
+  ok(H.nowHoldOf({compute_mode: 1, processes: [{pid: 1}]}) !== H.nowHoldOf({compute_mode: 1, processes: []}), "exclusive thread: held and free differ");
   ok(H.nowHoldOf({}) === H.nowHoldOf({processes: []}), "no mode and no processes read alike");
 }
 for (const lang of ["en", "ru", "uk"]) for (const k of ["nowNoStart", "nowRefused", "nowLess", "nowTip"])
