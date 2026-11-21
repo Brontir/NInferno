@@ -12,7 +12,7 @@ TOOL = os.path.join(ROOT, "tools", "route_table_retime.py")
 FIELDS = ["format", "compute", "epilogue", "n", "k", "T", "route", "median_us"]
 
 
-def run(tmp_path, bands, rows, margin="0.03", evidence=None, second=None):
+def run(tmp_path, bands, rows, margin="0.03", evidence=None, second=None, repeat=False):
     table = tmp_path / "t.json"
     entry = {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 4096, "k": 4096, "bands": bands}
     if evidence is not None:
@@ -42,6 +42,8 @@ def run(tmp_path, bands, rows, margin="0.03", evidence=None, second=None):
             for t, route in rankers:
                 w.writerow(["q4k", "a8", "store", 4096, 4096, t, route])
         extra = ["--evidence", str(ev), str(sel)]
+    if repeat:
+        extra.append("--repeat")
     r = subprocess.run([sys.executable, TOOL, "--table", str(table), "--routes", str(grid),
                         "--tokens", "9-11", "--margin", margin] + extra, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
@@ -84,6 +86,31 @@ def test_filled_count_takes_its_evidence_row_from_the_second_grid(tmp_path):
                           second=second)
     assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
     assert evidence == [[9, 150.0, 99.0], [10, 150.0, 99.0], [11, 150.0, 99.0]]
+
+
+def test_repeat_keeps_an_entry_the_second_grid_does_not_repeat(tmp_path):
+    # n2 wins T 9-11 in the first grid; in the second n1 wins T 10 by 5 %: with --repeat the entry
+    # stays as it was, without it the move is written.
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
+    second = ([(9, "n1", 200), (9, "n2", 100), (10, "n1", 95), (10, "n2", 100),
+               (11, "n1", 200), (11, "n2", 100)], [(t, "n1") for t in (9, 10, 11)])
+    bands, _ = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[],
+                   second=second, repeat=True)
+    assert bands == [[1, 11, "n1"], [12, 16777216, "n2"]]
+    bands, _ = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[],
+                   second=second)
+    assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
+
+
+def test_repeat_keeps_a_large_gain_the_second_grid_puts_a_little_behind(tmp_path):
+    # The second grid has n4 3 % ahead of n2 at T 10, but n2 still beats the old n1 by 2x there: the
+    # move repeats as a gain and is written.
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
+    second = ([(9, "n1", 200), (9, "n2", 100), (10, "n1", 200), (10, "n2", 100), (10, "n4", 95),
+               (11, "n1", 200), (11, "n2", 100)], [(t, "n1") for t in (9, 10, 11)])
+    bands, _ = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[],
+                   second=second, repeat=True)
+    assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
 
 
 def test_route_within_the_margin_is_kept(tmp_path):

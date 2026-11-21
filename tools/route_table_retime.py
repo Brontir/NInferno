@@ -90,6 +90,11 @@ def main():
     ap.add_argument("--tokens", required=True)
     ap.add_argument("--margin", type=float, default=0.03)
     ap.add_argument("--evidence", nargs=2, type=Path, metavar=("ROUTES", "SELECTED"))
+    ap.add_argument("--repeat", action="store_true",
+                    help="with --evidence: keep a move only where the second grid repeats it: at "
+                         "every moved or filled count it timed, the range's route is within --margin "
+                         "of that grid's fastest table route or faster than the old route by more "
+                         "than --margin")
     a = ap.parse_args()
     lo, hi = (int(x) for x in a.tokens.split("-"))
     grid = load_grid(a.routes, lo, hi)
@@ -171,6 +176,29 @@ def main():
                 print("%s %s %s %dx%d: the evidence grid has no ranker / %s row at T%s, kept"
                       % (*key[:3], key[3], key[4], best, ",".join(map(str, gaps))), file=sys.stderr)
                 continue
+            if a.repeat:
+                # An A/A grid that does not repeat a count's move (a near-tie, noise in the first
+                # grid) keeps the entry as it was (#1142's discipline). A move repeats where the
+                # range's route is within the margin of the second grid's fastest, or still beats
+                # the old route by more than the margin there (a large gain to a route the second
+                # grid puts a little behind another).
+                def repeats(t, old):
+                    times = {r: us for r, us in ev_grid.get((key, t), {}).items()
+                             if not r.startswith(NOT_TABLE_ROUTES)}
+                    if best not in times:
+                        return True  # not timed there: the first grid's word stands
+                    if times[best] <= min(times.values()) * (1 + a.margin):
+                        return True
+                    return old in times and times[best] * (1 + a.margin) < times[old]
+
+                olds = {**{t: haves[t] for t in moved},
+                        **{u: route_at(e["bands"], u) for u in filled}}
+                unrepeated = [t for t in sorted(olds) if not repeats(t, olds[t])]
+                if unrepeated:
+                    print("%s %s %s %dx%d: the second grid does not repeat %s at T%s, kept"
+                          % (*key[:3], key[3], key[4], best, ",".join(map(str, unrepeated))),
+                          file=sys.stderr)
+                    continue
         for t in sorted(moved):
             times = grid[(key, t)]
             print("%s %s %s %dx%d T%d: %s %.1f us -> %s %.1f us" % (*key[:3], key[3], key[4], t,
