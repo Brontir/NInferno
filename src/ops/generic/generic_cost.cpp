@@ -166,11 +166,10 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
                 s.producers > 0 ? kW4a8MmaFacts.producer_stages : kW4a8MmaFacts.stages;
             const double smem =
                 stages * (rows_w + cols) * route_cost::kW4a8StageBytesPerRow.value();
-            const auto key = w4a8_unit::kernel_key_of(i, dec, problem.epilogue, facts_arch);
+            // The snapshots parse once (release_arch above reads them all): a lookup, no throw.
+            const auto tile_key = w4a8_unit::kernel_key_of(i, dec, problem.epilogue, facts_arch);
             const double occ =
-                resident(facts_of([&] {
-                             return key ? kernel_facts::w4a8_facts(facts_arch, *key) : std::nullopt;
-                         }),
+                resident(tile_key ? kernel_facts::w4a8_facts(facts_arch, *tile_key) : std::nullopt,
                          threads, smem);
             const double ctas = cdiv(n, rows_o) * cdiv(t, cols);
             const double q    = std::ceil(ctas / sms);
@@ -264,8 +263,7 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const kernel_facts::I8KernelKey i8_key{wt, wn, stages, bits,
                                                    static_cast<int>(problem.epilogue)};
             const double occ =
-                resident(facts_of([&] { return kernel_facts::i8_facts(facts_arch, i8_key); }),
-                         s.threads, smem);
+                resident(kernel_facts::i8_facts(facts_arch, i8_key), s.threads, smem);
             const double ctas    = cdiv(n, rows_o) * cdiv(t, cols);
             const double q       = std::ceil(ctas / sms);
             const double mma     = q * 2.0 * rows_w * cols * k / peak_sm;

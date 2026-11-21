@@ -269,8 +269,8 @@ void check_kernel_keys() {
                    std::string("R8 verify kernel key of ") + f.name);
         }
     }
-    // The host's key (r8_decoder_name's table, the launch's widths) is the launch's own, for every
-    // format, schedule, epilogue, token count and form.
+    // The host's key (w4a8_decoder_name's table, the launch's widths) is the launch's own, for
+    // every format, schedule, epilogue, token count and form.
     int compared = 0;
     for (const ninferno::FormatFacts& f : ninferno::kFormatFacts) {
         for (int i = 0; i < g::r8_schedule_count(); ++i) {
