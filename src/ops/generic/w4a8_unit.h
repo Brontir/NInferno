@@ -58,6 +58,11 @@ void counted_for_test(std::optional<bool> on) noexcept;
 // generic_w4a8.cuh w4a8_classic_flavor); nullopt for a format that is not scored.
 [[nodiscard]] std::optional<ops::detail::generic::kernel_facts::W4a8KernelKey>
 kernel_key(int schedule, QType q, ops::detail::generic::Epilogue epilogue, std::string_view arch);
+// The same for any decoder (its kernel-facts name, generic::w4a8_decoder_name), scored or not: the
+// key of the instance a launch of `schedule` takes, whose registers price its occupancy (#938).
+[[nodiscard]] std::optional<ops::detail::generic::kernel_facts::W4a8KernelKey>
+kernel_key_of(int schedule, std::string_view codec, ops::detail::generic::Epilogue epilogue,
+              std::string_view arch);
 
 // The clocks one K tile of the kernel `key` takes on `arch`, with `ctas_per_sm` CTAs resident and
 // `k_tiles` K tiles a CTA; nullopt for a classic tile (no producer warps: the law does not hold
