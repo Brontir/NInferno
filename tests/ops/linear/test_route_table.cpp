@@ -624,9 +624,15 @@ int moe_pick_precedence() {
         return a == moe::MoeAuthority::TableAsMeasured || a == moe::MoeAuthority::TableW4a8 ||
                a == moe::MoeAuthority::TableClassA8 || a == moe::MoeAuthority::TableR8Refused;
     };
+    // In name order: the directory's own order differs by filesystem.
+    std::vector<std::filesystem::path> files;
     for (const auto& f : std::filesystem::directory_iterator(routes / "moe_pick")) {
+        if (f.path().extension() == ".json") files.push_back(f.path());
+    }
+    std::sort(files.begin(), files.end());
+    for (const auto& path : files) {
+        const std::filesystem::directory_entry f(path);
         const auto name = f.path().filename();
-        if (f.path().extension() != ".json") continue;
         const Json pick = read(f.path());
         const auto id   = static_cast<std::uint32_t>(
             std::stoul(pick["gpu"]["pci_id"].get<std::string>(), nullptr, 16));
@@ -690,6 +696,18 @@ int moe_pick_precedence() {
             // This board's own table, with the band: it stands above the pick.
             Json own   = read(routes / own_name);
             own["moe"] = own.value("moe", Json::array());
+            // An own entry of the layer already (at other widths) would make a duplicate key: the
+            // layer is not this case's.
+            const auto same_layer = [&](const Json& m) {
+                return m.value("format", Json()) == entry["format"] &&
+                       m.value("down_format", m.value("format", Json())) ==
+                           entry.value("down_format", entry["format"]) &&
+                       m.value("experts", Json()) == entry["experts"] &&
+                       m.value("top_k", Json()) == entry["top_k"] &&
+                       m.value("hidden", Json()) == entry["hidden"] &&
+                       m.value("inter", Json()) == entry["inter"];
+            };
+            if (std::any_of(own["moe"].begin(), own["moe"].end(), same_layer)) continue;
             own["moe"].push_back(entry);
             std::ofstream(dir / own_name) << own.dump(1);
             ninferno::ops::set_route_table_dir(utf8_path(dir));
