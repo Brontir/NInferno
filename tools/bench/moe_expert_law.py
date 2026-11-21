@@ -409,8 +409,8 @@ def _bands(text):
     collapse into one and compare wrongly, so a file that holds one twice is refused (#1115)."""
     out = {}
     for e in json.loads(text)["moe"]:
-        key = (e["format"], e.get("down_format", e["format"]), tuple(e.get("frag", ())), e["experts"], e["top_k"],
-               e["hidden"], e["inter"])
+        key = (e["format"], e.get("down_format", e["format"]), tuple(sorted(e.get("frag", ()))), e["experts"],
+               e["top_k"], e["hidden"], e["inter"])
         if key in out: raise ValueError(f"routes/moe_pick: layer {key} appears twice")
         out[key] = e["bands"]
     return out

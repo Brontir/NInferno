@@ -418,7 +418,8 @@ int shipped_moe_picks() {
         for (const Json& e : root["moe"]) {
             Json k = e;
             k.erase("bands");
-            Json frag = k.value("frag", Json::array());
+            k["down_format"] = e.value("down_format", e["format"]);
+            Json frag        = k.value("frag", Json::array());
             std::sort(frag.begin(), frag.end());
             k["frag"] = frag;
             layouts.insert(k.dump());
@@ -426,7 +427,8 @@ int shipped_moe_picks() {
         const auto holds_layout = [&](const Json& e, bool gate_up, bool down) {
             Json k = e;
             k.erase("bands");
-            Json frag = Json::array();
+            k["down_format"] = e.value("down_format", e["format"]);
+            Json frag        = Json::array();
             if (down) frag.push_back("down");
             if (gate_up) frag.push_back("gate_up");
             k["frag"] = frag;
@@ -552,16 +554,17 @@ int shipped_moe_picks() {
                          e["down_format"] = "q5k";
                          e["frag"]        = Json::array({"gate_up"});
                      }));
-        // Priced for another board of the class (its gpu.pci_id): not read, and the status says so.
-        // The other board is a registry board of the first file's own class, whichever file that
-        // is (#1115: a fixed 0x2204 / 0x2206 is a board of another arch beside an ad106 file).
+        // Priced for another board (its gpu.pci_id): not read, and the status says so. The loader
+        // skips a file whose board is at a nonzero board_distance from this one (a board of the
+        // same facts reads it), so the other board is a registry board of the first file's arch at
+        // a nonzero distance, whichever file that is (#1115: a fixed 0x2204 / 0x2206 assumed
+        // GA102).
         std::string other;
-        const std::string first_class             = scoped_board(first_id).id();
-        const board_registry::BoardRow& first_row = board_registry::row(first_id);
+        const ninferno::Board first_board = board_registry::board(first_id);
         for (const board_registry::BoardRow& row : board_registry::kRows) {
-            if (row.pci_device_id == first_id || row.major != first_row.major ||
-                row.minor != first_row.minor ||
-                scoped_board(row.pci_device_id).id() != first_class) {
+            const ninferno::Board b = board_registry::board(row.pci_device_id);
+            if (row.major != first_board.major || row.minor != first_board.minor ||
+                !(b.dram_gbps > 0) || ninferno::board_distance(first_board, b) == 0.0) {
                 continue;
             }
             char hex[16];
@@ -569,7 +572,7 @@ int shipped_moe_picks() {
             other = hex;
             break;
         }
-        failures += check(!other.empty(), "a second registry board of " + first_class);
+        failures += check(!other.empty(), "a registry board of another facts than " + first_name);
         install(changed([&](Json& root, Json&) { root["gpu"]["pci_id"] = other; }));
         try {
             const auto s = ninferno::ops::route_table_status();
