@@ -1250,6 +1250,11 @@ void test_artifact_plan_via_serve() {
         free_card.compute_mode = 0;
         free_card.processes    = {{1, 0}};
         check(free_card.refusal_now().empty(), "a default-mode card in use takes another process");
+        free_card.compute_mode = 3;
+        check(!free_card.refusal_now().empty(), "an exclusive card a process holds takes no other");
+        free_card.processes = {{1, 0, true}};
+        check(free_card.refusal_now().empty(),
+              "an exclusive card an MPS server holds takes an MPS client");
 
         UiOptions options;
         options.offline      = true;

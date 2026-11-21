@@ -2,6 +2,7 @@
 
 #include "core/sys.h"
 
+#include <algorithm>
 #include <mutex>
 
 namespace ninferno::ui {
@@ -13,7 +14,11 @@ double GpuStat::bandwidth_gbs() const noexcept {
 
 std::string GpuStat::refusal_now() const {
     if (compute_mode == 2) return "its compute mode is prohibited (NVML)";
-    if ((compute_mode == 1 || compute_mode == 3) && !processes.empty()) {
+    // Under MPS the server holds the exclusive context and clients join it (NVIDIA's MPS
+    // overview: exclusive-process mode then behaves as the default mode for them).
+    const bool mps = std::any_of(processes.begin(), processes.end(),
+                                 [](const GpuProcess& p) { return p.mps_server; });
+    if ((compute_mode == 1 || compute_mode == 3) && !processes.empty() && !mps) {
         return "its compute mode is exclusive and process " +
                std::to_string(processes.front().pid) + " holds it (NVML)";
     }
@@ -102,6 +107,7 @@ public:
         bind(pci_, "nvmlDeviceGetPciInfo_v3");
         bind(processes_, "nvmlDeviceGetComputeRunningProcesses_v3");
         bind(compute_mode_, "nvmlDeviceGetComputeMode");
+        bind(process_name_, "nvmlSystemGetProcessName");
         bind(cores_, "nvmlDeviceGetNumGpuCores");
         bind(mig_mode_, "nvmlDeviceGetMigMode");
         if (init_ == nullptr || count_ == nullptr || by_index_ == nullptr) {
@@ -206,8 +212,17 @@ public:
                     if (rc == kOk) {
                         for (unsigned p = 0; p < n; ++p) {
                             const auto used = infos[p].used_gpu_memory;
-                            stat.processes.push_back(
-                                {infos[p].pid, used == kUnavailableMemory ? 0 : used});
+                            GpuProcess process{infos[p].pid, used == kUnavailableMemory ? 0 : used};
+                            char path[256] = {};
+                            if (process_name_ &&
+                                process_name_(process.pid, path, sizeof(path)) == kOk) {
+                                const std::string name(path);
+                                const auto slash = name.find_last_of("/\\");
+                                const std::string base =
+                                    slash == std::string::npos ? name : name.substr(slash + 1);
+                                process.mps_server = base.rfind("nvidia-cuda-mps-server", 0) == 0;
+                            }
+                            stat.processes.push_back(process);
                         }
                     }
                 }
@@ -249,6 +264,7 @@ private:
     int (*mig_mode_)(Device, unsigned*, unsigned*)         = nullptr; // current, pending
     int (*processes_)(Device, unsigned*, NvmlProcessInfo*) = nullptr;
     int (*compute_mode_)(Device, int*)                     = nullptr; // nvmlComputeMode_t
+    int (*process_name_)(unsigned, char*, unsigned)        = nullptr; // a pid's executable path
 };
 
 } // namespace
