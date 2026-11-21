@@ -209,17 +209,59 @@ def test_second_grid_with_the_default_far_ahead_keeps_the_entry(tmp_path):
 
 
 def test_an_a8_default_is_no_rival_of_the_table(tmp_path):
-    # #1154: the ranker answers W4A8 (100) at T 9-11, faster than any table route; the table
+    # #1154: the ranker answers W4A8 (100) at T 17-19, faster than any table route; the table
     # stands aside where W4A8 may run, so the move to n2 (the fastest table route) stands and its
     # rows hold n2 against the fastest table route, not against the A8 tile.
-    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 150))]
-    second = ([(t, r, us) for t in (9, 10, 11)
+    rows = [(t, r, us) for t in (17, 18, 19) for r, us in (("n1", 200), ("n2", 150))]
+    second = ([(t, r, us) for t in (17, 18, 19)
                for r, us in (("n1", 200), ("n2", 150), ("w4a8.64x64", 100))],
-              [(t, "w4a8.64x64") for t in (9, 10, 11)])
+              [(t, "w4a8.64x64") for t in (17, 18, 19)])
+    bands, evidence = run(tmp_path, [[1, 19, "n1"], [20, 16777216, "n2"]], rows, evidence=[],
+                          second=second, tokens="17-19")
+    assert bands == [[1, 16, "n1"], [17, 16777216, "n2"]]
+    assert evidence == [[17, 150, 150], [18, 150, 150], [19, 150, 150]]
+
+
+def test_ggml_mmq_is_no_candidate_where_w4a8_may_run(tmp_path):
+    # #1149 review: at T >= 17 where the grid timed W4A8 (the format and K admit it), an A8 policy
+    # never reads the measured entry and an A16 call cannot run ggml_mmq (int8 activations): the
+    # range takes the fastest A16 route, n2, not ggml_mmq.
+    rows = [(t, r, us) for t in (17, 18, 19)
+            for r, us in (("n1", 200), ("n2", 150), ("ggml_mmq", 100), ("w4a8.64x64", 90))]
+    bands, _ = run(tmp_path, [[1, 19, "n1"], [20, 16777216, "n2"]], rows, tokens="17-19")
+    assert bands == [[1, 16, "n1"], [17, 16777216, "n2"]]
+
+
+def test_ggml_mmq_stays_a_candidate_without_w4a8(tmp_path):
+    # No W4A8 timed (the shape does not admit it): an A8 policy reads the measured entry, and
+    # ggml_mmq is its fastest route.
+    rows = [(t, r, us) for t in (17, 18, 19) for r, us in (("n1", 200), ("n2", 150), ("ggml_mmq", 100))]
+    bands, _ = run(tmp_path, [[1, 19, "n1"], [20, 16777216, "n2"]], rows, tokens="17-19")
+    assert bands == [[1, 16, "n1"], [17, 19, "ggml_mmq"], [20, 16777216, "n2"]]
+
+
+def test_a_count_without_a_ranker_is_a_gap(tmp_path):
+    # The second grid timed T 9-11, its selected file names a ranker at T 9 and 11 only: T 10 is a
+    # gap and the entry is kept (before, a KeyError).
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
+    second = ([(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))],
+              [(9, "n2"), (11, "n2")])
     bands, evidence = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[],
                           second=second)
-    assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
-    assert evidence == [[9, 150, 150], [10, 150, 150], [11, 150, 150]]
+    assert bands == [[1, 11, "n1"], [12, 16777216, "n2"]]
+    assert evidence == []
+
+
+def test_a_ranker_the_second_grid_did_not_time_is_a_gap(tmp_path):
+    # The ranker names n4, a table route the second grid did not time: no default to hold the move
+    # to, the entry is kept (only an A8 ranker is swapped for the fastest table route).
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
+    second = ([(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))],
+              [(t, "n4") for t in (9, 10, 11)])
+    bands, evidence = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[],
+                          second=second)
+    assert bands == [[1, 11, "n1"], [12, 16777216, "n2"]]
+    assert evidence == []
 
 
 def test_route_within_the_margin_is_kept(tmp_path):
@@ -312,3 +354,17 @@ if __name__ == "__main__":
             with tempfile.TemporaryDirectory() as d:
                 test(pathlib.Path(d))
             print("ok", name)
+
+
+def test_round_width_reads_the_token_tile_from_the_name():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("route_table_retime", TOOL)
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    assert tool.round_width("rmma.m1.n4.w1x4") == 32
+    assert tool.round_width("rmma.m2.n1.w4x1.c2") == 8
+    assert tool.round_width("staged.64x128.w4") == 128
+    assert tool.round_width("staged.128x64.w8") == 64
+    assert tool.round_width("tiled.128x64") == 128
+    assert tool.round_width("w4a8.32x128") == 32
+    assert tool.round_width("ggml_mmq") == 8

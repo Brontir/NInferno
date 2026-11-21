@@ -45,24 +45,71 @@ INF = 16777216
 NOT_TABLE_ROUTES = ("w4a8", "r8.")
 
 
-def default_route(times, ranker):
-    """The default an a16 band is held to at one count: the ranker where it names a table route,
-    else (an A8 route the table never competes with) the fastest table route timed there."""
-    if ranker in times and not ranker.startswith(NOT_TABLE_ROUTES):
+def board_keys(gpu):
+    """A table's own board keys, as tests/test_route_table_evidence.py reads them: its class, and
+    class:NNsm from the registry row of its PCI id (src/core/data/gpu_facts.json) or its own
+    board facts."""
+    keys = {gpu.get("class")}
+    sms = None
+    if "pci_id" in gpu:
+        facts = Path(__file__).resolve().parent.parent / "src/core/data/gpu_facts.json"
+        rows = json.loads(facts.read_text(encoding="utf-8"))["gpus"]
+        sms = {int(r["id"], 16): r["sms"] for r in rows}.get(int(str(gpu["pci_id"]), 16))
+    sms = sms or (gpu.get("board") or {}).get("sms")
+    if sms and ":" not in str(gpu.get("class")):
+        keys.add("%s:%dsm" % (gpu["class"], sms))
+    return keys
+
+
+# The first count of the W4A8 band (route_authorities.cpp kPrefillBandMinTokens).
+A8_WIDE_MIN_T = 17
+
+
+def a8_wide(times, t):
+    """A count where the call may take W4A8 (route_tune times it only where the format and K admit
+    it): under an A8 policy route_table_entry reads only the predicted band there (a8_wide_call),
+    and under A16 only ggml_mmq (int8 activations) is refused. A measured entry there answers A16
+    calls, so its candidates are the A16 routes (#1149 review)."""
+    return t >= A8_WIDE_MIN_T and any(r.startswith("w4a8") for r in times)
+
+
+def a16_routes(times, t):
+    """The routes of one count an A16 call of the table can run."""
+    wide = a8_wide(times, t)
+    return {r: us for r, us in times.items()
+            if not r.startswith(NOT_TABLE_ROUTES) and not (wide and r == "ggml_mmq")}
+
+
+def default_route(times, ranker, t):
+    """The default an a16 band is held to at one count: the ranker where it names a route an A16
+    call can run there; where it names an A8 route the table never competes with (W4A8, R8, or
+    ggml_mmq at a W4A8 count), the fastest route an A16 call can run there. No ranker, or one
+    that names a table route the grid did not time, gives None: the caller counts a gap."""
+    if ranker is None:
+        return None
+    table = a16_routes(times, t)
+    if ranker in table:
         return ranker
-    table = {r: us for r, us in times.items() if not r.startswith(NOT_TABLE_ROUTES)}
-    return min(table, key=table.get) if table else None
+    if ranker.startswith(NOT_TABLE_ROUTES) or (ranker == "ggml_mmq" and a8_wide(times, t)):
+        return min(table, key=table.get) if table else None
+    return None
 
 
 def round_width(route):
     """The token count a route's round count steps at (ceil(T / width)): eight columns a tile for the
-    register MMA's nN (rmma.m1.nN.*), 64 for the staged and W4A8 tiles, and eight, the narrowest
-    column step, for any other route (ggml_mmq's column tiles are multiples of eight)."""
+    register MMA's nN (rmma.m1.nN.*); the token tile its name carries for the staged
+    (staged.ROWSxTOKENS), tiled and W4A8 tiles (tiled.MxN, w4a8.MxN: M tokens; generic_routes.cpp
+    route_name); eight, the narrowest column step, for any other route (ggml_mmq's column tiles
+    are multiples of eight)."""
     m = re.search(r"(?:^|\.)n(\d+)(?:\.|$)", route)
     if m:
         return 8 * int(m.group(1))
-    if route.startswith(("staged", "w4a8")):
-        return 64
+    m = re.match(r"staged\.\d+x(\d+)", route)
+    if m:
+        return int(m.group(1))
+    m = re.match(r"(?:tiled|w4a8|w4a8ws)\.(\d+)x\d+", route)
+    if m:
+        return int(m.group(1))
     return 8
 
 
@@ -112,11 +159,18 @@ def row_key(r):
 
 
 def load_grid(path, lo, hi, every_route=False):
-    grid = defaultdict(dict)
+    every = defaultdict(dict)
     for r in csv.DictReader(path.open(encoding="utf-8")):
         t = int(r["T"])
-        if lo <= t <= hi and (every_route or not r["route"].startswith(NOT_TABLE_ROUTES)):
-            grid[(row_key(r), t)][r["route"]] = float(r["median_us"])
+        if lo <= t <= hi:
+            every[(row_key(r), t)][r["route"]] = float(r["median_us"])
+    if every_route:
+        return every
+    # The candidates: what an A16 call can run at the count (a16_routes).
+    grid = defaultdict(dict)
+    for (key, t), times in every.items():
+        if routes := a16_routes(times, t):
+            grid[(key, t)] = routes
     return grid
 
 
@@ -146,6 +200,7 @@ def main():
                 ranker[(row_key(r), int(r["T"]))] = r["ranker"]
     doc = json.loads(a.table.read_text(encoding="utf-8"))
     board = doc.get("gpu", {}).get("class")
+    own_keys = board_keys(doc.get("gpu", {}))
     moved_entries = 0
     for e in doc.get("entries", []):
         if "bands" not in e:
@@ -227,11 +282,11 @@ def main():
             # counts the first left out); only a timed moved count's row is required.
             for t in sorted({**moved, **filled}):
                 times = ev_grid.get((key, t), {})
-                rk = default_route(times, ranker.get((key, t)))
+                rk = default_route(times, ranker.get((key, t)), t)
                 if rk in times and best in times:
                     new_rows[t] = [t, round(times[rk], 2), round(times[best], 2)]
-            # A count the second grid cannot confirm (no ranker, new or old route row there) is a
-            # gap: the move would stand on the first grid alone.
+            # A count the second grid cannot confirm (no ranker, a ranker it did not time, new or
+            # old route row there) is a gap: the move would stand on the first grid alone.
             gaps = [t for t in sorted(moved)
                     if t not in new_rows or haves[t] not in ev_grid.get((key, t), {})]
             if gaps:
@@ -247,7 +302,7 @@ def main():
             reversed_at = [t for t in sorted(moved)
                            if ev_grid[(key, t)][best] > ev_grid[(key, t)][haves[t]] * (1 + a.margin)
                            or ev_grid[(key, t)][best] > ev_grid[(key, t)][default_route(
-                               ev_grid[(key, t)], ranker[(key, t)])] * (1 + a.margin)]
+                               ev_grid[(key, t)], ranker[(key, t)], t)] * (1 + a.margin)]
             if reversed_at:
                 print("%s %s %s %dx%d: the evidence grid does not repeat %s at T%s, kept"
                       % (*key[:3], key[3], key[4], best, ",".join(map(str, reversed_at))),
@@ -256,8 +311,9 @@ def main():
             # An entry whose evidence is borrowed (tuned_on another board's class) keeps that
             # borrow: this board's rows beside it would break the borrow's copy of the donor
             # (test_route_table_evidence, rule c). The move stands; its rows are not written.
+            # A borrow names another table's board key; free text (a model, a tool) is no key.
             tuned = str(e.get("tuned_on", ""))
-            if tuned and board and tuned.split(":")[0] != board:
+            if tuned and tuned not in own_keys and re.fullmatch(r"[a-z0-9-]+(:\d+sm)?", tuned):
                 new_rows = {}
             if a.repeat:
                 # An A/A grid that does not repeat a count's move (a near-tie, noise in the first
@@ -266,8 +322,7 @@ def main():
                 # the old route by more than the margin there (a large gain to a route the second
                 # grid puts a little behind another).
                 def repeats(t, old):
-                    times = {r: us for r, us in ev_grid.get((key, t), {}).items()
-                             if not r.startswith(NOT_TABLE_ROUTES)}
+                    times = a16_routes(ev_grid.get((key, t), {}), t)
                     if best not in times:
                         return True  # not timed there: the first grid's word stands
                     if times[best] <= min(times.values()) * (1 + a.margin):
