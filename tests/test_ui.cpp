@@ -1530,6 +1530,134 @@ void test_hub_plan_via_serve() {
                   other->status == 200 && count == 2,
               "serve runs once a plan key (" + std::to_string(count) + " runs for 2 keys)");
     }
+    // A kept document keeps serve's `now` while the card's free memory stays within the page's
+    // NOW_STEP (256 MiB) of where serve planned it; past that the plan runs again (#1147).
+    {
+        fs::remove(root / "runs.txt");
+
+        struct MovingGpu final : GpuSource {
+            std::atomic<std::uint64_t>* free;
+            std::atomic<int>* mode;
+
+            MovingGpu(std::atomic<std::uint64_t>* f, std::atomic<int>* m) : free(f), mode(m) {}
+
+            std::vector<GpuStat> snapshot() override {
+                GpuStat g;
+                g.index        = 0;
+                g.name         = "NVIDIA GeForce RTX 4090";
+                g.memory_total = 24ULL << 30;
+                g.memory_free  = free->load();
+                g.cc_major     = 8;
+                g.cc_minor     = 9;
+                g.compute_mode = mode->load();
+                return {g};
+            }
+
+            std::string error() const override { return {}; }
+        };
+
+        std::atomic<std::uint64_t> free{8ULL << 30};
+        std::atomic<int> mode{0};
+        UiOptions options;
+        options.serve_binary = root / "serve-plan";
+        options.hub_cache    = root / "hub";
+        App app(options, std::make_unique<MovingGpu>(&free, &mode));
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        httplib::Client client("127.0.0.1", port);
+        const std::string ask = "/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF";
+        const auto runs       = [&] {
+            std::ifstream in(root / "runs.txt");
+            int count = 0;
+            for (std::string line; std::getline(in, line);) { ++count; }
+            return count;
+        };
+        const auto has_now = [](const httplib::Result& r) {
+            if (!r || r->status != 200) return false;
+            const auto doc = nlohmann::json::parse(r->body, nullptr, false);
+            return doc.is_object() && doc.contains("now") && doc["now"].is_object();
+        };
+        const auto first      = client.Get(ask);
+        const int after_first = runs();
+        free += 100ULL << 20; // within the step: the kept document and its `now`
+        const auto near      = client.Get(ask);
+        const int after_near = runs();
+        free += 1ULL << 30; // past it: serve plans again
+        const auto far      = client.Get(ask);
+        const int after_far = runs();
+        mode = 2; // prohibited: no memory moves, but the kept `now` is of a card that took a start
+        const auto refused      = client.Get(ask);
+        const int after_refused = runs();
+        server.stop();
+        thread.join();
+        check(refused && refused->status == 200 && after_refused == 3,
+              "a refusal change plans again though the memory did not move (" +
+                  std::to_string(after_refused) + " runs)");
+        check(has_now(first) && after_first == 1, "the first ask runs serve and has its now");
+        check(has_now(near) && after_near == 1,
+              "a move within NOW_STEP keeps the document and its now (" +
+                  std::to_string(after_near) +
+                  " runs): " + (near ? near->body.substr(0, 200) : ""));
+        check(has_now(far) && after_far == 2,
+              "a move past NOW_STEP plans again (" + std::to_string(after_far) + " runs)");
+    }
+    // A re-plan that fails (serve's hub read, exit 75) keeps the good document: its plan answers,
+    // with no `now`, not the estimates of a failed serve.
+    {
+        fs::remove(root / "runs.txt");
+        std::ofstream(root / "serve-flaky")
+            << "#!/bin/sh\nif [ -s '" << (root / "runs.txt").string() << "' ]; then echo run >> '"
+            << (root / "runs.txt").string() << "'; echo 'error: HTTP 503' >&2; exit 75; fi\nexec '"
+            << (root / "serve-plan").string() << "' \"$@\"\n";
+        fs::permissions(root / "serve-flaky", fs::perms::owner_all);
+
+        struct MovingGpu final : GpuSource {
+            std::atomic<std::uint64_t>* free;
+
+            explicit MovingGpu(std::atomic<std::uint64_t>* f) : free(f) {}
+
+            std::vector<GpuStat> snapshot() override {
+                GpuStat g;
+                g.index        = 0;
+                g.name         = "NVIDIA GeForce RTX 4090";
+                g.memory_total = 24ULL << 30;
+                g.memory_free  = free->load();
+                g.cc_major     = 8;
+                g.cc_minor     = 9;
+                return {g};
+            }
+
+            std::string error() const override { return {}; }
+        };
+
+        std::atomic<std::uint64_t> free{8ULL << 30};
+        UiOptions options;
+        options.serve_binary = root / "serve-flaky";
+        options.hub_cache    = root / "hub";
+        App app(options, std::make_unique<MovingGpu>(&free));
+        httplib::Server server;
+        app.install(server);
+        const int port = server.bind_to_any_port("127.0.0.1");
+        std::thread thread([&] { server.listen_after_bind(); });
+        server.wait_until_ready();
+        httplib::Client client("127.0.0.1", port);
+        const std::string ask = "/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF";
+        const auto first      = client.Get(ask);
+        free += 1ULL << 30;
+        const auto again = client.Get(ask);
+        server.stop();
+        thread.join();
+        const auto doc =
+            again ? nlohmann::json::parse(again->body, nullptr, false) : nlohmann::json();
+        check(first && first->status == 200 && again && again->status == 200 && doc.is_object() &&
+                  doc.contains("now") && doc["now"].is_null() &&
+                  again->body.find("--plan failed") == std::string::npos,
+              "a failed re-plan answers the kept document, now null: " +
+                  (again ? again->body.substr(0, 300) : std::string("no answer")));
+    }
     // Two asks of one key at once share one serve run (single flight): the second waits for the
     // first's document, never starts a second child.
     {
