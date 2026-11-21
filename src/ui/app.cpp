@@ -1022,6 +1022,12 @@ std::string utf8_of(const fs::path& path) {
     return std::string(text.begin(), text.end());
 }
 
+// A repository at its listing's commit. A name given at a revision (org/m@branch) is read at
+// the commit that revision listed: org/m@<commit>, never org/m@branch@<commit>.
+std::string at_commit(const std::string& repo, const std::string& commit) {
+    return commit.empty() ? repo : repo.substr(0, repo.find('@')) + "@" + commit;
+}
+
 // A serve plan that failed for want of the hub or of time (its 45 s), not by refusing the model:
 // serve_plan_json's timeout, or a last line naming the transport (convert/fetch.cpp's curl and
 // HTTP errors). The plan here answers then (#766); any other failure is serve's refusal.
@@ -1249,8 +1255,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                                            : list.front().value("commit", std::string());
             // At the listing's commit, a repository named at a revision too (its branch may have
             // moved since the listing here was read, which the plan here and the key describe).
-            const std::string base  = repo.substr(0, repo.find('@'));
-            const std::string model = commit.empty() ? repo : base + "@" + commit;
+            const std::string model = at_commit(repo, commit);
             try {
                 if (auto answer = serve_plan_json(model, quant, gpu, launch)) {
                     // The model by the name the plan here gives it (the page names a family's
@@ -1329,6 +1334,15 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
             }
             if (!now) { return as_served(std::move(*served)); } // serve's `now`, of its pick
         }
+        if (!now) { // a cached plan here: its context, compared below as a fresh one is
+            std::lock_guard lock(sizes_mutex_);
+            if (const auto it = plan_now_.find(plan_key(repo, hub, gpu, quant, launch));
+                it != plan_now_.end()) {
+                now = it->second;
+            }
+        }
+        // No context here to replay at: serve's document as it is answered.
+        if (!now) { return as_served(std::move(*served)); }
         // The replay plans `now` at the plan here's configuration; serve's own choice may be
         // another (its workspace and routes move it): then serve's `now` is the answer, never a
         // replay of a configuration the document does not show.
@@ -1491,9 +1505,8 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         fetch.hub = hub;
         if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
         heads_read = std::async(
-            std::launch::async,
-            [spec = commit.empty() ? repo : repo + "@" + commit, fetch, quants,
-             facts = facts->model, tied = facts->shape.tied_embeddings] {
+            std::launch::async, [spec  = at_commit(repo, commit), fetch, quants,
+                                 facts = facts->model, tied = facts->shape.tied_embeddings] {
                 return convert::gguf_quants_head_bytes(spec, fetch, quants, facts.gguf_data_offset,
                                                        facts.hidden, facts.vocab, tied);
             });
@@ -2586,8 +2599,7 @@ void App::gguf_mtps(const std::string& repo, const std::string& hub, const std::
     convert::FetchOptions fetch;
     fetch.hub = hub;
     if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
-    const auto read =
-        convert::gguf_quants_carry_mtp(commit.empty() ? repo : repo + "@" + commit, fetch, missing);
+    const auto read = convert::gguf_quants_carry_mtp(at_commit(repo, commit), fetch, missing);
     std::lock_guard lock(sizes_mutex_);
     for (const auto& [quant, carries] : read) {
         if (carries) { mtp_[key_of(quant)] = carries; } // a read that failed is tried again
@@ -2614,7 +2626,7 @@ std::optional<product::GgufTensorTable> App::gguf_table(const std::string& repo,
     fetch.hub   = hub;
     fetch.quant = quant;
     if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
-    const std::string spec = commit.empty() ? repo : repo + "@" + commit;
+    const std::string spec = at_commit(repo, commit);
     for (const std::uint64_t bytes : {8ULL << 20, 32ULL << 20, 128ULL << 20}) {
         try {
             const auto head = convert::fetch_gguf_head(spec, fetch, bytes);
@@ -2667,7 +2679,7 @@ std::optional<bool> App::gguf_mtp(const std::string& repo, const std::string& hu
     fetch.hub   = hub;
     fetch.quant = quant;
     if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
-    const auto carries = convert::gguf_carries_mtp(commit.empty() ? repo : repo + "@" + commit, fetch);
+    const auto carries = convert::gguf_carries_mtp(at_commit(repo, commit), fetch);
     std::lock_guard lock(sizes_mutex_);
     if (carries) { mtp_[key] = carries; } // a read that failed is tried again
     return carries;
