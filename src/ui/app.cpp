@@ -2788,13 +2788,13 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
         try {
             {
                 // A native artifact keeps no config.json; its manifest names the base model's.
-                auto source = repo;
+                auto source = at; // at the listed commit, as the weights
                 if (native) {
                     const auto manifest =
                         convert::fetch_repo_json(at, fetch, "artifact-manifest.json");
                     source = manifest.value("source", Json::object())
                                  .value("base", Json::object())
-                                 .value("repo_id", repo);
+                                 .value("repo_id", at);
                 }
                 const Json config     = convert::fetch_config(source, fetch);
                 // The largest listed weights, with their MTP part (a checkpoint's
