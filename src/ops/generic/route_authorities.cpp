@@ -291,12 +291,12 @@ std::optional<RouteAnswer> w4a4_rule(const Ask& ask, const Problem& problem, con
 }
 
 // ggml's vector kernel for speculative verify (2..4 tokens; 2..3 for the K-quants on GA10x and
-// consumer Blackwell, vec_rule_max_tokens) of the ggml block formats it decodes (vec_rule). It
-// streams each weight row once for every token of the call and runs the epilogue in place: on the
-// RTX 5090 ISTA IQ3_S MTP3 it beat the R8 and A16 schedules the dense tuner picked there (C1 166 ->
-// 174 tok/s), whose L2-cold timings of one call at a time miss the stream of a verify step. The
-// tuner still replaces it where a route beats it by its margin (Muse Glimmer 30B Q4_K_M: the rule
-// alone lost C1 by 19 %).
+// consumer Blackwell, 2 for Q5_K / Q6_K on GA10x, vec_rule_max_tokens) of the ggml block formats
+// it decodes (vec_rule). It streams each weight row once for every token of the call and runs the
+// epilogue in place: on the RTX 5090 ISTA IQ3_S MTP3 it beat the R8 and A16 schedules the dense
+// tuner picked there (C1 166 -> 174 tok/s), whose L2-cold timings of one call at a time miss the
+// stream of a verify step. The tuner still replaces it where a route beats it by its margin (Muse
+// Glimmer 30B Q4_K_M: the rule alone lost C1 by 19 %).
 std::optional<RouteAnswer> vec_kernel_rule(const Ask& ask, const Problem& problem,
                                            const Weight& weight) {
     if (vec_rule(weight, problem.policy, ask.tokens)) {

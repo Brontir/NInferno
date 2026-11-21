@@ -67,6 +67,7 @@ struct PlannedDrafter {
     std::string status;   // embedded, converted, cached, attached, incompatible, failed: ...
     bool fetch_failed =
         false;            // status is "failed" and the fetch was what failed (not a conversion)
+    bool fetch_transport = false; // that fetch failed for want of the hub (a HubTransportError)
     std::string artifact; // the converted drafter
     std::string artifact_id;
     std::string commit;

@@ -442,7 +442,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "RTX 5090 +5.3 %; C = 2 and 3 within 0.1 %; under MTP the cap never lost in rounds a second "
      "(RTX 3090, 5070 Ti, 5090). Ada keeps kVecRuleMaxTokens (RTX 4070 Ti -2.0 %, 4090 -1.4 % with "
      "the cap, 4060 Ti +2.5 %), Turing has its own (kVecRuleMaxTokensTuring); sm_86 and "
-     "sm_120 only, for the formats of format_rules.h VecCapGa10xGb20x (the K-quants)",
+     "sm_120 only, for the formats of format_rules.h VecCapGa10xGb20x (the K-quants; on sm_86 "
+     "Q5_K and Q6_K take kVecRuleMaxTokensGa10xTwo)",
      ""},
     // Turing: the vector kernel stops at two tokens for the K-quants (#1038).
     {"kVecRuleMaxTokensTuring", Basis::Measured, "generic_select.cpp",
@@ -454,6 +455,16 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "R8VerifyEmulatedOff; the cap's formats are format_rules.h VecCapTuring, Q3_K and Q5_K "
      "carried; the others keep kVecRuleMaxTokens; IQ4_XS capped at T = 2: -0.05 / +0.93 / "
      "-0.74 %; an sm_75 build only, format_requires::kR8VerifyTuring)",
+     ""},
+    // GA10x: the vector kernel stops at two tokens for Q5_K / Q6_K (#1152).
+    {"kVecRuleMaxTokensGa10xTwo", Basis::Measured, "generic_select.cpp",
+     "constexpr std::int32_t kVecRuleMaxTokensGa10xTwo = 2;", 2, "ga106:28sm, ga102:82sm",
+     "RTX 3060, RTX 3090",
+     "end to end, Qwen3.5-9B, --spec off, vec at T = 1 only against vec at T = 2..3 (lab A/B, "
+     "4 alternating starts): Q6_K C = 3 RTX 3060 +10.7 %, RTX 3090 +5.0 %; Q5_K C = 3 RTX 3060 "
+     "+10.4 %, RTX 3090 +5.2 %; T = 2 keeps vec (Q6_K C = 2 RTX 3060 +4.0 %, RTX 3090 -2.3 %); "
+     "sm_86 only, for "
+     "the formats of format_rules.h VecCapGa10xTwo; Q4_K keeps kVecRuleMaxTokensGa10xGb20x",
      ""},
     // The rule's lower edge, from two tokens: T = 1 keeps R8 and the dense tuner.
     {"vec_rule lower edge", Basis::Measured, "generic_select.cpp",

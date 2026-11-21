@@ -2150,13 +2150,20 @@ rows, the register MMA on both stages at eight, the invariant profile's under ex
 **Open.** A step on the register-MMA pair (gpt-oss-20b, or Qwen3.6 at 16 rows) on two cards of a
 generation would give that pair its own share; the gpt-oss step rows as regression rows once their
 windows are re-measured; ninferno-ui links no Ops and registers neither this query nor the
-workspace ones (#766, held for the #620 host split: either query pulls the Ops' kernels into the
-UI). Its MoE steps keep the measured pair's share, but an estimate no query was asked for is
-Transferred past one row, `speed_why` "MoE route not queried" (`ModelFacts::moe_route_unqueried`),
-never Own; a kind the query gives no kernels for says "MoE route not answered". An MoE whose facts list
-no routed layers (a hub row priced from another quantization's header, a split GGUF part without
-expert banks, a `--plan-weight-bytes` estimate) is marked the same way (#799): nobody asked which
-pair runs its banks.
+workspace ones (the #620 host split: either query pulls the Ops' kernels into the UI). Its plan
+of a local artifact (#843) is ninferno-serve's own, both queries asked; online on Hugging Face,
+so is a GGUF repository's idle plan (#766: one serve run a plan key, kept, a failure for three
+minutes; `now` replayed in the UI at serve's pick and the free memory, its workspace by the
+formula; where serve's chosen configuration is another, `now` is serve's own when just measured,
+else none until the plan is asked again). serve's refusal is the plan's answer, as for an
+artifact. Offline, on ModelScope, with no serve, a serve that could not reach the hub or answer
+in time, or a native or mixed repository, the plan there answers, its `planner` saying why; the
+quantization rows' fits (`/api/quants`) and the catalog are always planned there. Its MoE steps keep the measured pair's
+share, but an estimate no query was asked for is Transferred past one row, `speed_why` "MoE route
+not queried" (`ModelFacts::moe_route_unqueried`), never Own; a kind the query gives no kernels for
+says "MoE route not answered". An MoE whose facts list no routed layers (a hub row priced from
+another quantization's header, a split GGUF part without expert banks, a `--plan-weight-bytes`
+estimate) is marked the same way (#799): nobody asked which pair runs its banks.
 
 ## 80. The pool rule prices the MTP head's pool over the benchmark's mix where the facts price it (#777, 12.11, rule)
 
@@ -3298,3 +3305,34 @@ End to end on the RTX 3090, Qwen3.6-35B-A3B re-quantized to Q3_K_M (gate/up Q3_K
 - Q5_K: the same sign on both cards, but no release quantization has Q5_K gate/up banks to check it end to end on.
 - IQ3_XXS: `r8_frag_dram_bound` holds (3090 ties, 3060 loses).
 - Turing: one card.
+
+## 99. The vec rule stops at two tokens on GA10x for Q5_K and Q6_K (#1152, 21.11, measured on two cards)
+
+**The question.** Decision 96 capped ggml's vector kernel at three tokens on GA10x for the K-quants. A route_tune check on the RTX 3090 (#1152) found the register MMA ahead at T 3 for Q5_K and Q6_K in 29-47 % of cells. End to end, does a cap of two pay on those formats?
+
+**Measurement.** End-to-end A/B, Qwen3.5-9B, `--spec off` (T = C), 8 alternating server starts. First with a lab switch (vec at T = 1 only against master's T = 2..3), then with this branch against master (`abref`). Lab / shipped (C3 also branch / master where named):
+
+| card | model | C2 | C3 | C4 |
+|---|---|---|---|---|
+| RTX 3060 | Q6_K | +4.0 % | +10.7 % | 0 |
+| RTX 3060 | Q5_K_M | +1.4 % | +10.3 % | 0 |
+| RTX 3090 | Q6_K | -2.3 % | +5.0 % | 0 |
+| RTX 3090 | Q5_K_M | -4.3 % | +5.2 % | 0 |
+
+The lab switch also moved T 2. The branch moves only T 3: branch / master at C3 RTX 3060 Q6_K +10.7 %, Q5_K_M +10.3 %, RTX 3090 Q6_K +5.0 %, with C2 and C4 within 0.1 %.
+
+The rule applies per tensor, while the models above mix formats. The quantizations that carry Q5_K / Q6_K tensors beside others were therefore measured with the branch too (#1158 review):
+
+| card | model | C2 | C3 | C4 |
+|---|---|---|---|---|
+| RTX 3060 | Q3_K_M | -0.1 % | +0.1 % | -0.1 % |
+| RTX 3090 | Q4_K_M | 0.0 % | +1.8 % | 0.0 % |
+
+**Decision.** `kVecRuleMaxTokensGa10xTwo = 2`: on sm_86 (`ga10x_cc`) `vec_rule_max_tokens` returns 2 for the formats of `format_rules.h` `vec_cap_ga10x_two` (Q5_K, Q6_K: two cards each, TwoCards), ahead of decision 96's three. T 3 of those formats goes to the route table or the next authority, as Q4_K's T 4 already does. A **measured constant** keyed by generation and format (`route_rules.h`, `Basis::Measured`).
+
+**Not taken.**
+- Q4_K: the cap on every tensor gave only +1.5 % on the RTX 3060 at C3, and the older #998 run (T = 2 on the 3090) lost 2.0 % at C3.
+- Q3_K: far behind without vec (RTX 3060 -11.6 % at C2, -5.7 % at C3).
+- T 2: the cards split (Q6_K C2: RTX 3060 +4.0 %, RTX 3090 -2.3 %), so vec keeps it.
+- Ada (RTX 4090 Q5_K_M: vec ahead at T 2..4), Turing (its own cap, decision 97) and Volta (vec 7-18 % ahead at T 3..4, #1153) keep theirs.
+- No MTP run. With `--spec off`, C3's T = 3 linear calls have the shapes of an MTP2 verify.
