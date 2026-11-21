@@ -2,23 +2,26 @@
 """Re-time a route table's bands over a token range from its own board's route_tune grid (#1073).
 
     tools/route_table_retime.py --table routes/C.json --routes routes.csv --tokens 9-11 [--margin 0.03]
+        [--evidence ROUTES SELECTED]
 
 For every generic entry of the table (format, compute, epilogue, n, k) that the grid timed inside
---tokens, where the table's own route is slower than the grid's fastest by more than --margin at some
-count there, the range takes one route: the one whose worst regret over the range is least (the
+--tokens, where the table's own route is slower than the grid's fastest by more than --margin at
+some count there, the range takes one route: the one whose worst regret over the range is least (the
 table's own route on a tie), unless it is slower than the table's own route by more than --margin at
-some count, where the entry is kept (and named on stderr). The candidates are the routes a table's a16 bands hold: A16 schedules and
-ggml_mmq, as the dense tuner writes them; the W4A8 and R8 routes (route_tune --a8-candidates 1 times
-them too) are never tabled (route_tune_tool.cpp, route_authorities.cpp). A GGUF format's a8 rows are
-its a16 entry's; FP8's a8 entry keeps its own key. An entry whose table route the grid
-did not time, or where no route was timed at every count, is kept (and named on stderr). Bands outside
-the range are kept; adjacent bands of one route are joined. A moved count's evidence_us row timed the
-old route, so it is dropped; with --evidence ROUTES SELECTED (a second grid of the same card, its
-route_tune --routes-out and --selected-out) it is written again from that grid as [T, ranker us,
-shipped us], the ranker being --selected-out's `ranker` column (route_table_prune's default), and an
-entry that grid cannot give a row for is kept (named on stderr). The grid must be the table's
-board's: route_tune --routes-out on the same card, at the same master. Prints one line a moved count;
-writes the table in place.
+some count, where the entry is kept (and named on stderr). The candidates are the routes a table's
+a16 bands hold: A16 schedules and ggml_mmq, as the dense tuner writes them; the W4A8 and R8 routes
+(route_tune --a8-candidates 1 times them too) are never tabled (route_tune_tool.cpp,
+route_authorities.cpp). A GGUF format's a8 rows are its a16 entry's; FP8's a8 entry keeps its own
+key. An entry whose table route the grid did not time, or where no route was timed at every count,
+is kept (and named on stderr). Bands outside the range are kept; adjacent bands of one route are
+joined. A moved count's evidence_us row timed the old route, so it is dropped; with --evidence
+ROUTES SELECTED (a second grid of the same card, its route_tune --routes-out and --selected-out) it
+is written again from that grid as [T, ranker us, shipped us], the ranker being --selected-out's
+`ranker` column (route_tune's default answer), and an entry that grid cannot give a row for is kept
+(named on stderr), as is one where that grid does not repeat the move (the range's route slower than
+the old one by more than --margin at a moved count). A count a band covers but the grid did not time
+keeps its old route. The grid must be the table's board's: route_tune --routes-out on the same card,
+at the same master. Prints one line a moved count; writes the table in place.
 """
 import argparse
 import csv
@@ -155,6 +158,16 @@ def main():
             if gaps:
                 print("%s %s %s %dx%d: the evidence grid has no ranker / %s row at T%s, kept"
                       % (*key[:3], key[3], key[4], best, ",".join(map(str, gaps))), file=sys.stderr)
+                continue
+            # A move the second grid reverses (the range's route slower than the old one there
+            # past the margin) is noise in the first grid: the entry is kept as it was.
+            reversed_at = [t for t in sorted(moved)
+                           if haves[t] in ev_grid.get((key, t), {})
+                           and ev_grid[(key, t)][best] > ev_grid[(key, t)][haves[t]] * (1 + a.margin)]
+            if reversed_at:
+                print("%s %s %s %dx%d: the evidence grid does not repeat %s at T%s, kept"
+                      % (*key[:3], key[3], key[4], best, ",".join(map(str, reversed_at))),
+                      file=sys.stderr)
                 continue
         for t in sorted(moved):
             times = grid[(key, t)]
