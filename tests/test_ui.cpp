@@ -1375,6 +1375,13 @@ void test_hub_plan_via_serve() {
           "serve plans the quantization asked for");
     check(doc.is_object() && doc["model"].value("source", "") == "org/m-GGUF:Q4_K_M",
           "the model is named as the plan here names it: " + body);
+    // A repository named at a revision: serve plans it at the commit that revision listed,
+    // org/m-GGUF@<sha>, never org/m-GGUF@branch@<sha>.
+    fs::remove(args);
+    std::tie(status, body) = plan(root / "serve-plan", "@branch&quant=Q4_K_M");
+    argv                   = args_of();
+    check(status == 200 && !argv.empty() && argv.front() == "org/m-GGUF@" + sha,
+          "a repository at a revision is planned at its listed commit: " + body);
     fs::remove(args);
     std::tie(status, body) = plan(root / "serve-plan", "");
     argv                   = args_of();
