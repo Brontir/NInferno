@@ -216,7 +216,9 @@ def main():
             continue
         timed = sorted(haves)
         # A band route an A16 call cannot run where the call may take W4A8 (ggml_mmq at an a8_wide
-        # count) is a dead entry: no policy reads it (a16_routes), so it is always replaced.
+        # count) is a dead entry: no policy reads it (a16_routes), so it is always replaced, timed
+        # or not. Dead is read off the grid (it timed W4A8): a grid run without --a8-candidates 1
+        # times no W4A8 and finds none.
         dead = {t for t, h in haves.items()
                 if h not in grid[(key, t)] and h == "ggml_mmq" and a8_wide(grid_all[(key, t)], t)}
         untimed = sorted({h for t, h in haves.items() if h not in grid[(key, t)] and t not in dead})
@@ -260,9 +262,12 @@ def main():
         # are the same on both sides and take no part.
         if not moved:
             continue  # the table's own route is the range's: nothing to move
-        old_worst = max(regret(haves[t], t) for t in moved)
-        new_worst = max(regret(best, t) for t in moved)
-        if new_worst >= old_worst - a.margin:
+        # Dead counts always move; the live ones must earn it (a dead count's infinite regret would
+        # wave every other move of the range through).
+        live = [t for t in moved if t not in dead]
+        old_worst = max((regret(haves[t], t) for t in live), default=float("inf"))
+        new_worst = max((regret(best, t) for t in live), default=0.0)
+        if live and new_worst >= old_worst - a.margin:
             print("%s %s %s %dx%d: %s would not lower the worst regret (%.1f %% -> %.1f %%), kept"
                   % (*key[:3], key[3], key[4], best, 100 * old_worst, 100 * new_worst),
                   file=sys.stderr)
@@ -347,8 +352,9 @@ def main():
                     continue
         for t in sorted(moved):
             times = grid_all[(key, t)]
-            print("%s %s %s %dx%d T%d: %s %.1f us%s -> %s %.1f us" % (*key[:3], key[3], key[4], t,
-                  haves[t], times[haves[t]], " (dead: no policy reads it)" if t in dead else "",
+            old_us = ("%.1f us" % times[haves[t]]) if haves[t] in times else "untimed"
+            print("%s %s %s %dx%d T%d: %s %s%s -> %s %.1f us" % (*key[:3], key[3], key[4], t,
+                  haves[t], old_us, " (dead: no policy reads it)" if t in dead else "",
                   best, times[best]))
         for u in sorted(filled):
             print("%s %s %s %dx%d T%d: %s -> %s (untimed, between timed counts)"

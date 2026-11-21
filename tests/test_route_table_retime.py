@@ -379,3 +379,12 @@ def test_a_dead_ggml_mmq_entry_is_replaced(tmp_path):
     bands, _ = run(tmp_path, [[1, 16, "n1"], [17, 19, "ggml_mmq"], [20, 16777216, "n2"]], rows,
                    tokens="17-19")
     assert bands == [[1, 16, "n1"], [17, 16777216, "n2"]]
+
+
+def test_a_dead_entry_the_grid_never_timed_is_replaced(tmp_path):
+    # #1149 re-review P2: the band names ggml_mmq, the grid timed W4A8 but no ggml_mmq row.
+    rows = [(t, r, us) for t in (17, 18, 19)
+            for r, us in (("n2", 150), ("n4", 160), ("w4a8.64x64", 90))]
+    bands, _ = run(tmp_path, [[1, 16, "n1"], [17, 19, "ggml_mmq"], [20, 16777216, "n2"]], rows,
+                   tokens="17-19")
+    assert bands == [[1, 16, "n1"], [17, 16777216, "n2"]]
