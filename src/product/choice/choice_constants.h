@@ -888,7 +888,9 @@ inline constexpr RouteEta kExactComputeEta[] = {{"turing", 0.0165}, {"ada", 0.02
 // rate against INT8's at the old 0.90 DRAM share: K8V4 1.01 / 1.04, NVFP4 1.25 / 1.22 on the RTX
 // 4070 Ti / 4090): the census has K8V4 on the 4070 Ti only (0.988), and NVFP4 is bound by the SMs,
 // not the DRAM (kKvSmRate), so its row here prices only the geometries the SM rate was not read on,
-// and decides at none of them (kv_decides, #863).
+// and decides at none of them (kv_decides, #863). kv_decides reads any kKvSmRate row of the
+// generation and codec as "SM-bound there": a family whose read of the codec is DRAM-bound on the
+// generation needs a row of its own before its factor can decide.
 // gb20x has no NVFP4 row: its SM rate (below, one card's: it never decides) prices Qwen3.5's
 // geometry, another one carries Ada's factor (transferred) and never decides.
 // Turing (run_sw.sh, one card: the RTX 2080 Ti) reads BF16 and FP8 without native support.

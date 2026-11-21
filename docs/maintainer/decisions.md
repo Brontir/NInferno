@@ -2470,10 +2470,12 @@ activations keep the family's default (`--activations fast`). Two gates follow:
   `Choice::activations_by_worth`) needs the exact-route factor too. Ada has both; gb20x the first.
 - Under the worth a KV codec is taken only where its own read cost on the generation rests on two
   cards (`kv_decides`: its kKvSmRate row for the model's family and geometry, else its own
-  kKvReadFactor row; INT8 is the reference codec). A codec priced on a row carried from Ada stays
+  kKvReadFactor row, except for a codec the SMs bound on the generation, which has a kKvSmRate row
+  there and decides only at a geometry of its own row (#863); INT8 is the reference codec). A codec priced on a row carried from Ada stays
   the default or a pin (`Choice::kv_not_decided`), and so does one priced on a row of one card: on
   gb20x NVFP4, whose Qwen3.5 SM rate is one card's (below) and whose other geometries carry Ada's
-  factor. Every codec of Ada decides; on gb20x every codec but NVFP4.
+  factor. On Ada every codec decides but NVFP4 away from Qwen3.5's geometry; on gb20x every codec
+  but NVFP4.
 
 **The census** (mcb.sh on each card: Qwen3.5-9B Q4_K_M, one stream, 128 decode steps at 7.8K and
 21.9K tokens of context; per step the attention kernel's time between the sampling kernels, 8 full
