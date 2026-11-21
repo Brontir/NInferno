@@ -11,8 +11,9 @@ the query stores in `DeviceClass::facts`.
 Each row is a published reference configuration, keyed by its PCI product id. A product id is
 not always a unique SKU: NVIDIA also uses subsystem vendor/product ids to distinguish boards.
 A board whose subsystem id is known is a `subsystems` entry, which the runtime selects by that id
-(#903). `variants` is audit metadata for a board whose subsystem id is not confirmed yet: it is
-never selected. Such a card keeps its row's SM clock, but its bus width and memory clock come from
+(#903). `variants` is audit metadata: the facts-vs-driver audit reads it, the runtime never selects it.
+A board whose subsystem id is not confirmed yet is only there; a board with a confirmed one is in
+both (the audit does not read `subsystems`). Such a card keeps its row's SM clock, but its bus width and memory clock come from
 the driver where they differ (machine_facts.cpp), and a live plan reads the driver's memory size;
 only `--plan-device` naming the row plans it at the row's own memory.
 
@@ -35,9 +36,7 @@ only `--plan-device` naming the row plans it at the row's own memory.
 | `target` | only when false: listed for identification, not a target (H100, H200, B200) |
 | `sources` | the datasheet or product page, a database page, and the pci-ids entry of the id |
 | `variants` | only where another board is sold, or reports itself, under the id: one object per board, with the values in which it differs from the row (`vram_gib`, `gbps`, `boost_mhz`, `bus_bits`; a bus width must be a whole number of 32-bit channels, the only widths `machine_facts` reads). The facts-vs-driver audit reads it, so a recorded board passes the audit as information; `machine_facts` never reads it and decides from the driver's values alone |
-| `subsystems` | only where another board under the id is told apart by its PCI subsystem and differs in a priced value (the TITAN V CEO Edition, subsystem `0x10DE12EB`, under the Quadro GV100's `0x1DBA`): one object per board with `id` (`0x`, subsystem vendor and device, eight hex digits), `name`, `sources`, and the values in which it differs (`boost_mhz`, `gbps`, `bus_bits`, `tdp_w`, `vram_gib`). Not on a laptop row. A subsystem's `name`, compared as `--plan-device` compares names (lower case, trimmed, without "nvidia " or "geforce "), names no row and no other board: `--plan-device` names the board by it. One board sold under
-several subsystem vendors (the RTX PRO 5000 72GB, device `227A` under NVIDIA, Dell, HP and Lenovo)
-is one entry an id, of one name and equal values; the name plans as the first. Unlike `variants`, `machine_facts` reads it (below) |
+| `subsystems` | only where another board under the id is told apart by its PCI subsystem and differs in a priced value (the TITAN V CEO Edition, subsystem `0x10DE12EB`, under the Quadro GV100's `0x1DBA`): one object per board with `id` (`0x`, subsystem vendor and device, eight hex digits), `name`, `sources`, and the values in which it differs (`boost_mhz`, `gbps`, `bus_bits`, `tdp_w`, `vram_gib`). Not on a laptop row. A subsystem's `name`, compared as `--plan-device` compares names (lower case, trimmed, without "nvidia " or "geforce "), names no row and no other board: `--plan-device` names the board by it. One board sold under several subsystem vendors (the RTX PRO 5000 72GB, device `227A` under NVIDIA, Dell, HP and Lenovo) is one entry per id, of one name and equal values; the name plans as the first. Unlike `variants`, `machine_facts` reads it (below) |
 | `note` | caveats: an id shared by two memory sizes, values from secondary sources |
 
 The reference clock is the published boost clock of NVIDIA's reference board. It is the value the
