@@ -191,6 +191,7 @@ def main():
         ap.error("--repeat needs --evidence (the second grid it checks the moves on)")
     lo, hi = (int(x) for x in a.tokens.split("-"))
     grid = load_grid(a.routes, lo, hi)
+    grid_all = load_grid(a.routes, lo, hi, every_route=True)
     # The evidence grid: every route it timed (the ranker may answer a route no table holds).
     ev_grid, ranker = {}, {}
     if a.evidence:
@@ -214,7 +215,11 @@ def main():
         if not haves:
             continue
         timed = sorted(haves)
-        untimed = sorted({h for t, h in haves.items() if h not in grid[(key, t)]})
+        # A band route an A16 call cannot run where the call may take W4A8 (ggml_mmq at an a8_wide
+        # count) is a dead entry: no policy reads it (a16_routes), so it is always replaced.
+        dead = {t for t, h in haves.items()
+                if h not in grid[(key, t)] and h == "ggml_mmq" and a8_wide(grid_all[(key, t)], t)}
+        untimed = sorted({h for t, h in haves.items() if h not in grid[(key, t)] and t not in dead})
         if untimed:
             # The grid did not time the table's route: it may be absent for a reason (not offered
             # on the board, refused by the shape), so the entry is left for a person to look at.
@@ -224,6 +229,8 @@ def main():
 
         def regret(route, t):
             times = grid[(key, t)]
+            if route not in times:
+                return float("inf")  # a dead entry (above)
             return times[route] / min(times.values()) - 1
 
         if all(regret(h, t) <= a.margin for t, h in haves.items()):
@@ -241,8 +248,8 @@ def main():
         # A count where the range's route is slower than the table's own by more than the margin:
         # the move would trade it for the others (GV100, #1125: w1x16 best at T 9-13 spread over
         # n2.w1x4's 14-16, 3-6 % slower there). The entry is kept for a person to look at.
-        slower = [t for t in sorted(moved)
-                  if grid[(key, t)][best] > grid[(key, t)][haves[t]] * (1 + a.margin)]
+        slower = [t for t in sorted(moved) if t not in dead
+                  and grid[(key, t)][best] > grid[(key, t)][haves[t]] * (1 + a.margin)]
         if slower:
             print("%s %s %s %dx%d: %s would slow T%s past the margin, kept"
                   % (*key[:3], key[3], key[4], best, ",".join(map(str, slower))), file=sys.stderr)
@@ -300,7 +307,8 @@ def main():
             # A8 ranker is no rival, the table stands aside where it may run): a table entry slower
             # than what the call runs without it overrides nothing worth keeping.
             reversed_at = [t for t in sorted(moved)
-                           if ev_grid[(key, t)][best] > ev_grid[(key, t)][haves[t]] * (1 + a.margin)
+                           if (t not in dead and ev_grid[(key, t)][best]
+                               > ev_grid[(key, t)][haves[t]] * (1 + a.margin))
                            or ev_grid[(key, t)][best] > ev_grid[(key, t)][default_route(
                                ev_grid[(key, t)], ranker[(key, t)], t)] * (1 + a.margin)]
             if reversed_at:
@@ -338,9 +346,10 @@ def main():
                           file=sys.stderr)
                     continue
         for t in sorted(moved):
-            times = grid[(key, t)]
-            print("%s %s %s %dx%d T%d: %s %.1f us -> %s %.1f us" % (*key[:3], key[3], key[4], t,
-                  haves[t], times[haves[t]], best, times[best]))
+            times = grid_all[(key, t)]
+            print("%s %s %s %dx%d T%d: %s %.1f us%s -> %s %.1f us" % (*key[:3], key[3], key[4], t,
+                  haves[t], times[haves[t]], " (dead: no policy reads it)" if t in dead else "",
+                  best, times[best]))
         for u in sorted(filled):
             print("%s %s %s %dx%d T%d: %s -> %s (untimed, between timed counts)"
                   % (*key[:3], key[3], key[4], u, route_at(e["bands"], u), best))

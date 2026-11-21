@@ -368,3 +368,14 @@ def test_round_width_reads_the_token_tile_from_the_name():
     assert tool.round_width("tiled.128x64") == 128
     assert tool.round_width("w4a8.32x128") == 32
     assert tool.round_width("ggml_mmq") == 8
+
+
+def test_a_dead_ggml_mmq_entry_is_replaced(tmp_path):
+    # The table's band names ggml_mmq at T 17-19 where the grid timed W4A8: no policy reads it
+    # (an A16 call cannot run it, an A8 one takes the predicted band), so the fastest A16 route
+    # takes the range, whatever ggml_mmq's own time.
+    rows = [(t, r, us) for t in (17, 18, 19)
+            for r, us in (("n1", 200), ("n2", 150), ("ggml_mmq", 80), ("w4a8.64x64", 90))]
+    bands, _ = run(tmp_path, [[1, 16, "n1"], [17, 19, "ggml_mmq"], [20, 16777216, "n2"]], rows,
+                   tokens="17-19")
+    assert bands == [[1, 16, "n1"], [17, 16777216, "n2"]]
