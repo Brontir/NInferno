@@ -2239,8 +2239,11 @@ function actAskOf(mode, allowed) { return mode && mode !== "auto" && (!allowed |
 // What decides whether a card takes a new process besides its memory (/api/gpus: NVML's compute
 // mode and its compute processes, GpuStat::refusal_now): when it moves, every "now" is asked
 // again (refreshPlanNow, #891).
+// What refusal_now reads (serve's GpuStat): the compute mode and who holds the card, each holder
+// by its pid and whether it is the MPS server, so a holder replaced at the same count re-asks.
 function nowHoldOf(g) {
-  return (g && g.compute_mode !== undefined ? g.compute_mode : "?") + "/" + ((g && g.processes) || []).length;
+  const holders = ((g && g.processes) || []).map(p => p.pid + (p.mps_server ? "m" : "")).sort();
+  return (g && g.compute_mode !== undefined ? g.compute_mode : "?") + "/" + holders.join(",");
 }
 // ---- end plan helpers ----
 

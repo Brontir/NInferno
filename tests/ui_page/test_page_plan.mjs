@@ -521,7 +521,10 @@ eq(H.nowLine({now: {free_now_bytes: 8 * 2 ** 30, fits_now: true, context_now: 65
 // does (#891): the hold differs; the same mode and count do not.
 {
   const g = {compute_mode: 0, processes: [{pid: 7}]};
-  ok(H.nowHoldOf(g) === H.nowHoldOf({compute_mode: 0, processes: [{pid: 9}]}), "same mode and count: the same hold");
+  ok(H.nowHoldOf(g) === H.nowHoldOf({compute_mode: 0, processes: [{pid: 7, used_bytes: 5}]}), "same mode and holder: the same hold");
+  ok(H.nowHoldOf(g) !== H.nowHoldOf({compute_mode: 0, processes: [{pid: 9}]}), "another holder at the same count moves the hold");
+  ok(H.nowHoldOf(g) !== H.nowHoldOf({compute_mode: 0, processes: [{pid: 7, mps_server: true}]}), "the holder becoming the MPS server moves the hold");
+  ok(H.nowHoldOf({compute_mode: 3, processes: [{pid: 1}, {pid: 2}]}) === H.nowHoldOf({compute_mode: 3, processes: [{pid: 2}, {pid: 1}]}), "the holders' order does not matter");
   ok(H.nowHoldOf(g) !== H.nowHoldOf({compute_mode: 1, processes: [{pid: 7}]}), "a mode change moves the hold");
   ok(H.nowHoldOf(g) !== H.nowHoldOf({compute_mode: 0, processes: []}), "a process stopping moves the hold");
   ok(H.nowHoldOf({}) === H.nowHoldOf({processes: []}), "no mode and no processes read alike");
