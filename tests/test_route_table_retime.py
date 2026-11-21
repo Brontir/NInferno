@@ -12,12 +12,14 @@ TOOL = os.path.join(ROOT, "tools", "route_table_retime.py")
 FIELDS = ["format", "compute", "epilogue", "n", "k", "T", "route", "median_us"]
 
 
-def run(tmp_path, bands, rows, margin="0.03", evidence=None, second=None, repeat=False):
+def run(tmp_path, bands, rows, margin="0.03", evidence=None, second=None, repeat=False, tuned=None):
     table = tmp_path / "t.json"
     entry = {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 4096, "k": 4096, "bands": bands}
     if evidence is not None:
         entry["evidence_us"] = evidence
-    table.write_text(json.dumps({"entries": [entry]}, indent=1) + "\n")
+    if tuned is not None:
+        entry["tuned_on"] = tuned
+    table.write_text(json.dumps({"gpu": {"class": "ga106"}, "entries": [entry]}, indent=1) + "\n")
     grid = tmp_path / "routes.csv"
     with grid.open("w", newline="") as f:
         w = csv.writer(f)
@@ -111,6 +113,16 @@ def test_repeat_keeps_a_large_gain_the_second_grid_puts_a_little_behind(tmp_path
     bands, _ = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows, evidence=[],
                    second=second, repeat=True)
     assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
+
+
+def test_a_borrowed_entry_moves_but_keeps_its_borrowed_rows(tmp_path):
+    # tuned_on another board's class: the move is written, this board's rows are not.
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
+    second = (rows, [(t, "n1") for t in (9, 10, 11)])
+    bands, evidence = run(tmp_path, [[1, 11, "n1"], [12, 16777216, "n2"]], rows,
+                          evidence=[[8, 5.0, 4.0]], second=second, tuned="ga102:82sm")
+    assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
+    assert evidence == [[8, 5.0, 4.0]]
 
 
 def test_route_within_the_margin_is_kept(tmp_path):

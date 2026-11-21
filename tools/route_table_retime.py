@@ -106,6 +106,7 @@ def main():
             if lo <= int(r["T"]) <= hi:
                 ranker[(row_key(r), int(r["T"]))] = r["ranker"]
     doc = json.loads(a.table.read_text(encoding="utf-8"))
+    board = doc.get("gpu", {}).get("class")
     moved_entries = 0
     for e in doc.get("entries", []):
         if "bands" not in e:
@@ -176,6 +177,12 @@ def main():
                 print("%s %s %s %dx%d: the evidence grid has no ranker / %s row at T%s, kept"
                       % (*key[:3], key[3], key[4], best, ",".join(map(str, gaps))), file=sys.stderr)
                 continue
+            # An entry whose evidence is borrowed (tuned_on another board's class) keeps that
+            # borrow: this board's rows beside it would break the borrow's copy of the donor
+            # (test_route_table_evidence, rule c). The move stands; its rows are not written.
+            tuned = str(e.get("tuned_on", ""))
+            if tuned and board and tuned.split(":")[0] != board:
+                new_rows = {}
             if a.repeat:
                 # An A/A grid that does not repeat a count's move (a near-tie, noise in the first
                 # grid) keeps the entry as it was (#1142's discipline). A move repeats where the
