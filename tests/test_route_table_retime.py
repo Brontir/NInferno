@@ -72,6 +72,26 @@ def test_untimed_count_between_timed_ones_takes_the_range_route(tmp_path):
     assert "T10: n1 -> n2 (untimed" in r.stdout
 
 
+def test_a_gap_across_a_round_edge_is_not_filled(tmp_path):
+    # Timed T 16 and T 33 only: n4's 32 edge lies between them (T 17-32 one pass, T 33 two), so
+    # the untimed T 17-32 keep n4; the timed counts move.
+    rows = [(16, "n4", 100), (16, "staged", 102), (33, "n4", 160), (33, "staged", 100)]
+    bands, _ = run(tmp_path, [[1, 16777216, "n4"]], rows, tokens="16-33")
+    assert bands == [[1, 15, "n4"], [16, 16, "staged"], [17, 32, "n4"], [33, 33, "staged"],
+                     [34, 16777216, "n4"]]
+
+
+def test_repeat_without_evidence_is_refused(tmp_path):
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
+    table = tmp_path / "t.json"
+    table.write_text(json.dumps({"entries": []}) + "\n")
+    grid = tmp_path / "routes.csv"
+    grid.write_text("format,compute,epilogue,n,k,T,route,median_us\n")
+    r = subprocess.run([sys.executable, str(TOOL), "--table", str(table), "--routes", str(grid),
+                        "--tokens", "9-11", "--repeat"], capture_output=True, text=True)
+    assert r.returncode != 0 and "--repeat needs --evidence" in r.stderr
+
+
 def test_untimed_band_the_grid_never_timed_is_left_alone(tmp_path):
     # T 10's band holds n4, which the grid timed at no count of the range: left as it is.
     rows = [(9, "n1", 200), (9, "n2", 100), (11, "n1", 200), (11, "n2", 100)]

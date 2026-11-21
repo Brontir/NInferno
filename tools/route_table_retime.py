@@ -2,34 +2,36 @@
 """Re-time a route table's bands over a token range from its own board's route_tune grid (#1073).
 
     tools/route_table_retime.py --table routes/C.json --routes routes.csv --tokens 9-11 [--margin 0.03]
-        [--evidence ROUTES SELECTED]
+        [--evidence ROUTES SELECTED [--repeat]]
 
 For every generic entry of the table (format, compute, epilogue, n, k) that the grid timed inside
 --tokens, where the table's own route is slower than the grid's fastest by more than --margin at
 some count there, the range takes one route: the one whose worst regret over the range is least (the
 table's own route on a tie), unless it is slower than the table's own route by more than --margin at
-some count or does not lower the worst regret of the counts it moves by more than --margin; then
-the entry is kept (and named on stderr). The candidates are the routes a table's
-a16 bands hold: A16 schedules and ggml_mmq, as the dense tuner writes them; the W4A8 and R8 routes
-(route_tune --a8-candidates 1 times them too) are never tabled (route_tune_tool.cpp,
-route_authorities.cpp). A GGUF format's a8 rows are its a16 entry's; FP8's a8 entry keeps its own
-key. An entry whose table route the grid did not time, or where no route was timed at every count,
-is kept (and named on stderr). Bands outside the range are kept; adjacent bands of one route are
-joined. A moved count's evidence_us row timed the old route, so it is dropped; with --evidence
-ROUTES SELECTED (a second grid of the same card, its route_tune --routes-out and --selected-out) it
-is written again from that grid as [T, ranker us, shipped us], the ranker being --selected-out's
-`ranker` column (route_tune's default answer), and an entry that grid cannot give a row for is kept
-(named on stderr), as is one where that grid does not repeat the move (the range's route slower than
-the old one by more than --margin at a moved count). A count the
-grid did not time between two it did takes the range's route too where its band's route is one the
-grid beat (#1149: a band joined from T 16 and T 24 across n2's 16-token edge, T 17-23 untimed), unless
-a round edge of the old or the new route lies between those two; a band route the grid never timed
-in the range is left alone. With --repeat (needs --evidence) a move stands only where the second grid
-repeats it; an entry tuned on another board class (tuned_on) moves but gets no rows of this board. The grid must be the table's board's: route_tune --routes-out on the same card,
-at the same master. Prints one line a moved count; writes the table in place.
+some count or does not lower the worst regret of the counts it moves by more than --margin; then the
+entry is kept (and named on stderr). The candidates are the routes a table's a16 bands hold: A16
+schedules and ggml_mmq, as the dense tuner writes them; the W4A8 and R8 routes (route_tune
+--a8-candidates 1 times them too) are never tabled (route_tune_tool.cpp, route_authorities.cpp). A
+GGUF format's a8 rows are its a16 entry's; FP8's a8 entry keeps its own key. An entry whose table
+route the grid did not time, or where no route was timed at every count, is kept (and named on
+stderr). Bands outside the range are kept; adjacent bands of one route are joined. A moved count's
+evidence_us row timed the old route, so it is dropped; with --evidence ROUTES SELECTED (a second
+grid of the same card, its route_tune --routes-out and --selected-out) it is written again from that
+grid as [T, ranker us, shipped us], the ranker being --selected-out's `ranker` column (route_tune's
+default answer), and an entry that grid cannot give a row for is kept (named on stderr), as is one
+where that grid does not repeat the move (the range's route slower than the old one by more than
+--margin at a moved count). A count the grid did not time between two it did takes the range's route
+too where its band's route is one the grid beat (#1149: a band joined from T 16 and T 24 across n2's
+16-token edge, T 17-23 untimed), unless a round edge of the old or the new route lies between those
+two; a band route the grid never timed in the range is left alone. With --repeat (needs --evidence)
+a move stands only where the second grid repeats it; an entry tuned on another board class
+(tuned_on) moves but gets no rows of this board. The grid must be the table's board's: route_tune
+--routes-out on the same card, at the same master. Prints one line a moved count; writes the table
+in place.
 """
 import argparse
 import csv
+import re
 import json
 import sys
 from collections import defaultdict
@@ -39,6 +41,25 @@ INF = 16777216
 # Routes a table's a16 bands do not hold: W4A8 and R8 are timed by --a8-candidates 1 but never tabled
 # (src/ops/generic/route_tune_tool.cpp; the W4A8 heuristic and the R8 rules answer them).
 NOT_TABLE_ROUTES = ("w4a8", "r8.")
+
+
+def round_width(route):
+    """The token count a route's round count steps at (ceil(T / width)): eight columns a tile for the
+    register MMA's nN (rmma.m1.nN.*), 64 for the staged and W4A8 tiles, and eight, the narrowest
+    column step, for any other route (ggml_mmq's column tiles are multiples of eight)."""
+    m = re.search(r"(?:^|\.)n(\d+)(?:\.|$)", route)
+    if m:
+        return 8 * int(m.group(1))
+    if route.startswith(("staged", "w4a8")):
+        return 64
+    return 8
+
+
+def crosses_an_edge(route, lo, hi):
+    """Whether a round edge of `route` (a multiple of its width) lies strictly between two timed
+    counts lo < hi: the untimed counts between them are of two round counts."""
+    w = round_width(route)
+    return (lo // w + 1) * w < hi
 
 
 def route_at(bands, t):
@@ -101,6 +122,8 @@ def main():
                          "of that grid's fastest table route or faster than the old route by more "
                          "than --margin")
     a = ap.parse_args()
+    if a.repeat and not a.evidence:
+        ap.error("--repeat needs --evidence (the second grid it checks the moves on)")
     lo, hi = (int(x) for x in a.tokens.split("-"))
     grid = load_grid(a.routes, lo, hi)
     # The evidence grid: every route it timed (the ranker may answer a route no table holds).
@@ -175,12 +198,18 @@ def main():
         # route is one the grid beat at a timed count, the range's route takes it there too (else
         # T 17 n4, T 19 n1, T 20 n4 from a grid timed at 17/18/20/22/23). A route the grid never
         # timed in the range is a band it did not see: left alone.
+        # A gap that holds a round edge of the old or the new route is not filled: its counts are
+        # of two round counts, and the timed ones on either side speak for one each (#1149's own
+        # mistake: T 17-32, n4's one pass, filled from T 16 and T 33 across its 32 edge).
         beaten = {haves[t] for t in moved}
         filled = {}
         for u in range(timed[0] + 1, timed[-1]):
             h = route_at(e["bands"], u)
             if u not in haves and h is not None and h != best and h in beaten:
-                filled[u] = best
+                below = max(t for t in timed if t < u)
+                above = min(t for t in timed if t > u)
+                if not (crosses_an_edge(h, below, above) or crosses_an_edge(best, below, above)):
+                    filled[u] = best
         new_rows = {}
         if moved and a.evidence:
             # A filled count's row where the evidence grid timed it (a second grid may time the
