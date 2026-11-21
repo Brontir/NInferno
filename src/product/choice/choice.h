@@ -699,8 +699,10 @@ enum class ChunkBasis : std::uint8_t { None, Own, CarriedCurve, VerifiedCurve, T
                                         const Gates& gates = {});
 // Whether `kv`'s read cost on `generation` for `model` rests on two lab cards (INT8: the reference
 // codec, priced at kDramEta): its kKvSmRate row for the model's family and geometry, else its own
-// kKvReadFactor row. The worth takes a codec only where it does (principle 4); one carried from
-// another generation, or of one card, prices the estimate but stays the default or a pin.
+// kKvReadFactor row, except for a codec with a kKvSmRate row of another geometry on the generation
+// (an SM-bound read: its factor row only prices, #863). The worth takes a codec only where it does
+// (principle 4); one carried from another generation, or of one card, prices the estimate but stays
+// the default or a pin.
 [[nodiscard]] bool kv_decides(const ModelFacts& model, std::string_view generation,
                               KvCacheStorage kv) noexcept;
 // Whether the worth decides the KV codec and the activations for `model` on this card: its
