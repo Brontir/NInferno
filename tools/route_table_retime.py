@@ -313,21 +313,25 @@ def main():
             # than what the call runs without it overrides nothing worth keeping.
             # A filled count the second grid timed is held to the same two tests: the move writes
             # the range's route there too (#1157 review). Its old route is the band's; a dead one
-            # (ggml_mmq where W4A8 may run) or one the second grid did not time is no rival.
+            # (ggml_mmq where W4A8 may run) or one the second grid did not time is no rival. A
+            # moved count is dead by the first grid (`dead`, above); a filled one, which the first
+            # grid did not time, by the second.
             def reversed_by_evidence(t, old):
                 times = ev_grid.get((key, t), {})
                 if best not in times:
                     return False
-                if (old in times and not (old == "ggml_mmq" and a8_wide(times, t))
-                        and times[best] > times[old] * (1 + a.margin)):
+                if old in times and times[best] > times[old] * (1 + a.margin):
                     return True
                 rk = default_route(times, ranker.get((key, t)), t)
                 return rk in times and times[best] > times[rk] * (1 + a.margin)
 
+            def filled_old(u):
+                h = route_at(e["bands"], u)
+                return None if h == "ggml_mmq" and a8_wide(ev_grid.get((key, u), {}), u) else h
+
             reversed_at = sorted(
                 [t for t in moved if reversed_by_evidence(t, None if t in dead else haves[t])]
-                + [u for u in filled if u not in moved
-                   and reversed_by_evidence(u, route_at(e["bands"], u))])
+                + [u for u in filled if reversed_by_evidence(u, filled_old(u))])
             if reversed_at:
                 print("%s %s %s %dx%d: the evidence grid does not repeat %s at T%s, kept"
                       % (*key[:3], key[3], key[4], best, ",".join(map(str, reversed_at))),

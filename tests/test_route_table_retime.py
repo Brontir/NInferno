@@ -124,6 +124,33 @@ def test_a_filled_count_the_second_grid_reverses_keeps_the_entry(tmp_path):
     assert bands == table and evidence == []
 
 
+def test_a_filled_count_behind_the_default_keeps_the_entry(tmp_path):
+    # As above, but the old route n1 is not timed at T 10 in the second grid: the ranker n4 (90)
+    # alone reverses the move there.
+    rows = [(9, "n1", 200), (9, "n2", 100), (11, "n1", 200), (11, "n2", 100)]
+    second = ([(9, "n1", 201), (9, "n2", 99), (9, "n4", 150), (11, "n1", 201), (11, "n2", 99),
+               (11, "n4", 150), (10, "n2", 200), (10, "n4", 90)],
+              [(t, "n4") for t in (9, 10, 11)])
+    table = [[1, 11, "n1"], [12, 16777216, "n2"]]
+    bands, evidence = run(tmp_path, table, rows, evidence=[], second=second)
+    assert bands == table and evidence == []
+
+
+def test_a_filled_counts_dead_old_route_is_no_rival(tmp_path):
+    # T 17 and 19 move a dead ggml_mmq band (W4A8 timed: an A16 call cannot run it) to n2; T 18 is
+    # filled. The second grid times ggml_mmq at T 18 faster than n2, but there it is dead too, and
+    # the W4A8 ranker gives way to the fastest A16 route: the move stands.
+    rows = [(t, r, us) for t in (17, 19)
+            for r, us in (("n1", 200), ("n2", 100), ("ggml_mmq", 60), ("w4a8.64x64", 50))]
+    second = ([(t, r, us) for t in (17, 18, 19)
+               for r, us in (("n1", 200), ("n2", 100), ("ggml_mmq", 60), ("w4a8.64x64", 50))],
+              [(t, "w4a8.64x64") for t in (17, 18, 19)])
+    bands, evidence = run(tmp_path, [[1, 19, "ggml_mmq"], [20, 16777216, "n2"]], rows,
+                          evidence=[], second=second, tokens="17-19")
+    assert bands == [[1, 16, "ggml_mmq"], [17, 16777216, "n2"]]
+    assert evidence == [[17, 100, 100], [18, 100, 100], [19, 100, 100]]
+
+
 def test_repeat_keeps_an_entry_the_second_grid_does_not_repeat(tmp_path):
     # n2 wins T 9-11 in the first grid. In the second, n2 ties n1 at T 10 and n4 (a table route)
     # is 10 % ahead of both: no reversal past the margin, so without --repeat the move is written;
