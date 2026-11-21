@@ -849,6 +849,8 @@ std::vector<std::pair<std::string, fs::path>> fetch_companions(DrafterPlan& plan
         } catch (const std::exception& error) {
             d.status       = std::string("failed: ") + error.what();
             d.fetch_failed = fetching;
+            d.fetch_transport =
+                fetching && dynamic_cast<const HubTransportError*>(&error) != nullptr;
             log_line(options.log, "  " + d.status);
         }
     }
@@ -861,8 +863,9 @@ void carry_failures(DrafterPlan& plan, const std::vector<PlannedDrafter>& failed
             return f.decl.name == d.decl.name;
         });
         if (it != failed.end() && d.status.empty()) {
-            d.status       = it->status;
-            d.fetch_failed = it->fetch_failed;
+            d.status          = it->status;
+            d.fetch_failed    = it->fetch_failed;
+            d.fetch_transport = it->fetch_transport;
         }
     }
 }
@@ -1146,6 +1149,8 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
         } catch (const std::exception& error) {
             d.status       = std::string("failed: ") + error.what();
             d.fetch_failed = fetching;
+            d.fetch_transport =
+                fetching && dynamic_cast<const HubTransportError*>(&error) != nullptr;
             log_line(options.log, "  " + d.status);
         }
     }

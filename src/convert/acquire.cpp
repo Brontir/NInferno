@@ -333,8 +333,11 @@ void require_drafters(const DrafterPlan& plan, const AcquireOptions& options) {
             continue;
         }
         if (options.drafters == Drafters::Require) {
-            throw std::runtime_error("drafter " + d.decl.name + " " + d.status + " (" +
-                                     required_text(options) + ")");
+            const std::string text =
+                "drafter " + d.decl.name + " " + d.status + " (" + required_text(options) + ")";
+            // A drafter the hub did not answer for is the transport's failure (exit 75, #1147).
+            if (d.fetch_transport) { throw HubTransportError(text); }
+            throw std::runtime_error(text);
         }
         // Only a failed fetch is cured by the network or a copy in the cache; a full disk, a
         // conversion error or a drafter that does not fit the model is not.
@@ -972,10 +975,9 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                     checked = true;
                 } catch (const std::exception& error) {
                     if (options.moved_ref == MovedRef::Refetch) {
-                        throw std::runtime_error("--refetch: cannot ask the hub what " + label +
-                                                 " names now (" + error.what() +
-                                                 "); the weights of " +
-                                                 held_commit.substr(0, 12) + " are kept");
+                        throw_as(error, "--refetch: cannot ask the hub what " + label +
+                                            " names now (" + error.what() + "); the weights of " +
+                                            held_commit.substr(0, 12) + " are kept");
                     }
                     say(options, "warning: could not ask the hub whether " + label +
                                      " moved (" + error.what() + "); serving the weights of " +
