@@ -321,7 +321,7 @@ bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
 // L4 79.4 -> 89.2 tok/s (+12.3 %), RTX 5070 Ti 242.7 -> 270.9 (+11.6 %); ninfer-all runs
 // mul_mat_q<16> there (92.9 / 280.1). The route_tune grid, one call with L2 flushed, does not show
 // it (L4 rule 1.06 of its best). Where the BF16 MMA is emulated (Turing) every mmq format takes
-// it from 9 tokens, and the codebook formats below that too (mmq_verify_rule).
+// it from 9 tokens, and IQ4_XS / IQ4_NL below that too (mmq_verify_rule, DECISIONS 100).
 namespace {
 
 // The codebook formats only: their register-MMA dequant looks every value up in a grid table per

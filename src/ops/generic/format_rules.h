@@ -13,9 +13,10 @@
 // constants the selection compares a call against. The rows up to #615 F6 restate what the
 // comments at the rules' uses say; vec_cap_ga10x_gb20x is new with its own end-to-end A/Bs (#998,
 // DECISIONS 96), the three Turing rules with theirs (#1038, DECISIONS 97), which move the
-// selector goldens of the RTX 2080 Ti board, mmq_verify_turing_low with its (#1040, DECISIONS
-// 100), which moves them again, and vec_cap_ga10x_two with its (#1152, DECISIONS 99),
+// selector goldens of the RTX 2080 Ti board, vec_cap_ga10x_two with its (#1152, DECISIONS 99),
 // which moves the GA10x boards'.
+// mmq_verify_turing_low with its (#1040, DECISIONS 100), which moves the RTX 2080 Ti board's
+// again.
 //
 // A rule may have several rows: one per group of formats whose evidence differs (other cards,
 // another run). Each row says how many cards stand behind it (principle 4 of
@@ -263,7 +264,7 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "where the BF16 MMA is emulated a verify of 5..8 tokens keeps mmq for the codebook formats "
      "only: off mmq the K-quants were 10-58 % faster (Gemma 4 12B Q4_K_M MTP5 116.7 -> 136.1 "
      "tok/s) while the codebook IQ4_XS lost 23-38 %; no native-MMA board timed IQ4_XS's verify "
-     "on its own"},
+     "on its own. Turing's T 5..8 set is mmq_verify_turing_low since #1040"},
     {Rule::MmqVerify, Basis::Unknown,
      FormatSet{Q::GGML_IQ3_XXS, Q::GGML_IQ4_NL, Q::GGML_IQ2_XXS, Q::GGML_IQ2_XS, Q::GGML_IQ2_S,
                Q::GGML_IQ1_S, Q::GGML_IQ1_M},
@@ -373,8 +374,9 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      kBeforePublic,
      "the band 9..16 is the 16-token C4 verify of the mmq_verify rows (L4 +12.3 %, RTX 5070 Ti "
      "+11.6 %; the K-quants off it on the RTX 4090); where the BF16 MMA is emulated (RTX 2080 "
-     "Ti) every matrix-kernel format takes mmq from 9 tokens, the codebook formats below that "
-     "too; the record names no timing that places the edge at 9 rather than at 5..8 on a "
+     "Ti) every matrix-kernel format takes mmq from 9 tokens, IQ4_XS / IQ4_NL below that too "
+     "(mmq_verify_turing_low); the record names no timing that places the edge at 9 rather than at "
+     "5..8 on a "
      "native-MMA "
      "board"},
 

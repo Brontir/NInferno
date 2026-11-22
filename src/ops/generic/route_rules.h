@@ -176,7 +176,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "(kR8MaxTokens); a bare 5 in the code, not defined from kR8MaxTokens or held to it by a "
      "static_assert, and no timing names the edge itself; docs/maintainer/decisions.md 58 is about "
      "the vector kernel through T = 4 and the register MMA from 5 on the native-MMA boards, and "
-     "Turing's codebook formats at T = 5..8 on the matrix kernel",
+     "Turing's IQ4_XS / IQ4_NL at T = 5..8 on the matrix kernel (DECISIONS 100)",
      ""},
     {"kMmqMaxTokens", Basis::Measured, "generic_ggml_internal.h",
      "inline constexpr std::int32_t kMmqMaxTokens = 16;", 16, "gb202:170sm, ad103:80sm, gb203:84sm",
@@ -202,8 +202,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "ISTA IQ3_S 27B C4 MTP3 (16-token verify): L4 79.4 -> 89.2 tok/s (+12.3 %), RTX 5070 Ti "
      "242.7 -> 270.9 (+11.6 %); the K-quants lost on the 4090 (UD-Q4_K_XL 27B DFlash2 C1 115.7 -> "
      "111.7, C4 271.5 -> 263.1) and stay on the register MMA; where the BF16 MMA is emulated "
-     "(Turing, RTX 2080 Ti) every matrix-kernel format takes it from 9 tokens, the codebook "
-     "formats below that too (mmq_verify_rule)",
+     "(Turing, RTX 2080 Ti) every matrix-kernel format takes it from 9 tokens, IQ4_XS / IQ4_NL "
+     "below that too (mmq_verify_rule, format_rules.h mmq_verify_turing_low)",
      ""},
     {"mmq_verify_rule: single-sequence rounds", Basis::Measured, "generic_select.cpp",
      "tokens >= kMmqVerifyMinTokens && lanes != 1 &&", 1, "gb203:70sm", "RTX 5070 Ti",

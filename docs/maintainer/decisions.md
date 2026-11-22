@@ -292,7 +292,7 @@ the register MMA from 5. This is the fast-activation route with no saved dense r
 the band is consulted, and in fast mode a saved `tuned_dense_route` replaces the vector kernel at
 T = 2..4 where one exists (`generic_select.cpp`, `select_route`). Other boards keep their own rules: Volta's vector route extends past T = 4
 for formats `volta_hmma_route` does not take (`vec_rule_max_tokens`), and Turing sends codebook
-formats at T = 5..8 to the MMQ kernel (`mmq_verify_rule`). `verify_route_seconds` (bytes at 0.93 of DRAM and counted warp instructions at
+formats at T = 5..8 to the MMQ kernel (`mmq_verify_rule`; since decision 100 IQ4_XS / IQ4_NL only). `verify_route_seconds` (bytes at 0.93 of DRAM and counted warp instructions at
 0.6 of the issue rate, combined as sqrt(tb^2 + ti^2), plus 1.5 us a launch) was never used and is
 removed; it and its instruction counts are in the history before that removal.
 
@@ -3339,7 +3339,7 @@ The rule applies per tensor, while the models above mix formats. The quantizatio
 
 ## 100. Turing keeps mmq below nine tokens for IQ4_XS and IQ4_NL only (#1040, 22.11, measured on one card)
 
-**The question.** `mmq_verify_rule`'s Turing branch (no native BF16 MMA) sent every `mmq_verify_format` codebook format to ggml's matrix kernel at T 2..8. Only IQ4_XS stood behind that (#159). Does it hold for the grid codebooks (IQ1, IQ2, IQ3)?
+**The question.** `mmq_verify_rule`'s Turing branch (no native BF16 MMA) sent every `mmq_verify_format` codebook format to ggml's matrix kernel at T 5..8 (`mmq_call` from five tokens, vec below). Only IQ4_XS stood behind that (#159). Does it hold for the grid codebooks (IQ1, IQ2, IQ3)?
 
 **Measurement.** RTX 2080 Ti, route_tune on `routes/tu102.json` at decode T 1-8, every route timed (master caf0d85b7). At T 5-8, 49 of the 51 mmq-verify cells were more than 10 % behind the fastest route:
 
