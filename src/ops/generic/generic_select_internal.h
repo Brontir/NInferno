@@ -150,7 +150,8 @@ bool r8_call(const Problem& problem, const Weight& w, std::int32_t tokens);
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens);
 // ggml's matrix kernel for the verify band: 9..16 tokens of the codebook formats in a round of
 // several sequences (`lanes`: ops::round_lanes(), which the four-argument form reads itself); on
-// an emulated BF16 MMA every mmq format from 9 tokens and the codebook formats from 5.
+// an emulated BF16 MMA every mmq format from 9 tokens and IQ4_XS / IQ4_NL from 5
+// (format_rules.h mmq_verify_turing_low).
 bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, std::int32_t tokens);
 bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, std::int32_t tokens,
                      int lanes);

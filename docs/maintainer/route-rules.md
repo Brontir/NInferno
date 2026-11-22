@@ -106,8 +106,8 @@ The guard is a text scan, and the list is not every literal comparison in `gener
   `tokens < kW4a8WideMinTokens` edge, not the `wide_format` switch in `generic_select.cpp` that says
   which formats take the wider tile. The format sets of the measured per-format rules
   (`light_step`, `tall_tile`, `mmq_verify`, `w4a8_ws_tuned`, `r8_verify`, `vec_cap_ga10x_gb20x`,
-  `r8_verify_emulated_off`, `r8_verify_two_rows_turing`, `vec_cap_turing`, `vec_cap_ga10x_two`)
-  are not this record's:
+  `r8_verify_emulated_off`, `r8_verify_two_rows_turing`, `vec_cap_turing`, `vec_cap_ga10x_two`,
+  `mmq_verify_turing_low`) are not this record's:
   they are `format_rules.h`'s rows (below), held by `ninferno_format_rules_test` and
   `ninferno_format_traits_test`;
 - the bare kernel counts of the cost model in `generic_cost.cpp` (the 384, 128 and 256 threads a
@@ -220,7 +220,8 @@ on GA10x and consumer Blackwell), `r8_verify_emulated_off` (the K-quants `r8_ver
 the register MMA on Turing), `r8_verify_two_rows_turing` (the formats whose Turing verify R8 takes two
 rows a warp from T = 3), `vec_cap_turing` (the formats whose vector band stops at two tokens on
 Turing), `vec_cap_ga10x_two` (the formats whose vector band stops at two tokens on GA10x, ahead of
-`vec_cap_ga10x_gb20x`), and the two thresholds `kR8VerifyQ40MinValues` and `kMmqVerifyMinTokens`,
+`vec_cap_ga10x_gb20x`), `mmq_verify_turing_low` (the formats Turing keeps on mmq below
+`kMmqVerifyMinTokens`), and the two thresholds `kR8VerifyQ40MinValues` and `kMmqVerifyMinTokens`,
 which are defined there. The code reads the rows (`format_rules::holds`) and the two constants;
 nothing else holds these format sets. A rule has one row per group of formats whose evidence
 differs, each with its formats, a basis, the boards and cards, an evidence tag, the source and a

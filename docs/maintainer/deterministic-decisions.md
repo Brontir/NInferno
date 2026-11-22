@@ -116,8 +116,9 @@ This page states the rule and its target. The engine does not meet all of it yet
   MMA, vec stops at two tokens, four codebook formats take two R8 rows a warp; DECISIONS 97) rest on
   one lab card, the RTX 2080 Ti (tu102). The R8 rules compare the same compiled code on every
   full-rate sm_75 board by wide margins; the vec cap's Q4_K row (and the carried Q3_K / Q5_K) sits
-  near an edge that split two GA10x cards. No TU104 / TU106 / T4 has timed them. A second Turing
-  card closes the gap;
+  near an edge that split two GA10x cards. Turing's T 5..8 mmq set (`mmq_verify_turing_low`:
+  IQ4_XS kept, the grid codebooks off it; DECISIONS 100) rests on the same card. No TU104 / TU106 /
+  T4 has timed them. A second Turing card closes the gap;
 - `fp32acc_full_rate` still stands in for per-segment instruction rates;
 - decode/verify parity is unverified for 18 formats;
 - the batch dependence of `fast` bytes at T ≤ 16 is not documented yet;

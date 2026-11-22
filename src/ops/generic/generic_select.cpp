@@ -321,7 +321,7 @@ bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
 // L4 79.4 -> 89.2 tok/s (+12.3 %), RTX 5070 Ti 242.7 -> 270.9 (+11.6 %); ninfer-all runs
 // mul_mat_q<16> there (92.9 / 280.1). The route_tune grid, one call with L2 flushed, does not show
 // it (L4 rule 1.06 of its best). Where the BF16 MMA is emulated (Turing) every mmq format takes
-// it from 9 tokens, and the codebook formats below that too (mmq_verify_rule).
+// it from 9 tokens, and IQ4_XS / IQ4_NL below that too (mmq_verify_rule, DECISIONS 100).
 namespace {
 
 // The codebook formats only: their register-MMA dequant looks every value up in a grid table per
@@ -346,10 +346,14 @@ bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, st
     // Where the BF16 MMA is emulated (Turing) a verify of 5..8 tokens keeps mmq for the codebook
     // formats only: the affine ones (the K-quants, Q4_0) dequant cheaply on the register MMA (RTX
     // 2080 Ti, one call each, T 5..8: Q3_K-Q6_K 10-58 % faster off mmq; Gemma 4 12B Q4_K_M MTP5
-    // 116.7 -> 136.1 tok/s), while the codebook IQ4_XS lost 23-38 % there.
+    // 116.7 -> 136.1 tok/s), while the codebook IQ4_XS lost 23-38 % there. The grid codebooks
+    // (IQ1, IQ2, IQ3) leave it there too: 1.3-1.6x behind R8 or the register MMA at T 5..8, and
+    // Qwen3.8-27B UD-IQ2_XXS +1.7..+5.4 % off mmq (#1040); IQ4_XS keeps it (+28 % on mmq, C 5..8),
+    // with IQ4_NL by its class (format_rules.h mmq_verify_turing_low).
     if (!bf16_mma_native())
         return mmq_call(w, policy, rows, tokens) &&
-               (tokens >= kMmqVerifyMinTokens || mmq_verify_format(w.qtype));
+               (tokens >= kMmqVerifyMinTokens ||
+                format_rules::holds(format_rules::Rule::MmqVerifyTuringLow, w.qtype));
     return mmq_call(w, policy, rows, tokens) && tokens >= kMmqVerifyMinTokens && lanes != 1 &&
            mmq_verify_format(w.qtype);
 }
