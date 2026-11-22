@@ -3336,3 +3336,29 @@ The rule applies per tensor, while the models above mix formats. The quantizatio
 - T 2: the cards split (Q6_K C2: RTX 3060 +4.0 %, RTX 3090 -2.3 %), so vec keeps it.
 - Ada (RTX 4090 Q5_K_M: vec ahead at T 2..4), Turing (its own cap, decision 97) and Volta (vec 7-18 % ahead at T 3..4, #1153) keep theirs.
 - No MTP run. With `--spec off`, C3's T = 3 linear calls have the shapes of an MTP2 verify.
+
+## 100. Turing keeps mmq below nine tokens for IQ4_XS and IQ4_NL only (#1040, 22.11, measured on one card)
+
+**The question.** `mmq_verify_rule`'s Turing branch (no native BF16 MMA) sent every `mmq_verify_format` codebook format to ggml's matrix kernel at T 2..8. Only IQ4_XS stood behind that (#159). Does it hold for the grid codebooks (IQ1, IQ2, IQ3)?
+
+**Measurement.** RTX 2080 Ti, route_tune on `routes/tu102.json` at decode T 1-8, every route timed (master caf0d85b7). At T 5-8, 49 of the 51 mmq-verify cells were more than 10 % behind the fastest route:
+
+| format | cells | ggml_mmq / fastest, median | fastest |
+|---|---|---|---|
+| IQ1_S | 32 | 1.31x | R8 (r8.w4r2) or the register MMA |
+| IQ2_S / IQ2_XS / IQ2_XXS | 14 | 1.45-1.58x | the register MMA |
+| IQ3_S / IQ3_XXS | 3 | 1.5x | R8 or the register MMA |
+| IQ4_XS | 2 | | mmq (1), R8 (1) |
+
+End to end (lab/1040-mmq-verify-turing, `--spec off`, C = T, 8 alternating starts, the lab switch leaving every codebook format off mmq below nine tokens), lab / master:
+
+| model | C5 | C6 | C8 |
+|---|---|---|---|
+| Qwen3.8-27B UD-IQ2_XXS | +5.4 % | +2.5 % | +1.7 % |
+| Qwen3.5-9B IQ4_XS | -22.1 % | -22.4 % | -22.1 % |
+
+The IQ4_XS row is mmq ahead by 28.4 / 28.9 / 28.3 %.
+
+**Decision.** Below `kMmqVerifyMinTokens`, Turing keeps mmq for `format_rules.h` `mmq_verify_turing_low`: IQ4_XS, measured on one card, and IQ4_NL, carried from it (one 16-entry table value a 4-bit code, as IQ4_XS decodes). The grid codebooks go to the next authority, R8 or the register MMA as the tables and the dense tuner answer. From nine tokens the branch is unchanged.
+
+**Not taken.** A counted edge: the decode instructions per value of the grid codebooks against IQ4_XS's table lookup (kernel_facts sm_75) would derive the split without a format list. It is the follow-up; this decision is the measured set it must reproduce.

@@ -13,7 +13,8 @@
 // constants the selection compares a call against. The rows up to #615 F6 restate what the
 // comments at the rules' uses say; vec_cap_ga10x_gb20x is new with its own end-to-end A/Bs (#998,
 // DECISIONS 96), the three Turing rules with theirs (#1038, DECISIONS 97), which move the
-// selector goldens of the RTX 2080 Ti board, and vec_cap_ga10x_two with its (#1152, DECISIONS 99),
+// selector goldens of the RTX 2080 Ti board, mmq_verify_turing_low with its (#1040, DECISIONS
+// 100), which moves them again, and vec_cap_ga10x_two with its (#1152, DECISIONS 99),
 // which moves the GA10x boards'.
 //
 // A rule may have several rows: one per group of formats whose evidence differs (other cards,
@@ -78,6 +79,8 @@ enum class Rule : std::uint8_t {
                            // on Turing
     VecCapGa10xTwo,        // vec_rule_max_tokens: the formats whose vec band stops at two tokens
                            // on GA10x
+    MmqVerifyTuringLow,    // mmq_verify_rule: the formats Turing keeps on mmq below
+                           // kMmqVerifyMinTokens
 };
 
 inline constexpr std::array kAllRules = {Rule::LightStep,
@@ -91,7 +94,8 @@ inline constexpr std::array kAllRules = {Rule::LightStep,
                                          Rule::R8VerifyEmulatedOff,
                                          Rule::R8VerifyTwoRowsTuring,
                                          Rule::VecCapTuring,
-                                         Rule::VecCapGa10xTwo};
+                                         Rule::VecCapGa10xTwo,
+                                         Rule::MmqVerifyTuringLow};
 
 constexpr std::string_view rule_name(Rule rule) {
     switch (rule) {
@@ -119,6 +123,8 @@ constexpr std::string_view rule_name(Rule rule) {
         return "vec_cap_turing";
     case Rule::VecCapGa10xTwo:
         return "vec_cap_ga10x_two";
+    case Rule::MmqVerifyTuringLow:
+        return "mmq_verify_turing_low";
     }
     return "";
 }
@@ -432,6 +438,19 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "3060 +1.4 %, RTX 3090 -4.3 % (T = 2 keeps vec); C = 4 within 0.2 %. Not in the rule: Q4_K "
      "(RTX 3060 C = 3 +1.5 %, C = 2 -1.6 %), Q3_K (RTX 3060 vec ahead: C = 2 -11.6 %, C = 3 "
      "-5.7 %) and the consumer Blackwell cards (not measured at T = 3)"},
+
+    // --- mmq_verify_turing_low: the formats Turing keeps on mmq at T < kMmqVerifyMinTokens ---
+    {Rule::MmqVerifyTuringLow, Basis::Measured, FormatSet{Q::GGML_IQ4_XS}, 0, "tu102:68sm",
+     "RTX 2080 Ti", Evidence::SingleCard,
+     "#1040: abvec8m.sh iq4v1040 (lab/1040-mmq-verify-turing); #159", "2026-11-21",
+     "Qwen3.5-9B IQ4_XS, --spec off, C = 5 / 6 / 8, mmq against the lab switch that leaves it: "
+     "mmq ahead +28.4 / +28.9 / +28.3 % (#159: 23-38 % on MTP verify)"},
+    {Rule::MmqVerifyTuringLow, Basis::Unknown, FormatSet{Q::GGML_IQ4_NL}, 0, kNone, kNone,
+     Evidence::Carried, "#1040 (carried from IQ4_XS)", "2026-11-22",
+     "IQ4_NL decodes as IQ4_XS does (one 16-entry table value a 4-bit code, no grid): carried "
+     "from the IQ4_XS row. The grid formats left the set: RTX 2080 Ti route_tune at T 5-8, mmq "
+     "1.31x (IQ1_S, 32 cells) and 1.45-1.58x (IQ2_S / IQ2_XS / IQ2_XXS, IQ3_S / IQ3_XXS) behind "
+     "R8 or the register MMA; Qwen3.8-27B UD-IQ2_XXS C = 5 / 6 / 8 +5.4 / +2.5 / +1.7 % off mmq"},
 });
 } // namespace rows
 
@@ -451,6 +470,8 @@ constexpr bool holds(Rule rule, QType q) noexcept { return formats_of(rule).has(
 
 static_assert(formats_of(Rule::MmqVerifyMinTokens).bits == formats_of(Rule::MmqVerify).bits,
               "format_rules.h: kMmqVerifyMinTokens' formats are the mmq_verify rows' formats");
+static_assert((formats_of(Rule::MmqVerifyTuringLow).bits & ~formats_of(Rule::MmqVerify).bits) == 0,
+              "format_rules.h: Turing's low mmq set is part of the mmq_verify rows' formats");
 static_assert(formats_of(Rule::R8VerifyQ40MinValues).bits == FormatSet{QType::GGML_Q4_0}.bits &&
                   holds(Rule::R8Verify, QType::GGML_Q4_0),
               "format_rules.h: the matrix-size gate is Q4_0's, a format r8_verify takes");
