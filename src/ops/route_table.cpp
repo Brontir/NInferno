@@ -456,8 +456,14 @@ void read_predicted(const std::string& path, Table& table) {
                                  require_route(b.at(2), where)});
             }
             check_bands(bands, where);
+            // Lab: a T 1-8 band (gen18.py) is read only under NINFERNO_LAB_PICK_T18=1; without
+            // it that entry is left out, so one file serves both arms of the A/B.
+            if (!lab_pick_t18() && !bands.empty() && bands.front().t_min < kPredictedMinTokens) {
+                continue;
+            }
             for (const RouteBand& b : bands) {
-                if (b.t_min < kPredictedMinTokens || b.t_max > kPredictedMaxTokens) {
+                if (b.t_min < (lab_pick_t18() ? 1 : kPredictedMinTokens) ||
+                    b.t_max > kPredictedMaxTokens) {
                     refuse("a predicted band outside T " + std::to_string(kPredictedMinTokens) +
                                "-" + std::to_string(kPredictedMaxTokens),
                            where);
@@ -1219,8 +1225,16 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
     return std::nullopt;
 }
 
+bool lab_pick_t18() {
+    static const bool on = [] {
+        const char* v = std::getenv("NINFERNO_LAB_PICK_T18");
+        return v != nullptr && v[0] == '1';
+    }();
+    return on;
+}
+
 std::optional<TableAnswer> table_predicted_answer(const Problem& problem, std::int32_t tokens) {
-    if (tokens < kPredictedMinTokens || tokens > kPredictedMaxTokens ||
+    if (tokens < (lab_pick_t18() ? 1 : kPredictedMinTokens) || tokens > kPredictedMaxTokens ||
         route_policy() == RoutePolicy::Legacy) {
         return std::nullopt;
     }

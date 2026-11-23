@@ -198,7 +198,13 @@ std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& prob
                profile_admits(h->route, ask, &weight);
     };
     std::optional<TableAnswer> hit;
-    if (a8_call(ask, problem, weight)) {
+    if (lab_pick_t18() && !ask.prefill() && ask.tokens <= 8) {
+        hit = table_predicted_answer(problem, ask.tokens);
+        if (!admitted(hit)) hit.reset();
+    }
+    if (hit) {
+        // the lab band answers (route_table.h lab_pick_t18)
+    } else if (a8_call(ask, problem, weight)) {
         // An int8 call of T 17-32 outside the prefill profile (a round of speculative verify, a
         // decode batch) that only a8_wide_call sends past the table: the analyzer's predicted band,
         // priced among the A16 register MMA and the int8 ggml_mmq (pick.py does not price W4A8, so

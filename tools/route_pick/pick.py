@@ -1,4 +1,5 @@
-"""pick.py: the route analyzer (analyzer core after round 11; tools/route_pick/README.md), counted from repo facts.
+"""pick.py: the route analyzer (analyzer core after round 11, candidates by kernel facts since round 15;
+tools/route_pick/README.md), counted from repo facts.
 
     pick(gpu_row, F, shape, among=None) -> route name       the lowest price; T 1..16, T 17..32 where handover() is False
     price_ns(gpu_row, F, shape, route)  -> ns | None        None: not priced, never picked
@@ -27,8 +28,12 @@ clock, the first round's times PDL on a PDL architecture):
   ggml_vec  K_VEC x [ node + pre + weight bytes / bus + lat_imad x L0 ]
   family factor (round 10): r8 at T 1, ggml_vec at T 2-4 and ggml_mmq at T 17-32 are multiplied by
               exp(sum(w x feature) / w_margin), a sign classifier against the cheapest rmma route written as a factor.
-FITTED, none of them here: P (round 9; K_VEC is round 8's) and FAMILY_W (round 10) are copied unchanged.
-Not priced: w4a8*, tiled, sm_70, r8 and ggml_vec above T 8, T > 16 on a compute capability outside VERIFIED_T17.
+FITTED, none of them here: P (round 9; K_VEC is round 8's) and FAMILY_W (round 10) are copied unchanged (22 numbers
+act at T 1-8: P's 7, the r8 weights' 8, the ggml_vec weights' 7).
+Round 15: the formats and their kernels come from FORMATS (names only); a family is priced for a format wherever its
+kernel-facts row exists (rmma decoder, r8 codec, ggml_mmq / ggml_vec type), so every format of the grids has a price.
+Not priced: w4a8*, tiled, sm_70 (facts.py leaves it out; with its facts admitted the pick loses to the product,
+RESULT_r15.md), r8 and ggml_vec above T 8, T > 16 on a compute capability outside VERIFIED_T17.
 """
 import math
 import os
@@ -57,11 +62,27 @@ MMQ_FILL = 0.9                     # ggml_mmq_internal.cuh: a tile a CTA where t
 LAT_BYTES = {'store': 5.5, 'add': 5.5, 'swiglu': 4.5}
 VEC_KS = (5120, 6144, 17408)       # ggml_vec.cu vec_launch_k: the K values with an unrolled kernel (5120 alone when gated)
 
-BITS = {'q4k': 4.5, 'q5k': 5.5, 'q6k': 6.5625, 'q8': 8.5, 'q3k': 3.4375, 'iq3s': 3.4375, 'iq4xs': 4.25}
-RMMA_DEC = {'q4k': 'GgmlQ45KQuadDecoder<4>', 'q5k': 'GgmlQ45KQuadDecoder<5>', 'q6k': 'GgmlQ6KDecoder', 'q8': 'Q8Decoder',
-            'q3k': 'GgmlQ3KDecoder', 'iq3s': 'GgmlIq3SDecoder', 'iq4xs': 'GgmlIq4XsDecoder'}
-R8_CODEC = {'q4k': 'W4a8Q45K<4>', 'q5k': 'W4a8Q45K<5>', 'q6k': 'W4a8Q6K', 'q8': 'W4a8Q8'}
-MMQ_TYPE = {'q4k': '12', 'q5k': '13', 'q6k': '14', 'q8': '8', 'q3k': '11', 'iq3s': '21', 'iq4xs': '23'}   # ggml_type
+# NAMES: format -> (bits a weight, rmma decoder, r8 / W4A8 codec, ggml_type), as generic_rmma_decoders.h rmma_decoder_of,
+# generic_select.cpp w4a8_decoder_name and ggml's enum name them. A family is a candidate where its kernel-facts row exists.
+FORMATS = {
+    'q4k': (4.5, 'GgmlQ45KQuadDecoder<4>', 'W4a8Q45K<4>', '12'), 'q5k': (5.5, 'GgmlQ45KQuadDecoder<5>', 'W4a8Q45K<5>', '13'),
+    'q6k': (6.5625, 'GgmlQ6KDecoder', 'W4a8Q6K', '14'), 'q8': (8.5, 'Q8Decoder', 'W4a8Q8', None),
+    'q3k': (3.4375, 'GgmlQ3KDecoder', 'W4a8Q3K', '11'), 'q2k': (2.625, 'GgmlQ2KDecoder', 'W4a8Q2K', '10'),
+    'iq4xs': (4.25, 'GgmlIq4XsDecoder', 'W4a8Iq4Xs', '23'), 'iq4nl': (4.5, 'Ggml32Decoder<4>', 'W4a8Ggml32<4>', '20'),
+    'iq3s': (3.4375, 'GgmlIq3SDecoder', 'W4a8Iq3S', '21'), 'iq3xxs': (3.0625, 'GgmlIq3XxsDecoder', 'W4a8Iq3Xxs', '18'),
+    'iq2s': (2.5625, 'GgmlIq2SDecoder', 'W4a8Iq2S', '22'), 'iq2xs': (2.3125, 'GgmlIq2XsDecoder', 'W4a8Iq2Xs', '17'),
+    'iq2xxs': (2.0625, 'GgmlIq2XxsDecoder', 'W4a8Iq2Xxs', '16'), 'iq1s': (1.5625, 'GgmlIq1SDecoder', 'W4a8Iq1S', '19'),
+    'iq1m': (1.75, 'GgmlIq1MDecoder', 'W4a8Iq1M', '29'), 'q40': (4.5, 'Ggml32Decoder<0>', 'W4a8Ggml32<0>', '2'),
+    'q41': (5.0, 'Ggml32Decoder<1>', 'W4a8Ggml32<1>', '3'), 'q50': (5.5, 'Ggml32Decoder<2>', 'W4a8Ggml32<2>', '6'),
+    'q51': (6.0, 'Ggml32Decoder<3>', 'W4a8Ggml32<3>', '7'), 'bf16': (16.0, 'Bf16Decoder', None, None),
+    'fp8': (8.0, 'Fp8Decoder', None, None), 'fp8r32': (8.0, 'Fp8RowF32Decoder', None, None),
+    'nvfp4': (4.5, 'Nvfp4Decoder', 'W4a8Nvfp4', None), 'q4': (4.25, 'GroupwiseG64Decoder<4>', 'W4a8G64<4>', None),
+    'q5': (5.25, 'GroupwiseG64Decoder<5>', 'W4a8G64<5>', None), 'q6': (6.25, 'GroupwiseG64Decoder<6>', 'W4a8G64<6>', None),
+}
+BITS = {f: v[0] for f, v in FORMATS.items()}
+RMMA_DEC = {f: v[1] for f, v in FORMATS.items()}
+R8_CODEC = {f: v[2] for f, v in FORMATS.items() if v[2]}
+MMQ_TYPE = {f: v[3] for f, v in FORMATS.items() if v[3]}
 EPI = {'store': '0', 'add': '1', 'swiglu': '2'}   # the kernel facts' epilogue column
 _RMMA = re.compile(r'rmma\.m(\d+)\.n(\d+)\.w(\d+)x(\d+)(?:\.c(\d+))?$')
 _R8 = re.compile(r'r8\.w(\d+)r(\d+)$')
@@ -239,11 +260,11 @@ def _price(gpu, F, shape, route, P, W, issue=False):
         r = None if T > 8 else kf_row(kf, 'r8', codec=R8_CODEC.get(fmt), warps=Wp, rows=R, nt=1 if T <= 1 else 2 if T <= 2 else 4 if T <= 4 else 8,
                                       epilogue=EPI.get(ep, '0'), pre=0 if T <= 1 else 1)
     elif route == 'ggml_mmq':
-        r = kf_row(kf, 'mmq', type=MMQ_TYPE[fmt], J=mmq_j(T), fallback=0)
+        r = kf_row(kf, 'mmq', type=MMQ_TYPE.get(fmt), J=mmq_j(T), fallback=0)
     elif route == 'ggml_vec':
         gated = ep == 'swiglu'
         ks = int(k) if int(k) in VEC_KS and (not gated or int(k) == 5120) else 0
-        r = None if T > 8 or fmt not in R8_CODEC else kf_row(kf, 'vec', type=MMQ_TYPE[fmt], T=int(T), KS=ks, gated=int(gated), bounded=0)
+        r = None if T > 8 or fmt not in MMQ_TYPE else kf_row(kf, 'vec', type=MMQ_TYPE[fmt], T=int(T), KS=ks, gated=int(gated), bounded=0)
     else:
         return None
     if r is None:

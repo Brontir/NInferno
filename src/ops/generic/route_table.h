@@ -89,6 +89,10 @@ struct TableAnswer {
 [[nodiscard]] std::optional<TableAnswer> table_predicted_answer(const Problem& problem,
                                                                 std::int32_t tokens);
 
+// Lab (NINFERNO_LAB_PICK_T18=1): predicted bands from T 1, answering every decode call of T 1-8
+// ahead of the table and the rules (an end-to-end A/B of the analyzer, tools/route_pick/gen18.py).
+[[nodiscard]] bool lab_pick_t18();
+
 // Whether a claiming entry (RouteEntry::claim) holds the exact problem and a route for this call
 // under an A16Only policy: then the generic path computes it even though its shape has a
 // shape-owned Linear table. Under --route-policy evidence (#614 F1) a claim whose answer is
