@@ -95,6 +95,13 @@ std::string formats_text(fr::FormatSet set) {
     return out;
 }
 
+bool vec_cap_rule(fr::Rule rule) {
+    for (const auto& scope : fr::kVecCapScopes) {
+        if (scope.rule == rule) return true;
+    }
+    return false;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -167,7 +174,13 @@ int main(int argc, char** argv) {
             }
             const bool threshold =
                 rule == fr::Rule::R8VerifyQ40MinValues || rule == fr::Rule::MmqVerifyMinTokens;
-            if (!threshold && r.value != 0) fail(name + ": a format-set row with a value");
+            // A vec cap row's value is its cap: a width the vector kernel keeps, below the
+            // generic edge of four (kVecRuleMaxTokens, generic_select.cpp).
+            if (vec_cap_rule(rule)) {
+                if (r.value < 1 || r.value >= 4) fail(name + ": a vec cap row's value is no cap");
+            } else if (!threshold && r.value != 0) {
+                fail(name + ": a format-set row with a value");
+            }
         }
         if (rows == 0) fail(name + ": no rows");
         if (with_cards == 0) fail(name + ": no row with cards (every format carried)");
@@ -217,6 +230,26 @@ int main(int argc, char** argv) {
         }
         if (desc->basis != row->basis || desc->boards != row->boards || desc->cards != row->cards) {
             fail(name + ": route_rules.h's basis, boards or cards differ from the row's");
+        }
+    }
+    // The vec cap scopes: each names a rule of its own, which kAllRules lists; and vec_cap reads a
+    // row's cap back.
+    for (std::size_t i = 0; i < fr::kVecCapScopes.size(); ++i) {
+        const fr::Rule rule = fr::kVecCapScopes[i].rule;
+        for (std::size_t j = 0; j < i; ++j) {
+            if (fr::kVecCapScopes[j].rule == rule) fail(str(fr::rule_name(rule)) + ": two scopes");
+        }
+        bool listed = false;
+        for (const fr::Rule r : fr::kAllRules) listed = listed || r == rule;
+        if (!listed) fail(str(fr::rule_name(rule)) + ": a vec cap scope not in kAllRules");
+    }
+    for (const auto& r : fr::kFormatRules) {
+        if (!vec_cap_rule(r.rule)) continue;
+        for (int v = 0; v < fr::FormatSet::kCapacity; ++v) {
+            const auto q = static_cast<QType>(v);
+            if (r.formats.has(q) && fr::vec_cap(r.rule, q) != r.value) {
+                fail(str(fr::rule_name(r.rule)) + ": vec_cap disagrees with its row");
+            }
         }
     }
     if (fr::formats_of(fr::Rule::MmqVerifyMinTokens).bits !=
