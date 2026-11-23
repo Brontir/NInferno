@@ -308,8 +308,8 @@ void check_hand_written() {
         {0x2C34, "RTX PRO 4000 Blackwell: just inside the 5080's reach", C, 3, N, 47, 0.99, -1,
          &measured::kRtx5080},
         {0x2BB3, "RTX PRO 5000 Blackwell: just outside the 5090's reach", N, -1, N, 47},
-        // sparse_moe_prefill_plan.cpp: the 3090 measured 17; moe.cpp: ga102's A8 row (Q5_K
-        // w4r2 at T = 5..8, the streaming down).
+        // sparse_moe_prefill_plan.cpp: the 3090 measured 17; moe.cpp: ga102's A8 entry (w4r1 on
+        // every row, measured ahead of w4r2 at T = 5 / 6, and the streaming down).
         {0x2204, "RTX 3090: a row of both tables", M, -1, M, 17},
         // measured_boards.h: the 3090 Ti is 0.14 from the 3090.
         {0x2203, "RTX 3090 Ti: a variant of the 3090", C, -1, C, 17, 0.14, 0.14,
