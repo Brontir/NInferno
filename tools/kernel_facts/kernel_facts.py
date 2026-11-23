@@ -552,7 +552,7 @@ FAMILIES = {
                       "moe_gemm_kernel", lambda key: moe_gemm_tiles(key), True, True,
                       waits=True, emulated=True),
     "vec": Family("vec", ("type", "T", "KS", "gated", "bounded"), lambda d: vec_key(d),
-                  "vec_kernel", lambda key: 1, False, False, loop=False),
+                  "vec_kernel", lambda key: 1, True, False, marker="IDP"),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -1023,9 +1023,9 @@ SECTION_NOTES = {
     "vec": (
         "# ggml's vector kernels (src/ops/generic/ggml_mmq/ggml_vec.cu, #763): vec_kernel<type, T,",
         "# KS, Gated, Bounded>, keyed as the ggml_type value, the tokens, the static K the slice loop",
-        "# unrolls over (0: the runtime K) and the two flags. Resources alone: the launch reads the",
-        "# CTAs an SM holds (core/kernel_occupancy.h) and a bounded twin's local bytes, never the",
-        "# host's kernels.",
+        "# unrolls over (0: the runtime K) and the two flags. The launch reads the CTAs an SM holds",
+        "# (core/kernel_occupancy.h) and a bounded twin's local bytes, never the host's kernels; the",
+        "# analyzer (tools/route_pick) reads the K loop's counts, the loop marked by its dp4a (IDP).",
     ),
 }
 
