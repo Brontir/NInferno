@@ -418,7 +418,8 @@ private:
     std::map<std::string, NowPoint> serve_free_at_;
 
     // A re-plan of a kept serve document (a move past kNowStepBytes) that failed, by key: when, and
-    // the card as that ask saw it. The kept document answers without another serve run for
+    // the card state serve was given (this ask's, where none was captured: NVML reported nothing
+    // as the child started). The kept document answers without another serve run for
     // kFailureKeptSeconds while the card stays there (#1156 review); a move from it plans again.
     struct ReplanFailure {
         std::int64_t at = 0;
