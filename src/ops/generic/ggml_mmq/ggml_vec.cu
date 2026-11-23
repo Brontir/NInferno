@@ -17,6 +17,7 @@
 #include "ops/generic/kernel_facts.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -955,8 +956,22 @@ void vec_launch_ks(const VecArgs& args, cudaStream_t stream) {
 
 // The K of the 27B and 35B text matrices are unrolled; any other K runs the loop.
 // A gated pair reads the block input (K = the hidden size): 5120 unrolled, any other K the loop.
+// Lab (NINFERNO_LAB_VEC_KS0=1, 24.11): every K runs the loop, an A/B of the unrolled variants.
+inline bool lab_vec_ks0() {
+    static const bool on = [] {
+        const char* v = std::getenv("NINFERNO_LAB_VEC_KS0");
+        return v != nullptr && v[0] == '1';
+    }();
+    return on;
+}
+
 template <ggml_type type, int T>
 void vec_launch_k(const VecArgs& args, cudaStream_t stream) {
+    if (lab_vec_ks0()) {
+        return args.out.epilogue == VecOut::Epilogue::SwiGlu
+                   ? vec_launch_ks<type, T, 0, true>(args, stream)
+                   : vec_launch_ks<type, T, 0, false>(args, stream);
+    }
     if (args.out.epilogue == VecOut::Epilogue::SwiGlu) {
         return args.k == 5120 ? vec_launch_ks<type, T, 5120, true>(args, stream)
                               : vec_launch_ks<type, T, 0, true>(args, stream);
