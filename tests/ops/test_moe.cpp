@@ -1101,14 +1101,13 @@ int check_a8_route_rule() {
                 w.qtype  = q;
                 w.layout = layout;
                 int row = -1;
-                for (std::size_t i = 0; i < moe::A8Route::kTwoBitFormats.size(); ++i) {
-                    if (q == moe::A8Route::kTwoBitFormats[i]) row = static_cast<int>(i);
+                for (std::size_t i = 0; i < moe::A8Route::kRowFormats.size(); ++i) {
+                    if (q == moe::A8Route::kRowFormats[i]) row = static_cast<int>(i);
                 }
-                const int expected =
-                    row >= 0 && layout != QuantLayout::GgmlFrag
-                        ? route->gate_up_2bit[static_cast<std::size_t>(row)]
-                                             [static_cast<std::size_t>(t - 1)]
-                        : 0;
+                const int expected = row >= 0 && layout != QuantLayout::GgmlFrag
+                                         ? route->gate_up_rows[static_cast<std::size_t>(row)]
+                                                              [static_cast<std::size_t>(t - 1)]
+                                         : 0;
                 if (route->gate_up_at(t, w) != expected) {
                     std::cerr << "A8 route " << qname(q)
                               << (layout == QuantLayout::GgmlFrag ? " frag" : "") << " T=" << t

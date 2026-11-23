@@ -340,24 +340,25 @@ void moe_with_plan(const Tensor& x, const MoeWeights& weights, const MoeConfig& 
 // streaming 1 x 4 warps (-1: the streaming one), the same at every T so that a token's bytes do
 // not depend on T.
 struct A8Route {
-    // The R8 schedule of a published 2-bit codebook gate/up bank at each T, one row per format
-    // (kTwoBitFormats: IQ2_XXS, IQ2_XS, IQ2_S); every other R8 bank, and a ggml_frag_v1 bank,
-    // takes w4r1 (schedule 0) at every T.
-    static constexpr std::array<QType, 3> kTwoBitFormats{QType::GGML_IQ2_XXS, QType::GGML_IQ2_XS,
-                                                         QType::GGML_IQ2_S};
-    std::array<std::array<int, kR8Tokens>, kTwoBitFormats.size()> gate_up_2bit{};
+    // The R8 schedule of a published-layout gate/up bank at each T, one row per format
+    // (kRowFormats: the 2-bit codebooks IQ2_XXS, IQ2_XS, IQ2_S, and Q5_K); every other R8 bank,
+    // and a ggml_frag_v1 bank, takes w4r1 (schedule 0) at every T.
+    static constexpr std::array<QType, 4> kRowFormats{QType::GGML_IQ2_XXS, QType::GGML_IQ2_XS,
+                                                      QType::GGML_IQ2_S, QType::GGML_Q5_K};
+    std::array<std::array<int, kR8Tokens>, kRowFormats.size()> gate_up_rows{};
     int down = -1;
-    // The row of a published 2-bit codebook bank, -1 for every other bank.
-    [[nodiscard]] static int two_bit_row(const Weight& bank) {
+
+    // The row of a published-layout bank of a kRowFormats format, -1 for every other bank.
+    [[nodiscard]] static int format_row(const Weight& bank) {
         if (bank.layout == QuantLayout::GgmlFrag) return -1;
-        for (std::size_t i = 0; i < kTwoBitFormats.size(); ++i) {
-            if (bank.qtype == kTwoBitFormats[i]) return static_cast<int>(i);
+        for (std::size_t i = 0; i < kRowFormats.size(); ++i) {
+            if (bank.qtype == kRowFormats[i]) return static_cast<int>(i);
         }
         return -1;
     }
     [[nodiscard]] int gate_up_at(std::int32_t tokens, const Weight& bank) const {
-        const int row = two_bit_row(bank);
-        return row >= 0 ? gate_up_2bit[static_cast<std::size_t>(row)]
+        const int row = format_row(bank);
+        return row >= 0 ? gate_up_rows[static_cast<std::size_t>(row)]
                                       [static_cast<std::size_t>(tokens - 1)]
                         : 0;
     }

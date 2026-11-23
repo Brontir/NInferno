@@ -58,8 +58,8 @@ std::string board_text(const std::optional<Board>& b) {
 
 std::string route_text(const moe::A8Route& r) {
     std::ostringstream out;
-    out << "down=" << r.down << " 2bit=";
-    for (const auto& row : r.gate_up_2bit) {
+    out << "down=" << r.down << " rows=";
+    for (const auto& row : r.gate_up_rows) {
         for (const int s : row) out << s;
         out << '/';
     }
@@ -67,7 +67,7 @@ std::string route_text(const moe::A8Route& r) {
 }
 
 bool same_route(const moe::A8Route& a, const moe::A8Route& b) {
-    return a.down == b.down && a.gate_up_2bit == b.gate_up_2bit;
+    return a.down == b.down && a.gate_up_rows == b.gate_up_rows;
 }
 
 // Rows per disposition, over the target SKUs; the counts docs/maintainer/table-dispositions.md
@@ -156,7 +156,8 @@ void check_against_production() {
 }
 
 void check_measured_boards_and_fallback() {
-    for (const Board& b : {measured::kRtx4090, measured::kRtx5090, measured::kRtx5080}) {
+    for (const Board& b : {measured::kRtx4090, measured::kRtx5090, measured::kRtx5080,
+                           measured::kRtx3090, measured::kRtx3060}) {
         const auto a8 = moe::a8_route_answer(b);
         expect(a8.disposition == Disposition::Measured && a8.distance == 0 && a8.donor,
                "a measured board's A8 route is Measured");
@@ -214,7 +215,7 @@ void check_reach_edge_and_unknown_bandwidth() {
     no_dram_5090.dram_gbps = 0;
     const auto ai          = moe::a8_route_answer(no_dram_5090);
     expect(ai.disposition == Disposition::Incomplete && !ai.donor && ai.distance == 0 &&
-               ai.route.down == -1 && ai.route.gate_up_2bit[0][3] == 0,
+               ai.route.down == -1 && ai.route.gate_up_rows[0][3] == 0,
            "a 5090 without its bandwidth is Incomplete, with the A8 literal");
     const auto fi = detail::sparse_moe_q4_groupwise_frontier_answer(no_dram_5090);
     expect(fi.disposition == Disposition::Incomplete && !fi.donor && fi.distance == 0 &&
@@ -371,11 +372,11 @@ void check_hand_written() {
     // gb202's IQ2_XXS goes w4r2 from T = 4, w4r1 before; gb203's IQ2_S takes w2r1 at T = 4..7 and
     // w4r1 at 8 (moe.cpp, the 2026-11-03 sweep).
     const auto r5090 = moe::a8_route_answer(measured::kRtx5090).route;
-    expect(r5090.gate_up_2bit[0][2] == 0 && r5090.gate_up_2bit[0][3] == 1,
+    expect(r5090.gate_up_rows[0][2] == 0 && r5090.gate_up_rows[0][3] == 1,
            "5090 IQ2_XXS T = 3 / 4");
     const auto r5080 = moe::a8_route_answer(measured::kRtx5080).route;
-    expect(r5080.gate_up_2bit[2][3] == 3 && r5080.gate_up_2bit[2][6] == 3 &&
-               r5080.gate_up_2bit[2][7] == 0,
+    expect(r5080.gate_up_rows[2][3] == 3 && r5080.gate_up_rows[2][6] == 3 &&
+               r5080.gate_up_rows[2][7] == 0,
            "5080 IQ2_S T = 4..7 w2r1, 8 w4r1");
 }
 
