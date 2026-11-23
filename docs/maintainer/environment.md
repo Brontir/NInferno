@@ -27,7 +27,7 @@ They refuse `--moe-tune`: the MoE schedule tuner runs in an Engine's model load 
 which neither tool goes through. The tuners (`--dense-tune`, `--moe-tune`, `--tune-cache`) time
 kernels on the machine, so `ninferno` and `ninferno-serve` refuse them: the tuner hosts are
 `ninferno-perplexity` (an Engine: both tuners, the MoE one at its model load, the dense one at the
-warm-up and the scored prefills) and the family tools above (the dense tuner). `ninferno-gemma4 spec-tune` names in its profile's settings the
+warm-up and the scored <speed|prefill|invariant>s) and the family tools above (the dense tuner). `ninferno-gemma4 spec-tune` names in its profile's settings the
 `--cuda-sync`, `--dense-tune`, `--route-table` and `--route-dir` it ran with, when not the
 release's. `EngineOptions::pacing` and `EngineOptions::maintainer` (`include/ninferno/types.h`)
 carry them for the Engine API.
@@ -44,7 +44,7 @@ other options (`options.pacing.*`, `options.maintainer.*`; an option naming a fi
 enters as `set`, the files themselves by content among the sources), and a maintainer option
 given is taint (`taint.maintainer`, by name). `--tune-cache` enters the fingerprint and is taint only
 while a tuner is on (it is read only then), and a `--drafter-registry` file in place of the compiled-in registry is taint too
-(`drafter_registry`). The route pins enter as `options.maintainer.prefill_route`,
+(`drafter_registry`). The route pins enter as `options.maintainer.<speed|prefill|invariant>_route`,
 `options.maintainer.decode_route` and `options.maintainer.moe_path` by their spelling, and each one
 not `auto` is taint by name; `--route-policy` enters as `options.maintainer.route_policy` and is
 taint when not `evidence` (the default since #614 F2). The request log's `server_start` record carries them
@@ -79,7 +79,7 @@ heuristic.
 |---|---|---|
 | `--route-table FILE` | file path | This route table alone, instead of the GPU class's own. A table that cannot be read or a malformed one is refused before the device is touched; one for another GPU class fails startup when it loads. |
 | `--route-dir DIR` | directory | The directory of per-GPU-class route tables (`DIR/*.json`) and of the release's dense-tuner measurements (`DIR/tuner/dense_tune.json`). A directory that cannot be listed, or one of those files that cannot be resolved (with the file system's reason), is a dangling symlink or cannot be read, is refused before the device is touched. The GPU class's own table in it that does not parse stops startup (a broken install); another class's table is checked against this GPU's facts, so one refused here lends it nothing; a directory with no table for the class runs the heuristic routes. Default: `routes/` beside the binary, then `share/ninferno/routes/` above it, then the source tree the binary was built from (only a build with `NINFERNO_SOURCE_TREE_PATHS=ON`, the default; a release has none). |
-| `--dense-tune` | `off` (default), `on`, `retune` | The dense GEMM tuner. `on` times the candidate routes of a problem the table does not cover the first time the engine computes it outside graph capture (the warm-up's eager prefill) and stores the choice per GPU class and problem; `on` and `retune` also read the cache file (`retune` ignores its choices, then merges its new ones into it). Route tables are built offline ([route tuning helpers](../../bench/README.md#route-tuning-helpers)). |
+| `--dense-tune` | `off` (default), `on`, `retune` | The dense GEMM tuner. `on` times the candidate routes of a problem the table does not cover the first time the engine computes it outside graph capture (the warm-up's eager <speed|prefill|invariant>) and stores the choice per GPU class and problem; `on` and `retune` also read the cache file (`retune` ignores its choices, then merges its new ones into it). Route tables are built offline ([route tuning helpers](../../bench/README.md#route-tuning-helpers)). |
 | `--moe-tune` | `off` (default), `on`, `retune` | The MoE schedule tuner an Engine runs at model load (the family tools, which load no model through an Engine, refuse it), with the same meaning per MoE layer shape; `tools/moe_tune_to_table.py` turns its cache into a route table's MoE bands. |
 | `--tune-cache DIR` | directory | Where the tuners keep `dense_tune.json` and `moe_tune.json`, read only while a tuner is on. Default: NInferno's cache directory, `$XDG_CACHE_HOME/ninferno`, else `~/.cache/ninferno` (`%LOCALAPPDATA%\NInferno` on Windows). |
 
@@ -92,7 +92,7 @@ clearing a pin restores every route).
 
 | Option | Values | Band | Families |
 |---|---|---|---|
-| `--prefill-route` | `auto`, `a16`, `w4a8`, `i8`, `mmq`, `w4a4` | calls of 17 tokens or more | `a16`: what the automatic selection takes for an A16Only weight (register MMA, tiled or staged tiles, the route tables' A16 entries); `w4a8`: the W4A8 heuristic's int8 tile (with its tuned prefill band); `i8`: the Q4/Q5/Q6 G64 int8 tiles; `mmq`: ggml's int8 matrix kernel in 512-token slices; `w4a4`: NVFP4 activations on NVFP4 weights |
+| `--<speed|prefill|invariant>-route` | `auto`, `a16`, `w4a8`, `i8`, `mmq`, `w4a4` | calls of 17 tokens or more | `a16`: what the automatic selection takes for an A16Only weight (register MMA, tiled or staged tiles, the route tables' A16 entries); `w4a8`: the W4A8 heuristic's int8 tile (with its tuned prefill band); `i8`: the Q4/Q5/Q6 G64 int8 tiles; `mmq`: ggml's int8 matrix kernel in 512-token slices; `w4a4`: NVFP4 activations on NVFP4 weights |
 | `--decode-route` | `auto`, `a16`, `r8`, `vec`, `mmq` | calls of 1..16 tokens | `a16`: the automatic selection for an A16Only weight; `r8`: the int8 R8 kernel at 1 token (where the activation fits a CTA) and 2..8 tokens (the pre-quantized form); `vec`: ggml's dp4a vector kernel, 1..8 tokens (16 without tensor mma.sync); `mmq`: ggml's matrix kernel, 5..16 tokens |
 | `--moe-path` | `auto`, `fused`, `generic` | each MoE layer at load | `fused`: Qwen 3.5/3.6 SparseMoe (top-8 experts it reads) or Gemma 4's NVFP4 MoE (calibrated NVFP4 experts, sm_120a); `generic`: the generic MoE Op, which reads every expert format |
 
@@ -100,7 +100,7 @@ A pinned family takes every call of its band that it can compute, and a call it 
 keeps the automatic route. A pin never changes the precision the user chose: the int8 families
 need a policy that allows int8 activations (the artifact's, or `--activations int8`), `w4a4` one
 that allows four bits. The one exception is the automatic promotion of the official Q4/Q5/Q6 G64
-weights recorded A16Only to int8 at prefill on the cards where it pays: `--prefill-route w4a8`
+weights recorded A16Only to int8 at <speed|prefill|invariant> on the cards where it pays: `--prefill-route w4a8`
 or `i8` promotes them on every card (that is the decision under test), `a16` on none.
 
 Where the pins reach:
@@ -109,14 +109,14 @@ Where the pins reach:
   not own, all ggml block formats among them; a pin stands before the route tables' and the dense
   tuner's choices;
 - the registered shapes' hand-off gates: R8 decode (`--decode-route r8` keeps the rule's 1-token
-  hand-off; any other decode pin keeps the call on the shape's own BF16 kernel), the int8 prefill
-  tiers of Q8 G32 and Q4/Q5/Q6 G64, and the NVFP4 W4A8 prefill (`a16` keeps the plan's A16 route);
+  hand-off; any other decode pin keeps the call on the shape's own BF16 kernel), the int8 <speed|prefill|invariant>
+  tiers of Q8 G32 and Q4/Q5/Q6 G64, and the NVFP4 W4A8 <speed|prefill|invariant> (`a16` keeps the plan's A16 route);
 - the NVFP4 and FP8 shape tables of `linear`: `a16` keeps BF16 activations at the pinned widths,
-  and `--prefill-route w4a4` takes A4 from 17 tokens;
+  and `--<speed|prefill|invariant>-route w4a4` takes A4 from 17 tokens;
 - the MoE path choice of the Qwen 3.5/3.6 and Gemma 4 families.
 
 ninfer-all's dedicated int8 kernels of the Qwen3.8-27B Q4/Q5 G64 shapes (the `linear_swiglu`
-gate_up, the `linear_add` down and output projections) give way to a prefill pin of `a16`, `w4a8`
+gate_up, the `linear_add` down and output projections) give way to a <speed|prefill|invariant> pin of `a16`, `w4a8`
 or `i8`.
 
 Where they do not: the fused NVFP4 plans of the registered Qwen shapes (attention and GDN input
@@ -124,13 +124,13 @@ projections, `linear_add`, `linear_swiglu`) keep their own A4 or A16 choice; the
 grouped GEMMs keep their schedules (`--moe-tune` and the route tables' MoE bands); a GPU without
 tensor mma.sync (Volta) keeps its tiled route for calls of 17 tokens or more of a format with a
 tiled codec, and its HMMA kernel for 1..16 tokens; both are the `a16` family's there (f16
-activations). A prefill pin of another family that no call can take is refused naming `a16`;
+activations). A <speed|prefill|invariant> pin of another family that no call can take is refused naming `a16`;
 another decode pin takes the verify calls where it computes them; the invariant routes of `--activations exact` take no pin at all; TMA and other
 schedule-level choices inside a shape table stay the table's.
 
 Refusals, each naming what can run instead:
 
-1. Before the device: a prefill or decode pin with `--activations exact`; `--prefill-route w4a4`
+1. Before the device: a <speed|prefill|invariant> or decode pin with `--activations exact`; `--prefill-route w4a4`
    with `--activations int8`.
 2. Once the device is bound, before any weight is read: a family this build and GPU hold no kernel
    of (`w4a4` outside the sm_120a builds, `mmq` below sm_75, a family whose device features are
@@ -178,10 +178,10 @@ answer `rmma` (`keeps_mmq_boundary`): F1's end-to-end A/B lost there on the RTX 
 4060 Ti (q4_K A8 SwiGLU 12288x4096 at T 12 and 16, 4 to 75 % slower), the one cell family of the
 moved set that lost; the ranker's price of the MMA kernels at those widths is the open term. `pin`, `measured`, `carried` and `ranker` answers are never demoted.
 
-The one other authority that can answer `transferred`, the MMQ prefill gate (`mmq-prefill-gate`,
+The one other authority that can answer `transferred`, the MMQ <speed|prefill|invariant> gate (`mmq-prefill-gate`,
 a measured board's gate carried to every board of its instruction set), keeps its answer: it is a
 rule of the ranker's own list and comes after the cost model already, so it answers only where the
-cost model abstains (the prefill band, a board without clocks, NVFP4). Demoting it would hand those
+cost model abstains (the <speed|prefill|invariant> band, a board without clocks, NVFP4). Demoting it would hand those
 calls to the rules below it, which no measurement compared with it either.
 
 A claiming entry of the route table (an entry that moves a call of a shape with its own Linear
@@ -214,7 +214,7 @@ from; `ninferno-convert --ranking FILE` names the target's own.
 
 | Option | Values | Effect |
 |---|---|---|
-| `--debug-prefill-cuts P1,P2,...` | absolute positions | Qwen 3.5: ends a prefill call at each of these positions, the way a restored or continued context meets the cache off the chunk grid. |
+| `--debug-<speed|prefill|invariant>-cuts P1,P2,...` | absolute positions | Qwen 3.5: ends a prefill call at each of these positions, the way a restored or continued context meets the cache off the chunk grid. |
 | `--debug-poison` | `0` (default), `1`/`nan`, a byte `1..255` | Overwrites pooled device memory with that byte whenever it is released (`1` and `nan` mean `0xFF`: NaN in every float format, -1 in indices), so a reader that skips initialization sees poison rather than the previous owner's data. |
 | `--debug-poison-skip SITE,...` | `kv`, `ingress`, `state`, `weights` | Leaves these sites unpoisoned, for bisecting which poisoned memory changed a result. |
 
@@ -236,7 +236,7 @@ that may quote these names; `ninferno_decision_fingerprint_test` fails otherwise
 | `NINFERNO_ROUTE_DIR` | `--route-dir` |
 | `NINFERNO_DENSE_TUNE`, `NINFERNO_MOE_TUNE` | `--dense-tune`, `--moe-tune` (maintainer tools only) |
 | `NINFERNO_DENSE_TUNE_CACHE`, `NINFERNO_MOE_TUNE_CACHE` | `--tune-cache` (one directory for both tuners) |
-| `NINFERNO_QWEN_PREFILL_CUTS` | `--debug-prefill-cuts` |
+| `NINFERNO_QWEN_PREFILL_CUTS` | `--debug-<speed|prefill|invariant>-cuts` |
 | `NINFERNO_DEBUG_POISON`, `NINFERNO_DEBUG_POISON_SKIP` | `--debug-poison`, `--debug-poison-skip` |
 | `NINFERNO_DRAFTER_REGISTRY` | `--drafter-registry` |
 | `NINFERNO_SPEC_CORPUS` | `--corpus` (`ninferno spec-tune`, `ninferno-gemma4`); elsewhere the compiled-in corpus |
@@ -251,7 +251,7 @@ Two variables steer choices outside the engine and its products, and stay variab
 | Variable | Read by | Effect |
 |---|---|---|
 | `NINFERNO_FORCE_WSL` | the Windows launcher and installer only (`tools/release/windows`) | `1` installs and runs the WSL engine even where a native Windows engine exists ([Windows](../windows.md)). The engine it starts reads none of it. |
-| `NINFERNO_BENCH_PREFILL_ROUTES` | the op benches only (`bench/ops`) | `1` runs the benched op under the prefill route profile for the rest of the process. |
+| `NINFERNO_BENCH_PREFILL_ROUTES` | the op benches only (`bench/ops`) | `1` runs the benched op under the <speed|prefill|invariant> route profile for the rest of the process. |
 
 ## Environment variables
 
@@ -274,7 +274,7 @@ never for timing. Graph-captured passes are skipped.
 
 | Variable | Values | Effect |
 |---|---|---|
-| `NINFERNO_QWEN_DUMP` | directory | Qwen3.5 prefill: appends each layer's intermediates to `<dir>/L<layer>.<kind>.bin`. |
+| `NINFERNO_QWEN_DUMP` | directory | Qwen3.5 <speed|prefill|invariant>: appends each layer's intermediates to `<dir>/L<layer>.<kind>.bin`. |
 | `NINFERNO_QWEN_DUMP_ROWS` | `lo:hi` | Only the token columns whose absolute position is in `[lo, hi)`. |
 | `NINFERNO_QWEN_DUMP_KINDS` | `a,b,...` | Only these intermediate kinds. Default: all. |
 | `NINFERNO_GEMMA4_DUMP` | directory | Gemma 4: appends each layer's intermediates to `<dir>/L<layer>.<kind>.bin`. |
@@ -283,7 +283,7 @@ never for timing. Graph-captured passes are skipped.
 | `NINFERNO_DENSE_DUMP_ROWS` | `lo:hi` | Only these absolute positions. Default: all. |
 | `NINFERNO_SCORE_LOGITS` | file path | `ninferno-perplexity` on Qwen3.5: appends each scored column's logits over the public vocabulary as FP32, for comparing distributions with a reference. |
 | `NINFERNO_SCORE_ARGMAX` | file path | The same, the argmax id per scored column, for top-1 agreement. |
-| `NINFERNO_MOE_PLAN_RECORD` | file path | Appends every distinct call of the generic MoE op as `<gate_up> <down> E<n> k<n> H<n>[ pad<n>] F<n> p<policy> T=<n> <decode\|prefill\|invariant> <plan> <authority>`, the layer named as the MoE plan goldens name it (a ggml_frag_v1 bank is `<format>.frag`): the plan a model's MoE layers take at each width and which authority of the plan cascade chose it (`moe-pick`, `decode-r8`, `decode-streaming`, `table`, `tuner`, ...). Distinct also by device class and route profile. Steers no decision. |
+| `NINFERNO_MOE_PLAN_RECORD` | file path | Appends every distinct call of the generic MoE op as `<gate_up> <down> E<n> k<n> H<n>[ pad<n>] F<n> p<policy> T=<n> <speed|prefill|invariant>\|prefill\|invariant> <plan> <authority>`, the layer named as the MoE plan goldens name it (a ggml_frag_v1 bank is `<format>.frag`): the plan a model's MoE layers take at each width and which authority of the plan cascade chose it (`moe-pick`, `decode-r8`, `decode-streaming`, `table`, `tuner`, ...). Distinct also by device class and route profile. Steers no decision. |
 | `NINFERNO_PROJECTION_RECORD` | file path | Appends every distinct specialized NVFP4 projection call (attention input, GDN input, linear-add, SwiGLU, plain linear) as `<op> <route> <T> <N> <K>`: the route a call of that width took (`a4`, `a16`, `a16_exact` under the exact contract, `a16_verify` for the same kernel at 2..8 tokens under another policy, `w4a8`, fused variants). Shows the width-dependent A4/A16 choice that `NINFERNO_ROUTE_RECORD` (generic path only) does not. |
 | `NINFERNO_ROUTE_RECORD` | file path | Appends every distinct problem that reaches the generic GEMM path, in `ninferno_route_tune --shapes` format, so a model's shapes come from running it (see [bench/README.md](../../bench/README.md)). |
 

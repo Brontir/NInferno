@@ -1893,7 +1893,7 @@ namespace {
 
 // Under NINFERNO_MOE_PLAN_RECORD=<file>: each distinct call of the op (both banks' formats and
 // layouts, the geometry, the expert policy, T, the route profile, the device class) appended once
-// as "<gate_up> <down> E<n> k<n> H<n>[ pad<n>] F<n> p<policy> T=<n> <decode|prefill|invariant>
+// as "<gate_up> <down> E<n> k<n> H<n>[ pad<n>] F<n> p<policy> T=<n> <speed|prefill|invariant>
 // <plan> <authority>", the layer named as the MoE plan goldens name it (H the router's K, pad the
 // gate/up bank's extra K) and a ggml_frag_v1 bank marked "<format>.frag": which plan and which
 // authority of select_plan's cascade a model's MoE layers take (#1166). The query is
@@ -1927,7 +1927,7 @@ void record_plan(const MoeWeights& w, const MoeConfig& c, std::int32_t t, bool p
                   w.down.k,
                   static_cast<int>(w.expert_policy),
                   t,
-                  prefill,
+                  prefill && !invariant,
                   invariant,
                   pci,
                   sms};
@@ -1945,7 +1945,7 @@ void record_plan(const MoeWeights& w, const MoeConfig& c, std::int32_t t, bool p
          << w.down.k << " p" << static_cast<int>(w.expert_policy) << " T=" << t
          << (invariant ? " invariant "
              : prefill ? " prefill "
-                       : " decode ")
+                       : " speed ")
          << plan_name(q.plan) << ' ' << authority_name(q.authority) << '\n';
     file.flush();
     if (!file.good() && !warned) {
