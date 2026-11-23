@@ -771,8 +771,18 @@ bool plan_compiled(const MoeWeights& w, const MoePlan& plan) {
            stage(w.down, plan.down_schedule, plan.down_r8);
 }
 
+// LAB #1166 (not for merge): NINFERNO_LAB_R8_TOKENS=1..8 overrides every R8 token limit.
+static std::int32_t lab_r8_tokens() {
+    static const std::int32_t v = [] {
+        const char* s = std::getenv("NINFERNO_LAB_R8_TOKENS");
+        const int n   = s ? std::atoi(s) : 0;
+        return (n >= 1 && n <= kR8Tokens) ? n : 0;
+    }();
+    return v;
+}
 
 std::int32_t r8_token_limit() {
+    if (const std::int32_t lab = lab_r8_tokens()) return lab;
     // The generation's rule (moe_regime_rules.h): eight on Ada and consumer Blackwell, measured on
     // two cards each; four elsewhere, and on a generation the table does not know.
     const auto& d = device_class();
@@ -792,7 +802,10 @@ regime::R8LimitAnswer regime::r8_limit_answer(const Weight& bank) {
     return r8_limit_answer(arch, facts);
 }
 
-std::int32_t r8_token_limit(const Weight& bank) { return regime::r8_limit_answer(bank).limit; }
+std::int32_t r8_token_limit(const Weight& bank) {
+    if (const std::int32_t lab = lab_r8_tokens()) return lab;
+    return regime::r8_limit_answer(bank).limit;
+}
 
 bool moe_format_has_min(QType q) {
     return q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 || q == QType::GGML_Q4_K ||
