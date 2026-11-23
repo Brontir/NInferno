@@ -142,7 +142,10 @@ ninferno_add_test(ninferno_route_rules_test LABELS host NEEDS_SOURCE_DIR
 # cards or are tagged single_card / carried, the thresholds equal the constants and their
 # route_rules.h descriptors; `--list` prints the table. No GPU.
 ninferno_add_test(ninferno_format_rules_test LABELS host
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_format_rules.cpp")
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_format_rules.cpp"
+  # format_rules.h reads format_requires.h (the vec cap scopes), which reads the generated board
+  # registry rows: the core host library carries them and orders their generation first.
+  LIBRARIES ninferno_core_host)
 
 # The register-MMA kernel's static shared memory as constexpr geometry (ops/generic/rmma_geometry.h,
 # static_asserted by the kernel, with the decoder rows pinned to their decoders) equals every row of
