@@ -201,12 +201,19 @@ struct ArtifactName {
                                       const std::vector<std::filesystem::path>& model_dirs);
 
 // The card as a ninferno-serve document planned its `now` (#1147): NVML's free memory (the bytes
-// passed as --plan-free-now) and its word that the card takes no new process (GpuStat::refusal_now,
-// empty when it takes one). A kept `now` answers while both hold: the page asks again when either
-// moves (page.html NOW_STEP, nowHoldOf).
+// passed as --plan-free-now) and the class of its hold (GpuStat::hold_class: what refusal_now
+// reads, not the holder's pid). A kept `now` answers while both hold: the page asks again when
+// either moves (page.html NOW_STEP, nowHoldOf, the same class).
 struct NowPoint {
     std::uint64_t free = 0;
-    std::string refusal;
+    std::string hold;
+};
+
+// A ninferno-serve plan run's answer as the asks that joined it read it: its document and the point
+// its `now` was planned at (none: NVML said nothing, or the run kept no `now`).
+struct ServeRun {
+    nlohmann::json doc;
+    std::optional<NowPoint> free_at;
 };
 
 class App {
@@ -278,6 +285,9 @@ private:
     // here would (online, Hugging Face, a GPU, a GGUF repository's table or one of its GGUF rows).
     std::string serve_hub_plan_refusal(const std::string& repo, const std::string& hub, int gpu,
                                        const std::string& quant);
+    // NVML's word that GPU `gpu` takes no new process (GpuStat::refusal_now, #891), a holder that
+    // is one of this UI's children named as such; empty when it takes one or NVML does not say.
+    [[nodiscard]] std::string refusal_now_of(const std::vector<GpuStat>& stats, int gpu) const;
     // read_tables: the chosen GGUF row's own tensor table is read when not known (a user's plan);
     // the catalog's plans (no network) price the tables known. `now_out`: the "now" context of
     // this plan (also when it is not cached).
@@ -406,12 +416,15 @@ private:
     // its `now` answers while the free memory stays within kNowStepBytes and the refusal is the
     // same.
     std::map<std::string, NowPoint> serve_free_at_;
+    // When a re-plan of a kept serve document (a move past kNowStepBytes) last failed, by key: the
+    // kept document answers without another serve run for kFailureKeptSeconds (#1156 review).
+    std::map<std::string, std::int64_t> serve_replan_failed_at_;
     // What plan_json's "now" (product::plan_now) re-plans per request at the GPU's free memory: the
     // shown quantization's facts, inputs (their subjects kept alive here), choice and pins.
     std::map<std::string, std::shared_ptr<const PlanNowContext>> plan_now_;
     // plan_json's ninferno-serve runs in flight by key: an ask that finds its key running shares
     // that run's document, never starts a second child (#766).
-    std::map<std::string, std::shared_future<nlohmann::json>> serve_plans_running_;
+    std::map<std::string, std::shared_future<ServeRun>> serve_plans_running_;
     // One plan_json serve child a card (under sizes_mutex_ to find or make; held while it runs).
     std::map<int, std::unique_ptr<std::mutex>> serve_card_mutexes_;
     std::mutex serve_unlisted_card_mutex_; // an index the GPU source does not list

@@ -48,8 +48,14 @@ struct GpuStat {
     // NVML's word that this card takes no new CUDA process now: a prohibited compute mode, or an
     // exclusive one that a running process holds and no MPS server serves (#891). Empty when it
     // takes one or NVML does not say. NVML still reports such a card's free memory, which alone
-    // reads as a fit.
-    [[nodiscard]] std::string refusal_now() const;
+    // reads as a fit. `holder_name` names the holder when it is one of this UI's own children
+    // ("your running model"); empty: its pid.
+    [[nodiscard]] std::string refusal_now(std::string_view holder_name = {}) const;
+
+    // The class of what refusal_now reads (page.html nowHoldOf): the compute mode, and in an
+    // exclusive mode whether a process holds the card and whether an MPS server is among them. A
+    // kept `now` answers while it holds; a new holder of a held card moves nothing (#1147).
+    [[nodiscard]] std::string hold_class() const;
 
     // Peak memory bandwidth from the bus width and the maximum memory clock (GDDR: two transfers
     // per clock as NVML reports it), 0 when either is unknown.

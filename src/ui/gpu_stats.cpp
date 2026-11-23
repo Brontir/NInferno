@@ -42,7 +42,7 @@ bool is_mps_server(std::string_view path) {
     return base == "nvidia-cuda-mps-server" || base == "nvidia-cuda-mps-server.exe";
 }
 
-std::string GpuStat::refusal_now() const {
+std::string GpuStat::refusal_now(std::string_view holder_name) const {
     if (compute_mode == 2) return "its compute mode is prohibited (NVML)";
     // Under MPS the server holds an exclusive-process card and clients join it (NVIDIA's MPS
     // overview: that mode then behaves as the default mode for them); MPS does not apply to the
@@ -50,10 +50,20 @@ std::string GpuStat::refusal_now() const {
     const bool mps = std::any_of(processes.begin(), processes.end(),
                                  [](const GpuProcess& p) { return p.mps_server; });
     if ((compute_mode == 1 || (compute_mode == 3 && !mps)) && !processes.empty()) {
-        return "its compute mode is exclusive and process " +
-               std::to_string(processes.front().pid) + " holds it (NVML)";
+        const std::string pid = "process " + std::to_string(processes.front().pid);
+        return "its compute mode is exclusive and " +
+               (holder_name.empty() ? pid : std::string(holder_name) + " (" + pid + ")") +
+               " holds it (NVML)";
     }
     return {};
+}
+
+std::string GpuStat::hold_class() const {
+    if (compute_mode != 1 && compute_mode != 3) return std::to_string(compute_mode);
+    const bool mps = std::any_of(processes.begin(), processes.end(),
+                                 [](const GpuProcess& p) { return p.mps_server; });
+    return std::to_string(compute_mode) + (processes.empty() ? "/free" : "/held") +
+           (mps ? "/mps" : "");
 }
 
 nlohmann::json GpuStat::to_json() const {

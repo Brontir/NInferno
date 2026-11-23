@@ -833,6 +833,10 @@ Json App::listing_of(const std::string& repo, const std::string& hub) {
     return list;
 }
 
+namespace {
+std::string at_commit(const std::string& repo, const std::string& commit);
+} // namespace
+
 Json App::arch_json(const std::string& repo, const std::string& hub) {
     const auto generation = hub_generation();
     {
@@ -842,6 +846,11 @@ Json App::arch_json(const std::string& repo, const std::string& hub) {
         }
     }
     const auto list = listing_of(repo, hub);
+    // The reads at the listing's commit, as kv_json's and the serve child's (#1147 review): a
+    // repository named at a branch is read where its listing was, not where the branch is now.
+    const std::string at = at_commit(repo, list.empty() || !list.front().is_object()
+                                               ? std::string()
+                                               : list.front().value("commit", std::string()));
     std::string quant;
     double smallest = 0;
     bool weights = false, native = false;
@@ -866,7 +875,7 @@ Json App::arch_json(const std::string& repo, const std::string& hub) {
         if (native && hub != "modelscope") {
             // The engine's own artifact: its manifest names the architecture and the container
             // version, which this engine must read.
-            const auto manifest = convert::fetch_repo_json(repo, fetch, "artifact-manifest.json");
+            const auto manifest = convert::fetch_repo_json(at, fetch, "artifact-manifest.json");
             const auto artifact = manifest.value("artifact", Json::object());
             out["architecture"] = artifact.value("architecture", std::string());
             out["source"]       = "manifest";
@@ -880,13 +889,13 @@ Json App::arch_json(const std::string& repo, const std::string& hub) {
             }
         } else if (!quant.empty()) {
             fetch.quant         = quant;
-            const auto head     = convert::fetch_gguf_head(repo, fetch, 256 << 10);
+            const auto head     = convert::fetch_gguf_head(at, fetch, 256 << 10);
             out["architecture"] = gguf_architecture(head.bytes);
             out["source"]       = "gguf";
             out["file"]         = head.path;
         } else if (weights && hub != "modelscope") {
-            out["architecture"] = product::plan_facts_of_config(convert::fetch_config(repo, fetch),
-                                                                0, runtime::WeightBasis::Unknown)
+            out["architecture"] = product::plan_facts_of_config(convert::fetch_config(at, fetch), 0,
+                                                                runtime::WeightBasis::Unknown)
                                       .model.architecture;
             out["source"] = "config";
             out["file"]   = "config.json";
@@ -902,7 +911,7 @@ Json App::arch_json(const std::string& repo, const std::string& hub) {
                 // any, else the GGUF read above.
                 auto ask  = fetch;
                 ask.quant = weights ? std::string() : quant;
-                if (const auto facts = convert::hub_support_facts(repo, ask)) {
+                if (const auto facts = convert::hub_support_facts(at, ask)) {
                     support = convert::model_support(*facts);
                 }
             } catch (const std::exception&) {}
@@ -984,15 +993,6 @@ struct App::PlanNowContext {
 
 namespace {
 
-// NVML's word that GPU `gpu` takes no new process (GpuStat::refusal_now, #891); empty when it
-// takes one or NVML does not say.
-std::string refusal_now_of(const std::vector<GpuStat>& stats, int gpu) {
-    for (const auto& stat : stats) {
-        if (stat.index == gpu) return stat.refusal_now();
-    }
-    return {};
-}
-
 // A refused card's `now`: planned at 0 bytes, as serve's plan does it, and named as the card's
 // refusal (reason_code_now card_refused, the shape serve's plan writes).
 void name_refusal_now(Json& now, const std::string& why) {
@@ -1010,7 +1010,7 @@ constexpr std::uint64_t kNowStepBytes = 256ULL << 20;
 // nullopt when it does not say.
 std::optional<NowPoint> now_point_of(const GpuStat& stat) {
     if (stat.memory_total == 0) return std::nullopt;
-    return NowPoint{static_cast<std::uint64_t>(stat.memory_free), stat.refusal_now()};
+    return NowPoint{static_cast<std::uint64_t>(stat.memory_free), stat.hold_class()};
 }
 
 std::optional<NowPoint> now_point_of(const std::vector<GpuStat>& stats, int gpu) {
@@ -1020,12 +1020,12 @@ std::optional<NowPoint> now_point_of(const std::vector<GpuStat>& stats, int gpu)
     return std::nullopt;
 }
 
-// Whether a `now` planned at `a` answers at `b`: the free memory within the page's step, the card
-// taking new processes or refusing them as it did (#1156 review: a compute-mode or holder change
-// moves no memory).
+// Whether a `now` planned at `a` answers at `b`: the free memory within the page's step, the card's
+// hold of the same class (#1156 review: a compute-mode change or a card becoming held moves no
+// memory; a new holder of a held card changes nothing a start meets).
 bool same_now_point(const NowPoint& a, const NowPoint& b) {
     return (a.free > b.free ? a.free - b.free : b.free - a.free) < kNowStepBytes &&
-           a.refusal == b.refusal;
+           a.hold == b.hold;
 }
 
 // The free memory of GPU `gpu` now (NVML), nullopt when it does not say.
@@ -1183,6 +1183,29 @@ std::optional<Json> App::serve_plan_json(const std::string& model, const std::st
     return doc;
 }
 
+std::string App::refusal_now_of(const std::vector<GpuStat>& stats, int gpu) const {
+    for (const auto& stat : stats) {
+        if (stat.index != gpu) continue;
+        // The holder by NVML's pid among this UI's children (a pid of another namespace, WSL or a
+        // container, matches none and is named by its number).
+        std::string holder;
+        if (!stat.processes.empty()) {
+            const auto pid = static_cast<int>(stat.processes.front().pid);
+            for (const auto& info : processes_.list()) {
+                if (info.pid == pid) {
+                    holder = info.spec.kind == "serve" ? std::string("your running model")
+                                                       : "this UI's " + info.spec.kind + " job";
+                }
+            }
+            for (const auto& info : planner_.list()) {
+                if (info.pid == pid) holder = "this UI's plan run";
+            }
+        }
+        return stat.refusal_now(holder);
+    }
+    return {};
+}
+
 Json App::artifact_plan_json(const fs::path& artifact, int gpu, const product::LaunchAsk& launch) {
     if (gpu < 0) { throw std::invalid_argument("no GPU " + std::to_string(gpu) + " to plan for"); }
     // The start's own plan when its binary is beside the UI (#843): its workspace is the start's
@@ -1246,14 +1269,16 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     std::string planner;
     std::optional<Json> served;
     bool fresh = false; // serve ran for this ask: its `now` is of the free memory now
-    // The card now, and where a kept document's `now` was planned (#1147).
+    // The card at the ask, and where a kept document's `now` was planned (#1147).
     const std::optional<NowPoint> point_now = now_point_of(gpus_->snapshot(), gpu);
     std::optional<NowPoint> kept_free_at;
     // serve's document as it is answered without a replay here: its `now` when just measured, or
-    // kept and planned at the card as it is now (same_now_point); else null (a kept one is of
-    // another moment; null reads as no `now`, and the page asks again at the next move).
+    // planned at the card as it is at the answer (same_now_point; read again: a run may have
+    // waited behind another key's child); else null (of another moment; null reads as no `now`,
+    // and the page asks again at the next move).
     const auto as_served = [&](Json d) {
-        const bool still = kept_free_at && point_now && same_now_point(*kept_free_at, *point_now);
+        const std::optional<NowPoint> point = now_point_of(gpus_->snapshot(), gpu);
+        const bool still = kept_free_at && point && same_now_point(*kept_free_at, *point);
         if (!fresh && !still && d.contains("now")) { d["now"] = nullptr; }
         return d;
     };
@@ -1278,8 +1303,8 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         // document. Two children at once would also contend for the card (an exclusive-compute GPU
         // lets one open a context: the other's refusal would be kept). A run is of one hub token:
         // an ask after a new token never joins a run under the old one (its listing, its access).
-        std::shared_future<Json> running;
-        std::promise<Json> runs;
+        std::shared_future<ServeRun> running;
+        std::promise<ServeRun> runs;
         const std::string running_key = key + "|generation " + std::to_string(generation);
         {
             std::lock_guard lock(sizes_mutex_);
@@ -1297,9 +1322,14 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                 const bool moved =
                     !failure && point_now &&
                     (at == serve_free_at_.end() || !same_now_point(at->second, *point_now));
+                // A re-plan that failed a while ago: the kept document answers, no serve run a
+                // move (a card where serve times out would cost each ask its 45 s).
+                const auto failed_at   = serve_replan_failed_at_.find(key);
+                const bool backing_off = failed_at != serve_replan_failed_at_.end() &&
+                                         clock_now() - failed_at->second < kFailureKeptSeconds;
                 if (failure ? clock_now() - it->second.value("at", std::int64_t{0}) <
                                   kFailureKeptSeconds
-                            : !moved) {
+                            : !moved || backing_off) {
                     kept = it->second;
                     if (at != serve_free_at_.end()) { kept_free_at = at->second; }
                 } else if (moved) {
@@ -1317,13 +1347,14 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
             }
         }
         if (!kept && running.valid()) {
-            kept = running.get(); // that run's document, measured for this burst of asks
-            // At the free memory it was planned at (serve_free_at_, stored before the run's
-            // document is handed out): a joiner a step of memory later is not answered that
-            // `now` (#1156 review). Without NVML's figures the run's `now` is the burst's.
-            std::lock_guard lock(sizes_mutex_);
-            if (const auto at = serve_free_at_.find(key); at != serve_free_at_.end()) {
-                kept_free_at = at->second;
+            // That run's document, measured for this burst of asks, at the free memory it was
+            // planned at (carried in the run's answer): a joiner a step of memory later is not
+            // answered that `now` (#1156 review). Without NVML's figures the run's `now` is the
+            // burst's.
+            const ServeRun run = running.get();
+            kept               = run.doc;
+            if (run.free_at) {
+                kept_free_at = run.free_at;
                 fresh        = false;
             } else {
                 fresh = !point_now;
@@ -1386,11 +1417,13 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     (*kept)["at"] = clock_now();
                 }
                 std::lock_guard lock(sizes_mutex_);
+                bool fell_back = false;
                 if (generation == hub_generation_ && !kept->contains("no_serve")) {
                     if (plans_.size() >= kMaxKeptPlans) {
                         plans_.clear();
                         plan_now_.clear();
                         serve_free_at_.clear();
+                        serve_replan_failed_at_.clear();
                     }
                     const bool failed_now = kept->contains("failed") || kept->contains("refused");
                     if (failed_now && previous) {
@@ -1399,9 +1432,12 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                         // next move asks serve again.
                         kept = previous;
                         if (kept->contains("now")) { (*kept)["now"] = nullptr; }
-                        kept_free_at = previous_free_at;
-                        fresh        = false;
+                        kept_free_at                 = previous_free_at;
+                        fresh                        = false;
+                        fell_back                    = true;
+                        serve_replan_failed_at_[key] = clock_now();
                     } else {
+                        serve_replan_failed_at_.erase(key);
                         plans_[key] = *kept;
                         if (served_free_at && !failed_now) {
                             serve_free_at_[key] = *served_free_at;
@@ -1410,8 +1446,15 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                         }
                     }
                 }
+                // The run's own ask is judged as a joiner is (#1156 review): at the free memory
+                // serve was given, which a wait on the card mutex may have moved from this ask's.
+                const bool failed_run = kept->contains("failed") || kept->contains("refused");
+                if (!fell_back && !failed_run && served_free_at) {
+                    kept_free_at = served_free_at;
+                    fresh        = false;
+                }
                 serve_plans_running_.erase(running_key);
-                runs.set_value(*kept);
+                runs.set_value(ServeRun{*kept, kept_free_at});
             } catch (...) {
                 // The listing's read failed: the asks waiting on this run fail as this one does.
                 std::lock_guard lock(sizes_mutex_);
@@ -1822,6 +1865,7 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         plans_.clear();
         plan_now_.clear();
         serve_free_at_.clear();
+        serve_replan_failed_at_.clear();
     }
     if (now_out != nullptr) { *now_out = now; }
     // A table kept by another request while this one planned: this plan is not the latest.
@@ -3398,6 +3442,7 @@ void App::install(httplib::Server& server) {
                 plans_.clear();
                 plan_now_.clear();
                 serve_free_at_.clear();
+                serve_replan_failed_at_.clear();
             }
             catalog_wake_ = true;
             const auto now = convert::hub_token();
