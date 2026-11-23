@@ -1676,22 +1676,32 @@ void test_hub_plan_via_serve() {
             for (std::string line; std::getline(in, line);) { ++count; }
             return count;
         }();
-        free += 1ULL << 30; // a move again, within the failure's back-off: no serve run
-        const auto backed_off   = client.Get(ask);
-        const int after_backoff = [&] {
+        const auto runs_now = [&] {
             std::ifstream in(root / "runs.txt");
             int count = 0;
             for (std::string line; std::getline(in, line);) { ++count; }
             return count;
-        }();
+        };
+        // Within the step of where it failed (still past the step from the kept document's point):
+        // the back-off holds, no serve run.
+        free += 100ULL << 20;
+        const auto backed_off   = client.Get(ask);
+        const int after_backoff = runs_now();
+        // A move from where it failed (a model unloaded): serve plans again within the window.
+        free += 1ULL << 30;
+        const auto moved_on    = client.Get(ask);
+        const int after_moving = runs_now();
         server.stop();
         thread.join();
         const auto kept_doc =
             backed_off ? nlohmann::json::parse(backed_off->body, nullptr, false) : nlohmann::json();
         check(backed_off && backed_off->status == 200 && after_failed == 2 && after_backoff == 2 &&
                   kept_doc.is_object() && kept_doc.contains("now") && kept_doc["now"].is_null(),
-              "a failed re-plan backs off: the next move runs no serve (" +
+              "a failed re-plan backs off at the card it failed at (" +
                   std::to_string(after_failed) + " then " + std::to_string(after_backoff) +
+                  " runs)");
+        check(moved_on && moved_on->status == 200 && after_moving == 3,
+              "a move from where the re-plan failed plans again (" + std::to_string(after_moving) +
                   " runs)");
         const auto doc =
             again ? nlohmann::json::parse(again->body, nullptr, false) : nlohmann::json();

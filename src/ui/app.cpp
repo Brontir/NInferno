@@ -1333,7 +1333,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                 const auto failed_at   = serve_replan_failed_at_.find(key);
                 const bool backing_off = failed_at != serve_replan_failed_at_.end() &&
                                          clock_now() - failed_at->second.at < kFailureKeptSeconds &&
-                                         failed_at->second.point &&
+                                         failed_at->second.point && point_now &&
                                          same_now_point(*failed_at->second.point, *point_now);
                 if (failure ? clock_now() - it->second.value("at", std::int64_t{0}) <
                                   kFailureKeptSeconds
