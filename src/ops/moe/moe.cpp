@@ -890,9 +890,11 @@ struct ClassA8Route {
 //          Q5_K gate/up at T = 5..8, w4r2 against w4r1 / the register MMA: RTX 3090 142.3 /
 //          158.7 / 173.1 / 185.3 us against 136.2 / 156.7 / 174.1 / 185.3 and 156.7 / 173.1 /
 //          192.5 / 200.7; RTX 3060 326.7 / 371.7 / 428.0 / 452.6 against 335.9 / 395.3 / 458.8
-//          / 488.5 and 341.0 / 389.1 / 436.2 / 455.7: w4r1 behind the register MMA from T = 6
-//          on the 3060 (+1.6..+7.2 %), w4r2 ahead of it on both cards. T = 1..4 keep w4r1
-//          (best or tied on both); their 2-bit rows keep w4r1 (decision 101's end-to-end A/B).
+//          / 488.5 and 341.0 / 389.1 / 436.2 / 455.7: on the 3060 w4r1 falls behind the register
+//          MMA from T = 6 (+1.6..+7.2 %) and w4r2 leads both, so ga106's Q5_K row is w4r2 at T =
+//          5..8; on the 3090 w4r1 is ahead of w4r2 at T = 5 / 6 (-4.3 / -1.3 %) and level at 7 / 8,
+//          so ga102 keeps w4r1 (its entry is all w4r1: measured, not the fallback). T = 1..4 keep
+//          w4r1 on both; their 2-bit rows keep w4r1 (decision 101's end-to-end A/B).
 // Rows: IQ2_XXS, IQ2_XS, IQ2_S, Q5_K (A8Route::kRowFormats).
 // R8 schedules (NINFERNO_MOE_R8_SCHEDULES): 0 w4r1, 1 w4r2, 2 w8r1, 3 w2r1.
 constexpr ClassA8Route kA8Routes[] = {
@@ -901,7 +903,7 @@ constexpr ClassA8Route kA8Routes[] = {
      {{{{0, 0, 0, 1, 1, 1, 1, 1}, {0, 0, 0, 0, 0, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 0}}}, -1}},
     {measured::kRtx5080,
      {{{{0, 0, 1, 1, 1, 1, 1, 1}, {0, 1, 1, 1, 1, 1, 1, 1}, {0, 0, 0, 3, 3, 3, 3, 0}}}, 3}},
-    {measured::kRtx3090, {{{{}, {}, {}, {0, 0, 0, 0, 1, 1, 1, 1}}}, -1}},
+    {measured::kRtx3090, {{}, -1}},
     {measured::kRtx3060, {{{{}, {}, {}, {0, 0, 0, 0, 1, 1, 1, 1}}}, -1}},
 };
 static_assert(measured_boards_known(std::span(kA8Routes)));

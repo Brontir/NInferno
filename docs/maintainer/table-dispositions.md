@@ -75,9 +75,9 @@ takes. Every other R8 bank takes w4r1 at every T.
 each quantized activation once for both rows, so it pays only where a row's weights are the fewest
 bytes per value and the activation reads are the largest share. That is why the 2-bit formats
 have a row. The activation reads also grow with T, so a wider call shifts the same balance: on
-GA10x, whose R8 band reaches eight tokens for Q5_K (decision 101), w4r2 takes Q5_K at T = 5..8
-(measured on the RTX 3090 and 3060). Every other format takes w4r1. The rows are declared from
-those sweeps.
+the RTX 3060, whose R8 band reaches eight tokens for Q5_K (decision 101), w4r2 takes Q5_K at
+T = 5..8 (on the RTX 3090 w4r1 stays ahead). Every other format takes w4r1. The rows are
+declared from those sweeps.
 
 **What cannot be derived now.**
 - The per-T edge (w4r1 to w4r2 for IQ2_XXS at T = 4 on the RTX 5090 and T = 3 on the 5080, for
@@ -88,8 +88,8 @@ those sweeps.
 - The down schedule (2 x 2 on the RTX 4090, 4 x 1 on the 5080) is a 1-2 % effect at Qwen3.6 decode.
 
 **Disposition: declared.**
-- Rows (RTX 4090, 5090, 5080, 3090, 3060): measured with `bench/ops/moe_bench.cu --a8 1 --plans sweep`, the
-  numbers in `moe.cpp` beside the table. `Measured` on those boards; `Carried` within distance 1.0
+- Rows (RTX 4090, 5090, 5080, 3090, 3060): measured with
+  `bench/ops/moe_bench.cu --a8 1 --plans sweep`, the numbers in `moe.cpp` beside the table. `Measured` on those boards; `Carried` within distance 1.0
   (RTX PRO 6000 Blackwell 0.35 from the 5090, RTX 5070 Ti 0.57 and the laptop 5090 0.13 from the
   5080, RTX 4090 D, 6000 Ada and L40 at 0.17 / 0.43 / 0.58 from the 4090).
 - Fallback literal (`kFallbackA8Route`): w4r1 on gate/up at every T, the register MMA on the down.
@@ -99,13 +99,16 @@ those sweeps.
   was measured against it (RTX 4060 Ti) every schedule is within 1..3 % of w4r1: the literal's cost,
   where measured, is at most that.
 - Rows (RTX 3090, 3060, #1166): `Measured` on the 3090 and the 3060 (three SKUs share its facts);
-  `Carried` within distance 1.0 of either (the 3090 Ti, 3080 family, A10 / A10G, A40, A5000..A6000,
-  the 3060 8 GB and laptop parts, A2000). The other GA10x cards (RTX 3070 and 3070 Ti, 3060 Ti,
-  3050, A4000, A4500, A2, A1000) are outside both cards' reach: they take the literal, so Q5_K runs
-  w4r1 on GA10x's widened band at T = 5..8 there, unmeasured (decision 101: w4r1 led the register
-  MMA by 8-13 % on the 3090 and trailed it by up to 7 % on the 3060 at T = 6..8).
+  `Carried` within distance 1.0 of either (the 3090 Ti, 3080 family, A10 / A10G, A40,
+  A5000..A6000, the 3060 8 GB and laptop parts, A2000). The 3060's Q5_K row is w4r2 at T = 5..8;
+  the 3090's entry is w4r1 throughout (measured ahead of w4r2 at T = 5 / 6, level at 7 / 8). The
+  other GA10x cards (RTX 3070 and 3070 Ti, 3060 Ti, 3050, A4000, A4500, A2, A1000) are outside
+  both cards' reach: they take the literal, so Q5_K runs w4r1 on GA10x's widened band at
+  T = 5..8 there, unmeasured (moe.cpp's sweep: w4r1 led the register MMA by 7.7-13 % at T = 5..8
+  on the 3090 and trailed it by up to 7 % at T = 6..8 on the 3060).
 - The literal answers 113 of 156 rows (`None` 113, `Incomplete` 0): every Turing and Volta card,
-  the GA100 cards and the GA10x cards above (no row in reach), every Ada card outside distance 1.0 of the 4090 (RTX 4080 and
+  the GA100 cards and the GA10x cards above (no row in reach), every Ada card outside distance
+  1.0 of the 4090 (RTX 4080 and
   SUPER, the 4070 and 4060 families, L4, RTX 2000..5000 Ada, the Ada laptop parts), and the consumer
   Blackwell cards outside reach of the 5090 and 5080: the RTX 5070, 5060 Ti, 5060, 5050, their newly
   listed laptop parts and PRO 2000 / 4000 SFF / 5000 (`None`). L40S, RTX PRO 6000 Blackwell Server
