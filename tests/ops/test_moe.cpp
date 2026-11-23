@@ -1134,6 +1134,12 @@ int check_r8_table() {
     const TempDir scratch("ninferno_test_moe_r8_routes");
     const auto file        = scratch.path() / "routes.json";
     const std::string path = utf8_path(file); // the route-table API takes UTF-8
+    // The IQ2_XXS bank's own R8 limit, not the generation's: GA10x's published IQ2_XXS gate/up
+    // banks take R8 to eight tokens (ga10x_iq2xxs_r8_wide, #1166).
+    Weight iq2_bank;
+    iq2_bank.qtype               = QType::GGML_IQ2_XXS;
+    iq2_bank.layout              = QuantLayout::GgmlBlocks;
+    const std::int32_t iq2_limit = moe::r8_token_limit(iq2_bank);
     {
         std::ofstream f(file);
         const auto entry = [](const char* format, const std::string& plan, int t_max = 16) {
@@ -1144,7 +1150,7 @@ int check_r8_table() {
         f << R"({"schema": "ninferno-route-table/1", "gpu": {"class": ")" << ops::route_gpu_class()
           << R"("}, "entries": [], "moe": [)" << entry("iq3xxs", tuned) << ", "
           << entry("iq2s", tuned + "|a16") << ", "
-          << entry("iq2xxs", "r8.w4r1|" + tuned_down, moe::r8_token_limit()) << "]}";
+          << entry("iq2xxs", "r8.w4r1|" + tuned_down, iq2_limit) << "]}";
     }
     const auto status = ops::load_route_table(path);
     if (!status.loaded) {
@@ -1164,12 +1170,19 @@ int check_r8_table() {
         c.expert_bias = false; c.shared_gate = false;
         c.epilogue = ops::MoeEpilogue::Store;
         const Layer l = make_layer(c, seed += 2);
+        if (q == QType::GGML_IQ2_XXS && moe::r8_token_limit(l.weights.gate_up) != iq2_limit) {
+            std::cerr << c.label << ": the layer's IQ2_XXS bank takes R8 to "
+                      << moe::r8_token_limit(l.weights.gate_up) << " tokens, the table's band to "
+                      << iq2_limit << '\n';
+            ++failures;
+            continue;
+        }
         const auto x = random_bf16(static_cast<std::size_t>(16) * c.hidden, seed + 21, -1.0, 1.0);
         const std::vector<std::uint16_t> residual(x.size(), 0);
         for (std::int32_t t = 1; t <= 16; ++t) {
             const auto p = moe::select_plan(l.weights, c.config, t, false);
             const std::string name = moe::plan_name(p);
-            const bool decode      = t <= moe::r8_token_limit();
+            const bool decode = t <= (q == QType::GGML_IQ2_XXS ? iq2_limit : moe::r8_token_limit());
             std::string expected;
             if (q == QType::GGML_IQ3_XXS) {
                 // The measured down (1 x 4, which the heuristic route would take to the class's

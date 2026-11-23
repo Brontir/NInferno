@@ -176,7 +176,8 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      kConservative,
      "no sweep"},
     // The two cards disagree above four tokens on Q4_K and Q5_K and both lose Q6_K there: a wider
-    // limit needs both, so the generation keeps four.
+    // limit needs both, so the generation keeps four. The cells below widen it per format where
+    // both cards and an end-to-end run agree (Q3_K, Q5_K, IQ2_XXS: ga10x_*_r8_wide).
     {"r8_token_limit: ga10x",
      Regime::TokenLimit,
      "ga10x",
@@ -385,7 +386,8 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      "NINFERNO_LAB_R8_TOKENS (#1166)",
      Disposition::Applied,
      ArchRequires{.mma_tensor = Need::Yes}},
-    // GA10x's IQ2_XXS (published layout; a ggml_frag_v1 bank takes the frag rules above): R8
+    // GA10x's IQ2_XXS (published layout; ggml_frag_v1 has no IQ2_XXS today, so the frag exclusion
+    // is defensive and such a bank would take the frag rules above): R8
     // wins on both cards at the kernel and end to end, Qwen3.6-35B-A3B UD-IQ2_XXS (80 IQ2_XXS
     // gate/up banks) on both and Gemma 4 26B-A4B UD-IQ2_M (29 of 30) on the RTX 3090 (#1166).
     {"ga10x_iq2xxs_r8_wide",

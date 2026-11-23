@@ -3389,6 +3389,11 @@ At the kernel (`moe_bench --plans sweep --a8 1`, E 256, H 2048, F 512, the lab l
 
 `moe_expert_law.py` admits the same, and `routes/moe_pick`'s Q5_K layers move to R8 at T 1..8 (`pick --rebands`).
 
+Two limits of the evidence:
+- The pick change is an admission change, not a new law. `pick --rebands` moved the Q5_K layers of ga102 (E40, E256, q5k/q6k) and ga106 (q5k/q6k) to R8 `w2r1` gate/up with the register-MMA down at T 5..8, priced by the law, with no new sealed grid of those layers.
+- The RTX 3060's Q5_K is measured at the kernel only. No Q5_K MoE model fits its 12 GB. Outside a pick key the decode heuristic runs `w4r1`, not the sweep's best R8 plan, and the generation record has the 3060's forced `w4r1` at -1..+6 % against the register MMA at T 5..8 (Qwen3.6-35B's shape). A kernel sweep at Gemma 4 26B-A4B's shape on both cards checks this; it follows in #1166.
+- Under an A16-only activation policy (no R8), a moved pick band no longer applies. On the RTX 3090 the granite Q5_K plan golden loses its T 5..8 pick (`rmma.m1.n1.w1x8|rmma.m1.n1.w2x2`) and takes the decode heuristic's `w1x8|w1x4` at T 1..32. The A8 policy, which decode uses by default, keeps the pick.
+
 **Not taken.**
 - Frag Q4_K: the cards still disagree, as before. The 3090 gains +3.7..+5.1 % end to end (repeated +3.9..+4.9 %); the 3060's kernel sweep has the register MMA 6-8 % ahead, and no frag Q4_K model fits its 12 GB for an end-to-end check.
 - The 3-bit codebooks (frag IQ3_XXS, IQ3_S) and MXFP4 lose or tie.

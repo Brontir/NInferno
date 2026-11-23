@@ -297,6 +297,19 @@ static_assert(
 static_assert(regime::r8_limit_answer(kGa10x(false),
                                       {QType::GGML_Q3_K, QuantLayout::GgmlPlanes, 0.0})
                   .limit == moe::kR8NarrowTokens);
+// #1166: published Q5_K and IQ2_XXS widen to eight on tensor mma.sync builds only.
+static_assert(
+    regime::r8_limit_answer(kGa10x(true), {QType::GGML_Q5_K, QuantLayout::GgmlBlocks, 0.0}).limit ==
+    moe::kR8Tokens);
+static_assert(regime::r8_limit_answer(kGa10x(false),
+                                      {QType::GGML_Q5_K, QuantLayout::GgmlBlocks, 0.0})
+                  .limit == moe::kR8NarrowTokens);
+static_assert(regime::r8_limit_answer(kGa10x(true),
+                                      {QType::GGML_IQ2_XXS, QuantLayout::GgmlBlocks, 0.0})
+                  .limit == moe::kR8Tokens);
+static_assert(regime::r8_limit_answer(kGa10x(false),
+                                      {QType::GGML_IQ2_XXS, QuantLayout::GgmlBlocks, 0.0})
+                  .limit == moe::kR8NarrowTokens);
 
 int main() {
     check_records();
