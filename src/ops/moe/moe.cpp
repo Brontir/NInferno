@@ -1933,13 +1933,23 @@ void record_plan(const MoeWeights& w, const MoeConfig& c, std::int32_t t, bool p
                   sms};
     const std::lock_guard lock(mutex);
     if (!seen.insert(key).second) return;
+    std::ofstream file(path, std::ios::app);
+    const auto failed = [&] {
+        // A failed write leaves the key unseen, so the next call of this shape tries again.
+        seen.erase(key);
+        if (!warned) {
+            warned = true;
+            std::fprintf(stderr, "NINFERNO_MOE_PLAN_RECORD: cannot write %s\n", path);
+        }
+    };
+    // An unwritable path costs only the failed open, not a second plan query.
+    if (!file.is_open()) return failed();
     const MoePlanQuery q = moe_plan_query(w, c, t, prefill);
     const auto bank      = [](const Weight& b) {
         return std::string(generic::qtype_name(b.qtype)) +
                (b.layout == QuantLayout::GgmlFrag ? ".frag" : "");
     };
     const std::int32_t pad = w.gate_up.k - w.router.k;
-    std::ofstream file(path, std::ios::app);
     file << bank(w.gate_up) << ' ' << bank(w.down) << " E" << w.router.n << " k" << c.top_k << " H"
          << w.router.k << (pad != 0 ? " pad" + std::to_string(pad) : std::string()) << " F"
          << w.down.k << " p" << static_cast<int>(w.expert_policy) << " T=" << t
@@ -1948,13 +1958,7 @@ void record_plan(const MoeWeights& w, const MoeConfig& c, std::int32_t t, bool p
                        : " speed ")
          << plan_name(q.plan) << ' ' << authority_name(q.authority) << '\n';
     file.flush();
-    if (file.good()) return;
-    // A failed write leaves the key unseen, so the next call of this shape tries again.
-    seen.erase(key);
-    if (!warned) {
-        warned = true;
-        std::fprintf(stderr, "NINFERNO_MOE_PLAN_RECORD: cannot write %s\n", path);
-    }
+    if (!file.good()) failed();
 }
 
 } // namespace
