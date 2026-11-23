@@ -1041,6 +1041,28 @@ void test_refusal_now() {
           "an exclusive card an MPS server holds takes an MPS client");
     free_card.compute_mode = 1;
     check(!free_card.refusal_now().empty(), "an exclusive-thread card is refused even under MPS");
+    // The hold's class (a kept `now` answers while it holds, #1147): another holder of a held card
+    // is the same class; held or free, a mode change and an MPS server are not.
+    GpuStat a, b;
+    a.compute_mode = b.compute_mode = 3;
+    a.processes                     = {{1, 0}};
+    b.processes                     = {{2, 0}};
+    check(a.hold_class() == b.hold_class() && a.refusal_now() != b.refusal_now(),
+          "a new holder of a held exclusive card keeps the hold class");
+    b.processes.clear();
+    check(a.hold_class() != b.hold_class(), "held and free are two classes");
+    b.processes = {{2, 0, true}};
+    check(a.hold_class() != b.hold_class(), "an MPS server's hold is its own class");
+    b.compute_mode = 0;
+    a.compute_mode = 2;
+    check(a.hold_class() == "2" && b.hold_class() == "0",
+          "the default and prohibited modes are classes by the mode alone");
+    GpuStat held;
+    held.compute_mode = 3;
+    held.processes    = {{7, 0}};
+    check(held.refusal_now("your running model").find("your running model (process 7) holds it") !=
+              std::string::npos,
+          "a holder that is this UI's child is named, its pid beside the name");
     check(ninferno::ui::is_mps_server("/usr/bin/nvidia-cuda-mps-server") &&
               ninferno::ui::is_mps_server("C:\\x\\nvidia-cuda-mps-server.exe") &&
               ninferno::ui::is_mps_server("nvidia-cuda-mps-server") &&
@@ -1647,9 +1669,40 @@ void test_hub_plan_via_serve() {
         const std::string ask = "/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF";
         const auto first      = client.Get(ask);
         free += 1ULL << 30;
-        const auto again = client.Get(ask);
+        const auto again       = client.Get(ask);
+        const int after_failed = [&] {
+            std::ifstream in(root / "runs.txt");
+            int count = 0;
+            for (std::string line; std::getline(in, line);) { ++count; }
+            return count;
+        }();
+        const auto runs_now = [&] {
+            std::ifstream in(root / "runs.txt");
+            int count = 0;
+            for (std::string line; std::getline(in, line);) { ++count; }
+            return count;
+        };
+        // Within the step of where it failed (still past the step from the kept document's point):
+        // the back-off holds, no serve run.
+        free += 100ULL << 20;
+        const auto backed_off   = client.Get(ask);
+        const int after_backoff = runs_now();
+        // A move from where it failed (a model unloaded): serve plans again within the window.
+        free += 1ULL << 30;
+        const auto moved_on    = client.Get(ask);
+        const int after_moving = runs_now();
         server.stop();
         thread.join();
+        const auto kept_doc =
+            backed_off ? nlohmann::json::parse(backed_off->body, nullptr, false) : nlohmann::json();
+        check(backed_off && backed_off->status == 200 && after_failed == 2 && after_backoff == 2 &&
+                  kept_doc.is_object() && kept_doc.contains("now") && kept_doc["now"].is_null(),
+              "a failed re-plan backs off at the card it failed at (" +
+                  std::to_string(after_failed) + " then " + std::to_string(after_backoff) +
+                  " runs)");
+        check(moved_on && moved_on->status == 200 && after_moving == 3,
+              "a move from where the re-plan failed plans again (" + std::to_string(after_moving) +
+                  " runs)");
         const auto doc =
             again ? nlohmann::json::parse(again->body, nullptr, false) : nlohmann::json();
         check(first && first->status == 200 && again && again->status == 200 && doc.is_object() &&
@@ -1662,8 +1715,13 @@ void test_hub_plan_via_serve() {
     // first's document, never starts a second child.
     {
         fs::remove(root / "runs.txt");
+        fs::remove(root / "child-started");
+        // The child notes its start, then holds 2 s: the second ask below starts only after that
+        // note, so it meets the run in flight (within those 2 s), not a document already kept
+        // (#1147 review).
         std::ofstream(root / "serve-slow")
-            << "#!/bin/sh\nsleep 1\nexec '" << (root / "serve-plan").string() << "' \"$@\"\n";
+            << "#!/bin/sh\n: > '" << (root / "child-started").string() << "'\nsleep 2\nexec '"
+            << (root / "serve-plan").string() << "' \"$@\"\n";
         fs::permissions(root / "serve-slow", fs::perms::owner_all);
         UiOptions options;
         options.serve_binary = root / "serve-slow";
@@ -1679,16 +1737,20 @@ void test_hub_plan_via_serve() {
             const auto res = client.Get("/api/plan?gpu=0&par=1&ctx=4096&repo=org/m-GGUF");
             return res ? res->status : 0;
         };
-        auto first        = std::async(std::launch::async, ask);
-        auto second       = std::async(std::launch::async, ask);
-        const int status1 = first.get();
+        auto first = std::async(std::launch::async, ask);
+        for (int i = 0; i < 200 && !fs::exists(root / "child-started"); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        const bool overlapped = fs::exists(root / "child-started");
+        auto second           = std::async(std::launch::async, ask);
+        const int status1     = first.get();
         const int status2 = second.get();
         server.stop();
         thread.join();
         std::ifstream runs(root / "runs.txt");
         int count = 0;
         for (std::string line; std::getline(runs, line);) { ++count; }
-        check(status1 == 200 && status2 == 200 && count == 1,
+        check(overlapped && status1 == 200 && status2 == 200 && count == 1,
               "two asks of one key at once: one serve run (" + std::to_string(count) + ")");
     }
     // Two asks of different keys at once: two serve runs, one after the other on the card (a child
