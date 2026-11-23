@@ -458,11 +458,12 @@ void read_predicted(const std::string& path, Table& table) {
             check_bands(bands, where);
             // Lab: a T 1-8 band (gen18.py) is read only under NINFERNO_LAB_PICK_T18=1; without
             // it that entry is left out, so one file serves both arms of the A/B.
-            if (!lab_pick_t18() && !bands.empty() && bands.front().t_min < kPredictedMinTokens) {
+            if (!detail::generic::lab_pick_t18() && !bands.empty() &&
+                bands.front().t_min < kPredictedMinTokens) {
                 continue;
             }
             for (const RouteBand& b : bands) {
-                if (b.t_min < (lab_pick_t18() ? 1 : kPredictedMinTokens) ||
+                if (b.t_min < (detail::generic::lab_pick_t18() ? 1 : kPredictedMinTokens) ||
                     b.t_max > kPredictedMaxTokens) {
                     refuse("a predicted band outside T " + std::to_string(kPredictedMinTokens) +
                                "-" + std::to_string(kPredictedMaxTokens),
