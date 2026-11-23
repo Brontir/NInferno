@@ -3370,3 +3370,26 @@ The IQ4_XS row is mmq ahead by 28.4 / 28.9 / 28.3 %.
 **Decision.** One table. A `vec_cap_*` rule is a generation scope, listed once in `format_rules.h` `kVecCapScopes` with its `ArchRequires` (GA10x and consumer Blackwell: sm_86 / sm_120; Turing: `format_requires::kR8VerifyTuring`; GA10x alone: sm_86). A row's `value` is its cap: the widest T the vector kernel keeps for the row's formats. `vec_rule_max_tokens` takes the least cap of the rows that name the call's format under the scopes the card meets, else `kVecRuleMaxTokens` (4). The least cap is the old precedence (GA10x's two ahead of three), so no selection moves: the selector goldens and the decision atlas are unchanged. `vec_cap_ga10x_two` is renamed `vec_cap_ga10x` (the cap is the row's, not the rule's). The three constants and their descriptors go; the rows' records hold their A/Bs. `ninferno_format_rules_test` holds the shape: a vec cap row's value is a width below four, each scope names a rule of its own that `kAllRules` lists, and `vec_cap` reads every row back.
 
 **Not taken.** A cap field on every `FormatRule` row (most rules have no generation), and a counted bound from the cards' integer issue per DRAM byte (#998: the edge in T still differs by card within a generation, so the rows stay measured).
+
+## 103. The vector kernel stops at two tokens for Q4_0 on GA10x, Turing and Ada (#1160, 23.11, measured)
+
+**The question.** The decode grids of #1160 (master, T 1-8, every route timed) put Q4_0's vector kernel 1.1-1.5x behind the register MMA n1.w1x4 at T 3..4 on most Q4_0 shapes of the RTX 3060, 3090 and 4090. No Q4_0 model had been run end to end on the stands, so the rule had never been checked for Q4_0. Does a cap at two pay end to end? (With the cap, T 3..4 goes to the register MMA on GA10x and Ada, and to R8 `r8.w4r2` on Turing, `r8_verify_two_rows_turing`.)
+
+**Measurement.** google's Gemma 4 QAT Q4_0 (12B, or 31B where it fits), `--spec off`, default activations, 4 alternating server starts, vec at T = 2 only (lab/vec-max8, `NINFERNO_LAB_VEC_MAX=2`) against master's T = 2..4:
+
+| card | model | C2 | C3 | C4 |
+|---|---|---|---|---|
+| RTX 3060 | 12B | 0.0 % | +1.4 % | +8.6 % |
+| RTX 3090 | 31B (four streams) | 0.0 % | +5.3 % | +12.3 % |
+| RTX 2080 Ti | 12B | 0.0 % | +1.4 % | +3.7 % |
+| RTX 4070 Ti | 12B | 0.0 % | +1.4 % | +1.5 % |
+| RTX 4060 Ti | 12B | 0.0 % | +0.7 % | +0.9 % |
+| RTX 4090 | 31B (four streams) | 0.0 % | +0.9 % | +0.5 % |
+| RTX 5070 Ti | 12B | 0.0 % | +1.4 % | +1.1 % |
+| RTX 5090 | 31B | 0.0 % | -2.1 % | -4.0 % |
+
+A cap at three keeps the C4 part (RTX 3060 +8.5 %, 4070 Ti +1.4 %, 5070 Ti +1.1 %) and gives up C3's. The real branch against master: RTX 3060 C4 +8.8 %, C3 +1.4 %; RTX 2080 Ti C4 +3.5 %, C3 +1.3 %.
+
+**Decision.** Rows of decision 102's table, cap 2 for Q4_0: `vec_cap_ga10x` (two cards), `vec_cap_turing` (one card) and a new scope `vec_cap_ada` (sm_89, three cards, small gains). The new scope is one rule and one line in `kVecCapScopes`.
+
+**Not taken.** Consumer Blackwell: the two cards split (RTX 5070 Ti +1.1 %, RTX 5090 -4.0 %), so vec keeps T 3..4 there. Volta: not measured for Q4_0, and vec leads at T 3..4 there for the K-quants (#1153). The Turing row rests on one card (the lab's only Turing board), as the other `vec_cap_turing` rows do: a second Turing card re-checks it.

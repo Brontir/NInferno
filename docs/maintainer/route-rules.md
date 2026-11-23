@@ -106,6 +106,7 @@ The guard is a text scan, and the list is not every literal comparison in `gener
   which formats take the wider tile. The format sets of the measured per-format rules
   (`light_step`, `tall_tile`, `mmq_verify`, `w4a8_ws_tuned`, `r8_verify`, `vec_cap_ga10x_gb20x`,
   `r8_verify_emulated_off`, `r8_verify_two_rows_turing`, `vec_cap_turing`, `vec_cap_ga10x`,
+  `vec_cap_ada`,
   `mmq_verify_turing_low`) are not this record's:
   they are `format_rules.h`'s rows (below), held by `ninferno_format_rules_test` and
   `ninferno_format_traits_test`;
@@ -218,9 +219,9 @@ The measured per-format rules of the selection are rows of `src/ops/generic/form
 Blackwell), `r8_verify_emulated_off` (the K-quants `r8_verify_takes` leaves to
 the register MMA on Turing), `r8_verify_two_rows_turing` (the formats whose Turing verify R8 takes two
 rows a warp from T = 3), `vec_cap_turing` (the vector kernel's caps on Turing), `vec_cap_ga10x`
-(its caps on GA10x alone), `mmq_verify_turing_low` (the formats Turing keeps on mmq below
+(its caps on GA10x alone), `vec_cap_ada` (its caps on Ada), `mmq_verify_turing_low` (the formats Turing keeps on mmq below
 `kMmqVerifyMinTokens`), and the two thresholds `kR8VerifyQ40MinValues` and `kMmqVerifyMinTokens`,
-which are defined there. The three `vec_cap_*` rules are one table: a rule a generation scope
+which are defined there. The four `vec_cap_*` rules are one table: a rule a generation scope
 (`kVecCapScopes`, an `ArchRequires` each), a cap a row (`value`, the widest T the vector kernel
 keeps for the row's formats); `vec_rule_max_tokens` takes the least cap of the rows naming the
 call's format under the scopes its card meets, else `kVecRuleMaxTokens`. A new cap is a row, a new

@@ -80,6 +80,7 @@ enum class Rule : std::uint8_t {
     R8VerifyTwoRowsTuring, // rules_r8: formats whose Turing verify R8 takes two rows a warp
     VecCapTuring,          // vec_rule_max_tokens: the vector kernel's caps on Turing
     VecCapGa10x,           // vec_rule_max_tokens: the vector kernel's caps on GA10x alone
+    VecCapAda,             // vec_rule_max_tokens: the vector kernel's caps on Ada
     MmqVerifyTuringLow,    // mmq_verify_rule: the formats Turing keeps on mmq below
                            // kMmqVerifyMinTokens
 };
@@ -96,6 +97,7 @@ inline constexpr std::array kAllRules = {Rule::LightStep,
                                          Rule::R8VerifyTwoRowsTuring,
                                          Rule::VecCapTuring,
                                          Rule::VecCapGa10x,
+                                         Rule::VecCapAda,
                                          Rule::MmqVerifyTuringLow};
 
 constexpr std::string_view rule_name(Rule rule) {
@@ -124,6 +126,8 @@ constexpr std::string_view rule_name(Rule rule) {
         return "vec_cap_turing";
     case Rule::VecCapGa10x:
         return "vec_cap_ga10x";
+    case Rule::VecCapAda:
+        return "vec_cap_ada";
     case Rule::MmqVerifyTuringLow:
         return "mmq_verify_turing_low";
     }
@@ -403,10 +407,11 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "IQ3_XXS 4096x4096 30.8 / 34.5 against 25.5 / 27.4, IQ4_XS 4096x4096 24.6 / 27.0 against "
      "24.5 / 25.3, Q4_0 12288x4096 60.2 / 68.6 against 57.9 / 59.9; at T = 2 within 1 %, where "
      "w4r1 is ahead for IQ4_XS and Q4_0. Not timed: the other R8 formats (NVFP4, MXFP4, U4 "
-     "zero-point, the native Q3-Q6 groups), which keep w4r1. The shipped picks do not change "
-     "today: vec takes T = 2..4 for these formats (kVecRuleMaxTokens) and r8_verify_widest is 4, "
-     "so the rule decides where vec declines a call, under NINFERNO_LAB_NO_VEC_RULE and in the "
-     "dense tuner's R8 candidate"},
+     "zero-point, the native Q3-Q6 groups), which keep w4r1. For IQ3_S, IQ3_XXS and IQ4_XS vec "
+     "takes T = 2..4 (kVecRuleMaxTokens) and r8_verify_widest is 4, so the rule decides where vec "
+     "declines a call, under NINFERNO_LAB_NO_VEC_RULE and in the dense tuner's R8 candidate; for "
+     "Q4_0 vec stops at T = 2 on Turing (vec_cap_turing, #1160), so this rule makes the shipped "
+     "pick at T = 3..4 (r8.w4r2)"},
 
     // --- vec_cap_turing: the vec band stops at two tokens on Turing (#1038) ---
     {Rule::VecCapTuring, Basis::Measured, FormatSet{Q::GGML_Q4_K, Q::GGML_Q6_K}, 2, "tu102:68sm",
@@ -422,7 +427,15 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      Evidence::Carried, "#1038", "2026-11-19",
      "Q3_K and Q5_K follow Q4_K / Q6_K, whose register-MMA verify they share (R8VerifyEmulatedOff: "
      "Q3_K timed at kernel level, Q5_K carried): not timed end to end. Not in the rule: IQ4_XS "
-     "(capped at T = 2: -0.05 / +0.93 / -0.74 %) and every format R8 verifies"},
+     "(capped at T = 2: -0.05 / +0.93 / -0.74 %) and the other formats R8 verifies (Q4_0 has its "
+     "own row below, #1160)"},
+    {Rule::VecCapTuring, Basis::Measured, FormatSet{Q::GGML_Q4_0}, 2, "tu102:68sm", "RTX 2080 Ti",
+     Evidence::SingleCard,
+     "#1160: abvec234.sh q40g12l2080 (lab/vec-max8 NINFERNO_LAB_VEC_MAX=2), abref q40brl2080",
+     "2026-11-23",
+     "Gemma 4 12B QAT Q4_0 (google), --spec off, default activations, vec to T = 2 against "
+     "master's T = 2..4, 4 alternating starts: C = 4 +3.7 %, C = 3 +1.4 %, C = 2 +0.0 %; the "
+     "real branch against master C = 4 +3.5 %, C = 3 +1.3 %"},
 
     // --- vec_cap_ga10x: the vector kernel's caps on GA10x alone (#1152) ---
     {Rule::VecCapGa10x, Basis::Measured, FormatSet{Q::GGML_Q6_K}, 2, "ga106:28sm, ga102:82sm",
@@ -440,6 +453,30 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "3060 +1.4 %, RTX 3090 -4.3 % (T = 2 keeps vec); C = 4 within 0.2 %. Not in the rule: Q4_K "
      "(RTX 3060 C = 3 +1.5 %, C = 2 -1.6 %), Q3_K (RTX 3060 vec ahead: C = 2 -11.6 %, C = 3 "
      "-5.7 %) and the consumer Blackwell cards (not measured at T = 3)"},
+    {Rule::VecCapGa10x, Basis::Measured, FormatSet{Q::GGML_Q4_0}, 2, "ga106:28sm, ga102:82sm",
+     "RTX 3060, RTX 3090", Evidence::TwoCards,
+     "#1160: abvec234.sh q40g12l3060, q40g12c3l3060, q40g31l3090 (lab/vec-max8 "
+     "NINFERNO_LAB_VEC_MAX), abref q40brl3060",
+     "2026-11-23",
+     "google's Gemma 4 QAT Q4_0, --spec off, default activations, vec to T = 2 against master's "
+     "T = 2..4, 4 alternating starts: RTX 3060 (12B) C = 4 +8.6 %, C = 3 +1.4 %; RTX 3090 (31B, "
+     "four streams at most) C = 4 +12.3 %, C = 3 +5.3 %; C = 2 0.0 % on both; the real branch "
+     "against master on the RTX 3060 C = 4 +8.8 %, C = 3 +1.4 %. Grid (rtband T 1-8): Q4_0 vec "
+     "1.10-1.48x behind rmma n1.w1x4 at T = 3..4 on most shapes of both cards"},
+
+    // --- vec_cap_ada: the vector kernel's caps on Ada (#1160) ---
+    {Rule::VecCapAda, Basis::Measured, FormatSet{Q::GGML_Q4_0}, 2,
+     "ad106:34sm, ad104:60sm, ad102:128sm", "RTX 4060 Ti, RTX 4070 Ti, RTX 4090",
+     Evidence::TwoCards,
+     "#1160: abvec234.sh q40g12l4060, q40g12l4070, q40g12c3l4070, q40g31l4090 (lab/vec-max8 "
+     "NINFERNO_LAB_VEC_MAX)",
+     "2026-11-23",
+     "google's Gemma 4 QAT Q4_0, --spec off, default activations, vec to T = 2 against master's "
+     "T = 2..4, 4 alternating starts: C = 4 RTX 4060 Ti +0.9 %, RTX 4070 Ti +1.5 %, RTX 4090 "
+     "(31B) +0.5 %; C = 3 +0.7 / +1.4 / +0.9 %; C = 2 0.0 %. Small, positive on all three. Not "
+     "in the rule: the K-quants (decision 96: the RTX 4070 Ti and 4090 lost with a cap) and "
+     "consumer Blackwell for Q4_0 (RTX 5070 Ti +1.1 %, RTX 5090 31B -4.0 % at C = 4: vec "
+     "ahead on the 5090)"},
 
     // --- mmq_verify_turing_low: the formats Turing keeps on mmq at T < kMmqVerifyMinTokens ---
     {Rule::MmqVerifyTuringLow, Basis::Measured, FormatSet{Q::GGML_IQ4_XS}, 0, "tu102:68sm",
@@ -484,6 +521,7 @@ inline constexpr std::array kVecCapScopes = {
     VecCapScope{Rule::VecCapGa10xGb20x, ArchRequires{.cc_any_of = {{{8, 6}, {12, 0}}}}},
     VecCapScope{Rule::VecCapTuring, format_requires::kR8VerifyTuring},
     VecCapScope{Rule::VecCapGa10x, ArchRequires{.cc_any_of = {{{8, 6}}}}},
+    VecCapScope{Rule::VecCapAda, ArchRequires{.cc_any_of = {{{8, 9}}}}},
 };
 
 // The cap a scope's rows give format q (0: no row names it).
