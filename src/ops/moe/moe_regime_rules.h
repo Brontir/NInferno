@@ -123,6 +123,7 @@ inline constexpr Card kRtx4060Ti{0x2805, "RTX 4060 Ti"};
 inline constexpr Card kRtx4090{0x2684, "RTX 4090"};
 inline constexpr Card kRtx5070Ti{0x2C05, "RTX 5070 Ti"};
 inline constexpr Card kRtx5090{0x2B85, "RTX 5090"};
+inline constexpr Card kQuadroGv100{0x1DBA, "Quadro GV100"};
 
 // The sweep the generation rules rest on: moe_bench (bench/ops/moe_bench.cu), a Qwen3.6-35B-like
 // layer (H 2048, F 512, E 128, k 8, published layout), the gate/up stage forced to R8 w4r1 against
@@ -367,8 +368,8 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      "--a8 1, lab limit 8; end to end C8 / C6 --spec off, 8 alternating starts",
      Disposition::Applied,
      ArchRequires{.mma_tensor = Need::Yes}},
-    // GA10x's Q5_K: the same sign on both cards, but no release quantization has Q5_K gate/up
-    // banks to check it end to end on (UD-Q4_K_M / XL keep Q5_K in the downs), so it is recorded.
+    // GA10x's Q5_K: the same sign on both cards at the kernel, and end to end on Gemma 4
+    // 26B-A4B UD-Q5_K_XL (29 of its 30 gate/up banks Q5_K) on the RTX 3090 (#1166).
     {"ga10x_q5k_r8_wide",
      Regime::Cell,
      "ga10x",
@@ -377,10 +378,34 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      Label::Measured,
      {kRtx3090, kRtx3060},
      "Q5_K, R8 gate/up with the register-MMA down against the register MMA on both stages at "
-     "T = 5..8: RTX 3090 -8.6..-13.7 %, RTX 3060 -1.1..-4.5 %; no end-to-end model",
+     "T = 5..8: RTX 3090 -8.6..-13.7 %, RTX 3060 -1.1..-4.5 %; end to end C5 / C6 / C8 on the RTX "
+     "3090 (Gemma 4 26B-A4B UD-Q5_K_XL) +3.1 / +2.8 / +2.6 % at eight tokens against four",
      "moe_bench Qwen3.6-35B's shape (H 2048, F 512, E 256, k 8), published layout, --plans sweep "
-     "--a8 1, lab limit 8",
-     Disposition::Recorded},
+     "--a8 1, lab limit 8; end to end --spec off, 8 alternating starts, lab/1166-r8-wide "
+     "NINFERNO_LAB_R8_TOKENS (#1166)",
+     Disposition::Applied,
+     ArchRequires{.mma_tensor = Need::Yes}},
+    // GA10x's IQ2_XXS (published layout; a ggml_frag_v1 bank takes the frag rules above): R8
+    // wins on both cards at the kernel and end to end, Qwen3.6-35B-A3B UD-IQ2_XXS (80 IQ2_XXS
+    // gate/up banks) on both and Gemma 4 26B-A4B UD-IQ2_M (29 of 30) on the RTX 3090 (#1166).
+    {"ga10x_iq2xxs_r8_wide",
+     Regime::Cell,
+     "ga10x",
+     +[](const BankFacts& b) {
+         return b.format == QType::GGML_IQ2_XXS && b.layout != QuantLayout::GgmlFrag;
+     },
+     kR8Tokens,
+     Label::Measured,
+     {kRtx3090, kRtx3060},
+     "IQ2_XXS, the best R8 plan against the best register-MMA plan at T = 5..8: RTX 3090 "
+     "-6..-8 %, RTX 3060 -3..-5 %; end to end C5 / C6 / C8 at eight tokens against four: "
+     "Qwen3.6-35B-A3B UD-IQ2_XXS RTX 3090 +3.9 / +3.9 / +2.8 %, RTX 3060 +4.2 / +2.8 / +1.2 %; "
+     "Gemma 4 26B-A4B UD-IQ2_M RTX 3090 +3.2 / +2.3 / +2.7 %",
+     "moe_bench Qwen3.6-35B's shape (H 2048, F 512, E 256, k 8), published layout, --plans sweep "
+     "--a8 1, lab limit 8; end to end --spec off, 8 alternating starts, lab/1166-r8-wide "
+     "NINFERNO_LAB_R8_TOKENS (#1166)",
+     Disposition::Applied,
+     ArchRequires{.mma_tensor = Need::Yes}},
     // --- Measured cells the table does not act on ---
     // The RTX 2080 Ti's Q6_K at four tokens: R8 loses, but the lab has one Turing card, so the
     // limit is not narrowed for it (two cards of a generation move a route); the cause is under
@@ -396,6 +421,22 @@ inline constexpr auto kRegimeRules = std::to_array<RegimeRule>({
      "261.8 against 208.7), T = 3 +2 / +19 %, T = 1 -9 / +10 % (the board's two clock states "
      "between runs)",
      kR8T8Sweep,
+     Disposition::Recorded},
+    // Volta at five to eight tokens: one R8 call beats the split into calls of at most four
+    // (moe_split_tokens) end to end, but the lab has one Volta card, so the limit stays four.
+    {"volta_q4k_r8_t8",
+     Regime::Cell,
+     "volta",
+     +[](const BankFacts& b) { return b.format == QType::GGML_Q4_K; },
+     kR8Tokens,
+     Label::SingleCard,
+     {kQuadroGv100},
+     "Q4_K, the best R8 plan against the FP32-FMA register MMA at T = 5..8: 0.39-0.40 of its "
+     "time; end to end Qwen3.6-35B-A3B UD-Q4_K_M C5 / C6 / C8, one R8 call against the splits "
+     "of four: +7.8 / +8.1 / +2.8 %, repeated +7.9 / +8.2 / +2.8 %",
+     "moe_bench Qwen3.6-35B's shape (H 2048, F 512, E 256, k 8), --plans sweep --a8 1, lab limit "
+     "8; end to end --spec off, 8 alternating starts, lab/1166-r8-wide NINFERNO_LAB_R8_TOKENS "
+     "(#1166)",
      Disposition::Recorded},
 });
 

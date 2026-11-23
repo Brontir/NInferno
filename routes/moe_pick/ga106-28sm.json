@@ -7,7 +7,7 @@
  },
  "source": "tools/bench/moe_expert_law.py pick (the expert-call law v2, #987): priced, not measured",
  "inputs": {
-  "tools/bench/moe_expert_law.py": "c19593dbe2a56c14870bb12159573b4e022e72f08717df0caee548f48b99e868",
+  "tools/bench/moe_expert_law.py": "d820b05454e2067a2e6e44f58c9647a198b95457202749659e2c09d0c3863610",
   "src/ops/generic/data/kernel_facts/sm_86.txt moegemm+moer8": "b9b1d1ac66823d2bee9acc25f7eb1dd87fffe142d1698f5d9c3f150d5cc210ad",
   "src/core/data/warp_inflight/warp_inflight_86_rtx3060.txt": "7ace5009c9291fd7ede445e1f55441fe14bd4151fd9684a7b57e026c2a9bb574",
   "src/core/data/gpu_facts.json archs": "7964780ae27886e65aae639bb45f8ab14813bbb9fa0e3ffdda311df23f8e09bf"
@@ -15,6 +15,6 @@
  "moe": [
   {"format": "q3k", "down_format": "q4k", "frag": ["down"], "experts": 256, "top_k": 8, "hidden": 2048, "inter": 512, "bands": [[1, 8, "r8.w2r1|rmma.m1.n1.w2x2"]]},
   {"format": "q4k", "down_format": "q6k", "frag": ["gate_up"], "experts": 256, "top_k": 8, "hidden": 2048, "inter": 512, "bands": [[1, 2, "r8.w2r1|rmma.m1.n1.w2x2"], [3, 4, "r8.w8r1|rmma.m1.n1.w2x2"], [5, 8, "rmma.m1.n1.w1x8|rmma.m1.n1.w2x2"]]},
-  {"format": "q5k", "down_format": "q6k", "experts": 256, "top_k": 8, "hidden": 2048, "inter": 512, "bands": [[1, 4, "r8.w2r1|rmma.m1.n1.w2x2"], [5, 8, "rmma.m1.n1.w1x8|rmma.m1.n1.w2x2"]]}
+  {"format": "q5k", "down_format": "q6k", "experts": 256, "top_k": 8, "hidden": 2048, "inter": 512, "bands": [[1, 8, "r8.w2r1|rmma.m1.n1.w2x2"]]}
  ]
 }
