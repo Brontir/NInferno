@@ -13,7 +13,7 @@
 // constants the selection compares a call against. The rows up to #615 F6 restate what the
 // comments at the rules' uses say; vec_cap_ga10x_gb20x is new with its own end-to-end A/Bs (#998,
 // DECISIONS 96), the three Turing rules with theirs (#1038, DECISIONS 97), which move the
-// selector goldens of the RTX 2080 Ti board, vec_cap_ga10x_two with its (#1152, DECISIONS 99),
+// selector goldens of the RTX 2080 Ti board, vec_cap_ga10x with its (#1152, DECISIONS 99),
 // which moves the GA10x boards'.
 // mmq_verify_turing_low with its (#1040, DECISIONS 100), which moves the RTX 2080 Ti board's
 // again.
@@ -42,7 +42,8 @@
 //   basis     what the row rests on (route_rules::Basis: Measured, PlacedBetweenMeasured, ...;
 //             Unknown for a carried row);
 //   formats   the formats of the row;
-//   value     a threshold's value (the constant the code reads), 0 for a format-set row;
+//   value     a threshold's value (the constant the code reads), a vec cap row's cap (the widest
+//             T the vector kernel keeps, kVecCapScopes), 0 for any other format-set row;
 //   boards    device class ids (chip:Nsm) of the cards, "none" for a carried row;
 //   cards     the products, comma-separated, "none" for a carried row;
 //   evidence  TwoCards, SingleCard or Carried (above);
@@ -51,6 +52,7 @@
 //   record    the numbers, as the source states them.
 
 #include "core/weight.h"
+#include "ops/generic/format_requires.h"
 #include "ops/generic/route_rules.h"
 
 #include <array>
@@ -72,14 +74,12 @@ enum class Rule : std::uint8_t {
     R8Verify,              // r8_verify_supports: R8 at verify widths
     R8VerifyQ40MinValues,  // kR8VerifyQ40MinValues: Q4_0's verify R8 on a large matrix only
     MmqVerifyMinTokens,    // kMmqVerifyMinTokens: the first width of the mmq verify band
-    VecCapGa10xGb20x,      // vec_rule_max_tokens: the formats whose vec band stops at three tokens
-                           // on GA10x and consumer Blackwell
+    VecCapGa10xGb20x,      // vec_rule_max_tokens: the vector kernel's caps on GA10x and consumer
+                           // Blackwell (a cap a row, kVecCapScopes)
     R8VerifyEmulatedOff,   // r8_verify_takes: formats R8 leaves at verify widths on Turing
     R8VerifyTwoRowsTuring, // rules_r8: formats whose Turing verify R8 takes two rows a warp
-    VecCapTuring,          // vec_rule_max_tokens: the formats whose vec band stops at two tokens
-                           // on Turing
-    VecCapGa10xTwo,        // vec_rule_max_tokens: the formats whose vec band stops at two tokens
-                           // on GA10x
+    VecCapTuring,          // vec_rule_max_tokens: the vector kernel's caps on Turing
+    VecCapGa10x,           // vec_rule_max_tokens: the vector kernel's caps on GA10x alone
     MmqVerifyTuringLow,    // mmq_verify_rule: the formats Turing keeps on mmq below
                            // kMmqVerifyMinTokens
 };
@@ -95,7 +95,7 @@ inline constexpr std::array kAllRules = {Rule::LightStep,
                                          Rule::R8VerifyEmulatedOff,
                                          Rule::R8VerifyTwoRowsTuring,
                                          Rule::VecCapTuring,
-                                         Rule::VecCapGa10xTwo,
+                                         Rule::VecCapGa10x,
                                          Rule::MmqVerifyTuringLow};
 
 constexpr std::string_view rule_name(Rule rule) {
@@ -122,8 +122,8 @@ constexpr std::string_view rule_name(Rule rule) {
         return "vec_cap_ga10x_gb20x";
     case Rule::VecCapTuring:
         return "vec_cap_turing";
-    case Rule::VecCapGa10xTwo:
-        return "vec_cap_ga10x_two";
+    case Rule::VecCapGa10x:
+        return "vec_cap_ga10x";
     case Rule::MmqVerifyTuringLow:
         return "mmq_verify_turing_low";
     }
@@ -331,24 +331,24 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      kBeforePublic, "'IQ2_XXS / IQ2_XS follow their family' (IQ2_S): not timed on their own"},
 
     // --- vec_cap_ga10x_gb20x: the vec band stops at three tokens on GA10x and GB20x (#998) ---
-    {Rule::VecCapGa10xGb20x, Basis::Measured, FormatSet{Q::GGML_Q4_K}, 0,
+    {Rule::VecCapGa10xGb20x, Basis::Measured, FormatSet{Q::GGML_Q4_K}, 3,
      "ga106:28sm, ga102:82sm, gb203:70sm, gb202:170sm", "RTX 3060, RTX 3090, RTX 5070 Ti, RTX 5090",
      Evidence::TwoCards, "#998: abvecn.sh t3_* (lab/vec-minn NINFERNO_LAB_VEC_MAX_T=3)",
      "2026-11-19",
      "Qwen3.5-9B Q4_K_M, --spec off, C = 4 (T = 4 calls) capped at T = 3 against vec at T = 4: "
      "RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 5070 Ti +11.1 %, RTX 5090 +5.3 %; C = 2 and 3 within "
      "0.1 %"},
-    {Rule::VecCapGa10xGb20x, Basis::Measured, FormatSet{Q::GGML_Q6_K}, 0,
+    {Rule::VecCapGa10xGb20x, Basis::Measured, FormatSet{Q::GGML_Q6_K}, 3,
      "gb202:170sm, gb203:70sm, ga106:28sm", "RTX 5090, RTX 5070 Ti, RTX 3060", Evidence::TwoCards,
      "#998: abvecn.sh t3q6nc_5090, t3q6_5070, t3q6_3060", "2026-11-19",
      "Qwen3.5-9B Q6_K, --spec off, C = 4 capped at T = 3 against T = 4: RTX 5090 +7.27 %, RTX "
      "5070 Ti +4.52 %, RTX 3060 +15.3 %; C = 2 and 3 within 0.05 %"},
-    {Rule::VecCapGa10xGb20x, Basis::Measured, FormatSet{Q::GGML_Q3_K, Q::GGML_Q5_K}, 0,
+    {Rule::VecCapGa10xGb20x, Basis::Measured, FormatSet{Q::GGML_Q3_K, Q::GGML_Q5_K}, 3,
      "gb203:70sm, ga106:28sm", "RTX 5070 Ti, RTX 3060", Evidence::TwoCards,
      "#998: abvecn.sh t3q3_5070, t3q5_5070, t3q3_3060, t3q5_3060", "2026-11-19",
      "Qwen3.5-9B Q3_K_M / Q5_K_M, --spec off, C = 4 capped at T = 3 against T = 4: RTX 5070 Ti "
      "+15.7 % / +6.74 %, RTX 3060 +0.63 % / +10.76 %; C = 2 and 3 within 0.1 %"},
-    {Rule::VecCapGa10xGb20x, Basis::Unknown, FormatSet{Q::GGML_Q2_K}, 0, kNone, kNone,
+    {Rule::VecCapGa10xGb20x, Basis::Unknown, FormatSet{Q::GGML_Q2_K}, 3, kNone, kNone,
      Evidence::Carried, "#998", "2026-11-19",
      "Q2_K follows the other K-quants, whose super-block decoder it shares: not timed on its own. "
      "Not in the rule: IQ4_XS (RTX 5070 Ti +4.45 %, RTX 5090 -3.27 %, RTX 3060 -11.3 %), "
@@ -409,7 +409,7 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "dense tuner's R8 candidate"},
 
     // --- vec_cap_turing: the vec band stops at two tokens on Turing (#1038) ---
-    {Rule::VecCapTuring, Basis::Measured, FormatSet{Q::GGML_Q4_K, Q::GGML_Q6_K}, 0, "tu102:68sm",
+    {Rule::VecCapTuring, Basis::Measured, FormatSet{Q::GGML_Q4_K, Q::GGML_Q6_K}, 2, "tu102:68sm",
      "RTX 2080 Ti", Evidence::SingleCard, "#1038: abvecn.sh on the RTX 2080 Ti (lab/vec-minn)",
      "2026-11-19",
      "Qwen3.5-9B, --spec off, vec at T = 2 and the register MMA at T = 3..4 against vec at "
@@ -418,14 +418,14 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "C = 3 +2.57 %, C = 4 +3.44 %; Q6_K +0.05 %, +28.5 %, +33.4 %. The vec-against-rmma edge "
      "split cards of one generation on GA10x (cap at T = 2: RTX 3090 C3 -2.0 %, RTX 3060 +1.5 %), "
      "so on another Turing board this row is the weak one"},
-    {Rule::VecCapTuring, Basis::Unknown, FormatSet{Q::GGML_Q3_K, Q::GGML_Q5_K}, 0, kNone, kNone,
+    {Rule::VecCapTuring, Basis::Unknown, FormatSet{Q::GGML_Q3_K, Q::GGML_Q5_K}, 2, kNone, kNone,
      Evidence::Carried, "#1038", "2026-11-19",
      "Q3_K and Q5_K follow Q4_K / Q6_K, whose register-MMA verify they share (R8VerifyEmulatedOff: "
      "Q3_K timed at kernel level, Q5_K carried): not timed end to end. Not in the rule: IQ4_XS "
      "(capped at T = 2: -0.05 / +0.93 / -0.74 %) and every format R8 verifies"},
 
-    // --- vec_cap_ga10x_two: the vec band stops at two tokens on GA10x (#1152) ---
-    {Rule::VecCapGa10xTwo, Basis::Measured, FormatSet{Q::GGML_Q6_K}, 0, "ga106:28sm, ga102:82sm",
+    // --- vec_cap_ga10x: the vector kernel's caps on GA10x alone (#1152) ---
+    {Rule::VecCapGa10x, Basis::Measured, FormatSet{Q::GGML_Q6_K}, 2, "ga106:28sm, ga102:82sm",
      "RTX 3060, RTX 3090", Evidence::TwoCards,
      "#1152: abvecn.sh q6v1152 (RTX 3060), q6v1152g (RTX 3090) (lab/1152-vec-cap "
      "NINFERNO_LAB_VEC_MAX_T=1)",
@@ -433,7 +433,7 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "Qwen3.5-9B Q6_K, --spec off, vec at T = 1 only against master (vec at T = 2..3), 4 "
      "alternating starts each: C = 3 RTX 3060 +10.7 %, RTX 3090 +5.0 %; C = 2 RTX 3060 +4.0 %, RTX "
      "3090 -2.3 % (the T = 2 edge splits the cards: T = 2 keeps vec); C = 4 within 0.1 %"},
-    {Rule::VecCapGa10xTwo, Basis::Measured, FormatSet{Q::GGML_Q5_K}, 0, "ga106:28sm, ga102:82sm",
+    {Rule::VecCapGa10x, Basis::Measured, FormatSet{Q::GGML_Q5_K}, 2, "ga106:28sm, ga102:82sm",
      "RTX 3060, RTX 3090", Evidence::TwoCards,
      "#1152: abvecn.sh q5v1152c (RTX 3060), q5v1152g (RTX 3090) (lab/1152-vec-cap)", "2026-11-21",
      "Qwen3.5-9B Q5_K_M, --spec off, as Q6_K: C = 3 RTX 3060 +10.4 %, RTX 3090 +5.2 %; C = 2 RTX "
@@ -469,6 +469,30 @@ constexpr FormatSet formats_of(Rule rule) noexcept {
 
 // Whether the rule takes the format.
 constexpr bool holds(Rule rule, QType q) noexcept { return formats_of(rule).has(q); }
+
+// The vector kernel's caps (vec_rule_max_tokens): a rule a generation scope, a cap a row (`value`:
+// the widest T the vector kernel keeps for the row's formats). A call takes the least cap of the
+// rows that name its format under the scopes its card meets; with none it keeps
+// kVecRuleMaxTokens (generic_select.cpp). A new cap is a row of a scope's rule; a new scope is a
+// rule and a line here.
+struct VecCapScope {
+    Rule rule;
+    ArchRequires arch;
+};
+
+inline constexpr std::array kVecCapScopes = {
+    VecCapScope{Rule::VecCapGa10xGb20x, ArchRequires{.cc_any_of = {{{8, 6}, {12, 0}}}}},
+    VecCapScope{Rule::VecCapTuring, format_requires::kR8VerifyTuring},
+    VecCapScope{Rule::VecCapGa10x, ArchRequires{.cc_any_of = {{{8, 6}}}}},
+};
+
+// The cap a scope's rows give format q (0: no row names it).
+constexpr std::int64_t vec_cap(Rule rule, QType q) noexcept {
+    for (const FormatRule& r : kFormatRules) {
+        if (r.rule == rule && r.formats.has(q)) return r.value;
+    }
+    return 0;
+}
 
 static_assert(formats_of(Rule::MmqVerifyMinTokens).bits == formats_of(Rule::MmqVerify).bits,
               "format_rules.h: kMmqVerifyMinTokens' formats are the mmq_verify rows' formats");
