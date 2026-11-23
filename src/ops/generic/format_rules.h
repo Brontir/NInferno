@@ -407,10 +407,11 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      "IQ3_XXS 4096x4096 30.8 / 34.5 against 25.5 / 27.4, IQ4_XS 4096x4096 24.6 / 27.0 against "
      "24.5 / 25.3, Q4_0 12288x4096 60.2 / 68.6 against 57.9 / 59.9; at T = 2 within 1 %, where "
      "w4r1 is ahead for IQ4_XS and Q4_0. Not timed: the other R8 formats (NVFP4, MXFP4, U4 "
-     "zero-point, the native Q3-Q6 groups), which keep w4r1. The shipped picks do not change "
-     "today: vec takes T = 2..4 for these formats (kVecRuleMaxTokens) and r8_verify_widest is 4, "
-     "so the rule decides where vec declines a call, under NINFERNO_LAB_NO_VEC_RULE and in the "
-     "dense tuner's R8 candidate"},
+     "zero-point, the native Q3-Q6 groups), which keep w4r1. For IQ3_S, IQ3_XXS and IQ4_XS vec "
+     "takes T = 2..4 (kVecRuleMaxTokens) and r8_verify_widest is 4, so the rule decides where vec "
+     "declines a call, under NINFERNO_LAB_NO_VEC_RULE and in the dense tuner's R8 candidate; for "
+     "Q4_0 vec stops at T = 2 on Turing (vec_cap_turing, #1160), so this rule makes the shipped "
+     "pick at T = 3..4 (r8.w4r2)"},
 
     // --- vec_cap_turing: the vec band stops at two tokens on Turing (#1038) ---
     {Rule::VecCapTuring, Basis::Measured, FormatSet{Q::GGML_Q4_K, Q::GGML_Q6_K}, 2, "tu102:68sm",
@@ -426,7 +427,8 @@ inline constexpr auto kTable = std::to_array<FormatRule>({
      Evidence::Carried, "#1038", "2026-11-19",
      "Q3_K and Q5_K follow Q4_K / Q6_K, whose register-MMA verify they share (R8VerifyEmulatedOff: "
      "Q3_K timed at kernel level, Q5_K carried): not timed end to end. Not in the rule: IQ4_XS "
-     "(capped at T = 2: -0.05 / +0.93 / -0.74 %) and every format R8 verifies"},
+     "(capped at T = 2: -0.05 / +0.93 / -0.74 %) and the other formats R8 verifies (Q4_0 has its "
+     "own row below, #1160)"},
     {Rule::VecCapTuring, Basis::Measured, FormatSet{Q::GGML_Q4_0}, 2, "tu102:68sm", "RTX 2080 Ti",
      Evidence::SingleCard,
      "#1160: abvec234.sh q40g12l2080 (lab/vec-max8 NINFERNO_LAB_VEC_MAX=2), abref q40brl2080",

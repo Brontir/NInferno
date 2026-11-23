@@ -221,7 +221,7 @@ the register MMA on Turing), `r8_verify_two_rows_turing` (the formats whose Turi
 rows a warp from T = 3), `vec_cap_turing` (the vector kernel's caps on Turing), `vec_cap_ga10x`
 (its caps on GA10x alone), `vec_cap_ada` (its caps on Ada), `mmq_verify_turing_low` (the formats Turing keeps on mmq below
 `kMmqVerifyMinTokens`), and the two thresholds `kR8VerifyQ40MinValues` and `kMmqVerifyMinTokens`,
-which are defined there. The three `vec_cap_*` rules are one table: a rule a generation scope
+which are defined there. The four `vec_cap_*` rules are one table: a rule a generation scope
 (`kVecCapScopes`, an `ArchRequires` each), a cap a row (`value`, the widest T the vector kernel
 keeps for the row's formats); `vec_rule_max_tokens` takes the least cap of the rows naming the
 call's format under the scopes its card meets, else `kVecRuleMaxTokens`. A new cap is a row, a new

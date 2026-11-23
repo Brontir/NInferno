@@ -3373,7 +3373,7 @@ The IQ4_XS row is mmq ahead by 28.4 / 28.9 / 28.3 %.
 
 ## 103. The vector kernel stops at two tokens for Q4_0 on GA10x, Turing and Ada (#1160, 23.11, measured)
 
-**The question.** The decode grids of #1160 (master, T 1-8, every route timed) put Q4_0's vector kernel 1.1-1.5x behind the register MMA n1.w1x4 at T 3..4 on most Q4_0 shapes of the RTX 3060, 3090 and 4090. No Q4_0 model had been run end to end on the stands, so the rule had never been checked for Q4_0. Does a cap at two pay end to end?
+**The question.** The decode grids of #1160 (master, T 1-8, every route timed) put Q4_0's vector kernel 1.1-1.5x behind the register MMA n1.w1x4 at T 3..4 on most Q4_0 shapes of the RTX 3060, 3090 and 4090. No Q4_0 model had been run end to end on the stands, so the rule had never been checked for Q4_0. Does a cap at two pay end to end? (With the cap, T 3..4 goes to the register MMA on GA10x and Ada, and to R8 `r8.w4r2` on Turing, `r8_verify_two_rows_turing`.)
 
 **Measurement.** google's Gemma 4 QAT Q4_0 (12B, or 31B where it fits), `--spec off`, default activations, 4 alternating server starts, vec at T = 2 only (lab/vec-max8, `NINFERNO_LAB_VEC_MAX=2`) against master's T = 2..4:
 
@@ -3392,4 +3392,4 @@ A cap at three keeps the C4 part (RTX 3060 +8.5 %, 4070 Ti +1.4 %, 5070 Ti +1.1 
 
 **Decision.** Rows of decision 102's table, cap 2 for Q4_0: `vec_cap_ga10x` (two cards), `vec_cap_turing` (one card) and a new scope `vec_cap_ada` (sm_89, three cards, small gains). The new scope is one rule and one line in `kVecCapScopes`.
 
-**Not taken.** Consumer Blackwell: the two cards split (RTX 5070 Ti +1.1 %, RTX 5090 -4.0 %), so vec keeps T 3..4 there. Volta: not measured for Q4_0, and vec leads at T 3..4 there for the K-quants (#1153).
+**Not taken.** Consumer Blackwell: the two cards split (RTX 5070 Ti +1.1 %, RTX 5090 -4.0 %), so vec keeps T 3..4 there. Volta: not measured for Q4_0, and vec leads at T 3..4 there for the K-quants (#1153). The Turing row rests on one card (the lab's only Turing board), as the other `vec_cap_turing` rows do: a second Turing card re-checks it.
