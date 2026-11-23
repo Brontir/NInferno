@@ -2277,6 +2277,30 @@ int main() {
         }
     }
 
+    // 2d'. The vector family's few-row MMA tile (Route{GgmlVec, 1}, #1162) on the same cases where
+    // it admits them (sm_80 on, Q4_K / Q5_K): 200 rows leave a partial 16-row CTA, and the gated
+    // epilogues a partial 8-row one.
+    {
+        const generic::Route mma{generic::Family::GgmlVec, 1};
+        for (const Format& f : kFormats) {
+            if (!on_build(f)) continue;
+            if (!generic::route_admits(mma, cached_weight(f.qtype, 128, 512, 5U).device->weight,
+                                       ops::LinearPolicy::AllowA8)) {
+                continue;
+            }
+            for (const auto& [n, k] : std::vector<std::pair<std::int32_t, std::int32_t>>{
+                     {128, 512}, {200, 2560}, {640, 5120}}) {
+                for (const std::int32_t t : {1, 2, 3, 4, 5, 8}) {
+                    for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu, Op::GeGlu, Op::Relu2}) {
+                        failures += check_case(f, op, n, k, t, ops::LinearPolicy::AllowA8,
+                                               static_cast<std::uint32_t>(37U + t + k), &mma,
+                                               ActivationCompute::A8);
+                    }
+                }
+            }
+        }
+    }
+
     // 2c'. A prefill chunk past the 65535 tokens of a grid's y extent: every token's epilogue runs.
     // Each SwiGLU half is a whole 128-row tile, as the kernel takes it (a 64-row half runs A16).
     {
