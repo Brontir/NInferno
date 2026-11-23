@@ -1686,7 +1686,10 @@ void test_hub_plan_via_serve() {
         }();
         server.stop();
         thread.join();
-        check(backed_off && backed_off->status == 200 && after_failed == 2 && after_backoff == 2,
+        const auto kept_doc =
+            backed_off ? nlohmann::json::parse(backed_off->body, nullptr, false) : nlohmann::json();
+        check(backed_off && backed_off->status == 200 && after_failed == 2 && after_backoff == 2 &&
+                  kept_doc.is_object() && kept_doc.contains("now") && kept_doc["now"].is_null(),
               "a failed re-plan backs off: the next move runs no serve (" +
                   std::to_string(after_failed) + " then " + std::to_string(after_backoff) +
                   " runs)");
@@ -1704,7 +1707,8 @@ void test_hub_plan_via_serve() {
         fs::remove(root / "runs.txt");
         fs::remove(root / "child-started");
         // The child notes its start, then holds 2 s: the second ask below starts only after that
-        // note, so it meets the run in flight and cannot be a plain cache hit (#1147 review).
+        // note, so it meets the run in flight (within those 2 s), not a document already kept
+        // (#1147 review).
         std::ofstream(root / "serve-slow")
             << "#!/bin/sh\n: > '" << (root / "child-started").string() << "'\nsleep 2\nexec '"
             << (root / "serve-plan").string() << "' \"$@\"\n";

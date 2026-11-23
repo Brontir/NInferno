@@ -834,7 +834,13 @@ Json App::listing_of(const std::string& repo, const std::string& hub) {
 }
 
 namespace {
-std::string at_commit(const std::string& repo, const std::string& commit);
+
+// A repository at its listing's commit. A name given at a revision (org/m@branch) is read at
+// the commit that revision listed: org/m@<commit>, never org/m@branch@<commit>.
+std::string at_commit(const std::string& repo, const std::string& commit) {
+    return commit.empty() ? repo : repo.substr(0, repo.find('@')) + "@" + commit;
+}
+
 } // namespace
 
 Json App::arch_json(const std::string& repo, const std::string& hub) {
@@ -1049,12 +1055,6 @@ std::string utf8_of(const fs::path& path) {
     return std::string(text.begin(), text.end());
 }
 
-// A repository at its listing's commit. A name given at a revision (org/m@branch) is read at
-// the commit that revision listed: org/m@<commit>, never org/m@branch@<commit>.
-std::string at_commit(const std::string& repo, const std::string& commit) {
-    return commit.empty() ? repo : repo.substr(0, repo.find('@')) + "@" + commit;
-}
-
 // A serve plan that failed for want of the hub or of time, not by refusing the model: serve's
 // exit kHubTransportExit (convert::HubTransportError: no answer, a cut connection, HTTP 408 / 429 /
 // 5xx) or its 45 s. The plan here answers then (#766); any other failure is serve's refusal, read
@@ -1191,14 +1191,18 @@ std::string App::refusal_now_of(const std::vector<GpuStat>& stats, int gpu) cons
         std::string holder;
         if (!stat.processes.empty()) {
             const auto pid = static_cast<int>(stat.processes.front().pid);
+            // Live children only: an ended one stays listed a while, and its pid may be reused.
+            const auto live = [](const ProcessInfo& info) {
+                return info.state != "exited" && info.state != "failed";
+            };
             for (const auto& info : processes_.list()) {
-                if (info.pid == pid) {
+                if (info.pid == pid && live(info)) {
                     holder = info.spec.kind == "serve" ? std::string("your running model")
                                                        : "this UI's " + info.spec.kind + " job";
                 }
             }
             for (const auto& info : planner_.list()) {
-                if (info.pid == pid) holder = "this UI's plan run";
+                if (info.pid == pid && live(info)) holder = "this UI's plan run";
             }
         }
         return stat.refusal_now(holder);
@@ -1322,11 +1326,15 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                 const bool moved =
                     !failure && point_now &&
                     (at == serve_free_at_.end() || !same_now_point(at->second, *point_now));
-                // A re-plan that failed a while ago: the kept document answers, no serve run a
-                // move (a card where serve times out would cost each ask its 45 s).
+                // A re-plan that failed a while ago at the card as it is now: the kept document
+                // answers, no serve run a move (a card where serve times out would cost each ask
+                // its 45 s). A move from where it failed (a model unloaded, the card freed) plans
+                // again.
                 const auto failed_at   = serve_replan_failed_at_.find(key);
                 const bool backing_off = failed_at != serve_replan_failed_at_.end() &&
-                                         clock_now() - failed_at->second < kFailureKeptSeconds;
+                                         clock_now() - failed_at->second.at < kFailureKeptSeconds &&
+                                         failed_at->second.point &&
+                                         same_now_point(*failed_at->second.point, *point_now);
                 if (failure ? clock_now() - it->second.value("at", std::int64_t{0}) <
                                   kFailureKeptSeconds
                             : !moved || backing_off) {
@@ -1435,7 +1443,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                         kept_free_at                 = previous_free_at;
                         fresh                        = false;
                         fell_back                    = true;
-                        serve_replan_failed_at_[key] = clock_now();
+                        serve_replan_failed_at_[key] = ReplanFailure{clock_now(), point_now};
                     } else {
                         serve_replan_failed_at_.erase(key);
                         plans_[key] = *kept;

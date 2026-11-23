@@ -416,9 +416,16 @@ private:
     // its `now` answers while the free memory stays within kNowStepBytes and the refusal is the
     // same.
     std::map<std::string, NowPoint> serve_free_at_;
-    // When a re-plan of a kept serve document (a move past kNowStepBytes) last failed, by key: the
-    // kept document answers without another serve run for kFailureKeptSeconds (#1156 review).
-    std::map<std::string, std::int64_t> serve_replan_failed_at_;
+
+    // A re-plan of a kept serve document (a move past kNowStepBytes) that failed, by key: when, and
+    // the card as that ask saw it. The kept document answers without another serve run for
+    // kFailureKeptSeconds while the card stays there (#1156 review); a move from it plans again.
+    struct ReplanFailure {
+        std::int64_t at = 0;
+        std::optional<NowPoint> point;
+    };
+
+    std::map<std::string, ReplanFailure> serve_replan_failed_at_;
     // What plan_json's "now" (product::plan_now) re-plans per request at the GPU's free memory: the
     // shown quantization's facts, inputs (their subjects kept alive here), choice and pins.
     std::map<std::string, std::shared_ptr<const PlanNowContext>> plan_now_;
