@@ -260,11 +260,12 @@ constexpr std::int32_t kVecRuleMaxTokens = 4;
 // Below kVecRuleMaxTokens the vector kernel's caps are format_rules.h rows, one rule a generation
 // scope and a cap a row (kVecCapScopes): GA10x and consumer Blackwell three for the K-quants
 // (#998, DECISIONS 96), Turing two for the K-quants that keep the register MMA at the verify
-// widths (#1038), GA10x two for Q5_K and Q6_K (#1152); each row's record holds its end-to-end
-// A/B. Ada keeps four (with the K-quant cap the RTX 4070 Ti lost 2.0 %, the 4090 1.4 %, the
-// 4060 Ti gained 2.5 %); the A100 (sm_80) and Volta are not capped. The edge in T differs by
-// card within a generation: a counted bound from the cards' integer issue per DRAM byte would
-// replace the rows (#998).
+// widths (#1038), GA10x two for Q5_K and Q6_K (#1152), and two for Q4_0 on GA10x, Turing and
+// Ada (#1160); each row's record holds its end-to-end A/B. Ada keeps four for the K-quants
+// (with their cap the RTX 4070 Ti lost 2.0 %, the 4090 1.4 %); consumer Blackwell keeps four
+// for Q4_0 (the RTX 5090 lost 4.0 % with the cap); the A100 (sm_80) and Volta are not capped. The
+// edge in T differs by card within a generation: a counted bound from the cards' integer issue per
+// DRAM byte would replace the rows (#998).
 std::int32_t vec_rule_max_tokens(QType qtype) {
     // vec_max_tokens() reaches past eight columns only without tensor mma.sync.
     const std::int32_t widest = vec_max_tokens();
