@@ -42,7 +42,8 @@
 //   basis     what the row rests on (route_rules::Basis: Measured, PlacedBetweenMeasured, ...;
 //             Unknown for a carried row);
 //   formats   the formats of the row;
-//   value     a threshold's value (the constant the code reads), 0 for a format-set row;
+//   value     a threshold's value (the constant the code reads), a vec cap row's cap (the widest
+//             T the vector kernel keeps, kVecCapScopes), 0 for any other format-set row;
 //   boards    device class ids (chip:Nsm) of the cards, "none" for a carried row;
 //   cards     the products, comma-separated, "none" for a carried row;
 //   evidence  TwoCards, SingleCard or Carried (above);

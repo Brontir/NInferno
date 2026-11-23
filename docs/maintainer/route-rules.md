@@ -224,7 +224,8 @@ which are defined there. The three `vec_cap_*` rules are one table: a rule a gen
 (`kVecCapScopes`, an `ArchRequires` each), a cap a row (`value`, the widest T the vector kernel
 keeps for the row's formats); `vec_rule_max_tokens` takes the least cap of the rows naming the
 call's format under the scopes its card meets, else `kVecRuleMaxTokens`. A new cap is a row, a new
-scope a rule and a line. The code reads the rows (`format_rules::holds`, `vec_cap`) and the two constants;
+scope a rule and a line. The code reads the rows (`format_rules::holds`, `vec_cap`) and the two
+constants;
 nothing else holds these format sets. A rule has one row per group of formats whose evidence
 differs, each with its formats, a basis, the boards and cards, an evidence tag, the source and a
 date. The tag says how many cards stand behind the row (principle 4): `TwoCards`, `SingleCard`

@@ -274,8 +274,9 @@ std::int32_t vec_rule_max_tokens(QType qtype) {
         const ArchFacts facts = current_arch_facts();
         for (const auto& scope : format_rules::kVecCapScopes) {
             const std::int64_t c = format_rules::vec_cap(scope.rule, qtype);
-            if (c > 0 && c < cap && satisfied(scope.arch, facts))
+            if (c > 0 && c < cap && satisfied(scope.arch, facts)) {
                 cap = static_cast<std::int32_t>(c);
+            }
         }
     } catch (const std::exception&) {}
     return cap;
