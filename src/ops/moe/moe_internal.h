@@ -367,11 +367,11 @@ struct A8Route {
 
 // What a board's A8 route rests on (#616 step 3): the one lookup a8_default_route (the running
 // device) and the route's evidence both read. Measured (the board's facts are a measured board's:
-// RTX 4090, 5090, 5080), Carried (a measured board within measured::kCarryDistance: `donor`,
-// `distance`), Incomplete (the nearest measured board has a fact unknown, L2 or bandwidth), or None
-// (no measured board is within reach); the last two take the declared literal kFallbackA8Route, a
-// w4r1 gate/up at every T over the register-MMA down, no donor. Not a derived rule: see
-// docs/maintainer/table-dispositions.md for why no fact derives it yet.
+// RTX 4090, 5090, 5080, 3090, 3060), Carried (a measured board within measured::kCarryDistance:
+// `donor`, `distance`), Incomplete (the nearest measured board has a fact unknown, L2 or
+// bandwidth), or None (no measured board is within reach); the last two take the declared literal
+// kFallbackA8Route, a w4r1 gate/up at every T over the register-MMA down, no donor. Not a derived
+// rule: see docs/maintainer/table-dispositions.md for why no fact derives it yet.
 struct A8RouteAnswer {
     A8Route route;
     measured::Disposition disposition = measured::Disposition::None;

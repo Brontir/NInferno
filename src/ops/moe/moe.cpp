@@ -836,8 +836,9 @@ bool r8_stages_admitted(const MoeWeights& w, const MoePlan& p, std::int32_t toke
 }
 
 // The default A8 route per GPU class, measured where it is listed (bench/ops/moe_bench.cu --a8 1
-// --plans sweep [--frag 1], E 128, k 8, H 2048, F 512): the R8 schedule of a published 2-bit
-// codebook gate/up bank (IQ2_XXS, IQ2_XS, IQ2_S, a row each) at each T, and the schedule an IQ3_XXS
+// --plans sweep [--frag 1], E 128, k 8, H 2048, F 512): the R8 schedule of a published-layout
+// gate/up bank of a kRowFormats format (the 2-bit codebooks IQ2_XXS, IQ2_XS, IQ2_S, and Q5_K, a
+// row each) at each T, and the schedule an IQ3_XXS
 // down of width 512..1023 then takes instead of the streaming 1 x 4 warps, the same at every T of
 // an A8 call so that a token's bytes do not depend on T (the A16 route keeps the streaming order).
 // Every other R8 gate/up bank takes w4r1 at every T (A8Route::gate_up_at). Two rows per warp
@@ -1312,7 +1313,7 @@ std::optional<MoeAnswer> speed_w4a8_authority(const MoeCall& c) {
 }
 
 // Decode widths: the streaming schedules by K, and the class's default A8 route on top (the
-// nearest of three measured boards within kCarryDistance, else the fallback route).
+// nearest measured board within kCarryDistance, else the fallback route).
 std::optional<MoeAnswer> decode_authority(const MoeCall& c) {
     const MoePlan decode = heuristic_r8(c.weights, c.g, c.p, c.tokens);
     if (decode.gate_up_r8 < 0 && decode.down_r8 < 0) {
