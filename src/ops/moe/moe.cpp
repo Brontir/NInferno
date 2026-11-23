@@ -1948,7 +1948,10 @@ void record_plan(const MoeWeights& w, const MoeConfig& c, std::int32_t t, bool p
                        : " speed ")
          << plan_name(q.plan) << ' ' << authority_name(q.authority) << '\n';
     file.flush();
-    if (!file.good() && !warned) {
+    if (file.good()) return;
+    // A failed write leaves the key unseen, so the next call of this shape tries again.
+    seen.erase(key);
+    if (!warned) {
         warned = true;
         std::fprintf(stderr, "NINFERNO_MOE_PLAN_RECORD: cannot write %s\n", path);
     }
