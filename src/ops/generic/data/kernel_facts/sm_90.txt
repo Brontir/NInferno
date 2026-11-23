@@ -3583,7 +3583,8 @@ family r8
 # iteration.
 # The columns: the key, the resources, the loop's counts and schedule as above, then the
 # pipe counts of the same iteration: I2F, I2FP, FFMA, FMUL, FADD, IMAD, BAR (sass_counts.py).
-# k_iter is the warp's MMA work per iteration over one m16n8 tile (m x n x k / 128).
+# k_iter is the K values one iteration covers per product (128 per dp4a over the row x token
+# products a warp accumulates; sass_counts.py), the MMA columns 0.
 family_nvcc 13.4.92
 family_kernels 2016
 family_columns family codec warps rows nt epilogue pre registers stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total stall_sum sb_waits sb_waits_local outside_total outside_stall outside_waits outside_bar i2f i2fp ffma fmul fadd imad bar pro_loops pro_total pro_int pro_fp pro_ldg_bytes pro_sts_bytes pro_stall glb_waits outside_glb_waits pro_glb_waits
@@ -5650,7 +5651,8 @@ family moer8
 # the activation quantizer's loop (F2I), the global-load waits after them.
 # The columns: the key, the resources, the loop's counts and schedule as above, then the
 # pipe counts of the same iteration: I2F, I2FP, FFMA, FMUL, FADD, IMAD, BAR (sass_counts.py).
-# k_iter is the warp's MMA work per iteration over one m16n8 tile (m x n x k / 128).
+# k_iter is the K values one iteration covers per product (128 per dp4a over the row x token
+# products a warp accumulates; sass_counts.py), the MMA columns 0.
 family_nvcc 13.4.92
 family_kernels 2400
 family_columns family codec warps rows nt stage pre registers stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total stall_sum sb_waits sb_waits_local outside_total outside_stall outside_waits outside_bar i2f i2fp ffma fmul fadd imad bar pro_loops pro_total pro_int pro_fp pro_ldg_bytes pro_sts_bytes pro_stall glb_waits outside_glb_waits pro_glb_waits

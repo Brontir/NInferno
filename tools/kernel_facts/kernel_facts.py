@@ -552,7 +552,7 @@ FAMILIES = {
                       "moe_gemm_kernel", lambda key: moe_gemm_tiles(key), True, True,
                       waits=True, emulated=True),
     "vec": Family("vec", ("type", "T", "KS", "gated", "bounded"), lambda d: vec_key(d),
-                  "vec_kernel", lambda key: 1, True, False, marker="IDP"),
+                  "vec_kernel", lambda key: 2 * key[1], True, False, marker="IDP"),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -1026,6 +1026,9 @@ SECTION_NOTES = {
         "# unrolls over (0: the runtime K) and the two flags. The launch reads the CTAs an SM holds",
         "# (core/kernel_occupancy.h) and a bounded twin's local bytes, never the host's kernels; the",
         "# analyzer (tools/route_pick) reads the K loop's counts, the loop marked by its dp4a (IDP).",
+        "# A warp takes a row pair (the gated kernel: one row's two sets) and all T tokens: 2 x T",
+        "# products, so k_iter is 1024 for the runtime-K loop (a slice of 32 values a lane) and KS",
+        "# for the unrolled ones (the whole K in one trip of the row loop).",
     ),
 }
 
@@ -1044,7 +1047,10 @@ def render_section(family, rows, nvcc):
     loop_notes = (
         "# The columns: the key, the resources, the loop's counts and schedule as above, then the",
         "# pipe counts of the same iteration: I2F, I2FP, FFMA, FMUL, FADD, IMAD, BAR (sass_counts.py).",
-        "# k_iter is the warp's MMA work per iteration over one m16n8 tile (m x n x k / 128).",
+        "# k_iter is the warp's MMA work per iteration over one m16n8 tile (m x n x k / 128)."
+        if f.marker != "IDP" else
+        "# k_iter is the K values one iteration covers per product (128 per dp4a over the row x token"
+        "\n# products a warp accumulates; sass_counts.py), the MMA columns 0.",
     ) if f.loop else ("# The columns: the key, then the resources as above.",)
     lines = [
         f"family {family}",
