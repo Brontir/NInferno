@@ -221,13 +221,15 @@ inline constexpr std::int32_t kR8Tokens = 8;
 // The widest R8 call on this GPU (r8_admits) where its generation's rule does not take kR8Tokens,
 // and the conservative limit of an unmeasured generation: the rules, with the cards and margins
 // they rest on, are moe_regime_rules.h (kR8Tokens on Ada and consumer Blackwell, measured on two
-// cards each; Ampere four, measured on two cards that disagree above four tokens; Turing four,
+// cards each; Ampere four, measured on two cards that disagree above four tokens, but for the
+// formats its Applied cells widen; Turing four,
 // measured on one card; Volta, the A100, Hopper and datacenter Blackwell unmeasured). Volta
 // splits a wider call into calls of four (moe()).
 inline constexpr std::int32_t kR8NarrowTokens = 4;
 // The generation's widest R8 call (moe_regime_rules.h generation_rule).
 [[nodiscard]] std::int32_t r8_token_limit();
-// The widest R8 call over `bank`: r8_token_limit(), narrowed by the first bank rule of
+// The widest R8 call over `bank`: r8_token_limit(), widened by an Applied cell of the bank's
+// format (GA10x Q3_K, Q5_K, published IQ2_XXS) and narrowed by the first bank rule of
 // moe_regime_rules.h that holds (four for the FP4-element formats MXFP4 and NVFP4, a
 // ggml_frag_v1 Q4_0 bank, and another frag bank but Q4_K on a board of many DRAM bytes per SM
 // cycle or none known).
@@ -338,24 +340,25 @@ void moe_with_plan(const Tensor& x, const MoeWeights& weights, const MoeConfig& 
 // streaming 1 x 4 warps (-1: the streaming one), the same at every T so that a token's bytes do
 // not depend on T.
 struct A8Route {
-    // The R8 schedule of a published 2-bit codebook gate/up bank at each T, one row per format
-    // (kTwoBitFormats: IQ2_XXS, IQ2_XS, IQ2_S); every other R8 bank, and a ggml_frag_v1 bank,
-    // takes w4r1 (schedule 0) at every T.
-    static constexpr std::array<QType, 3> kTwoBitFormats{QType::GGML_IQ2_XXS, QType::GGML_IQ2_XS,
-                                                         QType::GGML_IQ2_S};
-    std::array<std::array<int, kR8Tokens>, kTwoBitFormats.size()> gate_up_2bit{};
+    // The R8 schedule of a published-layout gate/up bank at each T, one row per format
+    // (kRowFormats: the 2-bit codebooks IQ2_XXS, IQ2_XS, IQ2_S, and Q5_K); every other R8 bank,
+    // and a ggml_frag_v1 bank, takes w4r1 (schedule 0) at every T.
+    static constexpr std::array<QType, 4> kRowFormats{QType::GGML_IQ2_XXS, QType::GGML_IQ2_XS,
+                                                      QType::GGML_IQ2_S, QType::GGML_Q5_K};
+    std::array<std::array<int, kR8Tokens>, kRowFormats.size()> gate_up_rows{};
     int down = -1;
-    // The row of a published 2-bit codebook bank, -1 for every other bank.
-    [[nodiscard]] static int two_bit_row(const Weight& bank) {
+
+    // The row of a published-layout bank of a kRowFormats format, -1 for every other bank.
+    [[nodiscard]] static int format_row(const Weight& bank) {
         if (bank.layout == QuantLayout::GgmlFrag) return -1;
-        for (std::size_t i = 0; i < kTwoBitFormats.size(); ++i) {
-            if (bank.qtype == kTwoBitFormats[i]) return static_cast<int>(i);
+        for (std::size_t i = 0; i < kRowFormats.size(); ++i) {
+            if (bank.qtype == kRowFormats[i]) return static_cast<int>(i);
         }
         return -1;
     }
     [[nodiscard]] int gate_up_at(std::int32_t tokens, const Weight& bank) const {
-        const int row = two_bit_row(bank);
-        return row >= 0 ? gate_up_2bit[static_cast<std::size_t>(row)]
+        const int row = format_row(bank);
+        return row >= 0 ? gate_up_rows[static_cast<std::size_t>(row)]
                                       [static_cast<std::size_t>(tokens - 1)]
                         : 0;
     }
@@ -364,11 +367,11 @@ struct A8Route {
 
 // What a board's A8 route rests on (#616 step 3): the one lookup a8_default_route (the running
 // device) and the route's evidence both read. Measured (the board's facts are a measured board's:
-// RTX 4090, 5090, 5080), Carried (a measured board within measured::kCarryDistance: `donor`,
-// `distance`), Incomplete (the nearest measured board has a fact unknown, L2 or bandwidth), or None
-// (no measured board is within reach); the last two take the declared literal kFallbackA8Route, a
-// w4r1 gate/up at every T over the register-MMA down, no donor. Not a derived rule: see
-// docs/maintainer/table-dispositions.md for why no fact derives it yet.
+// RTX 4090, 5090, 5080, 3090, 3060), Carried (a measured board within measured::kCarryDistance:
+// `donor`, `distance`), Incomplete (the nearest measured board has a fact unknown, L2 or
+// bandwidth), or None (no measured board is within reach); the last two take the declared literal
+// kFallbackA8Route, a w4r1 gate/up at every T over the register-MMA down, no donor. Not a derived
+// rule: see docs/maintainer/table-dispositions.md for why no fact derives it yet.
 struct A8RouteAnswer {
     A8Route route;
     measured::Disposition disposition = measured::Disposition::None;

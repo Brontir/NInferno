@@ -69,7 +69,8 @@ R8_CODEC["q4_kf"] = "ninferno::ops::detail::moe::W4a8Q4KFrag"
 R8_PER_LOAD["q4_kf"] = R8_PER_LOAD["q4_k"]
 # The candidates are the plans the call may run (moe.cpp r8_admits): an R8 stage only up to the R8 token limit,
 # moe_regime_rules.h's records (the generation's: eight on Ada and consumer Blackwell, four elsewhere; a non-frag
-# Q6_K bank four on every tensor mma.sync build; a Q3_K bank eight on GA10x, ga10x_q3k_r8_wide). The law prices the admitted plans; admission itself is the runtime's.
+# Q6_K bank four on every tensor mma.sync build; a Q3_K, Q5_K or published IQ2_XXS bank eight on GA10x, ga10x_q3k_r8_wide /
+# ga10x_q5k_r8_wide / ga10x_iq2xxs_r8_wide, #1166). The law prices the admitted plans; admission itself is the runtime's.
 GENERATION = {"rtx4090": "ada", "rtx4060ti": "ada", "rtx4070ti": "ada", "rtx5090": "gb20x", "rtx5070ti": "gb20x",
               "rtx3090": "ga10x", "rtx3060": "ga10x", "rtx2080ti": "turing"}
 
@@ -77,7 +78,7 @@ GENERATION = {"rtx4090": "ada", "rtx4060ti": "ada", "rtx4070ti": "ada", "rtx5090
 def r8_token_limit(board_name, fmt):
     if fmt == "q6_k":
         return 4
-    if fmt == "q3_k" and GENERATION[board_name] == "ga10x":
+    if fmt in ("q3_k", "q5_k", "iq2_xxs") and GENERATION[board_name] == "ga10x":
         return 8
     return 8 if GENERATION[board_name] in ("ada", "gb20x") else 4
 

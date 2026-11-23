@@ -230,12 +230,18 @@ void check_answers() {
             {QType::GGML_Q6_K, QuantLayout::GgmlBlocks, mma_tensor ? narrow : b.wide,
              mma_tensor && b.wide > 4 ? "r8_q6k_narrow" : ""},
             // GA10x widens Q3_K to eight on a tensor mma.sync build (ga10x_q3k_r8_wide, #860), in
-            // its published planes layout (measured) and blocks; Q5_K's cell is recorded.
+            // its published planes layout (measured) and blocks; Q5_K and a published IQ2_XXS bank
+            // the same way (ga10x_q5k_r8_wide, ga10x_iq2xxs_r8_wide, #1166).
             {QType::GGML_Q3_K, QuantLayout::GgmlPlanes, ga10x && mma_tensor ? 8 : b.wide,
              ga10x && mma_tensor ? "ga10x_q3k_r8_wide" : ""},
             {QType::GGML_Q3_K, QuantLayout::GgmlBlocks, ga10x && mma_tensor ? 8 : b.wide,
              ga10x && mma_tensor ? "ga10x_q3k_r8_wide" : ""},
-            {QType::GGML_Q5_K, QuantLayout::GgmlBlocks, b.wide, ""},
+            {QType::GGML_Q5_K, QuantLayout::GgmlBlocks, ga10x && mma_tensor ? 8 : b.wide,
+             ga10x && mma_tensor ? "ga10x_q5k_r8_wide" : ""},
+            {QType::GGML_IQ2_XXS, QuantLayout::GgmlBlocks, ga10x && mma_tensor ? 8 : b.wide,
+             ga10x && mma_tensor ? "ga10x_iq2xxs_r8_wide" : ""},
+            // A ggml_frag_v1 IQ2_XXS bank is not the cell's: the frag rules answer it.
+            {QType::GGML_IQ2_XXS, QuantLayout::GgmlFrag, frag_iq_narrow ? narrow : b.wide, nullptr},
             {QType::MXFP4, QuantLayout::BlockScaleK32E8M0, narrow,
              b.wide > 4 ? "r8_fp4_elements" : ""},
             {QType::NVFP4, QuantLayout::BlockScaleK16M128x4, narrow,
@@ -290,6 +296,19 @@ static_assert(
     moe::kR8Tokens);
 static_assert(regime::r8_limit_answer(kGa10x(false),
                                       {QType::GGML_Q3_K, QuantLayout::GgmlPlanes, 0.0})
+                  .limit == moe::kR8NarrowTokens);
+// #1166: published Q5_K and IQ2_XXS widen to eight on tensor mma.sync builds only.
+static_assert(
+    regime::r8_limit_answer(kGa10x(true), {QType::GGML_Q5_K, QuantLayout::GgmlBlocks, 0.0}).limit ==
+    moe::kR8Tokens);
+static_assert(regime::r8_limit_answer(kGa10x(false),
+                                      {QType::GGML_Q5_K, QuantLayout::GgmlBlocks, 0.0})
+                  .limit == moe::kR8NarrowTokens);
+static_assert(regime::r8_limit_answer(kGa10x(true),
+                                      {QType::GGML_IQ2_XXS, QuantLayout::GgmlBlocks, 0.0})
+                  .limit == moe::kR8Tokens);
+static_assert(regime::r8_limit_answer(kGa10x(false),
+                                      {QType::GGML_IQ2_XXS, QuantLayout::GgmlBlocks, 0.0})
                   .limit == moe::kR8NarrowTokens);
 
 int main() {

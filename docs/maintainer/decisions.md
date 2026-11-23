@@ -3363,6 +3363,43 @@ The IQ4_XS row is mmq ahead by 28.4 / 28.9 / 28.3 %.
 
 **Not taken.** A counted edge: the decode instructions per value of the grid codebooks against IQ4_XS's table lookup (kernel_facts sm_75) would derive the split without a format list. It is the follow-up; this decision is the measured set it must reproduce.
 
+## 101. GA10x takes R8 to eight tokens for Q5_K and published IQ2_XXS gate/up banks (#1166, 23.11, measured on two cards)
+
+**The question.** On GA10x the MoE stage-1 R8 band stops at four tokens (the generation's rule), so a decode call of five to eight streams switches its gate/up stage to the register MMA. A lab switch (`lab/1166-r8-wide`, `NINFERNO_LAB_R8_TOKENS`) raised every R8 limit to eight. Which banks gain end to end?
+
+**Measurement.** One build, the switch off against on, `--spec off`, C = 5 / 6 / 8, 8 alternating starts (MoE noise at most 0.31 %). The gate/up banks were read from each GGUF:
+
+| board | model (gate/up banks) | C 5 | C 6 | C 8 |
+|---|---|---|---|---|
+| RTX 3090 | Gemma 4 26B-A4B UD-Q5_K_XL (Q5_K) | +3.1 % | +2.8 % | +2.6 % |
+| RTX 3090 | Qwen3.6-35B-A3B UD-IQ2_XXS (IQ2_XXS) | +3.9 % | +3.9 % | +2.8 % |
+| RTX 3060 | Qwen3.6-35B-A3B UD-IQ2_XXS (IQ2_XXS) | +4.2 % | +2.8 % | +1.2 % |
+| RTX 3090 | Gemma 4 26B-A4B UD-IQ2_M (IQ2_XXS) | +3.2 % | +2.3 % | +2.7 % |
+| RTX 3090 | Qwen3.6-35B-A3B UD-Q4_K_XL (frag Q4_K) | +4.7 % | +5.1 % | +3.7 % |
+| RTX 3090 | Qwen3.6-35B-A3B UD-Q3_K_S (frag IQ3_XXS) | -0.9 % | -0.4 % | +1.2 % |
+| RTX 3090 | Qwen3.6-35B-A3B UD-IQ3_XXS (frag IQ2_S) | -0.2 % | +0.2 % | +1.7 % |
+| RTX 3090 | Gemma 4 26B-A4B UD-IQ3_S | -4.6 % | -5.3 % | -2.8 % |
+| RTX 3090 | Qwen3.6-35B-A3B MXFP4_MOE | -2.0 % | -3.2 % | -4.9 % |
+
+At the kernel (`moe_bench --plans sweep --a8 1`, E 256, H 2048, F 512, the lab limit eight), the best R8 plan against the best register-MMA plan at T 5..8 is 0.92-0.94 for IQ2_XXS on the 3090 and 0.95-0.97 on the 3060. Q5_K was already recorded on both cards (`ga10x_q5k_r8_wide`, R8 -8.6..-13.7 % / -1.1..-4.5 %).
+
+**Decision.** Two Applied cells, both on a tensor mma.sync build:
+- `ga10x_q5k_r8_wide`, Recorded until now: Q5_K at the kernel on both cards, and now end to end on the RTX 3090.
+- `ga10x_iq2xxs_r8_wide` (new): a published-layout IQ2_XXS bank, at the kernel and end to end on both cards.
+
+`moe_expert_law.py` admits the same, and `routes/moe_pick`'s Q5_K layers move to R8 at T 1..8 (`pick --rebands`).
+
+Three limits of the evidence:
+- The pick change is an admission change, not a new law. `pick --rebands` moved the Q5_K layers of ga102 (E40, E256, q5k/q6k) and ga106 (q5k/q6k) to R8 `w2r1` gate/up with the register-MMA down at T 5..8, priced by the law, with no new sealed grid of those layers.
+- The RTX 3060's Q5_K is measured at the kernel only. No Q5_K MoE model fits its 12 GB. Outside a pick key the decode heuristic runs `w4r1`, not the sweep's best R8 plan, and the generation record has the 3060's forced `w4r1` at -1..+6 % against the register MMA at T 5..8 (Qwen3.6-35B's shape). The sweep at the published layout on both cards (PR 1167 review, Qwen3.6-35B's shape; Gemma 4 26B-A4B's width 704 is not a whole number of superblocks for moe_bench) put the heuristic's `w4r1` behind the register MMA from T = 6 on the RTX 3060 (+1.6 / +5.2 / +7.2 % at T = 6 / 7 / 8) and `w4r2` ahead of it on both cards (RTX 3060 -4.2 / -4.5 / -1.9 / -0.7 %, RTX 3090 -9.1 / -8.3 / -10.1 / -7.7 % at T = 5..8). On the RTX 3090 `w4r1` itself is ahead of `w4r2` at T = 5 / 6 (136.2 / 156.7 against 142.3 / 158.7 us) and level at 7 / 8. So the class A8 route's per-format gate/up rows (`A8Route::kRowFormats`, the 2-bit codebooks until now) take Q5_K, the RTX 3060's row gives it `w4r2` at T = 5..8, and the RTX 3090's entry keeps `w4r1` (measured, all rows w4r1). Their down stays as the fallback's. The rows reach the GA10x cards within the carry distance of either card (table-dispositions.md); the RTX 3070 and 3070 Ti, 3060 Ti, 3050, A4000, A4500, A2 and A1000 keep the fallback's `w4r1` on the widened band, unmeasured.
+- Under an A16-only activation policy (no R8), a moved pick band no longer applies. On the RTX 3090 the granite Q5_K plan golden loses its T 5..8 pick (`rmma.m1.n1.w1x8|rmma.m1.n1.w2x2`) and takes the decode heuristic's `w1x8|w1x4` at T 1..32. The A8 policy, which decode uses by default, keeps the pick.
+
+**Not taken.**
+- Frag Q4_K: the cards still disagree, as before. The 3090 gains +3.7..+5.1 % end to end (repeated +3.9..+4.9 %); the 3060's kernel sweep has the register MMA 6-8 % ahead, and no frag Q4_K model fits its 12 GB for an end-to-end check.
+- The 3-bit codebooks (frag IQ3_XXS, IQ3_S) and MXFP4 lose or tie.
+- Volta: one R8 call of five to eight tokens beats the split into calls of four end to end on the GV100 (+2.8..+8.1 %, repeated). The lab has one Volta card, so `volta_q4k_r8_t8` is recorded, not applied.
+- Turing: MXFP4 R8 is 1.5x the register MMA at the kernel, but no MXFP4 model fits the RTX 2080 Ti. Its IQ2_XXS loses end to end (-2.3..-4.5 %).
+
 ## 102. The vector kernel's generation caps are one table of format_rules.h rows (#1160, 23.11, structural)
 
 **The question.** Decisions 96, 97 and 99 each capped the vector kernel for some formats on one generation: three `Rule`s, three constants in `generic_select.cpp` (`kVecRuleMaxTokensGa10xGb20x = 3`, `kVecRuleMaxTokensTuring = 2`, `kVecRuleMaxTokensGa10xTwo = 2`), three `route_rules.h` descriptors and three branches in `vec_rule_max_tokens`, with their precedence written as the order of the branches. #1160 found a fourth case (Q4_0). Each new cap would add a constant, a descriptor and a branch.

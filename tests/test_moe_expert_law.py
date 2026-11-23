@@ -35,7 +35,8 @@ def test_occupancy_takes_the_tightest_limit():
 def test_r8_token_limit_follows_the_regime_rules():
     assert law.r8_token_limit("rtx5090", "q4_k") == 8 and law.r8_token_limit("rtx3090", "q4_k") == 4
     assert law.r8_token_limit("rtx4090", "q6_k") == 4
-    assert law.r8_token_limit("rtx3060", "q3_k") == 8 and law.r8_token_limit("rtx3060", "q5_k") == 4
+    assert law.r8_token_limit("rtx3060", "q3_k") == 8 and law.r8_token_limit("rtx3060", "q5_k") == 8
+    assert law.r8_token_limit("rtx3090", "iq2_xxs") == 8 and law.r8_token_limit("rtx2080ti", "q5_k") == 4
     assert not law.admitted("rtx5090", "q6_k", "r8.w4r1|rmma.m1.n1.w1x4", 5)
     assert law.admitted("rtx5090", "q6_k", "rmma.m1.n1.w1x8|rmma.m1.n1.w1x4", 8)
 

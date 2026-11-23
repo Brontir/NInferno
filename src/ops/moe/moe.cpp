@@ -835,10 +835,10 @@ bool r8_stages_admitted(const MoeWeights& w, const MoePlan& p, std::int32_t toke
            (p.down_r8 < 0 || r8_admits(w, w.down, tokens));
 }
 
-
 // The default A8 route per GPU class, measured where it is listed (bench/ops/moe_bench.cu --a8 1
-// --plans sweep [--frag 1], E 128, k 8, H 2048, F 512): the R8 schedule of a published 2-bit
-// codebook gate/up bank (IQ2_XXS, IQ2_XS, IQ2_S, a row each) at each T, and the schedule an IQ3_XXS
+// --plans sweep [--frag 1], E 128, k 8, H 2048, F 512): the R8 schedule of a published-layout
+// gate/up bank of a kRowFormats format (the 2-bit codebooks IQ2_XXS, IQ2_XS, IQ2_S, and Q5_K, a
+// row each) at each T, and the schedule an IQ3_XXS
 // down of width 512..1023 then takes instead of the streaming 1 x 4 warps, the same at every T of
 // an A8 call so that a token's bytes do not depend on T (the A16 route keeps the streaming order).
 // Every other R8 gate/up bank takes w4r1 at every T (A8Route::gate_up_at). Two rows per warp
@@ -861,19 +861,21 @@ bool r8_stages_admitted(const MoeWeights& w, const MoePlan& p, std::int32_t toke
 //          16.4 / 20.5 / 24.6 both), 4 x 1 2 us behind at T = 1; it keeps the streaming 1 x 4.
 //   gb203, T = 3 / 4: IQ2_S w4r2 77.8 / 94.2 against w4r1 79.9 / 100.3, IQ2_XS 73.7 / 90.1
 //          against 77.8 / 96.3; at T = 1 / 2 w4r1 the same or 2 us ahead (IQ2_S 36.9 / 55.3
-//          against w4r2 36.9 / 57.3; w8r1, the former T = 1 schedule, 36.9 at T = 1). IQ4_XS, IQ3_S, Q5_0, Q4_K, Q6_K: w4r1 (or w2r1) best at
-//          every T, w4r2 2..40 us behind (Q6_K T = 3: 40 %). Frag Q4_K, T = 3 / 4: w4r1 85.7 /
-//          106.5 against w8r1 92.2 / 114.7; IQ2_S frag w4r1 83.9 / 102.4 against w4r2 92.2 /
-//          112.6. Down, T = 1..4: 4 x 1 16.4 / 22.5 / 26.6 / 34.8 against 1 x 4 16.4 / 22.5 /
-//          32.5 / 38.9 (2 x 2 16.4 / 24.6 / 32.8 / 40.6); Qwen3.6 decode x1.004 at C = 1, x1.015
-//          at C = 4.
-// The lists name the boards (ad102: the RTX 4090, gb202: the RTX 5090, gb203: the RTX 5080); a
+//          against w4r2 36.9 / 57.3; w8r1, the former T = 1 schedule, 36.9 at T = 1). IQ4_XS,
+//          IQ3_S, Q5_0, Q4_K, Q6_K: w4r1 (or w2r1) best at every T, w4r2 2..40 us behind (Q6_K T =
+//          3: 40 %). Frag Q4_K, T = 3 / 4: w4r1 85.7 / 106.5 against w8r1 92.2 / 114.7; IQ2_S frag
+//          w4r1 83.9 / 102.4 against w4r2 92.2 / 112.6. Down, T = 1..4: 4 x 1 16.4 / 22.5 / 26.6
+//          / 34.8 against 1 x 4 16.4 / 22.5 / 32.5 / 38.9 (2 x 2 16.4 / 24.6 / 32.8 / 40.6);
+//          Qwen3.6 decode x1.004 at C = 1, x1.015 at C = 4.
+// The lists name the boards (ad102: the RTX 4090, gb202: the RTX 5090, gb203: the RTX 5080,
+// ga102: the RTX 3090, ga106: the RTX 3060); a
 // device takes the nearest measured board's route within measured::kCarryDistance, else the
 // fallback below (nearest_measured).
 struct ClassA8Route {
     Board board;
     A8Route route;
 };
+
 // T = 1..8 with the R8 route to eight tokens (2026-11-03, master dd137f47, gate/up with the
 // register-MMA down, published layout, the schedule against w4r1):
 //   gb202: IQ2_XXS w4r2 -4.2 / -3.2 / -3.0 / -5.7 / -5.3 % at T = 4..8 (w4r1 best at 1..3);
@@ -883,7 +885,17 @@ struct ClassA8Route {
 //          -3.2 / -2.9 / -2.4 / -3.6 / -6.5 / -5.8 / -6.6 % at T = 2..8; IQ2_S w4r1 best to T =
 //          3, w2r1 -2.3 / -1.4 / -1.5 / -1.4 % at T = 4..7, w4r1 at 8.
 //   ad106 (RTX 4060 Ti, no entry): every schedule within 1..3 % of w4r1.
-// Rows: IQ2_XXS, IQ2_XS, IQ2_S (A8Route::kTwoBitFormats).
+//   ga102 / ga106 (RTX 3090 / 3060, #1166, 2026-11-23, PR 1167 head 84dd6982a, Qwen3.6-35B's
+//          shape E 256, k 8, H 2048, F 512, --plans sweep --a8 1, the register-MMA 4 x 1 down):
+//          Q5_K gate/up at T = 5..8, w4r2 against w4r1 / the register MMA: RTX 3090 142.3 /
+//          158.7 / 173.1 / 185.3 us against 136.2 / 156.7 / 174.1 / 185.3 and 156.7 / 173.1 /
+//          192.5 / 200.7; RTX 3060 326.7 / 371.7 / 428.0 / 452.6 against 335.9 / 395.3 / 458.8
+//          / 488.5 and 341.0 / 389.1 / 436.2 / 455.7: on the 3060 w4r1 falls behind the register
+//          MMA from T = 6 (+1.6..+7.2 %) and w4r2 leads both, so ga106's Q5_K row is w4r2 at T =
+//          5..8; on the 3090 w4r1 is ahead of w4r2 at T = 5 / 6 (-4.3 / -1.3 %) and level at 7 / 8,
+//          so ga102 keeps w4r1 (its entry is all w4r1: measured, not the fallback). T = 1..4 keep
+//          w4r1 on both; their 2-bit rows keep w4r1 (decision 101's end-to-end A/B).
+// Rows: IQ2_XXS, IQ2_XS, IQ2_S, Q5_K (A8Route::kRowFormats).
 // R8 schedules (NINFERNO_MOE_R8_SCHEDULES): 0 w4r1, 1 w4r2, 2 w8r1, 3 w2r1.
 constexpr ClassA8Route kA8Routes[] = {
     {measured::kRtx4090, {{}, 2}},
@@ -891,6 +903,8 @@ constexpr ClassA8Route kA8Routes[] = {
      {{{{0, 0, 0, 1, 1, 1, 1, 1}, {0, 0, 0, 0, 0, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 0}}}, -1}},
     {measured::kRtx5080,
      {{{{0, 0, 1, 1, 1, 1, 1, 1}, {0, 1, 1, 1, 1, 1, 1, 1}, {0, 0, 0, 3, 3, 3, 3, 0}}}, 3}},
+    {measured::kRtx3090, {{}, -1}},
+    {measured::kRtx3060, {{{{}, {}, {}, {0, 0, 0, 0, 1, 1, 1, 1}}}, -1}},
 };
 static_assert(measured_boards_known(std::span(kA8Routes)));
 // Every other class. The MoE tuner's choices of eight cards (A100, RTX 2080 Ti, 3090, 4060 Ti,
@@ -1301,7 +1315,7 @@ std::optional<MoeAnswer> speed_w4a8_authority(const MoeCall& c) {
 }
 
 // Decode widths: the streaming schedules by K, and the class's default A8 route on top (the
-// nearest of three measured boards within kCarryDistance, else the fallback route).
+// nearest measured board within kCarryDistance, else the fallback route).
 std::optional<MoeAnswer> decode_authority(const MoeCall& c) {
     const MoePlan decode = heuristic_r8(c.weights, c.g, c.p, c.tokens);
     if (decode.gate_up_r8 < 0 && decode.down_r8 < 0) {
@@ -1498,8 +1512,9 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     }
     if (!r8_stages_admitted(w, p, t)) {
         fail("an R8 stage needs an A8 expert policy, a codebook format, at most r8_token_limit() "
-             "tokens (8 on Ada and consumer Blackwell but for FP4 elements and some frag banks, 4 "
-             "otherwise) and an activation that fits a CTA");
+             "tokens (8 on Ada and consumer Blackwell but for FP4 elements and some frag banks, "
+             "and for "
+             "GA10x's measured cells; 4 otherwise) and an activation that fits a CTA");
     }
     if (x.dtype != DType::BF16 || !x.is_contiguous() || x.ne[0] != g.hidden || t < 1 ||
         x.ne[2] != 1 || x.ne[3] != 1) {

@@ -58,8 +58,8 @@ std::string board_text(const std::optional<Board>& b) {
 
 std::string route_text(const moe::A8Route& r) {
     std::ostringstream out;
-    out << "down=" << r.down << " 2bit=";
-    for (const auto& row : r.gate_up_2bit) {
+    out << "down=" << r.down << " rows=";
+    for (const auto& row : r.gate_up_rows) {
         for (const int s : row) out << s;
         out << '/';
     }
@@ -67,7 +67,7 @@ std::string route_text(const moe::A8Route& r) {
 }
 
 bool same_route(const moe::A8Route& a, const moe::A8Route& b) {
-    return a.down == b.down && a.gate_up_2bit == b.gate_up_2bit;
+    return a.down == b.down && a.gate_up_rows == b.gate_up_rows;
 }
 
 // Rows per disposition, over the target SKUs; the counts docs/maintainer/table-dispositions.md
@@ -156,7 +156,8 @@ void check_against_production() {
 }
 
 void check_measured_boards_and_fallback() {
-    for (const Board& b : {measured::kRtx4090, measured::kRtx5090, measured::kRtx5080}) {
+    for (const Board& b : {measured::kRtx4090, measured::kRtx5090, measured::kRtx5080,
+                           measured::kRtx3090, measured::kRtx3060}) {
         const auto a8 = moe::a8_route_answer(b);
         expect(a8.disposition == Disposition::Measured && a8.distance == 0 && a8.donor,
                "a measured board's A8 route is Measured");
@@ -214,7 +215,7 @@ void check_reach_edge_and_unknown_bandwidth() {
     no_dram_5090.dram_gbps = 0;
     const auto ai          = moe::a8_route_answer(no_dram_5090);
     expect(ai.disposition == Disposition::Incomplete && !ai.donor && ai.distance == 0 &&
-               ai.route.down == -1 && ai.route.gate_up_2bit[0][3] == 0,
+               ai.route.down == -1 && ai.route.gate_up_rows[0][3] == 0,
            "a 5090 without its bandwidth is Incomplete, with the A8 literal");
     const auto fi = detail::sparse_moe_q4_groupwise_frontier_answer(no_dram_5090);
     expect(fi.disposition == Disposition::Incomplete && !fi.donor && fi.distance == 0 &&
@@ -307,11 +308,17 @@ void check_hand_written() {
         {0x2C34, "RTX PRO 4000 Blackwell: just inside the 5080's reach", C, 3, N, 47, 0.99, -1,
          &measured::kRtx5080},
         {0x2BB3, "RTX PRO 5000 Blackwell: just outside the 5090's reach", N, -1, N, 47},
-        // sparse_moe_prefill_plan.cpp: the 3090 measured 17; moe.cpp lists no Ampere row.
-        {0x2204, "RTX 3090: the Ampere frontier row", N, -1, M, 17},
+        // sparse_moe_prefill_plan.cpp: the 3090 measured 17; moe.cpp: ga102's A8 entry (w4r1 on
+        // every row, measured ahead of w4r2 at T = 5 / 6, and the streaming down).
+        {0x2204, "RTX 3090: a row of both tables", M, -1, M, 17},
         // measured_boards.h: the 3090 Ti is 0.14 from the 3090.
-        {0x2203, "RTX 3090 Ti: a variant of the 3090", N, -1, C, 17, -1, 0.14, nullptr,
-         &measured::kRtx3090},
+        {0x2203, "RTX 3090 Ti: a variant of the 3090", C, -1, C, 17, 0.14, 0.14,
+         &measured::kRtx3090, &measured::kRtx3090},
+        // moe.cpp: ga106's A8 row; the frontier table has no 3060 row and the 3090's is beyond
+        // reach, so its literal, 47.
+        {0x2503, "RTX 3060: an A8 row, no frontier row", M, -1, N, 47},
+        // GA10x outside both lab cards' reach: the fallback (decision 101, table-dispositions.md).
+        {0x2484, "RTX 3070: beyond kCarryDistance of the 3090 and the 3060", N, -1, N, 47},
         // measured_boards.h: the 4090's entries on the 4080 SUPER (1.2) are out of reach.
         {0x2702, "RTX 4080 SUPER: beyond kCarryDistance of the 4090", N, -1, N, 47},
         // moe.cpp: "ad106 (RTX 4060 Ti, no entry)": the unmeasured default. 0x2803 is the 8 GB
@@ -321,10 +328,10 @@ void check_hand_written() {
         // Sourced L2 capacities complete these boards. Distances are independently calculated
         // from the published SMs, bandwidth and L2: |log2(SM ratio)| + |log2(BW ratio)| +
         // 0.5 * |log2(L2 ratio)|, all below the unchanged 1.0 carry threshold.
-        {0x2237, "A10G: 6 MiB, near the 3090", N, -1, C, 17, -1, 0.677, nullptr,
+        {0x2237, "A10G: 6 MiB, near the 3090", C, -1, C, 17, 0.677, 0.677, &measured::kRtx3090,
          &measured::kRtx3090},
-        {0x220A, "RTX 3080 12GB: 6 MiB, near the 3090", N, -1, C, 17, -1, 0.266, nullptr,
-         &measured::kRtx3090},
+        {0x220A, "RTX 3080 12GB: 6 MiB, near the 3090", C, -1, C, 17, 0.266, 0.266,
+         &measured::kRtx3090, &measured::kRtx3090},
         {0x2BB5, "RTX PRO 6000 Server: 128 MiB, near the 5090", C, -1, C, 47, 0.353, 0.353,
          &measured::kRtx5090, &measured::kRtx5090},
         {0x26B9, "L40S: 96 MiB, near the 4090", C, 2, C, 47, 0.580, 0.580, &measured::kRtx4090,
@@ -371,11 +378,11 @@ void check_hand_written() {
     // gb202's IQ2_XXS goes w4r2 from T = 4, w4r1 before; gb203's IQ2_S takes w2r1 at T = 4..7 and
     // w4r1 at 8 (moe.cpp, the 2026-11-03 sweep).
     const auto r5090 = moe::a8_route_answer(measured::kRtx5090).route;
-    expect(r5090.gate_up_2bit[0][2] == 0 && r5090.gate_up_2bit[0][3] == 1,
+    expect(r5090.gate_up_rows[0][2] == 0 && r5090.gate_up_rows[0][3] == 1,
            "5090 IQ2_XXS T = 3 / 4");
     const auto r5080 = moe::a8_route_answer(measured::kRtx5080).route;
-    expect(r5080.gate_up_2bit[2][3] == 3 && r5080.gate_up_2bit[2][6] == 3 &&
-               r5080.gate_up_2bit[2][7] == 0,
+    expect(r5080.gate_up_rows[2][3] == 3 && r5080.gate_up_rows[2][6] == 3 &&
+               r5080.gate_up_rows[2][7] == 0,
            "5080 IQ2_S T = 4..7 w2r1, 8 w4r1");
 }
 
@@ -385,7 +392,7 @@ void check_counts(const Counts& a8, const Counts& q4) {
     const auto same = [](const Counts& c, int m, int ca, int i, int n) {
         return c.measured == m && c.carried == ca && c.incomplete == i && c.none == n;
     };
-    expect(same(a8, 4, 19, 0, 133), "A8 route counts differ from the document");
+    expect(same(a8, 8, 35, 0, 113), "A8 route counts differ from the document");
     expect(same(q4, 4, 22, 0, 130), "frontier counts differ from the document");
 }
 
