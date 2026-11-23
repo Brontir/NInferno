@@ -1480,6 +1480,13 @@ def sass_unstable(family, key):
 # CPU; the r8 kernel files are unchanged between those trees, a few headers they include changed.
 # Host, build kind and tree all differ between the two counts, so this is a counted pair, not a
 # cause. No price reads the row (the R8 law prices T = 1 only, #966).
+# mmq (key FAMILIES["mmq"].key_columns: type, J, fallback, prec): sm_70's mul_mat_q<2, 16, 0, 30>
+# 95 / 96 and <2, 128, 0, 30> 172 / 177 registers, the stack, local and shared bytes equal, in clean
+# (CCACHE_DISABLE=1) Quadro GV100 builds of one source with identical compile commands (the 19
+# ggml_mmq units configured with tests on and off), nvcc 12.8.93: 95 / 172 at the 21.11 head, 96 /
+# 177 in a full ctest build of b3f6d9c7c, 96 / 172 in ninferno-serve builds of both de7eebee5 and
+# b3f6d9c7c (#1164). An allocation ptxas makes either way, not a commit; the counted MMQ unit is
+# off (kMmqCountedUnit), so no price reads these rows.
 REGISTER_ALLOCATIONS = {
     "moegemm": {
         "80": {
@@ -1510,6 +1517,12 @@ REGISTER_ALLOCATIONS = {
     "r8": {
         "80": {
             ("W4a8U4ZpG<64>", 4, 2, 8, 1, 1): (160, 162),
+        },
+    },
+    "mmq": {
+        "70": {
+            (2, 16, 0, 30): (95, 96),
+            (2, 128, 0, 30): (172, 177),
         },
     },
 }
