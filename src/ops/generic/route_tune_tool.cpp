@@ -665,6 +665,13 @@ int route_tune_main(int argc, char** argv) {
                                           ops::LinearPolicy::AllowA8)) {
                     time_route({generic::Family::GgmlVec, 0}, t);
                 }
+                // The few-row MMA tile (vector schedule 1, #1162) where it admits the call: the
+                // same activation and widths, timed and never tabled.
+                if (a8_sweep && generic::vec_call(w.weight, ops::LinearPolicy::AllowA8, t) &&
+                    generic::route_admits({generic::Family::GgmlVec, 1}, w.weight,
+                                          ops::LinearPolicy::AllowA8)) {
+                    time_route({generic::Family::GgmlVec, 1}, t);
+                }
                 winners.push_back({t, best_route});
                 if (selected_csv) {
                     const generic::Problem gp{p.qtype, policy, p.n, p.k, p.epilogue};
