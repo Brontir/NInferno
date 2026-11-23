@@ -289,6 +289,14 @@ std::int32_t vec_rule_max_tokens(QType qtype) {
     // vec_max_tokens() reaches past eight columns only without tensor mma.sync.
     const std::int32_t widest = vec_max_tokens();
     if (widest > ggml_mmq::kVecMaxColumns) return widest;
+    // LAB (not for merge): NINFERNO_LAB_VEC_MAX=2..8 sets the vector kernel's band edge for every
+    // format on tensor mma.sync builds (the Ada T 5-8 in-step question, #1162).
+    static const std::int32_t lab_max = [] {
+        const char* s = std::getenv("NINFERNO_LAB_VEC_MAX");
+        const int n   = s ? std::atoi(s) : 0;
+        return (n >= 2 && n <= ggml_mmq::kVecMaxColumns) ? n : 0;
+    }();
+    if (lab_max > 0) return lab_max;
     try {
         const auto& d = device_class();
         if (ga10x_cc(d.major, d.minor) &&
