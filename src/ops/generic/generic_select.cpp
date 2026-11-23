@@ -256,55 +256,29 @@ namespace {
 // T = 5..16 about 0.5 ms a call against 0.08 for the vector kernel at T = 4; C8 aggregate 37.3
 // tok/s against C4 86.3, DFlash2 (verify 6) C1 15.7 against plain 30.1.
 constexpr std::int32_t kVecRuleMaxTokens = 4;
-// On GA10x (sm_86) and consumer Blackwell (sm_120) the vector kernel stops at three tokens
-// (#998, DECISIONS 96), the two generations whose two lab cards both lose T = 4 to it end to end.
-// Qwen3.5-9B Q4_K_M, --spec off, C = 4 (every trunk linear a T = 4 call), the rule capped at T = 3
-// against T = 4: RTX 3060 +6.5 %, RTX 3090 +3.6 %, RTX 5070 Ti +11.1 %, RTX 5090 +5.3 %, with C = 2
-// and 3 within 0.1 %; under MTP the cap never lost in rounds a second (RTX 3090, 5070 Ti, 5090).
-// There T = 4 goes to the register MMA (on GA10x Q5_K and Q6_K stop at two:
-// kVecRuleMaxTokensGa10xTwo below). The cap holds for the K-quants only (format_rules.h
-// VecCapGa10xGb20x): IQ4_XS split the two GB20x cards (RTX 5070 Ti +4.45 %, RTX 5090 -3.27 %), the
-// formats R8 verifies would send T = 4 to R8, which no A/B here isolated (the vector kernel's own
-// first case was one of them, the IQ3_S verify above), and the others are not measured.
-// Ada keeps four: the RTX 4070 Ti (-2.0 %) and 4090 (-1.4 %) lose with the cap, the 4060 Ti gains
-// 2.5 %. The A100 (sm_80) is not measured. The edge in
-// T differs by card (capped at T = 2 the RTX 3090 lost 2.0 % at C = 3, the RTX 3060 gained 1.5 %):
-// a counted bound from the cards' integer issue per DRAM byte replaces this (#998).
-constexpr std::int32_t kVecRuleMaxTokensGa10xGb20x = 3;
-// On Turing (an sm_75 build: format_requires::kR8VerifyTuring) it stops at two (#1038) for the
-// K-quants that keep the register MMA at the verify widths (format_rules.h VecCapTuring: Q4_K and
-// Q6_K timed end to end, Q3_K and Q5_K carried). RTX 2080 Ti, Qwen3.5-9B, --spec off, vec
-// at T = 2 and the register MMA at T = 3..4 against vec at T = 2..4 (the branch against master):
-// Q4_K_M C = 2 +0.08 %, C = 3 +2.57 %, C = 4 +3.44 %; Q6_K +0.05 %, +28.5 %, +33.4 %.
-constexpr std::int32_t kVecRuleMaxTokensTuring = 2;
-// On GA10x the vector kernel stops at two tokens for Q5_K and Q6_K (#1152; format_rules.h
-// VecCapGa10xTwo). Qwen3.5-9B, --spec off, vec at T = 1 only against master's T = 2..3: Q6_K C = 3
-// RTX 3060 +10.7 %, RTX 3090 +5.0 %; Q5_K RTX 3060 +10.4 %, RTX 3090 +5.2 %; Q4_K only +1.5 %
-// (RTX 3060) and Q3_K far behind without vec (-5.7 %), so they keep three. T = 2 keeps vec: there
-// the cards split (Q6_K C = 2 RTX 3060 +4.0 %, RTX 3090 -2.3 %). Ada (RTX 4090 Q5_K_M: vec ahead at
-// T = 2..4), Turing (its own cap) and Volta (vec 7-18 % ahead at T = 3..4, #1153) keep theirs.
-constexpr std::int32_t kVecRuleMaxTokensGa10xTwo = 2;
 
+// Below kVecRuleMaxTokens the vector kernel's caps are format_rules.h rows, one rule a generation
+// scope and a cap a row (kVecCapScopes): GA10x and consumer Blackwell three for the K-quants
+// (#998, DECISIONS 96), Turing two for the K-quants that keep the register MMA at the verify
+// widths (#1038), GA10x two for Q5_K and Q6_K (#1152); each row's record holds its end-to-end
+// A/B. Ada keeps four (with the K-quant cap the RTX 4070 Ti lost 2.0 %, the 4090 1.4 %, the
+// 4060 Ti gained 2.5 %); the A100 (sm_80) and Volta are not capped. The edge in T differs by
+// card within a generation: a counted bound from the cards' integer issue per DRAM byte would
+// replace the rows (#998).
 std::int32_t vec_rule_max_tokens(QType qtype) {
     // vec_max_tokens() reaches past eight columns only without tensor mma.sync.
     const std::int32_t widest = vec_max_tokens();
     if (widest > ggml_mmq::kVecMaxColumns) return widest;
+    std::int32_t cap = kVecRuleMaxTokens;
     try {
-        const auto& d = device_class();
-        if (ga10x_cc(d.major, d.minor) &&
-            format_rules::holds(format_rules::Rule::VecCapGa10xTwo, qtype)) {
-            return kVecRuleMaxTokensGa10xTwo;
-        }
-        if ((ga10x_cc(d.major, d.minor) || gb20x_cc(d.major, d.minor)) &&
-            format_rules::holds(format_rules::Rule::VecCapGa10xGb20x, qtype)) {
-            return kVecRuleMaxTokensGa10xGb20x;
-        }
-        if (format_rules::holds(format_rules::Rule::VecCapTuring, qtype) &&
-            satisfied(format_requires::kR8VerifyTuring, current_arch_facts())) {
-            return kVecRuleMaxTokensTuring;
+        const ArchFacts facts = current_arch_facts();
+        for (const auto& scope : format_rules::kVecCapScopes) {
+            const std::int64_t c = format_rules::vec_cap(scope.rule, qtype);
+            if (c > 0 && c < cap && satisfied(scope.arch, facts))
+                cap = static_cast<std::int32_t>(c);
         }
     } catch (const std::exception&) {}
-    return kVecRuleMaxTokens;
+    return cap;
 }
 
 

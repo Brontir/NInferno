@@ -15,7 +15,7 @@
 // What this binary compiles for a format (its R8, W4A8, producer-warp and tiled codecs) is not
 // here: it is the launch files' lists, compiled_codecs.h (#615 F4). The measured per-format rules
 // of the selection (light_step, tall_tile, mmq_verify, w4a8_ws_tuned, r8_verify, the Turing rules,
-// vec_cap_ga10x_gb20x, vec_cap_ga10x_two, mmq_verify_turing_low) and their
+// vec_cap_ga10x_gb20x, vec_cap_ga10x, mmq_verify_turing_low) and their
 // thresholds are not here either: they are format_rules.h's rows, with the cards and the source of
 // their evidence (#615 F6).
 //
