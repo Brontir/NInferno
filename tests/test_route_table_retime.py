@@ -13,7 +13,7 @@ FIELDS = ["format", "compute", "epilogue", "n", "k", "T", "route", "median_us"]
 
 
 def run(tmp_path, bands, rows, margin="0.03", evidence=None, second=None, repeat=False, tuned=None,
-        tokens="9-11"):
+        tokens="9-11", fill=None):
     table = tmp_path / "t.json"
     entry = {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 4096, "k": 4096, "bands": bands}
     if evidence is not None:
@@ -47,6 +47,15 @@ def run(tmp_path, bands, rows, margin="0.03", evidence=None, second=None, repeat
         extra = ["--evidence", str(ev), str(sel)]
     if repeat:
         extra.append("--repeat")
+    if fill is not None:
+        # The first grid's --selected-out: per count, the route shipped and who answered it.
+        sel = tmp_path / "fill_selected.csv"
+        with sel.open("w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["format", "compute", "epilogue", "n", "k", "T", "selected", "authority"])
+            for t, route, authority in fill:
+                w.writerow(["q4k", "a8", "store", 4096, 4096, t, route, authority])
+        extra += ["--fill-rule", str(sel)]
     r = subprocess.run([sys.executable, TOOL, "--table", str(table), "--routes", str(grid),
                         "--tokens", tokens, "--margin", margin] + extra, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
@@ -444,3 +453,29 @@ def test_a_dead_entry_the_grid_never_timed_is_replaced(tmp_path):
     bands, _ = run(tmp_path, [[1, 16, "n1"], [17, 19, "ggml_mmq"], [20, 16777216, "n2"]], rows,
                    tokens="17-19")
     assert bands == [[1, 16, "n1"], [17, 16777216, "n2"]]
+
+
+def test_fill_rule_gives_a_rule_count_a_band_and_leaves_vec_counts(tmp_path):
+    # #1160: the entry's bands start at T 9; at T 4-5 the register MMA's rule shipped n1, which n8
+    # beats by 1.2x on both grids: those counts take a band of n8. T 3 shipped vec (vec-rule): the
+    # call takes vec there before any band, so no band is written, though n8 is faster than n1.
+    rows = [(t, r, us) for t in (3, 4, 5) for r, us in (("n1", 120), ("n8", 100))]
+    second = ([(t, r, us) for t in (3, 4, 5) for r, us in (("n1", 121), ("n8", 101))],
+              [(t, "n1") for t in (3, 4, 5)])
+    fill = [(3, "ggml_vec", "vec-rule"), (4, "n1", "rmma-rule"), (5, "n1", "rmma-rule")]
+    bands, r = run(tmp_path, [[9, 16, "n2"]], rows, second=second, repeat=True, fill=fill,
+                   tokens="3-5")
+    assert bands == [[4, 5, "n8"], [9, 16, "n2"]]
+    assert "T4: n1 120.0 us -> n8 100.0 us" in r.stdout
+
+
+def test_fill_rule_keeps_a_move_the_second_grid_does_not_repeat(tmp_path):
+    # The second grid puts n8 behind n1 at T 4: the filled count stands on one grid only, kept.
+    rows = [(t, r, us) for t in (4, 5) for r, us in (("n1", 120), ("n8", 100))]
+    second = ([(4, "n1", 100), (4, "n8", 110), (5, "n1", 121), (5, "n8", 101)],
+              [(t, "n1") for t in (4, 5)])
+    fill = [(4, "n1", "rmma-rule"), (5, "n1", "rmma-rule")]
+    bands, r = run(tmp_path, [[9, 16, "n2"]], rows, second=second, repeat=True, fill=fill,
+                   tokens="4-5")
+    assert bands == [[9, 16, "n2"]]
+    assert "kept" in r.stderr

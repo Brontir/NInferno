@@ -2,7 +2,12 @@
 """Re-time a route table's bands over a token range from its own board's route_tune grid (#1073).
 
     tools/route_table_retime.py --table routes/C.json --routes routes.csv --tokens 9-11 [--margin 0.03]
-        [--evidence ROUTES SELECTED [--repeat]]
+        [--evidence ROUTES SELECTED [--repeat [--fill-rule SELECTED]]]
+
+With --fill-rule (the first grid's --selected-out), a count inside --tokens that no band of an entry
+covers, where the register MMA's shape rule answered the call (authority rmma-rule), counts as that
+rule route's: the same tests move it, and a moved count becomes a band of the entry (#1160: ga102's
+K-quant 5120x17408 add entries had bands from T 9 only, and the rule's w1x4 lost T 4-8 by 1.2x).
 
 For every generic entry of the table (format, compute, epilogue, n, k) that the grid timed inside
 --tokens, where the table's own route is slower than the grid's fastest by more than --margin at
@@ -121,6 +126,14 @@ def crosses_an_edge(route, lo, hi):
     return (lo // w + 1) * w < hi
 
 
+# --fill-rule: the rule authorities whose answer a band may replace where the entry has none. The
+# register MMA's shape rule only: its route is one a band holds, and a band there is read before
+# it. A count the vec rule answers stays its own: the call takes ggml_vec there whatever the
+# entry's bands say (RTX 3090 grid, #1160: Q4_0 4096x2688 at T 2-3 ships vec-rule beside a band),
+# so a band written there would never be read.
+FILL_AUTHORITIES = {"rmma-rule"}
+
+
 def route_at(bands, t):
     for lo, hi, r in bands:
         if lo <= t <= hi:
@@ -129,7 +142,8 @@ def route_at(bands, t):
 
 
 def rebuild(bands, moved):
-    """bands with the per-token routes of `moved` ({t: route}) spliced in, equal neighbours joined."""
+    """bands with the per-token routes of `moved` ({t: route}) spliced in, equal neighbours joined.
+    A moved count no band covers (--fill-rule) becomes a band of its own."""
     points = sorted(moved)
     out = []
     for lo, hi, r in bands:
@@ -142,6 +156,8 @@ def rebuild(bands, moved):
             start = t + 1
         if start <= hi:
             out.append([start, hi, r])
+    out += [[t, t, moved[t]] for t in points if route_at(bands, t) is None]
+    out.sort(key=lambda b: b[0])
     joined = []
     for b in out:
         if joined and joined[-1][2] == b[2] and joined[-1][1] + 1 == b[0]:
@@ -182,6 +198,9 @@ def main():
     ap.add_argument("--tokens", required=True)
     ap.add_argument("--margin", type=float, default=0.03)
     ap.add_argument("--evidence", nargs=2, type=Path, metavar=("ROUTES", "SELECTED"))
+    ap.add_argument("--fill-rule", type=Path, metavar="SELECTED",
+                    help="the first grid's route_tune --selected-out: a count no band covers, where "
+                         "the register MMA's rule answered (rmma-rule), is the rule route's to lose")
     ap.add_argument("--repeat", action="store_true",
                     help="with --evidence: keep a move only where the second grid repeats it: at "
                          "every moved or filled count it timed, the range's route is within --margin "
@@ -190,8 +209,17 @@ def main():
     a = ap.parse_args()
     if a.repeat and not a.evidence:
         ap.error("--repeat needs --evidence (the second grid it checks the moves on)")
+    if a.fill_rule and not a.repeat:
+        ap.error("--fill-rule needs --evidence and --repeat (a filled count stands on two grids)")
     lo, hi = (int(x) for x in a.tokens.split("-"))
     grid = load_grid(a.routes, lo, hi)
+    # --fill-rule: what the first grid's call shipped where no band covers the count, when one of
+    # FILL_AUTHORITIES answered it with a route a band can hold.
+    shipped = {}
+    if a.fill_rule:
+        for r in csv.DictReader(a.fill_rule.open(encoding="utf-8")):
+            if lo <= int(r["T"]) <= hi and r["authority"] in FILL_AUTHORITIES:
+                shipped[(row_key(r), int(r["T"]))] = r["selected"]
     grid_all = load_grid(a.routes, lo, hi, every_route=True)
     # The evidence grid: every route it timed (the ranker may answer a route no table holds).
     ev_grid, ranker = {}, {}
@@ -211,8 +239,14 @@ def main():
         timed = [t for t in range(lo, hi + 1) if grid.get((key, t))]
         if not timed:
             continue
-        # Counts no band of the entry covers are not the table's answer there: left alone.
+        # Counts no band of the entry covers are not the table's answer there: left alone, unless
+        # --fill-rule names the rule route the call shipped there (then that route is the count's
+        # old route, and a move gives the entry a band there).
         haves = {t: r for t in timed if (r := route_at(e["bands"], t)) is not None}
+        for t in timed:
+            s = shipped.get((key, t))
+            if t not in haves and s is not None and s in grid[(key, t)]:
+                haves[t] = s
         if not haves:
             continue
         timed = sorted(haves)

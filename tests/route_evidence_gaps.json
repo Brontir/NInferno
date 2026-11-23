@@ -5,7 +5,6 @@
   "ga102.json:bf16.a16.store.n16384.k1024": "weak",
   "ga102.json:iq4xs.a16.add.n5120.k6144": "weak",
   "ga102.json:q40.a16.store.n5376.k21504": "weak",
-  "ga102.json:q40.a16.store.n5376.k8192": "weak",
   "ga102.json:q4k.a16.store.n16384.k5120": "weak",
   "ga102.json:q6k.a16.store.n248320.k2048": "weak",
   "ga102.json:q8.a16.store.n2880.k4096": "weak",
