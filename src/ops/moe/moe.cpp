@@ -25,6 +25,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <mutex>
@@ -1891,27 +1892,45 @@ std::int32_t moe_split_tokens(const MoeWeights& w, const MoeConfig& c, std::int3
 namespace {
 
 // Under NINFERNO_MOE_PLAN_RECORD=<file>: each distinct call of the op (both banks' formats and
-// layouts, the geometry, T, the route profile) appended once as "<gate_up> <down> E<n> k<n> H<n>
-// F<n> T=<n> <decode|prefill> <plan> <authority>", a bank in ggml_frag_v1 marked "<format>.frag":
-// which plan and which authority of select_plan's cascade a model's MoE layers take (#1166). The
-// query is moe_plan_query, select_plan with its reason; it runs once per distinct call.
+// layouts, the geometry, the expert policy, T, the route profile, the device class) appended once
+// as "<gate_up> <down> E<n> k<n> H<n>[ pad<n>] F<n> p<policy> T=<n> <decode|prefill|invariant>
+// <plan> <authority>", the layer named as the MoE plan goldens name it (H the router's K, pad the
+// gate/up bank's extra K) and a ggml_frag_v1 bank marked "<format>.frag": which plan and which
+// authority of select_plan's cascade a model's MoE layers take (#1166). The query is
+// moe_plan_query, select_plan with its reason; it runs once per distinct call. A file that cannot
+// be written is reported once on stderr.
 void record_plan(const MoeWeights& w, const MoeConfig& c, std::int32_t t, bool prefill) {
     static const char* path = std::getenv("NINFERNO_MOE_PLAN_RECORD");
     if (path == nullptr || *path == 0) return;
-    using Key = std::tuple<int, int, int, int, std::int32_t, std::int32_t, std::int32_t,
-                           std::int32_t, std::int32_t, bool>;
+    const bool invariant = invariant_routes_active();
+    std::uint32_t pci    = 0;
+    int sms              = 0;
+    try {
+        const auto& d = device_class();
+        pci           = d.pci_device_id;
+        sms           = d.sms;
+    } catch (const std::exception&) {}
+    using Key =
+        std::tuple<int, int, int, int, std::int32_t, std::int32_t, std::int32_t, std::int32_t,
+                   std::int32_t, int, std::int32_t, bool, bool, std::uint32_t, int>;
     static std::mutex mutex;
     static std::set<Key> seen;
+    static bool warned = false;
     const Key key{static_cast<int>(w.gate_up.qtype),
                   static_cast<int>(w.gate_up.layout),
                   static_cast<int>(w.down.qtype),
                   static_cast<int>(w.down.layout),
                   w.router.n,
                   c.top_k,
+                  w.router.k,
                   w.gate_up.k,
                   w.down.k,
+                  static_cast<int>(w.expert_policy),
                   t,
-                  prefill};
+                  prefill,
+                  invariant,
+                  pci,
+                  sms};
     const std::lock_guard lock(mutex);
     if (!seen.insert(key).second) return;
     const MoePlanQuery q = moe_plan_query(w, c, t, prefill);
@@ -1919,10 +1938,20 @@ void record_plan(const MoeWeights& w, const MoeConfig& c, std::int32_t t, bool p
         return std::string(generic::qtype_name(b.qtype)) +
                (b.layout == QuantLayout::GgmlFrag ? ".frag" : "");
     };
-    std::ofstream(path, std::ios::app)
-        << bank(w.gate_up) << ' ' << bank(w.down) << " E" << w.router.n << " k" << c.top_k << " H"
-        << w.gate_up.k << " F" << w.down.k << " T=" << t << (prefill ? " prefill " : " decode ")
-        << plan_name(q.plan) << ' ' << authority_name(q.authority) << '\n';
+    const std::int32_t pad = w.gate_up.k - w.router.k;
+    std::ofstream file(path, std::ios::app);
+    file << bank(w.gate_up) << ' ' << bank(w.down) << " E" << w.router.n << " k" << c.top_k << " H"
+         << w.router.k << (pad != 0 ? " pad" + std::to_string(pad) : std::string()) << " F"
+         << w.down.k << " p" << static_cast<int>(w.expert_policy) << " T=" << t
+         << (invariant ? " invariant "
+             : prefill ? " prefill "
+                       : " decode ")
+         << plan_name(q.plan) << ' ' << authority_name(q.authority) << '\n';
+    file.flush();
+    if (!file.good() && !warned) {
+        warned = true;
+        std::fprintf(stderr, "NINFERNO_MOE_PLAN_RECORD: cannot write %s\n", path);
+    }
 }
 
 } // namespace
