@@ -1440,10 +1440,14 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                         // next move asks serve again.
                         kept = previous;
                         if (kept->contains("now")) { (*kept)["now"] = nullptr; }
-                        kept_free_at                 = previous_free_at;
-                        fresh                        = false;
-                        fell_back                    = true;
-                        serve_replan_failed_at_[key] = ReplanFailure{clock_now(), point_now};
+                        kept_free_at = previous_free_at;
+                        fresh        = false;
+                        fell_back    = true;
+                        // Held at the point serve was given (captured as the child started,
+                        // after any wait on the card mutex), else at this ask's: the card state
+                        // the failure belongs to (#1172 review).
+                        serve_replan_failed_at_[key] =
+                            ReplanFailure{clock_now(), served_free_at ? served_free_at : point_now};
                     } else {
                         serve_replan_failed_at_.erase(key);
                         plans_[key] = *kept;
