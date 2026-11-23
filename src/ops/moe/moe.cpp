@@ -15,6 +15,7 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_select_detail.h"
+#include "ops/generic/route_table.h"
 #include "ops/moe/moe_internal.h"
 #include "ops/moe/moe_regime_rules.h"
 #include "ops/common/arch_limits.h"
@@ -25,11 +26,15 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
+#include <mutex>
 #include <optional>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 namespace ninferno::ops {
 namespace detail::moe {
@@ -1883,6 +1888,45 @@ std::int32_t moe_split_tokens(const MoeWeights& w, const MoeConfig& c, std::int3
     return split ? r8_tokens : 0;
 }
 
+namespace {
+
+// Under NINFERNO_MOE_PLAN_RECORD=<file>: each distinct call of the op (both banks' formats and
+// layouts, the geometry, T, the route profile) appended once as "<gate_up> <down> E<n> k<n> H<n>
+// F<n> T=<n> <decode|prefill> <plan> <authority>", a bank in ggml_frag_v1 marked "<format>.frag":
+// which plan and which authority of select_plan's cascade a model's MoE layers take (#1166). The
+// query is moe_plan_query, select_plan with its reason; it runs once per distinct call.
+void record_plan(const MoeWeights& w, const MoeConfig& c, std::int32_t t, bool prefill) {
+    static const char* path = std::getenv("NINFERNO_MOE_PLAN_RECORD");
+    if (path == nullptr || *path == 0) return;
+    using Key = std::tuple<int, int, int, int, std::int32_t, std::int32_t, std::int32_t,
+                           std::int32_t, std::int32_t, bool>;
+    static std::mutex mutex;
+    static std::set<Key> seen;
+    const Key key{static_cast<int>(w.gate_up.qtype),
+                  static_cast<int>(w.gate_up.layout),
+                  static_cast<int>(w.down.qtype),
+                  static_cast<int>(w.down.layout),
+                  w.router.n,
+                  c.top_k,
+                  w.gate_up.k,
+                  w.down.k,
+                  t,
+                  prefill};
+    const std::lock_guard lock(mutex);
+    if (!seen.insert(key).second) return;
+    const MoePlanQuery q = moe_plan_query(w, c, t, prefill);
+    const auto bank      = [](const Weight& b) {
+        return std::string(generic::qtype_name(b.qtype)) +
+               (b.layout == QuantLayout::GgmlFrag ? ".frag" : "");
+    };
+    std::ofstream(path, std::ios::app)
+        << bank(w.gate_up) << ' ' << bank(w.down) << " E" << w.router.n << " k" << c.top_k << " H"
+        << w.gate_up.k << " F" << w.down.k << " T=" << t << (prefill ? " prefill " : " decode ")
+        << plan_name(q.plan) << ' ' << authority_name(q.authority) << '\n';
+}
+
+} // namespace
+
 } // namespace detail::moe
 
 void moe(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue epilogue,
@@ -1897,12 +1941,14 @@ void moe(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
             Tensor outs          = out.slice(1, begin, n);
             const Tensor routes  = router_input != nullptr ? router_input->slice(1, begin, n) : xs;
             const auto plan      = detail::moe::select_plan(w, c, n, false);
+            detail::moe::record_plan(w, c, n, false);
             detail::moe::moe_with_plan(xs, w, c, epilogue, outs, workspace, stream, plan,
                                        router_input != nullptr ? &routes : nullptr);
         }
         return;
     }
     const auto plan = detail::moe::select_plan(w, c, t, prefill_routes_active());
+    detail::moe::record_plan(w, c, t, prefill_routes_active());
     detail::moe::moe_with_plan(x, w, c, epilogue, out, workspace, stream, plan, router_input);
 }
 
