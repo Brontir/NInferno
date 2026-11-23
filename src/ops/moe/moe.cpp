@@ -1492,8 +1492,9 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     }
     if (!r8_stages_admitted(w, p, t)) {
         fail("an R8 stage needs an A8 expert policy, a codebook format, at most r8_token_limit() "
-             "tokens (8 on Ada and consumer Blackwell but for FP4 elements and some frag banks, 4 "
-             "otherwise) and an activation that fits a CTA");
+             "tokens (8 on Ada and consumer Blackwell but for FP4 elements and some frag banks, "
+             "and for "
+             "GA10x's measured cells; 4 otherwise) and an activation that fits a CTA");
     }
     if (x.dtype != DType::BF16 || !x.is_contiguous() || x.ne[0] != g.hidden || t < 1 ||
         x.ne[2] != 1 || x.ne[3] != 1) {

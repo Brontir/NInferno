@@ -221,13 +221,15 @@ inline constexpr std::int32_t kR8Tokens = 8;
 // The widest R8 call on this GPU (r8_admits) where its generation's rule does not take kR8Tokens,
 // and the conservative limit of an unmeasured generation: the rules, with the cards and margins
 // they rest on, are moe_regime_rules.h (kR8Tokens on Ada and consumer Blackwell, measured on two
-// cards each; Ampere four, measured on two cards that disagree above four tokens; Turing four,
+// cards each; Ampere four, measured on two cards that disagree above four tokens, but for the
+// formats its Applied cells widen; Turing four,
 // measured on one card; Volta, the A100, Hopper and datacenter Blackwell unmeasured). Volta
 // splits a wider call into calls of four (moe()).
 inline constexpr std::int32_t kR8NarrowTokens = 4;
 // The generation's widest R8 call (moe_regime_rules.h generation_rule).
 [[nodiscard]] std::int32_t r8_token_limit();
-// The widest R8 call over `bank`: r8_token_limit(), narrowed by the first bank rule of
+// The widest R8 call over `bank`: r8_token_limit(), widened by an Applied cell of the bank's
+// format (GA10x Q3_K, Q5_K, published IQ2_XXS) and narrowed by the first bank rule of
 // moe_regime_rules.h that holds (four for the FP4-element formats MXFP4 and NVFP4, a
 // ggml_frag_v1 Q4_0 bank, and another frag bank but Q4_K on a board of many DRAM bytes per SM
 // cycle or none known).
