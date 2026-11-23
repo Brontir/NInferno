@@ -657,8 +657,8 @@ int route_tune_main(int argc, char** argv) {
                     time_route({generic::Family::GgmlMmq, 0}, t);
                 }
                 // ggml's vector kernel at every width it runs (generic::vec_call), timed and never
-                // tabled, as the A8 routes: otherwise it was timed only where the selection or the
-                // ranker took it, and a sweep could not say where the vec rule leaves it out
+                // tabled, like the A8 routes: otherwise it was timed only where the selection or
+                // the ranker took it, and a sweep could not say where the vec rule leaves it out
                 // wrongly (the analyzer's coverage grids, 24.11).
                 if (a8_sweep && generic::vec_call(w.weight, ops::LinearPolicy::AllowA8, t) &&
                     generic::route_admits({generic::Family::GgmlVec, 0}, w.weight,
