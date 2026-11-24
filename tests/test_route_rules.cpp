@@ -892,6 +892,8 @@ const std::vector<NotRule>& not_rules() {
          "the length of the resources-only column header (a file format)"},
         {"kernel_facts.cpp", "kWaitColumns", 1,
          "the mmq and w4a8 sections' wait-class columns (a file format)"},
+        {"kernel_facts.cpp", "kInflightColumns", 1,
+         "a family section's global-loads-in-flight columns (a file format)"},
         {"kernel_facts.cpp", "kProducerColumns", 1,
          "the w4a8 section's producer-loop columns (a file format)"},
         {"mmq_unit.cpp", "kActivationBytes", 1,
