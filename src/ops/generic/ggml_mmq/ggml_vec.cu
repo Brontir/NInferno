@@ -1421,10 +1421,6 @@ void vec_product(Type type, const Planes& weight, const Planes& up, int blocks_p
     throw std::invalid_argument("ggml vec: format without a vector decoder");
 }
 
-bool vec_mma_supported(Type type) {
-    return type == Type::Q4_K || type == Type::Q5_K || type == Type::Q6_K;
-}
-
 void vec_mma_product(Type type, const Planes& weight, const Planes& up, int blocks_per_row,
                      int rows, int k, const void* activation, int columns, const VecOut& out,
                      cudaStream_t stream) {
