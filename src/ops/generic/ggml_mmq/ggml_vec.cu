@@ -784,11 +784,21 @@ __launch_bounds__(kVecWarps * 32, Bounded ? kVecBoundedBlocks : 0) __global__
             }
             // Every lane holds the sums: lane j stores column j (row pair: lanes T..2T-1 the
             // second).
+            if constexpr (gated) {
+                // Lane j picks its column's gate and up sums by selects and makes one store:
+                // T guarded stores with the gate's exp inside each were compiled as a switch on
+                // the lane (an indirect branch) on sm_100 / sm_120a, which the kernel facts
+                // cannot count (#1179).
+                float g = 0.0F, u = 0.0F;
 #pragma unroll
-            for (int j = 0; j < T; ++j) {
-                if constexpr (gated) {
-                    if (lane == j) store(p.out, row0, j, gate_of(p.out, acc[0][j]) * acc[1][j]);
-                } else {
+                for (int j = 0; j < T; ++j) {
+                    g = lane == j ? acc[0][j] : g;
+                    u = lane == j ? acc[1][j] : u;
+                }
+                if (lane < T) store(p.out, row0, lane, gate_of(p.out, g) * u);
+            } else {
+#pragma unroll
+                for (int j = 0; j < T; ++j) {
 #pragma unroll
                     for (int r = 0; r < kRows; ++r) {
                         if (lane == r * T + j && row0 + r < p.rows) {
