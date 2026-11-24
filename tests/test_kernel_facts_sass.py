@@ -1202,9 +1202,8 @@ class Sections(unittest.TestCase):
     def test_vec_section_round_trips_and_holds_its_audit(self):
         # Every committed snapshot's vec section parses into its loop counts and renders back to
         # the same bytes; its rows hold the family audit (k_iter 1024 or KS, Q2_K / IQ1_M above
-        # it or 0), and the rows of unknown flow are the 216 gated T 3-8 ones of sm_100 / sm_120a
-        # only (a rebuild that loses more of the flow fails here).
-        unknown_rows = {"sm_100.txt": 216, "sm_120a.txt": 216}
+        # it or 0), and no row is of unknown flow: the gated store by selects (#1179) left sm_100 /
+        # sm_120a no switch on the lane, whose 216 gated T 3-8 rows had none before.
         import glob
         root = Path(__file__).resolve().parents[1]
         paths = sorted(glob.glob(str(root / "src" / "ops" / "generic" / "data" / "kernel_facts" /
@@ -1219,8 +1218,7 @@ class Sections(unittest.TestCase):
                              path)
             lines = kernel_facts.family_audit("vec", v["rows"])
             self.assertEqual([l for l in lines if "unknown flow" not in l], [], path)
-            self.assertEqual(sum("unknown flow" in l for l in lines),
-                             unknown_rows.get(os.path.basename(path), 0), path)
+            self.assertEqual(sum("unknown flow" in l for l in lines), 0, path)
             q4k = v["rows"].get((12, 4, 0, 0, 0))
             self.assertIsNotNone(q4k, path)
             self.assertEqual(q4k[4].k_iter, 1024, path)
