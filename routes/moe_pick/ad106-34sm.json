@@ -9,7 +9,7 @@
  "inputs": {
   "tools/bench/moe_expert_law.py": "d820b05454e2067a2e6e44f58c9647a198b95457202749659e2c09d0c3863610",
   "src/ops/generic/data/kernel_facts/sm_89.txt moegemm+moer8": "bf9818b911cc541f426a23306b412a51f81c2ed0d032f65945476b9969b63964",
-  "src/core/data/warp_inflight/warp_inflight_89_rtx4060ti.txt": "69f6021ebad3d2c76f4d64bef478b9eade5fe3aca1158df31644fce3d80a0deb",
+  "src/core/data/warp_inflight/warp_inflight_89_rtx4060ti.txt": "3ec765666c51e00855926a2b0566b7c00961f7e123f6333166b1a706aeae726f",
   "src/core/data/gpu_facts.json archs": "7964780ae27886e65aae639bb45f8ab14813bbb9fa0e3ffdda311df23f8e09bf"
  },
  "moe": [
