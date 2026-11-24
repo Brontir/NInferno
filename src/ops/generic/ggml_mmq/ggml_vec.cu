@@ -948,14 +948,17 @@ struct MmaQ6K {
         for (int r = 0; r < 2; ++r) {
             const std::uint8_t* c = w[r]->codes + b[r] * kCode;
             const std::uint8_t* h = w[r]->high + b[r] * kHigh;
+            // Whole words: ggml_refusal admits the route only with every plane 16-byte aligned,
+            // and each offset here is a multiple of 4 (the scales of 16).
+            const auto* cw = reinterpret_cast<const std::uint32_t*>(c);
 #pragma unroll
             for (int i = 0; i < 8; ++i)
-                s.ql[r][i] = live[r] ? u32_a2(c + 32 * (i >> 1) + 16 * (i & 1) + 4 * t) : 0U;
+                s.ql[r][i] = live[r] ? cw[8 * (i >> 1) + 4 * (i & 1) + t] : 0U;
 #pragma unroll
             for (int i = 0; i < 4; ++i)
-                s.qh[r][i] = live[r] ? u32_a2(c + 128 + 32 * (i >> 1) + 16 * (i & 1) + 4 * t) : 0U;
-#pragma unroll
-            for (int i = 0; i < 4; ++i) s.sc[r][i] = live[r] ? u32_a2(h + 4 * i) : 0U;
+                s.qh[r][i] = live[r] ? cw[32 + 8 * (i >> 1) + 4 * (i & 1) + t] : 0U;
+            const uint4 sc = live[r] ? *reinterpret_cast<const uint4*>(h) : make_uint4(0, 0, 0, 0);
+            s.sc[r][0] = sc.x, s.sc[r][1] = sc.y, s.sc[r][2] = sc.z, s.sc[r][3] = sc.w;
             s.d[r] = live[r] ? half_at(w[r]->scales + b[r] * kScale) : 0.0F;
         }
     }
