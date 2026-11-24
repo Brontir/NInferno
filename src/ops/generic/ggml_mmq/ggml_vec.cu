@@ -764,7 +764,7 @@ __launch_bounds__(kVecWarps * 32, Bounded ? kVecBoundedBlocks : 0) __global__
         } else {
             for (int it = 0; lane + 32 * it < slices; ++it) slice(it);
         }
-        if constexpr (gated || kRows * T < 8) {  // LAB #1185: T 4-8 take the transposed butterfly
+        if constexpr (gated || kRows * T < 8) { // LAB #1185: T 4-8 take the transposed butterfly
             // T != 4 and the gated pair (#1044): five shuffles a value and 2T predicated stores, as
             // before. The transposed reduction below gave Q3_K at T = 2 104 registers, not 96
             // (sm_86: 4 CTAs a SM, not 5; RTX 3060 Q3_K_M C2 -2.2 %), and IQ4_XS at T = 3 lost (RTX
