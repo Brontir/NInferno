@@ -9,18 +9,18 @@
       "cc": 70,
       "sms": 80,
       "tool": {
-        "probe": "warp_inflight 6",
+        "probe": "warp_inflight 7",
         "nvcc": "12.8.93",
         "driver": "13000",
         "runtime": "12080",
         "arch": "sm_70",
-        "source_sha256": "6c71e3c90e00736f4f5739efb01fe70f89a4465d8ca8e844f1ef55d227106c09"
+        "source_sha256": "f54abc0222375b467c02fffdf82fbe52ef3d9ec215326e395fc5952074dce317"
       },
       "clocks_waived": true,
       "notes": [
         "device 0 is the GPU at PCI 0000:01:00.0",
         "warm-up: begins",
-        "warm-up: 1103 ms of every SM streaming",
+        "warm-up: 1105 ms of every SM streaming",
         "free k > 1: the CTA scheduler chose the SMs (they may share a TPC or a GPC); compare free and placed at k = 1",
         "free ring8 w24: 0 of 1 CTAs fit an SM (registers), no row",
         "free ring8 w32: 0 of 1 CTAs fit an SM (registers), no row",
@@ -40,28 +40,34 @@
         "placed chain16 w32: 0 of 1 CTAs fit an SM (registers), no row",
         "placed chain16 w48: 0 of 2 CTAs fit an SM (registers), no row",
         "placed chain16 w64: 0 of 2 CTAs fit an SM (registers), no row",
+        "placed chain8_b8 w64: 1 of 2 CTAs fit an SM (registers), no row",
+        "placed chain16_b8 w48: 1 of 2 CTAs fit an SM (registers), no row",
+        "placed chain16_b8 w64: 1 of 2 CTAs fit an SM (registers), no row",
+        "placed chain16_b4 w64: 1 of 2 CTAs fit an SM (registers), no row",
+        "placed chain32_b4 w48: 1 of 2 CTAs fit an SM (registers), no row",
+        "placed chain32_b4 w64: 1 of 2 CTAs fit an SM (registers), no row",
         "compute processes on the probe's GPU before the run: 0",
         "compute processes on the probe's GPU after the run: 0",
         "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
         "warm-up: the memory clock held 850 MHz for 1.0 s before the measured span (settled 1.1 s into the warm-up)",
-        "clocks over the measured span (34 samples, nvidia-smi every 100 ms): memory 850..850 MHz, SM 1447..1447 MHz, P-state P2",
+        "clocks over the measured span (75 samples, nvidia-smi every 100 ms): memory 850..850 MHz, SM 1447..1447 MHz, P-state P2",
         "the clock check was waived (--clocks-waived)"
       ],
       "facts": {
         "sm_dram_bytes_per_clock_free": {
-          "value": 31.96,
+          "value": 31.98,
           "unit": "B/clk"
         },
         "sm_dram_bytes_per_clock_placed": {
-          "value": 30.25,
+          "value": 30.29,
           "unit": "B/clk"
         },
         "sm_dram_gbps_free": {
-          "value": 46.2825,
+          "value": 46.3043,
           "unit": "GB/s"
         },
         "sm_dram_gbps_placed": {
-          "value": 43.7685,
+          "value": 43.8857,
           "unit": "GB/s"
         },
         "sm_mhz_free": {
@@ -69,23 +75,23 @@
           "unit": "MHz"
         },
         "sm_mhz_placed": {
-          "value": 1447.0,
+          "value": 1449.0,
           "unit": "MHz"
         },
         "dram_stream_latency_ns": {
-          "value": 408.1,
+          "value": 408.4,
           "unit": "ns"
         },
         "max_warp_bytes_in_flight": {
-          "value": 5191.2,
+          "value": 5211.2,
           "unit": "B"
         },
         "ring2_b_w_w1_free": {
-          "value": 1741.2,
+          "value": 1740.7,
           "unit": "B"
         },
         "ring2_b_w_w1_placed": {
-          "value": 1741.2,
+          "value": 1740.7,
           "unit": "B"
         },
         "ring2_linear_to_w_free": {
@@ -97,78 +103,26 @@
           "unit": "warps"
         },
         "chain4_b_w_w1_free": {
-          "value": 1705.7,
+          "value": 1706.9,
           "unit": "B"
         },
         "ring4_b_w_w1_free": {
-          "value": 3072.7,
+          "value": 3069.4,
           "unit": "B"
         },
         "warp_fill_bytes_per_clock": {
-          "value": 18.33,
+          "value": 17.03,
           "unit": "B/clk"
         }
       },
       "warp_bytes_saturated": false,
-      "ring4_over_ring2_w1": 1.765,
+      "ring4_over_ring2_w1": 1.763,
       "ring2_rows": {
         "free": [
           [
             1,
-            4.2667,
-            1448.0
-          ],
-          [
-            2,
-            8.4803,
-            1448.0
-          ],
-          [
-            3,
-            12.4625,
-            1448.0
-          ],
-          [
-            4,
-            16.1737,
-            1448.0
-          ],
-          [
-            6,
-            22.9682,
-            1448.0
-          ],
-          [
-            8,
-            29.231,
-            1448.0
-          ],
-          [
-            12,
-            39.5113,
-            1448.0
-          ],
-          [
-            16,
-            43.2581,
+            4.2622,
             1447.0
-          ],
-          [
-            24,
-            46.2825,
-            1447.0
-          ],
-          [
-            32,
-            45.974,
-            1447.0
-          ]
-        ],
-        "placed": [
-          [
-            1,
-            4.2667,
-            1448.0
           ],
           [
             2,
@@ -177,48 +131,100 @@
           ],
           [
             3,
-            12.4498,
-            1448.0
+            12.4625,
+            1447.0
           ],
           [
             4,
-            16.1578,
-            1448.0
+            16.1897,
+            1447.0
           ],
           [
             6,
-            22.8827,
-            1448.0
+            22.8189,
+            1447.0
           ],
           [
             8,
-            29.574,
+            29.179,
             1447.0
           ],
           [
             12,
-            39.3216,
-            1447.0
-          ],
-          [
-            16,
-            42.1453,
+            38.6719,
             1448.0
           ],
           [
+            16,
+            42.2268,
+            1447.0
+          ],
+          [
             24,
-            42.519,
+            46.2607,
+            1448.0
+          ],
+          [
+            32,
+            46.2498,
+            1448.0
+          ]
+        ],
+        "placed": [
+          [
+            1,
+            4.2622,
+            1448.0
+          ],
+          [
+            2,
+            8.4891,
+            1447.0
+          ],
+          [
+            3,
+            12.4121,
+            1447.0
+          ],
+          [
+            4,
+            16.1737,
+            1447.0
+          ],
+          [
+            6,
+            22.9254,
+            1448.0
+          ],
+          [
+            8,
+            29.3095,
+            1448.0
+          ],
+          [
+            12,
+            38.7634,
+            1448.0
+          ],
+          [
+            16,
+            42.2268,
+            1447.0
+          ],
+          [
+            24,
+            42.6667,
             1447.0
           ],
           [
             32,
-            42.5973,
-            1447.0
+            42.806,
+            1448.0
           ],
           [
             48,
-            42.4731,
-            1448.0
+            42.409,
+            1447.0
           ]
         ]
       },
@@ -226,8 +232,8 @@
         "free": [
           [
             1,
-            7.5294,
-            1449.0
+            7.5156,
+            1448.0
           ],
           [
             2,
@@ -236,22 +242,22 @@
           ],
           [
             3,
-            20.898,
+            20.8625,
             1447.0
           ],
           [
             4,
-            26.8151,
-            1446.0
-          ],
-          [
-            6,
-            37.8675,
+            26.9031,
             1449.0
           ],
           [
+            6,
+            37.6933,
+            1448.0
+          ],
+          [
             8,
-            41.1142,
+            41.426,
             1448.0
           ],
           [
@@ -261,70 +267,70 @@
           ],
           [
             16,
-            46.0872,
+            46.2172,
             1448.0
           ],
           [
             24,
-            46.2389,
+            46.2172,
             1447.0
           ],
           [
             32,
-            46.1196,
-            1448.0
+            46.1684,
+            1447.0
           ]
         ],
         "placed": [
           [
             1,
-            7.5294,
-            1448.0
+            7.5156,
+            1446.0
           ],
           [
             2,
-            14.448,
-            1448.0
+            14.5248,
+            1447.0
           ],
           [
             3,
-            20.8271,
+            20.7919,
             1448.0
           ],
           [
             4,
-            26.7712,
+            26.8151,
             1447.0
           ],
           [
             6,
-            37.578,
+            37.6355,
             1448.0
           ],
           [
             8,
-            42.0103,
-            1448.0
+            42.2268,
+            1447.0
           ],
           [
             12,
-            42.4823,
-            1447.0
+            42.965,
+            1448.0
           ],
           [
             16,
-            42.3907,
-            1448.0
-          ],
-          [
-            24,
-            42.5927,
+            42.3633,
             1447.0
           ],
           [
-            32,
-            42.377,
+            24,
+            42.409,
             1448.0
+          ],
+          [
+            32,
+            42.2813,
+            1447.0
           ]
         ]
       },
@@ -336,13 +342,13 @@
         "decides": false,
         "chains": {
           "chain8": {
-            "b_w_w1": 3006.4,
-            "two_latency_bound": 2628.3,
+            "b_w_w1": 3014.1,
+            "two_latency_bound": 2630.2,
             "all_in_flight": true
           },
           "chain16": {
-            "b_w_w1": 4887.7,
-            "two_latency_bound": 5256.5,
+            "b_w_w1": 4877.0,
+            "two_latency_bound": 5260.4,
             "all_in_flight": false
           }
         },

@@ -806,9 +806,11 @@ class WarpInflight(unittest.TestCase):
         self.assertIn("ring8 11 of 16", err.getvalue())
 
     def test_committed_fill_goes_with_bytes(self):
-        # Every committed probe 7 run (#771): its 8- and 4-byte chains' windows, at 512-4096 B a
-        # warp, read within 5 % of L0 + (b - 512) / F with F that run's fill rate. With a cost per
-        # load instead they would read x2-x4 apart from the 16-byte chains of the same bytes.
+        # Every committed probe 7 run (#771): at equal bytes a warp keeps in flight (512-4096 B), its
+        # 8- and 4-byte chains' windows read within 6 % of the 16-byte chain's (the widest: the
+        # GV100's 4-byte chain at 4 KB, x1.054). With a cost per load they would read x2-x4 of it.
+        # The window is not linear in the bytes everywhere (the GV100's chain2 reads x1.09 of the
+        # least-squares line, its chain16 x0.95), so the check is width against width, not against F.
         runs = 0
         for name in sorted(os.listdir(wi.DEFAULT_INPUTS)):
             with open(os.path.join(wi.DEFAULT_INPUTS, name)) as f:
@@ -816,18 +818,18 @@ class WarpInflight(unittest.TestCase):
             if head["probe"] != "warp_inflight 7":
                 continue
             runs += 1
-            fill = wi.fill_rate(rows)
-            self.assertIsNotNone(fill, name)
-            one = {r["variant"]: r for r in rows
-                   if r["mode"] == "free" and r["k"] == 1 and r["w"] == 1}
-            l0, mhz = wi.WARP_LOAD / one["chain1"]["gbps"], one["chain1"]["sm_mhz"]
-            for v, r in one.items():
-                if wi.load_bytes_of(v) == 16:
-                    continue
-                b = wi.warp_bytes_of(v)
-                ratio = b / r["gbps"] / wi.window_ns(b, l0, fill, mhz)
-                self.assertTrue(0.95 <= ratio <= 1.05, f"{name} {v}: x{ratio:.3f}")
-        self.assertGreaterEqual(runs, 6)
+            self.assertIsNotNone(wi.fill_rate(rows), name)
+            window = {}
+            for r in rows:
+                if (r["mode"], r["k"], r["w"]) == ("free", 1, 1) and r["variant"].startswith("chain"):
+                    b = wi.warp_bytes_of(r["variant"])
+                    window.setdefault(b, {})[wi.load_bytes_of(r["variant"])] = b / r["gbps"]
+            for b, by_width in window.items():
+                for width in (8, 4):
+                    if 16 in by_width and width in by_width:
+                        ratio = by_width[width] / by_width[16]
+                        self.assertTrue(0.94 <= ratio <= 1.06, f"{name} {b} B {width}-byte: x{ratio:.3f}")
+        self.assertGreaterEqual(runs, 7)
 
     def test_fill_rate(self):
         # A lone warp whose window takes L0 plus its other bytes at F bytes a clock (#771): the
