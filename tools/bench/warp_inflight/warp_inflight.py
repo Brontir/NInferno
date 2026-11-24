@@ -83,10 +83,12 @@ VARIANTS = {"chain1": (1, False), "chain2": (2, False), "chain4": (4, False),
             "chain8": (8, False), "chain16": (16, False)}
 # The runs of an earlier probe still parse, as what that probe measured: its source's sha256 (the
 # warp_inflight.cu of that version, in the history) and its variants. Probe 3 (#739) had no ring8,
-# which probe 4 (#757) added; probe 5 (#757) added chain8 and chain16; probe 6 (#757) gave ring4
-# ring8's clock read (sm_120a kept 6 of its 8 loads without it). The other kernels an earlier
-# probe shares with the checked-in one compile to the same SASS; probe 5's ring4 differs from
-# probe 6's on sm_75-89 in its order only, both keeping 8 loads a lane in flight there.
+# which probe 4 (#757) added; probe 5 (#757) added chain8 and chain16; probe 6 (#757) gave every
+# variant the clock read that ring8, chain8 and chain16 had. So only those three compile to the
+# same SASS in probes 5 and 6. The others differ: ring4 of probes 3-5 kept 6 of its 8 loads
+# on sm_120a (nvcc 13.4.92; the sass_inflight check came with probe 4, after the sm_120a runs).
+# chain4 kept 3 of its 4 and ring4 7 of 8 on sm_70 (nvcc 12.8). On the RTX 3060, probe 6's ring4
+# reads up to 7 % below probe 5's in the latency-bound rows and the same once the bus saturates.
 EARLIER_PROBES = {
     "warp_inflight 3": {
         "source_sha256": "c903f40008fb45fa109c837b07bd78d9a5dbb565c9906afa1cbcd9b4711d93e8",

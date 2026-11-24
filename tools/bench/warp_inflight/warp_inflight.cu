@@ -36,8 +36,11 @@
 // at once. A ring's steps overlap, so a cap shows there only as a lower rate. A chain issues its
 // next fetch only once every load of this one is back, so a warp held to fewer loads than its
 // count takes at least two DRAM latencies a step (warp_inflight.py chain_all_in_flight).
-// Probe 6 (#757) gives ring4 the clock read ring8 had: without it ptxas kept only 6 of ring4's 8
-// loads a lane in flight on sm_120a.
+// Probe 6 (#757) gives every variant the clock read ring8, chain8 and chain16 had: without it
+// ptxas kept only 6 of ring4's 8 loads a lane in flight on sm_120a (nvcc 13.4), and 3 of chain4's
+// 4 and 7 of ring4's 8 on sm_70 (nvcc 12.8). The read costs a warp alone up to 7 % of its rate
+// in the latency-bound rows (ring4 on the RTX 3060 against probe 5), none once the bus saturates;
+// every variant, the run's own L0 among them, now has it.
 //
 // Two placements of the W warps:
 //   free:   k CTAs of W warps (W <= 32), no shared memory and the L1-largest carve-out; the CTA
@@ -177,9 +180,9 @@ __global__ void stream(const unsigned char* buf, unsigned long long base,
         for (int i = 0; i < fetches; ++i) {
             uint4 v[F];
             fetch<F>(v, p + off);
-            // As in the ring below: the clock read keeps every load of chain8 and chain16 ahead
-            // of the compute that waits on them; chain1-4's SASS does not change.
-            if constexpr (F >= 8) acc ^= static_cast<unsigned>(clock64()) & zero;
+            // As in the ring below: the clock read keeps every load of the fetch ahead of the
+            // compute that waits on them (without it chain4 kept 3 of its 4 on sm_70).
+            acc ^= static_cast<unsigned>(clock64()) & zero;
             acc = consume<F>(v, acc);
             off += kStep + (acc & zero);
         }
@@ -198,14 +201,14 @@ __global__ void stream(const unsigned char* buf, unsigned long long base,
                 fetch<F>(a, p + off + (acc & zero));
                 off += kStep;
             }
-            // ptxas issues ring1 and ring2's two fetches back to back after compute(Slot0) (2F
-            // loads a lane in flight, then waited on). From F = 4 it may recycle Slot1's
-            // registers instead, waiting on its first loads before issuing its last ones: ring8
-            // on every arch (about three round trips a step), ring4 on sm_120a (6 of its 8 loads
-            // in flight, nvcc 13.4). A clock read before compute(Slot1) keeps every load of both
-            // fetches ahead of it; ring1 and ring2's SASS does not change. On sm_75-89 ring4
-            // already kept its 8 loads; the read reorders its SASS there, not that count.
-            if constexpr (F >= 4) acc ^= static_cast<unsigned>(clock64()) & zero;
+            // ptxas should issue the two fetches back to back after compute(Slot0) (2F loads a
+            // lane in flight, then waited on). It may recycle Slot1's registers instead, waiting
+            // on its first loads before issuing its last ones: ring8 on every arch (about three
+            // round trips a step), ring4 on sm_120a (6 of its 8, nvcc 13.4) and sm_70 (7 of 8,
+            // nvcc 12.8). A clock read before compute(Slot1) keeps every load of both fetches
+            // ahead of it. Every variant has it (probe 6), so all are the same loop shape and
+            // each keeps its count on sm_70 to sm_120a (warp_inflight.py checks the SASS).
+            acc ^= static_cast<unsigned>(clock64()) & zero;
             acc = consume<F>(b, acc);
         }
     }
