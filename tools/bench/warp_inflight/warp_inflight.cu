@@ -454,7 +454,7 @@ int main(int argc, char** argv) {
     const int cc = p.major * 10 + p.minor;
     char pci[32] = {};
     CHECK(cudaDeviceGetPCIBusId(pci, sizeof pci, 0));
-    std::printf("probe warp_inflight 7\n");
+    std::printf("probe warp_inflight 8\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -562,6 +562,10 @@ int main(int argc, char** argv) {
             std::_Exit(3); // the reading thread may still wait on stdin
         }
     }
+    // Probe 8: the first measurement starts one run budget past the warm-up's last range. Right
+    // after it the L2 still held part of the next range: the RTX 5070 Ti's first lone-warp row read
+    // 159-312 ns in 3 of 4 runs against its 327, and 327 in 4 of 4 with this gap (#757, 24.11).
+    pr.take(kRunBudget);
 
     const int w_list[] = {1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64};
     const int k_list[] = {1, 2, 4, 8};
