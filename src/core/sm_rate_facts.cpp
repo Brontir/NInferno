@@ -33,7 +33,6 @@ const std::vector<Field>& fields() {
         {"sm_mhz_placed", "MHz", &SmRateRow::sm_mhz_placed},
         {"dram_stream_latency_ns", "ns", &SmRateRow::dram_stream_latency_ns},
         {"max_warp_bytes_in_flight", "B", &SmRateRow::max_warp_bytes_in_flight},
-        {"warp_fill_bytes_per_clock", "B/clk", &SmRateRow::warp_fill_bytes_per_clock},
         {"ring2_b_w_w1_free", "B", &SmRateRow::ring2_b_w_w1_free},
         {"ring2_b_w_w1_placed", "B", &SmRateRow::ring2_b_w_w1_placed},
         {"ring2_linear_to_w_free", "warps", &SmRateRow::ring2_linear_to_w_free},
@@ -122,6 +121,19 @@ SmRateRow parse_row(const std::string& key, const Json& j) {
             throw std::runtime_error(where + " is in " + unit + ", not " + std::string(f.unit));
         }
         r.*f.member = positive(it->at("value"), where);
+    }
+    {
+        // F: present in every row, null where the probe's chains show no fill (no positive slope).
+        const auto it = facts.find("warp_fill_bytes_per_clock");
+        if (it == facts.end())
+            throw std::runtime_error("fact warp_fill_bytes_per_clock is missing");
+        if (it->at("unit").get<std::string>() != "B/clk") {
+            throw std::runtime_error("fact warp_fill_bytes_per_clock is not in B/clk");
+        }
+        if (!it->at("value").is_null()) {
+            r.warp_fill_bytes_per_clock =
+                positive(it->at("value"), "fact warp_fill_bytes_per_clock");
+        }
     }
     r.warp_bytes_saturated = boolean(j, "warp_bytes_saturated");
     r.ring4_over_ring2_w1  = positive(j.at("ring4_over_ring2_w1"), "ring4_over_ring2_w1");

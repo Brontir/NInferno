@@ -335,13 +335,18 @@ struct DramTerms {
              chip.clock_hz;
     t.warp_bytes =
         chip.sm_max_warp_bytes ? std::min(counted_bytes, *chip.sm_max_warp_bytes) : counted_bytes;
-    // The window fills past its first warp-wide load (512 B) at F bytes a clock (#771).
+    // The window fills past its first warp-wide load (512 B) at F bytes a clock (#771). A cap is
+    // a rate: b_w_max is the probe's plain Little's-law reading (rate x L0), so a saturated warp
+    // moves at most b_w_max / L0, the rate it was measured at; the fill is not counted on it again.
     t.window = chip.dram_latency_s.value();
     if (chip.sm_warp_fill_bytes_per_clock) {
-        t.window += std::max(0.0, t.warp_bytes - 512.0) /
+        t.window += std::max(0.0, counted_bytes - 512.0) /
                     (*chip.sm_warp_fill_bytes_per_clock * chip.clock_hz);
     }
-    const double per_w = t.warp_bytes / t.window;
+    double per_w = counted_bytes / t.window;
+    if (chip.sm_max_warp_bytes) {
+        per_w = std::min(per_w, *chip.sm_max_warp_bytes / chip.dram_latency_s.value());
+    }
     const auto rate    = [&](double c) { return std::min(t.peak, c * warps_per_cta * per_w); };
     const auto round   = [&](double c) { return c * bytes_per_cta / rate(c); };
     t.round_rate       = rate(std::min(q, occ));
@@ -674,11 +679,11 @@ struct PipelinedTerms {
 // ---- From a device class ----
 
 // The SM DRAM rate facts of a chip from its architecture's row of core/sm_rate_facts.h (L0 in
-// seconds, P per SM clock in both carve-outs, b_w_max in bytes where a warp saturates, else no
-// cap); left absent without a row, and
+// seconds, P per SM clock in both carve-outs, F per SM clock, b_w_max in bytes where a warp
+// saturates, else no cap); left absent without a row, and
 // where another card of the architecture refutes the row (the law of the row falls outside the
-// check's bounds over that card's run: sm_120a, whose RTX 5070 Ti fetches 12 % faster a warp
-// and moves 9 % more a clock in the placed carve-out than the RTX 5090 row says). A board of
+// check's bounds over that card's run: sm_120a, whose RTX 5070 Ti's L0 is 327 ns against the
+// RTX 5090 row's 375, so the row's law reads x0.90-0.93 of its rows at W = 1). A board of
 // the architecture other than the row's card is priced by the row: a transfer, checked against
 // every other card's run that is committed.
 inline void fill_sm_rate_facts(ChipFacts& c, int major, int minor) {

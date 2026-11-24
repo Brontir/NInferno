@@ -55,7 +55,6 @@ const std::vector<Expected>& expected_facts() {
         {"sm_mhz_placed", "MHz", &SmRateRow::sm_mhz_placed},
         {"dram_stream_latency_ns", "ns", &SmRateRow::dram_stream_latency_ns},
         {"max_warp_bytes_in_flight", "B", &SmRateRow::max_warp_bytes_in_flight},
-        {"warp_fill_bytes_per_clock", "B/clk", &SmRateRow::warp_fill_bytes_per_clock},
         {"ring2_b_w_w1_free", "B", &SmRateRow::ring2_b_w_w1_free},
         {"ring2_b_w_w1_placed", "B", &SmRateRow::ring2_b_w_w1_placed},
         {"ring2_linear_to_w_free", "warps", &SmRateRow::ring2_linear_to_w_free},
@@ -119,6 +118,14 @@ void rows_equal_the_file(const Json& file) {
         expect(row->provenance == "Measured" && j.at("provenance") == "Measured",
                where + ": provenance Measured");
         expect(row->sms == j.at("sms").get<int>(), where + ": sms");
+        {
+            const Json& f = j.at("facts").at("warp_fill_bytes_per_clock");
+            expect(f.at("unit").get<std::string>() == "B/clk", where + ": F unit");
+            expect(f.at("value").is_null()
+                       ? !row->warp_fill_bytes_per_clock
+                       : row->warp_fill_bytes_per_clock == f.at("value").get<double>(),
+                   where + ": warp_fill_bytes_per_clock");
+        }
         for (const Expected& e : expected_facts()) {
             const Json& f = j.at("facts").at(e.name);
             expect(f.at("unit").get<std::string>() == e.unit, where + ": " + e.name + " unit");

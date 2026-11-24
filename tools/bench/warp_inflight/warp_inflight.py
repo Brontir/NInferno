@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build and run warp_inflight on this card, or read saved runs, and give the per-SM DRAM rate as a
 function of resident warps with the bytes a warp keeps in flight (b_w) and the saturated per-SM
-rate (P) read from it: the facts the decode price's per-SM bound min(P, W x b_w / L0) needs
-(#690, #735).
+rate (P) read from it, and the rate a lone warp's window fills at (F): the facts the decode
+price's per-SM bound min(P, W x b_w / (L0 + (b_w - 512 B) / F)) needs (#690, #735, #771).
 
     warp_inflight.py run  --arch 89 [--nvcc nvcc] [--out warp_inflight_89.txt] [--idle-unchecked]
                           [--clocks-waived]
@@ -143,8 +143,10 @@ COLUMNS = ("mode", "k", "variant", "inflight", "w", "gbps", "gbps_lo", "gbps_hi"
 HEADER = ("probe", "card", "cc", "sms", "l2_bytes", "mem_clock_khz", "max_warps_per_sm",
           "smem_per_sm", "driver", "runtime", "nvcc", "span_ns")
 RUN_HEADER = ("source_sha256", "arch", "sass_ldg128")
-# Run header lines from a probe version on: sass_inflight, the most 16-byte loads a lane each
-# kernel's SASS keeps in flight (peak_in_flight), which must be the variant's count.
+# Run header lines from a probe version on: sass_inflight, the most loads of its width (16 bytes,
+# or 8 / 4 for the probe 7 chains) a lane each kernel's SASS keeps in flight (peak_in_flight),
+# which must be the variant's count. sass_ldg128 keeps its name: since probe 7 it counts each
+# variant's loads of its own width.
 RUN_HEADER_SINCE = {"sass_inflight": 4}
 COUNTS = ("cc", "sms", "l2_bytes", "max_warps_per_sm", "smem_per_sm", "driver", "runtime")
 PROBE_LINE = re.compile(r'printf\("probe (warp_inflight \d+)\\n"\)')
@@ -497,8 +499,8 @@ def parse_run(text):
         raise ValueError(f"built for {head['arch']}, not {own} (cc {head['cc']})")
     want = " ".join(f"{v}:{sass_loads_of(v)}" for v in variants)
     if head["sass_ldg128"] != want:
-        raise ValueError(f"the build's 16-byte loads per kernel are {head['sass_ldg128']!r}, not "
-                         f"the variants' {want!r}")
+        raise ValueError(f"the build's loads per kernel (of each variant's width) are "
+                         f"{head['sass_ldg128']!r}, not the variants' {want!r}")
     version = int(PROBE_VALUE.fullmatch(head["probe"]).group(1))
     for k, since in RUN_HEADER_SINCE.items():
         if version >= since and not head.get(k):
@@ -639,7 +641,8 @@ def derive(rows, l0_ns, table_l0_ns=None):
 
 NOTE = ("Per-SM DRAM rate against resident warps W, written by `tools/bench/warp_inflight/"
         "warp_inflight.py rows` from `warp_inflight.py run` outputs (one per card): every lane "
-        "streams 16-byte ld.global.cs loads from a range of its own, the warp keeping a known "
+        "streams 16-byte ld.global.cs loads (8 or 4 bytes in the probe 7 chains *_b8 / *_b4) "
+        "from a range of its own, the warp keeping a known "
         "number of them in flight (chainF: F a lane; ringF: the decode kernels' two-slot ring, "
         "up to 2F); `free` is k CTAs of W <= 32 warps on k distinct SMs with the L1-largest "
         "carve-out, `placed` 1 or 2 CTAs on each of k chosen SMs held there by shared memory "
@@ -799,15 +802,18 @@ def law_ratios(row, rings):
     """Law over measured for every ring row of `rings` ({variant: {mode: [[W, GB/s, MHz]]}}) under
     `row`'s facts: [(variant, mode, W, ratio)]."""
     f = {n: v["value"] for n, v in row["facts"].items()}
+    l0 = f["dram_stream_latency_ns"]
     out = []
     for variant, count in CHECKED_RINGS.items():
-        b_w = min(count, f["max_warp_bytes_in_flight"]) if row["warp_bytes_saturated"] else count
         for mode in MODES:
             p = f[f"sm_dram_bytes_per_clock_{mode}"]
             for w, gbps, mhz in rings[variant][mode]:
-                window = window_ns(b_w, f["dram_stream_latency_ns"],
-                                   f.get("warp_fill_bytes_per_clock"), mhz)
-                law = min(p * mhz * 1e-3, w * b_w / window)
+                per_w = count / window_ns(count, l0, f.get("warp_fill_bytes_per_clock"), mhz)
+                if row["warp_bytes_saturated"]:
+                    # A cap is a rate: b_w_max is the plain reading rate x L0, so a saturated warp
+                    # moves at most b_w_max / L0 (the fill is in that reading already).
+                    per_w = min(per_w, f["max_warp_bytes_in_flight"] / l0)
+                law = min(p * mhz * 1e-3, w * per_w)
                 out.append((variant, mode, w, law / gbps))
     return out
 
@@ -1084,15 +1090,15 @@ def _kernels(sass):
 
 def _is_ldg(opcode, width=16):
     """Whether `opcode` is a global load of `width` bytes a lane: LDG with .128 (16), .64 (8), or
-    neither and no sub-word suffix (4). A 4-byte one must also be streaming (.EF, the probe's
+    neither and no other width suffix (4). A 4-byte one must also be streaming (.EF, the probe's
     ld.global.cs): every kernel reads its SM's `active` flag with a plain 4-byte LDG first."""
     if IP._sass_counts().base_opcode(opcode) != "LDG":
         return False
     suffix = {16: ".128", 8: ".64"}.get(width)
     if suffix:
         return suffix in opcode
-    return ".EF" in opcode and not any(t in opcode for t in (".128", ".64", ".U8", ".S8", ".U16",
-                                                             ".S16"))
+    return ".EF" in opcode and not any(t in opcode for t in (".256", ".128", ".64", ".U8", ".S8",
+                                                             ".U16", ".S16"))
 
 
 def _is_ldg128(opcode):

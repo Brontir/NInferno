@@ -4,12 +4,13 @@
 // bytes-in-flight probe on one card of it (tools/bench/warp_inflight/, its rows in
 // core/data/sm_rate_facts.json, compiled in). Per architecture: P, the most bytes per SM clock one
 // SM reaches with the L1-largest carve-out (`free`) and with the shared-largest one (`placed`);
-// L0, the fetch time of one warp alone with one 16-byte streaming load a lane in flight; b_w_max,
-// the most bytes one warp keeps in flight; the probe's ring rows that verify the decode price's
-// per-SM bound min(P, W x min(b_w, b_w_max) / L0) (ops/generic/kernel_roofline.h dram_time,
-// #690); and the runs of the architecture's other cards with the verdict of the law of this row
-// against them (`transfer_refuted`: the row is no fact of the architecture, its boards keep the
-// legacy DRAM law).
+// L0, the fetch time of one warp alone with one 16-byte streaming load a lane in flight; F, the
+// rate a lone warp's window fills at past its first load; b_w_max, the most bytes one warp keeps
+// in flight; the probe's ring rows that verify the decode price's per-SM bound
+// min(P, W x b_w / (L0 + (b_w - 512 B) / F)), a saturated warp at most b_w_max / L0
+// (ops/generic/kernel_roofline.h dram_time, #690, #771); and the runs of the architecture's other
+// cards with the verdict of the law of this row against them (`transfer_refuted`: the row is no
+// fact of the architecture, its boards keep the legacy DRAM law).
 //
 // The table is keyed like the ISA facts table (the build's arch, "120a"; the row's "cc" field). An
 // architecture without a row is unknown (sm_rate_row() gives nullopt) and the price keeps its
@@ -77,7 +78,8 @@ struct SmRateRow {
     // (#771): the window of b_w bytes takes L0 + (b_w - 512 B) / F (warp_inflight.py fill_rate,
     // the least-squares ns a byte over the probe's chains at W = 1; 17-19 B/clk on every
     // architecture, the same for 16-, 8- and 4-byte loads).
-    double warp_fill_bytes_per_clock = 0;
+    // Absent (JSON null) where the chains show no fill (no positive slope): the law reads L0.
+    std::optional<double> warp_fill_bytes_per_clock;
     bool warp_bytes_saturated       = false;
     double ring4_over_ring2_w1      = 0;
     // The two-slot ring (2048 B a warp by count): b_w at W = 1 (B) and the largest W up to which

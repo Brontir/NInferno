@@ -442,7 +442,7 @@ class WarpInflight(unittest.TestCase):
         self.refused(SAMPLE.replace(wi.source_sha256(), "0" * 64), "source_sha256")
         self.refused(SAMPLE.replace(f"probe {wi.checked_in_probe()}", "probe warp_inflight 999"),
                      "checked-in probe")
-        self.refused(SAMPLE.replace("ring4:12", "ring4:8"), "16-byte loads")
+        self.refused(SAMPLE.replace("ring4:12", "ring4:8"), "loads per kernel")
         self.refused(SAMPLE.replace("after the run: 0", "after the run: 1 (pid 42)"),
                      "another compute process")
         self.refused(SAMPLE.replace("note compute processes on the probe's GPU before the run: 0\n",
@@ -496,7 +496,7 @@ class WarpInflight(unittest.TestCase):
         # probe 3 run.
         ring8 = row_line("free", 1, "ring8", 1)
         self.refused(text.replace("selfcheck ok", ring8 + "selfcheck ok"), "outside the grid")
-        self.refused(text.replace("ring4:12", "ring4:12 ring8:24"), "16-byte loads")
+        self.refused(text.replace("ring4:12", "ring4:12 ring8:24"), "loads per kernel")
         self.refused(text.replace(wi.EARLIER_PROBES["warp_inflight 3"]["source_sha256"],
                                   wi.source_sha256()), "source_sha256")
         self.refused(text.replace("probe warp_inflight 3", "probe warp_inflight 2"),
