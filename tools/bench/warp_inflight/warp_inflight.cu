@@ -41,6 +41,10 @@
 // 4 and 7 of ring4's 8 on sm_70 (nvcc 12.8). The read costs a warp alone up to 7 % of its rate
 // in the latency-bound rows (ring4 on the RTX 3060 against probe 5), none once the bus saturates;
 // every variant, the run's own L0 among them, now has it.
+// Probe 7 (#771) adds chains of 8-byte (ld.global.cs.v2.u32) and 4-byte (ld.global.cs.u32) loads
+// a lane at 512 to 4096 bytes a warp: whether the time a warp's window takes past one load's
+// latency goes with its bytes or with its loads. On an RTX 4090 (a lab copy, 24.11) it goes with
+// the bytes, about 11 ns a further 512 bytes at every width (warp_inflight.py fill_rate).
 //
 // Two placements of the W warps:
 //   free:   k CTAs of W warps (W <= 32), no shared memory and the L1-largest carve-out; the CTA
@@ -138,23 +142,53 @@ __device__ __forceinline__ uint4 ld_stream_v4(const unsigned char* p) {
     return v;
 }
 
-template <int F>
-__device__ __forceinline__ void fetch(uint4 (&v)[F], const unsigned char* p) {
-#pragma unroll
-    for (int f = 0; f < F; ++f) v[f] = ld_stream_v4(p + f * kWarpLoad);
+__device__ __forceinline__ uint2 ld_stream_v2(const unsigned char* p) {
+    uint2 v;
+    asm volatile("ld.global.cs.v2.u32 {%0, %1}, [%2];\n" : "=r"(v.x), "=r"(v.y) : "l"(p));
+    return v;
 }
 
-template <int F>
-__device__ __forceinline__ unsigned consume(const uint4 (&v)[F], unsigned acc) {
+__device__ __forceinline__ unsigned ld_stream_v1(const unsigned char* p) {
+    unsigned v;
+    asm volatile("ld.global.cs.u32 %0, [%1];\n" : "=r"(v) : "l"(p));
+    return v;
+}
+
+// A lane's streaming load of B bytes (16, 8, 4; probe 7): a warp-wide load is 32 x B bytes.
+template <int B> struct Lane;
+template <> struct Lane<16> {
+    using T = uint4;
+    __device__ static T ld(const unsigned char* p) { return ld_stream_v4(p); }
+    __device__ static unsigned x(const T& v) { return v.x ^ v.y ^ v.z ^ v.w; }
+};
+template <> struct Lane<8> {
+    using T = uint2;
+    __device__ static T ld(const unsigned char* p) { return ld_stream_v2(p); }
+    __device__ static unsigned x(const T& v) { return v.x ^ v.y; }
+};
+template <> struct Lane<4> {
+    using T = unsigned;
+    __device__ static T ld(const unsigned char* p) { return ld_stream_v1(p); }
+    __device__ static unsigned x(const T& v) { return v; }
+};
+
+template <int F, int B>
+__device__ __forceinline__ void fetch(typename Lane<B>::T (&v)[F], const unsigned char* p) {
 #pragma unroll
-    for (int f = 0; f < F; ++f) acc ^= v[f].x ^ v[f].y ^ v[f].z ^ v[f].w;
+    for (int f = 0; f < F; ++f) v[f] = Lane<B>::ld(p + f * 32 * B);
+}
+
+template <int F, int B>
+__device__ __forceinline__ unsigned consume(const typename Lane<B>::T (&v)[F], unsigned acc) {
+#pragma unroll
+    for (int f = 0; f < F; ++f) acc ^= Lane<B>::x(v[f]);
     return acc;
 }
 
 // One measured warp streams `fetches` fetches of F warp-wide loads from its own range (ranked by
 // an atomic over the working warps, so the ranges are dense whichever CTAs work). `active`, when
 // given, holds a flag per SM id: a CTA on an SM without it returns at once.
-template <int F, bool Ring>
+template <int F, bool Ring, int B = 16>
 __global__ void stream(const unsigned char* buf, unsigned long long base,
                        unsigned long long per_warp, int fetches, const int* active, unsigned zero,
                        unsigned* rank, Rec* recs, unsigned* sink) {
@@ -168,8 +202,8 @@ __global__ void stream(const unsigned char* buf, unsigned long long base,
     unsigned r = 0;
     if (lane == 0) r = atomicAdd(rank, 1u);
     r                                  = __shfl_sync(0xffffffffu, r, 0);
-    const unsigned char* p             = buf + base + r * per_warp + lane * kLoadBytes;
-    constexpr unsigned long long kStep = static_cast<unsigned long long>(F) * kWarpLoad;
+    const unsigned char* p             = buf + base + r * per_warp + lane * B;
+    constexpr unsigned long long kStep = static_cast<unsigned long long>(F) * 32 * B;
     unsigned long long off             = 0;
     unsigned acc                       = 0;
     __syncwarp();
@@ -178,27 +212,27 @@ __global__ void stream(const unsigned char* buf, unsigned long long base,
     if constexpr (!Ring) {
 #pragma unroll 1
         for (int i = 0; i < fetches; ++i) {
-            uint4 v[F];
-            fetch<F>(v, p + off);
+            typename Lane<B>::T v[F];
+            fetch<F, B>(v, p + off);
             // As in the ring below: the clock read keeps every load of the fetch ahead of the
             // compute that waits on them (without it chain4 kept 3 of its 4 on sm_70).
             acc ^= static_cast<unsigned>(clock64()) & zero;
-            acc = consume<F>(v, acc);
+            acc = consume<F, B>(v, acc);
             off += kStep + (acc & zero);
         }
     } else {
         // rmma_kernel's loop: fetch(Slot1, next); compute(Slot0); fetch(Slot0, next);
         // compute(Slot1). `fetches` is even.
-        uint4 a[F], b[F];
-        fetch<F>(a, p + off);
+        typename Lane<B>::T a[F], b[F];
+        fetch<F, B>(a, p + off);
         off += kStep;
 #pragma unroll 1
         for (int i = 0; i < fetches; i += 2) {
-            fetch<F>(b, p + off + (acc & zero));
+            fetch<F, B>(b, p + off + (acc & zero));
             off += kStep;
-            acc = consume<F>(a, acc);
+            acc = consume<F, B>(a, acc);
             if (i + 2 < fetches) {
-                fetch<F>(a, p + off + (acc & zero));
+                fetch<F, B>(a, p + off + (acc & zero));
                 off += kStep;
             }
             // ptxas should issue the two fetches back to back after compute(Slot0) (2F loads a
@@ -209,7 +243,7 @@ __global__ void stream(const unsigned char* buf, unsigned long long base,
             // ahead of it. Every variant has it (probe 6), so all are the same loop shape and
             // each keeps its count on sm_70 to sm_120a (warp_inflight.py checks the SASS).
             acc ^= static_cast<unsigned>(clock64()) & zero;
-            acc = consume<F>(b, acc);
+            acc = consume<F, B>(b, acc);
         }
     }
     const long long c1 = clock64();
@@ -226,7 +260,9 @@ struct Variant {
     int f;
     bool ring;
     Kernel kernel;
+    int b = 16; // a lane's load, bytes (probe 7: 8 and 4 beside 16)
 
+    int warp_load() const { return 32 * b; }
     int inflight() const { return ring ? 2 * f : f; } // loads a lane keeps in flight, at most
 };
 
@@ -236,6 +272,11 @@ const Variant kVariants[] = {
     {"ring2", 2, true, stream<2, true>},       {"ring4", 4, true, stream<4, true>},
     {"ring8", 8, true, stream<8, true>},       {"chain8", 8, false, stream<8, false>},
     {"chain16", 16, false, stream<16, false>},
+    // Probe 7: chains of 8- and 4-byte loads a lane, 512 to 4096 bytes a warp.
+    {"chain2_b8", 2, false, stream<2, false, 8>, 8},   {"chain4_b8", 4, false, stream<4, false, 8>, 8},
+    {"chain8_b8", 8, false, stream<8, false, 8>, 8},   {"chain16_b8", 16, false, stream<16, false, 8>, 8},
+    {"chain4_b4", 4, false, stream<4, false, 4>, 4},   {"chain8_b4", 8, false, stream<8, false, 4>, 4},
+    {"chain16_b4", 16, false, stream<16, false, 4>, 4}, {"chain32_b4", 32, false, stream<32, false, 4>, 4},
 };
 
 std::vector<std::string> g_failures;
@@ -283,9 +324,9 @@ struct Probe {
                   const int* active, const std::string& what) {
         const int working_warps = k * c * warps_per_cta;
         size_t per_warp         = std::min(kWarpMax, kRunBudget / working_warps);
-        const size_t quantum    = static_cast<size_t>(2) * v.f * kWarpLoad; // even fetch count
+        const size_t quantum    = static_cast<size_t>(2) * v.f * v.warp_load(); // even fetch count
         per_warp                = per_warp / quantum * quantum;
-        const int fetches = static_cast<int>(per_warp / (static_cast<size_t>(v.f) * kWarpLoad));
+        const int fetches = static_cast<int>(per_warp / (static_cast<size_t>(v.f) * v.warp_load()));
         const size_t base = take(per_warp * working_warps);
         CHECK(cudaMemset(rank, 0, sizeof(unsigned)));
         v.kernel<<<ctas, 32 * warps_per_cta, shared>>>(buf, base, per_warp, fetches, active, 0u,
@@ -392,7 +433,7 @@ int main(int argc, char** argv) {
     const int cc = p.major * 10 + p.minor;
     char pci[32] = {};
     CHECK(cudaDeviceGetPCIBusId(pci, sizeof pci, 0));
-    std::printf("probe warp_inflight 6\n");
+    std::printf("probe warp_inflight 7\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -480,10 +521,10 @@ int main(int argc, char** argv) {
         for (; ms < 300.0F || (word == 0 && ms < 15000.0F);) {
             CHECK(cudaMemset(pr.rank, 0, sizeof(unsigned)));
             const size_t per_warp = kRunBudget / (static_cast<size_t>(pr.sms) * 32);
-            const size_t quantum  = static_cast<size_t>(2) * v.f * kWarpLoad;
+            const size_t quantum  = static_cast<size_t>(2) * v.f * v.warp_load();
             const size_t pw       = per_warp / quantum * quantum;
             v.kernel<<<pr.sms, 1024>>>(pr.buf, pr.take(pw * pr.sms * 32), pw,
-                                       static_cast<int>(pw / (v.f * kWarpLoad)), nullptr, 0u,
+                                       static_cast<int>(pw / (v.f * v.warp_load())), nullptr, 0u,
                                        pr.rank, pr.recs, pr.sink);
             LAUNCHED();
             CHECK(cudaEventRecord(e1));

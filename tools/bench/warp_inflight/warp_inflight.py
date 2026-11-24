@@ -75,20 +75,28 @@ def _isa_probe():
 IP = _isa_probe()
 
 WARP_LOAD = 512  # one warp-wide 16-byte load: 32 lanes x 16 B
-# The probe's variants (warp_inflight.cu kVariants): name -> (loads a fetch, ring). A chain keeps
-# F loads a lane in flight, a ring 2F; the SASS of a chain's loop holds F 16-byte loads, a ring's
-# 3F (the first fetch before the loop, two in it).
-VARIANTS = {"chain1": (1, False), "chain2": (2, False), "chain4": (4, False),
-            "ring1": (1, True), "ring2": (2, True), "ring4": (4, True), "ring8": (8, True),
-            "chain8": (8, False), "chain16": (16, False)}
+# The probe's variants (warp_inflight.cu kVariants): name -> (loads a fetch, ring, a lane's load
+# bytes). A chain keeps F loads a lane in flight, a ring 2F; the SASS of a chain's loop holds F
+# loads of its width, a ring's 3F (the first fetch before the loop, two in it). The `_b8` / `_b4`
+# chains (probe 7, #771) load 8 or 4 bytes a lane: 256 or 128 bytes a warp-wide load.
+VARIANTS = {"chain1": (1, False, 16), "chain2": (2, False, 16), "chain4": (4, False, 16),
+            "ring1": (1, True, 16), "ring2": (2, True, 16), "ring4": (4, True, 16),
+            "ring8": (8, True, 16), "chain8": (8, False, 16), "chain16": (16, False, 16),
+            "chain2_b8": (2, False, 8), "chain4_b8": (4, False, 8), "chain8_b8": (8, False, 8),
+            "chain16_b8": (16, False, 8), "chain4_b4": (4, False, 4), "chain8_b4": (8, False, 4),
+            "chain16_b4": (16, False, 4), "chain32_b4": (32, False, 4)}
+# The 16-byte variants, probes 5 and 6's.
+VARIANTS_16 = tuple(v for v, (_, _, b) in VARIANTS.items() if b == 16)
 # The runs of an earlier probe still parse, as what that probe measured: its source's sha256 (the
 # warp_inflight.cu of that version, in the history) and its variants. Probe 3 (#739) had no ring8,
 # which probe 4 (#757) added; probe 5 (#757) added chain8 and chain16; probe 6 (#757) gave every
 # variant the clock read that ring8, chain8 and chain16 had. So only those three compile to the
 # same SASS in probes 5 and 6. The others differ: ring4 of probes 3-5 kept 6 of its 8 loads
 # on sm_120a (nvcc 13.4.92; the sass_inflight check came with probe 4, after the sm_120a runs).
-# chain4 kept 3 of its 4 and ring4 7 of 8 on sm_70 (nvcc 12.8). On the RTX 3060, probe 6's ring4
-# reads up to 7 % below probe 5's in the latency-bound rows and the same once the bus saturates.
+# chain4 kept 3 of its 4 and ring4 7 of 8 on sm_70 (nvcc 12.8). On the RTX 3060 probe 6 reads
+# 0.3-5.5 % below probe 5 in the latency-bound rows (W <= 4; ring4 the most) and the same once the
+# bus saturates; on the GV100 its chain4 and ring4 read x1.6 and x1.3-1.5 above probe 3's. Probe 7
+# (#771) adds the 8- and 4-byte chains; its 16-byte variants are probe 6's loop, unchanged.
 EARLIER_PROBES = {
     "warp_inflight 3": {
         "source_sha256": "c903f40008fb45fa109c837b07bd78d9a5dbb565c9906afa1cbcd9b4711d93e8",
@@ -98,7 +106,10 @@ EARLIER_PROBES = {
         "variants": ("chain1", "chain2", "chain4", "ring1", "ring2", "ring4", "ring8")},
     "warp_inflight 5": {
         "source_sha256": "2abe75c6aef0a477cd05bcaf47b7b2c3a3a55cff1a02d3f9205f464a1ae5903c",
-        "variants": tuple(VARIANTS)},
+        "variants": VARIANTS_16},
+    "warp_inflight 6": {
+        "source_sha256": "6c71e3c90e00736f4f5739efb01fe70f89a4465d8ca8e844f1ef55d227106c09",
+        "variants": VARIANTS_16},
 }
 W_GRID = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
 K_GRID = (1, 2, 4, 8)
@@ -329,13 +340,23 @@ def clock_refusal(notes, rated_khz):
 
 
 def inflight_of(variant):
-    f, ring = VARIANTS[variant]
+    f, ring, _ = VARIANTS[variant]
     return 2 * f if ring else f
 
 
 def sass_loads_of(variant):
-    f, ring = VARIANTS[variant]
+    f, ring, _ = VARIANTS[variant]
     return 3 * f if ring else f
+
+
+def load_bytes_of(variant):
+    """A lane's load, bytes: 16, or 8 / 4 for the `_b8` / `_b4` chains."""
+    return VARIANTS[variant][2]
+
+
+def warp_bytes_of(variant):
+    """The bytes a warp keeps in flight by count: its loads a lane x 32 lanes x a load's bytes."""
+    return inflight_of(variant) * 32 * load_bytes_of(variant)
 
 
 def checked_in_probe():
@@ -423,7 +444,7 @@ def parse_run(text):
                                  f"in flight, not {r['inflight']}: {line!r}")
             row = {"mode": key[0], "k": key[1], "variant": key[2],
                    "inflight_loads": int(r["inflight"]),
-                   "warp_bytes_in_flight": int(r["inflight"]) * WARP_LOAD, "w": key[3]}
+                   "warp_bytes_in_flight": warp_bytes_of(key[2]), "w": key[3]}
             for c in COLUMNS[5:]:
                 row[c] = _positive(r[c], f"{c} of {key}")
             if not row["gbps_lo"] <= row["gbps"] <= row["gbps_hi"]:
@@ -549,6 +570,39 @@ def own_l0(rows):
     return next(r["ns_fetch"] for r in rows if (r["mode"], r["k"], r["variant"], r["w"]) == OWN_L0)
 
 
+def fill_rate(rows, cap_bytes=None):
+    """The rate a lone warp's window fills at, bytes an SM clock (#771): one warp alone on one SM
+    (free, k = 1, W = 1) on each chain keeps b bytes in flight and reads at gbps, so its window
+    takes L_eff = b / gbps ns, the run's own L0 (chain1, 512 B) plus the time the other b - 512
+    bytes take to arrive. The least-squares slope s of L_eff - L0 over b - 512 (through the
+    origin, every chain of the run: 16-byte ones, and the 8- and 4-byte ones from probe 7) is the
+    ns a further byte costs; the rate is 1 / s at chain1's SM clock. A measured fact of the
+    probe's rows, as P is: on an RTX 4090 the 16-, 8- and 4-byte chains give the same ns a byte
+    (the fill goes with the bytes, not the loads). Where a warp saturates (`cap_bytes`, b_w_max)
+    a chain past the cap reads the cap, not the fill, so only the chains within it are fit. None
+    without two chains past chain1 (within the cap), or without a positive slope."""
+    one = {r["variant"]: r for r in rows
+           if r["mode"] == "free" and r["k"] == 1 and r["w"] == 1 and not VARIANTS[r["variant"]][1]}
+    if "chain1" not in one:
+        return None
+    l0, mhz = WARP_LOAD / one["chain1"]["gbps"], one["chain1"]["sm_mhz"]
+    pts = [(warp_bytes_of(v) - WARP_LOAD, warp_bytes_of(v) / r["gbps"] - l0)
+           for v, r in one.items()
+           if warp_bytes_of(v) > WARP_LOAD and (cap_bytes is None or warp_bytes_of(v) <= cap_bytes)]
+    if len(pts) < 2:
+        return None
+    slope = sum(x * y for x, y in pts) / sum(x * x for x, _ in pts)
+    return round(1.0 / (slope * mhz * 1e-3), 2) if slope > 0 else None
+
+
+def window_ns(b_w, l0_ns, fill_bytes_per_clock, mhz):
+    """The time a warp's window of b_w bytes takes (#771): L0 for its first warp-wide load, then
+    the other bytes at the fill rate (bytes an SM clock, at `mhz`). L0 alone without a rate."""
+    if not fill_bytes_per_clock:
+        return l0_ns
+    return l0_ns + max(0.0, b_w - WARP_LOAD) / (fill_bytes_per_clock * mhz * 1e-3)
+
+
 def derive(rows, l0_ns, table_l0_ns=None):
     """Each row's b_w (bytes a warp keeps in flight, by Little's law on the row's rate and the
     run's own L0) and, where given (the ISA row is of the run's card), b_w at the table's L0; and
@@ -648,7 +702,8 @@ FACTS_NOTE = (
     "warp_inflight_<arch>_<card>.txt: another card of it, a transfer check; all written by "
     "`warp_inflight.py run`, never edited by "
     "hand), read by core/sm_rate_facts.h for the decode price's per-SM bound "
-    "min(P, W x min(b_w, b_w_max) / L0) (kernel_roofline.h dram_time, #690). "
+    "min(P, W x b_w / (L0 + (b_w - 512 B) / F)) with b_w at most b_w_max where a warp "
+    "saturates (kernel_roofline.h dram_time, #690, #771). "
     "sm_dram_bytes_per_clock_free / _placed: P, the largest rate one SM reached at k = 1 (any "
     "variant, any W) over the SM clock of that row, with the L1-largest carve-out (`free`) and "
     "the shared-largest one (`placed`); sm_dram_gbps_* and sm_mhz_* are the rate and clock it was "
@@ -657,7 +712,11 @@ FACTS_NOTE = (
     "law prices, not the ISA table's pointer chase (dram_tlbwarm_latency_ns_w1, 8-24 % shorter on "
     "the same card). max_warp_bytes_in_flight: b_w_max, the most bytes in flight one warp alone "
     "reached (b_w at W = 1 by Little's law on L0, the largest over every variant and both "
-    "carve-outs). warp_bytes_saturated: the warp saturates, so b_w_max caps the bytes the law "
+    "carve-outs). warp_fill_bytes_per_clock: F, the rate a lone warp's window fills at past its "
+    "first warp-wide load (fill_rate: the least-squares ns a further byte costs over the run's "
+    "chains at k = 1, W = 1, at chain1's SM clock; 17-19 B a clock on every architecture, about "
+    "0.55 P; the 8- and 4-byte chains of probe 7 show it goes with the bytes, not the loads). "
+    "warp_bytes_saturated: the warp saturates, so b_w_max caps the bytes the law "
     "counts. In a row whose run has chain8 and chain16 (probe 5 on), cap_test sets each chain's "
     "lone-warp b_w against the two-latency bound count x L0 / (2 x the ISA table's "
     "dram_tlbwarm_latency_ns_w1): a warp held to fewer loads than the chain's count reads at or "
@@ -681,7 +740,7 @@ FACTS_NOTE = (
     "8). transfer: the other cards' runs of the architecture, their ring rows, the law of this "
     "row against them (law over measured: the lowest, the highest at W = 1, the highest), and "
     "`refuted` when any of their rows falls outside the check's bounds (the law below the row by "
-    "more than 1 %, above it by more than x1.25 at W = 1 or x1.40 anywhere): a refuted row is no "
+    "more than 5 %, above it by more than x1.05 at W = 1 or x1.25 anywhere): a refuted row is no "
     "fact of the architecture, and its boards keep the legacy DRAM law. Provenance Measured for "
     "every run, with its source file, card, probe version, nvcc, driver, runtime and the sha256 "
     "of the warp_inflight.cu it was built from; a board of the architecture other than the "
@@ -699,17 +758,20 @@ FACT_UNITS = {
     "ring2_b_w_w1_free": "B", "ring2_b_w_w1_placed": "B",
     "ring2_linear_to_w_free": "warps", "ring2_linear_to_w_placed": "warps",
     "chain4_b_w_w1_free": "B", "ring4_b_w_w1_free": "B",
+    "warp_fill_bytes_per_clock": "B/clk",
 }
 # The ring variants the law is checked on, with the bytes a warp keeps in flight by count.
 CHECKED_RINGS = {"ring2": 2 * 2 * WARP_LOAD, "ring4": 2 * 4 * WARP_LOAD}
-# The check's bounds on law over measured (test_kernel_roofline.cpp check 8 holds the same): the
-# law is Little's with the unloaded L0, the counted bytes and a corner at P, an upper bound of the
-# rate, so never below a row (to 1 %), at most x1.25 above it at W = 1 and x1.40 anywhere. At W = 1
-# the gap is the count against what a warp keeps in flight: 0.86-0.93 of the 2-load ring's 2048 B,
-# 0.82-0.84 of the 4-load ring's 4096 B where nothing caps it (x1.07-1.16 and x1.19-1.23 over the
-# rows); on the curve the measured rate rounds off into P where the law has a corner (an
-# unmodelled knee at W = 8-16, x1.16-1.37: a gap of the model, not noise).
-LAW_NEVER_BELOW, LAW_AT_ONE_WARP, LAW_ON_THE_CURVE = 0.99, 1.25, 1.40
+# The check's bounds on law over measured (test_kernel_roofline.cpp check 8 holds the same). The
+# law is Little's with the counted bytes, a window that takes L0 plus its other bytes at the fill
+# rate F (window_ns, #771), and a corner at P. F is a least-squares rate over the chains, so the
+# law is no longer an upper bound of a ring's rate: it reads 0.965-1.043 of the rings' own rows
+# and 0.98-1.03 of the other cards' at W = 1 (probe 6; the chains scatter about +-4 % around the
+# fit). Hence at least x0.95 and at most x1.05 at W = 1. On the curve the measured rate rounds
+# off into P where the law has a corner (a knee at W = 6-16 the law does not model, up to x1.20
+# on the own rows and x1.16 on the others): at most x1.25 anywhere. Without the fill (probes 3-6
+# under the plain L0) the same rows read x1.07-1.33 at W = 1 and up to x1.44 on the curve.
+LAW_NEVER_BELOW, LAW_AT_ONE_WARP, LAW_ON_THE_CURVE = 0.95, 1.05, 1.25
 # Whether one warp saturates: the 4-load ring doubles the 2-load ring's loads in flight; a warp
 # that is not saturated gains about the count (x1.80-1.81 at W = 1 on sm_75, sm_86, sm_89), a
 # saturated one about nothing (x1.00 on sm_120a, x1.20 on sm_70). b_w_max caps the counted bytes
@@ -743,7 +805,9 @@ def law_ratios(row, rings):
         for mode in MODES:
             p = f[f"sm_dram_bytes_per_clock_{mode}"]
             for w, gbps, mhz in rings[variant][mode]:
-                law = min(p * mhz * 1e-3, w * b_w / f["dram_stream_latency_ns"])
+                window = window_ns(b_w, f["dram_stream_latency_ns"],
+                                   f.get("warp_fill_bytes_per_clock"), mhz)
+                law = min(p * mhz * 1e-3, w * b_w / window)
                 out.append((variant, mode, w, law / gbps))
     return out
 
@@ -812,6 +876,13 @@ def facts_row(head, rows, source, isa_table=DEFAULT_ISA_TABLE):
                                              for d in summary["variants"][mode].values())
     gain = values["ring4_b_w_w1_free"] / values["ring2_b_w_w1_free"]
     chains = cap_test(head, rows, summary, own, isa_table)
+    # b_w_max is a cap only where the probe saw one warp saturate: by the chain test where the
+    # run has its chains (probe 5 on) and the latency is the card's own, else by the ring rule
+    # (SATURATION_GAIN).
+    saturated = (chains["verdict"] == "cap" if chains and chains["decides"]
+                 else gain < SATURATION_GAIN)
+    values["warp_fill_bytes_per_clock"] = fill_rate(
+        rows, values["max_warp_bytes_in_flight"] if saturated else None)
     row = {
         "provenance": "Measured", "source": source, "card": head["card"],
         "cc": int(head["cc"]), "sms": int(head["sms"]),
@@ -821,11 +892,7 @@ def facts_row(head, rows, source, isa_table=DEFAULT_ISA_TABLE):
         "clocks_waived": any(n.startswith(CLOCK_WAIVED) for n in head["notes"]),
         "notes": head["notes"],
         "facts": {name: {"value": values[name], "unit": unit} for name, unit in FACT_UNITS.items()},
-        # b_w_max is a cap only where the probe saw one warp saturate: by the chain test where
-        # the run has its chains (probe 5 on) and the latency is the card's own, else by the
-        # ring rule (SATURATION_GAIN).
-        "warp_bytes_saturated": (chains["verdict"] == "cap" if chains and chains["decides"]
-                                 else gain < SATURATION_GAIN),
+        "warp_bytes_saturated": saturated,
         "ring4_over_ring2_w1": round(gain, 3),
         "ring2_rows": ring_rows(rows, "ring2"),
         "ring4_rows": ring_rows(rows, "ring4"),
@@ -1000,7 +1067,8 @@ def cmd_merge(a):
 def _kernels(sass):
     """{variant: its kernel's SASS body} of `cuobjdump -sass` text (sass_counts' parser)."""
     sc = IP._sass_counts()
-    tag = {f"streamILi{f}ELb{int(ring)}E": v for v, (f, ring) in VARIANTS.items()}
+    # stream<F, Ring, B>: every template argument is in the mangled name (B too, its default 16).
+    tag = {f"streamILi{f}ELb{int(ring)}ELi{b}E": v for v, (f, ring, b) in VARIANTS.items()}
     out = {}
     for name, body in sc.iter_functions(sass.splitlines(),
                                         lambda n: any(t in n for t in tag)):
@@ -1014,14 +1082,27 @@ def _kernels(sass):
     return out
 
 
+def _is_ldg(opcode, width=16):
+    """Whether `opcode` is a global load of `width` bytes a lane: LDG with .128 (16), .64 (8), or
+    neither and no sub-word suffix (4)."""
+    if IP._sass_counts().base_opcode(opcode) != "LDG":
+        return False
+    suffix = {16: ".128", 8: ".64"}.get(width)
+    if suffix:
+        return suffix in opcode
+    return not any(t in opcode for t in (".128", ".64", ".U8", ".S8", ".U16", ".S16"))
+
+
 def _is_ldg128(opcode):
-    return IP._sass_counts().base_opcode(opcode) == "LDG" and ".128" in opcode
+    return _is_ldg(opcode, 16)
 
 
 def sass_loads(sass):
-    """{variant: 16-byte global loads in its kernel} of `cuobjdump -sass` text, read with
-    sass_counts' parser: LDG instructions whose opcode carries .128."""
-    return {v: sum(1 for row in body if _is_ldg128(row[2])) for v, body in _kernels(sass).items()}
+    """{variant: global loads of its width in its kernel} of `cuobjdump -sass` text, read with
+    sass_counts' parser: LDG instructions whose opcode carries .128 (16-byte variants), .64
+    (`_b8`) or no width (`_b4`)."""
+    return {v: sum(1 for row in body if _is_ldg(row[2], load_bytes_of(v)))
+            for v, body in _kernels(sass).items()}
 
 
 SASS_REGISTER = re.compile(r"\bR(\d+)(\.64)?\b")
@@ -1031,7 +1112,7 @@ DEPBAR_LE = re.compile(r"SB(\d)\s*,\s*(0x[0-9a-f]+|\d+)")
 NO_SCOREBOARD = 7  # the control code's write barrier when an instruction sets none
 
 
-def peak_in_flight(body):
+def peak_in_flight(body, width=16):
     """The most 16-byte loads the kernel's SASS keeps in flight a lane, read in program order. A
     load stays in flight until something waits for it:
     - an instruction reads or overwrites a register it writes (its quad);
@@ -1066,7 +1147,7 @@ def peak_in_flight(body):
                 n = int(m.group(1))
                 reads.update({f"R{n}", f"R{n + 1}"} if m.group(2) else {f"R{n}"})
         pending = [(q, sb) for q, sb in pending if not (q & reads or q & written)]
-        if _is_ldg128(opcode):
+        if _is_ldg(opcode, width):
             pending.append((written, control.write_barrier if control else NO_SCOREBOARD))
             peak = max(peak, len(pending))
     return peak
@@ -1076,7 +1157,7 @@ def sass_inflight(sass):
     """{variant: the most 16-byte loads a lane its kernel's SASS keeps in flight} (peak_in_flight):
     a chain's F, a ring's 2F, when ptxas issues every load of a fetch before the data it waits
     on; fewer when it recycles a fetch's registers (ring8 without its clock read)."""
-    return {v: peak_in_flight(body) for v, body in _kernels(sass).items()}
+    return {v: peak_in_flight(body, load_bytes_of(v)) for v, body in _kernels(sass).items()}
 
 
 def cmd_run(a):
