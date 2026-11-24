@@ -2387,14 +2387,17 @@ int main() {
     }
 
     // 2d''. The few-row MMA tile against the dp4a kernel on the same calls, T 1-8 (#1189): 200
-    // rows leave the last 16-row CTA half full, 196 rows the last CTA part full in both forms (12
-    // of 16 rows, 4 of a gated CTA's 8); K 2560 and 5120 several superblocks a warp. Where the tile
-    // is compiled and the device has the native bf16 MMA, some call must be compared: a change that
-    // makes route_admits refuse them all would otherwise pass silently.
+    // rows leave the last 16-row CTA half full, 196 rows the last CTA part full in both forms (4 of
+    // 16 rows, 4 of a gated CTA's 8); K 2560 and 5120 several superblocks a warp. Where the tile is
+    // compiled, the device has the native bf16 MMA and a format the tile reads (Q4_K, Q5_K, Q6_K)
+    // is selected, some call must be compared: a change that makes route_admits refuse them all
+    // would otherwise pass silently.
     {
-        int compared = 0;
+        int compared = 0, tile_formats = 0;
         for (const Format& f : kFormats) {
             if (!on_build(f) || !generic::ggml_vec_format(f.qtype)) continue;
+            tile_formats += f.qtype == QType::GGML_Q4_K || f.qtype == QType::GGML_Q5_K ||
+                            f.qtype == QType::GGML_Q6_K;
             for (const auto& [n, k] :
                  std::vector<std::pair<std::int32_t, std::int32_t>>{{200, 2560}, {196, 5120}}) {
                 for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu, Op::GeGlu, Op::Relu2}) {
@@ -2404,7 +2407,8 @@ int main() {
             }
         }
         const bool tile_built = NINFERNO_BUILD_ARCH == 0 || NINFERNO_BUILD_ARCH >= 80;
-        if (tile_built && ninferno::device_class().features.mma_bf16_native && compared == 0) {
+        if (tile_built && tile_formats > 0 && ninferno::device_class().features.mma_bf16_native &&
+            compared == 0) {
             std::cerr
                 << "ggml_vec.mma: no call compared with ggml_vec on a native bf16 MMA device\n";
             ++failures;
