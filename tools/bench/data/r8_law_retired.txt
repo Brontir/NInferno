@@ -6,8 +6,10 @@
 # retired call fails there; it also fails where the law reproduces an entry a table still holds.
 # Listed by test_r8_law's count_reproduced_entries on cf194ffa1 (the answer is the same in every
 # build: a substituted board reads its own arch's kernel-facts snapshot). A table regenerated from
-# new sweeps passes --retire with this file.
+# new sweeps passes --retire with this file. Two more on PR 1180 (#771): the DRAM window with its
+# fill term reproduces the ad102 IQ2_XS 9216x2048 and ad106 IQ2_XS 6144x5120 entries.
 ad102:128sm GGML_IQ2_XS Store 6144 5120 8 2
+ad102:128sm GGML_IQ2_XS Store 9216 2048 4 1
 ad102:128sm GGML_IQ2_XXS Store 9216 2048 4 1
 ad102:128sm GGML_IQ2_XXS Store 6144 5120 8 2
 ad102:128sm GGML_IQ3_S Store 5120 6144 4 2
@@ -26,6 +28,7 @@ ad106:34sm GGML_IQ2_S Store 5120 17408 8 1
 ad106:34sm GGML_IQ2_XS Store 5120 17408 8 1
 ad106:34sm GGML_IQ2_XXS Store 5120 6144 8 1
 ad106:34sm GGML_IQ2_XXS Store 5120 17408 8 1
+ad106:34sm GGML_IQ2_XS Store 6144 5120 8 1
 ad106:34sm GGML_IQ3_S Store 1024 5120 8 1
 ad106:34sm GGML_IQ3_S Store 6144 5120 8 1
 ad106:34sm GGML_IQ3_S Store 5120 6144 8 1

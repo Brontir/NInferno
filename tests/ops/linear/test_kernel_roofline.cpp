@@ -769,8 +769,9 @@ constexpr double kRing2Bytes = 2 * 2 * 32 * 16, kRing4Bytes = 2 * 4 * 32 * 16;
 // SM rate row: (a) the time never rises with the SM count; (b) a grid of fewer CTAs than SMs costs
 // the same on any larger chip (idle SMs are not billed: the charge of #690); (c) the time is at
 // least every CTA's bytes over the bus; (d) a round of one CTA moves at its warps' rate,
-// W x b_w / L0, while that is under P. Revert check: the legacy law (the busiest SM's share
-// bw / SMs) fails (a) and (b) on the same grid, so the check does not pass vacuously.
+// W x b_w / (L0 + (b_w - 512 B) / F), while that is under P. Revert check: the legacy law (the
+// busiest SM's share bw / SMs) fails (a) and (b) on the same grid, so the check does not pass
+// vacuously.
 void check_dram_time() {
     long bad = 0, legacy_rises = 0, cases = 0;
     const auto it =
@@ -815,9 +816,13 @@ void check_dram_time() {
             }
         }
     }
-    // (d): one CTA of one warp on the 3090: 2048 B in flight over the measured L0, under P (the
-    // free carve-out's, and the placed one's for a shared-memory tile).
-    const double rate = b_w / *base.dram_latency_s;
+    // (d): one CTA of one warp on the 3090: 2048 B in flight over its window, the measured L0
+    // and the other 1536 B at the row's fill rate, under P (the free carve-out's, and the placed
+    // one's for a shared-memory tile).
+    if (!base.sm_warp_fill_bytes_per_clock) ++bad;
+    const double rate =
+        b_w / (*base.dram_latency_s +
+               (b_w - 512) / (base.sm_warp_fill_bytes_per_clock.value_or(1e300) * base.clock_hz));
     for (const bool placed : {false, true}) {
         const double p =
             (placed ? *base.sm_dram_bytes_per_clock_placed : *base.sm_dram_bytes_per_clock_free) *
@@ -841,28 +846,31 @@ void check_dram_time() {
 // ---- Check 8: the law against the probe's own rows ----
 // For every architecture of core/sm_rate_facts.h, dram_time prices one CTA of W warps on one SM,
 // each warp keeping the counted bytes of one of the probe's two-slot rings in flight (ring2: 2048
-// B, ring4: 4096 B, under the row's b_w_max where its warp saturates: sm_70, sm_120a), and that
+// B, ring4: 4096 B, under the row's b_w_max where its warp saturates: none since probe 6), and that
 // rate is held to the probe's measured ring rows (both carve-outs, every W, at each row's own SM
-// clock). P, L0 and the cap come from the table the rows sit in, so the check is about the
-// counted b_w and the law's form (ring4 at W = 1 equals the row where the cap is ring4's own
-// reading, sm_70). The law is Little's with the unloaded L0, the counted bytes and a hard corner
-// at P, an upper bound of the rate, so:
-//  - it is never below a measured row (to 1 %, kNeverBelow);
-//  - at W = 1 it is at most kAtOneWarp above it: the count against what a warp keeps in flight,
-//    ring2's 2048 B against 1767-1907 B (x1.07-1.16), ring4's 4096 B uncapped against 3340-3448 B
-//    (x1.19-1.23); a b_w counted twice over or a P in another unit fails here;
-//  - on every row at most kOnTheCurve above it. The worst reading, x1.16-1.37 at W = 6-16, is a gap
-//    of the model, not noise: the measured curve rounds off into P (a knee of queueing near the
-//    port's limit) where the law has a corner. It is recorded on #690; the law is optimistic there.
+// clock). P, L0, the fill rate F and any cap come from the table the rows sit in, so the check is
+// about the counted b_w and the law's form. The law is Little's with the counted bytes, a window
+// of L0 plus its other bytes at F (L0 + (b_w - 512 B) / F, #771) and a hard corner at P. F is a
+// least-squares rate over the probe's chains, so the law is a central reading at W = 1, not an
+// upper bound:
+//  - it is at least kNeverBelow of a measured row: law over row is 0.965-1.043 on the rings'
+//    own cards (sm_75 the lowest) and 0.98-1.03 on the others, the chains' +-4 % around the fit;
+//  - at W = 1 at most kAtOneWarp above it (before the fill the plain L0 read x1.07-1.33 there: the
+//    window's fill, which a b_w counted twice over or a P in another unit still fails);
+//  - on every row at most kOnTheCurve above it. The worst reading, up to x1.20 at W = 6-16, is a
+//    gap of the model, not noise: the measured curve rounds off into P (a knee of queueing near
+//    the port's limit) where the law has a corner (x1.44 before the fill).
 // The bounds are this check's tolerances, the same as warp_inflight.py's (LAW_*), not constants of
-// the price. The other cards' runs of an architecture (its transfer checks) are held to the same
-// bounds under the row's facts and their own SM clocks: the verdict must be the table's
+// the price; they are read off these same rows (fitted, said so), with sm_120a's own W = 1 at
+// x1.043 the nearest to its bound. The other cards' runs of an architecture (its transfer checks)
+// are held to the same bounds under the row's facts and their own SM clocks: the verdict must be
+// the table's
 // (`within_bounds`, `refuted`), and a refuted row gives no SM rate facts (fill_sm_rate_facts). The
-// RTX 5070 Ti refutes the sm_120a row: the law is x0.88-0.89 of its rows at W = 1 (its warps fetch
-// 12 % faster than the RTX 5090's) and x0.92 at its placed P (23.8 B/clk against 21.9).
+// RTX 5070 Ti refutes the sm_120a row: the law is x0.90-0.93 of its rows at W = 1 (its L0 is 327 ns
+// against the RTX 5090's 375).
 // Last, the boards of each law, written out: the legacy law on sm_80, sm_90, sm_100, sm_121 (no
 // row) and on sm_120a (refuted), the law of #690 on sm_70, sm_75, sm_86, sm_89.
-constexpr double kNeverBelow = 0.99, kAtOneWarp = 1.25, kOnTheCurve = 1.40;
+constexpr double kNeverBelow = 0.95, kAtOneWarp = 1.05, kOnTheCurve = 1.25;
 
 struct LawOverRows {
     long rows = 0, outside = 0;
@@ -880,6 +888,7 @@ LawOverRows law_over(const ninferno::SmRateRow& row, const ninferno::SmRateRings
     chip.sm_dram_bytes_per_clock_free   = row.bytes_per_clock_free;
     chip.sm_dram_bytes_per_clock_placed = row.bytes_per_clock_placed;
     if (row.warp_bytes_saturated) chip.sm_max_warp_bytes = row.max_warp_bytes_in_flight;
+    chip.sm_warp_fill_bytes_per_clock = row.warp_fill_bytes_per_clock;
     // One CTA on one SM: the bus is not the bound the probe measured.
     chip.dram_bytes_per_s = 1e18;
     const double bytes    = 1 << 20;
@@ -977,10 +986,10 @@ void check_law_against_probe() {
 // ---- Check 9: the register MMA's count of bytes in flight and its carve-out ----
 // The count of price_register_mma written out: 2 ring slots x m_tiles x 16 rows x the decoder's
 // K step x bpw. BF16 m1 Store is 2048 B, Q4_K m1 Store 2304 B; a Q6_K SwiGLU m2 schedule counts
-// 2 x 2 x 16 x 128 x 2 x 210 / 256 B, cut to b_w_max where the warp saturates (the V100's sm_70
-// row) and kept where it does not (the RTX 4090's sm_89 row). A kernel with static shared memory
-// takes the placed P, one without the free P; the IQ codebook and the K warps' partials are
-// shared memory by the geometry rule. A kernel without its K step is refused.
+// 2 x 2 x 16 x 128 x 2 x 210 / 256 B, kept on the V100's sm_70 row and the RTX 4090's sm_89 row
+// (no warp saturates since probe 6), its window L0 + (b_w - 512 B) / F on both. A kernel with
+// static shared memory takes the placed P, one without the free P; the IQ codebook and the K warps'
+// partials are shared memory by the geometry rule. A kernel without its K step is refused.
 void check_rmma_count() {
     long bad        = 0;
     const auto fail = [&](const std::string& what) {
@@ -1000,8 +1009,13 @@ void check_rmma_count() {
         ++failures;
         return;
     }
-    if (ada->sm_max_warp_bytes || !volta->sm_max_warp_bytes) {
-        fail("a cap on sm_70 (its warp saturates) and none on sm_89");
+    // Since probe 6 no architecture's warp saturates (#757): no cap, and both fill their windows
+    // at the row's F (#771).
+    if (ada->sm_max_warp_bytes || volta->sm_max_warp_bytes) fail("no cap on sm_70 or sm_89");
+    if (!ada->sm_warp_fill_bytes_per_clock || !volta->sm_warp_fill_bytes_per_clock) {
+        fail("the fill rate on sm_70 and sm_89");
+        ++failures;
+        return;
     }
     const kr::Calibration cal = kr::calibration_of(8, 9);
     const auto counted = [&](const kr::ChipFacts& chip, QType q, g::Epilogue e, double m_tiles,
@@ -1030,9 +1044,16 @@ void check_rmma_count() {
     if (!near(on_ada.counted, q6k_swiglu) || !near(on_ada.warp_bytes, q6k_swiglu)) {
         fail("Q6_K SwiGLU m2 on sm_89: counted " + std::to_string(on_ada.counted) + ", no cap");
     }
-    if (!near(on_volta.counted, q6k_swiglu) ||
-        !near(on_volta.warp_bytes, *volta->sm_max_warp_bytes)) {
-        fail("Q6_K SwiGLU m2 on sm_70: cut to b_w_max");
+    if (!near(on_volta.counted, q6k_swiglu) || !near(on_volta.warp_bytes, q6k_swiglu)) {
+        fail("Q6_K SwiGLU m2 on sm_70: counted " + std::to_string(on_volta.counted) +
+             ", no cap since probe 6");
+    }
+    // The window: L0, then the other bytes at F bytes a clock.
+    for (const auto& [chip, t] : {std::pair{&*ada, on_ada}, std::pair{&*volta, on_volta}}) {
+        const double window =
+            *chip->dram_latency_s +
+            (q6k_swiglu - 512) / (*chip->sm_warp_fill_bytes_per_clock * chip->clock_hz);
+        if (!near(t.window, window)) fail("Q6_K SwiGLU m2: the window L0 + (b_w - 512) / F");
     }
     // The carve-out: P of the free one without shared memory, of the placed one with some.
     if (bf16.shared_carved ||

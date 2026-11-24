@@ -34,7 +34,7 @@ struct R8DecodeTable {
     std::span<const R8DecodeEntry> entries;
 };
 
-// ad102:128sm: 98 entries (median us: rules -> entry).
+// ad102:128sm: 97 entries (median us: rules -> entry).
 inline constexpr R8DecodeEntry kR8DecodeAd102_128sm[] = {
     {QType::GGML_IQ2_S, Epilogue::Store, 4096, 2048, 4, 1},     // w4r2 5.89 -> 5.73
     {QType::GGML_IQ2_S, Epilogue::Store, 8192, 2048, 4, 1},     // w4r2 9.76 -> 9.44
@@ -59,7 +59,6 @@ inline constexpr R8DecodeEntry kR8DecodeAd102_128sm[] = {
     {QType::GGML_IQ2_S, Epilogue::SwiGlu, 19968, 6656, 4, 1},   // w8r2 107.96 -> 97.02
     {QType::GGML_IQ2_XS, Epilogue::Store, 4096, 2048, 4, 1},    // w4r2 5.27 -> 4.78
     {QType::GGML_IQ2_XS, Epilogue::Store, 8192, 2048, 4, 1},    // w4r2 9.45 -> 7.69
-    {QType::GGML_IQ2_XS, Epilogue::Store, 9216, 2048, 4, 1},    // w4r2 9.37 -> 8.19
     {QType::GGML_IQ2_XS, Epilogue::Store, 12288, 2048, 4, 1},   // w8r2 11.66 -> 10.03
     {QType::GGML_IQ2_XS, Epilogue::Store, 12288, 5120, 4, 1},   // w8r2 23.48 -> 22.29
     {QType::GGML_IQ2_XS, Epilogue::Store, 14336, 5120, 4, 1},   // w8r2 29.56 -> 25.51
@@ -196,13 +195,12 @@ inline constexpr R8DecodeEntry kR8DecodeAd104_60sm[] = {
     {QType::GGML_Q5_K, Epilogue::Store, 4096, 12288, 4, 1}, // w8r2 76.03 -> 74.85
 };
 
-// ad106:34sm: 15 entries (median us: rules -> entry).
+// ad106:34sm: 14 entries (median us: rules -> entry).
 inline constexpr R8DecodeEntry kR8DecodeAd106_34sm[] = {
     {QType::GGML_IQ2_S, Epilogue::Store, 6144, 5120, 4, 1},     // w4r2 45.47 -> 40.47
     {QType::GGML_IQ2_S, Epilogue::Store, 10240, 5120, 4, 1},    // w4r2 72.70 -> 64.34
     {QType::GGML_IQ2_S, Epilogue::Store, 17408, 5120, 4, 1},    // w8r2 121.44 -> 106.79
     {QType::GGML_IQ2_S, Epilogue::SwiGlu, 17408, 5120, 4, 1},   // w8r2 244.32 -> 208.96
-    {QType::GGML_IQ2_XS, Epilogue::Store, 6144, 5120, 8, 1},    // w4r2 39.56 -> 34.90
     {QType::GGML_IQ2_XS, Epilogue::Store, 17408, 5120, 8, 1},   // w8r2 105.47 -> 93.93
     {QType::GGML_IQ2_XXS, Epilogue::Store, 6144, 5120, 8, 1},   // w4r2 32.69 -> 31.13
     {QType::GGML_IQ2_XXS, Epilogue::Store, 10240, 5120, 8, 1},  // w4r2 51.98 -> 50.33

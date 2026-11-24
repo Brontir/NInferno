@@ -122,6 +122,19 @@ SmRateRow parse_row(const std::string& key, const Json& j) {
         }
         r.*f.member = positive(it->at("value"), where);
     }
+    {
+        // F: present in every row, null where the probe's chains show no fill (no positive slope).
+        const auto it = facts.find("warp_fill_bytes_per_clock");
+        if (it == facts.end())
+            throw std::runtime_error("fact warp_fill_bytes_per_clock is missing");
+        if (it->at("unit").get<std::string>() != "B/clk") {
+            throw std::runtime_error("fact warp_fill_bytes_per_clock is not in B/clk");
+        }
+        if (!it->at("value").is_null()) {
+            r.warp_fill_bytes_per_clock =
+                positive(it->at("value"), "fact warp_fill_bytes_per_clock");
+        }
+    }
     r.warp_bytes_saturated = boolean(j, "warp_bytes_saturated");
     r.ring4_over_ring2_w1  = positive(j.at("ring4_over_ring2_w1"), "ring4_over_ring2_w1");
     r.rings                = rings_of(j);
