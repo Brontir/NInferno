@@ -2589,8 +2589,8 @@ int main() {
         }
     }
     // 3c. The NVFP4 tiled routes sum in the register MMA's order: K of 17 steps (uneven classes),
-    // 4 steps (empty classes) and one step.
-    for (const std::int32_t k : {1088, 256, 64}) {
+    // 4 steps (empty classes) and one step, a step 128 values (#1199: sixteen code bytes a lane).
+    for (const std::int32_t k : {2176, 512, 128}) {
         for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu, Op::GeGlu, Op::Relu2}) {
             if (!kNativeNvfp4) break;
             failures += check_nvfp4_tiled_order(nvfp4, op, k, 83U + k);

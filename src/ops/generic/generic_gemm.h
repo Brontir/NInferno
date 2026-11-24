@@ -668,7 +668,7 @@ struct R8Coverage {
 //   Blackwell kernels, w4a4_schedule_count 0, still parses the names); format (not NVFP4, or no
 //   recorded input scale divisor, finite and positive); policy (no A4); instruction.
 // - NVFP4 tiled schedule `index`: not declared; not compiled (outside the 120a build,
-//   kNativeNvfp4); format (not NVFP4); instruction; alignment (the codes off 8 bytes).
+//   kNativeNvfp4); format (not NVFP4); instruction; alignment (the codes off 16 bytes).
 // - ggml's matrix and vector kernels (Family::GgmlMmq / GgmlVec, schedule 0): not declared (any
 //   other schedule); format (a format the kernel does not read, a layout it does not take, a
 //   plane it needs missing); policy (no A8); instruction (the matrix kernel below sm_75,
@@ -850,9 +850,9 @@ struct RouteTile {
 
 // The K values one register-MMA step of the format covers at K = `k`: four runs of the decoder
 // its codec launches (rmma_kernel's KStep = 4 x Decoder::kRun, generic_select.cpp rmma_k_step):
-// 32 for BF16, Q8 and U4 G32, 64 for FP8, NVFP4 and the 16-value groupwise runs, 128 for the
-// 32-value decoders and the ggml 32-blocks stepped four at a time. The price counts the bytes a
-// warp keeps in flight from it (kernel_roofline.h price_register_mma).
+// 32 for BF16, Q8 and U4 G32, 64 for FP8 and the 16-value groupwise runs, 128 for the
+// 32-value decoders (NVFP4 among them) and the ggml 32-blocks stepped four at a time. The price
+// counts the bytes a warp keeps in flight from it (kernel_roofline.h price_register_mma).
 [[nodiscard]] std::int64_t rmma_step_values(QType qtype, std::int32_t k);
 
 // The register-MMA decoder of the format by its geometry row's spelling (rmma_geometry.h

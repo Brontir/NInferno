@@ -73,7 +73,6 @@ int run_values(WeightCodec codec) {
     case WeightCodec::Fp8:
     case WeightCodec::Fp8RowF32:
     case WeightCodec::Fp8B128:
-    case WeightCodec::Nvfp4:
     case WeightCodec::Q4:
     case WeightCodec::Q5:
     case WeightCodec::Q6:
@@ -81,6 +80,7 @@ int run_values(WeightCodec codec) {
     case WeightCodec::Q3G128:
     case WeightCodec::Q3G64:
         return 16;
+    case WeightCodec::Nvfp4:
     case WeightCodec::Mxfp4:
     case WeightCodec::U4Zp:
     case WeightCodec::GgmlQ4K:
@@ -458,8 +458,8 @@ bool ring_swiglu_four_warps(QType q) {
 }
 
 // The K values one register-MMA step of the format covers: four runs of its decoder (rmma_kernel's
-// KStep = 4 x Decoder::kRun): 32 for BF16, Q8 and U4 G32 (eight-value runs), 64 for FP8, NVFP4
-// and the 16-value groupwise runs, 128 for the 32-value decoders (K-quants, IQ, MXFP4, the
+// KStep = 4 x Decoder::kRun): 32 for BF16, Q8 and U4 G32 (eight-value runs), 64 for FP8
+// and the 16-value groupwise runs, 128 for the 32-value decoders (K-quants, IQ, NVFP4, MXFP4, the
 // quad-run U4 G32 / G64 at K % 128 == 0) and for the ggml 32-blocks stepped four at a time
 // (run_values 128).
 std::int64_t rmma_k_step(QType qtype, std::int32_t k) {
@@ -1800,7 +1800,7 @@ ScheduleRefusal rmma_refusal(int index, const Weight& w) {
     if ((w.k % k_multiple(codec)) != 0) return ScheduleRefusal::Extent;
     if (codec == WeightCodec::Fp8 || codec == WeightCodec::Fp8RowF32 ||
         codec == WeightCodec::Fp8B128 || codec == WeightCodec::Bf16 ||
-        codec == WeightCodec::Mxfp4 || codec == WeightCodec::U4Zp ||
+        codec == WeightCodec::Nvfp4 || codec == WeightCodec::Mxfp4 || codec == WeightCodec::U4Zp ||
         codec == WeightCodec::U4ZpG64 || codec == WeightCodec::GgmlQ4K ||
         codec == WeightCodec::GgmlQ5K || codec == WeightCodec::GgmlQ6K ||
         codec == WeightCodec::GgmlQ3K || codec == WeightCodec::GgmlQ2K ||
@@ -1918,8 +1918,10 @@ ScheduleRefusal nvfp4_tiled_refusal(int index, const Weight& w) {
     const auto common =
         generic_refusal(Route{Family::Nvfp4TiledMma, static_cast<std::uint8_t>(index)}, w);
     if (common != ScheduleRefusal::NotDeclared) return common;
-    // supports() holds K to whole 64-value steps; a lane reads eight code bytes at once.
-    return aligned_to(w.qdata, 8) ? ScheduleRefusal::None : ScheduleRefusal::Alignment;
+    // Its K step is the register MMA's (generic_nvfp4_tiled.cu: Bytes 16, 128 values; supports()
+    // holds K only to 64), and a lane reads sixteen code bytes at once (#1199).
+    if ((w.k % 128) != 0) return ScheduleRefusal::Extent;
+    return aligned_to(w.qdata, 16) ? ScheduleRefusal::None : ScheduleRefusal::Alignment;
 }
 
 ScheduleRefusal ggml_refusal(Family family, int index, const Weight& w, LinearPolicy policy) {

@@ -1,7 +1,8 @@
 // Generic NVFP4 A16 in shared-memory activation tiles: nvfp4_a16_tiled.cuh on a runtime problem,
-// Bytes = 8 (the register MMA's 16-value NVFP4 run) and Classes = the register MMA's WarpsK, so a
-// call's bytes are those of rmma_kernel<Nvfp4Decoder> with that split (generic_gemm.cuh): the
-// same K steps, the same k slots, the same meeting of partials and the same epilogue arithmetic.
+// Bytes = 16 (the register MMA's 32-value NVFP4 run, #1199) and Classes = the register MMA's
+// WarpsK, so a call's bytes are those of rmma_kernel<Nvfp4Decoder> with that split
+// (generic_gemm.cuh): the same K steps, the same k slots, the same meeting of partials and the same
+// epilogue arithmetic.
 #include "ops/generic/generic_gemm.cuh"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/linear/nvfp4/nvfp4_a16_tiled.cuh"
@@ -15,7 +16,7 @@ namespace {
 // Keep in the order of kNvfp4TiledSchedules in generic_schedule_tables.h: four warps of two m16
 // tiles by 64 tokens, three activation steps in flight.
 template <int Classes>
-using Nvfp4TiledSchedule = Nvfp4A16TiledSchedule<4, 1, 2, 8, 3, 1, Classes, 8>;
+using Nvfp4TiledSchedule = Nvfp4A16TiledSchedule<4, 1, 2, 8, 3, 1, Classes, 16>;
 
 // The register MMA's epilogue on the tiled kernel's sums (it passes them through unscaled): the
 // row's weight divisor, SwiGLU's SiLU(gate) * up, then store_output.
