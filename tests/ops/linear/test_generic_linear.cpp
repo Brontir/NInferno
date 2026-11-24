@@ -2291,7 +2291,7 @@ int main() {
             }
             for (const auto& [n, k] : std::vector<std::pair<std::int32_t, std::int32_t>>{
                      {128, 512}, {200, 2560}, {196, 2560}, {640, 5120}}) {
-                for (const std::int32_t t : {1, 2, 3, 4, 5, 8}) {
+                for (const std::int32_t t : {1, 2, 3, 4, 5, 6, 7, 8}) {
                     for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu, Op::GeGlu, Op::Relu2}) {
                         failures += check_case(f, op, n, k, t, ops::LinearPolicy::AllowA8,
                                                static_cast<std::uint32_t>(37U + t + k), &mma,

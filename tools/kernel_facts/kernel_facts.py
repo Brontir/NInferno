@@ -808,7 +808,7 @@ VEC_MMA_K_ITER = 256
 I8_K_ITER = 32 * 64
 
 
-def family_audit(family, rows):
+def family_audit(family, rows, arch=""):
     """loop_audit for a section family's rows (#785): lines naming the kernels whose counted
     iteration is not the unit the family's price reads. ggml's matrix kernel: one or two
     candidate loops (its stream-k body holds the unit's loop twice, with and without the fixup
@@ -917,8 +917,10 @@ def family_audit(family, rows):
             # one 256-value super-block (eight k32 MMAs, or sixteen k16 for Q6_K). Below sm_80 the
             # MMA is a trap stand-in (no route launches it, route_requires): a loop with no MMA,
             # not held to the rest.
-            if c.mma == 0:
+            if c.mma == 0 and int(re.match(r"\d*", str(arch)).group() or 0) < 80:
                 continue
+            if c.mma == 0:
+                problems.append("no MMA in the loop on sm_80 or later")
             if c.loops != 1:
                 problems.append(f"{c.loops} candidate loops")
             if c.bar != 0:
@@ -1281,7 +1283,7 @@ def cmd_extract(args):
     audit = loop_audit(extracted[FAMILY]) if FAMILY in families else []
     for f in families:
         if f != FAMILY:
-            audit += family_audit(f, extracted[f])
+            audit += family_audit(f, extracted[f], args.arch)
     for line in audit:
         print(f"kernel_facts: {line}", file=sys.stderr)
     nvcc = args.nvcc or "unknown"

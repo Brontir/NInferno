@@ -1137,8 +1137,18 @@ void vec_mma_grid(const VecArgs& args, int columns, cudaStream_t stream) {
     const int blocks  = (args.rows + per_cta - 1) / per_cta;
     if (LaunchShape* described = describe_target()) {
         if (substituted_device_class() != nullptr) {
-            // No committed kernel facts yet (#1162): the launch's shape, no resources.
-            *described                       = LaunchShape{};
+            // The committed facts of the instance (the "vecmma" section), never this build's
+            // kernel; with no release snapshot for the board's code the resources stay 0.
+            namespace kf = ninferno::ops::detail::generic::kernel_facts;
+            *described   = LaunchShape{};
+            if (const std::optional<std::string> arch = kf::sass_arch()) {
+                if (const std::optional<kf::KernelFacts> facts =
+                        kf::vec_mma_facts(*arch, static_cast<int>(type), Gated)) {
+                    described->registers   = facts->registers;
+                    described->local_bytes = facts->spill_bytes();
+                    described->static_smem = facts->static_shared_bytes;
+                }
+            }
             described->threads               = kVecMmaWarps * 32;
             described->max_threads_per_block = kVecMmaWarps * 32;
             described->ptx_version           = NINFERNO_BUILD_ARCH;

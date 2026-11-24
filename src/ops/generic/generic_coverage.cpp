@@ -101,9 +101,11 @@ FamilyCoverage other_family_coverage(Family family, const Weight& w, LinearPolic
         for (int i = 0; i < c.declared; ++i) {
             const ScheduleRefusal why = ggml_refusal(family, i, w, policy);
             c.schedules.push_back({i, why});
+            // Schedule 1 compiles to a trap stand-in below sm_80 (as the manifest says).
+            const bool mma_built = NINFERNO_BUILD_ARCH == 0 || NINFERNO_BUILD_ARCH >= 80;
             c.compiled += type && (family == Family::GgmlMmq ? ggml_mmq::matrix_supported(*type)
                                    : i == 0                  ? ggml_mmq::vec_supported(*type)
-                                                             : ggml_mmq::vec_mma_supported(*type));
+                                            : mma_built && ggml_mmq::vec_mma_supported(*type));
             c.legal += why == ScheduleRefusal::None;
         }
         return c;

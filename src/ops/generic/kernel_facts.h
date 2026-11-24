@@ -282,6 +282,8 @@ section_rows(std::string_view arch, std::string_view family);
 [[nodiscard]] std::optional<KernelFacts> r8_facts(std::string_view arch, const R8KernelKey& key);
 [[nodiscard]] std::optional<KernelFacts> i8_facts(std::string_view arch, const I8KernelKey& key);
 [[nodiscard]] std::optional<KernelFacts> vec_facts(std::string_view arch, const VecKernelKey& key);
+// The vector family's few-row MMA tile vec_mma_kernel<type, Gated> (the "vecmma" section, #1162).
+[[nodiscard]] std::optional<KernelFacts> vec_mma_facts(std::string_view arch, int type, bool gated);
 
 // The build architecture labels with a committed snapshot, in file order.
 [[nodiscard]] std::vector<std::string_view> snapshot_archs();

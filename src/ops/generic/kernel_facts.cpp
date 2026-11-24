@@ -457,6 +457,10 @@ std::optional<KernelFacts> vec_facts(std::string_view arch, const VecKernelKey& 
     return section_facts(arch, "vec", k);
 }
 
+std::optional<KernelFacts> vec_mma_facts(std::string_view arch, int type, bool gated) {
+    return section_facts(arch, "vecmma", std::to_string(type) + (gated ? " 1" : " 0"));
+}
+
 std::optional<KernelFacts> rmma_facts(std::string_view arch, const RmmaKernelKey& key) {
     const Snapshot* s = find(arch);
     if (s == nullptr) return std::nullopt;

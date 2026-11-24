@@ -1685,8 +1685,11 @@ DeviceFeatures route_requires(Route route) {
         return f;
     case Family::GgmlMmq: // sm_75 and up, held by mmq_admits
         return f;
-    case Family::GgmlVec: // dp4a; schedule 1, the few-row tile: int8 m16n8k32 (as W4a8Mma)
-        f.mma_bf16 = route.schedule == 1;
+    case Family::GgmlVec: // dp4a; schedule 1, the few-row tile: int8 m16n8k32, sm_80 on
+        // Native: below sm_80 vec_mma_s8 is a trap stand-in (Turing and Volta compose W4a8Mma's
+        // MMA from smaller shapes; this kernel does not), as I8Mma.
+        f.mma_bf16        = route.schedule == 1;
+        f.mma_bf16_native = route.schedule == 1;
         return f;
     case Family::I8Mma: // m16n8k32 s8 x u8, ldmatrix, cp.async: sm_80 on
         f.mma_bf16        = true;

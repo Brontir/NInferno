@@ -369,8 +369,9 @@ bool other_old_rule(generic::Family family, int index, const Weight& w, LinearPo
         return index == 0 && generic::ggml_mmq_admits(w, policy);
     case generic::Family::GgmlVec:
         // Schedule 1, the few-row MMA tile (#1162): ggml's K-quants Q4_K, Q5_K and Q6_K only.
-        return (index == 0 ||
-                (index == 1 && (w.qtype == QType::GGML_Q4_K || w.qtype == QType::GGML_Q5_K ||
+        // Schedule 1 needs the native int8 MMA (sm_80 on): below it the kernel is a trap.
+        return (index == 0 || (index == 1 && features.mma_bf16_native &&
+                               (w.qtype == QType::GGML_Q4_K || w.qtype == QType::GGML_Q5_K ||
                                 w.qtype == QType::GGML_Q6_K))) &&
                generic::ggml_vec_admits(w, policy);
     default:
