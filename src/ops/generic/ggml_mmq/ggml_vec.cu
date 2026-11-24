@@ -857,9 +857,9 @@ struct MmaDecoder;
 // nibbles of qs bytes 32 (j / 2) .. + 31; Q5_K's fifth bit j is bit j of qh[i].
 template <int Bits>
 struct MmaQ45K {
-    static constexpr int kBytes = Bits == 5 ? 176 : 144;
-    static constexpr int kQs    = Bits == 5 ? 48 : 16;
-    static constexpr bool kK16  = false; // one m16n8k32 a 32-value block
+    static constexpr int kStride = Bits == 5 ? 176 : 144; // a superblock's bytes
+    static constexpr int kQs     = Bits == 5 ? 48 : 16;
+    static constexpr bool kK16   = false; // one m16n8k32 a 32-value block
 
     struct Stage {
         uint4 head[2];
@@ -871,8 +871,8 @@ struct MmaQ45K {
     __device__ __forceinline__ static void load(Stage& s, const VecPlanes& w0, std::int64_t blk0,
                                                 const VecPlanes& w1, std::int64_t blk1, bool l0,
                                                 bool l1, int t) {
-        const std::uint8_t* b0 = w0.codes + blk0 * kBytes;
-        const std::uint8_t* b1 = w1.codes + blk1 * kBytes;
+        const std::uint8_t* b0 = w0.codes + blk0 * kStride;
+        const std::uint8_t* b1 = w1.codes + blk1 * kStride;
         s.head[0]              = l0 ? *reinterpret_cast<const uint4*>(b0) : make_uint4(0, 0, 0, 0);
         s.head[1]              = l1 ? *reinterpret_cast<const uint4*>(b1) : make_uint4(0, 0, 0, 0);
 #pragma unroll

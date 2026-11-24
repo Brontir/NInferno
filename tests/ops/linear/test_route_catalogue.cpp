@@ -141,7 +141,7 @@ const FamilyCount kCatalogue[] = {
     {Family::Nvfp4TiledMma, 3, generic::nvfp4_tiled_schedule_count},
     {Family::R8Mma, 4, generic::r8_schedule_count},
     {Family::GgmlMmq, 1, one_schedule},
-    {Family::GgmlVec, 1, one_schedule},
+    {Family::GgmlVec, 2, generic::ggml_vec_schedule_count},
     {Family::I8Mma, 3, generic::i8_schedule_count},
 };
 

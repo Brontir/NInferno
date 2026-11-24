@@ -110,6 +110,8 @@ bool w4a8_fits(int schedule, QType qtype) {
 
 int r8_schedule_count() { return static_cast<int>(kR8Schedules.size()); }
 
+int ggml_vec_schedule_count() { return 2; }
+
 R8ScheduleInfo r8_schedule_info(int index) {
     return kR8Schedules.at(static_cast<std::size_t>(index));
 }

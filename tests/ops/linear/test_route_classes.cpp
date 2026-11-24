@@ -348,7 +348,8 @@ void check_i8(const Weight& w, LinearPolicy policy, const DeviceFeatures& featur
 // apart from them: the generic checks (the generic path reads the weight, the tile's
 // instructions, a ggml high plane on 16 bytes), then W4A4: a compiled schedule, NVFP4, A4 allowed
 // and a finite positive input scale divisor; NVFP4 tiled: the 120a kernels, NVFP4, 8-byte codes;
-// ggml's kernels: schedule 0 and the kernel's own admission (ggml_mmq_admits / ggml_vec_admits).
+// ggml's kernels: schedule 0 (the vector family also its few-row MMA tile, schedule 1, for the
+// K-quants it decodes) and the kernel's own admission (ggml_mmq_admits / ggml_vec_admits).
 bool other_old_rule(generic::Family family, int index, const Weight& w, LinearPolicy policy,
                     const DeviceFeatures& features) {
     const generic::Route r{family, static_cast<std::uint8_t>(index)};
@@ -367,7 +368,11 @@ bool other_old_rule(generic::Family family, int index, const Weight& w, LinearPo
     case generic::Family::GgmlMmq:
         return index == 0 && generic::ggml_mmq_admits(w, policy);
     case generic::Family::GgmlVec:
-        return index == 0 && generic::ggml_vec_admits(w, policy);
+        // Schedule 1, the few-row MMA tile (#1162): ggml's K-quants Q4_K, Q5_K and Q6_K only.
+        return (index == 0 ||
+                (index == 1 && (w.qtype == QType::GGML_Q4_K || w.qtype == QType::GGML_Q5_K ||
+                                w.qtype == QType::GGML_Q6_K))) &&
+               generic::ggml_vec_admits(w, policy);
     default:
         return false;
     }

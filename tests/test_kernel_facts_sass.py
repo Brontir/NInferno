@@ -1181,6 +1181,23 @@ class Sections(unittest.TestCase):
         with self.assertRaises(SystemExit):
             kernel_facts.vec_key(self.VEC_NAME.replace(", true>", ">"))
 
+    VEC_MMA_NAME = ("void ninferno::ops::ggml_mmq::detail::<unnamed>::vec_mma_kernel<(ggml_type)14, true>"
+                    "(ninferno::ops::ggml_mmq::detail::<unnamed>::VecArgs, int)")
+
+    def test_vec_mma_keys(self):
+        # The few-row MMA tile (#1162): its own section, keyed as the ggml_type and the Gated flag;
+        # neither the vec section nor the register-MMA one takes its symbol.
+        self.assertEqual(kernel_facts.vec_mma_key(self.VEC_MMA_NAME), (14, 1))
+        self.assertEqual(kernel_facts.vec_mma_key(
+            self.VEC_MMA_NAME.replace("<unnamed>", "(anonymous namespace)").replace(
+                "(ggml_type)14, true", "(ggml_type)12, false")), (12, 0))
+        self.assertIsNone(kernel_facts.vec_key(self.VEC_MMA_NAME))
+        self.assertIsNone(kernel_facts.vec_mma_key(self.VEC_NAME))
+        for f in kernel_facts.FAMILIES.values():
+            self.assertEqual(f.needle in self.VEC_MMA_NAME, f.name == "vecmma", f.name)
+        with self.assertRaises(SystemExit):
+            kernel_facts.vec_mma_key(self.VEC_MMA_NAME.replace(", true>", ">"))
+
     def test_vec_section_needs_its_loop(self):
         # The vec family (#763) carries its K loop's counts (facts/vec-loop, 24.11): a vec kernel
         # with resources and no SASS is refused, not written as resources alone. Its loop is

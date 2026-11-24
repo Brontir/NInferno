@@ -209,8 +209,11 @@ struct SnapshotHeader {
 //             K, or a static K of 5120, 6144 or 17408). A substituted board's launch reads the
 //             CTAs an SM holds and a bounded twin's local bytes from them; a real device asks its
 //             own kernel.
-inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8",  "gemma4",  "r8",
-                                                        "i8",  "moer8", "moegemm", "vec"};
+//   "vecmma"  the vector family's few-row MMA tiles vec_mma_kernel<type, Gated> (ggml_vec.cu,
+//             #1162; route ggml_vec.mma): key "type gated" ("12 0"); below sm_80 no MMA in the
+//             loop (a trap stand-in, never launched).
+inline constexpr std::string_view kSectionFamilies[] = {"mmq",   "w4a8",    "gemma4", "r8",    "i8",
+                                                        "moer8", "moegemm", "vec",    "vecmma"};
 
 struct MmqKernelKey {
     int type      = 0; // the ggml_type value: 12 Q4_K, 13 Q5_K, 14 Q6_K

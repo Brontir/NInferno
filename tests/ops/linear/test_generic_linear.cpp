@@ -2278,8 +2278,9 @@ int main() {
     }
 
     // 2d'. The vector family's few-row MMA tile (Route{GgmlVec, 1}, #1162) on the same cases where
-    // it admits them (sm_80 on, Q4_K / Q5_K / Q6_K): 200 rows leave a partial 16-row CTA, and the
-    // gated epilogues a partial 8-row one.
+    // it admits them (sm_80 on, Q4_K / Q5_K / Q6_K): 200 rows leave a 16-row CTA its first 8 rows
+    // (the second 8, r1, dead), 196 rows only 4 of them (r0 dead from lane group 4 on, r1 dead),
+    // and 196 output rows a gated CTA of 4 of its 8.
     {
         const generic::Route mma{generic::Family::GgmlVec, 1};
         for (const Format& f : kFormats) {
@@ -2289,7 +2290,7 @@ int main() {
                 continue;
             }
             for (const auto& [n, k] : std::vector<std::pair<std::int32_t, std::int32_t>>{
-                     {128, 512}, {200, 2560}, {640, 5120}}) {
+                     {128, 512}, {200, 2560}, {196, 2560}, {640, 5120}}) {
                 for (const std::int32_t t : {1, 2, 3, 4, 5, 8}) {
                     for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu, Op::GeGlu, Op::Relu2}) {
                         failures += check_case(f, op, n, k, t, ops::LinearPolicy::AllowA8,

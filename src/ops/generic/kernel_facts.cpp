@@ -91,6 +91,7 @@ constexpr SectionFamily kSections[] = {
      "family decoder warps_m warps_k m_tiles n_tiles cluster stage registers stack local shared", 1,
      6, true},
     {"vec", "family type T KS gated bounded registers stack local shared", 0, 5},
+    {"vecmma", "family type gated registers stack local shared", 0, 2},
 };
 static_assert(std::size(kSections) == std::size(kSectionFamilies));
 
