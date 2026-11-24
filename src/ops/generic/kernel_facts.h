@@ -83,6 +83,10 @@ struct PipeCounts {
     // PR-5): on a global load's result, and on a shared load's where no global load is waited.
     int sb_waits_global = 0;
     int sb_waits_shared = 0;
+    // The global loads the K loop keeps in flight a lane, and the bytes they hold
+    // (sass_counts.py INFLIGHT_FIELDS, #1185): written for the vec section, 0 elsewhere.
+    int ldg_peak       = 0;
+    int ldg_peak_bytes = 0;
 };
 
 // A second counted loop of a section row (#613 PR-10): the R8 decode kernels' activation

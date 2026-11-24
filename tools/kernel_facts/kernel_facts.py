@@ -492,8 +492,13 @@ class Family:
     k_iter divides a warp's MMA work by, and whether its rows carry the pipe counts."""
 
     def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True,
-                 marker=None, prologue=None, waits=False, producer=None, emulated=False):
+                 marker=None, prologue=None, waits=False, producer=None, emulated=False,
+                 inflight=False):
         self.name = name
+        # Whether its rows carry the K loop's global loads in flight a lane
+        # (sass_counts.INFLIGHT_FIELDS) after the wait classes: the vec section (#1185), whose
+        # instances ptxas compiles to registers that set how many of a row's loads stay in flight.
+        self.inflight = inflight
         # Whether its loop calls the emulated MMA on sm_70 (NINFERNO_FMA_MMA): the int8
         # mma_s8_dp4a_call of the W4A8 tiles (#787) and the BF16 / F16 mma_*_fma_call of the
         # register-MMA and grouped MoE loops (#762), which that image's SASS prints unresolved
@@ -532,6 +537,7 @@ class Family:
         loop = sass_counts.COLUMNS + (sass_counts.PIPE_FIELDS if self.pipes else ()) + (
             sass_counts.WAIT_FIELDS if self.pipes and self.waits else ()) + (
             sass_counts.PRODUCER_FIELDS if self.pipes and self.waits and self.producer else ()) + (
+            sass_counts.INFLIGHT_FIELDS if self.pipes and self.waits and self.inflight else ()) + (
             sass_counts.PROLOGUE_FIELDS if self.pipes and self.prologue else ())
         return {1: (self.row_head, 0), 4: (self.row_head + loop, len(loop))}
 
@@ -570,7 +576,8 @@ FAMILIES = {
                       "moe_gemm_kernel", lambda key: moe_gemm_tiles(key), True, True,
                       waits=True, emulated=True),
     "vec": Family("vec", ("type", "T", "KS", "gated", "bounded"), lambda d: vec_key(d),
-                  "vec_kernel", lambda key: 2 * key[1], True, False, marker="IDP"),
+                  "vec_kernel", lambda key: 2 * key[1], True, False, marker="IDP", waits=True,
+                  inflight=True),
     "vecmma": Family("vecmma", ("type", "gated"), lambda d: vec_mma_key(d), "vec_mma_kernel",
                      lambda key: 1, True, False),
 }
@@ -725,7 +732,8 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
                     if family.producer is not None and fk[1][-1] > 0 and has_mma else None)
         c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker, family.prologue,
                                     producer).with_pipes(
-            family.pipes, family.prologue is not None, family.waits, family.producer is not None)
+            family.pipes, family.prologue is not None, family.waits, family.producer is not None,
+            family.inflight)
         if calls is not None and family.emulated and c.mma == 0:
             fail(f"{name}: an sm_70 {fk[0]} loop with no MMA (no emulated call resolved)")
         if producer is not None and c.prod_loops != 1:
@@ -1088,9 +1096,14 @@ SECTION_NOTES = {
         "# (29) also take dp4a for the activation's block sums, so theirs is above it (1536,",
         "# 7680, 26112: 1.5x; up to 1.6x in some instances; 0 where their dp4a count does not",
         "# divide by 2 x T).",
-        "# A row whose loop columns are all 0 (no loop, nothing outside it) is unknown flow: an",
-        "# indirect branch the counter cannot follow (a compiled switch; sm_100 / sm_120a gated",
-        "# T 3-8); its resources hold, its counts are unknown, not zero.",
+        "# A row whose loop columns are all 0 (no loop, nothing outside it) would be unknown flow:",
+        "# an indirect branch the counter cannot follow (a compiled switch, which the gated store",
+        "# by selects removed on sm_100 / sm_120a, #1179); its resources would hold, its counts be",
+        "# unknown, not zero. No committed row is.",
+        "# After the pipe counts, the iteration's waits on a global and on a shared load, then the",
+        "# global loads the K loop keeps in flight a lane at most and the bytes they hold (ldg_peak,",
+        "# ldg_peak_bytes; sass_counts.py peak_loads_in_flight, #1185): with the CTAs the registers",
+        "# let an SM hold, the bytes an SM keeps in flight.",
     ),
     "vecmma": (
         "# The vector family's few-row int8 MMA tiles (ggml_vec.cu, #1162; route ggml_vec.mma):",
