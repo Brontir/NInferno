@@ -1232,7 +1232,7 @@ int check_r8_schedules_agree(const Format& f, Op op, std::int32_t out_rows, std:
 // here. Each value may differ by 2^-7 of the larger of the two (one to two bf16 steps), and by
 // 2^-10 of the output's largest magnitude where the terms cancel.
 int check_vec_schedules_agree(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
-                              std::uint32_t seed) {
+                              std::uint32_t seed, int& compared) {
     const generic::Route vec{generic::Family::GgmlVec, 0};
     const generic::Route mma{generic::Family::GgmlVec, 1};
     const std::int32_t rows_n  = gated(op) ? 2 * out_rows : out_rows;
@@ -1242,6 +1242,7 @@ int check_vec_schedules_agree(const Format& f, Op op, std::int32_t out_rows, std
         !generic::route_admits(mma, weight, ops::LinearPolicy::AllowA8)) {
         return 0;
     }
+    ++compared;
     constexpr std::int32_t wide = 8;
     const auto activation       = make_linear_activation(k, wide, seed + 3U, ActivationCompute::A8);
     DeviceBuffer x(activation.size() * 2);
@@ -2385,17 +2386,30 @@ int main() {
         }
     }
 
-    // 2d''. The few-row MMA tile against the dp4a kernel on the same calls, T 1-8 (#1189): 200 and
-    // 196 rows leave the last CTA part full, K 2560 and 5120 several superblocks a warp.
-    for (const Format& f : kFormats) {
-        if (!on_build(f) || !generic::ggml_vec_format(f.qtype)) continue;
-        for (const auto& [n, k] :
-             std::vector<std::pair<std::int32_t, std::int32_t>>{{200, 2560}, {196, 5120}}) {
-            for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu, Op::GeGlu, Op::Relu2}) {
-                failures +=
-                    check_vec_schedules_agree(f, op, n, k, 43U + static_cast<std::uint32_t>(k));
+    // 2d''. The few-row MMA tile against the dp4a kernel on the same calls, T 1-8 (#1189): 200
+    // rows leave the last 16-row CTA half full, 196 rows the last CTA part full in both forms (12
+    // of 16 rows, 4 of a gated CTA's 8); K 2560 and 5120 several superblocks a warp. Where the tile
+    // is compiled and the device has the native bf16 MMA, some call must be compared: a change that
+    // makes route_admits refuse them all would otherwise pass silently.
+    {
+        int compared = 0;
+        for (const Format& f : kFormats) {
+            if (!on_build(f) || !generic::ggml_vec_format(f.qtype)) continue;
+            for (const auto& [n, k] :
+                 std::vector<std::pair<std::int32_t, std::int32_t>>{{200, 2560}, {196, 5120}}) {
+                for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu, Op::GeGlu, Op::Relu2}) {
+                    failures += check_vec_schedules_agree(
+                        f, op, n, k, 43U + static_cast<std::uint32_t>(k), compared);
+                }
             }
         }
+        const bool tile_built = NINFERNO_BUILD_ARCH == 0 || NINFERNO_BUILD_ARCH >= 80;
+        if (tile_built && ninferno::device_class().features.mma_bf16_native && compared == 0) {
+            std::cerr
+                << "ggml_vec.mma: no call compared with ggml_vec on a native bf16 MMA device\n";
+            ++failures;
+        }
+        std::cout << "ggml_vec.mma against ggml_vec: " << compared << " calls compared\n";
     }
 
     // 2c'. A prefill chunk past the 65535 tokens of a grid's y extent: every token's epilogue runs.

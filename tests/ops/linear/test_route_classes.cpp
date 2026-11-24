@@ -1556,7 +1556,8 @@ int run_board(const TestBoard& b) {
         const std::pair<QType, int> kinds[] = {
             {QType::GGML_Q4_K, 12}, {QType::GGML_Q5_K, 13}, {QType::GGML_Q6_K, 14}};
         for (const auto& [qtype, ggml_type] : kinds) {
-            constexpr std::int32_t kRows = 200, kK = 5120; // 200: a last CTA of 8 (4 gated) rows
+            constexpr std::int32_t kRows = 196,
+                                   kK    = 5120; // 196: a last CTA of 4 rows (4 of 8 gated)
             for (const bool gated_call : {false, true}) {
                 const auto host = quantized_weight::make_patterned_weight(
                     qtype, gated_call ? 2 * kRows : kRows, kK, 7U, {});
