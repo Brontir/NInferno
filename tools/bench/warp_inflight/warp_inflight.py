@@ -1084,13 +1084,15 @@ def _kernels(sass):
 
 def _is_ldg(opcode, width=16):
     """Whether `opcode` is a global load of `width` bytes a lane: LDG with .128 (16), .64 (8), or
-    neither and no sub-word suffix (4)."""
+    neither and no sub-word suffix (4). A 4-byte one must also be streaming (.EF, the probe's
+    ld.global.cs): every kernel reads its SM's `active` flag with a plain 4-byte LDG first."""
     if IP._sass_counts().base_opcode(opcode) != "LDG":
         return False
     suffix = {16: ".128", 8: ".64"}.get(width)
     if suffix:
         return suffix in opcode
-    return not any(t in opcode for t in (".128", ".64", ".U8", ".S8", ".U16", ".S16"))
+    return ".EF" in opcode and not any(t in opcode for t in (".128", ".64", ".U8", ".S8", ".U16",
+                                                             ".S16"))
 
 
 def _is_ldg128(opcode):
