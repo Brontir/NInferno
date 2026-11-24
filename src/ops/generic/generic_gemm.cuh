@@ -242,17 +242,17 @@ struct Nvfp4Decoder {
         return *reinterpret_cast<const unsigned*>(&w);
     }
     __device__ static __forceinline__ void pair(const Run& r, int j, unsigned& lo, unsigned& hi) {
-        const unsigned word  = (j >> 1) == 0   ? r.codes.x
-                               : (j >> 1) == 1 ? r.codes.y
-                               : (j >> 1) == 2 ? r.codes.z
-                                               : r.codes.w;
-        const int shift      = (j & 1) * 16;
-        const unsigned scale = j < 4 ? r.scale & 0xffU : (r.scale >> 8) & 0xffU; // the j's group
+        const unsigned word = (j >> 1) == 0   ? r.codes.x
+                              : (j >> 1) == 1 ? r.codes.y
+                              : (j >> 1) == 2 ? r.codes.z
+                                              : r.codes.w;
+        const int shift     = (j & 1) * 16;
+        const unsigned bits = j < 4 ? r.scale & 0xffU : (r.scale >> 8) & 0xffU; // the j's group
 // cvt with .e2m1x2 / FP8-to-half: Blackwell's architecture- and family-specific targets
 // (sm_100a.., sm_120a, sm_120f: __CUDA_ARCH_FAMILY_SPECIFIC__), not a plain target's PTX.
 #if defined(__CUDA_ARCH__) && NINFERNO_ARCH_FAMILY_SPECIFIC >= 1000
         const __half_raw h =
-            __nv_cvt_fp8_to_halfraw(static_cast<__nv_fp8_storage_t>(scale), __NV_E4M3);
+            __nv_cvt_fp8_to_halfraw(static_cast<__nv_fp8_storage_t>(bits), __NV_E4M3);
         const __half s(h);
         const __half2 scale(s, s);
         lo = dq(word >> shift, scale);
@@ -263,7 +263,7 @@ struct Nvfp4Decoder {
         // product (at most 8 significant bits) are exact in BF16, so these are the converter
         // path's bits.
         __nv_fp8_e4m3 block_scale;
-        block_scale.__x = static_cast<__nv_fp8_storage_t>(scale);
+        block_scale.__x = static_cast<__nv_fp8_storage_t>(bits);
         const __nv_bfloat162 half_scale =
             __float2bfloat162_rn(0.5F * static_cast<float>(block_scale));
         unsigned doubled_lo, doubled_hi;
