@@ -53,9 +53,10 @@
 // asked and run, workspace, tile, logical traffic, prepared activation, the cost model's price and
 // the compiled kernel's resources on this board.
 // --a8-candidates 1 admits and selects a GGUF block format under the default policy (AllowA8):
-// the W4A8 tiles, R8 and ggml's matrix kernel are timed and priced at every width beside the A16
-// routes (--routes-out, --selected-out, whose rows then say a8: the AllowA8 case they time), but
-// the W4A8 tiles and R8 never make the table, its bands or its prefill route.
+// the W4A8 tiles, R8 and ggml's matrix and vector kernels (the vector one alone for IQ1_M) are
+// timed and priced at every width beside the A16 routes (--routes-out, --selected-out, whose rows
+// then say a8: the AllowA8 case they time), but the W4A8 tiles and R8 never make the table, its
+// bands or its prefill route.
 // A decode or verify sample (T <= 16) is one call on each of a set of weight copies spanning 2x L2
 // and 128 MiB, as decode runs its layers back to back; --rotate 0 times one call after the L2
 // flush there too, as at the wider widths.
