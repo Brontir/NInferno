@@ -2278,8 +2278,8 @@ int main() {
     }
 
     // 2d'. The vector family's few-row MMA tile (Route{GgmlVec, 1}, #1162) on the same cases where
-    // it admits them (sm_80 on, Q4_K / Q5_K): 200 rows leave a partial 16-row CTA, and the gated
-    // epilogues a partial 8-row one.
+    // it admits them (sm_80 on, Q4_K / Q5_K / Q6_K): 200 rows leave a partial 16-row CTA, and the
+    // gated epilogues a partial 8-row one.
     {
         const generic::Route mma{generic::Family::GgmlVec, 1};
         for (const Format& f : kFormats) {

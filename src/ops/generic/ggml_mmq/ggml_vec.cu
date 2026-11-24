@@ -839,15 +839,15 @@ __launch_bounds__(kVecWarps * 32, Bounded ? kVecBoundedBlocks : 0) __global__
 // The few-row int8 tile (#1162, Route{GgmlVec, 1}, sm_80+): one CTA takes 16 weight rows (a gated
 // pair: 8 gate rows and the same 8 up rows) and every column of the call (at most 8) as one n8 MMA
 // operand; its 4 warps split K by superblock (warp w takes w, w + 4, ...), one m16n8k32 s8 MMA a
-// 32-value block, then a fixed-order sum of the four warps' partials. A lane (g = lane / 4,
-// t = lane % 4) feeds the MMA the values 8t .. 8t + 7 of its block in rows g and g + 8 (A) and the
-// same 8 activation codes of column g (B): the MMA's K slots 4t .. 4t + 3 and 16 + 4t .. are that
-// lane's two words, so one K permutation serves both operands and the int32 sum is the block's
-// dot. The activation is vec's q8_1 plane (the quantizer and workspace of the dp4a kernel).
-// Against the dp4a kernel it decodes each weight once for every column instead of once a column:
-// an RTX 5070 Ti runs Q4_K 4096 x 12288 at T 3-8 in 0.90 of the best shipped route's time
-// (issue #1162). A column's sums depend on its own activation only: its bytes do not change with
-// the call's width.
+// 32-value block (two m16n8k16 for Q6_K: MmaQ6K), then a fixed-order sum of the four warps'
+// partials. A lane (g = lane / 4, t = lane % 4) feeds the MMA the values 8t .. 8t + 7 of its block
+// in rows g and g + 8 (A) and the same 8 activation codes of column g (B): the MMA's K slots 4t ..
+// 4t + 3 and 16 + 4t .. are that lane's two words, so one K permutation serves both operands and
+// the int32 sum is the block's dot. The activation is vec's q8_1 plane (the quantizer and workspace
+// of the dp4a kernel). Against the dp4a kernel it decodes each weight once for every column instead
+// of once a column: an RTX 5070 Ti runs Q4_K 4096 x 12288 at T 3-8 in 0.90 of the best shipped
+// route's time (issue #1162). A column's sums depend on its own activation only: its bytes do not
+// change with the call's width.
 constexpr int kVecMmaWarps = 4;
 
 template <ggml_type type>
@@ -859,6 +859,7 @@ template <int Bits>
 struct MmaQ45K {
     static constexpr int kBytes = Bits == 5 ? 176 : 144;
     static constexpr int kQs    = Bits == 5 ? 48 : 16;
+    static constexpr bool kK16  = false; // one m16n8k32 a 32-value block
 
     struct Stage {
         uint4 head[2];
@@ -866,10 +867,14 @@ struct MmaQ45K {
         uint2 qh[2];    // Q5_K: qh bytes 8t .. 8t + 7
     };
 
-    __device__ __forceinline__ static void load(Stage& s, const std::uint8_t* b0,
-                                                const std::uint8_t* b1, bool l0, bool l1, int t) {
-        s.head[0] = l0 ? *reinterpret_cast<const uint4*>(b0) : make_uint4(0, 0, 0, 0);
-        s.head[1] = l1 ? *reinterpret_cast<const uint4*>(b1) : make_uint4(0, 0, 0, 0);
+    // Superblock blk0 of plane w0 (row r0) and blk1 of w1 (row r1).
+    __device__ __forceinline__ static void load(Stage& s, const VecPlanes& w0, std::int64_t blk0,
+                                                const VecPlanes& w1, std::int64_t blk1, bool l0,
+                                                bool l1, int t) {
+        const std::uint8_t* b0 = w0.codes + blk0 * kBytes;
+        const std::uint8_t* b1 = w1.codes + blk1 * kBytes;
+        s.head[0]              = l0 ? *reinterpret_cast<const uint4*>(b0) : make_uint4(0, 0, 0, 0);
+        s.head[1]              = l1 ? *reinterpret_cast<const uint4*>(b1) : make_uint4(0, 0, 0, 0);
 #pragma unroll
         for (int p = 0; p < 4; ++p) {
             s.qs[0][p] =
@@ -916,6 +921,69 @@ struct MmaDecoder<GGML_TYPE_Q4_K> : MmaQ45K<4> {};
 template <>
 struct MmaDecoder<GGML_TYPE_Q5_K> : MmaQ45K<5> {};
 
+// Q6_K (vec's planes: codes = ql (128) and qh (64), high = the 16 int8 scales, scales = d): a
+// 16-value sub-block has its own scale, so a 32-value block is two m16n8k16 MMAs, the low one on
+// its values 4t .. 4t + 3 and the high one on 16 + 4t .. 16 + 4t + 3 of the lane, with codes
+// q - 32 (signed, no sum term). Block u of the superblock is half h = u / 4, quarter q = u % 4:
+// ql bytes 64h + 32 (q & 1) .., nibble q / 2, and qh bytes 32h .., bits 2q (ggml's
+// dequantize_row_q6_K), scale 8h + 2q for the low sub-block and 8h + 2q + 1 for the high one.
+struct MmaQ6K {
+    static constexpr int kCode = 192, kHigh = 16, kScale = 2;
+    static constexpr bool kK16 = true;
+
+    struct Stage {
+        std::uint32_t ql[2][8]; // row r, 4h + 2c + s: ql bytes 64h + 32c + 16s + 4t .. + 3
+        std::uint32_t qh[2][4]; // row r, 2h + s: qh bytes 32h + 16s + 4t .. + 3
+        std::uint32_t sc[2][4]; // row r: the 16 scales
+        float d[2];
+    };
+
+    __device__ __forceinline__ static void load(Stage& s, const VecPlanes& w0, std::int64_t blk0,
+                                                const VecPlanes& w1, std::int64_t blk1, bool l0,
+                                                bool l1, int t) {
+        const VecPlanes* w[2]   = {&w0, &w1};
+        const std::int64_t b[2] = {blk0, blk1};
+        const bool live[2]      = {l0, l1};
+#pragma unroll
+        for (int r = 0; r < 2; ++r) {
+            const std::uint8_t* c = w[r]->codes + b[r] * kCode;
+            const std::uint8_t* h = w[r]->high + b[r] * kHigh;
+#pragma unroll
+            for (int i = 0; i < 8; ++i)
+                s.ql[r][i] = live[r] ? u32_a2(c + 32 * (i >> 1) + 16 * (i & 1) + 4 * t) : 0U;
+#pragma unroll
+            for (int i = 0; i < 4; ++i)
+                s.qh[r][i] = live[r] ? u32_a2(c + 128 + 32 * (i >> 1) + 16 * (i & 1) + 4 * t) : 0U;
+#pragma unroll
+            for (int i = 0; i < 4; ++i) s.sc[r][i] = live[r] ? u32_a2(h + 4 * i) : 0U;
+            s.d[r] = live[r] ? half_at(w[r]->scales + b[r] * kScale) : 0.0F;
+        }
+    }
+
+    // v - 32 per byte, v in [0, 64), as the dp4a decoder writes it.
+    __device__ __forceinline__ static unsigned centred(unsigned v) {
+        return v ^ 0xE0E0E0E0U ^ ((v & 0x20202020U) * 6U);
+    }
+
+    // Row r's codes of block u as the lane's low and high A words, and the two sub-blocks' scales.
+    __device__ __forceinline__ static void block(const Stage& s, int r, int u, unsigned& lo,
+                                                 unsigned& hi, int& sc_lo, int& sc_hi) {
+        const int h = u >> 2, q = u & 3;
+        const int i      = 4 * h + 2 * (q & 1);
+        const unsigned n = 4U * unsigned(q >> 1), e = 2U * unsigned(q);
+        lo          = centred(((s.ql[r][i] >> n) & 0x0F0F0F0FU) |
+                              (((s.qh[r][2 * h] >> e) << 4) & 0x30303030U));
+        hi          = centred(((s.ql[r][i + 1] >> n) & 0x0F0F0F0FU) |
+                              (((s.qh[r][2 * h + 1] >> e) << 4) & 0x30303030U));
+        const int j = 8 * h + 2 * q;
+        sc_lo       = int(static_cast<std::int8_t>(s.sc[r][j >> 2] >> (8 * (j & 3))));
+        sc_hi       = int(static_cast<std::int8_t>(s.sc[r][(j + 1) >> 2] >> (8 * ((j + 1) & 3))));
+    }
+};
+
+template <>
+struct MmaDecoder<GGML_TYPE_Q6_K> : MmaQ6K {};
+
 __device__ __forceinline__ void vec_mma_s8(int (&c)[4], unsigned a0, unsigned a1, unsigned a2,
                                            unsigned a3, unsigned b0, unsigned b1) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
@@ -926,6 +994,19 @@ __device__ __forceinline__ void vec_mma_s8(int (&c)[4], unsigned a0, unsigned a1
 #else
     // The host refuses the route below sm_80 (ggml_refusal); never reached.
     (void)a0, (void)a1, (void)a2, (void)a3, (void)b0, (void)b1;
+    __trap();
+#endif
+}
+
+// m16n8k16 s8: a0 row g, a1 row g + 8, b0 column g, each the lane's K slots 4t .. 4t + 3.
+__device__ __forceinline__ void vec_mma_s8_k16(int (&c)[4], unsigned a0, unsigned a1, unsigned b0) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+    asm volatile("mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 "
+                 "{%0,%1,%2,%3}, {%4,%5}, {%6}, {%0,%1,%2,%3};\n"
+                 : "+r"(c[0]), "+r"(c[1]), "+r"(c[2]), "+r"(c[3])
+                 : "r"(a0), "r"(a1), "r"(b0));
+#else
+    (void)a0, (void)a1, (void)b0;
     __trap();
 #endif
 }
@@ -947,18 +1028,26 @@ __launch_bounds__(kVecMmaWarps * 32) __global__ void vec_mma_kernel(VecArgs p, i
     const int blocks    = p.k / 32;
     const int c0 = 2 * t, c1 = 2 * t + 1;
     const bool v0 = c0 < columns, v1 = c1 < columns, vb = g < columns;
-    const std::int8_t* xg = p.qs + std::int64_t(g) * p.k + 8 * t;
+    // Column g's activation codes: 8t .. 8t + 7 of each block (one k32 MMA), or 4t .. 4t + 3 and
+    // 16 + 4t .. 16 + 4t + 3 (two k16 MMAs).
+    const std::int8_t* xg = p.qs + std::int64_t(g) * p.k + (D::kK16 ? 4 : 8) * t;
     float acc[4]          = {0.0F, 0.0F, 0.0F, 0.0F}; // (r0, c0), (r0, c1), (r1, c0), (r1, c1)
-    const auto at         = [&](const VecPlanes& w, int row, int sb) {
-        return w.codes + (std::int64_t(row) * sbs + sb) * D::kBytes;
-    };
+    const auto blk        = [&](int row, int sb) { return std::int64_t(row) * sbs + sb; };
     Stage cur, nxt;
     uint2 bc[8], bn[8];
     const auto load = [&](Stage& s, uint2(&b)[8], int sb) {
-        D::load(s, at(p.first, l0 ? r0 : 0, sb), at(w1, l1 ? r1 : 0, sb), l0, l1, t);
+        D::load(s, p.first, blk(l0 ? r0 : 0, sb), w1, blk(l1 ? r1 : 0, sb), l0, l1, t);
 #pragma unroll
-        for (int j = 0; j < 8; ++j)
-            b[j] = vb ? *reinterpret_cast<const uint2*>(xg + 256 * sb + 32 * j) : make_uint2(0, 0);
+        for (int j = 0; j < 8; ++j) {
+            const std::int8_t* x = xg + 256 * sb + 32 * j;
+            if constexpr (D::kK16) {
+                b[j] = vb ? make_uint2(*reinterpret_cast<const unsigned*>(x),
+                                       *reinterpret_cast<const unsigned*>(x + 16))
+                          : make_uint2(0, 0);
+            } else {
+                b[j] = vb ? *reinterpret_cast<const uint2*>(x) : make_uint2(0, 0);
+            }
+        }
     };
     int sb = warp;
     if (sb < sbs) load(cur, bc, sb);
@@ -972,20 +1061,37 @@ __launch_bounds__(kVecMmaWarps * 32) __global__ void vec_mma_kernel(VecArgs p, i
                 v0 ? __half22float2(p.ds[std::int64_t(c0) * blocks + kb]) : make_float2(0.0F, 0.0F);
             const float2 f1 =
                 v1 ? __half22float2(p.ds[std::int64_t(c1) * blocks + kb]) : make_float2(0.0F, 0.0F);
-            unsigned a0, a2, a1, a3;
-            float s0, m0, s1, m1;
-            D::block(cur, 0, j, a0, a2, s0, m0);
-            D::block(cur, 1, j, a1, a3, s1, m1);
-            int c[4] = {0, 0, 0, 0};
-            vec_mma_s8(c, a0, a1, a2, a3, bc[j].x, bc[j].y);
-            acc[0] = fmaf(s0 * f0.x, float(c[0]), acc[0]);
-            acc[0] = fmaf(-m0, f0.y, acc[0]);
-            acc[1] = fmaf(s0 * f1.x, float(c[1]), acc[1]);
-            acc[1] = fmaf(-m0, f1.y, acc[1]);
-            acc[2] = fmaf(s1 * f0.x, float(c[2]), acc[2]);
-            acc[2] = fmaf(-m1, f0.y, acc[2]);
-            acc[3] = fmaf(s1 * f1.x, float(c[3]), acc[3]);
-            acc[3] = fmaf(-m1, f1.y, acc[3]);
+            if constexpr (D::kK16) {
+                // Each sub-block's int32 dot times its int8 scale, summed in int32 (at most
+                // 2 x 128 x 16 x 32 x 127 in magnitude, exact in a float), then d x the
+                // activation's scale.
+                unsigned r0lo, r0hi, r1lo, r1hi;
+                int s0lo, s0hi, s1lo, s1hi;
+                D::block(cur, 0, j, r0lo, r0hi, s0lo, s0hi);
+                D::block(cur, 1, j, r1lo, r1hi, s1lo, s1hi);
+                int lo[4] = {0, 0, 0, 0}, hi[4] = {0, 0, 0, 0};
+                vec_mma_s8_k16(lo, r0lo, r1lo, bc[j].x);
+                vec_mma_s8_k16(hi, r0hi, r1hi, bc[j].y);
+                acc[0] = fmaf(cur.d[0] * f0.x, float(s0lo * lo[0] + s0hi * hi[0]), acc[0]);
+                acc[1] = fmaf(cur.d[0] * f1.x, float(s0lo * lo[1] + s0hi * hi[1]), acc[1]);
+                acc[2] = fmaf(cur.d[1] * f0.x, float(s1lo * lo[2] + s1hi * hi[2]), acc[2]);
+                acc[3] = fmaf(cur.d[1] * f1.x, float(s1lo * lo[3] + s1hi * hi[3]), acc[3]);
+            } else {
+                unsigned a0, a2, a1, a3;
+                float s0, m0, s1, m1;
+                D::block(cur, 0, j, a0, a2, s0, m0);
+                D::block(cur, 1, j, a1, a3, s1, m1);
+                int c[4] = {0, 0, 0, 0};
+                vec_mma_s8(c, a0, a1, a2, a3, bc[j].x, bc[j].y);
+                acc[0] = fmaf(s0 * f0.x, float(c[0]), acc[0]);
+                acc[0] = fmaf(-m0, f0.y, acc[0]);
+                acc[1] = fmaf(s0 * f1.x, float(c[1]), acc[1]);
+                acc[1] = fmaf(-m0, f1.y, acc[1]);
+                acc[2] = fmaf(s1 * f0.x, float(c[2]), acc[2]);
+                acc[2] = fmaf(-m1, f0.y, acc[2]);
+                acc[3] = fmaf(s1 * f1.x, float(c[3]), acc[3]);
+                acc[3] = fmaf(-m1, f1.y, acc[3]);
+            }
         }
         cur = nxt;
 #pragma unroll
@@ -1312,16 +1418,23 @@ void vec_product(Type type, const Planes& weight, const Planes& up, int blocks_p
     throw std::invalid_argument("ggml vec: format without a vector decoder");
 }
 
-bool vec_mma_supported(Type type) { return type == Type::Q4_K || type == Type::Q5_K; }
+bool vec_mma_supported(Type type) {
+    return type == Type::Q4_K || type == Type::Q5_K || type == Type::Q6_K;
+}
 
 void vec_mma_product(Type type, const Planes& weight, const Planes& up, int blocks_per_row,
                      int rows, int k, const void* activation, int columns, const VecOut& out,
                      cudaStream_t stream) {
     if (k % 256 != 0) throw std::invalid_argument("ggml vec MMA: K whole 256-value superblocks");
     detail::VecArgs args{};
-    args.first =
-        detail::VecPlanes{static_cast<const std::uint8_t*>(weight.codes), nullptr, nullptr};
-    args.second = detail::VecPlanes{static_cast<const std::uint8_t*>(up.codes), nullptr, nullptr};
+    // vec's planes (whole blocks in codes for Q4_K / Q5_K; codes, scales and d for Q6_K).
+    const auto planes = [](const Planes& p) {
+        return detail::VecPlanes{static_cast<const std::uint8_t*>(p.codes),
+                                 static_cast<const std::uint8_t*>(p.high),
+                                 static_cast<const std::uint8_t*>(p.scales)};
+    };
+    args.first          = planes(weight);
+    args.second         = planes(up);
     args.blocks_per_row = blocks_per_row;
     args.rows           = rows;
     args.k              = k;
@@ -1334,6 +1447,8 @@ void vec_mma_product(Type type, const Planes& weight, const Planes& up, int bloc
         return detail::vec_mma_launch<GGML_TYPE_Q4_K>(args, columns, stream);
     case Type::Q5_K:
         return detail::vec_mma_launch<GGML_TYPE_Q5_K>(args, columns, stream);
+    case Type::Q6_K:
+        return detail::vec_mma_launch<GGML_TYPE_Q6_K>(args, columns, stream);
     default:
         break;
     }
