@@ -323,15 +323,17 @@ class WarpInflight(unittest.TestCase):
                     "3RecES5_")
             body = "".join(f"        /*{i:04x}*/                   {width[b]} R4, [R4.64] ;\n"
                            for i in range(loads))
-            # A load of another width (a guard's 2-byte one) is not the variant's.
-            return (f"\t\tFunction : {name}\n        /*0000*/              @P0 LDG.E.U16 R4, "
-                    f"[R4.64] ;\n{body}        /*0ff0*/                   EXIT ;\n")
+            # The `active` flag's plain 4-byte load is no variant's, nor is a 2-byte one.
+            return (f"\t\tFunction : {name}\n        /*0000*/              @P0 LDG.E R4, "
+                    f"[R4.64] ;\n        /*0008*/              @P0 LDG.E.U16 R4, [R4.64] ;\n"
+                    f"{body}        /*0ff0*/                   EXIT ;\n")
         sass = "".join(fn(f, ring, b, wi.sass_loads_of(v))
                        for v, (f, ring, b) in wi.VARIANTS.items())
         self.assertEqual(wi.sass_loads(sass), {v: wi.sass_loads_of(v) for v in wi.VARIANTS})
         with self.assertRaises(ValueError):
             wi.sass_loads(fn(1, False, 16, 1))
         self.assertTrue(wi._is_ldg("LDG.E.EF", 4) and not wi._is_ldg("LDG.E.EF.64", 4))
+        self.assertFalse(wi._is_ldg("LDG.E", 4))
         self.assertTrue(wi._is_ldg("LDG.E.EF.64", 8) and not wi._is_ldg("LDG.E.EF.128", 8))
 
     @staticmethod
