@@ -1661,7 +1661,7 @@ DeviceFeatures route_requires(Route route) {
     case Family::RegisterMma:
         f.mma_bf16 = true;
 #ifdef NINFERNO_WITHOUT_NVFP4
-        f.clusters = false;  // LAB #1048: the global split needs no cluster
+        f.clusters = false; // LAB #1048: the global split needs no cluster
 #else
         f.clusters = route.schedule < rmma_schedule_count() &&
                      rmma_schedule_info(route.schedule).cluster > 1;

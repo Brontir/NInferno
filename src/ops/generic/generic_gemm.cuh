@@ -3748,7 +3748,8 @@ __launch_bounds__(Schedule::kThreads,
         static_assert(kPart <= kLabSplitPart, "LAB #1048: the split's partial outgrows its slot");
         const unsigned tile = blockIdx.x + gridDim.x * blockIdx.y;
         if ((tile + 1) * C > kLabSplitSlots) __trap();
-        float* own = g_lab_split_ws + (static_cast<std::size_t>(tile) * C + blockIdx.z) * kLabSplitPart;
+        float* own =
+            g_lab_split_ws + (static_cast<std::size_t>(tile) * C + blockIdx.z) * kLabSplitPart;
         const int slot = ((warp_m * kSets) * MT * NT) * 4 * 32;
         if (live) {
 #    pragma unroll
@@ -3781,7 +3782,8 @@ __launch_bounds__(Schedule::kThreads,
                             float sum = 0.0F;
                             for (int r = 0; r < C; ++r) {
                                 sum += __ldcg(g_lab_split_ws +
-                                              (static_cast<std::size_t>(tile) * C + r) * kLabSplitPart +
+                                              (static_cast<std::size_t>(tile) * C + r) *
+                                                  kLabSplitPart +
                                               slot + (((s * MT + m) * NT + n) * 4 + e) * 32 + lane);
                             }
                             acc[s][m][n][e] = sum;
