@@ -805,6 +805,30 @@ class WarpInflight(unittest.TestCase):
         popen.assert_not_called()
         self.assertIn("ring8 11 of 16", err.getvalue())
 
+    def test_committed_fill_goes_with_bytes(self):
+        # Every committed probe 7 run (#771): its 8- and 4-byte chains' windows, at 512-4096 B a
+        # warp, read within 5 % of L0 + (b - 512) / F with F that run's fill rate. With a cost per
+        # load instead they would read x2-x4 apart from the 16-byte chains of the same bytes.
+        runs = 0
+        for name in sorted(os.listdir(wi.DEFAULT_INPUTS)):
+            with open(os.path.join(wi.DEFAULT_INPUTS, name)) as f:
+                head, rows = wi.parse_run(f.read())
+            if head["probe"] != "warp_inflight 7":
+                continue
+            runs += 1
+            fill = wi.fill_rate(rows)
+            self.assertIsNotNone(fill, name)
+            one = {r["variant"]: r for r in rows
+                   if r["mode"] == "free" and r["k"] == 1 and r["w"] == 1}
+            l0, mhz = wi.WARP_LOAD / one["chain1"]["gbps"], one["chain1"]["sm_mhz"]
+            for v, r in one.items():
+                if wi.load_bytes_of(v) == 16:
+                    continue
+                b = wi.warp_bytes_of(v)
+                ratio = b / r["gbps"] / wi.window_ns(b, l0, fill, mhz)
+                self.assertTrue(0.95 <= ratio <= 1.05, f"{name} {v}: x{ratio:.3f}")
+        self.assertGreaterEqual(runs, 6)
+
     def test_fill_rate(self):
         # A lone warp whose window takes L0 plus its other bytes at F bytes a clock (#771): the
         # chains of every width give F back, the ring rows meet the law with the fill, and the

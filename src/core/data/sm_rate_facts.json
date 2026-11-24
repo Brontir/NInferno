@@ -360,18 +360,18 @@
       "cc": 75,
       "sms": 68,
       "tool": {
-        "probe": "warp_inflight 6",
+        "probe": "warp_inflight 7",
         "nvcc": "13.4.92",
         "driver": "13040",
         "runtime": "13040",
         "arch": "sm_75",
-        "source_sha256": "6c71e3c90e00736f4f5739efb01fe70f89a4465d8ca8e844f1ef55d227106c09"
+        "source_sha256": "f54abc0222375b467c02fffdf82fbe52ef3d9ec215326e395fc5952074dce317"
       },
       "clocks_waived": true,
       "notes": [
         "device 0 is the GPU at PCI 0000:01:00.0",
         "warm-up: begins",
-        "warm-up: 1192 ms of every SM streaming",
+        "warm-up: 1246 ms of every SM streaming",
         "free k > 1: the CTA scheduler chose the SMs (they may share a TPC or a GPC); compare free and placed at k = 1",
         "free ring8 w24: 0 of 1 CTAs fit an SM (registers), no row",
         "free ring8 w32: 0 of 1 CTAs fit an SM (registers), no row",
@@ -384,25 +384,25 @@
         "compute processes on the probe's GPU before the run: 0",
         "compute processes on the probe's GPU after the run: 0",
         "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
-        "warm-up: the memory clock held 6800 MHz for 1.0 s before the measured span (settled 1.2 s into the warm-up)",
-        "clocks over the measured span (21 samples, nvidia-smi every 100 ms): memory 6800..6800 MHz, SM 1965..1965 MHz, P-state P2",
+        "warm-up: the memory clock held 6800 MHz for 1.1 s before the measured span (settled 1.2 s into the warm-up)",
+        "clocks over the measured span (45 samples, nvidia-smi every 100 ms): memory 6800..6800 MHz, SM 1965..1965 MHz, P-state P2",
         "the clock check was waived (--clocks-waived)"
       ],
       "facts": {
         "sm_dram_bytes_per_clock_free": {
-          "value": 31.68,
+          "value": 31.67,
           "unit": "B/clk"
         },
         "sm_dram_bytes_per_clock_placed": {
-          "value": 30.95,
+          "value": 30.73,
           "unit": "B/clk"
         },
         "sm_dram_gbps_free": {
-          "value": 62.2577,
+          "value": 62.2393,
           "unit": "GB/s"
         },
         "sm_dram_gbps_placed": {
-          "value": 60.8199,
+          "value": 60.3775,
           "unit": "GB/s"
         },
         "sm_mhz_free": {
@@ -414,19 +414,19 @@
           "unit": "MHz"
         },
         "dram_stream_latency_ns": {
-          "value": 276.7,
+          "value": 277.0,
           "unit": "ns"
         },
         "max_warp_bytes_in_flight": {
-          "value": 4757.0,
+          "value": 4766.6,
           "unit": "B"
         },
         "ring2_b_w_w1_free": {
-          "value": 1845.9,
+          "value": 1845.7,
           "unit": "B"
         },
         "ring2_b_w_w1_placed": {
-          "value": 1845.9,
+          "value": 1842.5,
           "unit": "B"
         },
         "ring2_linear_to_w_free": {
@@ -438,122 +438,122 @@
           "unit": "warps"
         },
         "chain4_b_w_w1_free": {
-          "value": 1799.8,
+          "value": 1800.9,
           "unit": "B"
         },
         "ring4_b_w_w1_free": {
-          "value": 3117.4,
+          "value": 3118.4,
           "unit": "B"
         },
         "warp_fill_bytes_per_clock": {
-          "value": 18.81,
+          "value": 19.15,
           "unit": "B/clk"
         }
       },
       "warp_bytes_saturated": false,
-      "ring4_over_ring2_w1": 1.689,
+      "ring4_over_ring2_w1": 1.69,
       "ring2_rows": {
         "free": [
           [
             1,
-            6.671,
+            6.6632,
             1966.0
           ],
           [
             2,
-            13.0167,
+            12.9691,
             1963.0
           ],
           [
             3,
-            19.1794,
-            1967.0
+            19.2574,
+            1966.0
           ],
           [
             4,
-            25.2304,
+            25.2207,
             1966.0
           ],
           [
             6,
-            36.3567,
+            36.4646,
             1962.0
           ],
           [
             8,
-            46.3172,
+            46.1887,
             1965.0
           ],
           [
             12,
-            60.5297,
-            1964.0
+            60.337,
+            1965.0
           ],
           [
             16,
-            61.9177,
+            61.7463,
             1965.0
           ],
           [
             24,
-            61.0584,
-            1965.0
+            61.1165,
+            1966.0
           ],
           [
             32,
-            61.016,
+            60.9673,
             1965.0
           ]
         ],
         "placed": [
           [
             1,
-            6.671,
-            1966.0
+            6.6517,
+            1965.0
           ],
           [
             2,
-            13.0284,
-            1966.0
+            12.9627,
+            1965.0
           ],
           [
             3,
-            19.2197,
-            1965.0
+            19.3075,
+            1967.0
           ],
           [
             4,
-            25.2086,
-            1964.0
+            25.1844,
+            1965.0
           ],
           [
             6,
-            36.4849,
-            1965.0
+            36.3618,
+            1967.0
           ],
           [
             8,
-            46.3725,
-            1966.0
-          ],
-          [
-            12,
-            60.1892,
+            46.2784,
             1965.0
           ],
           [
-            16,
-            58.5159,
+            12,
+            59.6505,
             1966.0
           ],
           [
+            16,
+            58.5404,
+            1964.0
+          ],
+          [
             24,
-            58.769,
+            58.6977,
             1965.0
           ],
           [
             32,
-            59.1097,
+            59.078,
             1965.0
           ]
         ]
@@ -562,104 +562,104 @@
         "free": [
           [
             1,
-            11.2663,
+            11.2576,
             1965.0
           ],
           [
             2,
-            21.9037,
-            1961.0
+            21.9276,
+            1962.0
           ],
           [
             3,
-            32.3475,
-            1964.0
+            32.3368,
+            1966.0
           ],
           [
             4,
-            41.4031,
-            1965.0
+            41.5871,
+            1964.0
           ],
           [
             6,
-            56.5982,
-            1965.0
+            56.6798,
+            1962.0
           ],
           [
             8,
             61.594,
-            1964.0
+            1962.0
           ],
           [
             12,
-            60.2284,
-            1965.0
+            60.2676,
+            1967.0
           ],
           [
             16,
-            61.1664,
-            1964.0
+            61.4298,
+            1965.0
           ],
           [
             24,
-            61.1688,
-            1964.0
+            61.2868,
+            1965.0
           ],
           [
             32,
-            61.446,
-            1964.0
+            61.3732,
+            1965.0
           ]
         ],
         "placed": [
           [
             1,
-            11.2585,
+            11.2673,
             1965.0
           ],
           [
             2,
-            22.0215,
-            1966.0
+            21.9294,
+            1967.0
           ],
           [
             3,
-            32.1965,
+            32.2308,
             1963.0
           ],
           [
             4,
-            41.5838,
-            1965.0
+            41.7427,
+            1969.0
           ],
           [
             6,
-            56.8889,
-            1968.0
+            56.6634,
+            1965.0
           ],
           [
             8,
-            58.2413,
-            1967.0
+            57.6838,
+            1965.0
           ],
           [
             12,
-            57.688,
-            1963.0
+            57.6204,
+            1966.0
           ],
           [
             16,
-            59.2249,
+            58.619,
             1965.0
           ],
           [
             24,
-            59.2974,
-            1964.0
+            59.2795,
+            1965.0
           ],
           [
             32,
-            59.2667,
+            59.2767,
             1965.0
           ]
         ]
@@ -672,13 +672,13 @@
         "decides": true,
         "chains": {
           "chain8": {
-            "b_w_w1": 3073.5,
-            "two_latency_bound": 2285.0,
+            "b_w_w1": 3064.6,
+            "two_latency_bound": 2287.5,
             "all_in_flight": true
           },
           "chain16": {
-            "b_w_w1": 4648.5,
-            "two_latency_bound": 4570.0,
+            "b_w_w1": 4650.0,
+            "two_latency_bound": 4575.0,
             "all_in_flight": true
           }
         },
@@ -696,18 +696,18 @@
       "cc": 86,
       "sms": 82,
       "tool": {
-        "probe": "warp_inflight 6",
+        "probe": "warp_inflight 7",
         "nvcc": "13.5.37",
         "driver": "13040",
         "runtime": "13050",
         "arch": "sm_86",
-        "source_sha256": "6c71e3c90e00736f4f5739efb01fe70f89a4465d8ca8e844f1ef55d227106c09"
+        "source_sha256": "f54abc0222375b467c02fffdf82fbe52ef3d9ec215326e395fc5952074dce317"
       },
       "clocks_waived": true,
       "notes": [
         "device 0 is the GPU at PCI 0000:01:00.0",
         "warm-up: begins",
-        "warm-up: 1408 ms of every SM streaming",
+        "warm-up: 1526 ms of every SM streaming",
         "free k > 1: the CTA scheduler chose the SMs (they may share a TPC or a GPC); compare free and placed at k = 1",
         "free ring8 w24: 0 of 1 CTAs fit an SM (registers), no row",
         "free ring8 w32: 0 of 1 CTAs fit an SM (registers), no row",
@@ -721,52 +721,54 @@
         "placed chain16 w24: 0 of 1 CTAs fit an SM (registers), no row",
         "placed chain16 w32: 0 of 1 CTAs fit an SM (registers), no row",
         "placed chain16 w48: 0 of 2 CTAs fit an SM (registers), no row",
+        "placed chain16_b8 w48: 1 of 2 CTAs fit an SM (registers), no row",
+        "placed chain32_b4 w48: 1 of 2 CTAs fit an SM (registers), no row",
         "compute processes on the probe's GPU before the run: 0",
         "compute processes on the probe's GPU after the run: 0",
         "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
-        "warm-up: the memory clock held 9501 MHz for 1.0 s before the measured span (settled 1.4 s into the warm-up)",
-        "clocks over the measured span (22 samples, nvidia-smi every 100 ms): memory 9501..9501 MHz, SM 1995..1995 MHz, P-state P2",
+        "warm-up: the memory clock held 9501 MHz for 1.0 s before the measured span (settled 1.5 s into the warm-up)",
+        "clocks over the measured span (49 samples, nvidia-smi every 100 ms): memory 9501..9501 MHz, SM 1980..1980 MHz, P-state P2",
         "the clock check was waived (--clocks-waived)"
       ],
       "facts": {
         "sm_dram_bytes_per_clock_free": {
-          "value": 32.0,
-          "unit": "B/clk"
-        },
-        "sm_dram_bytes_per_clock_placed": {
           "value": 31.99,
           "unit": "B/clk"
         },
+        "sm_dram_bytes_per_clock_placed": {
+          "value": 31.98,
+          "unit": "B/clk"
+        },
         "sm_dram_gbps_free": {
-          "value": 63.8338,
+          "value": 63.3402,
           "unit": "GB/s"
         },
         "sm_dram_gbps_placed": {
-          "value": 63.813,
+          "value": 63.3198,
           "unit": "GB/s"
         },
         "sm_mhz_free": {
-          "value": 1995.0,
+          "value": 1980.0,
           "unit": "MHz"
         },
         "sm_mhz_placed": {
-          "value": 1995.0,
+          "value": 1980.0,
           "unit": "MHz"
         },
         "dram_stream_latency_ns": {
-          "value": 302.8,
+          "value": 304.0,
           "unit": "ns"
         },
         "max_warp_bytes_in_flight": {
-          "value": 4981.0,
+          "value": 4980.7,
           "unit": "B"
         },
         "ring2_b_w_w1_free": {
-          "value": 1794.9,
+          "value": 1794.2,
           "unit": "B"
         },
         "ring2_b_w_w1_placed": {
-          "value": 1794.9,
+          "value": 1794.2,
           "unit": "B"
         },
         "ring2_linear_to_w_free": {
@@ -778,128 +780,128 @@
           "unit": "warps"
         },
         "chain4_b_w_w1_free": {
-          "value": 1774.3,
+          "value": 1776.3,
           "unit": "B"
         },
         "ring4_b_w_w1_free": {
-          "value": 3155.9,
+          "value": 3160.4,
           "unit": "B"
         },
         "warp_fill_bytes_per_clock": {
-          "value": 18.35,
+          "value": 18.31,
           "unit": "B/clk"
         }
       },
       "warp_bytes_saturated": false,
-      "ring4_over_ring2_w1": 1.758,
+      "ring4_over_ring2_w1": 1.761,
       "ring2_rows": {
         "free": [
           [
             1,
-            5.9276,
-            1995.0
+            5.902,
+            1981.0
           ],
           [
             2,
-            11.7364,
-            1996.0
+            11.6862,
+            1979.0
           ],
           [
             3,
-            17.4545,
-            1997.0
+            17.3315,
+            1980.0
           ],
           [
             4,
-            22.9468,
-            1995.0
+            22.9147,
+            1981.0
           ],
           [
             6,
-            33.5738,
-            1994.0
+            33.4367,
+            1980.0
           ],
           [
             8,
-            43.749,
-            1994.0
+            43.5166,
+            1979.0
           ],
           [
             12,
-            60.9071,
-            1994.0
+            60.7565,
+            1981.0
           ],
           [
             16,
-            63.5655,
-            1996.0
+            63.3198,
+            1981.0
           ],
           [
             24,
-            63.7923,
-            1995.0
+            63.3402,
+            1980.0
           ],
           [
             32,
-            63.782,
-            1995.0
+            63.3198,
+            1980.0
           ]
         ],
         "placed": [
           [
             1,
-            5.9276,
-            1995.0
+            5.902,
+            1982.0
           ],
           [
             2,
-            11.7364,
-            1995.0
+            11.7029,
+            1981.0
           ],
           [
             3,
-            17.4545,
-            1995.0
+            17.3805,
+            1980.0
           ],
           [
             4,
-            22.979,
-            1996.0
+            22.8508,
+            1979.0
           ],
           [
             6,
-            33.5738,
-            1996.0
+            33.3913,
+            1981.0
           ],
           [
             8,
-            43.5745,
-            1995.0
+            43.4013,
+            1979.0
           ],
           [
             12,
-            60.9826,
-            1996.0
+            60.532,
+            1980.0
           ],
           [
             16,
-            63.4424,
-            1996.0
+            62.7139,
+            1979.0
           ],
           [
             24,
-            63.6684,
-            1995.0
+            63.218,
+            1981.0
           ],
           [
             32,
-            63.689,
-            1995.0
+            63.1977,
+            1979.0
           ],
           [
             48,
-            63.5449,
-            1995.0
+            63.076,
+            1980.0
           ]
         ]
       },
@@ -907,105 +909,105 @@
         "free": [
           [
             1,
-            10.4224,
-            1995.0
+            10.3959,
+            1983.0
           ],
           [
             2,
-            19.9805,
-            1998.0
+            19.8354,
+            1981.0
           ],
           [
             3,
-            28.8451,
-            1996.0
+            28.7775,
+            1980.0
           ],
           [
             4,
-            37.6644,
-            1996.0
+            37.578,
+            1979.0
           ],
           [
             6,
-            54.0132,
-            1992.0
+            53.6594,
+            1979.0
           ],
           [
             8,
-            63.5039,
-            1993.0
+            62.8944,
+            1978.0
           ],
           [
             12,
-            63.8338,
-            1995.0
+            63.3402,
+            1981.0
           ],
           [
             16,
-            63.751,
-            1996.0
+            63.3198,
+            1981.0
           ],
           [
             24,
-            63.751,
-            1995.0
+            63.2994,
+            1980.0
           ],
           [
             32,
-            63.782,
-            1995.0
+            63.3198,
+            1980.0
           ]
         ],
         "placed": [
           [
             1,
-            10.4224,
-            1992.0
+            10.3696,
+            1982.0
           ],
           [
             2,
-            19.8835,
-            1994.0
+            19.8354,
+            1982.0
           ],
           [
             3,
-            28.8451,
-            1994.0
+            28.7775,
+            1979.0
           ],
           [
             4,
-            37.492,
-            1994.0
+            37.3212,
+            1979.0
           ],
           [
             6,
-            54.0132,
-            1994.0
+            53.8947,
+            1982.0
           ],
           [
             8,
-            62.8944,
-            1997.0
+            62.5344,
+            1980.0
           ],
           [
             12,
-            63.4219,
-            1993.0
+            62.9347,
+            1981.0
           ],
           [
             16,
-            63.689,
-            1995.0
+            62.6539,
+            1980.0
           ],
           [
             24,
-            63.7097,
-            1995.0
+            63.2994,
+            1980.0
           ],
           [
             32,
-            63.5963,
-            1995.0
+            63.1368,
+            1980.0
           ]
         ]
       },
@@ -1017,13 +1019,13 @@
         "decides": true,
         "chains": {
           "chain8": {
-            "b_w_w1": 3108.5,
-            "two_latency_bound": 2385.1,
+            "b_w_w1": 3097.5,
+            "two_latency_bound": 2394.6,
             "all_in_flight": true
           },
           "chain16": {
-            "b_w_w1": 4844.8,
-            "two_latency_bound": 4770.3,
+            "b_w_w1": 4845.1,
+            "two_latency_bound": 4789.2,
             "all_in_flight": true
           }
         },
@@ -1036,119 +1038,119 @@
             "card": "NVIDIA GeForce RTX 3060",
             "sms": 28,
             "tool": {
-              "probe": "warp_inflight 6",
-              "source_sha256": "6c71e3c90e00736f4f5739efb01fe70f89a4465d8ca8e844f1ef55d227106c09"
+              "probe": "warp_inflight 7",
+              "source_sha256": "f54abc0222375b467c02fffdf82fbe52ef3d9ec215326e395fc5952074dce317"
             },
             "clocks_waived": true,
-            "dram_stream_latency_ns": 301.0,
+            "dram_stream_latency_ns": 301.8,
             "ring2_rows": {
               "free": [
                 [
                   1,
-                  5.9883,
-                  1928.0
+                  5.9622,
+                  1923.0
                 ],
                 [
                   2,
-                  11.8382,
-                  1928.0
+                  11.804,
+                  1921.0
                 ],
                 [
                   3,
-                  17.6046,
-                  1928.0
+                  17.5794,
+                  1921.0
                 ],
                 [
                   4,
-                  23.2068,
-                  1928.0
+                  23.174,
+                  1921.0
                 ],
                 [
                   6,
-                  33.9448,
-                  1928.0
+                  33.9917,
+                  1921.0
                 ],
                 [
                   8,
                   43.8661,
-                  1928.0
+                  1921.0
                 ],
                 [
                   12,
-                  58.9353,
-                  1928.0
+                  58.7943,
+                  1921.0
                 ],
                 [
                   16,
-                  61.4784,
-                  1928.0
+                  61.1914,
+                  1921.0
                 ],
                 [
                   24,
-                  61.5169,
-                  1927.0
+                  61.325,
+                  1920.0
                 ],
                 [
                   32,
-                  61.594,
-                  1928.0
+                  61.3346,
+                  1920.0
                 ]
               ],
               "placed": [
                 [
                   1,
-                  5.9796,
-                  1929.0
+                  5.9622,
+                  1920.0
                 ],
                 [
                   2,
                   11.8211,
-                  1927.0
+                  1920.0
                 ],
                 [
                   3,
-                  17.5794,
-                  1927.0
+                  17.6046,
+                  1920.0
                 ],
                 [
                   4,
-                  23.2068,
-                  1928.0
+                  23.1412,
+                  1920.0
                 ],
                 [
                   6,
-                  34.0388,
-                  1928.0
+                  33.8979,
+                  1921.0
                 ],
                 [
                   8,
-                  43.8661,
-                  1929.0
+                  43.749,
+                  1921.0
                 ],
                 [
                   12,
                   59.006,
-                  1927.0
+                  1921.0
                 ],
                 [
                   16,
-                  60.5134,
-                  1927.0
+                  60.4576,
+                  1920.0
                 ],
                 [
                   24,
-                  61.0205,
-                  1928.0
+                  60.7565,
+                  1920.0
                 ],
                 [
                   32,
-                  61.1914,
-                  1928.0
+                  60.9637,
+                  1920.0
                 ],
                 [
                   48,
-                  60.9637,
-                  1927.0
+                  60.719,
+                  1920.0
                 ]
               ]
             },
@@ -1157,111 +1159,111 @@
                 [
                   1,
                   10.3174,
-                  1928.0
+                  1922.0
                 ],
                 [
                   2,
-                  20.6348,
-                  1928.0
+                  20.4289,
+                  1921.0
                 ],
                 [
                   3,
-                  29.6096,
-                  1928.0
+                  29.3971,
+                  1922.0
                 ],
                 [
                   4,
                   37.6644,
-                  1928.0
+                  1921.0
                 ],
                 [
                   6,
                   52.4009,
-                  1927.0
+                  1919.0
                 ],
                 [
                   8,
                   59.5782,
-                  1928.0
+                  1919.0
                 ],
                 [
                   12,
-                  61.2105,
-                  1926.0
+                  60.9826,
+                  1921.0
                 ],
                 [
                   16,
-                  61.5362,
-                  1928.0
+                  61.2486,
+                  1920.0
                 ],
                 [
                   24,
-                  61.594,
-                  1927.0
+                  61.3633,
+                  1920.0
                 ],
                 [
                   32,
-                  61.6519,
-                  1927.0
+                  61.4208,
+                  1920.0
                 ]
               ],
               "placed": [
                 [
                   1,
-                  10.3434,
-                  1930.0
+                  10.2915,
+                  1919.0
                 ],
                 [
                   2,
-                  20.5313,
-                  1925.0
+                  20.48,
+                  1920.0
                 ],
                 [
                   3,
                   29.6812,
-                  1928.0
+                  1920.0
                 ],
                 [
                   4,
                   37.9259,
-                  1930.0
+                  1918.0
                 ],
                 [
                   6,
-                  52.6253,
-                  1930.0
+                  52.1783,
+                  1919.0
                 ],
                 [
                   8,
-                  58.724,
-                  1927.0
+                  58.5143,
+                  1921.0
                 ],
                 [
                   12,
-                  60.0147,
-                  1928.0
+                  59.5782,
+                  1920.0
                 ],
                 [
                   16,
-                  60.5134,
-                  1928.0
+                  59.7956,
+                  1920.0
                 ],
                 [
                   24,
-                  61.0205,
-                  1928.0
+                  60.719,
+                  1920.0
                 ],
                 [
                   32,
-                  61.22,
-                  1927.0
+                  61.0205,
+                  1920.0
                 ]
               ]
             },
             "law_over_measured": {
-              "lowest": 0.9802,
-              "highest_at_one_warp": 0.9893,
-              "highest": 1.1604
+              "lowest": 0.9782,
+              "highest_at_one_warp": 0.9881,
+              "highest": 1.1601
             },
             "within_bounds": true
           }
@@ -1276,18 +1278,18 @@
       "cc": 89,
       "sms": 128,
       "tool": {
-        "probe": "warp_inflight 6",
+        "probe": "warp_inflight 7",
         "nvcc": "13.4.92",
         "driver": "13040",
         "runtime": "13040",
         "arch": "sm_89",
-        "source_sha256": "6c71e3c90e00736f4f5739efb01fe70f89a4465d8ca8e844f1ef55d227106c09"
+        "source_sha256": "f54abc0222375b467c02fffdf82fbe52ef3d9ec215326e395fc5952074dce317"
       },
       "clocks_waived": true,
       "notes": [
         "device 0 is the GPU at PCI 0000:01:00.0",
         "warm-up: begins",
-        "warm-up: 3566 ms of every SM streaming",
+        "warm-up: 3550 ms of every SM streaming",
         "free k > 1: the CTA scheduler chose the SMs (they may share a TPC or a GPC); compare free and placed at k = 1",
         "free ring8 w24: 0 of 1 CTAs fit an SM (registers), no row",
         "free ring8 w32: 0 of 1 CTAs fit an SM (registers), no row",
@@ -1301,52 +1303,54 @@
         "placed chain16 w24: 0 of 1 CTAs fit an SM (registers), no row",
         "placed chain16 w32: 0 of 1 CTAs fit an SM (registers), no row",
         "placed chain16 w48: 0 of 2 CTAs fit an SM (registers), no row",
+        "placed chain16_b8 w48: 1 of 2 CTAs fit an SM (registers), no row",
+        "placed chain32_b4 w48: 1 of 2 CTAs fit an SM (registers), no row",
         "compute processes on the probe's GPU before the run: 0",
         "compute processes on the probe's GPU after the run: 0",
         "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
         "warm-up: the memory clock held 10251 MHz for 3.0 s before the measured span (settled 3.5 s into the warm-up)",
-        "clocks over the measured span (18 samples, nvidia-smi every 100 ms): memory 10251..10251 MHz, SM 2790..2790 MHz, P-state P2",
+        "clocks over the measured span (40 samples, nvidia-smi every 100 ms): memory 10251..10251 MHz, SM 2775..2775 MHz, P-state P2",
         "the clock check was waived (--clocks-waived)"
       ],
       "facts": {
         "sm_dram_bytes_per_clock_free": {
-          "value": 31.96,
+          "value": 31.98,
           "unit": "B/clk"
         },
         "sm_dram_bytes_per_clock_placed": {
-          "value": 29.94,
+          "value": 30.11,
           "unit": "B/clk"
         },
         "sm_dram_gbps_free": {
-          "value": 88.9227,
+          "value": 88.5024,
           "unit": "GB/s"
         },
         "sm_dram_gbps_placed": {
-          "value": 83.2732,
+          "value": 83.3791,
           "unit": "GB/s"
         },
         "sm_mhz_free": {
-          "value": 2782.0,
+          "value": 2767.0,
           "unit": "MHz"
         },
         "sm_mhz_placed": {
-          "value": 2781.0,
+          "value": 2769.0,
           "unit": "MHz"
         },
         "dram_stream_latency_ns": {
-          "value": 253.6,
+          "value": 254.6,
           "unit": "ns"
         },
         "max_warp_bytes_in_flight": {
-          "value": 5091.9,
+          "value": 5087.0,
           "unit": "B"
         },
         "ring2_b_w_w1_free": {
-          "value": 1812.8,
+          "value": 1816.8,
           "unit": "B"
         },
         "ring2_b_w_w1_placed": {
-          "value": 1816.0,
+          "value": 1820.0,
           "unit": "B"
         },
         "ring2_linear_to_w_free": {
@@ -1358,128 +1362,128 @@
           "unit": "warps"
         },
         "chain4_b_w_w1_free": {
-          "value": 1784.8,
+          "value": 1788.7,
           "unit": "B"
         },
         "ring4_b_w_w1_free": {
-          "value": 3215.9,
+          "value": 3208.7,
           "unit": "B"
         },
         "warp_fill_bytes_per_clock": {
-          "value": 17.41,
+          "value": 17.45,
           "unit": "B/clk"
         }
       },
       "warp_bytes_saturated": false,
-      "ring4_over_ring2_w1": 1.774,
+      "ring4_over_ring2_w1": 1.766,
       "ring2_rows": {
         "free": [
           [
             1,
-            7.1483,
-            2780.0
+            7.1359,
+            2769.0
           ],
           [
             2,
-            14.2222,
-            2777.0
+            14.1485,
+            2766.0
           ],
           [
             3,
-            21.1134,
-            2783.0
+            20.9336,
+            2766.0
           ],
           [
             4,
-            27.7225,
-            2782.0
+            27.6757,
+            2767.0
           ],
           [
             6,
             40.6215,
-            2781.0
+            2768.0
           ],
           [
             8,
-            52.7665,
-            2780.0
+            52.6817,
+            2769.0
           ],
           [
             12,
-            74.4727,
-            2781.0
+            73.9128,
+            2768.0
           ],
           [
             16,
-            87.8499,
-            2781.0
+            87.498,
+            2766.0
           ],
           [
             24,
-            88.8022,
-            2780.0
+            88.2442,
+            2767.0
           ],
           [
             32,
-            88.8022,
-            2781.0
+            88.383,
+            2767.0
           ]
         ],
         "placed": [
           [
             1,
-            7.1608,
-            2783.0
+            7.1483,
+            2770.0
           ],
           [
             2,
-            14.1976,
-            2779.0
+            14.1485,
+            2765.0
           ],
           [
             3,
-            21.0772,
-            2784.0
+            21.0051,
+            2768.0
           ],
           [
             4,
-            27.7225,
-            2781.0
+            27.6757,
+            2765.0
           ],
           [
             6,
-            40.6215,
-            2780.0
+            40.5545,
+            2768.0
           ],
           [
             8,
-            52.937,
-            2781.0
+            52.5128,
+            2765.0
           ],
           [
             12,
-            74.0241,
-            2778.0
+            73.6912,
+            2766.0
           ],
           [
             16,
-            76.6503,
-            2781.0
+            76.2934,
+            2769.0
           ],
           [
             24,
-            80.2482,
-            2780.0
+            79.7275,
+            2767.0
           ],
           [
             32,
-            81.2598,
-            2780.0
+            80.8089,
+            2767.0
           ],
           [
             48,
-            78.9273,
-            2780.0
+            79.2455,
+            2767.0
           ]
         ]
       },
@@ -1487,105 +1491,105 @@
         "free": [
           [
             1,
-            12.6811,
-            2783.0
+            12.6031,
+            2770.0
           ],
           [
             2,
-            24.4537,
-            2783.0
+            24.5269,
+            2774.0
           ],
           [
             3,
-            35.7209,
-            2786.0
+            35.4121,
+            2769.0
           ],
           [
             4,
-            45.8936,
-            2782.0
+            45.6379,
+            2763.0
           ],
           [
             6,
-            65.1883,
-            2780.0
+            64.5039,
+            2772.0
           ],
           [
             8,
-            80.7094,
-            2782.0
+            80.1174,
+            2767.0
           ],
           [
             12,
-            88.4029,
-            2781.0
+            87.9284,
+            2770.0
           ],
           [
             16,
-            88.682,
-            2781.0
+            88.3235,
+            2765.0
           ],
           [
             24,
-            88.8022,
-            2779.0
+            88.4824,
+            2768.0
           ],
           [
             32,
-            88.8624,
-            2779.0
+            88.5024,
+            2767.0
           ]
         ],
         "placed": [
           [
             1,
-            12.6811,
-            2780.0
+            12.642,
+            2771.0
           ],
           [
             2,
             24.5269,
-            2785.0
+            2771.0
           ],
           [
             3,
-            35.6174,
-            2782.0
+            35.3103,
+            2767.0
           ],
           [
             4,
-            45.8936,
-            2779.0
+            45.5111,
+            2769.0
           ],
           [
             6,
-            64.8443,
-            2783.0
+            64.6737,
+            2767.0
           ],
           [
             8,
-            75.8519,
-            2778.0
+            74.8128,
+            2766.0
           ],
           [
             12,
-            77.7722,
-            2780.0
+            76.0867,
+            2766.0
           ],
           [
             16,
-            79.922,
-            2779.0
+            77.5574,
+            2768.0
           ],
           [
             24,
-            81.6478,
-            2780.0
+            82.0568,
+            2767.0
           ],
           [
             32,
-            81.6139,
-            2779.0
+            80.9586,
+            2767.0
           ]
         ]
       },
@@ -1597,13 +1601,13 @@
         "decides": true,
         "chains": {
           "chain8": {
-            "b_w_w1": 3157.3,
-            "two_latency_bound": 2200.7,
+            "b_w_w1": 3160.1,
+            "two_latency_bound": 2209.4,
             "all_in_flight": true
           },
           "chain16": {
-            "b_w_w1": 5067.1,
-            "two_latency_bound": 4401.5,
+            "b_w_w1": 5087.0,
+            "two_latency_bound": 4418.8,
             "all_in_flight": true
           }
         },
@@ -1616,119 +1620,119 @@
             "card": "NVIDIA GeForce RTX 4060 Ti",
             "sms": 34,
             "tool": {
-              "probe": "warp_inflight 6",
-              "source_sha256": "6c71e3c90e00736f4f5739efb01fe70f89a4465d8ca8e844f1ef55d227106c09"
+              "probe": "warp_inflight 7",
+              "source_sha256": "f54abc0222375b467c02fffdf82fbe52ef3d9ec215326e395fc5952074dce317"
             },
             "clocks_waived": true,
-            "dram_stream_latency_ns": 255.8,
+            "dram_stream_latency_ns": 254.6,
             "ring2_rows": {
               "free": [
                 [
                   1,
-                  7.1483,
-                  2818.0
+                  7.1734,
+                  2820.0
                 ],
                 [
                   2,
-                  14.173,
-                  2817.0
+                  14.2222,
+                  2824.0
                 ],
                 [
                   3,
-                  21.1862,
-                  2818.0
+                  21.2228,
+                  2820.0
                 ],
                 [
                   4,
-                  28.0548,
-                  2814.0
+                  28.1029,
+                  2819.0
                 ],
                 [
                   6,
-                  41.2349,
-                  2818.0
+                  41.3737,
+                  2822.0
                 ],
                 [
                   8,
-                  54.162,
-                  2817.0
+                  54.2517,
+                  2820.0
                 ],
                 [
                   12,
-                  77.6493,
-                  2819.0
+                  77.7722,
+                  2821.0
                 ],
                 [
                   16,
                   89.6525,
-                  2818.0
+                  2820.0
                 ],
                 [
                   24,
-                  90.1045,
-                  2819.0
+                  90.1872,
+                  2820.0
                 ],
                 [
                   32,
-                  90.0838,
-                  2818.0
+                  90.2078,
+                  2820.0
                 ]
               ],
               "placed": [
                 [
                   1,
-                  7.1483,
-                  2817.0
+                  7.1734,
+                  2818.0
                 ],
                 [
                   2,
-                  14.1241,
-                  2815.0
+                  14.173,
+                  2820.0
                 ],
                 [
                   3,
-                  21.1134,
-                  2817.0
+                  21.1497,
+                  2821.0
                 ],
                 [
                   4,
-                  28.0548,
-                  2819.0
+                  28.1029,
+                  2821.0
                 ],
                 [
                   6,
-                  41.1658,
-                  2815.0
+                  41.3737,
+                  2822.0
                 ],
                 [
                   8,
-                  54.162,
-                  2816.0
+                  54.2517,
+                  2821.0
                 ],
                 [
                   12,
                   76.9202,
-                  2817.0
+                  2820.0
                 ],
                 [
                   16,
-                  81.2094,
-                  2818.0
+                  78.6747,
+                  2819.0
                 ],
                 [
                   24,
-                  83.3085,
-                  2817.0
+                  82.3317,
+                  2819.0
                 ],
                 [
                   32,
-                  83.1675,
-                  2818.0
+                  83.7521,
+                  2820.0
                 ],
                 [
                   48,
-                  81.1089,
-                  2817.0
+                  80.7425,
+                  2820.0
                 ]
               ]
             },
@@ -1742,106 +1746,106 @@
                 [
                   2,
                   25.3622,
-                  2816.0
+                  2817.0
                 ],
                 [
                   3,
                   37.578,
-                  2813.0
+                  2817.0
                 ],
                 [
                   4,
                   49.2012,
-                  2815.0
+                  2822.0
                 ],
                 [
                   6,
-                  70.2171,
-                  2814.0
+                  70.4183,
+                  2819.0
                 ],
                 [
                   8,
-                  87.3813,
-                  2817.0
+                  87.615,
+                  2821.0
                 ],
                 [
                   12,
-                  90.022,
-                  2816.0
+                  90.1872,
+                  2819.0
                 ],
                 [
                   16,
                   90.1458,
-                  2820.0
+                  2819.0
                 ],
                 [
                   24,
-                  90.1045,
-                  2817.0
+                  90.1872,
+                  2819.0
                 ],
                 [
                   32,
-                  90.1458,
-                  2819.0
+                  90.2078,
+                  2820.0
                 ]
               ],
               "placed": [
                 [
                   1,
                   12.7601,
-                  2820.0
+                  2818.0
                 ],
                 [
                   2,
-                  25.3622,
-                  2818.0
+                  25.441,
+                  2824.0
                 ],
                 [
                   3,
                   37.578,
-                  2816.0
-                ],
-                [
-                  4,
-                  49.0539,
-                  2818.0
-                ],
-                [
-                  6,
-                  69.4237,
-                  2814.0
-                ],
-                [
-                  8,
-                  78.5803,
-                  2819.0
-                ],
-                [
-                  12,
-                  79.922,
                   2820.0
                 ],
                 [
+                  4,
+                  49.2012,
+                  2822.0
+                ],
+                [
+                  6,
+                  69.8182,
+                  2821.0
+                ],
+                [
+                  8,
+                  79.534,
+                  2820.0
+                ],
+                [
+                  12,
+                  81.243,
+                  2821.0
+                ],
+                [
                   16,
-                  82.6431,
-                  2818.0
+                  77.5574,
+                  2819.0
                 ],
                 [
                   24,
-                  84.7448,
-                  2818.0
+                  84.0205,
+                  2820.0
                 ],
                 [
                   32,
-                  82.7475,
-                  2818.0
+                  82.8521,
+                  2819.0
                 ]
               ]
             },
             "law_over_measured": {
-              "lowest": 0.9829,
-              "highest_at_one_warp": 1.0056,
-              "highest": 1.1109
+              "lowest": 0.9802,
+              "highest_at_one_warp": 0.9989,
+              "highest": 1.1057
             },
             "within_bounds": true
           },
@@ -2073,9 +2077,9 @@
               ]
             },
             "law_over_measured": {
-              "lowest": 0.9956,
-              "highest_at_one_warp": 1.0305,
-              "highest": 1.1551
+              "lowest": 0.9931,
+              "highest_at_one_warp": 1.0272,
+              "highest": 1.1514
             },
             "within_bounds": true
           }
@@ -2090,18 +2094,18 @@
       "cc": 120,
       "sms": 170,
       "tool": {
-        "probe": "warp_inflight 6",
+        "probe": "warp_inflight 7",
         "nvcc": "13.4.92",
         "driver": "13040",
         "runtime": "13040",
         "arch": "sm_120a",
-        "source_sha256": "6c71e3c90e00736f4f5739efb01fe70f89a4465d8ca8e844f1ef55d227106c09"
+        "source_sha256": "f54abc0222375b467c02fffdf82fbe52ef3d9ec215326e395fc5952074dce317"
       },
       "clocks_waived": true,
       "notes": [
         "device 0 is the GPU at PCI 0000:01:00.0",
         "warm-up: begins",
-        "warm-up: 1557 ms of every SM streaming",
+        "warm-up: 1509 ms of every SM streaming",
         "free k > 1: the CTA scheduler chose the SMs (they may share a TPC or a GPC); compare free and placed at k = 1",
         "free ring8 w24: 0 of 1 CTAs fit an SM (registers), no row",
         "free ring8 w32: 0 of 1 CTAs fit an SM (registers), no row",
@@ -2113,11 +2117,13 @@
         "placed chain8 w48: 1 of 2 CTAs fit an SM (registers), no row",
         "placed chain16 w32: 0 of 1 CTAs fit an SM (registers), no row",
         "placed chain16 w48: 1 of 2 CTAs fit an SM (registers), no row",
+        "placed chain16_b8 w48: 1 of 2 CTAs fit an SM (registers), no row",
+        "placed chain32_b4 w48: 1 of 2 CTAs fit an SM (registers), no row",
         "compute processes on the probe's GPU before the run: 0",
         "compute processes on the probe's GPU after the run: 0",
         "compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0",
         "warm-up: the memory clock held 13801 MHz for 1.0 s before the measured span (settled 1.5 s into the warm-up)",
-        "clocks over the measured span (25 samples, nvidia-smi every 100 ms): memory 13801..13801 MHz, SM 2887..2887 MHz, P-state P1",
+        "clocks over the measured span (55 samples, nvidia-smi every 100 ms): memory 13801..13801 MHz, SM 2887..2887 MHz, P-state P1",
         "the clock check was waived (--clocks-waived)"
       ],
       "facts": {
@@ -2126,39 +2132,39 @@
           "unit": "B/clk"
         },
         "sm_dram_bytes_per_clock_placed": {
-          "value": 23.13,
+          "value": 23.31,
           "unit": "B/clk"
         },
         "sm_dram_gbps_free": {
-          "value": 92.3408,
+          "value": 92.3015,
           "unit": "GB/s"
         },
         "sm_dram_gbps_placed": {
-          "value": 66.8585,
+          "value": 67.343,
           "unit": "GB/s"
         },
         "sm_mhz_free": {
-          "value": 2891.0,
+          "value": 2890.0,
           "unit": "MHz"
         },
         "sm_mhz_placed": {
-          "value": 2891.0,
+          "value": 2889.0,
           "unit": "MHz"
         },
         "dram_stream_latency_ns": {
-          "value": 374.8,
+          "value": 379.9,
           "unit": "ns"
         },
         "max_warp_bytes_in_flight": {
-          "value": 6041.8,
+          "value": 6124.7,
           "unit": "B"
         },
         "ring2_b_w_w1_free": {
-          "value": 1814.7,
+          "value": 1840.3,
           "unit": "B"
         },
         "ring2_b_w_w1_placed": {
-          "value": 1814.7,
+          "value": 1839.7,
           "unit": "B"
         },
         "ring2_linear_to_w_free": {
@@ -2170,128 +2176,128 @@
           "unit": "warps"
         },
         "chain4_b_w_w1_free": {
-          "value": 1794.4,
+          "value": 1829.2,
           "unit": "B"
         },
         "ring4_b_w_w1_free": {
-          "value": 3306.3,
+          "value": 3372.9,
           "unit": "B"
         },
         "warp_fill_bytes_per_clock": {
-          "value": 17.32,
+          "value": 16.7,
           "unit": "B/clk"
         }
       },
       "warp_bytes_saturated": false,
-      "ring4_over_ring2_w1": 1.822,
+      "ring4_over_ring2_w1": 1.833,
       "ring2_rows": {
         "free": [
           [
             1,
-            4.8418,
-            2892.0
+            4.8441,
+            2890.0
           ],
           [
             2,
-            9.6689,
-            2892.0
+            9.6829,
+            2890.0
           ],
           [
             3,
-            14.4453,
-            2891.0
+            14.44,
+            2889.0
           ],
           [
             4,
-            19.2548,
-            2892.0
+            19.2392,
+            2890.0
           ],
           [
             6,
-            28.6684,
-            2891.0
+            28.6883,
+            2889.0
           ],
           [
             8,
-            37.985,
-            2892.0
+            37.8288,
+            2890.0
           ],
           [
             12,
-            55.649,
-            2891.0
+            55.5508,
+            2890.0
           ],
           [
             16,
-            72.3705,
-            2891.0
+            72.2085,
+            2890.0
           ],
           [
             24,
-            91.9804,
-            2891.0
+            91.9373,
+            2890.0
           ],
           [
             32,
-            92.1906,
-            2891.0
+            92.0591,
+            2890.0
           ]
         ],
         "placed": [
           [
             1,
-            4.8418,
-            2891.0
+            4.8427,
+            2889.0
           ],
           [
             2,
-            9.6711,
-            2891.0
+            9.6804,
+            2889.0
           ],
           [
             3,
-            14.4368,
-            2891.0
+            14.4443,
+            2889.0
           ],
           [
             4,
-            19.1794,
-            2891.0
+            19.2188,
+            2889.0
           ],
           [
             6,
-            28.6507,
-            2891.0
-          ],
-          [
-            8,
-            37.8807,
+            28.7344,
             2890.0
           ],
           [
+            8,
+            37.9534,
+            2889.0
+          ],
+          [
             12,
-            54.3867,
-            2891.0
+            54.3022,
+            2889.0
           ],
           [
             16,
-            57.87,
-            2891.0
+            57.2648,
+            2889.0
           ],
           [
             24,
-            62.0802,
-            2891.0
+            62.2534,
+            2889.0
           ],
           [
             32,
-            62.7195,
-            2891.0
+            61.9955,
+            2889.0
           ],
           [
             48,
-            61.2105,
-            2891.0
+            61.1551,
+            2889.0
           ]
         ]
       },
@@ -2299,105 +2305,105 @@
         "free": [
           [
             1,
-            8.8216,
-            2892.0
+            8.8784,
+            2891.0
           ],
           [
             2,
-            17.5324,
-            2892.0
+            17.577,
+            2889.0
           ],
           [
             3,
-            26.0684,
-            2892.0
+            26.0909,
+            2890.0
           ],
           [
             4,
-            34.5358,
-            2888.0
+            34.5996,
+            2890.0
           ],
           [
             6,
-            50.5484,
-            2891.0
+            50.4803,
+            2890.0
           ],
           [
             8,
-            64.9474,
-            2891.0
+            65.1613,
+            2889.0
           ],
           [
             12,
-            89.0435,
-            2891.0
+            89.2,
+            2889.0
           ],
           [
             16,
-            91.3394,
-            2892.0
+            91.0855,
+            2889.0
           ],
           [
             24,
-            92.2393,
-            2891.0
+            92.1393,
+            2890.0
           ],
           [
             32,
-            92.3408,
-            2891.0
+            92.2271,
+            2889.0
           ]
         ],
         "placed": [
           [
             1,
-            8.8323,
-            2891.0
+            8.9134,
+            2890.0
           ],
           [
             2,
-            17.5101,
-            2892.0
+            17.5806,
+            2890.0
           ],
           [
             3,
-            25.9926,
-            2886.0
+            26.1812,
+            2889.0
           ],
           [
             4,
-            34.504,
-            2892.0
+            34.5768,
+            2888.0
           ],
           [
             6,
-            49.6861,
-            2891.0
+            49.8152,
+            2889.0
           ],
           [
             8,
-            57.3243,
-            2891.0
+            56.9321,
+            2889.0
           ],
           [
             12,
-            58.6124,
-            2892.0
+            60.6347,
+            2889.0
           ],
           [
             16,
-            55.719,
-            2891.0
+            56.798,
+            2889.0
           ],
           [
             24,
-            63.5835,
-            2891.0
+            63.5719,
+            2889.0
           ],
           [
             32,
-            62.8954,
-            2891.0
+            62.7514,
+            2889.0
           ]
         ]
       },
@@ -2409,13 +2415,13 @@
         "decides": true,
         "chains": {
           "chain8": {
-            "b_w_w1": 3318.9,
-            "two_latency_bound": 2560.8,
+            "b_w_w1": 3405.2,
+            "two_latency_bound": 2595.6,
             "all_in_flight": true
           },
           "chain16": {
-            "b_w_w1": 5971.3,
-            "two_latency_bound": 5121.5,
+            "b_w_w1": 6068.8,
+            "two_latency_bound": 5191.2,
             "all_in_flight": true
           }
         },
@@ -2651,9 +2657,9 @@
               ]
             },
             "law_over_measured": {
-              "lowest": 0.8996,
-              "highest_at_one_warp": 0.9312,
-              "highest": 1.0499
+              "lowest": 0.8842,
+              "highest_at_one_warp": 0.9171,
+              "highest": 1.0581
             },
             "within_bounds": false
           }
