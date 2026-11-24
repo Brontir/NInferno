@@ -552,7 +552,7 @@ FAMILIES = {
                       "moe_gemm_kernel", lambda key: moe_gemm_tiles(key), True, True,
                       waits=True, emulated=True),
     "vec": Family("vec", ("type", "T", "KS", "gated", "bounded"), lambda d: vec_key(d),
-                  "vec_kernel", lambda key: 1, False, False, loop=False),
+                  "vec_kernel", lambda key: 2 * key[1], True, False, marker="IDP"),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -871,6 +871,24 @@ def family_audit(family, rows):
             # where it reads a quantized activation (pre 1).
             if c.pro_loops != (0 if k[5] else 1):
                 problems.append(f"{c.pro_loops} quantizer loops (pre {k[5]})")
+        elif family == "vec":
+            # ggml's vector kernels: a loop marked by its dp4a (the gated T 1 instances on sm_100 /
+            # sm_120a have three candidates; the heaviest is counted), no MMA, k_iter 1024 for the
+            # runtime K or KS unrolled (above it for Q2_K and IQ1_M, whose activation sums take
+            # dp4a of their own). A row of unknown flow (no loop and nothing outside it) is said
+            # as such and not held to the rest.
+            if c.loops == 0 and c.outside_total == 0:
+                out.append(f"vec {row_key(k)}: unknown flow (an indirect branch): no counts")
+                continue
+            want = k[2] if k[2] else 1024
+            if c.loops < 1:
+                problems.append("no K loop")
+            if c.mma != 0:
+                problems.append(f"{c.mma} MMAs in the iteration")
+            if k[0] in (10, 29) and 0 < c.k_iter < want:
+                problems.append(f"k_iter {c.k_iter}, under {want}")
+            elif k[0] not in (10, 29) and c.k_iter != want:
+                problems.append(f"k_iter {c.k_iter}, not {want}")
         problems += c.schedule_problems()
         if problems:
             out.append(f"{family} {row_key(k)}: {'; '.join(problems)}")
@@ -1023,9 +1041,18 @@ SECTION_NOTES = {
     "vec": (
         "# ggml's vector kernels (src/ops/generic/ggml_mmq/ggml_vec.cu, #763): vec_kernel<type, T,",
         "# KS, Gated, Bounded>, keyed as the ggml_type value, the tokens, the static K the slice loop",
-        "# unrolls over (0: the runtime K) and the two flags. Resources alone: the launch reads the",
-        "# CTAs an SM holds (core/kernel_occupancy.h) and a bounded twin's local bytes, never the",
-        "# host's kernels.",
+        "# unrolls over (0: the runtime K) and the two flags. The launch reads the CTAs an SM holds",
+        "# (core/kernel_occupancy.h) and a bounded twin's local bytes, never the host's kernels; the",
+        "# analyzer (tools/route_pick) reads the K loop's counts, the loop marked by its dp4a (IDP).",
+        "# A warp takes a row pair (the gated kernel: one row's two sets) and all T tokens: 2 x T",
+        "# products, so k_iter is 1024 for the runtime-K loop (a slice of 32 values a lane) and KS",
+        "# for the unrolled ones (the whole K in one trip of the row loop). Q2_K (10) and IQ1_M",
+        "# (29) also take dp4a for the activation's block sums, so theirs is above it (1536,",
+        "# 7680, 26112: 1.5x; up to 1.6x in some instances; 0 where their dp4a count does not",
+        "# divide by 2 x T).",
+        "# A row whose loop columns are all 0 (no loop, nothing outside it) is unknown flow: an",
+        "# indirect branch the counter cannot follow (a compiled switch; sm_100 / sm_120a gated",
+        "# T 3-8); its resources hold, its counts are unknown, not zero.",
     ),
 }
 
@@ -1044,7 +1071,10 @@ def render_section(family, rows, nvcc):
     loop_notes = (
         "# The columns: the key, the resources, the loop's counts and schedule as above, then the",
         "# pipe counts of the same iteration: I2F, I2FP, FFMA, FMUL, FADD, IMAD, BAR (sass_counts.py).",
-        "# k_iter is the warp's MMA work per iteration over one m16n8 tile (m x n x k / 128).",
+        "# k_iter is the warp's MMA work per iteration over one m16n8 tile (m x n x k / 128)."
+        if f.marker != "IDP" else
+        "# k_iter is the K values one iteration covers per product (128 per dp4a over the row x token"
+        "\n# products a warp accumulates; sass_counts.py), the MMA columns 0.",
     ) if f.loop else ("# The columns: the key, then the resources as above.",)
     lines = [
         f"family {family}",
