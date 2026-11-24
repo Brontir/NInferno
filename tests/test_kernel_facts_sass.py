@@ -603,6 +603,20 @@ class StaticSchedule(unittest.TestCase):
         for what in ("2 candidate loops", "2 barriers", "k_iter 1024"):
             self.assertIn(what, problems[0])
 
+    def test_vecmma_audit_by_arch(self):
+        # The few-row MMA tile (#1162): below sm_80 its MMA is a trap stand-in, so a loop with no
+        # MMA passes there; on sm_80 and later the same row is named.
+        from types import SimpleNamespace as N
+        bare = N(mma=0, loops=1, bar=0, k_iter=0, scheduled=True, outside_bar=0,
+                 outside_total=900, schedule_problems=lambda: [])
+        rows = {(12, 0): (0, 0, 0, 0, bare)}
+        self.assertEqual(kernel_facts.family_audit("vecmma", rows, "75"), [])
+        self.assertEqual(kernel_facts.family_audit("vecmma", rows, "70"), [])
+        named = kernel_facts.family_audit("vecmma", rows, "86")
+        self.assertEqual(len(named), 1)
+        self.assertIn("no MMA in the loop", named[0])
+        self.assertEqual(len(kernel_facts.family_audit("vecmma", rows, "120a")), 1)
+
     def test_problems(self):
         c = sc.loop_counts(body_of(SCHEDULED, SCHEDULED_WORDS), tiles=2)
         c.stall_sum = c.total - 1
@@ -1180,6 +1194,23 @@ class Sections(unittest.TestCase):
         self.assertIsNone(kernel_facts.vec_key(self.MMQ_NAME))
         with self.assertRaises(SystemExit):
             kernel_facts.vec_key(self.VEC_NAME.replace(", true>", ">"))
+
+    VEC_MMA_NAME = ("void ninferno::ops::ggml_mmq::detail::<unnamed>::vec_mma_kernel<(ggml_type)14, true>"
+                    "(ninferno::ops::ggml_mmq::detail::<unnamed>::VecArgs, int)")
+
+    def test_vec_mma_keys(self):
+        # The few-row MMA tile (#1162): its own section, keyed as the ggml_type and the Gated flag;
+        # neither the vec section nor the register-MMA one takes its symbol.
+        self.assertEqual(kernel_facts.vec_mma_key(self.VEC_MMA_NAME), (14, 1))
+        self.assertEqual(kernel_facts.vec_mma_key(
+            self.VEC_MMA_NAME.replace("<unnamed>", "(anonymous namespace)").replace(
+                "(ggml_type)14, true", "(ggml_type)12, false")), (12, 0))
+        self.assertIsNone(kernel_facts.vec_key(self.VEC_MMA_NAME))
+        self.assertIsNone(kernel_facts.vec_mma_key(self.VEC_NAME))
+        for f in kernel_facts.FAMILIES.values():
+            self.assertEqual(f.needle in self.VEC_MMA_NAME, f.name == "vecmma", f.name)
+        with self.assertRaises(SystemExit):
+            kernel_facts.vec_mma_key(self.VEC_MMA_NAME.replace(", true>", ">"))
 
     def test_vec_section_needs_its_loop(self):
         # The vec family (#763) carries its K loop's counts (facts/vec-loop, 24.11): a vec kernel

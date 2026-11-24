@@ -44,6 +44,11 @@ bool vec_supported(Type type) {
     }
 }
 
+// The few-row MMA tile's decoders (ggml_vec.cu MmaDecoder, #1162): the K-quants.
+bool vec_mma_supported(Type type) {
+    return type == Type::Q4_K || type == Type::Q5_K || type == Type::Q6_K;
+}
+
 std::size_t activation_bytes(int k, int columns) {
     return std::size_t(columns) * (k / kQ8MmqValues) * kQ8MmqBlockBytes + kActivationSlack;
 }

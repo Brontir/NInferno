@@ -168,4 +168,13 @@ void vec_product(Type type, const Planes& weight, const Planes& up, int blocks_p
                  int k, const void* activation, int columns, const VecOut& out,
                  cudaStream_t stream);
 
+// The few-row int8 MMA tile (#1162, Route{GgmlVec, 1}): the same product, activation and epilogues
+// (Store, AddResidual, SwiGlu) with int8 MMAs over a 32-value block of 16 rows against every
+// column at once (one m16n8k32, or two m16n8k16 for Q6_K's 16-value scales); sm_80+, the formats
+// vec_mma_supported names, K whole superblocks.
+[[nodiscard]] bool vec_mma_supported(Type type);
+void vec_mma_product(Type type, const Planes& weight, const Planes& up, int blocks_per_row,
+                     int rows, int k, const void* activation, int columns, const VecOut& out,
+                     cudaStream_t stream);
+
 } // namespace ninferno::ops::ggml_mmq

@@ -10324,3 +10324,22 @@ vec 29 8 5120 0 0 168 0 0 8192 1 7680 0 0 - 222 51392 0 0 0 0 40 5120 0 0 0 0 0 
 vec 29 8 5120 1 0 96 0 0 8192 1 7680 0 0 - 192 48512 0 0 0 0 40 5120 0 0 0 0 0 1809 1721 2 114 3878 8869 644 0 131 482 22 1 500 0 500 113 405 12 0
 vec 29 8 6144 0 0 168 0 0 8192 1 9216 0 0 - 260 61056 0 0 0 0 48 6144 0 0 0 0 0 2612 2465 2 400 5787 13778 756 0 129 478 22 1 600 0 736 264 512 71 0
 vec 29 8 17408 0 0 168 0 0 8192 1 26112 0 0 - 678 167360 0 0 0 0 136 17408 0 0 0 0 0 5874 5793 2 432 12915 28572 1652 0 130 490 22 1 1700 0 1792 484 1216 85 0
+family vecmma
+# The vector family's few-row int8 MMA tiles (ggml_vec.cu, #1162; route ggml_vec.mma):
+# vec_mma_kernel<type, Gated>, keyed as the ggml_type value and the flag. A CTA of four
+# warps over 16 rows (the gated kernel: 8 rows' two sets) and up to 8 tokens; a warp takes
+# every fourth 256-value super-block, one m16n8 tile: eight k32 MMAs (Q4_K, Q5_K) or
+# sixteen k16 (Q6_K) an iteration, k_iter 256. Below sm_80 the MMA is a trap stand-in
+# (the route needs sm_80, route_requires): those rows have no MMA in their loop.
+# The columns: the key, the resources, the loop's counts and schedule as above, then the
+# pipe counts of the same iteration: I2F, I2FP, FFMA, FMUL, FADD, IMAD, BAR (sass_counts.py).
+# k_iter is the warp's MMA work per iteration over one m16n8 tile (m x n x k / 128).
+family_nvcc 13.4.92
+family_kernels 6
+family_columns family type gated registers stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total stall_sum sb_waits sb_waits_local outside_total outside_stall outside_waits outside_bar i2f i2fp ffma fmul fadd imad bar
+vecmma 12 0 128 0 0 2048 1 256 8 0 IMMA.16832.S8.S8 34 7168 0 0 0 0 0 0 0 0 0 0 0 320 228 2 27 619 1107 59 0 582 1797 71 1 64 0 64 64 0 82 0
+vecmma 12 1 128 0 0 2048 1 256 8 0 IMMA.16832.S8.S8 34 7168 0 0 0 0 0 0 0 0 0 0 0 318 228 2 26 616 1110 68 0 419 1221 48 1 64 0 64 64 0 76 0
+vecmma 13 0 136 0 0 2048 1 256 8 0 IMMA.16832.S8.S8 36 7680 0 0 0 0 0 0 0 0 0 0 0 390 228 2 29 693 1415 70 0 597 1823 71 1 64 0 64 64 0 110 0
+vecmma 13 1 128 0 0 2048 1 256 8 0 IMMA.16832.S8.S8 36 7680 0 0 0 0 0 0 0 0 0 0 0 390 228 2 29 693 1316 70 0 425 1227 46 1 64 0 64 64 0 104 0
+vecmma 14 0 168 0 0 2048 1 256 16 0 IMMA.16816.S8.S8 60 7296 0 0 0 0 0 0 0 0 0 0 0 493 114 2 30 715 1290 44 0 688 2073 75 1 32 0 32 32 0 190 0
+vecmma 14 1 166 0 0 2048 1 256 16 0 IMMA.16816.S8.S8 60 7296 0 0 0 0 0 0 0 0 0 0 0 492 114 2 29 713 1231 44 0 533 1564 58 1 32 0 32 32 0 182 0

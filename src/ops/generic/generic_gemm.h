@@ -277,6 +277,8 @@ struct I8ScheduleInfo {
 [[nodiscard]] int staged_schedule_count();
 [[nodiscard]] StagedScheduleInfo staged_schedule_info(int index);
 [[nodiscard]] int r8_schedule_count();
+// ggml's vector family: the dp4a kernel (schedule 0) and the few-row MMA tile (1, #1162).
+[[nodiscard]] int ggml_vec_schedule_count();
 [[nodiscard]] R8ScheduleInfo r8_schedule_info(int index);
 // Whether a weight format has a W4A8 codec: a scale (and min) per 32 values (Q6_K, Q3_K, Q2_K,
 // IQ2_XS, IQ2_S: per 16) over integer codes that fit int8 (ggml Q4_0/Q4_1/Q5_0/Q5_1/IQ4_NL/IQ4_XS/

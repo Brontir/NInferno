@@ -980,7 +980,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
                     out.segment_end[s] = args.segment_end[s];
                     out.ld[s]          = args.ld[s];
                 }
-                ggml_mmq::vec_product(
+                (route.schedule == 1 ? ggml_mmq::vec_mma_product : ggml_mmq::vec_product)(
                     type, ggml_rows_at(args, w.qtype, bpr, call.row_begin),
                     gated ? ggml_rows_at(args, w.qtype, bpr, call.row_begin + call.up_offset)
                           : ggml_mmq::Planes{},
@@ -1018,7 +1018,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             out.segment_end[s] = args.segment_end[s];
             out.ld[s]          = args.ld[s];
         }
-        ggml_mmq::vec_product(
+        (route.schedule == 1 ? ggml_mmq::vec_mma_product : ggml_mmq::vec_product)(
             type, ggml_rows_at(args, w.qtype, bpr, call.row_begin),
             gated ? ggml_rows_at(args, w.qtype, bpr, call.row_begin + call.up_offset)
                   : ggml_mmq::Planes{},

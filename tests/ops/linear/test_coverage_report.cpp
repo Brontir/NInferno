@@ -357,7 +357,7 @@ Kind classify(Route executed, const Weight& w, std::int32_t tokens, bool invaria
         return Kind::Scalar;
     case Family::R8Mma:
     case Family::GgmlVec:
-        return Kind::Native; // dp4a, no MMA
+        return Kind::Native; // dp4a, no MMA (the vector family's schedule 1: native int8 MMA)
     case Family::TiledMma:
     case Family::GgmlMmq:
         // Volta's tiled kernel issues mma.m8n8k4 (and CUTLASS's); ggml's matrix kernel refuses

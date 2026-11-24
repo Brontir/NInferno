@@ -1684,7 +1684,12 @@ DeviceFeatures route_requires(Route route) {
         f.mma_bf16 = true;
         return f;
     case Family::GgmlMmq: // sm_75 and up, held by mmq_admits
-    case Family::GgmlVec: // dp4a
+        return f;
+    case Family::GgmlVec: // dp4a; schedule 1, the few-row tile: int8 m16n8k32, sm_80 on
+        // Native: below sm_80 vec_mma_s8 is a trap stand-in (Turing and Volta compose W4a8Mma's
+        // MMA from smaller shapes; this kernel does not), as I8Mma.
+        f.mma_bf16        = route.schedule == 1;
+        f.mma_bf16_native = route.schedule == 1;
         return f;
     case Family::I8Mma: // m16n8k32 s8 x u8, ldmatrix, cp.async: sm_80 on
         f.mma_bf16        = true;
@@ -1919,10 +1924,15 @@ ScheduleRefusal nvfp4_tiled_refusal(int index, const Weight& w) {
 
 ScheduleRefusal ggml_refusal(Family family, int index, const Weight& w, LinearPolicy policy) {
     const bool matrix = family == Family::GgmlMmq;
-    if (index != 0 || (!matrix && family != Family::GgmlVec)) return ScheduleRefusal::NotDeclared;
+    // The vector family's schedule 1: the few-row int8 MMA tile (#1162).
+    const bool mma = family == Family::GgmlVec && index == 1;
+    if ((index != 0 && !mma) || (!matrix && family != Family::GgmlVec)) {
+        return ScheduleRefusal::NotDeclared;
+    }
     if (!supports(w)) return ScheduleRefusal::Format;
     const auto type = mmq_type(w);
-    if (!type || !(matrix ? ggml_mmq::matrix_supported(*type) : ggml_mmq::vec_supported(*type))) {
+    if (!type || !(matrix ? ggml_mmq::matrix_supported(*type) : ggml_mmq::vec_supported(*type)) ||
+        (mma && !ggml_mmq::vec_mma_supported(*type))) {
         return ScheduleRefusal::Format;
     }
     // ggml_layout_admits: whole blocks where the codec reads them (codec_traits block_bytes: Q4_K /
@@ -1937,6 +1947,9 @@ ScheduleRefusal ggml_refusal(Family family, int index, const Weight& w, LinearPo
     const auto common = generic_refusal(Route{family, 0}, w);
     if (common != ScheduleRefusal::NotDeclared) return common;
     if (matrix && !ggml_mmq::device_supported()) return ScheduleRefusal::Instruction;
+    if (mma && !has_features(current_features(), route_requires(Route{family, 1}))) {
+        return ScheduleRefusal::Instruction;
+    }
     // ggml's loaders read every plane in vector words.
     if (!aligned_to(w.qdata, 16) || (bytes.high > 0 && !aligned_to(w.qhigh, 16)) ||
         (bytes.scales > 0 && !aligned_to(w.scales, 16))) {
