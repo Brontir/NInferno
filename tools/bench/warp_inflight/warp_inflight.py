@@ -97,6 +97,8 @@ VARIANTS_16 = tuple(v for v, (_, _, b) in VARIANTS.items() if b == 16)
 # 0.3-5.5 % below probe 5 in the latency-bound rows (W <= 4; ring4 the most) and the same once the
 # bus saturates; on the GV100 its chain4 and ring4 read x1.6 and x1.3-1.5 above probe 3's. Probe 7
 # (#771) adds the 8- and 4-byte chains; its 16-byte variants are probe 6's loop, unchanged.
+# Probe 8 measures the same rows, its first one past a run budget's gap after the warm-up (the L2
+# held the next range: the 5070 Ti's first lone-warp row of probe 7 read 254 / 311 ns against 327).
 EARLIER_PROBES = {
     "warp_inflight 3": {
         "source_sha256": "c903f40008fb45fa109c837b07bd78d9a5dbb565c9906afa1cbcd9b4711d93e8",
@@ -110,6 +112,9 @@ EARLIER_PROBES = {
     "warp_inflight 6": {
         "source_sha256": "6c71e3c90e00736f4f5739efb01fe70f89a4465d8ca8e844f1ef55d227106c09",
         "variants": VARIANTS_16},
+    "warp_inflight 7": {
+        "source_sha256": "f54abc0222375b467c02fffdf82fbe52ef3d9ec215326e395fc5952074dce317",
+        "variants": tuple(VARIANTS)},
 }
 W_GRID = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
 K_GRID = (1, 2, 4, 8)
