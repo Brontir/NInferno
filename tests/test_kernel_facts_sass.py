@@ -1181,25 +1181,23 @@ class Sections(unittest.TestCase):
         with self.assertRaises(SystemExit):
             kernel_facts.vec_key(self.VEC_NAME.replace(", true>", ">"))
 
-    def test_vec_section_is_resources_only(self):
-        # The vec family (#763) is read for its resources alone, as the gemma4 one.
+    def test_vec_section_needs_its_loop(self):
+        # The vec family (#763) carries its K loop's counts (facts/vec-loop, 24.11): a vec kernel
+        # with resources and no SASS is refused, not written as resources alone. Its loop is
+        # marked by the dp4a and counted per row and token: a warp holds 2 x T products (a row pair,
+        # or a gated row's two sets), so k_iter is 1024 for the runtime-K loop, KS when unrolled.
         dump = Check.DUMP + "\n".join((" Function " + self.VEC + ":",
                                         "  REG:72 STACK:0 SHARED:1024 LOCAL:0", ""))
         (self.root / "usage.txt").write_text(dump)
         names = {self.RMMA: self.RMMA, self.VEC: self.VEC_NAME}
         kernel_facts.demangle = lambda wanted, cuda_bin: {n: names[n] for n in wanted}
         out = self.extract("--families", "rmma")
-        self.extract("--families", "vec", "--update", str(out))
-        text = out.read_text()
-        self.assertIn("family vec", text)
-        self.assertIn("family_columns family type T KS gated bounded registers stack local shared\n",
-                      text)
-        self.assertIn("vec 13 4 0 0 1 72 0 0 1024\n", text)
-        _, sections = kernel_facts.parse_sections(text)
-        self.assertEqual(sections["vec"]["rows"][self.VEC_KEY], (72, 0, 0, 1024, None))
-        self.assertEqual(self.check(out), 0)
-        (self.root / "moved.txt").write_text(text.replace(" 72 0 0 1024\n", " 80 0 0 1024\n"))
-        self.assertEqual(self.check(self.root / "moved.txt"), 1)
+        with self.assertRaises(SystemExit):
+            self.extract("--families", "vec", "--update", str(out))
+        vec = kernel_facts.FAMILIES["vec"]
+        self.assertTrue(vec.loop)
+        self.assertEqual(vec.marker, "IDP")
+        self.assertEqual(vec.tiles(self.VEC_KEY), 8)  # T 4: two rows x four tokens
 
 
 class SassUnstable(unittest.TestCase):
