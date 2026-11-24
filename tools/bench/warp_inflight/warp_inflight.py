@@ -717,7 +717,7 @@ FACTS_NOTE = (
     "reached (b_w at W = 1 by Little's law on L0, the largest over every variant and both "
     "carve-outs). warp_fill_bytes_per_clock: F, the rate a lone warp's window fills at past its "
     "first warp-wide load (fill_rate: the least-squares ns a further byte costs over the run's "
-    "chains at k = 1, W = 1, at chain1's SM clock; 17-19 B a clock on every architecture, about "
+    "chains at k = 1, W = 1, at chain1's SM clock; 16.7-19.4 B a clock on every architecture, about "
     "0.55 P; the 8- and 4-byte chains of probe 7 show it goes with the bytes, not the loads). "
     "warp_bytes_saturated: the warp saturates, so b_w_max caps the bytes the law "
     "counts. In a row whose run has chain8 and chain16 (probe 5 on), cap_test sets each chain's "
@@ -1121,7 +1121,8 @@ NO_SCOREBOARD = 7  # the control code's write barrier when an instruction sets n
 
 
 def peak_in_flight(body, width=16):
-    """The most 16-byte loads the kernel's SASS keeps in flight a lane, read in program order. A
+    """The most loads of `width` bytes (the variant's own) the kernel's SASS keeps in flight a lane,
+    read in program order. A
     load stays in flight until something waits for it:
     - an instruction reads or overwrites a register it writes (its quad);
     - an instruction's control-code wait mask names the scoreboard the load set (every load on
@@ -1162,7 +1163,8 @@ def peak_in_flight(body, width=16):
 
 
 def sass_inflight(sass):
-    """{variant: the most 16-byte loads a lane its kernel's SASS keeps in flight} (peak_in_flight):
+    """{variant: the most loads of its own width a lane its kernel's SASS keeps in flight}
+    (peak_in_flight):
     a chain's F, a ring's 2F, when ptxas issues every load of a fetch before the data it waits
     on; fewer when it recycles a fetch's registers (ring8 without its clock read)."""
     return {v: peak_in_flight(body, load_bytes_of(v)) for v, body in _kernels(sass).items()}

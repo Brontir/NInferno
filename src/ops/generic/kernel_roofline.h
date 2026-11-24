@@ -313,7 +313,7 @@ struct DramTerms {
 //    reach, min(P, W x b_w / window), P of the carve-out at the chip's reference clock, b_w the
 //    counted bytes (at most b_w_max where the probe saw one warp saturate: no architecture since
 //    probe 6, #757), and the window L0 + (b_w - 512 B) / F: the first warp-wide load's latency,
-//    then the other bytes at the fill rate F (#771; 17-19 B a clock on every architecture, the
+//    then the other bytes at the fill rate F (#771; 16.7-19.4 B a clock on every arch, the
 //    same for 16-, 8- and 4-byte loads; the cp.async of the shared-memory tiles is taken to fill
 //    at the same rate, not measured).
 // The bus bound reads no SM count; the busiest SM's rounds read it only through q, which does not

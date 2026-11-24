@@ -76,7 +76,7 @@ struct SmRateRow {
     double max_warp_bytes_in_flight = 0;
     // F: the rate a lone warp's window fills at past its first warp-wide load, bytes an SM clock
     // (#771): the window of b_w bytes takes L0 + (b_w - 512 B) / F (warp_inflight.py fill_rate,
-    // the least-squares ns a byte over the probe's chains at W = 1; 17-19 B/clk on every
+    // the least-squares ns a byte over the probe's chains at W = 1; 16.7-19.4 B/clk on every
     // architecture, the same for 16-, 8- and 4-byte loads).
     // Absent (JSON null) where the chains show no fill (no positive slope): the law reads L0.
     std::optional<double> warp_fill_bytes_per_clock;
