@@ -110,6 +110,8 @@ bool w4a8_fits(int schedule, QType qtype) {
 
 int r8_schedule_count() { return static_cast<int>(kR8Schedules.size()); }
 
+int ggml_vec_schedule_count() { return 2; }
+
 R8ScheduleInfo r8_schedule_info(int index) {
     return kR8Schedules.at(static_cast<std::size_t>(index));
 }
@@ -202,7 +204,7 @@ std::string route_name(Route route) {
     case Family::GgmlMmq:
         return "ggml_mmq";
     case Family::GgmlVec:
-        return "ggml_vec";
+        return route.schedule == 1 ? "ggml_vec.mma" : "ggml_vec";
     case Family::I8Mma: {
         const auto s = i8_schedule_info(route.schedule);
         return "i8." + std::to_string(s.block_m) + "x" + std::to_string(s.block_n);
@@ -243,6 +245,7 @@ std::optional<Route> parse_route(std::string_view name) {
     if (name == "scalar") return Route{Family::Scalar, 0};
     if (name == "ggml_mmq") return Route{Family::GgmlMmq, 0};
     if (name == "ggml_vec") return Route{Family::GgmlVec, 0};
+    if (name == "ggml_vec.mma") return Route{Family::GgmlVec, 1};
     for (int i = 0; i < rmma_schedule_count(); ++i) {
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         if (route_name(r) == name) return r;

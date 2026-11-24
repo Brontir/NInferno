@@ -95,13 +95,19 @@ FamilyCoverage other_family_coverage(Family family, const Weight& w, LinearPolic
         return c;
     case Family::GgmlMmq:
     case Family::GgmlVec: {
-        c.declared               = 1;
-        const ScheduleRefusal why = ggml_refusal(family, 0, w, policy);
-        c.schedules.push_back({0, why});
+        // The vector family: the dp4a kernel (0) and the few-row MMA tile (1, #1162).
+        c.declared      = family == Family::GgmlVec ? ggml_vec_schedule_count() : 1;
         const auto type = mmq_type(w);
-        c.compiled = type && (family == Family::GgmlMmq ? ggml_mmq::matrix_supported(*type)
-                                                        : ggml_mmq::vec_supported(*type));
-        c.legal    = why == ScheduleRefusal::None;
+        for (int i = 0; i < c.declared; ++i) {
+            const ScheduleRefusal why = ggml_refusal(family, i, w, policy);
+            c.schedules.push_back({i, why});
+            // Schedule 1 compiles to a trap stand-in below sm_80 (as the manifest says).
+            const bool mma_built = NINFERNO_BUILD_ARCH == 0 || NINFERNO_BUILD_ARCH >= 80;
+            c.compiled += type && (family == Family::GgmlMmq ? ggml_mmq::matrix_supported(*type)
+                                   : i == 0                  ? ggml_mmq::vec_supported(*type)
+                                            : mma_built && ggml_mmq::vec_mma_supported(*type));
+            c.legal += why == ScheduleRefusal::None;
+        }
         return c;
     }
     default:
@@ -208,17 +214,21 @@ BuildManifest build_manifest() {
         [](int, ManifestSchedule& s) { s.compiled = kNativeNvfp4; });
     add(Family::R8Mma, r8_schedule_count(), none);
     for (const Family family : {Family::GgmlMmq, Family::GgmlVec}) {
-        add(family, 1, [&](int, ManifestSchedule& s) {
-            for (const auto& f : formats) {
-                Weight w{};
-                w.qtype         = f.first;
-                const auto type = mmq_type(w);
-                if (type && (family == Family::GgmlMmq ? ggml_mmq::matrix_supported(*type)
-                                                       : ggml_mmq::vec_supported(*type))) {
-                    s.only_formats.push_back(f.first);
+        add(family, family == Family::GgmlVec ? ggml_vec_schedule_count() : 1,
+            [&](int i, ManifestSchedule& s) {
+                // The few-row MMA tile (vector schedule 1): int8 m16n8k32, sm_80 on.
+                if (i == 1) s.compiled = m.arch == 0 || m.arch >= 80;
+                for (const auto& f : formats) {
+                    Weight w{};
+                    w.qtype         = f.first;
+                    const auto type = mmq_type(w);
+                    if (type && (family == Family::GgmlMmq ? ggml_mmq::matrix_supported(*type)
+                                 : i == 0                  ? ggml_mmq::vec_supported(*type)
+                                                           : ggml_mmq::vec_mma_supported(*type))) {
+                        s.only_formats.push_back(f.first);
+                    }
                 }
-            }
-        });
+            });
     }
     // generic_i8.cu compiles its kernels from sm_80 on (NINFERNO_I8_KERNELS); below, empty bodies.
     add(Family::I8Mma, i8_schedule_count(), [&](int i, ManifestSchedule& s) {

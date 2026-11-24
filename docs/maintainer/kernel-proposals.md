@@ -1042,3 +1042,46 @@ P from #850's plan. A, G, N and P have frozen predictions so far.
   - sm_86 / sm_89: the gain is the spill going, not issue.
   - sm_120a, with no spill: 3 % fewer instructions and 8 % less time at 0.38 waves, a dependent-chain reading not counted here.
   - No measured term explains the classic tiles' losses on sm_86 / sm_120a. The entry claims no law for them, which is why the proposal is removed and not narrowed into a variant.
+
+### S. The vector family's few-row int8 MMA tile, `ggml_vec.mma` (#1162): built before its entry
+- **Process breach, stated first.** The kernel (PR #1188) was built and timed before this entry
+  existed (codex review of #1188, AGENTS.md). No time prediction was frozen before its grids, so
+  the grids below are measurements, not an A/B against a prediction. This entry freezes what comes
+  next: the selector's admission.
+- **Regime.** Decode linears, Q4_K / Q5_K / Q6_K, T 5-8, plain and gated. Boards: RTX 5070 Ti,
+  3090, 3060, 4060 Ti, 4090. There the dp4a vector kernel is SM-bound, not DRAM-bound
+  (analyzer_cov AUDIT 11 and 17).
+  - Its trip issues the decode once per row and a dp4a per token and 32 values, so the SM side
+    grows with T.
+  - At T 5-8 it runs 1.65-3.6x its bytes time on the 3090 and 5070 Ti, with no_instruction and
+    issue stalls.
+- **Law.** The tile moves the T-dependent work to the tensor pipe.
+  - A warp decodes one 256-value super-block of 16 rows once, then issues eight m16n8k32 int8 MMAs
+    (sixteen k16 for Q6_K) for up to 8 tokens.
+  - So its issue per weight byte does not grow with T. The time is the larger of the bytes term
+    (the DRAM window, #771) and the decode issue: the `vecmma` kernel-facts section, k_iter 256.
+  - It loses where few CTAs fill the SMs (16 rows a CTA) and at T 1, where the vector kernel
+    issues no more per byte.
+- **Measured** (fm grids, branch feat/1162-few-mma, 31 shapes, T 1-8, route_tune median of
+  samples; analyzer_cov `few_score.py`):
+  - it is the fastest route at T 5-8 in 80 of 124 cells on the 5070 Ti (median 0.975 of the next
+    best, best 0.864);
+  - 21 cells on the 3090, 34 on the 4060 Ti and 8 on the 4090 (counts at T 5-8 against the other
+    routes of the same cell);
+  - never at T 1.
+  - Not run: an ABBA against master. The route is new, so no master time exists for it; the
+    grids rank it against the routes master already has.
+- **Prediction, frozen 24.11 07:45 before any admission A/B.** Admitting `ggml_vec.mma` at T 5-8
+  where the analyzer prices it cheapest moves e2e decode by:
+  - +0.5 to +2.0 % on the RTX 5070 Ti, Qwen3.5-9B Q4_K_M at C 5-8 (the linears' share of a step
+    times the cells' median gain of 2.5-3.5 %);
+  - between -0.3 % and +1.0 % on the 3090, 3060 and 4060 Ti;
+  - 0 % on the 4090 and at C 1-4 (the tile is not taken there).
+- **Acceptance / refutation, frozen with it.**
+  - Admit on a board only if its e2e A/B (ABBA, two runs) gains at least +0.3 % at C 5-8 with
+    C 1-4 within +-0.3 %.
+  - A board below 0 in both runs refutes the price there.
+  - The summation order is the tile's own (`summation_order`: Own), so the byte rule is the KLD
+    bound: mean KLD within 15 % of master's on the quick corpus.
+- **Decision.** Kept as a route that route_tune, coverage and the analyzer time and price. Not
+  admitted by the selector until the A/B above (analyzer round 17, product change 2).

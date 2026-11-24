@@ -299,6 +299,24 @@ def vec_key(demangled):
     return key[:3] + tuple(int(v) for v in key[3:])
 
 
+def vec_mma_key(demangled):
+    """The key of a few-row MMA tile of the vector family (ggml_vec.cu, #1162): vec_mma_kernel<type,
+    Gated> in the file's anonymous namespace, keyed as the ggml_type value and the Gated flag. None
+    for other symbols."""
+    unnamed = demangled.replace("(anonymous namespace)", "(anonymousnamespace)")
+    args = template_args(unnamed.replace("<unnamed>", "(anonymousnamespace)"),
+                         "void " + VEC_NAMESPACE + "vec_mma_kernel<")
+    if args is None:
+        return None
+    if len(args) != 2:
+        fail(f"unexpected vec_mma_kernel arguments in {demangled}")
+    try:
+        key = tuple(ggml_int(a) for a in args)
+    except ValueError:
+        fail(f"unexpected vec_mma_kernel arguments in {demangled}")
+    return key[:1] + (int(key[1]),)
+
+
 W4A8_SCHEDULE = re.compile(r"W4a8Schedule<(\d+),(\d+),(\d+),(\d+)>")
 
 
@@ -553,6 +571,8 @@ FAMILIES = {
                       waits=True, emulated=True),
     "vec": Family("vec", ("type", "T", "KS", "gated", "bounded"), lambda d: vec_key(d),
                   "vec_kernel", lambda key: 2 * key[1], True, False, marker="IDP"),
+    "vecmma": Family("vecmma", ("type", "gated"), lambda d: vec_mma_key(d), "vec_mma_kernel",
+                     lambda key: 1, True, False),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -782,11 +802,13 @@ def loop_audit(rows):
 MMQ_EMPTY_INSTRUCTIONS = 64
 
 
+# The few-row MMA tile's k_iter (family_audit): one m16n8 tile a warp over a 256-value super-block.
+VEC_MMA_K_ITER = 256
 # The I8 tile's k_iter (family_audit): 32 m16n8 tiles a warp over one 64-value K group.
 I8_K_ITER = 32 * 64
 
 
-def family_audit(family, rows):
+def family_audit(family, rows, arch=""):
     """loop_audit for a section family's rows (#785): lines naming the kernels whose counted
     iteration is not the unit the family's price reads. ggml's matrix kernel: one or two
     candidate loops (its stream-k body holds the unit's loop twice, with and without the fixup
@@ -889,6 +911,22 @@ def family_audit(family, rows):
                 problems.append(f"k_iter {c.k_iter}, under {want}")
             elif k[0] not in (10, 29) and c.k_iter != want:
                 problems.append(f"k_iter {c.k_iter}, not {want}")
+        elif family == "vecmma":
+            # The few-row MMA tiles: one K loop of int8 MMAs, no CTA barrier in it (the warps
+            # meet once, after the loop), and k_iter VEC_MMA_K_ITER: a warp's one m16n8 tile over
+            # one 256-value super-block (eight k32 MMAs, or sixteen k16 for Q6_K). Below sm_80 the
+            # MMA is a trap stand-in (no route launches it, route_requires): a loop with no MMA,
+            # not held to the rest.
+            if c.mma == 0 and int(re.match(r"\d*", str(arch)).group() or 0) < 80:
+                continue
+            if c.mma == 0:
+                problems.append("no MMA in the loop on sm_80 or later")
+            if c.loops != 1:
+                problems.append(f"{c.loops} candidate loops")
+            if c.bar != 0:
+                problems.append(f"{c.bar} barriers in the iteration")
+            if c.k_iter != VEC_MMA_K_ITER:
+                problems.append(f"k_iter {c.k_iter}, not {VEC_MMA_K_ITER}")
         problems += c.schedule_problems()
         if problems:
             out.append(f"{family} {row_key(k)}: {'; '.join(problems)}")
@@ -1053,6 +1091,14 @@ SECTION_NOTES = {
         "# A row whose loop columns are all 0 (no loop, nothing outside it) is unknown flow: an",
         "# indirect branch the counter cannot follow (a compiled switch; sm_100 / sm_120a gated",
         "# T 3-8); its resources hold, its counts are unknown, not zero.",
+    ),
+    "vecmma": (
+        "# The vector family's few-row int8 MMA tiles (ggml_vec.cu, #1162; route ggml_vec.mma):",
+        "# vec_mma_kernel<type, Gated>, keyed as the ggml_type value and the flag. A CTA of four",
+        "# warps over 16 rows (the gated kernel: 8 rows' two sets) and up to 8 tokens; a warp takes",
+        "# every fourth 256-value super-block, one m16n8 tile: eight k32 MMAs (Q4_K, Q5_K) or",
+        "# sixteen k16 (Q6_K) an iteration, k_iter 256. Below sm_80 the MMA is a trap stand-in",
+        "# (the route needs sm_80, route_requires): those rows have no MMA in their loop.",
     ),
 }
 
@@ -1237,7 +1283,7 @@ def cmd_extract(args):
     audit = loop_audit(extracted[FAMILY]) if FAMILY in families else []
     for f in families:
         if f != FAMILY:
-            audit += family_audit(f, extracted[f])
+            audit += family_audit(f, extracted[f], args.arch)
     for line in audit:
         print(f"kernel_facts: {line}", file=sys.stderr)
     nvcc = args.nvcc or "unknown"
