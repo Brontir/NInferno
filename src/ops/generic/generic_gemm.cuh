@@ -540,9 +540,12 @@ struct Q8Decoder {
     static constexpr bool kF16       = kF16Operands;
     static constexpr int kRun        = 8;
     static constexpr bool kStepScale = true;
+    // The scale as the 16 bits it is: held in an `unsigned`, the run merged from the K-bounds
+    // branches (load / masked / zero) got a 0xffff mask right after its load on sm_120a, a wait
+    // that exposed each scale's DRAM round trip (four a K trip, #1197).
     struct Run {
         uint2 codes;
-        unsigned scale;
+        unsigned short scale;
     };
     __device__ static __forceinline__ Run load(const GemmArgs& a, int row, int k0) {
         const int group        = k0 >> 5;
