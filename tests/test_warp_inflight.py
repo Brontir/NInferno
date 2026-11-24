@@ -45,7 +45,7 @@ NO_ROW_NOTES = ("note placed ring4 w48: 1 of 2 CTAs fit an SM (registers), no ro
 
 
 def law(variant, w):
-    return min(P_GBPS, w * wi.inflight_of(variant) * wi.WARP_LOAD / L_NS)
+    return min(P_GBPS, w * wi.warp_bytes_of(variant) / L_NS)
 
 
 def row_line(mode, k, v, w, gbps=None):
@@ -93,8 +93,8 @@ class WarpInflight(unittest.TestCase):
                 d = s["variants"][mode].get(v)
                 if v == "ring4" or d is None:
                     continue
-                self.assertAlmostEqual(d["b_w_w1"], wi.inflight_of(v) * 512, delta=1.0)
-                self.assertEqual(d["warp_bytes_in_flight"], wi.inflight_of(v) * 512)
+                self.assertAlmostEqual(d["b_w_w1"], wi.warp_bytes_of(v), delta=1.0)
+                self.assertEqual(d["warp_bytes_in_flight"], wi.warp_bytes_of(v))
         # chain1 runs 2 GB/s a warp: linear up to 45 warps, so through W = 32 free and, with 90
         # of 96 GB/s at W = 48 (94 %), through 48 placed. chain4 saturates past 11 warps (W = 12
         # still keeps 94 %).
@@ -298,10 +298,14 @@ class WarpInflight(unittest.TestCase):
 
     def test_source_and_parser_agree(self):
         self.assertTrue(wi.PROBE_VALUE.fullmatch(wi.checked_in_probe()))
-        variants = re.findall(r'\{"(\w+)", (\d+), (true|false), stream<(\d+), (true|false)>\}', CU)
-        self.assertEqual({n: (int(f), r == "true") for n, f, r, _, _ in variants}, wi.VARIANTS)
-        for _, f, r, tf, tr in variants:
-            self.assertEqual((f, r), (tf, tr))
+        # {"name", F, ring, stream<F, ring>} or, for the 8- / 4-byte chains (probe 7),
+        # {"name", F, ring, stream<F, ring, B>, B}.
+        variants = re.findall(r'\{"(\w+)", (\d+), (true|false), stream<(\d+), (true|false)'
+                              r'(?:, (\d+))?>(?:, (\d+))?\}', CU)
+        self.assertEqual({n: (int(f), r == "true", int(b or 16))
+                          for n, f, r, _, _, _, b in variants}, wi.VARIANTS)
+        for _, f, r, tf, tr, tb, b in variants:
+            self.assertEqual((f, r, tb), (tf, tr, b))
         grid = re.search(r"w_list\[\] = \{([^}]*)\}", CU).group(1)
         self.assertEqual(tuple(int(x) for x in grid.split(",")), wi.W_GRID)
         ks = re.search(r"k_list\[\] = \{([^}]*)\}", CU).group(1)
@@ -312,16 +316,25 @@ class WarpInflight(unittest.TestCase):
         self.assertIn("ld.global.cs.v4.u32", CU)
 
     def test_sass_loads(self):
-        def fn(f, ring, loads):
-            name = f"_ZN45_GLOBAL__N__x_6streamILi{f}ELb{int(ring)}EEEvPKhyyiPKijPjPNS_3RecES5_"
-            body = "".join(f"        /*{i:04x}*/                   LDG.E.EF.128 R4, [R4.64] ;\n"
+        width = {16: "LDG.E.EF.128", 8: "LDG.E.EF.64", 4: "LDG.E.EF"}
+
+        def fn(f, ring, b, loads):
+            name = (f"_ZN45_GLOBAL__N__x_6streamILi{f}ELb{int(ring)}ELi{b}EEEvPKhyyiPKijPjPNS_"
+                    "3RecES5_")
+            body = "".join(f"        /*{i:04x}*/                   {width[b]} R4, [R4.64] ;\n"
                            for i in range(loads))
+            # The `active` flag's plain 4-byte load is no variant's, nor is a 2-byte one.
             return (f"\t\tFunction : {name}\n        /*0000*/              @P0 LDG.E R4, "
-                    f"[R4.64] ;\n{body}        /*0ff0*/                   EXIT ;\n")
-        sass = "".join(fn(f, ring, wi.sass_loads_of(v)) for v, (f, ring) in wi.VARIANTS.items())
+                    f"[R4.64] ;\n        /*0008*/              @P0 LDG.E.U16 R4, [R4.64] ;\n"
+                    f"{body}        /*0ff0*/                   EXIT ;\n")
+        sass = "".join(fn(f, ring, b, wi.sass_loads_of(v))
+                       for v, (f, ring, b) in wi.VARIANTS.items())
         self.assertEqual(wi.sass_loads(sass), {v: wi.sass_loads_of(v) for v in wi.VARIANTS})
         with self.assertRaises(ValueError):
-            wi.sass_loads(fn(1, False, 1))
+            wi.sass_loads(fn(1, False, 16, 1))
+        self.assertTrue(wi._is_ldg("LDG.E.EF", 4) and not wi._is_ldg("LDG.E.EF.64", 4))
+        self.assertFalse(wi._is_ldg("LDG.E", 4))
+        self.assertTrue(wi._is_ldg("LDG.E.EF.64", 8) and not wi._is_ldg("LDG.E.EF.128", 8))
 
     @staticmethod
     def body(lines):
@@ -364,7 +377,7 @@ class WarpInflight(unittest.TestCase):
         self.assertFalse(wi.chain_all_in_flight(bound, 8192, 256.0, 234.0))
         self.assertEqual(wi.CAP_CHAINS, {"chain8": 8, "chain16": 16})
         for v, n in wi.CAP_CHAINS.items():
-            self.assertEqual(wi.VARIANTS[v], (n, False))
+            self.assertEqual(wi.VARIANTS[v], (n, False, 16))
 
     def test_peak_in_flight(self):
         ld = "LDG.E.EF.128 R{}, [R2.64+0x{:x}]"
@@ -429,7 +442,7 @@ class WarpInflight(unittest.TestCase):
         self.refused(SAMPLE.replace(wi.source_sha256(), "0" * 64), "source_sha256")
         self.refused(SAMPLE.replace(f"probe {wi.checked_in_probe()}", "probe warp_inflight 999"),
                      "checked-in probe")
-        self.refused(SAMPLE.replace("ring4:12", "ring4:8"), "16-byte loads")
+        self.refused(SAMPLE.replace("ring4:12", "ring4:8"), "loads per kernel")
         self.refused(SAMPLE.replace("after the run: 0", "after the run: 1 (pid 42)"),
                      "another compute process")
         self.refused(SAMPLE.replace("note compute processes on the probe's GPU before the run: 0\n",
@@ -483,7 +496,7 @@ class WarpInflight(unittest.TestCase):
         # probe 3 run.
         ring8 = row_line("free", 1, "ring8", 1)
         self.refused(text.replace("selfcheck ok", ring8 + "selfcheck ok"), "outside the grid")
-        self.refused(text.replace("ring4:12", "ring4:12 ring8:24"), "16-byte loads")
+        self.refused(text.replace("ring4:12", "ring4:12 ring8:24"), "loads per kernel")
         self.refused(text.replace(wi.EARLIER_PROBES["warp_inflight 3"]["source_sha256"],
                                   wi.source_sha256()), "source_sha256")
         self.refused(text.replace("probe warp_inflight 3", "probe warp_inflight 2"),
@@ -734,7 +747,7 @@ class WarpInflight(unittest.TestCase):
         reading as a warp held to `cap_bytes` in flight: a card that saturates."""
         def one(m):
             mode, k, v, w = m.group(1), int(m.group(2)), m.group(3), int(m.group(4))
-            if wi.inflight_of(v) * wi.WARP_LOAD <= cap_bytes or (only and v not in only):
+            if wi.warp_bytes_of(v) <= cap_bytes or (only and v not in only):
                 return m.group(0)
             return row_line(mode, k, v, w, gbps=min(P_GBPS, w * cap_bytes / L_NS)).strip()
         return re.sub(r"^row (\S+) (\d+) (\S+) \d+ (\d+) .*$", one, text, flags=re.M)
@@ -791,6 +804,70 @@ class WarpInflight(unittest.TestCase):
             self.assertEqual(wi.cmd_run(args), 3)
         popen.assert_not_called()
         self.assertIn("ring8 11 of 16", err.getvalue())
+
+    def test_committed_fill_goes_with_bytes(self):
+        # Every committed probe 7 run (#771): at equal bytes a warp keeps in flight (512-4096 B), its
+        # 8- and 4-byte chains' windows read within 6 % of the 16-byte chain's (the widest: the
+        # GV100's 4-byte chain at 4 KB, x1.054). With a cost per load they would read x2-x4 of it.
+        # The window is not linear in the bytes everywhere (the GV100's chain2 reads x1.09 of the
+        # least-squares line, its chain16 x0.95), so the check is width against width, not against F.
+        runs = 0
+        for name in sorted(os.listdir(wi.DEFAULT_INPUTS)):
+            with open(os.path.join(wi.DEFAULT_INPUTS, name)) as f:
+                head, rows = wi.parse_run(f.read())
+            if head["probe"] != "warp_inflight 7":
+                continue
+            runs += 1
+            self.assertIsNotNone(wi.fill_rate(rows), name)
+            window = {}
+            for r in rows:
+                if (r["mode"], r["k"], r["w"]) == ("free", 1, 1) and r["variant"].startswith("chain"):
+                    b = wi.warp_bytes_of(r["variant"])
+                    window.setdefault(b, {})[wi.load_bytes_of(r["variant"])] = b / r["gbps"]
+            for b, by_width in window.items():
+                for width in (8, 4):
+                    if 16 in by_width and width in by_width:
+                        ratio = by_width[width] / by_width[16]
+                        self.assertTrue(0.94 <= ratio <= 1.06, f"{name} {b} B {width}-byte: x{ratio:.3f}")
+        self.assertGreaterEqual(runs, 7)
+
+    def test_fill_rate(self):
+        # A lone warp whose window takes L0 plus its other bytes at F bytes a clock (#771): the
+        # chains of every width give F back, the ring rows meet the law with the fill, and the
+        # plain L0 reads them x(1 + (b - 512) / (F x MHz x 1e-3 x L0)) above.
+        fill, mhz, l0 = 18.0, 2000.0, 260.0
+
+        def gbps(v, w=1):
+            b = wi.warp_bytes_of(v)
+            return w * b / (l0 + (b - 512) / (fill * mhz * 1e-3))
+
+        rows = [{"mode": "free", "k": 1, "w": 1, "variant": v, "gbps": gbps(v), "sm_mhz": mhz}
+                for v, (_, ring, _) in wi.VARIANTS.items() if not ring]
+        self.assertAlmostEqual(wi.fill_rate(rows), fill, delta=0.01)
+        # Within a cap only the chains under it are fit; one chain past chain1 is too few.
+        self.assertAlmostEqual(wi.fill_rate(rows, 2048), fill, delta=0.01)
+        self.assertIsNone(wi.fill_rate([r for r in rows if r["variant"] in ("chain1", "chain2")]))
+        self.assertIsNone(wi.fill_rate([r for r in rows if r["variant"] != "chain1"]))
+        flat = [dict(r, gbps=wi.warp_bytes_of(r["variant"]) / l0) for r in rows]
+        self.assertIsNone(wi.fill_rate(flat))  # no slope: the plain law, no fill
+        self.assertEqual(wi.window_ns(4096, l0, None, mhz), l0)
+        self.assertAlmostEqual(wi.window_ns(512, l0, fill, mhz), l0)
+        self.assertAlmostEqual(wi.window_ns(4096, l0, fill, mhz), l0 + 3584 / 36.0)
+        row = {"facts": {"sm_dram_bytes_per_clock_free": {"value": 32.0},
+                         "sm_dram_bytes_per_clock_placed": {"value": 32.0},
+                         "dram_stream_latency_ns": {"value": l0},
+                         "max_warp_bytes_in_flight": {"value": 8192.0},
+                         "warp_fill_bytes_per_clock": {"value": fill}},
+               "warp_bytes_saturated": False}
+        rings = {v: {m: [[w, gbps(v, w), mhz] for w in (1, 2, 4)] for m in wi.MODES}
+                 for v in wi.CHECKED_RINGS}
+        ratios = wi.law_ratios(row, rings)
+        self.assertTrue(all(abs(r - 1) < 1e-9 for *_, r in ratios), ratios[:3])
+        self.assertTrue(wi.within_bounds(ratios))
+        row["facts"]["warp_fill_bytes_per_clock"]["value"] = None
+        plain = wi.law_ratios(row, rings)
+        self.assertAlmostEqual(max(r for *_, r in plain), 1 + 3584 / 36.0 / l0, places=6)
+        self.assertFalse(wi.within_bounds(plain))
 
     def test_warp_saturation(self):
         # The made-up card follows its count: its chains hold every load (no cap). A card held to

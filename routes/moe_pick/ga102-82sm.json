@@ -7,9 +7,9 @@
  },
  "source": "tools/bench/moe_expert_law.py pick (the expert-call law v2, #987): priced, not measured",
  "inputs": {
-  "tools/bench/moe_expert_law.py": "d820b05454e2067a2e6e44f58c9647a198b95457202749659e2c09d0c3863610",
+  "tools/bench/moe_expert_law.py": "64c90a0dcb1716c54c3e82c129b30fb854737af05acabfd5304e4168b142138b",
   "src/ops/generic/data/kernel_facts/sm_86.txt moegemm+moer8": "8d05eadb45f14dcc10e6b2b219376f6a99de1161169581d2953be8556fdc5ead",
-  "src/core/data/warp_inflight/warp_inflight_86.txt": "7f833fe85115b79730178ffa49b2325e8dbc0966779897c840fe2929f5cd3cc9",
+  "src/core/data/warp_inflight/warp_inflight_86.txt": "4877397552337546d8fd30ba3f6867214f7e1641ea39de94f20f15fafa68a750",
   "src/core/data/gpu_facts.json archs": "7964780ae27886e65aae639bb45f8ab14813bbb9fa0e3ffdda311df23f8e09bf"
  },
  "moe": [

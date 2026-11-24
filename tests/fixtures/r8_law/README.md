@@ -24,3 +24,10 @@ tokens on, the predictor reads the kernel the launch runs with a workspace: the 
 verify form where the codec has one (`kPre`). At 8 tokens there is no other form, so a codec
 without it answers `none` (36 of the 192 problems; 24 on the GV100), as the bench cannot time it
 either.
+
+## Law v3
+
+`predicted_v3_hold_<board>_t<NT>.csv` is the same command on PR 1180's law (#771): a warp's exposed DRAM
+latency is the window L0 + (b_w - 512 B) / F of its counted bytes, not L0. Made at c25cfca34 (the build of
+PR 1180's head; its later commits change no law input) before the holdout grids were read against it; the
+v2 files stay as the record. test_r8_law holds the selector to the v3 T = 1 files.

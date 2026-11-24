@@ -118,6 +118,14 @@ void rows_equal_the_file(const Json& file) {
         expect(row->provenance == "Measured" && j.at("provenance") == "Measured",
                where + ": provenance Measured");
         expect(row->sms == j.at("sms").get<int>(), where + ": sms");
+        {
+            const Json& f = j.at("facts").at("warp_fill_bytes_per_clock");
+            expect(f.at("unit").get<std::string>() == "B/clk", where + ": F unit");
+            expect(f.at("value").is_null()
+                       ? !row->warp_fill_bytes_per_clock
+                       : row->warp_fill_bytes_per_clock == f.at("value").get<double>(),
+                   where + ": warp_fill_bytes_per_clock");
+        }
         for (const Expected& e : expected_facts()) {
             const Json& f = j.at("facts").at(e.name);
             expect(f.at("unit").get<std::string>() == e.unit, where + ": " + e.name + " unit");

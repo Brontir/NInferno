@@ -288,13 +288,14 @@ void print_grid(const kr::Grid& g) {
                 g.ctas, g.waves, g.occupancy, g.rounds, g.warps, g.fill);
 }
 
-// The DRAM law of #690 (kernel_roofline.h dram_terms): P, b_w, the busiest SM's first-round rate
-// R_sm(W) = min(P, W x b_w / L0), and which bound held.
+// The DRAM law of #690 (kernel_roofline.h dram_terms): P, b_w, the window, the busiest SM's
+// first-round rate R_sm(W) = min(P, W x b_w / (L0 + (b_w - 512 B) / F)), and which bound held.
 void print_dram_law(const kr::DramTerms& d) {
     std::printf("  dram law: P %.1f GB/s an SM (%s carve-out), b_w %.0f B a warp (counted %.0f), "
-                "R_sm %.1f GB/s; bus %.2f us, busiest SM %.2f us: the %s bound\n",
+                "window %.1f ns, R_sm %.1f GB/s; bus %.2f us, busiest SM %.2f us: the %s bound\n",
                 d.peak / 1e9, d.shared_carved ? "shared-largest" : "L1-largest", d.warp_bytes,
-                d.counted, d.round_rate / 1e9, us(d.bus), us(d.sm), d.bus_bound ? "bus" : "per-SM");
+                d.counted, d.window * 1e9, d.round_rate / 1e9, us(d.bus), us(d.sm),
+                d.bus_bound ? "bus" : "per-SM");
 }
 
 // The price the selector offers for an A16 tile's terms: total x the A16 scale, plus the
@@ -442,6 +443,9 @@ int run(const Options& o) {
                     "B/clk placed, ",
                     *chip.dram_latency_s * 1e9, *chip.sm_dram_bytes_per_clock_free,
                     *chip.sm_dram_bytes_per_clock_placed);
+        if (chip.sm_warp_fill_bytes_per_clock) {
+            std::printf("fill F %.2f B/clk, ", *chip.sm_warp_fill_bytes_per_clock);
+        }
         if (chip.sm_max_warp_bytes) {
             std::printf("b_w_max %.0f B\n", *chip.sm_max_warp_bytes);
         } else {

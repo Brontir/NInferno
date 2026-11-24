@@ -406,9 +406,9 @@ void check_kernel_keys() {
 }
 
 // The selector's law (law_r8) is the frozen prediction: on every board the law decides on, every
-// call of its unread holdout grid's T = 1 file (tests/fixtures/r8_law, frozen at 9bdd25031) takes
-// the schedule the file picks; where the law does not decide (GA10x, Turing, GB20x) it answers
-// nothing; and the route's evidence names the law, a cost ranker, where it answered.
+// call of its holdout grid's T = 1 file (tests/fixtures/r8_law, law v3: the DRAM window, #771)
+// takes the schedule the file picks; where the law does not decide (GA10x, Turing, GB20x) it
+// answers nothing; and the route's evidence names the law, a cost ranker, where it answered.
 void check_selector_is_the_prediction() {
     struct HoldBoard {
         const char* name;
@@ -434,7 +434,7 @@ void check_selector_is_the_prediction() {
             expect(!g::law_r8(p), std::string("the law answered off its generations: ") + b.name);
             continue;
         }
-        std::ifstream in(dir / ("predicted_v2_hold_" + std::string(b.name) + "_t1.csv"));
+        std::ifstream in(dir / ("predicted_v3_hold_" + std::string(b.name) + "_t1.csv"));
         expect(static_cast<bool>(in), std::string("no T=1 prediction file: ") + b.name);
         // (format, epilogue, n, k) -> the schedule the file picks.
         std::map<std::string, std::string> picks;
@@ -590,7 +590,7 @@ void check_retired_entries() {
         expect(same, "retired " + line + ": the law no longer gives its measured schedule");
         ++checked;
     }
-    expect(checked == 27, "27 retired entries checked, not " + std::to_string(checked));
+    expect(checked == 29, "29 retired entries checked, not " + std::to_string(checked));
     std::cout << "retired R8 table entries: the law gives all " << checked
               << " their measured schedule\n";
 }
