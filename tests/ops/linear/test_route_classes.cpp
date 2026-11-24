@@ -31,6 +31,7 @@
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_i8_schedules.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
+#include "ops/generic/kernel_facts.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
 
@@ -42,6 +43,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -1539,6 +1541,76 @@ int run_board(const TestBoard& b) {
         check_staged(w, d.features, where, staged_refused, fail);
         check_tiled(w, d.features, where, tiled_refused, fail);
         check_manifest(manifest, w, LinearPolicy::A16Only, where, manifest_checked, fail);
+    }
+    // The vector family's few-row MMA tile (Route{GgmlVec, 1}, #1162, #1189) on the substituted
+    // board: described from its instance's committed facts (the "vecmma" section,
+    // kernel_facts::vec_mma_facts), registers, spill and static shared memory, with 128 threads
+    // and one CTA per 16 output rows (8 under SwiGLU), never this build's kernel. A board with no
+    // release snapshot (sass_arch nullopt) is described with no resources.
+    {
+        namespace kf = generic::kernel_facts;
+        const generic::Route mma{generic::Family::GgmlVec, 1};
+        const std::optional<std::string> arch = kf::sass_arch();
+        int mma_described                     = 0;
+        // The ggml_type values the snapshot keys rows by (third_party/ggml-quants ggml.h).
+        const std::pair<QType, int> kinds[] = {
+            {QType::GGML_Q4_K, 12}, {QType::GGML_Q5_K, 13}, {QType::GGML_Q6_K, 14}};
+        for (const auto& [qtype, ggml_type] : kinds) {
+            constexpr std::int32_t kRows = 200, kK = 5120; // 200: a last CTA of 8 (4 gated) rows
+            for (const bool gated_call : {false, true}) {
+                const auto host = quantized_weight::make_patterned_weight(
+                    qtype, gated_call ? 2 * kRows : kRows, kK, 7U, {});
+                const Weight w = host.device_weight(payload);
+                if (!generic::supports(w) ||
+                    !generic::route_admits(mma, w, LinearPolicy::AllowA8)) {
+                    continue;
+                }
+                const auto epilogue =
+                    gated_call ? generic::Epilogue::SwiGlu : generic::Epilogue::Store;
+                const std::string at = std::string(generic::qtype_name(qtype)) +
+                                       (gated_call ? " swiglu" : "") + " " +
+                                       generic::route_name(mma);
+                for (const std::int32_t t : {1, 8}) {
+                    const auto r = generic::route_resources(mma, w, epilogue, t, kRows);
+                    if (!r) {
+                        fail(at + " T=" + std::to_string(t) + ": admitted, not described");
+                        continue;
+                    }
+                    ++mma_described;
+                    const unsigned per_cta = gated_call ? 8U : 16U;
+                    const unsigned grid    = (kRows + per_cta - 1) / per_cta;
+                    int registers          = 0;
+                    std::size_t local = 0, smem = 0;
+                    if (arch) {
+                        const auto facts = kf::vec_mma_facts(*arch, ggml_type, gated_call);
+                        if (!facts) {
+                            fail(at + ": no vecmma row in the sm_" + *arch + " snapshot");
+                            continue;
+                        }
+                        registers = facts->registers;
+                        local     = facts->spill_bytes();
+                        smem      = facts->static_shared_bytes;
+                    }
+                    if (r->registers != registers || r->local_bytes != local ||
+                        r->static_smem != smem || r->threads != 128 || r->grid_x != grid ||
+                        r->grid_y != 1 || (arch && registers <= 0)) {
+                        fail(at + " T=" + std::to_string(t) + ": described " +
+                             std::to_string(r->registers) + " regs " +
+                             std::to_string(r->local_bytes) + " B local " +
+                             std::to_string(r->static_smem) + " B static, " +
+                             std::to_string(r->threads) + " threads, grid " +
+                             std::to_string(r->grid_x) + "x" + std::to_string(r->grid_y) +
+                             "; the facts " + std::to_string(registers) + " regs " +
+                             std::to_string(local) + " B local " + std::to_string(smem) +
+                             " B static, grid " + std::to_string(grid));
+                    }
+                }
+            }
+        }
+        const bool mma_built = NINFERNO_BUILD_ARCH == 0 || NINFERNO_BUILD_ARCH >= 80;
+        if (mma_built && d.features.mma_bf16_native && mma_described == 0) {
+            fail("no few-row MMA tile described on a board with the native bf16 MMA");
+        }
     }
     // ggml_mmq::device_supported reads the board (device_class), so a board with tensor mma.sync
     // admits some weight to the matrix kernel too.

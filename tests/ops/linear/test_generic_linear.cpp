@@ -1224,6 +1224,89 @@ int check_r8_schedules_agree(const Format& f, Op op, std::int32_t out_rows, std:
     return failures;
 }
 
+// The vector family's two schedules on the same call (#1189): the dp4a kernel (Route{GgmlVec, 0})
+// and the few-row MMA tile (Route{GgmlVec, 1}, #1162) take the same q8_1 activation and the same
+// integer dot products of each 32-value block; only the float sums of the block terms run in
+// another order. So the tile matches the dp4a kernel to a few bf16 rounding steps, far tighter
+// than the A8 oracle's tolerance: a wrong sub-block scale or min term that the oracle passes fails
+// here. Each value may differ by 2^-7 of the larger of the two (one to two bf16 steps), and by
+// 2^-10 of the output's largest magnitude where the terms cancel.
+int check_vec_schedules_agree(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
+                              std::uint32_t seed) {
+    const generic::Route vec{generic::Family::GgmlVec, 0};
+    const generic::Route mma{generic::Family::GgmlVec, 1};
+    const std::int32_t rows_n  = gated(op) ? 2 * out_rows : out_rows;
+    const CachedWeight& cached = cached_weight(f.qtype, rows_n, k, seed);
+    const Weight& weight       = cached.device->weight;
+    if (!generic::route_admits(vec, weight, ops::LinearPolicy::AllowA8) ||
+        !generic::route_admits(mma, weight, ops::LinearPolicy::AllowA8)) {
+        return 0;
+    }
+    constexpr std::int32_t wide = 8;
+    const auto activation       = make_linear_activation(k, wide, seed + 3U, ActivationCompute::A8);
+    DeviceBuffer x(activation.size() * 2);
+    x.copy_from_host(activation.data(), x.bytes);
+    DeviceArena workspace(std::max(generic::route_workspace_bytes(vec, k, wide),
+                                   generic::route_workspace_bytes(mma, k, wide)));
+    // The add epilogue reads a residual: the same one for both schedules.
+    std::vector<std::uint16_t> residual(static_cast<std::size_t>(out_rows) * wide);
+    {
+        std::mt19937 rng(seed + 11U);
+        std::uniform_real_distribution<float> u(-0.5F, 0.5F);
+        for (auto& v : residual) v = f32_to_bf16(u(rng));
+    }
+    const auto run = [&](generic::Route route, std::int32_t t) {
+        DeviceBuffer out(static_cast<std::size_t>(out_rows) * t * 2);
+        out.copy_from_host(residual.data(), out.bytes);
+        Tensor tx(x.p, DType::BF16, {k, t});
+        Tensor tout(out.p, DType::BF16, {out_rows, t});
+        generic::Call call;
+        call.x               = &tx;
+        call.weight          = &weight;
+        call.rows            = out_rows;
+        call.up_offset       = gated(op) ? out_rows : 0;
+        call.gelu_gate       = op == Op::GeGlu;
+        call.relu2           = op == Op::Relu2;
+        call.epilogue        = gated(op)       ? generic::Epilogue::SwiGlu
+                               : op == Op::Add ? generic::Epilogue::AddResidual
+                                               : generic::Epilogue::Store;
+        call.out[0]          = &tout;
+        call.segment_rows[0] = out_rows;
+        generic::run_route(route, call, &workspace, nullptr);
+        cuda_check(cudaDeviceSynchronize(), "run");
+        return download_bf16(out.p, static_cast<std::size_t>(out_rows) * t);
+    };
+    int failures = 0;
+    double worst = 0.0; // the largest difference over its bound
+    for (std::int32_t t = 1; t <= wide; ++t) {
+        const auto a = run(vec, t);
+        const auto b = run(mma, t);
+        float scale  = 0.0F;
+        for (const std::uint16_t v : a) scale = std::max(scale, std::fabs(bf16_to_f32(v)));
+        int bad = 0;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            const float x0 = bf16_to_f32(a[i]), x1 = bf16_to_f32(b[i]);
+            const float bound =
+                std::ldexp(std::max(std::fabs(x0), std::fabs(x1)), -7) + std::ldexp(scale, -10);
+            const double d = std::fabs(static_cast<double>(x0) - x1);
+            if (!(d <= bound)) {
+                if (++bad <= 3) {
+                    std::cerr << f.name << " " << op_name(op) << " [" << rows_n << "," << k
+                              << "] T=" << t << " value " << i << ": schedule 0 " << x0
+                              << ", schedule 1 " << x1 << " (bound " << bound << ")\n";
+                }
+            }
+            if (bound > 0.0F) worst = std::max(worst, d / bound);
+        }
+        failures += bad > 0 ? 1 : 0;
+    }
+    if (failures == 0) {
+        std::cout << f.name << " " << op_name(op) << " [" << rows_n << "," << k
+                  << "]: ggml_vec.mma within " << worst << " of its bound of ggml_vec, T 1-8\n";
+    }
+    return failures;
+}
+
 // The invariant route profile (--activations exact): every call through select_route, a single
 // token included and whatever the policy allows, gives a token the bytes of the wide call.
 int check_invariant_profile(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
@@ -2298,6 +2381,19 @@ int main() {
                                                ActivationCompute::A8);
                     }
                 }
+            }
+        }
+    }
+
+    // 2d''. The few-row MMA tile against the dp4a kernel on the same calls, T 1-8 (#1189): 200 and
+    // 196 rows leave the last CTA part full, K 2560 and 5120 several superblocks a warp.
+    for (const Format& f : kFormats) {
+        if (!on_build(f) || !generic::ggml_vec_format(f.qtype)) continue;
+        for (const auto& [n, k] :
+             std::vector<std::pair<std::int32_t, std::int32_t>>{{200, 2560}, {196, 5120}}) {
+            for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu, Op::GeGlu, Op::Relu2}) {
+                failures +=
+                    check_vec_schedules_agree(f, op, n, k, 43U + static_cast<std::uint32_t>(k));
             }
         }
     }
