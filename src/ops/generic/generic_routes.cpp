@@ -66,11 +66,8 @@ RmmaScheduleInfo rmma_schedule_info(int index) {
 }
 
 bool rmma_schedule_launchable(int index) {
-#ifdef NINFERNO_WITHOUT_NVFP4
-    return rmma_schedule_info(index).cluster == 1;
-#else
+    // LAB #1048: the C > 1 schedules run on a build without clusters too (the global split).
     return index >= 0 && index < rmma_schedule_count();
-#endif
 }
 
 int w4a4_schedule_count() {
