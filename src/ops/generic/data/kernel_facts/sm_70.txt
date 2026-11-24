@@ -9112,8 +9112,8 @@ family vec
 # products, so k_iter is 1024 for the runtime-K loop (a slice of 32 values a lane) and KS
 # for the unrolled ones (the whole K in one trip of the row loop). Q2_K (10) and IQ1_M
 # (29) also take dp4a for the activation's block sums, so theirs is above it (1536,
-# 7680, 26112, or between where the compiler shares part of the sum between the rows; 0
-# where their dp4a count does not divide by 2 x T).
+# 7680, 26112: 1.5x; up to 1.6x in some instances; 0 where their dp4a count does not
+# divide by 2 x T).
 # A row whose loop columns are all 0 (no loop, nothing outside it) is unknown flow: an
 # indirect branch the counter cannot follow (a compiled switch; sm_100 / sm_120a gated
 # T 3-8); its resources hold, its counts are unknown, not zero.

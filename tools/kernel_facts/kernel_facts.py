@@ -872,7 +872,8 @@ def family_audit(family, rows):
             if c.pro_loops != (0 if k[5] else 1):
                 problems.append(f"{c.pro_loops} quantizer loops (pre {k[5]})")
         elif family == "vec":
-            # ggml's vector kernels: one loop marked by its dp4a, no MMA, k_iter 1024 for the
+            # ggml's vector kernels: a loop marked by its dp4a (the gated T 1 instances on sm_100 /
+            # sm_120a have three candidates; the heaviest is counted), no MMA, k_iter 1024 for the
             # runtime K or KS unrolled (above it for Q2_K and IQ1_M, whose activation sums take
             # dp4a of their own). A row of unknown flow (no loop and nothing outside it) is said
             # as such and not held to the rest.
@@ -1047,8 +1048,8 @@ SECTION_NOTES = {
         "# products, so k_iter is 1024 for the runtime-K loop (a slice of 32 values a lane) and KS",
         "# for the unrolled ones (the whole K in one trip of the row loop). Q2_K (10) and IQ1_M",
         "# (29) also take dp4a for the activation's block sums, so theirs is above it (1536,",
-        "# 7680, 26112, or between where the compiler shares part of the sum between the rows; 0",
-        "# where their dp4a count does not divide by 2 x T).",
+        "# 7680, 26112: 1.5x; up to 1.6x in some instances; 0 where their dp4a count does not",
+        "# divide by 2 x T).",
         "# A row whose loop columns are all 0 (no loop, nothing outside it) is unknown flow: an",
         "# indirect branch the counter cannot follow (a compiled switch; sm_100 / sm_120a gated",
         "# T 3-8); its resources hold, its counts are unknown, not zero.",
