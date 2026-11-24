@@ -36,6 +36,8 @@
 // at once. A ring's steps overlap, so a cap shows there only as a lower rate. A chain issues its
 // next fetch only once every load of this one is back, so a warp held to fewer loads than its
 // count takes at least two DRAM latencies a step (warp_inflight.py chain_all_in_flight).
+// Probe 6 (#757) gives ring4 the clock read ring8 had: without it ptxas kept only 6 of ring4's 8
+// loads a lane in flight on sm_120a.
 //
 // Two placements of the W warps:
 //   free:   k CTAs of W warps (W <= 32), no shared memory and the L1-largest carve-out; the CTA
@@ -196,12 +198,14 @@ __global__ void stream(const unsigned char* buf, unsigned long long base,
                 fetch<F>(a, p + off + (acc & zero));
                 off += kStep;
             }
-            // ptxas issues ring1-4's two fetches back to back after compute(Slot0) (2F loads a
-            // lane in flight, then waited on). At F = 8 it would recycle Slot1's registers
-            // instead, waiting on its first loads before issuing its last ones (about three
-            // round trips a step). A clock read before compute(Slot1) keeps every load of both
-            // fetches ahead of it, as at F <= 4; ring1-4's SASS does not change.
-            if constexpr (F >= 8) acc ^= static_cast<unsigned>(clock64()) & zero;
+            // ptxas issues ring1 and ring2's two fetches back to back after compute(Slot0) (2F
+            // loads a lane in flight, then waited on). From F = 4 it may recycle Slot1's
+            // registers instead, waiting on its first loads before issuing its last ones: ring8
+            // on every arch (about three round trips a step), ring4 on sm_120a (6 of its 8 loads
+            // in flight, nvcc 13.4). A clock read before compute(Slot1) keeps every load of both
+            // fetches ahead of it; ring1 and ring2's SASS does not change. On sm_75-89 ring4
+            // already kept its 8 loads; the read reorders its SASS there, not that count.
+            if constexpr (F >= 4) acc ^= static_cast<unsigned>(clock64()) & zero;
             acc = consume<F>(b, acc);
         }
     }
@@ -385,7 +389,7 @@ int main(int argc, char** argv) {
     const int cc = p.major * 10 + p.minor;
     char pci[32] = {};
     CHECK(cudaDeviceGetPCIBusId(pci, sizeof pci, 0));
-    std::printf("probe warp_inflight 5\n");
+    std::printf("probe warp_inflight 6\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);

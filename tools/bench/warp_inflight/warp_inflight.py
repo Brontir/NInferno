@@ -83,8 +83,10 @@ VARIANTS = {"chain1": (1, False), "chain2": (2, False), "chain4": (4, False),
             "chain8": (8, False), "chain16": (16, False)}
 # The runs of an earlier probe still parse, as what that probe measured: its source's sha256 (the
 # warp_inflight.cu of that version, in the history) and its variants. Probe 3 (#739) had no ring8,
-# which probe 4 (#757) added; probe 5 (#757) added chain8 and chain16. The kernels an earlier
-# probe shares with the checked-in one compile to the same SASS.
+# which probe 4 (#757) added; probe 5 (#757) added chain8 and chain16; probe 6 (#757) gave ring4
+# ring8's clock read (sm_120a kept 6 of its 8 loads without it). The other kernels an earlier
+# probe shares with the checked-in one compile to the same SASS; probe 5's ring4 differs from
+# probe 6's on sm_75-89 in its order only, both keeping 8 loads a lane in flight there.
 EARLIER_PROBES = {
     "warp_inflight 3": {
         "source_sha256": "c903f40008fb45fa109c837b07bd78d9a5dbb565c9906afa1cbcd9b4711d93e8",
@@ -92,6 +94,9 @@ EARLIER_PROBES = {
     "warp_inflight 4": {
         "source_sha256": "58670da851b02a489eff542a37b9f4baf3f97221db6952c82641e20204ff83d1",
         "variants": ("chain1", "chain2", "chain4", "ring1", "ring2", "ring4", "ring8")},
+    "warp_inflight 5": {
+        "source_sha256": "2abe75c6aef0a477cd05bcaf47b7b2c3a3a55cff1a02d3f9205f464a1ae5903c",
+        "variants": tuple(VARIANTS)},
 }
 W_GRID = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
 K_GRID = (1, 2, 4, 8)
