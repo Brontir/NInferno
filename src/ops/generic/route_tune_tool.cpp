@@ -141,6 +141,12 @@ generic::Epilogue parse_epilogue(const std::string& s) {
     throw std::invalid_argument("unknown epilogue " + s);
 }
 
+// Whether --a8-candidates sweeps the format under AllowA8: ggml's matrix kernel or its vector
+// kernel takes it (IQ1_M has the vector kernel only, so its vec rows need the sweep too).
+bool a8_sweep_format(QType qtype) {
+    return generic::ggml_mmq_format(qtype) || generic::ggml_vec_format(qtype);
+}
+
 std::vector<std::int32_t> decode_points() { return {1, 2, 3, 4, 5, 6, 7, 8, 12, 16}; }
 std::vector<std::int32_t> wide_points() { return {24, 32, 48, 64, 96, 128, 192, 256, 512}; }
 
@@ -331,7 +337,7 @@ int route_tune_main(int argc, char** argv) {
                 // The sweep's policy (a8_sweep below): an A16 GGUF block format under
                 // --a8-candidates runs AllowA8.
                 const bool a8_sweep = a8_candidates && p.compute == generic::ComputeClass::A16 &&
-                                      generic::ggml_mmq_format(p.qtype);
+                                      a8_sweep_format(p.qtype);
                 const auto policy = p.compute == generic::ComputeClass::A4
                                         ? ops::LinearPolicy::AllowA4
                                     : p.compute == generic::ComputeClass::A8 || a8_sweep
@@ -397,10 +403,11 @@ int route_tune_main(int argc, char** argv) {
                 }
             }
             // --a8-candidates 1: a GGUF block format keyed a16 is admitted and selected under the
-            // default policy (AllowA8), so the W4A8 tiles and ggml's matrix kernel run beside the
-            // A16 routes at every width, with their prices; the table still takes A16 winners.
+            // default policy (AllowA8), so the W4A8 tiles and ggml's matrix and vector kernels run
+            // beside the A16 routes at every width, with their prices; the table still takes A16
+            // winners.
             const bool a8_sweep = a8_candidates && p.compute == generic::ComputeClass::A16 &&
-                                  generic::ggml_mmq_format(p.qtype);
+                                  a8_sweep_format(p.qtype);
             // An a8 sweep's rows (--routes-out, --selected-out) are the AllowA8 case they time:
             // the collector (tools/bench/regret_collect.py) then judges its int8 picks eligible.
             const char* row_compute = a8_sweep ? "a8" : generic::compute_class_name(p.compute);
