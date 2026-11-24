@@ -191,6 +191,14 @@ __device__ __forceinline__ uint4 ld_stream_v4(const std::uint8_t* p) {
     return v;
 }
 
+// A 16-bit value loaded into a 32-bit register, zero-extended by the load itself (PTX ld with a
+// wider destination): no conversion after the load for ptxas to keep at a branch merge (#1197).
+__device__ __forceinline__ unsigned ld_u16_wide(const unsigned short* p) {
+    unsigned v;
+    asm("ld.global.u16 %0, [%1];\n" : "=r"(v) : "l"(p));
+    return v;
+}
+
 __device__ __forceinline__ std::int64_t nvfp4_scale_offset(const GemmArgs& a, int row, int group) {
     const int row_inner = row & 127;
     return (static_cast<std::int64_t>(row >> 7) * a.scale_tiles + (group >> 2)) * 512 +
@@ -541,12 +549,14 @@ struct Q8Decoder {
     static constexpr int kRun        = 8;
     static constexpr bool kStepScale = true;
 
-    // The scale as the 16 bits it is: held in an `unsigned`, the run merged from the K-bounds
-    // branches (load / masked / zero) got a 0xffff mask right after its load on sm_120a, a wait
-    // that exposed each scale's DRAM round trip (four a K trip, #1197).
+    // The scale's 16 bits loaded straight into a 32-bit register (ld_u16_wide): a C++ load of the
+    // unsigned short gave the run, merged from the K-bounds branches (load / masked / zero), a
+    // 0xffff mask right after its load on sm_120a, and held as an unsigned short a PRMT packing
+    // two scales on sm_86 / sm_89; either reads the loaded value, a wait that exposed each scale's
+    // DRAM round trip (#1197).
     struct Run {
         uint2 codes;
-        unsigned short scale;
+        unsigned scale;
     };
     __device__ static __forceinline__ Run load(const GemmArgs& a, int row, int k0) {
         const int group        = k0 >> 5;
@@ -554,13 +564,14 @@ struct Q8Decoder {
         const std::int64_t gid = static_cast<std::int64_t>(row) * a.groups_per_row + group;
         Run r;
         r.codes = *reinterpret_cast<const uint2*>(a.codes + gid * 32 + lane_offset);
-        r.scale = reinterpret_cast<const unsigned short*>(a.scales)[gid];
+        r.scale = ld_u16_wide(reinterpret_cast<const unsigned short*>(a.scales) + gid);
         return r;
     }
     __device__ static __forceinline__ Run zero() { return {make_uint2(0, 0), 0}; }
     __device__ static __forceinline__ Run masked(const GemmArgs& a, int row, int step_k0) {
         const std::int64_t gid = static_cast<std::int64_t>(row) * a.groups_per_row + (step_k0 >> 5);
-        return {make_uint2(0, 0), reinterpret_cast<const unsigned short*>(a.scales)[gid]};
+        return {make_uint2(0, 0),
+                ld_u16_wide(reinterpret_cast<const unsigned short*>(a.scales) + gid)};
     }
     __device__ static __forceinline__ int code(const Run& r, int v) {
         const unsigned word = v < 4 ? r.codes.x : r.codes.y;
