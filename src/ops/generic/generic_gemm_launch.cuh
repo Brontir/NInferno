@@ -383,7 +383,8 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
         return v != nullptr ? std::atoi(v) : 0;
     }();
     std::size_t lab_smem = smem;
-    if (lab_warps_sm > 0) {
+    if (lab_warps_sm > 0 &&
+        Schedule::kCluster == 1) { // a cluster launch takes no padded shared memory
         static const int sm_count = [] {
             int d = 0, n = 0;
             cudaGetDevice(&d);
