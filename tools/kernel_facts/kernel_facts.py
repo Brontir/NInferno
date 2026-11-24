@@ -494,6 +494,9 @@ class Family:
     def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True,
                  marker=None, prologue=None, waits=False, producer=None, emulated=False,
                  inflight=False):
+        # The C++ reader takes the loads in flight ahead of the producer loop, the columns line
+        # lists them after it: a family carries one or the other (kernel_facts.cpp asserts it).
+        assert not (inflight and producer), name
         self.name = name
         # Whether its rows carry the K loop's global loads in flight a lane
         # (sass_counts.INFLIGHT_FIELDS) after the wait classes: the vec section (#1185), whose

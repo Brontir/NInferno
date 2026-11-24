@@ -108,7 +108,7 @@ static_assert(std::size(kSections) == std::size(kSectionFamilies));
 
 // read_loop takes the loads in flight with the pipe counts, ahead of the producer loop, while the
 // columns line lists the producer loop first (kernel_facts.py's order): no family may carry both
-// (Family and LoopCounts.with_pipes assert the same).
+// (kernel_facts.py's Family and LoopCounts.with_pipes assert the same).
 constexpr bool no_family_with_producer_and_inflight() {
     for (const auto& f : kSections)
         if (f.producer && f.inflight) return false;
