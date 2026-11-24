@@ -53,9 +53,10 @@
 // asked and run, workspace, tile, logical traffic, prepared activation, the cost model's price and
 // the compiled kernel's resources on this board.
 // --a8-candidates 1 admits and selects a GGUF block format under the default policy (AllowA8):
-// the W4A8 tiles, R8 and ggml's matrix kernel are timed and priced at every width beside the A16
-// routes (--routes-out, --selected-out, whose rows then say a8: the AllowA8 case they time), but
-// the W4A8 tiles and R8 never make the table, its bands or its prefill route.
+// the W4A8 tiles, R8 and ggml's matrix and vector kernels (the vector one alone for IQ1_M) are
+// timed and priced at every width beside the A16 routes (--routes-out, --selected-out, whose rows
+// then say a8: the AllowA8 case they time), but the W4A8 tiles and R8 never make the table, its
+// bands or its prefill route.
 // A decode or verify sample (T <= 16) is one call on each of a set of weight copies spanning 2x L2
 // and 128 MiB, as decode runs its layers back to back; --rotate 0 times one call after the L2
 // flush there too, as at the wider widths.
@@ -139,6 +140,12 @@ generic::Epilogue parse_epilogue(const std::string& s) {
     if (s == "add") return generic::Epilogue::AddResidual;
     if (s == "swiglu") return generic::Epilogue::SwiGlu;
     throw std::invalid_argument("unknown epilogue " + s);
+}
+
+// Whether --a8-candidates sweeps the format under AllowA8: ggml's matrix kernel or its vector
+// kernel takes it (IQ1_M has the vector kernel only, so its vec rows need the sweep too).
+bool a8_sweep_format(QType qtype) {
+    return generic::ggml_mmq_format(qtype) || generic::ggml_vec_format(qtype);
 }
 
 std::vector<std::int32_t> decode_points() { return {1, 2, 3, 4, 5, 6, 7, 8, 12, 16}; }
@@ -331,7 +338,7 @@ int route_tune_main(int argc, char** argv) {
                 // The sweep's policy (a8_sweep below): an A16 GGUF block format under
                 // --a8-candidates runs AllowA8.
                 const bool a8_sweep = a8_candidates && p.compute == generic::ComputeClass::A16 &&
-                                      generic::ggml_mmq_format(p.qtype);
+                                      a8_sweep_format(p.qtype);
                 const auto policy = p.compute == generic::ComputeClass::A4
                                         ? ops::LinearPolicy::AllowA4
                                     : p.compute == generic::ComputeClass::A8 || a8_sweep
@@ -397,10 +404,11 @@ int route_tune_main(int argc, char** argv) {
                 }
             }
             // --a8-candidates 1: a GGUF block format keyed a16 is admitted and selected under the
-            // default policy (AllowA8), so the W4A8 tiles and ggml's matrix kernel run beside the
-            // A16 routes at every width, with their prices; the table still takes A16 winners.
+            // default policy (AllowA8), so the W4A8 tiles and ggml's matrix and vector kernels run
+            // beside the A16 routes at every width, with their prices; the table still takes A16
+            // winners.
             const bool a8_sweep = a8_candidates && p.compute == generic::ComputeClass::A16 &&
-                                  generic::ggml_mmq_format(p.qtype);
+                                  a8_sweep_format(p.qtype);
             // An a8 sweep's rows (--routes-out, --selected-out) are the AllowA8 case they time:
             // the collector (tools/bench/regret_collect.py) then judges its int8 picks eligible.
             const char* row_compute = a8_sweep ? "a8" : generic::compute_class_name(p.compute);
@@ -655,6 +663,15 @@ int route_tune_main(int argc, char** argv) {
                            p.n % ops::ggml_mmq::kRowMultiple == 0 &&
                            generic::ggml_mmq_admits(w.weight, ops::LinearPolicy::AllowA8)) {
                     time_route({generic::Family::GgmlMmq, 0}, t);
+                }
+                // ggml's vector kernel at every width it runs (generic::vec_call), timed and never
+                // tabled, like the A8 routes: otherwise it was timed only where the selection or
+                // the ranker took it, and a sweep could not say where the vec rule leaves it out
+                // wrongly (the analyzer's coverage grids, 24.11).
+                if (a8_sweep && generic::vec_call(w.weight, ops::LinearPolicy::AllowA8, t) &&
+                    generic::route_admits({generic::Family::GgmlVec, 0}, w.weight,
+                                          ops::LinearPolicy::AllowA8)) {
+                    time_route({generic::Family::GgmlVec, 0}, t);
                 }
                 winners.push_back({t, best_route});
                 if (selected_csv) {
