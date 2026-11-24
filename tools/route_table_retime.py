@@ -186,7 +186,8 @@ def main():
                     help="with --evidence: keep a move only where the second grid repeats it: at "
                          "every moved or filled count it timed, the range's route is within --margin "
                          "of that grid's fastest table route or faster than the old route by more "
-                         "than --margin")
+                         "than --margin, and the move lowers that grid's worst regret of the live "
+                         "moved counts by more than --margin (a tie there keeps the entry)")
     a = ap.parse_args()
     if a.repeat and not a.evidence:
         ap.error("--repeat needs --evidence (the second grid it checks the moves on)")
@@ -373,7 +374,8 @@ def main():
                 # second grid's fastest, a test a tie also passes (#1205: 248320 x 2560, 0.0-0.5 %
                 # in the second grid against 1 % in the first). The move as a whole is held to the
                 # first grid's own test there: it lowers the worst regret of the live moved counts
-                # by more than the margin. Counts the second grid did not time take no part.
+                # by more than the margin. A count takes no part where the second grid has no A16
+                # time of its old or its new route (untimed, or ggml_mmq where it timed W4A8).
                 def regret2(route, t):
                     times = a16_routes(ev_grid.get((key, t), {}), t)
                     return times[route] / min(times.values()) - 1 if route in times else None
