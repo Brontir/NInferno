@@ -4,6 +4,8 @@
 // launch_rmma<Decoder> once (generic_gemm_<format>.cu), so the whole list is compiled per format.
 
 #include "core/device.h"
+#include <algorithm>
+#include <cstdlib>
 #include "core/device_class.h"
 #include "core/kernel_occupancy.h"
 #include "core/per_device.h"
@@ -374,10 +376,43 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
         described->sums = static_cast<int>(Sums);
         return;
     }
+    // LAB #1199: NINFERNO_RMMA_WARPS_SM=W caps the CTAs an SM to W / warps by padding the dynamic
+    // shared memory, for a grid of more than one full wave at that cap.
+    static const int lab_warps_sm = [] {
+        const char* v = std::getenv("NINFERNO_RMMA_WARPS_SM");
+        return v != nullptr ? std::atoi(v) : 0;
+    }();
+    std::size_t lab_smem = smem;
+    if (lab_warps_sm > 0) {
+        static const int sm_count = [] {
+            int d = 0, n = 0;
+            cudaGetDevice(&d);
+            cudaDeviceGetAttribute(&n, cudaDevAttrMultiProcessorCount, d);
+            return n;
+        }();
+        static const int smem_sm = [] {
+            int d = 0, n = 0;
+            cudaGetDevice(&d);
+            cudaDeviceGetAttribute(&n, cudaDevAttrMaxSharedMemoryPerMultiprocessor, d);
+            return n;
+        }();
+        const int per_sm = std::max(1, lab_warps_sm / (Schedule::kThreads / 32));
+        if (static_cast<long long>(grid.x) * grid.y * Schedule::kCluster >
+            static_cast<long long>(sm_count) * per_sm) {
+            const std::size_t pad = static_cast<std::size_t>(smem_sm / per_sm - 1024);
+            if (pad > lab_smem) {
+                lab_smem = pad;
+                cudaFuncSetAttribute(reinterpret_cast<const void*>(
+                                         &rmma_kernel<Decoder, Schedule, E, Latency, Sums>),
+                                     cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                     static_cast<int>(lab_smem));
+            }
+        }
+    }
     if (Schedule::kCluster == 1 &&
         ((args.join_previous == 0 && args.pdl_prefetch == 0) || !pdl::supported())) {
         rmma_kernel<Decoder, Schedule, E, Latency, Sums>
-            <<<grid, Schedule::kThreads, smem, stream>>>(args);
+            <<<grid, Schedule::kThreads, lab_smem, stream>>>(args);
     } else {
         cudaLaunchAttribute attributes[2]{};
         unsigned count = 0;
@@ -396,7 +431,7 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
         cudaLaunchConfig_t config{};
         config.gridDim  = dim3(grid.x, grid.y, Schedule::kCluster);
         config.blockDim = dim3(Schedule::kThreads);
-        config.dynamicSmemBytes = smem;
+        config.dynamicSmemBytes = lab_smem;
         config.stream   = stream;
         config.attrs    = attributes;
         config.numAttrs = count;
