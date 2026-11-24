@@ -3750,7 +3750,7 @@
     [
      1,
      8,
-     "rmma.m1.n1.w1x8"
+     "rmma.m1.n1.w1x16"
     ],
     [
      9,
@@ -3811,7 +3811,49 @@
      "rmma.m1.n8.w4x1"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     1,
+     136.19,
+     132.1
+    ],
+    [
+     2,
+     137.22,
+     132.61
+    ],
+    [
+     3,
+     138.24,
+     134.14
+    ],
+    [
+     4,
+     137.22,
+     134.14
+    ],
+    [
+     5,
+     138.24,
+     135.17
+    ],
+    [
+     6,
+     138.24,
+     134.66
+    ],
+    [
+     7,
+     138.75,
+     135.17
+    ],
+    [
+     8,
+     139.26,
+     136.19
+    ]
+   ]
   },
   {
    "bands": [
@@ -5564,11 +5606,6 @@
    "bands": [
     [
      1,
-     1,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     2,
      15,
      "rmma.m1.n1.w1x4"
     ],
@@ -5621,7 +5658,14 @@
      "rmma.m1.n4.w4x1"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     1,
+     11.52,
+     11.01
+    ]
+   ]
   },
   {
    "bands": [
@@ -8721,7 +8765,7 @@
     [
      1,
      8,
-     "rmma.m1.n1.w1x4"
+     "rmma.m1.n1.w1x8"
     ],
     [
      9,
@@ -8757,7 +8801,49 @@
      "rmma.m1.n4.w4x1"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     1,
+     60.07,
+     60.07
+    ],
+    [
+     2,
+     61.27,
+     61.27
+    ],
+    [
+     3,
+     61.44,
+     61.44
+    ],
+    [
+     4,
+     61.44,
+     61.44
+    ],
+    [
+     5,
+     61.44,
+     61.44
+    ],
+    [
+     6,
+     61.44,
+     61.44
+    ],
+    [
+     7,
+     61.44,
+     61.44
+    ],
+    [
+     8,
+     61.44,
+     61.44
+    ]
+   ]
   },
   {
    "bands": [
@@ -8811,23 +8897,8 @@
    "bands": [
     [
      1,
-     2,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     3,
-     4,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     5,
-     5,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     6,
      8,
-     "rmma.m1.n1.w1x4"
+     "rmma.m1.n1.w1x16"
     ],
     [
      9,
@@ -8868,7 +8939,49 @@
      "rmma.m1.n8.w4x1"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     1,
+     124.93,
+     120.83
+    ],
+    [
+     2,
+     125.95,
+     121.86
+    ],
+    [
+     3,
+     125.95,
+     122.88
+    ],
+    [
+     4,
+     125.95,
+     122.88
+    ],
+    [
+     5,
+     126.98,
+     123.9
+    ],
+    [
+     6,
+     126.98,
+     123.9
+    ],
+    [
+     7,
+     126.98,
+     123.9
+    ],
+    [
+     8,
+     126.98,
+     123.9
+    ]
+   ]
   },
   {
    "format": "bf16",
@@ -11498,11 +11611,6 @@
    "bands": [
     [
      1,
-     8,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     9,
      23,
      "rmma.m1.n2.w1x4"
     ],
@@ -11548,6 +11656,48 @@
      128,
      255,
      "rmma.m1.n4.w4x1"
+    ]
+   ],
+   "evidence_us": [
+    [
+     1,
+     23.89,
+     21.39
+    ],
+    [
+     2,
+     24.23,
+     21.62
+    ],
+    [
+     3,
+     24.23,
+     21.62
+    ],
+    [
+     4,
+     24.23,
+     21.85
+    ],
+    [
+     5,
+     24.46,
+     21.85
+    ],
+    [
+     6,
+     24.46,
+     21.96
+    ],
+    [
+     7,
+     24.46,
+     21.85
+    ],
+    [
+     8,
+     24.46,
+     21.96
     ]
    ]
   },
@@ -11672,6 +11822,11 @@
    "bands": [
     [
      1,
+     8,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     9,
      23,
      "rmma.m1.n1.w1x8.c2"
     ],
@@ -11732,6 +11887,48 @@
      512,
      1023,
      "rmma.m1.n8.w4x1"
+    ]
+   ],
+   "evidence_us": [
+    [
+     1,
+     5.01,
+     4.77
+    ],
+    [
+     2,
+     5.24,
+     4.97
+    ],
+    [
+     3,
+     5.24,
+     4.97
+    ],
+    [
+     4,
+     5.28,
+     4.97
+    ],
+    [
+     5,
+     5.27,
+     4.97
+    ],
+    [
+     6,
+     5.28,
+     4.97
+    ],
+    [
+     7,
+     5.27,
+     4.97
+    ],
+    [
+     8,
+     5.28,
+     4.97
     ]
    ]
   },
