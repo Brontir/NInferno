@@ -499,7 +499,7 @@ void check_manifest_lists(const generic::BuildManifest& manifest, Fail&& fail) {
         {Family::Nvfp4TiledMma, generic::nvfp4_tiled_schedule_count()},
         {Family::R8Mma, generic::r8_schedule_count()},
         {Family::GgmlMmq, 1},
-        {Family::GgmlVec, 1},
+        {Family::GgmlVec, generic::ggml_vec_schedule_count()},
         {Family::I8Mma, generic::i8_schedule_count()},
     };
     for (const auto& [family, count] : declared) {
@@ -725,7 +725,7 @@ int run_summation_orders() {
         {generic::Family::I8Mma, generic::i8_schedule_count()},
         {generic::Family::Nvfp4TiledMma, generic::nvfp4_tiled_schedule_count()},
         {generic::Family::GgmlMmq, 1},
-        {generic::Family::GgmlVec, 1},
+        {generic::Family::GgmlVec, generic::ggml_vec_schedule_count()},
     };
     for (const auto& [family, count] : families) {
         for (int i = 0; i < count; ++i) routes.push_back({family, static_cast<std::uint8_t>(i)});
