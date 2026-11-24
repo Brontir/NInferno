@@ -639,6 +639,23 @@ void old_columns_refused() {
     expect(kf::snapshot_text_accepted(text(resources)), "the resources-only columns line is read");
     expect(!kf::snapshot_text_accepted(text(resources + loop)),
            "the schema 2 columns line (no schedule) is refused");
+    // Schema 5 (#1196): the weight loads in flight after the schedule. A row is read with them,
+    // and refused short of them; the two names in another order are refused.
+    const std::string stream = " wldg_peak wldg_peak_bytes";
+    expect(kf::snapshot_text_accepted(text(resources + loop + schedule + stream)),
+           "the schema 5 columns line is read");
+    expect(!kf::snapshot_text_accepted(
+               text(resources + loop + schedule + " wldg_peak_bytes wldg_peak")),
+           "the schema 5 names in another order are refused");
+    std::string values;
+    for (int i = 0; i < 30; ++i) values += i == 4 ? " -" : " 1";
+    const auto row = [&](const std::string& extra) {
+        return "arch 89\nkernels 1\ncolumns " + resources + loop + schedule + stream +
+               "\nrmma Bf16Decoder 4 1 1 1 1 0 0 0 48 0 0 0" + values + extra + "\n";
+    };
+    expect(kf::snapshot_text_accepted(row(" 2 32")), "a schema 5 row with its weight loads");
+    expect(!kf::snapshot_text_accepted(row(" 2")), "a schema 5 row short of its weight loads");
+    expect(!kf::snapshot_text_accepted(row(" 2 32 7")), "a schema 5 row with a field past them");
 }
 
 } // namespace

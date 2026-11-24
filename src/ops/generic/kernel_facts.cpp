@@ -52,6 +52,9 @@ constexpr std::string_view kWaitColumns = " sb_waits_global sb_waits_shared";
 // The vec section's loads in flight after the wait classes (kernel_facts.py Family.inflight,
 // sass_counts.py INFLIGHT_FIELDS; #1185).
 constexpr std::string_view kInflightColumns = " ldg_peak ldg_peak_bytes";
+// The register-MMA rows' weight loads in flight after the schedule (schema 5; kernel_facts.py
+// SCHEMA_COLUMNS, sass_counts.py STREAM_FIELDS; #1196).
+constexpr std::string_view kStreamColumns = " wldg_peak wldg_peak_bytes";
 // The w4a8 section's producer warps' loop after the wait classes (kernel_facts.py
 // Family.producer, sass_counts.py PRODUCER_FIELDS; #613 PR-6).
 constexpr std::string_view kProducerColumns =
@@ -125,7 +128,9 @@ const SectionFamily* section_family(std::string_view name) {
 }
 
 // What a snapshot's rows carry past the resources, by its columns line.
-enum class Columns { Resources, Schedule };
+// Resources: schema 1; Schedule: schema 4 (and every section's loop columns); ScheduleStreamed:
+// schema 5, the register-MMA rows with their weight loads in flight (#1196).
+enum class Columns { Resources, Schedule, ScheduleStreamed };
 
 // The K loop's counts and the static schedule (schema 4) of a row, from `fields` at the loop's
 // first column; the pipe counts after them where `pipes`, and the wait classes where `waits`.
@@ -291,6 +296,16 @@ Snapshot parse(std::string_view text) {
             // on none of a resources-only one's.
             if (*columns != Columns::Resources)
                 f.loop = read_loop(fields, false, false, false, line);
+            // Schema 5: the K loop's weight loads in flight a lane after the schedule (#1196).
+            if (*columns == Columns::ScheduleStreamed) {
+                StreamCounts w;
+                fields >> w.loads >> w.bytes;
+                if (!fields) {
+                    throw std::runtime_error("kernel facts: malformed weight loads in flight: " +
+                                             line);
+                }
+                f.loop->stream = w;
+            }
             if (fields >> std::ws; !fields.eof()) {
                 throw std::runtime_error("kernel facts: fields past the columns': " + line);
             }
@@ -313,6 +328,8 @@ Snapshot parse(std::string_view text) {
                 // The columns are read by position: the file spells one of the lists exactly.
                 if (rest == kColumns)
                     columns = Columns::Schedule;
+                else if (rest == std::string(kColumns) + std::string(kStreamColumns))
+                    columns = Columns::ScheduleStreamed;
                 else if (rest == kColumns.substr(0, kResourceColumnsLength))
                     columns = Columns::Resources;
                 else

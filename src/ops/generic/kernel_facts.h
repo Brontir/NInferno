@@ -121,6 +121,15 @@ struct ProducerCounts {
     int int_alu         = 0;
 };
 
+// The K loop's weight loads in flight a lane (#1196; tools/kernel_facts/sass_counts.py
+// STREAM_FIELDS): the most streamed (LDG .EF, the decoders' ld.global.cs) loads the SASS keeps in
+// flight at once over the iteration walked twice, and the most bytes they hold. Times 32 lanes, a
+// warp's weight bytes in flight; the activations' cached loads are not counted.
+struct StreamCounts {
+    int loads = 0;
+    int bytes = 0;
+};
+
 struct LoopCounts {
     int loops  = 0; // candidate K loops found: 1 normally; 0 none (every count is 0); 2+ ambiguous
     int k_iter = 0; // K values per warp per iteration from the weight MMAs; 0 unknown
@@ -147,6 +156,7 @@ struct LoopCounts {
     int total                = 0;
     std::optional<StaticSchedule> schedule; // every row of a snapshot with a loop
     std::optional<PipeCounts> pipes;        // every loop row of a section family
+    std::optional<StreamCounts> stream;     // the register-MMA rows of a schema 5 snapshot
 };
 
 struct KernelFacts {

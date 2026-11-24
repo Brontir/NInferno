@@ -183,6 +183,11 @@ SECTION_FIELDS = PIPE_FIELDS + WAIT_FIELDS
 # second counted). A warp's loads in flight times the warps an SM holds are the bytes an SM keeps
 # in flight, which the DRAM law prices; ptxas's register budget sets both.
 INFLIGHT_FIELDS = ("ldg_peak", "ldg_peak_bytes")
+# The register-MMA rows' weight loads in flight a lane (#1196), after the schedule: the same count
+# over the K loop's streamed loads only (LDG .EF, the decoders' ld.global.cs; the activations
+# load cached, out of L1 and L2). Times 32 lanes, a warp's weight bytes in flight; over the warp's
+# rows and its CTA's K-interleaved warps, the contiguous run of a weight row in flight.
+STREAM_FIELDS = ("wldg_peak", "wldg_peak_bytes")
 # A second counted loop (#613 PR-10): the R8 decode kernels quantize the activation into shared
 # memory in a loop of their own before the dp4a loop, one 32-value block per thread and pass. Its
 # counts follow the pipe counts, prefixed pro_: the loops found (0 where the kernel reads a
@@ -729,12 +734,13 @@ class LoopCounts:
         self.k_iter = 0
         self.mma_shape = "-"
         for f in (COUNT_FIELDS + SCHEDULE_FIELDS + PIPE_FIELDS + WAIT_FIELDS + INFLIGHT_FIELDS +
-                  PROLOGUE_FIELDS + PRODUCER_FIELDS):
+                  STREAM_FIELDS + PROLOGUE_FIELDS + PRODUCER_FIELDS):
             setattr(self, f, 0)
         self.scheduled = False
         self.pipes = False
         self.waits = False
         self.inflight = False
+        self.streamed = False
         self.prologue = False
         self.producer = False
 
@@ -742,7 +748,7 @@ class LoopCounts:
         if not self.scheduled:
             return LOOP_COLUMNS
         if not self.pipes:
-            return COLUMNS
+            return COLUMNS + (STREAM_FIELDS if self.streamed else ())
         # The order of kernel_facts.py Family.schema_columns, from_row and the C++ header check
         # (kernel_facts.cpp); no family carries both the producer loop and the loads in flight.
         return (COLUMNS + PIPE_FIELDS + (WAIT_FIELDS if self.waits else ()) +
@@ -778,6 +784,13 @@ class LoopCounts:
         self.prologue = prologue and pipes
         return self
 
+    def with_streamed(self, streamed=True):
+        """This row's columns with (or without) the weight loads in flight after the schedule
+        (STREAM_FIELDS, the register-MMA rows; no pipe counts with them), the counts unchanged."""
+        assert not (streamed and self.pipes)
+        self.streamed = streamed
+        return self
+
     @classmethod
     def from_row(cls, fields):
         """The counts of a snapshot row's loop columns, with the schedule (COLUMNS), without it
@@ -786,12 +799,18 @@ class LoopCounts:
         piped = len(COLUMNS) + len(PIPE_FIELDS)
         widths = (len(COLUMNS), len(LOOP_COLUMNS), piped, piped + len(WAIT_FIELDS),
                   piped + len(WAIT_FIELDS) + len(PRODUCER_FIELDS),
-                  piped + len(WAIT_FIELDS) + len(INFLIGHT_FIELDS), piped + len(PROLOGUE_FIELDS))
+                  piped + len(WAIT_FIELDS) + len(INFLIGHT_FIELDS), piped + len(PROLOGUE_FIELDS),
+                  len(COLUMNS) + len(STREAM_FIELDS))
         assert len(set(widths)) == len(widths)
         if len(fields) not in widths:
             raise ValueError(f"{len(fields)} loop fields, {' or '.join(map(str, widths))} columns")
         c = cls()
         c.scheduled = len(fields) != len(LOOP_COLUMNS)
+        if len(fields) == len(COLUMNS) + len(STREAM_FIELDS):
+            c.streamed = True
+            for name, value in zip(COLUMNS + STREAM_FIELDS, fields):
+                setattr(c, name, value if name == "mma_shape" else int(value))
+            return c
         c.pipes = len(fields) >= piped
         c.producer = len(fields) == piped + len(WAIT_FIELDS) + len(PRODUCER_FIELDS)
         c.inflight = len(fields) == piped + len(WAIT_FIELDS) + len(INFLIGHT_FIELDS)
@@ -849,6 +868,9 @@ def schedule_counts(body, control, iteration, outside):
     out = dict.fromkeys(SCHEDULE_FIELDS + WAIT_FIELDS, 0)
     out["ldg_peak"], out["ldg_peak_bytes"] = peak_loads_in_flight(
         body, control, iteration, 2, lambda opcode: base_opcode(opcode) in GLOBAL_LOADS)
+    out["wldg_peak"], out["wldg_peak_bytes"] = peak_loads_in_flight(
+        body, control, iteration, 2,
+        lambda opcode: base_opcode(opcode) in GLOBAL_LOADS and ".EF" in opcode)
     for i in iteration:
         out["stall_sum"] += control[i].stall
         out["sb_waits"] += control[i].wait_mask != 0

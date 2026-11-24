@@ -63,20 +63,24 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sass_counts  # noqa: E402
 
-SCHEMA = 4
+SCHEMA = 5
 NAMESPACE = "ninferno::ops::detail::generic::"
 FAMILY = "rmma"
 RESOURCE_COLUMNS = ("registers", "stack", "local", "shared")
 KEY_COLUMNS = ("decoder", "warps_m", "warps_k", "m_tiles", "n_tiles", "cluster", "epilogue",
                "latency", "sums")
 ROW_HEAD = ("family",) + KEY_COLUMNS + RESOURCE_COLUMNS
-COLUMNS = " ".join(ROW_HEAD + sass_counts.COLUMNS)
+COLUMNS = " ".join(ROW_HEAD + sass_counts.COLUMNS + sass_counts.STREAM_FIELDS)
 # The columns line of every snapshot `check` reads, and the loop fields its rows carry: schema 1
-# the resources alone (`extract --no-sass`), 4 the counts and the static schedule. Older formats
-# (the counts without a schedule, the critical-path columns) are not read: regenerate the file.
+# the resources alone (`extract --no-sass`), 4 the counts and the static schedule, 5 those and the
+# weight loads in flight (sass_counts.STREAM_FIELDS, #1196). Schema 4 is read (an --update of
+# another family keeps its rows) and written only where its rows are; older formats (the counts
+# without a schedule, the critical-path columns) are not read: regenerate the file.
 SCHEMA_COLUMNS = {
     1: (ROW_HEAD, 0),
     4: (ROW_HEAD + sass_counts.COLUMNS, len(sass_counts.COLUMNS)),
+    5: (ROW_HEAD + sass_counts.COLUMNS + sass_counts.STREAM_FIELDS,
+        len(sass_counts.COLUMNS) + len(sass_counts.STREAM_FIELDS)),
 }
 EPILOGUE_SWIGLU = 2  # Epilogue::SwiGlu (generic_gemm.h): two row sets per warp
 # The sources whose text decides the device code: the CUDA units and headers of the ops tree.
@@ -493,7 +497,7 @@ class Family:
 
     def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True,
                  marker=None, prologue=None, waits=False, producer=None, emulated=False,
-                 inflight=False):
+                 inflight=False, streamed=False):
         # The C++ reader takes the loads in flight ahead of the producer loop, the columns line
         # lists them after it: a family carries one or the other (kernel_facts.cpp asserts it).
         assert not (inflight and producer), name
@@ -502,6 +506,10 @@ class Family:
         # (sass_counts.INFLIGHT_FIELDS) after the wait classes: the vec section (#1185), whose
         # instances ptxas compiles to registers that set how many of a row's loads stay in flight.
         self.inflight = inflight
+        # Whether its rows carry the K loop's weight loads in flight after the schedule
+        # (sass_counts.STREAM_FIELDS): the register-MMA rows (#1196), a family without pipe counts.
+        assert not (streamed and pipes), name
+        self.streamed = streamed
         # Whether its loop calls the emulated MMA on sm_70 (NINFERNO_FMA_MMA): the int8
         # mma_s8_dp4a_call of the W4A8 tiles (#787) and the BF16 / F16 mma_*_fma_call of the
         # register-MMA and grouped MoE loops (#762), which that image's SASS prints unresolved
@@ -556,7 +564,7 @@ class Family:
 # tile of 128.
 FAMILIES = {
     FAMILY: Family(FAMILY, KEY_COLUMNS, lambda d: rmma_key(d), "rmma_kernel", key_tiles, False,
-                   True, emulated=True),
+                   True, emulated=True, streamed=True),
     "mmq": Family("mmq", ("type", "J", "fallback", "prec"), lambda d: mmq_key(d), "mul_mat_q",
                   lambda key: 1, True, False, waits=True),
     "w4a8": Family("w4a8", ("codec", "block_m", "block_n", "warps_m", "warps_n", "epilogue",
@@ -736,7 +744,7 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
         c = sass_counts.loop_counts(body, family.tiles(fk[1]), family.marker, family.prologue,
                                     producer).with_pipes(
             family.pipes, family.prologue is not None, family.waits, family.producer is not None,
-            family.inflight)
+            family.inflight).with_streamed(family.streamed)
         if calls is not None and family.emulated and c.mma == 0:
             fail(f"{name}: an sm_70 {fk[0]} loop with no MMA (no emulated call resolved)")
         if producer is not None and c.prod_loops != 1:
@@ -990,10 +998,13 @@ def render(arch, rows, nvcc, flags, source):
     loops = [v[4] for v in rows.values() if v[4] is not None]
     if not loops:
         schema = 1
-    elif all(c.scheduled for c in loops):
+    elif all(c.scheduled and c.streamed for c in loops):
         schema = SCHEMA
+    elif all(c.scheduled and not c.streamed for c in loops):
+        schema = 4  # rows kept from a schema 4 file by an --update of another family
     else:
-        fail("a row has no control codes: only schema 4 (loop and schedule) is written")
+        fail("a row has no control codes, or rows of schema 4 and 5 mix: only a loop with its "
+             "schedule (and, in schema 5, its weight loads in flight) is written")
     columns = SCHEMA_COLUMNS[schema][0]
     lines = [
         f"# NInferno kernel facts, schema {schema}: what ptxas made of the register-MMA kernels of",

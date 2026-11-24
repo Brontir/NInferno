@@ -633,8 +633,8 @@ class StaticSchedule(unittest.TestCase):
 class Snapshot(unittest.TestCase):
     KEY = ("Bf16Decoder", 1, 4, 1, 1, 1, 0, 0, 0)
 
-    def rows(self):
-        c = sc.loop_counts(body_of(KERNEL), tiles=1)
+    def rows(self, streamed=True):
+        c = sc.loop_counts(body_of(KERNEL), tiles=1).with_streamed(streamed)
         return {self.KEY: (48, 0, 0, 1536, c)}
 
     def test_render_and_parse(self):
@@ -643,7 +643,38 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(header["arch"], "89")
         self.assertEqual(rows, self.rows())
         self.assertIn("columns " + kernel_facts.COLUMNS, text)
+        self.assertIn("schema 5", text)
         self.assertEqual(sum(1 for l in text.splitlines() if not l.startswith("#")), 6 + 1)
+        # Rows of a schema 4 file (an --update of another family keeps them) render as schema 4
+        # and read back; rows of both schemas in one file are refused (#1196).
+        old = kernel_facts.render("89", self.rows(False), "13.4.92", "-O3", "abc")
+        self.assertIn("schema 4", old)
+        self.assertNotIn("wldg_peak", old)
+        self.assertEqual(kernel_facts.parse_snapshot(old)[1], self.rows(False))
+        mixed = {**self.rows(False), self.KEY[:-1] + (1,): self.rows()[self.KEY]}
+        with self.assertRaises(SystemExit):
+            kernel_facts.render("89", mixed, "13.4.92", "-O3", "abc")
+
+    def test_weight_loads_in_flight_are_the_streamed_ones(self):
+        # The register-MMA rows count the streamed (.EF, ld.global.cs) loads in flight only: the
+        # weights; an activation load (cached) beside them is no weight load (#1196).
+        lines = [(0x00, "LDG.E.EF.128 R8, [R2.64] ;"), (0x10, "LDG.E.EF.128 R12, [R2.64+0x10] ;"),
+                 (0x20, "LDG.E.128 R16, [R4.64] ;"),
+                 (0x30, "HMMA.16816.F32.BF16 R20, R8, R16, R20 ;"),
+                 (0x40, "HMMA.16816.F32.BF16 R24, R12, R18, R24 ;"),
+                 (0x50, "IADD3 R2, R2, 0x400, RZ ;"), (0x60, "@!P0 BRA 0x0 ;")]
+        iteration = range(len(lines))
+        body = body_of(lines)
+        ef = lambda opcode: sc.base_opcode(opcode) in sc.GLOBAL_LOADS and ".EF" in opcode  # noqa
+        self.assertEqual(sc.peak_loads_in_flight(body, None, iteration, 2, ef), (2, 32))
+        every = lambda opcode: sc.base_opcode(opcode) in sc.GLOBAL_LOADS  # noqa: E731
+        self.assertEqual(sc.peak_loads_in_flight(body, None, iteration, 2, every), (3, 48))
+        c = sc.loop_counts(body_of(KERNEL), tiles=1).with_streamed()
+        c.wldg_peak, c.wldg_peak_bytes = 2, 32
+        self.assertEqual(c.columns()[-2:], sc.STREAM_FIELDS)
+        self.assertEqual(sc.LoopCounts.from_row(c.row()), c)
+        with self.assertRaises(AssertionError):
+            sc.LoopCounts().with_pipes().with_streamed()  # a section row carries no weight loads
 
     def test_replica_l1_latency_per_arch(self):
         # The replica prices a spill at the arch's isa_probe L1 hit latency, as the engine's
