@@ -267,7 +267,16 @@ struct Nvfp4Decoder {
         // doubled codes by byte permutes times half the block scale. Both factors and their
         // product (at most 8 significant bits) are exact in BF16, so these are the converter
         // path's bits.
+#    if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 890
+        // sm_89+ converts E4M3 in one instruction: the library's form (selects would add work:
+        // sm_89 w4x1 413 -> 463 instructions a K trip).
+        __nv_fp8_e4m3 block_scale;
+        block_scale.__x = static_cast<__nv_fp8_storage_t>(r.scale & 0xffU);
+        const __nv_bfloat162 half_scale =
+            __float2bfloat162_rn(0.5F * static_cast<float>(block_scale));
+#    else
         const __nv_bfloat162 half_scale = __float2bfloat162_rn(0.5F * e4m3_value(r.scale & 0xffU));
+#    endif
         unsigned doubled_lo, doubled_hi;
         e2m1x2_bf16(word >> shift, doubled_lo, doubled_hi);
         const __nv_bfloat162 product_lo =
