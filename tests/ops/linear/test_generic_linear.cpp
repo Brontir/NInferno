@@ -2544,7 +2544,8 @@ int main() {
         for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu, Op::GeGlu, Op::Relu2}) {
             for (const std::int32_t t : {1, 37, 200}) {
                 for (const std::int32_t n : {384, 200}) {
-                    failures += check_case(nvfp4, op, n, 1088, t, ops::LinearPolicy::A16Only,
+                    // K 2176: 17 steps of 128 values (#1199: the route refuses K off a 128 step).
+                    failures += check_case(nvfp4, op, n, 2176, t, ops::LinearPolicy::A16Only,
                                            13U + i, &r, ActivationCompute::A16);
                 }
             }
