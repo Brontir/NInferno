@@ -1056,10 +1056,41 @@ class Sections(unittest.TestCase):
         self.assertEqual(sc.LoopCounts.from_row(produced.row()), produced)
         with self.assertRaises(AssertionError):
             sc.LoopCounts().with_pipes(producer=True)  # the producer loop rides on the waits
+        # The vec section's rows: the K loop's loads in flight after the wait classes (#1185).
+        inflight = c.with_pipes(waits=True, inflight=True)
+        inflight.ldg_peak, inflight.ldg_peak_bytes = 3, 40
+        self.assertEqual(inflight.columns()[-len(sc.INFLIGHT_FIELDS):], sc.INFLIGHT_FIELDS)
+        self.assertEqual(len(inflight.row()), len(sc.COLUMNS) + len(sc.SECTION_FIELDS) +
+                         len(sc.INFLIGHT_FIELDS))
+        self.assertEqual(sc.LoopCounts.from_row(inflight.row()), inflight)
+        self.assertEqual(sc.LoopCounts.from_row(inflight.row()).ldg_peak_bytes, 40)
         lines = [(o, {0x170: "I2F.F32.S32 R25, R24 ;", 0x1d0: "IMAD R9, R9, R10, RZ ;",
                       0x210: "BAR.SYNC.DEFER_BLOCKING 0x0 ;"}.get(o, t)) for o, t in KERNEL]
         c = sc.loop_counts(body_of(lines), tiles=1)
         self.assertEqual((c.i2f, c.imad, c.bar), (1, 1, 1))
+
+    def test_loads_in_flight_across_trips_and_widths(self):
+        # A software-pipelined loop (#1185): the 16-byte load of R4 issued at the end of one trip
+        # is read in the next, after that trip's 8- and 4-byte loads were issued. Walked once
+        # (warp_inflight's straight code), a trip's loads count alone: 2 loads, 16 bytes at most.
+        # Walked twice, the carried load meets the next trip's two: 3 loads, 16 + 8 + 4 bytes.
+        lines = [(0x00, "LDG.E.64 R8, [R2.64] ;"),           # 8 bytes
+                 (0x10, "LDG.E R10, [R2.64+0x100] ;"),       # 4 bytes
+                 (0x20, "FFMA R20, R4, R5, R20 ;"),          # reads the carried load
+                 (0x30, "FFMA R21, R8, R10, R21 ;"),         # both of this trip's: back
+                 (0x40, "LDG.E.128 R4, [R2.64+0x200] ;"),    # 16 bytes, read next trip
+                 (0x50, "IADD3 R2, R2, 0x400, RZ ;")]
+        body = body_of(lines)
+        ldg = lambda opcode: sc.base_opcode(opcode) == "LDG"  # noqa: E731
+        order = range(len(body))
+        self.assertEqual(sc.peak_loads_in_flight(body, None, order, 1, ldg), (2, 16))
+        self.assertEqual(sc.peak_loads_in_flight(body, None, order, 2, ldg), (3, 28))
+        # The read moved before the next trip's loads: nothing is carried past them.
+        early = [lines[2], lines[0], lines[1], lines[3], lines[4], lines[5]]
+        self.assertEqual(sc.peak_loads_in_flight(body_of(early), None, order, 2, ldg), (2, 16))
+        # Only the accepted loads count: an LDS of the same registers is no global load.
+        shared = [lines[0], lines[1], lines[2], lines[3], (0x40, "LDS.128 R4, [R12] ;"), lines[5]]
+        self.assertEqual(sc.peak_loads_in_flight(body_of(shared), None, order, 2, ldg), (2, 12))
 
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()

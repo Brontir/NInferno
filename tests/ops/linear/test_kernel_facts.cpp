@@ -596,6 +596,26 @@ void section_wait_columns() {
            "a w4a8 section without the producer loop");
     expect(!kf::snapshot_text_accepted(mmq(waits + producer, 30 + 7 + 2 + 7)),
            "an mmq section with the producer loop");
+    // The vec section carries the K loop's loads in flight after its waits (#1185); one without
+    // them, with the waits alone or with them before the waits, is refused, as is an mmq section
+    // with them.
+    const std::string inflight = " ldg_peak ldg_peak_bytes";
+    const auto vec             = [&](const std::string& extra, int fields) {
+        return base +
+               "family vec\nfamily_nvcc 13.0\nfamily_kernels 1\nfamily_columns family type T KS "
+                           "gated bounded registers stack local shared" +
+               loop + pipes + extra + "\nvec 12 5 0 0 0 40 0 0 0" + values(fields) + "\n";
+    };
+    expect(kf::snapshot_text_accepted(vec(waits + inflight, 30 + 7 + 2 + 2)),
+           "a vec section with its waits and loads in flight");
+    expect(!kf::snapshot_text_accepted(vec(waits, 30 + 7 + 2)),
+           "a vec section without the loads in flight");
+    expect(!kf::snapshot_text_accepted(vec(inflight + waits, 30 + 7 + 2 + 2)),
+           "a vec section with the loads in flight before the waits");
+    expect(!kf::snapshot_text_accepted(vec(waits + inflight, 30 + 7 + 2)),
+           "a vec row short of its loads in flight");
+    expect(!kf::snapshot_text_accepted(mmq(waits + inflight, 30 + 7 + 2 + 2)),
+           "an mmq section with the loads in flight");
 }
 
 void old_columns_refused() {

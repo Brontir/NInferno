@@ -402,6 +402,10 @@ class WarpInflight(unittest.TestCase):
                   [("IADD3 R60, R61, 0x1, RZ", {"wait_mask": 1 << 5})] +
                   [(ld.format(4 * i + 20, 0x800 + 0x200 * i), on5) for i in range(4)])
         self.assertEqual(wi.peak_in_flight(self.body(waited)), 4)
+        # Each instruction's control word is read on its own: with the wait's word but one SB5
+        # load's dropped, that load is retired by nothing (no scoreboard named it): 4 + 1 at most.
+        mixed = [waited[0][0]] + waited[1:]
+        self.assertEqual(wi.peak_in_flight(self.body(mixed)), 5)
         # A wait on another scoreboard retires none of them: 8.
         other = [x if x[0].startswith("LDG") else (x[0], {"wait_mask": 1 << 2}) for x in waited]
         self.assertEqual(wi.peak_in_flight(self.body(other)), 8)
