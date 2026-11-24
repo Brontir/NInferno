@@ -55,6 +55,7 @@ const std::vector<Expected>& expected_facts() {
         {"sm_mhz_placed", "MHz", &SmRateRow::sm_mhz_placed},
         {"dram_stream_latency_ns", "ns", &SmRateRow::dram_stream_latency_ns},
         {"max_warp_bytes_in_flight", "B", &SmRateRow::max_warp_bytes_in_flight},
+        {"warp_fill_bytes_per_clock", "B/clk", &SmRateRow::warp_fill_bytes_per_clock},
         {"ring2_b_w_w1_free", "B", &SmRateRow::ring2_b_w_w1_free},
         {"ring2_b_w_w1_placed", "B", &SmRateRow::ring2_b_w_w1_placed},
         {"ring2_linear_to_w_free", "warps", &SmRateRow::ring2_linear_to_w_free},

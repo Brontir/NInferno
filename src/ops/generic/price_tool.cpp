@@ -442,6 +442,9 @@ int run(const Options& o) {
                     "B/clk placed, ",
                     *chip.dram_latency_s * 1e9, *chip.sm_dram_bytes_per_clock_free,
                     *chip.sm_dram_bytes_per_clock_placed);
+        if (chip.sm_warp_fill_bytes_per_clock) {
+            std::printf("fill F %.2f B/clk, ", *chip.sm_warp_fill_bytes_per_clock);
+        }
         if (chip.sm_max_warp_bytes) {
             std::printf("b_w_max %.0f B\n", *chip.sm_max_warp_bytes);
         } else {

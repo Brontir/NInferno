@@ -73,6 +73,11 @@ struct SmRateRow {
     // rule: the 4-load ring keeps less than x1.5 of the 2-load ring's b_w at W = 1
     // (`ring4_over_ring2_w1`).
     double max_warp_bytes_in_flight = 0;
+    // F: the rate a lone warp's window fills at past its first warp-wide load, bytes an SM clock
+    // (#771): the window of b_w bytes takes L0 + (b_w - 512 B) / F (warp_inflight.py fill_rate,
+    // the least-squares ns a byte over the probe's chains at W = 1; 17-19 B/clk on every
+    // architecture, the same for 16-, 8- and 4-byte loads).
+    double warp_fill_bytes_per_clock = 0;
     bool warp_bytes_saturated       = false;
     double ring4_over_ring2_w1      = 0;
     // The two-slot ring (2048 B a warp by count): b_w at W = 1 (B) and the largest W up to which

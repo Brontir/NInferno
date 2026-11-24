@@ -841,28 +841,29 @@ void check_dram_time() {
 // ---- Check 8: the law against the probe's own rows ----
 // For every architecture of core/sm_rate_facts.h, dram_time prices one CTA of W warps on one SM,
 // each warp keeping the counted bytes of one of the probe's two-slot rings in flight (ring2: 2048
-// B, ring4: 4096 B, under the row's b_w_max where its warp saturates: sm_70, sm_120a), and that
+// B, ring4: 4096 B, under the row's b_w_max where its warp saturates: none since probe 6), and that
 // rate is held to the probe's measured ring rows (both carve-outs, every W, at each row's own SM
-// clock). P, L0 and the cap come from the table the rows sit in, so the check is about the
-// counted b_w and the law's form (ring4 at W = 1 equals the row where the cap is ring4's own
-// reading, sm_70). The law is Little's with the unloaded L0, the counted bytes and a hard corner
-// at P, an upper bound of the rate, so:
-//  - it is never below a measured row (to 1 %, kNeverBelow);
-//  - at W = 1 it is at most kAtOneWarp above it: the count against what a warp keeps in flight,
-//    ring2's 2048 B against 1767-1907 B (x1.07-1.16), ring4's 4096 B uncapped against 3340-3448 B
-//    (x1.19-1.23); a b_w counted twice over or a P in another unit fails here;
-//  - on every row at most kOnTheCurve above it. The worst reading, x1.16-1.37 at W = 6-16, is a gap
-//    of the model, not noise: the measured curve rounds off into P (a knee of queueing near the
-//    port's limit) where the law has a corner. It is recorded on #690; the law is optimistic there.
+// clock). P, L0, the fill rate F and any cap come from the table the rows sit in, so the check is
+// about the counted b_w and the law's form. The law is Little's with the counted bytes, a window
+// of L0 plus its other bytes at F (L0 + (b_w - 512 B) / F, #771) and a hard corner at P. F is a
+// least-squares rate over the probe's chains, so the law is a central reading at W = 1, not an
+// upper bound:
+//  - it is at least kNeverBelow of a measured row: the rings read 0.965-1.043 of it on their own
+//    cards (sm_75 the lowest) and 0.98-1.03 on the others, the chains' +-4 % around the fit;
+//  - at W = 1 at most kAtOneWarp above it (before the fill the plain L0 read x1.07-1.33 there: the
+//    window's fill, which a b_w counted twice over or a P in another unit still fails);
+//  - on every row at most kOnTheCurve above it. The worst reading, up to x1.20 at W = 6-16, is a
+//    gap of the model, not noise: the measured curve rounds off into P (a knee of queueing near
+//    the port's limit) where the law has a corner (x1.44 before the fill).
 // The bounds are this check's tolerances, the same as warp_inflight.py's (LAW_*), not constants of
 // the price. The other cards' runs of an architecture (its transfer checks) are held to the same
 // bounds under the row's facts and their own SM clocks: the verdict must be the table's
 // (`within_bounds`, `refuted`), and a refuted row gives no SM rate facts (fill_sm_rate_facts). The
-// RTX 5070 Ti refutes the sm_120a row: the law is x0.88-0.89 of its rows at W = 1 (its warps fetch
-// 12 % faster than the RTX 5090's) and x0.92 at its placed P (23.8 B/clk against 21.9).
+// RTX 5070 Ti refutes the sm_120a row: the law is x0.90-0.93 of its rows at W = 1 (its L0 is 327 ns
+// against the RTX 5090's 375).
 // Last, the boards of each law, written out: the legacy law on sm_80, sm_90, sm_100, sm_121 (no
 // row) and on sm_120a (refuted), the law of #690 on sm_70, sm_75, sm_86, sm_89.
-constexpr double kNeverBelow = 0.99, kAtOneWarp = 1.25, kOnTheCurve = 1.40;
+constexpr double kNeverBelow = 0.95, kAtOneWarp = 1.05, kOnTheCurve = 1.25;
 
 struct LawOverRows {
     long rows = 0, outside = 0;
@@ -880,6 +881,7 @@ LawOverRows law_over(const ninferno::SmRateRow& row, const ninferno::SmRateRings
     chip.sm_dram_bytes_per_clock_free   = row.bytes_per_clock_free;
     chip.sm_dram_bytes_per_clock_placed = row.bytes_per_clock_placed;
     if (row.warp_bytes_saturated) chip.sm_max_warp_bytes = row.max_warp_bytes_in_flight;
+    chip.sm_warp_fill_bytes_per_clock = row.warp_fill_bytes_per_clock;
     // One CTA on one SM: the bus is not the bound the probe measured.
     chip.dram_bytes_per_s = 1e18;
     const double bytes    = 1 << 20;
@@ -1000,8 +1002,13 @@ void check_rmma_count() {
         ++failures;
         return;
     }
-    if (ada->sm_max_warp_bytes || !volta->sm_max_warp_bytes) {
-        fail("a cap on sm_70 (its warp saturates) and none on sm_89");
+    // Since probe 6 no architecture's warp saturates (#757): no cap, and both fill their windows
+    // at the row's F (#771).
+    if (ada->sm_max_warp_bytes || volta->sm_max_warp_bytes) fail("no cap on sm_70 or sm_89");
+    if (!ada->sm_warp_fill_bytes_per_clock || !volta->sm_warp_fill_bytes_per_clock) {
+        fail("the fill rate on sm_70 and sm_89");
+        ++failures;
+        return;
     }
     const kr::Calibration cal = kr::calibration_of(8, 9);
     const auto counted = [&](const kr::ChipFacts& chip, QType q, g::Epilogue e, double m_tiles,
@@ -1030,9 +1037,15 @@ void check_rmma_count() {
     if (!near(on_ada.counted, q6k_swiglu) || !near(on_ada.warp_bytes, q6k_swiglu)) {
         fail("Q6_K SwiGLU m2 on sm_89: counted " + std::to_string(on_ada.counted) + ", no cap");
     }
-    if (!near(on_volta.counted, q6k_swiglu) ||
-        !near(on_volta.warp_bytes, *volta->sm_max_warp_bytes)) {
-        fail("Q6_K SwiGLU m2 on sm_70: cut to b_w_max");
+    if (!near(on_volta.counted, q6k_swiglu) || !near(on_volta.warp_bytes, q6k_swiglu)) {
+        fail("Q6_K SwiGLU m2 on sm_70: counted " + std::to_string(on_volta.counted) + ", no cap");
+    }
+    // The window: L0, then the other bytes at F bytes a clock.
+    for (const auto& [chip, t] : {std::pair{&*ada, on_ada}, std::pair{&*volta, on_volta}}) {
+        const double window =
+            *chip->dram_latency_s +
+            (q6k_swiglu - 512) / (*chip->sm_warp_fill_bytes_per_clock * chip->clock_hz);
+        if (!near(t.window, window)) fail("Q6_K SwiGLU m2: the window L0 + (b_w - 512) / F");
     }
     // The carve-out: P of the free one without shared memory, of the placed one with some.
     if (bf16.shared_carved ||

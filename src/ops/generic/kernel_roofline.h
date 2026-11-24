@@ -18,14 +18,16 @@
 //
 // The DRAM time (issue #690, dram_time below): every CTA's bytes over the chip's shared bus, or the
 // busiest SM's residency rounds at the rate its resident warps reach, whichever is longer. The rate
-// one SM reaches with W resident warps is min(P, W x b_w / L0) (Little's law), from the facts the
+// one SM reaches with W resident warps is min(P, W x b_w / (L0 + (b_w - 512 B) / F)) (Little's
+// law with the window's fill, #771), from the facts the
 // bytes-in-flight probe measured once per architecture (core/sm_rate_facts.h): L0 the fetch time of
 // one warp's 16-byte streaming loads alone on an SM, P the most bytes per SM clock one SM reaches
 // (with the L1-largest carve-out for a kernel without shared memory, the shared-largest one for a
 // kernel with some). b_w, the bytes a warp keeps in flight, is counted per kernel from its loop
 // (the register MMA's two ring slots of a step's weight runs, the pipelined and A8 tiles' cp.async
 // stages ahead), and held to b_w_max, the most one warp kept in flight in the probe, on the
-// architectures where the probe saw one warp saturate (sm_70; elsewhere no cap). The rate
+// architectures where the probe saw one warp saturate (none since probe 6). F is the rate a lone
+// warp's window fills at past its first warp-wide load, from the probe's chains. The rate
 // depends on no other SM, so a board with more SMs, all else equal, is never priced slower for
 // it. A chip whose architecture has no SM rate row (sm_80, sm_90, sm_100, sm_121 today), or whose
 // row another card of it refutes (sm_120a: the RTX 5070 Ti), keeps the law #643 extracted
@@ -68,6 +70,9 @@ struct ChipFacts {
     std::optional<double> sm_dram_bytes_per_clock_free;
     std::optional<double> sm_dram_bytes_per_clock_placed;
     std::optional<double> sm_max_warp_bytes;
+    // F, bytes an SM clock: a warp's window of b_w bytes takes L0 + (b_w - 512 B) / F (#771);
+    // absent, L0 alone (the law of #690 before the fill).
+    std::optional<double> sm_warp_fill_bytes_per_clock;
     double tensor_rate        = 0; // the BF16 MMA rate per SM and clock (GenerationRow::bf16)
     double max_threads_per_sm = 0;
     double max_ctas_per_sm    = 0;
@@ -290,7 +295,8 @@ struct DramTerms {
     double peak        = 0; // P of the carve-out at the reference clock, bytes per second
     double counted     = 0; // the bytes the kernel's loop keeps in flight a warp, by count
     double warp_bytes  = 0; // b_w: that, at most b_w_max where a warp saturates
-    double round_rate  = 0; // R_sm of the busiest SM's first round: min(P, W x b_w / L0)
+    double window      = 0; // a warp's window: L0 + (b_w - 512 B) / F, seconds
+    double round_rate  = 0; // R_sm of the busiest SM's first round: min(P, W x b_w / window)
     double total       = 0; // max(bus, sm)
     bool bus_bound     = false;
     bool shared_carved = false; // P of the shared-largest carve-out
@@ -304,12 +310,12 @@ struct DramTerms {
 //  - the bus: every CTA's bytes over the chip's bandwidth;
 //  - the busiest SM: its q = ceil(ctas / SMs) CTAs run in residency rounds of `occupancy` (the last
 //    one holds the rest), and a round of c CTAs moves c x bytes_per_cta at the rate its c x warps
-//    reach, min(P, W x b_w / L0), P of the carve-out at the chip's reference clock, b_w the
-//    counted bytes, at most b_w_max where the probe saw one warp saturate (sm_70, and sm_120a
-//    whose row is refuted: the 4-load ring keeps x1.20 and x1.00 of the 2-load ring's b_w; the
-//    others' x1.80-1.81 show no limit, and their counted bytes stand, b_w_max a lower bound of
-//    the limit). The probe measured b_w_max with 16-byte ld.global loads; the cp.async of the
-//    shared-memory tiles is taken to have the same per-warp limit (not measured).
+//    reach, min(P, W x b_w / window), P of the carve-out at the chip's reference clock, b_w the
+//    counted bytes (at most b_w_max where the probe saw one warp saturate: no architecture since
+//    probe 6, #757), and the window L0 + (b_w - 512 B) / F: the first warp-wide load's latency,
+//    then the other bytes at the fill rate F (#771; 17-19 B a clock on every architecture, the
+//    same for 16-, 8- and 4-byte loads; the cp.async of the shared-memory tiles is taken to fill
+//    at the same rate, not measured).
 // The bus bound reads no SM count; the busiest SM's rounds read it only through q, which does not
 // grow with more SMs. A round's rate is its own SM's, never a share of the bus: SMs left idle by
 // a small grid cost nothing, and the bus bound holds the grid that fills every SM. Requires the
@@ -329,7 +335,13 @@ struct DramTerms {
              chip.clock_hz;
     t.warp_bytes =
         chip.sm_max_warp_bytes ? std::min(counted_bytes, *chip.sm_max_warp_bytes) : counted_bytes;
-    const double per_w = t.warp_bytes / chip.dram_latency_s.value();
+    // The window fills past its first warp-wide load (512 B) at F bytes a clock (#771).
+    t.window = chip.dram_latency_s.value();
+    if (chip.sm_warp_fill_bytes_per_clock) {
+        t.window += std::max(0.0, t.warp_bytes - 512.0) /
+                    (*chip.sm_warp_fill_bytes_per_clock * chip.clock_hz);
+    }
+    const double per_w = t.warp_bytes / t.window;
     const auto rate    = [&](double c) { return std::min(t.peak, c * warps_per_cta * per_w); };
     const auto round   = [&](double c) { return c * bytes_per_cta / rate(c); };
     t.round_rate       = rate(std::min(q, occ));
@@ -677,6 +689,7 @@ inline void fill_sm_rate_facts(ChipFacts& c, int major, int minor) {
         c.sm_dram_bytes_per_clock_free   = row.bytes_per_clock_free;
         c.sm_dram_bytes_per_clock_placed = row.bytes_per_clock_placed;
         if (row.warp_bytes_saturated) c.sm_max_warp_bytes = row.max_warp_bytes_in_flight;
+        c.sm_warp_fill_bytes_per_clock = row.warp_fill_bytes_per_clock;
         return;
     }
 }
