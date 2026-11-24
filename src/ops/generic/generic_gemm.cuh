@@ -218,8 +218,9 @@ __device__ __forceinline__ void e2m1x2_bf16(unsigned c, unsigned& lo, unsigned& 
 // branches on subnormals and NaN, which put 16 never-taken arms a K step into the NVFP4 decode
 // (sm_86 w4x1: 1017 instructions in the loop, 624 executed an iteration, #1182) that the warp
 // still issues around (BSSY / BRA / BSYNC) and the kernel facts count. A normal code's exponent
-// is rebiased (7 -> 127), a subnormal is m x 2^-9 (exact), 0x7f / 0xff is NaN: every code's value
-// equals the library's.
+// is rebiased (7 -> 127), a subnormal is m x 2^-9 (exact), 0x7f / 0xff is NaN: every non-NaN
+// code's value equals the library's, and the two NaN codes give a NaN (other payload bits; the
+// 0.5 x scale and the bf16 rounding make it the canonical NaN either way).
 __device__ __forceinline__ float e4m3_value(unsigned b) {
     const unsigned sign = (b & 0x80U) << 24;
     const unsigned e    = (b >> 3) & 0xfU;
