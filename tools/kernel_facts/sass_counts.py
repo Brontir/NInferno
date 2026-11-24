@@ -743,9 +743,11 @@ class LoopCounts:
             return LOOP_COLUMNS
         if not self.pipes:
             return COLUMNS
+        # The order of kernel_facts.py Family.schema_columns, from_row and the C++ header check
+        # (kernel_facts.cpp); no family carries both the producer loop and the loads in flight.
         return (COLUMNS + PIPE_FIELDS + (WAIT_FIELDS if self.waits else ()) +
-                (INFLIGHT_FIELDS if self.inflight else ()) +
                 (PRODUCER_FIELDS if self.producer else ()) +
+                (INFLIGHT_FIELDS if self.inflight else ()) +
                 (PROLOGUE_FIELDS if self.prologue else ()))
 
     def row(self):

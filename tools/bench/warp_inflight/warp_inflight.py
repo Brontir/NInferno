@@ -1121,11 +1121,11 @@ def peak_in_flight(body, width=16):
     read once in program order (the loop's body after the code before it, which is where the
     probe's fetches meet; a guarded load counts as issued; the back edge is not followed):
     kernel_facts' sass_counts peak_loads_in_flight, the rule the kernel-facts rows' ldg_peak column
-    counts by. A body without control words (hand-made SASS) is read by its registers alone."""
+    counts by. An instruction without a control word (hand-made SASS) is read by its registers
+    alone."""
     sc = IP._sass_counts()
-    control = None
-    if all(len(row) >= 5 and row[4] is not None for row in body):
-        control = [sc.Control(row[4]) for row in body]
+    control = [sc.Control(row[4]) if len(row) >= 5 and row[4] is not None else None
+               for row in body]
     return sc.peak_loads_in_flight(body, control, range(len(body)), 1,
                                    lambda opcode: _is_ldg(opcode, width))[0]
 

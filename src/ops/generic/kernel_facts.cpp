@@ -96,17 +96,26 @@ constexpr SectionFamily kSections[] = {
     {"moegemm",
      "family decoder warps_m warps_k m_tiles n_tiles cluster stage registers stack local shared", 1,
      6, true},
-    {"vec",
-     "family type T KS gated bounded registers stack local shared",
-     0,
-     5,
-     true,
-     false,
-     {},
-     true},
+    {.name         = "vec",
+     .head_columns = "family type T KS gated bounded registers stack local shared",
+     .text_keys    = 0,
+     .int_keys     = 5,
+     .waits        = true,
+     .inflight     = true},
     {"vecmma", "family type gated registers stack local shared", 0, 2},
 };
 static_assert(std::size(kSections) == std::size(kSectionFamilies));
+
+// read_loop takes the loads in flight with the pipe counts, ahead of the producer loop, while the
+// columns line lists the producer loop first (kernel_facts.py's order): no family may carry both
+// (Family and LoopCounts.with_pipes assert the same).
+constexpr bool no_family_with_producer_and_inflight() {
+    for (const auto& f : kSections)
+        if (f.producer && f.inflight) return false;
+    return true;
+}
+
+static_assert(no_family_with_producer_and_inflight());
 
 const SectionFamily* section_family(std::string_view name) {
     for (const auto& f : kSections) {
