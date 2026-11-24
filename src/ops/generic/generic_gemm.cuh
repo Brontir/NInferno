@@ -171,6 +171,36 @@ inline constexpr bool kF16Operands = true;
 inline constexpr bool kF16Operands = false;
 #endif
 
+// The register-MMA loop's activation-side loads (the B fragments, the group-sum planes) as generic
+// `ld`, so ptxas writes them LD on every arch, as it already did on sm_120a; the weights load
+// LDG (or LDG.E.EF through ld_stream_*). The kernel facts count the loop's weight loads in flight
+// by that split (sass_counts STREAM_FIELDS, #1196): on sm_75-90 the activations were LDG too.
+template <class V>
+__device__ __forceinline__ V ld_act(const void* p) {
+    static_assert(sizeof(V) == 4 || sizeof(V) == 8 || sizeof(V) == 16);
+    if constexpr (sizeof(V) == 16) {
+        uint4 v;
+        asm("ld.v4.u32 {%0, %1, %2, %3}, [%4];"
+            : "=r"(v.x), "=r"(v.y), "=r"(v.z), "=r"(v.w)
+            : "l"(p));
+        V out;
+        __builtin_memcpy(&out, &v, sizeof(V));
+        return out;
+    } else if constexpr (sizeof(V) == 8) {
+        uint2 v;
+        asm("ld.v2.u32 {%0, %1}, [%2];" : "=r"(v.x), "=r"(v.y) : "l"(p));
+        V out;
+        __builtin_memcpy(&out, &v, sizeof(V));
+        return out;
+    } else {
+        unsigned v;
+        asm("ld.u32 %0, [%1];" : "=r"(v) : "l"(p));
+        V out;
+        __builtin_memcpy(&out, &v, sizeof(V));
+        return out;
+    }
+}
+
 __device__ __forceinline__ unsigned ld_stream_u32(const std::uint8_t* p) {
     unsigned v;
     asm volatile("ld.global.cs.u32 %0, [%1];\n" : "=r"(v) : "l"(p));
@@ -2351,7 +2381,7 @@ __device__ __forceinline__ void load_act(unsigned (&act)[NT][2 * M],
 #pragma unroll
             for (int i = 0; i < M; i += 2) {
                 uint4 w = make_uint4(0, 0, 0, 0);
-                if (col[n] != nullptr) w = load_vec<uint4>(col[n] + k0 + 4 * M * quad + 4 * i);
+                if (col[n] != nullptr) w = ld_act<uint4>(col[n] + k0 + 4 * M * quad + 4 * i);
                 act[n][2 * i]     = w.x;
                 act[n][2 * i + 1] = w.y;
                 act[n][2 * i + 2] = w.z;
@@ -2363,7 +2393,7 @@ __device__ __forceinline__ void load_act(unsigned (&act)[NT][2 * M],
                 // A quad-run decoder: quad q owns the group's values 4Mq .. 4Mq + 4M - 1.
                 const int at = QuadRunsOf<Decoder>::value ? 4 * M * quad + 4 * i : 16 * i + 4 * quad;
                 uint2 w = make_uint2(0, 0);
-                if (col[n] != nullptr) w = load_vec<uint2>(col[n] + k0 + at);
+                if (col[n] != nullptr) w = ld_act<uint2>(col[n] + k0 + at);
                 act[n][2 * i]     = w.x;
                 act[n][2 * i + 1] = w.y;
             }
@@ -2372,7 +2402,7 @@ __device__ __forceinline__ void load_act(unsigned (&act)[NT][2 * M],
 #pragma unroll
             for (int v = 0; v < R / 8; ++v) {
                 uint4 w = make_uint4(0, 0, 0, 0);
-                if (col[n] != nullptr) w = load_vec<uint4>(col[n] + k0 + quad * R + v * 8);
+                if (col[n] != nullptr) w = ld_act<uint4>(col[n] + k0 + quad * R + v * 8);
                 act[n][v * 4 + 0] = w.x;
                 act[n][v * 4 + 1] = w.y;
                 act[n][v * 4 + 2] = w.z;
@@ -2515,8 +2545,8 @@ mma_step(float (&acc)[Sets][MT][NT][4], const typename Decoder::Run (&runs)[Sets
                     for (int n = 0; n < NT; ++n) {
                         const float* r0 = plane_rows[2 * n];
                         const float* r1 = plane_rows[2 * n + 1];
-                        sums[n][0] = sums[n][2] = r0 != nullptr ? load_vec<float>(r0 + g) : 0.0F;
-                        sums[n][1] = sums[n][3] = r1 != nullptr ? load_vec<float>(r1 + g) : 0.0F;
+                        sums[n][0] = sums[n][2] = r0 != nullptr ? ld_act<float>(r0 + g) : 0.0F;
+                        sums[n][1] = sums[n][3] = r1 != nullptr ? ld_act<float>(r1 + g) : 0.0F;
                     }
                 } else if constexpr (MinTermOf<Decoder>::value) {
                     if (add) {
@@ -2696,7 +2726,7 @@ __device__ __forceinline__ void mma_step_local(float (&acc)[Sets][MT][2][8],
         return fmaf(w.y, v.y, fmaf(w.x, v.x, sum));
     };
     const auto act = [&](int n, int offset) -> unsigned {
-        return col[n] != nullptr ? load_vec<unsigned>(col[n] + offset) : 0U;
+        return col[n] != nullptr ? ld_act<unsigned>(col[n] + offset) : 0U;
     };
     if constexpr (SpreadOf<Decoder>) {
         constexpr int S = SplitsOf<Decoder>::value;
@@ -3314,7 +3344,7 @@ __device__ __forceinline__ void load_group_sums(float* dst, const GemmArgs& a, i
 #pragma unroll
             for (int v = 0; v < S / 4; ++v) {
                 float4 w = make_float4(0.0F, 0.0F, 0.0F, 0.0F);
-                if (live) w = load_vec<float4>(src + 4 * v);
+                if (live) w = ld_act<float4>(src + 4 * v);
                 dst[(2 * n + e) * S + 4 * v + 0] = w.x;
                 dst[(2 * n + e) * S + 4 * v + 1] = w.y;
                 dst[(2 * n + e) * S + 4 * v + 2] = w.z;

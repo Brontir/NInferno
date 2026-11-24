@@ -184,9 +184,11 @@ SECTION_FIELDS = PIPE_FIELDS + WAIT_FIELDS
 # in flight, which the DRAM law prices; ptxas's register budget sets both.
 INFLIGHT_FIELDS = ("ldg_peak", "ldg_peak_bytes")
 # The register-MMA rows' weight loads in flight a lane (#1196), after the schedule: the same count
-# over the K loop's streamed loads only (LDG .EF, the decoders' ld.global.cs; the activations
-# load cached, out of L1 and L2). Times 32 lanes, a warp's weight bytes in flight; over the warp's
-# rows and its CTA's K-interleaved warps, the contiguous run of a weight row in flight.
+# over the K loop's LDG loads but the read-only-cache ones (LDG.E.CONSTANT, the codebook grids):
+# the weights. The activation side loads generic (generic_gemm.cuh ld_act: LD on every arch), so
+# an LDG of the loop is a weight plane's (codes, scales, heads; LDG.E.EF where ld_stream_*). Times
+# 32 lanes, a warp's weight bytes in flight; over the warp's rows and its CTA's K-interleaved
+# warps, the contiguous run of a weight row in flight.
 STREAM_FIELDS = ("wldg_peak", "wldg_peak_bytes")
 # A second counted loop (#613 PR-10): the R8 decode kernels quantize the activation into shared
 # memory in a loop of their own before the dp4a loop, one 32-value block per thread and pass. Its
@@ -870,7 +872,7 @@ def schedule_counts(body, control, iteration, outside):
         body, control, iteration, 2, lambda opcode: base_opcode(opcode) in GLOBAL_LOADS)
     out["wldg_peak"], out["wldg_peak_bytes"] = peak_loads_in_flight(
         body, control, iteration, 2,
-        lambda opcode: base_opcode(opcode) in GLOBAL_LOADS and ".EF" in opcode)
+        lambda opcode: base_opcode(opcode) == "LDG" and ".CONSTANT" not in opcode)
     for i in iteration:
         out["stall_sum"] += control[i].stall
         out["sb_waits"] += control[i].wait_mask != 0

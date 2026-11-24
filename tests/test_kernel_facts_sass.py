@@ -656,19 +656,20 @@ class Snapshot(unittest.TestCase):
             kernel_facts.render("89", mixed, "13.4.92", "-O3", "abc")
 
     def test_weight_loads_in_flight_are_the_streamed_ones(self):
-        # The register-MMA rows count the streamed (.EF, ld.global.cs) loads in flight only: the
-        # weights; an activation load (cached) beside them is no weight load (#1196).
+        # The register-MMA rows count the LDG loads in flight but the read-only-cache table ones:
+        # the weights; an activation load (generic LD, ld_act) and a codebook grid read
+        # (LDG.E.CONSTANT) beside them are no weight loads (#1196).
         lines = [(0x00, "LDG.E.EF.128 R8, [R2.64] ;"), (0x10, "LDG.E.EF.128 R12, [R2.64+0x10] ;"),
-                 (0x20, "LDG.E.128 R16, [R4.64] ;"),
+                 (0x20, "LD.E.128 R16, [R4.64] ;"), (0x28, "LDG.E.CONSTANT R30, [R6.64] ;"),
                  (0x30, "HMMA.16816.F32.BF16 R20, R8, R16, R20 ;"),
                  (0x40, "HMMA.16816.F32.BF16 R24, R12, R18, R24 ;"),
                  (0x50, "IADD3 R2, R2, 0x400, RZ ;"), (0x60, "@!P0 BRA 0x0 ;")]
         iteration = range(len(lines))
         body = body_of(lines)
-        ef = lambda opcode: sc.base_opcode(opcode) in sc.GLOBAL_LOADS and ".EF" in opcode  # noqa
-        self.assertEqual(sc.peak_loads_in_flight(body, None, iteration, 2, ef), (2, 32))
+        c = sc.loop_counts(body, tiles=1)
+        self.assertEqual((c.wldg_peak, c.wldg_peak_bytes), (2, 32))
         every = lambda opcode: sc.base_opcode(opcode) in sc.GLOBAL_LOADS  # noqa: E731
-        self.assertEqual(sc.peak_loads_in_flight(body, None, iteration, 2, every), (3, 48))
+        self.assertEqual(sc.peak_loads_in_flight(body, None, iteration, 2, every)[0], 4)
         c = sc.loop_counts(body_of(KERNEL), tiles=1).with_streamed()
         c.wldg_peak, c.wldg_peak_bytes = 2, 32
         self.assertEqual(c.columns()[-2:], sc.STREAM_FIELDS)
