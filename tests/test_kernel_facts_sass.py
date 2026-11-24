@@ -1199,6 +1199,29 @@ class Sections(unittest.TestCase):
         self.assertEqual(vec.marker, "IDP")
         self.assertEqual(vec.tiles(self.VEC_KEY), 8)  # T 4: two rows x four tokens
 
+    def test_vec_section_round_trips_and_holds_its_audit(self):
+        # Every committed snapshot's vec section parses into its loop counts and renders back to
+        # the same bytes; its rows hold the family audit (k_iter 1024 or KS, Q2_K / IQ1_M above
+        # it or 0, unknown flow said); one row moved fails the check's comparison.
+        import glob
+        root = Path(__file__).resolve().parents[1]
+        paths = sorted(glob.glob(str(root / "src" / "ops" / "generic" / "data" / "kernel_facts" /
+                                     "sm_*.txt")))
+        self.assertTrue(paths)
+        for path in paths:
+            text = open(path).read()
+            _, secs = kernel_facts.split_sections(text)
+            _, parsed = kernel_facts.parse_sections(text)
+            v = parsed["vec"]
+            self.assertEqual(kernel_facts.render_section("vec", v["rows"], v["nvcc"]), secs["vec"],
+                             path)
+            lines = kernel_facts.family_audit("vec", v["rows"])
+            self.assertEqual([l for l in lines if "unknown flow" not in l], [], path)
+            q4k = v["rows"].get((12, 4, 0, 0, 0))
+            self.assertIsNotNone(q4k, path)
+            self.assertEqual(q4k[4].k_iter, 1024, path)
+            self.assertEqual(v["rows"][(12, 4, 17408, 0, 0)][4].k_iter, 17408, path)
+
 
 class SassUnstable(unittest.TestCase):
     # #968: every pre-quantized nt = 8 R8 row is held to its resources; another nt, a row that is

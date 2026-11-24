@@ -871,6 +871,23 @@ def family_audit(family, rows):
             # where it reads a quantized activation (pre 1).
             if c.pro_loops != (0 if k[5] else 1):
                 problems.append(f"{c.pro_loops} quantizer loops (pre {k[5]})")
+        elif family == "vec":
+            # ggml's vector kernels: one loop marked by its dp4a, no MMA, k_iter 1024 for the
+            # runtime K or KS unrolled (above it for Q2_K and IQ1_M, whose activation sums take
+            # dp4a of their own). A row of unknown flow (no loop and nothing outside it) is said
+            # as such and not held to the rest.
+            if c.loops == 0 and c.outside_total == 0:
+                out.append(f"vec {row_key(k)}: unknown flow (an indirect branch): no counts")
+                continue
+            want = k[2] if k[2] else 1024
+            if c.loops < 1:
+                problems.append("no K loop")
+            if c.mma != 0:
+                problems.append(f"{c.mma} MMAs in the iteration")
+            if k[0] in (10, 29) and 0 < c.k_iter < want:
+                problems.append(f"k_iter {c.k_iter}, under {want}")
+            elif k[0] not in (10, 29) and c.k_iter != want:
+                problems.append(f"k_iter {c.k_iter}, not {want}")
         problems += c.schedule_problems()
         if problems:
             out.append(f"{family} {row_key(k)}: {'; '.join(problems)}")
@@ -1028,7 +1045,13 @@ SECTION_NOTES = {
         "# analyzer (tools/route_pick) reads the K loop's counts, the loop marked by its dp4a (IDP).",
         "# A warp takes a row pair (the gated kernel: one row's two sets) and all T tokens: 2 x T",
         "# products, so k_iter is 1024 for the runtime-K loop (a slice of 32 values a lane) and KS",
-        "# for the unrolled ones (the whole K in one trip of the row loop).",
+        "# for the unrolled ones (the whole K in one trip of the row loop). Q2_K (10) and IQ1_M",
+        "# (29) also take dp4a for the activation's block sums, so theirs is above it (1536,",
+        "# 7680, 26112, or between where the compiler shares part of the sum between the rows; 0",
+        "# where their dp4a count does not divide by 2 x T).",
+        "# A row whose loop columns are all 0 (no loop, nothing outside it) is unknown flow: an",
+        "# indirect branch the counter cannot follow (a compiled switch; sm_100 / sm_120a gated",
+        "# T 3-8); its resources hold, its counts are unknown, not zero.",
     ),
 }
 

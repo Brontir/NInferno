@@ -9311,7 +9311,13 @@ family vec
 # analyzer (tools/route_pick) reads the K loop's counts, the loop marked by its dp4a (IDP).
 # A warp takes a row pair (the gated kernel: one row's two sets) and all T tokens: 2 x T
 # products, so k_iter is 1024 for the runtime-K loop (a slice of 32 values a lane) and KS
-# for the unrolled ones (the whole K in one trip of the row loop).
+# for the unrolled ones (the whole K in one trip of the row loop). Q2_K (10) and IQ1_M
+# (29) also take dp4a for the activation's block sums, so theirs is above it (1536,
+# 7680, 26112, or between where the compiler shares part of the sum between the rows; 0
+# where their dp4a count does not divide by 2 x T).
+# A row whose loop columns are all 0 (no loop, nothing outside it) is unknown flow: an
+# indirect branch the counter cannot follow (a compiled switch; sm_100 / sm_120a gated
+# T 3-8); its resources hold, its counts are unknown, not zero.
 # The columns: the key, the resources, the loop's counts and schedule as above, then the
 # pipe counts of the same iteration: I2F, I2FP, FFMA, FMUL, FADD, IMAD, BAR (sass_counts.py).
 # k_iter is the K values one iteration covers per product (128 per dp4a over the row x token
