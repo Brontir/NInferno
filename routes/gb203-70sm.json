@@ -3702,7 +3702,7 @@
     [
      1,
      8,
-     "rmma.m1.n1.w1x8"
+     "rmma.m1.n1.w1x16"
     ],
     [
      9,
@@ -3743,7 +3743,49 @@
      "rmma.m2.n4.w4x1"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     1,
+     1299.46,
+     1278.98
+    ],
+    [
+     2,
+     1301.5,
+     1285.12
+    ],
+    [
+     3,
+     1303.55,
+     1285.12
+    ],
+    [
+     4,
+     1309.7,
+     1289.22
+    ],
+    [
+     5,
+     1309.7,
+     1289.22
+    ],
+    [
+     6,
+     1313.79,
+     1291.26
+    ],
+    [
+     7,
+     1313.79,
+     1293.31
+    ],
+    [
+     8,
+     1315.84,
+     1296.38
+    ]
+   ]
   },
   {
    "bands": [
@@ -4563,11 +4605,6 @@
    "bands": [
     [
      1,
-     8,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     9,
      23,
      "rmma.m1.n2.w1x4"
     ],
@@ -4605,7 +4642,49 @@
      "rmma.m1.n4.w4x1"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     1,
+     36.45,
+     36.45
+    ],
+    [
+     2,
+     36.95,
+     36.45
+    ],
+    [
+     3,
+     37.27,
+     36.45
+    ],
+    [
+     4,
+     37.27,
+     36.73
+    ],
+    [
+     5,
+     37.27,
+     36.86
+    ],
+    [
+     6,
+     37.27,
+     36.86
+    ],
+    [
+     7,
+     37.27,
+     36.93
+    ],
+    [
+     8,
+     37.27,
+     36.86
+    ]
+   ]
   },
   {
    "bands": [
@@ -4649,13 +4728,8 @@
    "bands": [
     [
      1,
-     4,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     5,
      8,
-     "rmma.m1.n1.w1x4"
+     "rmma.m1.n1.w1x16"
     ],
     [
      9,
@@ -4689,7 +4763,49 @@
    "k": 2560,
    "n": 248320,
    "prefill": "rmma.m1.n8.w4x1",
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     1,
+     813.06,
+     813.06
+    ],
+    [
+     2,
+     817.15,
+     814.08
+    ],
+    [
+     3,
+     821.25,
+     817.18
+    ],
+    [
+     4,
+     822.27,
+     821.25
+    ],
+    [
+     5,
+     825.34,
+     822.27
+    ],
+    [
+     6,
+     828.38,
+     826.37
+    ],
+    [
+     7,
+     828.42,
+     826.37
+    ],
+    [
+     8,
+     832.51,
+     829.44
+    ]
+   ]
   },
   {
    "bands": [
@@ -5046,26 +5162,6 @@
    "bands": [
     [
      1,
-     4,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     5,
-     5,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     6,
-     6,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     7,
-     8,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     9,
      31,
      "rmma.m1.n2.w1x4"
     ],
@@ -5118,7 +5214,24 @@
      "rmma.m1.n4.w4x1"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     5,
+     17.09,
+     14.57
+    ],
+    [
+     7,
+     17.25,
+     14.57
+    ],
+    [
+     8,
+     17.25,
+     14.57
+    ]
+   ]
   },
   {
    "bands": [
@@ -5518,26 +5631,6 @@
    "bands": [
     [
      1,
-     1,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     2,
-     3,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     4,
-     6,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     7,
-     7,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     8,
      23,
      "rmma.m1.n2.w1x4"
     ],
@@ -5600,7 +5693,24 @@
      "rmma.m1.n4.w4x1"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     2,
+     9.43,
+     7.78
+    ],
+    [
+     3,
+     9.52,
+     7.78
+    ],
+    [
+     7,
+     9.52,
+     7.82
+    ]
+   ]
   },
   {
    "bands": [
@@ -5671,26 +5781,11 @@
    "bands": [
     [
      1,
-     2,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     3,
-     3,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     4,
-     6,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     7,
-     7,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
      8,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     9,
      23,
      "rmma.m1.n2.w1x4"
     ],
@@ -5728,7 +5823,39 @@
      "rmma.m1.n2.w4x1"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     1,
+     11.15,
+     10.35
+    ],
+    [
+     2,
+     11.61,
+     10.58
+    ],
+    [
+     4,
+     11.61,
+     10.64
+    ],
+    [
+     5,
+     11.61,
+     10.58
+    ],
+    [
+     6,
+     11.61,
+     10.64
+    ],
+    [
+     8,
+     11.61,
+     10.58
+    ]
+   ]
   },
   {
    "bands": [
@@ -8354,7 +8481,7 @@
     [
      1,
      8,
-     "rmma.m1.n1.w1x8"
+     "rmma.m1.n1.w1x16"
     ],
     [
      9,
@@ -8395,14 +8522,56 @@
      "rmma.m2.n4.w4x1"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     1,
+     528.38,
+     522.24
+    ],
+    [
+     2,
+     530.43,
+     523.26
+    ],
+    [
+     3,
+     532.48,
+     524.32
+    ],
+    [
+     4,
+     532.48,
+     526.34
+    ],
+    [
+     5,
+     532.48,
+     526.34
+    ],
+    [
+     6,
+     534.53,
+     527.36
+    ],
+    [
+     7,
+     535.55,
+     528.38
+    ],
+    [
+     8,
+     536.58,
+     528.38
+    ]
+   ]
   },
   {
    "bands": [
     [
      1,
      8,
-     "rmma.m1.n1.w1x8"
+     "rmma.m1.n1.w1x16"
     ],
     [
      9,
@@ -8448,14 +8617,56 @@
      "rmma.m2.n4.w4x1"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     1,
+     528.38,
+     522.24
+    ],
+    [
+     2,
+     530.43,
+     524.29
+    ],
+    [
+     3,
+     532.48,
+     524.29
+    ],
+    [
+     4,
+     532.51,
+     525.31
+    ],
+    [
+     5,
+     534.53,
+     526.34
+    ],
+    [
+     6,
+     534.53,
+     528.38
+    ],
+    [
+     7,
+     536.58,
+     528.38
+    ],
+    [
+     8,
+     536.58,
+     529.41
+    ]
+   ]
   },
   {
    "bands": [
     [
      1,
      8,
-     "rmma.m1.n1.w1x8"
+     "rmma.m1.n1.w1x16"
     ],
     [
      9,
@@ -8496,14 +8707,56 @@
      "rmma.m2.n4.w4x1"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     1,
+     673.79,
+     665.6
+    ],
+    [
+     2,
+     675.84,
+     667.65
+    ],
+    [
+     3,
+     677.89,
+     668.67
+    ],
+    [
+     4,
+     680.96,
+     670.72
+    ],
+    [
+     5,
+     680.96,
+     670.72
+    ],
+    [
+     6,
+     680.96,
+     672.77
+    ],
+    [
+     7,
+     683.01,
+     673.79
+    ],
+    [
+     8,
+     685.06,
+     675.81
+    ]
+   ]
   },
   {
    "bands": [
     [
      1,
      8,
-     "rmma.m1.n1.w1x8"
+     "rmma.m1.n1.w1x16"
     ],
     [
      9,
@@ -8549,7 +8802,49 @@
      "rmma.m2.n4.w4x1"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     1,
+     796.67,
+     787.46
+    ],
+    [
+     2,
+     798.72,
+     790.53
+    ],
+    [
+     3,
+     800.77,
+     790.53
+    ],
+    [
+     4,
+     802.82,
+     791.55
+    ],
+    [
+     5,
+     804.86,
+     793.6
+    ],
+    [
+     6,
+     804.86,
+     795.65
+    ],
+    [
+     7,
+     806.94,
+     796.67
+    ],
+    [
+     8,
+     807.94,
+     797.7
+    ]
+   ]
   },
   {
    "bands": [
@@ -8686,13 +8981,8 @@
    "bands": [
     [
      1,
-     1,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     2,
      8,
-     "rmma.m1.n1.w1x16"
+     "rmma.m1.n1.w1x8"
     ],
     [
      9,
@@ -8758,7 +9048,44 @@
      "rmma.m1.n8.w8x1"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)",
+   "evidence_us": [
+    [
+     2,
+     61.44,
+     61.44
+    ],
+    [
+     3,
+     61.98,
+     61.98
+    ],
+    [
+     4,
+     62.12,
+     62.12
+    ],
+    [
+     5,
+     62.12,
+     62.12
+    ],
+    [
+     6,
+     62.12,
+     62.12
+    ],
+    [
+     7,
+     62.46,
+     62.46
+    ],
+    [
+     8,
+     62.12,
+     62.12
+    ]
+   ]
   },
   {
    "bands": [
@@ -11936,11 +12263,6 @@
    "bands": [
     [
      1,
-     8,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     9,
      23,
      "rmma.m1.n1.w1x8"
     ],
@@ -11991,6 +12313,48 @@
      256,
      2047,
      "rmma.m1.n4.w4x1"
+    ]
+   ],
+   "evidence_us": [
+    [
+     1,
+     2.96,
+     2.15
+    ],
+    [
+     2,
+     3.1,
+     2.27
+    ],
+    [
+     3,
+     3.09,
+     2.31
+    ],
+    [
+     4,
+     3.1,
+     2.31
+    ],
+    [
+     5,
+     3.12,
+     2.34
+    ],
+    [
+     6,
+     3.12,
+     2.34
+    ],
+    [
+     7,
+     3.09,
+     2.34
+    ],
+    [
+     8,
+     3.09,
+     2.34
     ]
    ]
   },
