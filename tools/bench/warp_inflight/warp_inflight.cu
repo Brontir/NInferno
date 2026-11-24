@@ -155,20 +155,33 @@ __device__ __forceinline__ unsigned ld_stream_v1(const unsigned char* p) {
 }
 
 // A lane's streaming load of B bytes (16, 8, 4; probe 7): a warp-wide load is 32 x B bytes.
-template <int B> struct Lane;
-template <> struct Lane<16> {
+template <int B>
+struct Lane;
+
+template <>
+struct Lane<16> {
     using T = uint4;
+
     __device__ static T ld(const unsigned char* p) { return ld_stream_v4(p); }
+
     __device__ static unsigned x(const T& v) { return v.x ^ v.y ^ v.z ^ v.w; }
 };
-template <> struct Lane<8> {
+
+template <>
+struct Lane<8> {
     using T = uint2;
+
     __device__ static T ld(const unsigned char* p) { return ld_stream_v2(p); }
+
     __device__ static unsigned x(const T& v) { return v.x ^ v.y; }
 };
-template <> struct Lane<4> {
+
+template <>
+struct Lane<4> {
     using T = unsigned;
+
     __device__ static T ld(const unsigned char* p) { return ld_stream_v1(p); }
+
     __device__ static unsigned x(const T& v) { return v; }
 };
 
@@ -267,16 +280,24 @@ struct Variant {
 };
 
 const Variant kVariants[] = {
-    {"chain1", 1, false, stream<1, false>},    {"chain2", 2, false, stream<2, false>},
-    {"chain4", 4, false, stream<4, false>},    {"ring1", 1, true, stream<1, true>},
-    {"ring2", 2, true, stream<2, true>},       {"ring4", 4, true, stream<4, true>},
-    {"ring8", 8, true, stream<8, true>},       {"chain8", 8, false, stream<8, false>},
+    {"chain1", 1, false, stream<1, false>},
+    {"chain2", 2, false, stream<2, false>},
+    {"chain4", 4, false, stream<4, false>},
+    {"ring1", 1, true, stream<1, true>},
+    {"ring2", 2, true, stream<2, true>},
+    {"ring4", 4, true, stream<4, true>},
+    {"ring8", 8, true, stream<8, true>},
+    {"chain8", 8, false, stream<8, false>},
     {"chain16", 16, false, stream<16, false>},
     // Probe 7: chains of 8- and 4-byte loads a lane, 512 to 4096 bytes a warp.
-    {"chain2_b8", 2, false, stream<2, false, 8>, 8},   {"chain4_b8", 4, false, stream<4, false, 8>, 8},
-    {"chain8_b8", 8, false, stream<8, false, 8>, 8},   {"chain16_b8", 16, false, stream<16, false, 8>, 8},
-    {"chain4_b4", 4, false, stream<4, false, 4>, 4},   {"chain8_b4", 8, false, stream<8, false, 4>, 4},
-    {"chain16_b4", 16, false, stream<16, false, 4>, 4}, {"chain32_b4", 32, false, stream<32, false, 4>, 4},
+    {"chain2_b8", 2, false, stream<2, false, 8>, 8},
+    {"chain4_b8", 4, false, stream<4, false, 8>, 8},
+    {"chain8_b8", 8, false, stream<8, false, 8>, 8},
+    {"chain16_b8", 16, false, stream<16, false, 8>, 8},
+    {"chain4_b4", 4, false, stream<4, false, 4>, 4},
+    {"chain8_b4", 8, false, stream<8, false, 4>, 4},
+    {"chain16_b4", 16, false, stream<16, false, 4>, 4},
+    {"chain32_b4", 32, false, stream<32, false, 4>, 4},
 };
 
 std::vector<std::string> g_failures;
