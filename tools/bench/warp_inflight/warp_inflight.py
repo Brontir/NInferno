@@ -1113,53 +1113,21 @@ def sass_loads(sass):
             for v, body in _kernels(sass).items()}
 
 
-SASS_REGISTER = re.compile(r"\bR(\d+)(\.64)?\b")
-
-
-DEPBAR_LE = re.compile(r"SB(\d)\s*,\s*(0x[0-9a-f]+|\d+)")
 NO_SCOREBOARD = 7  # the control code's write barrier when an instruction sets none
 
 
 def peak_in_flight(body, width=16):
     """The most loads of `width` bytes (the variant's own) the kernel's SASS keeps in flight a lane,
-    read in program order. A
-    load stays in flight until something waits for it:
-    - an instruction reads or overwrites a register it writes (its quad);
-    - an instruction's control-code wait mask names the scoreboard the load set (every load on
-      that scoreboard is then back);
-    - a `DEPBAR.LE SBx, n` leaves at most n loads outstanding on SBx (the oldest are back).
-    The loop's body is read once, after the code before it, which is where the probe's fetches
-    meet; a guarded load counts as issued. A count of what the text lets be in flight, not a
-    schedule: the loop's back edge is not followed. A body without control words (hand-made SASS)
-    is read by its registers alone."""
+    read once in program order (the loop's body after the code before it, which is where the
+    probe's fetches meet; a guarded load counts as issued; the back edge is not followed):
+    kernel_facts' sass_counts peak_loads_in_flight, the rule the kernel-facts rows' ldg_peak column
+    counts by. An instruction without a control word (hand-made SASS) is read by its registers
+    alone."""
     sc = IP._sass_counts()
-    pending, peak = [], 0  # [(registers, scoreboard)], in issue order
-    for _, _, opcode, operands, high in body:
-        control = sc.Control(high) if high is not None else None
-        if control is not None and control.wait_mask:
-            pending = [(q, sb) for q, sb in pending
-                       if sb == NO_SCOREBOARD or not control.wait_mask >> sb & 1]
-        if sc.base_opcode(opcode) == "DEPBAR":
-            m = DEPBAR_LE.search(operands)
-            if m:
-                sb, keep = int(m.group(1)), int(m.group(2), 0)
-                mine = [i for i, (_, b) in enumerate(pending) if b == sb]
-                done = set(mine[:max(0, len(mine) - keep)])
-                pending = [x for i, x in enumerate(pending) if i not in done]
-        written = sc.written_registers(opcode, operands)
-        fields = operands.split(",")
-        reads = set()
-        # The registers read: every one named after the destination (its first operand, where
-        # the instruction writes one), a .64 address as its pair.
-        for f in fields[1:] if written else fields:
-            for m in SASS_REGISTER.finditer(f):
-                n = int(m.group(1))
-                reads.update({f"R{n}", f"R{n + 1}"} if m.group(2) else {f"R{n}"})
-        pending = [(q, sb) for q, sb in pending if not (q & reads or q & written)]
-        if _is_ldg(opcode, width):
-            pending.append((written, control.write_barrier if control else NO_SCOREBOARD))
-            peak = max(peak, len(pending))
-    return peak
+    control = [sc.Control(row[4]) if len(row) >= 5 and row[4] is not None else None
+               for row in body]
+    return sc.peak_loads_in_flight(body, control, range(len(body)), 1,
+                                   lambda opcode: _is_ldg(opcode, width))[0]
 
 
 def sass_inflight(sass):

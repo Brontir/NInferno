@@ -178,6 +178,11 @@ PIPE_FIELDS = tuple(PIPE_OPCODES)
 WAIT_FIELDS = ("sb_waits_global", "sb_waits_shared")
 # The mmq and w4a8 sections' columns after the schedule (Family.pipes and Family.waits).
 SECTION_FIELDS = PIPE_FIELDS + WAIT_FIELDS
+# The global loads the K loop keeps in flight a lane (#1185), after the wait classes: the most at
+# once and the most bytes they hold (peak_loads_in_flight over the iteration walked twice, the
+# second counted). A warp's loads in flight times the warps an SM holds are the bytes an SM keeps
+# in flight, which the DRAM law prices; ptxas's register budget sets both.
+INFLIGHT_FIELDS = ("ldg_peak", "ldg_peak_bytes")
 # A second counted loop (#613 PR-10): the R8 decode kernels quantize the activation into shared
 # memory in a loop of their own before the dp4a loop, one 32-value block per thread and pass. Its
 # counts follow the pipe counts, prefixed pro_: the loops found (0 where the kernel reads a
@@ -723,12 +728,13 @@ class LoopCounts:
         self.loops = 0
         self.k_iter = 0
         self.mma_shape = "-"
-        for f in (COUNT_FIELDS + SCHEDULE_FIELDS + PIPE_FIELDS + WAIT_FIELDS + PROLOGUE_FIELDS +
-                  PRODUCER_FIELDS):
+        for f in (COUNT_FIELDS + SCHEDULE_FIELDS + PIPE_FIELDS + WAIT_FIELDS + INFLIGHT_FIELDS +
+                  PROLOGUE_FIELDS + PRODUCER_FIELDS):
             setattr(self, f, 0)
         self.scheduled = False
         self.pipes = False
         self.waits = False
+        self.inflight = False
         self.prologue = False
         self.producer = False
 
@@ -737,8 +743,11 @@ class LoopCounts:
             return LOOP_COLUMNS
         if not self.pipes:
             return COLUMNS
+        # The order of kernel_facts.py Family.schema_columns, from_row and the C++ header check
+        # (kernel_facts.cpp); no family carries both the producer loop and the loads in flight.
         return (COLUMNS + PIPE_FIELDS + (WAIT_FIELDS if self.waits else ()) +
                 (PRODUCER_FIELDS if self.producer else ()) +
+                (INFLIGHT_FIELDS if self.inflight else ()) +
                 (PROLOGUE_FIELDS if self.prologue else ()))
 
     def row(self):
@@ -753,16 +762,19 @@ class LoopCounts:
             setattr(c, name, getattr(self, name))
         return c
 
-    def with_pipes(self, pipes=True, prologue=False, waits=False, producer=False):
+    def with_pipes(self, pipes=True, prologue=False, waits=False, producer=False, inflight=False):
         """This row's columns with (or without) the pipe counts, and after them the wait classes
-        (WAIT_FIELDS, the mmq and w4a8 sections) and the producer loop's (PRODUCER_FIELDS, the
-        w4a8 section), or the prologue loop's (PROLOGUE_FIELDS, the r8 section), each only with
-        the pipes, the counts unchanged."""
+        (WAIT_FIELDS, the mmq, w4a8 and vec sections) and then the producer loop's
+        (PRODUCER_FIELDS, the w4a8 section) or the loads in flight (INFLIGHT_FIELDS, the vec
+        section), or the prologue loop's (PROLOGUE_FIELDS, the r8 section), each only with the
+        pipes, the counts unchanged."""
         assert not (waits and prologue)
         assert not producer or waits
+        assert not inflight or (waits and not producer)
         self.pipes = pipes
         self.waits = waits and pipes
         self.producer = producer and self.waits
+        self.inflight = inflight and self.waits
         self.prologue = prologue and pipes
         return self
 
@@ -773,7 +785,8 @@ class LoopCounts:
         a field that is no count."""
         piped = len(COLUMNS) + len(PIPE_FIELDS)
         widths = (len(COLUMNS), len(LOOP_COLUMNS), piped, piped + len(WAIT_FIELDS),
-                  piped + len(WAIT_FIELDS) + len(PRODUCER_FIELDS), piped + len(PROLOGUE_FIELDS))
+                  piped + len(WAIT_FIELDS) + len(PRODUCER_FIELDS),
+                  piped + len(WAIT_FIELDS) + len(INFLIGHT_FIELDS), piped + len(PROLOGUE_FIELDS))
         assert len(set(widths)) == len(widths)
         if len(fields) not in widths:
             raise ValueError(f"{len(fields)} loop fields, {' or '.join(map(str, widths))} columns")
@@ -781,10 +794,11 @@ class LoopCounts:
         c.scheduled = len(fields) != len(LOOP_COLUMNS)
         c.pipes = len(fields) >= piped
         c.producer = len(fields) == piped + len(WAIT_FIELDS) + len(PRODUCER_FIELDS)
-        c.waits = len(fields) == piped + len(WAIT_FIELDS) or c.producer
+        c.inflight = len(fields) == piped + len(WAIT_FIELDS) + len(INFLIGHT_FIELDS)
+        c.waits = len(fields) == piped + len(WAIT_FIELDS) or c.producer or c.inflight
         c.prologue = len(fields) == piped + len(PROLOGUE_FIELDS)
-        extra = (WAIT_FIELDS + (PRODUCER_FIELDS if c.producer else ()) if c.waits
-                 else PROLOGUE_FIELDS)
+        extra = (WAIT_FIELDS + (PRODUCER_FIELDS if c.producer else ()) +
+                 (INFLIGHT_FIELDS if c.inflight else ()) if c.waits else PROLOGUE_FIELDS)
         for name, value in zip(COLUMNS + PIPE_FIELDS + extra, fields):
             setattr(c, name, value if name == "mma_shape" else int(value))
         return c
@@ -833,6 +847,8 @@ def schedule_counts(body, control, iteration, outside):
     walk counted: a wait clears the scoreboards of its mask, a write barrier set by an LDL makes
     its scoreboard local until then."""
     out = dict.fromkeys(SCHEDULE_FIELDS + WAIT_FIELDS, 0)
+    out["ldg_peak"], out["ldg_peak_bytes"] = peak_loads_in_flight(
+        body, control, iteration, 2, lambda opcode: base_opcode(opcode) in GLOBAL_LOADS)
     for i in iteration:
         out["stall_sum"] += control[i].stall
         out["sb_waits"] += control[i].wait_mask != 0
@@ -888,6 +904,56 @@ def global_waits(body, control, indices, walks):
             if c.write_barrier != NO_BARRIER and base_opcode(body[i][2]) in GLOBAL_LOADS:
                 pending[c.write_barrier] = generation
     return count
+
+
+SASS_READ_REGISTER = re.compile(r"\bR(\d+)(\.64)?\b")
+DEPBAR_LE = re.compile(r"SB(\d)\s*,\s*(0x[0-9a-f]+|\d+)")
+
+
+def peak_loads_in_flight(body, control, indices, walks, is_load):
+    """(loads, bytes): the most loads `is_load(opcode)` accepts that the SASS keeps in flight a
+    lane, and the most bytes a lane they hold, over `indices` (in the order they execute) walked
+    `walks` times, the last walk counted: a loop's loads issued late in one trip and waited on in
+    the next count together. A load stays in flight until something waits for it:
+    - an instruction reads or overwrites a register it writes;
+    - an instruction's wait mask names the scoreboard the load set (every load on that scoreboard
+      is then back);
+    - a `DEPBAR.LE SBx, n` leaves at most n loads outstanding on SBx (the oldest are back).
+    `control` None (a body without control words) is read by its registers alone. A count of what
+    the text lets be in flight, not a schedule: no branch is followed. warp_inflight's
+    peak_in_flight (the 16-byte loads of its probe) is this rule."""
+    pending, peak, peak_bytes = [], 0, 0  # [(registers, scoreboard, bytes)], in issue order
+    for walk in range(walks):
+        for i in indices:
+            opcode, operands = body[i][2], body[i][3]
+            c = control[i] if control is not None else None
+            if c is not None and c.wait_mask:
+                pending = [p for p in pending
+                           if p[1] == NO_BARRIER or not c.wait_mask >> p[1] & 1]
+            if base_opcode(opcode) == "DEPBAR":
+                m = DEPBAR_LE.search(operands)
+                if m:
+                    sb, keep = int(m.group(1)), int(m.group(2), 0)
+                    mine = [k for k, p in enumerate(pending) if p[1] == sb]
+                    done = set(mine[:max(0, len(mine) - keep)])
+                    pending = [p for k, p in enumerate(pending) if k not in done]
+            written = written_registers(opcode, operands)
+            fields = operands.split(",")
+            reads = set()
+            # The registers read: every one named after the destination (its first operand, where
+            # the instruction writes one), a .64 address as its pair.
+            for f in fields[1:] if written else fields:
+                for m in SASS_READ_REGISTER.finditer(f):
+                    n = int(m.group(1))
+                    reads.update({f"R{n}", f"R{n + 1}"} if m.group(2) else {f"R{n}"})
+            pending = [p for p in pending if not (p[0] & reads or p[0] & written)]
+            if is_load(opcode):
+                pending.append((written, c.write_barrier if c is not None else NO_BARRIER,
+                                access_bytes(opcode)))
+                if walk == walks - 1:
+                    peak = max(peak, len(pending))
+                    peak_bytes = max(peak_bytes, sum(p[2] for p in pending))
+    return peak, peak_bytes
 
 
 def outside_counts(body, control, outside, out):
