@@ -351,13 +351,8 @@ int sm_count() {
 
 // Index of the register-MMA schedule with this shape; the list is generic_gemm_launch.cuh's.
 int rmma_index(int warps_m, int warps_k, int m_tiles, int n_tiles, int cluster) {
-#ifdef NINFERNO_WITHOUT_NVFP4
-    if (cluster > 1) {
-        // Thread-block clusters are sm_90+; the Ada build compiles C == 1 schedules only and
-        // the selector must never offer a cluster split there.
-        cluster = 1;
-    }
-#endif
+    // LAB #1048: no clamp: the C > 1 schedules split K over the grid's z on a build without
+    // clusters (generic_gemm.cuh g_lab_split_ws).
     for (std::size_t i = 0; i < kRmmaSchedules.size(); ++i) {
         const auto& s = kRmmaSchedules[i];
         if (s.warps_m == warps_m && s.warps_k == warps_k && s.m_tiles == m_tiles &&
@@ -1665,8 +1660,12 @@ DeviceFeatures route_requires(Route route) {
         return f;
     case Family::RegisterMma:
         f.mma_bf16 = true;
+#ifdef NINFERNO_WITHOUT_NVFP4
+        f.clusters = false;  // LAB #1048: the global split needs no cluster
+#else
         f.clusters = route.schedule < rmma_schedule_count() &&
                      rmma_schedule_info(route.schedule).cluster > 1;
+#endif
         return f;
     case Family::W4a4Mma:
         f.mma_bf16     = true;

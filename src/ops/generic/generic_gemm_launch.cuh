@@ -381,7 +381,11 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
     } else {
         cudaLaunchAttribute attributes[2]{};
         unsigned count = 0;
+#ifdef NINFERNO_WITHOUT_NVFP4
+        if (false) {  // LAB #1048: no cluster on this build; the grid's z carries the ranks
+#else
         if (Schedule::kCluster > 1) {
+#endif
             attributes[count].id               = cudaLaunchAttributeClusterDimension;
             attributes[count].val.clusterDim.x = 1;
             attributes[count].val.clusterDim.y = 1;

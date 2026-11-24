@@ -52,6 +52,16 @@ namespace ninferno::ops::detail::generic {
 // rank r sums K steps [steps*r/C, steps*(r+1)/C), and rank 0 adds the ranks' partials from
 // distributed shared memory in rank order. It is for problems too small to give every SM a CTA
 // (decode of a few dozen rows); the order depends on nothing but the schedule.
+#ifdef NINFERNO_WITHOUT_NVFP4
+// LAB #1048: the C > 1 schedules on a build without clusters split K over C CTAs of the grid's z
+// and add the ranks' partials through these (one slot of kLabSplitPart floats a tile and rank;
+// the counters start at zero and the reducing CTA resets its own).
+inline constexpr unsigned kLabSplitSlots = 8192;
+inline constexpr int kLabSplitPart       = 256;
+static __device__ float g_lab_split_ws[kLabSplitSlots * kLabSplitPart];
+static __device__ unsigned g_lab_split_count[kLabSplitSlots];
+#endif
+
 template <int WarpsM, int WarpsK, int MTiles, int NTiles, int Cluster = 1>
 struct RmmaSchedule {
     static_assert(WarpsM > 0 && WarpsK > 0 && WarpsM * WarpsK <= 16);
@@ -3730,6 +3740,54 @@ __launch_bounds__(Schedule::kThreads,
         // No CTA leaves (and frees its shared memory) before rank 0 has read it.
         cluster.sync();
         if (!rank0 || !live) return;
+#else
+        // LAB #1048: no clusters on this build: the ranks' partials go through global memory and
+        // the last CTA of the tile to arrive adds them in rank order (deterministic), then resets
+        // the tile's counter for the next launch.
+        constexpr int kPart = Schedule::kWarpsM * kSets * MT * NT * 4 * 32;
+        static_assert(kPart <= kLabSplitPart, "LAB #1048: the split's partial outgrows its slot");
+        const unsigned tile = blockIdx.x + gridDim.x * blockIdx.y;
+        if ((tile + 1) * C > kLabSplitSlots) __trap();
+        float* own = g_lab_split_ws + (static_cast<std::size_t>(tile) * C + blockIdx.z) * kLabSplitPart;
+        const int slot = ((warp_m * kSets) * MT * NT) * 4 * 32;
+        if (live) {
+#    pragma unroll
+            for (int s = 0; s < kSets; ++s)
+#    pragma unroll
+                for (int m = 0; m < MT; ++m)
+#    pragma unroll
+                    for (int n = 0; n < NT; ++n)
+#    pragma unroll
+                        for (int e = 0; e < 4; ++e)
+                            own[slot + (((s * MT + m) * NT + n) * 4 + e) * 32 + lane] =
+                                acc[s][m][n][e];
+        }
+        __threadfence();
+        __syncthreads();
+        __shared__ unsigned arrived;
+        if (threadIdx.x == 0) arrived = atomicAdd(&g_lab_split_count[tile], 1U);
+        __syncthreads();
+        if (arrived != static_cast<unsigned>(C - 1) || !live) return;
+        __threadfence();
+        if (live) {
+#    pragma unroll
+            for (int s = 0; s < kSets; ++s)
+#    pragma unroll
+                for (int m = 0; m < MT; ++m)
+#    pragma unroll
+                    for (int n = 0; n < NT; ++n)
+#    pragma unroll
+                        for (int e = 0; e < 4; ++e) {
+                            float sum = 0.0F;
+                            for (int r = 0; r < C; ++r) {
+                                sum += __ldcg(g_lab_split_ws +
+                                              (static_cast<std::size_t>(tile) * C + r) * kLabSplitPart +
+                                              slot + (((s * MT + m) * NT + n) * 4 + e) * 32 + lane);
+                            }
+                            acc[s][m][n][e] = sum;
+                        }
+        }
+        if (threadIdx.x == 0) g_lab_split_count[tile] = 0U;
 #endif
     }
 
