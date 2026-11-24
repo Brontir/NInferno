@@ -139,13 +139,15 @@ _curves = {}
 
 def sm_rate(board_name, bytes_inflight):
     """One SM's DRAM rate (B/s) at `bytes_inflight` bytes in flight: the warp_inflight probe's placed k=1 rows
-    (bytes = loads in flight a warp x warps x 512), the best rate at or below those bytes, linear between rows."""
+    (bytes = loads in flight a lane x 32 lanes x the load's bytes x warps: 16, or 8 / 4 for probe 7's `_b8` / `_b4`
+    chains, warp_inflight.load_bytes_of), the best rate at or below those bytes, linear between rows."""
     if board_name not in _curves:
         pts = {}
         for line in open(os.path.join(PROBE_DIR, PROBE[board_name])):
             f = line.split()
             if f[:3] == ["row", "placed", "1"]:
-                b = int(f[4]) * int(f[5]) * 512; g = float(f[6]) * 1e9
+                load = 8 if f[3].endswith("_b8") else 4 if f[3].endswith("_b4") else 16
+                b = int(f[4]) * 32 * load * int(f[5]); g = float(f[6]) * 1e9
                 pts[b] = max(pts.get(b, 0), g)
         xs = sorted(pts); best = 0; curve = []
         for x in xs: best = max(best, pts[x]); curve.append((x, best))

@@ -9,7 +9,7 @@
  "inputs": {
   "src/core/data/gpu_facts.json": "beb9d18a93d7ab298370bcfe5998ad7f18afe2cf24b19efeca2f7787d35d596d",
   "src/core/data/isa_facts.json": "ea91e207d90ba4516a40f0ff3016182926b15ee87204ae3e9b833ec4e1fc21d4",
-  "src/core/data/sm_rate_facts.json": "bfcd77295bba25aea216aa800548bda80e655770725ef4bd66ef4251de3a105f",
+  "src/core/data/sm_rate_facts.json": "89ec3b3a6edb45a21733c387a84c41d9cac45f3cd918acbf8320b16f0dacaa0f",
   "src/ops/generic/data/kernel_facts/sm_89.txt": "019410d5fe7382af3367afe0a78f6c9679fb218b7aa101d71cdeca28bb2e6aca",
   "tools/route_pick/pick.py": "7b6166d08ff970a7546ea98701c764bc2e1552c6baf4c86d4570b9ca3e00aad4",
   "tools/route_pick/facts.py": "22e14fd9524280429ed5f8455dee8b40217445518e7b411508cfbc52cd3fb24b",
@@ -1870,13 +1870,8 @@
    "bands": [
     [
      9,
-     24,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     25,
      32,
-     "rmma.m1.n1.w1x8"
+     "rmma.m1.n1.w1x16"
     ]
    ]
   },
