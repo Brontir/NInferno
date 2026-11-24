@@ -815,7 +815,7 @@ class WarpInflight(unittest.TestCase):
         for name in sorted(os.listdir(wi.DEFAULT_INPUTS)):
             with open(os.path.join(wi.DEFAULT_INPUTS, name)) as f:
                 head, rows = wi.parse_run(f.read())
-            if head["probe"] != "warp_inflight 7":
+            if head["probe"] not in ("warp_inflight 7", "warp_inflight 8"):  # the b8 / b4 chains
                 continue
             runs += 1
             self.assertIsNotNone(wi.fill_rate(rows), name)
