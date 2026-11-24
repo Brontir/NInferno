@@ -209,8 +209,11 @@ struct SnapshotHeader {
 //             K, or a static K of 5120, 6144 or 17408). A substituted board's launch reads the
 //             CTAs an SM holds and a bounded twin's local bytes from them; a real device asks its
 //             own kernel.
-inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8",  "gemma4",  "r8",
-                                                        "i8",  "moer8", "moegemm", "vec"};
+//   "vecmma"  the vector family's few-row MMA tiles vec_mma_kernel<type, Gated> (ggml_vec.cu,
+//             #1162; route ggml_vec.mma): key "type gated" ("12 0"); below sm_80 no MMA in the
+//             loop (a trap stand-in, never launched).
+inline constexpr std::string_view kSectionFamilies[] = {"mmq",   "w4a8",    "gemma4", "r8",    "i8",
+                                                        "moer8", "moegemm", "vec",    "vecmma"};
 
 struct MmqKernelKey {
     int type      = 0; // the ggml_type value: 12 Q4_K, 13 Q5_K, 14 Q6_K
@@ -279,6 +282,8 @@ section_rows(std::string_view arch, std::string_view family);
 [[nodiscard]] std::optional<KernelFacts> r8_facts(std::string_view arch, const R8KernelKey& key);
 [[nodiscard]] std::optional<KernelFacts> i8_facts(std::string_view arch, const I8KernelKey& key);
 [[nodiscard]] std::optional<KernelFacts> vec_facts(std::string_view arch, const VecKernelKey& key);
+// The vector family's few-row MMA tile vec_mma_kernel<type, Gated> (the "vecmma" section, #1162).
+[[nodiscard]] std::optional<KernelFacts> vec_mma_facts(std::string_view arch, int type, bool gated);
 
 // The build architecture labels with a committed snapshot, in file order.
 [[nodiscard]] std::vector<std::string_view> snapshot_archs();

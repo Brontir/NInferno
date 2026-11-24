@@ -198,8 +198,9 @@ std::optional<KernelResources> ggml_resources(Route route, const Weight& w, Epil
             const auto up      = epilogue == Epilogue::SwiGlu
                                      ? ggml_rows_at(args, w.qtype, bpr, args.rows)
                                      : ggml_mmq::Planes{};
-            ggml_mmq::vec_product(*type, rows, up, bpr, args.rows, w.k, stand_in,
-                                  std::min(args.tokens, ggml_mmq::kVecMaxColumns), out, nullptr);
+            (route.schedule == 1 ? ggml_mmq::vec_mma_product : ggml_mmq::vec_product)(
+                *type, rows, up, bpr, args.rows, w.k, stand_in,
+                std::min(args.tokens, ggml_mmq::kVecMaxColumns), out, nullptr);
         }
     }
     if (shape.threads == 0) return std::nullopt;

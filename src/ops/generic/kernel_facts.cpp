@@ -91,6 +91,7 @@ constexpr SectionFamily kSections[] = {
      "family decoder warps_m warps_k m_tiles n_tiles cluster stage registers stack local shared", 1,
      6, true},
     {"vec", "family type T KS gated bounded registers stack local shared", 0, 5},
+    {"vecmma", "family type gated registers stack local shared", 0, 2},
 };
 static_assert(std::size(kSections) == std::size(kSectionFamilies));
 
@@ -454,6 +455,10 @@ std::optional<KernelFacts> vec_facts(std::string_view arch, const VecKernelKey& 
         k += std::to_string(v);
     }
     return section_facts(arch, "vec", k);
+}
+
+std::optional<KernelFacts> vec_mma_facts(std::string_view arch, int type, bool gated) {
+    return section_facts(arch, "vecmma", std::to_string(type) + (gated ? " 1" : " 0"));
 }
 
 std::optional<KernelFacts> rmma_facts(std::string_view arch, const RmmaKernelKey& key) {
