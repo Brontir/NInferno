@@ -214,20 +214,27 @@ __device__ __forceinline__ void e2m1x2_bf16(unsigned c, unsigned& lo, unsigned& 
     hi               = __byte_perm(l, h, 0x7362U) | ((c & 0x0800U) << 4) | ((c & 0x8000U) << 16);
 }
 
+// Two 16-value scale groups a run: sixteen code bytes, a lane's request 16 B (#1199: at 8 B a lane,
+// 32 B a row a request, a die streamed 40-70 % of DRAM below 16 warps on a row's span; at 16 B it
+// streams at peak at any warps_k). The two groups' E4M3 scales are adjacent bytes of the swizzled
+// scale tile (nvfp4_scale_offset: group & 3 innermost; the run's first group is even), one 16-bit
+// load; the scale multiplies in the decode (exact in BF16), so the two groups share one MMA.
 struct Nvfp4Decoder {
-    static constexpr int kRun        = 16; // one 16-value scale group: eight code bytes
+    static constexpr int kRun        = 32;
     static constexpr bool kStepScale = false;
     struct Run {
-        uint2 codes;
-        unsigned scale;
+        uint4 codes;
+        unsigned scale; // byte 0: values 0..15, byte 1: values 16..31
     };
     __device__ static __forceinline__ Run load(const GemmArgs& a, int row, int k0) {
         Run r;
-        r.codes = ld_stream_v2(a.codes + static_cast<std::int64_t>(row) * (a.k / 2) + k0 / 2);
-        r.scale = a.scales[nvfp4_scale_offset(a, row, k0 / 16)];
+        r.codes = ld_stream_v4(a.codes + static_cast<std::int64_t>(row) * (a.k / 2) + k0 / 2);
+        r.scale = *reinterpret_cast<const unsigned short*>(a.scales +
+                                                           nvfp4_scale_offset(a, row, k0 / 16));
         return r;
     }
-    __device__ static __forceinline__ Run zero() { return {make_uint2(0, 0), 0}; }
+
+    __device__ static __forceinline__ Run zero() { return {make_uint4(0, 0, 0, 0), 0}; }
     __device__ static __forceinline__ Run masked(const GemmArgs&, int, int) { return zero(); }
     __device__ static __forceinline__ unsigned dq(unsigned byte, __half2 scale) {
         const __half2 product  = __hmul2(e2m1x2_to_half2(byte), scale);
@@ -235,13 +242,17 @@ struct Nvfp4Decoder {
         return *reinterpret_cast<const unsigned*>(&w);
     }
     __device__ static __forceinline__ void pair(const Run& r, int j, unsigned& lo, unsigned& hi) {
-        const unsigned word = j < 2 ? r.codes.x : r.codes.y;
-        const int shift     = (j & 1) * 16;
+        const unsigned word  = (j >> 1) == 0   ? r.codes.x
+                               : (j >> 1) == 1 ? r.codes.y
+                               : (j >> 1) == 2 ? r.codes.z
+                                               : r.codes.w;
+        const int shift      = (j & 1) * 16;
+        const unsigned scale = j < 4 ? r.scale & 0xffU : (r.scale >> 8) & 0xffU; // the j's group
 // cvt with .e2m1x2 / FP8-to-half: Blackwell's architecture- and family-specific targets
 // (sm_100a.., sm_120a, sm_120f: __CUDA_ARCH_FAMILY_SPECIFIC__), not a plain target's PTX.
 #if defined(__CUDA_ARCH__) && NINFERNO_ARCH_FAMILY_SPECIFIC >= 1000
         const __half_raw h =
-            __nv_cvt_fp8_to_halfraw(static_cast<__nv_fp8_storage_t>(r.scale & 0xffU), __NV_E4M3);
+            __nv_cvt_fp8_to_halfraw(static_cast<__nv_fp8_storage_t>(scale), __NV_E4M3);
         const __half s(h);
         const __half2 scale(s, s);
         lo = dq(word >> shift, scale);
@@ -252,7 +263,7 @@ struct Nvfp4Decoder {
         // product (at most 8 significant bits) are exact in BF16, so these are the converter
         // path's bits.
         __nv_fp8_e4m3 block_scale;
-        block_scale.__x = static_cast<__nv_fp8_storage_t>(r.scale & 0xffU);
+        block_scale.__x = static_cast<__nv_fp8_storage_t>(scale);
         const __nv_bfloat162 half_scale =
             __float2bfloat162_rn(0.5F * static_cast<float>(block_scale));
         unsigned doubled_lo, doubled_hi;
