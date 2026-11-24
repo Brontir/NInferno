@@ -369,6 +369,26 @@ def main():
                           % (*key[:3], key[3], key[4], best, ",".join(map(str, unrepeated))),
                           file=sys.stderr)
                     continue
+                # Each count above passes where the range's route is within the margin of the
+                # second grid's fastest, a test a tie also passes (#1205: 248320 x 2560, 0.0-0.5 %
+                # in the second grid against 1 % in the first). The move as a whole is held to the
+                # first grid's own test there: it lowers the worst regret of the live moved counts
+                # by more than the margin. Counts the second grid did not time take no part.
+                def regret2(route, t):
+                    times = a16_routes(ev_grid.get((key, t), {}), t)
+                    return times[route] / min(times.values()) - 1 if route in times else None
+
+                pairs = [(regret2(haves[t], t), regret2(best, t)) for t in moved if t not in dead]
+                pairs = [(o, n) for o, n in pairs if o is not None and n is not None]
+                if pairs:
+                    old2 = max(o for o, _ in pairs)
+                    new2 = max(n for _, n in pairs)
+                    if new2 >= old2 - a.margin:
+                        print("%s %s %s %dx%d: the second grid does not lower the worst regret with"
+                              " %s (%.1f %% -> %.1f %%), kept"
+                              % (*key[:3], key[3], key[4], best, 100 * old2, 100 * new2),
+                              file=sys.stderr)
+                        continue
         for t in sorted(moved):
             times = grid_all[(key, t)]
             old_us = ("%.1f us" % times[haves[t]]) if haves[t] in times else "untimed"

@@ -189,6 +189,21 @@ def test_repeat_keeps_a_large_gain_the_second_grid_puts_a_little_behind(tmp_path
     assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
 
 
+def test_repeat_keeps_an_entry_the_second_grid_shows_as_a_tie(tmp_path):
+    # #1205: n2 is 2 % ahead of n1 at T 9-11 in the first grid (past a 1 % margin), but 0.3 % in
+    # the second. n2 is within the margin of the second grid's fastest at every count, so each
+    # count passes; the move as a whole lowers the second grid's worst regret by 0.3 %, under the
+    # margin: kept. Without --repeat it is written.
+    rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 102.0), ("n2", 100.0))]
+    second = ([(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 100.3), ("n2", 100.0))],
+              [(t, "n1") for t in (9, 10, 11)])
+    table = [[1, 11, "n1"], [12, 16777216, "n2"]]
+    bands, _ = run(tmp_path, table, rows, margin="0.01", evidence=[], second=second, repeat=True)
+    assert bands == table
+    bands, _ = run(tmp_path, table, rows, margin="0.01", evidence=[], second=second)
+    assert bands == [[1, 8, "n1"], [9, 16777216, "n2"]]
+
+
 def test_a_borrowed_entry_moves_but_keeps_its_borrowed_rows(tmp_path):
     # tuned_on another board's class: the move is written, this board's rows are not.
     rows = [(t, r, us) for t in (9, 10, 11) for r, us in (("n1", 200), ("n2", 100))]
