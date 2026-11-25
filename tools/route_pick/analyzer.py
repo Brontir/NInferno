@@ -284,11 +284,20 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.
     bus); the chain is the dp4a loop's stall clocks and a DRAM window for each global-wait generation a trip (#1207: that
     charge is the suspect of r8's 2x on NVFP4), the activation quantizer's loop at T 1, the code outside."""
     sms, clk, l0, bus, pitch = c['sms'], c['clk'], c['l0'], c['bus'], sets * k * bits / 8.0
-    pre = launch_ns(c, P, 1) + l0 + second_kernel(c, P)    # the activation pre-pass: a launch and a DRAM latency
+
+    def quant(ctas, out_per_value):
+        # An activation pre-pass: its launch and a DRAM latency, and its bytes (the BF16 input read, the int8 codes and
+        # their scales written) at the L2 rate of its CTAs' SMs (the input is the previous kernel's just-written output).
+        return (launch_ns(c, P, ctas) + l0 + second_kernel(c, P) +
+                T * k * (2.0 + out_per_value) / (c['l2bpc'] * min(ctas, sms) * clk))
+    # r8's (generic_w4a8.cu launch_w4a8_quantize: a thread a 32-value block, 256 threads a CTA; an int8 code a value,
+    # a scale and a sum a block).
+    pre = quant(math.ceil(T * k / 8192.0), 1.0 + 8.0 / 32.0)
     out = c['lat'] * _num(r['outside_stall']) / clk if r else 0.0
     if fam == 'ggml_mmq':                                  # 128-row tiles; one CTA an SM, or a tile a CTA (the fill rule)
-        # ggml_mmq.cu quantize_activation: a CTA quantizes 512 values of a column, columns x ceil(K / 512) CTAs.
-        pre = launch_ns(c, P, T * math.ceil(k / 512.0)) + l0 + second_kernel(c, P)
+        # ggml_mmq.cu quantize_activation: a CTA quantizes 512 values of a column, columns x ceil(K / 512) CTAs; its
+        # output two block_q8_1_mmq of 144 B a column per 256 values.
+        pre = quant(T * math.ceil(k / 512.0), 288.0 / 256.0)
         nt = math.ceil(n / 128.0)
         launch = mmq_launch(n, k, int(sms), mmq_j(T), T)
         ctas = launch['blocks']
@@ -688,11 +697,20 @@ def _price(gpu, F, shape, route, P, issue=False):
         # lanes take consecutive groups of R8_GROUP blocks (generic_r8.cuh: kSpan x kStride blocks of 32 B), so a codes load
         # touches 32 lanes x 16 B at that stride: one L1 tag request a 128 B line it touches (ncu, Q6_K: 32 a load), its
         # scales' load R8_GROUP lines. The rate: one wavefront a request (the die's narrow-load facts).
-        r0 = kf_row(kf, 'r8', codec=R8_CODEC.get(fmt), warps=Wp, rows=R, nt=nt, epilogue=EPI.get(ep, '0'), pre=0) if T > 1 else None
         act = 0.0
-        if r is not None and r0 is not None:
-            n_add = max(_num(r['ldg']) - _num(r0['ldg']), 0.0)
-            b_add = max(_num(r['ldg_bytes']) - _num(r0['ldg_bytes']), 0.0)
+        # The twins: this width's pre 0 row, or (sm_120a holds no pre-0 row at nt 8) the nearest width with both, its
+        # added loads scaled by the tokens (the activation's codes and scales are each token's).
+        twin = None
+        for nt2 in sorted((1, 2, 4, 8), key=lambda x: abs(x - nt)) if T > 1 else ():
+            a1 = r if nt2 == nt else kf_row(kf, 'r8', codec=R8_CODEC.get(fmt), warps=Wp, rows=R, nt=nt2, epilogue=EPI.get(ep, '0'), pre=1)
+            a0 = kf_row(kf, 'r8', codec=R8_CODEC.get(fmt), warps=Wp, rows=R, nt=nt2, epilogue=EPI.get(ep, '0'), pre=0)
+            if a1 is not None and a0 is not None:
+                twin = (a1, a0, nt / float(nt2))
+                break
+        if r is not None and twin is not None:
+            a1, a0, scale = twin
+            n_add = max(_num(a1['ldg']) - _num(a0['ldg']), 0.0) * scale
+            b_add = max(_num(a1['ldg_bytes']) - _num(a0['ldg_bytes']), 0.0) * scale
             codes = max(min((b_add - 128.0 * n_add) / 384.0, n_add), 0.0)
             grp = R8_GROUP.get(str(R8_CODEC.get(fmt)).split('<')[0], 1)
             lines = min(32.0, 8.0 * grp)                                  # 32 lanes x 16 B at a 32 x grp B stride
@@ -706,8 +724,10 @@ def _price(gpu, F, shape, route, P, issue=False):
         return price_vec_mma(c, P, fmt, ep, n, k, T, bits, sets) if T <= 8 else None
     elif route in ('ggml_vec', 'ggml_vec.ks', 'ggml_vec.loop'):
         # ggml_vec = the instance the product launches today; .loop = the runtime-K loop (lab/vec-ks0); .ks = unrolled
-        inst = 'loop' if route.endswith('.loop') else None
+        inst = 'loop' if route.endswith('.loop') else 'ks' if route.endswith('.ks') else None
         if vec_row(c, fmt, ep, k, T, inst=inst) is None:          # no vec kernel for the format (q8, bf16, fp8, NVFP4, G64)
+            return None
+        if inst == 'ks' and vec_ks(ep, k, inst) == 0:            # .ks names the unrolled instance: none at this K
             return None
         return price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst)
     else:
