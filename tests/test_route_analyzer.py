@@ -1,6 +1,8 @@
-"""The route analyzer (tools/route_pick/analyzer.py) on the repo's facts: for one board of every architecture with
-facts, every A16 release shape the route tables list (store, add, SwiGLU) at T 1-8 has at least one priced route, every
-price is a positive finite number, and rank() lists the priced routes cheapest first with pick() its head."""
+"""The route analyzer (tools/route_pick/analyzer.py) on the repo's facts: for one board of every architecture the
+analyzer routes (ROUTED_CC: sm_75, sm_86, sm_89, sm_120a; Volta keeps its HMMA authority, route_authorities.cpp
+volta_hmma, until its substitutes' kernel facts are committed), every A16 release shape the route tables list (store,
+add, SwiGLU) at T 1-8 has at least one priced route, every price is a positive finite number, and rank() lists the
+priced routes cheapest first with pick() its head."""
 import json
 import math
 import os
@@ -25,11 +27,15 @@ def release_shapes():
     return sorted(seen)
 
 
+ROUTED_CC = (75, 86, 89, 120)
+
+
 def boards(F):
-    """The first gpu_facts row of each compute capability the analyzer has facts for."""
+    """The first gpu_facts row of each compute capability of ROUTED_CC; every one must have the analyzer's facts."""
     out = {}
     for row in F['rows']:
-        if row.get('cc') and analyzer.card_of(row, F) is not None:
+        if row.get('cc') and int(row['cc']) in ROUTED_CC and not row.get('mma_slow'):
+            assert analyzer.card_of(row, F) is not None, 'no analyzer facts for %s' % row.get('name')
             out.setdefault(int(row['cc']), row)
     return [out[cc] for cc in sorted(out)]
 
@@ -39,7 +45,7 @@ def main():
     shapes = release_shapes()
     bs = boards(F)
     assert shapes, 'no release shapes'
-    assert bs, 'no board with facts'
+    assert sorted(int(b['cc']) for b in bs) == sorted(ROUTED_CC), 'a routed architecture without a board'
     failures = 0
     for g in bs:
         for fmt, ep, n, k in shapes:
