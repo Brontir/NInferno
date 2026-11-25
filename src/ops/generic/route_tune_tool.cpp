@@ -410,8 +410,8 @@ int route_tune_main(int argc, char** argv) {
             }
             // --a8-candidates 1: a format a8_sweep_format admits, keyed a16, is admitted and
             // selected under the default policy (AllowA8), so the W4A8 tiles, R8 and ggml's matrix
-            // and vector kernels (where they take it) run beside the A16 routes at every width, with
-            // their prices; the table still takes A16 winners.
+            // and vector kernels (where they take it) run beside the A16 routes at every width,
+            // with their prices; the table still takes A16 winners.
             const bool a8_sweep = a8_candidates && p.compute == generic::ComputeClass::A16 &&
                                   a8_sweep_format(p.qtype);
             // An a8 sweep's rows (--routes-out, --selected-out) are the AllowA8 case they time:
