@@ -59,6 +59,8 @@ __device__ __forceinline__ float moe_activation(const GemmArgs& a, float g, floa
         const float r = fmaxf(u, 0.0F);
         return r * r;
     }
+    case 4: // Situ (Inkling 2): alpha = the gate's soft cap, limit = the up's
+        return a.alpha * tanhf(g / a.alpha) * moe_sigmoid(g) * (a.limit * tanhf(u / a.limit));
     default: // SwiGlu
         return g * moe_sigmoid(g) * u;
     }

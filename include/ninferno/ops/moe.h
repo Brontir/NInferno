@@ -37,6 +37,9 @@ enum class MoeActivation : std::uint8_t {
                    ///< (u' + 1) * g' * sigmoid(alpha * g')
     Relu2,         ///< NemotronH: relu(u)^2 of a non-gated expert (gate_up holds up rows only:
                    ///< [E * F, H]; the shared expert is non-gated too: shared_gate_up [Fs, H])
+    Situ,          ///< Inkling 2: alpha tanh(g / alpha) sigmoid(g) * limit tanh(u / limit), a
+                   ///< soft-capped SiLU gate times a soft-capped up (alpha = the gate's cap 4,
+                   ///< limit = the up's cap 25; llama.cpp LLM_FFN_SITU)
 };
 
 /// Row order of one expert's 2F gate/up rows in the stacked gate_up plane.
@@ -123,8 +126,8 @@ struct MoeConfig {
     bool renormalize             = true; ///< w_k = s_k / sum over the selected scores
     float routed_scale           = 1.0F; ///< multiplies every routed weight
     MoeActivation activation     = MoeActivation::SwiGlu;
-    float alpha                  = 1.702F; ///< ClampedSwiGlu only
-    float limit                  = 7.0F;   ///< ClampedSwiGlu only
+    float alpha                  = 1.702F; ///< ClampedSwiGlu; Situ: the gate's soft cap
+    float limit                  = 7.0F;   ///< ClampedSwiGlu; Situ: the up's soft cap
     MoeGateUpLayout gate_up_layout = MoeGateUpLayout::Concatenated;
     /// Programmatic dependent launches through the decode chain where the device and the layer
     /// take them; false keeps a pass's chain on plain launches (a drafter's: Nemotron 3.5 MTP).

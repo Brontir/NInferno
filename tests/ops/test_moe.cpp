@@ -288,6 +288,8 @@ double act(const ops::MoeConfig& c, double g, double u) {
     }
     case ops::MoeActivation::Relu2: // non-gated: u only
         return g > 0.0 ? g * g : 0.0;
+    case ops::MoeActivation::Situ:
+        return c.alpha * std::tanh(g / c.alpha) / (1.0 + std::exp(-g)) * c.limit * std::tanh(u / c.limit);
     case ops::MoeActivation::SwiGlu:
         break;
     }
@@ -1404,6 +1406,25 @@ Case oss_like() {
     return c;
 }
 
+// An Inkling-2-shaped bank at reduced H: 128 experts top-8, sigmoid scores with a selection
+// bias, renormalized and scaled by 8, the soft-capped SITU activation, NVFP4 experts.
+Case inkling2_like() {
+    Case c;
+    c.label = "inkling2-like nvfp4 E128 k8 situ";
+    c.experts = 128; c.top_k = 8; c.hidden = 512; c.inter = 192; c.shared_inter = 0;
+    c.gate_up = c.down = QType::NVFP4;
+    c.config.top_k        = 8;
+    c.config.scoring      = ops::MoeScoring::Sigmoid;
+    c.config.routed_scale = 8.0F;
+    c.config.activation   = ops::MoeActivation::Situ;
+    c.config.alpha        = 4.0F;
+    c.config.limit        = 25.0F;
+    c.router_bias = false; c.selection_bias = true; c.expert_scale = false;
+    c.expert_bias = false; c.shared_gate = false;
+    c.epilogue = ops::MoeEpilogue::Store;
+    return c;
+}
+
 Case qwen3_like() {
     Case c;
     c.label = "qwen3-moe-like nvfp4 E128 k8";
@@ -2239,6 +2260,7 @@ int main(int argc, char** argv) {
                     failures += check_case(c, 90U, {1, 2, 4, 16, 40, 130});
                 }
             }
+            failures += check_case(inkling2_like(), 79U, {1, 2, 4, 8, 17, 200});
             {
                 const Case c = oss_like();
                 failures += check_case(c, 77U, {1, 4, 17, 200});

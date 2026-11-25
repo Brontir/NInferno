@@ -340,6 +340,9 @@ Geometry validate(const MoeWeights& w, const MoeConfig& c) {
     if (c.activation == MoeActivation::ClampedSwiGlu && !(c.limit > 0.0F)) {
         fail("ClampedSwiGlu needs a positive limit");
     }
+    if (c.activation == MoeActivation::Situ && !(c.alpha > 0.0F && c.limit > 0.0F)) {
+        fail("Situ needs positive gate and up caps (alpha, limit)");
+    }
     return g;
 }
 
