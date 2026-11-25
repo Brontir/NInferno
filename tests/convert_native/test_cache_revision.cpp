@@ -113,10 +113,7 @@ int main() {
     {
         const auto gguf = dir / "gguf8.ninferno";
         std::ofstream(gguf) << "x";
-        std::ofstream(gguf.string() + ".revision")
-            << 8
-            << "
-               ";
+        std::ofstream(gguf.string() + ".revision") << 8 << "\n";
             std::ofstream(gguf.string() + ".conversion.json")
             << R"({"components": {"text": {"config": {"model_type": "llama"}}}, "methods": [], )"
             << R"("gguf": {"file": "m.gguf"}})";
@@ -125,10 +122,7 @@ int main() {
         check(cached_revision(gguf) == 8, "and keeps its stamp");
         const auto plain = dir / "plain8.ninferno";
         std::ofstream(plain) << "x";
-        std::ofstream(plain.string() + ".revision")
-            << 8
-            << "
-               ";
+        std::ofstream(plain.string() + ".revision") << 8 << "\n";
             std::ofstream(plain.string() + ".conversion.json")
             << R"({"components": {"text": {"config": {"model_type": "llama"}}}, "methods": []})";
         check(cache_current(plain), "a checkpoint's artifact at revision 8 is current");

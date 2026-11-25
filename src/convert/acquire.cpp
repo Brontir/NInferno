@@ -94,7 +94,8 @@ void say(const AcquireOptions& options, const std::string& line) {
 // tokenizer.json and tokenizer_config.json name the same added tokens and special flags, so they
 // come from one source: the base gives the ones wanted only when its snapshot holds all of them
 // (a cached snapshot may hold tokenizer_config.json alone, #1218), else both are rebuilt from
-// the GGUF. Files beside the GGUF that are another model's (their vocabulary is not the GGUF's:
+// the GGUF (a lone member beside the GGUF is then not read either: checks.cpp load_resources).
+// A --resource override of one member is the user's choice and stands as given. Files beside the GGUF that are another model's (their vocabulary is not the GGUF's:
 // the convert drops them, checks.cpp load_resources) count as absent here too.
 void base_tokenizer(const FetchResult& fetched, const FetchOptions& fetch, ConvertOptions& options) {
     if (!fs::is_regular_file(fetched.model)) { return; }

@@ -649,6 +649,23 @@ def main() -> int:
                  and "base model org/qwen-base: tokenizer.json, tokenizer_config.json" in lone.stdout)
             if lone.returncode:
                 errors.append(lone.stderr[-1500:])
+            # The same with a base that lacks tokenizer.json (Opus on #1225): the base gives neither,
+            # and the lone config beside is not read either: both are rebuilt from the GGUF.
+            gguf_cfg2, _, _ = synthetic_gguf.qwen_case(work / "qwen-src7", False, None, 34, rebuilt=True,
+                                                       base_model="https://huggingface.co/org/qwen-base-half")
+            hub.add_repo("org/qwen-gguf7", {"model-Q8_0.gguf": gguf_cfg2.read_bytes(),
+                                            "tokenizer_config.json": base_files["tokenizer_config.json"]})
+            lone2 = subprocess.run([str(native), "--fetch", "org/qwen-gguf7", "--cache", str(work / "cache-e2e")],
+                                   cwd=repository, capture_output=True, text=True, env=environment)
+            lone2_out = (work / "cache-e2e" / "models--org--qwen-gguf7" / "ninferno" /
+                         "c0ffee0123456789abcdef0123456789abcdef01" / "model-Q8_0.qwen3_5_bf16.ninferno")
+            lone2_notes = " ".join(json.loads(Path(str(lone2_out) + ".conversion.json").read_text(encoding="utf-8"))
+                                   .get("resource_notes", []) if lone2_out.exists() else [])
+            case("tokenizer_config.json alone beside the GGUF, a base without the pair: both rebuilt (#1218)",
+                 lone2.returncode == 0 and "tokenizer_config.json alone in" in lone2_notes
+                 and "tokenizer.json: rebuilt" in lone2_notes and "tokenizer_config.json: rebuilt" in lone2_notes)
+            if lone2.returncode:
+                errors.append(lone2.stderr[-1500:])
 
             # 12c. Its download still in the cache and its branch moved on the hub: the same rule as
             # 12b. A rerun serves the weights here, pinned to their commit (nothing is downloaded),

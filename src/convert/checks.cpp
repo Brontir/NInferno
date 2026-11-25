@@ -331,6 +331,27 @@ void load_resources(Model& model, const std::filesystem::path& root, std::uint64
                 "rebuilt from the GGUF are used (--resource names one explicitly)");
         }
     }
+    // The tokenizer pair from one source (#1218): one member beside the GGUF and the other not,
+    // neither overridden (acquire.cpp found no base model that gives both) and the GGUF rebuilding
+    // both: both are rebuilt, the lone file beside is not read.
+    const auto is_pair = [](std::string_view role) {
+        return role == "tokenizer.json" || role == "tokenizer_config.json";
+    };
+    bool lone_beside = false;
+    if (!foreign_beside && fallbacks.contains("tokenizer.json") &&
+        fallbacks.contains("tokenizer_config.json")) {
+        bool overridden_pair = false;
+        for (const auto& [name, _] : overrides) { overridden_pair = overridden_pair || is_pair(name); }
+        const bool json   = std::filesystem::exists(root / "tokenizer.json");
+        const bool config = std::filesystem::exists(root / "tokenizer_config.json");
+        if (!overridden_pair && json != config) {
+            lone_beside = true;
+            model.resource_notes.push_back(
+                std::string(json ? "tokenizer.json" : "tokenizer_config.json") + " alone in " +
+                root.string() +
+                ": not read; both tokenizer files are rebuilt from the GGUF (one source)");
+        }
+    }
     Json tokenizer;
     Json tokenizer_config;
     for (const auto& [component, names] : roles) {
@@ -347,7 +368,8 @@ void load_resources(Model& model, const std::filesystem::path& root, std::uint64
             std::string data;
             const auto fallback = fallbacks.find(std::string(role));
             if (!overridden && fallback != fallbacks.end() &&
-                (foreign_beside || !std::filesystem::exists(path))) {
+                (foreign_beside || (lone_beside && is_pair(role)) ||
+                 !std::filesystem::exists(path))) {
                 data = fallback->second;
                 path = std::string(role) + " (rebuilt)";
                 model.resource_notes.push_back(std::string(role) + ": rebuilt, not read from " +
