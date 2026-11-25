@@ -26,7 +26,7 @@ EXTRA = dict(l1lat='l1_latency_w1', l2lat_ns='l2_latency_ns_w1', int_cyc='int32_
 # Equal on every card of an arch (sm_86: 3060 / 3090; sm_89: 4060 Ti / 4070 Ti / 4090; sm_120a: 5070 Ti / 5090).
 MMQ_HEADER = 'src/ops/generic/ggml_mmq/ggml_mmq.h'
 # The facts every price reads: an arch without one of them is left out (no price for its cards).
-REQUIRED = ('l0', 'node', 'mma_lat', 'hmma', 'lat', 'fill', 'nr') + tuple(EXTRA)
+REQUIRED = ('l0', 'node', 'mma_lat', 'hmma', 'lat', 'fill', 'nr', 'l2trip') + tuple(EXTRA)
 NARROW = {'70': (1.621, 1.027, 8), '75': (2.012, 2.000, 8), '86': (2.000, 1.019, 4), '89': (2.000, 1.019, 4),
           '120a': (2.000, 1.008, 4)}
 
@@ -78,6 +78,8 @@ def load_facts(root):
                  lat=val(fa['lat_imad']))
         for k, name in EXTRA.items():
             d[k] = val(fa[name])
+        # The L2 round trip of four warps (the stream-k fixup's walk), the one-warp trip where the probe has no w4 row.
+        d['l2trip'] = val(fa.get('l2_latency_w4') or fa.get('l2_latency_w1'))
         d['fill'] = val(rf['warp_fill_bytes_per_clock']) if 'warp_fill_bytes_per_clock' in rf else None
         lsms = a.get('launch', {}).get('sms')
         d['stream'] = val(la['stream_ns']) if 'stream_ns' in la else None
