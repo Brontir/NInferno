@@ -18,6 +18,7 @@
 #include "ops/common/arch_limits.h"
 #include "ops/generic/generic_i8_schedules.h"
 #include "ops/generic/w4a8_unit.h"
+#include "ops/route_pins.h"
 
 #include <algorithm>
 #include <cmath>
@@ -638,6 +639,10 @@ void check_evidence_paths() {
         {"rtx3090ti", 0x2203, ninferno::QType::GGML_IQ4_NL, 4096, 5120, g::Evidence::Kind::Carried,
          "r8-table"},
     };
+    // Under evidence the analyzer's ranked list (routes/pick, a board's own or a carried one)
+    // answers T = 1 ahead of the R8 table and law (route_authorities.cpp analyzer_entry); legacy
+    // reads no list, so the R8 paths are asked there.
+    const ninferno::ops::ScopedRoutePolicy legacy(ninferno::RoutePolicy::Legacy);
     for (const Path& path : paths) {
         const ninferno::DeviceClass d =
             g::board_device_class(g::registry_facts_board(path.name, path.pci));

@@ -1,525 +1,171 @@
 {
- "schema": "ninferno-route-pick/1",
+ "schema": "ninferno-route-pick/2",
  "gpu": {
   "class": "ga102:82sm",
   "board": "GeForce RTX 3090",
   "pci_id": "0x2204"
  },
- "source": "tools/route_pick/gen.py: pick.py over the facts below, nothing measured on this card",
+ "source": "tools/route_pick/gen.py: analyzer.py (ranked, T 1-8) and pick.py (bands, T 9-32) over the facts below, nothing measured on this card",
  "inputs": {
   "src/core/data/gpu_facts.json": "beb9d18a93d7ab298370bcfe5998ad7f18afe2cf24b19efeca2f7787d35d596d",
   "src/core/data/isa_facts.json": "ea91e207d90ba4516a40f0ff3016182926b15ee87204ae3e9b833ec4e1fc21d4",
   "src/core/data/sm_rate_facts.json": "21bea588f9c7ef2b61b07fe1cbf111eda940edc882961737df278579271c0831",
   "src/ops/generic/data/kernel_facts/sm_86.txt": "8ee6f20694aabde6d0050184cc0c7848ca49087c6ffde0e88da7afac8a8eb389",
+  "tools/route_pick/analyzer.py": "360682ca6c9935d94048b185d34985da768fda11d7dd3413ffbc65f4fa8c51a7",
+  "tools/route_pick/analyzer_facts.py": "2355f86358b4ca8f1abc78cfa114ba374a7c8cb8284736c0252ede6189cdd12d",
   "tools/route_pick/pick.py": "7b6166d08ff970a7546ea98701c764bc2e1552c6baf4c86d4570b9ca3e00aad4",
   "tools/route_pick/facts.py": "22e14fd9524280429ed5f8455dee8b40217445518e7b411508cfbc52cd3fb24b",
-  "tools/route_pick/gen.py": "90181088a3b61edfe19b6cecb3cc2a78ec3e3f0ea352569b47bced90c01ad4fc",
+  "tools/route_pick/gen.py": "19512d868e958f5f47992f8997a6a11a9f0cc7ea4ad23dac92c29143f1424cda",
   "src/ops/generic/ggml_mmq/ggml_mmq.h": "60bd7827baaf3023467036f58676d993c166f83230576811cf66bbfc87d8f2f1"
  },
  "entries": [
-  {
-   "format": "iq3s",
-   "compute": "a16",
-   "epilogue": "add",
-   "n": 5120,
-   "k": 17408,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n2.w1x4"
-    ]
-   ]
-  },
-  {
-   "format": "iq4xs",
-   "compute": "a16",
-   "epilogue": "add",
-   "n": 5120,
-   "k": 6144,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n2.w1x4"
-    ]
-   ]
-  },
-  {
-   "format": "iq4xs",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 6144,
-   "k": 5120,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n2.w2x2"
-    ]
-   ]
-  },
-  {
-   "format": "iq4xs",
-   "compute": "a16",
-   "epilogue": "swiglu",
-   "n": 17408,
-   "k": 5120,
-   "bands": [
-    [
-     9,
-     15,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q4k",
-   "compute": "a16",
-   "epilogue": "add",
-   "n": 4096,
-   "k": 4096,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n1.w2x2"
-    ]
-   ]
-  },
-  {
-   "format": "q4k",
-   "compute": "a16",
-   "epilogue": "add",
-   "n": 4096,
-   "k": 12288,
-   "bands": [
-    [
-     9,
-     16,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q4k",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 4096,
-   "k": 4096,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n1.w2x2"
-    ]
-   ]
-  },
-  {
-   "format": "q4k",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 6144,
-   "k": 5120,
-   "bands": [
-    [
-     11,
-     11,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q4k",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 6656,
-   "k": 19968,
-   "bands": [
-    [
-     9,
-     15,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q4k",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 8192,
-   "k": 3840,
-   "bands": [
-    [
-     9,
-     16,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q4k",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 16384,
-   "k": 5120,
-   "bands": [
-    [
-     9,
-     16,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q4k",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 17408,
-   "k": 5120,
-   "bands": [
-    [
-     9,
-     11,
-     "ggml_mmq"
-    ],
-    [
-     13,
-     13,
-     "ggml_mmq"
-    ],
-    [
-     15,
-     16,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q4k",
-   "compute": "a16",
-   "epilogue": "swiglu",
-   "n": 15360,
-   "k": 3840,
-   "bands": [
-    [
-     9,
-     16,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q5k",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 6144,
-   "k": 5120,
-   "bands": [
-    [
-     9,
-     9,
-     "ggml_mmq"
-    ],
-    [
-     13,
-     13,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q5k",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 6656,
-   "k": 4096,
-   "bands": [
-    [
-     9,
-     9,
-     "rmma.m1.n2.w2x2"
-    ]
-   ]
-  },
-  {
-   "format": "q5k",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 7168,
-   "k": 5120,
-   "bands": [
-    [
-     9,
-     9,
-     "rmma.m1.n2.w2x2"
-    ]
-   ]
-  },
-  {
-   "format": "q6k",
-   "compute": "a16",
-   "epilogue": "add",
-   "n": 4096,
-   "k": 12288,
-   "bands": [
-    [
-     9,
-     16,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q6k",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 256,
-   "k": 6656,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n1.w1x16"
-    ]
-   ]
-  },
-  {
-   "format": "q6k",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 3840,
-   "k": 15360,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n2.w1x4"
-    ]
-   ]
-  },
-  {
-   "format": "q6k",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 6656,
-   "k": 19968,
-   "bands": [
-    [
-     9,
-     16,
-     "ggml_mmq"
-    ]
-   ]
-  },
-  {
-   "format": "q6k",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 248320,
-   "k": 2048,
-   "bands": [
-    [
-     9,
-     14,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     16,
-     16,
-     "rmma.m1.n2.w2x2"
-    ]
-   ]
-  },
-  {
-   "format": "q8",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 48,
-   "k": 5120,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n1.w1x16"
-    ]
-   ]
-  },
-  {
-   "format": "q8",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 256,
-   "k": 2688,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n1.w1x16"
-    ]
-   ]
-  },
-  {
-   "format": "q8",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 2048,
-   "k": 512,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n1.w1x8"
-    ]
-   ]
-  },
-  {
-   "format": "q8",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 2688,
-   "k": 3712,
-   "bands": [
-    [
-     9,
-     9,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     11,
-     11,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     14,
-     14,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     16,
-     16,
-     "rmma.m1.n1.w1x4"
-    ]
-   ]
-  },
-  {
-   "format": "q8",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 2688,
-   "k": 4096,
-   "bands": [
-    [
-     9,
-     9,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     12,
-     12,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     15,
-     15,
-     "rmma.m1.n1.w1x4"
-    ]
-   ]
-  },
-  {
-   "format": "q8",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 2880,
-   "k": 4096,
-   "bands": [
-    [
-     9,
-     9,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     11,
-     11,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     13,
-     13,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     16,
-     16,
-     "rmma.m1.n1.w1x4"
-    ]
-   ]
-  },
-  {
-   "format": "q8",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 3712,
-   "k": 2688,
-   "bands": [
-    [
-     9,
-     11,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     14,
-     16,
-     "rmma.m1.n1.w1x4"
-    ]
-   ]
-  },
-  {
-   "format": "q8",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 4608,
-   "k": 2688,
-   "bands": [
-    [
-     9,
-     11,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     13,
-     16,
-     "rmma.m1.n2.w1x4"
-    ]
-   ]
-  },
-  {
-   "format": "q8",
-   "compute": "a16",
-   "epilogue": "store",
-   "n": 201088,
-   "k": 2880,
-   "bands": [
-    [
-     9,
-     9,
-     "rmma.m1.n2.w1x4"
-    ]
-   ]
-  },
-  {
-   "format": "q8",
-   "compute": "a16",
-   "epilogue": "swiglu",
-   "n": 512,
-   "k": 2048,
-   "bands": [
-    [
-     9,
-     16,
-     "rmma.m1.n1.w1x16"
-    ]
-   ]
-  }
+  {"format": "bf16", "compute": "a16", "epilogue": "add", "n": 2880, "k": 2880, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 1, "k": 2048, "ranked": [[1, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 32, "k": 4096, "ranked": [[1, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 1024, "k": 4096, "ranked": [[1, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 1024, "k": 5632, "ranked": [[1, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 1024, "k": 8192, "ranked": [[1, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 1024, "k": 10752, "ranked": [[1, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 1024, "k": 16384, "ranked": [[1, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 2816, "k": 1024, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 2880, "k": 2880, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 2880, "k": 4096, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 2880, "k": 7680, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 4096, "k": 1024, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 5120, "k": 2880, "ranked": [[1, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 5376, "k": 1024, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 8192, "k": 1024, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 8192, "k": 2880, "ranked": [[1, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 15360, "k": 2880, "ranked": [[1, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 16384, "k": 1024, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 98304, "k": 1024, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "store", "n": 201088, "k": 2880, "ranked": [[1, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "bf16", "compute": "a16", "epilogue": "swiglu", "n": 8192, "k": 1024, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "iq3s", "compute": "a16", "epilogue": "add", "n": 5120, "k": 17408, "ranked": [[1, 1, ["ggml_vec", "r8.w8r1", "rmma.m1.n1.w1x8"]], [2, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 16, "rmma.m1.n2.w1x4"]]},
+  {"format": "iq4nl", "compute": "a16", "epilogue": "add", "n": 5120, "k": 17408, "ranked": [[1, 1, ["r8.w8r1", "ggml_vec", "r8.w4r2", "r8.w8r2", "r8.w4r1", "rmma.m1.n1.w1x16"]], [2, 2, ["ggml_vec", "r8.w8r1", "r8.w4r1", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x16"]], [3, 3, ["r8.w4r2", "ggml_vec", "r8.w8r2", "rmma.m1.n1.w1x16"]], [4, 4, ["ggml_vec", "r8.w4r2", "r8.w8r2", "rmma.m1.n1.w1x16"]], [5, 6, ["ggml_vec", "rmma.m1.n1.w1x16"]], [7, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "iq4nl", "compute": "a16", "epilogue": "store", "n": 4096, "k": 5120, "ranked": [[1, 1, ["r8.w4r2", "r8.w8r1", "r8.w4r1", "ggml_vec", "r8.w8r2", "rmma.m1.n1.w1x4"]], [2, 2, ["ggml_vec", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x4"]], [3, 5, ["ggml_vec", "rmma.m1.n1.w1x4"]], [6, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "iq4nl", "compute": "a16", "epilogue": "store", "n": 6144, "k": 5120, "ranked": [[1, 1, ["r8.w8r2", "ggml_vec", "r8.w8r1", "r8.w4r2", "r8.w4r1", "rmma.m1.n2.w1x4"]], [2, 2, ["r8.w8r2", "ggml_vec", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n2.w1x4"]], [3, 5, ["ggml_vec", "rmma.m1.n2.w1x4"]], [6, 8, ["rmma.m1.n2.w1x4"]]]},
+  {"format": "iq4nl", "compute": "a16", "epilogue": "store", "n": 10240, "k": 5120, "ranked": [[1, 1, ["r8.w8r1", "ggml_vec", "r8.w8r2", "r8.w4r1", "r8.w4r2", "rmma.m1.n1.w1x4"]], [2, 2, ["ggml_vec", "r8.w8r2", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x4"]], [3, 4, ["ggml_vec", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x4"]], [5, 5, ["ggml_vec", "rmma.m1.n1.w1x4"]], [6, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "iq4nl", "compute": "a16", "epilogue": "store", "n": 17408, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w4r2", "r8.w8r1", "r8.w8r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w8r2", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [3, 4, ["ggml_vec", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [5, 7, ["ggml_vec", "rmma.m1.n1.w1x8"]], [8, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "iq4xs", "compute": "a16", "epilogue": "add", "n": 5120, "k": 6144, "ranked": [[1, 1, ["ggml_vec", "r8.w8r1", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 3, ["ggml_vec", "rmma.m1.n1.w1x8"]], [4, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 16, "rmma.m1.n2.w1x4"]]},
+  {"format": "iq4xs", "compute": "a16", "epilogue": "add", "n": 5120, "k": 17408, "ranked": [[1, 1, ["ggml_vec", "r8.w8r1", "r8.w8r2", "r8.w4r2", "r8.w4r1", "rmma.m1.n1.w1x16"]], [2, 2, ["ggml_vec", "r8.w8r2", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x16"]], [3, 4, ["ggml_vec", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x16"]], [5, 5, ["ggml_vec", "rmma.m1.n1.w1x16"]], [6, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "iq4xs", "compute": "a16", "epilogue": "store", "n": 6144, "k": 5120, "ranked": [[1, 1, ["r8.w4r2", "r8.w4r1", "ggml_vec", "r8.w8r1", "r8.w8r2", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w8r2", "r8.w8r1", "r8.w4r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [3, 6, ["ggml_vec", "rmma.m1.n1.w1x8"]], [7, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 16, "rmma.m1.n2.w2x2"]]},
+  {"format": "iq4xs", "compute": "a16", "epilogue": "store", "n": 10240, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w4r1", "r8.w8r1", "r8.w8r2", "rmma.m1.n1.w1x4"]], [2, 2, ["ggml_vec", "r8.w8r2", "r8.w4r2", "r8.w8r1", "rmma.m1.n1.w1x4"]], [3, 4, ["ggml_vec", "rmma.m1.n1.w1x4"]], [5, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "iq4xs", "compute": "a16", "epilogue": "store", "n": 17408, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w8r1", "r8.w4r1", "r8.w4r2", "r8.w8r2", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w8r1", "r8.w4r1", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [3, 5, ["ggml_vec", "rmma.m1.n1.w1x8"]], [6, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "iq4xs", "compute": "a16", "epilogue": "swiglu", "n": 17408, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "r8.w4r2", "r8.w4r1", "r8.w8r1", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w8r2", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [3, 6, ["ggml_vec", "rmma.m1.n1.w1x8"]], [7, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 15, "ggml_mmq"]]},
+  {"format": "q3k", "compute": "a16", "epilogue": "store", "n": 17408, "k": 5120, "ranked": [[1, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "add", "n": 2688, "k": 4096, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 2688, "k": 3712, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 2688, "k": 4096, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 2688, "k": 5376, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 2816, "k": 2112, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 2816, "k": 4096, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 2816, "k": 8192, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "ggml_vec", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 3712, "k": 2688, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 4096, "k": 2688, "ranked": [[1, 1, ["r8.w4r2", "r8.w8r1", "r8.w4r1", "ggml_vec", "rmma.m1.n1.w1x4"]], [2, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 4224, "k": 2816, "ranked": [[1, 1, ["r8.w4r2", "r8.w8r1", "r8.w4r1", "ggml_vec", "rmma.m1.n1.w1x4"]], [2, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 4608, "k": 2688, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x4"]], [2, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 5376, "k": 8192, "ranked": [[1, 1, ["r8.w8r2", "ggml_vec", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w4r1", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [3, 4, ["r8.w4r2", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 5376, "k": 16384, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "ggml_vec", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w4r1", "r8.w8r2", "ggml_vec", "r8.w4r2", "r8.w8r1", "rmma.m1.n1.w1x8"]], [3, 4, ["r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [5, 6, ["ggml_vec", "rmma.m1.n1.w1x8"]], [7, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 5376, "k": 21504, "ranked": [[1, 1, ["r8.w8r2", "ggml_vec", "r8.w8r1", "r8.w4r1", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w8r2", "r8.w4r1", "ggml_vec", "r8.w4r2", "r8.w8r1", "rmma.m1.n1.w1x8"]], [3, 4, ["r8.w4r2", "r8.w8r1", "r8.w4r1", "ggml_vec", "rmma.m1.n1.w1x8"]], [5, 6, ["ggml_vec", "rmma.m1.n1.w1x8"]], [7, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 8192, "k": 2816, "ranked": [[1, 1, ["r8.w4r2", "ggml_vec", "r8.w8r1", "r8.w8r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w4r2", "ggml_vec", "r8.w4r1", "r8.w8r2", "r8.w8r1", "rmma.m1.n1.w1x8"]], [3, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 9216, "k": 2816, "ranked": [[1, 1, ["r8.w8r2", "ggml_vec", "r8.w8r1", "r8.w4r1", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w8r2", "ggml_vec", "r8.w8r1", "rmma.m1.n1.w1x8"]], [3, 3, ["rmma.m1.n1.w1x8"]], [4, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 10304, "k": 2688, "ranked": [[1, 1, ["r8.w8r2", "r8.w8r1", "ggml_vec", "r8.w4r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w8r2", "rmma.m1.n1.w1x8"]], [3, 3, ["rmma.m1.n1.w1x8"]], [4, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 16384, "k": 5376, "ranked": [[1, 1, ["r8.w4r2", "ggml_vec", "r8.w8r1", "r8.w8r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w4r2", "r8.w8r2", "ggml_vec", "r8.w4r1", "r8.w8r1", "rmma.m1.n1.w1x8"]], [3, 3, ["r8.w4r2", "rmma.m1.n1.w1x8"]], [4, 4, ["ggml_vec", "r8.w4r2", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 18432, "k": 5376, "ranked": [[1, 1, ["r8.w8r2", "ggml_vec", "r8.w8r1", "r8.w4r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w8r2", "r8.w4r2", "r8.w4r1", "ggml_vec", "rmma.m1.n1.w1x8"]], [3, 3, ["rmma.m1.n1.w1x8"]], [4, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 43008, "k": 5376, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "ggml_vec", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w8r2", "r8.w4r2", "r8.w4r1", "ggml_vec", "r8.w8r1", "rmma.m1.n1.w1x8"]], [3, 3, ["rmma.m1.n1.w1x8"]], [4, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 262144, "k": 2816, "ranked": [[1, 1, ["ggml_vec", "r8.w4r2", "r8.w8r2", "r8.w8r1", "rmma.m1.n1.w1x4"]], [2, 2, ["r8.w4r2", "r8.w8r2", "r8.w8r1", "ggml_vec", "r8.w4r1", "rmma.m1.n1.w1x4"]], [3, 3, ["rmma.m1.n1.w1x4"]], [4, 4, ["ggml_vec", "rmma.m1.n1.w1x4"]], [5, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "q40", "compute": "a16", "epilogue": "store", "n": 262144, "k": 5376, "ranked": [[1, 1, ["ggml_vec", "r8.w4r2", "r8.w8r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w4r2", "r8.w8r2", "r8.w4r1", "r8.w8r1", "ggml_vec", "rmma.m1.n1.w1x8"]], [3, 3, ["r8.w4r2", "ggml_vec", "rmma.m1.n1.w1x8"]], [4, 4, ["ggml_vec", "r8.w4r2", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "add", "n": 4096, "k": 4096, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "rmma.m1.n1.w1x4"]], [2, 8, ["rmma.m1.n1.w1x4"]]], "bands": [[9, 16, "rmma.m1.n1.w2x2"]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "add", "n": 4096, "k": 12288, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "r8.w8r1", "r8.w4r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w4r1", "rmma.m1.n1.w1x8"]], [3, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 16, "ggml_mmq"]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "add", "n": 5120, "k": 6144, "ranked": [[1, 1, ["r8.w8r2", "ggml_vec", "r8.w8r1", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "rmma.m1.n1.w1x8"]], [3, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "add", "n": 5120, "k": 17408, "ranked": [[1, 1, ["r8.w8r2", "r8.w8r1", "ggml_vec", "r8.w4r2", "r8.w4r1", "rmma.m1.n1.w1x16"]], [2, 2, ["ggml_vec", "r8.w8r2", "r8.w8r1", "rmma.m1.n1.w1x16"]], [3, 4, ["ggml_vec", "rmma.m1.n1.w1x16"]], [5, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "add", "n": 6656, "k": 6656, "ranked": [[1, 1, ["r8.w8r1", "r8.w8r2", "ggml_vec", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w4r1", "rmma.m1.n1.w1x8"]], [3, 3, ["ggml_vec", "rmma.m1.n1.w1x8"]], [4, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 256, "k": 6656, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 1024, "k": 5120, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 1024, "k": 6656, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 3840, "k": 4096, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "ggml_vec", "rmma.m1.n1.w1x4"]], [2, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 4096, "k": 4096, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "rmma.m1.n1.w1x4"]], [2, 8, ["rmma.m1.n1.w1x4"]]], "bands": [[9, 16, "rmma.m1.n1.w2x2"]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 4096, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "rmma.m1.n1.w1x4"]], [2, 2, ["ggml_vec", "rmma.m1.n1.w1x4"]], [3, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 4096, "k": 6656, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "rmma.m1.n1.w1x8"]], [2, 3, ["ggml_vec", "rmma.m1.n1.w1x8"]], [4, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 6144, "k": 5120, "ranked": [[1, 1, ["r8.w4r2", "ggml_vec", "r8.w8r2", "r8.w8r1", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w4r1", "rmma.m1.n1.w1x8"]], [3, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[11, 11, "ggml_mmq"]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 6656, "k": 4096, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "r8.w8r1", "rmma.m1.n1.w1x8"]], [2, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 6656, "k": 6656, "ranked": [[1, 1, ["r8.w8r2", "r8.w8r1", "ggml_vec", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w4r1", "rmma.m1.n1.w1x8"]], [3, 3, ["ggml_vec", "rmma.m1.n1.w1x8"]], [4, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 6656, "k": 19968, "ranked": [[1, 1, ["r8.w8r1", "r8.w8r2", "ggml_vec", "r8.w4r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w4r1", "r8.w8r2", "r8.w8r1", "r8.w4r2", "rmma.m1.n1.w1x8"]], [3, 5, ["ggml_vec", "rmma.m1.n1.w1x8"]], [6, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 15, "ggml_mmq"]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 8192, "k": 3840, "ranked": [[1, 1, ["ggml_vec", "r8.w4r2", "rmma.m1.n1.w1x4"]], [2, 4, ["ggml_vec", "rmma.m1.n1.w1x4"]], [5, 8, ["rmma.m1.n1.w1x4"]]], "bands": [[9, 16, "ggml_mmq"]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 8704, "k": 6656, "ranked": [[1, 1, ["ggml_vec", "r8.w4r2", "r8.w8r1", "r8.w8r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w4r1", "r8.w8r1", "rmma.m1.n1.w1x8"]], [3, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 9216, "k": 4096, "ranked": [[1, 1, ["ggml_vec", "r8.w4r2", "r8.w8r1", "r8.w8r2", "rmma.m1.n1.w1x4"]], [2, 3, ["rmma.m1.n1.w1x4"]], [4, 4, ["ggml_vec", "rmma.m1.n1.w1x4"]], [5, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 10240, "k": 4096, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "rmma.m1.n1.w1x4"]], [2, 2, ["ggml_vec", "rmma.m1.n1.w1x4"]], [3, 3, ["rmma.m1.n1.w1x4"]], [4, 4, ["ggml_vec", "rmma.m1.n1.w1x4"]], [5, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 10240, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "r8.w8r1", "rmma.m1.n1.w1x8"]], [2, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 16384, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w4r2", "r8.w8r1", "r8.w8r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w4r1", "r8.w8r1", "r8.w8r2", "rmma.m1.n1.w1x8"]], [3, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 16, "ggml_mmq"]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 17408, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w8r1", "r8.w8r2", "r8.w4r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w4r1", "r8.w8r1", "r8.w8r2", "rmma.m1.n1.w1x8"]], [3, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 11, "ggml_mmq"], [13, 13, "ggml_mmq"], [15, 16, "ggml_mmq"]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 39936, "k": 6656, "ranked": [[1, 1, ["ggml_vec", "r8.w8r1", "r8.w4r2", "r8.w8r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w4r1", "r8.w8r2", "r8.w8r1", "rmma.m1.n1.w1x8"]], [3, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "store", "n": 262144, "k": 3840, "ranked": [[1, 1, ["ggml_vec", "r8.w4r2", "r8.w8r2", "r8.w8r1", "rmma.m1.n1.w1x4"]], [2, 2, ["ggml_vec", "r8.w4r1", "r8.w8r2", "r8.w8r1", "rmma.m1.n1.w1x4"]], [3, 4, ["ggml_vec", "rmma.m1.n1.w1x4"]], [5, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "swiglu", "n": 12288, "k": 4096, "ranked": [[1, 1, ["ggml_vec", "r8.w4r1", "r8.w8r1", "rmma.m1.n1.w1x8"]], [2, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "swiglu", "n": 15360, "k": 3840, "ranked": [[1, 1, ["ggml_vec", "r8.w4r1", "r8.w8r1", "rmma.m1.n1.w1x8"]], [2, 5, ["ggml_vec", "rmma.m1.n1.w1x8"]], [6, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 16, "ggml_mmq"]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "swiglu", "n": 17408, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w4r1", "r8.w8r1", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w4r1", "r8.w8r1", "rmma.m1.n1.w1x8"]], [3, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q4k", "compute": "a16", "epilogue": "swiglu", "n": 19968, "k": 6656, "ranked": [[1, 1, ["ggml_vec", "r8.w4r1", "r8.w8r1", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "r8.w4r1", "r8.w8r1", "rmma.m1.n1.w1x8"]], [3, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q50", "compute": "a16", "epilogue": "store", "n": 2688, "k": 3712, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "ggml_vec", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x4"]], [2, 2, ["ggml_vec", "r8.w4r2", "rmma.m1.n1.w1x4"]], [3, 4, ["ggml_vec", "rmma.m1.n1.w1x4"]], [5, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "q50", "compute": "a16", "epilogue": "store", "n": 3712, "k": 2688, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w8r1", "ggml_vec", "r8.w4r1", "rmma.m1.n1.w1x4"]], [2, 2, ["ggml_vec", "rmma.m1.n1.w1x4"]], [3, 3, ["rmma.m1.n1.w1x4"]], [4, 4, ["ggml_vec", "rmma.m1.n1.w1x4"]], [5, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "q5k", "compute": "a16", "epilogue": "add", "n": 5120, "k": 6144, "ranked": [[1, 1, ["r8.w8r2", "ggml_vec", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q5k", "compute": "a16", "epilogue": "add", "n": 5120, "k": 17408, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w8r1", "ggml_vec", "r8.w4r1", "rmma.m1.n1.w1x16"]], [2, 4, ["ggml_vec", "rmma.m1.n1.w1x16"]], [5, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q5k", "compute": "a16", "epilogue": "store", "n": 256, "k": 6656, "ranked": [[1, 1, ["r8.w8r1", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q5k", "compute": "a16", "epilogue": "store", "n": 1024, "k": 5120, "ranked": [[1, 1, ["r8.w8r1", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q5k", "compute": "a16", "epilogue": "store", "n": 4096, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "rmma.m1.n1.w1x8"]], [3, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q5k", "compute": "a16", "epilogue": "store", "n": 6144, "k": 5120, "ranked": [[1, 1, ["r8.w8r2", "ggml_vec", "r8.w4r1", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 5, ["ggml_vec", "rmma.m1.n1.w1x8"]], [6, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 9, "ggml_mmq"], [13, 13, "ggml_mmq"]]},
+  {"format": "q5k", "compute": "a16", "epilogue": "store", "n": 6656, "k": 4096, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "rmma.m1.n1.w1x8"]], [3, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 9, "rmma.m1.n2.w2x2"]]},
+  {"format": "q5k", "compute": "a16", "epilogue": "store", "n": 7168, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "rmma.m1.n1.w1x8"]], [3, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 9, "rmma.m1.n2.w2x2"]]},
+  {"format": "q5k", "compute": "a16", "epilogue": "store", "n": 10240, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 2, ["ggml_vec", "rmma.m1.n1.w1x8"]], [3, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q5k", "compute": "a16", "epilogue": "store", "n": 16384, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 5, ["ggml_vec", "rmma.m1.n1.w1x8"]], [6, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q5k", "compute": "a16", "epilogue": "store", "n": 17408, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 4, ["ggml_vec", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q5k", "compute": "a16", "epilogue": "store", "n": 202048, "k": 6656, "ranked": [[1, 1, ["ggml_vec", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 5, ["ggml_vec", "rmma.m1.n1.w1x8"]], [6, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q5k", "compute": "a16", "epilogue": "swiglu", "n": 17408, "k": 5120, "ranked": [[1, 1, ["ggml_vec", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 6, ["ggml_vec", "rmma.m1.n1.w1x8"]], [7, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "add", "n": 2688, "k": 4096, "ranked": [[1, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "add", "n": 4096, "k": 12288, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 16, "ggml_mmq"]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "add", "n": 5120, "k": 6144, "ranked": [[1, 1, ["r8.w8r1", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "add", "n": 5120, "k": 17408, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 256, "k": 6656, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]], "bands": [[9, 16, "rmma.m1.n1.w1x16"]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 1024, "k": 4096, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 1024, "k": 5120, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 1024, "k": 6656, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 2048, "k": 3840, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 3840, "k": 15360, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]], "bands": [[9, 16, "rmma.m1.n2.w1x4"]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 4096, "k": 5120, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 4096, "k": 6656, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 6144, "k": 5120, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 6656, "k": 19968, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]], "bands": [[9, 16, "ggml_mmq"]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 8192, "k": 4096, "ranked": [[1, 8, ["rmma.m1.n1.w1x4"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 10240, "k": 5120, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 17408, "k": 5120, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 248320, "k": 2048, "ranked": [[1, 8, ["rmma.m1.n1.w1x4"]]], "bands": [[9, 14, "rmma.m1.n2.w2x2"], [16, 16, "rmma.m1.n2.w2x2"]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 248320, "k": 4096, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "store", "n": 248320, "k": 5120, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q6k", "compute": "a16", "epilogue": "swiglu", "n": 17408, "k": 5120, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "add", "n": 2048, "k": 4096, "ranked": [[1, 1, ["r8.w4r1", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "add", "n": 5120, "k": 6144, "ranked": [[1, 2, ["r8.w8r1", "r8.w8r2", "r8.w4r2", "r8.w4r1", "rmma.m1.n1.w1x16"]], [3, 3, ["r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x16"]], [4, 4, ["r8.w8r2", "rmma.m1.n1.w1x16"]], [5, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 48, "k": 5120, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]], "bands": [[9, 16, "rmma.m1.n1.w1x16"]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 256, "k": 2688, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]], "bands": [[9, 16, "rmma.m1.n1.w1x16"]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 256, "k": 5120, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 1024, "k": 5120, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 1280, "k": 5120, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 2048, "k": 512, "ranked": [[1, 1, ["r8.w4r1", "rmma.m1.n1.w1x16"]], [2, 8, ["rmma.m1.n1.w1x16"]]], "bands": [[9, 16, "rmma.m1.n1.w1x8"]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 2688, "k": 3712, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w4r2", "rmma.m1.n1.w1x8"]], [3, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 9, "rmma.m1.n1.w1x4"], [11, 11, "rmma.m1.n1.w1x4"], [14, 14, "rmma.m1.n1.w1x4"], [16, 16, "rmma.m1.n1.w1x4"]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 2688, "k": 4096, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w4r2", "rmma.m1.n1.w1x8"]], [3, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 9, "rmma.m1.n1.w1x4"], [12, 12, "rmma.m1.n1.w1x4"], [15, 15, "rmma.m1.n1.w1x4"]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 2816, "k": 2112, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w8r1", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 2816, "k": 4096, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w4r2", "rmma.m1.n1.w1x8"]], [3, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 2816, "k": 8192, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w4r2", "r8.w8r1", "r8.w4r1", "r8.w8r2", "rmma.m1.n1.w1x8"]], [3, 4, ["r8.w4r1", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 2880, "k": 4096, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w4r2", "rmma.m1.n1.w1x8"]], [3, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 9, "rmma.m1.n1.w1x4"], [11, 11, "rmma.m1.n1.w1x4"], [13, 13, "rmma.m1.n1.w1x4"], [16, 16, "rmma.m1.n1.w1x4"]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 3712, "k": 2688, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 11, "rmma.m1.n1.w1x4"], [14, 16, "rmma.m1.n1.w1x4"]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 4608, "k": 2688, "ranked": [[1, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 11, "rmma.m1.n2.w1x4"], [13, 16, "rmma.m1.n2.w1x4"]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 8192, "k": 2816, "ranked": [[1, 1, ["r8.w4r1", "r8.w8r2", "r8.w4r2", "r8.w8r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w4r2", "rmma.m1.n1.w1x8"]], [3, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 9216, "k": 2048, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [2, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 9216, "k": 2816, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w8r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w4r2", "r8.w8r1", "r8.w4r1", "r8.w8r2", "rmma.m1.n1.w1x8"]], [3, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 10304, "k": 2688, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w8r1", "r8.w8r2", "rmma.m1.n1.w1x8"]], [3, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 12288, "k": 2048, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w8r1", "r8.w4r2", "r8.w4r1", "r8.w8r2", "rmma.m1.n1.w1x8"]], [3, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 131072, "k": 2688, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w8r1", "r8.w4r2", "r8.w8r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [3, 4, ["r8.w8r2", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 201088, "k": 2880, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w4r1", "r8.w8r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w8r1", "r8.w4r2", "r8.w8r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [3, 4, ["r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]], "bands": [[9, 9, "rmma.m1.n2.w1x4"]]},
+  {"format": "q8", "compute": "a16", "epilogue": "store", "n": 262144, "k": 2816, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w4r2", "r8.w8r1", "r8.w8r2", "r8.w4r1", "rmma.m1.n1.w1x8"]], [3, 4, ["r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x8"]], [5, 8, ["rmma.m1.n1.w1x8"]]]},
+  {"format": "q8", "compute": "a16", "epilogue": "swiglu", "n": 512, "k": 2048, "ranked": [[1, 1, ["r8.w8r1", "r8.w4r1", "r8.w8r2", "r8.w4r2", "rmma.m1.n1.w1x16"]], [2, 2, ["r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x16"]], [3, 8, ["rmma.m1.n1.w1x16"]]], "bands": [[9, 16, "rmma.m1.n1.w1x16"]]},
+  {"format": "q8", "compute": "a16", "epilogue": "swiglu", "n": 2112, "k": 2816, "ranked": [[1, 1, ["r8.w8r2", "r8.w4r2", "r8.w8r1", "r8.w4r1", "rmma.m1.n1.w1x8"]], [2, 2, ["r8.w8r2", "r8.w8r1", "rmma.m1.n1.w1x8"]], [3, 8, ["rmma.m1.n1.w1x8"]]]}
  ]
 }

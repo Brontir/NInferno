@@ -723,7 +723,7 @@ int check_predicted_band(cudaStream_t stream, const std::filesystem::path& scrat
                route + R"("]]})";
     };
     std::ofstream(dir / "pick" / (own + ".json"))
-        << R"({"schema": "ninferno-route-pick/1", "gpu": {"class": ")" << gpu << R"(", "pci_id": ")"
+        << R"({"schema": "ninferno-route-pick/2", "gpu": {"class": ")" << gpu << R"(", "pci_id": ")"
         << pci << R"(", "name": "test"}, "entries": [)"
         << entry("q8", off.n, off.k, generic::route_name(heuristic9)) << ", "
         << entry("q4k", no.n, no.k,
