@@ -78,6 +78,8 @@ FORMATS = {
 BITS = {f: v[0] for f, v in FORMATS.items()}
 RMMA_DEC = {f: v[1] for f, v in FORMATS.items()}
 R8_CODEC = {f: v[2] for f, v in FORMATS.items() if v[2]}
+# The blocks a lane's group spans (generic_w4a8.cuh: kSpan x kStride of the codec; 1 where it has neither).
+R8_GROUP = {'W4a8Q45K': 2, 'W4a8Q6K': 4, 'W4a8Q3K': 4, 'W4a8Q2K': 4, 'W4a8Iq3XxsPaired': 2, 'W4a8Iq3SPaired': 2}
 MMQ_TYPE = {f: v[3] for f, v in FORMATS.items() if v[3]}
 EPI = {'store': '0', 'add': '1', 'swiglu': '2'}   # the kernel facts' epilogue column
 _RMMA = re.compile(r'rmma\.m(\d+)\.n(\d+)\.w(\d+)x(\d+)(?:\.c(\d+))?$')
@@ -327,10 +329,11 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.
         chain += k / 1024.0 / Wp * (_num(r.get('pro_stall')) / clk + _num(r.get('pro_glb_waits')) * c['l2lat_ns'])
     rounds = math.ceil(ctas / slots)
     last = ctas - (rounds - 1) * slots
-    # A round's bytes: its weights at the bus, or its warps' activation reads (act a warp's trip, a pre-quantized call) at
-    # the L2 rate of the SMs the round fills, whichever is longer (the MMQ unit's load, mmq_unit.cpp unit_seconds).
+    # A round's memory side: its weights at the bus, or its warps' activation L1 requests (act a warp's trip, a
+    # pre-quantized call: ncu shows that call L1-bound, 85 % of the L1/TEX throughput, its L2 traffic below T 1's), one
+    # wavefront each on the SMs the round fills, whichever is longer.
     rnd = lambda nc: math.hypot(chain, max(nc * Wp * R * pitch / bus,
-                                           nc * Wp * trips * act / (c['l2bpc'] * min(nc, sms) * clk)))
+                                           nc * Wp * trips * act * c['die']['nr']['wf'] / (min(nc, sms) * clk)))
     return launch_ns(c, P, ctas) + (0.0 if T <= 1 else pre) + (rounds - 1) * rnd(slots) + rnd(last)
 
 
@@ -676,10 +679,21 @@ def _price(gpu, F, shape, route, P, issue=False):
         nt = 1 if T <= 1 else 2 if T <= 2 else 4 if T <= 4 else 8
         r = None if T > 8 else kf_row(kf, 'r8', codec=R8_CODEC.get(fmt), warps=Wp, rows=R, nt=nt, epilogue=EPI.get(ep, '0'),
                                       pre=0 if T <= 1 else 1)
-        # A pre-quantized call (T >= 2) reads its int8 activation from global, from L2 (the pre-pass wrote it): the bytes a
-        # warp's trip loads beyond the same instance quantizing into shared memory (pre 0) are the activation's.
+        # A pre-quantized call (T >= 2) reads its int8 activation from global (the pre-pass wrote it): the loads a warp's
+        # trip issues beyond the same instance quantizing into shared memory (pre 0) are the activation's, its codes in
+        # LDG.128 (512 B a warp) and its scales in LDG.32 (128 B): c and s from the count and bytes they add. Consecutive
+        # lanes take consecutive groups of R8_GROUP blocks (generic_r8.cuh: kSpan x kStride blocks of 32 B), so a codes load
+        # touches 32 lanes x 16 B at that stride: one L1 tag request a 128 B line it touches (ncu, Q6_K: 32 a load), its
+        # scales' load R8_GROUP lines. The rate: one wavefront a request (the die's narrow-load facts).
         r0 = kf_row(kf, 'r8', codec=R8_CODEC.get(fmt), warps=Wp, rows=R, nt=nt, epilogue=EPI.get(ep, '0'), pre=0) if T > 1 else None
-        act = max(_num(r['ldg_bytes']) - _num(r0['ldg_bytes']), 0.0) if r is not None and r0 is not None else 0.0
+        act = 0.0
+        if r is not None and r0 is not None:
+            n_add = max(_num(r['ldg']) - _num(r0['ldg']), 0.0)
+            b_add = max(_num(r['ldg_bytes']) - _num(r0['ldg_bytes']), 0.0)
+            codes = max(min((b_add - 128.0 * n_add) / 384.0, n_add), 0.0)
+            grp = R8_GROUP.get(str(R8_CODEC.get(fmt)).split('<')[0], 1)
+            lines = min(32.0, 8.0 * grp)                                  # 32 lanes x 16 B at a 32 x grp B stride
+            act = codes * lines + (n_add - codes) * min(float(grp), 32.0)    # L1 tag requests a warp's trip
     elif route == 'ggml_mmq':
         # Rows and K in whole tiles only: on other rows the launch demotes it, on other K the selection refuses it.
         if c.get('imma_n') is None or c.get('imma_w') is None or not mmq_takes(shape, F):
