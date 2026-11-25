@@ -1,4 +1,5 @@
-fp8r32 p0 store 256x2048 speed T=1..16 rmma.m1.n2.w4x1 ws=0
+fp8r32 p0 store 256x2048 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+fp8r32 p0 store 256x2048 speed T=9..16 rmma.m1.n2.w4x1 ws=0
 fp8r32 p0 store 256x2048 speed T=17..48 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 store 256x2048 speed T=64..96 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 store 256x2048 speed T=128 rmma.m1.n4.w1x8 ws=0
@@ -8,7 +9,8 @@ fp8r32 p0 store 256x2048 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 store 256x2048 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 store 256x2048 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 store 256x2048 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 add 256x2048 speed T=1..16 rmma.m1.n2.w4x1 ws=0
+fp8r32 p0 add 256x2048 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+fp8r32 p0 add 256x2048 speed T=9..16 rmma.m1.n2.w4x1 ws=0
 fp8r32 p0 add 256x2048 speed T=17..48 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 add 256x2048 speed T=64..96 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 add 256x2048 speed T=128 rmma.m1.n4.w1x8 ws=0
@@ -18,7 +20,8 @@ fp8r32 p0 add 256x2048 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 add 256x2048 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 add 256x2048 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 add 256x2048 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 swiglu 128x2048 speed T=1..16 rmma.m1.n2.w4x1 ws=0
+fp8r32 p0 swiglu 128x2048 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+fp8r32 p0 swiglu 128x2048 speed T=9..16 rmma.m1.n2.w4x1 ws=0
 fp8r32 p0 swiglu 128x2048 speed T=17..64 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 swiglu 128x2048 speed T=96..256 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 swiglu 128x2048 speed T=512..2048 rmma.m1.n4.w1x4 ws=0
@@ -26,7 +29,8 @@ fp8r32 p0 swiglu 128x2048 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 swiglu 128x2048 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 swiglu 128x2048 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 swiglu 128x2048 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 store 256x2048 speed T=1..16 rmma.m1.n2.w4x1 ws=0
+fp8r32 p1 store 256x2048 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+fp8r32 p1 store 256x2048 speed T=9..16 rmma.m1.n2.w4x1 ws=0
 fp8r32 p1 store 256x2048 speed T=17..48 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 store 256x2048 speed T=64..96 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 store 256x2048 speed T=128 rmma.m1.n4.w1x8 ws=0
@@ -36,7 +40,8 @@ fp8r32 p1 store 256x2048 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 store 256x2048 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 store 256x2048 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 store 256x2048 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 add 256x2048 speed T=1..16 rmma.m1.n2.w4x1 ws=0
+fp8r32 p1 add 256x2048 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+fp8r32 p1 add 256x2048 speed T=9..16 rmma.m1.n2.w4x1 ws=0
 fp8r32 p1 add 256x2048 speed T=17..48 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 add 256x2048 speed T=64..96 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 add 256x2048 speed T=128 rmma.m1.n4.w1x8 ws=0
@@ -46,7 +51,8 @@ fp8r32 p1 add 256x2048 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 add 256x2048 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 add 256x2048 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 add 256x2048 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 swiglu 128x2048 speed T=1..16 rmma.m1.n2.w4x1 ws=0
+fp8r32 p1 swiglu 128x2048 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+fp8r32 p1 swiglu 128x2048 speed T=9..16 rmma.m1.n2.w4x1 ws=0
 fp8r32 p1 swiglu 128x2048 speed T=17..64 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 swiglu 128x2048 speed T=96..256 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 swiglu 128x2048 speed T=512..2048 rmma.m1.n4.w1x4 ws=0
@@ -54,7 +60,8 @@ fp8r32 p1 swiglu 128x2048 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 swiglu 128x2048 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 swiglu 128x2048 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 swiglu 128x2048 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 store 1024x4096 speed T=1..16 rmma.m1.n2.w4x1 ws=0
+fp8r32 p0 store 1024x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+fp8r32 p0 store 1024x4096 speed T=9..16 rmma.m1.n2.w4x1 ws=0
 fp8r32 p0 store 1024x4096 speed T=17..64 rmma.m1.n4.w1x8 ws=0
 fp8r32 p0 store 1024x4096 speed T=96..256 rmma.m1.n4.w1x4 ws=0
 fp8r32 p0 store 1024x4096 speed T=512..2048 rmma.m1.n8.w4x1 ws=0
@@ -62,7 +69,8 @@ fp8r32 p0 store 1024x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 store 1024x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 store 1024x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 store 1024x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 add 1024x4096 speed T=1..16 rmma.m1.n2.w4x1 ws=0
+fp8r32 p0 add 1024x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+fp8r32 p0 add 1024x4096 speed T=9..16 rmma.m1.n2.w4x1 ws=0
 fp8r32 p0 add 1024x4096 speed T=17..64 rmma.m1.n4.w1x8 ws=0
 fp8r32 p0 add 1024x4096 speed T=96..256 rmma.m1.n4.w1x4 ws=0
 fp8r32 p0 add 1024x4096 speed T=512..2048 rmma.m1.n8.w4x1 ws=0
@@ -70,7 +78,8 @@ fp8r32 p0 add 1024x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 add 1024x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 add 1024x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 add 1024x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 swiglu 512x4096 speed T=1..16 rmma.m1.n2.w4x1 ws=0
+fp8r32 p0 swiglu 512x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+fp8r32 p0 swiglu 512x4096 speed T=9..16 rmma.m1.n2.w4x1 ws=0
 fp8r32 p0 swiglu 512x4096 speed T=17..24 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 swiglu 512x4096 speed T=32..128 rmma.m1.n4.w1x8 ws=0
 fp8r32 p0 swiglu 512x4096 speed T=192..512 rmma.m1.n4.w1x4 ws=0
@@ -79,7 +88,8 @@ fp8r32 p0 swiglu 512x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 swiglu 512x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 swiglu 512x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 swiglu 512x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 store 1024x4096 speed T=1..16 rmma.m1.n2.w4x1 ws=0
+fp8r32 p1 store 1024x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+fp8r32 p1 store 1024x4096 speed T=9..16 rmma.m1.n2.w4x1 ws=0
 fp8r32 p1 store 1024x4096 speed T=17..64 rmma.m1.n4.w1x8 ws=0
 fp8r32 p1 store 1024x4096 speed T=96..256 rmma.m1.n4.w1x4 ws=0
 fp8r32 p1 store 1024x4096 speed T=512..2048 rmma.m1.n8.w4x1 ws=0
@@ -87,7 +97,8 @@ fp8r32 p1 store 1024x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 store 1024x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 store 1024x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 store 1024x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 add 1024x4096 speed T=1..16 rmma.m1.n2.w4x1 ws=0
+fp8r32 p1 add 1024x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+fp8r32 p1 add 1024x4096 speed T=9..16 rmma.m1.n2.w4x1 ws=0
 fp8r32 p1 add 1024x4096 speed T=17..64 rmma.m1.n4.w1x8 ws=0
 fp8r32 p1 add 1024x4096 speed T=96..256 rmma.m1.n4.w1x4 ws=0
 fp8r32 p1 add 1024x4096 speed T=512..2048 rmma.m1.n8.w4x1 ws=0
@@ -95,7 +106,8 @@ fp8r32 p1 add 1024x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 add 1024x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 add 1024x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 add 1024x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 swiglu 512x4096 speed T=1..16 rmma.m1.n2.w4x1 ws=0
+fp8r32 p1 swiglu 512x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+fp8r32 p1 swiglu 512x4096 speed T=9..16 rmma.m1.n2.w4x1 ws=0
 fp8r32 p1 swiglu 512x4096 speed T=17..24 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 swiglu 512x4096 speed T=32..128 rmma.m1.n4.w1x8 ws=0
 fp8r32 p1 swiglu 512x4096 speed T=192..512 rmma.m1.n4.w1x4 ws=0
@@ -104,7 +116,7 @@ fp8r32 p1 swiglu 512x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 swiglu 512x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 swiglu 512x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 swiglu 512x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 store 2048x1024 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 store 2048x1024 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 store 2048x1024 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 store 2048x1024 speed T=17..192 rmma.m1.n4.w1x4 ws=0
 fp8r32 p0 store 2048x1024 speed T=256..1024 rmma.m1.n8.w4x1 ws=0
@@ -113,7 +125,7 @@ fp8r32 p0 store 2048x1024 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 store 2048x1024 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 store 2048x1024 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 store 2048x1024 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 add 2048x1024 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 add 2048x1024 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 add 2048x1024 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 add 2048x1024 speed T=17..192 rmma.m1.n4.w1x4 ws=0
 fp8r32 p0 add 2048x1024 speed T=256..1024 rmma.m1.n8.w4x1 ws=0
@@ -122,7 +134,8 @@ fp8r32 p0 add 2048x1024 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 add 2048x1024 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 add 2048x1024 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 add 2048x1024 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 swiglu 1024x1024 speed T=1..16 rmma.m1.n2.w4x1 ws=0
+fp8r32 p0 swiglu 1024x1024 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+fp8r32 p0 swiglu 1024x1024 speed T=9..16 rmma.m1.n2.w4x1 ws=0
 fp8r32 p0 swiglu 1024x1024 speed T=17..48 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 swiglu 1024x1024 speed T=64..256 rmma.m1.n4.w1x4 ws=0
 fp8r32 p0 swiglu 1024x1024 speed T=512..2048 rmma.m1.n8.w4x1 ws=0
@@ -130,7 +143,7 @@ fp8r32 p0 swiglu 1024x1024 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 swiglu 1024x1024 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 swiglu 1024x1024 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 swiglu 1024x1024 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 store 2048x1024 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 store 2048x1024 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 store 2048x1024 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 store 2048x1024 speed T=17..192 rmma.m1.n4.w1x4 ws=0
 fp8r32 p1 store 2048x1024 speed T=256..1024 rmma.m1.n8.w4x1 ws=0
@@ -139,7 +152,7 @@ fp8r32 p1 store 2048x1024 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 store 2048x1024 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 store 2048x1024 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 store 2048x1024 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 add 2048x1024 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 add 2048x1024 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 add 2048x1024 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 add 2048x1024 speed T=17..192 rmma.m1.n4.w1x4 ws=0
 fp8r32 p1 add 2048x1024 speed T=256..1024 rmma.m1.n8.w4x1 ws=0
@@ -148,7 +161,8 @@ fp8r32 p1 add 2048x1024 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 add 2048x1024 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 add 2048x1024 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 add 2048x1024 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 swiglu 1024x1024 speed T=1..16 rmma.m1.n2.w4x1 ws=0
+fp8r32 p1 swiglu 1024x1024 speed T=1..8 rmma.m1.n1.w1x16 ws=0
+fp8r32 p1 swiglu 1024x1024 speed T=9..16 rmma.m1.n2.w4x1 ws=0
 fp8r32 p1 swiglu 1024x1024 speed T=17..48 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 swiglu 1024x1024 speed T=64..256 rmma.m1.n4.w1x4 ws=0
 fp8r32 p1 swiglu 1024x1024 speed T=512..2048 rmma.m1.n8.w4x1 ws=0
@@ -156,7 +170,7 @@ fp8r32 p1 swiglu 1024x1024 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 swiglu 1024x1024 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 swiglu 1024x1024 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 swiglu 1024x1024 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 store 4096x4096 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 store 4096x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 store 4096x4096 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 store 4096x4096 speed T=17..96 rmma.m1.n4.w1x4 ws=0
 fp8r32 p0 store 4096x4096 speed T=128..512 rmma.m1.n8.w4x1 ws=0
@@ -165,7 +179,7 @@ fp8r32 p0 store 4096x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 store 4096x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 store 4096x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 store 4096x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 add 4096x4096 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 add 4096x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 add 4096x4096 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 add 4096x4096 speed T=17..96 rmma.m1.n4.w1x4 ws=0
 fp8r32 p0 add 4096x4096 speed T=128..512 rmma.m1.n8.w4x1 ws=0
@@ -174,7 +188,7 @@ fp8r32 p0 add 4096x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 add 4096x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 add 4096x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 add 4096x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 swiglu 2048x4096 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 swiglu 2048x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 swiglu 2048x4096 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 swiglu 2048x4096 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 fp8r32 p0 swiglu 2048x4096 speed T=48..192 rmma.m1.n4.w1x4 ws=0
@@ -184,7 +198,7 @@ fp8r32 p0 swiglu 2048x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 swiglu 2048x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 swiglu 2048x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 swiglu 2048x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 store 4096x4096 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 store 4096x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 store 4096x4096 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 store 4096x4096 speed T=17..96 rmma.m1.n4.w1x4 ws=0
 fp8r32 p1 store 4096x4096 speed T=128..512 rmma.m1.n8.w4x1 ws=0
@@ -193,7 +207,7 @@ fp8r32 p1 store 4096x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 store 4096x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 store 4096x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 store 4096x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 add 4096x4096 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 add 4096x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 add 4096x4096 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 add 4096x4096 speed T=17..96 rmma.m1.n4.w1x4 ws=0
 fp8r32 p1 add 4096x4096 speed T=128..512 rmma.m1.n8.w4x1 ws=0
@@ -202,7 +216,7 @@ fp8r32 p1 add 4096x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 add 4096x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 add 4096x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 add 4096x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 swiglu 2048x4096 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 swiglu 2048x4096 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 swiglu 2048x4096 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 swiglu 2048x4096 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 fp8r32 p1 swiglu 2048x4096 speed T=48..192 rmma.m1.n4.w1x4 ws=0
@@ -212,7 +226,7 @@ fp8r32 p1 swiglu 2048x4096 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 swiglu 2048x4096 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 swiglu 2048x4096 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 swiglu 2048x4096 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 store 6144x5120 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 store 6144x5120 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 store 6144x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 store 6144x5120 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 fp8r32 p0 store 6144x5120 speed T=48..96 rmma.m1.n4.w1x4 ws=0
@@ -223,7 +237,7 @@ fp8r32 p0 store 6144x5120 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 store 6144x5120 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 store 6144x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 store 6144x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 add 6144x5120 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 add 6144x5120 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 add 6144x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 add 6144x5120 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 fp8r32 p0 add 6144x5120 speed T=48..96 rmma.m1.n4.w1x4 ws=0
@@ -234,7 +248,7 @@ fp8r32 p0 add 6144x5120 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 add 6144x5120 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 add 6144x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 add 6144x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 swiglu 3072x5120 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 swiglu 3072x5120 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 swiglu 3072x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 swiglu 3072x5120 speed T=17..128 rmma.m1.n4.w1x4 ws=0
 fp8r32 p0 swiglu 3072x5120 speed T=192..1024 rmma.m1.n8.w4x1 ws=0
@@ -243,7 +257,7 @@ fp8r32 p0 swiglu 3072x5120 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 swiglu 3072x5120 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 swiglu 3072x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 swiglu 3072x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 store 6144x5120 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 store 6144x5120 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 store 6144x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 store 6144x5120 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 fp8r32 p1 store 6144x5120 speed T=48..96 rmma.m1.n4.w1x4 ws=0
@@ -254,7 +268,7 @@ fp8r32 p1 store 6144x5120 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 store 6144x5120 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 store 6144x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 store 6144x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 add 6144x5120 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 add 6144x5120 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 add 6144x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 add 6144x5120 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 fp8r32 p1 add 6144x5120 speed T=48..96 rmma.m1.n4.w1x4 ws=0
@@ -265,7 +279,7 @@ fp8r32 p1 add 6144x5120 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 add 6144x5120 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 add 6144x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 add 6144x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 swiglu 3072x5120 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 swiglu 3072x5120 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 swiglu 3072x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 swiglu 3072x5120 speed T=17..128 rmma.m1.n4.w1x4 ws=0
 fp8r32 p1 swiglu 3072x5120 speed T=192..1024 rmma.m1.n8.w4x1 ws=0
@@ -274,7 +288,7 @@ fp8r32 p1 swiglu 3072x5120 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 swiglu 3072x5120 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 swiglu 3072x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 swiglu 3072x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 store 17408x5120 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 store 17408x5120 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 store 17408x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 store 17408x5120 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 fp8r32 p0 store 17408x5120 speed T=48..192 rmma.m1.n8.w4x1 ws=0
@@ -285,7 +299,7 @@ fp8r32 p0 store 17408x5120 prefill T=17..32 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 store 17408x5120 prefill T=48..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 store 17408x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 store 17408x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 add 17408x5120 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 add 17408x5120 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 add 17408x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 add 17408x5120 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 fp8r32 p0 add 17408x5120 speed T=48..192 rmma.m1.n8.w4x1 ws=0
@@ -296,7 +310,7 @@ fp8r32 p0 add 17408x5120 prefill T=17..32 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 add 17408x5120 prefill T=48..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 add 17408x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 add 17408x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 swiglu 8704x5120 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 swiglu 8704x5120 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 swiglu 8704x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 swiglu 8704x5120 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 fp8r32 p0 swiglu 8704x5120 speed T=48..256 rmma.m1.n8.w4x1 ws=0
@@ -306,7 +320,7 @@ fp8r32 p0 swiglu 8704x5120 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 swiglu 8704x5120 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 swiglu 8704x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 swiglu 8704x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 store 17408x5120 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 store 17408x5120 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 store 17408x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 store 17408x5120 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 fp8r32 p1 store 17408x5120 speed T=48..192 rmma.m1.n8.w4x1 ws=0
@@ -317,7 +331,7 @@ fp8r32 p1 store 17408x5120 prefill T=17..32 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 store 17408x5120 prefill T=48..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 store 17408x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 store 17408x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 add 17408x5120 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 add 17408x5120 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 add 17408x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 add 17408x5120 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 fp8r32 p1 add 17408x5120 speed T=48..192 rmma.m1.n8.w4x1 ws=0
@@ -328,7 +342,7 @@ fp8r32 p1 add 17408x5120 prefill T=17..32 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 add 17408x5120 prefill T=48..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 add 17408x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 add 17408x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 swiglu 8704x5120 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 swiglu 8704x5120 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 swiglu 8704x5120 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 swiglu 8704x5120 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 fp8r32 p1 swiglu 8704x5120 speed T=48..256 rmma.m1.n8.w4x1 ws=0
@@ -338,7 +352,7 @@ fp8r32 p1 swiglu 8704x5120 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 swiglu 8704x5120 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 swiglu 8704x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 swiglu 8704x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 store 5120x17408 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 store 5120x17408 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 store 5120x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 store 5120x17408 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 fp8r32 p0 store 5120x17408 speed T=48..96 rmma.m1.n4.w1x4 ws=0
@@ -348,7 +362,7 @@ fp8r32 p0 store 5120x17408 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 store 5120x17408 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 store 5120x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 store 5120x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 add 5120x17408 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 add 5120x17408 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 add 5120x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 add 5120x17408 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 fp8r32 p0 add 5120x17408 speed T=48..96 rmma.m1.n4.w1x4 ws=0
@@ -358,7 +372,7 @@ fp8r32 p0 add 5120x17408 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 add 5120x17408 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 add 5120x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 add 5120x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 swiglu 2560x17408 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 swiglu 2560x17408 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 swiglu 2560x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 swiglu 2560x17408 speed T=17..64 rmma.m1.n4.w1x8 ws=0
 fp8r32 p0 swiglu 2560x17408 speed T=96..128 rmma.m1.n4.w1x4 ws=0
@@ -368,7 +382,7 @@ fp8r32 p0 swiglu 2560x17408 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 swiglu 2560x17408 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 swiglu 2560x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 swiglu 2560x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 store 5120x17408 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 store 5120x17408 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 store 5120x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 store 5120x17408 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 fp8r32 p1 store 5120x17408 speed T=48..96 rmma.m1.n4.w1x4 ws=0
@@ -378,7 +392,7 @@ fp8r32 p1 store 5120x17408 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 store 5120x17408 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 store 5120x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 store 5120x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 add 5120x17408 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 add 5120x17408 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 add 5120x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 add 5120x17408 speed T=17..32 rmma.m1.n4.w1x8 ws=0
 fp8r32 p1 add 5120x17408 speed T=48..96 rmma.m1.n4.w1x4 ws=0
@@ -388,7 +402,7 @@ fp8r32 p1 add 5120x17408 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 add 5120x17408 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 add 5120x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 add 5120x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 swiglu 2560x17408 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 swiglu 2560x17408 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 swiglu 2560x17408 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 swiglu 2560x17408 speed T=17..64 rmma.m1.n4.w1x8 ws=0
 fp8r32 p1 swiglu 2560x17408 speed T=96..128 rmma.m1.n4.w1x4 ws=0
@@ -398,7 +412,7 @@ fp8r32 p1 swiglu 2560x17408 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 swiglu 2560x17408 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 swiglu 2560x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 swiglu 2560x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 store 28672x8192 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 store 28672x8192 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 store 28672x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 store 28672x8192 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 fp8r32 p0 store 28672x8192 speed T=48..64 rmma.m1.n8.w4x1 ws=0
@@ -410,7 +424,7 @@ fp8r32 p0 store 28672x8192 prefill T=17..32 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 store 28672x8192 prefill T=48..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 store 28672x8192 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 store 28672x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 add 28672x8192 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 add 28672x8192 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 add 28672x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 add 28672x8192 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 fp8r32 p0 add 28672x8192 speed T=48..64 rmma.m1.n8.w4x1 ws=0
@@ -422,7 +436,7 @@ fp8r32 p0 add 28672x8192 prefill T=17..32 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 add 28672x8192 prefill T=48..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 add 28672x8192 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 add 28672x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p0 swiglu 14336x8192 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p0 swiglu 14336x8192 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p0 swiglu 14336x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p0 swiglu 14336x8192 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 fp8r32 p0 swiglu 14336x8192 speed T=48..192 rmma.m1.n8.w4x1 ws=0
@@ -432,7 +446,7 @@ fp8r32 p0 swiglu 14336x8192 prefill T=17..32 rmma.m1.n4.w4x1 ws=0
 fp8r32 p0 swiglu 14336x8192 prefill T=48..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p0 swiglu 14336x8192 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p0 swiglu 14336x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 store 28672x8192 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 store 28672x8192 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 store 28672x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 store 28672x8192 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 fp8r32 p1 store 28672x8192 speed T=48..64 rmma.m1.n8.w4x1 ws=0
@@ -444,7 +458,7 @@ fp8r32 p1 store 28672x8192 prefill T=17..32 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 store 28672x8192 prefill T=48..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 store 28672x8192 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 store 28672x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 add 28672x8192 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 add 28672x8192 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 add 28672x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 add 28672x8192 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 fp8r32 p1 add 28672x8192 speed T=48..64 rmma.m1.n8.w4x1 ws=0
@@ -456,7 +470,7 @@ fp8r32 p1 add 28672x8192 prefill T=17..32 rmma.m1.n4.w4x1 ws=0
 fp8r32 p1 add 28672x8192 prefill T=48..2048 rmma.m1.n8.w4x1 ws=0
 fp8r32 p1 add 28672x8192 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 fp8r32 p1 add 28672x8192 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-fp8r32 p1 swiglu 14336x8192 speed T=1..8 rmma.m1.n1.w1x8 ws=0
+fp8r32 p1 swiglu 14336x8192 speed T=1..8 rmma.m1.n1.w1x16 ws=0
 fp8r32 p1 swiglu 14336x8192 speed T=9..16 rmma.m1.n2.w1x4 ws=0
 fp8r32 p1 swiglu 14336x8192 speed T=17..32 rmma.m1.n4.w1x4 ws=0
 fp8r32 p1 swiglu 14336x8192 speed T=48..192 rmma.m1.n8.w4x1 ws=0
