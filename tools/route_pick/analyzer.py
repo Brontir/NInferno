@@ -288,15 +288,19 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store'):
         nt = math.ceil(n / 128.0)
         launch = mmq_launch(n, k, int(sms), mmq_j(T), T)
         ctas = launch['blocks']
-        per = nt * (k / 256.0) * sets * math.ceil(T / float(mmq_j(T))) / ctas
+        # The longest CTA's units (launch_of units: a tile a CTA, a wave of them after another; stream-k, ceil(work /
+        # blocks)), each set's: a launch takes as long as its longest CTA (mmq_unit.cpp launch_seconds).
+        per = launch['units'] * sets / math.ceil(ctas / sms)
         cyc = c['imma_w'] if '16832' in r.get('mma_shape', '') else c['imma_n']
         issue = max(MMQ_WARPS * _num(r['mma']) * cyc / PARTITIONS / clk, _num(r['stall_sum']) / clk)
         unit = per * (issue + 4096.0 * bits * sms / bus)
         # generic_gemm.cpp GgmlMmq: the quantizer (pre), one product launch a weight set (a gated call runs the gate's and
         # the up's, each its own rounds with its own code outside the loop), then the epilogue kernel over the plane
         # (generic_mmq_epilogue.cu: ceil(rows / 1024) x T CTAs of 256 threads, a launch, and its bytes: each output reads
-        # its FP32 plane value, the up's too under SwiGLU, an added call its BF16 residual, and writes its BF16 value).
-        epi = launch_ns(c, P, math.ceil(n / 1024.0) * T) + n * T * (4.0 * sets + 2.0 + (2.0 if ep == 'add' else 0.0)) / bus
+        # its FP32 plane value, the up's too under SwiGLU, an added call its BF16 residual, and writes its BF16 value), at
+        # the L2 rate: the plane is the product's just-written output, the residual and the output a few KiB a token.
+        epi_bytes = n * T * (4.0 * sets + 2.0 + (2.0 if ep == 'add' else 0.0))
+        epi = launch_ns(c, P, math.ceil(n / 1024.0) * T) + epi_bytes / (c['l2bpc'] * sms * clk)
         # Stream-k adds the fixup kernel after each product where the CTAs do not divide the output tiles (mmq_launch).
         fix = mmq_fixup_ns(c, P, launch, mmq_j(T))
         return pre + sets * (launch_ns(c, P, ctas) + fix + math.ceil(ctas / sms) * (unit / sets + out)) + epi
@@ -603,7 +607,6 @@ def volta_sub_price(c, P, n, k, T, bits, sets, fmt=None, ep='store', kind=None):
     occ = occupancy(c, warps, regs)
     if shared > 0:
         occ = min(occ, float(int(c['smem_sm'] // (shared + c.get('smem_res', 1024.0)))))
-    occ = max(min(occ, float(c['thr_sm'] // (warps * 32)), float(c['blk_sm'])), 1.0)
     tot, stall = _num(r['total']), _num(r['stall_sum'])
     rows_warp = 8.0 if kind == 'hmma' else rows_cta / warps      # hmma: a warp's eight fragment rows; gemv: R rows a warp
     bytes_iter = rows_warp * 256.0 * bits / 8.0 * sets            # a warp's iteration: 256 values of each of its rows
