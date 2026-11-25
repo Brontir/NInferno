@@ -1,8 +1,8 @@
-// Volta's decode and speculative-verify widths (T = 1..16) on its tensor cores. sm_70 has no mma.sync of the
-// shapes the register-MMA tiles issue (m16n8k16 BF16/F16, m16n8k32 s8): there those tiles run on
-// FP32 FMAs over warp shuffles (ops/common/mma.cuh) and ggml's vector kernel re-reads the
-// activation for every column on dp4a, so both grow with T and neither streams the weight at the
-// DRAM rate (GV100, Qwen3.5-9B Q4_K_M, dflash:7 round: Q6_K LM head 163 GB/s, target verify
+// Volta's decode and speculative-verify widths (T = 1..16) on its tensor cores. sm_70 has no
+// mma.sync of the shapes the register-MMA tiles issue (m16n8k16 BF16/F16, m16n8k32 s8): there those
+// tiles run on FP32 FMAs over warp shuffles (ops/common/mma.cuh) and ggml's vector kernel re-reads
+// the activation for every column on dp4a, so both grow with T and neither streams the weight at
+// the DRAM rate (GV100, Qwen3.5-9B Q4_K_M, dflash:7 round: Q6_K LM head 163 GB/s, target verify
 // 176-312 GB/s, of 870). Volta's one tensor-core shape is mma.m8n8k4 with f16 operands
 // (HMMA.884): this kernel turns each weight code into f16 once, straight from the lane's own loads
 // into an A fragment, and multiplies it against eight (or sixteen) token columns.
@@ -18,8 +18,9 @@
 // Layout: a warp holds eight weight rows (fragment row f = weight row f) and splits each 256-value
 // superblock over its quad-pairs, 64 values each (the format's own runs of 32: Q4_K / Q5_K
 // sub-blocks 2q and 2q+1, Q6_K quarters q % 2 and q % 2 + 2 of half q / 2, Q8 groups 2q and
-// 2q+1). One code word (four bytes) gives two half2 per run: (byte 0, byte 2) and (byte 1, byte 3),
-// so the staged activation swaps the middle two of every four values.
+// 2q+1, MXFP4 blocks 2q and 2q+1, NVFP4 16-value blocks 4q .. 4q+3). One code word (four bytes)
+// gives two half2 per run: (byte 0, byte 2) and (byte 1, byte 3), so the staged activation swaps
+// the middle two of every four values (the FP4 decoders keep that order: generic_volta_hmma.cuh).
 //
 // Arithmetic: the A operand is the code itself (less its zero point; Q4_K / Q5_K: plus 1024), an
 // exact f16 integer, so the tensor cores sum exact products of codes and f16 activations in FP32
@@ -219,15 +220,17 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
         for (int g = 0; g < NG; ++g) {
             const int token = 8 * g + (i & 4) + (lane & 2) + (i & 1);
             if (token >= a.tokens) continue;
-            float value = acc[0][g][i];
-            float up    = acc[kSets - 1][g][i];
             // A format with a per-tensor scale (NVFP4's divisor): on each set's own row, as the
             // register MMA applies it (Decoder::row_scale).
-            if constexpr (requires { F::row_scale(a, 0); }) {
+            float value = acc[0][g][i];
+            if constexpr (requires { F::row_scale(a, 0); })
                 value *= F::row_scale(a, a.row_begin + row);
-                if constexpr (kSets == 2) up *= F::row_scale(a, a.row_begin + row + a.up_offset);
+            if constexpr (E == Epilogue::SwiGlu) {
+                float up = acc[kSets - 1][g][i];
+                if constexpr (requires { F::row_scale(a, 0); })
+                    up *= F::row_scale(a, a.row_begin + row + a.up_offset);
+                value = generic_gate(a, value) * up;
             }
-            if constexpr (E == Epilogue::SwiGlu) value = generic_gate(a, value) * up;
             store_output<E>(a, row, token, value);
         }
     }
