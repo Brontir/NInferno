@@ -1,14 +1,16 @@
 #pragma once
 
-// The Inkling 2 forward over one sequence: every visit's KV planes and convolution state, the
-// residual blocks and the loop's messages (docs/maintainer/inkling2-model.md). This first form
-// runs plain launches (no CUDA graph) for exactness; the decode graph comes after the family is
-// qualified against llama.cpp.
+// The Inkling 2 forward over one sequence (pass.h over the sequence's own planes): every visit's
+// KV planes (a ring on a sliding visit) and convolution state, for the reference comparison and
+// the standalone app. This form runs plain launches (no CUDA graph); the Program runs the same
+// Pass over its paged pool, rings and state images.
 
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/tensor.h"
 #include "models/inkling2/model.h"
+#include "models/inkling2/pass.h"
+#include "ninferno/ops/gemma4_attention.h"
 #include "ninferno/ops/inkling2.h"
 
 #include <cuda_runtime.h>
@@ -33,13 +35,14 @@ public:
     std::vector<float> forward(std::span<const std::int32_t> ids, cudaStream_t stream);
 
     // The visit schedule (slot and physical layer of each visit, in order).
-    [[nodiscard]] const std::vector<Visit>& visits() const noexcept { return visits_; }
+    [[nodiscard]] const std::vector<Visit>& visits() const noexcept { return pass_.visits(); }
 
     [[nodiscard]] std::int32_t position() const noexcept { return position_; }
 
-    // Optional: called with every visit's output stream (BF16 [H, T]) and the final hidden state,
-    // for comparisons with a reference (`name` as llama.cpp's callback names them: "l_out",
-    // "result_norm"; visit -1 for the latter).
+    // Optional: called with every visit's output stream (BF16 [H, T]), the first visit's
+    // intermediate tensors and the final hidden state of the last token, for comparisons with a
+    // reference (`name` as llama.cpp's callback names them: "l_out", ..., "result_norm"; visit -1
+    // for all but "l_out").
     std::function<void(const char* name, std::int32_t visit, const Tensor& value)> observe;
 
 private:
@@ -48,17 +51,14 @@ private:
         std::int32_t capacity = 0;
     };
 
-    ops::Inkling2ConvState state(std::int32_t slot, std::int32_t offset);
-    Tensor stream_buffer(); // a fresh [H, max_tokens] BF16 buffer of the pool, for blocks
-
     const Model& model_;
     const Config& c_;
-    std::vector<Visit> visits_;
+    Pass pass_;
     std::vector<Slot> slots_;
+    std::vector<ops::Gemma4KvLayer> kv_;
+    std::vector<ops::Inkling2ConvState> conv_;
     std::int32_t max_context_ = 0, max_tokens_ = 0, position_ = 0;
     DeviceArena work_;
-    std::vector<DeviceBuffer> pool_; // block snapshots and the loop's bank outputs
-    std::size_t pool_next_ = 0;
     DeviceBuffer ids_, positions_, logits_;
 };
 
