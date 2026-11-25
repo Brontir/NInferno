@@ -256,15 +256,15 @@ struct AttnParams {
 // (kv_address.h: a ring image or a page table row).
 __global__ void attention_kernel(AttnParams p) {
     const int h = blockIdx.x, t = blockIdx.y, b = blockIdx.z, lane = threadIdx.x & 31,
-              warp = threadIdx.x >> 5;
-    const int g            = h / (p.q_heads / p.kv_heads);
-    const std::int64_t col = static_cast<std::int64_t>(b) * p.tokens + t;
-    const int pos          = p.positions[col];
-    const int low          = p.window ? max(0, pos - p.window + 1) : 0;
-    const float sc         = rsqrtf(static_cast<float>(p.d));
-    const __nv_bfloat16* q = p.q + (col * p.q_heads + h) * p.d;
-    const __nv_bfloat16* r = p.r + (col * p.q_heads + h) * p.dr;
-    const int binding      = detail::gemma4_kv_binding(p.kv, b);
+              warp          = threadIdx.x >> 5;
+    const int g             = h / (p.q_heads / p.kv_heads);
+    const std::int64_t col  = static_cast<std::int64_t>(b) * p.tokens + t;
+    const int pos           = p.positions[col];
+    const int low           = p.window ? max(0, pos - p.window + 1) : 0;
+    const float sc          = rsqrtf(static_cast<float>(p.d));
+    const __nv_bfloat16* q  = p.q + (col * p.q_heads + h) * p.d;
+    const __nv_bfloat16* r  = p.r + (col * p.q_heads + h) * p.dr;
+    const int binding       = detail::gemma4_kv_binding(p.kv, b);
     const std::int64_t base = detail::gemma4_kv_plane_offset(p.kv, binding) +
                               static_cast<std::int64_t>(g) * p.kv.capacity * p.d;
     float qv[4], acc[4] = {0, 0, 0, 0};
@@ -278,8 +278,8 @@ __global__ void attention_kernel(AttnParams p) {
     for (int key = low + warp; key <= pos; key += kAttnWarps) {
         const std::int64_t row =
             base + static_cast<std::int64_t>(detail::gemma4_kv_slot(p.kv, binding, key)) * p.d;
-        const int dist         = pos - key;
-        float s                = 0;
+        const int dist = pos - key;
+        float s        = 0;
         for (int j = 0; j < 4; ++j) {
             const int i = lane + 32 * j;
             if (i < p.d) { s += qv[j] * __bfloat162float(p.k[row + i]); }
@@ -446,8 +446,8 @@ void inkling2_attention(const Tensor& q, const Tensor& r, const Tensor& sink, co
     need_bf16(out, op, "out");
     need_f32(bias, op, "bias");
     const int d = q.ne[0], hq = q.ne[1], tokens = q.ne[2], batch = q.ne[3], dr = r.ne[0];
-    const auto kv = detail::gemma4_kv_binding(cache, d, cache.k.ne[cache.block_tables.data ? 3 : 2],
-                                              op);
+    const auto kv =
+        detail::gemma4_kv_binding(cache, d, cache.k.ne[cache.block_tables.data ? 3 : 2], op);
     const int hkv = cache.k.ne[cache.block_tables.data ? 3 : 2];
     need(!kv.fp8, op, "BF16 cache planes");
     need(kv.batch == batch, op, "one binding a batch row");
@@ -456,8 +456,9 @@ void inkling2_attention(const Tensor& q, const Tensor& r, const Tensor& sink, co
              bias.ne[0] == dr && bias.ne[1] == extent && positions.ne[0] == tokens &&
              positions.ne[1] == batch && out.ne[0] == d && out.ne[1] == hq && out.ne[2] == tokens &&
              out.ne[3] == batch,
-         op, "D <= 128, Dr <= 32, q/out [D, Hq, T, B], r [Dr, Hq, T, B], sink [Hq, T, B], "
-             "bias [extent, Dr], positions [T, B]");
+         op,
+         "D <= 128, Dr <= 32, q/out [D, Hq, T, B], r [Dr, Hq, T, B], sink [Hq, T, B], "
+         "bias [extent, Dr], positions [T, B]");
     AttnParams p{};
     p.q         = static_cast<const __nv_bfloat16*>(q.data),
     p.r         = static_cast<const __nv_bfloat16*>(r.data);
