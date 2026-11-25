@@ -234,7 +234,11 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0):
         # the up's, each its own rounds with its own code outside the loop), then the epilogue kernel over the plane
         # (generic_mmq_epilogue.cu: ceil(rows / 1024) x T CTAs of 256 threads, a launch).
         epi = launch_ns(c, P, math.ceil(n / 1024.0) * T)
-        return pre + sets * (launch_ns(c, P, ctas) + math.ceil(ctas / sms) * (unit / sets + out)) + epi
+        # Stream-k (core/mmq_columns.h launch_of: min(SMs, units) CTAs where a tile a CTA would not fill its last wave)
+        # adds the fixup kernel where the CTAs do not divide the output tiles (nt at T <= 8: one column tile), its grid
+        # the stream-k grid x I / 32 (ggml_mmq_internal.cuh), after each product.
+        fix = launch_ns(c, P, ctas * 4) if ctas == sms and tiles >= sms and nt % ctas != 0 else 0.0
+        return pre + sets * (launch_ns(c, P, ctas) + fix + math.ceil(ctas / sms) * (unit / sets + out)) + epi
     ctas = math.ceil(n / float(Wp * R))                    # r8
     slots = sms * occupancy(c, Wp, _num(r['registers']))
     trips = k / max(_num(r['k_iter']), 1.0)
