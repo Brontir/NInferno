@@ -125,8 +125,13 @@ family (`models/inkling2/program_family.cpp`, loaded by `runtime/engine/inkling2
 `StateFamily::Inkling2` names that layout (`sequence_bytes.cpp`, `inkling2_layout`); the keys and
 values stay BF16 (`validate_state_storage`). Prefill and ordinary decode (captured as a decode
 graph) follow the Gemma 4 family without its MTP and vision paths. No speculative backend. The
-plan without the weights (`product/plan/plan_facts.cpp`, `state_of`) does not size Inkling 2 yet:
-the server's automatic configuration choice leaves its axes to the engine's defaults.
+plan without the weights (`product/plan/plan_facts.cpp`, `state_of`) sizes Inkling 2 from its
+config, or from a GGUF header's `loop.start` / `loop.end` / `loop.count`: a state slot a visit of
+the looped schedule, counted by kind (`inkling2_visits`: 8 full and 40 sliding attention visits
+and 48 convolution slots for Inkling-2-Mini's 24 layers looped 6-18 three times), each sliding
+visit's window and every slot's FP32 convolution history (`sequence_bytes.cpp inkling2_layout`). Its `offline_reason` is empty, so the
+server's automatic configuration choice sizes the context and streams of an Inkling 2 model as it
+does any other family's (`tests/test_plan_facts.cpp`, "inkling2 plans" and "inkling2 gguf plans").
 
 First serve measurement (RTX 4090, Inkling-2-Mini UD-Q4_K_M, 256 tokens a stream, greedy):
 97.3 tokens/s at one stream and 260 at four, against llama.cpp's llama-server on the same GGUF
