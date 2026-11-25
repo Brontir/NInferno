@@ -22,14 +22,12 @@ The price (ns):
   ggml_vec  two launches (quantizer, product) + L0 + rounds of the persistent grid; a round = hypot(SM side: the loop's
             chain, the issue bound and the load unit by the narrow-load rule; the round's bytes / bus).
   sm_70     every rmma.* route is the Volta substitute the launch takes (volta_hmma_takes before volta_gemv_takes),
-            priced from its own counted kernel (sections vhmma / vgemv / vgemvr).
-FITTED: G alone at T 1-8 (and FAMILY_W, the T 17-32 ggml_mmq factor, outside this module's scope). Not priced: W4A8 /
+            priced from its own counted kernel (sections vhmma / vgemv / vgemvr of sm_70.txt; without them, no price).
+FITTED: G alone. Not priced: W4A8 /
 tiled / staged tiles (None).
 """
 import math
-import os
 import re
-import sys
 
 # FITTED (2 at T 1-8; round 9's values, not refitted in round 16):
 P = dict(G=0.1240,       # FITTED, the one number left at T 1-8 (round 9's): exponent of rmma's DRAM slowdown with the rows open on one SM
@@ -40,13 +38,8 @@ P = dict(G=0.1240,       # FITTED, the one number left at T 1-8 (round 9's): exp
          VEC_SM='iol',   # ggml_vec's SM side: the code outside the K loop ('o'), the issue bound ('i'), the load unit ('l')
          MMA_SM='io',    # ggml_vec.mma: the same SM side from its vecmma row
          XK=1,           # a route's second kernel (vec's quantizer, r8's / mmq's pre-pass) costs one more stream launch
-         VSUB=2,         # sm_70: every rmma.* route is the Volta substitute the launch takes, priced from its counted kernel
-         VSER=1)         # the substitute's iteration = max(issue, chain, latency + bytes / bus)
-FAMILY_W = {             # the T 17-32 ggml_mmq factor only (out of this round's scope, untouched); r8 and ggml_vec: deleted
-    'ggml_mmq': ((17, 32), dict(one=2.6797, margin=-24.6209, pdl=1.4861)),
-}
+         VSUB=1)         # sm_70: every rmma.* route is the Volta substitute the launch takes, priced from its counted kernel
 L1_MIN_KIB = 28.0                  # SET: the L1 an SM keeps beside its shared memory
-VERIFIED_T17 = (86, 89, 120)       # guard: compute capabilities whose T 17-32 pick was scored on an open grid
 PARTITIONS = 4.0                   # tensor partitions of an SM
 # Counted (no fit): the SASS instructions of one emulated MMA call (sm_70, nvcc 12.8.93, generic_gemm_bf16.cu.o:
 # mma_bf16_fma_call, 551 instructions: FFMA 120, MOV 146, IMAD 88, LOP3 84, SHF 32, SHFL 32, CALL 32 to the 16-instruction
@@ -88,8 +81,6 @@ MMQ_TYPE = {f: v[3] for f, v in FORMATS.items() if v[3]}
 EPI = {'store': '0', 'add': '1', 'swiglu': '2'}   # the kernel facts' epilogue column
 _RMMA = re.compile(r'rmma\.m(\d+)\.n(\d+)\.w(\d+)x(\d+)(?:\.c(\d+))?$')
 _R8 = re.compile(r'r8\.w(\d+)r(\d+)$')
-_CACHE = {}
-DBG = None                         # explore only: a list, price_rmma appends each round's terms
 
 
 def _num(v, d=0.0):
@@ -101,21 +92,24 @@ def _num(v, d=0.0):
 
 
 def kf_row(kf, fam, **want):
-    """The first kernel-facts row of `fam` whose key fields equal `want`, or None."""
-    key = (id(kf), fam, tuple(sorted(want.items())))
-    if key not in _CACHE:
-        _CACHE[key] = next((r for r in kf[fam] if all(r.get(k) == str(v) for k, v in want.items())
-                            and (fam == 'vec' or _num(r.get('loops', '1'), 1.0) > 0)), None)
-    return _CACHE[key]
+    """The first kernel-facts row of `fam` whose key fields equal `want`, or None (cached in the arch's facts)."""
+    cache = kf.setdefault('_rows', {})
+    key = (fam, tuple(sorted(want.items())))
+    if key not in cache:
+        cache[key] = next((r for r in kf[fam] if all(r.get(k) == str(v) for k, v in want.items())
+                           and (fam == 'vec' or _num(r.get('loops', '1'), 1.0) > 0)), None)
+    return cache[key]
 
 
-def card_of(gpu, F, P=None):
-    """The numbers of a gpu_facts.json row the price uses, or None for a card on an architecture without facts.
-    Round 18: P DIE = the DRAM window of the card's own die (L0, F: facts.py load_warp_inflight), P CLK = the SM clock that
-    probe ran at instead of gpu_facts' boost clock (bpc, the product's latency-instance rule, keeps the boost clock)."""
-    P = P or globals()['P']
-    key = (id(F), gpu.get('id'), gpu.get('name'))
-    if key not in _CACHE:
+CARD_FIELDS = ('cc', 'sms', 'boost_mhz', 'boost_min_mhz', 'form', 'bus_bits', 'gbps')
+
+
+def card_of(gpu, F):
+    """The numbers of a gpu_facts.json row the price uses, or None for a card on an architecture without facts (cached
+    in F by the row's CARD_FIELDS, the fields read)."""
+    cache = F.setdefault('_cards', {})
+    key = tuple(gpu.get(f) for f in CARD_FIELDS)
+    if key not in cache:
         cc = int(gpu['cc'])
         arch = next((a for a in (str(cc), '%da' % cc) if a in F['isa']), None)       # cc 120 -> the sm_120a snapshot
         lim = next((r for r in F['archs'] if r['cc'] != 0 and r['cc'] <= cc <= r.get('cc_to', r['cc'])),
@@ -132,9 +126,9 @@ def card_of(gpu, F, P=None):
                      thr_sm=int(lim['max_threads_per_sm']), blk_sm=int(lim['max_blocks_per_sm']),
                      smem_sm=float(lim['smem_per_sm_kib']) * 1024.0, smem_res=float(lim.get('smem_reserved_per_block', 0)))
             c['arch'] = arch
-            c['die'] = dict(nr=c['nr']) if c.get('nr') else {}   # the arch's narrow-load facts (facts_lean.NARROW)
-        _CACHE[key] = c
-    return _CACHE[key]
+            c['die'] = dict(nr=c['nr'])                      # the arch's narrow-load facts (analyzer_facts.NARROW)
+        cache[key] = c
+    return cache[key]
 
 
 def occupancy(c, warps, regs):
@@ -170,45 +164,6 @@ def window(c, P, bw):
     """ns of one DRAM round trip of a warp that keeps bw bytes in flight (PR 1180, #771): L0 for the first 512 B, then
     the window fills at F bytes a clock (facts.py `fill`, warp_fill_bytes_per_clock). No fitted number."""
     return c['l0'] + max(bw - 512.0, 0.0) / c['fill'] / c['clk']
-
-
-
-
-_ACT_F = ((1.0, 1.0), (1.17, 0.36), (1.33, 0.12), (2.0, 0.08), (6.0, 0.05))   # stride14 H, 4070 Ti (measured)
-# stride5 on the 4070 Ti (the kernel's own shape: wk warps on 16 rows, ring of 2, lw 8): a sibling's merge share
-# ((rate / (A x 32) - 1) / (wk - 1), median over wk 2 / 4 / 8) at X = warps x 16 over X* = 480: 16 / 32 / 48 warps an SM
-_ACT_F5 = ((1.0, 1.0), (1.07, 0.31), (1.6, 0.17), (3.0, 0.10))
-
-
-
-
-
-
-
-
-# The bytes a lane loads a request in rmma's fetch: the decoder's kRun x its code bits (generic_gemm.cuh): Q8 8 x 8 bits and
-# NVFP4 16 x 4 bits are 8 B, every other decoder 16 B (Fp8 16 x 8, Bf16 8 x 16, the K-quants 32 x 4-6).
-LANE_BYTES = dict(q8=8, nvfp4=8)
-
-
-
-
-
-
-
-
-
-
-_WALK = {}
-_WKEY = ('decoder', 'warps_m', 'warps_k', 'm_tiles', 'n_tiles', 'cluster', 'epilogue', 'latency', 'sums')
-
-
-
-
-
-
-
-
 
 
 def price_rmma(c, P, r, n, k, T, pitch, M, N, A, B, C, issue=False, sets=1.0):
@@ -317,10 +272,9 @@ def vec_occ(c, r):
     return max(int(occ), 1)
 
 
-def vec_launch(c, fmt, ep, n, k, T, inst=None, regs=None, slots_over=None):
+def vec_launch(c, fmt, ep, n, k, T, inst=None):
     """The launch as vec_launch_ks makes it: (kernel-facts row, CTAs, row groups). The grid is min(groups, resident
-    CTAs); at T 4 the bounded twin where it saves a round. `regs`: the registers of another compile of the same instance
-    (round 18 item 5: the butterfly build's), which set its CTAs an SM and so its grid."""
+    CTAs); at T 4 the bounded twin where it saves a round and spills nothing (`local`: the local-memory frame bytes)."""
     r = vec_row(c, fmt, ep, k, T, inst=inst)
     groups = math.ceil(n / (VEC_WARPS * (1.0 if ep == 'swiglu' else 2.0)))
     slots = vec_occ(c, r) * int(c['sms'])
@@ -378,10 +332,6 @@ EPI_SITE = {'store': 51.0, 'add': 54.0, 'swiglu': 51.0}   # one store site on th
 EPI_GATE = 41.0     # the gate's issue slots of a gated site (0x2880-0x2b00)
 
 
-
-
-
-
 def load_clocks(nr, lanes):
     """Clocks one warp load takes of the SM's load unit (AUDIT 19): max(issue cap, wavefronts x clocks a wavefront)."""
     by = {}
@@ -392,12 +342,16 @@ def load_clocks(nr, lanes):
     return max(nr['cap'], max(len(v) for v in by.values()) * nr['wf'])
 
 
+_VLU = {}
+
+
 def vec_load_unit(c, fmt, T):
     """(clocks of a row's weight loads, clocks of a token's activation loads) for one 1024-value slice of one warp, by the
-    narrow-load rule with the die's probe facts; the block's alignment in its line averaged over the 4 B offsets. None without facts."""
-    nr = (c.get('die') or {}).get('nr')
-    key = ('vlu', nr['cap'], nr['wf'], nr['bank'], fmt)
-    if key not in _CACHE:
+    narrow-load rule with the die's probe facts; the block's alignment in its line averaged over the 4 B offsets (cached by
+    the facts' values: a pure function of them)."""
+    nr = c['die']['nr']
+    key = (nr['cap'], nr['wf'], nr['bank'], fmt)
+    if key not in _VLU:
         per, loads = VEC_LOADS[fmt]
         uw = 0.0
         for width, plane, blk, offs in loads:
@@ -406,9 +360,8 @@ def vec_load_unit(c, fmt, T):
                 tot += load_clocks(nr, [(al + (l // per) * blk + offs[l % per], width) for l in range(32)])
             uw += tot / 32.0
         ua = sum(load_clocks(nr, [(a, w) for a in offs]) for w, offs in VEC_ACT)
-        _CACHE[key] = (uw, ua)
-    return _CACHE[key]
-
+        _VLU[key] = (uw, ua)
+    return _VLU[key]
 
 
 def sm_side(c, P, mode, tot, stall, o_tot, o_stall, trips, cps, dram_trips, bw, ld_clk, icf=1.0, warps=VEC_WARPS):
@@ -427,18 +380,15 @@ def sm_side(c, P, mode, tot, stall, o_tot, o_stall, trips, cps, dram_trips, bw, 
     return sm
 
 
-def vec_counts(c, P, q, loop_twin, fmt, ep, k, T, gated, bfly=None):
+def vec_counts(c, P, q, fmt, k, T):
     """The counted terms of a vec instance row q for the price: (instructions a trip, stall clocks a trip, epilogue instructions,
-    epilogue stall clocks, trips, load-unit clocks of the whole K, body bytes). P EPI: the executed epilogue (epilogue_exec) in place of
-    the row's `outside` (every alternative); the unrolled row holds its epilogue inside the loop, so the loop twin's surplus is taken
-    off. P LD 'n': the loads by the narrow-load rule (vec_load_unit), else round 17's count x l1_ldg32_cycles_per_sm."""
+    epilogue stall clocks, trips, load-unit clocks of the whole K, body bytes). P LD 'n': the loads by the narrow-load rule
+    (vec_load_unit), else round 17's count x l1_ldg32_cycles_per_sm."""
     tot, stall = _num(q['total']), _num(q['stall_sum'])
     o_tot, o_stall = _num(q['outside_total']), _num(q['outside_stall'])
     unrolled = q['KS'] != '0'
     slices = k / 1024.0
     trips = 1.0 if unrolled else slices
-    if bfly is None:
-        bfly = int(T) == 4 and not gated
     lu = vec_load_unit(c, fmt, T) if P.get('LD') == 'n' else None
     nld = _num(q['ldg']) + _num(q.get('lds'))
     if lu is None:
@@ -450,16 +400,15 @@ def vec_counts(c, P, q, loop_twin, fmt, ep, k, T, gated, bfly=None):
     return tot, stall, o_tot, o_stall, trips, ld, body
 
 
-def price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst=None, regs=None, bfly=None, slots_over=None):
+def price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst=None):
     """ggml_vec from its launch: two nodes (the q8_1 quantizer and the product) and the quantizer's DRAM latency, then
     the rounds of the persistent grid, the last with its own CTAs. A warp takes a row pair over the whole K; a round =
     its weight bytes / bus combined with the SM side (sm_side) as rmma's round combines SM and DRAM time. `inst`: None
     = the instance the product launches (unrolled at 5120 / 6144 / 17408), 'loop' = the runtime-K loop at any K.
     No fitted constant."""
-    L = vec_launch(c, fmt, ep, n, k, T, inst, regs, slots_over)
+    L = vec_launch(c, fmt, ep, n, k, T, inst)
     r, ctas, groups = L
     q = r
-    gated = ep == 'swiglu'
     if _num(r['total']) <= 0:                      # unknown flow (a compiled switch, sm_100 / sm_120a gated T 3-8): the
         q = vec_row(c, fmt, 'store', k, T, inst=inst)   # plain instance's loop counts stand in (a row pair a trip either way)
     l0, bus = c['l0'], c['bus']
@@ -467,8 +416,7 @@ def price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst=None, regs=None, bfly=Non
     rounds = math.ceil(groups / ctas)
     last = groups - (rounds - 1) * ctas
     form, mode = P.get('VEC_FORM', 'h'), P.get('VEC_SM', 'iol')
-    twin = vec_row(c, fmt, 'store' if q is not r else ep, k, T, inst='loop') if q['KS'] != '0' else None
-    tot, stall, o_tot, o_stall, trips, ld, body = vec_counts(c, P, q, twin, fmt, ep, k, T, gated and q is r, bfly)
+    tot, stall, o_tot, o_stall, trips, ld, body = vec_counts(c, P, q, fmt, k, T)
     bw = bg / VEC_WARPS / (k / 1024.0)             # DRAM bytes a warp keeps in flight: a 1024-value slice of its rows
 
     def rnd(nc):
@@ -533,41 +481,12 @@ def mmq_j(T):
     return 16 if T <= 16 else 32 if T <= 32 else 64 if T <= 64 else 128
 
 
-def handover(gpu, F, T):
-    c = card_of(gpu, F)
-    return c is None or (float(T) > 16 and c['cc'] not in VERIFIED_T17)
-
-
-MMQ_HEADER = os.path.join('src', 'ops', 'generic', 'ggml_mmq', 'ggml_mmq.h')
-
-
-def _mmq_multiples():
-    """ggml_mmq::kRowMultiple and kKMultiple, read from the header (mmq_call / mmq_admits take a shape in whole
-    tiles of both). A copy of this file outside the tree (the analyzer's round folders) falls back to the values
-    the header held when this was written, with a note."""
-    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    try:
-        with open(os.path.join(root, MMQ_HEADER), encoding='utf-8') as f:
-            text = f.read()
-    except OSError:
-        sys.stderr.write('pick.py: no %s beside this file: MMQ multiples 128 / 256\n' % MMQ_HEADER)
-        return 128, 256
-    out = []
-    for name in ('kRowMultiple', 'kKMultiple'):
-        m = re.search(r'inline constexpr int %s\s*=\s*(\d+)\s*;' % name, text)
-        if not m:
-            raise SystemExit(MMQ_HEADER + ': no ' + name)
-        out.append(int(m.group(1)))
-    return tuple(out)
-
-
-MMQ_ROW_MULTIPLE, MMQ_K_MULTIPLE = _mmq_multiples()
-
-
-def mmq_takes(shape):
-    """Whether ggml's MMQ takes the shape (generic_select.cpp mmq_call, mmq_admits): rows and K in whole tiles; on
-    other rows the launch demotes it, on other K the selection refuses it (#1077)."""
-    return int(shape['n']) % MMQ_ROW_MULTIPLE == 0 and int(shape['k']) % MMQ_K_MULTIPLE == 0
+def mmq_takes(shape, F):
+    """Whether ggml's MMQ takes the shape (generic_select.cpp mmq_call, mmq_admits): rows and K in whole tiles of
+    F['mmq'] (ggml_mmq.h kRowMultiple, kKMultiple); on other rows the launch demotes it, on other K the selection
+    refuses it (#1077)."""
+    rows, ks = F['mmq']
+    return int(shape['n']) % rows == 0 and int(shape['k']) % ks == 0
 
 
 # Round 19 law 2 (generic_routes.cpp volta_hmma_takes / volta_gemv_takes, generic_gemm.cpp RegisterMma): on a die
@@ -587,7 +506,6 @@ def volta_takes(fmt, k, T):
 
 
 VOLTA_FMT = dict(q4k=('HK45<4>', 'K45<4>'), q5k=('HK45<5>', 'K45<5>'), q6k=('HK6', 'K6'), q8=('HQ8', 'Q8G32'), bf16=(None, 'Bf16Rows'))
-_VKF = {}
 
 
 def volta_kf(c):
@@ -603,14 +521,13 @@ def volta_kf(c):
 
 
 def volta_sub_price(c, P, n, k, T, bits, sets, fmt=None, ep='store', kind=None):
-    """Law 2. VSUB 1: v0, the weights at the bus rate after a launch and one DRAM latency. VSUB 2: the counted kernel
-    (kfx_sm_70: its loop's instructions and static stalls an iteration of 256 values, its registers / shared memory), an
-    iteration per SM = max(one warp's chain, the SM's issue, the SM's share of the DRAM rate), over waves x iterations."""
-    ctas_rows = VOLTA_CTA_ROWS
+    """The Volta substitute from its counted kernel (sm_70 kernel facts vhmma / vgemv / vgemvr: its loop's instructions
+    and static stalls an iteration of 256 values, its registers / shared memory): an iteration per SM = max(one warp's
+    chain, the SM's issue, the SM's share of the DRAM rate), over waves x iterations. None without the kernel's row."""
     E = {'store': '0', 'add': '1', 'swiglu': '2'}.get(ep, '0')
     kf = volta_kf(c)
     if kind == 'hmma':
-        warps, rows_cta = 4, 32
+        warps, rows_cta = 4, VOLTA_CTA_ROWS
         ctas = math.ceil(n / rows_cta)
         ahead = '1' if ctas >= 2 * c['sms'] else '2'
         r = kf.get(('vhmma', VOLTA_FMT[fmt][0], E, '1' if T <= 8 else '2', ahead))
@@ -643,35 +560,32 @@ def volta_sub_price(c, P, n, k, T, bits, sets, fmt=None, ep='store', kind=None):
         chain = (tot + stall) / clk                                # one warp's iteration: its instructions and static stalls
         bus = c['bus']
         dram = nc * warps * bytes_iter / bus                       # the round's iteration bytes at the die's rate
-        if P.get('VSUB') == 3:                                     # (b2) the chain and the bus in series, the latency hidden
-            t += iters * (max(issue, chain) + dram) + c['l0']      # by the superblocks in flight once per round
-        else:
-            lat = c['l0'] / depth
-            if P.get('VSER'):                                      # 25.11: a warp's load waits the latency, then the round's
-                t += iters * max(issue, chain, lat + dram)         # bytes stream behind it (in series, not the larger of the two)
-            else:
-                t += iters * max(issue, chain, lat, dram)          # a load's latency over the superblocks in flight
+        # A warp's load waits one DRAM latency over the superblocks in flight, then the round's bytes stream behind it.
+        t += iters * max(issue, chain, c['l0'] / depth + dram)
         left -= nc
     return t
 
 
-def price_ns(gpu, F, shape, route, P=P, W=FAMILY_W):
+def price_ns(gpu, F, shape, route, P=P):
+    """ns of one call of `shape` by `route` on the card of `gpu` (a gpu_facts.json row), or None: no facts for the card,
+    the format or the route's kernel, or a route the launch would not take as named."""
     fmt, anchor = PAIR.get(route, (None, None))
     if fmt == str(shape['format']).lower():                # the pair's ratio by the issue bound, on the anchor's price
-        t = [_price(gpu, F, shape, r, P, W, i) for r, i in ((anchor, False), (route, True), (anchor, True))]
+        t = [_price(gpu, F, shape, r, P, i) for r, i in ((anchor, False), (route, True), (anchor, True))]
         if None not in t:
             return t[0] * t[1] / t[2]
-    return _price(gpu, F, shape, route, P, W)
+    return _price(gpu, F, shape, route, P)
 
 
-def _price(gpu, F, shape, route, P, W, issue=False):
-    c, fmt, ep = card_of(gpu, F, P), str(shape['format']).lower(), str(shape.get('epilogue', 'store')).lower()
+def _price(gpu, F, shape, route, P, issue=False):
+    c, fmt, ep = card_of(gpu, F), str(shape['format']).lower(), str(shape.get('epilogue', 'store')).lower()
+    if c is None or fmt not in BITS:
+        return None
     n, k, T = float(shape['n']), float(shape['k']), max(float(shape.get('T', 1)), 1.0)
     kf, bits, sets = c['kf'], BITS[fmt], 2.0 if ep == 'swiglu' else 1.0   # SwiGLU: two weight sets
     m = _RMMA.match(route)
     if m and P.get('VSUB') and c['cc'] == 70 and volta_takes(fmt, k, T):
         return volta_sub_price(c, P, n, k, T, bits, sets, fmt, ep, volta_takes(fmt, k, T))
-    m = _RMMA.match(route)
     if m:
         M, N, A, B, C = (int(x or 1) for x in m.groups())
         key = dict(decoder=RMMA_DEC.get(fmt), warps_m=A, warps_k=B, m_tiles=M, n_tiles=N, cluster=C, epilogue=EPI.get(ep, '0'), sums=0)
@@ -685,7 +599,10 @@ def _price(gpu, F, shape, route, P, W, issue=False):
         r = None if T > 8 else kf_row(kf, 'r8', codec=R8_CODEC.get(fmt), warps=Wp, rows=R, nt=1 if T <= 1 else 2 if T <= 2 else 4 if T <= 4 else 8,
                                       epilogue=EPI.get(ep, '0'), pre=0 if T <= 1 else 1)
     elif route == 'ggml_mmq':
-        r = None if c.get('imma_n') is None else kf_row(kf, 'mmq', type=MMQ_TYPE.get(fmt), J=mmq_j(T), fallback=0)
+        # Rows and K in whole tiles only: on other rows the launch demotes it, on other K the selection refuses it.
+        if c.get('imma_n') is None or not mmq_takes(shape, F):
+            return None
+        r = kf_row(kf, 'mmq', type=MMQ_TYPE.get(fmt), J=mmq_j(T), fallback=0)
     elif route == 'ggml_vec.mma':
         return price_vec_mma(c, P, fmt, ep, n, k, T, bits, sets) if T <= 8 else None
     elif route in ('ggml_vec', 'ggml_vec.ks', 'ggml_vec.loop'):
@@ -698,19 +615,19 @@ def _price(gpu, F, shape, route, P, W, issue=False):
         return None
     if r is None:
         return None
-    t = price_other(c, P, fam, r if fam != 'ggml_vec' else None, n, k, T, bits, sets, Wp, R)
-    (lo, hi), w = W.get(fam, ((0, 0), None))
-    return t
+    return price_other(c, P, fam, r, n, k, T, bits, sets, Wp, R)
 
 
 def candidates(gpu, F, shape):
-    """Every route name this file can price for the shape: the schedules that have a kernel-facts row."""
+    """The routes the product can launch for the shape that this file prices: ggml_vec (T <= 8), ggml_mmq (T >= 5, whole
+    tiles), every rmma and r8 (T <= 8) schedule with a kernel-facts row. The lab's ggml_vec variants (.mma, .ks, .loop)
+    are priced, never listed."""
     c = card_of(gpu, F)
     if c is None:
         return []
     T, fmt = max(float(shape.get('T', 1)), 1.0), str(shape['format']).lower()
-    # ggml's MMQ on rows it takes only (mmq_takes; price_ns refuses the others too) (#1077).
-    names = set(['ggml_mmq'] if T >= 5 and mmq_takes(shape) else []) | set(['ggml_vec'] if T <= 8 else [])
+    # ggml's MMQ on rows and K it takes only (mmq_takes; price_ns refuses the others too) (#1077).
+    names = set(['ggml_mmq'] if T >= 5 and mmq_takes(shape, F) else []) | set(['ggml_vec'] if T <= 8 else [])
     for r in c['kf']['rmma']:
         # Thread-block clusters are sm_90+ (generic_select.cpp rmma_index: below it a cluster
         # schedule runs as its C == 1 twin), so a cluster row is no candidate there.
@@ -730,7 +647,6 @@ def pick(gpu_row, F, shape, among=None):
     names = sorted(among) if among is not None else candidates(gpu_row, F, shape)
     priced = [(t, r) for t, r in ((price_ns(gpu_row, F, shape, r), r) for r in names) if t is not None]
     return min(priced)[1] if priced else None
-
 
 
 def rank(gpu_row, F, shape, among=None):

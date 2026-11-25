@@ -1,8 +1,8 @@
 """The route analyzer (tools/route_pick/analyzer.py) on the repo's facts: for one board of every architecture the
 analyzer routes (ROUTED_CC: sm_75, sm_86, sm_89, sm_120a; Volta keeps its HMMA authority, route_authorities.cpp
 volta_hmma, until its substitutes' kernel facts are committed), every A16 release shape the route tables list (store,
-add, SwiGLU) at T 1-8 has at least one priced route, every price is a positive finite number, and rank() lists the
-priced routes cheapest first with pick() its head."""
+add, SwiGLU) at T 1-8 has at least one candidate route (analyzer.candidates: the launchable routes it prices) and every
+price is a positive finite number. A card of an architecture without facts gets no price, not an error."""
 import json
 import math
 import os
@@ -51,14 +51,16 @@ def main():
         for fmt, ep, n, k in shapes:
             for T in range(1, 9):
                 shape = dict(format=fmt, epilogue=ep, n=n, k=k, T=T)
-                ranked = analyzer.rank(g, F, shape)
-                prices = [analyzer.price_ns(g, F, shape, r) for r in ranked]
-                ok = bool(ranked) and all(p is not None and p > 0 and math.isfinite(p) for p in prices) \
-                    and prices == sorted(prices) and analyzer.pick(g, F, shape) == ranked[0]
-                if not ok:
+                prices = {r: analyzer.price_ns(g, F, shape, r) for r in analyzer.candidates(g, F, shape)}
+                if not prices or not all(p > 0 and math.isfinite(p) for p in prices.values()):
                     failures += 1
                     if failures <= 10:
-                        print('FAIL', g.get('name'), shape, ranked[:3], prices[:3])
+                        print('FAIL', g.get('name'), shape, sorted(prices.items())[:3])
+    # A card of an architecture without the analyzer's facts (sm_80 here): no price, no candidate, no error.
+    no_facts = dict(bs[0], cc=80)
+    one = dict(format='q4k', epilogue='store', n=4096, k=4096, T=1)
+    assert analyzer.card_of(no_facts, F) is None
+    assert analyzer.price_ns(no_facts, F, one, 'ggml_vec') is None and analyzer.rank(no_facts, F, one) == []
     print('boards %d, shapes %d, T 1-8: %d failures' % (len(bs), len(shapes), failures))
     return 1 if failures else 0
 

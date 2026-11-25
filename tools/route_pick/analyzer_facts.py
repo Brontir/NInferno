@@ -1,7 +1,10 @@
-"""facts_lean.py: the facts the lean core prices from, read from one source tree (the repo) and nothing else.
+"""analyzer_facts.py: the facts analyzer.py prices from, read from one source tree (`root`, the repo) and nothing else.
 
     F = load_facts(root)   {'gpus': {name: row}, 'rows': [gpu_facts rows], 'archs': [SM limit rows],
-                            'isa': {arch: numbers}, 'kf': {arch: {family: [rows]}}}
+                            'isa': {arch: numbers}, 'kf': {arch: {family: [rows]}}, 'mmq': (rows, K)}
+
+An arch enters F['isa'] only with every fact the price reads (REQUIRED below): a missing one leaves the arch out, and
+analyzer.card_of then gives None for its cards (no price) rather than a price that fails or guesses.
 
 Files: src/core/data/gpu_facts.json, isa_facts.json (the isa_probe and launch facts), sm_rate_facts.json (the DRAM
 latency L0 and the warp's fill rate, warp_inflight), src/ops/generic/data/kernel_facts/sm_<arch>.txt (rmma, r8, mmq,
@@ -10,6 +13,7 @@ NARROW below holds the narrow-load facts per arch (probe narrow.cu, #1183) until
 """
 import json
 import os
+import re
 
 DATA = 'src/core/data'
 KERNEL_FACTS = 'src/ops/generic/data/kernel_facts'
@@ -20,6 +24,9 @@ EXTRA = dict(l1lat='l1_latency_w1', l2lat_ns='l2_latency_ns_w1', int_cyc='int32_
 # Probe narrow.cu (analyzer_cov/narrow/nr_l*.out, 24.11): clocks of a warp load at (4 B a lane, 4 B stride) = the issue
 # cap; a wavefront's clocks from (16, 16) over its four wavefronts; the bank width whose wavefront count matches (1, 26).
 # Equal on every card of an arch (sm_86: 3060 / 3090; sm_89: 4060 Ti / 4070 Ti / 4090; sm_120a: 5070 Ti / 5090).
+MMQ_HEADER = 'src/ops/generic/ggml_mmq/ggml_mmq.h'
+# The facts every price reads: an arch without one of them is left out (no price for its cards).
+REQUIRED = ('l0', 'node', 'mma_lat', 'hmma', 'lat', 'fill', 'nr') + tuple(EXTRA)
 NARROW = {'70': (1.621, 1.027, 8), '75': (2.012, 2.000, 8), '86': (2.000, 1.019, 4), '89': (2.000, 1.019, 4),
           '120a': (2.000, 1.008, 4)}
 
@@ -32,6 +39,9 @@ def load_kernel_facts(path):
         for ln in f:
             if ln.startswith('columns ') or ln.startswith('family_columns '):
                 cols = ln.split()[1:]
+                # `local` twice: the local-memory frame bytes after `stack`, then the local instructions (`local_ops`).
+                if cols.count('local') == 2:
+                    cols[len(cols) - 1 - cols[::-1].index('local')] = 'local_ops'
             elif cols is not None and not ln.startswith('#'):
                 q = ln.split()
                 if not q or q[0] not in out or len(q) != len(cols) or cols[0] != 'family':
@@ -75,6 +85,22 @@ def load_facts(root):
                                                          (1024, 'floor_ns_1024'), (4096, 'floor_ns_4096')) if n and k in la)
         if arch in NARROW:
             d['nr'] = dict(zip(('cap', 'wf', 'bank'), NARROW[arch]))
+        if any(d.get(f) is None for f in REQUIRED) or len(d['floor']) < 2:
+            continue
         F['isa'][arch] = d
         F['kf'][arch] = load_kernel_facts(path)
+    F['mmq'] = mmq_multiples(root)
     return F
+
+
+def mmq_multiples(root):
+    """ggml_mmq::kRowMultiple and kKMultiple from the tree's header (mmq_call / mmq_admits take a shape in whole tiles)."""
+    with open(os.path.join(root, MMQ_HEADER), encoding='utf-8') as f:
+        text = f.read()
+    out = []
+    for name in ('kRowMultiple', 'kKMultiple'):
+        m = re.search(r'inline constexpr int %s\s*=\s*(\d+)\s*;' % name, text)
+        if not m:
+            raise SystemExit(MMQ_HEADER + ': no ' + name)
+        out.append(int(m.group(1)))
+    return tuple(out)
