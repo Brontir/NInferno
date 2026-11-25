@@ -69,6 +69,9 @@ constexpr Gpt2Pre kGpt2Pres[] = {
     // meta-models/Muse-Glimmer-* (the Llama 4 vocabulary: the o200k regex, a whole pre-token in
     // the vocabulary taken as one token, <|begin_of_text|> prepended)
     {"llama4", kGpt4oSplit, false, true, true, false},
+    // thinkingmachines/Inkling-2-* (llama.cpp's inkling2: the o200k regex, merges ignored for a
+    // whole pre-token in the vocabulary, no BOS)
+    {"inkling2", kGpt4oSplit, false, true, false, false},
     // HuggingFaceTB/SmolLM2-* (StarCoder vocabulary: Digits, then the GPT-2 regex)
     {"smollm", nullptr, false, false, false, true},
     // ibm-granite/granite-3.* (the GPT-2 regex alone; llama.cpp splits digits first, which
