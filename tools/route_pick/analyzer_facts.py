@@ -79,7 +79,8 @@ def load_facts(root):
         for k, name in EXTRA.items():
             d[k] = val(fa[name])
         # The L2 round trip of four warps (the stream-k fixup's walk), the one-warp trip where the probe has no w4 row.
-        d['l2trip'] = val(fa.get('l2_latency_w4') or fa.get('l2_latency_w1'))
+        w4 = val(fa.get('l2_latency_w4')) if fa.get('l2_latency_w4') is not None else None
+        d['l2trip'] = w4 if w4 is not None else val(fa.get('l2_latency_w1'))
         d['fill'] = val(rf['warp_fill_bytes_per_clock']) if 'warp_fill_bytes_per_clock' in rf else None
         lsms = a.get('launch', {}).get('sms')
         d['stream'] = val(la['stream_ns']) if 'stream_ns' in la else None
