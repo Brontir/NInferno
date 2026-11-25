@@ -12,6 +12,7 @@
 #include "ops/generic/kernel_roofline.h"
 #include "ops/generic/r8_decode_table.h"
 #include "ops/generic/r8_law.h"
+#include "ops/generic/route_analyzer.h"
 #include "ops/generic/route_authorities.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/selector_facts.h"
@@ -480,11 +481,20 @@ void check_selector_is_the_prediction() {
         };
         const auto one = at(1);
         const auto two = at(2);
-        expect(one && one->evidence.source == "r8-law" &&
-                   one->evidence.kind == g::Evidence::Kind::Ranker &&
-                   one->evidence.ranker == g::Evidence::Ranker::Cost,
-               std::string("T=1 evidence is not the law's: ") + b.name + " " +
-                   (one ? g::evidence_text(one->evidence) : std::string("none")));
+        // Where the engine's analyzer answers the board (route_analyzer.h device_routes: any
+        // shape, not only the tables'), its answer stands above the law (route_authorities.cpp,
+        // the authority "analyzer"); on a held chip or Volta the law answers.
+        const g::Problem off_table{ninferno::QType::GGML_Q6_K,
+                                   ninferno::ops::LinearPolicy::AllowA8, 4608, 3584,
+                                   g::Epilogue::Store};
+        const bool analyzer = !ninferno::ops::route_analyzer::device_routes(off_table, 1).empty();
+        expect(one && (analyzer ? one->evidence.source == "analyzer"
+                                : one->evidence.source == "r8-law" &&
+                                      one->evidence.kind == g::Evidence::Kind::Ranker &&
+                                      one->evidence.ranker == g::Evidence::Ranker::Cost),
+               std::string("T=1 evidence is not the ") + (analyzer ? "analyzer's: " : "law's: ") +
+                   b.name + " " + (one ? g::evidence_text(one->evidence) : std::string("none")));
+        if (analyzer) std::cout << b.name << ": the analyzer answers the off-table T=1 call\n";
         expect(two && two->evidence.source != "r8-law",
                std::string("T=2 evidence is the law's: ") + b.name + " " +
                    (two ? g::evidence_text(two->evidence) : std::string("none")));
