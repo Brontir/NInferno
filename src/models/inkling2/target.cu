@@ -141,7 +141,7 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
     // The first visit's intermediate tensors, under llama.cpp's names (llama-eval-callback), for a
     // layer-by-layer comparison.
     std::int32_t visit_index = 0;
-    const auto see = [&](const char* name, const Tensor& t) {
+    const auto see           = [&](const char* name, const Tensor& t) {
         if (observe && visit_index == 0) {
             check(cudaStreamSynchronize(s), "observe");
             observe(name, -1, t);
@@ -284,7 +284,7 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
         if (messages) { f = control(f, msg[3], L.control[3]); }
         Tensor fn = rms(f, L.ffn_norm);
         see("node_108", fn);
-        Tensor y  = tmp(H);
+        Tensor y = tmp(H);
         {
             auto moe_scope = work_.scope();
             WorkspaceArena scratch(work_.alloc_bytes(
