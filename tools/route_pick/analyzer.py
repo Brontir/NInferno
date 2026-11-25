@@ -79,7 +79,7 @@ BITS = {f: v[0] for f, v in FORMATS.items()}
 RMMA_DEC = {f: v[1] for f, v in FORMATS.items()}
 R8_CODEC = {f: v[2] for f, v in FORMATS.items() if v[2]}
 # The blocks a lane's group spans (generic_w4a8.cuh: kSpan x kStride of the codec; 1 where it has neither).
-R8_GROUP = {'W4a8Q45K': 2, 'W4a8Q6K': 4, 'W4a8Q3K': 4, 'W4a8Q2K': 4, 'W4a8Iq3XxsPaired': 2, 'W4a8Iq3SPaired': 2}
+R8_GROUP = {'W4a8Q45K': 2, 'W4a8Q6K': 4, 'W4a8Q3K': 4, 'W4a8Q2K': 4}
 MMQ_TYPE = {f: v[3] for f, v in FORMATS.items() if v[3]}
 EPI = {'store': '0', 'add': '1', 'swiglu': '2'}   # the kernel facts' epilogue column
 _RMMA = re.compile(r'rmma\.m(\d+)\.n(\d+)\.w(\d+)x(\d+)(?:\.c(\d+))?$')
@@ -631,6 +631,9 @@ def volta_sub_price(c, P, n, k, T, bits, sets, fmt=None, ep='store', kind=None):
     bytes_iter = rows_warp * 256.0 * bits / 8.0 * sets            # a warp's iteration: 256 values of each of its rows
     iters = math.ceil(k / 256.0)                                   # superblocks, the last bounded (k % 256 at K % 64 / 8)
     sms, clk = c['sms'], c['clk']
+    # A gated GEMV runs the gate's K loop, then the up's (generic_volta_gemv.cu: kSets loops; the row counts the heavier,
+    # `loops` of them): each its share of the bytes. The HMMA kernel holds both sets in one loop.
+    kloops = 1.0 if kind == 'hmma' else max(_num(r.get('loops'), 1.0), 1.0)
     t = launch_ns(c, P, ctas) + c['l0']
     left = float(ctas)
     while left > 0:                                                # rounds of the CTAs the SMs hold at once
@@ -641,7 +644,7 @@ def volta_sub_price(c, P, n, k, T, bits, sets, fmt=None, ep='store', kind=None):
         bus = c['bus']
         dram = nc * warps * bytes_iter / bus                       # the round's iteration bytes at the die's rate
         # A warp's load waits one DRAM latency over the superblocks in flight, then the round's bytes stream behind it.
-        t += iters * max(issue, chain, c['l0'] / depth + dram)
+        t += iters * kloops * max(issue, chain, c['l0'] / depth + dram / kloops)
         left -= nc
     return t
 
