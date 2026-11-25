@@ -86,6 +86,7 @@ struct IsaRow {
     // Dependent load latencies on a chip running nothing else (clk unless _ns).
     IsaByWarps l1_latency;
     IsaByWarps l2_latency;
+    IsaByWarps l2_latency_ns; // the L2 chase in wall nanoseconds
     std::optional<double> shared_latency;
     IsaByWarps dram_latency;            // links anywhere in a 2 GiB buffer
     IsaByWarps dram_tlbwarm_latency;    // each warp in a 512 KB range whose pages are walked
@@ -95,6 +96,11 @@ struct IsaRow {
     // buffer, 4 CTAs of 4 warps an SM, 8 in flight a warp (isa_probe 18 on; unknown on a row an
     // older probe measured).
     std::optional<double> l2_bytes_per_sm_clock;
+    // The SM clocks one warp's 32-bit load takes of the SM's L1 throughput (all its lanes hit).
+    std::optional<double> l1_ldg32_cycles_per_sm;
+    // Dependent issue latencies (clk): an IMAD after an IMAD, a SHFL after a SHFL.
+    std::optional<double> lat_imad;
+    std::optional<double> lat_shfl;
     // The int8 MMA shapes the W4A8 tiles run, by role (isa_probe 19, #978): `wide` the 32-value K
     // group's (IMMA.16832 from sm_80, IMMA.8816 on sm_75), `narrow` the 16-value sub-block
     // codecs' (IMMA.16816; IMMA.8816 on sm_75), per SASS IMMA a partition with every partition

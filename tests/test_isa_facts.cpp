@@ -68,11 +68,15 @@ std::vector<Expected> expected_facts() {
     one("fp32_cycles_per_warp_instruction", "clk", &IsaRow::fp32_cycles_per_warp_instruction);
     warps("l1_latency", "clk", &IsaRow::l1_latency);
     warps("l2_latency", "clk", &IsaRow::l2_latency);
+    warps("l2_latency_ns", "ns", &IsaRow::l2_latency_ns);
     one("shared_latency", "clk", &IsaRow::shared_latency);
     warps("dram_latency", "clk", &IsaRow::dram_latency);
     warps("dram_tlbwarm_latency", "clk", &IsaRow::dram_tlbwarm_latency);
     warps("dram_tlbwarm_latency_ns", "ns", &IsaRow::dram_tlbwarm_latency_ns);
     one("l2_bytes_per_sm_clock", "byte", &IsaRow::l2_bytes_per_sm_clock);
+    one("l1_ldg32_cycles_per_sm", "clk", &IsaRow::l1_ldg32_cycles_per_sm);
+    one("lat_imad", "clk", &IsaRow::lat_imad);
+    one("lat_shfl", "clk", &IsaRow::lat_shfl);
     one("imma_wide_cycles_per_partition", "clk", &IsaRow::imma_wide_cycles_per_partition);
     one("imma_narrow_cycles_per_partition", "clk", &IsaRow::imma_narrow_cycles_per_partition);
     one("imma_wide_dependent_latency", "clk", &IsaRow::imma_wide_dependent_latency);

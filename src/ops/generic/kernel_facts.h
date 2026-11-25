@@ -315,6 +315,10 @@ section_rows(std::string_view arch, std::string_view family);
 // Every kernel's facts of a label's snapshot, in no particular order (empty where none is
 // committed): for checks over all rows.
 [[nodiscard]] std::vector<KernelFacts> rmma_rows(std::string_view arch);
+// The keys of those rows, in the snapshot's spelling without the family column: "<decoder>
+// <warps_m> <warps_k> <m_tiles> <n_tiles> <cluster> <epilogue> <latency> <sums>" (the route
+// analyzer's candidates).
+[[nodiscard]] std::vector<std::string> rmma_row_keys(std::string_view arch);
 
 // The label of the release engine whose SASS a board of this compute capability runs, by the
 // dispatcher's rule over the committed snapshots (apps/dispatch): an architecture-specific

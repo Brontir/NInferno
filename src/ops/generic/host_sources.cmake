@@ -41,6 +41,8 @@ add_library(ninferno_ops_host_objects OBJECT
   "${CMAKE_CURRENT_LIST_DIR}/generic_rmma_describe.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_gates.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_cost.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/route_analyzer.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/route_analyzer_tool.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_workspace.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_volta_cutlass_sizes.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/route_query.cpp"
@@ -81,6 +83,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
                       "${CMAKE_CURRENT_LIST_DIR}/mmq_unit.cpp"
                       "${CMAKE_CURRENT_LIST_DIR}/w4a8_unit.cpp"
                       "${CMAKE_CURRENT_LIST_DIR}/price_tool.cpp"
+                      "${CMAKE_CURRENT_LIST_DIR}/route_analyzer.cpp"
     TARGET_DIRECTORY ninferno_ops_host_objects
     APPEND PROPERTY COMPILE_OPTIONS "-ffp-contract=off")
 endif()

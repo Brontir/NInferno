@@ -5,17 +5,15 @@
   "board": "GeForce RTX 4060 Ti 16GB",
   "pci_id": "0x2805"
  },
- "source": "tools/route_pick/gen.py: analyzer.py (ranked, T 1-8) and pick.py (bands, T 9-32) over the facts below, nothing measured on this card",
+ "source": "tools/route_pick/gen.py: pick.py (bands, T 9-32) over the facts below, nothing measured on this card",
  "inputs": {
   "src/core/data/gpu_facts.json": "beb9d18a93d7ab298370bcfe5998ad7f18afe2cf24b19efeca2f7787d35d596d",
   "src/core/data/isa_facts.json": "ea91e207d90ba4516a40f0ff3016182926b15ee87204ae3e9b833ec4e1fc21d4",
   "src/core/data/sm_rate_facts.json": "21bea588f9c7ef2b61b07fe1cbf111eda940edc882961737df278579271c0831",
   "src/ops/generic/data/kernel_facts/sm_89.txt": "f1efe275a86f277fa13b317eb297726fb7284f1493d31e5f5cfedbe8a00868c6",
-  "tools/route_pick/analyzer.py": "360682ca6c9935d94048b185d34985da768fda11d7dd3413ffbc65f4fa8c51a7",
-  "tools/route_pick/analyzer_facts.py": "2355f86358b4ca8f1abc78cfa114ba374a7c8cb8284736c0252ede6189cdd12d",
   "tools/route_pick/pick.py": "7b6166d08ff970a7546ea98701c764bc2e1552c6baf4c86d4570b9ca3e00aad4",
   "tools/route_pick/facts.py": "22e14fd9524280429ed5f8455dee8b40217445518e7b411508cfbc52cd3fb24b",
-  "tools/route_pick/gen.py": "19512d868e958f5f47992f8997a6a11a9f0cc7ea4ad23dac92c29143f1424cda",
+  "tools/route_pick/gen.py": "44807a1d232fc7244437fcc4f5118d0fae952b5c17536ab4a345b187f0caf50d",
   "src/ops/generic/ggml_mmq/ggml_mmq.h": "60bd7827baaf3023467036f58676d993c166f83230576811cf66bbfc87d8f2f1"
  },
  "entries": [
