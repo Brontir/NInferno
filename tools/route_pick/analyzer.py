@@ -23,13 +23,12 @@ The price (ns):
             chain, the issue bound and the load unit by the narrow-load rule; the round's bytes / bus).
   sm_70     every rmma.* route is the Volta substitute the launch takes (volta_hmma_takes before volta_gemv_takes),
             priced from its own counted kernel (sections vhmma / vgemv / vgemvr of sm_70.txt; without them, no price).
-FITTED: G alone. Not priced: W4A8 /
-tiled / staged tiles (None).
+FITTED: G alone. Not priced (None): the W4A8, tiled and staged tiles.
 """
 import math
 import re
 
-# FITTED (2 at T 1-8; round 9's values, not refitted in round 16):
+# The analyzer's settings: G is FITTED (round 9's value), the rest choose a form, no number.
 P = dict(G=0.1240,       # FITTED, the one number left at T 1-8 (round 9's): exponent of rmma's DRAM slowdown with the rows open on one SM
          LCH='s',        # a launch's time: 'g' a graph node's floor by its CTAs (the product's decode graph); 's' the same under a stream
                          # launch (route_tune times stream launches: the exam)
@@ -38,7 +37,7 @@ P = dict(G=0.1240,       # FITTED, the one number left at T 1-8 (round 9's): exp
          VEC_SM='iol',   # ggml_vec's SM side: the code outside the K loop ('o'), the issue bound ('i'), the load unit ('l')
          MMA_SM='io',    # ggml_vec.mma: the same SM side from its vecmma row
          XK=1,           # a route's second kernel (vec's quantizer, r8's / mmq's pre-pass) costs one more stream launch
-         VSUB=1)         # sm_70: every rmma.* route is the Volta substitute the launch takes, priced from its counted kernel
+         VSUB=1)         # on (1) / off (0). sm_70: every rmma.* route is the Volta substitute the launch takes, priced from its counted kernel
 L1_MIN_KIB = 28.0                  # SET: the L1 an SM keeps beside its shared memory
 PARTITIONS = 4.0                   # tensor partitions of an SM
 # Counted (no fit): the SASS instructions of one emulated MMA call (sm_70, nvcc 12.8.93, generic_gemm_bf16.cu.o:
@@ -600,7 +599,7 @@ def _price(gpu, F, shape, route, P, issue=False):
                                       epilogue=EPI.get(ep, '0'), pre=0 if T <= 1 else 1)
     elif route == 'ggml_mmq':
         # Rows and K in whole tiles only: on other rows the launch demotes it, on other K the selection refuses it.
-        if c.get('imma_n') is None or not mmq_takes(shape, F):
+        if c.get('imma_n') is None or c.get('imma_w') is None or not mmq_takes(shape, F):
             return None
         r = kf_row(kf, 'mmq', type=MMQ_TYPE.get(fmt), J=mmq_j(T), fallback=0)
     elif route == 'ggml_vec.mma':
