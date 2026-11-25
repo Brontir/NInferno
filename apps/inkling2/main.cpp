@@ -78,7 +78,7 @@ int main(int argc, char** argv) {
         if (dump) {
             const auto& visits = target.visits();
             target.observe     = [&](const char* name, std::int32_t visit, const Tensor& value) {
-                const std::size_t n = std::size_t(value.ne[0]) * value.ne[1];
+                const std::size_t n = std::size_t(value.numel());
                 std::vector<std::uint16_t> bits(n);
                 cudaMemcpy(bits.data(), value.data, n * 2, cudaMemcpyDeviceToHost);
                 double sum = 0;

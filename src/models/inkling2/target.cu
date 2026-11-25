@@ -138,6 +138,16 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
         return out;
     };
 
+    // The first visit's intermediate tensors, under llama.cpp's names (llama-eval-callback), for a
+    // layer-by-layer comparison.
+    std::int32_t visit_index = 0;
+    const auto see = [&](const char* name, const Tensor& t) {
+        if (observe && visit_index == 0) {
+            check(cudaStreamSynchronize(s), "observe");
+            observe(name, -1, t);
+        }
+    };
+
     // Token embeddings, normalized by tok_norm.
     Tensor cur = fresh();
     {
@@ -145,10 +155,11 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
         ops::embedding(ids_t, W.token_embedding.weight, raw, s);
         ops::rmsnorm(raw, W.embedding_norm, c_.rms_norm_eps, false, cur, s);
     }
+    see("node_12", cur);
 
     std::vector<Tensor> blocks, prelude_blocks, bank;
     Tensor prelude, bank_out;
-    std::int32_t visit_index = 0, pass = -1;
+    std::int32_t pass = -1;
     for (const auto& v : visits_) {
         const Layer& L  = W.layers[static_cast<std::size_t>(v.layer)];
         const bool core = c_.looped() && v.layer >= c_.core_start && v.layer < c_.core_end;
@@ -207,6 +218,10 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
         project(hq, L.relative, r, work_, s);
         project(hq, L.sink, sink, work_, s);
         project(hq, L.gate, gate, work_, s);
+        see("node_14", hq);
+        see("node_15", k);
+        see("node_30", q);
+        see("node_65", sink);
         Tensor ktaps, vtaps;
         if (full) {
             ktaps = tmp(Hkv * c_.conv_taps), vtaps = tmp(Hkv * c_.conv_taps);
@@ -224,6 +239,10 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
                                         c_.log_scale_alpha, c_.log_scale_floor, full};
         ops::inkling2_attention_prepare(q3, k3, v3, r3, L.query_clip, L.relative_clip, positions,
                                         prep, s);
+        see("Qcur-0", q);
+        see("Kcur-0", k);
+        see("Vcur-0", vv);
+        see("Rcur-0", r);
         auto& slot = slots_[static_cast<std::size_t>(v.slot)];
         Tensor kc(slot.k.p, DType::BF16, {D, slot.capacity, Hkv}),
             vc(slot.v.p, DType::BF16, {D, slot.capacity, Hkv});
@@ -233,13 +252,17 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
         ops::Inkling2AttentionParams ap{c_.extent(v.layer), full ? 0 : c_.sliding_window,
                                         slot.capacity, max_context_};
         ops::inkling2_attention(q3, r3, sink, L.relative_bias, kc, vc, positions, ap, c3, s);
+        see("kqv_out-0", context);
         ops::sigmoid_mul(gate, context, s);
+        see("node_83", context);
         Tensor attn = fresh();
         project(context, L.output, attn, work_, s);
+        see("node_84", attn);
         {
             Tensor os = state(v.slot, 2 * KV, H);
             ops::inkling2_conv(attn, L.output_conv, Tensor(), 1, os, attn, s);
         }
+        see("ffn_inp-0", attn);
 
         // The first layer of each block starts a new residual stream; the earlier one joins the
         // blocks.
@@ -260,6 +283,7 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
         mix(blocks, x, L.ffn_query, std::span<Tensor>(&f, 1));
         if (messages) { f = control(f, msg[3], L.control[3]); }
         Tensor fn = rms(f, L.ffn_norm);
+        see("node_108", fn);
         Tensor y  = tmp(H);
         {
             auto moe_scope = work_.scope();
@@ -267,6 +291,7 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
                 std::max<std::size_t>(ops::moe_workspace_bytes(L.moe, L.moe_config, T, T), 256)));
             ops::moe(fn, L.moe, L.moe_config, ops::MoeEpilogue::Store, y, scratch, s);
         }
+        see("ffn_moe_out-0", y);
         {
             Tensor fs = state(v.slot, 2 * KV + H, H);
             ops::inkling2_conv(y, L.ffn_conv, Tensor(), 1, fs, y, s);
