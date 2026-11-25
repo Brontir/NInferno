@@ -467,9 +467,9 @@ __global__ void attention_join_kernel(AttnParams p) {
 // The key splits a call takes: enough blocks to cover the SMs twice, at most kAttnMaxSplit.
 // The current device's SMs, asked once a device (a host attribute query: graph-capture safe).
 int device_sms() {
-    constexpr int kDevices = 64;
+    constexpr int kDevices                  = 64;
     static std::atomic<int> cache[kDevices] = {};
-    int device = 0;
+    int device                              = 0;
     if (cudaGetDevice(&device) != cudaSuccess || device < 0) { return 1; }
     if (device < kDevices) {
         if (const int known = cache[device].load(std::memory_order_relaxed); known > 0) {
