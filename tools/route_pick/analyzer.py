@@ -161,6 +161,23 @@ def occupancy(c, warps, regs, smem=0.0):
     return max(float(lim), 1.0)
 
 
+def latency_launched(c, ep, A, B, M, n, plain, lat, C=1):
+    """Whether the launch takes the latency instance of a one-token-tile rmma kernel (latency_pays,
+    generic_rmma_describe.cpp): the board is latency-bound for the epilogue (bytes a SM cycle >= LAT_BYTES) from sm_75; on sm_75
+    (no cp.async) SwiGLU's variant is the activation ring's form only, a CTA of at most 128 threads (ahead_form); and the
+    variant keeps the plain kernel's waves (rmma_variant_occupancy_rule: as many CTAs a SM, or no extra wave of the grid)."""
+    if lat is None or c['bpc'] < LAT_BYTES.get(ep, 5.5) or c['cc'] < 75:
+        return False
+    if ep == 'swiglu' and c['cc'] < 80 and A * B * 32 > 128:
+        return False
+    warps = A * B
+    var, pla = occupancy(c, warps, _num(lat['registers'])), occupancy(c, warps, _num(plain['registers']))
+    if var >= pla:
+        return True
+    ctas = math.ceil(n / (16.0 * M * A)) * C
+    return math.ceil(ctas / (var * c['sms'])) <= math.ceil(ctas / (pla * c['sms']))
+
+
 def launch_ns(c, P, ctas):
     """ns one kernel launch takes before its work (round 18). P LCH '' = one graph node whatever the grid (round 17); 'g' = a graph node
     whose floor grows with its CTAs (isa_facts launch facts floor_ns_1 / _sms / _4sms / _1024 / _4096: CTAs of 128 threads, linear between
@@ -708,8 +725,8 @@ def _price(gpu, F, shape, route, P, issue=False):
             return None
         key = dict(decoder=RMMA_DEC.get(fmt), warps_m=A, warps_k=B, m_tiles=M, n_tiles=N, cluster=C, epilogue=EPI.get(ep, '0'), sums=0)
         r = kf_row(kf, 'rmma', latency=0, **key)
-        if r is not None and N == 1 and c['bpc'] >= LAT_BYTES.get(ep, 5.5) and c['cc'] >= 75:
-            r = kf_row(kf, 'rmma', latency=1, **key) or r                  # the latency instance is the one launched
+        if r is not None and N == 1 and latency_launched(c, ep, A, B, M, n, r, kf_row(kf, 'rmma', latency=1, **key), C):
+            r = kf_row(kf, 'rmma', latency=1, **key)                       # the latency instance is the one launched
         return None if r is None else price_rmma(c, P, r, n, k, T, sets * k * bits / 8.0, M, N, A, B, C, issue, sets=sets)
     (fam, Wp, R), m = (route, 0, 0), _R8.match(route)
     if m:

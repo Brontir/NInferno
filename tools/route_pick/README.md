@@ -40,14 +40,16 @@ never demoted and never claims a shape-owned problem. An explicit `--route-table
 and `--route-policy legacy` reads none either (the lookup answers as before the overlay).
 
 ## T 1-8: the analyzer's ranked lists (the switch to one decision source)
-Every class of sm_75, sm_86, sm_89 and sm_120a with tensor cores gets a file, the tabled boards and the boards within
-`kCarryDistance` of a table included (66 files today; schema `ninferno-route-pick/2`). Each entry holds `ranked`, the
+Every class of sm_86, sm_89 and sm_120a with tensor cores gets a file (sm_75's chips are held, below), the tabled boards and the boards within
+`kCarryDistance` of a table included (56 files today; schema `ninferno-route-pick/2`). Each entry holds `ranked`, the
 widths T 1-8 as runs `[t_min, t_max, [route, ...]]` of `analyzer.rank()` over the repo's facts: every route the analyzer
 prices for the call, cheapest first, cut after the first register-MMA schedule (an A16 route every policy admits). The
 problems are every A16 entry of the capability's route tables, all three epilogues; a width with no priced route is
 left out. The T 9-32 `bands` keep the classes and widths above.
-A chip in `gen.py` `HELD_CHIPS` (AD102 today: the analyzer prices rmma 12-16 % below its time there, #1211) keeps
-its bands and gets no ranked list, so its T 1-8 calls are answered by its route table and the rules as before.
+A chip in `gen.py` `HELD_CHIPS` gets no ranked list, so its T 1-8 calls are answered by its route table and the rules
+as before; it keeps its bands where it has them (a Turing chip has none, so no file). Held today: AD102 (the analyzer
+prices rmma 12-16 % below its time there, #1211) and TU102 / TU104 / TU106 (the activation-ring latency kernel sm_75
+launches is priced 1.2-1.3x its time, the plain w1x8 0.9x, #1183).
 
 The engine (`route_table.cpp` `table_ranked_routes`, `route_authorities.cpp` `analyzer_entry`) reads the lists on the
 board the file was priced for, under `--route-policy evidence`, at any distance from a table. The select list's last
