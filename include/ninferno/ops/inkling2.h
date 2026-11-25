@@ -36,10 +36,12 @@ struct Inkling2MixStates {
     std::array<const void*, kInkling2MaxMixStates> data{};
     std::int32_t count = 0;
 };
+
 struct Inkling2MixOutputs {
     std::array<void*, kInkling2MaxMixQueries> data{};
     std::int32_t count = 0;
 };
+
 void inkling2_depth_mix(const Inkling2MixStates& states, const Tensor& query, std::int32_t hidden,
                         std::int32_t tokens, const Inkling2MixOutputs& out, cudaStream_t stream);
 
@@ -95,6 +97,7 @@ struct Inkling2PrepareParams {
     float qk_clip = 0, rel_clip = 0, eps = 0, alpha = 0, floor = 1;
     bool full = false;
 };
+
 void inkling2_attention_prepare(Tensor& q, Tensor& k, Tensor& v, Tensor& r, const Tensor& q_clip,
                                 const Tensor& rel_clip, const Tensor& positions,
                                 const Inkling2PrepareParams& params, cudaStream_t stream);
@@ -121,6 +124,7 @@ struct Inkling2AttentionParams {
     std::int32_t capacity = 0;
     std::int32_t max_keys = 0; // bounds p + 1 over the calls made under this launch
 };
+
 void inkling2_attention(const Tensor& q, const Tensor& r, const Tensor& sink, const Tensor& bias,
                         const Tensor& k_cache, const Tensor& v_cache, const Tensor& positions,
                         const Inkling2AttentionParams& params, Tensor& out, cudaStream_t stream);
@@ -129,7 +133,8 @@ void inkling2_attention(const Tensor& q, const Tensor& r, const Tensor& sink, co
  * Op: append this call's K and V rows to a visit's cache planes:
  *   k_cache[:, p_t % capacity, g] = k[:, g, t], likewise v. k, v: BF16 [D, Hkv, T].
  */
-void inkling2_kv_append(const Tensor& k, const Tensor& v, const Tensor& positions, std::int32_t capacity,
-                        Tensor& k_cache, Tensor& v_cache, cudaStream_t stream);
+void inkling2_kv_append(const Tensor& k, const Tensor& v, const Tensor& positions,
+                        std::int32_t capacity, Tensor& k_cache, Tensor& v_cache,
+                        cudaStream_t stream);
 
 } // namespace ninferno::ops

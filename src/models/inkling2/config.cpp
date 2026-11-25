@@ -38,9 +38,11 @@ Config parse_config(const artifact::Json& c) {
     out.situ_linear_beta = json_positive_float(c, "mlp_up_softcap");
     out.softcap          = json_positive_float(c, "final_logit_softcapping");
     if (out.vocab_size > out.vocab_rows || out.query_heads % out.kv_heads || out.conv_taps != 4 ||
-        out.experts_per_tok > out.experts || out.log_scale_alpha < 0 || out.layers % out.block_size) {
-        throw std::invalid_argument("inkling2 config: vocabulary, head grouping, convolution width, "
-                                    "experts or residual blocks out of the family's domain");
+        out.experts_per_tok > out.experts || out.log_scale_alpha < 0 ||
+        out.layers % out.block_size) {
+        throw std::invalid_argument(
+            "inkling2 config: vocabulary, head grouping, convolution width, "
+            "experts or residual blocks out of the family's domain");
     }
     const auto& kinds = c.at("layer_types");
     if (!kinds.is_array() || static_cast<std::int32_t>(kinds.size()) != out.layers) {
@@ -56,16 +58,18 @@ Config parse_config(const artifact::Json& c) {
     if (c.contains("loop_config")) {
         const auto& loop = c.at("loop_config");
         if (loop.value("is_varloop", false)) {
-            throw std::invalid_argument("inkling2 config: the variable-pass research loop is not implemented");
+            throw std::invalid_argument(
+                "inkling2 config: the variable-pass research loop is not implemented");
         }
         out.core_start = json_dimension_i32(loop, "core_start");
         out.core_end   = json_dimension_i32(loop, "core_end");
         out.passes     = json_dimension_i32(loop, "num_passes");
         out.gate_rank  = json_dimension_i32(loop, "gate_rank");
-        if (out.core_start >= out.core_end || out.core_end > out.layers || out.core_start % out.block_size ||
-            out.core_end % out.block_size || out.passes < 2) {
-            throw std::invalid_argument("inkling2 config: the loop core must lie on residual-block bounds "
-                                        "and run at least twice");
+        if (out.core_start >= out.core_end || out.core_end > out.layers ||
+            out.core_start % out.block_size || out.core_end % out.block_size || out.passes < 2) {
+            throw std::invalid_argument(
+                "inkling2 config: the loop core must lie on residual-block bounds "
+                "and run at least twice");
         }
     }
     return out;

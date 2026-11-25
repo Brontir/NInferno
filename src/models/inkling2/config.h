@@ -48,13 +48,22 @@ struct Config {
     std::vector<LayerKind> kinds;
 
     [[nodiscard]] bool looped() const noexcept { return passes > 1; }
+
     [[nodiscard]] std::int32_t core_layers() const noexcept { return core_end - core_start; }
-    [[nodiscard]] std::int32_t visits() const noexcept { return layers + (passes - 1) * core_layers(); }
-    [[nodiscard]] std::int32_t extent(std::int32_t layer) const noexcept {
-        return kinds[static_cast<std::size_t>(layer)] == LayerKind::Full ? rel_extent : sliding_window;
+
+    [[nodiscard]] std::int32_t visits() const noexcept {
+        return layers + (passes - 1) * core_layers();
     }
+
+    [[nodiscard]] std::int32_t extent(std::int32_t layer) const noexcept {
+        return kinds[static_cast<std::size_t>(layer)] == LayerKind::Full ? rel_extent
+                                                                         : sliding_window;
+    }
+
     // Channels of one visit's convolution state row: K, V, the attention output, the expert output.
-    [[nodiscard]] std::int32_t conv_channels() const noexcept { return 2 * kv_heads * head_dim + 2 * hidden_size; }
+    [[nodiscard]] std::int32_t conv_channels() const noexcept {
+        return 2 * kv_heads * head_dim + 2 * hidden_size;
+    }
 };
 
 [[nodiscard]] Config parse_config(const artifact::Json& text_config);
