@@ -1085,3 +1085,37 @@ P from #850's plan. A, G, N and P have frozen predictions so far.
     bound: mean KLD within 15 % of master's on the quick corpus.
 - **Decision.** Kept as a route that route_tune, coverage and the analyzer time and price. Not
   admitted by the selector until the A/B above (analyzer round 17, product change 2).
+
+### T. NVFP4 on Volta's HMMA kernel, the `HNV4` decoder (#1165, #1210): built before its entry
+- **Process breach, stated first.** The decoder was built before this entry existed (codex
+  review of #1210, AGENTS.md). Its prediction was written before the grids ran, but after the
+  code, so it is recorded here as the run's, not as a frozen proposal.
+- **Regime.** Decode and verify linears in NVFP4, T 1-16, sm_70 (Quadro GV100). Before this
+  change the dispatch took the register-MMA tile there. On sm_70 that tile multiplies on the
+  emulated BF16 MMA (`NINFERNO_FMA_MMA`: FP32 FMAs and shuffles, 551 SASS instructions a call), so
+  the call ran at 6-15x its bus time.
+- **Law.** Volta's HMMA kernel (`generic_volta_hmma.cu`) streams a weight once at the DRAM rate.
+  - Each code becomes an exact f16 operand of `mma.m8n8k4` once (twice the E2M1 value, HX4's
+    table), and the tensor cores multiply eight or sixteen token columns with it.
+  - So the time is the bytes term (k / 2 code bytes and k / 16 scale bytes a row), not issue.
+  - The block scale (half its E4M3 value) and the tensor divisor (`row_scale`) are applied in
+    FP32 after the group's sum, so no weight value is ever rounded to f16.
+- **Variant.** The `HNV4` fragment decoder:
+  - a quad-pair takes four 16-value blocks, 32 contiguous code bytes;
+  - their four scales are one aligned word;
+  - each set's divisor is applied on its own rows (gate and up of a stacked plane).
+- **Prediction (written 24.11, before the grids).** 3.5-6x faster than master on the release
+  NVFP4 shapes at T 1-16 (the bytes term against the emulated tile's measured time).
+- **Acceptance / refutation.** Acceptance: at least 2x on the release shapes in every band T 1,
+  T 2-4, T 5-8. Refutation: any band slower than master. Byte rule: token-invariant over 1-16
+  (byte-identical windows), and within one bf16 ulp of an FP64 reference of the reduced |w x|.
+- **A/B.** GV100, route_tune grids, branch against master, the best route a cell, summed per band.
+  - Release NVFP4 shapes (160 cells): 0.262 / 0.231 / 0.190 of master at T1 / T2-4 / T5-8, so
+    3.8-5.3x faster.
+  - Qwen3.5-9B calls (48 cells): 1.001 / 0.987 / 0.698. At T 1-4 those calls are best on other
+    routes, so they do not move.
+  - Accuracy: max 9e-05 at K 4096, 4e-05 at K 17408; the two-divisor SwiGLU check within the bound.
+- **Open.** Under AllowA8, `volta_hmma_route` leaves T 1-4 to R8 (W4a8Nvfp4 on dp4a), as for the
+  K-quants. That boundary (kVecRuleMaxTokens) was measured on the K-quants, not on NVFP4. The
+  R8-against-HMMA grid for NVFP4 at T 1-4 runs on the GV100 (cov nvr8gv), and its numbers go here.
+- **Decision.** Kept, on the HMMA route of the NVFP4 calls the dispatch takes it for.
