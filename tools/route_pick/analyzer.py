@@ -427,16 +427,6 @@ def price_vec(c, P, fmt, ep, n, k, T, bits, sets, inst=None):
     return launch_ns(c, P, ctas) + launch_ns(c, P, math.ceil(k / 256.0) * int(T)) + second_kernel(c, P) + l0 + (rounds - 1) * rnd(ctas) + rnd(last)
 
 
-def vec_instance(gpu, F, shape, P=P):
-    """'ks' or 'loop': the instance of ggml_vec the launch should take for the shape (the cheaper price; 'loop'
-    where the K has no unrolled kernel). The product launches what this returns (#1181)."""
-    ep, k = str(shape.get('epilogue', 'store')).lower(), int(shape['k'])
-    if not vec_ks(ep, k):
-        return 'loop'
-    a, b = price_ns(gpu, F, shape, 'ggml_vec.ks', P), price_ns(gpu, F, shape, 'ggml_vec.loop', P)
-    return 'loop' if a is None or (b is not None and b < a) else 'ks'
-
-
 VEC_MMA_TYPES = ('q4k', 'q5k', 'q6k')   # ggml_vec.cu vec_mma_supported (feat/1162-few)
 
 
@@ -548,7 +538,7 @@ def volta_sub_price(c, P, n, k, T, bits, sets, fmt=None, ep='store', kind=None):
     tot, stall = _num(r['total']), _num(r['stall_sum'])
     rows_warp = 8.0 if kind == 'hmma' else rows_cta / warps      # hmma: a warp's eight fragment rows; gemv: R rows a warp
     bytes_iter = rows_warp * 256.0 * bits / 8.0 * sets            # a warp's iteration: 256 values of each of its rows
-    iters = k / 256.0
+    iters = math.ceil(k / 256.0)                                   # superblocks, the last bounded (k % 256 at K % 64 / 8)
     sms, clk = c['sms'], c['clk']
     t = launch_ns(c, P, ctas) + c['l0']
     left = float(ctas)
@@ -618,15 +608,15 @@ def _price(gpu, F, shape, route, P, issue=False):
 
 
 def candidates(gpu, F, shape):
-    """The routes the product can launch for the shape that this file prices: ggml_vec (T <= 8), ggml_mmq (T >= 5, whole
-    tiles), every rmma and r8 (T <= 8) schedule with a kernel-facts row. The lab's ggml_vec variants (.mma, .ks, .loop)
-    are priced, never listed."""
+    """The routes the product can launch for the shape that this file prices: ggml_vec and its few-row MMA tile
+    ggml_vec.mma (T <= 8; the tile on sm_80+ K-quants with a vecmma row), ggml_mmq (T >= 5, whole tiles), every rmma and
+    r8 (T <= 8) schedule with a kernel-facts row. The lab's instances ggml_vec.ks / .loop are priced, never listed."""
     c = card_of(gpu, F)
     if c is None:
         return []
     T, fmt = max(float(shape.get('T', 1)), 1.0), str(shape['format']).lower()
     # ggml's MMQ on rows and K it takes only (mmq_takes; price_ns refuses the others too) (#1077).
-    names = set(['ggml_mmq'] if T >= 5 and mmq_takes(shape, F) else []) | set(['ggml_vec'] if T <= 8 else [])
+    names = set(['ggml_mmq'] if T >= 5 and mmq_takes(shape, F) else []) | set(['ggml_vec', 'ggml_vec.mma'] if T <= 8 else [])
     for r in c['kf']['rmma']:
         # Thread-block clusters are sm_90+ (generic_select.cpp rmma_index: below it a cluster
         # schedule runs as its C == 1 twin), so a cluster row is no candidate there.
