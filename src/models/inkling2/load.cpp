@@ -36,6 +36,19 @@ struct LayerIds {
     std::array<ControllerIds, 4> control{};
 };
 
+// A direct parameter as a tensor of its stored shape, innermost dimension first (Prepare::tensor
+// takes vectors only): the FP32 tables (clips, biases, taps, mix queries) are matrices.
+Tensor table(const Prepare& prepare, Id id) {
+    const auto& v = prepare.view(id);
+    if (v.shape.size() == 1) { return weight_tensor(v, {static_cast<std::int32_t>(v.shape[0])}); }
+    if (v.shape.size() == 2) {
+        return weight_tensor(
+            v, {static_cast<std::int32_t>(v.shape[1]), static_cast<std::int32_t>(v.shape[0])});
+    }
+    throw std::invalid_argument("inkling2: a direct parameter of " + std::to_string(v.shape.size()) +
+                                " dimensions");
+}
+
 } // namespace
 
 Model::~Model() = default;
@@ -120,9 +133,9 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
     const Prepare prepare(demands, *model->backing_, /*recorded*/ false);
     auto& w                  = model->weights_;
     w.token_embedding.weight = native_weight(prepare.view(embedding));
-    w.embedding_norm         = prepare.tensor(embed_norm);
-    w.final_norm             = prepare.tensor(final_norm);
-    w.output_query           = prepare.tensor(out_query);
+    w.embedding_norm         = table(prepare, embed_norm);
+    w.final_norm             = table(prepare, final_norm);
+    w.output_query           = table(prepare, out_query);
     {
         const auto prepared = ops::prepare_linear_weight(prepare.input(head));
         w.output_head       = {prepared.weight, prepared.policy};
@@ -134,13 +147,13 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
         const bool full = c.kinds[static_cast<std::size_t>(i)] == LayerKind::Full;
         layer.kind      = c.kinds[static_cast<std::size_t>(i)];
         if (full) {
-            layer.q_norm     = prepare.tensor(l.q_norm);
-            layer.k_norm     = prepare.tensor(l.k_norm);
-            layer.v_norm     = prepare.tensor(l.v_norm);
+            layer.q_norm     = table(prepare, l.q_norm);
+            layer.k_norm     = table(prepare, l.k_norm);
+            layer.v_norm     = table(prepare, l.v_norm);
             layer.key_taps   = prepare.projection(l.key_taps);
             layer.value_taps = prepare.projection(l.value_taps);
         } else {
-            layer.input_norm = prepare.tensor(l.input_norm);
+            layer.input_norm = table(prepare, l.input_norm);
         }
         layer.query         = prepare.projection(l.query);
         layer.key           = prepare.projection(l.key);
@@ -149,20 +162,20 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
         layer.relative      = prepare.projection(l.relative);
         layer.sink          = prepare.projection(l.sink);
         layer.output        = prepare.projection(l.output);
-        layer.query_clip    = prepare.tensor(l.query_clip);
-        layer.relative_clip = prepare.tensor(l.relative_clip);
-        layer.relative_bias = prepare.tensor(l.relative_bias);
-        layer.key_conv      = prepare.tensor(l.key_conv);
-        layer.value_conv    = prepare.tensor(l.value_conv);
-        layer.output_conv   = prepare.tensor(l.output_conv);
-        layer.ffn_conv      = prepare.tensor(l.ffn_conv);
-        if (l.has_attention_query) { layer.attention_query = prepare.tensor(l.attention_query); }
-        layer.ffn_query = prepare.tensor(l.ffn_query);
-        layer.ffn_norm  = prepare.tensor(l.ffn_norm);
+        layer.query_clip    = table(prepare, l.query_clip);
+        layer.relative_clip = table(prepare, l.relative_clip);
+        layer.relative_bias = table(prepare, l.relative_bias);
+        layer.key_conv      = table(prepare, l.key_conv);
+        layer.value_conv    = table(prepare, l.value_conv);
+        layer.output_conv   = table(prepare, l.output_conv);
+        layer.ffn_conv      = table(prepare, l.ffn_conv);
+        if (l.has_attention_query) { layer.attention_query = table(prepare, l.attention_query); }
+        layer.ffn_query = table(prepare, l.ffn_query);
+        layer.ffn_norm  = table(prepare, l.ffn_norm);
 
         ops::MoeWeights& m = layer.moe;
         m.router           = prepare.projection(l.router).weight;
-        m.selection_bias   = prepare.tensor(l.selection_bias);
+        m.selection_bias   = table(prepare, l.selection_bias);
         const auto gate_up = prepare.packed(l.gate_up);
         const auto down    = prepare.packed(l.down);
         if (!gate_up || !down) {
@@ -183,7 +196,7 @@ std::unique_ptr<Model> Model::load(const std::filesystem::path& path, DeviceCont
         mc.limit           = c.situ_linear_beta;
         mc.gate_up_layout  = ops::MoeGateUpLayout::Concatenated;
         if (l.looped) {
-            layer.message_query = prepare.tensor(l.message_query);
+            layer.message_query = table(prepare, l.message_query);
             for (std::size_t j = 0; j < 4; ++j) {
                 layer.control[j] = {prepare.projection(l.control[j].down),
                                     prepare.projection(l.control[j].gain),
