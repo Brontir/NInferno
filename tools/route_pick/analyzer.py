@@ -616,15 +616,17 @@ def _price(gpu, F, shape, route, P, issue=False):
 
 
 def candidates(gpu, F, shape):
-    """The routes the product can launch for the shape that this file prices: ggml_vec and its few-row MMA tile
-    ggml_vec.mma (T <= 8; the tile on sm_80+ K-quants with a vecmma row), ggml_mmq (T >= 5, whole tiles), every rmma and
-    r8 (T <= 8) schedule with a kernel-facts row. The lab's instances ggml_vec.ks / .loop are priced, never listed."""
+    """The routes the product can launch for the shape that this file prices: ggml_vec (T <= 8), ggml_mmq (T >= 5, whole
+    tiles), every rmma and r8 (T <= 8) schedule with a kernel-facts row. Priced, never listed: the lab's instances
+    ggml_vec.ks / .loop, and ggml_vec.mma, the few-row MMA tile (#1162), which the product times only in a8 sweeps and
+    never tables (route_tune_tool.cpp), so no exam grid holds it; on the RTX 4070 Ti it lost 8 % end to end on Q6_K
+    where its price ranked it first (25.11). It joins the list once the exam grids time it."""
     c = card_of(gpu, F)
     if c is None:
         return []
     T, fmt = max(float(shape.get('T', 1)), 1.0), str(shape['format']).lower()
     # ggml's MMQ on rows and K it takes only (mmq_takes; price_ns refuses the others too) (#1077).
-    names = set(['ggml_mmq'] if T >= 5 and mmq_takes(shape, F) else []) | set(['ggml_vec', 'ggml_vec.mma'] if T <= 8 else [])
+    names = set(['ggml_mmq'] if T >= 5 and mmq_takes(shape, F) else []) | set(['ggml_vec'] if T <= 8 else [])
     for r in c['kf']['rmma']:
         # Thread-block clusters are sm_90+ (generic_select.cpp rmma_index: below it a cluster
         # schedule runs as its C == 1 twin), so a cluster row is no candidate there.
