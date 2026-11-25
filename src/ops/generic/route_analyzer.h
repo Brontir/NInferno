@@ -63,15 +63,15 @@ enum class RoundForm : std::uint8_t { Hypot, Sum, Max };
 // The analyzer's settings. Every field but `g` chooses a form, no number; the defaults are the
 // shipped forms (analyzer.py P).
 struct Settings {
-    double g          = 0.1240; // FITTED (round 9): rmma's DRAM slowdown exponent, rows open on an SM
-    LaunchMode launch = LaunchMode::Stream;
-    bool narrow_loads = true; // ggml_vec's loads by the narrow-load rule
+    double g = 0.1240; // FITTED (round 9): rmma's DRAM slowdown exponent, rows open on an SM
+    LaunchMode launch  = LaunchMode::Stream;
+    bool narrow_loads  = true; // ggml_vec's loads by the narrow-load rule
     RoundForm vec_form = RoundForm::Hypot;
     // ggml_vec's SM side: the code outside the K loop, the issue bound, the load unit.
     bool vec_outside = true, vec_issue = true, vec_load = true;
     // ggml_vec.mma's SM side.
     bool mma_outside = true, mma_issue = true;
-    bool second_kernel = true;     // a route's second kernel costs one more stream launch
+    bool second_kernel     = true; // a route's second kernel costs one more stream launch
     bool volta_substitutes = true; // sm_70: every rmma route is the Volta substitute it launches
 };
 
@@ -80,7 +80,8 @@ struct Settings {
 struct Card {
     int cc = 0;
     std::string arch; // the kernel-facts snapshot ("86", "120a")
-    double sms = 0, clk = 0, bus = 0, bpc = 0; // SMs, SM clocks a ns, DRAM bytes a ns, bytes an SM clock
+    double sms = 0, clk = 0, bus = 0,
+           bpc  = 0; // SMs, SM clocks a ns, DRAM bytes a ns, bytes an SM clock
     int regs_sm = 0, thr_sm = 0, blk_sm = 0;
     double l1 = 0, smem_sm = 0, smem_res = 0; // bytes
     // isa / rate / launch facts
@@ -90,7 +91,8 @@ struct Card {
     std::optional<double> stream, imma_n, imma_w;
     bool pdl = false;
     std::vector<std::pair<double, double>> floor; // (CTAs, ns), sorted
-    // the narrow-load facts: a warp load's issue cap (clk), a wavefront's clocks, the bank width (B)
+    // the narrow-load facts: a warp load's issue cap (clk), a wavefront's clocks, the bank width
+    // (B)
     double nr_cap = 0, nr_wf = 0;
     int nr_bank = 0;
 };
@@ -103,7 +105,7 @@ struct Card {
 // One call: the weight's format, the epilogue, the output rows (SwiGLU: the gate rows), K and
 // the tokens.
 struct Call {
-    QType qtype      = QType::BF16;
+    QType qtype       = QType::BF16;
     Epilogue epilogue = Epilogue::Store;
     std::int32_t n = 0, k = 0, tokens = 1;
 };

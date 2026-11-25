@@ -29,7 +29,8 @@ int route_analyzer_main(int argc, char** argv) {
             }
             s.launch = m == "graph" ? ra::LaunchMode::Graph : ra::LaunchMode::Stream;
         } else {
-            std::cerr << "usage: ninferno-serve route-analyzer [--cells FILE] [--launch graph|stream]\n";
+            std::cerr
+                << "usage: ninferno-serve route-analyzer [--cells FILE] [--launch graph|stream]\n";
             return 2;
         }
     }
@@ -55,16 +56,22 @@ int route_analyzer_main(int argc, char** argv) {
         }
         const std::string head = pci + ' ' + fmt + ' ' + ep + ' ' + std::to_string(n) + ' ' +
                                  std::to_string(k) + ' ' + std::to_string(T);
-        const auto q  = ra::format_of_name(fmt);
-        const GpuFactsRow* row = find_gpu_facts(static_cast<std::uint32_t>(std::stoul(pci, nullptr, 16)));
-        const auto card = row ? ra::card_of(*row) : std::nullopt;
-        const Epilogue e = ep == "swiglu" ? Epilogue::SwiGlu : ep == "add" ? Epilogue::AddResidual : Epilogue::Store;
+        const auto q = ra::format_of_name(fmt);
+        const GpuFactsRow* row =
+            find_gpu_facts(static_cast<std::uint32_t>(std::stoul(pci, nullptr, 16)));
+        const auto card  = row ? ra::card_of(*row) : std::nullopt;
+        const Epilogue e = ep == "swiglu" ? Epilogue::SwiGlu
+                           : ep == "add"  ? Epilogue::AddResidual
+                                          : Epilogue::Store;
         if (!q || !card || (ep != "store" && ep != "add" && ep != "swiglu")) {
             std::cout << head << " - -\n";
             continue;
         }
-        const auto ranked = ra::rank(*card, ra::Call{*q, e, static_cast<std::int32_t>(n),
-                                                     static_cast<std::int32_t>(k), static_cast<std::int32_t>(T)}, s);
+        const auto ranked =
+            ra::rank(*card,
+                     ra::Call{*q, e, static_cast<std::int32_t>(n), static_cast<std::int32_t>(k),
+                              static_cast<std::int32_t>(T)},
+                     s);
         if (ranked.empty()) std::cout << head << " - -\n";
         for (const ra::Priced& p : ranked) {
             std::snprintf(buf, sizeof buf, "%.17g", p.ns);
