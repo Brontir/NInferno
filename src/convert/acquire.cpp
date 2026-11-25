@@ -131,8 +131,8 @@ void base_tokenizer(const FetchResult& fetched, const FetchOptions& fetch, Conve
             std::erase_if(wanted, pair);
             if (fetch.log) {
                 fetch.log("base model " + *base + " has no " + missing +
-                          ": tokenizer.json and tokenizer_config.json are both rebuilt from the "
-                          "GGUF metadata");
+                          ": it gives neither tokenizer.json nor tokenizer_config.json (the GGUF "
+                          "metadata rebuilds the ones not given)");
             }
         }
         std::string taken;

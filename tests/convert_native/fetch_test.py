@@ -603,10 +603,16 @@ def main() -> int:
             hub.add_repo("org/qwen-gguf4", {"model-Q8_0.gguf": gguf_half.read_bytes()})
             half = subprocess.run([str(native), "--fetch", "org/qwen-gguf4", "--cache", str(work / "cache-e2e")],
                                   cwd=repository, capture_output=True, text=True, env=environment)
+            half_out = (work / "cache-e2e" / "models--org--qwen-gguf4" / "ninferno" /
+                        "c0ffee0123456789abcdef0123456789abcdef01" / "model-Q8_0.qwen3_5_bf16.ninferno")
+            half_report = (json.loads(Path(str(half_out) + ".conversion.json").read_text(encoding="utf-8"))
+                           if half_out.exists() else {})
+            half_notes = " ".join(half_report.get("resource_notes", []))
             case("a base without tokenizer.json gives neither tokenizer file (#1218)",
                  half.returncode == 0
                  and "base model org/qwen-base-half has no tokenizer.json" in half.stdout
-                 and "tokenizer files from the base model" not in half.stdout)
+                 and "tokenizer files from the base model" not in half.stdout
+                 and "tokenizer.json: rebuilt" in half_notes and "tokenizer_config.json: rebuilt" in half_notes)
             if half.returncode:
                 errors.append(half.stderr[-1500:])
 
