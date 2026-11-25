@@ -76,6 +76,9 @@ FORMATS = {
     'q5': (5.25, 'GroupwiseG64Decoder<5>', 'W4a8G64<5>', None), 'q6': (6.25, 'GroupwiseG64Decoder<6>', 'W4a8G64<6>', None),
 }
 BITS = {f: v[0] for f, v in FORMATS.items()}
+# generic_select.cpp k_multiple: the K step rmma_refusal requires of a register-MMA route (run_values: a lane's run;
+# the ggml 32-value block formats their block).
+RMMA_K_MULTIPLE = dict({f: 32 for f in FORMATS}, bf16=8, q8=8, fp8=16, fp8r32=16, nvfp4=16, q4=16, q5=16, q6=16)
 RMMA_DEC = {f: v[1] for f, v in FORMATS.items()}
 R8_CODEC = {f: v[2] for f, v in FORMATS.items() if v[2]}
 # The blocks a lane's group spans (generic_w4a8.cuh: kSpan x kStride of the codec; 1 where it has neither).
@@ -686,6 +689,8 @@ def _price(gpu, F, shape, route, P, issue=False):
     n, k, T = float(shape['n']), float(shape['k']), max(float(shape.get('T', 1)), 1.0)
     kf, bits, sets = c['kf'], BITS[fmt], 2.0 if ep == 'swiglu' else 1.0   # SwiGLU: two weight sets
     m = _RMMA.match(route)
+    if m and k % RMMA_K_MULTIPLE.get(fmt, 32) != 0:           # rmma_refusal Extent: the resolver demotes the route
+        return None
     if m and P.get('VSUB') and c['cc'] == 70 and volta_takes(fmt, k, T):
         return volta_sub_price(c, P, n, k, T, bits, sets, fmt, ep, volta_takes(fmt, k, T))
     if m:

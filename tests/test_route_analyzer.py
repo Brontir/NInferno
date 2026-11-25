@@ -61,6 +61,14 @@ def main():
     one = dict(format='q4k', epilogue='store', n=4096, k=4096, T=1)
     assert analyzer.card_of(no_facts, F) is None
     assert analyzer.price_ns(no_facts, F, one, 'ggml_vec') is None and analyzer.rank(no_facts, F, one) == []
+    # The product's refusals: an rmma route at a K off its codec's step (rmma_refusal Extent; Q4_K's is 32), and a cluster
+    # schedule below sm_90.
+    sm89 = next(b for b in bs if int(b['cc']) == 89)
+    odd = dict(format='q4k', epilogue='store', n=4096, k=5200, T=4)
+    assert analyzer.price_ns(sm89, F, odd, 'rmma.m1.n1.w1x8') is None
+    assert not any(r.startswith('rmma.') for r in analyzer.candidates(sm89, F, odd))
+    assert analyzer.price_ns(sm89, F, dict(odd, k=4096), 'rmma.m1.n1.w1x8') is not None
+    assert analyzer.price_ns(sm89, F, dict(odd, k=4096), 'rmma.m1.n1.w1x8.c2') is None
     print('boards %d, shapes %d, T 1-8: %d failures' % (len(bs), len(shapes), failures))
     return 1 if failures else 0
 
