@@ -636,6 +636,19 @@ def main() -> int:
                  and "chat_template.jinja: rebuilt" in beside_notes)
             if beside.returncode:
                 errors.append(beside.stderr[-1500:])
+            # tokenizer_config.json alone beside the GGUF (codex on #1225): the base gives both
+            # members, its config replacing the one beside, so the pair is of one source.
+            gguf_cfg, _, _ = synthetic_gguf.qwen_case(work / "qwen-src6", False, None, 34, rebuilt=True,
+                                                      base_model="https://huggingface.co/org/qwen-base")
+            hub.add_repo("org/qwen-gguf6", {"model-Q8_0.gguf": gguf_cfg.read_bytes(),
+                                            "tokenizer_config.json": base_files["tokenizer_config.json"]})
+            lone = subprocess.run([str(native), "--fetch", "org/qwen-gguf6", "--cache", str(work / "cache-e2e")],
+                                  cwd=repository, capture_output=True, text=True, env=environment)
+            case("tokenizer_config.json alone beside the GGUF: the base gives the pair (#1218)",
+                 lone.returncode == 0
+                 and "base model org/qwen-base: tokenizer.json, tokenizer_config.json" in lone.stdout)
+            if lone.returncode:
+                errors.append(lone.stderr[-1500:])
 
             # 12c. Its download still in the cache and its branch moved on the hub: the same rule as
             # 12b. A rerun serves the weights here, pinned to their commit (nothing is downloaded),

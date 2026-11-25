@@ -157,10 +157,22 @@ bool default_head_outdated(const std::filesystem::path& artifact, int revision) 
 namespace {
 
 // Whether an artifact at `revision` is served as it is (cache_current's rule).
+// Revision 9's: an artifact converted from a GGUF before it (its report's "gguf" summary), whose
+// tokenizer pair may mix the base model's and the GGUF's files (#1218). An unreadable report: not.
+bool gguf_tokenizer_outdated(const std::filesystem::path& artifact, int revision) {
+    if (revision >= 9) { return false; }
+    std::ifstream stream(artifact.string() + ".conversion.json");
+    if (!stream) { return false; }
+    try {
+        return OJson::parse(stream).contains("gguf");
+    } catch (const std::exception&) { return false; }
+}
+
 bool serves_at(const std::filesystem::path& artifact, int revision) {
     return revision >= kCacheRevision ||
            (revision >= 3 && !unquantized_drafter_attention(artifact) &&
-            !default_head_outdated(artifact, revision));
+            !default_head_outdated(artifact, revision) &&
+            !gguf_tokenizer_outdated(artifact, revision));
 }
 
 } // namespace

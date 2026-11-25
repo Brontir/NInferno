@@ -40,7 +40,10 @@ namespace ninferno::convert {
 //    again.
 // 8: a head serving MTP and DFlash leads with MTP's own rows (proposal.drafter_rows), which MTP
 //    reads alone: Qwen artifacts whose head serves both without them are converted again.
-inline constexpr int kCacheRevision = 8;
+// 9: a GGUF's tokenizer.json and tokenizer_config.json come from one source (the base model's
+//    snapshot with both, else both rebuilt from the GGUF, #1218): every artifact converted from a
+//    GGUF is converted again, since its report does not record where each file came from.
+inline constexpr int kCacheRevision = 9;
 
 // Whether an artifact carries the defect revisions 4 and 5 fixed: its report binds a DFlash /
 // DFlash2 companion drafter's attention query unquantized (bf16, fp16, fp32).

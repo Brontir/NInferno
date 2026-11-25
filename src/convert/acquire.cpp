@@ -123,6 +123,17 @@ void base_tokenizer(const FetchResult& fetched, const FetchOptions& fetch, Conve
                           std::string_view(role) == "generation_config.json";
         if (!given && !beside && !(keep && rebuilt.contains(role))) { wanted.emplace_back(role); }
     }
+    // One member of the pair wanted and the other beside the GGUF: the base must give both (its
+    // tokenizer_config.json then replaces the one beside), or the pair would mix two sources.
+    const auto wants = [&](std::string_view role) {
+        return std::find(wanted.begin(), wanted.end(), role) != wanted.end();
+    };
+    if (wants("tokenizer.json") != wants("tokenizer_config.json")) {
+        const std::string other = wants("tokenizer.json") ? "tokenizer_config.json" : "tokenizer.json";
+        bool given              = false;
+        for (const auto& [name, _] : options.resources) { given = given || name == other; }
+        if (!given) { wanted.push_back(other); }
+    }
     if (wanted.empty()) { return; }
     const auto base = gguf_base_repository(fetched.model);
     if (!base) { return; }

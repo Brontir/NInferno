@@ -3,7 +3,8 @@
 // revision 5: qwen3_5_bf16, the dense Qwen3.5 GGUF default, too), and one with a DFlash /
 // DFlash2 companion and no proposal head (revision 6), and one with MTP layers and no head or
 // revision 6's DFlash-only head (revision 7), and one whose head serves MTP and DFlash without
-// MTP's own leading rows (revision 8); not a text-only one. A current older artifact is stamped current, so its report is read
+// MTP's own leading rows (revision 8), and one converted from a GGUF (revision 9: its tokenizer pair
+// from one source); not a text-only one. A current older artifact is stamped current, so its report is read
 // once. The stamp of what a conversion read tells a checkpoint replaced at the same path.
 
 #include "convert/acquire.h"
@@ -104,8 +105,28 @@ int main() {
           "a Q8 drafter without a proposal head at revision 4 is converted again");
     check(!cache_current(artifact(dir, "rev5", 5, "dflash/layers/0/attention/query", "q8_g32_fp16")),
           "a companion without a proposal head at revision 5 is converted again");
-    check(cache_current(artifact(dir, "new", 8, "dflash/layers/0/attention/query", "bf16")),
-          "revision 8 is current");
+    check(cache_current(artifact(dir, "new", 9, "dflash/layers/0/attention/query", "bf16")),
+          "revision 9 is current");
+    // Revision 9: a GGUF's tokenizer pair from one source (#1218): an artifact converted from a
+    // GGUF (its report's "gguf" summary) is converted again, a checkpoint's is current.
+    {
+        const auto gguf = dir / "gguf8.ninferno";
+        std::ofstream(gguf) << "x";
+        std::ofstream(gguf.string() + ".revision") << 8 << "
+";
+        std::ofstream(gguf.string() + ".conversion.json")
+            << R"({"components": {"text": {"config": {"model_type": "llama"}}}, "methods": [], )"
+            << R"("gguf": {"file": "m.gguf"}})";
+        check(!cache_current(gguf), "an artifact converted from a GGUF at revision 8 is converted again");
+        check(cached_revision(gguf) == 8, "and keeps its stamp");
+        const auto plain = dir / "plain8.ninferno";
+        std::ofstream(plain) << "x";
+        std::ofstream(plain.string() + ".revision") << 8 << "
+";
+        std::ofstream(plain.string() + ".conversion.json")
+            << R"({"components": {"text": {"config": {"model_type": "llama"}}}, "methods": []})";
+        check(cache_current(plain), "a checkpoint's artifact at revision 8 is current");
+    }
     // Revision 8: a head serving MTP and DFlash leads with MTP's own rows (drafter_rows).
     const std::vector<std::string> both{"mtp/layers/0/attention/query",
                                         "dflash/layers/0/attention/query", "proposal/head"};
