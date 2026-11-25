@@ -599,6 +599,28 @@ void check_analyzer_walk() {
                  ", expected " + want);
         }
     }
+    // A list none of whose routes is admitted (the A8 routes under A16Only) gives no answer, so
+    // the authorities below answer; a prefill call never reaches the walk (analyzer_entry).
+    {
+        const quantized_weight::PackedWeight host = quantized_weight::make_patterned_weight(
+            QType::GGML_Q4_K, 4096, 4096, 7U, quantized_weight::PatternedWeightOptions{});
+        const Weight w = host.device_weight(payload);
+        const generic::Problem a16{QType::GGML_Q4_K, LinearPolicy::A16Only, 4096, 4096,
+                                   generic::Epilogue::Store};
+        const std::vector<generic::Route> a8_only(ranked.begin(), ranked.begin() + 2);
+        if (const auto got =
+                generic::analyzer_walk(a8_only, generic::resolve_ask(1, false), a16, w)) {
+            fail("analyzer walk: an A16Only call took " + generic::route_name(*got) +
+                 " off a list of A8 routes");
+        }
+        const generic::Problem a8{QType::GGML_Q4_K, LinearPolicy::AllowA8, 4096, 4096,
+                                  generic::Epilogue::Store};
+        for (const generic::NamedAuthority& a : generic::select_authorities()) {
+            if (a.name == "analyzer" && a.answer(generic::resolve_ask(4, true), a8, w)) {
+                fail("analyzer walk: a prefill call of T 4 is answered by the analyzer");
+            }
+        }
+    }
 }
 
 // The MMQ prefill gate on a board whose L2 size is unknown (a card outside the facts whose driver
