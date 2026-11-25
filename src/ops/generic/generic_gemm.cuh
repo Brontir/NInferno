@@ -581,6 +581,21 @@ struct Q8Decoder {
         const std::int64_t gid = static_cast<std::int64_t>(row) * a.groups_per_row + (step_k0 >> 5);
         return {make_uint2(0, 0), reinterpret_cast<const unsigned short*>(a.scales)[gid]};
     }
+
+    // rmma_kernel's split fetch (ScaleAtOf): the codes under the K / row bounds, the scale loaded
+    // once outside them, from a row and K the caller keeps in bounds. Merged from the three
+    // branches (load / masked / zero), the loaded scale got a 0xffff mask right after its load on
+    // sm_120a, a wait that exposed each scale's DRAM round trip (four a K trip, #1197); a zero
+    // row's codes are 0, so the scale it loads multiplies nothing.
+    __device__ static __forceinline__ uint2 codes_at(const GemmArgs& a, int row, int k0) {
+        const std::int64_t gid = static_cast<std::int64_t>(row) * a.groups_per_row + (k0 >> 5);
+        return *reinterpret_cast<const uint2*>(a.codes + gid * 32 + (k0 & 31));
+    }
+
+    __device__ static __forceinline__ unsigned scale_at(const GemmArgs& a, int row, int k0) {
+        const std::int64_t gid = static_cast<std::int64_t>(row) * a.groups_per_row + (k0 >> 5);
+        return reinterpret_cast<const unsigned short*>(a.scales)[gid];
+    }
     __device__ static __forceinline__ int code(const Run& r, int v) {
         const unsigned word = v < 4 ? r.codes.x : r.codes.y;
         return static_cast<int>(static_cast<signed char>((word >> ((v & 3) * 8)) & 0xffU));
@@ -2228,6 +2243,16 @@ struct UnpackOf<D, std::void_t<decltype(D::unpack(std::declval<typename D::Run&>
                                decltype(D::load_raw(std::declval<const GemmArgs&>(), 0, 0))>>
     : std::true_type {};
 
+// A decoder with codes_at() and scale_at() (Q8): rmma_kernel's fetch loads the scale outside the
+// bounds branches (#1197).
+template <class D, class = void>
+struct ScaleAtOf : std::false_type {};
+
+template <class D>
+struct ScaleAtOf<D, std::void_t<decltype(D::scale_at(std::declval<const GemmArgs&>(), 0, 0)),
+                                decltype(D::codes_at(std::declval<const GemmArgs&>(), 0, 0))>>
+    : std::true_type {};
+
 // A decoder whose SwiGLU decode tile stages its activations ahead (kStageActs; rmma_kernel's
 // kActStage).
 template <class D, class = void>
@@ -3524,9 +3549,19 @@ __launch_bounds__(Schedule::kThreads,
                 for (int h = 0; h < 2; ++h) {
                     const int l   = local0 + m * 16 + h * 8 + group;
                     const int row = a.row_begin + l + (s == 1 ? a.up_offset : 0);
-                    ring[slot][s][m][h] = l >= a.rows ? Decoder::zero()
-                                          : k_ok      ? load_run<Decoder, kRaw>(a, row, k0)
-                                                      : Decoder::masked(a, row, step * KStep);
+                    if constexpr (ScaleAtOf<Decoder>::value) {
+                        // The scale from a row in bounds (a zero row reads the set's first) and the
+                        // step's first group where K is past the end, as masked() does.
+                        const bool row_ok = l < a.rows;
+                        Run& r            = ring[slot][s][m][h];
+                        r.codes = row_ok && k_ok ? Decoder::codes_at(a, row, k0) : make_uint2(0, 0);
+                        r.scale =
+                            Decoder::scale_at(a, row_ok ? row : row - l, k_ok ? k0 : step * KStep);
+                    } else {
+                        ring[slot][s][m][h] = l >= a.rows ? Decoder::zero()
+                                              : k_ok      ? load_run<Decoder, kRaw>(a, row, k0)
+                                                          : Decoder::masked(a, row, step * KStep);
+                    }
                 }
     };
 
