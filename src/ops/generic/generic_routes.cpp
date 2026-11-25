@@ -305,7 +305,11 @@ bool tiled_supports(WeightCodec codec) { return compiled(Variant::Tiled, codec);
 
 bool volta_hmma_codec(WeightCodec codec) { return compiled(Variant::VoltaHmma, codec); }
 
-int volta_hmma_k_multiple(WeightCodec codec) { return codec == WeightCodec::Q8 ? 64 : 256; }
+// Whole superblocks of the K-quants; Q8 G32 and NVFP4 in whole 64-value quad-pair runs (HQ8,
+// HNV4: a run past K holds zeros).
+int volta_hmma_k_multiple(WeightCodec codec) {
+    return codec == WeightCodec::Q8 || codec == WeightCodec::Nvfp4 ? 64 : 256;
+}
 
 bool tiled_fits(int schedule, WeightCodec codec) {
     const int c = tiled_codec_index(codec);

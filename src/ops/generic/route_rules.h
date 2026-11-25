@@ -420,7 +420,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      ""},
     {"kVoltaHmmaMaxTokens", Basis::Measured, "generic_gemm_internal.h",
      "inline constexpr std::int32_t kVoltaHmmaMaxTokens = 16;", 16, "gv100:80sm", "V100",
-     "the verify widths (Q4_K / Q5_K / Q6_K and Q8 G32); Quadro GV100 Qwen3.8 27B UD-Q4_K_XL: the "
+     "the verify widths (Q4_K / Q5_K / Q6_K, Q8 G32 and NVFP4); Quadro GV100 Qwen3.8 27B "
+     "UD-Q4_K_XL: the "
      "register MMA at T = 5..16 about 0.5 ms a call against 0.08 for the vector kernel at T = 4; "
      "C8 aggregate 37.3 tok/s against C4 86.3",
      ""},

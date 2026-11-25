@@ -260,7 +260,7 @@ bool tiled_supports(WeightCodec codec) {
 
 bool volta_hmma_codec(WeightCodec codec) {
     return codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
-           codec == WeightCodec::GgmlQ6K || codec == WeightCodec::Q8;
+           codec == WeightCodec::GgmlQ6K || codec == WeightCodec::Q8 || codec == WeightCodec::Nvfp4;
 }
 
 } // namespace legacy

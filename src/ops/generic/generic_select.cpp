@@ -2177,14 +2177,14 @@ std::optional<Route> volta_tiled_route(const Weight& weight, LinearPolicy policy
     return std::nullopt;
 }
 
-// Without tensor mma.sync (Volta) a call of 1..16 tokens of Q4_K / Q5_K / Q6_K or Q8 G32 takes
-// the HMMA kernel (generic_volta_hmma.cu): it runs as a register-MMA route (run_route launches it
-// in place of the emulated tiles, volta_hmma_takes), f16 activations as the tiled route's from 17
-// tokens. Its alternatives grow with T on Volta's CUDA cores: the register MMA's emulated
-// fragments (FP32 FMAs and shuffles), ggml's vector kernel (dp4a, the activation re-read for every
-// column) and R8 (dp4a); the tensor cores multiply eight or sixteen columns for the price of one,
-// so the call costs reading its weight once, whatever its width up to eight (sixteen: two column
-// groups). An A16 call takes it from one token. A call with an int8 route keeps that route
+// Without tensor mma.sync (Volta) a call of 1..16 tokens of Q4_K / Q5_K / Q6_K, Q8 G32 or NVFP4
+// takes the HMMA kernel (generic_volta_hmma.cu): it runs as a register-MMA route (run_route
+// launches it in place of the emulated tiles, volta_hmma_takes), f16 activations as the tiled
+// route's from 17 tokens. Its alternatives grow with T on Volta's CUDA cores: the register MMA's
+// emulated fragments (FP32 FMAs and shuffles), ggml's vector kernel (dp4a, the activation re-read
+// for every column) and R8 (dp4a); the tensor cores multiply eight or sixteen columns for the price
+// of one, so the call costs reading its weight once, whatever its width up to eight (sixteen: two
+// column groups). An A16 call takes it from one token. A call with an int8 route keeps that route
 // through the widths it holds where tensor mma.sync exists (kVecRuleMaxTokens): there an HMMA
 // leaves at least half of its eight columns empty while the int8 kernels' per-column work is still
 // small, and from five tokens the HMMA kernel takes over, where those cards move to their MMA.
