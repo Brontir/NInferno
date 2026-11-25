@@ -16,6 +16,7 @@
 #include "core/cache_file.h"
 #include "core/host_memory.h"
 #include "core/sha256.h"
+#include "spec/fingerprint.h"
 #include "spec/manifest.h"
 
 #include "core/sys.h"
@@ -93,18 +94,31 @@ void say(const AcquireOptions& options, const std::string& line) {
 // tokenizer.json and tokenizer_config.json name the same added tokens and special flags, so they
 // come from one source: the base gives the ones wanted only when its snapshot holds all of them
 // (a cached snapshot may hold tokenizer_config.json alone, #1218), else both are rebuilt from
-// the GGUF.
+// the GGUF. Files beside the GGUF that are another model's (their vocabulary is not the GGUF's:
+// the convert drops them, checks.cpp load_resources) count as absent here too.
 void base_tokenizer(const FetchResult& fetched, const FetchOptions& fetch, ConvertOptions& options) {
     if (!fs::is_regular_file(fetched.model)) { return; }
     std::map<std::string, std::string> rebuilt;
     try {
         rebuilt = Checkpoint(fetched.model).rebuilt_resources();
     } catch (const std::exception&) {}
+    const fs::path dir   = fetched.model.parent_path();
+    bool foreign_beside  = false;
+    const auto own_vocab = rebuilt.find("tokenizer.json");
+    if (own_vocab != rebuilt.end() && fs::exists(dir / "tokenizer.json")) {
+        // The same test as load_resources'.
+        std::string beside_vocab, gguf_vocab;
+        try {
+            beside_vocab = spec::vocab_fingerprint_file(dir / "tokenizer.json").value;
+            gguf_vocab   = spec::vocab_fingerprint_text(own_vocab->second).value;
+        } catch (const std::exception&) {}
+        foreign_beside = beside_vocab != gguf_vocab;
+    }
     std::vector<std::string> wanted;
     for (const char* role : kTokenizerFiles) {
         bool given = false;
         for (const auto& [name, _] : options.resources) { given = given || name == role; }
-        const bool beside = fs::exists(fetched.model.parent_path() / role);
+        const bool beside = !foreign_beside && fs::exists(dir / role);
         const bool keep   = std::string_view(role) == "chat_template.jinja" ||
                           std::string_view(role) == "generation_config.json";
         if (!given && !beside && !(keep && rebuilt.contains(role))) { wanted.emplace_back(role); }
