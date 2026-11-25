@@ -82,7 +82,7 @@ __global__ void depth_mix_sums_kernel(MixParams p, float* part) {
     constexpr int kWarps = kMixThreads / 32;
     __shared__ float warp_part[kWarps][kMixSums];
     const int chunk = blockIdx.x, chunks = gridDim.x, t = blockIdx.y;
-    const int h = chunk * kMixThreads + threadIdx.x;
+    const int h             = chunk * kMixThreads + threadIdx.x;
     const std::int64_t base = static_cast<std::int64_t>(t) * p.hidden;
     float acc[kMixSums];
 #pragma unroll
