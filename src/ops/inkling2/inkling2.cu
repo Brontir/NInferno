@@ -71,50 +71,79 @@ struct MixParams {
 
 constexpr int kMixThreads = 256;
 
+// One block a token. One pass over the states gathers every sum the weights need (each state's
+// sum of squares and its dot with every query) in registers; one block reduction of them all, the
+// softmax, then the weighted sum. (A reduction a sum, 1 + queries of them a state, took 13.9 us a
+// call at T 1 on the RTX 4090: 16 % of the decode's kernel time.)
 __global__ void depth_mix_kernel(MixParams p) {
-    __shared__ float scratch[32];
-    __shared__ float inv[kInkling2MaxMixStates];
-    __shared__ float weight[kInkling2MaxMixQueries][kInkling2MaxMixStates];
-    const std::int64_t t = blockIdx.x, base = t * p.hidden;
-    for (int s = 0; s < p.count; ++s) {
-        float sq = 0;
-        for (int h = threadIdx.x; h < p.hidden; h += blockDim.x) {
-            const float x = bf(p.states[s], base + h);
-            sq += x * x;
+    constexpr int S = kInkling2MaxMixStates, Q = kInkling2MaxMixQueries, kSums = S * (Q + 1);
+    constexpr int kWarps = kMixThreads / 32;
+    __shared__ float part[kWarps][kSums];
+    __shared__ float total[kSums];
+    __shared__ float weight[Q][S];
+    const std::int64_t base = static_cast<std::int64_t>(blockIdx.x) * p.hidden;
+    float acc[kSums];
+#pragma unroll
+    for (int i = 0; i < kSums; ++i) { acc[i] = 0.0F; }
+    for (int h = threadIdx.x; h < p.hidden; h += kMixThreads) {
+        float qv[Q];
+#pragma unroll
+        for (int r = 0; r < Q; ++r) {
+            qv[r] = r < p.queries ? p.query[static_cast<std::int64_t>(r) * p.hidden + h] : 0.0F;
         }
-        const float total = block_sum(sq, scratch);
-        if (threadIdx.x == 0) { inv[s] = rsqrtf(total / p.hidden + 1e-6F); }
+#pragma unroll
+        for (int st = 0; st < S; ++st) {
+            if (st < p.count) {
+                const float x = bf(p.states[st], base + h);
+                acc[st] += x * x;
+#pragma unroll
+                for (int r = 0; r < Q; ++r) { acc[S + r * S + st] += x * qv[r]; }
+            }
+        }
+    }
+    const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
+#pragma unroll
+    for (int i = 0; i < kSums; ++i) {
+        const float v = warp_sum(acc[i]);
+        if (lane == 0) { part[warp][i] = v; }
     }
     __syncthreads();
-    const float scale = rsqrtf(static_cast<float>(p.hidden));
-    for (int r = 0; r < p.queries; ++r) {
-        for (int s = 0; s < p.count; ++s) {
-            float dot = 0;
-            for (int h = threadIdx.x; h < p.hidden; h += blockDim.x) {
-                dot += bf(p.states[s], base + h) *
-                       p.query[static_cast<std::int64_t>(r) * p.hidden + h];
-            }
-            const float total = block_sum(dot, scratch);
-            if (threadIdx.x == 0) { weight[r][s] = total * inv[s] * scale; }
-        }
+    if (threadIdx.x < kSums) {
+        float t = 0.0F;
+#pragma unroll
+        for (int w = 0; w < kWarps; ++w) { t += part[w][threadIdx.x]; }
+        total[threadIdx.x] = t;
     }
     __syncthreads();
     if (threadIdx.x < p.queries) {
-        const int r = threadIdx.x;
-        float m     = -INFINITY;
-        for (int s = 0; s < p.count; ++s) { m = fmaxf(m, weight[r][s]); }
-        float z = 0;
-        for (int s = 0; s < p.count; ++s) { z += expf(weight[r][s] - m); }
-        for (int s = 0; s < p.count; ++s) { weight[r][s] = expf(weight[r][s] - m) / z * inv[s]; }
+        const int r       = threadIdx.x;
+        const float scale = rsqrtf(static_cast<float>(p.hidden));
+        float inv[S], w[S];
+        float m = -INFINITY;
+#pragma unroll
+        for (int st = 0; st < S; ++st) {
+            inv[st] = st < p.count ? rsqrtf(total[st] / p.hidden + 1e-6F) : 0.0F;
+            w[st]   = st < p.count ? total[S + r * S + st] * inv[st] * scale : -INFINITY;
+            m       = fmaxf(m, w[st]);
+        }
+        float z = 0.0F;
+#pragma unroll
+        for (int st = 0; st < S; ++st) { z += st < p.count ? expf(w[st] - m) : 0.0F; }
+#pragma unroll
+        for (int st = 0; st < S; ++st) {
+            weight[r][st] = st < p.count ? expf(w[st] - m) / z * inv[st] : 0.0F;
+        }
     }
     __syncthreads();
-    for (int h = threadIdx.x; h < p.hidden; h += blockDim.x) {
-        float x[kInkling2MaxMixStates];
-        for (int s = 0; s < p.count; ++s) { x[s] = bf(p.states[s], base + h); }
+    for (int h = threadIdx.x; h < p.hidden; h += kMixThreads) {
+        float x[S];
+#pragma unroll
+        for (int st = 0; st < S; ++st) { x[st] = st < p.count ? bf(p.states[st], base + h) : 0.0F; }
         for (int r = 0; r < p.queries; ++r) {
-            float acc = 0;
-            for (int s = 0; s < p.count; ++s) { acc += weight[r][s] * x[s]; }
-            p.out[r][base + h] = __float2bfloat16(acc);
+            float a = 0.0F;
+#pragma unroll
+            for (int st = 0; st < S; ++st) { a += weight[r][st] * x[st]; }
+            p.out[r][base + h] = __float2bfloat16(a);
         }
     }
 }
@@ -169,18 +198,18 @@ __global__ void control_kernel(const __nv_bfloat16* cur, const __nv_bfloat16* ms
     out[i] = __float2bfloat16(c - tanhf(bf(forget, i)) * c + tanhf(bf(gain, i)) * bf(msg, i));
 }
 
+// One block a half (cur, message) of a token: the two norms in parallel.
 __global__ void norm_pair_kernel(const __nv_bfloat16* a, const __nv_bfloat16* b, __nv_bfloat16* out,
                                  int hidden) {
     __shared__ float scratch[32];
-    const std::int64_t t = blockIdx.x;
-    for (int half = 0; half < 2; ++half) {
-        const __nv_bfloat16* x = (half ? b : a) + t * hidden;
-        float sq               = 0;
-        for (int h = threadIdx.x; h < hidden; h += blockDim.x) { sq += bf(x, h) * bf(x, h); }
-        const float inv = rsqrtf(block_sum(sq, scratch) / hidden + 1e-6F);
-        for (int h = threadIdx.x; h < hidden; h += blockDim.x) {
-            out[t * 2 * hidden + half * hidden + h] = __float2bfloat16(bf(x, h) * inv);
-        }
+    const std::int64_t t   = blockIdx.y;
+    const int half         = blockIdx.x;
+    const __nv_bfloat16* x = (half ? b : a) + t * hidden;
+    float sq               = 0;
+    for (int h = threadIdx.x; h < hidden; h += blockDim.x) { sq += bf(x, h) * bf(x, h); }
+    const float inv = rsqrtf(block_sum(sq, scratch) / hidden + 1e-6F);
+    for (int h = threadIdx.x; h < hidden; h += blockDim.x) {
+        out[t * 2 * hidden + half * hidden + h] = __float2bfloat16(bf(x, h) * inv);
     }
 }
 
@@ -407,7 +436,7 @@ void inkling2_norm_pair(const Tensor& a, const Tensor& b, Tensor& out, cudaStrea
     need(a.ne[0] == b.ne[0] && a.ne[1] == b.ne[1] && out.ne[0] == 2 * a.ne[0] &&
              out.ne[1] == a.ne[1],
          op, "a, b [H, T] and out [2H, T]");
-    norm_pair_kernel<<<a.ne[1], 256, 0, stream>>>(static_cast<const __nv_bfloat16*>(a.data),
+    norm_pair_kernel<<<dim3(2, a.ne[1]), 256, 0, stream>>>(static_cast<const __nv_bfloat16*>(a.data),
                                                   static_cast<const __nv_bfloat16*>(b.data),
                                                   static_cast<__nv_bfloat16*>(out.data), a.ne[0]);
     CUDA_CHECK(cudaGetLastError());
