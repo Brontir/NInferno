@@ -315,7 +315,8 @@ int attention_case(int window, int extent, std::uint32_t seed, KvLayout layout) 
     const int capacity = window ? window + chunk - 1 : keys;
     const int pages = 6, per_row = 3;
     const std::vector<int> table = {3, 0, 5, 1, 4, 2}; // I32 [per_row, 2]: row 0 then row 1
-    std::vector<std::vector<float>> k(std::size_t(batch)), v(std::size_t(batch));
+    std::vector<std::vector<float>> k(static_cast<std::size_t>(batch)),
+        v(static_cast<std::size_t>(batch));
     for (int b = 0; b < batch; ++b) {
         k[std::size_t(b)] = bf16_values(std::size_t(d) * hkv * keys, seed + 10 * b, -1.5f, 1.5f);
         v[std::size_t(b)] = bf16_values(std::size_t(d) * hkv * keys, seed + 10 * b + 1, -2, 2);
