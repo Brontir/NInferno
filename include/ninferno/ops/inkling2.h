@@ -64,9 +64,9 @@ void inkling2_depth_mix(const Inkling2MixStates& states, const Tensor& query, st
  * read and replaced; the rows' planes are distinct. T >= 1.
  */
 struct Inkling2ConvState {
-    float* data                = nullptr;
-    std::int64_t slot_stride   = 0; // elements between two slots' planes
-    const std::int32_t* slots  = nullptr;
+    float* data               = nullptr;
+    std::int64_t slot_stride  = 0; // elements between two slots' planes
+    const std::int32_t* slots = nullptr;
 };
 
 void inkling2_conv(const Tensor& x, const Tensor& weight, const Tensor& taps, std::int32_t heads,

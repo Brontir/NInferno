@@ -376,11 +376,10 @@ void inkling2_conv(const Tensor& x, const Tensor& weight, const Tensor& taps, st
     }
     const float scale = 1.0F / std::sqrt(4.0F * (dynamic ? 2.0F : 1.0F) + 1.0F);
     conv_kernel<<<dim3((channels + kConvThreads - 1) / kConvThreads, batch), kConvThreads, 0,
-                  stream>>>(static_cast<const __nv_bfloat16*>(x.data),
-                            static_cast<const float*>(weight.data),
-                            dynamic ? static_cast<const __nv_bfloat16*>(taps.data) : nullptr,
-                            dynamic ? heads : 1, state, static_cast<__nv_bfloat16*>(out.data),
-                            channels, tokens, scale);
+                  stream>>>(
+        static_cast<const __nv_bfloat16*>(x.data), static_cast<const float*>(weight.data),
+        dynamic ? static_cast<const __nv_bfloat16*>(taps.data) : nullptr, dynamic ? heads : 1,
+        state, static_cast<__nv_bfloat16*>(out.data), channels, tokens, scale);
     CUDA_CHECK(cudaGetLastError());
 }
 

@@ -124,7 +124,7 @@ int conv_batch_case(int channels, int heads, std::uint32_t seed) {
             const int head = c / (channels / heads);
             for (int t = 0; t < tokens; ++t) {
                 const std::size_t i = std::size_t(t) + 3, col = std::size_t(b) * tokens + t;
-                double y            = u[i];
+                double y = u[i];
                 for (int k = 0; k < 4; ++k) {
                     y += weight[std::size_t(c) * 4 + k] * u[i - 3 + std::size_t(k)];
                 }
