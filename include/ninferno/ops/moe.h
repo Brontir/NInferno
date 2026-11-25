@@ -126,8 +126,8 @@ struct MoeConfig {
     bool renormalize             = true; ///< w_k = s_k / sum over the selected scores
     float routed_scale           = 1.0F; ///< multiplies every routed weight
     MoeActivation activation     = MoeActivation::SwiGlu;
-    float alpha                  = 1.702F; ///< ClampedSwiGlu; Situ: the gate's soft cap
-    float limit                  = 7.0F;   ///< ClampedSwiGlu; Situ: the up's soft cap
+    float alpha                    = 1.702F; ///< ClampedSwiGlu; Situ: the gate's soft cap
+    float limit                    = 7.0F;   ///< ClampedSwiGlu; Situ: the up's soft cap
     MoeGateUpLayout gate_up_layout = MoeGateUpLayout::Concatenated;
     /// Programmatic dependent launches through the decode chain where the device and the layer
     /// take them; false keeps a pass's chain on plain launches (a drafter's: Nemotron 3.5 MTP).

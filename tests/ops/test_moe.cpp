@@ -289,7 +289,8 @@ double act(const ops::MoeConfig& c, double g, double u) {
     case ops::MoeActivation::Relu2: // non-gated: u only
         return g > 0.0 ? g * g : 0.0;
     case ops::MoeActivation::Situ:
-        return c.alpha * std::tanh(g / c.alpha) / (1.0 + std::exp(-g)) * c.limit * std::tanh(u / c.limit);
+        return c.alpha * std::tanh(g / c.alpha) / (1.0 + std::exp(-g)) * c.limit *
+               std::tanh(u / c.limit);
     case ops::MoeActivation::SwiGlu:
         break;
     }
@@ -1410,18 +1411,25 @@ Case oss_like() {
 // bias, renormalized and scaled by 8, the soft-capped SITU activation, NVFP4 experts.
 Case inkling2_like() {
     Case c;
-    c.label = "inkling2-like nvfp4 E128 k8 situ";
-    c.experts = 128; c.top_k = 8; c.hidden = 512; c.inter = 192; c.shared_inter = 0;
-    c.gate_up = c.down = QType::NVFP4;
+    c.label        = "inkling2-like nvfp4 E128 k8 situ";
+    c.experts      = 128;
+    c.top_k        = 8;
+    c.hidden       = 512;
+    c.inter        = 192;
+    c.shared_inter = 0;
+    c.gate_up = c.down    = QType::NVFP4;
     c.config.top_k        = 8;
     c.config.scoring      = ops::MoeScoring::Sigmoid;
     c.config.routed_scale = 8.0F;
     c.config.activation   = ops::MoeActivation::Situ;
     c.config.alpha        = 4.0F;
     c.config.limit        = 25.0F;
-    c.router_bias = false; c.selection_bias = true; c.expert_scale = false;
-    c.expert_bias = false; c.shared_gate = false;
-    c.epilogue = ops::MoeEpilogue::Store;
+    c.router_bias         = false;
+    c.selection_bias      = true;
+    c.expert_scale        = false;
+    c.expert_bias         = false;
+    c.shared_gate         = false;
+    c.epilogue            = ops::MoeEpilogue::Store;
     return c;
 }
 
