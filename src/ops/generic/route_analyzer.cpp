@@ -1169,6 +1169,11 @@ std::vector<detail::generic::Route> device_routes(const detail::generic::Problem
     const DeviceClass& d = device_class();
     for (const std::string_view chip : kHeldChips)
         if (d.chip == chip) return {};
+    // The architectures the switch scored (sm_75, sm_86, sm_89, sm_120a) on boards with tensor
+    // cores. Volta keeps its HMMA authority: the analyzer prices its substitutes, but they are not
+    // scored yet (the GV100's HMMA priced 11.8 us where it takes 20, the sealed exam 25.11).
+    const int cc = d.compute_capability();
+    if ((cc != 75 && cc != 86 && cc != 89 && cc != 120) || d.facts.mma_slow) return {};
     const auto kernels = kf::sass_arch_of(d, substituted_device_class() != nullptr);
     std::string key = d.id() + '|' + std::to_string(d.pci_device_id) + '|' + kernels.value_or("-") +
                       '|' + std::to_string(static_cast<int>(problem.qtype)) + '|' +

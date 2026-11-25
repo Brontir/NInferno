@@ -286,12 +286,12 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "T 9-16 alone, above the vec and R8 widths it does not price; held by a static_assert; a "
      "structural width, no margin recorded",
      ""},
-    {"kRankedMaxTokens", Basis::Structural, "../route_table.cpp",
-     "constexpr std::int32_t kRankedMaxTokens = 8;", 8, kUnknown, kUnknown,
-     "the last width a routes/pick ranked list may hold: the analyzer (tools/route_pick/"
-     "analyzer.py) answers T 1-8, the decode and verify widths of one card it was scored on "
-     "(the same-SHA exam), below the predicted bands; held by a static_assert against "
-     "kPredictedMinTokens; a structural width, no margin recorded",
+    {"kMaxTokens", Basis::Structural, "route_analyzer.h",
+     "inline constexpr std::int32_t kMaxTokens = 8;", 8, kUnknown, kUnknown,
+     "the last width the engine's analyzer answers (route_analyzer.cpp device_routes): T 1-8, "
+     "the decode and verify widths of one card it was scored on (the same-SHA exam), below the "
+     "predicted bands; held by a static_assert against kPredictedMinTokens; a structural width, "
+     "no margin recorded",
      ""},
     {"kPredictedMaxTokens", Basis::Measured, "../route_table.cpp",
      "constexpr std::int32_t kPredictedMaxTokens = 32;", 32, "ad104:60sm, ad102:128sm",
