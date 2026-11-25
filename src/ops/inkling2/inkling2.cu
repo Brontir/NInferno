@@ -10,6 +10,7 @@
 #include <cuda_bf16.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
@@ -464,15 +465,28 @@ __global__ void attention_join_kernel(AttnParams p) {
 }
 
 // The key splits a call takes: enough blocks to cover the SMs twice, at most kAttnMaxSplit.
-int attention_splits(int groups, int columns) {
-    static const int sms = [] {
-        int device = 0, count = 0;
-        if (cudaGetDevice(&device) != cudaSuccess ||
-            cudaDeviceGetAttribute(&count, cudaDevAttrMultiProcessorCount, device) != cudaSuccess) {
-            return 1;
+// The current device's SMs, asked once a device (a host attribute query: graph-capture safe).
+int device_sms() {
+    constexpr int kDevices = 64;
+    static std::atomic<int> cache[kDevices] = {};
+    int device = 0;
+    if (cudaGetDevice(&device) != cudaSuccess || device < 0) { return 1; }
+    if (device < kDevices) {
+        if (const int known = cache[device].load(std::memory_order_relaxed); known > 0) {
+            return known;
         }
-        return count;
-    }();
+    }
+    int count = 0;
+    if (cudaDeviceGetAttribute(&count, cudaDevAttrMultiProcessorCount, device) != cudaSuccess ||
+        count < 1) {
+        return 1;
+    }
+    if (device < kDevices) { cache[device].store(count, std::memory_order_relaxed); }
+    return count;
+}
+
+int attention_splits(int groups, int columns) {
+    const int sms    = device_sms();
     const int blocks = groups * columns;
     return std::clamp((2 * sms + blocks - 1) / blocks, 1, kAttnMaxSplit);
 }
