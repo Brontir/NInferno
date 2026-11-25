@@ -89,6 +89,13 @@ struct TableAnswer {
 [[nodiscard]] std::optional<TableAnswer> table_predicted_answer(const Problem& problem,
                                                                 std::int32_t tokens);
 
+// The analyzer's ranked routes of one decode or verify call (routes/pick "ranked", T 1-8,
+// tools/route_pick/analyzer.py over this board's facts): cheapest first, ending at the first A16
+// register-MMA schedule. Empty: no list (no file for this board, no entry for the problem, a width
+// the file leaves out, or the Legacy policy). route_authorities.cpp analyzer_entry takes the first
+// route the call's policy, profile and build admit.
+[[nodiscard]] std::vector<Route> table_ranked_routes(const Problem& problem, std::int32_t tokens);
+
 // Whether a claiming entry (RouteEntry::claim) holds the exact problem and a route for this call
 // under an A16Only policy: then the generic path computes it even though its shape has a
 // shape-owned Linear table. Under --route-policy evidence (#614 F1) a claim whose answer is

@@ -70,6 +70,11 @@ struct RouteTableStatus {
     // measured::kCarryDistance, whose answers would be Transferred. Their answers are Predicted
     // (route_authorities.h). Empty path: none read.
     std::size_t predicted_entries = 0;
+    // Of those problems, the ones with the analyzer's ranked routes at T 1-8 (routes/pick "ranked",
+    // tools/route_pick/analyzer.py): read at any distance on the board the file was priced for; the
+    // first route of a call's list its policy admits answers ahead of the tables and the rules
+    // (route_authorities.cpp analyzer_entry).
+    std::size_t ranked_entries = 0;
     std::string predicted_path; // UTF-8
     // A pick file of this class read for another board (its gpu.pci_id): not read, and why.
     std::string predicted_skipped;

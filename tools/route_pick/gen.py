@@ -45,9 +45,13 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
+import analyzer  # noqa: E402
+import analyzer_facts  # noqa: E402
 import facts  # noqa: E402
 import pick  # noqa: E402
 
+# The decode and verify widths the analyzer (analyzer.py) ranks routes at, every class of ARCH_OF_CC (ranked_entries).
+RANK_LO, RANK_HI = 1, 8
 LO, HI = 9, 16
 # The narrow band (#785): on these compute capabilities the file also holds T 17..NARROW_HI, which answers the int8
 # calls of those widths outside the prefill profile (speculative verify rounds, decode batches) ahead of the cost
@@ -57,7 +61,7 @@ LO, HI = 9, 16
 # and no sm_86 grid was scored at those widths.
 NARROW_CC = (89,)
 NARROW_HI = 32
-SCHEMA = 'ninferno-route-pick/1'
+SCHEMA = 'ninferno-route-pick/2'
 ARCH_OF_CC = {75: '75', 86: '86', 89: '89', 120: '120a'}
 
 
@@ -178,14 +182,29 @@ def tabled_classes(F, all_tables):
     return out
 
 
-def problems(all_tables, cc, epilogues=WRITTEN_EPILOGUES):
+def all_classes(F):
+    """Every board class of an architecture in ARCH_OF_CC with its facts and tensor cores (not mma_slow), each by its
+    first desktop row, else its first row: the classes the analyzer's T 1-8 ranked lists are written for (no span or
+    carry limit: at T 1-8 the analyzer is the engine's first authority on every board it has a file for)."""
+    seen = {}
+    for row in F['rows']:
+        cc = int(row.get('cc', 0))
+        if cc not in ARCH_OF_CC or ARCH_OF_CC[cc] not in F['isa'] or row.get('mma_slow'):
+            continue
+        key = class_id(row)
+        if key not in seen or (row.get('form') == 'desktop' and seen[key].get('form') != 'desktop'):
+            seen[key] = row
+    return seen
+
+
+def problems(all_tables, cc, epilogues=WRITTEN_EPILOGUES, known=pick.BITS):
     out = {}
     for _, tcc, t in all_tables:
         if tcc != cc:
             continue
         for e in t.get('entries', []):
             ep = e.get('epilogue', 'store')
-            if 'bands' not in e or e['format'] not in pick.BITS or e['compute'] != 'a16' or ep not in epilogues:
+            if 'bands' not in e or e['format'] not in known or e['compute'] != 'a16' or ep not in epilogues:
                 continue
             out[(e['format'], ep, int(e['n']), int(e['k']))] = True
     return sorted(out)
@@ -201,12 +220,40 @@ def runs(seq):
     return out
 
 
-def overlay(row, F, probs, inputs, own=None):
-    """The file of `probs`, at the widths of LO..HI (LO..NARROW_HI on NARROW_CC) `own` ({problem: widths}) leaves.
-    A problem pick.py cannot price at some width of LO..HI is left out; past HI the bands stop at the first
-    width it cannot price."""
+def ranked_list(row, AF, shape):
+    """analyzer.rank's routes of one call, cut after the first register-MMA schedule: the engine takes the first route
+    its policy, profile and build admit (route_authorities.cpp analyzer_entry), and an A16 rmma schedule is admitted
+    under every policy, so no route past it is ever taken. Empty: no route priced."""
+    out = []
+    for r in analyzer.rank(row, AF, shape):
+        out.append(r)
+        if r.startswith('rmma.'):
+            break
+    return out
+
+
+def ranked_runs(row, AF, prob):
+    """[[t_min, t_max, [route, ...]], ...] over RANK_LO..RANK_HI, runs of equal lists; a width with no priced route is
+    left out (the engine's older authorities answer it)."""
+    fmt, ep, n, k = prob
+    out = []
+    for T in range(RANK_LO, RANK_HI + 1):
+        lst = ranked_list(row, AF, dict(format=fmt, epilogue=ep, n=n, k=k, T=T))
+        if not lst:
+            continue
+        if out and out[-1][2] == lst and out[-1][1] == T - 1:
+            out[-1][1] = T
+        else:
+            out.append([T, T, lst])
+    return out
+
+
+def overlay(row, F, probs, inputs, own=None, AF=None, rprobs=()):
+    """The file of `probs`' bands, at the widths of LO..HI (LO..NARROW_HI on NARROW_CC) `own` ({problem: widths})
+    leaves, and of `rprobs`' ranked lists at T RANK_LO..RANK_HI (analyzer.py over `AF`). A problem pick.py cannot price
+    at some width of LO..HI has no bands; past HI the bands stop at the first width it cannot price."""
     own = own or {}
-    entries = []
+    bands = {}
     hi = NARROW_HI if int(row['cc']) in NARROW_CC else HI
     for fmt, ep, n, k in probs:
         seq = []
@@ -221,11 +268,21 @@ def overlay(row, F, probs, inputs, own=None):
                 break
             seq.append((T, r))
         if seq:
-            entries.append(dict(format=fmt, compute='a16', epilogue=ep, n=n, k=k, bands=runs(seq)))
+            bands[(fmt, ep, n, k)] = runs(seq)
+    ranked = {p: r for p, r in ((p, ranked_runs(row, AF, p)) for p in rprobs) if r}
+    entries = []
+    for fmt, ep, n, k in sorted(set(bands) | set(ranked)):
+        e = dict(format=fmt, compute='a16', epilogue=ep, n=n, k=k)
+        if (fmt, ep, n, k) in ranked:
+            e['ranked'] = ranked[(fmt, ep, n, k)]
+        if (fmt, ep, n, k) in bands:
+            e['bands'] = bands[(fmt, ep, n, k)]
+        entries.append(e)
     return {
         'schema': SCHEMA,
         'gpu': {'class': class_id(row), 'board': row['name'], 'pci_id': row['id']},
-        'source': 'tools/route_pick/gen.py: pick.py over the facts below, nothing measured on this card',
+        'source': 'tools/route_pick/gen.py: analyzer.py (ranked, T 1-8) and pick.py (bands, T 9-32) over the facts '
+                  'below, nothing measured on this card',
         'inputs': inputs,
         'entries': entries,
     }
@@ -237,14 +294,19 @@ def inputs_of(root, F, arch):
     for p in [q for q in facts.input_paths(root, F) if not q.startswith(facts.KERNEL_FACTS) or q.endswith('/sm_%s.txt' % arch)]:
         with open(os.path.join(root, p), 'rb') as f:
             out[p] = hashlib.sha256(f.read().replace(b'\r\n', b'\n')).hexdigest()
-    for p in ('tools/route_pick/pick.py', 'tools/route_pick/facts.py', 'tools/route_pick/gen.py', pick.MMQ_HEADER.replace(os.sep, '/')):
+    for p in ('tools/route_pick/analyzer.py', 'tools/route_pick/analyzer_facts.py', 'tools/route_pick/pick.py',
+              'tools/route_pick/facts.py', 'tools/route_pick/gen.py', pick.MMQ_HEADER.replace(os.sep, '/')):
         with open(os.path.join(root, p), 'rb') as f:
             out[p] = hashlib.sha256(f.read().replace(b'\r\n', b'\n')).hexdigest()
     return out
 
 
 def text(doc):
-    return json.dumps(doc, indent=1, sort_keys=False) + '\n'
+    """The file's text: the header indented, one line an entry (the ranked lists would take a line a route)."""
+    head = {k: v for k, v in doc.items() if k != 'entries'}
+    body = json.dumps(head, indent=1, sort_keys=False)[:-2]
+    lines = [json.dumps(e, sort_keys=False) for e in doc['entries']]
+    return body + ',\n "entries": [\n  ' + ',\n  '.join(lines) + '\n ]\n}\n'
 
 
 def main():
@@ -265,6 +327,7 @@ def main():
         if bad or not all(epilogues):
             sys.exit('--epilogues: %s is not one of %s' % (','.join(bad) or '(none)', ','.join(GAP_EPILOGUES)))
     F = facts.load_facts(a.root)
+    AF = analyzer_facts.load_facts(a.root)
     all_tables = tables(a.root, F)
     tabled = {chip for chip, _, _ in all_tables}
     if a.only:
@@ -280,15 +343,21 @@ def main():
             if k in want:
                 sys.exit('board class %s is both tabled and untabled' % k)
             want[k] = (row, GAP_EPILOGUES, own)
+        # Every other class gets the T 1-8 ranked lists alone (no bands: `None`).
+        for k, row in all_classes(F).items():
+            want.setdefault(k, (row, None, {}))
     out_dir = a.out or os.path.join(a.root, 'routes', 'pick')
     stale = []
     expected = set()
     for key, (row, eps, own) in sorted(want.items()):
         full = frozenset(range(LO, (NARROW_HI if int(row['cc']) in NARROW_CC else HI) + 1))
-        probs = [p for p in problems(all_tables, int(row['cc']), eps) if own.get(p, frozenset()) != full]
-        doc = overlay(row, F, probs, inputs_of(a.root, F, ARCH_OF_CC[int(row['cc'])]), own)
-        if own and not doc['entries']:
-            continue  # a tabled board with no gap the other tables of its capability fill: no file
+        probs = [] if eps is None else [p for p in problems(all_tables, int(row['cc']), eps)
+                                        if own.get(p, frozenset()) != full]
+        # The ranked lists answer every problem of the capability's tables at T 1-8, a tabled board's own included.
+        rprobs = problems(all_tables, int(row['cc']), GAP_EPILOGUES, analyzer.BITS)
+        doc = overlay(row, F, probs, inputs_of(a.root, F, ARCH_OF_CC[int(row['cc'])]), own, AF, rprobs)
+        if not doc['entries']:
+            continue  # nothing priced for the class: no file
         name = key.replace(':', '-') + '.json'
         expected.add(name)
         path = os.path.join(out_dir, name)
