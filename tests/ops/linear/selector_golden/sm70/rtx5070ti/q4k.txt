@@ -685,7 +685,7 @@ q4k p1 store 5120x17408 prefill T=1024 w4a8.32x128 ws=22282240
 q4k p1 store 5120x17408 prefill T=2048 w4a8.32x128 ws=44564480
 q4k p1 store 5120x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q4k p1 store 5120x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
-q4k p1 add 5120x17408 speed T=1 r8.w4r2 ws=0
+q4k p1 add 5120x17408 speed T=1 r8.w8r1 ws=0
 q4k p1 add 5120x17408 speed T=2 ggml_vec ws=39168
 q4k p1 add 5120x17408 speed T=3 ggml_vec ws=58752
 q4k p1 add 5120x17408 speed T=4 ggml_vec ws=78336
