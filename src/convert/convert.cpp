@@ -2232,7 +2232,8 @@ const std::string& supported_architectures_text() {
             "Gemma4AssistantForCausalLM, Gemma4UnifiedAssistantForCausalLM, DFlashDraftModel "
             "(Gemma 4 drafters), MuseGlimmerAssistantModel (Muse Glimmer's DFlash drafter), "
             "Qwen3_5ForCausalLM, Qwen3_5ForConditionalGeneration, Qwen3_5MoeForCausalLM, "
-            "Qwen3_5MoeForConditionalGeneration, Inkling2LoopForCausalLM (Inkling 2, GGUF); dense, MoE and "
+            "Qwen3_5MoeForConditionalGeneration, Inkling2LoopForCausalLM (Inkling 2, GGUF); dense, "
+            "MoE and "
             "hybrid decoders:";
         const char* separator = " ";
         for (const std::string_view name : dense_architectures()) {

@@ -39,14 +39,16 @@ OJson text_config(const OJson& source) {
     for (std::uint64_t i = 0; i < layers; ++i) {
         const auto type = (*types)[i].get<std::string>();
         if ((type == "full_attention") != (i % block == block - 1)) {
-            throw std::runtime_error("inkling2: the last layer of each residual block, and only it, "
-                                     "is a full-attention layer");
+            throw std::runtime_error(
+                "inkling2: the last layer of each residual block, and only it, "
+                "is a full-attention layer");
         }
     }
-    for (const char* key : {"hidden_size", "vocab_size", "unpadded_vocab_size", "num_attention_heads",
-                            "num_key_value_heads", "head_dim", "sliding_window", "d_rel", "rel_extent",
-                            "log_scaling_n_floor", "sconv_kernel_size", "n_routed_experts",
-                            "num_experts_per_tok", "intermediate_size"}) {
+    for (const char* key :
+         {"hidden_size", "vocab_size", "unpadded_vocab_size", "num_attention_heads",
+          "num_key_value_heads", "head_dim", "sliding_window", "d_rel", "rel_extent",
+          "log_scaling_n_floor", "sconv_kernel_size", "n_routed_experts", "num_experts_per_tok",
+          "intermediate_size"}) {
         (void)count(source, key);
     }
     if (count(source, "num_attention_heads") % count(source, "num_key_value_heads") ||
@@ -60,8 +62,10 @@ OJson text_config(const OJson& source) {
         const auto start = (*loop)["core_start"].get<std::uint64_t>();
         const auto end   = (*loop)["core_end"].get<std::uint64_t>();
         if (!start || start >= end || end > layers || start % block || end % block ||
-            (*loop)["num_passes"].get<std::uint64_t>() < 1 || !(*loop)["gate_rank"].get<std::uint64_t>()) {
-            throw std::runtime_error("inkling2: loop_config core must lie on residual-block bounds");
+            (*loop)["num_passes"].get<std::uint64_t>() < 1 ||
+            !(*loop)["gate_rank"].get<std::uint64_t>()) {
+            throw std::runtime_error(
+                "inkling2: loop_config core must lie on residual-block bounds");
         }
     }
     return source;
@@ -76,8 +80,8 @@ public:
         auto factory = [tensor, shape](const Checkpoint& base, MatrixFormat format) -> SourcePtr {
             return matrix_source(base, tensor, shape, format);
         };
-        add(name, shape, factory(base_, MatrixFormat::Auto), factory, std::move(inputs), QType::BF16,
-            std::move(probe_leaf));
+        add(name, shape, factory(base_, MatrixFormat::Auto), factory, std::move(inputs),
+            QType::BF16, std::move(probe_leaf));
     }
 
     void vector(const std::string& name, const std::string& tensor, Shape shape,
@@ -91,7 +95,8 @@ public:
     // An expert's gate and up as one matrix (gate rows first); NVFP4 halves share one divisor.
     void stacked(const std::string& name, std::vector<std::string> members, Shape shape,
                  std::vector<std::string> inputs, std::string probe_leaf) {
-        auto factory = [name, members, shape](const Checkpoint& base, MatrixFormat format) -> SourcePtr {
+        auto factory = [name, members, shape](const Checkpoint& base,
+                                              MatrixFormat format) -> SourcePtr {
             const auto rows_each = shape[0] / members.size();
             std::vector<SourcePtr> parts;
             bool encoded = true;
@@ -107,14 +112,16 @@ public:
             }
             return stacked_source(std::move(parts), name);
         };
-        add(name, shape, factory(base_, MatrixFormat::Auto), factory, std::move(inputs), QType::BF16,
-            std::move(probe_leaf));
+        add(name, shape, factory(base_, MatrixFormat::Auto), factory, std::move(inputs),
+            QType::BF16, std::move(probe_leaf));
     }
 
     // An expert's down projection read against its gate_up plane's adopted divisor.
-    void compensated(const std::string& name, const std::string& tensor, Shape shape, std::string gate,
-                     std::string up, Shape pair, std::vector<std::string> inputs, std::string probe_leaf) {
-        auto factory = [tensor, shape, gate, up, pair](const Checkpoint& base, MatrixFormat format) -> SourcePtr {
+    void compensated(const std::string& name, const std::string& tensor, Shape shape,
+                     std::string gate, std::string up, Shape pair, std::vector<std::string> inputs,
+                     std::string probe_leaf) {
+        auto factory = [tensor, shape, gate, up, pair](const Checkpoint& base,
+                                                       MatrixFormat format) -> SourcePtr {
             auto ref         = matrix_source(base, tensor, shape, format);
             const auto strip = [](std::string value) {
                 if (value.ends_with(".weight")) { value.resize(value.size() - 7); }
@@ -128,11 +135,13 @@ public:
             return divisor_scaled_source(ref, matrix_source(base, gate, pair, MatrixFormat::Nvfp4),
                                          matrix_source(base, up, pair, MatrixFormat::Nvfp4));
         };
-        add(name, shape, factory(base_, MatrixFormat::Auto), factory, std::move(inputs), QType::BF16,
-            std::move(probe_leaf));
+        add(name, shape, factory(base_, MatrixFormat::Auto), factory, std::move(inputs),
+            QType::BF16, std::move(probe_leaf));
     }
 
-    std::size_t group(const std::vector<std::string>& names) { return model_.add_packing_group(names); }
+    std::size_t group(const std::vector<std::string>& names) {
+        return model_.add_packing_group(names);
+    }
 
 private:
     void add(const std::string& name, Shape shape, SourcePtr source,
@@ -155,20 +164,21 @@ private:
 };
 
 void text_block(Builder& b, Model& model, const OJson& c, std::uint64_t layer) {
-    const auto h      = c["hidden_size"].get<std::uint64_t>();
-    const auto d      = c["head_dim"].get<std::uint64_t>();
-    const auto q      = c["num_attention_heads"].get<std::uint64_t>() * d;
-    const auto heads  = c["num_attention_heads"].get<std::uint64_t>();
-    const auto kvh    = c["num_key_value_heads"].get<std::uint64_t>();
-    const auto k      = kvh * d;
-    const auto rel    = c["d_rel"].get<std::uint64_t>();
-    const auto taps   = c["sconv_kernel_size"].get<std::uint64_t>();
-    const bool full   = c["layer_types"][layer].get<std::string>() == "full_attention";
-    const auto extent = full ? c["rel_extent"].get<std::uint64_t>() : c["sliding_window"].get<std::uint64_t>();
-    const auto p      = "text/layers/" + std::to_string(layer) + "/";
-    const auto leaf   = "layers." + std::to_string(layer) + ".";
-    const auto s      = "model." + leaf;
-    const auto f32    = [&](const std::string& name, const std::string& tensor, Shape shape) {
+    const auto h     = c["hidden_size"].get<std::uint64_t>();
+    const auto d     = c["head_dim"].get<std::uint64_t>();
+    const auto q     = c["num_attention_heads"].get<std::uint64_t>() * d;
+    const auto heads = c["num_attention_heads"].get<std::uint64_t>();
+    const auto kvh   = c["num_key_value_heads"].get<std::uint64_t>();
+    const auto k     = kvh * d;
+    const auto rel   = c["d_rel"].get<std::uint64_t>();
+    const auto taps  = c["sconv_kernel_size"].get<std::uint64_t>();
+    const bool full  = c["layer_types"][layer].get<std::string>() == "full_attention";
+    const auto extent =
+        full ? c["rel_extent"].get<std::uint64_t>() : c["sliding_window"].get<std::uint64_t>();
+    const auto p    = "text/layers/" + std::to_string(layer) + "/";
+    const auto leaf = "layers." + std::to_string(layer) + ".";
+    const auto s    = "model." + leaf;
+    const auto f32  = [&](const std::string& name, const std::string& tensor, Shape shape) {
         b.vector(p + name, s + tensor, std::move(shape), QType::FP32);
     };
 
@@ -181,20 +191,23 @@ void text_block(Builder& b, Model& model, const OJson& c, std::uint64_t layer) {
     }
     const auto attn = p + "attention/";
     for (const auto& [role, field, rows, input] :
-         {std::tuple{"query", "q_proj", q, "query_input"}, std::tuple{"key", "k_proj", k, "key_input"},
-          std::tuple{"value", "v_proj", k, "value_input"}, std::tuple{"gate", "gate_proj", q, "query_input"},
+         {std::tuple{"query", "q_proj", q, "query_input"},
+          std::tuple{"key", "k_proj", k, "key_input"},
+          std::tuple{"value", "v_proj", k, "value_input"},
+          std::tuple{"gate", "gate_proj", q, "query_input"},
           std::tuple{"relative", "rel_proj", rel * heads, "query_input"},
           std::tuple{"sink", "sink_proj", heads, "query_input"}}) {
         b.matrix(attn + role, s + "self_attn." + field + ".weight", {rows, h}, {attn + input},
                  leaf + "self_attn." + field);
     }
     if (full) {
-        b.matrix(attn + "key_taps", s + "self_attn.k_conv_proj.weight", {kvh * taps, h}, {attn + "key_input"},
-                 leaf + "self_attn.k_conv_proj");
+        b.matrix(attn + "key_taps", s + "self_attn.k_conv_proj.weight", {kvh * taps, h},
+                 {attn + "key_input"}, leaf + "self_attn.k_conv_proj");
         b.matrix(attn + "value_taps", s + "self_attn.v_conv_proj.weight", {kvh * taps, h},
                  {attn + "value_input"}, leaf + "self_attn.v_conv_proj");
     }
-    b.matrix(attn + "output", s + "self_attn.o_proj.weight", {h, q}, {attn + "context"}, leaf + "self_attn.o_proj");
+    b.matrix(attn + "output", s + "self_attn.o_proj.weight", {h, q}, {attn + "context"},
+             leaf + "self_attn.o_proj");
     f32("attention/query_clip", "self_attn.q_clip", {heads, d});
     f32("attention/relative_clip", "self_attn.rel_clip", {heads, rel});
     f32("attention/relative_bias", "self_attn.rel_bias", {extent, rel});
@@ -208,7 +221,8 @@ void text_block(Builder& b, Model& model, const OJson& c, std::uint64_t layer) {
     const auto experts = c["n_routed_experts"].get<std::uint64_t>();
     const auto ir      = c["intermediate_size"].get<std::uint64_t>();
     const auto m       = p + "moe/";
-    b.matrix(m + "router", s + "mlp.gate.weight", {experts, h}, {m + "router_input"}, leaf + "mlp.gate");
+    b.matrix(m + "router", s + "mlp.gate.weight", {experts, h}, {m + "router_input"},
+             leaf + "mlp.gate");
     b.vector(m + "selection_bias", s + "mlp.gate.e_score_correction_bias", {experts}, QType::FP32);
     f32("moe/output_conv", "mlp.post_conv", {h, taps});
     std::vector<std::string> gate_up, downs;
@@ -239,7 +253,8 @@ void text_block(Builder& b, Model& model, const OJson& c, std::uint64_t layer) {
             const auto ll = leaf + "loop." + role + "_control.";
             b.matrix(lp + "down", ls + "down.weight", {rank, 2 * h}, {lp + "pair"}, ll + "down");
             b.matrix(lp + "gain", ls + "gain.weight", {h, rank}, {lp + "low_rank"}, ll + "gain");
-            b.matrix(lp + "forget", ls + "forget.weight", {h, rank}, {lp + "low_rank"}, ll + "forget");
+            b.matrix(lp + "forget", ls + "forget.weight", {h, rank}, {lp + "low_rank"},
+                     ll + "forget");
             b.group({lp + "gain", lp + "forget"});
         }
     }
@@ -252,7 +267,8 @@ std::map<std::size_t, KeptEncoding> encoded_sites(const Model& model, const Chec
         const auto& parameter = model.parameters[i];
         if (!parameter.projection() || parameter.probe_leaf.empty()) { continue; }
         const auto& dims = parameter.probe_shape.empty() ? parameter.shape : parameter.probe_shape;
-        if (const auto kept = kept_encoding(base, "model." + parameter.probe_leaf, dims[0], dims[1])) {
+        if (const auto kept =
+                kept_encoding(base, "model." + parameter.probe_leaf, dims[0], dims[1])) {
             found[i] = *kept;
         }
     }
@@ -262,14 +278,15 @@ std::map<std::size_t, KeptEncoding> encoded_sites(const Model& model, const Chec
 } // namespace
 
 bool is_inkling2_architecture(std::string_view architecture) noexcept {
-    return architecture == "Inkling2LoopForCausalLM" || architecture == "Inkling2LoopForConditionalGeneration";
+    return architecture == "Inkling2LoopForCausalLM" ||
+           architecture == "Inkling2LoopForConditionalGeneration";
 }
 
 Model build_inkling2_model(const Checkpoint& base, const ResourceOverrides& overrides) {
     Model model;
     model.components["text"]["config"] = text_config(base.config());
-    load_resources(model, base.root(), model.config()["unpadded_vocab_size"].get<std::uint64_t>(), overrides,
-                   nullptr, resource_fallbacks(base));
+    load_resources(model, base.root(), model.config()["unpadded_vocab_size"].get<std::uint64_t>(),
+                   overrides, nullptr, resource_fallbacks(base));
     const auto& config = model.config();
     Builder b(model, base);
     const auto h = config["hidden_size"].get<std::uint64_t>();
@@ -289,8 +306,10 @@ Model build_inkling2_model(const Checkpoint& base, const ResourceOverrides& over
 
 bool is_inkling2_recipe(std::string_view name) noexcept { return name == "inkling2_published"; }
 
-void apply_inkling2_recipe(std::string_view name, Model& model, Recipe& recipe, const Checkpoint& base) {
-    if (name != "inkling2_published" || model.config().value("model_type", std::string()) != "inkling2_text") {
+void apply_inkling2_recipe(std::string_view name, Model& model, Recipe& recipe,
+                           const Checkpoint& base) {
+    if (name != "inkling2_published" ||
+        model.config().value("model_type", std::string()) != "inkling2_text") {
         throw std::runtime_error("inkling2_published requires an Inkling 2 text model");
     }
     // NVFP4 expert banks keep their words and per-expert divisors; every other tensor keeps its

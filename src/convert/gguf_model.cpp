@@ -2827,9 +2827,11 @@ void map_inkling2(Mapper& m) {
     const auto& embd  = m.need("token_embd.weight");
     const auto* swa   = m.meta("attention.sliding_window_pattern");
     if (!swa || !swa->is_array() || swa->size() != layers) {
-        throw std::runtime_error("inkling2: attention.sliding_window_pattern must cover every layer");
+        throw std::runtime_error(
+            "inkling2: attention.sliding_window_pattern must cover every layer");
     }
-    if (embd.shape.size() != 2 || embd.shape[0] != vocab || embd.shape[1] != hidden || tokens > vocab) {
+    if (embd.shape.size() != 2 || embd.shape[0] != vocab || embd.shape[1] != hidden ||
+        tokens > vocab) {
         throw std::runtime_error("inkling2: token_embd is not [vocab_size, embedding_length]");
     }
     const auto heads = m.per_layer("attention.head_count", 0);
@@ -2855,41 +2857,42 @@ void map_inkling2(Mapper& m) {
         }
         types.push_back(flag((*swa)[i]) ? "sliding_attention" : "full_attention");
     }
-    OJson config                    = OJson::object();
-    config["architectures"]         = OJson::array({"Inkling2LoopForCausalLM"});
-    config["model_type"]            = "inkling2_text";
-    config["hidden_size"]           = hidden;
-    config["num_hidden_layers"]     = layers;
-    config["vocab_size"]            = vocab;
-    config["unpadded_vocab_size"]   = tokens;
-    config["max_position_embeddings"] = m.count("context_length");
-    config["num_attention_heads"]   = heads;
-    config["num_key_value_heads"]   = kv;
-    config["head_dim"]              = d;
-    config["layer_types"]           = types;
-    config["sliding_window"]        = m.count("attention.sliding_window");
-    config["rms_norm_eps"]          = m.real("attention.layer_norm_rms_epsilon");
-    config["d_rel"]                 = rel;
-    config["rel_extent"]            = m.count("attention.relative_extent");
-    config["rel_l2_clip_threshold"] = m.real("attention.relative_clip");
-    config["qk_l2_clip_threshold"]  = m.real("attention.qk_clip");
-    config["log_scaling_n_floor"]   = m.count("attention.log_scale_floor");
-    config["log_scaling_alpha"]     = m.real("attention.log_scale_alpha");
-    config["sconv_kernel_size"]     = conv;
+    OJson config                          = OJson::object();
+    config["architectures"]               = OJson::array({"Inkling2LoopForCausalLM"});
+    config["model_type"]                  = "inkling2_text";
+    config["hidden_size"]                 = hidden;
+    config["num_hidden_layers"]           = layers;
+    config["vocab_size"]                  = vocab;
+    config["unpadded_vocab_size"]         = tokens;
+    config["max_position_embeddings"]     = m.count("context_length");
+    config["num_attention_heads"]         = heads;
+    config["num_key_value_heads"]         = kv;
+    config["head_dim"]                    = d;
+    config["layer_types"]                 = types;
+    config["sliding_window"]              = m.count("attention.sliding_window");
+    config["rms_norm_eps"]                = m.real("attention.layer_norm_rms_epsilon");
+    config["d_rel"]                       = rel;
+    config["rel_extent"]                  = m.count("attention.relative_extent");
+    config["rel_l2_clip_threshold"]       = m.real("attention.relative_clip");
+    config["qk_l2_clip_threshold"]        = m.real("attention.qk_clip");
+    config["log_scaling_n_floor"]         = m.count("attention.log_scale_floor");
+    config["log_scaling_alpha"]           = m.real("attention.log_scale_alpha");
+    config["sconv_kernel_size"]           = conv;
     config["n_layers_per_attn_res_block"] = block;
-    config["n_routed_experts"]      = exps;
-    config["num_experts_per_tok"]   = m.count("expert_used_count");
-    config["intermediate_size"]     = ir;
-    config["route_scale"]           = m.real("expert_weights_scale");
-    config["mlp_gate_softcap"]      = m.real("activation.situ_beta");
-    config["mlp_up_softcap"]        = m.real("activation.situ_linear_beta");
-    config["final_logit_softcapping"] = m.real("final_logit_softcapping");
+    config["n_routed_experts"]            = exps;
+    config["num_experts_per_tok"]         = m.count("expert_used_count");
+    config["intermediate_size"]           = ir;
+    config["route_scale"]                 = m.real("expert_weights_scale");
+    config["mlp_gate_softcap"]            = m.real("activation.situ_beta");
+    config["mlp_up_softcap"]              = m.real("activation.situ_linear_beta");
+    config["final_logit_softcapping"]     = m.real("final_logit_softcapping");
     if (rank) {
-        config["loop_config"] = OJson{{"core_start", start},
-                                      {"core_end", end},
-                                      {"num_passes", m.count("loop.count")},
-                                      {"gate_rank", rank},
-                                      {"is_varloop", m.meta("loop.varying") && flag(*m.meta("loop.varying"))}};
+        config["loop_config"] =
+            OJson{{"core_start", start},
+                  {"core_end", end},
+                  {"num_passes", m.count("loop.count")},
+                  {"gate_rank", rank},
+                  {"is_varloop", m.meta("loop.varying") && flag(*m.meta("loop.varying"))}};
     }
     m.out.config = std::move(config);
 
@@ -2906,11 +2909,14 @@ void map_inkling2(Mapper& m) {
         const auto s       = "blk." + std::to_string(i) + ".";
         const auto p       = "model.layers." + std::to_string(i) + ".";
         const bool sliding = flag((*swa)[i]);
-        const auto extent  = sliding ? m.count("attention.sliding_window") : m.count("attention.relative_extent");
+        const auto extent =
+            sliding ? m.count("attention.sliding_window") : m.count("attention.relative_extent");
         for (const auto& [from, to, rows, cols] :
              {std::tuple{"attn_q", "q_proj", q, hidden}, std::tuple{"attn_k", "k_proj", k, hidden},
-              std::tuple{"attn_v", "v_proj", k, hidden}, std::tuple{"attn_output", "o_proj", hidden, q},
-              std::tuple{"attn_gate", "gate_proj", q, hidden}, std::tuple{"attn_rel", "rel_proj", rel * heads, hidden},
+              std::tuple{"attn_v", "v_proj", k, hidden},
+              std::tuple{"attn_output", "o_proj", hidden, q},
+              std::tuple{"attn_gate", "gate_proj", q, hidden},
+              std::tuple{"attn_rel", "rel_proj", rel * heads, hidden},
               std::tuple{"attn_sink_proj", "sink_proj", heads, hidden}}) {
             vector(s + from + ".weight", p + "self_attn." + to + ".weight", {rows, cols});
         }
@@ -2925,13 +2931,17 @@ void map_inkling2(Mapper& m) {
             vector(s + "attn_norm.weight", p + "input_layernorm.weight", {hidden});
         } else {
             for (const char* role : {"q", "k", "v"}) {
-                vector(s + "attn_" + role + "_inp_norm.weight", p + role + "_input_layernorm.weight", {hidden});
+                vector(s + "attn_" + role + "_inp_norm.weight",
+                       p + role + "_input_layernorm.weight", {hidden});
             }
-            vector(s + "attn_k_conv_proj.weight", p + "self_attn.k_conv_proj.weight", {kv * conv, hidden});
-            vector(s + "attn_v_conv_proj.weight", p + "self_attn.v_conv_proj.weight", {kv * conv, hidden});
+            vector(s + "attn_k_conv_proj.weight", p + "self_attn.k_conv_proj.weight",
+                   {kv * conv, hidden});
+            vector(s + "attn_v_conv_proj.weight", p + "self_attn.v_conv_proj.weight",
+                   {kv * conv, hidden});
         }
         if (i > 0) {
-            vector(s + "attn_res_query.weight", p + "attention_input.query", {sliding ? 1U : 3U, hidden});
+            vector(s + "attn_res_query.weight", p + "attention_input.query",
+                   {sliding ? 1U : 3U, hidden});
         }
         vector(s + "ffn_res_query.weight", p + "ffn_input.query", {1, hidden});
         vector(s + "ffn_norm.weight", p + "post_attention_layernorm.weight", {hidden});
@@ -2965,9 +2975,9 @@ void map_inkling2(Mapper& m) {
 
 const std::vector<std::string>& supported_gguf_architectures() {
     static const std::vector<std::string> names = [] {
-        std::vector<std::string> out = {"qwen35", "qwen35moe", "gemma4", "gpt-oss",
-                                        "gemma4-assistant", "dflash", "nemotron_h_moe",
-                                        "inkling2_loop", "clip"};
+        std::vector<std::string> out = {"qwen35",         "qwen35moe",        "gemma4",
+                                        "gpt-oss",        "gemma4-assistant", "dflash",
+                                        "nemotron_h_moe", "inkling2_loop",    "clip"};
         for (const auto& arch : kDenseArchs) { out.emplace_back(arch.gguf); }
         return out;
     }();

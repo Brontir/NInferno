@@ -14,13 +14,15 @@ namespace ninferno::convert {
 
 [[nodiscard]] bool is_inkling2_architecture(std::string_view architecture) noexcept;
 
-[[nodiscard]] Model build_inkling2_model(const Checkpoint& base, const ResourceOverrides& overrides);
+[[nodiscard]] Model build_inkling2_model(const Checkpoint& base,
+                                         const ResourceOverrides& overrides);
 
 [[nodiscard]] bool is_inkling2_recipe(std::string_view name) noexcept;
 
 // inkling2_published: every tensor as published (Q8_0 projections and head, NVFP4 experts with
 // their per-expert scales, BF16 sink and tap projections, FP32 vectors and tables).
-void apply_inkling2_recipe(std::string_view name, Model& model, Recipe& recipe, const Checkpoint& base);
+void apply_inkling2_recipe(std::string_view name, Model& model, Recipe& recipe,
+                           const Checkpoint& base);
 
 [[nodiscard]] std::string default_inkling2_recipe(const OJson& config);
 
