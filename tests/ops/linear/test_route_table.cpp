@@ -411,6 +411,40 @@ int shipped_picks() {
         }
     }
     ninferno::ops::set_route_table_dir("");
+    // The engine's analyzer answers where the switch scored it and nowhere else (route_analyzer.h
+    // device_routes): a GA102 board, and one of an unknown PCI id priced from its driver values;
+    // not an sm_80 board, nor Volta (its HMMA authority answers), nor an A4 call.
+    {
+        const generic::Problem q4k_store{ninferno::QType::GGML_Q4_K,
+                                         ninferno::ops::LinearPolicy::A16Only, 4096, 4096,
+                                         generic::Epilogue::Store};
+        const auto routes_on = [&](std::uint32_t id, int major, int minor, int sms, double l2_mib,
+                                   bool driver_values, const generic::Problem& p) {
+            ninferno::DeviceClass d = ninferno::synthetic_device_class(
+                id, major, minor, sms, static_cast<std::size_t>(l2_mib * (1 << 20)), 0);
+            if (driver_values) {
+                d.sm_clock_khz     = 2'520'000;
+                d.memory_clock_khz = 10'501'000;
+                d.memory_bus_bits  = 192;
+            }
+            d.facts = ninferno::machine_facts_of(d);
+            const ninferno::ScopedDeviceClass scoped(d);
+            return ninferno::ops::route_analyzer::device_routes(p, 1);
+        };
+        failures += check(!routes_on(0x2204, 8, 6, 82, 6, false, q4k_store).empty(),
+                          "the analyzer answers a decode call on the RTX 3090");
+        failures += check(!routes_on(0, 8, 9, 60, 48, true, q4k_store).empty(),
+                          "the analyzer answers an unknown sm_89 board from its driver values");
+        failures += check(routes_on(0x20B0, 8, 0, 108, 40, false, q4k_store).empty(),
+                          "the analyzer does not answer an sm_80 board (A100)");
+        failures += check(routes_on(0x1DB1, 7, 0, 80, 6, false, q4k_store).empty(),
+                          "the analyzer does not answer Volta (its HMMA authority does)");
+        const generic::Problem nvfp4_a4{ninferno::QType::NVFP4,
+                                        ninferno::ops::LinearPolicy::AllowA4, 5120, 5120,
+                                        generic::Epilogue::Store};
+        failures += check(routes_on(0x2B85, 12, 0, 170, 96, false, nvfp4_a4).empty(),
+                          "the analyzer does not answer an A4 call (NVFP4 under AllowA4)");
+    }
     std::cout << files << " shipped predicted files; " << (failures == 0 ? "OK" : "FAIL")
               << " route_table shipped picks\n";
     return failures == 0 ? 0 : 1;
