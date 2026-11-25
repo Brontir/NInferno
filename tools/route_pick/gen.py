@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""gen.py: the analyzer's predicted route bands (T 9-16, and T 17-32 on sm_89, #785): for the board classes no route table was measured on,
-and for a tabled board, its table's gaps (#1068).
+"""gen.py: routes/pick/<chip>-<sms>sm.json, two parts a board class.
+
+- `ranked` (T 1-8): analyzer.rank()'s route list a problem and width, cheapest first, which the engine's select
+  authority "analyzer" answers decode and verify calls by, ahead of the route tables and the rules (README "T 1-8").
+  A chip in HELD_CHIPS gets none.
+- `bands` (T 9-16, and T 17-32 on sm_89, #785): the predicted route bands, for the board classes no route table was
+  measured on, and for a tabled board, its table's gaps (#1068). The rest of this docstring is about them.
 
     python3 tools/route_pick/gen.py            write routes/pick/<chip>-<sms>sm.json, one file a board class
     python3 tools/route_pick/gen.py --check    exit 1 when a file differs from what the facts give now (CI)

@@ -238,7 +238,8 @@ int shipped_picks() {
             }
         } const removed{tmp};
 
-        const auto refused_with = [&](const std::string& what, const std::string& text) {
+        const auto refused_with = [&](const std::string& what, const std::string& text,
+                                      const std::string& why = std::string()) {
             std::filesystem::remove_all(tmp);
             std::filesystem::create_directories(tmp / "pick");
             for (const auto& t : std::filesystem::directory_iterator(routes)) {
@@ -252,9 +253,12 @@ int shipped_picks() {
             try {
                 (void)ninferno::ops::route_table_status();
             } catch (const std::runtime_error& e) {
-                refused = std::string(e.what()).find(first_name) != std::string::npos;
+                const std::string msg = e.what();
+                refused               = msg.find(first_name) != std::string::npos &&
+                          (why.empty() || msg.find(why) != std::string::npos);
             }
-            failures += check(refused, first_name + " " + what + " is refused, naming the file");
+            failures += check(refused, first_name + " " + what + " is refused, naming the file" +
+                                           (why.empty() ? std::string() : " (" + why + ")"));
         };
         refused_with("as another class's file",
                      std::regex_replace(first_text, std::regex(R"re("class": "[^"]+")re"),
@@ -275,10 +279,18 @@ int shipped_picks() {
             std::regex_replace(first_text, std::regex(R"re("ranked": \[)re"),
                                R"re("ranked": [[9, 9, ["rmma.m1.n1.w1x4"]], )re",
                                std::regex_constants::format_first_only));
+        // At T 1 (not past T 8, which the limit refuses first): the refusal must be the empty
+        // list's.
         refused_with("with an empty ranked list",
                      std::regex_replace(first_text, std::regex(R"re("ranked": \[)re"),
-                                        R"re("ranked": [[9, 9, []], )re",
-                                        std::regex_constants::format_first_only));
+                                        R"re("ranked": [[1, 1, []], )re",
+                                        std::regex_constants::format_first_only),
+                     "an empty ranked list");
+        refused_with("with a band triple's route where a list belongs",
+                     std::regex_replace(first_text, std::regex(R"re("ranked": \[)re"),
+                                        R"re("ranked": [[1, 1, "rmma.m1.n1.w1x4"], )re",
+                                        std::regex_constants::format_first_only),
+                     "[t_min, t_max, [route, ...]]");
         // Within kCarryDistance a predicted band fills the table's gaps only (#1068): a table of
         // this class (distance 0) holding the file's first problem answers it as measured; the
         // file's second problem, which the table lacks, is answered as predicted, also where a

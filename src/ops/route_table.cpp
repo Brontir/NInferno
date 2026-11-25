@@ -493,7 +493,13 @@ void read_predicted(const std::string& path, Table& table) {
                 // [[t_min, t_max, [route, ...]], ...]: a list of one route at least, cheapest
                 // first.
                 std::vector<RankedBand> lists;
+                if (!e.at("ranked").is_array() || e.at("ranked").empty()) {
+                    refuse("a ranked field that is not a list of lists", where);
+                }
                 for (const Json& b : e.at("ranked")) {
+                    if (!b.is_array() || b.size() != 3 || !b.at(2).is_array()) {
+                        refuse("a ranked list that is not [t_min, t_max, [route, ...]]", where);
+                    }
                     RankedBand band{b.at(0).get<std::int32_t>(), b.at(1).get<std::int32_t>(), {}};
                     for (const Json& r : b.at(2)) band.routes.push_back(require_route(r, where));
                     if (band.routes.empty()) refuse("an empty ranked list", where);
@@ -876,8 +882,10 @@ void ensure_default_locked(DeviceTables& d) {
                 auto nearest = std::move(tables.front());
                 tables.erase(tables.begin());
                 fill_from(*nearest, tables);
-                // The analyzer's bands for this board class, where tools/route_pick wrote them
-                // (routes/pick/<class>.json). Past kCarryDistance they answer ahead of the nearest
+                // The analyzer's file for this board class, where tools/route_pick wrote it
+                // (routes/pick/<class>.json): its ranked lists (T 1-8, read only on the board the
+                // file was priced for: table_ranked_routes, the select authority "analyzer") and
+                // its bands (T 9-32). Past kCarryDistance the bands answer ahead of the nearest
                 // table (whose answers would all be Transferred or Borrowed); within it, only the
                 // table's gaps: a problem it holds no entry of its own for, one borrowed by
                 // fill_from, or a width its own entry has no band at (#1068, table_route_answer).
