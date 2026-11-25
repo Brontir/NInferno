@@ -277,7 +277,10 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
             "residual copy");
         ops::residual_add(y, out, s);
         cur = out;
-        if (observe) { observe("l_out", visit_index, cur); }
+        if (observe) {
+            check(cudaStreamSynchronize(s), "observe");
+            observe("l_out", visit_index, cur);
+        }
         ++visit_index;
     }
 
@@ -290,7 +293,10 @@ std::vector<float> Target::forward(std::span<const std::int32_t> ids, cudaStream
                       DType::BF16, {H, 1});
     Tensor hidden = work_.alloc(DType::BF16, {H, 1});
     ops::rmsnorm(last, W.final_norm, c_.rms_norm_eps, false, hidden, s);
-    if (observe) { observe("result_norm", -1, hidden); }
+    if (observe) {
+        check(cudaStreamSynchronize(s), "observe");
+        observe("result_norm", -1, hidden);
+    }
     Tensor logits(logits_.p, DType::BF16, {c_.vocab_rows, 1});
     project(hidden, W.output_head, logits, work_, s);
     ops::logit_softcap(logits, c_.softcap, s);
