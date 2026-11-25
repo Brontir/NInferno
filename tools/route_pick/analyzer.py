@@ -374,16 +374,20 @@ def price_other(c, P, fam, r, n, k, T, bits, sets, Wp=0, R=0, ep='store', act=0.
     gw = _num(r.get('glb_waits'))
     trip = _num(r['stall_sum']) / clk + gw * window(c, P, _num(r['ldg_bytes']) / max(gw, 1.0))
     chain = trips * trip + out
+    pro = 0.0
     if T <= 1:                                             # the CTA quantizes the activation: its loads are L2 latencies
-        chain += k / 1024.0 / Wp * (_num(r.get('pro_stall')) / clk + _num(r.get('pro_glb_waits')) * c['l2lat_ns'])
+        pro = k / 1024.0 / Wp * (_num(r.get('pro_stall')) / clk + _num(r.get('pro_glb_waits')) * c['l2lat_ns'])
+        chain += pro
     rounds = math.ceil(ctas / slots)
     last = ctas - (rounds - 1) * slots
     # A round's memory side: its weights at the bus, or its warps' activation L1 requests (act a warp's trip, a
     # pre-quantized call: ncu shows that call L1-bound, 85 % of the L1/TEX throughput, its L2 traffic below T 1's), one
     # wavefront each on the SMs the round fills, whichever is longer.
-    rnd = lambda nc: math.hypot(chain, max(nc * Wp * R * pitch / bus,
+    # A full round's CTAs quantize their activation while the SM's other resident CTAs stream (#1219): the prologue
+    # overlaps there; the last round pays it.
+    rnd = lambda nc, ch=chain: math.hypot(ch, max(nc * Wp * R * pitch / bus,
                                            nc * Wp * trips * act * c['die']['nr']['wf'] / (min(nc, sms) * clk)))
-    return launch_ns(c, P, ctas) + (0.0 if T <= 1 else pre) + (rounds - 1) * rnd(slots) + rnd(last)
+    return launch_ns(c, P, ctas) + (0.0 if T <= 1 else pre) + (rounds - 1) * rnd(slots, chain - pro) + rnd(last)
 
 
 VEC_WARPS = 4                      # ggml_vec.cu kVecWarps
