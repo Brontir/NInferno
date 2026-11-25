@@ -192,7 +192,9 @@ launch_lifetime(std::string_view name, const LaunchOverlap& overlap, bool pdl,
     // every prefetch as releasing over-marks R8, the safe side (more hazards checked, none missed).
     // ggml_vec's kernels also trigger right after their wait (ggml_vec.cu, #1219), which the
     // overlap does not carry: a vec launch is under-marked here. No launch after one reads or
-    // writes scratch before its own wait today (launch_overlap refuses a join after GgmlVec).
+    // writes scratch before its own wait today: run_route reports a GgmlVec launch as not
+    // released, so its caller sets no join_previous on the next launch (launch_overlap refuses
+    // GgmlVec its own join and release).
     out.releases = overlap.releases() || (pdl && overlap.prefetches());
     if (prepared && rule) {
         out.add({*prepared, ScratchAccess::Read, ScratchFirst::AfterWait, ScratchLast::AtExit});
