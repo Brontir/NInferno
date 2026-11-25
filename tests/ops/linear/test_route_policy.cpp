@@ -494,9 +494,13 @@ void check_cell(const DeviceClass& d, const Cell& c, const std::string& at,
     ++tally.moved;
     const char* regime = regime_of(c.tokens, c.prefill);
     ++tally.moved_by_regime[regime];
-    tally.moved_problems.insert(std::string(generic::qtype_name(c.shape->qtype)) + "|" +
-                                generic::epilogue_name(c.shape->epilogue) + "|n" +
-                                std::to_string(c.shape->n) + "|k" + std::to_string(c.shape->k));
+    // The analyzer answers ahead of the dense tuner's entry (a select authority): a move of its
+    // asks no tuner entry, so it names no problem for check_dense_tune_free.
+    if (!analyzer) {
+        tally.moved_problems.insert(std::string(generic::qtype_name(c.shape->qtype)) + "|" +
+                                    generic::epilogue_name(c.shape->epilogue) + "|n" +
+                                    std::to_string(c.shape->n) + "|k" + std::to_string(c.shape->k));
+    }
     // The prediction before any run: the cost model's price of the evidence route over the legacy
     // route's (null where it prices either not), and the A5 sweep's measured ratio, which
     // tools/bench/policy_moves_predict.py fills from that sweep's routes CSVs on the stand.
