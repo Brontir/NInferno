@@ -3,9 +3,10 @@
 // revision 5: qwen3_5_bf16, the dense Qwen3.5 GGUF default, too), and one with a DFlash /
 // DFlash2 companion and no proposal head (revision 6), and one with MTP layers and no head or
 // revision 6's DFlash-only head (revision 7), and one whose head serves MTP and DFlash without
-// MTP's own leading rows (revision 8), and one converted from a GGUF (revision 9: its tokenizer pair
-// from one source); not a text-only one. A current older artifact is stamped current, so its report is read
-// once. The stamp of what a conversion read tells a checkpoint replaced at the same path.
+// MTP's own leading rows (revision 8), and one converted from a GGUF (revision 9: its tokenizer
+// pair from one source); not a text-only one. A current older artifact is stamped current, so its
+// report is read once. The stamp of what a conversion read tells a checkpoint replaced at the same
+// path.
 
 #include "convert/acquire.h"
 #include "convert/cache.h"
@@ -112,18 +113,23 @@ int main() {
     {
         const auto gguf = dir / "gguf8.ninferno";
         std::ofstream(gguf) << "x";
-        std::ofstream(gguf.string() + ".revision") << 8 << "
-";
-        std::ofstream(gguf.string() + ".conversion.json")
+        std::ofstream(gguf.string() + ".revision")
+            << 8
+            << "
+               ";
+            std::ofstream(gguf.string() + ".conversion.json")
             << R"({"components": {"text": {"config": {"model_type": "llama"}}}, "methods": [], )"
             << R"("gguf": {"file": "m.gguf"}})";
-        check(!cache_current(gguf), "an artifact converted from a GGUF at revision 8 is converted again");
+        check(!cache_current(gguf),
+              "an artifact converted from a GGUF at revision 8 is converted again");
         check(cached_revision(gguf) == 8, "and keeps its stamp");
         const auto plain = dir / "plain8.ninferno";
         std::ofstream(plain) << "x";
-        std::ofstream(plain.string() + ".revision") << 8 << "
-";
-        std::ofstream(plain.string() + ".conversion.json")
+        std::ofstream(plain.string() + ".revision")
+            << 8
+            << "
+               ";
+            std::ofstream(plain.string() + ".conversion.json")
             << R"({"components": {"text": {"config": {"model_type": "llama"}}}, "methods": []})";
         check(cache_current(plain), "a checkpoint's artifact at revision 8 is current");
     }

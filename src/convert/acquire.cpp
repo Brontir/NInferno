@@ -129,8 +129,9 @@ void base_tokenizer(const FetchResult& fetched, const FetchOptions& fetch, Conve
         return std::find(wanted.begin(), wanted.end(), role) != wanted.end();
     };
     if (wants("tokenizer.json") != wants("tokenizer_config.json")) {
-        const std::string other = wants("tokenizer.json") ? "tokenizer_config.json" : "tokenizer.json";
-        bool given              = false;
+        const std::string other =
+            wants("tokenizer.json") ? "tokenizer_config.json" : "tokenizer.json";
+        bool given = false;
         for (const auto& [name, _] : options.resources) { given = given || name == other; }
         if (!given) { wanted.push_back(other); }
     }
