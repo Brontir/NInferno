@@ -114,9 +114,10 @@ int shipped_picks() {
         const std::string name = f.path().filename().string();
         std::smatch m, e, r;
         // Every file holds ranked lists (every class of an analyzer architecture) but a held chip's
-        // (gen.py HELD_CHIPS: AD102, #1211), which holds none; bands only the classes gen.py writes
-        // them for.
-        const bool held       = name.rfind("ad102-", 0) == 0;
+        // (gen.py HELD_CHIPS: AD102, #1211; TU102 / TU104 / TU106, #1183), which holds none; bands
+        // only the classes gen.py writes them for.
+        const bool held = name.rfind("ad102-", 0) == 0 || name.rfind("tu102-", 0) == 0 ||
+                          name.rfind("tu104-", 0) == 0 || name.rfind("tu106-", 0) == 0;
         const bool has_ranked = std::regex_search(text, r, ranked_re);
         if (!std::regex_search(text, m, pci_re) || has_ranked == held) {
             failures += check(false, name + (held ? " names its board and has no ranked entry (a "
