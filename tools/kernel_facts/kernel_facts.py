@@ -1153,7 +1153,29 @@ SECTION_NOTES = {
         "# sixteen k16 (Q6_K) an iteration, k_iter 256. Below sm_80 the MMA is a trap stand-in",
         "# (the route needs sm_80, route_requires): those rows have no MMA in their loop.",
     ),
+    "vhmma": (
+        "# Volta's HMMA kernel of the decode and verify widths (src/ops/generic/generic_volta_hmma.cu,",
+        "# #1165), sm_70 alone: volta_hmma_kernel<format, epilogue, NG, ahead>, the kernel run_route",
+        "# takes for an rmma.* route of its formats there (volta_hmma_takes); NG the 8-token column",
+        "# groups, ahead the superblocks it loads ahead. A warp holds eight weight rows; one iteration",
+        "# of the counted loop is one 256-value superblock of them (k_iter 1).",
+    ),
+    "vgemv": (
+        "# Volta's decode GEMV (src/ops/generic/generic_volta_gemv.cu, #1165), sm_70 alone:",
+        "# volta_kquant_gemv_kernel<format, epilogue, NT>, a warp per output row over NT tokens, the",
+        "# codes decoded to FP32 against FP32 activations (FFMA, no MMA); run_route takes it for a",
+        "# lane-local register-MMA call the HMMA kernel does not (volta_gemv_takes). One iteration of",
+        "# the counted loop is one 256-value superblock of the row (k_iter 1).",
+    ),
+    "vgemvr": (
+        "# The same GEMV over R output rows a warp, for a large store (volta_kquant_gemv_rows_kernel<",
+        "# format, epilogue, NT, R>, generic_volta_gemv.cu), sm_70 alone. One iteration of the counted",
+        "# loop is one 256-value superblock of the warp's rows (k_iter 1).",
+    ),
 }
+# The section families whose k_iter is one superblock an iteration (their notes say so), not the
+# MMA work over an m16n8 tile the generic loop note names.
+SUPERBLOCK_ITER = ("vhmma", "vgemv", "vgemvr")
 
 
 def render_section(family, rows, nvcc):
@@ -1171,7 +1193,9 @@ def render_section(family, rows, nvcc):
         "# The columns: the key, the resources, the loop's counts and schedule as above, then the",
         "# pipe counts of the same iteration: I2F, I2FP, FFMA, FMUL, FADD, IMAD, BAR (sass_counts.py).",
         "# k_iter is the warp's MMA work per iteration over one m16n8 tile (m x n x k / 128)."
-        if f.marker != "IDP" else
+        if f.marker != "IDP" and family not in SUPERBLOCK_ITER else
+        "# k_iter 1: one iteration is one 256-value superblock (the family's note above)."
+        if family in SUPERBLOCK_ITER else
         "# k_iter is the K values one iteration covers per product (128 per dp4a over the row x token"
         "\n# products a warp accumulates; sass_counts.py), the MMA columns 0.",
     ) if f.loop else ("# The columns: the key, then the resources as above.",)
