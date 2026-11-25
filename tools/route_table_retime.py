@@ -73,9 +73,10 @@ def a8_wide(times, t):
     return t >= A8_WIDE_MIN_T and any(r.startswith("w4a8") for r in times)
 
 
-def a16_routes(times, t):
-    """The routes of one count an A16 call of the table can run."""
-    wide = a8_wide(times, t)
+def a16_routes(times, t, wide=None):
+    """The routes of one count an A16 call of the table can run. `wide`: the count may take W4A8
+    (read off `times` unless given: a grid run without --a8-candidates 1 times no W4A8)."""
+    wide = a8_wide(times, t) if wide is None else wide
     return {r: us for r, us in times.items()
             if not r.startswith(NOT_TABLE_ROUTES) and not (wide and r == "ggml_mmq")}
 
@@ -354,8 +355,14 @@ def main():
                 # range's route is within the margin of the second grid's fastest, or still beats
                 # the old route by more than the margin there (a large gain to a route the second
                 # grid puts a little behind another).
+                # Dead is the shape's, not the grid's (#1206 review): a count either grid timed
+                # W4A8 at admits W4A8, so ggml_mmq is no A16 rival there in the second grid either.
+                def ev_a16(t):
+                    ev = ev_grid.get((key, t), {})
+                    return a16_routes(ev, t, a8_wide(ev, t) or a8_wide(grid_all[(key, t)], t))
+
                 def repeats(t, old):
-                    times = a16_routes(ev_grid.get((key, t), {}), t)
+                    times = ev_a16(t)
                     if best not in times:
                         return True  # not timed there: the first grid's word stands
                     if times[best] <= min(times.values()) * (1 + a.margin):
@@ -375,13 +382,11 @@ def main():
                 # in the second grid against 1 % in the first). The move as a whole is held to the
                 # first grid's own test there: it lowers the worst regret of the live moved counts
                 # by more than the margin. A count takes no part where the second grid has no A16
-                # time of its old or its new route (untimed, or ggml_mmq where it timed W4A8).
+                # time of its old or its new route (untimed, or ggml_mmq where W4A8 was timed).
                 def regret2(route, t):
-                    times = a16_routes(ev_grid.get((key, t), {}), t)
+                    times = ev_a16(t)
                     return times[route] / min(times.values()) - 1 if route in times else None
 
-                # Live by the second grid, not the first (#1206 review): ggml_mmq dead in a first
-                # grid that timed W4A8 is a rival in a second grid that did not.
                 pairs = [(regret2(haves[t], t), regret2(best, t)) for t in moved]
                 pairs = [(o, n) for o, n in pairs if o is not None and n is not None]
                 if pairs:
