@@ -490,8 +490,7 @@ q6k p1 store 5120x17408 prefill T=17..2048 ggml_mmq ws=0
 q6k p1 store 5120x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 q6k p1 store 5120x17408 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 q6k p1 add 5120x17408 speed T=1 r8.w8r1 ws=0
-q6k p1 add 5120x17408 speed T=2 r8.w8r1 ws=43520
-q6k p1 add 5120x17408 speed T=3..8 rmma.m1.n1.w1x16 ws=0
+q6k p1 add 5120x17408 speed T=2..8 rmma.m1.n1.w1x16 ws=0
 q6k p1 add 5120x17408 speed T=9..96 ggml_mmq ws=0
 q6k p1 add 5120x17408 speed T=128 w4a8ws.128x64.p4 ws=2785280
 q6k p1 add 5120x17408 speed T=192..2048 ggml_mmq ws=0

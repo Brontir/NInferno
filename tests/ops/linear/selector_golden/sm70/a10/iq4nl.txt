@@ -304,7 +304,7 @@ iq4nl p0 swiglu 3072x5120 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 iq4nl p0 swiglu 3072x5120 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 iq4nl p0 swiglu 3072x5120 invariant T=9..2048 rmma.m1.n4.w1x8 ws=0
 iq4nl p1 store 6144x5120 speed T=1 r8.w8r2 ws=0
-iq4nl p1 store 6144x5120 speed T=2 r8.w8r2 ws=12800
+iq4nl p1 store 6144x5120 speed T=2 ggml_vec ws=11520
 iq4nl p1 store 6144x5120 speed T=3 ggml_vec ws=17280
 iq4nl p1 store 6144x5120 speed T=4 ggml_vec ws=23040
 iq4nl p1 store 6144x5120 speed T=5 ggml_vec ws=28800
