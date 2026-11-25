@@ -482,16 +482,16 @@ void read_predicted(const std::string& path, Table& table) {
                 check_bands(bands, where);
                 for (const RouteBand& b : bands) {
                     if (b.t_min < kPredictedMinTokens || b.t_max > kPredictedMaxTokens) {
-                        refuse("a predicted band outside T " +
-                                   std::to_string(kPredictedMinTokens) + "-" +
-                                   std::to_string(kPredictedMaxTokens),
+                        refuse("a predicted band outside T " + std::to_string(kPredictedMinTokens) +
+                                   "-" + std::to_string(kPredictedMaxTokens),
                                where);
                     }
                 }
                 if (!bands.empty()) table.predicted.emplace(key, std::move(bands));
             }
             if (e.contains("ranked")) {
-                // [[t_min, t_max, [route, ...]], ...]: a list of one route at least, cheapest first.
+                // [[t_min, t_max, [route, ...]], ...]: a list of one route at least, cheapest
+                // first.
                 std::vector<RankedBand> lists;
                 for (const Json& b : e.at("ranked")) {
                     RankedBand band{b.at(0).get<std::int32_t>(), b.at(1).get<std::int32_t>(), {}};
@@ -793,7 +793,7 @@ void publish_locked(DeviceTables& d, std::shared_ptr<const Table> table) {
     d.table = std::move(table);
     d.has_route_as.store(d.table && !d.table->route_as.empty(), std::memory_order_release);
     d.has_generic.store(d.table && (!d.table->generic.empty() || !d.table->predicted.empty() ||
-                                     !d.table->ranked.empty()),
+                                    !d.table->ranked.empty()),
                         std::memory_order_release);
     d.has_moe.store(d.table && (!d.table->moe.empty() || !d.table->moe_predicted.empty()),
                     std::memory_order_release);
@@ -1312,8 +1312,8 @@ std::vector<Route> table_ranked_routes(const Problem& problem, std::int32_t toke
     const auto table = active_table(d);
     if (!table) return {};
     const auto compute = compute_class(problem.qtype, problem.policy);
-    auto p             = table->ranked.find(
-        key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
+    auto p =
+        table->ranked.find(key_of(problem.qtype, compute, problem.epilogue, problem.n, problem.k));
     // The same fp8 row-F32 fallback as table_route_answer.
     if (p == table->ranked.end() && problem.qtype == QType::FP8_E4M3FN_ROW_F32) {
         p = table->ranked.find(

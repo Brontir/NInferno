@@ -95,9 +95,10 @@ int shipped_picks() {
                               R"re("epilogue": "([a-z]+)",\s*"n": ([0-9]+),\s*"k": ([0-9]+),)re"
                               R"re(\s*(?:"ranked": [^}]*?,\s*)?)re"
                               R"re("bands": \[\s*\[\s*([0-9]+),\s*[0-9]+,\s*"([^"]+)")re");
-    const std::regex ranked_re(R"re("format": "([a-z0-9_]+)",\s*"compute": "a16",\s*)re"
-                               R"re("epilogue": "([a-z]+)",\s*"n": ([0-9]+),\s*"k": ([0-9]+),)re"
-                               R"re(\s*"ranked": \[\s*\[\s*([0-9]+),\s*[0-9]+,\s*\[\s*"([^"]+)")re");
+    const std::regex ranked_re(
+        R"re("format": "([a-z0-9_]+)",\s*"compute": "a16",\s*)re"
+        R"re("epilogue": "([a-z]+)",\s*"n": ([0-9]+),\s*"k": ([0-9]+),)re"
+        R"re(\s*"ranked": \[\s*\[\s*([0-9]+),\s*[0-9]+,\s*\[\s*"([^"]+)")re");
     int files = 0;
     // The file and its board for the refusals and the gap check below: of the files with two
     // entries or more, the first by name (a directory's order is the filesystem's: one stand
@@ -145,12 +146,11 @@ int shipped_picks() {
             const auto s = ninferno::ops::route_table_status();
             std::cout << name << " on " << ninferno::device_class().id() << ": " << s.message
                       << '\n';
-            failures +=
-                check(s.loaded && ninferno::path_from_utf8(s.predicted_path).filename() == name &&
-                          s.predicted_entries > 0 && s.ranked_entries > 0 &&
-                          !s.predicted_sha256.empty(),
-                      name + " is read as " + ninferno::device_class().id() +
-                          "'s predicted bands and ranked lists: " + s.message);
+            failures += check(
+                s.loaded && ninferno::path_from_utf8(s.predicted_path).filename() == name &&
+                    s.predicted_entries > 0 && s.ranked_entries > 0 && !s.predicted_sha256.empty(),
+                name + " is read as " + ninferno::device_class().id() +
+                    "'s predicted bands and ranked lists: " + s.message);
             const auto problem_of = [](const std::smatch& x) {
                 return generic::Problem{
                     ninferno::find_route(x[1].str()).value_or(ninferno::QType::BF16),
@@ -166,11 +166,12 @@ int shipped_picks() {
                 const auto pr     = problem_of(r);
                 const int width   = std::stoi(r[5].str());
                 const auto routes = generic::table_ranked_routes(pr, width);
-                failures += check(
-                    ninferno::find_route(r[1].str()) && !routes.empty() &&
-                        generic::route_name(routes.front()) == r[6].str(),
-                    name + ": its first ranked entry lists " + r[6].str() + " first, not " +
-                        (routes.empty() ? std::string("none") : generic::route_name(routes.front())));
+                failures +=
+                    check(ninferno::find_route(r[1].str()) && !routes.empty() &&
+                              generic::route_name(routes.front()) == r[6].str(),
+                          name + ": its first ranked entry lists " + r[6].str() + " first, not " +
+                              (routes.empty() ? std::string("none")
+                                              : generic::route_name(routes.front())));
                 const ninferno::ops::ScopedRoutePolicy legacy(ninferno::RoutePolicy::Legacy);
                 failures += check(generic::table_ranked_routes(pr, width).empty(),
                                   name + ": under --route-policy legacy no ranked list is read");
