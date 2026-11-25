@@ -885,18 +885,18 @@ void inkling2_visits(const json& c, const std::vector<std::string>& kinds, Geome
         const std::uint32_t times = i >= start && i < end ? passes : 1;
         (kinds[i] == "full_attention" ? full : sliding) += times;
     }
-    const double kv   = number(c, "num_key_value_heads");
-    const double dim  = number(c, "head_dim");
-    g.full_layers     = full;
-    g.sliding_layers  = sliding;
-    g.full_kv_total   = u32(kv * full);
-    g.sliding_kv_total = u32(kv * sliding);
-    g.full_attending  = full;
-    g.sliding_attending = sliding;
+    const double kv           = number(c, "num_key_value_heads");
+    const double dim          = number(c, "head_dim");
+    g.full_layers             = full;
+    g.sliding_layers          = sliding;
+    g.full_kv_total           = u32(kv * full);
+    g.sliding_kv_total        = u32(kv * sliding);
+    g.full_attending          = full;
+    g.sliding_attending       = sliding;
     const double heads        = number(c, "num_attention_heads");
     g.full_attention_width    = heads * 2 * dim * full;
     g.sliding_attention_width = heads * 2 * dim * sliding;
-    g.conv_channels   = static_cast<std::int32_t>(2 * kv * dim + 2 * g.hidden);
+    g.conv_channels           = static_cast<std::int32_t>(2 * kv * dim + 2 * g.hidden);
 }
 
 Geometry geometry_of_config(const json& config) {

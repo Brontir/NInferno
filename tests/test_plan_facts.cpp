@@ -986,7 +986,7 @@ int inkling2() {
                          {"max_position_embeddings", 262144},
                          {"layer_types", types},
                          {"loop_config", {{"core_start", 6}, {"core_end", 18}, {"num_passes", 3}}}};
-    const auto f = pr::plan_facts_of_config(config, 1, rt::WeightBasis::Artifact);
+    const auto f      = pr::plan_facts_of_config(config, 1, rt::WeightBasis::Artifact);
     failures += same(f.model.offline_reason, std::string(), "inkling2 plans");
     failures += same(static_cast<int>(f.model.state.family),
                      static_cast<int>(ninferno::models::StateFamily::Inkling2), "inkling2 family");
@@ -1804,8 +1804,7 @@ int artifact_bank_formats() {
 int main() {
     const int failures = gguf_qwen35() + config_qwen35() + qwen35_moe() + gemma4() + gpt_oss() +
                          nemotron_h() + inkling2() + llama() + model_types() + boards() +
-                         artifact_errors() +
-                         artifact_expert_layers() + artifact_prefill_policy() +
+                         artifact_errors() + artifact_expert_layers() + artifact_prefill_policy() +
                          gguf_linear_formats() + artifact_tensor_table() + table_counting() +
                          plan_device_error() + artifact_bank_formats();
     if (failures == 0) { std::cout << "plan facts OK\n"; }
