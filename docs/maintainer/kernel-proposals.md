@@ -1152,8 +1152,8 @@ P from #850's plan. A, G, N and P have frozen predictions so far.
 - **Prediction, frozen 25.11 23:00 before the next speed step.** The packed projection (q,
   gate, relative and sink from one input as one linear; k, v and taps as another; the analyzer's
   sealed prices, `analyzer_r20/sealed_inkling2.json`) cuts a visit's seven attention
-  projections from ~44 us to 24-30 us on the RTX 4090. That moves C 1 decode by +8 to +14 %
-  (48 visits a token, ~2.1 ms of ~9.1 ms).
+  projections from ~44 us to 24-30 us on the RTX 4090. That saves 0.67-0.96 ms of a
+  ~9.1 ms token at C 1 (48 visits), +8 to +12 % decode.
 - **Acceptance / refutation, frozen with it.** Accept if the e2e A/B (ABBA, two runs) on the RTX
   4090 gains at least +5 % at C 1 with C 2-8 not below -0.3 %. Below +2 % at C 1 in both runs
   refutes the latency-bound reading of these calls. The byte rule is the KLD bound: mean KLD
