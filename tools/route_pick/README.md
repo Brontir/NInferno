@@ -17,6 +17,13 @@ Nothing is measured on the card.
   inputs.
 - `facts.py` reads the inputs: `gpu_facts.json`, `isa_facts.json` (isa_probe), `sm_rate_facts.json`, and the
   kernel facts `sm_<arch>.txt`.
+- `analyzer.py` (with `analyzer_facts.py`) is the analyzer of T 1-8, rounds 15-20: the same inputs plus the launch,
+  DRAM-latency and narrow-load facts, one price per route of ggml_vec, r8, ggml_mmq and every rmma schedule, and on
+  sm_70 the Volta substitutes once their kernel facts (sections vhmma / vgemv / vgemvr of `sm_70.txt`) are committed;
+  until then those routes have no price there. `rank()` lists the priced routes cheapest first. The engine does not read it yet; it
+  will replace the T 1-8 route-table entries and rules (vec, R8, rmma) once `gen.py` writes its ranked lists.
+  `tests/test_route_analyzer.py` (ctest `ninferno_route_analyzer_test`) checks that every A16 release shape at
+  T 1-8 has a priced route on sm_75, sm_86, sm_89 and sm_120a.
 - `gen.py` writes the files. `gen.py --check` exits 1 when a file differs from what the facts give now; it runs as
   the `ninferno_route_pick_fresh_test` ctest. After a kernel-facts, gpu-facts or route-table change, run
   `python3 tools/route_pick/gen.py` and commit `routes/pick`.

@@ -103,6 +103,9 @@ constexpr SectionFamily kSections[] = {
      .waits        = true,
      .inflight     = true},
     {"vecmma", "family type gated registers stack local shared", 0, 2},
+    {"vhmma", "family fmt E NG ahead registers stack local shared", 1, 3, true},
+    {"vgemv", "family fmt E NT registers stack local shared", 1, 2, true},
+    {"vgemvr", "family fmt E NT R registers stack local shared", 1, 3, true},
 };
 static_assert(std::size(kSections) == std::size(kSectionFamilies));
 

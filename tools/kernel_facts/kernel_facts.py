@@ -280,6 +280,27 @@ def mmq_key(demangled):
 VEC_NAMESPACE = "ninferno::ops::ggml_mmq::detail::(anonymousnamespace)::"
 
 
+def volta_key(demangled, name, n):
+    """The key of a Volta substitute kernel (generic_volta_hmma.cu / generic_volta_gemv.cu, in their
+    files' anonymous namespace): the format struct (HK45<4>, Q8G32, ...) and the integer template
+    arguments (epilogue, column groups or tokens, loads ahead or rows). None for other symbols."""
+    unnamed = demangled.replace("(anonymous namespace)", "(anonymousnamespace)")
+    args = template_args(unnamed.replace("<unnamed>", "(anonymousnamespace)"),
+                         "void " + NAMESPACE + "(anonymousnamespace)::" + name)
+    if args is None:
+        return None
+    if len(args) != n:
+        fail(f"unexpected {name} arguments in {demangled}")
+    fmt = args[0].split("::")[-1].replace(" ", "")
+    ints = []
+    for a in args[1:]:
+        m = re.search(r"(\d+)$", a)
+        if not m:
+            fail(f"unexpected {name} arguments in {demangled}")
+        ints.append(int(m.group(1)))
+    return (fmt, *ints)
+
+
 def vec_key(demangled):
     """The key of a vector kernel instance (src/ops/generic/ggml_mmq/ggml_vec.cu, #763):
     vec_kernel<type, T, KS, Gated, Bounded> in the file's anonymous namespace, keyed as the
@@ -493,11 +514,15 @@ class Family:
 
     def __init__(self, name, key_columns, key_of, needle, tiles, pipes, text_key, loop=True,
                  marker=None, prologue=None, waits=False, producer=None, emulated=False,
-                 inflight=False):
+                 inflight=False, archs=None):
         # The C++ reader takes the loads in flight ahead of the producer loop, the columns line
         # lists them after it: a family carries one or the other (kernel_facts.cpp asserts it).
         assert not (inflight and producer), name
         self.name = name
+        # The archs whose snapshot holds the family (None: every arch): Volta's substitutes of
+        # the register MMA run on sm_70 alone (the HMMA kernel's body traps elsewhere,
+        # NINFERNO_HMMA884; the GEMVs compile everywhere and are routed on sm_70 alone).
+        self.archs = archs
         # Whether its rows carry the K loop's global loads in flight a lane
         # (sass_counts.INFLIGHT_FIELDS) after the wait classes: the vec section (#1185), whose
         # instances ptxas compiles to registers that set how many of a row's loads stay in flight.
@@ -583,6 +608,19 @@ FAMILIES = {
                   inflight=True),
     "vecmma": Family("vecmma", ("type", "gated"), lambda d: vec_mma_key(d), "vec_mma_kernel",
                      lambda key: 1, True, False),
+    # Volta's substitutes of the register MMA (generic_volta_hmma.cu, generic_volta_gemv.cu,
+    # #1165): sm_70 alone. tiles 1: an iteration is one 256-value superblock of the warp's rows.
+    "vhmma": Family("vhmma", ("fmt", "E", "NG", "ahead"),
+                    lambda d: volta_key(d, "volta_hmma_kernel<", 4), "volta_hmma_kernel",
+                    lambda key: 1, True, True, waits=True, archs=("70",)),
+    "vgemv": Family("vgemv", ("fmt", "E", "NT"),
+                    lambda d: volta_key(d, "volta_kquant_gemv_kernel<", 3),
+                    "volta_kquant_gemv_kernel", lambda key: 1, True, True, waits=True,
+                    archs=("70",)),
+    "vgemvr": Family("vgemvr", ("fmt", "E", "NT", "R"),
+                     lambda d: volta_key(d, "volta_kquant_gemv_rows_kernel<", 4),
+                     "volta_kquant_gemv_rows_kernel", lambda key: 1, True, True, waits=True,
+                     archs=("70",)),
 }
 SECTION_FAMILIES = tuple(f for f in FAMILIES if f != FAMILY)
 GGML_Q2_K = 10  # the ggml_type value of Q2_K (third_party/ggml-quants/include/ggml.h)
@@ -938,6 +976,26 @@ def family_audit(family, rows, arch=""):
                 problems.append(f"{c.bar} barriers in the iteration")
             if c.k_iter != VEC_MMA_K_ITER:
                 problems.append(f"k_iter {c.k_iter}, not {VEC_MMA_K_ITER}")
+        elif family == "vhmma":
+            # Volta's HMMA kernel: one K loop of mma.m8n8k4 over a 256-value superblock of the
+            # warp's eight rows; k_iter its m16n8-equivalent work, 8 rows x 8 NG tokens x 256 / 128
+            # per set (SwiGLU: two sets in the one loop).
+            sets = 2 if int(k[1]) == 2 else 1
+            want = 128 * int(k[2]) * sets
+            if c.loops != 1:
+                problems.append(f"{c.loops} candidate loops")
+            if c.mma == 0:
+                problems.append("no MMA in the loop")
+            if c.k_iter != want:
+                problems.append(f"k_iter {c.k_iter}, not {want}")
+        elif family in ("vgemv", "vgemvr"):
+            # Volta's GEMV: FFMA, no MMA (k_iter 0); one K loop a set (SwiGLU: the gate's, then the
+            # up's, kSets loops; the heavier is counted, so a superblock costs `loops` iterations).
+            sets = 2 if int(k[1]) == 2 else 1
+            if c.loops != sets:
+                problems.append(f"{c.loops} candidate loops, not {sets}")
+            if c.mma != 0:
+                problems.append(f"{c.mma} MMAs in the iteration")
         problems += c.schedule_problems()
         if problems:
             out.append(f"{family} {row_key(k)}: {'; '.join(problems)}")
@@ -1116,6 +1174,30 @@ SECTION_NOTES = {
         "# sixteen k16 (Q6_K) an iteration, k_iter 256. Below sm_80 the MMA is a trap stand-in",
         "# (the route needs sm_80, route_requires): those rows have no MMA in their loop.",
     ),
+    "vhmma": (
+        "# Volta's HMMA kernel of the decode and verify widths (src/ops/generic/generic_volta_hmma.cu,",
+        "# #1165), sm_70 alone: volta_hmma_kernel<format, epilogue, NG, ahead>, the kernel run_route",
+        "# takes for an rmma.* route of its formats there (volta_hmma_takes); NG the 8-token column",
+        "# groups, ahead the superblocks it loads ahead. A warp holds eight weight rows; one iteration",
+        "# of the counted loop is one 256-value superblock of them, both sets of a SwiGLU call in it;",
+        "# k_iter its m16n8-equivalent MMA work, 128 x NG x sets.",
+    ),
+    "vgemv": (
+        "# Volta's decode GEMV (src/ops/generic/generic_volta_gemv.cu, #1165), sm_70 alone:",
+        "# volta_kquant_gemv_kernel<format, epilogue, NT>, a warp per output row over NT tokens, the",
+        "# codes decoded to FP32 against FP32 activations (FFMA, no MMA); run_route takes it for a",
+        "# lane-local register-MMA call the HMMA kernel does not (volta_gemv_takes). One iteration of",
+        "# the counted loop is one 256-value superblock of the row; no MMA, so k_iter 0. A SwiGLU call",
+        "# (E 2) runs two K loops, the gate's then the up's (kSets): loops 2, the heavier counted, so a",
+        "# superblock costs two iterations. Compiled on every arch, routed on sm_70 alone.",
+    ),
+    "vgemvr": (
+        "# The same GEMV over R output rows a warp, for a large store (volta_kquant_gemv_rows_kernel<",
+        "# format, epilogue, NT, R>, generic_volta_gemv.cu), sm_70 alone. One iteration of the counted",
+        "# loop is one 256-value superblock of the warp's rows; k_iter 0 and the SwiGLU loops as vgemv.",
+        "# launch_format takes R > 1 for a store alone: the other epilogues' rows are compiled, never",
+        "# launched.",
+    ),
 }
 
 
@@ -1285,7 +1367,9 @@ RESOURCES_ONLY = {("70", "mmq")}
 
 
 def cmd_extract(args):
-    families = family_list(args.families)
+    # A family of other archs only (Family.archs) is not part of this arch's snapshot.
+    families = tuple(f for f in family_list(args.families)
+                     if FAMILIES[f].archs is None or str(args.arch) in FAMILIES[f].archs)
     sass = () if args.no_sass else tuple(
         f for f in families if FAMILIES[f].loop and (args.arch, f) not in RESOURCES_ONLY)
     extracted = extract_families(args.binary, args.cuda_bin, args.arch, args.dump, args.sass_dump,

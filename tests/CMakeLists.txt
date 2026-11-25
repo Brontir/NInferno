@@ -208,6 +208,12 @@ add_test(NAME ninferno_route_table_retime_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_retime.py)
 set_tests_properties(ninferno_route_table_retime_test PROPERTIES LABELS host)
 
+# tools/route_pick/analyzer.py: every A16 release shape at T 1-8 has a priced route on every
+# architecture with facts, ranked cheapest first, no GPU.
+add_test(NAME ninferno_route_analyzer_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_analyzer.py)
+set_tests_properties(ninferno_route_analyzer_test PROPERTIES LABELS host)
+
 # routes/*.json: evidence_us / tuned_on provenance (#634), no GPU.
 add_test(NAME ninferno_route_table_evidence_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_evidence.py)
