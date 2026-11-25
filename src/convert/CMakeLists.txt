@@ -7,6 +7,7 @@ add_library(ninferno_convert STATIC
   checks.cpp
   dense.cpp
   gemma4.cpp
+  inkling2.cpp
   qwen3_5.cpp
   planner.cpp
   expert_layout.cpp

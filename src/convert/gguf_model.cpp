@@ -2814,11 +2814,160 @@ bool clip_projector_supported(const std::string& type) {
     return type == "qwen3vl_merger" || type == "gemma4v";
 }
 
+// ---------------------------------------------------------------------------------------------
+// inkling2_loop: Thinking Machines' Inkling 2 (llama.cpp src/models/inkling2.cpp and
+// inkling2-loop.cpp; conversion/inkling2.py). The text decoder only: the vision tower ships as a
+// separate projector file, the MTP block and the DSpark drafter are not in the trunk file. Every
+// tensor keeps its stored encoding; the config is docs/maintainer/inkling2-model.md's.
+void map_inkling2(Mapper& m) {
+    const auto hidden = m.count("embedding_length");
+    const auto layers = m.count("block_count");
+    const auto vocab  = m.count("vocab_size");
+    const auto tokens = m.count("vocab_size_unpadded");
+    const auto& embd  = m.need("token_embd.weight");
+    const auto* swa   = m.meta("attention.sliding_window_pattern");
+    if (!swa || !swa->is_array() || swa->size() != layers) {
+        throw std::runtime_error("inkling2: attention.sliding_window_pattern must cover every layer");
+    }
+    if (embd.shape.size() != 2 || embd.shape[0] != vocab || embd.shape[1] != hidden || tokens > vocab) {
+        throw std::runtime_error("inkling2: token_embd is not [vocab_size, embedding_length]");
+    }
+    const auto heads = m.per_layer("attention.head_count", 0);
+    const auto kv    = m.per_layer("attention.head_count_kv", 0);
+    const auto d     = m.count("attention.key_length");
+    const auto rel   = m.count("attention.relative_length");
+    const auto conv  = m.count("shortconv.l_cache");
+    const auto block = m.count("attn_res.block_size");
+    const auto ir    = m.per_layer("expert_feed_forward_length", 0);
+    const auto exps  = m.count("expert_count");
+    const auto start = m.count_or("loop.start", 0);
+    const auto end   = m.count_or("loop.end", 0);
+    const auto rank  = m.count_or("loop.gate_rank", 0);
+    if (m.count("attention.value_length") != d || m.count_or("attention.key_length_swa", d) != d) {
+        throw std::runtime_error("inkling2: one head dimension for keys, values and both kinds");
+    }
+    OJson types = OJson::array();
+    for (std::uint64_t i = 0; i < layers; ++i) {
+        if (m.per_layer("attention.head_count", i) != heads ||
+            m.per_layer("attention.head_count_kv", i) != kv ||
+            m.per_layer("expert_feed_forward_length", i) != ir) {
+            throw std::runtime_error("inkling2: head counts and expert widths differ by layer");
+        }
+        types.push_back(flag((*swa)[i]) ? "sliding_attention" : "full_attention");
+    }
+    OJson config                    = OJson::object();
+    config["architectures"]         = OJson::array({"Inkling2LoopForCausalLM"});
+    config["model_type"]            = "inkling2_text";
+    config["hidden_size"]           = hidden;
+    config["num_hidden_layers"]     = layers;
+    config["vocab_size"]            = vocab;
+    config["unpadded_vocab_size"]   = tokens;
+    config["max_position_embeddings"] = m.count("context_length");
+    config["num_attention_heads"]   = heads;
+    config["num_key_value_heads"]   = kv;
+    config["head_dim"]              = d;
+    config["layer_types"]           = types;
+    config["sliding_window"]        = m.count("attention.sliding_window");
+    config["rms_norm_eps"]          = m.real("attention.layer_norm_rms_epsilon");
+    config["d_rel"]                 = rel;
+    config["rel_extent"]            = m.count("attention.relative_extent");
+    config["rel_l2_clip_threshold"] = m.real("attention.relative_clip");
+    config["qk_l2_clip_threshold"]  = m.real("attention.qk_clip");
+    config["log_scaling_n_floor"]   = m.count("attention.log_scale_floor");
+    config["log_scaling_alpha"]     = m.real("attention.log_scale_alpha");
+    config["sconv_kernel_size"]     = conv;
+    config["n_layers_per_attn_res_block"] = block;
+    config["n_routed_experts"]      = exps;
+    config["num_experts_per_tok"]   = m.count("expert_used_count");
+    config["intermediate_size"]     = ir;
+    config["route_scale"]           = m.real("expert_weights_scale");
+    config["mlp_gate_softcap"]      = m.real("activation.situ_beta");
+    config["mlp_up_softcap"]        = m.real("activation.situ_linear_beta");
+    config["final_logit_softcapping"] = m.real("final_logit_softcapping");
+    if (rank) {
+        config["loop_config"] = OJson{{"core_start", start},
+                                      {"core_end", end},
+                                      {"num_passes", m.count("loop.count")},
+                                      {"gate_rank", rank},
+                                      {"is_varloop", m.meta("loop.varying") && flag(*m.meta("loop.varying"))}};
+    }
+    m.out.config = std::move(config);
+
+    const auto vector = [&](const std::string& from, const std::string& to, Shape shape) {
+        m.add(to, std::move(shape), m.whole(m.need(from)));
+    };
+    vector("token_embd.weight", "model.embed_tokens.weight", {vocab, hidden});
+    vector("token_embd_norm.weight", "model.embed_norm.weight", {hidden});
+    vector("output.weight", "lm_head.weight", {vocab, hidden});
+    vector("output_norm.weight", "model.norm.weight", {hidden});
+    vector("output_res_query.weight", "model.output_res_query", {1, hidden});
+    const auto q = heads * d, k = kv * d;
+    for (std::uint64_t i = 0; i < layers; ++i) {
+        const auto s       = "blk." + std::to_string(i) + ".";
+        const auto p       = "model.layers." + std::to_string(i) + ".";
+        const bool sliding = flag((*swa)[i]);
+        const auto extent  = sliding ? m.count("attention.sliding_window") : m.count("attention.relative_extent");
+        for (const auto& [from, to, rows, cols] :
+             {std::tuple{"attn_q", "q_proj", q, hidden}, std::tuple{"attn_k", "k_proj", k, hidden},
+              std::tuple{"attn_v", "v_proj", k, hidden}, std::tuple{"attn_output", "o_proj", hidden, q},
+              std::tuple{"attn_gate", "gate_proj", q, hidden}, std::tuple{"attn_rel", "rel_proj", rel * heads, hidden},
+              std::tuple{"attn_sink_proj", "sink_proj", heads, hidden}}) {
+            vector(s + from + ".weight", p + "self_attn." + to + ".weight", {rows, cols});
+        }
+        vector(s + "attn_q_clip.weight", p + "self_attn.q_clip", {heads, d});
+        vector(s + "attn_rel_clip.weight", p + "self_attn.rel_clip", {heads, rel});
+        vector(s + "attn_rel_bias.weight", p + "self_attn.rel_bias", {extent, rel});
+        vector(s + "attn_k_conv.weight", p + "self_attn.k_conv", {k, conv});
+        vector(s + "attn_v_conv.weight", p + "self_attn.v_conv", {k, conv});
+        vector(s + "attn_post_conv.weight", p + "self_attn.post_conv", {hidden, conv});
+        vector(s + "ffn_post_conv.weight", p + "mlp.post_conv", {hidden, conv});
+        if (sliding) {
+            vector(s + "attn_norm.weight", p + "input_layernorm.weight", {hidden});
+        } else {
+            for (const char* role : {"q", "k", "v"}) {
+                vector(s + "attn_" + role + "_inp_norm.weight", p + role + "_input_layernorm.weight", {hidden});
+            }
+            vector(s + "attn_k_conv_proj.weight", p + "self_attn.k_conv_proj.weight", {kv * conv, hidden});
+            vector(s + "attn_v_conv_proj.weight", p + "self_attn.v_conv_proj.weight", {kv * conv, hidden});
+        }
+        if (i > 0) {
+            vector(s + "attn_res_query.weight", p + "attention_input.query", {sliding ? 1U : 3U, hidden});
+        }
+        vector(s + "ffn_res_query.weight", p + "ffn_input.query", {1, hidden});
+        vector(s + "ffn_norm.weight", p + "post_attention_layernorm.weight", {hidden});
+        vector(s + "ffn_gate_inp.weight", p + "mlp.gate.weight", {exps, hidden});
+        if (m.find(s + "exp_probs_b.bias")) {
+            vector(s + "exp_probs_b.bias", p + "mlp.gate.e_score_correction_bias", {exps});
+        }
+        const auto& gate_up = m.need(s + "ffn_gate_up_exps.weight");
+        const auto& down    = m.need(s + "ffn_down_exps.weight");
+        for (std::uint64_t e = 0; e < exps; ++e) {
+            const auto ep = p + "mlp.experts." + std::to_string(e) + ".";
+            // Rows [0, F) of an expert are its gate, [F, 2F) its up (conversion/inkling2.py
+            // de-interleaves w13).
+            m.add(ep + "gate_proj.weight", {ir, hidden}, m.slice(gate_up, e * 2 * ir, ir));
+            m.add(ep + "up_proj.weight", {ir, hidden}, m.slice(gate_up, e * 2 * ir + ir, ir));
+            m.add(ep + "down_proj.weight", {hidden, ir}, m.slice(down, e * hidden, hidden));
+        }
+        if (rank && i >= start && i < end) {
+            vector(s + "loop_msg_query.weight", p + "loop.message_query", {4, hidden});
+            for (const char* role : {"q", "k", "v", "ffn"}) {
+                const auto c = std::string("loop_") + role + "_ctrl_";
+                const auto t = p + "loop." + role + "_control.";
+                vector(s + c + "down.weight", t + "down.weight", {rank, 2 * hidden});
+                vector(s + c + "gain.weight", t + "gain.weight", {hidden, rank});
+                vector(s + c + "forget.weight", t + "forget.weight", {hidden, rank});
+            }
+        }
+    }
+    m.note("expert banks split into per-expert matrices (NVFP4 per-expert scales kept)");
+}
+
 const std::vector<std::string>& supported_gguf_architectures() {
     static const std::vector<std::string> names = [] {
         std::vector<std::string> out = {"qwen35", "qwen35moe", "gemma4", "gpt-oss",
                                         "gemma4-assistant", "dflash", "nemotron_h_moe",
-                                        "clip"};
+                                        "inkling2_loop", "clip"};
         for (const auto& arch : kDenseArchs) { out.emplace_back(arch.gguf); }
         return out;
     }();
@@ -2840,6 +2989,8 @@ GgufMapping map_gguf_model(const GgufFile& file, const StoredLookup& stored, con
         map_dflash(m);
     } else if (m.arch() == "clip") {
         map_clip(m);
+    } else if (m.arch() == "inkling2_loop" || m.arch() == "inkling2") {
+        map_inkling2(m);
     } else if (m.arch() == "nemotron_h_moe") {
         // llama.cpp writes the sidecar under the same architecture string as the trunk: the
         // nextn_predict_layers count and the absent trunk block tell the two apart. A trunk file
