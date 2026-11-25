@@ -513,10 +513,13 @@ void check_known() {
         // the 4096x4096 store entry ad102.json lacks: borrowed, and under --route-policy evidence
         // (the default, #614 F2) demoted to the rules, the borrowed answer named
         {"rtx4090", q4k, big, a16, 512, true, 0, "tiled-rule", "demoted=route-table:borrowed"},
-        // a decode call of a class routes/pick ranks: the analyzer's list, ahead of the table's
-        // measured entry and of the borrowed one alike (analyzer_entry)
-        {"rtx4090", q4k, own, a16, 1, false, 0, "analyzer", "predicted"},
-        {"rtx4090", q4k, big, a16, 1, false, 0, "analyzer", "predicted"},
+        // AD102 is held out of the analyzer's ranked lists (gen.py HELD_CHIPS, #1211): its decode
+        // calls keep the table and the rules
+        {"rtx4090", q4k, own, a16, 1, false, 0, "route-table", "measured"},
+        {"rtx4090", q4k, big, a16, 1, false, 0, "rmma-rule", "demoted=route-table:borrowed"},
+        // a decode call of a class routes/pick ranks: the analyzer's list, ahead of the table and
+        // the rules (analyzer_entry)
+        {"rtx5090", q4k, big, a16, 1, false, 0, "analyzer", "predicted"},
         {"rtx4090", q8, big, a16, 64, false, 0, "cost-model"},
         {"rtx4090", q8, big, a16, 1, false, 0, "rmma-rule"},
         {"rtx4090", q6k, big, a16, 24, true, 0, "rmma-rule"},

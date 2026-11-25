@@ -52,6 +52,11 @@ import pick  # noqa: E402
 
 # The decode and verify widths the analyzer (analyzer.py) ranks routes at, every class of ARCH_OF_CC (ranked_entries).
 RANK_LO, RANK_HI = 1, 8
+# The chips whose classes get no ranked lists yet (the Fable r21 gate: no card below -1 % e2e against master): AD102
+# (RTX 4090), whose rmma the analyzer prices 12-16 % below its time at T 2-4 (#1211; Qwen3.5-9B Q4_K_M -1.5 / -1.6 /
+# -3.0 % at C 2 / 3 / 4). Its calls keep the authorities after the analyzer until the DRAM side is priced from the
+# die's activation rate.
+HELD_CHIPS = ('ad102',)
 LO, HI = 9, 16
 # The narrow band (#785): on these compute capabilities the file also holds T 17..NARROW_HI, which answers the int8
 # calls of those widths outside the prefill profile (speculative verify rounds, decode batches) ahead of the cost
@@ -354,7 +359,8 @@ def main():
         probs = [] if eps is None else [p for p in problems(all_tables, int(row['cc']), eps)
                                         if own.get(p, frozenset()) != full]
         # The ranked lists answer every problem of the capability's tables at T 1-8, a tabled board's own included.
-        rprobs = problems(all_tables, int(row['cc']), GAP_EPILOGUES, analyzer.BITS)
+        rprobs = () if row['chip'] in HELD_CHIPS else problems(all_tables, int(row['cc']), GAP_EPILOGUES,
+                                                                analyzer.BITS)
         doc = overlay(row, F, probs, inputs_of(a.root, F, ARCH_OF_CC[int(row['cc'])]), own, AF, rprobs)
         if not doc['entries']:
             continue  # nothing priced for the class: no file
